@@ -637,7 +637,7 @@ fn an_alter_type_changing_labels_unread_leaves_them_inexact() {
     );
 }
 
-/// The case [`Builder::snapshot`] exists for: `stream.rs`'s live segment
+/// The case [`Builder::snapshot`] exists for: `pgdt_mapping`'s forward pass
 /// needs a tiling span list *before* the scan reaches its true end, right
 /// after a `CopyEnd`, `mode` being `Idle` from the `CopyStart` before
 /// it. `check_tiling` is checked at every such boundary

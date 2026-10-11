@@ -444,7 +444,7 @@ pub enum SourceIdentity {
         etag: Option<String>,
         /// `Last-Modified`, in [`SourceIdentity::LocalFile`]'s on-disk
         /// vocabulary. `None` where the server sent none — which is what a
-        /// substituted epoch is read as (`pgdt_io::io`'s `weak_identity`).
+        /// substituted epoch is read as (`pgdt_io`'s `weak_identity`).
         last_modified: Option<(u64, u32)>,
         stored_size: u64,
     },
@@ -522,7 +522,7 @@ impl SourceIdentity {
     /// with it is not consulted (`docs/design/decisions.md`, "D21"). A weak
     /// one states only equivalent content (RFC 9110, §8.8.1), which is not
     /// what a map of byte offsets needs, so it cannot outrank a moved
-    /// `Last-Modified` — the reason [`pgdt_io::io`] pins no read by it either —
+    /// `Last-Modified` — the reason `pgdt_io`'s remote source pins no read by it either —
     /// and decides only where neither side states one. **There it can show a
     /// change and never confirm one**: opaque tags that differ, with either
     /// side's `W/` set aside, are [`WeakIdentity::TagDiffers`], and equal ones

@@ -154,7 +154,7 @@ impl BlockCache {
     /// [`Partitioning::window_end`]'s window, so a held batch can pin several
     /// units where this charges one. The decline it draws on a large-block
     /// file is accepted rather than worked around: it is reported
-    /// (`pgdt_query::stream::compressed_block_path_declined`), and a caller who
+    /// (`pgdt_query`'s `compressed_block_path_declined`), and a caller who
     /// wants the path back states a budget.
     ///
     /// *Rejected: a fixed refusal line beside a fixed budget*

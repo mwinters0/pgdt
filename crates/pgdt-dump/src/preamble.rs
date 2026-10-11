@@ -160,10 +160,10 @@ async fn preamble_only_watched(
     // where it says the file did not move underneath it
     // (`crate::cache::SourceWatch`).
     watch.check(source).await?;
-    // A complete cache already carries this diagnostic, computed by
+    // A loaded cache already carries this diagnostic, computed by
     // `cache::store::status_from_file` off the persisted table — so this is
-    // idempotent rather than gated on `!known`, which would miss a cache
-    // that exists but whose preamble was not yet complete.
+    // idempotent rather than gated on `!known`, which would add it twice to
+    // a cache that exists but whose preamble was not yet complete.
     if let Some(d) = non_seekable_compression_diagnostic(source.seek_table().as_ref())
         && !base_index.diagnostics.contains(&d)
     {

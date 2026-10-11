@@ -103,7 +103,7 @@ impl WorkerMemory {
 
     /// The same shape with `extra` bytes added to the per-worker term — what a
     /// caller pinning a batch of its own on top of the source's charge pays
-    /// (`pgdt_query::stream::plan_partitions`).
+    /// (`pgdt_query`'s `plan_partitions`).
     pub const fn plus_per_worker(mut self, extra: u64) -> Self {
         self.per_worker = self.per_worker.saturating_add(extra);
         self

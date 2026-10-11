@@ -49,7 +49,7 @@ A caller's ask that a scan stop, and a signal that ends the process
 - **pgdt-io** — `cancel.rs`: the token a scan polls, below everything that
   scans.
 - **namespace-init** — `lib.rs`, `unshare.rs`: ending as a PID namespace's
-  init on a signal, shared by both binaries.
+  init on a signal, shared by `pgdt` and the DataFusion CLI it composes.
 - **pgdt** — `interrupt.rs`: what a signal does to a `parse`, the binary's
   own: cancel the scan, save, then end by that signal.
 
@@ -86,7 +86,8 @@ escaped ([`decisions.md`](decisions.md), "The scanner").
 Which bytes of a line outside a `COPY` block are code, and which are inside a
 string, a quoted identifier or a comment; a type name canonicalized.
 
-- **pgdt-dump** — `lex.rs`: read by the scanner and the DDL grammar alone.
+- **pgdt-dump** — `lex.rs`: read by the scanner, the map's statement scan
+  and the DDL grammar.
 - **pgdt-core** — `type_name.rs`: a type name's canonical form, read by the
   DDL grammar and by the catalog and the type register, so below the model
   and the codec, and kept out of the model, whose edits ask whether the
@@ -105,7 +106,8 @@ The spans tiling a dump and the `COPY` blocks among them, the builder that
 extends a map, and what is found wrong with the file
 ([`decisions.md`](decisions.md), "The file map and the preamble").
 
-- **pgdt-model** — `span.rs`, `diagnostic.rs`: what the cache persists (D68).
+- **pgdt-model** — `span.rs`: what the cache persists (D68); `diagnostic.rs`:
+  what is found wrong with the file, recomputed on load rather than persisted.
 - **pgdt-dump** — `map/`: building a map — where a statement ends, a comment
   block read, and what every map is checked for and carries.
 
@@ -180,8 +182,9 @@ time grammar, nested literals, and whether PostgreSQL refuses a field
 - **pgdt-codec** — `value/`, and the `decode.rs` and `nested.rs` namespaces
   declaring from it: synchronous and free of Arrow past its schema types, so
   a decoder takes a field and returns a value (D74). A type family is one
-  module — its reader, renderer, refusal classifier and key type — and reads
-  nothing of the order key's dispatch.
+  module — its reader, renderer, refusal classifier and key type — and a
+  scalar one reads nothing of the order key's dispatch, which the nested
+  family's keys are built through.
 - **pgdt-query** — `render.rs`: a value read back from an Arrow array, and one
   field's text read into the array a batch of its column would hold; reading
   an array is query's (D74), and it is a one-row column, not the batcher's.
@@ -253,8 +256,8 @@ a table's summary, DataFusion's statistics, `pgdt info --detail`
   gathers and what holding it costs, the mapping pass's because gathering
   decodes and builds no array (D68); what a column's statistics are stored
   against, which pruning and summaries read.
-- **pgdt-query** — `prune.rs`, `summary.rs`: what reads the statistics
-  through the filter expression.
+- **pgdt-query** — `prune.rs`, `summary.rs`: what reads the statistics —
+  pruning through the filter expression, a summary folding every group.
 - **datafusion-pgdump** — `statistics.rs`: the map's statistics as
   DataFusion's.
 - **pgdt** — `info/statistics.rs`: what `pgdt info --detail` prints of them.

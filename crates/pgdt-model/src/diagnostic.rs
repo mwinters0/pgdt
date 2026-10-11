@@ -227,13 +227,11 @@ impl Finding for Diagnostic {
 }
 
 impl Diagnostic {
-    /// Public, unlike its siblings: a caller matching on
-    /// [`pgdt_dump::cache::CacheStatus`] itself rather than going through
-    /// [`pgdt_dump::cache::CacheMode::load`] still has to turn a
-    /// [`pgdt_dump::cache::WeakIdentity::Differs`] into this warning. `pgdt info`
-    /// is that caller: it reports what the cache holds, unless the selection
-    /// it asked [`pgdt_dump::cache::CacheMode::strict_identity_refusal`] about
-    /// binds the signal.
+    /// Public, unlike its siblings: the crate above turning a
+    /// `pgdt_dump::cache::WeakIdentity::Differs` into this warning,
+    /// `pgdt_dump::cache::advisory_identity_diagnostics`, is outside this one —
+    /// and `pgdt info`, matching on `CacheStatus` itself rather than going
+    /// through `CacheMode::load`, reaches it there.
     pub fn cache_mtime_changed() -> Self {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged }
     }

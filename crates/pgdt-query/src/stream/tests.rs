@@ -369,7 +369,7 @@ fn the_count_note_offers_the_chunk_only_where_the_span_sits_on_it() {
     assert_eq!(plan(chunk / 2, 1 << 20, 256 << 10).2, charged, "nothing the chunk moves");
 }
 
-/// **A note is a `Warning` exactly where the budget declined something
+/// **A budget's note is a `Warning` exactly where it declined something
 /// asked of it**: a skip and a narrowed span are `Info`, as `pgdt` has
 /// always printed them `note:`. A sink recovers the note itself.
 #[test]

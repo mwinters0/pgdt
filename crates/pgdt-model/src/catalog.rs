@@ -2,7 +2,7 @@
 //! and extensions its DDL wrote, kept as the words written — a declared type's
 //! text, never a parsed `(base, typmod)` pair, the codec drawing every
 //! conclusion from them (`docs/design/decisions.md`, "D74"). The grammar that
-//! reads them is `pgdt_dump::preamble`'s.
+//! reads them is `pgdt_dump::ddl`'s.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -503,7 +503,7 @@ pub struct TypeDef {
 pub enum TypeKind {
     /// Fully determined by the DDL — labels in declaration order. A
     /// `--binary-upgrade` dump emits these via a separate `ALTER TYPE ADD
-    /// VALUE` per label (I6); `pgdt_dump::preamble::fold_alter_type_add_value` folds them back
+    /// VALUE` per label (I6); `pgdt_dump`'s `ddl::metadata::fold_alter_type_add_value` folds them back
     /// in here so both forms produce the same shape.
     ///
     /// `exact` says the labels are every label the type holds when its
@@ -512,7 +512,7 @@ pub enum TypeKind {
     /// and by an `ALTER TYPE` that could change the labels and is not read —
     /// `RENAME VALUE`, `ADD VALUE IF NOT EXISTS`, and any naming a type no
     /// definition here carries, which clears every enum's
-    /// (`pgdt_dump::preamble::fold_enum_labels_unread`). Nothing `pg_dump` writes clears it.
+    /// (`pgdt_dump`'s `ddl::metadata::fold_enum_labels_unread`). Nothing `pg_dump` writes clears it.
     Enum { labels: Vec<String>, exact: bool },
     /// Reduces to a base type, resolved transitively by [`pgdt_codec::pgtype`] (a
     /// domain over a domain is legal).

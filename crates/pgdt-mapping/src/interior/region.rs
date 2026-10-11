@@ -59,7 +59,7 @@ pub enum BoundBy {
     /// ([`pgdt_io::ByteRangeSource::block_decode_bytes`]).
     Source,
     /// The source would be split, and the caller's memory budget affords fewer
-    /// readers of it than were asked for (`pgdt_io::worker_count`).
+    /// readers of it than were asked for (`pgdt_io::internal::worker_count`).
     Budget,
 }
 
@@ -383,7 +383,7 @@ async fn run_region(
 /// **How the piece is read is the source's own statement**
 /// ([`pgdt_io::PartitionRead`], and `docs/design/decisions.md`, "D9"). A
 /// plain file is read [`pgdt_io::PartitionRead::Chunked`], so
-/// [`pgdt_io::BufferPool`] pools every chunk-long buffer a worker takes — a
+/// `pgdt_io`'s `BufferPool` pools every chunk-long buffer a worker takes — a
 /// read grown past a chunk to finish a longer line is not pooled; a
 /// block-decoding file is read [`pgdt_io::PartitionRead::Whole`], whose
 /// *first* read of a piece is one of that source's own units; each

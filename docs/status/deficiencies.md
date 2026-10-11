@@ -454,9 +454,9 @@ than reading as a phase nobody has sliced.
   hand-written dump holding one. Detail: `crates/pgdt-dump/src/scan.rs`.
 
 - **KD106** — an `INSERT` run that a `COPY` header or a large object's
-  `BEGIN;` follows with no blank line between them is dropped rather than
+  `BEGIN;` follows with no TOC comment between them is dropped rather than
   closed: its bytes extend the span before it and no `InsertRun` counts its
-  rows; `pg_dump` ends every run with a blank line. **(c) unowned**; promoted
+  rows; `pg_dump` follows every run with the next entry's TOC comment. **(c) unowned**; promoted
   by a hand-written dump holding one. Detail: `crates/pgdt-dump/src/map.rs`.
 
 - **KD107** — a block's recorded first refused field, under

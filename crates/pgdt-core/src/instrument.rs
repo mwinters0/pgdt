@@ -21,7 +21,7 @@
 //! attributed the same way, so a statistic freed outside every scope reads as
 //! still live: the instrument errs towards finding the account short.
 //!
-//! What it answers is the reconciliation of `pgdt_query::statistics`'
+//! What it answers is the reconciliation of `pgdt_mapping::statistics`'
 //! account against the heap (`docs/design/decisions.md`, "D81"): at every
 //! update the live statistics bytes this module counts are compared with the
 //! account's total, and with that total less what it carries for allocations
@@ -48,7 +48,7 @@ pub use evaluation::{EvaluationReading, evaluation_reading};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvaluationPart {
     /// One row's evaluation against a dynamic filter's state, whole
-    /// (`stream::dynamic::DynamicRead::rejects`): every leaf part below and the tree
+    /// (`stream::replay::dynamic::DynamicRead::rejects`): every leaf part below and the tree
     /// walk between them. **The leaf parts are timed only inside one**, so a
     /// static filter, a sorted stop and a row group's statistics, which
     /// evaluate the same leaves, add nothing to them.
@@ -67,7 +67,7 @@ pub enum EvaluationPart {
     /// A membership probing its lookup for that key or text.
     Lookup,
     /// A replay's read of the filter's state as it takes a chunk
-    /// (`stream::dynamic::DynamicRead::at_chunk`), outside every row.
+    /// (`stream::replay::dynamic::DynamicRead::at_chunk`), outside every row.
     Chunk,
 }
 

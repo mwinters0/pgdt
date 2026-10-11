@@ -116,7 +116,7 @@ async fn a_structural_scan_grants_no_wait() {
 
 /// **A `parse` that states workers reaches the leader, and the sequence is how
 /// that is visible from outside.** `map_forward` states `NeverWait` once and
-/// then offers each open `COPY` region to `leader::scan_region`, which grants
+/// then offers each open `COPY` region to `pgdt_mapping`'s `scan_region`, which grants
 /// `MayWait` for the window it schedules and restores `NeverWait` before
 /// returning. So a scan that took `n` regions announces `NeverWait` and then
 /// `n` grant-and-restore pairs — the restoration being what the last entry

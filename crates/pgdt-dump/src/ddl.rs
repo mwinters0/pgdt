@@ -101,9 +101,8 @@ pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
 }
 
 /// `\connect <name>` — a bare prefix check on a line the scanner already
-/// holds. Exposed to `pgdt_mapping`'s live scan too:
-/// tracking which database a `CopyBlock` belongs to needs only the name a
-/// `\connect` yields, never a column type.
+/// holds, read by the map builder: tracking which database a `CopyBlock`
+/// belongs to needs only the name a `\connect` yields, never a column type.
 ///
 /// Both of `appendPsqlMetaConnect`'s forms (I55): the name as an identifier,
 /// and for a name holding a byte outside `[A-Za-z0-9_.]`, `-reuse-previous=on`

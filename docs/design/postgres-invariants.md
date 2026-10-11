@@ -1425,7 +1425,7 @@ the character set. All four output shapes observed live on the local
 PostgreSQL 16 instance.
 
 **Relied on by:** `decisions.md`, "D35" — it is why
-`crate::model::ArrayShape::observe` can read a value's dimensionality off the
+`pgdt_model`'s `ArrayShape::observe` can read a value's dimensionality off the
 raw, still-COPY-escaped field with no array parser at all, and why `{}`
 constrains neither bound.
 
@@ -2589,8 +2589,8 @@ matching `printf` conversion — `int`/`%d` at v13–v14, `int64`/`%lld` at
 v15–v17, `int64`/`PRId64` at v18 — which changes no output for any value the
 type can hold.
 
-**Relied on by.** `pgtype.rs`'s `CompareKind::Interval`, `TimeTz`, `Network`
-and `MacAddr` arms and the parsers `key.rs` dispatches to for them —
+**Relied on by.** `key.rs`'s `CompareKind::Interval`, `TimeTz`, `Network`
+and `MacAddr` arms and the parsers they dispatch to —
 [`decisions.md`](decisions.md), "D55",
 where these are four *Agrees* rows; `cidr_in`'s refusal is I67's. The `macaddr` output form is also what
 lets its one set of stored bounds serve DataFusion's semantics, which compares the
@@ -2739,7 +2739,7 @@ and the duplicate rule are unchanged. `escape_json`'s body moved into an
 across all six. `json_lex_number` gained the incremental-parser branch at v17,
 which `jsonb_in` does not enter.
 
-**Relied on by.** `pgtype.rs`'s `CompareKind::Jsonb` arm and `value/json.rs`'s
+**Relied on by.** `key.rs`'s `CompareKind::Jsonb` arm and `value/json.rs`'s
 `Jsonb`, `JsonCursor` — whose `number`, `string` and `unicode_escape` refuse
 what the input bullet says `jsonb_in` refuses — `jsonb_unread`, which refuses
 what `json_in` refuses (I72), the grammar being one, and `storage_order` —
@@ -4184,7 +4184,7 @@ prefix from v16 — is a spelling, not a range (I80).
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `key::int_in`, which refuses a field or a filter
+**Relied on by:** `value::int::int_in`, which refuses a field or a filter
 literal of any of the three types past its column's width, a parse keying the
 field failing on it.
 
@@ -4870,7 +4870,7 @@ case agrees across the three but `line '[(2,0),(3,1.7976931348623157e308)]'`,
 read by 13 alone, and `line '[(Infinity,1),(0,2)]'`, refused by 13 alone. The
 cases are `value/geometric/tests.rs`'s
 `a_geometric_field_is_refused_only_where_every_major_refuses_it`; `box[]`'s
-and `point[]`'s are `key/tests.rs`'s. Hexadecimal reading was checked against
+and `point[]`'s are `grammar/check/tests.rs`'s. Hexadecimal reading was checked against
 glibc's `strtod` over 595,823 generated spellings, with no difference.
 
 **Scope limit.** A server whose `strtod` reads no hexadecimal number refuses
@@ -5021,7 +5021,7 @@ subcommands), are not followed; no `pg_dump` writes the latter.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 16.15 (observed).
 
-**Relied on by:** `model::DatabaseMetadata::column_not_null` and
+**Relied on by:** `DatabaseMetadata::column_not_null` and
 `declared::domain_not_null`, through `ResolvedSchema::not_null`, which a parse
 keying, a query reading or filtering on and a strict parse checking a column
 refuse a NULL by, and through `pgtype::Position::not_null`, which a query
@@ -5087,7 +5087,7 @@ once the data has loaded, as it does every post-data constraint. Nor is an
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 the fixtures at every major (observed).
 
-**Relied on by:** `model::DatabaseMetadata::table_checks` and
+**Relied on by:** `DatabaseMetadata::table_checks` and
 `TypeKind::Domain`'s `check`, through `strict_unchecked`, which names each as
 what a strict parse does not check.
 
@@ -5477,7 +5477,7 @@ and server).
 
 **Relied on by:** `value::datetime::grammar::interval_reads`, which refuses an `interval`
 field only where no major reads it under any style and its column's
-qualifier (`pgtype::IntervalQualifier`).
+qualifier (`declared::IntervalQualifier`).
 
 **Re-verify.**
 
@@ -5580,7 +5580,7 @@ the fixtures at every major (observed).
 
 **Relied on by:** `ddl::table::parse_alter_table_reference` and
 `parse_create_table`, which read a partition's parent and bound into
-`TableDef::partition_of`; `gather::strict_unchecked`, which names a block's
+`TableDef::partition_of`; `gather::strict::strict_unchecked`, which names a block's
 bounds and its routing as unchecked.
 
 **Re-verify.**

@@ -1,5 +1,5 @@
 //! Per-row-group column statistics, gathered by `map_file` and persisted in
-//! the cache (`pgdt_query::statistics`).
+//! the cache (`pgdt_mapping::statistics`).
 //!
 //! **Checked against the file, not against the gatherer.** Each group's rows
 //! are re-read from the block's bytes by line, placed by where each line

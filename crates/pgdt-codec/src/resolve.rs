@@ -255,7 +255,7 @@ impl ResolvedSchema {
     ///
     /// **Meaningful for a schema resolved as gathering resolves it**:
     /// `SchemaMode::Typed` against the block's own DDL and no census
-    /// (`pgdt_query::gather`). A query's schema says only which kind a term reads
+    /// (`pgdt_mapping`'s `statistics::gather`). A query's schema says only which kind a term reads
     /// bounds by ([`ComparisonPlan::bounds_read_by`]); which stored set that
     /// is, is read off these kinds recomputed for the block
     /// ([`crate::compare::bounds_set_keyed_by`]).

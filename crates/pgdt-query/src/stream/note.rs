@@ -371,8 +371,8 @@ impl Finding for PlanNote {
         }
     }
 
-    /// One sentence naming why the plan fell short of what was asked, and what
-    /// to raise to close the gap — in the library's own vocabulary rather than
+    /// One sentence saying what the plan did and why — for a decline, what to
+    /// raise to close the gap — in the library's own vocabulary rather than
     /// any caller's flag names, as `ComparisonNote`'s is.
     fn message(&self) -> String {
         match &self.kind {

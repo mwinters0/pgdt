@@ -1989,7 +1989,7 @@ its own container, untimed and unwrapped.
 
 One `pgdt parse` of the 3.00 GiB `COPY` control at six read chunk sizes, in all
 three regimes, differing in nothing but the number `--chunk-size` carries.
-`io::SCAN_CHUNK_DEFAULT_SIZE_BYTES` is the shipped constant and the ratio column is
+`pgdt_io::SCAN_CHUNK_DEFAULT_SIZE_BYTES` is the shipped constant and the ratio column is
 against its row. The figure exists to decide one of the three I/O defaults and
 to bound the other two ([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 
@@ -2066,7 +2066,7 @@ kernel is told about rather than has to infer. Cold on the NVMe, nothing above
 1 MiB beats it: 4 MiB reads 1.06×, 8 MiB 1.16×, 16 MiB 1.26×.
 
 **All three rows above the default carry that argument.** The 16 MiB row was
-excluded from it while `io::BufferPool` kept nothing over 8 MiB: every chunk at
+excluded from it while `source::pool::BufferPool` kept nothing over 8 MiB: every chunk at
 that size was a fresh `vec![0u8; len]` — the `calloc` the pool exists to
 remove, back once per chunk — so its penalty was a pool miss rather than a
 request depth. The pool keeps a buffer of whatever length a read loop announces
@@ -2649,7 +2649,7 @@ of the walls above; the count's own share of them, the samples under its
 `{` and `[`. The statistics, sampled under the block observer's `observe_row`, are **72%** of
 either, about 3.3 s and 3.1 s: unescaping each field, keying it, holding each
 group's bounds in every view and the previous value, and a dictionary's
-membership test, which `gather.rs` names and the profile does not split
+membership test, which `gather/column.rs` names and the profile does not split
 further. The remainder is the scan and the save, and is unattributed between
 them. Warm is the only regime this table prices: nothing here says what the
 same CPU costs a device-bound cold scan.
@@ -2843,7 +2843,7 @@ alone on the other two rows.** Each join's filter is
 (`decisions.md`, "D53"), and it reaches a row as the membership alone: the
 bounds it implies still prune groups and are dropped from row evaluation
 ("D93"), so a row unescapes the field once and answers by one lookup
-(`predicate::ResolvedMembership::eval`), whatever the list's length.
+(`ResolvedMembership::eval`, `predicate/eval.rs`), whatever the list's length.
 
 **At `5e02bf9`, against `11e13f2`** (`runs/measure-20260927T221125/`), where each row also
 evaluated both bounds — two more unescapes, keys and comparisons — and the
@@ -2933,7 +2933,7 @@ the figure's **+0.131 s** at `11e13f2`; the shares below are of the profile's ow
 | `at_row`'s group lookup on every row and `at_chunk`'s re-read | row, chunk | +30, +21 | 3.2% |
 | `DynamicRead::stop` and `reads_fields`, asked every row | row | +13, +16 | 1.8% |
 | `push_row` past its split | row | +20, +22 | 2.6% |
-| The byte cut: the state's truths over every group, the membership keying each group's bounds once per term (`ResolvedTerm::bounded` at that commit, once a group since: `predicate::KeyedBounds`) | groups × list | +112, +112 | 14.1% |
+| The byte cut: the state's truths over every group, the membership keying each group's bounds once per term (`ResolvedTerm::bounded` at that commit, once a group since: `predicate::truths::KeyedBounds`) | groups × list | +112, +112 | 14.1% |
 | Unattributed: sampling, over buckets nothing between the legs reaches — UTF-8 validation alone reads +33 and −55 | — | +12, −64 | −3.2% |
 
 The move is exact: the on leg's `push_row` loses **786 and 787 cycles a row**
@@ -3220,7 +3220,7 @@ side by side and never subtracted.
   sixteen.** The `.xz` `parse` column does so at no row: `KD20`'s doubled
   decode comes from a fused worker's tail read landing in its successor's
   block. A replay sub-stream's last chunk reads past its limit into its
-  successor's bytes the same way (`crates/pgdt-query/src/stream.rs`, `replay`), but
+  successor's bytes the same way (`crates/pgdt-query/src/stream/replay.rs`, `replay`), but
   no reading here counts its decodes. Nothing explains why it gains so little
   past sixteen.
 - **Rep 1 is slow**: the slowest of five on the plain provider rows at two
@@ -3320,8 +3320,8 @@ Apparatus over every run in this table: CPU stall ≤0.99%, I/O stall ≤2.40%, 
 ## What a scan holds above the budget it was given
 
 A flagless `pgdt` scan discovers its own memory limit, keeps
-`io::MEMORY_RESERVE` back from it and solves the remainder, held under
-`io::MEMORY_MARGIN_PERCENT`, for a worker count
+`pgdt_io::MEMORY_RESERVE` back from it and solves the remainder, held under
+`pgdt_io::MEMORY_MARGIN_PERCENT`, for a worker count
 ([`decisions.md`](decisions.md), "I/O, memory and parallelism"). This
 figure is what says that arithmetic survives contact with a real cgroup: it
 runs the shipped binary flagless at six allocations and two block sizes, and
@@ -3330,7 +3330,7 @@ reaches.
 
 **It checks a model registered before the sitting rather than searching for a
 constant.** The two constants are already shipped — `MEMORY_RESERVE` is
-**384 MiB**, read off five builds and 400 runs on the platform allocator, and `io::MEMORY_UNPOOLED_BOUND`
+**384 MiB**, read off five builds and 400 runs on the platform allocator, and `pgdt_io::MEMORY_UNPOOLED_BOUND`
 is **256 MiB**, derived by arithmetic over those same runs under the shipped
 charge — a reading taken once, transcribed in
 [`decisions.md`](decisions.md), "I/O, memory and parallelism", and

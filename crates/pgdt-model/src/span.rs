@@ -80,9 +80,8 @@ pub struct TocHeader {
     /// namespace-less object).
     pub schema: Option<String>,
     /// `None` for `Owner: -` (`--no-owner`, or an owner-less kind like
-    /// `COMMENT`) or `Owner: ` (empty — some entry kinds pass an empty string
-    /// rather than `NULL` through `sanitize_line`). Both mean "no owner
-    /// recorded here" to a reader.
+    /// `COMMENT`): "no owner recorded here" to a reader. An empty `Owner: `
+    /// leaves no header at all (`KD114`).
     pub owner: Option<String>,
     /// The `; Tablespace: <name>` suffix, present only when the entry has a
     /// non-default tablespace and `--no-tablespaces` was not given.
@@ -148,7 +147,7 @@ pub struct LargeObjectRegion {
 }
 
 /// What a span is, at the granularity the statement-driven pass (no
-/// TOC enrichment) can tell — see the module docs.
+/// TOC enrichment) can tell — see `pgdt_dump::map`'s module docs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SpanBody {
     Table {
@@ -209,7 +208,7 @@ pub enum SpanBody {
         attribute: String,
     },
     /// An `ALTER TYPE` that could change an enum's labels and that
-    /// [`pgdt_dump::preamble`] does not read — `RENAME VALUE`, `ADD VALUE IF NOT
+    /// `pgdt_dump::ddl` does not read — `RENAME VALUE`, `ADD VALUE IF NOT
     /// EXISTS`, a label no plain `'…'` literal spells — naming the type it alters, or `None`
     /// where it names none this grammar reads. No `pg_dump` writes one; it is
     /// recognized so [`pgdt_dump::dump_metadata_from_spans`] can mark
@@ -218,7 +217,7 @@ pub enum SpanBody {
         type_name: Option<String>,
     },
     /// An `ALTER TABLE` adding to a table what
-    /// [`pgdt_dump::preamble::parse_alter_table_reference`] reads — a
+    /// `pgdt_dump`'s `ddl::table::parse_alter_table_reference` reads — a
     /// `--binary-upgrade` dump's `INHERIT <parent>`, `OF <type>` or `ADD
     /// CONSTRAINT … CHECK`, a pre-v18 `SET NOT NULL`, an `ATTACH PARTITION`,
     /// whose `table` is the partition it attaches — recognized so
@@ -237,7 +236,7 @@ pub enum SpanBody {
     /// closed early by a `--` line or a dollar body's end — or a TOC comment
     /// no statement followed, that is none of this module's classified shapes — including every object kind
     /// TOC enrichment would otherwise label, and any statement not grouped
-    /// into its owning entry's span (the module docs' "no grouping").
+    /// into its owning entry's span (`pgdt_dump::map`'s module docs, "no grouping").
     Unparsed,
     /// Bytes no scan has walked yet — always a single trailing span
     /// (`docs/design/decisions.md`, "D30"). Never produced by `pgdt_mapping::build_map`,
@@ -269,12 +268,12 @@ pub struct CopyBlock {
     /// root rather than the partition whose rows follow, and **other blocks
     /// in this same dump carry the same header name**. Stored, not concluded
     /// from (`docs/design/decisions.md`, "D74"), and read by
-    /// `pgdt_query::table_stream` to decide whether a cold query may stop
+    /// `pgdt_mapping`'s `target_settled` to decide whether a cold query may stop
     /// once the queried table's block closes or must run to EOF, those blocks
     /// not being adjacent (`docs/design/decisions.md`, "D49").
     pub partition_root: Option<String>,
     /// This block's per-row-group column statistics, where the mapping pass
-    /// that recorded it was asked to gather them (`pgdt_query::statistics`).
+    /// that recorded it was asked to gather them (`pgdt_mapping::statistics`).
     /// Shared, so a clone of the map copies a reference
     /// (`docs/design/decisions.md`, "D34").
     #[serde(deserialize_with = "deserialize_block_statistics")]
@@ -306,7 +305,7 @@ pub struct CopyBlock {
     /// and found none refused — a fact about the dump's bytes, which the
     /// cache's identity binds it to. A strict parse re-reads every block
     /// holding `false`, so a clean one has checked every field whichever runs
-    /// built the map; nothing else reads it.
+    /// built the map; `info --detail` and `--json` report it.
     #[serde(default)]
     pub checked_in_full: bool,
     /// This block's array-shape census, one [`ArrayShape`] per column in

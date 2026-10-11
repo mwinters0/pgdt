@@ -39,8 +39,7 @@ pub fn bytea_unread(s: &str) -> Unread {
 /// not pin (I4): `hex`, `\x` followed by hex pairs, and `escape`
 /// ([`decode_bytea_escape`]). An `escape` value never opens `\x`, so the
 /// prefix tells the two apart (I56). The decoded text (a single backslash),
-/// not the doubled-backslash form COPY escaping writes to disk (see the
-/// module docs).
+/// not the doubled-backslash form COPY escaping writes to disk.
 pub fn decode_bytea(s: &str) -> Option<Vec<u8>> {
     match s.strip_prefix("\\x") {
         Some(hex) => decode_bytea_hex(hex),

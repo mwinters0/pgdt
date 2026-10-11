@@ -52,7 +52,7 @@ struct Reference {
 }
 
 /// Drive the serial scanner and `map::Builder` over `file` exactly as
-/// `stream::map_forward` does, and report every `COPY` block it found.
+/// `crate::forward::map_forward` does, and report every `COPY` block it found.
 /// Synchronous on purpose: the reference must not depend on a source, a
 /// runtime or a chunk size, the very things the split may differ in.
 fn reference(file: &[u8]) -> Vec<Reference> {
@@ -330,7 +330,7 @@ fn a_cut_inside_a_row_whose_tail_is_a_backslash_dot_is_resynced_past() {
 /// The byte counts a fixture-sized block has to be scheduled against.
 ///
 /// A dump fixture is kilobytes and the source's own partition is several
-/// read chunks (`pgdt_io::PLAIN_PARTITION_CHUNKS`), so at the shipped
+/// read chunks (`pgdt_io`'s `PLAIN_PARTITION_CHUNKS`), so at the shipped
 /// chunk size every block here sits inside one partition and the scheduler
 /// declines it. Announcing 8 bytes as the read size makes the source
 /// advise 64-byte partitions, which is what exercises the window loop, the
@@ -453,7 +453,7 @@ impl pgdt_io::ByteRangeSource for Recording {
 /// first read of a piece as much as the tail; a read grown to finish a
 /// longer line is held to `max_line_bytes` alone. It is what keeps every
 /// buffer such a worker takes but a grown one a *pooled* one
-/// (`pgdt_io::BufferPool::keeps` admits the announced length and nothing
+/// (`pgdt_io`'s `BufferPool::keeps` admits the announced length and nothing
 /// longer). It is **not** source-agnostic: the block-decoding path reads a
 /// piece whole, where the bound that binds is the source's own unit
 /// ([`no_read_a_worker_makes_exceeds_the_stated_unit`]) — evidence
@@ -524,13 +524,13 @@ async fn no_read_a_worker_makes_exceeds_the_chunk_size() {
 /// chunk far below the unit, which is the case it covers. It is
 /// what bounds the body buffer on the block-decoding path, where a
 /// `Whole` read is capped at `min(piece, unit)` and a cut is one unit wide
-/// (`pgdt_io::BOUNDARIED_PARTITION_UNITS`, and
+/// (`pgdt_io`'s `BOUNDARIED_PARTITION_UNITS`, and
 /// `docs/design/decisions.md`, "D8"). Asserted over a **plain** file restated as
 /// `Whole`, because on the one source that says `Whole` today
 /// `min(piece, unit)` is `piece` and the bound is vacuous.
 ///
 /// It does **not** assert that the read is poolable:
-/// `pgdt_io::BufferPool::keeps` admits the announced chunk and nothing
+/// `pgdt_io`'s `BufferPool::keeps` admits the announced chunk and nothing
 /// longer, at either width.
 #[tokio::test]
 async fn no_read_a_worker_makes_exceeds_the_stated_unit() {

@@ -20,7 +20,7 @@ use crate::statistics::stored::{declared_column, stored_resolution};
 /// What a strict parse checks each of `header`'s columns by, positionally:
 /// its comparison under `resolved`, which is what names the type a field is
 /// read as ([`field_refused`]), or for a column ordered by nothing its
-/// declared type's input grammar ([`text_grammar`]), and whether its
+/// declared type's input grammar ([`column_grammar`]), and whether its
 /// declaration makes it `NOT NULL`; `None` for a column read as no type and
 /// declared nullable.
 pub(super) fn field_checks(

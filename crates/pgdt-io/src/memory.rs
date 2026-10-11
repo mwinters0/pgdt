@@ -154,7 +154,7 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
 }
 
 /// **What a resolved arrangement leaves for a mapping pass's statistics**: the
-/// bytes a `pgdt_query::statistics::StatisticsAccount` may hold under `allowance` —
+/// bytes `pgdt_mapping`'s `StatisticsAccount` may hold under `allowance` —
 /// a discovered limit or a stated `--memory` — once `budget`, the read-buffer
 /// budget that arrangement resolved to, comes off [`margin_allowance`]'s
 /// ceiling, which already stands [`MEMORY_UNPOOLED_BOUND`] below its fraction
@@ -346,7 +346,8 @@ fn smallest_limit(mount: &Path, cgroup_path: &str, files: &[&str]) -> Option<Mem
 /// kills (`RT3`), and either may be stated on an ancestor rather than on the
 /// leaf (`RT5`), so a cut budget is only actionable beside the file whose
 /// number did the cutting. It is a display fact: nothing in the library
-/// branches on it, and a status line is its one consumer
+/// branches on it, and what reads it is a message — `pgdt`'s status line, the
+/// DataFusion provider's budget note
 /// (`docs/design/decisions.md`, "D64").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryLimit {

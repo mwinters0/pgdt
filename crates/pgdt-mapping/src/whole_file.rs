@@ -140,8 +140,8 @@ pub struct MapRun {
     /// **How many blocks the map already held that no strict parse had
     /// checked were re-read to check them**, under
     /// [`PostgresInvalidValues::Strict`] ([`CopyBlock::checked_in_full`](pgdt_model::CopyBlock::checked_in_full)) —
-    /// zero under every other mode, and for an interrupted run, whatever it
-    /// checked and banked before the interrupt.
+    /// zero under every other mode, and for a run interrupted before the map
+    /// reached EOF, whatever it checked and banked before the interrupt.
     pub checked: usize,
     /// **How many blocks of the finished map declined to gather statistics**,
     /// under this run's allowance or an earlier, larger one

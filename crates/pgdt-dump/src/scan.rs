@@ -186,7 +186,7 @@ impl RowEnding {
             // shortfall: that would fail the whole parse, and this match is
             // PostgreSQL's refusals alone. Reading one needs rows framed by
             // CR in the leader's resync (`pgdt_mapping`'s `interior::scan_piece`) and a query
-            // segment's (`stream::first_row_start`) too, each of which
+            // segment's (`pgdt_query`'s `first_row_start`) too, each of which
             // searches for an LF such a block's interior does not hold.
             (Self::Cr, _) => None,
             (block, row) if block == row => None,
@@ -754,7 +754,7 @@ pub struct ScanOptions {
     /// from the byte half and — for a compressed source — decides from it
     /// whether a whole block can be decoded at all. The `jobs` half is that
     /// source's retention depth, one decoded block per concurrent reader, and
-    /// the ceiling on the workers [`crate::leader::scan_region`] runs over an
+    /// the ceiling on the workers `pgdt_mapping`'s `scan_region` runs over an
     /// open `COPY` block's interior, which is what a `parse` splits by.
     pub parallelism: Parallelism,
     /// **The bytes of heap this scan's statistics may hold alive**, and
@@ -764,7 +764,7 @@ pub struct ScanOptions {
     ///
     /// It is what [`pgdt_io::statistics_allowance`] leaves under the margin once
     /// `parallelism`'s budget is spent, and it bounds the whole account
-    /// (`pgdt_query::statistics::StatisticsAccount`): a `COPY` block whose
+    /// (`pgdt_mapping`'s `StatisticsAccount`): a `COPY` block whose
     /// gathering would pass it declines, drops what it gathered, and is
     /// recorded in the map as having declined under this number
     /// ([`pgdt_model::CopyBlock::statistics_declined`]).
@@ -823,8 +823,8 @@ where
 {
     let size = source.size().await?;
     // Named "preamble scan", not "scan": the caller a `parse` runs is
-    // `load::scan_preamble`, and `stream::map_forward` announces itself as
-    // "scan". `stream::build_index` and `stream::build_map` share this label
+    // `preamble::scan_preamble`, and `pgdt_mapping`'s `map_forward` announces
+    // itself as "scan". Its `build_index` and `build_map` share this label
     // while scanning to EOF; neither is reached from the CLI. A single `parse` runs both in sequence, so two passes sharing
     // one name would read as an interrupted-and-resumed run.
     tracing::info!(
@@ -843,7 +843,7 @@ where
     announce_cancellation(source, options);
     // This loop grants no wait (`ByteRangeSource::hint_wait_policy`): the
     // leader's fused worker is the holder that needs the bound and is where
-    // one is granted (`crate::leader::scan_region`, and
+    // one is granted (`pgdt_mapping`'s `scan_region`, and
     // `docs/design/decisions.md`, "D5").
     source.hint_wait_policy(WaitPolicy::NeverWait);
     let mut scanner = CopyScanner::new();

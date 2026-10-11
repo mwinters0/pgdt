@@ -2303,11 +2303,11 @@ def predicate_expr(shape: str) -> str:
 
 
 #: The read chunk sizes `chunk-size` is taken at, in bytes, smallest first.
-#: `1 << 20` is the shipped default (`io::SCAN_CHUNK_DEFAULT_SIZE_BYTES`) and every
+#: `1 << 20` is the shipped default (`pgdt_io::SCAN_CHUNK_DEFAULT_SIZE_BYTES`) and every
 #: other row is read against it.
 #:
 #: **The range brackets the read path's own buffer-pool ceiling.** 8 MiB is
-#: the largest buffer `io::BufferPool::give` keeps for a length nobody
+#: the largest buffer `source::pool::BufferPool::give` keeps for a length nobody
 #: announced; a read loop announces its chunk size, so a 16 MiB chunk is
 #: pooled like the rest. The 16 MiB row is in the table on purpose either way:
 #: a sweep that stopped at the ceiling would leave a reader to assume the curve
@@ -3109,7 +3109,7 @@ def reader_bytes(unit: int) -> int:
     return unit + LIBRARY_CHUNK_BYTES + XZ_DECODE_FOOTPRINT
 
 
-#: `pgdt_io`'s `io::POOL_DEPTH`, mirrored: the floor `BufferPool::slots`
+#: `pgdt_io`'s `source::pool::POOL_DEPTH`, mirrored: the floor `BufferPool::slots`
 #: clamps a pool's slot count to, whatever worker count was announced to it.
 #:
 #: It lives with the charge rather than with the other library mirrors because
@@ -3222,7 +3222,7 @@ def charge_bytes(unit: int, jobs: int) -> int:
     count, plus the retention list those readers share.
 
     `WorkerMemory::at`, mirrored — what `Parallelism::fit` solves a cap against
-    and what `io::worker_count` solves a budget against, so under discovery
+    and what `pgdt_io`'s `worker_count` solves a budget against, so under discovery
     it is also the budget a run reports for itself.
     """
     return jobs * reader_bytes(unit) + pool_bytes(unit, jobs)
@@ -10803,9 +10803,9 @@ FIGURES: list[Figure] = [
             "crates/pgdt/Cargo.toml",
         ),
         # **The query path's sub-stream sizing does not reach this figure.** It
-        # is in `stream::plan_partitions`, and every leg here is
+        # is in `stream::replay::partition::plan_partitions`, and every leg here is
         # `pgdt parse`, which reaches `worker_count` through
-        # `leader::scan_region` instead — so this figure is excused by
+        # `pgdt_mapping`'s `scan_region` instead — so this figure is excused by
         # reachability where its sibling is not, though both declare the same
         # read path.
         warm_inputs=("control_xz", "control_xz128"),

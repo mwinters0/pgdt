@@ -479,7 +479,7 @@ pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Rec
 /// sentence holds with round trips in place of a decode.
 ///
 /// **On the status channel rather than as a `Diagnostic`.** The division is
-/// the one `crate::diagnostic`'s module doc draws: `tracing` carries cost and
+/// the one `pgdt_model::diagnostic`'s module doc draws: `tracing` carries cost and
 /// progress as a run meets them, a `Diagnostic` a structured finding about the
 /// file, drained from a result. This line is the first kind — a
 /// `pgdt_model::Diagnostic` rides a `DumpIndex` or a `CacheStatus`, both built from

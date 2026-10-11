@@ -2,7 +2,7 @@
 //! field's refusal leaves behind (`docs/design/decisions.md`, "D34", "D103"),
 //! and the contract over a block's rows that answers both ([`BlockObserver`]).
 //! What a mapping pass is asked to gather, and the account of what it holds,
-//! are `pgdt_query::statistics`'.
+//! are `pgdt_mapping::statistics`'.
 //!
 //! Model vocabulary only (`docs/design/decisions.md`, "D74"): column names, the
 //! declared type text and `COLLATE` clause a column's statistics were computed
@@ -121,7 +121,7 @@ pub struct FieldRefusal {
     /// The row's line as `COPY` numbers it, `1` being the block's first data
     /// line: the rows the observer meeting it was handed before it, plus
     /// one, and the rows before that observer's first once the block folds
-    /// it in ([`crate::BlockObserver::absorb`]).
+    /// it in ([`crate::internal::BlockObserver::absorb`]).
     pub line: u64,
     /// The field's column, by its position in the block's header.
     pub column: usize,
@@ -288,7 +288,7 @@ impl IgnoredRefusalsExt for IgnoredRefusals {
 }
 
 /// Receives every row of one `COPY` block from the mapping pass and answers
-/// the block's statistics once it closes. Defined here and implemented in query,
+/// the block's statistics once it closes. Defined here and implemented in mapping,
 /// the shape `docs/design/decisions.md`, "D74" gives a contract over a block's rows.
 ///
 /// **A block the leader splits is observed piece by piece**: each piece's rows
@@ -573,7 +573,7 @@ pub fn max_rows_group(rows: &[u64]) -> u64 {
 
 impl BlockStatistics {
     /// The heap one block's statistics hold, the allocation of the `Arc` that
-    /// shares them included: what [`pgdt_query::statistics::StatisticsAccount`] charges a retained or a
+    /// shares them included: what `pgdt_mapping`'s `StatisticsAccount` charges a retained or a
     /// loaded block. Each term is the size the allocator was asked for — a
     /// vector's capacity, not its length — which
     /// `pgdt-mapping`'s `tests/statistics_heap.rs` holds to what freeing a block gives back.

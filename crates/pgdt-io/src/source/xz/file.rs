@@ -66,7 +66,7 @@ pub struct XzSource {
     /// `seek_table()` and the per-read `blocks_in` lookup read one table.
     pub(super) table: Arc<xz_seek::SeekTable>,
     /// The live piecewise decode, or `None` where no read has taken that arm
-    /// yet or its last decode failed. Behind a `Mutex` because a handle goes forward only and one
+    /// yet, its last decode failed or `complete_reads` has left it. Behind a `Mutex` because a handle goes forward only and one
     /// position cannot serve two readers — which is why that arm advises a
     /// single partition ([`xz_partition_advice`](super::blocks::xz_partition_advice)).
     pub(super) live: Arc<Mutex<Option<LiveBlock>>>,

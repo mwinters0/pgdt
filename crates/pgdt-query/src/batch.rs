@@ -66,7 +66,7 @@ pub(crate) struct RowBatcher {
     decodes_fields: bool,
     /// Parallel to `columns`: how each projected column's values its type
     /// cannot hold are read, where it can hold one
-    /// ([`pgdt_codec::unrepresentable::unrepresentable_reads`]).
+    /// ([`pgdt_codec::internal::unrepresentable_reads`]).
     unrepresentable: Vec<Option<UnrepresentableRead>>,
     /// Parallel to `columns`: whether each column's declaration makes it `NOT
     /// NULL`, so a NULL in it is refused ([`Error::NullRefused`]).

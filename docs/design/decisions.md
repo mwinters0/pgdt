@@ -41,7 +41,7 @@ retention list is flat below `POOL_DEPTH` and a unit per reader above, which no 
 never shrunk (`BlockCache::affordable`). Evidence: `reserve`, `parallel-peak-rss`.
 
 ### D5 A wait is a permission the read loop grants
-`NeverWait` is the default and allocates past the budget. Only `leader::scan_region` grants
+`NeverWait` is the default and allocates past the budget. Only `interior::region::scan_region` grants
 `MayWait`, and restores it on exit: each leader worker holds one read, so a blocked one waits on a
 sibling that finishes. A loop retaining into a batch holds the buffers it would wait on, and the
 block pool never waits whatever the loop said. Rejected: gating on `Parallelism`.
@@ -166,7 +166,7 @@ falling back to a cold query's early-stopping map, which brings each of those ba
 `Unusable` carries its reason to every caller. Bump on any persisted reshape, a parse fix changing what a span or
 the metadata holds included; record it nowhere: an older cache is then refused until replaced by the flag or deleted
 (D20), which is what a user hears of first. Rejected: an unbumped parse fix, its cache answering as the old parse did.
-Code: `model::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_to_the_format_version`.
+Code: `pgdt_model::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_to_the_format_version`.
 
 ## The scanner
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
@@ -254,7 +254,7 @@ by its own type, lexically, the boundary years and an interval's long hour part 
 `format` past Arrow's spec, `engine` past `calendar_end` (RT21). It persists as counts (D74); a type holding more or
 less bumps `CACHE_FORMAT_VERSION`, as D78's order does, and a cache counted under another calendar is refused (D20).
 Rejected: a decode per field; a type-blind test (`text` reading `infinity`); counting as a query reads (timing decides);
-one tier; a value the server refuses, a decode error, this being our front end's limit. Code: `unrepresentable::Counter`, `model::FieldCount`. Evidence:
+one tier; a value the server refuses, a decode error, this being our front end's limit. Code: `unrepresentable::Counter`, `FieldCount`. Evidence:
 `every_extreme_is_held_by_arrow_or_recorded`, `the_types_fixture_counts_what_its_typed_columns_cannot_hold`.
 
 ### D36 The preamble grammar dispatches on fixed keywords and never guesses
@@ -328,7 +328,7 @@ compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
 `max_source_span` is a ceiling: `plan_partitions` charges `(budget − charge.at(jobs)) / jobs`, floored at the caller's
 announced `ScanOptions::chunk_size_bytes` — one read chunk, below which the span costs rows and bounds nothing the
-retained unit does not — and writes it onto the sub-streams. A plain source stays at most `DEFAULT_MEMORY_BUDGET` whatever
+retained unit does not — and `plan_replay` writes it onto the plan the sub-streams share. A plain source stays at most `DEFAULT_MEMORY_BUDGET` whatever
 is stated (D83, `KD32`), which the shipped span spent whole, so `--jobs` bought no readers. Rejected: a third flag
 (`roadmap.md`, "Two tunables fit pgdt to hardware"); pricing a plain reader (`KD25`); a *larger* floor, a performance
 claim with no batch-size figure behind it; the *shipped* chunk as the floor, which at `--chunk-size 64k` declines
@@ -403,7 +403,7 @@ Under `UnrepresentableMode::Text` a column whose blocks count, over every one, a
 semantics, special values ranked (D56), and is `Refused` under DataFusion's, its text bytewise and no bound gathered in the type's order read,
 so a pushed filter stays `Exact` (D88). Rejected: text everywhere, `pgdt --where` refusing its order as an unmapped column's; per block, two
 blocks of one table typed apart; the declared plan in both, each reader of `comparisons` then asked to know which semantics widened it.
-Code: `resolve::read_as_text`, `stream::TableColumns`. Evidence: the untyped mode's cases,
+Code: `resolve::read_as_text`, `stream::replay::plan::TableColumns`. Evidence: the untyped mode's cases,
 `the_untyped_mode_compares_its_text_column_in_each_semantics_order`.
 
 ### D103 The value modes are one option each for every column, fixed where a dump is opened, apart from the schema mode
@@ -497,7 +497,7 @@ combine as if independent. Rejected: bounds proving "unequal", `Canonical`/`Trim
 filter shape a reading shows common. Code: `ResolvedTerm::truths`, `prune::SortedStop`. Evidence: `tests/pruning.rs`'s generated check.
 
 ### D76 Gathering never keys a bytewise value; a bound past the cap is a prefix and a successor
-`text`, `character` and `bytea` order by a clipped head (`gather::Clipped`), not an `OrderKey`: a key copies the whole value, and a row
+`text`, `character` and `bytea` order by a clipped head (`gather::clip::Clipped`), not an `OrderKey`: a key copies the whole value, and a row
 may run to `--max-line-bytes`. Values agreeing on the head share every byte a stored bound reads, so bounds stay valid and only row
 order is lost (`Unsorted`), where a decoded-kind value past the cap loses its group's bounds too. A truncated text `max` replaces its
 last character by the next scalar value (`text_upper`), `bytea`'s increments its decoded bytes. Rejected: the byte successor for text,
@@ -577,7 +577,7 @@ left out as a NULL, the sum read only in a view taking it as one (D98); a value 
 kept for every column, a cache being gathered typed whatever reads it: a `Utf8View`'s size, a `Binary`'s bound and an enum's labels beside its keys,
 `Inexact` (D46); rows × width, a bit a boolean, `Exact` unfiltered; a nested column none, its text bounding no leaf; a filter bounds each by the
 kept groups. Rejected: a float's sum; a bare `numeric`'s, emitted as text; a partial sum; a `bytea`'s decoded length, below `:strings`; `:strings`
-sized by bounds and type widths, an invariant a type; a guessed selectivity. Code: `gather::Summand`, `byte_size`. Evidence: `tests/statistics.rs`.
+sized by bounds and type widths, an invariant a type; a guessed selectivity. Code: `stored::Summand`, `byte_size`. Evidence: `tests/statistics.rs`.
 
 ### D97 A group keeps a view per tier only where it holds such a value, the values its type holds the base
 A column whose type cannot hold every value counts them per group and bounds and orders the values it holds; beside them, where a
@@ -586,7 +586,7 @@ that group alone, read in a `StatisticsView` that adds what it takes as NULL to 
 base is kept apart from each tier's extremes, allocated at a group's first such value, so a view folds the base with the tiers it
 takes, exactly across pieces and merges (D82); every value PostgreSQL admits keys, a timestamp from PostgreSQL's epoch (I49).
 Rejected: every value's bounds and the count alone; a set per view per column from its first row; a timestamp key of
-`i128` from 1970, a width chosen where PostgreSQL's is inherited. Code: `gather::KeyedGroup`, `gather::ViewOrders`. Evidence: `each_view_bounds_and_orders_the_values_it_takes`.
+`i128` from 1970, a width chosen where PostgreSQL's is inherited. Code: `gather::bounds::KeyedGroup`, `gather::order::ViewOrders`. Evidence: `each_view_bounds_and_orders_the_values_it_takes`.
 
 ## The CLI
 ### D61 `info` never scans

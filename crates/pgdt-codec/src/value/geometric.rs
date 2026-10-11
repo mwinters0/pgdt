@@ -3,7 +3,7 @@
 //! Each answers whether its `*_in` reads `text`, read or refused and nothing
 //! between, walking it as the C walks a NUL-terminated string: a byte past the
 //! end reads as `0`, which no field holds. Not `decode`'s API; a strict parse
-//! and a filter's literal call them.
+//! calls them.
 
 use crate::value::libc::{c_at, is_c_space, strtod};
 

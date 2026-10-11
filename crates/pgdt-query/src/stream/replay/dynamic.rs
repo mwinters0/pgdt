@@ -82,7 +82,8 @@ pub(in crate::stream) struct DynamicRead {
     /// read with again rather than asked of each group anew.
     pub(in crate::stream) cut: Arc<Cut>,
     /// The block last entered, by `header_offset`, as the filter reads it —
-    /// `None` for one whose schema does not resolve.
+    /// `None` before any is, and the inner `None` for one whose schema does
+    /// not resolve.
     pub(in crate::stream) block: Option<(u64, Option<DynamicBlock>)>,
     /// The groups ruled out so far ([`TableStream::dynamic_filter_pruned_groups`](crate::stream::table::TableStream::dynamic_filter_pruned_groups)).
     pub(in crate::stream) pruned: Arc<AtomicU64>,

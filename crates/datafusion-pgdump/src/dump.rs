@@ -32,8 +32,9 @@ pub struct PgDumpOptions {
     pub unrepresentable: UnrepresentableMode,
     /// How a scan reads a field its type's `*_in` refuses, which the `pgdt
     /// parse` that built the cache went past: refused, by default, or read as
-    /// the library's decoders read it, which only a float's past its type's
-    /// range is (`docs/design/decisions.md`, "D103"); `Strict`, a parse's
+    /// the library's decoders read it, as
+    /// [`QueryOptions::postgres_invalid_values`](pgdt_query::QueryOptions::postgres_invalid_values)
+    /// says (`docs/design/decisions.md`, "D103"); `Strict`, a parse's
     /// mode, reads as the default does.
     pub postgres_invalid_values: PostgresInvalidValues,
     /// Which identity signals bind, as `pgdt --strict-identity` states them:

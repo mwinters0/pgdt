@@ -23,7 +23,7 @@
 //! ever point inside already-mapped territory. A [`CacheMode::Enabled`](pgdt_dump::cache::CacheMode::Enabled) cache
 //! is persisted where the map advances: completed blocks whose save has earned
 //! its cost (`pgdt_mapping`'s save throttle), the block that settles the query, and every
-//! exit past the first read but an error. [`CacheMode::Disabled`](pgdt_dump::cache::CacheMode::Disabled) runs the same way with `save` a no-op.
+//! exit from its read loop but an error (`pgdt_mapping`'s `map_forward`). [`CacheMode::Disabled`](pgdt_dump::cache::CacheMode::Disabled) runs the same way with `save` a no-op.
 //!
 //! **Preamble capture** (`docs/design/decisions.md`, "D30"): before any of
 //! that, [`table_stream`] runs [`pgdt_dump::internal::scan_preamble`] once (skipped

@@ -268,7 +268,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     // Pull mode, not `read_table`: rendering a nested column back to
     // its literal needs the stream's `NestedPlan`s, and push mode
     // hands the resolved schema back only once the whole stream has
-    // drained (`docs/design/decisions.md`, "D46").
+    // drained.
     //
     // Partitioned, not serial: `Parallelism::Serial` — `--jobs 1` —
     // is one sub-stream, so the serial path is reached through the
@@ -387,7 +387,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
         any_batch = true;
         // A zero-column projection prints no header: it would be an
         // empty line, and `--no-columns | wc -l` would come back one
-        // too many (`docs/design/decisions.md`, "D28").
+        // too many.
         if !header_printed && batch.num_columns() > 0 {
             let names: Vec<String> =
                 batch.schema().fields().iter().map(|f| f.name().clone()).collect();
@@ -433,7 +433,7 @@ enum QueryStatistics {
 /// states are distinct and none of them is spelled the same way:
 /// `--no-columns` is the empty projection (`COUNT(*)`), one or more
 /// `--column` is that list in that order, and neither flag is `None` — every
-/// column (`docs/design/decisions.md`, "D28").
+/// column.
 ///
 /// The two flags cannot both be given: clap's `conflicts_with` refuses that
 /// before this is reached. A repeated `--column` name is refused by the

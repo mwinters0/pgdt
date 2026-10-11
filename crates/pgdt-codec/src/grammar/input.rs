@@ -24,13 +24,13 @@ pub enum TextGrammar {
     /// One of the seven geometric types' input functions (I74).
     Geometric(Geometric),
     /// An array of `box`, which `array_in` splits at `box`'s `;` (I22) and
-    /// whose elements `box_in` reads: the one array a column holds that no
-    /// nested plan reads, its element type being opaque here. `not_null`
+    /// whose elements `box_in` reads: the one array no nested plan reads
+    /// that a grammar does, its element type being opaque here. `not_null`
     /// is its element's, a `NOT NULL` domain over `box` refusing a NULL
     /// element ([`Position`](crate::declared::Position)).
     BoxArray { not_null: bool },
-    /// A type whose input function refuses every value — the planner's and
-    /// the extended statistics' internal types and `gtsvector` (I78), and an
+    /// A type whose input function refuses every value — the planner's, the
+    /// extended statistics' and BRIN's internal types and `gtsvector` (I78), and an
     /// enum declaring no labels, which `enum_in` has none to read (I70) — so
     /// every field of it is refused.
     RefusesAll,

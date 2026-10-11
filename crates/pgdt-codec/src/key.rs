@@ -4,7 +4,7 @@
 //! [`NestedCompare`](crate::compare::NestedCompare)) and one unescaped text
 //! alone, so a field, a filter's literal, a stored bound and a gathered value
 //! are ordered by one comparison: the filter's (`pgdt_query::predicate`), the
-//! statistics gatherer's (`pgdt_query::gather`) and the summaries' alike.
+//! statistics gatherer's (`pgdt_mapping`'s `statistics::gather`) and the summaries' alike.
 //!
 //! [`ValueKey`] is the API. Everything else here — [`OrderKey`], the readers
 //! building one from a field or a filter's literal, and their comparison — is
@@ -542,7 +542,7 @@ impl ValueKey {
 
     /// The heap this key holds, as the sizes the allocator was asked for:
     /// what gathering charges a keyed bound or row-order value
-    /// (`pgdt_query::statistics::StatisticsAccount`).
+    /// (`pgdt_mapping`'s `StatisticsAccount`).
     pub fn heap_bytes(&self) -> u64 {
         match &self.0 {
             OrderKey::Numeric(numeric) => numeric.heap_bytes(),

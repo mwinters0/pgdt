@@ -212,7 +212,9 @@ impl StreamShared {
 /// It is the schema every batch of that query carries, projection included
 /// ([`TableColumns`]), or the refusal its plan would raise — a table whose
 /// blocks name different column sets, a projected name no block carries —
-/// but for the refuse mode's, which only planning the replay raises. A
+/// but for the refuse mode's, which only planning the replay raises, and a
+/// projection naming a column twice, which only the query's request check
+/// refuses: here the column comes back twice. A
 /// table the map holds no block for has the empty schema, as its stream has
 /// no rows. **Believe it only over a complete map**: a table's later blocks
 /// are part of its census and of its column-set check

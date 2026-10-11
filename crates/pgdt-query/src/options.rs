@@ -87,7 +87,8 @@ pub struct QueryOptions {
     /// What a read does with a field its type's `*_in` refuses: fails on it,
     /// by default, or reads it as the decoders do, which only a float past
     /// its type's range, a `varchar(n)` or `char(n)` value past its length and
-    /// a NULL in a `NOT NULL` column are ([`PostgresInvalidValues`]). The
+    /// a NULL in a `NOT NULL` column, or beneath it where a `NOT NULL` domain
+    /// refuses one, are ([`PostgresInvalidValues`]). The
     /// typed read and every filter reading the field take it alike; a
     /// filter's literal is read as before.
     pub postgres_invalid_values: PostgresInvalidValues,

@@ -511,7 +511,7 @@ pub fn hex_val(b: u8) -> Option<u32> {
 }
 
 /// Minimal byte cursor for the `COPY` header grammar. Also reused by
-/// `pgdt_dump::preamble` for the preamble's DDL grammars (`CREATE TABLE` /
+/// `pgdt_dump::ddl` for the preamble's DDL grammars (`CREATE TABLE` /
 /// `TYPE` / `DOMAIN` / `EXTENSION`), which share the same identifier and
 /// keyword rules.
 pub struct Cursor<'a> {

@@ -19,7 +19,7 @@ struct SourceChunk {
     buffer: Buffer,
     /// Cached `StringViewBuilder::append_block` index per column, filled in
     /// the first time a column takes a view into this chunk. Grown lazily,
-    /// since more than one schema can reference the same chunk.
+    /// since a chunk is retained before any column reads it.
     column_blocks: Vec<Option<u32>>,
 }
 

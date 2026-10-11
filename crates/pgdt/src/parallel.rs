@@ -211,7 +211,7 @@ impl Discovered<'_> {
     /// *recommended* count is lowered to fit (`docs/design/roadmap.md`, "A
     /// default runs as fast as the allocation permits"); either allowance may
     /// put the budget below `DEFAULT_MEMORY_BUDGET`, and what it affords still
-    /// binds through `io::worker_count`.
+    /// binds through `pgdt_io`'s `worker_count`.
     ///
     /// **A carved budget reaches the library at every worker count**, the
     /// serial state carrying one of its own
@@ -246,7 +246,7 @@ impl Discovered<'_> {
         };
         let parallelism = match (args.jobs, carved.memory_bytes()) {
             // A stated count is not lowered by the allowance; what the budget
-            // delivers still binds through `io::worker_count`.
+            // delivers still binds through `pgdt_io`'s `worker_count`.
             (Some(stated), Some(bytes)) => Parallelism::workers(stated, bytes),
             _ => carved,
         };

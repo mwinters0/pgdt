@@ -27,7 +27,7 @@
 //! the second fixture rather than assert anything about the first.
 //!
 //! **Why the small-chunk legs state a chunk size.** `LocalFileSource`'s
-//! partition is a fixed multiple of the read chunk, and `leader::scan_region`
+//! partition is a fixed multiple of the read chunk, and `pgdt_mapping`'s `scan_region`
 //! declines a region with less than one partition left in the file — so at the
 //! shipped 1 MiB every fixture here (none reaching one partition) is declined whole
 //! and a `--jobs 8` leg would be the serial path compared to itself, which is
@@ -202,7 +202,7 @@ fn every_fixture_backfills_to_the_cache_one_gathering_parse_writes() {
 }
 
 /// What one partition costs a plain source at the shipped chunk size — the
-/// floor `leader::scan_region` applies.
+/// floor `pgdt_mapping`'s `scan_region` applies.
 ///
 /// **Read off the source rather than restated as a chunk count.** A
 /// partition is a multiple of the read chunk and the multiple is the

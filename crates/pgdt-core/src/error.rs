@@ -171,7 +171,8 @@ pub enum Error {
     /// unavailable here. Raised where the file *states* that the server's
     /// equality is not a comparison of the text it holds
     /// (`pgdt_codec::compare::UnanswerableReason`), so answering bytewise would be
-    /// a wrong answer rather than a weaker one.
+    /// a wrong answer rather than a weaker one — and for any nested column
+    /// under DataFusion's semantics.
     #[error(
         "`{op}` on column `{column}` in the COPY block at offset {header_offset}: {reason}; no operator can be answered for this column, `=` and `!=` included"
     )]
@@ -179,8 +180,9 @@ pub enum Error {
         header_offset: u64,
         column: String,
         op: &'static str,
-        /// Which of `pgdt_codec::compare::UnanswerableReason`'s cases it is, worded
-        /// beside the comparison it is about.
+        /// Which of `pgdt_codec::compare::UnanswerableReason`'s cases it is, or
+        /// the nested-under-DataFusion refusal, worded beside the comparison it
+        /// is about.
         reason: String,
     },
     #[error(
@@ -338,7 +340,7 @@ pub enum Error {
     /// (`docs/design/decisions.md`, "D44").
     ///
     /// It names the Arrow value rather than a table, column and row offset
-    /// because nothing this crate scans can reach it — every typed column it
+    /// because nothing a scan fills can reach it — every typed column a query
     /// fills comes from a `decode_*`, whose range is what its `render_*` can
     /// write back. Only an array a caller built itself carries one, and such
     /// an array has no dump position to name. Two cases reach it: `interval`,

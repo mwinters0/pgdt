@@ -1500,8 +1500,11 @@ carries three things the text views state differently:
   only machine-readable form of "why is this column a string". Its
   `unchecked` is the block's `unchecked by a strict parse` lines: `declared`
   (whether the dump declares the table), `columns` (each with its `column`,
-  `path`, `declared` type and `reason` token) and `checks` (each `name` and
-  the `inherited_from` table, `null` for the table's own).
+  `path`, `declared` type and `reason` token), `checks` (each `name` and
+  the `inherited_from` table, `null` for the table's own), `bounds` (each
+  `partition`, its `parent` and the `bound` text, `null` where it is not
+  read) and `routed_through` (the partitioned table a restore routes each
+  row through, `null` for none).
 
   There is no per-column `labels` array: the whole preamble is already in the
   object, so every user-defined type is under `metadata.databases[].types[]`
@@ -1520,7 +1523,9 @@ column, `null` for a block recorded at the metadata level, their
 column's Arrow type cannot hold and `engine` those it holds past the calendar
 end the cache's `calendar_end` states, as days from 1970 — and their
 **`statistics`**, exactly as the cache holds them — `null` for a block `parse`
-gathered nothing for. Each has its `group_size`, a `groups` array giving every
+gathered nothing for. Each has its `group_size`, its `sizing` — how that size
+was chosen, `"Stated"` or a `Density` object holding the `min_rows` and
+`max_rows` it was chosen under — a `groups` array giving every
 group's `rows` and `bytes`, and one entry per column of the block's header,
 `null` for a column no `parse` that gathered the block kept at the data level: the column's `declared_type` and `collation`, its
 `null_counts` per group, `bounds` (a block-wide `sortedness` and per group a

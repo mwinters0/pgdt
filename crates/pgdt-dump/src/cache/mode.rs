@@ -141,7 +141,7 @@ impl CacheMode {
     ///
     /// `Incomplete` is treated exactly like `Valid` — both are
     /// [`CacheLoad::Index`] — because every caller of this method
-    /// (`pgdt_mapping::map_file`, `pgdt_query::stream::map_for_query`, which
+    /// (`pgdt_mapping::map_file`, `pgdt_query`'s `map_for_query`, which
     /// serves both `pgdt_query::table_stream` and `pgdt_query::table_stream_partitions`,
     /// and `crate::preamble::preamble_only`) builds forward from whatever partial
     /// map exists (`docs/design/decisions.md`, "D22"). A caller that instead

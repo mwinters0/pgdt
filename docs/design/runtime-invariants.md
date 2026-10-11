@@ -729,14 +729,14 @@ rounding: the sizes are what `GlobalAlloc` is asked for.
 through the instrument build, `crates/pgdt/tests/statistics_account.rs`).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D81" — the interned term of
-the statistics account, `gather::map_heap` and `gather::grown_map_heap`.
+the statistics account, `gather::charge::map_heap` and `grown_map_heap`.
 
 **Re-verify:**
 
 ```sh
 grep -A2 'name = "hashbrown"' "$(rustc --print sysroot)/lib/rustlib/src/rust/library/Cargo.lock"
-cargo test -p pgdt-query --lib a_full_map_grows_into_the_table_it_is_charged
-cargo test -p pgdt-query --lib a_map_made_to_hold_its_entries_allocates_the_table_it_is_charged
+cargo test -p pgdt-mapping --lib a_full_map_grows_into_the_table_it_is_charged
+cargo test -p pgdt-mapping --lib a_map_made_to_hold_its_entries_allocates_the_table_it_is_charged
 cargo test -p pgdt --features introspect --test statistics_account --target-dir <own>
 ```
 
@@ -767,13 +767,13 @@ of any allocator's own rounding: the sizes are what `GlobalAlloc` is asked for.
 build, `crates/pgdt/tests/statistics_account.rs`).
 
 **Relied on by:** [`decisions.md`](decisions.md), "D81" — a vector charged
-ahead of its growth, `gather::reserve_charged` and `gather::push_charged`.
+ahead of its growth, `gather::charge::reserve_charged` and `push_charged`.
 
 **Re-verify:**
 
 ```sh
 grep -n -A20 'fn grow_exact' "$(rustc --print sysroot)/lib/rustlib/src/rust/library/alloc/src/raw_vec/mod.rs"
-cargo test -p pgdt-query --lib a_vector_grows_into_the_capacity_it_is_charged
+cargo test -p pgdt-mapping --lib a_vector_grows_into_the_capacity_it_is_charged
 cargo test -p pgdt --features introspect --test statistics_account --target-dir <own>
 ```
 
@@ -802,7 +802,7 @@ answers `200` to a `Range` (which is `RT14`), or for any backend but this one.
 **Verified against:** `object_store` 0.14.2 (source read; observed against the
 oracle, `crates/pgdt/tests/remote.rs`).
 
-**Relied on by:** `io::RemoteObject::probe` ([`decisions.md`](decisions.md),
+**Relied on by:** `source::remote::RemoteObject::probe` ([`decisions.md`](decisions.md),
 "D14") — the origin probe costs one round trip rather than a `HEAD` and a
 `GET`.
 
@@ -833,7 +833,7 @@ different case, and is `RT15`.
 **Verified against:** `object_store` 0.14.2 (source read; observed against the
 oracle's `ignoring_range` knob, `crates/pgdt/tests/remote.rs`).
 
-**Relied on by:** `io::RemoteSource` ([`decisions.md`](decisions.md), "D6") —
+**Relied on by:** `pgdt_io::RemoteSource` ([`decisions.md`](decisions.md), "D6") —
 positioned reads are simply unavailable against such a server, and asking for
 one does not download the object to find that out.
 
@@ -870,7 +870,7 @@ conditions are produced deliberately by the oracle
 **Verified against:** `object_store` 0.14.2 (source read; observed against both
 oracle knobs, `crates/pgdt/tests/remote.rs`).
 
-**Relied on by:** `io::RemoteSource::read_range` ([`decisions.md`](decisions.md),
+**Relied on by:** `pgdt_io::RemoteSource::read_range` ([`decisions.md`](decisions.md),
 "D6") — it answers exactly its `len` or errors, as `ByteRangeSource` requires
 of every source.
 
@@ -902,7 +902,7 @@ a decoding.
 **Verified against:** `object_store` 0.14.2 (source read; observed against the
 oracle's `without_last_modified` knob).
 
-**Relied on by:** `io::weak_identity` ([`decisions.md`](decisions.md), "D21") —
+**Relied on by:** `source::remote::weak_identity` ([`decisions.md`](decisions.md), "D21") —
 it reads the epoch as absence, so a server that says nothing is treated as
 silent rather than as claiming a date; `RemoteObject::precondition` pins no read
 by it, and a run over a server stating no strong tag either is refused unless

@@ -22,8 +22,8 @@
 //! by the kernel at the command's own `exec` (`enable_on_exec`), so the
 //! spawning side's instructions — before and after the `exec` — stand in no
 //! reading. A child's count is folded into the counter this process reads when
-//! that child exits, and every task the command started has exited when the
-//! wait returns. Kernel and hypervisor instructions are excluded: a codegen
+//! that child exits, and the wait returns once the command has: a process it
+//! leaves running past its exit is not counted. Kernel and hypervisor instructions are excluded: a codegen
 //! change moves user space, and a kernel path is the kernel's.
 //!
 //! **Why a wrapper rather than `perf stat`.** `perf` is the host's, tied to its

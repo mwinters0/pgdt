@@ -70,7 +70,7 @@ pub enum RetainedUnit {
     /// the leader's window guarantees and a query's cut does not** — `KD23`.
     /// `pgdt_mapping::interior::scan_region` sizes its window with
     /// [`Partitioning::window_end`] and is held to
-    /// [`BOUNDARIED_PARTITION_UNITS`](crate::partition::BOUNDARIED_PARTITION_UNITS); `pgdt_query::stream::plan_partitions` cuts a
+    /// [`BOUNDARIED_PARTITION_UNITS`](crate::partition::BOUNDARIED_PARTITION_UNITS); `pgdt_query`'s `plan_partitions` cuts a
     /// whole `CopyBlock` into `min(workers, max_partitions)` pieces, so a
     /// piece may span more units than `partition_bytes` charged for.
     Partition,
@@ -188,7 +188,7 @@ impl Partitioning {
     /// What concurrent readers of this source cost, as a shape a budget is
     /// solved against — [`Partitioning::partition_bytes`] is its per-worker
     /// term. `worker_count` solves against it,
-    /// `pgdt_query::stream::plan_partitions` builds a query's charge from it, and
+    /// `pgdt_query`'s `plan_partitions` builds a query's charge from it, and
     /// `pgdt_mapping::interior` reads it for the `scan arrangement` note.
     pub fn worker_memory(&self) -> WorkerMemory {
         self.memory
@@ -227,7 +227,7 @@ impl Partitioning {
 
     /// What a batch this caller holds across reads pins on this source, which
     /// is what a sub-stream's span allowance is charged against — see
-    /// [`RetainedUnit`], and `pgdt_query::stream::plan_partitions`, which is the
+    /// [`RetainedUnit`], and `pgdt_query`'s `plan_partitions`, which is the
     /// one caller that reads it.
     pub fn retained_unit(&self) -> RetainedUnit {
         self.retained

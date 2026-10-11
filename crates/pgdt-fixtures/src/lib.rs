@@ -136,15 +136,16 @@ pub fn sandboxed_edge_cases() -> (tempfile::TempDir, PathBuf) {
 /// Two copies of `edge_cases/create.sql`, concatenated: a real
 /// `\connect`-delimited multi-database dump, the shape `pg_dumpall` and
 /// hand-concatenated dump files produce. `--create`
-/// is the only flag combination in the fixture matrix that emits a `\connect`
-/// at all (plain `pg_dump` never
-/// does), so it is the only one two copies of can be concatenated into this
-/// shape.
+/// is the only `pg_dump` flag combination in the fixture matrix that emits a
+/// `\connect` at all (plain `pg_dump` never does; `dumpall.sql` is
+/// `pg_dumpall`'s own), so it is the only one two copies of can be
+/// concatenated into this shape.
 ///
 /// The second copy has its database name changed so the two `\connect`
 /// targets are distinguishable: `pgdt_fixture` (the fixture generator's fixed
 /// `DB_NAME`) appears nowhere in a `--create` dump except in the
-/// `CREATE DATABASE`/`ALTER DATABASE`/`\connect` lines naming it, so a
+/// `CREATE DATABASE`/`ALTER DATABASE`/`\connect` lines and the TOC comments
+/// naming it, so a
 /// literal string replace is safe and needs no real second Postgres instance.
 /// The rest of the schema — every table, type, and row — is identical between
 /// the two, which is deliberate: it means a table name like `public.widgets`

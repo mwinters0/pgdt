@@ -26,7 +26,7 @@ pub const BLOCK_MAX_ROW_GROUPS: usize = 4096;
 /// unstated minimum: short of it, the finished block's groups merge
 /// pairwise until that group reaches it, the block is one group, or the next
 /// size would break a stated maximum, which outranks the minimum
-/// (`gather::density_merges`; `docs/design/decisions.md`, "D82").
+/// (`gather::gatherer::density_merges`; `docs/design/decisions.md`, "D82").
 /// `ROW_GROUP_DEFAULT_SIZE_BYTES` over a row a kibibyte wide; a judgement,
 /// not a reading.
 pub const ROW_GROUP_DEFAULT_MIN_ROWS: u64 = 1 << 10;
@@ -63,7 +63,7 @@ pub struct StatisticsRequest {
     /// exactly, it sizes nothing and is ignored.
     pub min_rows: Option<u64>,
     /// The most rows a block's densest tenth of groups should hold — read at
-    /// the 90th-percentile group ([`pgdt_model::max_rows_group`]) — and **there is no
+    /// the 90th-percentile group ([`pgdt_model::internal::max_rows_group`]) — and **there is no
     /// default**: a maximum applies only where a caller states one.
     ///
     /// Short of a stated group size, it is the only thing that makes a block

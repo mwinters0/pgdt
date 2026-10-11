@@ -188,7 +188,7 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
     // `DumpIndex::diagnostics` is `#[serde(skip)]`, so a loaded index arrives
     // with none. Both file-level figures are pure functions of the spans and
     // the persisted size, so they are recomputed on load rather than persisted
-    // (`crate::diagnostic`, "Not persisted").
+    // (`pgdt_model::diagnostic`, "Not persisted").
     index.diagnostics = tiling_diagnostics(&index.spans, total_size);
     index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
     let table = file.compression.as_ref().map(|CompressionIndex::Xz(table)| table);

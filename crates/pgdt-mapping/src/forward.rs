@@ -162,7 +162,7 @@ pub enum Pass<'a> {
 
 /// Extend `index`'s map forward from its own `scanned_through`, persisting as
 /// it goes, until the queried table is settled, EOF is reached, or the scan is
-/// cancelled. Emits no rows — see the module docs. `target` is the
+/// cancelled. Emits no rows. `target` is the
 /// `(table, database selector)` a query may stop early for once
 /// [`target_settled`] says so; **`None` means "run to EOF"**, what
 /// `pgdt_query::ScanExtent::Full` asks for and what [`map_file`](crate::map_file) always wants. Rejected:

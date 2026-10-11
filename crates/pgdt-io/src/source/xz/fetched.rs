@@ -66,8 +66,8 @@ pub struct FetchedXzSource {
     table: Arc<xz_seek::SeekTable>,
     /// The block the piecewise arm is reading — its fetched window and its
     /// live handle — or `None` where that arm has not run, its last read
-    /// failed, a block-arm read has run since, or a piecewise read has it
-    /// ([`HeldBlock`]). Behind a `Mutex` because the handle goes
+    /// failed, a block-arm read has run since, `complete_reads` has left it, or
+    /// a piecewise read has it ([`HeldBlock`]). Behind a `Mutex` because the handle goes
     /// forward only and one position cannot serve two readers, which is why
     /// that arm advises a single partition ([`xz_partition_advice`](crate::source::xz::blocks::xz_partition_advice)).
     held: Mutex<Option<HeldBlock>>,
@@ -322,7 +322,7 @@ impl FetchedXzSource {
 
     /// How many block decodes this source's piecewise arm has begun.
     ///
-    /// **An instrument, never a figure** (`../../CLAUDE.md`): a build carrying
+    /// **An instrument, never a figure** (`CLAUDE.md`): a build carrying
     /// `introspect` is never timed, and what this exists for is a test that
     /// asserts a block a forward scan sits inside is decoded once rather than
     /// once per read (`docs/design/decisions.md`, "D15").
@@ -532,7 +532,7 @@ impl ByteRangeSource for FetchedXzSource {
     /// [`xz_partition_advice`](crate::source::xz::blocks::xz_partition_advice), as the local source's is: the cut points are a
     /// property of the file rather than of the transport, and reading them off
     /// the arm actually taken is what keeps
-    /// `pgdt_query::stream::compressed_block_path_declined` honest here.
+    /// `pgdt_query`'s `compressed_block_path_declined` honest here.
     fn partitions(&self, range: Range<u64>) -> Partitioning {
         self.budget.partitions(&self.table, range)
     }

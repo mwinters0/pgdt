@@ -826,7 +826,7 @@ impl Builder {
 
     /// The open `COPY` block's statistics observer, for the interior workers
     /// that observe its rows in pieces instead of [`on_row`](Self::on_row)
-    /// (`crate::leader::scan_region`).
+    /// (`pgdt_mapping`'s `scan_region`).
     pub fn block_observer(&mut self) -> Option<&mut (dyn BlockObserver + 'static)> {
         self.pending_observer.as_deref_mut()
     }
@@ -834,7 +834,7 @@ impl Builder {
     /// Union an already-folded census and count into the open `COPY` block's
     /// own — what a block whose rows were counted by interior workers states
     /// instead of the [`on_row`](Self::on_row) calls it never made
-    /// (`crate::leader::scan_region`). Takes the model's [`BlockCensus`]
+    /// (`pgdt_mapping`'s `scan_region`). Takes the model's [`BlockCensus`]
     /// rather than the leader's `Interior`, so the map does not reach into the
     /// leader that drives it. A block holding no census absorbs nothing.
     pub fn absorb_census(&mut self, census: &BlockCensus) {

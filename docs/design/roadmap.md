@@ -168,7 +168,7 @@ Four bounds, and they are what keep this from being "take everything":
   allocate workers there is no memory for. The pair has to settle consistently
   on machines of *different shape* — a wide host with little memory per core
   and a narrow one with a great deal — so neither number may be chosen without
-  the other. `io::worker_count` and `BufferPool::slots`' clamp are the
+  the other. `pgdt_io`'s `worker_count` and `BufferPool::slots`' clamp are the
   second half in code: resident saturates at `WorkerMemory::at` of the
   announced count — its readers' own terms plus the block pool's retention
   list — and what no pool holds, plus what `at` does not bill (`KD24`'s chunk
@@ -1084,7 +1084,7 @@ which is what makes the difference worth minding at the moment one is found.
   already** — a reader holds one unit and the pool retains
   `(POOL_DEPTH.max(jobs) − 1) × unit` beside it, which no per-reader term
   carries ([2026-09-12](../status/history/2026-09-12.md), "The charge
-  over-bills the pool floor at every count"), and `io::WorkerMemory` is the
+  over-bills the pool floor at every count"), and `pgdt_io::WorkerMemory` is the
   shape that bills it ([`decisions.md`](decisions.md), "I/O, memory and parallelism").
   That charge is not this item: the item is whether the floor should follow the
   count at all — and billing it is what makes the question answerable, the
@@ -1118,8 +1118,8 @@ which is what makes the difference worth minding at the moment one is found.
   no-limit cap".
 
 - **The `POOL_MAX_BYTES` cap on the plain partition product, lifted, so a
-  raised `--chunk-size` keeps its multiple.** `leader::scan_partition` reads a
-  plain piece a chunk at a time (`io::PartitionRead`), so the plain source is
+  raised `--chunk-size` keeps its multiple.** `interior::region::scan_partition` reads a
+  plain piece a chunk at a time (`pgdt_io::PartitionRead`), so the plain source is
   single-unit, every chunk-sized buffer a worker takes is pooled, and no partition-length
   buffer is allocated for an arena to retain — a probe on the build that
   introduced the chunked read put that at 9.4 MiB at `--jobs 24` against 209.2
@@ -1127,7 +1127,7 @@ which is what makes the difference worth minding at the moment one is found.
   the cap. Its reason was to bound the allocation a raised `--chunk-size` would
   make, and no such allocation exists;
   with the cap still in place a partition is one chunk at `--chunk-size 8m` and
-  above, which hands back the 100% tail re-read `io::PLAIN_PARTITION_CHUNKS`
+  above, which hands back the 100% tail re-read `source::local::PLAIN_PARTITION_CHUNKS`
   exists to cap. Lifting it is one expression, and it is here rather than taken
   along with the read shape because it widens the *cut* at large stated chunks
   and nothing has measured that — a wider cut was measured to cost throughput

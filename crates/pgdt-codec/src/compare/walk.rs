@@ -128,7 +128,7 @@ fn unanswerable_range(range_type: &str, function: &str) -> ComparisonPlan {
 /// `=` the column still falls back to is an answer PostgreSQL does not have,
 /// where [`ComparisonPlan::Refused`] says only that *this build* has no order
 /// for the position and makes no claim about the server's equality (`KD10`
-/// one level down is announced off the column's own resolution instead).
+/// one level down goes unannounced).
 ///
 /// **[`ComparisonPlan::Unanswerable`] is the one answer a position cannot
 /// hold**, and it is why this returns a `Result`: "no equality either" is a

@@ -138,7 +138,7 @@ pub(super) fn push_fraction(out: &mut String, micros: i64) {
 
 /// The 256 lowercase hex pairs end to end, so byte `b`'s pair is the two bytes
 /// at `b * 2` — [`HEX_NIBBLE`](crate::value::libc::HEX_NIBBLE)'s counterpart in
-/// the render direction. The two renderers below loop per *byte* over a value
+/// the render direction. `render_bytea` and `render_uuid` loop per *byte* over a value
 /// of any length, and each knows its whole output length before it starts, so a
 /// byte becomes an indexed slice and a two-byte copy into a pre-sized `String`
 /// rather than a trip through `core::fmt` (`docs/design/decisions.md`, "D44").

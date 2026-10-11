@@ -1,5 +1,5 @@
 //! Whether `bit_in` or `varbit_in` reads a text under a column's typmod. Not
-//! `decode`'s API; a strict parse and a filter's literal call it.
+//! `decode`'s API; a strict parse calls it.
 
 /// `VARBITMAXLEN`, the most bits a `bit` or `bit varying` value holds, which
 /// bounds a hex spelling's digits at a quarter of it (I73).

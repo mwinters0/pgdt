@@ -125,7 +125,7 @@ impl Drop for StatisticsScope {
 /// the index for it.
 ///
 /// **It is the only statistics term a `query` has.** A query loads a cache and
-/// keeps no [`pgdt_query::statistics::StatisticsAccount`], so nothing else says what
+/// keeps no `pgdt_mapping`'s `StatisticsAccount`, so nothing else says what
 /// the cache handed it.
 #[cfg(feature = "introspect")]
 pub fn statistics_loaded(bytes: u64) {

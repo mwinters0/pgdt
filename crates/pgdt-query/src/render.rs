@@ -349,8 +349,7 @@ mod prior_shape;
 /// [`render_array_into`] against the literal-building oracle, over generated
 /// element text and generated shapes. The corpus is built as Arrow values
 /// directly rather than through [`append_typed`]: the quoting rule is what is
-/// under test, and `decode_array` only hands back text `array_out` would have
-/// written, so a corpus routed through it could not reach an element holding
-/// a brace, a bare `NULL` or a lone backslash.
+/// under test, and a corpus routed through `decode_array` would need its
+/// input literals written by that same rule.
 #[cfg(test)]
 mod differential;

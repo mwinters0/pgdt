@@ -35,7 +35,7 @@ use crate::stream::note::{PlanNote, PlanNoteKind};
 /// by every sub-stream of a partitioned replay
 /// (`docs/design/decisions.md`, "D51"). Held behind an `Arc`, `metadata` being
 /// the whole dump's DDL, and never mutated once shared with a sub-stream —
-/// `table_stream_partitions` writes the derived span onto `query_options`
+/// `plan_replay` writes the derived span onto `query_options`
 /// after the mapping pass and before the `Arc`: the table's columns
 /// in particular — their order, and their census, the union over **every**
 /// block the query will replay — are settled once, so two partitions of one

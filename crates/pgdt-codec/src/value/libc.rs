@@ -304,7 +304,7 @@ pub(crate) fn strtod_token(b: &[u8]) -> Option<(usize, StrtodToken)> {
 }
 
 /// Nibble value per byte, `BAD_NIBBLE` for anything that is not a hex digit.
-/// The two hex decoders below loop per *byte* over a field of any length,
+/// The hex decoders reading it loop per *byte* over a field of any length,
 /// so they read a table rather than branching through
 /// [`pgdt_core::internal::hex_val`]'s three ranges: a pair becomes two loads, a
 /// shift and an or, and validity is one bit test on the accumulated `or`.

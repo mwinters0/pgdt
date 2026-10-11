@@ -59,8 +59,8 @@ pub(crate) enum PieceEntry {
 /// **How a data-level block is censused and counted**: its header's width,
 /// which sizes both, and what its values are counted against
 /// (`docs/design/decisions.md`, "D35", "D96"). `None` wherever one is taken
-/// is a block at the metadata level, whose rows are counted and never split
-/// into fields.
+/// is a block at the metadata level, whose rows are counted and split into
+/// fields by a strict parse alone.
 #[derive(Clone)]
 pub struct CensusPlan {
     pub width: usize,
@@ -129,7 +129,7 @@ pub(crate) struct PieceObserver {
 /// `census` sizes the census the way `map::Builder::on_copy_start` does, from
 /// the header's column list, and a row wider than it grows it
 /// (`BlockCensusExt::observe_row`); `None` is a block at the metadata level, whose
-/// rows are counted and never split into fields (`docs/design/decisions.md`, "D35"). Every row the piece owns is handed to `observer`, where the block
+/// rows are counted and split into fields by a strict parse alone (`docs/design/decisions.md`, "D35"). Every row the piece owns is handed to `observer`, where the block
 /// gathers statistics. **Synchronous and free of I/O**: this is the body a
 /// `spawn_blocking` task runs, once per read of the piece, so it takes a slice
 /// rather than a source (`docs/design/decisions.md`, "D52").

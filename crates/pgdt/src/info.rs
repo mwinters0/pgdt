@@ -81,7 +81,7 @@ pub(crate) async fn run(args: InfoArgs) -> Result<()> {
         );
     }
     let Some(file) = file else {
-        // Cache-only mode (`docs/design/decisions.md`, "D22"): no
+        // Cache-only mode (`docs/design/decisions.md`, "D61"): no
         // live dump file at all, so clap already required
         // `--dtcache` for us — and refused `--strict-identity`, which
         // has nothing here to bind.
@@ -147,7 +147,7 @@ pub(crate) async fn run(args: InfoArgs) -> Result<()> {
 }
 
 /// `pgdt info` with no `--source`: answer strictly from the cache at `path`
-/// (`docs/design/decisions.md`, "D22"). An `Incomplete` cache is
+/// (`docs/design/decisions.md`, "D61"). An `Incomplete` cache is
 /// reported like any other, with its coverage stated — cache-only mode has no
 /// scan to extend it with, but "as far as the scan got" is still an answer.
 async fn info_offline(path: &Path, detail: bool, map: bool, json: bool) -> Result<()> {

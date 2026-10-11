@@ -13,7 +13,7 @@ use super::labels::{arrow_type_label, block_resolutions, block_unchecked, resolu
 /// `--json`'s shape: the whole cache file — the [`DumpIndex`] and the
 /// [`CacheEnvelope`] around it — flattened to one object, plus what the file
 /// does not itself carry: the container's shape derived from its seek table,
-/// the diagnostics `#[serde(skip)]` drops (`docs/design/decisions.md`, "D22"),
+/// the diagnostics `#[serde(skip)]` drops (`docs/design/decisions.md`, "D34"),
 /// and the per-block type resolution, a codec conclusion the model's index has no
 /// field for. No schema stability is promised — see the `--json` flag's help
 /// text.
