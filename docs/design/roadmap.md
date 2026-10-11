@@ -294,8 +294,10 @@ Lost inlining moves retired instructions and `#[inline]` closes it; a gap in
 cycles with the counts level is layout ([`measurements.md`](measurements.md),
 "Two builds of one source can differ by layout"), which it cannot close, so it
 is recorded in the figure's prose and owes nothing. The calls a remedy names
-are those a sampling profile of the default leg shows hot and uninlined
-across a crate boundary, and the next sitting is the check. The figure counts
+are those hot in the default leg alone, out of line there and not in the
+shipped leg — the two legs of that sitting profiled on the failing workload
+and set side by side (`measure.py --profile-recipe`, which prints the
+differential) — and the next sitting is the check. The figure counts
 each leg in the run its wall clock is, and prints this rule's verdict for
 every workload.
 

@@ -6433,7 +6433,8 @@ class ProfileRecipe(unittest.TestCase):
         self.assertEqual(
             len(recorded),
             len(measure.PROFILE_INPUTS) * len(measure.PROFILE_SHAPES)
-            + len(measure.DFCLI_ACCOUNT_LEGS),
+            + len(measure.DFCLI_ACCOUNT_LEGS)
+            + len(measure.RELEASE_PROFILE_SHAPES) * len(measure.RELEASE_DIFF_LEGS),
         )
         for record, line in recorded:
             with self.subTest(line=line):
@@ -6549,6 +6550,102 @@ class ProfileRecipe(unittest.TestCase):
         self.assertIn("cargo build --release -p pgdt --features introspect", recipe)
         self.assertIn(f"--target-dir {cfg.alloc_build_root / 'dfcli-introspect'}", recipe)
         self.assertIn(f"{dump}.dtcache", recipe.splitlines()[-1])
+
+    def test_the_differential_runs_each_shape_as_the_figure_times_it(self):
+        """The downstream-build rule's differential is read against a verdict,
+        so each `release-profile` shape runs `_script`'s timed line and its
+        builder flag for flag: a moved flag would attribute a gap the figure
+        never measured."""
+        for command, _ in measure.RELEASE_PROFILE_SHAPES:
+            with self.subTest(shape=command):
+                env, argv, builder = measure.release_diff_invocation(
+                    command, "/dump.sql", "/tmp/x.dtcache"
+                )
+                script = measure._script(command)
+                before, _, timed = script.partition("time ")
+                timed = timed.split(" >", 1)[0]
+                self.assertEqual(f"{' '.join([*env, '/pgdt'])} {' '.join(argv)}".lstrip(),
+                                 timed.replace("'", "").lstrip())
+                if builder is None:
+                    self.assertEqual(before, "")
+                    continue
+                built = before.removesuffix(" && ").split()
+                self.assertEqual(built[0], "/pgdt")
+                self.assertEqual(builder, [w for w in built[1:] if w != ">/dev/null"])
+
+    def test_the_differential_profiles_the_sittings_own_legs(self):
+        """No rebuild: a profile of a rebuilt leg is of another binary than
+        the one the verdict timed. Each leg is the file the figure leaves,
+        asked which leg it is before any recording, writes its own cache,
+        which a cache from another build is refused as, and is recorded flat,
+        the legs carrying no frame pointers."""
+        cfg = measure.Config()
+        lines = measure.profile_recipe(cfg).splitlines()
+        self.assertEqual(
+            measure.RELEASE_DIFF_LEGS,
+            (measure.SHIPPED_PROFILE_LEG, measure.PROFILE_LEGS[0][0]),
+        )
+        first_record = next(
+            i for i, ln in enumerate(lines) if "release-diff-" in ln and " record " in ln
+        )
+        for leg in measure.RELEASE_DIFF_LEGS:
+            binary = measure.profile_leg_binary(cfg, leg)
+            with self.subTest(leg=leg):
+                self.assertEqual(binary, cfg.out_dir / f"pgdt-{leg}")
+                asked = next(
+                    i for i, ln in enumerate(lines)
+                    if ln.startswith(f"{binary} --version")
+                )
+                self.assertIn(f"'(profile: {leg})'", lines[asked])
+                self.assertLess(asked, first_record)
+                recorded = [
+                    i for i, line in enumerate(lines)
+                    if "release-diff-" in line and f"-{leg}.data \\" in line
+                ]
+                self.assertEqual(len(recorded), len(measure.RELEASE_PROFILE_SHAPES))
+                for i in recorded:
+                    line = lines[i]
+                    self.assertNotIn("--call-graph", line)
+                    self.assertTrue(lines[i + 1].startswith(f"  -- {binary} "), lines[i + 1])
+                    if lines[i - 1].startswith(f"{binary} parse "):
+                        self.assertTrue(lines[i - 2].startswith("rm -f "), lines[i - 2])
+                    else:
+                        self.assertTrue(lines[i - 1].startswith("rm -f "), lines[i - 1])
+        self.assertFalse(any("--profile release-" in ln for ln in lines))
+
+    def test_the_differential_reads_the_default_leg_against_the_shipped_one(self):
+        # `perf diff`'s first file is its baseline, so a symbol the default leg
+        # alone leaves out of line is one the shipped leg's profile lacks.
+        cfg = measure.Config()
+        recipe = measure.profile_recipe(cfg)
+        shipped, default = measure.RELEASE_DIFF_LEGS
+        for command, _ in measure.RELEASE_PROFILE_SHAPES:
+            with self.subTest(shape=command):
+                self.assertIn(
+                    f"{measure.PERF} diff --sort symbol "
+                    f"{cfg.out_dir / f'release-diff-{command}-{shipped}.data'} "
+                    f"{cfg.out_dir / f'release-diff-{command}-{default}.data'} > "
+                    f"{cfg.out_dir / f'release-diff-{command}.txt'}",
+                    recipe,
+                )
+
+    def test_the_differential_reads_the_figures_input_warm(self):
+        cfg = measure.Config()
+        lines = measure.profile_recipe(cfg).splitlines()
+        inputs = {
+            spec.input
+            for spec in measure._release_profile_specs()
+            if spec.binary.startswith("profile:")
+        }
+        self.assertEqual(len(inputs), 1)
+        (name,) = inputs
+        dump = cfg.warm_dir / f"{name}.sql"
+        self.assertIn(f"cp -n {cfg.cache_dir / f'{name}.sql'} {dump}", lines)
+        for line in lines:
+            if line.startswith("  -- ") and "pgdt-release-" in line:
+                with self.subTest(line=line):
+                    self.assertTrue(f"--source {dump} " in line or f"={dump} " in line, line)
+        self.assertIn(f"{dump}.dtcache", lines[-1].split())
 
     def test_the_recipe_never_runs_anything(self):
         # The same rule koji's recipe obeys: this prints, and a session runs it

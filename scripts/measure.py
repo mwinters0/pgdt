@@ -6094,6 +6094,13 @@ def binary_profile(binary: Path) -> str:
     return match.group(1)
 
 
+def profile_leg_binary(cfg: Config, leg: str) -> Path:
+    """Where a sitting leaves one `release-profile` leg's binary: in
+    `Config.out_dir`, which the next sitting overwrites. Read by the figure
+    and by `profile_recipe`'s differential, which profiles these files."""
+    return cfg.out_dir / f"pgdt-{leg}"
+
+
 #: Legs built by this process, and legs a dry run has announced, for
 #: `_ALLOC_BUILT`'s and `_ALLOC_ANNOUNCED`'s reasons.
 _PROFILE_BUILT: set[str] = set()
@@ -6113,7 +6120,7 @@ def ensure_profile_binary(cfg: Config, leg: str, log: Callable[[str], None]) -> 
     """
     if leg not in dict(PROFILE_LEGS):
         raise ValueError(f"unknown release-profile leg {leg!r}")
-    out = cfg.out_dir / f"pgdt-{leg}"
+    out = profile_leg_binary(cfg, leg)
     if leg in _PROFILE_BUILT:
         return out
     target = image_target_dir(cfg, leg)
@@ -13492,6 +13499,41 @@ def profile_builder_argv(command: str, source: Path | str, cache: Path | str) ->
     ]
 
 
+#: The `release-profile` legs the downstream-build rule's differential sets
+#: side by side (`roadmap.md`, "A downstream build is within 3% of ours"), in
+#: `perf diff`'s order: the shipped leg as the baseline, then the default leg
+#: read against it, so a symbol the default leg alone leaves out of line is
+#: one the baseline lacks.
+RELEASE_DIFF_LEGS: tuple[str, str] = (SHIPPED_PROFILE_LEG, PROFILE_LEGS[0][0])
+
+
+def release_diff_invocation(
+    command: str, source: Path | str, cache: Path | str
+) -> tuple[list[str], list[str], list[str] | None]:
+    """The environment, the arguments (subcommand first) and the untimed
+    builder one `RELEASE_PROFILE_SHAPES` shape runs on a leg's binary.
+
+    A `pgdt` shape is `profile_argv`'s and `profile_builder_argv`'s, over
+    `cache`; `PARALLEL_SCAN` is `typed_scan_invocation`'s over a cache
+    `PROVIDER_BUILDER`'s flags write beside the dump, where `--dump` looks, and
+    `cache` goes unused. `test_measure.py`'s `ProfileRecipe` holds each to
+    `_script`'s timed line, so the differential runs the workload the verdict
+    was read on."""
+    if command == PARALLEL_SCAN:
+        env, argv = typed_scan_invocation(str(source))
+        builder = [
+            "parse",
+            "--source", str(source),
+            "--dtcache", f"{source}.dtcache",
+            "--jobs", str(SWEEP_JOBS),
+            *GATHER_STATISTICS.split(),
+        ]
+        return env, ["sql", *argv], builder
+    if command not in dict(RELEASE_PROFILE_SHAPES):
+        raise ValueError(f"{command!r} is not a `release-profile` shape")
+    return [], profile_argv(command, source, cache), profile_builder_argv(command, source, cache)
+
+
 def profile_recipe(cfg: Config) -> str:
     """The whole sequence, with every path filled in.
 
@@ -13548,7 +13590,24 @@ def profile_recipe(cfg: Config) -> str:
     binary is overwritten) runs the same legs, each run writing what
     `pgdt_core::instrument` timed of its row evaluation to the file
     `INSTRUMENT_OUT_VAR` names: a `runs/` artifact, like the profiles, and
-    never a figure."""
+    never a figure.
+
+    **The downstream-build rule's differential** profiles no build of its own:
+    it records a `release-profile` sitting's `RELEASE_DIFF_LEGS` binaries
+    where the sitting left them (`profile_leg_binary`), each asked first which
+    leg it is, on every shape's own argv and builder
+    (`release_diff_invocation`) over the figure's input, and prints `perf diff
+    --sort symbol` of the pair. The legs are one tree's, the figure building
+    every leg before its first reading, so nothing in it subtracts one commit
+    from another; and since the next sitting overwrites them, a failing
+    workload is profiled before it. Flat, with no `--call-graph`: the legs
+    keep `.symtab` and carry no frame pointers, and `#[inline]` goes on the
+    callee, whose name is the remedy's whole input. **It is read for names,
+    never for a time** -- what the default leg alone leaves out of line --
+    as any profile is read for proportions. Like every profile here it runs
+    on the host, so a shape stating no allowance discovers the host's memory
+    rather than the figure container's: a different budget, under which each
+    leg runs the same code."""
     warm = cfg.warm_dir
     binary = REPO / "target/profiling/pgdt"
     sql = f"{binary} sql"
@@ -13625,8 +13684,13 @@ def profile_recipe(cfg: Config) -> str:
 
     # Every input any profile below reads, in declaration order and without
     # repetition: the cross product's, then the `pgdt sql` pair's.
+    (release_input,) = {
+        spec.input for spec in _release_profile_specs() if spec.binary.startswith("profile:")
+    }
+    release_dump = warm / f"{release_input}.sql"
     staged = list(PROFILE_INPUTS)
     staged += [account_input] if account_input not in staged else []
+    staged += [release_input] if release_input not in staged else []
 
     head("Stage the inputs warm, on the host.")
     lines.append(f"mkdir -p {warm} {out}")
@@ -13695,9 +13759,44 @@ def profile_recipe(cfg: Config) -> str:
                 ">/dev/null"
             )
     lines.append("")
+    head(
+        "The downstream-build rule's attribution, for a workload a `release-profile`",
+        "sitting's verdict reads as lost inlining: a flat profile of that sitting's own",
+        f"{RELEASE_DIFF_LEGS[1]} and {RELEASE_DIFF_LEGS[0]} legs on the workload's own argv,",
+        f"and `perf diff` of the two, {RELEASE_DIFF_LEGS[0]} the baseline. A hot symbol only",
+        f"{RELEASE_DIFF_LEGS[1]} carries is a call it leaves out of line: `#[inline]` goes",
+        "on it, or, where it is not ours, `graft callers` finds the calls crossing to it.",
+        "Read for names, never for a time. Run only the failing workload's block, and",
+        "before the next sitting, which overwrites the legs; each must name itself first.",
+    )
+    for leg in RELEASE_DIFF_LEGS:
+        leg_binary = profile_leg_binary(cfg, leg)
+        lines.append(
+            f"{leg_binary} --version | grep -qF '(profile: {leg})' "
+            f"|| echo '{leg_binary} is not the {leg} leg: stop' >&2"
+        )
+    for command, label in RELEASE_PROFILE_SHAPES:
+        env, argv, builder = release_diff_invocation(command, release_dump, cache)
+        written = builder[builder.index("--dtcache") + 1] if builder else str(cache)
+        lines += ["", f"# {label}"]
+        for leg in RELEASE_DIFF_LEGS:
+            leg_binary = profile_leg_binary(cfg, leg)
+            data = out / f"release-diff-{command}-{leg}.data"
+            lines += [
+                f"rm -f {written}",
+                *([f"{leg_binary} {' '.join(builder)} >/dev/null"] if builder else []),
+                f"{' '.join([*env, PERF])} record -F {PERF_FREQ} -o {data} \\",
+                f"  -- {dfcli_shell([], str(leg_binary), argv).lstrip()} >/dev/null",
+            ]
+        baseline, read = (out / f"release-diff-{command}-{leg}.data" for leg in RELEASE_DIFF_LEGS)
+        lines.append(
+            f"{PERF} diff --sort symbol {baseline} {read} > {out / f'release-diff-{command}.txt'}"
+        )
+    lines.append("")
     head("Tear down: tmpfs is 16 G and these inputs do not fit beside a sweep's.")
     lines.append(
-        f"rm -f {' '.join(str(warm / f'{n}.sql') for n in staged)} {cache} {account_cache}"
+        f"rm -f {' '.join(str(warm / f'{n}.sql') for n in staged)} {cache} {account_cache} "
+        f"{release_dump}.dtcache"
     )
     return "\n".join(lines)
 
