@@ -139,8 +139,9 @@ one is due; it does not carve the crate.
 
 ## 5. Exempt, with the reason
 
-A file a cut would make worse — a port mirroring an upstream file's sections,
-a grammar whose cases are one table, a seam that would be arbitrary — goes in
+A file whose length overstates its breadth (`docs/process.md`, "Seams") — one
+narrow concept a cut would only scatter, as a port mirroring an upstream
+file's sections, or a grammar whose cases are one table — goes in
 `file_limits.py`'s `EXEMPT` with that reason, and the reason names what would
 lift it. An exemption is a debt the check reads as live: one for a file that
 has come under the limit fails the check and is struck.

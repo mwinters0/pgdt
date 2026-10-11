@@ -283,26 +283,26 @@ for the maintainer.
 
 A file that has outgrown one reader's working memory is the code's mortar
 failure: nothing in it is wrong, and nobody can find anything in it. So the
-code carries caps as the record does, asserted by `scripts/file_limits.py`,
-which states the numbers once: a **soft** limit on a file's production code
-lines and functions, past which a split is due the next time someone is in the
-file; a **hard** limit on each, and on its total length with its tests, past
-which it is due now; and an **exemption table** naming each file allowed past
-a hard limit with its reason. The check is a **meter**, like repoint's: red
-never fails a round, because a slice is sized by its review and not by what it
-leaves long; it says a seams round is due, and `.claude/skills/seams/SKILL.md`
-is that round's procedure.
+code carries caps, stated once in `scripts/file_limits.py`: a **soft** limit
+on a file's production lines and functions, past which a split is due when
+someone is next in the file; a **hard** limit on each and on its total length,
+past which it is due now; and an **exemption table**, each with its reason.
+The check is a **meter**, like repoint's: red never fails a round, a slice
+being sized by its review; it says a round of `.claude/skills/seams/SKILL.md`
+is due.
 
-**A file past a limit indicts the design around it, not just itself.** It is
-where the seams of its module or crate first show they no longer fit the code,
-so the round redraws those seams: it designs the tree the code now wants —
-**each concept in one place**, above all else; each file one concern a reader
-can hold, named for it; no file past a limit — and cuts toward that design.
-Splitting the one file at its banners and stopping is what this rule is for:
-each such cut is locally sound, and a run of them leaves no design at all.
-A design may land over several slices; none lands a cut the design lacks.
-**A crate is a seam too**: the workspace graph is the current answer, not a
-fixed one, and the same round asks whether a crate should split or two merge.
+**The limits are a proxy for a concept's breadth**, which nothing measures:
+"one concept per file" bounds nothing alone, a concept being as broad as an
+operating system. A broad concept is a module tree, its sub-concepts its files,
+so **a file past a limit indicts the design around it**: the round designs the
+tree the code now wants — **each concept in one place**, above all else; each
+file one concern a reader can hold, named for it — and cuts toward it. A cut is
+judged by whether it narrows each file's concept, never by the meter going
+green, which a banner split achieves with no design at all; an exemption is a
+file whose length overstates its breadth. A design may land over several
+slices; none lands a cut the design lacks. **A crate is a seam too**: the
+workspace graph is the current answer, not a fixed one, and the same round asks
+whether a crate should split or two merge.
 
 ## The keystone: striking the centering
 
