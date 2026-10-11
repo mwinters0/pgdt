@@ -9,7 +9,7 @@
 //!
 //! **A filter is translated loosened, never refused.** Its state now is read
 //! into the library's tree in DataFusion semantics, as a static filter is
-//! ([`crate::pushdown`]), and every row DataFusion's evaluation of that state
+//! ([`crate::filter::pushdown`]), and every row DataFusion's evaluation of that state
 //! keeps, or its producer keeps by its own order ([`loosened`]), the
 //! translation keeps: a wrongly skipped row is one the join or the TopK never
 //! sees. Where a part has no library term — a `hash_lookup`, a
@@ -38,7 +38,7 @@ use datafusion::physical_plan::apply_expression_roots;
 use pgdt_codec::ResolvedSchema;
 use pgdt_query::{DynamicFilter, Expr as L, Membership, PredicateOp};
 
-use crate::pushdown::{boolean_term, compared, is_float, member, null_term};
+use super::{boolean_term, compared, is_float, member, null_term};
 
 #[cfg(test)]
 mod tests;

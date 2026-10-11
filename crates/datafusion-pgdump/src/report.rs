@@ -23,13 +23,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_model::{DiagnosticSink, Finding, Severity, TableName};
-use pgdt_query::{PlanLever, PlanNote, column_divergences};
+use pgdt_query::{PlanLever, PlanNote};
 
 use crate::budget::{AllowanceOrigin, BudgetAccount};
 use crate::dump::PgDump;
-use crate::table::PgDumpTable;
+use crate::error::Error;
 
 /// A finding with what it is about named in front of its sentence: the dump,
 /// or a table as SQL names it. The library's findings name a column at most
@@ -41,9 +40,9 @@ use crate::table::PgDumpTable;
 /// which is reached inside its [`BudgetedPlanNote`]; the subject is in the
 /// sentence.
 #[derive(Debug)]
-struct Located<'a> {
-    subject: &'a str,
-    finding: &'a dyn Finding,
+pub(crate) struct Located<'a> {
+    pub(crate) subject: &'a str,
+    pub(crate) finding: &'a dyn Finding,
 }
 
 impl Finding for Located<'_> {
@@ -73,64 +72,21 @@ impl PgDump {
 /// Where a registered table's scans report: the name SQL reaches it by, and
 /// the sink it was registered with.
 pub(crate) struct Reporting {
-    subject: String,
-    sink: Arc<dyn DiagnosticSink>,
-}
-
-impl PgDumpTable {
-    /// Hand this table's findings to `sink`, each prefixed with `subject` —
-    /// the name SQL reaches the table by: how each column resolved, and how
-    /// each column's comparison in DataFusion's semantics diverges from
-    /// PostgreSQL's.
-    ///
-    /// **`sink` is kept, and hears every scan's plan notes from then on**
-    /// (`pgdt_query::PlanNote`), under the same `subject`: what the memory
-    /// budget declined and what statistics let the scan skip, settled when
-    /// the scan is planned, one quoting a budget wrapped in a
-    /// [`BudgetedPlanNote`]. A table reported again reports its scans to the
-    /// latest sink; one never reported reports no scan.
-    pub fn report(&self, subject: &str, sink: Arc<dyn DiagnosticSink>) {
-        let resolved = self.resolved_schema();
-        for finding in &resolved.notes {
-            sink.report(&Located { subject, finding });
-        }
-        for finding in &column_divergences(resolved, ComparisonSemantics::DataFusion) {
-            sink.report(&Located { subject, finding });
-        }
-        let reporting = Reporting { subject: subject.to_string(), sink };
-        *self.reporting().lock().unwrap() = Some(Arc::new(reporting));
-    }
-
-    /// Hand what one scan's plan settled to the sink this table was reported
-    /// to, if it was, each note quoting a budget wrapped with `account`, the
-    /// scan's own.
-    pub(crate) fn report_plan(&self, notes: &[PlanNote], account: &BudgetAccount) {
-        // Taken out of the lock, so a sink that reports this table again
-        // does not wait on itself.
-        let Some(reporting) = self.reporting().lock().unwrap().clone() else { return };
-        let subject = reporting.subject.as_str();
-        for note in notes {
-            if note.budget_bytes().is_some() {
-                let finding = &BudgetedPlanNote { note: note.clone(), account: account.clone() };
-                reporting.sink.report(&Located { subject, finding });
-            } else {
-                reporting.sink.report(&Located { subject, finding: note });
-            }
-        }
-    }
+    pub(crate) subject: String,
+    pub(crate) sink: Arc<dyn DiagnosticSink>,
 }
 
 /// A table of the dump its catalog does not list, because the library's plan
 /// of it refuses — its `COPY` blocks naming different columns, say — with
-/// that refusal. It is what [`crate::register_dump`] hands the sink in place
+/// that refusal. It is what [`crate::catalog::register_dump`] hands the sink in place
 /// of the table's findings, and the only place its refusal is said: a query
-/// naming the table finds no such table ([`crate::PgDumpCatalog`]).
+/// naming the table finds no such table ([`crate::catalog::PgDumpCatalog`]).
 #[derive(Debug)]
 pub struct RefusedTable {
     /// The table, as the dump names it.
     pub table: TableName,
     /// What planning it raised.
-    pub error: crate::Error,
+    pub error: Error,
 }
 
 impl Finding for RefusedTable {

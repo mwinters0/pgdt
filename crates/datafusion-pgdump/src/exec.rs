@@ -27,7 +27,7 @@
 //! physical plan names the static one. Parquet's `pruning_predicate=` is not
 //! copied: it exists because Parquet prunes by something other than its
 //! `predicate=`, where this scan prunes by the filters it prints — a dynamic
-//! one as far as its translation reaches ([`crate::dynamic_filter`]).
+//! one as far as its translation reaches (`crate::filter::dynamic`).
 
 use std::fmt;
 use std::pin::Pin;
@@ -63,8 +63,8 @@ use pgdt_query::{
 };
 
 use crate::budget::Draw;
-use crate::dynamic_filter::{DynamicFilters, ReplayFilter};
-use crate::table::external;
+use crate::error::external;
+use crate::filter::{DynamicFilters, ReplayFilter};
 
 /// The replay of one table, with its statistics.
 #[derive(Debug, Clone)]
@@ -267,7 +267,7 @@ impl ExecutionPlan for PgDumpExec {
     /// **Every filter the `Post` phase pushes is held and answered `No`**:
     /// each is a dynamic filter a producer above re-checks its own rows
     /// against. A `Pre` phase filter is a static one, which the provider
-    /// already answers where it can (`crate::pushdown`), and is not held.
+    /// already answers where it can (`crate::filter::pushdown`), and is not held.
     fn handle_child_pushdown_result(
         &self,
         phase: FilterPushdownPhase,

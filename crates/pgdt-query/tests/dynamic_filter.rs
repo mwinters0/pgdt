@@ -9,7 +9,7 @@
 //!
 //! **That skipping loses no row the filter keeps** is checked with generated
 //! filters beside DataFusion's own evaluation of them
-//! (`crates/datafusion-pgdump/src/dynamic_filter/tests.rs`). Here, that each thing
+//! (`crates/datafusion-pgdump/src/filter/dynamic/tests.rs`). Here, that each thing
 //! happens where the `statistics` fixture's shapes say it must: `ordered`'s
 //! `id` ascends from 1 to 1000, so at [`SMALL_GROUP`] every group ahead of
 //! the one holding `990` has a maximum below it.

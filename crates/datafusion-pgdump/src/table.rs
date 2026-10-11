@@ -13,14 +13,15 @@ use datafusion::datasource::TableType;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use pgdt_codec::{ResolvedSchema, SchemaMode, compare::ComparisonSemantics};
-use pgdt_model::TableName;
-use pgdt_query::{QueryOptions, TablePartitions};
+use pgdt_model::{DiagnosticSink, TableName};
+use pgdt_query::{PlanNote, QueryOptions, TablePartitions, column_divergences};
 
-use crate::budget::{ScanBudget, pool_limit};
+use crate::budget::{BudgetAccount, ScanBudget, pool_limit};
 use crate::dump::PgDump;
+use crate::error::{Error, external};
 use crate::exec::{PgDumpExec, Replay, ScanMetrics, StaticFilter};
-use crate::pushdown::translate;
-use crate::report::Reporting;
+use crate::filter::translate;
+use crate::report::{BudgetedPlanNote, Located, Reporting};
 use crate::settings::PgDumpSettings;
 use crate::statistics::{byte_size, output_orderings, table_statistics, total_byte_size};
 
@@ -57,7 +58,7 @@ impl PgDumpTable {
     /// refusal its plan would raise.
     pub fn new(dump: Arc<PgDump>, name: TableName) -> Result<Self> {
         Self::build(dump, name).map_err(|err| match err {
-            crate::Error::Library(err) => external(err),
+            Error::Library(err) => external(err),
             err => DataFusionError::External(Box::new(err)),
         })
     }
@@ -65,12 +66,12 @@ impl PgDumpTable {
     /// [`PgDumpTable::new`], its refusal the library's own, bar a table the
     /// cache holds at the metadata level under a typed schema, which the
     /// library refuses too and this names the parse for
-    /// ([`crate::Error::MetadataLevel`]).
-    pub(crate) fn build(dump: Arc<PgDump>, name: TableName) -> Result<Self, crate::Error> {
+    /// ([`Error::MetadataLevel`]).
+    pub(crate) fn build(dump: Arc<PgDump>, name: TableName) -> Result<Self, Error> {
         let unmapped = dump.index().blocks_of(&name).any(|block| block.array_shapes.is_none());
         if unmapped && dump.schema_mode() == SchemaMode::Typed {
-            return Err(crate::Error::MetadataLevel {
-                table: crate::describe(&name),
+            return Err(Error::MetadataLevel {
+                table: describe(&name),
                 parse: dump.parse_at_data_level(&name),
             });
         }
@@ -89,8 +90,86 @@ impl PgDumpTable {
         &self.resolved
     }
 
-    pub(crate) fn reporting(&self) -> &Mutex<Option<Arc<Reporting>>> {
-        &self.reporting
+    /// Hand this table's findings to `sink`, each prefixed with `subject` —
+    /// the name SQL reaches the table by: how each column resolved, and how
+    /// each column's comparison in DataFusion's semantics diverges from
+    /// PostgreSQL's.
+    ///
+    /// **`sink` is kept, and hears every scan's plan notes from then on**
+    /// (`pgdt_query::PlanNote`), under the same `subject`: what the memory
+    /// budget declined and what statistics let the scan skip, settled when
+    /// the scan is planned, one quoting a budget wrapped in a
+    /// [`BudgetedPlanNote`]. A table reported again reports its scans to the
+    /// latest sink; one never reported reports no scan.
+    pub fn report(&self, subject: &str, sink: Arc<dyn DiagnosticSink>) {
+        let resolved = self.resolved_schema();
+        for finding in &resolved.notes {
+            sink.report(&Located { subject, finding });
+        }
+        for finding in &column_divergences(resolved, ComparisonSemantics::DataFusion) {
+            sink.report(&Located { subject, finding });
+        }
+        let reporting = Reporting { subject: subject.to_string(), sink };
+        *self.reporting.lock().unwrap() = Some(Arc::new(reporting));
+    }
+
+    /// Hand what one scan's plan settled to the sink this table was reported
+    /// to, if it was, each note quoting a budget wrapped with `account`, the
+    /// scan's own.
+    pub(crate) fn report_plan(&self, notes: &[PlanNote], account: &BudgetAccount) {
+        // Taken out of the lock, so a sink that reports this table again
+        // does not wait on itself.
+        let Some(reporting) = self.reporting.lock().unwrap().clone() else { return };
+        let subject = reporting.subject.as_str();
+        for note in notes {
+            if note.budget_bytes().is_some() {
+                let finding = &BudgetedPlanNote { note: note.clone(), account: account.clone() };
+                reporting.sink.report(&Located { subject, finding });
+            } else {
+                reporting.sink.report(&Located { subject, finding: note });
+            }
+        }
+    }
+}
+
+impl PgDump {
+    /// One table on its own, the provider its catalog would hand out.
+    ///
+    /// `schema` left out matches the table in any schema, and `database` left
+    /// out matches it in any database; a name that then matches more than one
+    /// table is refused, naming them.
+    pub fn table(
+        self: &Arc<Self>,
+        database: Option<&str>,
+        schema: Option<&str>,
+        table: &str,
+    ) -> Result<Arc<PgDumpTable>, Error> {
+        let candidates: Vec<&TableName> = self
+            .tables()
+            .iter()
+            .filter(|t| database.is_none_or(|d| t.database.as_deref() == Some(d)))
+            .filter(|t| schema.is_none_or(|s| t.schema.as_deref() == Some(s)))
+            .filter(|t| t.table == table)
+            .collect();
+        match candidates.as_slice() {
+            [one] => Ok(Arc::new(PgDumpTable::new(Arc::clone(self), (*one).clone())?)),
+            [] => Err(Error::Table(format!("{} holds no table `{table}`", self.origin()))),
+            many => Err(Error::Table(format!(
+                "`{table}` names {} tables in {}: {}; name the schema or the database",
+                many.len(),
+                self.origin(),
+                many.iter().map(|t| describe(t)).collect::<Vec<_>>().join(", ")
+            ))),
+        }
+    }
+}
+
+/// A table as a refusal names it: `schema.table`, and its database where it
+/// has one.
+fn describe(table: &TableName) -> String {
+    match &table.database {
+        Some(database) => format!("{} in database {database}", table.qualified()),
+        None => table.qualified(),
     }
 }
 
@@ -108,12 +187,6 @@ fn query_options(dump: &PgDump) -> QueryOptions {
     }
 }
 
-/// A library error carried across DataFusion's boundary whole, so an embedder
-/// can downcast it back.
-pub(crate) fn external(err: pgdt_core::Error) -> DataFusionError {
-    DataFusionError::External(Box::new(err))
-}
-
 #[async_trait]
 impl TableProvider for PgDumpTable {
     fn schema(&self) -> SchemaRef {
@@ -127,7 +200,7 @@ impl TableProvider for PgDumpTable {
     /// `Exact` for a filter that translates into the library's tree and that
     /// the library's plan of this table resolves in DataFusion semantics, as the
     /// scan will ask it to; `Unsupported` for every other
-    /// ([`crate::pushdown`]). Resolving is the plan's own check, over every
+    /// (`crate::filter::pushdown`). Resolving is the plan's own check, over every
     /// block, and reads no byte of the dump.
     ///
     /// **A filter holding `pgdump_unrepresentable` that translates and does

@@ -218,8 +218,9 @@ front end's spelling of it ([`decisions.md`](decisions.md), "Predicates").
   the batcher splits, and answers a row group off its statistics for pruning
   to read.
 - **pgdt** — `where_expr.rs`: `--where`'s grammar, a front end's own syntax.
-- **datafusion-pgdump** — `pushdown.rs`, `dynamic_filter.rs`,
-  `unrepresentable.rs`: DataFusion's expressions as the library's filter tree.
+- **datafusion-pgdump** — `filter/`, `unrepresentable.rs`: DataFusion's
+  expressions as the library's filter tree, the leaves in the parent and the
+  static and dynamic translations its children, neither reading the other.
 
 **Not in one place.** `--filter`'s term grammar is in `pgdt`'s `main.rs`, and
 `where_expr.rs` calls back into it for its leaves.
@@ -290,8 +291,9 @@ A dump's databases as DataFusion catalogs, a table as a `TableProvider`
 scanned by the partitioned replay, and the `pgdump.` session settings
 ([`decisions.md`](decisions.md), "D90", "D94").
 
-- **datafusion-pgdump** — `lib.rs`, `catalog.rs`, `factory.rs`, `table.rs`,
-  `exec.rs`, `settings.rs`: an embedder, above every library crate.
+- **datafusion-pgdump** — `lib.rs`, `error.rs`, `catalog.rs`, `factory.rs`,
+  `table.rs`, `exec.rs`, `settings.rs`: an embedder, above every library
+  crate, its root declaring and defining nothing.
 
 ## The DataFusion CLI
 

@@ -11,8 +11,8 @@ use pgdt_dump::cache::{
 use pgdt_io::{ByteRangeSource, Origin, Recognized};
 use pgdt_model::{Diagnostic, DumpIndex, PostgresInvalidValues, TableName};
 
-use crate::Error;
 use crate::budget::{Hold, ScanBudget};
+use crate::error::Error;
 
 /// How a dump is opened.
 #[derive(Debug, Clone, Default)]

@@ -1,6 +1,6 @@
 //! A dump's databases as DataFusion catalogs: PostgreSQL schemas are
 //! DataFusion schemas and tables are tables, each catalog named as
-//! [`crate::register_dump`] says.
+//! [`register_dump`] says.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -9,15 +9,96 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use datafusion::catalog::{CatalogProvider, SchemaProvider, TableProvider};
 use datafusion::common::Result;
+use datafusion::prelude::SessionContext;
 use pgdt_model::{DiagnosticSink, TableName};
 
+use crate::budget::session_budget;
 use crate::dump::PgDump;
+use crate::error::Error;
 use crate::report::RefusedTable;
 use crate::table::PgDumpTable;
+use crate::unrepresentable;
 
 /// Where a table whose `COPY` header names no schema is listed. `pg_dump`
 /// qualifies every table it writes, so only a hand-written file reaches it.
 pub const UNQUALIFIED_SCHEMA: &str = "public";
+
+/// Register `dump` in `ctx` as catalogs, returning their names in file order.
+///
+/// **A database the file names is a catalog of that name**, and one no
+/// `\connect` names — a single-database dump taken without `--create` — takes
+/// `name`. So `name` is required exactly where the file names no database, and
+/// refused on a file of several databases, where it would have to be invented
+/// into a prefix nobody wrote; given for a single named database, it replaces
+/// that database's name. *Rejected: one registration per database, chosen by
+/// a fragment of the location.*
+///
+/// The session gains a [`ScanBudget`](crate::budget::ScanBudget) discovered
+/// from the process's allowance, unless it already carries one, and `dump`'s
+/// statistics are billed to it; the
+/// [`PgDumpSettings`](crate::settings::PgDumpSettings) `SET` moves, unless it
+/// already carries them; and `pgdump_unrepresentable`
+/// ([`register_unrepresentable`](crate::unrepresentable::register)), its
+/// planning left as its embedder built it, which refuses the function at
+/// planning only where it was built
+/// [`with_unrepresentable_guard`](crate::unrepresentable::with_guard).
+/// `sink` hears the dump's findings and then every table's, each table named
+/// `catalog.schema.table`, and is kept to hear each scan's plan notes under
+/// that name; a table whose plan refuses is not listed, and is one
+/// [`RefusedTable`] finding instead.
+pub fn register_dump(
+    ctx: &SessionContext,
+    name: Option<&str>,
+    dump: &Arc<PgDump>,
+    sink: Arc<dyn DiagnosticSink>,
+) -> Result<Vec<String>, Error> {
+    let databases = dump.databases();
+    let named: Vec<(Option<String>, String)> = match (databases.as_slice(), name) {
+        ([database], Some(name)) => vec![(database.clone(), name.to_string())],
+        ([Some(database)], None) => vec![(Some(database.clone()), database.clone())],
+        ([], Some(name)) => vec![(None, name.to_string())],
+        ([None] | [], None) => {
+            return Err(Error::CatalogName(format!(
+                "{} names no database, so its catalog needs a name — give one",
+                dump.origin()
+            )));
+        }
+        (_, Some(name)) => {
+            return Err(Error::CatalogName(format!(
+                "{} holds {} databases, each registered under its own name; `{name}` would name \
+                 none of them — leave the name out",
+                dump.origin(),
+                databases.len()
+            )));
+        }
+        (_, None) => {
+            let mut named = Vec::new();
+            for database in databases {
+                let Some(catalog) = database.clone() else {
+                    return Err(Error::CatalogName(format!(
+                        "{} holds several databases and one of them has no name, so no catalog \
+                         name can be taken from the file for it",
+                        dump.origin()
+                    )));
+                };
+                named.push((database, catalog));
+            }
+            named
+        }
+    };
+    dump.bill(&session_budget(ctx));
+    unrepresentable::register(ctx);
+    dump.report(sink.as_ref());
+    Ok(named
+        .into_iter()
+        .map(|(database, name)| {
+            let catalog = Arc::new(PgDumpCatalog::new(dump, database.as_deref()));
+            ctx.register_catalog(&name, Arc::clone(&catalog) as _);
+            catalog.report(&name, &sink);
+            name
+        })
+        .collect())
+}
 
 /// One database of a dump.
 ///

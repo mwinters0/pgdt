@@ -562,29 +562,6 @@ filter.rs           the leaf builders both translations use, the literal's text
   filter/dynamic.rs   the dynamic filters (+ dynamic/tests.rs)
 ```
 
-The 35.21 cut's moves, projected against `2ea0056b` with no cycle:
-
-```moves
-datafusion-pgdump::Error -> datafusion-pgdump::error
-datafusion-pgdump::table::external -> datafusion-pgdump::error
-datafusion-pgdump::describe -> datafusion-pgdump::table
-datafusion-pgdump::PgDump -> datafusion-pgdump::table          # the root's `impl PgDump { fn table }`
-datafusion-pgdump::report::PgDumpTable -> datafusion-pgdump::table   # report's `impl PgDumpTable { report, report_plan }`
-datafusion-pgdump::register_dump -> datafusion-pgdump::catalog
-datafusion-pgdump::session_budget -> datafusion-pgdump::budget
-datafusion-pgdump::pushdown -> datafusion-pgdump::filter::pushdown
-datafusion-pgdump::dynamic_filter -> datafusion-pgdump::filter::dynamic
-datafusion-pgdump::pushdown::compared -> datafusion-pgdump::filter
-datafusion-pgdump::pushdown::member -> datafusion-pgdump::filter
-datafusion-pgdump::pushdown::null_term -> datafusion-pgdump::filter
-datafusion-pgdump::pushdown::boolean_term -> datafusion-pgdump::filter
-datafusion-pgdump::pushdown::is_float -> datafusion-pgdump::filter
-datafusion-pgdump::pushdown::column_index -> datafusion-pgdump::filter
-datafusion-pgdump::pushdown::literal_text -> datafusion-pgdump::filter
-datafusion-pgdump::pushdown::string_value -> datafusion-pgdump::filter
-datafusion-pgdump::pushdown::compared_as_text -> datafusion-pgdump::filter
-```
-
 ## Tests
 
 Each cut module's tests move beside it, split where its tests file mirrors

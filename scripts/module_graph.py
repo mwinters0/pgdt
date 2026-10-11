@@ -84,16 +84,6 @@ ACCEPTED: dict[frozenset[str], str] = {
 #: Cycles the tree has and a design or a slice removes, each naming which;
 #: a phase's closing seams round leaves none.
 OWED: dict[frozenset[str], str] = {
-    frozenset(
-        {
-            "datafusion-pgdump",
-            "datafusion-pgdump::catalog",
-            "datafusion-pgdump::dump",
-            "datafusion-pgdump::exec",
-            "datafusion-pgdump::report",
-            "datafusion-pgdump::table",
-        }
-    ): "P35.21, the root declaring and what it defines moved below its readers",
     frozenset({"pgdt", "pgdt::where_expr"}): "P35.22, the filter grammars one `query/filter/`",
 }
 

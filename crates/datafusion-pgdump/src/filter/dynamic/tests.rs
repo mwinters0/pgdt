@@ -680,12 +680,12 @@ fn an_in_list_reaches_the_library_as_one_membership() {
         vec![logical(1i32), logical(ScalarValue::Int32(None)), logical(3i32), logical(4i32)],
         false,
     );
-    let translated = crate::pushdown::translate(&listed, &table).unwrap();
+    let translated = crate::filter::translate(&listed, &table).unwrap();
     assert_eq!(
         format!("{translated:?}"),
         r#"In(Membership { column: "k", values: [Some("1"), None, Some("3"), Some("4")] })"#
     );
     let excluded = col("k").in_list(vec![logical(1i32), logical(2i32)], true);
-    let translated = crate::pushdown::translate(&excluded, &table).unwrap();
+    let translated = crate::filter::translate(&excluded, &table).unwrap();
     assert!(matches!(translated, L::Not(inner) if matches!(*inner, L::In(_))), "{excluded}");
 }

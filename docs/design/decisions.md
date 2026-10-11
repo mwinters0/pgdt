@@ -486,7 +486,7 @@ has no term: a TopK and `MIN`/`MAX` order the zeros apart where evaluation equat
 are dropped at `reset_state`. Rejected: `PruningPredicate` (bounds decoded to scalars, pruned in DataFusion's semantics, nothing on a `CASE`, a long
 `IN` or a sorted block); a narrower zero rule, sound only as far as each producer's shape is followed; keeping filters across a reset as Parquet does,
 a recursive query's next iteration needing rows the last one's ruled out. Reopens: a release whose producers hold with the zeros equal, then an `RT<n>`.
-Code: `datafusion-pgdump`'s `dynamic_filter::loosened`, `exec.rs`. Evidence: `dynamic_filter/tests.rs`, `tests/dynamic_filters.rs`, `tests/statistics.rs`.
+Code: `datafusion-pgdump`'s `filter::dynamic::loosened`, `exec.rs`. Evidence: `filter/dynamic/tests.rs`, `tests/dynamic_filters.rs`, `tests/statistics.rs`.
 
 ## Statistics
 ### D75 Pruning takes only what each operator family proves

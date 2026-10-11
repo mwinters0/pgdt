@@ -6,7 +6,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use datafusion::catalog::Session;
 use datafusion::execution::memory_pool::MemoryLimit;
+use datafusion::prelude::SessionContext;
 use pgdt_io::{Parallelism, WorkerMemory};
+
+use crate::settings::PgDumpSettings;
 
 /// What the pgdump scans of one DataFusion session may hold resident between
 /// them, and how much of it the scans running now have drawn.
@@ -228,7 +231,7 @@ impl ScanBudget {
     }
 
     /// The budget `state` carries, or the process's own where a session was
-    /// built without one — [`crate::register_dump`] installs one, so this is a
+    /// built without one — [`crate::catalog::register_dump`] installs one, so this is a
     /// provider registered by hand. Shared by every such session, which keeps
     /// the bound rather than multiplying it.
     pub(crate) fn of(state: &dyn Session) -> Arc<Self> {
@@ -247,6 +250,22 @@ pub(crate) fn pool_limit(state: &dyn Session) -> u64 {
     match state.runtime_env().memory_pool.memory_limit() {
         MemoryLimit::Finite(bytes) => bytes as u64,
         MemoryLimit::Infinite | MemoryLimit::Unknown => 0,
+    }
+}
+
+/// `ctx`'s [`ScanBudget`], installed discovered from the process's allowance
+/// where the session carries none yet, beside its [`PgDumpSettings`].
+pub(crate) fn session_budget(ctx: &SessionContext) -> Arc<ScanBudget> {
+    PgDumpSettings::install(ctx);
+    let state = ctx.state_ref();
+    let mut state = state.write();
+    match state.config().get_extension::<ScanBudget>() {
+        Some(budget) => budget,
+        None => {
+            let budget = Arc::new(ScanBudget::discover());
+            state.config_mut().set_extension(Arc::clone(&budget));
+            budget
+        }
     }
 }
 

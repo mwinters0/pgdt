@@ -312,7 +312,7 @@ than reading as a phase nobody has sliced.
   default settings. **(c) unowned**; promoted by a DataFusion release carrying
   the fix, the shell meanwhile defaulting the filter off
   ([`upstream.md`](upstream.md), "UF1"). Detail:
-  `crates/datafusion-pgdump/src/dynamic_filter.rs`.
+  `crates/datafusion-pgdump/src/filter/dynamic.rs`.
 
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: a worst 544 MiB on a compressed

@@ -5,7 +5,7 @@
 //! **Only a scan can answer it**: under the null mode an unrepresentable
 //! value reaches DataFusion as a NULL, which no longer says where it came
 //! from, so the function is answered on the field's text, by the library, as
-//! a filter pushed `Exact` into a pgdump scan ([`crate::pushdown`]). Wherever
+//! a filter pushed `Exact` into a pgdump scan (`crate::filter::pushdown`). Wherever
 //! DataFusion would have to evaluate it instead — projected, under an
 //! expression no scan answers, over another source — evaluating it refuses,
 //! and a session its embedder built [`with_guard`] refuses the plan before it
@@ -97,7 +97,7 @@ fn evaluated_by_datafusion(call: &str) -> String {
 
 /// **Register the function in `ctx`**, leaving the session's planning as its
 /// embedder built it: a use DataFusion would evaluate refuses when it is
-/// evaluated, unless the session was built [`with_guard`]. [`crate::register_dump`]
+/// evaluated, unless the session was built [`with_guard`]. [`crate::catalog::register_dump`]
 /// and [`crate::register_table_factory`] call it, and an embedder registering
 /// a [`crate::PgDumpTable`] by hand calls it itself.
 pub fn register(ctx: &SessionContext) {
