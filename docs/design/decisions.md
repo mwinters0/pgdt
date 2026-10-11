@@ -622,13 +622,13 @@ pages are snapshotted with width and bare-flag assertions. `sql --dump`'s value 
 
 ## Layering
 ### D68 Six crates, the module assignment Cargo enforces
-core (`error`, `instrument`, `lex`, `copy`), model (`model`), io (`io`), dump (`scan`, `map`, `preamble`, `cache`, `load`,
-`leader`), codec (`pgtype`, `resolve`, `decode`, `datetime_in`, `nested`, `unrepresentable`, `key`), query (`batch`, `stream`,
-`predicate`, `gather`, `prune`, `summary`, `statistics`); each uses only crates before it, dump and codec siblings, each
-crate's dependencies held to that graph (`scripts/layering.py`); CLI and embedders above query. Model is what the cache persists, apart
-from core so an edit there is the one asking whether the format bumps, and below the parsers so the codec does not recompile
-with the grammar. Gathering decodes, so is query's; the ordering keys it shares with a filter are value semantics, so codec's; worker sizing and the cut are io's, the leader asking them.
-Rejected: four layers in one crate with upward deviations; the cache a crate of its own (the loader scans, so it is dump's).
+core (`error`, `instrument`, `lex`, `copy`), model (`model`), io (`io`), dump (`scan`, `map`, `preamble`, `cache`, `load`, `leader`), codec (`pgtype`,
+`resolve`, `decode`, `datetime_in`, `nested`, `unrepresentable`, `key`), query (`batch`, `stream`, `predicate`, `gather`, `prune`, `summary`, `statistics`);
+each uses only crates before it, dump and codec siblings; CLI and embedders above query; every member's dependencies, and each library's API namespaces,
+held to tables in `scripts/layering.py`. Model is what the cache persists, apart from core so an edit there is the one asking whether the format bumps, and
+below the parsers so the codec does not recompile with the grammar. Gathering decodes, so is query's; the ordering keys it shares with a filter are value
+semantics, so codec's; worker sizing and the cut are io's, the leader asking them. Rejected: four layers in one crate with upward deviations; the cache a crate of
+its own (the loader scans, so it is dump's); the graph held to the libraries alone (a new member unplaced, `namespace-init` open to a library); any `pub mod` a namespace (one line past `internal`).
 
 ### D74 Below the codec no Arrow, the codec pure, and the core's error naming no dependency
 Core, model, io and dump never name Arrow; the codec only its schema types and `i256`, is synchronous and does no I/O, nor does

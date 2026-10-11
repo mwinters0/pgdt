@@ -26,14 +26,15 @@ member under `crates/` and turning the crate check into
   members' sources through `file_limits.masked`; its rules are its module
   docstring. Its `ThisRepo` test runs the real check, so every `mise run
   check`, `--affected` included, runs it through the scripts' `unittest`
-  rather than a cargo target. It holds more than the row named:
-  - `GRAPH` lists every member, the embedders and the apparatus with rows
-    of their own, so a library depending on `namespace-init` or on an
-    embedder is refused as an undrawn edge.
+  rather than a cargo target. Its two tables are D68's:
+  - `GRAPH` holds every member's dependencies, as the spec's "The crate
+    graph" says, the apparatus with rows of their own. Beyond what Cargo's
+    cycle refusal already gives, that refuses an unlisted member and any
+    edge to `namespace-init` but `pgdt`'s and `datafusion-cli-pgdump`'s.
   - `NAMESPACES` lists each library's API namespaces, and any other `pub
     mod` but `internal`, or a `pub mod` inside a namespace, is refused —
-    "every library module private" as the spec puts it, which 35.10.2's
-    notes said this check would hold.
+    the spec's "every library module private", without which one `pub mod`
+    line would reach past `internal` unrefused.
   - Dev-dependencies are not read, as the Rust test did not read them.
 - **`repoint.py`'s meter reads a stamp's own member roots** (`members_at`):
   `CODE_ROOTS` is `crates` alone, and a file git does not pair with its old

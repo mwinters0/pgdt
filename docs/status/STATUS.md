@@ -126,14 +126,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`scripts/layering.py` gates what the row did not name** (35.5). It lists
-  every member in `GRAPH`, the embedders and the apparatus with rows of their
-  own, so a library depending on `namespace-init` or an embedder fails; and it
-  lists each library's API namespaces in `NAMESPACES`, refusing any other
-  `pub mod` but `internal`, or a public child of a namespace. Made so because
-  the spec's "every library module private" and "a check, not a convention"
-  read as rules this check is where they live, and 35.10.2's notes said it
-  would hold them. Reconsidering drops either table: the first back to the
-  six libraries' rows, the second to trusting any `pub mod` as a namespace, so
-  adding one no longer means an edit to the script.

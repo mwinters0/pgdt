@@ -60,9 +60,10 @@ LIBRARIES = ("pgdt-core", "pgdt-model", "pgdt-io", "pgdt-dump", "pgdt-codec", "p
 #: The embedders: everything above the query layer that links a library.
 EMBEDDERS = ("datafusion-pgdump", "datafusion-cli-pgdump", "pgdt")
 
-#: Every member and the members it may depend on. The dump's parsers and the
-#: codec are siblings, neither reaching the other; `namespace-init` and
-#: `peak-rss` are apparatus, a binary's choice no library makes (D13).
+#: Every member and the members it may depend on, so a new member is placed
+#: deliberately (D68). The dump's parsers and the codec are siblings, neither
+#: reaching the other; `namespace-init` installs a binary's signal handlers
+#: (D26), which no library does, and `peak-rss` is the harness's.
 GRAPH: dict[str, tuple[str, ...]] = {
     "pgdt-core": (),
     "pgdt-model": ("pgdt-core",),
@@ -79,7 +80,7 @@ GRAPH: dict[str, tuple[str, ...]] = {
 
 #: Each library's API namespaces: the public modules an embedder names. Any
 #: other public module but `internal` is refused, so a new namespace is an
-#: edit here, made deliberately.
+#: edit here, made deliberately (D68).
 NAMESPACES: dict[str, tuple[str, ...]] = {
     "pgdt-core": ("instrument",),
     "pgdt-dump": ("cache",),
