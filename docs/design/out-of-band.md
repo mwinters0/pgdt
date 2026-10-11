@@ -74,3 +74,4 @@ table as a work queue.
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
 | M221 | 2026-10-11 | The `release-profile` figure times a warm typed `pgdt sql -c` shape, its sitting at `2df93720` folded and D105 re-read against it | | [2026-10-10](../status/history/2026-10-10.md), "The shipped profile, reviewed"; [2026-10-11](../status/history/2026-10-11.md), "M221: the `release-profile` figure's `pgdt sql` row" |
+| M222 | | The `release-profile` figure takes `instructions:u` per leg beside its wall clock, and the downstream-build rule gains its attribution clause with it | P35 | [2026-10-11](../status/history/2026-10-11.md), "The downstream-build rule, read in wall clock" |

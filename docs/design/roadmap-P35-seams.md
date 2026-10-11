@@ -40,7 +40,8 @@ decision with its own `D<k>` and figure, never a slice's quiet edit.
 The reading is a `release-profile` figure built as `allocator` is: legs at
 Cargo's default, thin LTO, and fat LTO with one codegen unit, each built from
 the tree measured, so no sitting subtracts one commit from another. It sits
-once on the one-crate tree and once on the split one; **the split cost
+once on the one-crate tree, once on the split one, and once on the tree the
+phase closes on, the carve having continued after the second; **the split cost
 nothing recoverable if the default leg's gap to fat LTO is no wider after the
 carve than before, within the figure's noise**. The shipped build's profile
 is decided from the two sittings whatever they show, the first pricing
@@ -94,6 +95,14 @@ between them and the query layer, by the `seams` skill's crate test
 - **`pgdt-query`** — Arrow batches, the streams, the filter expression,
   pruning, summaries. Everything above it is an
   embedder: `datafusion-pgdump`, `datafusion-cli-pgdump`, `pgdt`.
+
+Beside them, **`pgdt-fixtures`**, a member only tests depend on: the fixture
+vocabulary every crate's tests speak — paths, the sweep's enumerator, the
+sandboxes, the refused fields, the hand-written `edge_cases.sql` — depending on
+no member, so every crate's tests reach it with the graph one-way, and behind
+a `mapping` feature on pgdt-mapping alone, for the sweep's request builders. It
+replaces every cross-crate `#[path]` include, which rust-analyzer cannot resolve
+(`../status/history/2026-10-11.md`, "The test vocabulary, a crate of its own").
 
 What the graph settles: D74's two rules — the parsing crates compile no Arrow,
 the codec reaches `arrow::datatypes` and no further and does no I/O — become
@@ -224,4 +233,7 @@ stated its edges' direction unread (`../status/history/2026-10-11.md`). Then
 the cuts, sliced
 by that design rather than by crate: each slice owns whole concepts, so no
 concept is half-moved between two; and a closing round that finds nothing
-past any limit.
+past any limit. Last, the profile figure's third sitting, on the tree that
+round leaves, so the split the phase prices is the one it ships
+(`../status/history/2026-10-11.md`, "The downstream-build rule, read in wall
+clock").

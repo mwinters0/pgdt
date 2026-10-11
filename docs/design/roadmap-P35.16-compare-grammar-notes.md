@@ -34,7 +34,9 @@ whole; nothing persisted changed, so no format bump.
   35.17; `field_key` and `checked_key` stay in `key/order.rs`, `pub(crate)`
   for it. **`compare` declares the three API types** (`pub use`), the
   register's plans carrying the first two and a strict parse's listing the
-  third; that call is under STATUS's "Decisions worth another look".
+  third; reviewed, a `grammar` namespace declares them instead, 35.25's cut
+  (`../status/history/2026-10-11.md`, "The strict parse's API types, declared
+  by `grammar`").
 - **Tests beside what they test.** `pgtype/tests.rs` kept every test driving
   `resolve_declared_type`, those pinning a type and its comparison together
   (`int2vector`, a quoted name, a `NOT NULL` domain's positions, the

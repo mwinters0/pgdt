@@ -1407,7 +1407,8 @@ shapes ranked above `strings`, and wider on `strings`, where the cells
 meet** ([`roadmap.md`](roadmap.md), "A downstream build is within 3% of
 ours"). On `pgdt sql` it reads 0.98×, 0.065 s, its 2.85–2.90 s wholly above
 fat's 2.75–2.81 s; on `typed` 0.97×, 0.124 s, as wholly above; on `strings`
-0.96×, 0.112 s, the default's one low rep, 2.94 s, inside fat's 2.89–2.95 s.
+0.96×, 0.112 s, the default's one low rep, 2.94 s, inside fat's 2.89–2.95 s,
+so unresolved and the rule holds, by one rep.
 In user time, what a codegen change moves (`raw.json`'s `cpu_seconds`), all
 three are resolved: 0.077 s of the default's 2.432 s on `pgdt sql`, 0.117 s
 of 3.869 s on `typed`, 0.127 s of 2.502 s on `strings`. `parse` cannot

@@ -173,8 +173,11 @@ the table, so they are `compare/walk.rs`, a child the parent never reads.
 
 **The strict parse's codec part is one tree**, `grammar`. `compare`'s plans
 carry `TextGrammar` and its walk calls `text_grammar`, while the refusal checks
-read the plans 104 times, so `grammar.rs` holds the type's grammar alone and
-the checks are its child. `grammar_refuses` and `checked_key` call each other —
+read the plans 104 times, so the type's grammar and the checks are two
+children, and `grammar.rs` is the namespace declaring the concept's three API
+types, `compare`'s plans and pgdt-mapping's strict listing carrying them
+(`../status/history/2026-10-11.md`, "The strict parse's API types, declared by
+`grammar`"). `grammar_refuses` and `checked_key` call each other —
 an array of `box` — and the checks are `checked_key`'s only callers, so it and
 `checked_range` leave `key/order.rs` for `grammar/check.rs`.
 
@@ -188,7 +191,8 @@ compare.rs          namespace: the comparison register — CompareKind … Compa
 pgtype.rs           namespace: a declared type to an Arrow type — TypeOutcome, NestedPlan, the built-in table, user types, domains, extensions; pub use of Position
 nested.rs           namespace: the nested literal, one grammar with two scanners (D45) — pub use of value/nested.rs's 18 items, off the crate root
 resolve.rs          a COPY header's columns joined against the declared schema (+ resolve/tests.rs, out of line)
-grammar.rs          which grammar reads a column's text: TextGrammar, Geometric, text_grammar
+grammar.rs          namespace: the strict parse's codec part — pub use of TextGrammar, Geometric, Unchecked
+  grammar/input.rs  which grammar reads a column's text: TextGrammar, Geometric, text_grammar
   grammar/check.rs  whether PostgreSQL refuses a field: field_refused, grammar_refuses, checked_key, checked_range, column_grammar, Unchecked, unchecked_positions
   grammar/form.rs   the form a filter's literal has to take: accepted_form, nested_accepted_form
 unrepresentable.rs  a field's tier against its Arrow type

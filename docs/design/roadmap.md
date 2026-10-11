@@ -275,13 +275,16 @@ decided on its own figures, not by this order.
 **An embedder compiles our crates under their own profile, and Cargo's default
 release profile is the one to assume** — no cross-crate LTO, sixteen codegen
 units. Our `[profile.release]` never reaches their build, and across a crate
-boundary a function that is neither generic nor `#[inline]` is not inlined
-without LTO. So **the shipped profile buys at most 3% over Cargo's default** on
-each workload the order above ranks, the first-ranked first; a wider gap is
-closed in the code — `#[inline]` on a hot cross-crate call, or a call that no
-longer crosses — never left to the profile. The `release-profile` figure's
-`release-default` leg is that build, and its gap to the shipped leg is this
-rule's check.
+boundary a function that is neither generic, `#[inline]`, nor small enough for
+rustc's automatic cross-crate inlining is not inlined without LTO. So **the
+shipped profile buys at most 3% over Cargo's default in wall clock**, the wait
+the embedder's user feels, on each workload the order above ranks, the
+first-ranked first — 3% being the order's "small", so a gap the figure does not
+resolve passes ("Where a setting trades one workload for another, the typed
+DataFusion query wins"). A wider gap is closed in the code — `#[inline]` on a
+hot cross-crate call, or a call that no longer crosses — never left to the
+profile. The `release-profile` figure's `release-default` leg is that build,
+and its gap to the shipped leg is this rule's check.
 
 ### Coverage increases monotonically
 

@@ -109,7 +109,10 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 - [ ] **35.20** pgdt-query's `options.rs`, `render.rs`, `batch/` and `stream/`, the replay nested under `stream/replay/`
 - [ ] **35.21** datafusion-pgdump's `filter/`: the leaf builders in its parent, the static and dynamic translations its children; and `lib.rs` declaring, `Error` in `error.rs` and what else it defines moved below its readers
 - [ ] **35.22** `pgdt` a module a subcommand, each owning its flags as a `#[derive(Args)]` struct, `--filter`'s and `--where`'s grammar one `query/filter/`, `tests.rs` split beside them
+- [ ] **35.25** pgdt-codec's `grammar` an API namespace declaring `TextGrammar`, `Geometric` and `Unchecked`, defined in `grammar/input.rs` and `grammar/check.rs`; `compare`'s `pub use` of them removed, `layering.py`'s `NAMESPACES` gaining `grammar`, and every `compare::` path to them repointed
+- [ ] **35.26** `pgdt-fixtures`, a test-only member at the bottom of the graph holding the fixture vocabulary — paths, the sweep's enumerator, the sandboxes, `REFUSED_FIELDS`, `edge_cases.sql` — and behind a `mapping` feature the sweep's request builders; every crate's tests dev-depend on it, every cross-crate `#[path]` include and every copy in `pgdt` and `datafusion-pgdump` replaced, `check.py`'s `#[path]` arm removed, and D68 and `layering.py`'s `GRAPH` amended
 - [ ] **35.12** The closing seams round: no file past any limit but an exemption, and every crate read for the `seams` skill's "Antipatterns"
+- [ ] **35.24** The `release-profile` figure's third sitting, on the tree 35.12 leaves and carrying M222's `instructions:u`: the downstream-build rule read on it, its attribution clause applied to any workload failing the gate, and D105's Reopens read against the count
 
 ## Not started
 
@@ -141,53 +144,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **M221's fold read the downstream-build rule in wall clock, and filed no
-  obligation.** The `release-profile` sitting at `2df93720`
-  ([`../design/measurements.md`](../design/measurements.md), "What link-time
-  optimization buys the shipped build") holds the default leg within 3% of
-  `release-fat` in wall clock on `pgdt sql` and on `typed`, and not on
-  `strings`, where its one low rep meets fat's cell; in user time, what a
-  codegen change moves, it trails by more on all three. The fold read the
-  rule ([`../design/roadmap.md`](../design/roadmap.md), "A downstream build is
-  within 3% of ours") as holding: the figure's column is wall clock, the wait
-  a user feels; a gap the cells do not resolve is small by the same rule; and
-  every gap that widened since `6b759eaf` widened by the fat leg moving, the
-  default leg unmoved, by the size fat has swung against thin between
-  neighbouring trees, so layout rather than lost inlining is the candidate.
-  Reading the rule in user time, or `strings`' gap as resolved, owes the
-  rule's remedy instead: `#[inline]` on the hot cross-crate calls of the
-  `pgdt sql` and `strings` paths, admitted as an out-of-band row, the figure's
-  next sitting its check.
-
-- **35.16 put the strict parse's three API types in `compare`.**
-  `TextGrammar`, `Geometric` and `Unchecked` were `pgtype`'s API, and 35.11's
-  design moves them to `grammar.rs`, a private module, naming no namespace to
-  declare them. `pgdt_codec::compare` now does (`pub use`): the register's
-  `NestedCompare::Uncomparable` carries a `TextGrammar`, and `Unchecked` is
-  what `unchecked_positions` reads off a plan — so an embedder reading
-  `StrictUnchecked`'s reasons names `compare::Unchecked`. A `grammar`
-  namespace was the alternative; since 35.17 the checks and forms are its
-  private children (`grammar/check.rs`, `grammar/form.rs`), so it would need
-  only `text_grammar` and the two types `grammar.rs` defines moved to a child
-  of their own. Reconsidering moves the `pub use` lines and every
-  `compare::Unchecked`, `compare::TextGrammar` path above the codec, and adds
-  a namespace to `layering.py` if it is `grammar`
-  ([`../design/roadmap-P35.16-compare-grammar-notes.md`](../design/roadmap-P35.16-compare-grammar-notes.md)).
-
-- **35.18 put the integration tests' fixture vocabulary in `pgdt-mapping`'s
-  `tests/common/`, and pgdt-query's includes it by `#[path]`.** Six test
-  files exercise pgdt-mapping's API alone and moved there, as the spec's
-  "lowest crate whose API it exercises" asks, and each speaks the shared
-  vocabulary — fixture paths and the refused-field list. Moved down and
-  included from above by path, as `pgdt` and `datafusion-pgdump` already
-  included `refused.rs`, it stays one copy; `scripts/check.py` now follows a
-  `#[path]`, so a fixture change still reaches pgdt-query's sweeps. The cost
-  is rust-analyzer's: it resolves nothing in a file a package loads from
-  outside its own directory, so in pgdt-query's integration tests every
-  `common::` item is unresolved in the IDE and the index, and two closures
-  resting on one crashed `rust-analyzer scip`, which `module_graph.py` runs
-  (rewritten). The alternatives are a dev-only fixtures crate both
-  dev-depend on, a member `layering.py`'s graph would have to place, or the
-  six tests left in pgdt-query. Reconsidering moves `tests/common/` once
-  more, and keeps `check.py`'s `#[path]` arm for `refused.rs` or drops it
-  ([`../design/roadmap-P35.18-mapping-notes.md`](../design/roadmap-P35.18-mapping-notes.md)).
