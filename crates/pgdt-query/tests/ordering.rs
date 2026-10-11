@@ -5,7 +5,7 @@
 //! The library-level tests only — everything here drives `table_stream`
 //! directly against real `pg_dump` output, so each column is compared
 //! through the decoder its own DDL resolved to. The unit tests in
-//! `src/predicate.rs` cover the comparison itself against hand-built
+//! `src/predicate/tests.rs` cover the comparison itself against hand-built
 //! schemas; the flags are pinned in `crates/pgdt/tests/query_ordering.rs`.
 
 use futures::StreamExt;

@@ -63,7 +63,7 @@ pub fn nested_accepted_form(plan: &NestedCompare) -> String {
 /// `Error::PredicateValueDecode`'s sentence — read after "which is written".
 ///
 /// It lives beside the grammar rather than beside [`CompareKind`] because it
-/// describes what [`literal_key`] and `pgdt_query::predicate::equality_comparison` accept, which is
+/// describes what [`literal_key`] and `pgdt_query::predicate::resolve::equality_comparison` accept, which is
 /// each type's `*_out` form, widened by an integer's sign and leading zeros,
 /// a float's sign, bare point, exponent case and `inf` or `nan` in any case,
 /// a `uuid` or `macaddr` hex digit's case, a `uuid`'s omitted hyphens,

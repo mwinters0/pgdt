@@ -6535,6 +6535,10 @@ MAP_BUILD = (*MAP, *STREAM)
 #: which is the same shape of blindness the read path had before `READ`.
 PREDICATE = (
     "crates/pgdt-query/src/predicate.rs",
+    *(
+        f"crates/pgdt-query/src/predicate/{name}.rs"
+        for name in ("eval", "notes", "resolve", "truths")
+    ),
     "crates/pgdt-codec/src/key.rs",
     "crates/pgdt-codec/src/value.rs",
     "crates/pgdt-codec/src/value/datetime.rs",
@@ -10638,7 +10642,7 @@ FIGURES: list[Figure] = [
         run=run_projection_widths,
     ),
     # The only figure in the register that passes a filter, and therefore the
-    # only one a change to `predicate.rs` can move. `depends` carries the scan
+    # only one a change to `predicate.rs` or `predicate/` can move. `depends` carries the scan
     # path for the same reason `projection-widths` does — every row is an
     # absolute reading of replay with nothing decoded — and `QUERY_CLI`
     # because `--where` is parsed there. `batch.rs` is deliberately absent:

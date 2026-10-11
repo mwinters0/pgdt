@@ -218,17 +218,15 @@ The filter expression — terms, membership, three-valued evaluation, its
 resolution against a block, a filter refined while a query runs — and each
 front end's spelling of it ([`decisions.md`](decisions.md), "Predicates").
 
-- **pgdt-query** — `predicate.rs`, `stream/dynamic.rs`: it evaluates the rows
-  the batcher splits.
+- **pgdt-query** — `predicate/`, `stream/dynamic.rs`: it evaluates the rows
+  the batcher splits, and answers a row group off its statistics for pruning
+  to read.
 - **pgdt** — `where_expr.rs`: `--where`'s grammar, a front end's own syntax.
 - **datafusion-pgdump** — `pushdown.rs`, `dynamic_filter.rs`,
   `unrepresentable.rs`: DataFusion's expressions as the library's filter tree.
 
-**Not in one place.** Resolution: `resolve_expr` and `resolve_loosened` are in
-`stream/resolve.rs`, `resolve_term` in `predicate.rs`. `--filter`'s term
-grammar is in `pgdt`'s `main.rs`, and `where_expr.rs` calls back into it for
-its leaves. The truth sets over a group's statistics are in `predicate.rs`,
-read by `prune.rs` alone.
+**Not in one place.** `--filter`'s term grammar is in `pgdt`'s `main.rs`, and
+`where_expr.rs` calls back into it for its leaves.
 
 ## Strict parse
 
@@ -263,8 +261,6 @@ a table's summary, DataFusion's statistics, `pgdt info --detail`
 - **datafusion-pgdump** — `statistics.rs`: the map's statistics as
   DataFusion's.
 - **pgdt** — `info_statistics.rs`: what `pgdt info --detail` prints of them.
-
-**Not in one place.** The truth sets are in pgdt-query's `predicate.rs`.
 
 ## The replay
 

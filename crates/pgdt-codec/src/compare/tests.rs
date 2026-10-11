@@ -792,7 +792,7 @@ fn a_position_with_no_order_refuses_the_whole_column() {
         // An element this walk cannot find, `types` declaring no
         // `public.intarr`: refused as an unknown type. The fixture's own
         // `public.intarr`, an array element that is itself an array
-        // (I26), is the oracle walk's (`predicate.rs`'s `REFUSED`).
+        // (I26), is the oracle walk's (pgdt-query's `predicate/tests.rs`, `REFUSED`).
         ("public.intarr[]", "[]", "public.intarr", false),
     ] {
         let plan = comparison_for(declared, None, &types, &[]);

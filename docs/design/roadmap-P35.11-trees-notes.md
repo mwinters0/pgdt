@@ -353,73 +353,8 @@ beside `key`, which dev-depends on pgdt-dump (`preamble_only`) and tokio for
 them; `layering.py` reads no dev-dependency. `oracle_register.py:216` names
 `predicate/tests.rs` and a test in it, and follows the test.
 
-The 35.19 and 35.20 cuts' moves, projected against `2ea0056b` with no cycle:
-
-```moves
-# 35.19: the predicate as one tree
-pgdt-query::predicate::ComparisonNote -> pgdt-query::predicate::notes
-pgdt-query::predicate::column_divergences -> pgdt-query::predicate::notes
-pgdt-query::predicate::compares_as_declared -> pgdt-query::predicate::notes
-pgdt-query::predicate::DivergingPosition -> pgdt-query::predicate::notes
-pgdt-query::predicate::postgres_divergences -> pgdt-query::predicate::notes
-pgdt-query::predicate::datafusion_divergences -> pgdt-query::predicate::notes
-pgdt-query::predicate::NOT_MAPPED -> pgdt-query::predicate::notes
-pgdt-query::predicate::NESTED -> pgdt-query::predicate::notes
-pgdt-query::predicate::NESTED_IN_DATAFUSION -> pgdt-query::predicate::notes
-pgdt-query::predicate::NO_ORDER -> pgdt-query::predicate::notes
-pgdt-query::predicate::nested_refusal -> pgdt-query::predicate::notes
-pgdt-query::predicate::unanswerable_reason -> pgdt-query::predicate::notes
-
-pgdt-query::predicate::ResolvedTerm -> pgdt-query::predicate::resolve
-pgdt-query::predicate::ResolvedMembership -> pgdt-query::predicate::resolve
-pgdt-query::predicate::ResolvedExpr -> pgdt-query::predicate::resolve
-pgdt-query::predicate::resolve_term -> pgdt-query::predicate::resolve
-pgdt-query::predicate::resolve_membership -> pgdt-query::predicate::resolve
-pgdt-query::predicate::believed_bounds -> pgdt-query::predicate::resolve
-pgdt-query::predicate::BelievedStatistics -> pgdt-query::predicate::resolve
-pgdt-query::predicate::ComparedTerm -> pgdt-query::predicate::resolve
-pgdt-query::predicate::Comparison -> pgdt-query::predicate::resolve
-pgdt-query::predicate::NestedComparison -> pgdt-query::predicate::resolve
-pgdt-query::predicate::Spellings -> pgdt-query::predicate::resolve
-pgdt-query::predicate::equality_comparison -> pgdt-query::predicate::resolve
-pgdt-query::predicate::not_null_column -> pgdt-query::predicate::resolve
-pgdt-query::predicate::null_refused -> pgdt-query::predicate::resolve
-pgdt-query::predicate::named_in -> pgdt-query::predicate::resolve
-pgdt-query::predicate::Lookup -> pgdt-query::predicate::resolve
-pgdt-query::stream::resolve::resolve_expr -> pgdt-query::predicate::resolve
-pgdt-query::stream::resolve::resolve_loosened -> pgdt-query::predicate::resolve
-pgdt-query::stream::resolve::column_position -> pgdt-query::predicate::resolve
-
-pgdt-query::predicate::ResolvedTerm::eval -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedTerm::eval_value -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedTerm::field_decode -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedTerm::as_read -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedTerm::is_false -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedTerm::wants_equal -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedMembership::unmatched -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedMembership::eval_value -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedMembership::eval -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedMembership::implies -> pgdt-query::predicate::eval  # read by for_rows alone
-pgdt-query::predicate::ResolvedExpr::matches -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedExpr::eval -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedExpr::for_rows -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedExpr::conjuncts -> pgdt-query::predicate::eval
-pgdt-query::predicate::ResolvedExpr::reads_fields -> pgdt-query::predicate::eval
-pgdt-query::predicate::Lookup::contains -> pgdt-query::predicate::eval
-
-pgdt-query::predicate::ResolvedTerm::truths -> pgdt-query::predicate::truths
-pgdt-query::predicate::ResolvedTerm::truths_keyed -> pgdt-query::predicate::truths
-pgdt-query::predicate::ResolvedTerm::value_truths -> pgdt-query::predicate::truths
-pgdt-query::predicate::ResolvedTerm::bounded -> pgdt-query::predicate::truths
-pgdt-query::predicate::ResolvedMembership::truths -> pgdt-query::predicate::truths
-pgdt-query::predicate::ResolvedMembership::truths_keyed -> pgdt-query::predicate::truths
-pgdt-query::predicate::ResolvedExpr::truths -> pgdt-query::predicate::truths
-pgdt-query::predicate::ResolvedExpr::truths_keyed -> pgdt-query::predicate::truths
-pgdt-query::predicate::ResolvedExpr::required_ordering_terms -> pgdt-query::predicate::truths  # a sorted run's stop, off believed bounds
-pgdt-query::predicate::TruthSet -> pgdt-query::predicate::truths
-pgdt-query::predicate::GroupStatistics -> pgdt-query::predicate::truths
-pgdt-query::predicate::KeyedBounds -> pgdt-query::predicate::truths
-```
+35.19 cut the predicate. The 35.20 cut's moves, projected against `2ea0056b`
+with no cycle:
 
 ```moves
 # 35.20: options, render, batch and the stream

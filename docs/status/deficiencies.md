@@ -304,7 +304,7 @@ than reading as a phase nobody has sliced.
   costing row's evaluation, where a fast hasher seeded once a process would
   keep a flooded list's defence at a fraction of the cost. **(c) unowned**;
   promoted by row evaluation going on by default, or a figure pricing
-  `pgdt --where`'s `in (…)`. Detail: `crates/pgdt-query/src/predicate.rs`.
+  `pgdt --where`'s `in (…)`. Detail: `crates/pgdt-query/src/predicate/resolve.rs`.
 
 - **KD56** — an ungrouped aggregate's dynamic filter drops a column's bounds
   in DataFusion 55.1 while a batch of it holds no value, so a scan pruning
@@ -351,7 +351,7 @@ than reading as a phase nobody has sliced.
   never writes — `1.005` in a `numeric(10,2)`, a braced `uuid` — is missed
   where a typed read and an ordering operator take its value. **(c)
   unowned**; promoted by a user meeting it. Detail:
-  `crates/pgdt-query/src/predicate.rs`.
+  `crates/pgdt-query/src/predicate/resolve.rs`.
 
 - **KD84** — an `oid` written with a leading zero, which no `pg_dump` writes,
   is read in decimal as v15 and earlier read it, where v16 and later read it
@@ -370,7 +370,7 @@ than reading as a phase nobody has sliced.
   though the server may hold the label. **(c)
   unowned**; promoted by a hand-written dump renaming or adding a label in a
   statement this build does not read. Detail:
-  `crates/pgdt-query/src/predicate.rs`.
+  `crates/pgdt-query/src/predicate/resolve.rs`.
 
 - **KD87** — an enum's labels changed by code this build does not read as an
   `ALTER TYPE` — a `DO` block, a function a statement calls, a write to

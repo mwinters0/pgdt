@@ -1,12 +1,12 @@
 use super::map_query::map_for_query;
 use super::partition::{derived_source_span, distribute, plan_partitions};
 use super::plan::{ReplayPlan, resolve_for_query};
-use super::resolve::{query_fingerprint, resolve_expr};
+use super::resolve::query_fingerprint;
 use super::segment::{Segment, SegmentEntry, activate};
 use super::table::{PlannedReplay, plan_replay, resolve_block};
 use super::*;
 use crate::batch::{QueryOptions, ScanExtent};
-use crate::predicate::{Expr, PredicateOp};
+use crate::predicate::{Expr, PredicateOp, resolve_expr};
 use crate::prune::{DynamicPruning, prune_block};
 use bytes::Bytes;
 use pgdt_codec::SchemaMode;

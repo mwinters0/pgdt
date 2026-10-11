@@ -109,7 +109,7 @@ OWED: dict[frozenset[str], str] = {
             "pgdt-query::stream::table_partitions",
             "pgdt-query::summary",
         }
-    ): "P35.19 and P35.20, whose tree P35.11's design says the stream's cycles fall to",
+    ): "P35.20, whose tree P35.11's design says the stream's cycles fall to",
 }
 
 #: How many references are shown for each edge of a cycle.

@@ -347,7 +347,7 @@ mod oracle {
     ///   function; `numrange` has none and is absent here for that reason.
     ///   That one **is** closed, one layer up rather than here: the
     ///   comparison rewrites the decoded bounds (I46, and
-    ///   `predicate.rs`'s `a_range_literal_is_canonicalized_before_it_is_compared`
+    ///   `predicate/tests.rs`'s `a_range_literal_is_canonicalized_before_it_is_compared`
     ///   asserts it over these same rows), where this parser deliberately
     ///   hands back the bounds as written. `parse_range` may not tighten and
     ///   `render_range` may not rewrite — the pair is the container grammar
@@ -365,8 +365,9 @@ mod oracle {
     /// order, which needs the subtype's comparison. Asserted as an exact set
     /// for the same reason as the two above.
     ///
-    /// **The refusal exists, one layer up**: `predicate.rs`'s `make_range`
-    /// raises `Error::PredicateValueDecode` for exactly this literal (I46).
+    /// **The refusal exists, one layer up**: pgdt-codec's `make_range`
+    /// refuses exactly this literal, which a filter raises as
+    /// `Error::PredicateValueDecode` (I46).
     /// This entry is not that refusal going missing — it is the statement
     /// that the *grammar* cannot make it, which is why the comparison layer
     /// has to.

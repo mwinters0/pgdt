@@ -1,6 +1,7 @@
-//! A block's state while a query reads it, the query's filter and
-//! projection resolved against one block's own column order, and the stamp a
-//! resume token carries of the query that produced it.
+//! A block's state while a query reads it, the query's projection resolved
+//! against one block's own column order — its filter is resolved by
+//! [`crate::predicate::resolve_expr`] — and the stamp a resume token carries
+//! of the query that produced it.
 
 use std::sync::Arc;
 
@@ -13,9 +14,7 @@ use pgdt_core::{Error, Result};
 use pgdt_dump::Row;
 
 use crate::batch::{QueryOptions, RowBatcher};
-use crate::predicate::{
-    ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_membership, resolve_term,
-};
+use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr};
 
 /// State for a `COPY` block whose table matches the query: the batcher
 /// accumulating its rows, `QueryOptions::filter` resolved against this block's
@@ -48,123 +47,6 @@ pub(super) fn render_candidate((database, qualified_name): &(Option<String>, Str
     match database {
         Some(db) => format!("{db}.{qualified_name}"),
         None => qualified_name.clone(),
-    }
-}
-
-/// Resolve `filter` against `resolved` — the block's own **unprojected**
-/// schema — once per block, returning the same tree with every leaf
-/// resolved. The empty conjunction resolves to an empty conjunction.
-///
-/// **This is where a predicate is validated against a block**, and the only
-/// place (`docs/design/decisions.md`, "D54"): a term naming a column this
-/// block does not carry is `Error::UnknownPredicateColumn`, an ordering
-/// operator on a column the register gives no order is
-/// `Error::UnorderedPredicateColumn`, any comparing operator on a column whose
-/// server comparison is not a text one is `Error::UncomparablePredicateColumn`,
-/// and a literal that is not a value of
-/// the column's type — `=` included — is `Error::PredicateValueDecode`. All
-/// are raised for the first offending term in a left-to-right walk. The plan
-/// runs it for every block before any is read, and raises the first refusing
-/// block's refusal in file order before any row of the table
-/// ([`plan_blocks`](super::plan::plan_blocks)). It takes the whole [`ResolvedSchema`] because the ordering
-/// refusal reads `columns` and `plans` too.
-pub(super) fn resolve_expr(
-    filter: &Expr,
-    resolved: &ResolvedSchema,
-    header_offset: u64,
-    semantics: ComparisonSemantics,
-) -> Result<ResolvedExpr> {
-    let branch = |children: &[Expr]| {
-        children
-            .iter()
-            .map(|child| resolve_expr(child, resolved, header_offset, semantics))
-            .collect::<Result<Vec<_>>>()
-    };
-    let column = |name: &str| {
-        column_position(resolved, name).ok_or_else(|| Error::UnknownPredicateColumn {
-            header_offset,
-            column: name.to_string(),
-        })
-    };
-    Ok(match filter {
-        Expr::Term(predicate) => ResolvedExpr::Term(resolve_term(
-            predicate,
-            column(&predicate.column)?,
-            resolved,
-            header_offset,
-            semantics,
-        )?),
-        Expr::In(membership) => ResolvedExpr::In(resolve_membership(
-            membership,
-            column(&membership.column)?,
-            resolved,
-            header_offset,
-            semantics,
-        )?),
-        Expr::And(children) => ResolvedExpr::And(branch(children)?),
-        Expr::Or(children) => ResolvedExpr::Or(branch(children)?),
-        Expr::Not(inner) => {
-            ResolvedExpr::Not(Box::new(resolve_expr(inner, resolved, header_offset, semantics)?))
-        }
-    })
-}
-
-/// Where the column `name` sits in the block's unprojected schema.
-fn column_position(resolved: &ResolvedSchema, name: &str) -> Option<usize> {
-    resolved.schema.fields().iter().position(|f| f.name() == name)
-}
-
-/// A [`DynamicFilter`](super::dynamic::DynamicFilter)'s state resolved as [`resolve_expr`] resolves a static
-/// filter, but **never refused**: a term this block cannot resolve stands as
-/// whatever keeps every row where it sits — the empty conjunction beneath an
-/// even number of `Not`s, the empty disjunction beneath an odd one — since a
-/// dynamic filter only ever licenses dropping rows, and a term it cannot
-/// state here licenses nothing.
-pub(super) fn resolve_loosened(
-    filter: &Expr,
-    resolved: &ResolvedSchema,
-    header_offset: u64,
-    semantics: ComparisonSemantics,
-    negated: bool,
-) -> ResolvedExpr {
-    let branch = |children: &[Expr]| {
-        children
-            .iter()
-            .map(|child| resolve_loosened(child, resolved, header_offset, semantics, negated))
-            .collect()
-    };
-    let leaf = match filter {
-        // No producer states one, and a block reading a state holds no test
-        // for it to read (`resolve_for_query`'s `testing`), so it stands as
-        // whatever keeps every row.
-        Expr::Term(predicate) if predicate.op.tests_unrepresentable() => None,
-        Expr::Term(predicate) => column_position(resolved, &predicate.column).and_then(|index| {
-            resolve_term(predicate, index, resolved, header_offset, semantics)
-                .ok()
-                .map(ResolvedExpr::Term)
-        }),
-        Expr::In(membership) => column_position(resolved, &membership.column).and_then(|index| {
-            resolve_membership(membership, index, resolved, header_offset, semantics)
-                .ok()
-                .map(ResolvedExpr::In)
-        }),
-        _ => None,
-    };
-    match filter {
-        Expr::Term(_) | Expr::In(_) => match (leaf, negated) {
-            (Some(leaf), _) => leaf,
-            (None, false) => ResolvedExpr::And(Vec::new()),
-            (None, true) => ResolvedExpr::Or(Vec::new()),
-        },
-        Expr::And(children) => ResolvedExpr::And(branch(children)),
-        Expr::Or(children) => ResolvedExpr::Or(branch(children)),
-        Expr::Not(inner) => ResolvedExpr::Not(Box::new(resolve_loosened(
-            inner,
-            resolved,
-            header_offset,
-            semantics,
-            !negated,
-        ))),
     }
 }
 

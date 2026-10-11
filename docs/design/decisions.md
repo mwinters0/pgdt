@@ -282,7 +282,7 @@ and widens only a column the map says its front end cannot hold (D100). Rejected
 
 ### D40 The comparison is decided per declared type, in the same arm
 `builtin_scalar` answers Arrow type and `CompareKind` both, per declared type and `COLLATE`; types
-sharing `Utf8View` compare differently, and neither `predicate.rs` nor `key.rs` reads the Arrow type. DataFusion
+sharing `Utf8View` compare differently, and neither `predicate/` nor `key.rs` reads the Arrow type. DataFusion
 semantics, one per query lest rows depend on what a plan pushes, maps each kind (`datafusion_order`); no
 term says a divergence (D59); every text-emitted kind maps to `Text`, `macaddr` too though its file
 text orders as its octets, since a user's literal is compared bytewise. Rejected: a nested column

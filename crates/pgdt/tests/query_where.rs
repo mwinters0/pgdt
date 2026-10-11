@@ -2,7 +2,7 @@
 //! (`docs/design/decisions.md`, "D60", and "Predicates").
 //!
 //! What an expression *means* is pinned against the library in
-//! `crates/pgdt-query/tests/batch.rs` and `crates/pgdt-query/src/predicate.rs`; the
+//! `crates/pgdt-query/tests/batch.rs` and `crates/pgdt-query/src/predicate/eval/tests.rs`; the
 //! grammar's own shape is unit-tested in `crates/pgdt/src/where_expr.rs`. What only
 //! the binary can say is that the flag reaches the evaluator, that `OR` and
 //! `NOT` change which rows come back, that `--where` and `--filter` compose,

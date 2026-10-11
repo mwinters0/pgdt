@@ -14,7 +14,7 @@
 //! **A NULL in a list is referred to a membership of that NULL alone**, the
 //! `Or` of `=` having no NULL literal: `c IN (a, NULL)` against
 //! `c = a OR c IN (NULL)`. What `c IN (NULL)` answers is pinned apart, by
-//! `predicate.rs`'s own tests, against a term over a field the row lacks.
+//! `predicate/eval/tests.rs`, against a term over a field the row lacks.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;

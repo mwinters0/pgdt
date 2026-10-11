@@ -490,7 +490,7 @@ pub fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
 /// A `macaddr`/`macaddr8` literal in `macaddr_out`'s own spelling: `octets`
 /// lowercase hex pairs joined by colons (I40). Those two rules are the whole
 /// of that output function, which is why this type canonicalizes where the
-/// two beside it decode per row — see `pgdt_query::predicate::equality_comparison`.
+/// two beside it decode per row — see `pgdt_query::predicate::resolve::equality_comparison`.
 pub fn render_macaddr(text: &str, octets: usize) -> Option<String> {
     let OrderKey::Bytes(bytes) = macaddr_key(text, octets)? else {
         unreachable!("`macaddr_key` yields its octets")

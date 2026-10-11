@@ -17,11 +17,11 @@ use pgdt_dump::ScanOptions;
 use pgdt_model::{CopyBlock, DumpMetadata, Unrepresentable, UnrepresentableTier};
 
 use super::note::{PlanNote, PlanNoteKind};
-use super::resolve::{project, resolve_expr};
+use super::resolve::project;
 use super::segment::{Segment, SegmentEntry};
 use super::table::{TableColumns, refuse_metadata_level, resolve_block};
 use crate::batch::QueryOptions;
-use crate::predicate::{ComparisonNote, ResolvedExpr};
+use crate::predicate::{ComparisonNote, ResolvedExpr, resolve_expr};
 use crate::prune::{SortedStop, prune_block};
 
 /// Everything a replay needs that the mapping pass produced, shared unchanged

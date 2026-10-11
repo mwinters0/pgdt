@@ -18,10 +18,9 @@ use pgdt_core::{
 use pgdt_model::{BlockStatistics, CopyBlock, PostgresInvalidValues};
 
 use super::plan::{ReplayPlan, query_reads};
-use super::resolve::resolve_loosened;
 use super::table::resolve_block;
 use super::table_partitions::Cut;
-use crate::predicate::{Expr, ResolvedExpr};
+use crate::predicate::{Expr, ResolvedExpr, resolve_loosened};
 use crate::prune::{DynamicPruning, SortedStop};
 
 /// A filter a query's consumer refines while the query runs — a hash join's
