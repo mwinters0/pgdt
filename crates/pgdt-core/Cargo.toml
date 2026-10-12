@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
-# The introspection build's hooks (`src/instrument.rs`): which allocations are
+# The introspection build's hooks (`src/instrument/`): which allocations are
 # statistics, and what a dynamic filter's row evaluation spends, for `pgdt`'s
 # counting allocator and report. Every crate compiling a hook names its own
 # `introspect`, turning this one on, since a `cfg` is read where the code is

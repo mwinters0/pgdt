@@ -23,11 +23,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub mod internal {
     pub use crate::copy::{Cursor, hex_val};
     pub use crate::error::OVERWRITE_WAYS_OUT;
-    pub use crate::instrument::hooks::{
-        DecodeCounter, StatisticsScope, statistics_account_updated,
-    };
+    pub use crate::instrument::decode::DecodeCounter;
     #[cfg(feature = "introspect")]
-    pub use crate::instrument::hooks::{evaluated_row, statistics_loaded, timed_span};
+    pub use crate::instrument::evaluation::{evaluated_row, timed_span};
+    #[cfg(feature = "introspect")]
+    pub use crate::instrument::statistics::statistics_loaded;
+    pub use crate::instrument::statistics::{StatisticsScope, statistics_account_updated};
     pub use crate::type_name::{canonical_type_name, parse_type_name};
     pub use crate::{row_evaluated, timed};
 }
