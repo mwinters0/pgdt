@@ -41,7 +41,7 @@ pub enum PlanLever {
     /// A smaller read chunk (`pgdt_dump::ScanOptions::chunk_size_bytes`) —
     /// listed only where the source sizes a reader from it
     /// ([`pgdt_io::Partitioning::sized_by_read_chunk`]) or the batch span
-    /// the plan charged sits on the chunk floor ([`derived_source_span`](super::replay::partition::derived_source_span)),
+    /// the plan charged sits on the chunk floor (`derived_source_span`),
     /// never for a span stated below the chunk, which is charged as stated.
     SmallerReadChunk,
     /// Fewer sub-streams asked for (`Parallelism::jobs`), which leaves each a
@@ -63,7 +63,7 @@ pub enum PlanNoteKind {
     ///
     /// **`max_source_span` here is what was charged, not what was stated**:
     /// the span is derived down before the count is cut
-    /// ([`derived_source_span`](super::replay::partition::derived_source_span)), so this note beside a
+    /// (`derived_source_span`), so this note beside a
     /// [`PlanNoteKind::BatchSpanNarrowed`] names that smaller number and the
     /// span is not among the levers left.
     ///
@@ -78,7 +78,7 @@ pub enum PlanNoteKind {
     /// never announces (`KD41`), and which a source cutting by it sizes
     /// `footprint` from, a fixed multiple of it
     /// (`pgdt_io::Partitioning::partition_bytes`), and which floors the
-    /// span unless the span was stated below it ([`derived_source_span`](super::replay::partition::derived_source_span)).
+    /// span unless the span was stated below it (`derived_source_span`).
     /// The arm with no span names it with that condition; **the span arm
     /// names it only where [`PlanNote::levers`] lists it**, where it moves
     /// one of the two terms, and is otherwise left with the budget alone.
@@ -151,14 +151,14 @@ pub enum PlanNoteKind {
     /// (`crate::options::QueryOptions::max_source_span`) did not leave room for
     /// the workers it asked for, so the plan charged `planned_bytes` instead
     /// of `stated_bytes` and the sub-streams' batches are that much smaller
-    /// ([`derived_source_span`](super::replay::partition::derived_source_span); `docs/design/decisions.md`, "D84").
+    /// (`derived_source_span`; `docs/design/decisions.md`, "D84").
     ///
     /// **Not a shortfall in itself**: `workers` is what the narrowed span did
     /// buy, and where it still came up short of what was asked for a
     /// [`PlanNoteKind::ParallelismBudgetLimited`] says so beside this. A span
     /// at one announced read chunk
     /// (`pgdt_dump::ScanOptions::chunk_size_bytes`) is the floor, and what
-    /// moves a span off it is what [`derived_source_span`](super::replay::partition::derived_source_span) divides: a larger
+    /// moves a span off it is what `derived_source_span` divides: a larger
     /// `memory_bytes`, a smaller `Parallelism::jobs`, or a smaller charge per
     /// reader — which a source sizing its reader from the read chunk
     /// ([`pgdt_io::Partitioning::sized_by_read_chunk`]) lowers with the

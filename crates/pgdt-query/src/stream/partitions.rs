@@ -59,7 +59,7 @@ use crate::summary::partition_orders;
 /// against what the source charges concurrent readers
 /// (`Partitioning::worker_memory`, a shared pool term included) plus, on a
 /// source retaining by chunk alone, what a sub-stream's in-flight batch pins
-/// (`QueryOptions::max_source_span`) — see [`plan_partitions`](super::replay::partition::plan_partitions)
+/// (`QueryOptions::max_source_span`) — see `plan_partitions`
 /// (`docs/design/decisions.md`, "D4").
 pub async fn table_stream_partitions<'a>(
     source: &'a dyn ByteRangeSource,

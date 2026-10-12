@@ -352,7 +352,7 @@ pub(in crate::stream) struct PlannedBlock {
 ///
 /// `counts` is the block's unrepresentable count, where the map holds the
 /// block ([`unrepresentable_reads`]).
-pub(in crate::stream) fn resolve_for_query(
+pub(super) fn resolve_for_query(
     header: &CopyHeader,
     header_offset: u64,
     database: Option<&str>,
@@ -599,7 +599,7 @@ impl TableColumns {
 /// `text` marks, as `census` is taken, each column the untyped mode reads as
 /// its text ([`TableColumns::text_for`]), compared in `semantics`
 /// ([`read_as_text`]).
-pub(in crate::stream) fn resolve_block(
+pub(super) fn resolve_block(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
@@ -725,3 +725,6 @@ pub(in crate::stream) fn plan_replay(
     plan_notes.extend(plan.notes());
     Ok(PlannedReplay { plan: Arc::new(plan), groups, plan_notes, advice })
 }
+
+#[cfg(test)]
+mod tests;

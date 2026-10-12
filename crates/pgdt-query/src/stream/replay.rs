@@ -478,7 +478,7 @@ type Opened = (Active, ResolvedSchema, Vec<ComparisonNote>);
 /// The three places a block becomes active — a `COPY` header the scanner
 /// read, a partition that started inside a block, and a resumed token —
 /// differ only in where the header comes from.
-pub(super) fn activate(
+fn activate(
     header: CopyHeader,
     header_offset: u64,
     database: Option<String>,
@@ -561,3 +561,6 @@ fn row_text<'a>(prefix: &'a str, span_base: u64, row: &Row<'_>) -> Option<&'a st
     let start = usize::try_from(row.offset.checked_sub(span_base)?).ok()?;
     prefix.get(start..start.checked_add(row.raw.len())?)
 }
+
+#[cfg(test)]
+mod tests;

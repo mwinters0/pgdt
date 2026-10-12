@@ -134,7 +134,7 @@ fn compressed_block_path_declined(
 /// to seat what the note promised, the fix being `hint_read_size(chunk_size)`
 /// beside `hint_parallelism` — a plan announcing a read size to a source
 /// other scans share.
-pub(in crate::stream) fn plan_partitions(
+pub(super) fn plan_partitions(
     source: &dyn ByteRangeSource,
     matches: &[CopyBlock],
     kept: &BTreeMap<u64, Vec<Range<u64>>>,
@@ -332,7 +332,7 @@ pub(in crate::stream) fn cut_blocks(
 // count are both fixed at a number picked to answer a different question.
 // **(c) unowned**; closing it means a plain source recommending a per-reader
 // cost, which is `KD25`'s reading.
-pub(in crate::stream) fn derived_source_span(
+fn derived_source_span(
     charge: WorkerMemory,
     parallelism: Parallelism,
     stated: usize,
@@ -353,7 +353,7 @@ pub(in crate::stream) fn derived_source_span(
 /// (`docs/design/decisions.md`, "D51"). The group is chosen from a segment's
 /// **midpoint** in the running total, so one huge piece beside many small ones
 /// does not push everything after it into the last group.
-pub(in crate::stream) fn distribute(segments: Vec<Segment>, streams: usize) -> Vec<Vec<Segment>> {
+fn distribute(segments: Vec<Segment>, streams: usize) -> Vec<Vec<Segment>> {
     let streams = streams.max(1).min(segments.len().max(1));
     if streams == 1 {
         return vec![segments];
@@ -378,3 +378,6 @@ pub(in crate::stream) fn distribute(segments: Vec<Segment>, streams: usize) -> V
     }
     groups
 }
+
+#[cfg(test)]
+mod tests;

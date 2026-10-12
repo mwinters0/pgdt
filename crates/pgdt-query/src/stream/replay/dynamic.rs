@@ -385,3 +385,6 @@ pub(in crate::stream) struct Cut {
     pub(in crate::stream) generation: u64,
     pub(in crate::stream) verdicts: BTreeMap<u64, Vec<Option<bool>>>,
 }
+
+#[cfg(test)]
+mod tests;

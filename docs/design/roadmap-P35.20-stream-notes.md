@@ -38,10 +38,9 @@ edges fell from 206 to 204.
   the builders' round trips to `batch/builder/tests.rs`, the defaults test to
   `options/tests.rs`, the batcher's own left; `prior_shape.rs` and
   `differential.rs` went to `render/`, whose walk they check.
-- **`stream/tests.rs` stays whole**: it mirrors no file, its tests driving the
-  plan, the cut and the replay together through what they share, so no item
-  is held wider for it than the cut already held it. The closing round reads
-  it with the rest.
+- **`stream/tests.rs` was left whole** by this cut; the closing round split
+  it along `replay/`, which narrowed six items it held wider
+  ([`roadmap-P35.12-closing-seams-notes.md`](roadmap-P35.12-closing-seams-notes.md), B30).
 
 ## What later cuts inherit
 
