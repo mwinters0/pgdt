@@ -307,7 +307,7 @@ async fn the_large_object_region_is_one_data_span_on_every_routine_version() {
 }
 
 /// A `CREATE TABLE`'s span carries the name and columns
-/// pgdt-dump's `ddl::classify_statement` parsed out of the statement, that
+/// pgdt-dump's `ddl::classify` parsed out of the statement, that
 /// being the only parser of one in the tree.
 #[tokio::test]
 async fn create_table_span_carries_name_and_columns() {

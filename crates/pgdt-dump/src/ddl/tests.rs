@@ -1,12 +1,12 @@
 use super::*;
-use pgdt_model::ColumnDef;
+use pgdt_model::{ColumnDef, TableDef};
 
 /// Feed `lines` (joined with `\n`, the same way `crate::map::Builder`
-/// accumulates a statement) to [`classify_statement`] and unwrap the
+/// accumulates a statement) to [`classify_create`] and unwrap the
 /// result — the DDL grammar exercised directly, nothing about it
 /// depending on a database-segmenting builder.
-fn parse(lines: &[&str]) -> StatementShape {
-    classify_statement(&lines.join("\n")).unwrap()
+fn parse(lines: &[&str]) -> SpanBody {
+    classify_create(&lines.join("\n")).unwrap()
 }
 
 pub(super) fn parse_table(lines: &[&str]) -> (String, Vec<ColumnDef>) {
@@ -16,21 +16,21 @@ pub(super) fn parse_table(lines: &[&str]) -> (String, Vec<ColumnDef>) {
 
 pub(super) fn parse_table_def(lines: &[&str]) -> (String, TableDef) {
     match parse(lines) {
-        StatementShape::Table { name, definition } => (name, definition),
+        SpanBody::Table { name, definition } => (name, definition),
         other => panic!("expected a Table shape, got {other:?}"),
     }
 }
 
 pub(super) fn parse_type(lines: &[&str]) -> TypeDef {
     match parse(lines) {
-        StatementShape::Type(def) => def,
+        SpanBody::TypeDef { name, kind } => TypeDef { name, kind },
         other => panic!("expected a Type shape, got {other:?}"),
     }
 }
 
 pub(super) fn parse_extension(lines: &[&str]) -> Extension {
     match parse(lines) {
-        StatementShape::Extension(ext) => ext,
+        SpanBody::Extension { name, schema } => Extension { name, schema },
         other => panic!("expected an Extension shape, got {other:?}"),
     }
 }
@@ -58,30 +58,30 @@ fn a_connect_names_its_database_in_either_form() {
 }
 
 #[test]
-fn classify_statement_recognizes_the_four_span_shapes() {
+fn classify_create_recognizes_the_four_span_shapes() {
     assert!(matches!(
-        classify_statement("CREATE TABLE public.t (id integer);"),
-        Some(StatementShape::Table { .. })
+        classify_create("CREATE TABLE public.t (id integer);"),
+        Some(SpanBody::Table { .. })
     ));
     assert!(matches!(
-        classify_statement("CREATE TYPE public.mood AS ENUM ('sad');"),
-        Some(StatementShape::Type(_))
+        classify_create("CREATE TYPE public.mood AS ENUM ('sad');"),
+        Some(SpanBody::TypeDef { .. })
     ));
     assert!(matches!(
-        classify_statement("CREATE EXTENSION pgcrypto;"),
-        Some(StatementShape::Extension(_))
+        classify_create("CREATE EXTENSION pgcrypto;"),
+        Some(SpanBody::Extension { .. })
     ));
     assert!(matches!(
-        classify_statement("CREATE COLLATION public.c (provider = libc, locale = 'C');"),
-        Some(StatementShape::Collation(_))
+        classify_create("CREATE COLLATION public.c (provider = libc, locale = 'C');"),
+        Some(SpanBody::Collation { .. })
     ));
-    assert!(classify_statement("ALTER TABLE t OWNER TO postgres;").is_none());
+    assert!(classify_create("ALTER TABLE t OWNER TO postgres;").is_none());
     assert!(
-        classify_statement("CREATE TABLESPACE fast OWNER postgres LOCATION '/srv/fast';").is_none()
+        classify_create("CREATE TABLESPACE fast OWNER postgres LOCATION '/srv/fast';").is_none()
     );
-    assert!(classify_statement("CREATE TYPES x;").is_none());
-    assert!(classify_statement("ALTER TYPE t ADD VALUE 'x';").is_none());
+    assert!(classify_create("CREATE TYPES x;").is_none());
+    assert!(classify_create("ALTER TYPE t ADD VALUE 'x';").is_none());
     // `ALTER COLLATION ... OWNER TO` follows every `CREATE COLLATION` in
     // a real dump and must not be mistaken for one.
-    assert!(classify_statement("ALTER COLLATION public.c OWNER TO postgres;").is_none());
+    assert!(classify_create("ALTER COLLATION public.c OWNER TO postgres;").is_none());
 }

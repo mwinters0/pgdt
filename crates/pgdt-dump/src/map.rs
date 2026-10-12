@@ -111,9 +111,8 @@ use self::toc::{
     version_header_field,
 };
 use crate::ddl::{
-    StatementShape, alter_type_labels_unread, classify_statement, extract_statement_cross_refs,
-    insert_role, insert_tablespace, parse_alter_table_reference, parse_alter_type_add_value_body,
-    parse_alter_type_drop_attribute_body, parse_connect, parse_qualified_name, strip_kw,
+    classify, extract_statement_cross_refs, insert_role, insert_tablespace, parse_connect,
+    parse_qualified_name,
 };
 use crate::lex::standard_conforming_strings;
 use crate::scan::{CopyEnd, CopyStart};
@@ -121,8 +120,8 @@ use pgdt_core::Result;
 use pgdt_core::internal::StatisticsScope;
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
-    BlockCensus, BlockGathered, CopyBlock, DataBlock, Extension, InsertRun, LargeObjectRegion,
-    Span, SpanBody, TocHeader, TypeDef,
+    BlockCensus, BlockGathered, CopyBlock, DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody,
+    TocHeader,
     internal::{BlockObserver, FieldCount},
 };
 
@@ -381,8 +380,8 @@ impl Builder {
     /// statement this module classifies is scanned exactly once.
     ///
     /// A statement that classifies as `Framing` never inherits, even when
-    /// `toc`/`toc_owned` arrived carrying an inherited value: `classify`
-    /// decides the span's final kind, so the veto has to follow that decision
+    /// `toc`/`toc_owned` arrived carrying an inherited value: the
+    /// classification decides the span's final kind, so the veto has to follow that decision
     /// rather than sit at the `Mode::Idle`→`Statement` transition that seeds
     /// it (`docs/design/decisions.md`, "D31").
     fn push_statement_span(
@@ -393,7 +392,8 @@ impl Builder {
         toc_owned: bool,
     ) {
         extract_statement_cross_refs(buf, &mut self.roles, &mut self.tablespaces);
-        let body = classify(buf);
+        let body =
+            if looks_like_framing_statement(buf) { SpanBody::Framing } else { classify(buf) };
         let (toc, toc_owned) =
             if matches!(body, SpanBody::Framing) { (None, false) } else { (toc, toc_owned) };
         self.push_span(start, body, toc, toc_owned);
@@ -1087,35 +1087,6 @@ fn looks_like_framing_statement(stmt: &str) -> bool {
             && trimmed.as_bytes()[..kw.len()].eq_ignore_ascii_case(kw.as_bytes())
     };
     upper_prefix("SET ") || upper_prefix("SELECT pg_catalog.set_config(")
-}
-
-fn classify(stmt: &str) -> SpanBody {
-    if looks_like_framing_statement(stmt) {
-        return SpanBody::Framing;
-    }
-    if let Some(rest) = strip_kw(stmt.trim_start(), "ALTER TYPE") {
-        if let Some((type_name, label)) = parse_alter_type_add_value_body(rest) {
-            return SpanBody::AlterTypeAddValue { type_name, label };
-        }
-        if let Some((type_name, attribute)) = parse_alter_type_drop_attribute_body(rest) {
-            return SpanBody::AlterTypeDropAttribute { type_name, attribute };
-        }
-        if let Some(type_name) = alter_type_labels_unread(rest) {
-            return SpanBody::EnumLabelsUnread { type_name };
-        }
-    }
-    if let Some((table, reference)) = parse_alter_table_reference(stmt) {
-        return SpanBody::AlterTableReference { table, reference };
-    }
-    match classify_statement(stmt) {
-        Some(StatementShape::Table { name, definition }) => SpanBody::Table { name, definition },
-        Some(StatementShape::Type(TypeDef { name, kind })) => SpanBody::TypeDef { name, kind },
-        Some(StatementShape::Extension(Extension { name, schema })) => {
-            SpanBody::Extension { name, schema }
-        }
-        Some(StatementShape::Collation(collation)) => SpanBody::Collation { collation },
-        None => SpanBody::Unparsed,
-    }
 }
 
 #[cfg(test)]

@@ -133,9 +133,9 @@ fn partition_bound(s: &str) -> Option<(String, &str)> {
 /// `pg_dump` writes before the data (I86), as the partition it attaches and
 /// its parent and bound. `None` for every other
 /// `ALTER TABLE`, one listing several subcommands included, which the dump
-/// never writes for these. `pub(crate)` for [`crate::map::classify`], as
+/// never writes for these. Read by [`classify`](super::classify), as
 /// [`parse_alter_type_add_value_body`](super::types::parse_alter_type_add_value_body) is.
-pub(crate) fn parse_alter_table_reference(stmt: &str) -> Option<(String, TableReference)> {
+pub(super) fn parse_alter_table_reference(stmt: &str) -> Option<(String, TableReference)> {
     let stmt = stmt.trim_start();
     let rest = strip_kw(stmt, "ALTER TABLE").or_else(|| strip_kw(stmt, "ALTER FOREIGN TABLE"))?;
     let rest = strip_kw(rest, "ONLY").unwrap_or(rest);

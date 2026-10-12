@@ -3911,7 +3911,7 @@ materialized view are other emitters.
 `emitters.external`, and `objects/include-foreign-data.sql`'s
 `objects.imported`, at all six majors.
 
-**Relied on by:** `ddl.rs`'s `classify_statement`.
+**Relied on by:** `ddl.rs`'s `classify_create`.
 
 **Re-verify.**
 

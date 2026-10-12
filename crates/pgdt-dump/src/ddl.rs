@@ -8,10 +8,9 @@
 //! [`lex`].
 //!
 //! **This module owns the DDL grammar, not a second pass over the file.**
-//! [`classify_statement`] and friends (`parse_create_table`,
-//! `parse_create_type`, …) are the shared parser [`crate::map::classify`] calls
-//! to turn a complete statement into a [`pgdt_model::SpanBody`] while it builds
-//! the full file map in its one pass over [`crate::scan::scan`]'s events.
+//! [`classify`] turns a complete statement into a [`pgdt_model::SpanBody`],
+//! which the map builder calls while it builds the full file map in its one
+//! pass over [`crate::scan::scan`]'s events.
 //! [`pgdt_model::DumpMetadata`] is then [`dump_metadata_from_spans`] — a
 //! derived view over the resulting spans, computed once, never a second
 //! line-by-line scan (`docs/design/decisions.md`, "D34").
@@ -23,10 +22,10 @@
 //! types is `pgdt_codec::pgtype`'s job.
 //!
 //! [`extract_statement_cross_refs`] is a second, independent kind
-//! of statement scan this module owns: unlike [`classify_statement`], it
+//! of statement scan this module owns: unlike [`classify`], it
 //! doesn't try to fully parse a statement into a `SpanBody` — it just pulls
 //! out whatever role/tablespace references `crate::map::Builder::push_statement_span`
-//! feeds it, from statement shapes [`classify_statement`] does not recognize
+//! feeds it, from statement shapes [`classify`] does not recognize
 //! (`OWNER TO`, `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, `SET
 //! default_tablespace`).
 
@@ -36,66 +35,80 @@ mod refs;
 mod table;
 mod types;
 
-pub(crate) use self::lex::{parse_qualified_name, strip_kw};
+pub(crate) use self::lex::parse_qualified_name;
+use self::lex::strip_kw;
 pub use self::metadata::dump_metadata_from_spans;
 pub(crate) use self::refs::{extract_statement_cross_refs, insert_role, insert_tablespace};
-pub(crate) use self::table::parse_alter_table_reference;
-use self::table::parse_create_table;
-pub(crate) use self::types::{
-    alter_type_labels_unread, parse_alter_type_add_value_body, parse_alter_type_drop_attribute_body,
-};
+use self::table::{parse_alter_table_reference, parse_create_table};
 use self::types::{
-    parse_create_collation, parse_create_domain, parse_create_extension, parse_create_type,
+    alter_type_labels_unread, parse_alter_type_add_value_body,
+    parse_alter_type_drop_attribute_body, parse_create_collation, parse_create_domain,
+    parse_create_extension, parse_create_type,
 };
 use pgdt_core::internal::Cursor;
-use pgdt_model::{CollationDef, Extension, TableDef, TypeDef};
+use pgdt_model::{Extension, SpanBody, TypeDef};
 
-/// The four statement shapes [`classify_statement`] recognizes directly.
-/// `ALTER TYPE ADD VALUE` and `DROP ATTRIBUTE` are not among them: each
-/// mutates an already-declared object rather than introducing one, so it has
-/// its own two entry points — [`parse_alter_type_add_value_body`] and
-/// [`parse_alter_type_drop_attribute_body`] for [`crate::map::classify`],
-/// `fold_alter_type_add_value` and `fold_alter_type_drop_attribute` for
-/// [`dump_metadata_from_spans`] — and so, for the same reason, has an `ALTER
-/// TABLE` adding a [`pgdt_model::TableReference`]
-/// ([`parse_alter_table_reference`], folded by [`TableDef`]).
-#[derive(Debug)]
-pub(crate) enum StatementShape {
-    Table { name: String, definition: TableDef },
-    Type(TypeDef),
-    Extension(Extension),
-    Collation(CollationDef),
+/// Classify a complete statement (see `statement_complete`) as the span it
+/// is, [`SpanBody::Unparsed`] for anything this grammar does not read. The
+/// map builder has already taken the framing statements out
+/// (`looks_like_framing_statement`), which are the map's, not the grammar's.
+///
+/// Three `ALTER` statements are spans of their own rather than declarations:
+/// each amends an already-declared object rather than introducing one, so it
+/// is folded into it later — `ALTER TYPE ADD VALUE` and `DROP ATTRIBUTE` by
+/// `fold_alter_type_add_value` and `fold_alter_type_drop_attribute` in
+/// [`dump_metadata_from_spans`], an `ALTER TABLE` adding a
+/// [`pgdt_model::TableReference`] by [`pgdt_model::TableDef`]. The rest are
+/// the `CREATE` shapes introducing one ([`classify_create`]).
+pub(crate) fn classify(stmt: &str) -> SpanBody {
+    if let Some(rest) = strip_kw(stmt.trim_start(), "ALTER TYPE") {
+        if let Some((type_name, label)) = parse_alter_type_add_value_body(rest) {
+            return SpanBody::AlterTypeAddValue { type_name, label };
+        }
+        if let Some((type_name, attribute)) = parse_alter_type_drop_attribute_body(rest) {
+            return SpanBody::AlterTypeDropAttribute { type_name, attribute };
+        }
+        if let Some(type_name) = alter_type_labels_unread(rest) {
+            return SpanBody::EnumLabelsUnread { type_name };
+        }
+    }
+    if let Some((table, reference)) = parse_alter_table_reference(stmt) {
+        return SpanBody::AlterTableReference { table, reference };
+    }
+    classify_create(stmt).unwrap_or(SpanBody::Unparsed)
 }
 
-/// Classify a complete statement (see `statement_complete`) as one of
-/// this module's recognized `CREATE` shapes, or `None` for anything else —
-/// including `ALTER TYPE ADD VALUE`, which needs an already-open `TypeDef`
-/// to fold into (see [`StatementShape`]'s docs) rather than being
-/// classifiable from its own text alone.
+/// Classify a complete statement as one of the four `CREATE` shapes this
+/// grammar reads — a table, a type or domain, an extension, a collation —
+/// or `None` for anything else, the `ALTER` statements [`classify`] reads
+/// before it included.
 ///
 /// A table is any of the three `dumpTableSchema` writes as `CREATE %s%s %s`
 /// (I54): a plain one, an `UNLOGGED` one and a `FOREIGN TABLE`, whose list
 /// and `INHERITS` are a plain table's, its `SERVER` clause after them.
-pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
+fn classify_create(stmt: &str) -> Option<SpanBody> {
     let trimmed = stmt.trim_start();
     if let Some(rest) = ["CREATE TABLE", "CREATE UNLOGGED TABLE", "CREATE FOREIGN TABLE"]
         .into_iter()
         .find_map(|kw| strip_kw(trimmed, kw))
     {
         return parse_create_table(rest)
-            .map(|(name, definition)| StatementShape::Table { name, definition });
+            .map(|(name, definition)| SpanBody::Table { name, definition });
     }
     if let Some(rest) = strip_kw(trimmed, "CREATE TYPE") {
-        return parse_create_type(rest).map(StatementShape::Type);
+        return parse_create_type(rest)
+            .map(|TypeDef { name, kind }| SpanBody::TypeDef { name, kind });
     }
     if let Some(rest) = strip_kw(trimmed, "CREATE DOMAIN") {
-        return parse_create_domain(rest).map(StatementShape::Type);
+        return parse_create_domain(rest)
+            .map(|TypeDef { name, kind }| SpanBody::TypeDef { name, kind });
     }
     if let Some(rest) = strip_kw(trimmed, "CREATE EXTENSION") {
-        return parse_create_extension(rest).map(StatementShape::Extension);
+        return parse_create_extension(rest)
+            .map(|Extension { name, schema }| SpanBody::Extension { name, schema });
     }
     if let Some(rest) = strip_kw(trimmed, "CREATE COLLATION") {
-        return parse_create_collation(rest).map(StatementShape::Collation);
+        return parse_create_collation(rest).map(|collation| SpanBody::Collation { collation });
     }
     None
 }

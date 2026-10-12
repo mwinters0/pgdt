@@ -22,9 +22,8 @@ pub(super) fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
 /// Case-insensitively strip a leading keyword ending at a word boundary,
 /// returning the (whitespace stripped) remainder: the byte after it may not
 /// continue an identifier, so `CREATE TABLE` is no prefix of
-/// `CREATE TABLESPACE`. `pub(crate)` for [`crate::map::classify`]'s own
-/// `ALTER TYPE` check.
-pub(crate) fn strip_kw<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
+/// `CREATE TABLESPACE`.
+pub(super) fn strip_kw<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
     let bytes = s.as_bytes();
     if bytes.len() < kw.len()
         || !bytes[..kw.len()].eq_ignore_ascii_case(kw.as_bytes())

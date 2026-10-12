@@ -174,7 +174,7 @@ pub(super) fn parse_create_extension(rest: &str) -> Option<Extension> {
 /// `ALTER TYPE` has already been stripped. `BEFORE`/`AFTER` is ignored: a
 /// `--binary-upgrade` dump only ever emits these in declaration order
 /// (`fixtures/*/types/binary-upgrade.sql`), so appending is equivalent to
-/// respecting them. Used by [`crate::map::classify`] to recognize the statement
+/// respecting them. Used by [`classify`](super::classify) to recognize the statement
 /// as its own [`pgdt_model::SpanBody::AlterTypeAddValue`] span, since that
 /// module has no already-open `TypeDef` to fold into the way
 /// `fold_alter_type_add_value` does for
@@ -183,7 +183,7 @@ pub(super) fn parse_create_extension(rest: &str) -> Option<Extension> {
 // the label anywhere but last is folded as appended, so the label orders after
 // every other: an ordering term, a group's bounds and the pruning they drive
 // place it where the server does not, and a query can lose its rows.
-pub(crate) fn parse_alter_type_add_value_body(rest: &str) -> Option<(String, String)> {
+pub(super) fn parse_alter_type_add_value_body(rest: &str) -> Option<(String, String)> {
     let (name, consumed) = parse_type_name(rest)?;
     let after = strip_kw(strip_kw(rest[consumed..].trim_start(), "ADD")?, "VALUE")?;
     let label = parse_string_literal(after)?;
@@ -196,9 +196,9 @@ pub(crate) fn parse_alter_type_add_value_body(rest: &str) -> Option<(String, Str
 /// word anywhere after the name counts, an identifier's included — answered
 /// where [`parse_alter_type_add_value_body`] does not read it, as the type it
 /// names, `None` where it names none this grammar reads. Such a statement
-/// leaves the labels inexact (`fold_enum_labels_unread`). `pub(crate)` for
-/// [`crate::map::classify`], as [`parse_alter_type_add_value_body`] is.
-pub(crate) fn alter_type_labels_unread(rest: &str) -> Option<Option<String>> {
+/// leaves the labels inexact (`fold_enum_labels_unread`). Read by
+/// [`classify`](super::classify), as [`parse_alter_type_add_value_body`] is.
+pub(super) fn alter_type_labels_unread(rest: &str) -> Option<Option<String>> {
     let (name, after) = match parse_type_name(rest) {
         Some((name, consumed)) => (Some(name), &rest[consumed..]),
         None => (None, rest),
@@ -210,9 +210,9 @@ pub(crate) fn alter_type_labels_unread(rest: &str) -> Option<Option<String>> {
 /// TYPE` has been stripped — the statement a `--binary-upgrade` dump drops a
 /// composite's placeholder for a dropped attribute with (I5) — as the type
 /// and the attribute. `None` for anything more than that
-/// one subcommand, which `dumpCompositeType` never writes. `pub(crate)` for
-/// [`crate::map::classify`], as [`parse_alter_type_add_value_body`] is.
-pub(crate) fn parse_alter_type_drop_attribute_body(rest: &str) -> Option<(String, String)> {
+/// one subcommand, which `dumpCompositeType` never writes. Read by
+/// [`classify`](super::classify), as [`parse_alter_type_add_value_body`] is.
+pub(super) fn parse_alter_type_drop_attribute_body(rest: &str) -> Option<(String, String)> {
     let (name, consumed) = parse_type_name(rest)?;
     let after = strip_kw(rest[consumed..].trim_start(), "DROP ATTRIBUTE")?;
     let mut cur = Cursor::new(after.as_bytes());

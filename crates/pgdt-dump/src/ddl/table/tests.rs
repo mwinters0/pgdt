@@ -1,5 +1,5 @@
 use super::*;
-use crate::ddl::classify_statement;
+use crate::ddl::classify_create;
 use crate::ddl::tests::{parse_table, parse_table_def, parse_type};
 use pgdt_model::TypeKind;
 
@@ -556,5 +556,5 @@ fn unlogged_and_foreign_tables_are_tables() {
     assert_eq!(name, "objects.imported");
     assert_eq!(table.columns, [not_null("id", "integer"), ColumnDef::new("born", "date")]);
     assert_eq!(table.parents, ["objects.base"]);
-    assert!(classify_statement("CREATE UNLOGGED SEQUENCE public.s;").is_none());
+    assert!(classify_create("CREATE UNLOGGED SEQUENCE public.s;").is_none());
 }

@@ -1,7 +1,7 @@
 use super::*;
+use crate::ddl::classify_create;
 use crate::ddl::tests::{parse_extension, parse_table, parse_type};
-use crate::ddl::{StatementShape, classify_statement};
-use pgdt_model::ColumnDef;
+use pgdt_model::{ColumnDef, SpanBody};
 
 /// A domain carries its own `COLLATE`, which is its *type default* — the
 /// thing a column-level clause exists to override — and its `NOT NULL`,
@@ -237,8 +237,8 @@ fn extension_without_a_schema_clause() {
 #[test]
 fn create_collation_reads_determinism_and_nothing_else() {
     fn parse(stmt: &str) -> CollationDef {
-        match classify_statement(stmt) {
-            Some(StatementShape::Collation(def)) => def,
+        match classify_create(stmt) {
+            Some(SpanBody::Collation { collation }) => collation,
             other => panic!("{stmt:?} classified as {other:?}"),
         }
     }
@@ -360,7 +360,7 @@ fn a_type_name_needing_quotes_survives_the_statement_grammar() {
 /// as the name the column's `COLLATE` clause states (I42).
 #[test]
 fn a_quoted_collation_name_keeps_its_case() {
-    let Some(StatementShape::Collation(def)) = classify_statement(
+    let Some(SpanBody::Collation { collation: def }) = classify_create(
         r#"CREATE COLLATION public."CI" (provider = icu, deterministic = false, locale = 'und-u-ks-level2');"#,
     ) else {
         panic!("not a collation");
