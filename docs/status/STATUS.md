@@ -111,7 +111,7 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 - [x] **35.22** `pgdt` a module a subcommand, each owning its flags as a `#[derive(Args)]` struct, `--filter`'s and `--where`'s grammar one `query/filter/`, `tests.rs` split beside them — [notes](../design/roadmap-P35.22-subcommands-notes.md)
 - [x] **35.25** pgdt-codec's `grammar` an API namespace declaring `TextGrammar`, `Geometric` and `Unchecked`, defined in `grammar/input.rs` and `grammar/check.rs`; `compare`'s `pub use` of them removed, `layering.py`'s `NAMESPACES` gaining `grammar`, and every `compare::` path to them repointed — [notes](../design/roadmap-P35.25-grammar-namespace-notes.md)
 - [x] **35.26** `pgdt-fixtures`, a test-only member at the bottom of the graph holding the fixture vocabulary — paths, the sweep's enumerator, the sandboxes, `REFUSED_FIELDS`, `edge_cases.sql` — and behind a `mapping` feature the sweep's request builders; the tests of every crate reading a fixture dev-depend on it, every cross-crate `#[path]` include and every copy in `pgdt` and `datafusion-pgdump` replaced, `check.py`'s `#[path]` arm removed, and D68 and `layering.py`'s `GRAPH` amended — [notes](../design/roadmap-P35.26-fixtures-notes.md)
-- [ ] **35.12** The closing seams round: no file past any limit but an exemption, and every crate read for the `seams` skill's "Antipatterns" — landed: `value/nested.rs` cut into its two scanners, no file past a limit but the exemption, every crate read, and what the read found that no reviewer would dispute removed; remains: the design findings B1–B44 its notes list, each cut, kept or filed once ruled on — [notes](../design/roadmap-P35.12-closing-seams-notes.md)
+- [ ] **35.12** The closing seams round: no file past any limit but an exemption, and every crate read for the `seams` skill's "Antipatterns" — landed: `value/nested.rs` cut into its two scanners, no file past a limit but the exemption, every crate read, and what the read found that no reviewer would dispute removed; remains: the cuts the maintainer's rulings on B1–B44 take, listed in its notes' "The rulings" — [notes](../design/roadmap-P35.12-closing-seams-notes.md)
 - [ ] **35.24** The `release-profile` figure's third sitting, on the tree 35.12 leaves and carrying M222's `instructions:u`: the downstream-build rule read on it, its attribution clause applied to any workload failing the gate, and D105's Reopens read against the count
 
 ## Not started
@@ -152,15 +152,3 @@ beside the mechanism it governs first. Full rules:
   allowing a test's `#[path]` again and restoring the arm with it, or keeping
   the refusal and naming it in the spec's "The crate graph" list of what the
   script holds.
-- **35.12: the closing read's design findings are listed, not cut.** The
-  read of every crate found 44 places the "Antipatterns" name that only a
-  judgement removes — a new module or name, a duplicate merged, a concept's
-  part moved crate — listed B1–B44 in
-  [the notes](../design/roadmap-P35.12-closing-seams-notes.md), "What is not
-  cut", beside the mechanical fixes landed. The box stays open on them: the
-  skill removes or keeps each one, and unattended only a cut may land. B34 is
-  more than layout: which error type an embedder downcasts to depends on the
-  path a refusal took. Reconsidering means ruling on each — cut, kept with
-  its reason, or filed in the seam register
-  ([`seam-findings.md`](seam-findings.md)), B34 as a `KD<k>` if its cost to an
-  embedder stays — before 35.24's sitting prices the tree.

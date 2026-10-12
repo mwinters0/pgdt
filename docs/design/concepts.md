@@ -93,6 +93,11 @@ string, a quoted identifier or a comment; a type name canonicalized.
   and the codec, and kept out of the model, whose edits ask whether the
   cache format bumps.
 
+**Not in one place.** A schema-qualified name is read four ways: pgdt-core's
+`COPY` header splits and unquotes it, its type-name canonical form re-quotes
+it, pgdt-dump's DDL grammar joins it raw, and pgdt-codec's collation lookup
+splits it without skipping the spaces around the dot the others skip.
+
 ## The scanner
 
 The line-anchored state machine finding statements and `COPY` blocks in a
@@ -149,6 +154,10 @@ format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
   parsers (D68).
 - **datafusion-pgdump** — `dump.rs`: a dump opened through its complete
   cache (D90).
+
+**Not in one place.** Why a cache cannot be used is worded twice, by
+pgdt-core's `Error` and by the `pgdt` binary's `info`, and the two disagree
+(a changed source among them).
 
 ## What a pass records of a block's rows
 

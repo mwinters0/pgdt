@@ -229,3 +229,120 @@ protocol; they share no commits and each builds as its own static binary, so
 the merge test is not met. The `module_graph.py --docs` links in every crate
 name a caller or a producer, none a concept not standing alone; the reviews
 list each.
+
+## The rulings
+
+Each finding was re-read against the tree at `10107ad3` before it was ruled,
+the reviews having been written before the round's own fixes; the maintainer
+ruled on 2026-10-12. What the re-read corrected is stated with the ruling.
+
+**Cut**, each in the commit that lands it:
+
+- **B1** `instrument/` into three children, `statistics`, `evaluation`,
+  `decode`, each a concern's API and hooks together; `internal` re-exports
+  from them. The audience split never held: pgdt-query's evaluation reads
+  `EvaluationPart`. Five `pub(super)` items, not six.
+- **B2** `Cursor` into `type_name.rs`, renamed `identifier.rs`, its
+  `internal` path kept. The wider scatter is concepts.md's "SQL lexing"
+  **Not in one place** line: a qualified name read four ways, not two.
+- **B3** the four items private; the docs linking `field_ranges` reworded.
+- **B5** a `DecodedBlock` slice and a piece copy shared by `.xz`'s two arms,
+  each keeping its own loop, which holds one cache slot at a time.
+- **B6** the verdict once, behind `open`, the only production entry point;
+  `open_local` and `open_remote` `pub(crate)`.
+- **B7** the test into `partition/tests.rs`, the constant private.
+- **B8** `ddl::classify`, `StatementShape` dissolved into it;
+  `looks_like_framing_statement` stays the map's.
+- **B9** `ddl/column.rs`, its tests with it, `measure.py`'s `PREAMBLE` too.
+- **B10**, **B11** `ddl/lex.rs` renamed, and one keyword strip in
+  `crate::lex`.
+- **B12** `write_cache_file` in `file.rs`, called by `save` and by
+  pgdt-query's forging test; no format change.
+- **B14** `macaddr`'s octets and renderer into `network.rs`. The `timetz`
+  half was misstated: `timetz_key` only composes its family's readers.
+- **B16** `strtoint` private to `int.rs`, `HEX_NIBBLE` into `digits.rs`;
+  `strtoint` also named a second, datetime function.
+- **B17** the test into `declared/tests.rs`.
+- **B18** `gathers_bounds` deleted; nothing has called it since P6.
+- **B19** each half-split a method beside its type; `BoundsGatherer`'s
+  append keeps the charge's ordering.
+- **B20** one `bounded_columns` in `stored.rs`, KD115's entry saying its
+  closure leaves it `pub(crate)`.
+- **B21** one read-loop announcement in pgdt-dump's `scan.rs`, taking the
+  parallelism; five sites in three crates read it.
+- **B22** the account carried in `Pass::Parse`; pgdt-query's placeholder
+  account and the `internal` line go.
+- **B23**, its bounds half: `bounds/tests.rs`. Its density half waits on B4.
+- **B24** the tree inverted: `interior.rs` the scheduler, a child `piece.rs`
+  holding the piece scan, its fold and `BlockEndings`.
+- **B25** `report_shortfall` beside `Shortfall`, one copy of the paragraph.
+- **B26** `believed_under` beside `declared_column` in `stored.rs`. The
+  fit guards differ legitimately: pruning addresses bytes.
+- **B27** `conjuncts` beside `ResolvedExpr`, both flattenings built on it;
+  `required_ordering_terms` stays in `truths.rs`, reading statistics.
+- **B28** one `announced` derivation; the oracle test stays and proves the
+  cut. Two derivations reading one register were never independent.
+- **B30** the tests split across `replay/`, six items narrowed, not three.
+- **B31** `DynamicRead::new`, the fields private.
+- **B32** one opening shared by `table_schema` and `ReplayPlan::new`, so the
+  provider's declared schema and the stream's agree by construction.
+- **B33** a copying arm in `append_typed`.
+- **B35** `scanned` and `fetched` both in `statistics.rs`; `exec.rs` held
+  the fetch half of the same D89 clause.
+- **B40** `parsed_copy` and `ungathered` into `pgdt-fixtures` behind
+  `mapping`: thirteen copies and four, not eight.
+- **B41** each helper into its one reader. The cache's two wordings are
+  concepts.md's "The cache" **Not in one place** line.
+- **B43** `info` re-exports what `parse` prints; `text` private.
+- **B44** the test into `args/tests.rs`, `identity` private.
+
+**Kept:** **B29** — `predicate/tests.rs` is the filter, resolved and
+evaluated, against the server's answers, forcing nothing wider; its module
+doc says so.
+
+**Grilled**, the maintainer answering:
+
+- **B4**, with **B23**'s density half: cut. `nth_smallest`, `min_rows_group`,
+  `max_rows_group` and `BlockStatisticsExt` leave pgdt-model for a
+  pgdt-mapping `statistics/density.rs`, beside `density_merges` and the
+  density tests; they persist nothing and only pgdt-mapping reads them, so
+  D68 already places them there and the move is a cut, not a crate decision.
+- **B13**: cut. The two fields leave `ScanOptions` for a pgdt-mapping
+  `GatherOptions`, taken by `map_file` and `gather_block_statistics` beside
+  `ScanOptions`. Not `StatisticsRequest`: it is compared against a cache, and
+  neither a run's allowance nor the mode may take part (D19; D103's rejected
+  recording). D103's "(`ScanOptions`)" is reworded by the change that lands it.
+- **B15**: cut. `grammar/form.rs` to `key/form.rs`, the clause struck from
+  concepts.md's "Strict parse": the form is what `literal_key` accepts, as
+  35.7 placed it, which 35.16's move of `key/order.rs`'s section broke.
+- **B34**: cut, and no `KD<k>` unless it slips past the wrap. One rule:
+  whatever crosses DataFusion's boundary is `External(datafusion_pgdump::Error)`,
+  its `Library` variant no longer transparent but its own message over a
+  `#[source]`, so a `source()` walk reaches `pgdt_core::Error` from every path;
+  `PgDump::table` returns its own variants unwrapped. Today a scan gives the
+  core error, `STORED AS PGDUMP` and `--dump` the provider's with the core
+  error hidden from the walk, and `PgDump::table` its variants as
+  `Error::DataFusion`; no doc promised a type, D74 only a downcast.
+- **B36**: cut. One public `install(ctx)` — settings, budget, the
+  `pgdump_unrepresentable` function — called by `register_dump` and the
+  factory, and named by the docs for a `PgDumpTable` registered by hand, which
+  today can call `unrepresentable::register` but never install the settings.
+- **B37**, **B38**: cut. The library folds: each registration
+  (`register_dump`, the factory's `create`) reports one structured finding of
+  its uncollated columns — subject, columns, reason — in place of a note a
+  column, so the CLI prints it, and its re-parse of the provider's
+  `"{subject}: "` prefix and the note's wording, and the factory it installs
+  only to replace, go. The prefix strip failed silently into one `""` table.
+- **B39**: cut. Each mode enum states its words once, as `StrictIdentity`
+  does, by `FromStr` and `Display`, **case-insensitive** as the factory
+  already reads them; the factory and `--dump` parse through it, and `pgdt`
+  reads the library types by a `value_parser`, its four clap enums gone.
+  `PostgresInvalidValues` parses all three words, and the query front ends
+  refuse `Strict`, a parse's alone (D103), through one library check. Today
+  `--dump` and `pgdt`'s flags match case exactly while `PGDUMP` does not.
+- **B42** follows from B39: four of its six items go with the clap enums, and
+  `parse_statistics_level` and `parse_row_group_size` move into `parse.rs`,
+  their one reader, as B41's helpers do.
+
+The seam register is filed nothing: every finding is cut or kept.
+

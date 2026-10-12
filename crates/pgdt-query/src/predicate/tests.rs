@@ -1,3 +1,7 @@
+//! The filter as a whole, resolved and evaluated, against the server's
+//! answers; `eval/` and `truths/` hold their own units' tests. It reaches
+//! nothing wider than `pub(super)`, so nothing here is a reason to split it.
+
 use std::cmp::Ordering;
 
 use arrow::datatypes::{DataType, IntervalUnit, TimeUnit};
