@@ -6666,6 +6666,7 @@ STATISTICS = (
         f"crates/pgdt-mapping/src/statistics/{name}.rs"
         for name in (
             "account",
+            "density",
             "gather",
             "gather/bounds",
             "gather/charge",

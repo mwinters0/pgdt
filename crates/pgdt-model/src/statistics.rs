@@ -549,30 +549,6 @@ pub fn text_heap(text: &String) -> u64 {
     text.capacity() as u64
 }
 
-/// The `rank`-th smallest of `rows`, counting from zero.
-fn nth_smallest(rows: &[u64], rank: usize) -> u64 {
-    let mut sorted = rows.to_vec();
-    *sorted.select_nth_unstable(rank).1
-}
-
-/// **The group a density minimum is read at**: the upper middle one, the
-/// `⌊G/2⌋+1`-th smallest of `G` groups' rows, so that at most half the groups
-/// fall short of the minimum. Reading the upper middle group rather than the
-/// nearest-rank `⌈G/2⌉`-th is what makes the predicate monotone in size
-/// (`gather::gatherer::density_merges`). Panics on no groups.
-pub fn min_rows_group(rows: &[u64]) -> u64 {
-    nth_smallest(rows, rows.len() / 2)
-}
-
-/// **The group a density maximum is read at**: the 90th-percentile one by
-/// nearest rank, the `⌈9G/10⌉`-th smallest of `G` groups' rows, so that at most
-/// a tenth of the groups hold more than the maximum. Near enough a bound for a
-/// person who asked for one, without one dense stretch multiplying a whole
-/// block's groups. Panics on no groups.
-pub fn max_rows_group(rows: &[u64]) -> u64 {
-    nth_smallest(rows, (9 * rows.len()).div_ceil(10) - 1)
-}
-
 impl BlockStatistics {
     /// The heap one block's statistics hold, the allocation of the `Arc` that
     /// shares them included: what `pgdt_mapping`'s `StatisticsAccount` charges a retained or a
@@ -585,38 +561,6 @@ impl BlockStatistics {
             + vec_heap(&self.groups)
             + vec_heap(&self.columns)
             + self.columns.iter().flatten().map(ColumnStatistics::heap_bytes).sum::<u64>()
-    }
-}
-
-/// What a crate above calls on [`BlockStatistics`] that is not its API: public only
-/// because a crate boundary forced it, and reached through `internal`.
-pub trait BlockStatisticsExt {
-    fn breaks_max_rows(&self, max_rows: u64) -> bool;
-    fn predicted_group_size(&self, max_rows: u64) -> u64;
-}
-
-impl BlockStatisticsExt for BlockStatistics {
-    /// Whether this block's groups break `max_rows`: its 90th-percentile group
-    /// holds more rows than that. A block with no group breaks nothing.
-    fn breaks_max_rows(&self, max_rows: u64) -> bool {
-        let rows: Vec<u64> = self.groups.iter().map(|group| group.rows).collect();
-        !rows.is_empty() && max_rows_group(&rows) > max_rows
-    }
-
-    /// **The group size a re-read of this block should gather at to meet
-    /// `max_rows`**: halved, from the size it holds, until the rows its
-    /// 90th-percentile group would then hold are within the maximum — a
-    /// prediction, since halving a group does not halve every group's rows,
-    /// and one the re-read is free to miss where a block's rows cluster.
-    /// Asked only of a block [`Self::breaks_max_rows`] answered for, so it
-    /// holds at least one group.
-    fn predicted_group_size(&self, max_rows: u64) -> u64 {
-        let rows: Vec<u64> = self.groups.iter().map(|group| group.rows).collect();
-        let (mut size, mut densest) = (self.group_size, max_rows_group(&rows));
-        while densest > max_rows && size > 1 {
-            (size, densest) = (size / 2, densest.div_ceil(2));
-        }
-        size
     }
 }
 

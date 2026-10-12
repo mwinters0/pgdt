@@ -264,13 +264,15 @@ a table's summary, DataFusion's statistics, `pgdt info --detail`
   contract over a block's rows that answers it, model wherever its
   implementor sits (D74).
 - **pgdt-mapping** — `statistics.rs`, `statistics/request.rs`,
-  `statistics/account.rs`, `statistics/stored.rs`, `statistics/gather.rs`,
-  `statistics/gather/gatherer.rs`, `statistics/gather/column.rs`,
-  `statistics/gather/bounds.rs`, `statistics/gather/order.rs`,
-  `statistics/gather/clip.rs`, `statistics/gather/charge.rs`: what a pass
-  gathers and what holding it costs, the mapping pass's because gathering
-  decodes and builds no array (D68); what a column's statistics are stored
-  against, which pruning and summaries read.
+  `statistics/density.rs`, `statistics/account.rs`, `statistics/stored.rs`,
+  `statistics/gather.rs`, `statistics/gather/gatherer.rs`,
+  `statistics/gather/column.rs`, `statistics/gather/bounds.rs`,
+  `statistics/gather/order.rs`, `statistics/gather/clip.rs`,
+  `statistics/gather/charge.rs`: what a pass gathers and what holding it
+  costs, the mapping pass's because gathering decodes and builds no array
+  (D68); the density rule a block's groups are sized by, persisting nothing;
+  what a column's statistics are stored against, which pruning and summaries
+  read.
 - **pgdt-query** — `prune.rs`, `summary.rs`: what reads the statistics —
   pruning through the filter expression, a summary folding every group.
 - **datafusion-pgdump** — `statistics.rs`: the map's statistics as

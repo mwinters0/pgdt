@@ -5,8 +5,9 @@
 use std::num::NonZeroU64;
 
 use pgdt_core::CopyHeader;
-use pgdt_model::internal::BlockStatisticsExt;
 use pgdt_model::{CopyBlock, GroupSizing};
+
+use super::density::BlockStatisticsExt;
 
 /// The group size a request that states none gathers at: one mebibyte of a
 /// block's data per group.
@@ -26,7 +27,7 @@ pub const BLOCK_MAX_ROW_GROUPS: usize = 4096;
 /// unstated minimum: short of it, the finished block's groups merge
 /// pairwise until that group reaches it, the block is one group, or the next
 /// size would break a stated maximum, which outranks the minimum
-/// (`gather::gatherer::density_merges`; `docs/design/decisions.md`, "D82").
+/// (`density::density_merges`; `docs/design/decisions.md`, "D82").
 /// `ROW_GROUP_DEFAULT_SIZE_BYTES` over a row a kibibyte wide; a judgement,
 /// not a reading.
 pub const ROW_GROUP_DEFAULT_MIN_ROWS: u64 = 1 << 10;
@@ -63,7 +64,7 @@ pub struct StatisticsRequest {
     /// exactly, it sizes nothing and is ignored.
     pub min_rows: Option<u64>,
     /// The most rows a block's densest tenth of groups should hold — read at
-    /// the 90th-percentile group ([`pgdt_model::internal::max_rows_group`]) — and **there is no
+    /// the 90th-percentile group ([`max_rows_group`](super::density::max_rows_group)) — and **there is no
     /// default**: a maximum applies only where a caller states one.
     ///
     /// Short of a stated group size, it is the only thing that makes a block
@@ -206,9 +207,9 @@ impl StatisticsRequest {
     /// (`docs/design/decisions.md`, "D85").
     ///
     /// **A block still at the size it gathered from also lacks a stated
-    /// maximum its groups break** ([`pgdt_model::BlockStatistics::breaks_max_rows`]): no
+    /// maximum its groups break** ([`BlockStatisticsExt::breaks_max_rows`]): no
     /// merge can make a block finer, so the maximum is reachable only by
-    /// re-reading it at [`pgdt_model::BlockStatistics::predicted_group_size`]. Once that
+    /// re-reading it at [`BlockStatisticsExt::predicted_group_size`]. Once that
     /// re-read has happened the block is finer than the size a gather starts
     /// from, so it is never re-read for that maximum again however its rows
     /// cluster.
@@ -298,7 +299,7 @@ pub struct StatisticsBackfill {
     /// The group size gathered at: for a block re-read from its first row,
     /// the request's stated size, else [`ROW_GROUP_DEFAULT_SIZE_BYTES`]; for
     /// a block whose groups break a stated maximum, the finer size
-    /// [`pgdt_model::BlockStatistics::predicted_group_size`] predicts; and for one lacking
+    /// [`BlockStatisticsExt::predicted_group_size`] predicts; and for one lacking
     /// only a column, the size it already held.
     pub group_size: u64,
     /// The most groups the block may hold, adjacent ones merging pairwise

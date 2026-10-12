@@ -43,8 +43,8 @@ pub mod internal {
     pub use crate::catalog::{DatabaseMetadataExt, TableDefExt};
     pub use crate::diagnostic::DiagnosticExt;
     pub use crate::statistics::{
-        BlockObserver, BlockStatisticsExt, ColumnStatisticsExt, FieldRefusalExt,
-        IgnoredRefusalsExt, max_rows_group, min_rows_group, text_heap, vec_heap,
+        BlockObserver, ColumnStatisticsExt, FieldRefusalExt, IgnoredRefusalsExt, text_heap,
+        vec_heap,
     };
 }
 

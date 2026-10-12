@@ -14,7 +14,7 @@ use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::internal::announce_cancellation;
 use pgdt_dump::{ChunkCarry, CopyEnd, CopyScanner, Event, ScanOptions};
 use pgdt_io::{ByteRangeSource, WaitPolicy};
-use pgdt_model::internal::{BlockCensusExt, BlockStatisticsExt, FieldRefusalExt};
+use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
     BlockCensus, BlockGathered, BlockStatistics, CopyBlock, DataBlock, DumpIndex, DumpMetadata,
     IgnoredRefusals, PostgresInvalidValues, SpanBody, internal::BlockObserver,
@@ -23,6 +23,7 @@ use pgdt_model::{
 use crate::forward::{SaveThrottle, cancelled_read, report_shortfall};
 use crate::interior::{CensusPlan, RegionScan, scan_region};
 use crate::statistics::account::{StatisticsAccount, Term};
+use crate::statistics::density::BlockStatisticsExt;
 use crate::statistics::gather;
 use crate::statistics::request::{StatisticsBackfill, StatisticsRequest};
 

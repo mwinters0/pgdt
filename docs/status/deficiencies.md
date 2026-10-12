@@ -283,7 +283,7 @@ than reading as a phase nobody has sliced.
   last group stands unpaired: at 19, 39, 59… groups one merge can lower the
   90th-percentile group it is read at, so a block already past the maximum
   merges further past it. **(c) unowned**; promoted by a stated maximum seen
-  to leave a block's groups past it. Detail: `crates/pgdt-mapping/src/statistics/gather/gatherer.rs`.
+  to leave a block's groups past it. Detail: `crates/pgdt-mapping/src/statistics/density.rs`.
 
 - **KD53** — a dynamic filter's cut at the first poll is not made where it
   would put two blocks in one sub-stream that nothing proves in a declared

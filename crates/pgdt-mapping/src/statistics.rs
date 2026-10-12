@@ -11,9 +11,12 @@
 //! ([`strict_unchecked`](crate::strict_unchecked)).
 
 pub(crate) mod account;
+pub(crate) mod density;
 pub(crate) mod gather;
 pub(crate) mod request;
 pub(crate) mod stored;
+#[cfg(test)]
+mod test_support;
 
 pub use self::account::{StatisticsHeld, StatisticsTerms};
 pub use self::request::{

@@ -12,7 +12,7 @@ use pgdt_core::{decode_field, split_fields};
 use pgdt_model::internal::IgnoredRefusalsExt;
 use pgdt_model::{
     BlockGathered, BlockStatistics, FieldRefusal, GroupSizing, IgnoredRefusals, RowGroup,
-    internal::{BlockObserver, max_rows_group, min_rows_group, vec_heap},
+    internal::{BlockObserver, vec_heap},
 };
 
 use super::bounds::{Refused, merge_adjacent};
@@ -20,6 +20,7 @@ use super::charge::{push_charged, reserve_charged};
 use super::column::{ColumnGatherer, Observed};
 use super::strict::{FieldCheck, check_row};
 use crate::statistics::account::{Charge, STATISTICS_ACCOUNT_CHARGE_STEP, Term};
+use crate::statistics::density::density_merges;
 use crate::statistics::request::StatisticsBackfill;
 
 /// The group a row is being added to.
@@ -671,44 +672,4 @@ impl BlockObserver for Gatherer {
     fn checks_every_field(&self) -> bool {
         self.checks.is_some()
     }
-}
-
-/// How many times a block whose groups hold `rows` merges pairwise before its
-/// **upper middle** group ([`min_rows_group`]) holds `min_rows`, or it is one
-/// group: at each merge the rows per group are the sums of adjacent pairs, a
-/// last odd group standing alone.
-///
-/// Reading the upper middle group rather than the nearest-rank `⌈G/2⌉`-th is
-/// what makes the predicate **monotone in size**: a merged group falls short
-/// only where both its parts did, so of `S ≤ ⌊G/2⌋` short groups at most
-/// `⌊S/2⌋` pairs fall short, plus a short odd tail — within `⌊⌈G/2⌉/2⌋` at
-/// every `G` (by cases on `G` mod 4), the same predicate at the coarser size.
-/// `the_density_predicate_is_monotone_in_size` holds it.
-///
-/// **`max_rows` stops the merging first**, wherever the next size would put
-/// more than that many rows in its 90th-percentile group ([`max_rows_group`]):
-/// so a stated maximum outranks the minimum. Nothing here can make a block
-/// *finer*: a block breaking `max_rows` at the size it gathered from is
-/// re-read instead ([`StatisticsRequest::backfill`](crate::statistics::StatisticsRequest::backfill)).
-///
-/// deficiency: KD43 — the maximum's predicate is monotone in size only where
-/// every group pairs. A last odd group stands alone, so a pairwise sum can
-/// rank below the parts it replaces: at 19, 39, 59… groups a block already
-/// past the maximum can merge once (`[10, 10, 0 × 17]` under a maximum of 5
-/// becomes `[20, 0 × 9]`, whose 90th-percentile group is 0), and stopping at
-/// the first merge that breaks the predicate can miss a coarser size that
-/// would hold it. `an_unpaired_last_group_lets_a_block_past_the_maximum_merge`
-/// pins the example. **(c) unowned**; promoted by a stated maximum seen to
-/// leave a block's groups past it.
-pub(super) fn density_merges(mut rows: Vec<u64>, min_rows: u64, max_rows: Option<u64>) -> u32 {
-    let mut merges = 0;
-    while rows.len() > 1 && min_rows_group(&rows) < min_rows {
-        let coarser: Vec<u64> = rows.chunks(2).map(|pair| pair.iter().sum()).collect();
-        if max_rows.is_some_and(|max_rows| max_rows_group(&coarser) > max_rows) {
-            break;
-        }
-        rows = coarser;
-        merges += 1;
-    }
-    merges
 }

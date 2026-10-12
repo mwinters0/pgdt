@@ -174,7 +174,7 @@ def choose(sizes: Sequence[Sequence[int]], min_rows: int, q: float) -> Choice:
     """The smallest size at which the `q`-quantile group ([`min_group`]) holds
     at least `min_rows` rows, or the single group where none does. `pgdt`
     chooses a block's size by this rule, from whatever size the length cap left
-    it; `pgdt_query`'s `gather::gatherer::density_merges`, mirrored."""
+    it; `pgdt_mapping`'s `statistics::density::density_merges`, mirrored."""
     for k, rows in enumerate(sizes):
         if min_group(sorted(rows), q) >= min_rows:
             return Choice(q, k, len(rows), True)
