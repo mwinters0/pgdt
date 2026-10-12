@@ -1,5 +1,6 @@
 //! The cache file — its format, its header, what it encodes, and the reading
-//! and writing of it that [`super::load`] and [`super::save`] go through — and
+//! and the writing of it ([`read_cache_file`], [`write_cache_file`]) that
+//! [`super::load`] and [`super::save`] go through — and
 //! what a read of it finds ([`CacheStatus`]), with the shape of the container
 //! under its offsets ([`CompressionShape`]) and the rest it persists
 //! ([`CacheEnvelope`]). Those three are the cache's API; the format is not,
@@ -11,7 +12,7 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bincode::error::DecodeError;
+use bincode::error::{DecodeError, EncodeError};
 use serde::{Deserialize, Serialize};
 
 use super::identity::{OriginMatch, SourceIdentity, WeakIdentity};
@@ -257,10 +258,10 @@ pub fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, Cac
     }
 }
 
-/// What [`save`](super::save) encodes: [`CacheFile`]'s fields in
-/// [`CacheFile`]'s order, the index borrowed rather than cloned, so the bytes
-/// are the ones an owned `CacheFile` encodes to and [`read_cache_file`]
-/// decodes.
+/// What [`write_cache_file`] encodes for [`save`](super::save): [`CacheFile`]'s
+/// fields in [`CacheFile`]'s order, the index borrowed rather than cloned, so
+/// the bytes are the ones an owned `CacheFile` encodes to and
+/// [`read_cache_file`] decodes.
 #[derive(Serialize)]
 pub struct CacheFileRef<'a> {
     pub container_kind: ContainerKind,
@@ -271,9 +272,25 @@ pub struct CacheFileRef<'a> {
     pub index: &'a DumpIndex,
 }
 
+/// Write `file` to `path` as [`read_cache_file`] reads it back — [`CACHE_MAGIC`],
+/// [`CACHE_FORMAT_VERSION`] as a little-endian `u32`, then the encoded file —
+/// streamed into a file beside `path` and renamed over it ([`write_beside`]).
+pub fn write_cache_file(path: &Path, file: &CacheFileRef<'_>) -> Result<()> {
+    write_beside(path, |writer| {
+        writer.write_all(&CACHE_MAGIC)?;
+        writer.write_all(&CACHE_FORMAT_VERSION.to_le_bytes())?;
+        bincode::serde::encode_into_std_write(file, writer, bincode::config::standard())
+            .map(drop)
+            .map_err(|e| match e {
+                EncodeError::Io { inner, .. } => Error::Io(inner),
+                other => Error::cache_encode(other),
+            })
+    })
+}
+
 /// Run `encode` into a new file [`beside`] `path`, then rename that file over
 /// `path`; on any failure, remove it and leave `path` as it was.
-pub fn write_beside(
+fn write_beside(
     path: &Path,
     encode: impl FnOnce(&mut BufWriter<File>) -> Result<()>,
 ) -> Result<()> {

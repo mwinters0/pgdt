@@ -4,21 +4,18 @@
 //! without one ([`load_offline`]), and the writer ([`save`]) — see the parent
 //! module's docs for what each refuses and why.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use bincode::error::EncodeError;
-
 use super::file::{
-    CACHE_MAGIC, CacheEnvelope, CacheFile, CacheFileRef, CacheStatus, CompressionIndex,
-    CompressionShape, ContainerKind, read_cache_file, write_beside,
+    CacheEnvelope, CacheFile, CacheFileRef, CacheStatus, CompressionIndex, CompressionShape,
+    ContainerKind, read_cache_file, write_cache_file,
 };
 use super::identity::{OriginMatch, SourceIdentity, WeakIdentity};
 use crate::map::{
     non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
 };
 use pgdt_core::internal::StatisticsScope;
-use pgdt_core::{Error, Result, Unusable};
+use pgdt_core::{Result, Unusable};
 use pgdt_io::{ByteRangeSource, KnownCompression, Origin};
 use pgdt_model::{CACHE_FORMAT_VERSION, DataBlock, DumpIndex, SpanBody, calendar_end};
 
@@ -241,14 +238,5 @@ pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) 
         calendar_end: calendar_end(),
         index,
     };
-    write_beside(path, |writer| {
-        writer.write_all(&CACHE_MAGIC)?;
-        writer.write_all(&CACHE_FORMAT_VERSION.to_le_bytes())?;
-        bincode::serde::encode_into_std_write(&file, writer, bincode::config::standard())
-            .map(drop)
-            .map_err(|e| match e {
-                EncodeError::Io { inner, .. } => Error::Io(inner),
-                other => Error::cache_encode(other),
-            })
-    })
+    write_cache_file(path, &file)
 }

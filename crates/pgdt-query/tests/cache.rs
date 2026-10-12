@@ -1191,7 +1191,6 @@ async fn persisted_index_is_pinned_to_the_format_version() {
 /// own unit tests until the crates were carved, here because a statistics
 /// fixture's index is `map_file`'s to build.
 mod encoding {
-    use std::io::Write;
     use std::path::PathBuf;
     use std::process::Command;
 
@@ -1200,7 +1199,7 @@ mod encoding {
     use pgdt_dump::cache::{CacheMode, CacheStatus, Unusable, load, save};
     use pgdt_dump::internal::{
         CACHE_MAGIC, CacheFile, CacheFileRef, CompressionIndex, ContainerKind, SourceIdentity,
-        read_cache_file, write_beside,
+        read_cache_file, write_cache_file,
     };
     use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
     use pgdt_mapping::map_file;
@@ -1344,14 +1343,7 @@ mod encoding {
                 calendar_end: other,
                 index,
             };
-            write_beside(&path, |writer| {
-                writer.write_all(&CACHE_MAGIC)?;
-                writer.write_all(&CACHE_FORMAT_VERSION.to_le_bytes())?;
-                bincode::serde::encode_into_std_write(&file, writer, bincode::config::standard())
-                    .map(drop)
-                    .map_err(Error::cache_encode)
-            })
-            .unwrap();
+            write_cache_file(&path, &file).unwrap();
             let status = load(&path, &source).await.unwrap();
             if refused {
                 let why = Unusable::CalendarChanged { counted_under: other, build: calendar_end() };

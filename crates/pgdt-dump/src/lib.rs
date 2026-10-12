@@ -24,7 +24,7 @@ pub mod internal {
     #[cfg(any(test, feature = "test-support"))]
     pub use crate::cache::file::{
         CACHE_MAGIC, CacheFile, CacheFileRef, CompressionIndex, ContainerKind, read_cache_file,
-        write_beside,
+        write_cache_file,
     };
     #[cfg(any(test, feature = "test-support"))]
     pub use crate::cache::identity::SourceIdentity;
