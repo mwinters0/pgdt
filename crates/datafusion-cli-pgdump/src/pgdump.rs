@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider, TableProviderFactory};
-use datafusion::error::{DataFusionError, Result};
+use datafusion::error::Result;
 use datafusion::logical_expr::CreateExternalTable;
 use datafusion::prelude::SessionContext;
 use datafusion_pgdump::{
@@ -327,15 +327,11 @@ pub async fn register(
             strict_identity: dump.strict_identity.unwrap_or(strict_identity),
             ..PgDumpOptions::default()
         };
-        let opened = PgDump::open(&dump.source, options).await.map_err(external)?;
-        register_dump(ctx, dump.name.as_deref(), &opened, Arc::clone(&sink)).map_err(external)?;
+        let opened = PgDump::open(&dump.source, options).await?;
+        register_dump(ctx, dump.name.as_deref(), &opened, Arc::clone(&sink))?;
         stderr.fold(opened.origin());
     }
     Ok(())
-}
-
-fn external(err: datafusion_pgdump::Error) -> DataFusionError {
-    DataFusionError::External(Box::new(err))
 }
 
 #[cfg(test)]

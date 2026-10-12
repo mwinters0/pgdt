@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
-use datafusion::common::{DataFusionError, Result, Statistics};
+use datafusion::common::{Result, Statistics};
 use datafusion::datasource::TableType;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
@@ -54,12 +54,10 @@ impl fmt::Debug for PgDumpTable {
 
 impl PgDumpTable {
     /// `name`, which must be one of `dump`'s own [`PgDump::tables`], or the
-    /// refusal its plan would raise.
+    /// refusal its plan would raise, an [`Error`] across DataFusion's
+    /// boundary as every refusal of ours is.
     pub fn new(dump: Arc<PgDump>, name: TableName) -> Result<Self> {
-        Self::build(dump, name).map_err(|err| match err {
-            Error::Library(err) => external(err),
-            err => DataFusionError::External(Box::new(err)),
-        })
+        Ok(Self::build(dump, name)?)
     }
 
     /// [`PgDumpTable::new`], its refusal the library's own, bar a table the
@@ -151,7 +149,7 @@ impl PgDump {
             .filter(|t| t.table == table)
             .collect();
         match candidates.as_slice() {
-            [one] => Ok(Arc::new(PgDumpTable::new(Arc::clone(self), (*one).clone())?)),
+            [one] => Ok(Arc::new(PgDumpTable::build(Arc::clone(self), (*one).clone())?)),
             [] => Err(Error::Table(format!("{} holds no table `{table}`", self.origin()))),
             many => Err(Error::Table(format!(
                 "`{table}` names {} tables in {}: {}; name the schema or the database",

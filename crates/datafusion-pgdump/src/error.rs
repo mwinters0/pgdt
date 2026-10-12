@@ -1,5 +1,5 @@
-//! What opening or registering a dump refuses, and the library's refusal
-//! carried across DataFusion's boundary.
+//! What opening or registering a dump refuses, and the one way anything of
+//! ours crosses DataFusion's boundary.
 
 use datafusion::common::DataFusionError;
 
@@ -7,8 +7,10 @@ use datafusion::common::DataFusionError;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// The library's own refusal: a source it cannot read, a cache it cannot
-    /// use, a table whose blocks disagree.
-    #[error(transparent)]
+    /// use, a table whose blocks disagree. Its sentence is the library's, and
+    /// the library's error is its source, so a walk of
+    /// [`std::error::Error::source`] reaches it.
+    #[error("{0}")]
     Library(#[from] pgdt_core::Error),
     /// The cache this provider reads does not cover the whole file, or is not
     /// there to read. The provider never maps, so the remedy is the parse
@@ -32,12 +34,22 @@ pub enum Error {
     /// than one.
     #[error("{0}")]
     Table(String),
-    #[error(transparent)]
-    DataFusion(#[from] datafusion::error::DataFusionError),
 }
 
-/// A library error carried across DataFusion's boundary whole, so an embedder
-/// can downcast it back.
+/// **Whatever of ours crosses DataFusion's boundary is
+/// [`DataFusionError::External`] holding an [`Error`]**, from a scan, a pushed
+/// filter, a table built or registered and a `CREATE EXTERNAL TABLE` alike,
+/// so an embedder downcasts the top to [`Error`] on every path and reaches
+/// `pgdt_core::Error` below it by [`std::error::Error::source`]
+/// (`docs/design/decisions.md`, "D74").
+impl From<Error> for DataFusionError {
+    fn from(err: Error) -> Self {
+        DataFusionError::External(Box::new(err))
+    }
+}
+
+/// The library's refusal across DataFusion's boundary, as
+/// [`Error::Library`].
 pub(crate) fn external(err: pgdt_core::Error) -> DataFusionError {
-    DataFusionError::External(Box::new(err))
+    Error::Library(err).into()
 }

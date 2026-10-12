@@ -632,12 +632,12 @@ in one crate with upward deviations; the cache a crate of its own (the loader sc
 
 ### D74 Below the codec no Arrow, the codec pure, and the core's error naming no dependency
 Core, model, io and dump never name Arrow; the codec and mapping only its schema types, and the codec `i256`; the codec is synchronous and does no I/O, nor does
-the model; a decoder takes an unescaped field and returns a value, never a builder (query's, whose views marry array building
-to the read buffers, D46). Anything persisted is model vocabulary — declared type strings, never a `DataType` or another codec
-conclusion, a statistic's bounds included. A contract over a block's rows is model, implemented above (`pgdt_model::internal::BlockObserver`,
-`pgdt_model::internal::FieldCount`). The core error carries a dependency's error as an opaque `Cause`, built by `map_err` where a crate meets
-it and reached by downcast. Rejected: a `#[from]` variant per dependency's error, compiling Arrow, xz-seek and bincode into every
-crate; a decimal key (`OrderKey::Decimal`) of digit strings, a heap per field, or of a 256-bit integer other than `Decimal256`'s.
+the model; a decoder takes an unescaped field and returns a value, never a builder (query's, whose views marry array building to the read buffers, D46). Anything
+persisted is model vocabulary — declared type strings, never a `DataType` or another codec conclusion, a statistic's bounds included. A contract over a block's
+rows is model, implemented above (`pgdt_model::internal::BlockObserver`, `pgdt_model::internal::FieldCount`). The core error carries a dependency's error as an
+opaque `Cause`, built by `map_err` where a crate meets it and reached by downcast; whatever the provider hands DataFusion is `External(datafusion_pgdump::Error)`,
+the core error its `source()`. Rejected: a `#[from]` variant per dependency's error, compiling Arrow, xz-seek and bincode into every crate; the core error
+crossing bare on some paths; a decimal key (`OrderKey::Decimal`) of digit strings, a heap per field, or of a 256-bit integer other than `Decimal256`'s.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family

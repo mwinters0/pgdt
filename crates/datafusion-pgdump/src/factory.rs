@@ -12,7 +12,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider, TableProviderFactory};
 use datafusion::common::config::{ConfigEntry, ConfigExtension, ExtensionOptions};
-use datafusion::common::{DataFusionError, Result, plan_err};
+use datafusion::common::{Result, plan_err};
 use datafusion::logical_expr::CreateExternalTable;
 use datafusion::prelude::SessionContext;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
@@ -255,12 +255,10 @@ impl TableProviderFactory for PgDumpTableFactory {
             strict_identity: options.strict_identity.unwrap_or(self.strict_identity),
             ..PgDumpOptions::default()
         };
-        let dump = PgDump::open(location, open).await.map_err(external)?;
+        let dump = PgDump::open(location, open).await?;
         dump.bill(&ScanBudget::of(state));
         dump.report(self.sink.as_ref());
-        let provider = dump
-            .table(options.database.as_deref(), options.schema.as_deref(), table)
-            .map_err(external)?;
+        let provider = dump.table(options.database.as_deref(), options.schema.as_deref(), table)?;
         provider.report(&cmd.name.to_string(), Arc::clone(&self.sink));
         Ok(provider)
     }
@@ -287,10 +285,6 @@ pub fn register_table_factory(
         PGDUMP_FILE_TYPE.to_string(),
         Arc::new(PgDumpTableFactory::new(sink).with_strict_identity(strict_identity)),
     );
-}
-
-fn external(err: crate::error::Error) -> DataFusionError {
-    DataFusionError::External(Box::new(err))
 }
 
 #[cfg(test)]

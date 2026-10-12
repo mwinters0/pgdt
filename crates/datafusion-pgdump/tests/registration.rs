@@ -4,15 +4,17 @@
 //! sink hears is one the library produced — a `Diagnostic`, a `ColumnNote` or
 //! a `ComparisonNote`, recovered through `as_any` — or the provider's
 //! `RefusedTable` for a table whose plan refuses, with the dump or the table
-//! it is about in front of its sentence.
+//! it is about in front of its sentence. What a refusal is across
+//! DataFusion's boundary is held here too.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use arrow::array::RecordBatch;
+use datafusion::error::DataFusionError;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
-    PgDump, PgDumpOptions, RefusedTable, register_dump, register_table_factory,
+    PgDump, PgDumpOptions, PgDumpTable, RefusedTable, register_dump, register_table_factory,
 };
 use pgdt_codec::{ColumnNote, SchemaMode};
 use pgdt_dump::ScanOptions;
@@ -23,7 +25,7 @@ use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{
     GatherOptions, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
-use pgdt_model::{Diagnostic, DiagnosticSink, Finding, Severity};
+use pgdt_model::{Diagnostic, DiagnosticSink, Finding, PostgresInvalidValues, Severity};
 use pgdt_query::ComparisonNote;
 
 fn fixture(schema: &str, flag_set: &str) -> PathBuf {
@@ -390,4 +392,106 @@ async fn a_statement_s_strictness_overrides_the_session_s() {
     assert!(err.contains("`--strict-identity=time`"), "{err}");
     let err = rows(&advisory, &create("e", Some("tiem"))).await.unwrap_err();
     assert!(err.contains("pgdump.strict_identity `tiem`"), "{err}");
+}
+
+/// The library's error beneath `err`, which must be the provider's own
+/// [`datafusion_pgdump::Error`] at the root of what DataFusion carries.
+fn library_error(err: &DataFusionError) -> &pgdt_core::Error {
+    let DataFusionError::External(top) = err.find_root() else {
+        panic!("not an external error: {err:?}")
+    };
+    let ours = top.downcast_ref::<datafusion_pgdump::Error>();
+    core_beneath(ours.unwrap_or_else(|| panic!("not the provider's error: {err:?}")))
+}
+
+/// The first `pgdt_core::Error` a walk of `err`'s sources reaches.
+fn core_beneath<'a>(err: &'a (dyn std::error::Error + 'static)) -> &'a pgdt_core::Error {
+    let mut cause = Some(err);
+    while let Some(err) = cause {
+        if let Some(core) = err.downcast_ref() {
+            return core;
+        }
+        cause = err.source();
+    }
+    panic!("no library error beneath {err}")
+}
+
+/// **Whatever crosses DataFusion's boundary is the provider's `Error`, the
+/// library's beneath it** (`docs/design/decisions.md`, "D74"): a scan's
+/// refusal, a `STORED AS PGDUMP` statement's and a table built by hand each
+/// downcast to `datafusion_pgdump::Error` and reach `pgdt_core::Error` by a
+/// walk of their sources; `PgDump::table` returns its own variants unwrapped.
+#[tokio::test(flavor = "multi_thread")]
+async fn every_refusal_is_the_provider_s_error_over_the_library_s() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump_path = dir.path().join("refusing.sql");
+    std::fs::write(
+        &dump_path,
+        "CREATE TABLE public.t (\n    a integer\n);\n\n\
+         COPY public.t (a) FROM stdin;\n1\nabc\n\\.\n\n\
+         COPY public.u (a, b) FROM stdin;\n1\tx\n\\.\n\n\
+         COPY public.u (a, c) FROM stdin;\n4\tz\n\\.\n",
+    )
+    .unwrap();
+    let source = LocalFileSource::open(&dump_path).unwrap();
+    let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
+    let ignoring = GatherOptions {
+        postgres_invalid_values: PostgresInvalidValues::Ignore,
+        ..GatherOptions::default()
+    };
+    map_file(&source, &ScanOptions::default(), &ignoring, &cache, &StatisticsRequest::DATA)
+        .await
+        .unwrap();
+    let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+
+    let err = dump.table(None, None, "u").unwrap_err();
+    assert!(matches!(err, datafusion_pgdump::Error::Library(_)), "{err:?}");
+    core_beneath(&err);
+    let name = dump.tables().iter().find(|name| name.table == "u").unwrap().clone();
+    library_error(&PgDumpTable::new(Arc::clone(&dump), name).unwrap_err());
+
+    let ctx = SessionContext::new();
+    ctx.register_table("t", dump.table(None, None, "t").unwrap()).unwrap();
+    let err = ctx.sql("SELECT * FROM t").await.unwrap().collect().await.unwrap_err();
+    assert!(
+        matches!(
+            library_error(&err),
+            pgdt_core::Error::FieldRefused { .. } | pgdt_core::Error::FieldDecode { .. }
+        ),
+        "{err:?}"
+    );
+
+    let foreign = dir.path().join("foreign.sql");
+    std::fs::copy(&dump_path, &foreign).unwrap();
+    std::fs::write(cache::colocated_path(&foreign), "not a cache").unwrap();
+    register_table_factory(&ctx, Arc::new(|_: &dyn Finding| {}), StrictIdentity::ADVISORY);
+    let create = format!(
+        "CREATE EXTERNAL TABLE f STORED AS PGDUMP LOCATION '{}' OPTIONS ('pgdump.table' 't')",
+        foreign.display()
+    );
+    let err = ctx.sql(&create).await.unwrap_err();
+    assert!(matches!(library_error(&err), pgdt_core::Error::CacheUnusable { .. }), "{err:?}");
+}
+
+/// **`PgDump::table` refusing a table the cache holds at the metadata level
+/// is its own variant**, matched as it is returned.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_table_asked_for_at_the_metadata_level_is_refused_as_such() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump_path = dir.path().join("meta.sql");
+    std::fs::write(&dump_path, "COPY public.meta (a) FROM stdin;\n1\n\\.\n").unwrap();
+    let source = LocalFileSource::open(&dump_path).unwrap();
+    let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
+    map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &cache,
+        &StatisticsRequest::METADATA,
+    )
+    .await
+    .unwrap();
+    let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let err = dump.table(None, None, "meta").unwrap_err();
+    assert!(matches!(err, datafusion_pgdump::Error::MetadataLevel { .. }), "{err:?}");
 }
