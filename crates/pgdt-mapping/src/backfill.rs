@@ -26,6 +26,7 @@ use crate::statistics::account::{StatisticsAccount, Term};
 use crate::statistics::density::BlockStatisticsExt;
 use crate::statistics::gather;
 use crate::statistics::request::{StatisticsBackfill, StatisticsRequest};
+use crate::statistics::stored::bounded_columns;
 
 /// What [`backfill_statistics`] did.
 pub(crate) struct BackfillRun {
@@ -313,15 +314,6 @@ pub fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptio
     source.hint_parallelism(scan_options.parallelism);
     announce_cancellation(source, scan_options);
     source.hint_wait_policy(WaitPolicy::NeverWait);
-}
-
-/// Which of `block`'s columns gathering keeps bounds and row order for,
-/// positionally to its header, its columns resolved against `metadata` as a
-/// mapping pass resolves them — what [`StatisticsRequest::backfill`] reads a
-/// block's held statistics against, a column held without the bounds this
-/// says it gets lacking them (`docs/design/decisions.md`, "D79").
-pub fn bounded_columns(block: &CopyBlock, metadata: Option<&DumpMetadata>) -> Vec<bool> {
-    gather::bounded_columns(&block.header, metadata, block.database.as_deref())
 }
 
 /// What re-reading one block the map already holds yields

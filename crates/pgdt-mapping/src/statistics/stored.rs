@@ -10,7 +10,7 @@ use pgdt_codec::decode::typmod_unscaled_digits;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_core::CopyHeader;
-use pgdt_model::{ColumnDef, DumpMetadata};
+use pgdt_model::{ColumnDef, CopyBlock, DumpMetadata};
 
 /// The kinds each of `header`'s columns' stored sets of bounds are ordered
 /// by, positionally, resolved as `gather::observer_tracking` resolves them — so for
@@ -24,6 +24,19 @@ pub fn stored_bounds_kinds(
 ) -> Vec<[Option<CompareKind>; 2]> {
     let resolved = stored_resolution(header, metadata, database);
     (0..header.columns.len()).map(|i| resolved.bounds_kinds(i)).collect()
+}
+
+/// Which of `block`'s columns gathering keeps bounds and row order for,
+/// positionally to its header, its columns resolved against `metadata` as a
+/// mapping pass resolves them — what
+/// [`StatisticsRequest::backfill`](crate::statistics::StatisticsRequest::backfill)
+/// reads a block's held statistics against, a column held without the bounds
+/// this says it gets lacking them (`docs/design/decisions.md`, "D79").
+pub fn bounded_columns(block: &CopyBlock, metadata: Option<&DumpMetadata>) -> Vec<bool> {
+    stored_bounds_kinds(&block.header, metadata, block.database.as_deref())
+        .iter()
+        .map(|kinds| kinds[0].is_some())
+        .collect()
 }
 
 /// `header`'s columns resolved as `gather::observer_tracking` resolves them, under

@@ -62,7 +62,7 @@ use self::gatherer::{Gatherer, Sizing};
 use self::strict::field_checks;
 use super::account::{Charge, StatisticsAccount, Term};
 use super::request::{ROW_GROUP_DEFAULT_SIZE_BYTES, StatisticsBackfill, StatisticsRequest};
-use super::stored::{declared_column, stored_bounds_kinds, stored_resolution};
+use super::stored::{declared_column, stored_resolution};
 
 mod bounds;
 mod charge;
@@ -162,18 +162,6 @@ pub(crate) fn observer_tracking(
     // (`docs/design/decisions.md`, "D85").
     gatherer.decline_if_over();
     Box::new(gatherer)
-}
-
-/// Which of `header`'s columns gathering keeps bounds for, positionally, under
-/// the DDL `metadata` states for it — what a block's held statistics are read
-/// against to find a column gathered by a build that kept none
-/// ([`StatisticsRequest::backfill`]).
-pub(crate) fn bounded_columns(
-    header: &CopyHeader,
-    metadata: Option<&DumpMetadata>,
-    database: Option<&str>,
-) -> Vec<bool> {
-    stored_bounds_kinds(header, metadata, database).iter().map(|kinds| kinds[0].is_some()).collect()
 }
 
 /// **An observer gathering nothing that checks every field of the block** as

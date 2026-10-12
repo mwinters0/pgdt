@@ -181,7 +181,8 @@ impl StatisticsRequest {
     /// resolved against other metadata, is answered for columns the re-read
     /// will not bound as the mask says. `map_file`'s back-fill is the only
     /// caller today and computes both together. **(b) owned by P36**: closing
-    /// it means this taking the metadata and computing the mask itself.
+    /// it means this taking the metadata and computing the mask itself, which
+    /// leaves `bounded_columns` `pub(crate)`.
     ///
     /// **A block lacks the requested statistics** where it holds none — every
     /// block mapped at the metadata level that this request puts at the data

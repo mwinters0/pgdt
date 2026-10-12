@@ -519,7 +519,8 @@ than reading as a phase nobody has sliced.
 - **KD115** — `StatisticsRequest::backfill` takes a `bounded` mask the caller
   must compute with `bounded_columns` over the same block and metadata, and
   nothing checks the two agree, so an embedder back-filling one block can ask
-  for the wrong columns silently. **(b) owned by P36**. Detail:
+  for the wrong columns silently. **(b) owned by P36**; closing it leaves
+  `bounded_columns` `pub(crate)`. Detail:
   `crates/pgdt-mapping/src/statistics/request.rs`.
 
 - **KD116** — a nested value has no API key: an embedder orders a scalar as
