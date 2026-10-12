@@ -2,10 +2,11 @@
 //! `COLLATION`, the `ALTER` statements amending them, `\connect`, and the
 //! roles and tablespaces a statement references, read from any complete
 //! statement the map builder closes, before the data or after it
-//! (`docs/design/decisions.md`, "D36"). Tables and their columns are
-//! [`table`], the other declarations [`types`], the references [`refs`], the
-//! derived view [`metadata`], and the keyword and quoting helpers they share
-//! [`lex`].
+//! (`docs/design/decisions.md`, "D36"). Tables are [`table`], a column's
+//! grammar, which a table's list, a composite's fields and a domain's tail
+//! share, [`column`], the other declarations [`types`], the references
+//! [`refs`], the derived view [`metadata`], and the keyword and quoting
+//! helpers they share [`lex`].
 //!
 //! **This module owns the DDL grammar, not a second pass over the file.**
 //! [`classify`] turns a complete statement into a [`pgdt_model::SpanBody`],
@@ -29,6 +30,7 @@
 //! (`OWNER TO`, `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, `SET
 //! default_tablespace`).
 
+mod column;
 mod lex;
 mod metadata;
 mod refs;

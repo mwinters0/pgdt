@@ -3,12 +3,12 @@
 //! an enum label added, a composite's attribute dropped, and one that could
 //! change an enum's labels unread.
 
-use super::lex::{
-    find_ci, holds_word, matching_paren, parse_string_literal, split_top_level_commas, strip_kw,
-};
-use super::table::{
+use super::column::{
     check_constraints, extract_collation, extract_type_words, not_null_clause,
     parse_column_fragment,
+};
+use super::lex::{
+    find_ci, holds_word, matching_paren, parse_string_literal, split_top_level_commas, strip_kw,
 };
 use pgdt_core::internal::Cursor;
 use pgdt_core::internal::{canonical_type_name, parse_type_name};

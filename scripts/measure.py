@@ -6617,6 +6617,7 @@ NESTED = (
 PREAMBLE = (
     "crates/pgdt-dump/src/preamble.rs",
     "crates/pgdt-dump/src/ddl.rs",
+    "crates/pgdt-dump/src/ddl/column.rs",
     "crates/pgdt-dump/src/ddl/lex.rs",
     "crates/pgdt-dump/src/ddl/metadata.rs",
     "crates/pgdt-dump/src/ddl/refs.rs",

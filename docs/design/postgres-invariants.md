@@ -2301,7 +2301,7 @@ the column emission follows the `GENERATED`/`DEFAULT`/`NOT NULL` appends. The
 placement and every form above are observed in the committed fixtures at all
 six, the three v18-only window shapes at 18.
 
-**Relied on by.** `crate::ddl::table`'s `extract_collation` (the placement and the
+**Relied on by.** `crate::ddl::column`'s `extract_collation` (the placement and the
 form) and `ColumnDef::collation`/`TypeKind::Domain::collation`; the comparison
 register's collatable arms in `crate::pgtype`, which read a clause's absence as
 the type's default.
