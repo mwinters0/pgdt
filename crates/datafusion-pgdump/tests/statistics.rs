@@ -50,11 +50,7 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpTable, register_dump};
 use futures::StreamExt;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
-use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::CacheMode;
-use pgdt_fixtures::{all_fixtures, fixtures_root, past_refused};
-use pgdt_io::LocalFileSource;
-use pgdt_mapping::map_file;
+use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy, past_refused, sweep_request};
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_model::{Finding, TableName};
 
@@ -75,39 +71,20 @@ fn planned_fixtures() -> Vec<PathBuf> {
         .collect()
 }
 
-/// `fixture` copied into `dir` beside the complete cache a gathering parse
-/// leaves, so the committed tree is never written into and the map carries
-/// the statistics this target is about.
-async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
-    parsed_copy_gathering(fixture, dir, &StatisticsRequest::DATA).await
-}
-
 /// A group size several rows of every fixture table long, so a pushed filter
 /// keeps some of a block's groups and not others.
 const SMALL_GROUP: u64 = 1024;
 
-/// [`parsed_copy`], gathering every statistic at [`SMALL_GROUP`].
-async fn parsed_copy_in_small_groups(fixture: &Path, dir: &Path) -> PathBuf {
+/// Every statistic at [`SMALL_GROUP`], but for a column of `fixture` holding a
+/// field PostgreSQL refuses, which a data-level parse fails on
+/// (`refused::past_refused`).
+fn in_small_groups(fixture: &Path) -> StatisticsRequest {
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
         ..StatisticsRequest::DATA
     };
-    parsed_copy_gathering(fixture, dir, &request).await
-}
-
-/// `fixture` copied into `dir` beside the cache `request` leaves, but for a
-/// column holding a field PostgreSQL refuses, which a data-level parse fails
-/// on (`refused::past_refused`).
-async fn parsed_copy_gathering(fixture: &Path, dir: &Path, request: &StatisticsRequest) -> PathBuf {
-    let dir = tempfile::tempdir_in(dir).unwrap().keep();
-    let copy = dir.join(fixture.file_name().unwrap());
-    std::fs::copy(fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
-    let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
-    let request = past_refused(fixture, request);
-    map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
-    copy
+    past_refused(fixture, &request)
 }
 
 /// A session that reads the provider's statistics, and one that cannot, each
@@ -454,7 +431,7 @@ fn statistics_never_change_an_answer() {
         let (mut typed, mut refusing, mut untyped, mut strings) =
             (Seen::default(), Seen::default(), Seen::default(), Seen::default());
         for fixture in fixtures {
-            let copy = parsed_copy(&fixture, scratch.path()).await;
+            let copy = parsed_copy(&fixture, scratch.path(), &sweep_request(&fixture)).await;
             let (text_dump, text_reading, text_blind, text_catalogs) =
                 opened(&copy, SchemaMode::Strings).await;
             let (dump, reading, blind, catalogs) = opened(&copy, SchemaMode::Typed).await;
@@ -512,7 +489,7 @@ fn statistics_never_change_an_answer() {
 async fn an_extreme_answers_where_its_stored_bound_is_the_value() {
     let scratch = tempfile::tempdir().unwrap();
     let fixture = fixtures_root().join("16/statistics/default.sql");
-    let copy = parsed_copy(&fixture, scratch.path()).await;
+    let copy = parsed_copy(&fixture, scratch.path(), &sweep_request(&fixture)).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let (reading, blind) = sessions();
     register_in((&reading, &blind), &dump);
@@ -559,7 +536,7 @@ async fn an_enum_s_extremes_answer_in_label_text_order() {
 
     let scratch = tempfile::tempdir().unwrap();
     let fixture = fixtures_root().join("16/statistics/default.sql");
-    let copy = parsed_copy(&fixture, scratch.path()).await;
+    let copy = parsed_copy(&fixture, scratch.path(), &sweep_request(&fixture)).await;
     let (dump, reading, blind, _) = opened(&copy, SchemaMode::Typed).await;
     let both = "SELECT MIN(m), MAX(m) FROM \"dump\".public.moods";
     assert_eq!(agrees(&reading, &blind, both).await, Answer::FromStatistics, "{both}");
@@ -625,7 +602,7 @@ async fn an_enum_s_extremes_answer_in_label_text_order() {
 async fn a_filtered_scan_answers_nothing_from_the_table_s_statistics() {
     let scratch = tempfile::tempdir().unwrap();
     let fixture = fixtures_root().join("16/types/default.sql");
-    let copy = parsed_copy(&fixture, scratch.path()).await;
+    let copy = parsed_copy(&fixture, scratch.path(), &sweep_request(&fixture)).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let (reading, blind) = sessions();
     register_in((&reading, &blind), &dump);
@@ -657,7 +634,7 @@ async fn a_fetched_or_filtered_plan_states_no_exact_statistic() {
 
     let scratch = tempfile::tempdir().unwrap();
     let fixture = fixtures_root().join("16/types/default.sql");
-    let copy = parsed_copy(&fixture, scratch.path()).await;
+    let copy = parsed_copy(&fixture, scratch.path(), &sweep_request(&fixture)).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let (reading, _blind) = sessions();
     let table = dump.table(None, None, "t_int").unwrap();
@@ -709,8 +686,9 @@ async fn a_fetched_or_filtered_plan_states_no_exact_statistic() {
 async fn a_distinct_count_is_exact_only_where_every_group_kept_a_dictionary_of_emitted_text() {
     let scratch = tempfile::tempdir().unwrap();
     let spans = fixtures_root().join("16/statistics/load-via-partition-root.sql");
-    let spans = parsed_copy(&spans, scratch.path()).await;
-    let types = parsed_copy(&fixtures_root().join("16/types/default.sql"), scratch.path()).await;
+    let spans = parsed_copy(&spans, scratch.path(), &sweep_request(&spans)).await;
+    let types = fixtures_root().join("16/types/default.sql");
+    let types = parsed_copy(&types, scratch.path(), &sweep_request(&types)).await;
     // `public.spans` is three blocks. `tint`'s union is larger than any one
     // block's, `small` holds NULLs, and `stamp` wrote one instant from two
     // offsets. `wide` overflows every block's dictionaries and `mixed` the
@@ -762,10 +740,11 @@ async fn a_distinct_count_is_exact_only_where_every_group_kept_a_dictionary_of_e
 async fn a_sum_answers_where_every_group_kept_one() {
     let scratch = tempfile::tempdir().unwrap();
     let spans = fixtures_root().join("16/statistics/load-via-partition-root.sql");
-    let spans = parsed_copy(&spans, scratch.path()).await;
+    let spans = parsed_copy(&spans, scratch.path(), &sweep_request(&spans)).await;
     let default = fixtures_root().join("16/statistics/default.sql");
-    let default = parsed_copy(&default, scratch.path()).await;
-    let types = parsed_copy(&fixtures_root().join("16/types/default.sql"), scratch.path()).await;
+    let default = parsed_copy(&default, scratch.path(), &sweep_request(&default)).await;
+    let types = fixtures_root().join("16/types/default.sql");
+    let types = parsed_copy(&types, scratch.path(), &sweep_request(&types)).await;
     let summed = ["part", "id", "gappy", "small", "i2", "i4", "big", "ident", "amount", "huge"];
     let unsummed = [
         (&spans, "spans", "stamp"),
@@ -1082,7 +1061,7 @@ async fn estimates_over(fixtures: Vec<PathBuf>) -> Estimates {
     let mut rng = Rng(0x5eed_2501 + major);
     let mut seen = Estimates::default();
     for fixture in fixtures {
-        let copy = parsed_copy_in_small_groups(&fixture, scratch.path()).await;
+        let copy = parsed_copy(&fixture, scratch.path(), &in_small_groups(&fixture)).await;
         for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
             let options = PgDumpOptions { schema_mode, ..PgDumpOptions::default() };
             let dump = PgDump::open(copy.to_str().unwrap(), options).await.unwrap();
@@ -1269,7 +1248,7 @@ async fn orderings_over(fixtures: Vec<PathBuf>) -> BTreeMap<usize, bool> {
     let scratch = tempfile::tempdir().unwrap();
     let mut crossings = BTreeMap::new();
     for fixture in fixtures {
-        let copy = parsed_copy(&fixture, scratch.path()).await;
+        let copy = parsed_copy(&fixture, scratch.path(), &sweep_request(&fixture)).await;
         let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
         for partitions in ORDERING_PARTITIONS {
             let (ctx, blind) = sessions_at(partitions);
@@ -1492,7 +1471,7 @@ fn build_side(plan: &Arc<dyn ExecutionPlan>, marker: &str) -> Option<(bool, Part
 async fn a_join_builds_the_side_its_statistics_call_smaller() {
     let scratch = tempfile::tempdir().unwrap();
     let fixture = fixtures_root().join("16/statistics/default.sql");
-    let copy = parsed_copy(&fixture, scratch.path()).await;
+    let copy = parsed_copy(&fixture, scratch.path(), &sweep_request(&fixture)).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let (reading, blind) = sessions();
     register_in((&reading, &blind), &dump);
@@ -1530,7 +1509,7 @@ async fn a_join_builds_the_side_its_statistics_call_smaller() {
 async fn a_filtered_side_s_bound_moves_a_join_s_build_side() {
     let scratch = tempfile::tempdir().unwrap();
     let fixture = fixtures_root().join("16/statistics/default.sql");
-    let copy = parsed_copy_in_small_groups(&fixture, scratch.path()).await;
+    let copy = parsed_copy(&fixture, scratch.path(), &in_small_groups(&fixture)).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let (reading, blind) = sessions();
     register_in((&reading, &blind), &dump);

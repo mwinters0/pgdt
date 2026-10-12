@@ -12,9 +12,10 @@ persisted changed, so no format bump.
   root re-exports, so each has one path. `edge_cases.sql` sits beside the
   manifest. `all_fixtures` now sorts, as `pgdt`'s and `datafusion-pgdump`'s
   copies did.
-- **`sweep_request` and `past_refused` sit behind `mapping`**, the only
-  dependency. pgdt-query, datafusion-pgdump turn it on; `pgdt`'s tests read
-  `refused_field` alone, and pgdt-codec's and pgdt-mapping's tests neither.
+- **`sweep_request` and `past_refused` sit behind `mapping`**, as
+  `parsed_copy` and `ungathered` do, the feature carrying every member
+  dependency. pgdt-query, datafusion-pgdump and `pgdt` turn it on;
+  pgdt-codec's and pgdt-mapping's tests do not.
 - **Each crate's tests reach it by dev-dependency**: pgdt-codec, pgdt-mapping,
   pgdt-query, datafusion-pgdump and `pgdt`. The tests of pgdt-core,
   pgdt-model, pgdt-io and pgdt-dump read no fixture, so take none. pgdt-mapping's integration tests
@@ -41,7 +42,7 @@ persisted changed, so no format bump.
   target of the five crates above.
 - **`layering.py` refuses `#[path]` in every member, tests included**, which
   is what lets `check.py` stop following it. `GRAPH` lists `pgdt-fixtures`
-  with its one edge, to pgdt-mapping, and no row lists it, so a normal
+  with its edges, behind `mapping`, and no row lists it, so a normal
   dependency on it is refused.
 - **`persisted_index_is_pinned_to_the_format_version` keeps the label
   `"tests/data/edge_cases.sql"`**, which its digest hashes; the path it reads

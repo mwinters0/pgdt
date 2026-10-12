@@ -22,10 +22,8 @@ use datafusion_pgdump::{
     AllowanceOrigin, BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, ScanBudget,
     register_dump,
 };
-use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::CacheMode;
-use pgdt_io::{LocalFileSource, MEMORY_RESERVE};
-use pgdt_mapping::map_file;
+use pgdt_fixtures::{parsed_copy, statistics_fixture};
+use pgdt_io::MEMORY_RESERVE;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_model::{DiagnosticSink, Finding, Severity};
 use pgdt_query::{PlanNote, PlanNoteKind};
@@ -38,18 +36,12 @@ const ORDERED: &str = "shop.public.ordered";
 /// The statistics fixture copied into `dir` beside the complete cache a parse
 /// gathering every column's statistics at [`SMALL_GROUP`] leaves.
 async fn gathered_copy(dir: &Path) -> PathBuf {
-    let fixture = pgdt_fixtures::statistics_fixture(16, "default");
-    let copy = dir.join("default.sql");
-    std::fs::copy(fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
         ..StatisticsRequest::DATA
     };
-    let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
-    map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
-    copy
+    parsed_copy(&statistics_fixture(16, "default"), dir, &request).await
 }
 
 /// What a sink heard of the plan-note channel: each note, with its severity

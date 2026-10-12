@@ -54,12 +54,11 @@ use datafusion_pgdump::{
     PgDump, PgDumpOptions, PgDumpSettings, register_dump, with_unrepresentable_guard,
 };
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
-use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode, CacheStatus};
+use pgdt_dump::cache::{self, CacheStatus};
+use pgdt_fixtures::{parsed_copy, ungathered};
 use pgdt_io::LocalFileSource;
-use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_model::{DataBlock, Finding, SpanBody, Unrepresentable};
+use pgdt_model::{Finding, Unrepresentable};
 use pgdt_query::{RowEvaluation, decode_field};
 
 mod in_order;
@@ -510,33 +509,17 @@ fn fixture(major: u32) -> PathBuf {
 const SMALL_GROUP: u64 = 64;
 
 /// `fixture` copied into its own directory under `dir` beside a complete
-/// cache, gathering what `statistics` says, so the committed tree is never
-/// written into.
-async fn parsed_copy(fixture: &Path, dir: &Path, statistics: Statistics) -> PathBuf {
-    let dir = tempfile::tempdir_in(dir).unwrap().keep();
-    let copy = dir.join(fixture.file_name().unwrap());
-    std::fs::copy(fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
-    let path = cache::colocated_path(&copy);
-    let cache = CacheMode::enabled(path.clone());
+/// cache in groups [`SMALL_GROUP`] rows long, keeping what `statistics` says.
+async fn parsed_copy_keeping(fixture: &Path, dir: &Path, statistics: Statistics) -> PathBuf {
     let request = StatisticsRequest {
         group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
         ..StatisticsRequest::DATA
     };
-    map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
+    let copy = parsed_copy(fixture, dir, &request).await;
     // Absent is a data-level map holding none, as a query's own mapping pass
     // leaves one: the provider refuses a metadata-level table outright.
     if statistics == Statistics::Absent {
-        let CacheStatus::Valid { mut index, .. } = cache::load(&path, &source).await.unwrap()
-        else {
-            panic!("the parse left a complete cache")
-        };
-        for span in &mut index.spans {
-            if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
-                block.statistics = None;
-            }
-        }
-        cache::save(&path, &source, &index).await.unwrap();
+        ungathered(&copy).await;
     }
     copy
 }
@@ -695,7 +678,7 @@ async fn sweep(major: u32) -> (BTreeMap<(usize, Mode), Vec<Miss>>, BTreeSet<usiz
     let fixture = fixture(major);
     let mut copies = BTreeMap::new();
     for statistics in [Statistics::Gathered, Statistics::Absent] {
-        copies.insert(statistics, parsed_copy(&fixture, scratch.path(), statistics).await);
+        copies.insert(statistics, parsed_copy_keeping(&fixture, scratch.path(), statistics).await);
     }
     let oracle = Oracle::of(&copies[&Statistics::Absent]).await;
     let mut dumps = BTreeMap::new();
@@ -929,7 +912,7 @@ async fn counted(copy: &Path) -> BTreeMap<String, Unrepresentable> {
 /// Each extreme, and the library's count of it, over one major.
 async fn extremes(major: u32) -> Extremes {
     let scratch = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture(major), scratch.path(), Statistics::Absent).await;
+    let copy = parsed_copy_keeping(&fixture(major), scratch.path(), Statistics::Absent).await;
     let counted = counted(&copy).await;
     let strings = PgDumpOptions { schema_mode: SchemaMode::Strings, ..PgDumpOptions::default() };
     let text_dump = PgDump::open(copy.to_str().unwrap(), strings).await.unwrap();
@@ -1109,7 +1092,7 @@ async fn the_unrepresentable_function_finds_what_the_null_mode_nulls() {
     for major in MAJORS {
         let scratch = tempfile::tempdir().unwrap();
         for statistics in [Statistics::Gathered, Statistics::Absent] {
-            let copy = parsed_copy(&fixture(major), scratch.path(), statistics).await;
+            let copy = parsed_copy_keeping(&fixture(major), scratch.path(), statistics).await;
             for mode in MODES {
                 let dump = PgDump::open(copy.to_str().unwrap(), options(mode)).await.unwrap();
                 for config in every_config().into_iter().filter(|c| c.statistics == statistics) {
@@ -1176,7 +1159,7 @@ const EVALUATED: [&str; 3] = [
 #[tokio::test]
 async fn the_unrepresentable_function_refuses_where_datafusion_would_evaluate_it() {
     let scratch = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture(16), scratch.path(), Statistics::Gathered).await;
+    let copy = parsed_copy_keeping(&fixture(16), scratch.path(), Statistics::Gathered).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let ctx = guarded();
     register(&ctx, &dump);
@@ -1226,7 +1209,7 @@ async fn the_unrepresentable_function_refuses_where_datafusion_would_evaluate_it
 #[tokio::test]
 async fn registering_a_dump_leaves_the_session_s_planning_alone() {
     let scratch = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture(16), scratch.path(), Statistics::Gathered).await;
+    let copy = parsed_copy_keeping(&fixture(16), scratch.path(), Statistics::Gathered).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let ctx = SessionContext::new();
     ctx.sql("PREPARE before_registration(INT) AS SELECT $1 + 1 AS n").await.unwrap();
@@ -1255,7 +1238,7 @@ async fn registering_a_dump_leaves_the_session_s_planning_alone() {
 #[tokio::test]
 async fn the_null_mode_s_warning_names_the_function() {
     let scratch = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture(16), scratch.path(), Statistics::Gathered).await;
+    let copy = parsed_copy_keeping(&fixture(16), scratch.path(), Statistics::Gathered).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let heard = Arc::new(std::sync::Mutex::new(Vec::new()));
     let sink = {

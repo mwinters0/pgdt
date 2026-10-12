@@ -45,11 +45,7 @@ use datafusion::physical_plan::metrics::MetricValue;
 use datafusion::physical_plan::{ExecutionPlan, ExecutionPlanProperties, collect, displayable};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, register_dump};
-use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::CacheMode;
-use pgdt_fixtures::{all_fixtures, fixtures_root};
-use pgdt_io::LocalFileSource;
-use pgdt_mapping::map_file;
+use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy};
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_model::Finding;
 use pgdt_query::RowEvaluation;
@@ -74,21 +70,14 @@ fn statistics_fixtures() -> Vec<PathBuf> {
 /// prunes has groups to keep and groups to skip.
 const SMALL_GROUP: u64 = 1024;
 
-/// `fixture` copied into `dir` beside a complete cache holding every
-/// statistic at [`SMALL_GROUP`], so the committed tree is never written into.
-async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
-    let dir = tempfile::tempdir_in(dir).unwrap().keep();
-    let copy = dir.join(fixture.file_name().unwrap());
-    std::fs::copy(fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
-    let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
-    let request = StatisticsRequest {
+/// Every statistic at [`SMALL_GROUP`], what each copy this target reads is
+/// mapped at.
+fn small_groups() -> StatisticsRequest {
+    StatisticsRequest {
         selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
         ..StatisticsRequest::DATA
-    };
-    map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
-    copy
+    }
 }
 
 /// What the dynamic filter reaching a scan must look like, read off its
@@ -507,7 +496,7 @@ async fn a_dynamic_filter_changes_no_answer() {
     let mut unshaped = Vec::new();
     let mut consumed: [Consumed; 2] = Default::default();
     for fixture in statistics_fixtures() {
-        let copy = parsed_copy(&fixture, dir.path()).await;
+        let copy = parsed_copy(&fixture, dir.path(), &small_groups()).await;
         let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
         let present: BTreeSet<&str> = dump.tables().iter().map(|t| t.table.as_str()).collect();
         for join in [Join::Chosen, Join::Partitioned] {
@@ -601,7 +590,7 @@ async fn a_float_s_zeros_at_its_extremes_answer_alike_in_either_order() {
     let dir = tempfile::tempdir().unwrap();
     let mut split = false;
     for fixture in statistics_fixtures() {
-        let copy = parsed_copy(&fixture, dir.path()).await;
+        let copy = parsed_copy(&fixture, dir.path(), &small_groups()).await;
         let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
         if !dump.tables().iter().any(|t| t.table == "zeros") {
             continue;
@@ -644,7 +633,7 @@ async fn a_float_s_zeros_at_its_extremes_answer_alike_in_either_order() {
 /// with every producer's flag on.
 async fn statistics_session(dir: &Path) -> SessionContext {
     let fixture = fixtures_root().join("18/statistics/default.sql");
-    let copy = parsed_copy(&fixture, dir).await;
+    let copy = parsed_copy(&fixture, dir, &small_groups()).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let ctx = session(Join::Chosen, true);
     register(&ctx, &dump);
@@ -697,7 +686,7 @@ async fn a_join_s_filter_prunes_its_probe_side_and_stops_it() {
 
     let off = session(Join::Chosen, false);
     let fixture = fixtures_root().join("18/statistics/default.sql");
-    let copy = parsed_copy(&fixture, dir.path()).await;
+    let copy = parsed_copy(&fixture, dir.path(), &small_groups()).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     register(&off, &dump);
     let (unfiltered, plan) = run(&off, JOIN).await;
@@ -762,7 +751,7 @@ async fn a_selective_join_s_probe_side_is_cut_over_what_its_filter_keeps() {
 
     let off = session(Join::Chosen, false);
     let fixture = fixtures_root().join("18/statistics/default.sql");
-    let copy = parsed_copy(&fixture, dir.path()).await;
+    let copy = parsed_copy(&fixture, dir.path(), &small_groups()).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     register(&off, &dump);
     let (unfiltered, plan) = run(&off, SELECTIVE).await;

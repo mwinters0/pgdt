@@ -26,7 +26,7 @@ use futures::StreamExt;
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode};
+use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
@@ -37,7 +37,7 @@ use pgdt_query::{
 };
 
 mod common;
-use common::{VERSIONS, fixture, fixtures_root, sandboxed};
+use common::{VERSIONS, fixture, fixtures_root, parsed_copy};
 
 /// The group size statistics are gathered at: tens of bytes, so a fixture's
 /// block spans many groups and a membership has groups to skip.
@@ -133,17 +133,18 @@ fn named_as_equality(error: &str) -> String {
 /// `dump` mapped into a cache beside a private copy of it, every statistic
 /// gathered at [`TINY_GROUP`].
 async fn gathered(dump: &Path) -> (tempfile::TempDir, PathBuf, DumpIndex) {
-    let (dir, copy) = sandboxed(dump, "dump.sql");
-    let source = LocalFileSource::open(&copy).unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(TINY_GROUP).unwrap()),
         ..StatisticsRequest::DATA
     };
-    let cache = CacheMode::enabled(cache::colocated_path(&copy));
-    let run = map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
-    assert!(!run.interrupted);
-    (dir, copy, run.index)
+    let copy = parsed_copy(dump, dir.path(), &request).await;
+    let path = cache::colocated_path(&copy);
+    let CacheStatus::Valid { index, .. } = cache::load_offline(&path).await.unwrap() else {
+        panic!("the parse left a complete cache")
+    };
+    (dir, copy, index)
 }
 
 /// The values a column's lists draw from: its stored bounds and dictionary

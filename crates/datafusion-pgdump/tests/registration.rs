@@ -6,7 +6,7 @@
 //! `RefusedTable` for a table whose plan refuses, with the dump or the table
 //! it is about in front of its sentence.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use arrow::array::RecordBatch;
@@ -16,26 +16,18 @@ use datafusion_pgdump::{
 };
 use pgdt_codec::{ColumnNote, SchemaMode};
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode, CacheStatus, StrictIdentity};
+use pgdt_dump::cache::{self, CacheMode, StrictIdentity};
+use pgdt_fixtures::{parsed_copy, ungathered};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{
     StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
-use pgdt_model::{DataBlock, Diagnostic, DiagnosticSink, Finding, Severity, SpanBody};
+use pgdt_model::{Diagnostic, DiagnosticSink, Finding, Severity};
 use pgdt_query::ComparisonNote;
 
 fn fixture(schema: &str, flag_set: &str) -> PathBuf {
     pgdt_fixtures::fixture(16, schema, flag_set)
-}
-
-/// `fixture` copied into `dir` beside the complete cache a parse leaves.
-async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
-    let copy = dir.join(fixture.file_name().unwrap());
-    std::fs::copy(fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
-    map_ungathered(&source, &cache::colocated_path(&copy)).await;
-    copy
 }
 
 /// What a sink heard: each finding's severity, sentence and channel.
@@ -80,7 +72,9 @@ async fn rows(ctx: &SessionContext, sql: &str) -> Result<Vec<RecordBatch>, Strin
 #[tokio::test(flavor = "multi_thread")]
 async fn registration_reports_every_table_s_columns_named_by_catalog() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("types", "default"), dir.path()).await;
+    let copy =
+        parsed_copy(&fixture("types", "default"), dir.path(), &StatisticsRequest::DATA).await;
+    ungathered(&copy).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let heard = Arc::new(Heard::default());
     let ctx = SessionContext::new();
@@ -126,7 +120,9 @@ async fn registration_reports_every_table_s_columns_named_by_catalog() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_strings_registration_warns_each_column_once() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("types", "default"), dir.path()).await;
+    let copy =
+        parsed_copy(&fixture("types", "default"), dir.path(), &StatisticsRequest::DATA).await;
+    ungathered(&copy).await;
     let options = PgDumpOptions { schema_mode: SchemaMode::Strings, ..PgDumpOptions::default() };
     let dump = PgDump::open(copy.to_str().unwrap(), options).await.unwrap();
     let heard = Arc::new(Heard::default());
@@ -154,7 +150,9 @@ async fn a_table_whose_plan_refuses_is_reported_and_not_listed() {
     )
     .unwrap();
     let source = LocalFileSource::open(&dump_path).unwrap();
-    map_ungathered(&source, &cache::colocated_path(&dump_path)).await;
+    let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
+    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
+    ungathered(&dump_path).await;
     let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let heard = Arc::new(Heard::default());
     let ctx = SessionContext::new_with_config(SessionConfig::new().with_information_schema(true));
@@ -241,7 +239,9 @@ async fn a_metadata_level_table_is_refused_naming_its_parse() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pgdump_external_table_answers_as_its_catalog_table() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("edge_cases", "default"), dir.path()).await;
+    let copy =
+        parsed_copy(&fixture("edge_cases", "default"), dir.path(), &StatisticsRequest::DATA).await;
+    ungathered(&copy).await;
     let location = copy.to_str().unwrap();
     let heard = Arc::new(Heard::default());
     let ctx = SessionContext::new_with_config(SessionConfig::new().with_target_partitions(2));
@@ -300,7 +300,9 @@ async fn a_pgdump_external_table_answers_as_its_catalog_table() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_pgdump_external_table_refuses_what_it_cannot_mean() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("edge_cases", "default"), dir.path()).await;
+    let copy =
+        parsed_copy(&fixture("edge_cases", "default"), dir.path(), &StatisticsRequest::DATA).await;
+    ungathered(&copy).await;
     let location = copy.to_str().unwrap();
     let ctx = SessionContext::new();
     register_table_factory(&ctx, Arc::new(|_: &dyn Finding| {}), StrictIdentity::ADVISORY);
@@ -345,7 +347,9 @@ async fn a_pgdump_external_table_refuses_what_it_cannot_mean() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_statement_s_strictness_overrides_the_session_s() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("edge_cases", "default"), dir.path()).await;
+    let copy =
+        parsed_copy(&fixture("edge_cases", "default"), dir.path(), &StatisticsRequest::DATA).await;
+    ungathered(&copy).await;
     let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
     std::fs::File::options().write(true).open(&copy).unwrap().set_modified(future).unwrap();
     let location = copy.to_str().unwrap();
@@ -376,22 +380,4 @@ async fn a_statement_s_strictness_overrides_the_session_s() {
     assert!(err.contains("`--strict-identity=time`"), "{err}");
     let err = rows(&advisory, &create("e", Some("tiem"))).await.unwrap_err();
     assert!(err.contains("pgdump.strict_identity `tiem`"), "{err}");
-}
-
-/// Map `source` whole into the cache at `path` at the data level and keep no
-/// statistics: the census a typed plan needs and nothing gathered, as a
-/// query's own mapping pass leaves a cache (`docs/design/decisions.md`,
-/// "D35").
-async fn map_ungathered(source: &LocalFileSource, path: &Path) {
-    let cache = CacheMode::enabled(path.to_path_buf());
-    map_file(source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
-    let CacheStatus::Valid { mut index, .. } = cache::load(path, source).await.unwrap() else {
-        panic!("the parse left a complete cache")
-    };
-    for span in &mut index.spans {
-        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
-            block.statistics = None;
-        }
-    }
-    cache::save(path, source, &index).await.unwrap();
 }

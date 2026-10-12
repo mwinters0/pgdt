@@ -3710,7 +3710,10 @@ dependencies = [
 name = "pgdt-fixtures"
 version = "0.1.0"
 dependencies = [
+ "pgdt-dump",
+ "pgdt-io",
  "pgdt-mapping",
+ "pgdt-model",
  "tempfile",
 ]
 

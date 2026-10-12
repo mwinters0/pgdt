@@ -28,7 +28,7 @@
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use arrow::array::{Array, AsArray, RecordBatch};
 use arrow::compute::concat_batches;
@@ -41,9 +41,8 @@ use datafusion::physical_expr::utils::collect_columns;
 use futures::StreamExt;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::CacheMode;
-use pgdt_io::{LocalFileSource, Parallelism};
-use pgdt_mapping::map_file;
+use pgdt_fixtures::parsed_copy;
+use pgdt_io::Parallelism;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_model::TableName;
 use pgdt_query::{QueryOptions, RowEvaluation, TablePartitions};
@@ -99,21 +98,14 @@ fn fixtures() -> Vec<PathBuf> {
     found
 }
 
-/// `fixture` copied into `dir` beside a complete cache holding every
-/// statistic at [`TINY_GROUP`].
-async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
-    let dir = tempfile::tempdir_in(dir).unwrap().keep();
-    let copy = dir.join(fixture.file_name().unwrap());
-    std::fs::copy(fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
-    let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
-    let request = StatisticsRequest {
+/// Every statistic at [`TINY_GROUP`], what each copy this module reads is
+/// mapped at.
+fn tiny_groups() -> StatisticsRequest {
+    StatisticsRequest {
         selection: StatisticsSelection::DATA,
         group_size: Some(NonZeroU64::new(TINY_GROUP).unwrap()),
         ..StatisticsRequest::DATA
-    };
-    map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
-    copy
+    }
 }
 
 /// What a scan's replay returns of `table` under `filter`, in DataFusion
@@ -474,7 +466,7 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
     let mut rng = Rng(0x5eed_d15c);
     let (mut tally, mut failures) = (Tally::default(), Vec::new());
     for fixture in fixtures() {
-        let copy = parsed_copy(&fixture, dir.path()).await;
+        let copy = parsed_copy(&fixture, dir.path(), &tiny_groups()).await;
         let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
         for name in dump.tables() {
             // Only the columns every row decodes are read, so a value the

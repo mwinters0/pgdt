@@ -2,7 +2,7 @@
 //! `--chunk-size` and `--max-line-bytes`, set with `SET` and read when a scan
 //! is planned.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use arrow::array::RecordBatch;
@@ -13,26 +13,14 @@ use datafusion_pgdump::{
     AllowanceOrigin, BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, PgDumpSettings,
     ScanBudget, register_dump, register_table_factory,
 };
-use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode, CacheStatus, StrictIdentity};
-use pgdt_io::{LocalFileSource, MEMORY_RESERVE};
-use pgdt_mapping::map_file;
+use pgdt_dump::cache::StrictIdentity;
+use pgdt_fixtures::{edge_cases_fixture, parsed_copy, ungathered};
+use pgdt_io::MEMORY_RESERVE;
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_model::{DataBlock, DiagnosticSink, Finding, SpanBody};
+use pgdt_model::{DiagnosticSink, Finding};
 use pgdt_query::PlanNoteKind;
 
 const EVENTS: &str = "shop.logs.events";
-
-/// The `edge_cases` fixture copied into `dir` beside the complete cache a
-/// parse leaves.
-async fn parsed_copy(dir: &Path) -> PathBuf {
-    let fixture = pgdt_fixtures::edge_cases_fixture(16, "default");
-    let copy = dir.join("default.sql");
-    std::fs::copy(fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
-    map_ungathered(&source, &cache::colocated_path(&copy)).await;
-    copy
-}
 
 /// The budget-quoting plan notes a sink heard, each with its account; every
 /// other finding is registration's, or a note quoting no budget.
@@ -93,7 +81,9 @@ async fn session(copy: &Path, allowance: u64, plans: &Arc<Plans>) -> SessionCont
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stated_allowance_binds_the_scans_planned_after_it() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(dir.path()).await;
+    let copy =
+        parsed_copy(&edge_cases_fixture(16, "default"), dir.path(), &StatisticsRequest::DATA).await;
+    ungathered(&copy).await;
     let plans = Arc::new(Plans::default());
     let ctx = session(&copy, MEMORY_RESERVE, &plans).await;
     let query = format!("SELECT * FROM {EVENTS}");
@@ -131,7 +121,9 @@ async fn a_stated_allowance_binds_the_scans_planned_after_it() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_zero_allowance_returns_to_the_budgets_own() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(dir.path()).await;
+    let copy =
+        parsed_copy(&edge_cases_fixture(16, "default"), dir.path(), &StatisticsRequest::DATA).await;
+    ungathered(&copy).await;
     let plans = Arc::new(Plans::default());
     let ctx = session(&copy, MEMORY_RESERVE, &plans).await;
     let query = format!("SELECT * FROM {EVENTS}");
@@ -161,7 +153,9 @@ async fn a_zero_allowance_returns_to_the_budgets_own() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_read_settings_reach_the_scan() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(dir.path()).await;
+    let copy =
+        parsed_copy(&edge_cases_fixture(16, "default"), dir.path(), &StatisticsRequest::DATA).await;
+    ungathered(&copy).await;
     let plans = Arc::new(Plans::default());
     let ctx = session(&copy, 1 << 30, &plans).await;
     let query = format!("SELECT * FROM {EVENTS} ORDER BY event_id");
@@ -201,22 +195,4 @@ async fn the_settings_are_listed_and_checked() {
     ] {
         assert!(run(&ctx, bad).await.is_err(), "{bad}");
     }
-}
-
-/// Map `source` whole into the cache at `path` at the data level and keep no
-/// statistics: the census a typed plan needs and nothing gathered, as a
-/// query's own mapping pass leaves a cache (`docs/design/decisions.md`,
-/// "D35").
-async fn map_ungathered(source: &LocalFileSource, path: &Path) {
-    let cache = CacheMode::enabled(path.to_path_buf());
-    map_file(source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
-    let CacheStatus::Valid { mut index, .. } = cache::load(path, source).await.unwrap() else {
-        panic!("the parse left a complete cache")
-    };
-    for span in &mut index.spans {
-        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
-            block.statistics = None;
-        }
-    }
-    cache::save(path, source, &index).await.unwrap();
 }

@@ -9,7 +9,7 @@
 //! the provider emits.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use arrow::array::{
@@ -35,11 +35,7 @@ use pgdt_codec::{
     ResolvedSchema, SchemaMode, compare::ComparisonDivergence, compare::ComparisonSemantics,
     resolve_columns,
 };
-use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::CacheMode;
-use pgdt_fixtures::{all_fixtures, fixtures_root};
-use pgdt_io::LocalFileSource;
-use pgdt_mapping::map_file;
+use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy};
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef};
 use pgdt_query::column_divergences;
@@ -48,18 +44,6 @@ use pgdt_query::column_divergences;
 /// and the statistics fixture's groups, so a pushed filter is also pruned.
 fn default_fixtures() -> Vec<PathBuf> {
     all_fixtures().into_iter().filter(|dump| dump.ends_with("default.sql")).collect()
-}
-
-/// `fixture` copied into `dir` beside a complete cache holding every
-/// statistic a parse gathers, so the committed tree is never written into.
-async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
-    let dir = tempfile::tempdir_in(dir).unwrap().keep();
-    let copy = dir.join(fixture.file_name().unwrap());
-    std::fs::copy(fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
-    let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
-    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
-    copy
 }
 
 /// Small batches and several partitions, so the cuts land inside blocks.
@@ -174,7 +158,7 @@ async fn a_pushed_filter_keeps_the_rows_datafusion_keeps() {
     let mut tally: BTreeMap<(String, bool), Tally> = BTreeMap::new();
     let mut compared = 0;
     for fixture in default_fixtures() {
-        let copy = parsed_copy(&fixture, dir.path()).await;
+        let copy = parsed_copy(&fixture, dir.path(), &StatisticsRequest::DATA).await;
         // As text, every column is `Utf8View` and compared bytewise; one
         // major's fixtures say as much as six.
         let modes: &[SchemaMode] = if fixture.starts_with(fixtures_root().join("18")) {
@@ -358,7 +342,7 @@ impl TableProvider for NoPushdown {
 async fn sql_pushes_down_what_the_library_answers_and_answers_alike() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = fixtures_root().join("16/types/default.sql");
-    let copy = parsed_copy(&fixture, dir.path()).await;
+    let copy = parsed_copy(&fixture, dir.path(), &StatisticsRequest::DATA).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let (on, off) = (session(), session());
     for table in [
@@ -378,12 +362,22 @@ async fn sql_pushes_down_what_the_library_answers_and_answers_alike() {
         on.register_table(table, Arc::clone(&provider) as Arc<dyn TableProvider>).unwrap();
         off.register_table(table, Arc::new(NoPushdown(provider))).unwrap();
     }
-    let objects = parsed_copy(&fixtures_root().join("16/objects/default.sql"), dir.path()).await;
+    let objects = parsed_copy(
+        &fixtures_root().join("16/objects/default.sql"),
+        dir.path(),
+        &StatisticsRequest::DATA,
+    )
+    .await;
     let objects = PgDump::open(objects.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let events = objects.table(None, Some("objects"), "events_2024").unwrap();
     on.register_table("events", Arc::clone(&events) as Arc<dyn TableProvider>).unwrap();
     off.register_table("events", Arc::new(NoPushdown(events))).unwrap();
-    let edge = parsed_copy(&fixtures_root().join("16/edge_cases/default.sql"), dir.path()).await;
+    let edge = parsed_copy(
+        &fixtures_root().join("16/edge_cases/default.sql"),
+        dir.path(),
+        &StatisticsRequest::DATA,
+    )
+    .await;
     let edge = PgDump::open(edge.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let widgets = edge.table(None, Some("public"), "widgets").unwrap();
     on.register_table("widgets", Arc::clone(&widgets) as Arc<dyn TableProvider>).unwrap();

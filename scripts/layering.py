@@ -76,8 +76,9 @@ EMBEDDERS = ("datafusion-pgdump", "datafusion-cli-pgdump", "pgdt")
 #: reaching the other; `namespace-init` installs a binary's signal handlers
 #: (D26), which no library does, and `peak-rss` and `count-instructions` are
 #: the harness's. `pgdt-fixtures` is the tests' vocabulary, which no row
-#: lists, so only a dev-dependency reaches it; its own edge, behind its
-#: `mapping` feature, is for a sweep's request builders.
+#: lists, so only a dev-dependency reaches it; its edges, behind its
+#: `mapping` feature, are for a sweep's request builders and a fixture mapped
+#: beside its cache, which takes the mapping pass and what its call names.
 GRAPH: dict[str, tuple[str, ...]] = {
     "pgdt-core": (),
     "pgdt-model": ("pgdt-core",),
@@ -99,7 +100,7 @@ GRAPH: dict[str, tuple[str, ...]] = {
     "namespace-init": (),
     "peak-rss": (),
     "count-instructions": (),
-    "pgdt-fixtures": ("pgdt-mapping",),
+    "pgdt-fixtures": ("pgdt-model", "pgdt-io", "pgdt-dump", "pgdt-mapping"),
 }
 
 #: Each library's API namespaces: the public modules an embedder names. Any

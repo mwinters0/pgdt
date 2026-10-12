@@ -127,7 +127,7 @@ bytes = { workspace = true }
 insta = { workspace = true }
 # `tests/namespace_init.rs` runs the binary as a PID namespace's init.
 namespace-init = { path = "../namespace-init", features = ["test-support"] }
-pgdt-fixtures = { path = "../pgdt-fixtures" }
+pgdt-fixtures = { path = "../pgdt-fixtures", features = ["mapping"] }
 tempfile = { workspace = true }
 # `rt` here too, as the binary states it: every `#[tokio::test]` in this
 # crate takes the default `current_thread` flavour, the one `pgdt`'s own

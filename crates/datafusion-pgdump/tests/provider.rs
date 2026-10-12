@@ -18,29 +18,16 @@ use datafusion_pgdump::{Error, PgDump, PgDumpOptions, ScanBudget, register_dump}
 use futures::StreamExt;
 use pgdt_codec::{SchemaMode, compare::ComparisonSemantics};
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode, CacheStatus};
-use pgdt_fixtures::{all_fixtures, fixtures_root, sweep_request};
+use pgdt_dump::cache::{self, CacheMode};
+use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy, sweep_request, ungathered};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_model::{DataBlock, DiagnosticKind, Finding, SpanBody, TableName};
+use pgdt_model::{DiagnosticKind, Finding, TableName};
 use pgdt_query::{QueryOptions, table_stream};
 
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
-
-/// `fixture` copied into `dir` beside the complete cache a parse leaves, so
-/// the committed tree is never written into.
-async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
-    // One directory per fixture: every major has a `default.sql`, and a cache
-    // left by another's copy describes another file.
-    let dir = tempfile::tempdir_in(dir).unwrap().keep();
-    let copy = dir.join(fixture.file_name().unwrap());
-    std::fs::copy(fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
-    map_ungathered(&source, &cache::colocated_path(&copy), &sweep_request(fixture)).await;
-    copy
-}
 
 fn session(partitions: usize, batch_size: usize) -> SessionContext {
     SessionContext::new_with_config(
@@ -127,7 +114,8 @@ async fn every_fixture_table_reads_as_the_library_reads_it() {
     let dir = tempfile::tempdir().unwrap();
     let mut tables_compared = 0;
     for fixture in all_fixtures() {
-        let copy = parsed_copy(&fixture, dir.path()).await;
+        let copy = parsed_copy(&fixture, dir.path(), &sweep_request(&fixture)).await;
+        ungathered(&copy).await;
         for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
             let options = PgDumpOptions { schema_mode, ..PgDumpOptions::default() };
             let dump = PgDump::open(copy.to_str().unwrap(), options).await.unwrap();
@@ -165,7 +153,8 @@ async fn every_fixture_table_reads_as_the_library_reads_it() {
 
 async fn fixture_dump(schema: &str, flag_set: &str, dir: &Path) -> (PathBuf, Arc<PgDump>) {
     let fixture = fixtures_root().join("16").join(schema).join(format!("{flag_set}.sql"));
-    let copy = parsed_copy(&fixture, dir).await;
+    let copy = parsed_copy(&fixture, dir, &sweep_request(&fixture)).await;
+    ungathered(&copy).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     (copy, dump)
 }
@@ -248,7 +237,8 @@ async fn only_a_complete_cache_opens() {
 async fn a_stated_strictness_binds_the_cache_s_identity_at_open() {
     let dir = tempfile::tempdir().unwrap();
     let fixture = fixtures_root().join("16/edge_cases/default.sql");
-    let copy = parsed_copy(&fixture, dir.path()).await;
+    let copy = parsed_copy(&fixture, dir.path(), &sweep_request(&fixture)).await;
+    ungathered(&copy).await;
     let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
     std::fs::File::options().write(true).open(&copy).unwrap().set_modified(future).unwrap();
     let location = copy.to_str().unwrap();
@@ -451,26 +441,6 @@ async fn a_single_table_registers_on_its_own() {
         concat_batches(&schema, &alone).unwrap(),
         concat_batches(&schema, &catalogued).unwrap()
     );
-}
-
-/// Map `source` whole into the cache at `path` under `request` and keep no
-/// statistics: the census a typed plan needs and nothing gathered, as a
-/// query's own mapping pass leaves a cache (`docs/design/decisions.md`,
-/// "D35"). `request` is the data level, but for a column holding a field
-/// PostgreSQL refuses, which a data-level parse fails on
-/// (`refused::sweep_request`).
-async fn map_ungathered(source: &LocalFileSource, path: &Path, request: &StatisticsRequest) {
-    let cache = CacheMode::enabled(path.to_path_buf());
-    map_file(source, &ScanOptions::default(), &cache, request).await.unwrap();
-    let CacheStatus::Valid { mut index, .. } = cache::load(path, source).await.unwrap() else {
-        panic!("the parse left a complete cache")
-    };
-    for span in &mut index.spans {
-        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
-            block.statistics = None;
-        }
-    }
-    cache::save(path, source, &index).await.unwrap();
 }
 
 /// **A dump opened ignoring them reads a float PostgreSQL refuses as the

@@ -1,9 +1,10 @@
 //! The fixture vocabulary every integration test speaks, `pgdt-fixtures`, and
 //! what reading a batch back adds to it.
 //!
-//! Everything here is a *path* or an *expectation*. Anything that drives the
-//! library — a `collect`, a `drain`, a `census_of` — stays in the file whose
-//! subject it is.
+//! Everything here is a *path* or an *expectation*, but `pgdt-fixtures`'
+//! fixture mapped beside its cache. Anything else that drives the library — a
+//! `collect`, a `drain`, a `census_of` — stays in the file whose subject it
+//! is.
 
 // Each test binary compiles the whole module and uses a subset of it, so
 // per-binary dead-code warnings are structural rather than informative.

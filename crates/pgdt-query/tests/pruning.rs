@@ -19,7 +19,7 @@ use futures::StreamExt;
 use pgdt_codec::UnrepresentableMode;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode};
+use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
@@ -30,7 +30,7 @@ use pgdt_query::{
 };
 
 mod common;
-use common::{VERSIONS, all_fixtures, sandboxed, statistics_fixture, types_fixture};
+use common::{VERSIONS, all_fixtures, parsed_copy, statistics_fixture, types_fixture};
 
 /// The group size the generated check gathers at: tens of bytes, where the
 /// shipped mebibyte makes every fixture block one group and pruning has
@@ -72,17 +72,18 @@ impl Rng {
 /// but for a column holding a field PostgreSQL refuses, which a data-level
 /// parse fails on (`common::sweep_request`).
 async fn gathered(dump: &Path, group_size: u64) -> (tempfile::TempDir, PathBuf, DumpIndex) {
-    let (dir, copy) = sandboxed(dump, "dump.sql");
-    let source = LocalFileSource::open(&copy).unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let request = StatisticsRequest {
         selection: common::sweep_request(dump).selection,
         group_size: Some(NonZeroU64::new(group_size).unwrap()),
         ..StatisticsRequest::DATA
     };
-    let cache = CacheMode::enabled(cache::colocated_path(&copy));
-    let run = map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
-    assert!(!run.interrupted);
-    (dir, copy, run.index)
+    let copy = parsed_copy(dump, dir.path(), &request).await;
+    let path = cache::colocated_path(&copy);
+    let CacheStatus::Valid { index, .. } = cache::load_offline(&path).await.unwrap() else {
+        panic!("the parse left a complete cache")
+    };
+    (dir, copy, index)
 }
 
 /// One query's answer: every row in file order as one batch (`None` for no

@@ -3,28 +3,13 @@
 
 mod common;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Output;
 
-use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode, CacheStatus};
-use pgdt_io::LocalFileSource;
-use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_model::{DataBlock, SpanBody};
 
 fn fixture(schema: &str) -> PathBuf {
     common::fixture(16, schema, "default")
-}
-
-/// `fixture` copied into `dir` beside a complete cache holding no statistics
-/// ([`map_ungathered`]).
-async fn parsed_copy(fixture: &Path, dir: &Path) -> PathBuf {
-    let copy = dir.join(fixture.file_name().unwrap());
-    std::fs::copy(fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
-    map_ungathered(&source, &cache::colocated_path(&copy)).await;
-    copy
 }
 
 /// `pgdt sql`, its rows as CSV.
@@ -41,7 +26,9 @@ fn text(bytes: &[u8]) -> String {
 #[tokio::test]
 async fn a_dump_answers_through_both_registrations() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("edge_cases"), dir.path()).await;
+    let copy =
+        common::parsed_copy(&fixture("edge_cases"), dir.path(), &StatisticsRequest::DATA).await;
+    common::ungathered(&copy).await;
     let dump = copy.to_str().unwrap();
 
     let out = run(&[
@@ -73,7 +60,8 @@ async fn a_dump_answers_through_both_registrations() {
 #[tokio::test]
 async fn registration_warnings_reach_stderr_unless_quiet() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("types"), dir.path()).await;
+    let copy = common::parsed_copy(&fixture("types"), dir.path(), &StatisticsRequest::DATA).await;
+    common::ungathered(&copy).await;
     let dump = format!("shop={}", copy.display());
 
     let out = run(&["--dump", &dump, "-c", "SELECT 1"]);
@@ -98,7 +86,9 @@ async fn registration_warnings_reach_stderr_unless_quiet() {
 #[tokio::test]
 async fn a_statement_s_uncollated_columns_are_one_line() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("edge_cases"), dir.path()).await;
+    let copy =
+        common::parsed_copy(&fixture("edge_cases"), dir.path(), &StatisticsRequest::DATA).await;
+    common::ungathered(&copy).await;
     let out = run(&[
         "-c",
         &format!(
@@ -122,7 +112,9 @@ async fn a_statement_s_uncollated_columns_are_one_line() {
 #[tokio::test]
 async fn a_scan_s_warnings_reach_stderr_when_it_is_planned() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("edge_cases"), dir.path()).await;
+    let copy =
+        common::parsed_copy(&fixture("edge_cases"), dir.path(), &StatisticsRequest::DATA).await;
+    common::ungathered(&copy).await;
     let dump = format!("shop={}", copy.display());
     let args = ["--memory-limit", "1024T", "--dump", &dump, "-c", "SELECT * FROM shop.logs.events"];
     let floor = |stderr: &str| {
@@ -159,7 +151,9 @@ async fn a_scan_s_warnings_reach_stderr_when_it_is_planned() {
 #[tokio::test]
 async fn a_scan_setting_is_set_by_sql() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("edge_cases"), dir.path()).await;
+    let copy =
+        common::parsed_copy(&fixture("edge_cases"), dir.path(), &StatisticsRequest::DATA).await;
+    common::ungathered(&copy).await;
     let dump = format!("shop={}", copy.display());
 
     let out = run(&[
@@ -225,7 +219,8 @@ fn the_aggregate_dynamic_filter_is_off_unless_stated() {
 #[tokio::test]
 async fn the_unrepresentable_function_is_guarded_at_planning() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("types"), dir.path()).await;
+    let copy = common::parsed_copy(&fixture("types"), dir.path(), &StatisticsRequest::DATA).await;
+    common::ungathered(&copy).await;
     let dump = format!("shop={}", copy.display());
 
     let out = run(&[
@@ -272,7 +267,9 @@ async fn a_dump_with_no_cache_names_the_parse() {
 #[tokio::test]
 async fn strict_identity_binds_both_registrations() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("edge_cases"), dir.path()).await;
+    let copy =
+        common::parsed_copy(&fixture("edge_cases"), dir.path(), &StatisticsRequest::DATA).await;
+    common::ungathered(&copy).await;
     let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
     std::fs::File::options().write(true).open(&copy).unwrap().set_modified(future).unwrap();
     let dump = copy.to_str().unwrap();
@@ -302,7 +299,9 @@ async fn strict_identity_binds_both_registrations() {
 #[tokio::test]
 async fn a_dump_s_own_strictness_overrides_the_session_s() {
     let dir = tempfile::tempdir().unwrap();
-    let copy = parsed_copy(&fixture("edge_cases"), dir.path()).await;
+    let copy =
+        common::parsed_copy(&fixture("edge_cases"), dir.path(), &StatisticsRequest::DATA).await;
+    common::ungathered(&copy).await;
     let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
     std::fs::File::options().write(true).open(&copy).unwrap().set_modified(future).unwrap();
     let dump = copy.to_str().unwrap();
@@ -349,22 +348,4 @@ async fn a_dump_s_own_strictness_overrides_the_session_s() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert!(text(&out.stdout).contains("n\n3"), "{}", text(&out.stdout));
     refused(&run(&["-q", "-c", &create("time")]));
-}
-
-/// Map `source` whole into the cache at `path` at the data level and keep no
-/// statistics: the census a typed plan needs and nothing gathered, as a
-/// query's own mapping pass leaves a cache (`docs/design/decisions.md`,
-/// "D35").
-async fn map_ungathered(source: &LocalFileSource, path: &Path) {
-    let cache = CacheMode::enabled(path.to_path_buf());
-    map_file(source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
-    let CacheStatus::Valid { mut index, .. } = cache::load(path, source).await.unwrap() else {
-        panic!("the parse left a complete cache")
-    };
-    for span in &mut index.spans {
-        if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
-            block.statistics = None;
-        }
-    }
-    cache::save(path, source, &index).await.unwrap();
 }
