@@ -389,15 +389,15 @@ main.rs                  Cli, Invocation, Command, main, sql_release; runtime se
 version.rs               version(), RELEASE_VARIABLE, RELEASED, same_str
 args.rs                  the flag groups subcommands share: IdentityArgs, OverwriteArgs, ReadFlags, scan_options, the Cli* enums, value parsers
 parallel.rs              ParallelArgs, Discovered, QueryPasses, Resolved, parse_jobs, parse_memory
-source.rs                Opened, open_with_cache, open_for_scan, unusable_cache_message, naming the source, quoted_name_note
+source.rs                Opened, open_with_cache, open_for_scan, naming the source
 interrupt.rs             InterruptGuard, install_interrupt_guard, die_by
 parse.rs                 ParseArgs, run, resume_notice, statistics_request
-info.rs                  InfoArgs, run, info_offline, report, completion_line
+info.rs                  InfoArgs, run, info_offline, unusable_cache_message, report, completion_line
   info/text.rs           print_index, print_metadata (which parse also calls), DatabaseHeadings, compression_line, the line printers
   info/json.rs           IndexJson and its parts, print_index_json
   info/labels.rs         what both read: arrow_type_label, range_label, type_kind_*, span_summary, block_resolutions, block_unchecked
   info/statistics.rs     today's info_statistics.rs
-query.rs                 QueryArgs, run, QueryStatistics, the Slot merge, announce_*, print_batch, projection
+query.rs                 QueryArgs, run, quoted_name_note, QueryStatistics, the Slot merge, announce_*, print_batch, projection
   query/filter.rs        --filter's entry: parse_filter_flag, refused where --where reads structure
     filter/term.rs       the term grammar and its operator lexing (from main.rs)
     filter/expr.rs       --where (today's where_expr.rs), its leaves from term.rs

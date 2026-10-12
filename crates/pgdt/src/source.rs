@@ -1,33 +1,11 @@
-//! Opening the dump against its cache, naming the source in what a refusal
-//! says, and the sentences an unusable cache and a name not found earn.
+//! Opening the dump against its cache, and naming the source in what a
+//! refusal says.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
-use pgdt_dump::cache::{CacheClaim, CacheMode, CacheStatus, OVERWRITE_WAYS_OUT, Unusable};
+use pgdt_dump::cache::{CacheClaim, CacheMode, Unusable};
 use pgdt_io::{KnownCompression, Origin, Recognized, open};
-use pgdt_model::CACHE_FORMAT_VERSION;
-
-/// The sentence a name that was not found earns when it opens and closes with
-/// a matching quote: `--column` and `--table` take their names exactly as
-/// given, so the quote marks were part of what was looked for.
-///
-/// **Only a `--filter` term has quoting to strip**, a term being one string
-/// to split into three parts; the shell has already delimited a `--column`
-/// argument, and stripping quotes here would make a column genuinely named
-/// with quote marks unaskable (`docs/design/decisions.md`, "D60").
-pub(crate) fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
-    let quote = name.chars().next()?;
-    if quote != '\'' && quote != '"' {
-        return None;
-    }
-    (name.len() > quote.len_utf8() && name.ends_with(quote)).then(|| {
-        format!(
-            "`{flag}` takes the name exactly as given, so `{name}` was matched literally, quote marks included — only a `--filter` term has quoting to strip"
-        )
-    })
-}
 
 /// Whether a refusal is about **which file was read** — the classification
 /// [`naming_the_source`] renders and `query`'s own reporter shares,
@@ -120,18 +98,6 @@ pub(crate) fn naming_the_source(err: pgdt_core::Error, source: &Origin) -> anyho
     err.into()
 }
 
-/// Add [`quoted_name_note`] to the one library refusal that can carry it —
-/// the failure is loud either way; the note adds *why* the name was not
-/// found.
-pub(crate) fn name_taken_verbatim(err: pgdt_core::Error) -> anyhow::Error {
-    if let pgdt_core::Error::UnknownProjectionColumn { column, .. } = &err
-        && let Some(note) = quoted_name_note("--column", column)
-    {
-        return anyhow::anyhow!("{err}; {note}");
-    }
-    err.into()
-}
-
 /// What [`open_with_cache`] found: the source to read, or why the cache at
 /// the mode's path cannot be used, settled before a stream-footer walk.
 /// **What to do about the second is the caller's**: `parse` and `query` ask
@@ -200,76 +166,6 @@ pub(crate) async fn open_for_scan(
                 Recognized::Mismatch => unreachable!("`Unknown` claims nothing to contradict"),
             },
         },
-    }
-}
-
-/// The sentence `pgdt info` prints for a cache it cannot use — one per cause,
-/// because the fact the user needs to know differs. Each ends as the scanning
-/// commands' refusals do, in `OVERWRITE_WAYS_OUT`, and then names the `parse`
-/// those ways out enable; a file that is not a pgdt cache names neither, no
-/// scan being allowed to write over it (`docs/design/decisions.md`, "D20"),
-/// and a missing one names only the `parse` that builds it.
-///
-/// **One match, two renderings**, so a new [`Unusable`] variant has to answer
-/// both. `source` is `None` in cache-only mode, which states the fault and
-/// stops; it cannot reach [`Unusable::SourceChanged`] or
-/// [`Unusable::CompressionContradicted`] at all, there being no live file to
-/// compare against — what its `CacheOffline` diagnostic warns about.
-///
-/// Takes the whole [`CacheStatus`] rather than a narrowed type so the match
-/// stays exhaustive: a usable status reaching here is a caller bug.
-pub(crate) fn unusable_cache_message(
-    status: &CacheStatus,
-    path: &Path,
-    source: Option<&Origin>,
-) -> String {
-    let shown = path.display();
-    let live = || source.expect("cache-only mode has no live source to compare against");
-    let found = match status {
-        CacheStatus::Missing => {
-            return match source {
-                Some(s) => format!("no cache at {shown} — run `pgdt parse --source {s}` first"),
-                None => format!("no cache at {shown}"),
-            };
-        }
-        CacheStatus::Unusable(Unusable::NotACache) => {
-            return format!("{shown} is not a pgdt cache — check the path");
-        }
-        CacheStatus::Unusable(Unusable::Unreadable) => {
-            format!("the cache at {shown} is cut short or damaged and cannot be read")
-        }
-        CacheStatus::Unusable(Unusable::UnsupportedVersion { found }) => format!(
-            "the cache at {shown} was written by a different pgdt build (cache format {found}, \
-             where this build reads {CACHE_FORMAT_VERSION}) and cannot be read"
-        ),
-        CacheStatus::Unusable(Unusable::SourceChanged {
-            cached_stored_size: cached_size,
-            live_stored_size: live_size,
-        }) => format!(
-            "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when the \
-             cache at {shown} was written), so every offset in the cache could be wrong",
-            live()
-        ),
-        CacheStatus::Unusable(Unusable::CompressionContradicted) => format!(
-            "the cache at {shown} records compression details that {} contradicts, so it was \
-             written for another file",
-            live()
-        ),
-        CacheStatus::Unusable(Unusable::CalendarChanged { counted_under, build }) => format!(
-            "the cache at {shown} counted the values a query cannot display against a calendar \
-             ending {}, where this build's ends {}, so it cannot be read",
-            pgdt_codec::decode::render_date32(*counted_under),
-            pgdt_codec::decode::render_date32(*build),
-        ),
-        CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. } => {
-            unreachable!("a usable cache is reported, not refused")
-        }
-    };
-    match source {
-        Some(s) => format!(
-            "{found}{OVERWRITE_WAYS_OUT}; `pgdt parse --source {s}` then builds a fresh one"
-        ),
-        None => found,
     }
 }
 

@@ -18,9 +18,7 @@ use crate::args::{
     parse_chunk_size, parse_max_line_bytes, scan_options,
 };
 use crate::parallel::{ParallelArgs, QueryPasses, Resolved};
-use crate::source::{
-    about_the_source, name_taken_verbatim, naming_the_source, open_for_scan, quoted_name_note,
-};
+use crate::source::{about_the_source, naming_the_source, open_for_scan};
 use filter::{parse_filter_flag, parse_where};
 
 mod filter;
@@ -420,6 +418,38 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     Ok(())
 }
 
+/// The sentence a name that was not found earns when it opens and closes with
+/// a matching quote: `--column` and `--table` take their names exactly as
+/// given, so the quote marks were part of what was looked for.
+///
+/// **Only a `--filter` term has quoting to strip**, a term being one string
+/// to split into three parts; the shell has already delimited a `--column`
+/// argument, and stripping quotes here would make a column genuinely named
+/// with quote marks unaskable (`docs/design/decisions.md`, "D60").
+fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
+    let quote = name.chars().next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    (name.len() > quote.len_utf8() && name.ends_with(quote)).then(|| {
+        format!(
+            "`{flag}` takes the name exactly as given, so `{name}` was matched literally, quote marks included — only a `--filter` term has quoting to strip"
+        )
+    })
+}
+
+/// Add [`quoted_name_note`] to the one library refusal that can carry it —
+/// the failure is loud either way; the note adds *why* the name was not
+/// found.
+fn name_taken_verbatim(err: pgdt_core::Error) -> anyhow::Error {
+    if let pgdt_core::Error::UnknownProjectionColumn { column, .. } = &err
+        && let Some(note) = quoted_name_note("--column", column)
+    {
+        return anyhow::anyhow!("{err}; {note}");
+    }
+    err.into()
+}
+
 /// What `query` does with the statistics `parse` stored: the CLI spelling of
 /// [`QueryOptions::use_statistics`].
 #[derive(Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
@@ -597,3 +627,6 @@ fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
