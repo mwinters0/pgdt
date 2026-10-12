@@ -167,7 +167,7 @@ pub fn column_divergences(
     for (index, note) in resolved.notes.iter().enumerate() {
         let declared = note.declared.clone().unwrap_or_default();
         let positions = match semantics {
-            ComparisonSemantics::Postgres => postgres_divergences(resolved, index, &declared),
+            ComparisonSemantics::Postgres => postgres_divergences(resolved, index),
             ComparisonSemantics::DataFusion => datafusion_divergences(resolved, index, &declared),
         };
         out.extend(positions.into_iter().map(|(path, declared_type, divergence)| ComparisonNote {
@@ -191,41 +191,70 @@ pub(super) fn compares_as_declared(resolution: &ColumnResolution) -> bool {
 
 /// One diverging position: its path inside the column (`None` for the column
 /// itself), its declared type, and the divergence.
-type DivergingPosition = (Option<String>, String, ComparisonDivergence);
+pub(super) type DivergingPosition = (Option<String>, String, ComparisonDivergence);
 
-/// [`column_divergences`] under PostgreSQL's semantics: the arms of
-/// [`resolve_term`](super::resolve::resolve_term), each taken under both operator families.
-fn postgres_divergences(
+/// What a term on column `index` announces under PostgreSQL's semantics, in
+/// the operator family `ordering` names, where resolving the term does not
+/// refuse it: the register's divergences for the column, a nested one's per
+/// position, each kept where the family is the ordering one or it reaches
+/// equality ([`ComparisonDivergence::affects_equality`]).
+///
+/// A column that *fell out of a tree* — one with an uncompared position,
+/// whose `=` compares the container's text — announces per position as a
+/// compared tree does: the position that refused the order, and any other
+/// whose divergence reaches equality. A position the *resolver* declined
+/// instead (I22, I26) never reaches the tree; its column is not `Mapped`.
+///
+/// A column that does not compare as declared announces off its own
+/// **resolution**, and only `UnknownType` and `OpaqueBaseType` do: the file
+/// *named* a type this build models nothing for — `box`, `money`, a C-level
+/// base type — and `box_eq` compares areas, so bytewise is a guess there
+/// ([`ComparisonDivergence::UnmodelledType`]). Every other outcome is silent,
+/// there being no declared type to qualify.
+pub(super) fn announced(
     resolved: &ResolvedSchema,
     index: usize,
-    declared: &str,
+    ordering: bool,
 ) -> Vec<DivergingPosition> {
-    let column = |divergence| vec![(None, declared.to_string(), divergence)];
+    let declared = resolved.notes[index].declared.clone().unwrap_or_default();
+    let reaches = |d: &ComparisonDivergence| ordering || d.affects_equality();
+    let column = |divergence: Option<ComparisonDivergence>| {
+        divergence.filter(reaches).map(|d| (None, declared.clone(), d)).into_iter().collect()
+    };
     if !compares_as_declared(&resolved.columns[index]) {
-        // Ordering refused; `=` compares the text, announced only where the
-        // file named a type this build models nothing for.
         return match resolved.columns[index] {
             ColumnResolution::UnknownType | ColumnResolution::OpaqueBaseType => {
-                column(ComparisonDivergence::UnmodelledType)
+                column(Some(ComparisonDivergence::UnmodelledType))
             }
             _ => Vec::new(),
         };
     }
     match &resolved.comparisons[index] {
         ComparisonPlan::Unanswerable(_) => Vec::new(),
-        ComparisonPlan::Nested(tree) => {
-            // A tree with an uncompared position answers only `=`/`!=`.
-            let equality_only = tree.uncomparable().is_some();
-            tree.divergences()
-                .into_iter()
-                .filter(|(_, _, d)| !equality_only || d.affects_equality())
-                .map(|(path, declared, d)| (Some(path), declared, d))
-                .collect()
-        }
+        ComparisonPlan::Nested(tree) => tree
+            .divergences()
+            .into_iter()
+            .filter(|(_, _, d)| reaches(d))
+            .map(|(path, declared, d)| (Some(path), declared, d))
+            .collect(),
         _ if !resolved.plans[index].is_scalar() => Vec::new(),
-        ComparisonPlan::Compared { divergence, .. } => divergence.map(column).unwrap_or_default(),
+        ComparisonPlan::Compared { divergence, .. } => column(*divergence),
         ComparisonPlan::Refused => Vec::new(),
     }
+}
+
+/// [`column_divergences`] under PostgreSQL's semantics: what a term on the
+/// column announces ([`announced`]) under the widest operator family the
+/// column answers.
+fn postgres_divergences(resolved: &ResolvedSchema, index: usize) -> Vec<DivergingPosition> {
+    // A tree with an uncompared position answers only `=`/`!=`. Any other
+    // column refusing `<` announces nothing `<` would add, its one
+    // divergence, `UnmodelledType`, reaching `=`.
+    let ordering = !matches!(
+        &resolved.comparisons[index],
+        ComparisonPlan::Nested(tree) if tree.uncomparable().is_some()
+    );
+    announced(resolved, index, ordering)
 }
 
 /// [`column_divergences`] under DataFusion's semantics, read off what the column

@@ -3414,9 +3414,10 @@ mod oracle {
 
     /// **Under PostgreSQL's semantics a column reports exactly what a term
     /// on it would announce**, under `=` and under `<` — the two operator
-    /// families — over every case the oracle holds on six majors. The
-    /// report is written apart from [`resolve_term`], so this is what
-    /// holds the two to one answer.
+    /// families — over every case the oracle holds on six majors. Both read
+    /// one derivation, `notes::announced`, so what this holds is the family
+    /// the report reads it under: the widest the column answers, against
+    /// what [`resolve_term`] refuses.
     #[tokio::test]
     async fn a_column_reports_what_its_terms_announce() {
         let mut compared = 0usize;

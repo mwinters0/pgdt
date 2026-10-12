@@ -3,9 +3,8 @@
 //! read once, so a row is evaluated ([`super::eval`]) and a row group
 //! answered ([`super::truths`]) against the same tree.
 
-use pgdt_codec::compare::{
-    CompareKind, ComparisonDivergence, ComparisonPlan, ComparisonSemantics, NestedCompare,
-};
+use pgdt_codec::ResolvedSchema;
+use pgdt_codec::compare::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedCompare};
 use pgdt_codec::decode;
 use pgdt_codec::internal::{
     NestedKey, OrderKey, Side, UnrepresentableRead, accepted_form, compare_keys, compare_nested,
@@ -13,13 +12,12 @@ use pgdt_codec::internal::{
     render_macaddr, render_timestamp_postgres_micros, special_order_key, time_of_day_micros,
     timestamp_postgres_micros,
 };
-use pgdt_codec::{ColumnResolution, ResolvedSchema};
 use pgdt_core::{Error, Result};
 use pgdt_model::PostgresInvalidValues;
 
 use super::notes::{
-    ComparisonNote, NESTED, NESTED_IN_DATAFUSION, NO_ORDER, NOT_MAPPED, compares_as_declared,
-    nested_refusal, unanswerable_reason,
+    ComparisonNote, DivergingPosition, NESTED, NESTED_IN_DATAFUSION, NO_ORDER, NOT_MAPPED,
+    announced, compares_as_declared, nested_refusal, unanswerable_reason,
 };
 use super::{Expr, Membership, Predicate, PredicateOp};
 
@@ -207,14 +205,13 @@ pub(super) struct ComparedTerm {
     /// for [`ComparisonNote::message`].
     pub(super) declared_type: String,
     /// The register's divergences for this column, already filtered to the
-    /// ones that reach *this* term's operator
-    /// ([`ComparisonDivergence::affects_equality`]).
+    /// ones that reach *this* term's operator ([`announced`]).
     ///
     /// A list, because a nested column has a position per divergence: a
     /// composite can be on the database's collation twice, through two
     /// different fields. Each entry carries the position's own path and
     /// declared type (`docs/design/decisions.md`, "D59").
-    pub(super) divergences: Vec<(Option<String>, String, ComparisonDivergence)>,
+    pub(super) divergences: Vec<DivergingPosition>,
     /// Which of a row group's statistics this term reads
     /// ([`ResolvedTerm::truths`]).
     pub(super) statistics: BelievedStatistics,
@@ -409,9 +406,6 @@ pub(super) fn resolve_term(
         accepted: accepted_form(kind),
     };
     let mut plan = Some(&resolved.comparisons[index]);
-    // The nested tree a column fell out of, kept so the bytewise `=` below
-    // can say what that fallback costs at the position that refused the order.
-    let mut fell_back: Option<&NestedCompare> = None;
     if !compares_as_declared(&resolved.columns[index]) {
         if ordering && !arrow {
             return Err(refuse(NOT_MAPPED));
@@ -442,7 +436,6 @@ pub(super) fn resolve_term(
             if ordering {
                 return Err(refuse(&nested_refusal(&path, &declared, divergence)));
             }
-            fell_back = Some(tree);
             plan = None;
         }
     } else if !resolved.plans[index].is_scalar() {
@@ -460,8 +453,8 @@ pub(super) fn resolve_term(
         }
         plan = None;
     }
-    let (comparison, divergences, statistics) = match plan {
-        Some(compared @ ComparisonPlan::Compared { kind, divergence }) => {
+    let (comparison, statistics) = match plan {
+        Some(compared @ ComparisonPlan::Compared { kind, .. }) => {
             let kind = &match semantics {
                 ComparisonSemantics::Postgres => kind.clone(),
                 ComparisonSemantics::DataFusion => kind.datafusion_order(),
@@ -475,16 +468,11 @@ pub(super) fn resolve_term(
             } else {
                 equality_comparison(kind, text, semantics).ok_or_else(|| refuse_literal(kind))?
             };
-            let divergences: Vec<_> = divergence
-                .filter(|d| ordering || d.affects_equality())
-                .map(|d| (None, declared_type.clone(), d))
-                .into_iter()
-                .collect();
             let statistics = BelievedStatistics {
                 bounds: believed_bounds(compared, semantics, kind, text),
                 dictionary: !ordering && compared.dictionary_answers_in(semantics),
             };
-            (comparison, divergences, statistics)
+            (comparison, statistics)
         }
         // A nested column, compared structurally: the literal is read once in
         // the `array_in`/`record_in` superset, the field per row in the strict
@@ -502,11 +490,6 @@ pub(super) fn resolve_term(
                     }
                 })?,
             })),
-            tree.divergences()
-                .into_iter()
-                .filter(|(_, _, d)| ordering || d.affects_equality())
-                .map(|(path, declared, d)| (Some(path), declared, d))
-                .collect(),
             BelievedStatistics::NONE,
         ),
         // No plan at all: an ordering operator is refused here, and `Eq`/`Ne`
@@ -521,7 +504,6 @@ pub(super) fn resolve_term(
                 bound: order_key(&CompareKind::Text { length: None }, text)
                     .ok_or_else(|| refuse_literal(&CompareKind::Text { length: None }))?,
             },
-            Vec::new(),
             BelievedStatistics {
                 bounds: believed_bounds(
                     &resolved.comparisons[index],
@@ -533,39 +515,8 @@ pub(super) fn resolve_term(
             },
         ),
         _ if ordering => return Err(refuse(NO_ORDER)),
-        //
-        // What it announces comes from one of two places, and which one is
-        // whether a nested tree sent the column here.
-        //
-        // A column that *fell out of a tree* announces per position, as the
-        // structural arm above does: the position that refused the order, and
-        // any other whose divergence reaches equality. A position the
-        // *resolver* declined instead (I22, I26) never reaches here; its
-        // column is not `Mapped`.
-        //
-        // Every other column announces off its own **resolution**, and only
-        // `UnknownType` and `OpaqueBaseType` do: the file *named* a type this
-        // build models nothing for — `box`, `money`, a C-level base type —
-        // and `box_eq` compares areas, so bytewise is a guess there
-        // ([`ComparisonDivergence::UnmodelledType`]). Every other outcome is
-        // silent, there being no declared type to qualify.
         _ => (
             Comparison::Canonical(Spellings::one(text.to_string())),
-            match fell_back {
-                Some(tree) => tree
-                    .divergences()
-                    .into_iter()
-                    .filter(|(_, _, d)| d.affects_equality())
-                    .map(|(path, declared, d)| (Some(path), declared, d))
-                    .collect(),
-                None => matches!(
-                    resolved.columns[index],
-                    ColumnResolution::UnknownType | ColumnResolution::OpaqueBaseType
-                )
-                .then(|| (None, declared_type.clone(), ComparisonDivergence::UnmodelledType))
-                .into_iter()
-                .collect(),
-            },
             BelievedStatistics {
                 bounds: believed_bounds(
                     &resolved.comparisons[index],
@@ -579,7 +530,7 @@ pub(super) fn resolve_term(
     };
     // Arrow's answer is not the register's to qualify: a divergence from
     // PostgreSQL is the column's (`docs/design/decisions.md`, "D40").
-    let divergences = if arrow { Vec::new() } else { divergences };
+    let divergences = if arrow { Vec::new() } else { announced(resolved, index, ordering) };
     Ok(ResolvedTerm {
         op: predicate.op,
         index,
