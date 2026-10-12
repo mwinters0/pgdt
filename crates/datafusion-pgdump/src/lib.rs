@@ -3,7 +3,8 @@
 //! A dump is opened through the complete cache `pgdt parse` leaves
 //! ([`PgDump::open`]) and registered as one catalog per database
 //! ([`register_dump`]), its PostgreSQL schemas DataFusion schemas and its
-//! tables tables; one table can also be had on its own ([`PgDump::table`]).
+//! tables tables; one table can also be had on its own ([`PgDump::table`]),
+//! registered by hand in a session [`install`] has readied.
 //! A scan is the library's partitioned replay, one DataFusion partition per
 //! sub-stream, with the projection pushed into the library by name, a filter
 //! pushed `Exact` wherever the library answers it as DataFusion would, a
@@ -60,6 +61,7 @@ mod exec;
 mod factory;
 mod filter;
 mod report;
+mod session;
 mod settings;
 mod statistics;
 mod table;
@@ -73,9 +75,9 @@ pub use factory::{
     PGDUMP_FILE_TYPE, PgDumpTableFactory, PgDumpTableOptions, register_table_factory,
 };
 pub use report::{BudgetedPlanNote, RefusedTable};
+pub use session::install;
 pub use settings::PgDumpSettings;
 pub use table::PgDumpTable;
 pub use unrepresentable::{
-    PgDumpUnrepresentable, UNREPRESENTABLE_FUNCTION, register as register_unrepresentable,
-    with_guard as with_unrepresentable_guard,
+    PgDumpUnrepresentable, UNREPRESENTABLE_FUNCTION, with_guard as with_unrepresentable_guard,
 };

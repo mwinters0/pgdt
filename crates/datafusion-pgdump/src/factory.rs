@@ -20,8 +20,8 @@ use pgdt_dump::cache::StrictIdentity;
 use pgdt_model::{DiagnosticSink, PostgresInvalidValues};
 
 use crate::budget::ScanBudget;
-use crate::budget::session_budget;
 use crate::dump::{PgDump, PgDumpOptions};
+use crate::session::install;
 
 /// The word after `STORED AS`, as DataFusion keys a table factory by it.
 pub const PGDUMP_FILE_TYPE: &str = "PGDUMP";
@@ -267,20 +267,17 @@ impl TableProviderFactory for PgDumpTableFactory {
 /// Let `ctx` run `CREATE EXTERNAL TABLE … STORED AS PGDUMP`, reporting what
 /// each registration finds to `sink` and opening a dump whose statement states
 /// no `pgdump.strict_identity` under `strict_identity`, the session's: the
-/// factory keyed [`PGDUMP_FILE_TYPE`], the [`PgDumpTableOptions`] extension,
-/// and the session's [`crate::ScanBudget`] and [`crate::PgDumpSettings`]
-/// installed as [`crate::catalog::register_dump`] installs them, so every table the
-/// statement registers draws on the one budget and `SET pgdump.…` reaches
-/// every scan; and `pgdump_unrepresentable`, registered as
-/// [`crate::catalog::register_dump`] registers it.
+/// factory keyed [`PGDUMP_FILE_TYPE`] and the [`PgDumpTableOptions`]
+/// extension, the session [`install`](crate::install)ed as
+/// [`crate::catalog::register_dump`] installs it, so every table a statement
+/// registers draws on the one budget and `SET pgdump.…` reaches every scan.
 pub fn register_table_factory(
     ctx: &SessionContext,
     sink: Arc<dyn DiagnosticSink>,
     strict_identity: StrictIdentity,
 ) {
     ctx.register_table_options_extension(PgDumpTableOptions::default());
-    session_budget(ctx);
-    crate::unrepresentable::register(ctx);
+    install(ctx);
     ctx.state_ref().write().table_factories_mut().insert(
         PGDUMP_FILE_TYPE.to_string(),
         Arc::new(PgDumpTableFactory::new(sink).with_strict_identity(strict_identity)),

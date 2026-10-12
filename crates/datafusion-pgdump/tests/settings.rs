@@ -11,7 +11,7 @@ use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
     AllowanceOrigin, BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, PgDumpSettings,
-    ScanBudget, register_dump, register_table_factory,
+    ScanBudget, install, register_dump, register_table_factory,
 };
 use pgdt_dump::cache::StrictIdentity;
 use pgdt_fixtures::{edge_cases_fixture, parsed_copy, ungathered};
@@ -195,4 +195,37 @@ async fn the_settings_are_listed_and_checked() {
     ] {
         assert!(run(&ctx, bad).await.is_err(), "{bad}");
     }
+}
+
+/// **A table registered by hand reads the settings of a session `install`
+/// readied**: before it, `SET pgdump.memory` is refused and
+/// `pgdump_unrepresentable` unknown; after it, the setting binds the table's
+/// next scan, as under a registered dump, and the function is answered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_table_registered_by_hand_reads_an_installed_session_s_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy =
+        parsed_copy(&edge_cases_fixture(16, "default"), dir.path(), &StatisticsRequest::DATA).await;
+    ungathered(&copy).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let events = dump.table(None, Some("logs"), "events").unwrap();
+    let plans = Arc::new(Plans::default());
+    events.report("events", Arc::clone(&plans) as _);
+    let unrepresentable = "SELECT event_id FROM events WHERE NOT pgdump_unrepresentable(event_id)";
+
+    let bare = SessionContext::new();
+    bare.register_table("events", Arc::clone(&events) as _).unwrap();
+    assert!(run(&bare, "SET pgdump.memory = 4096").await.is_err());
+    assert!(run(&bare, unrepresentable).await.is_err());
+
+    let budget = Arc::new(ScanBudget::new(1 << 30));
+    let ctx =
+        SessionContext::new_with_config(SessionConfig::new().with_extension(Arc::clone(&budget)));
+    assert!(Arc::ptr_eq(&install(&ctx), &budget), "a session's own budget is kept");
+    ctx.register_table("events", events).unwrap();
+    run(&ctx, &format!("SET pgdump.memory = {MEMORY_RESERVE}")).await.unwrap();
+    drop(plan(&ctx, "SELECT * FROM events").await);
+    let account = plans.floored().expect("an allowance the reserve takes whole seats no reader");
+    assert_eq!(account.origin, AllowanceOrigin::Setting);
+    assert!(!run(&ctx, unrepresentable).await.unwrap().is_empty());
 }

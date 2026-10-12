@@ -25,7 +25,6 @@ use datafusion::logical_expr::{
 use datafusion::physical_expr::ScalarFunctionExpr;
 use datafusion::physical_optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion::prelude::SessionContext;
 
 /// The function's name, as SQL calls it.
 pub const UNREPRESENTABLE_FUNCTION: &str = "pgdump_unrepresentable";
@@ -95,22 +94,13 @@ fn evaluated_by_datafusion(call: &str) -> String {
     )
 }
 
-/// **Register the function in `ctx`**, leaving the session's planning as its
-/// embedder built it: a use DataFusion would evaluate refuses when it is
-/// evaluated, unless the session was built [`with_guard`]. [`crate::catalog::register_dump`]
-/// and [`crate::register_table_factory`] call it, and an embedder registering
-/// a [`crate::PgDumpTable`] by hand calls it itself.
-pub fn register(ctx: &SessionContext) {
-    ctx.register_udf(ScalarUDF::new_from_impl(PgDumpUnrepresentable::default()));
-}
-
 /// **`builder` with the function and its guard**: a physical optimizer rule,
 /// appended after every other, refusing at planning a plan in which any node
 /// holds the function among the expressions DataFusion evaluates — a scan's
 /// pushed filters being the library's, no node but a scan answering it
 /// (`docs/design/runtime-invariants.md`, "RT22"). Offered on a builder alone,
 /// so nothing rebuilds a session its embedder owns: one holding a live
-/// [`SessionContext`] rebuilds it through
+/// [`SessionContext`](datafusion::prelude::SessionContext) rebuilds it through
 /// [`SessionStateBuilder::new_from_existing`], which keeps no prepared
 /// statement.
 pub fn with_guard(mut builder: SessionStateBuilder) -> SessionStateBuilder {

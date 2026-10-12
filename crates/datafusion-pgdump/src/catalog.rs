@@ -12,12 +12,11 @@ use datafusion::common::Result;
 use datafusion::prelude::SessionContext;
 use pgdt_model::{DiagnosticSink, TableName};
 
-use crate::budget::session_budget;
 use crate::dump::PgDump;
 use crate::error::Error;
 use crate::report::RefusedTable;
+use crate::session::install;
 use crate::table::PgDumpTable;
-use crate::unrepresentable;
 
 /// Where a table whose `COPY` header names no schema is listed. `pg_dump`
 /// qualifies every table it writes, so only a hand-written file reaches it.
@@ -33,15 +32,9 @@ pub const UNQUALIFIED_SCHEMA: &str = "public";
 /// that database's name. *Rejected: one registration per database, chosen by
 /// a fragment of the location.*
 ///
-/// The session gains a [`ScanBudget`](crate::budget::ScanBudget) discovered
-/// from the process's allowance, unless it already carries one, and `dump`'s
-/// statistics are billed to it; the
-/// [`PgDumpSettings`](crate::settings::PgDumpSettings) `SET` moves, unless it
-/// already carries them; and `pgdump_unrepresentable`
-/// ([`register_unrepresentable`](crate::unrepresentable::register)), its
-/// planning left as its embedder built it, which refuses the function at
-/// planning only where it was built
-/// [`with_unrepresentable_guard`](crate::unrepresentable::with_guard).
+/// The session is [`install`](crate::install)ed — its settings, its
+/// [`ScanBudget`](crate::budget::ScanBudget) and `pgdump_unrepresentable` —
+/// and `dump`'s statistics are billed to that budget.
 /// `sink` hears the dump's findings and then every table's, each table named
 /// `catalog.schema.table`, and is kept to hear each scan's plan notes under
 /// that name; a table whose plan refuses is not listed, and is one
@@ -86,8 +79,7 @@ pub fn register_dump(
             named
         }
     };
-    dump.bill(&session_budget(ctx));
-    unrepresentable::register(ctx);
+    dump.bill(&install(ctx));
     dump.report(sink.as_ref());
     Ok(named
         .into_iter()

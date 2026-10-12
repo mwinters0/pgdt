@@ -312,8 +312,8 @@ scanned by the partitioned replay, and the `pgdump.` session settings
 ([`decisions.md`](decisions.md), "D90", "D94").
 
 - **datafusion-pgdump** — `lib.rs`, `error.rs`, `catalog.rs`, `factory.rs`,
-  `table.rs`, `exec.rs`, `settings.rs`: an embedder, above every library
-  crate, its root declaring and defining nothing.
+  `table.rs`, `exec.rs`, `settings.rs`, `session.rs`: an embedder, above
+  every library crate, its root declaring and defining nothing.
 
 ## The DataFusion CLI
 
