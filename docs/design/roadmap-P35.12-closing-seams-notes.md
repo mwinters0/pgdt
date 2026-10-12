@@ -3,7 +3,9 @@
 The round over the tree the cuts from 35.13 to 35.26 left. Its report named
 no file past a hard limit and one past a soft one; this doc holds that file's
 cut and what the read of every crate for the `seams` skill's "Antipatterns"
-found. No behaviour changed and no test changed what it asserts; nothing
+found, and the cuts the maintainer's rulings took. The cut and the read's
+fixes changed no behaviour; the rulings on B13, B34, B36–B39 change public
+API and what the front ends accept, as ruled ("As landed", below). Nothing
 persisted moved, so `CACHE_FORMAT_VERSION` stands.
 
 ## The report
@@ -345,4 +347,42 @@ doc says so.
   their one reader, as B41's helpers do.
 
 The seam register is filed nothing: every finding is cut or kept.
+
+### As landed
+
+Where what landed differs from a ruling's words, or settles what it left
+open:
+
+- **B24**: `CensusPlan` and `Interior` are in `interior/piece.rs` too,
+  re-exported by `interior.rs`: the ruled moves alone left `piece.rs` and
+  its parent reading each other (`module_graph.py --design`).
+- **B40**: `pgdt-fixtures`' `mapping` feature reaches pgdt-model, pgdt-io
+  and pgdt-dump as well as pgdt-mapping, the crates `parsed_copy`'s call
+  names; D68 says so.
+- **B13**: `GatherOptions` is `pgdt_mapping::statistics::GatherOptions`, in
+  `statistics/request.rs` beside `StatisticsRequest` and apart from it:
+  defined beside `map_file` in `whole_file.rs` it made `whole_file` and
+  `backfill` read each other. `map_forward` takes the mode in `Pass::Parse`.
+- **B34**: `Error::Library`'s message is the core error's sentence, its
+  source that error, so `datafusion-cli`, which prints the top error alone,
+  prints what it did. `Error::DataFusion`, which only `PgDump::table`'s round
+  trip produced, is gone; `From<Error> for DataFusionError` is the one
+  conversion.
+- **B36**: `install` returns the session's `ScanBudget`, which
+  `register_dump` bills; `unrepresentable::register` and its
+  `register_unrepresentable` re-export, needed by nothing alone, are folded
+  into it.
+- **B37**, **B38**: the finding is `datafusion_pgdump::UncollatedColumns`,
+  its reason `ComparisonNote::bytewise_reason`, the clause every bytewise
+  note's sentence ends with, stated once in pgdt-query.
+  `PgDumpTable::report` folds too, being the factory's registration of one
+  table.
+- **B39**: each enum's words are its `Display`, `ALL` listing them;
+  `FromStr` refuses another word by listing them. `pgdt`'s flags read the
+  library types through `args.rs`'s `ModeParser`, a `TypedValueParser`
+  whose `--help` values are the `Display` of the modes a flag accepts,
+  which takes clap's `string` feature; every help page reads as before. The
+  one check is `PostgresInvalidValues::queryable`. The factory's entry
+  listing still shows a hand-set `Strict` as `default`, the mode a scan
+  reads it as.
 
