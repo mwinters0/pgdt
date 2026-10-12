@@ -10,9 +10,8 @@ mod identifier;
 pub mod instrument;
 
 pub use copy::{
-    COPY_BLOCK_TERMINATOR, COPY_TEXT_DELIMITER, CopyHeader, FieldRanges, RawRow, RowSplit,
-    decode_field, encode_field, field_ranges, is_terminator, parse_copy_header, split_fields,
-    validated_prefix,
+    CopyHeader, RawRow, RowSplit, decode_field, encode_field, is_terminator, parse_copy_header,
+    split_fields, validated_prefix,
 };
 pub use error::{Error, RowEndingRefusal, Unusable};
 

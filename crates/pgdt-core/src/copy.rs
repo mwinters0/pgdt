@@ -21,13 +21,13 @@ use crate::{Error, Result};
 
 /// The default COPY TEXT field delimiter. `pg_dump` plain-format output never
 /// overrides it, so it is hardcoded rather than configurable.
-pub const COPY_TEXT_DELIMITER: u8 = b'\t';
+const COPY_TEXT_DELIMITER: u8 = b'\t';
 
 /// The literal that COPY TEXT uses for SQL `NULL`.
 const COPY_TEXT_NULL_MARKER: &[u8] = b"\\N";
 
 /// The line that terminates a COPY data block.
-pub const COPY_BLOCK_TERMINATOR: &[u8] = b"\\.";
+const COPY_BLOCK_TERMINATOR: &[u8] = b"\\.";
 
 /// A parsed `COPY <table> [(<columns>)] FROM stdin;` header line.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,14 +133,14 @@ pub fn split_fields(line: &[u8]) -> impl Iterator<Item = &[u8]> {
 /// A caller holding the row as `&str` as well as `&[u8]` — which is what
 /// [`RawRow`] is — needs the position rather than the slice, so that it can
 /// take the same field out of either. `split_fields` is this, resolved.
-pub fn field_ranges(line: &[u8]) -> FieldRanges<'_> {
+fn field_ranges(line: &[u8]) -> FieldRanges<'_> {
     FieldRanges { line, start: 0, done: false }
 }
 
 /// [`field_ranges`]'s iterator. Yields one range per field, always at least
 /// one — an empty line is a single empty field, exactly as `split` gives it.
 #[derive(Debug)]
-pub struct FieldRanges<'a> {
+struct FieldRanges<'a> {
     line: &'a [u8],
     start: usize,
     done: bool,
@@ -171,7 +171,7 @@ impl Iterator for FieldRanges<'_> {
 /// One row's field boundaries, discovered once and shared by everything that
 /// reads that row.
 ///
-/// [`field_ranges`] walks from the front every time it is asked; this is the
+/// [`split_fields`] walks from the front every time it is asked; this is the
 /// same split, memoized: each boundary is found by exactly one `memchr`,
 /// whichever consumer asks for it first, and every later ask is an index into
 /// what is already here (`docs/design/decisions.md`, "D28").
@@ -238,9 +238,9 @@ impl RowSplit {
     /// The range of field `index`, extending the split as far as it must and
     /// no further. `None` where the row has no such field.
     ///
-    /// The answer is [`field_ranges`]'s, for the same row and the same index:
-    /// a row always has at least one field, and a trailing delimiter is
-    /// followed by an empty one.
+    /// The answer is the field [`split_fields`] yields at the same index of
+    /// the same row, as a range: a row always has at least one field, and a
+    /// trailing delimiter is followed by an empty one.
     ///
     /// `#[inline]` because the caller is one predicate term per row and the
     /// loop below usually does not run at all — the boundary it wants is
@@ -345,13 +345,14 @@ impl<'a> RawRow<'a> {
         Self { bytes: text.as_bytes(), text: Some(text) }
     }
 
-    /// The row's raw, still-escaped bytes — what [`field_ranges`] splits and
+    /// The row's raw, still-escaped bytes — what [`split_fields`] splits and
     /// what a caller measuring or locating a field works in.
     pub fn bytes(&self) -> &'a [u8] {
         self.bytes
     }
 
-    /// Decode the field at `field`, one of [`field_ranges`]'s ranges.
+    /// Decode the field at `field`, one field's range as [`RowSplit::field`]
+    /// gives it.
     ///
     /// **The `str` path is a total fallback, not an assertion.** `str::get`
     /// answers `None` for a range that is out of bounds or not on a character
