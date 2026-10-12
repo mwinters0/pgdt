@@ -2,8 +2,6 @@
 //! extended until the queried table is settled, and the census a
 //! metadata-level table lacks.
 
-use std::sync::Arc;
-
 use pgdt_codec::SchemaMode;
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::statistics_loaded;
@@ -113,20 +111,8 @@ pub(super) async fn map_for_query(
     // A cancelled mapping pass is an error here rather than a short stream
     // (`docs/design/decisions.md`, "D48"). `pgdt query` never sets the flag;
     // an embedder that does gets told.
-    // A pass gathering nothing charges nothing, so its account is never read.
-    let account = Arc::default();
-    if map_forward(
-        source,
-        scan_options,
-        cache,
-        watch,
-        &mut index,
-        target,
-        Pass::Query,
-        &account,
-        size,
-    )
-    .await?
+    if map_forward(source, scan_options, cache, watch, &mut index, target, Pass::Query, size)
+        .await?
         == MapStop::Interrupted
     {
         return Err(Error::ScanCancelled { scanned_through: index.scanned_through });

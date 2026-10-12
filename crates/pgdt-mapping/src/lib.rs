@@ -23,7 +23,6 @@ pub use whole_file::{MapRun, build_index, build_map, map_file};
 pub mod internal {
     pub use crate::backfill::reread_rows;
     pub use crate::forward::{MapStop, Pass, map_forward, splice};
-    pub use crate::statistics::account::StatisticsAccount;
     #[cfg(feature = "test-support")]
     pub use crate::statistics::gather::one_group_bounds;
     pub use crate::statistics::stored::{

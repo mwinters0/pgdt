@@ -153,8 +153,9 @@ pub(crate) fn cancelled_read(error: &Error, scan_options: &ScanOptions) -> bool 
 #[derive(Clone, Copy)]
 pub enum Pass<'a> {
     /// [`map_file`](crate::map_file)'s: each block at the level `.0` gives its table, censused
-    /// where that is the data level, and its data-level columns gathered.
-    Parse(&'a StatisticsRequest),
+    /// where that is the data level, and its data-level columns gathered,
+    /// every observer charging `.1`.
+    Parse(&'a StatisticsRequest, &'a Arc<StatisticsAccount>),
     /// A query's: every block censused, nothing gathered, whatever level a
     /// parse would have given it (`docs/design/decisions.md`, "D35").
     Query,
@@ -185,7 +186,7 @@ pub enum Pass<'a> {
 /// records what its request's levels ask, a query's censuses every block and
 /// gathers nothing. A block gathering statistics is observed row by row on
 /// this loop, or piece by piece where the leader takes it, every observer
-/// charging `account`.
+/// charging the account [`Pass::Parse`] carries.
 #[allow(clippy::too_many_arguments)]
 pub async fn map_forward(
     source: &dyn ByteRangeSource,
@@ -195,7 +196,6 @@ pub async fn map_forward(
     index: &mut DumpIndex,
     target: Option<(&str, Option<&str>)>,
     mapping: Pass<'_>,
-    account: &Arc<StatisticsAccount>,
     size: u64,
 ) -> Result<MapStop> {
     if index.scanned_through >= size {
@@ -314,9 +314,10 @@ pub async fn map_forward(
                         // a statistics request tracks its columns.
                         let (census, request) = match mapping {
                             Pass::Query => (true, None),
-                            Pass::Parse(request) => {
-                                (request.tracked_columns(&start.header).is_some(), Some(request))
-                            }
+                            Pass::Parse(request, account) => (
+                                request.tracked_columns(&start.header).is_some(),
+                                Some((request, account)),
+                            ),
                         };
                         let header = start.header.clone();
                         builder.on_copy_start(start, census);
@@ -346,7 +347,7 @@ pub async fn map_forward(
                         });
                         // A block no request tracks is observed too under
                         // `PostgresInvalidValues::Strict`, to check its fields.
-                        let observer = request.and_then(|request| {
+                        let observer = request.and_then(|(request, account)| {
                             gather::observer_for(
                                 request,
                                 &header,

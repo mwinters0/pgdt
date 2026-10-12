@@ -356,8 +356,7 @@ async fn map_file_watched(
         watch,
         &mut index,
         None,
-        Pass::Parse(statistics),
-        &account,
+        Pass::Parse(statistics, &account),
         size,
     )
     .await
