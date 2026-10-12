@@ -16,7 +16,7 @@ use pgdt_dump::internal::announce_read_loop;
 use pgdt_dump::internal::{tiling_diagnostics, toc_coverage_diagnostic};
 use pgdt_dump::{ChunkCarry, CopyEnd, CopyScanner, Event, ScanOptions};
 use pgdt_io::{ByteRangeSource, internal::memory_budget_display};
-use pgdt_model::{DumpIndex, Span, SpanBody};
+use pgdt_model::{DumpIndex, PostgresInvalidValues, Span, SpanBody};
 
 use crate::interior::{CensusPlan, RegionScan, report_shortfall, scan_region};
 use crate::statistics::account::StatisticsAccount;
@@ -154,8 +154,9 @@ pub(crate) fn cancelled_read(error: &Error, scan_options: &ScanOptions) -> bool 
 pub enum Pass<'a> {
     /// [`map_file`](crate::map_file)'s: each block at the level `.0` gives its table, censused
     /// where that is the data level, and its data-level columns gathered,
-    /// every observer charging `.1`.
-    Parse(&'a StatisticsRequest, &'a Arc<StatisticsAccount>),
+    /// every observer charging `.1` and treating a field its type's `*_in`
+    /// refuses as `.2` says ([`crate::statistics::GatherOptions::postgres_invalid_values`]).
+    Parse(&'a StatisticsRequest, &'a Arc<StatisticsAccount>, PostgresInvalidValues),
     /// A query's: every block censused, nothing gathered, whatever level a
     /// parse would have given it (`docs/design/decisions.md`, "D35").
     Query,
@@ -314,9 +315,9 @@ pub async fn map_forward(
                         // a statistics request tracks its columns.
                         let (census, request) = match mapping {
                             Pass::Query => (true, None),
-                            Pass::Parse(request, account) => (
+                            Pass::Parse(request, account, invalid) => (
                                 request.tracked_columns(&start.header).is_some(),
-                                Some((request, account)),
+                                Some((request, account, invalid)),
                             ),
                         };
                         let header = start.header.clone();
@@ -347,14 +348,14 @@ pub async fn map_forward(
                         });
                         // A block no request tracks is observed too under
                         // `PostgresInvalidValues::Strict`, to check its fields.
-                        let observer = request.and_then(|(request, account)| {
+                        let observer = request.and_then(|(request, account, invalid)| {
                             gather::observer_for(
                                 request,
                                 &header,
                                 index.metadata.as_ref(),
                                 db.as_deref(),
                                 account,
-                                scan_options.postgres_invalid_values,
+                                invalid,
                             )
                         });
                         if let Some(observer) = observer {

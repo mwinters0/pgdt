@@ -10,7 +10,7 @@ use pgdt_core::{decode_field, encode_field, split_fields};
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{Event, ScanOptions, scan};
 use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
-use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_mapping::{build_index, map_file};
 
 use pgdt_fixtures::{edge_cases, edge_cases_fixture, objects_fixture, types_fixture};
@@ -369,9 +369,15 @@ async fn a_crlf_conversion_reads_alike_and_a_stray_ending_is_refused() {
         expected.iter().map(|(table, rows)| (table.clone(), rows.len() as u64)).collect();
     for options in serial_and_split() {
         let source = LocalFileSource::open(&crlf_path).unwrap();
-        let run = map_file(&source, &options, &CacheMode::DISABLED, &StatisticsRequest::DATA)
-            .await
-            .unwrap();
+        let run = map_file(
+            &source,
+            &options,
+            &GatherOptions::default(),
+            &CacheMode::DISABLED,
+            &StatisticsRequest::DATA,
+        )
+        .await
+        .unwrap();
         assert_eq!(counts(&run.index), expected_counts, "{:?}", options.parallelism);
     }
 
@@ -395,7 +401,14 @@ async fn a_crlf_conversion_reads_alike_and_a_stray_ending_is_refused() {
         std::fs::write(&path, &stray).unwrap();
         for options in serial_and_split() {
             let source = LocalFileSource::open(&path).unwrap();
-            match map_file(&source, &options, &CacheMode::DISABLED, &StatisticsRequest::DATA).await
+            match map_file(
+                &source,
+                &options,
+                &GatherOptions::default(),
+                &CacheMode::DISABLED,
+                &StatisticsRequest::DATA,
+            )
+            .await
             {
                 Err(pgdt_core::Error::RowEndingRefused {
                     table: t,

@@ -20,7 +20,7 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 
 mod in_order;
 use in_order::{Order, RunScansInOrder};
@@ -79,7 +79,9 @@ async fn parsed(dir: &Path) -> PathBuf {
         group_size: Some(NonZeroU64::new(GROUP_ROWS).unwrap()),
         ..StatisticsRequest::DATA
     };
-    map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
+    map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &cache, &request)
+        .await
+        .unwrap();
     copy
 }
 

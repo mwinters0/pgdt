@@ -22,7 +22,7 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_model::{CopyBlock, DumpIndex};
 use pgdt_query::{
     EarlyStop, Expr, PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions, table_stream,
@@ -473,9 +473,15 @@ async fn check_fixture(
     let plain = dir.path().join("plain.dtcache");
     let source = LocalFileSource::open(&dump).unwrap();
     let request = StatisticsRequest::METADATA;
-    map_file(&source, &ScanOptions::default(), &CacheMode::enabled(plain.clone()), &request)
-        .await
-        .unwrap();
+    map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &CacheMode::enabled(plain.clone()),
+        &request,
+    )
+    .await
+    .unwrap();
     let gathered_cache = cache::colocated_path(&dump);
 
     let mut tables: BTreeMap<(Option<String>, String), Vec<&CopyBlock>> = BTreeMap::new();

@@ -269,7 +269,6 @@ pub(crate) fn scan_options(read: ReadFlags, parallel: &Resolved) -> ScanOptions 
         chunk_size_bytes: read.chunk_size.unwrap_or(pgdt_io::SCAN_CHUNK_DEFAULT_SIZE_BYTES),
         max_line_bytes: read.max_line_bytes.unwrap_or(pgdt_dump::SCAN_LINE_DEFAULT_MAX_BYTES),
         parallelism: parallel.parallelism(),
-        statistics_allowance_bytes: parallel.statistics_allowance(),
         ..ScanOptions::default()
     }
 }

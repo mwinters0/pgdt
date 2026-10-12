@@ -39,7 +39,6 @@ use pgdt_io::{
     ByteRangeSource, Cancellation, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
     internal::memory_budget_display,
 };
-use pgdt_model::PostgresInvalidValues;
 
 /// The start of a COPY data block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -759,27 +758,6 @@ pub struct ScanOptions {
     /// the ceiling on the workers `pgdt_mapping`'s `scan_region` runs over an
     /// open `COPY` block's interior, which is what a `parse` splits by.
     pub parallelism: Parallelism,
-    /// **The bytes of heap this scan's statistics may hold alive**, and
-    /// `None` — the default — declines nothing, an embedder that stated no
-    /// allowance having chosen no bound
-    /// (`docs/design/decisions.md`, "D1", "D85").
-    ///
-    /// It is what [`pgdt_io::statistics_allowance`] leaves under the margin once
-    /// `parallelism`'s budget is spent, and it bounds the whole account
-    /// (`pgdt_mapping`'s `StatisticsAccount`): a `COPY` block whose
-    /// gathering would pass it declines, drops what it gathered, and is
-    /// recorded in the map as having declined under this number
-    /// ([`pgdt_model::CopyBlock::statistics_declined`]).
-    ///
-    /// **Read by `pgdt_mapping::map_file` alone**: a query gathers nothing,
-    /// so on every other entry point it bounds nothing.
-    pub statistics_allowance_bytes: Option<u64>,
-    /// What gathering does with a field its type's `*_in` refuses: fails the
-    /// pass at the first, by default, or goes on past it, or checks every
-    /// field ([`PostgresInvalidValues`]). Read by `pgdt_mapping::map_file` and
-    /// `pgdt_mapping::gather_block_statistics` alone, as gathering is; a
-    /// query's reads are `pgdt_query::QueryOptions::postgres_invalid_values`'.
-    pub postgres_invalid_values: PostgresInvalidValues,
 }
 
 impl Default for ScanOptions {
@@ -789,8 +767,6 @@ impl Default for ScanOptions {
             max_line_bytes: SCAN_LINE_DEFAULT_MAX_BYTES,
             cancel: None,
             parallelism: Parallelism::default(),
-            statistics_allowance_bytes: None,
-            postgres_invalid_values: PostgresInvalidValues::default(),
         }
     }
 }

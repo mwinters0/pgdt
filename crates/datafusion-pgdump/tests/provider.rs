@@ -22,7 +22,7 @@ use pgdt_dump::cache::{self, CacheMode};
 use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy, sweep_request, ungathered};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_model::{DiagnosticKind, Finding, TableName};
 use pgdt_query::{QueryOptions, table_stream};
 
@@ -365,7 +365,15 @@ async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot
     std::fs::copy(&fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
     let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
-    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
+    map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &cache,
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let statistics = dump.statistics_bytes();
     assert!(statistics > 0, "a parse gathering statistics leaves some resident");
@@ -458,12 +466,14 @@ async fn a_dump_opened_ignoring_refused_values_reads_a_float_past_its_range() {
     let copy = dir.path().join("dump.sql");
     std::fs::copy(&fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
-    let scan = ScanOptions {
+    let scan = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Ignore,
-        ..ScanOptions::default()
+        ..GatherOptions::default()
     };
     let cached = CacheMode::enabled(cache::colocated_path(&copy));
-    map_file(&source, &scan, &cached, &StatisticsRequest::DATA).await.unwrap();
+    map_file(&source, &ScanOptions::default(), &scan, &cached, &StatisticsRequest::DATA)
+        .await
+        .unwrap();
     let modes = [
         PostgresInvalidValues::Default,
         PostgresInvalidValues::Strict,

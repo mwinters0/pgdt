@@ -460,12 +460,12 @@ async fn every_column_resolves_alike_with_every_identifier_quoted() {
 async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
     use pgdt_core::Error;
     use pgdt_dump::cache::CacheMode;
-    use pgdt_mapping::statistics::StatisticsRequest;
+    use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
     use pgdt_mapping::{map_file, strict_unchecked};
     use pgdt_model::PostgresInvalidValues;
-    let strict = ScanOptions {
+    let strict = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..ScanOptions::default()
+        ..GatherOptions::default()
     };
     let spelled = [
         ("id", "integer"),
@@ -487,9 +487,15 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
             flag_sets += 1;
             let label = format!("pg_dump {version} {}", path.display());
             let source = LocalFileSource::open(&path).unwrap();
-            let run = map_file(&source, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA)
-                .await
-                .unwrap_or_else(|e| panic!("{label}: a strict parse refused: {e}"));
+            let run = map_file(
+                &source,
+                &ScanOptions::default(),
+                &strict,
+                &CacheMode::DISABLED,
+                &StatisticsRequest::DATA,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{label}: a strict parse refused: {e}"));
             let block = run.index.blocks_for("public.t_bit").next();
             let block = block.unwrap_or_else(|| panic!("{label}: no `t_bit` block"));
             let Some(meta) = run.index.metadata.as_ref() else { panic!("{label}") };
@@ -533,7 +539,15 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
             std::fs::write(&path, text.replace(row, &mutated)).unwrap();
             let label = format!("pg_dump {version}: {column} `{field}`");
             let source = LocalFileSource::open(&path).unwrap();
-            match map_file(&source, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA).await {
+            match map_file(
+                &source,
+                &ScanOptions::default(),
+                &strict,
+                &CacheMode::DISABLED,
+                &StatisticsRequest::DATA,
+            )
+            .await
+            {
                 Err(Error::FieldRefused { column: named, declared_type, line, value, .. }) => {
                     assert_eq!(
                         (named.as_str(), declared_type.as_str(), line, value.as_str()),

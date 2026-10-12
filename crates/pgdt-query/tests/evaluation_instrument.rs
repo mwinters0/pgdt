@@ -18,7 +18,7 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, SourceWatch, StrictIdentity};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSelection};
 use pgdt_query::{
     DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
     TablePartitions,
@@ -85,7 +85,11 @@ async fn read(
         ..StatisticsRequest::DATA
     };
     let cache = CacheMode::enabled(cache::colocated_path(&dump));
-    let index = map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap().index;
+    let index =
+        map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &cache, &request)
+            .await
+            .unwrap()
+            .index;
     let source: Arc<dyn ByteRangeSource> = Arc::new(source);
     let watch =
         Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());

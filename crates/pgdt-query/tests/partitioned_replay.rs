@@ -1087,7 +1087,7 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
 
     use pgdt_core::Error;
     use pgdt_dump::cache::{SourceWatch, StrictIdentity};
-    use pgdt_mapping::statistics::StatisticsRequest;
+    use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
     use pgdt_mapping::{build_index, map_file};
     use pgdt_model::TableName;
     use pgdt_query::{TablePartitions, table_schema};
@@ -1097,6 +1097,7 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
     let run = map_file(
         source.as_ref(),
         &ScanOptions::default(),
+        &GatherOptions::default(),
         &CacheMode::DISABLED,
         &StatisticsRequest::DATA,
     )

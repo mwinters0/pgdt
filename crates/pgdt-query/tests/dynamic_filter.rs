@@ -27,7 +27,7 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, SourceWatch, StrictIdentity};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSelection};
 use pgdt_model::{DumpIndex, Sortedness};
 use pgdt_query::{
     DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
@@ -104,7 +104,10 @@ async fn mapped(dump: &Path, group_size: u64) -> DumpIndex {
         ..StatisticsRequest::DATA
     };
     let cache = CacheMode::enabled(cache::colocated_path(dump));
-    let run = map_file(&source, &ScanOptions::default(), &cache, &request).await.unwrap();
+    let run =
+        map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &cache, &request)
+            .await
+            .unwrap();
     assert!(!run.interrupted);
     run.index
 }

@@ -19,7 +19,7 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
     use crate::predicate::Predicate;
     use pgdt_io::LocalFileSource;
     use pgdt_mapping::map_file;
-    use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
+    use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSelection};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ascending.sql");
@@ -38,8 +38,15 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
         group_size: Some(std::num::NonZeroU64::new(64).unwrap()),
         ..StatisticsRequest::DATA
     };
-    let run =
-        map_file(&source, &ScanOptions::default(), &CacheMode::DISABLED, &request).await.unwrap();
+    let run = map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &CacheMode::DISABLED,
+        &request,
+    )
+    .await
+    .unwrap();
     let block = run.index.blocks_for("public.t").next().unwrap();
     let statistics = Arc::clone(block.statistics.as_ref().unwrap());
     let metadata = run.index.metadata.as_ref();

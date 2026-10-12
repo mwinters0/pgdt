@@ -21,7 +21,7 @@ use pgdt_fixtures::{parsed_copy, ungathered};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{
-    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    GatherOptions, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
 use pgdt_model::{Diagnostic, DiagnosticSink, Finding, Severity};
 use pgdt_query::ComparisonNote;
@@ -151,7 +151,15 @@ async fn a_table_whose_plan_refuses_is_reported_and_not_listed() {
     .unwrap();
     let source = LocalFileSource::open(&dump_path).unwrap();
     let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
-    map_file(&source, &ScanOptions::default(), &cache, &StatisticsRequest::DATA).await.unwrap();
+    map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &cache,
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
     ungathered(&dump_path).await;
     let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let heard = Arc::new(Heard::default());
@@ -202,7 +210,9 @@ async fn a_metadata_level_table_is_refused_naming_its_parse() {
         },
         ..StatisticsRequest::DATA
     };
-    map_file(&source, &ScanOptions::default(), &cache, &levels).await.unwrap();
+    map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &cache, &levels)
+        .await
+        .unwrap();
     let location = dump_path.to_str().unwrap();
 
     let dump = PgDump::open(location, PgDumpOptions::default()).await.unwrap();

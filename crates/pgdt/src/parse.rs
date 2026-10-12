@@ -10,6 +10,7 @@ use namespace_init::InitShutdown;
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ScanOptions, preamble_only};
 use pgdt_io::{Cancellation, Origin};
+use pgdt_mapping::statistics::GatherOptions;
 use pgdt_mapping::statistics::{
     ROW_GROUP_DEFAULT_MIN_ROWS, StatisticsRequest, StatisticsSelection,
 };
@@ -241,12 +242,12 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
     let size = source.size().await?;
     let cancel = Arc::new(Cancellation::new());
     let guard = install_interrupt_guard(Arc::clone(&cancel), init)?;
-    let scan_options = ScanOptions {
-        cancel: Some(cancel),
+    let scan_options = ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
+    let gather = GatherOptions {
+        statistics_allowance_bytes: parallel.statistics_allowance(),
         postgres_invalid_values: postgres_invalid_values.into(),
-        ..scan_options(read, &parallel)
     };
-    let run = pgdt_mapping::map_file(source.as_ref(), &scan_options, &mode, &statistics)
+    let run = pgdt_mapping::map_file(source.as_ref(), &scan_options, &gather, &mode, &statistics)
         .await
         .map_err(|e| naming_the_source(e, &origin))?;
     introspect::statistics_returned(&run.statistics);

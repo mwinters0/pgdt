@@ -16,7 +16,7 @@ use pgdt_io::{
     ByteRangeSource, KnownCompression, LocalFileSource, Origin, Parallelism, Recognized, XzSource,
     open,
 };
-use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::CACHE_FORMAT_VERSION;
 use pgdt_model::DiagnosticKind;
@@ -314,7 +314,15 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
     let cached_stored_size = source.stored_size().await.unwrap();
     let path = cache::colocated_path(&dump);
     let mode = CacheMode::enabled(path.clone());
-    map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::default()).await.unwrap();
+    map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &mode,
+        &StatisticsRequest::default(),
+    )
+    .await
+    .unwrap();
     let before = std::fs::read(&path).unwrap();
 
     // Grow the dump under its own cache: the file at `path` is now a valid
@@ -341,9 +349,15 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
 
     expected(
         "map_file",
-        map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::default())
-            .await
-            .unwrap_err(),
+        map_file(
+            &source,
+            &ScanOptions::default(),
+            &GatherOptions::default(),
+            &mode,
+            &StatisticsRequest::default(),
+        )
+        .await
+        .unwrap_err(),
     );
     expected(
         "preamble_only",
@@ -888,7 +902,15 @@ async fn a_claim_sizes_the_statistics_a_load_hands_back() {
     let source = LocalFileSource::open(&dump).unwrap();
     let path = cache::colocated_path(&dump);
     let mode = CacheMode::enabled(path.clone());
-    map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::default()).await.unwrap();
+    map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &mode,
+        &StatisticsRequest::default(),
+    )
+    .await
+    .unwrap();
 
     let claimed = match cache::claim(&path, &Origin::local(&dump)).await.unwrap() {
         CacheClaim::Settles { statistics_heap_bytes, .. } => statistics_heap_bytes,
@@ -1021,7 +1043,15 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
     let path = cache::colocated_path(&dump);
     let options = ScanOptions::default();
     let statistics = StatisticsRequest::default();
-    map_file(&source, &options, &CacheMode::enabled(path.clone()), &statistics).await.unwrap();
+    map_file(
+        &source,
+        &options,
+        &GatherOptions::default(),
+        &CacheMode::enabled(path.clone()),
+        &statistics,
+    )
+    .await
+    .unwrap();
     let good = std::fs::read(&path).unwrap();
 
     let other = dir.path().join("other.sql");
@@ -1046,9 +1076,15 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
     ];
     for (bytes, why) in cases {
         std::fs::write(&path, bytes).unwrap();
-        let refused = map_file(&source, &options, &CacheMode::enabled(path.clone()), &statistics)
-            .await
-            .unwrap_err();
+        let refused = map_file(
+            &source,
+            &options,
+            &GatherOptions::default(),
+            &CacheMode::enabled(path.clone()),
+            &statistics,
+        )
+        .await
+        .unwrap_err();
         match refused {
             Error::CacheUnusable { path: named, unusable } => {
                 assert_eq!(named, path);
@@ -1059,7 +1095,8 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
         assert_eq!(std::fs::read(&path).unwrap(), bytes, "{why:?}: the refused file is untouched");
 
         let replacing = CacheMode::enabled(path.clone()).with_overwrite_unusable(true);
-        let run = map_file(&source, &options, &replacing, &statistics).await;
+        let run =
+            map_file(&source, &options, &GatherOptions::default(), &replacing, &statistics).await;
         if why.overwritable() {
             run.unwrap();
             assert!(
@@ -1089,7 +1126,15 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
     let dir = tempfile::tempdir().unwrap();
     let mode = CacheMode::enabled(dir.path().join("single_block.xz.dtcache"));
     let intact = XzSource::open(compressed.path()).unwrap();
-    map_file(&intact, &ScanOptions::default(), &mode, &StatisticsRequest::default()).await.unwrap();
+    map_file(
+        &intact,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &mode,
+        &StatisticsRequest::default(),
+    )
+    .await
+    .unwrap();
     let table = intact.seek_table().unwrap();
     drop(intact);
 
@@ -1168,9 +1213,15 @@ async fn persisted_index_is_pinned_to_the_format_version() {
     for (name, path) in &files {
         let source = LocalFileSource::open(path).unwrap();
         let request = common::sweep_request(path);
-        let run = map_file(&source, &ScanOptions::default(), &CacheMode::DISABLED, &request)
-            .await
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let run = map_file(
+            &source,
+            &ScanOptions::default(),
+            &GatherOptions::default(),
+            &CacheMode::DISABLED,
+            &request,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(!run.interrupted, "{name}");
         let bytes = bincode::serde::encode_to_vec(&run.index, bincode::config::standard()).unwrap();
         fnv(&mut digest, name.as_bytes());
@@ -1203,7 +1254,7 @@ mod encoding {
     };
     use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
     use pgdt_mapping::map_file;
-    use pgdt_mapping::statistics::StatisticsRequest;
+    use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
     use pgdt_model::{CACHE_FORMAT_VERSION, DataBlock, SpanBody, calendar_end};
 
     /// Real `pg_dump` output whose columns gather bounds and dictionaries.
@@ -1237,6 +1288,7 @@ mod encoding {
             let run = map_file(
                 source,
                 &ScanOptions::default(),
+                &GatherOptions::default(),
                 &CacheMode::DISABLED,
                 &StatisticsRequest::default(),
             )
@@ -1324,11 +1376,19 @@ mod encoding {
         let source = LocalFileSource::open(&dump).unwrap();
         let mode = CacheMode::enabled(dir.path().join("scratch.dtcache"));
         let options = ScanOptions::default();
-        let data = map_file(&source, &options, &mode, &StatisticsRequest::DATA).await.unwrap();
-        let metadata =
-            map_file(&source, &options, &CacheMode::DISABLED, &StatisticsRequest::METADATA)
+        let data =
+            map_file(&source, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
                 .await
                 .unwrap();
+        let metadata = map_file(
+            &source,
+            &options,
+            &GatherOptions::default(),
+            &CacheMode::DISABLED,
+            &StatisticsRequest::METADATA,
+        )
+        .await
+        .unwrap();
 
         let other = calendar_end() - 1;
         for (name, index, refused) in

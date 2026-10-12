@@ -22,7 +22,9 @@ use std::sync::Arc;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
-use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsTerms};
+use pgdt_mapping::statistics::{
+    GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsTerms,
+};
 use pgdt_mapping::{MapRun, map_file};
 use pgdt_model::DumpIndex;
 use pgdt_model::{DataBlock, SpanBody};
@@ -68,7 +70,8 @@ fn request(group_size: u64) -> StatisticsRequest {
 async fn parse(dump: &Path, options: &ScanOptions, statistics: &StatisticsRequest) -> MapRun {
     let source = LocalFileSource::open(dump).unwrap();
     let mode = CacheMode::enabled(pgdt_dump::cache::colocated_path(dump));
-    let run = map_file(&source, options, &mode, statistics).await.unwrap();
+    let run =
+        map_file(&source, options, &GatherOptions::default(), &mode, statistics).await.unwrap();
     assert!(!run.interrupted);
     run
 }

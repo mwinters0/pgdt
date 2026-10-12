@@ -29,7 +29,7 @@ use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{
-    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    GatherOptions, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
 use pgdt_model::PostgresInvalidValues;
 use pgdt_query::{
@@ -582,10 +582,16 @@ async fn a_scale_past_the_precision_or_arrows_reach_reads_every_value() {
 
     let source = LocalFileSource::open(&path).unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(&path));
-    let index = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
-        .await
-        .unwrap()
-        .index;
+    let index = map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &mode,
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap()
+    .index;
     let mut blocks = 0;
     for block in index.blocks() {
         let counts = block.unrepresentable.as_deref().expect("a data-level block is counted");
@@ -665,10 +671,16 @@ async fn a_negative_scale_zero_reads_as_zero_in_every_mode() {
 
     let source = LocalFileSource::open(&path).unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(&path));
-    let index = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
-        .await
-        .unwrap()
-        .index;
+    let index = map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &mode,
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap()
+    .index;
     let mut blocks = 0;
     for block in index.blocks() {
         let counts = block.unrepresentable.as_deref().expect("a data-level block is counted");
@@ -764,7 +776,15 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
     let source = LocalFileSource::open(&path).unwrap();
     let line_offset = std::fs::read_to_string(&path).unwrap().find("\n0.001\n").unwrap() + 1;
     let disabled = CacheMode::DISABLED;
-    match map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::DATA).await {
+    match map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &disabled,
+        &StatisticsRequest::DATA,
+    )
+    .await
+    {
         Err(Error::FieldRefused { table, column, declared_type, line, line_offset: at, value }) => {
             assert_eq!((table.as_str(), column.as_str()), ("public.t_past", "v2_5"));
             assert_eq!(
@@ -789,8 +809,16 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
         ..StatisticsRequest::DATA
     };
     let mode = CacheMode::enabled(cache::colocated_path(&path));
-    let index =
-        map_file(&source, &ScanOptions::default(), &mode, &past_at_metadata).await.unwrap().index;
+    let index = map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &mode,
+        &past_at_metadata,
+    )
+    .await
+    .unwrap()
+    .index;
     let block = index.blocks().find(|b| b.header.table == "t").unwrap();
     let statistics = block.statistics.as_deref().unwrap();
     let sums = |at: usize| statistics.columns[at].as_ref().unwrap().sums.clone();
@@ -866,8 +894,9 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
         let path = char_typmod_dump(dir.path(), declared, field);
         let source = LocalFileSource::open(&path).unwrap();
         for invalid in [PostgresInvalidValues::Default, PostgresInvalidValues::Strict] {
-            let scan = ScanOptions { postgres_invalid_values: invalid, ..ScanOptions::default() };
-            map_file(&source, &scan, &disabled, &StatisticsRequest::DATA)
+            let scan =
+                GatherOptions { postgres_invalid_values: invalid, ..GatherOptions::default() };
+            map_file(&source, &ScanOptions::default(), &scan, &disabled, &StatisticsRequest::DATA)
                 .await
                 .unwrap_or_else(|e| panic!("{declared} `{field}`: {invalid:?} refused: {e}"));
         }
@@ -890,7 +919,14 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
         let escaped = field.replace('\t', "\\t");
         let path = char_typmod_dump(dir.path(), declared, &escaped);
         let source = LocalFileSource::open(&path).unwrap();
-        match map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::DATA).await
+        match map_file(
+            &source,
+            &ScanOptions::default(),
+            &GatherOptions::default(),
+            &disabled,
+            &StatisticsRequest::DATA,
+        )
+        .await
         {
             Err(Error::FieldRefused {
                 column,
@@ -947,14 +983,28 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
     ] {
         let path = char_typmod_dump(dir.path(), declared, field);
         let source = LocalFileSource::open(&path).unwrap();
-        map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::DATA)
-            .await
-            .unwrap_or_else(|e| panic!("{declared} `{field}`: a default parse refused: {e}"));
-        let strict = ScanOptions {
+        map_file(
+            &source,
+            &ScanOptions::default(),
+            &GatherOptions::default(),
+            &disabled,
+            &StatisticsRequest::DATA,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{declared} `{field}`: a default parse refused: {e}"));
+        let strict = GatherOptions {
             postgres_invalid_values: PostgresInvalidValues::Strict,
-            ..ScanOptions::default()
+            ..GatherOptions::default()
         };
-        match map_file(&source, &strict, &disabled, &StatisticsRequest::DATA).await {
+        match map_file(
+            &source,
+            &ScanOptions::default(),
+            &strict,
+            &disabled,
+            &StatisticsRequest::DATA,
+        )
+        .await
+        {
             Err(Error::FieldRefused { column, line, value, .. }) => {
                 assert_eq!((column.as_str(), line, value.as_str()), ("v", 2, field), "{declared}");
             }
@@ -994,9 +1044,9 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
 async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
     let dir = tempfile::tempdir().unwrap();
     let disabled = CacheMode::DISABLED;
-    let strict = ScanOptions {
+    let strict = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..Default::default()
+        ..GatherOptions::default()
     };
     for (declared, field) in [
         ("interval", "3000000000"),
@@ -1008,10 +1058,16 @@ async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
     ] {
         let path = char_typmod_dump(dir.path(), declared, field);
         let source = LocalFileSource::open(&path).unwrap();
-        for scan in [ScanOptions::default(), strict.clone()] {
-            map_file(&source, &scan, &disabled, &StatisticsRequest::DATA)
-                .await
-                .unwrap_or_else(|e| panic!("{declared} `{field}`: refused: {e}"));
+        for gather in [GatherOptions::default(), strict] {
+            map_file(
+                &source,
+                &ScanOptions::default(),
+                &gather,
+                &disabled,
+                &StatisticsRequest::DATA,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{declared} `{field}`: refused: {e}"));
         }
     }
     for (declared, field, strict_alone) in [
@@ -1025,8 +1081,14 @@ async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
     ] {
         let path = char_typmod_dump(dir.path(), declared, field);
         let source = LocalFileSource::open(&path).unwrap();
-        let default =
-            map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::DATA).await;
+        let default = map_file(
+            &source,
+            &ScanOptions::default(),
+            &GatherOptions::default(),
+            &disabled,
+            &StatisticsRequest::DATA,
+        )
+        .await;
         match (default, strict_alone) {
             (Ok(_), true) => {}
             (Err(Error::FieldRefused { column, line, value, .. }), false) => {
@@ -1034,7 +1096,15 @@ async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
             }
             (other, _) => panic!("{declared} `{field}`: a default parse answered {other:?}"),
         }
-        match map_file(&source, &strict, &disabled, &StatisticsRequest::DATA).await {
+        match map_file(
+            &source,
+            &ScanOptions::default(),
+            &strict,
+            &disabled,
+            &StatisticsRequest::DATA,
+        )
+        .await
+        {
             Err(Error::FieldRefused { column, line, value, .. }) => {
                 assert_eq!((column.as_str(), line, value.as_str()), ("v", 2, field), "{declared}");
             }
@@ -1086,13 +1156,13 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
     let with_null = rows(&[Some("5"), None, Some("7")]);
     let line_offset =
         |path: &Path| std::fs::read_to_string(path).unwrap().find("\n2\t").unwrap() as u64 + 1;
-    let strict = ScanOptions {
+    let strict = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..Default::default()
+        ..GatherOptions::default()
     };
-    let ignoring = ScanOptions {
+    let ignoring = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Ignore,
-        ..Default::default()
+        ..GatherOptions::default()
     };
 
     for ddl in [
@@ -1113,12 +1183,12 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
     ] {
         let path = not_null_dump(dir.path(), ddl);
         let source = LocalFileSource::open(&path).unwrap();
-        for (scan, request) in [
-            (ScanOptions::default(), StatisticsRequest::DATA),
-            (strict.clone(), StatisticsRequest::DATA),
-            (strict.clone(), StatisticsRequest::METADATA),
+        for (gather, request) in [
+            (GatherOptions::default(), StatisticsRequest::DATA),
+            (strict, StatisticsRequest::DATA),
+            (strict, StatisticsRequest::METADATA),
         ] {
-            match map_file(&source, &scan, &disabled, &request).await {
+            match map_file(&source, &ScanOptions::default(), &gather, &disabled, &request).await {
                 Err(Error::NullRefused { table, column, line, line_offset: at }) => {
                     assert_eq!(
                         (table.as_str(), column.as_str(), line, at),
@@ -1129,9 +1199,15 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
                 other => panic!("{ddl}: expected the parse to refuse the NULL, got {other:?}"),
             }
         }
-        map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::METADATA)
-            .await
-            .unwrap_or_else(|e| panic!("{ddl}: a metadata-level parse refused: {e}"));
+        map_file(
+            &source,
+            &ScanOptions::default(),
+            &GatherOptions::default(),
+            &disabled,
+            &StatisticsRequest::METADATA,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{ddl}: a metadata-level parse refused: {e}"));
         match read(path.clone(), QueryOptions::default()).await {
             Err(Error::NullRefused { column, line: None, line_offset: at, .. }) => {
                 assert_eq!((column.as_str(), at), ("v", line_offset(&path)), "{ddl}");
@@ -1169,14 +1245,25 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
 
         let mode = CacheMode::enabled(cache::colocated_path(&path));
         let _ = std::fs::remove_file(cache::colocated_path(&path));
-        let mapped = map_file(&source, &ignoring, &mode, &StatisticsRequest::DATA).await.unwrap();
+        let mapped =
+            map_file(&source, &ScanOptions::default(), &ignoring, &mode, &StatisticsRequest::DATA)
+                .await
+                .unwrap();
         let block = mapped.index.blocks().find(|b| b.header.table == "t").unwrap();
         let recorded = block.ignored_refusals.as_ref().expect("the NULL is recorded");
         assert_eq!(
             (recorded.columns[0].first.value.as_deref(), recorded.columns[0].count),
             (None, 1)
         );
-        match map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA).await {
+        match map_file(
+            &source,
+            &ScanOptions::default(),
+            &GatherOptions::default(),
+            &mode,
+            &StatisticsRequest::DATA,
+        )
+        .await
+        {
             Err(Error::FieldRefusedRecorded { refused, .. }) => {
                 assert!(matches!(*refused, Error::NullRefused { line: Some(2), .. }), "{ddl}");
             }
@@ -1193,10 +1280,16 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
     ] {
         let path = not_null_dump(dir.path(), ddl);
         let source = LocalFileSource::open(&path).unwrap();
-        for scan in [ScanOptions::default(), strict.clone()] {
-            map_file(&source, &scan, &disabled, &StatisticsRequest::DATA)
-                .await
-                .unwrap_or_else(|e| panic!("{ddl}: refused: {e}"));
+        for gather in [GatherOptions::default(), strict] {
+            map_file(
+                &source,
+                &ScanOptions::default(),
+                &gather,
+                &disabled,
+                &StatisticsRequest::DATA,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{ddl}: refused: {e}"));
         }
         let both = QueryOptions {
             projection: Some(vec!["id".to_string(), "v".to_string()]),
@@ -1253,9 +1346,9 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
         (1..=3).zip(v).map(|(id, v)| vec![Some(id.to_string()), Some(v.to_string())]).collect()
     };
     let both = || Some(vec!["id".to_string(), "v".to_string()]);
-    let strict = ScanOptions {
+    let strict = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..Default::default()
+        ..GatherOptions::default()
     };
     let term = |op, value: &str| QueryOptions {
         filter: Expr::Term(Predicate { column: "v".into(), op, value: Some(value.into()) }),
@@ -1275,7 +1368,7 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
         let path = not_null_beneath_dump(dir.path(), declared, fields);
         let source = LocalFileSource::open(&path).unwrap();
         for request in [StatisticsRequest::DATA, StatisticsRequest::METADATA] {
-            match map_file(&source, &strict, &disabled, &request).await {
+            match map_file(&source, &ScanOptions::default(), &strict, &disabled, &request).await {
                 Err(Error::FieldRefused { table, column, line, value, .. }) => {
                     assert_eq!(
                         (table.as_str(), column.as_str(), line, value.as_str()),
@@ -1286,9 +1379,15 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
                 other => panic!("{declared}: expected a strict parse to refuse, got {other:?}"),
             }
         }
-        map_file(&source, &ScanOptions::default(), &disabled, &StatisticsRequest::DATA)
-            .await
-            .unwrap_or_else(|e| panic!("{declared}: a default parse refused: {e}"));
+        map_file(
+            &source,
+            &ScanOptions::default(),
+            &GatherOptions::default(),
+            &disabled,
+            &StatisticsRequest::DATA,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{declared}: a default parse refused: {e}"));
         let projected = || QueryOptions { projection: both(), ..Default::default() };
         match read(path.clone(), projected()).await {
             Err(Error::FieldDecode { column, value, .. }) => {
@@ -1327,7 +1426,14 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
     ] {
         let path = not_null_beneath_dump(dir.path(), declared, fields);
         let source = LocalFileSource::open(&path).unwrap();
-        let run = map_file(&source, &strict, &disabled, &StatisticsRequest::DATA).await;
+        let run = map_file(
+            &source,
+            &ScanOptions::default(),
+            &strict,
+            &disabled,
+            &StatisticsRequest::DATA,
+        )
+        .await;
         match (declared, run) {
             ("public.nnbox[]", Err(Error::FieldRefused { line: 2, .. })) => {}
             ("public.nnbox[]", other) => panic!("expected `{{NULL}}` refused, got {other:?}"),
@@ -1363,7 +1469,15 @@ async fn every_refused_field_fails_a_data_level_parse_reading_it() {
         copies += 1;
         let source = LocalFileSource::open(&path).unwrap();
         let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
-        match map_file(&source, &options, &mode, &StatisticsRequest::DATA).await {
+        match map_file(
+            &source,
+            &options,
+            &GatherOptions::default(),
+            &mode,
+            &StatisticsRequest::DATA,
+        )
+        .await
+        {
             Err(Error::FieldRefused { table, column, line, line_offset, value, .. }) => {
                 assert_eq!((table.as_str(), column.as_str()), (refused.table, refused.column));
                 let text = std::fs::read(&path).unwrap();
@@ -1375,7 +1489,14 @@ async fn every_refused_field_fails_a_data_level_parse_reading_it() {
             }
             other => panic!("{}: expected the parse to refuse, got {other:?}", path.display()),
         }
-        let run = map_file(&source, &options, &mode, &common::sweep_request(&path)).await;
+        let run = map_file(
+            &source,
+            &options,
+            &GatherOptions::default(),
+            &mode,
+            &common::sweep_request(&path),
+        )
+        .await;
         run.unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     }
     assert_eq!(copies, common::REFUSED_FIELDS.len() * common::VERSIONS.len());
@@ -1389,14 +1510,16 @@ async fn every_refused_field_fails_a_data_level_parse_reading_it() {
 /// in full.
 #[tokio::test]
 async fn a_strict_parse_refuses_no_fixture_field_but_the_listed_ones() {
-    let strict = ScanOptions {
+    let strict = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..Default::default()
+        ..GatherOptions::default()
     };
     for path in common::all_fixtures() {
         let source = LocalFileSource::open(&path).unwrap();
         for request in [StatisticsRequest::DATA, StatisticsRequest::METADATA] {
-            let run = map_file(&source, &strict, &CacheMode::DISABLED, &request).await;
+            let run =
+                map_file(&source, &ScanOptions::default(), &strict, &CacheMode::DISABLED, &request)
+                    .await;
             match (common::refused_field(&path), run) {
                 (Some(refused), Err(Error::FieldRefused { table, column, .. })) => {
                     assert_eq!((table.as_str(), column.as_str()), (refused.table, refused.column));
@@ -1454,9 +1577,9 @@ async fn a_float_past_its_range_is_read_as_the_largest_only_when_told_to_ignore_
         let path = dir.path().join("dump.sql");
         std::fs::copy(&fixture, &path).unwrap();
         let source = LocalFileSource::open(&path).unwrap();
-        let scan = ScanOptions { postgres_invalid_values: ignore, ..ScanOptions::default() };
+        let scan = GatherOptions { postgres_invalid_values: ignore, ..GatherOptions::default() };
         let cached = CacheMode::enabled(cache::colocated_path(&path));
-        map_file(&source, &scan, &cached, &StatisticsRequest::DATA)
+        map_file(&source, &ScanOptions::default(), &scan, &cached, &StatisticsRequest::DATA)
             .await
             .unwrap_or_else(|e| panic!("{version}: an ignoring parse refused: {e}"));
 

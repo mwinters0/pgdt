@@ -28,7 +28,7 @@ use crate::backfill::{
 };
 use crate::forward::{MapStop, Pass, cancelled_read, map_forward, splice};
 use crate::statistics::account::{StatisticsAccount, StatisticsHeld, Term};
-use crate::statistics::request::StatisticsRequest;
+use crate::statistics::request::{GatherOptions, StatisticsRequest};
 
 /// Scan `source` end to end and build its full file map, every block
 /// censused and counted and none gathering statistics — the eager, serial
@@ -205,13 +205,14 @@ pub struct MapRun {
 pub async fn map_file(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    gather: &GatherOptions,
     cache: &CacheMode,
     statistics: &StatisticsRequest,
 ) -> Result<MapRun> {
     // Taken before anything is read, so every later observation compares
     // against what this run started from (`pgdt_dump::cache::SourceWatch`).
     let watch = SourceWatch::open(source, cache.strict_identity()).await?;
-    let run = map_file_watched(source, scan_options, cache, statistics, &watch).await;
+    let run = map_file_watched(source, scan_options, gather, cache, statistics, &watch).await;
     watch.attribute(source, run).await
 }
 
@@ -219,6 +220,7 @@ pub async fn map_file(
 async fn map_file_watched(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    gather: &GatherOptions,
     cache: &CacheMode,
     statistics: &StatisticsRequest,
     watch: &SourceWatch,
@@ -235,8 +237,8 @@ async fn map_file_watched(
             None => DumpIndex::default(),
         },
     };
-    refuse_recorded(scan_options, cache, statistics, &index)?;
-    let account = Arc::new(StatisticsAccount::bounded_by(scan_options.statistics_allowance_bytes));
+    refuse_recorded(gather.postgres_invalid_values, cache, statistics, &index)?;
+    let account = Arc::new(StatisticsAccount::bounded_by(gather.statistics_allowance_bytes));
     let loaded = index.statistics_heap_bytes();
     #[cfg(feature = "introspect")]
     statistics_loaded(loaded);
@@ -328,6 +330,7 @@ async fn map_file_watched(
         let checked = backfill_statistics(
             source,
             scan_options,
+            gather,
             cache,
             watch,
             &mut index,
@@ -356,7 +359,7 @@ async fn map_file_watched(
         watch,
         &mut index,
         None,
-        Pass::Parse(statistics, &account),
+        Pass::Parse(statistics, &account, gather.postgres_invalid_values),
         size,
     )
     .await
@@ -393,6 +396,7 @@ async fn map_file_watched(
     let backfill = backfill_statistics(
         source,
         scan_options,
+        gather,
         cache,
         watch,
         &mut index,
@@ -415,7 +419,7 @@ async fn map_file_watched(
         cache.save(watch, source, &index).await?;
         report_density_shortfall(statistics, &index);
         declined_statistics =
-            report_statistics_declines(statistics, scan_options.statistics_allowance_bytes, &index);
+            report_statistics_declines(statistics, gather.statistics_allowance_bytes, &index);
     }
     Ok(MapRun {
         index,
@@ -492,12 +496,12 @@ fn announce_statistics_held(account: &StatisticsAccount) -> StatisticsHeld {
 /// re-reads the block instead, as it re-reads every block no strict parse
 /// checked, and fails at the first field there ([`backfill_statistics`]).
 fn refuse_recorded(
-    scan_options: &ScanOptions,
+    invalid: PostgresInvalidValues,
     cache: &CacheMode,
     statistics: &StatisticsRequest,
     index: &DumpIndex,
 ) -> Result<()> {
-    if scan_options.postgres_invalid_values != PostgresInvalidValues::Default {
+    if invalid != PostgresInvalidValues::Default {
         return Ok(());
     }
     // Only a cache read from a file can hold a record.

@@ -90,7 +90,7 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
     use crate::predicate::Predicate;
     use pgdt_io::LocalFileSource;
     use pgdt_mapping::map_file;
-    use pgdt_mapping::statistics::StatisticsRequest;
+    use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
     use pgdt_model::StatisticsView;
 
     let dir = tempfile::tempdir().unwrap();
@@ -111,8 +111,15 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
         group_size: Some(std::num::NonZeroU64::new(1).unwrap()),
         ..StatisticsRequest::DATA
     };
-    let run =
-        map_file(&source, &ScanOptions::default(), &CacheMode::DISABLED, &request).await.unwrap();
+    let run = map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &CacheMode::DISABLED,
+        &request,
+    )
+    .await
+    .unwrap();
     let metadata = run.index.metadata.as_ref();
     let filter = |table: &str, op: PredicateOp, value: Option<&str>| {
         let block = run.index.blocks_for(table).next().unwrap();

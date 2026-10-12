@@ -8,7 +8,7 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_model::{DataBlock, SpanBody};
 
 /// `fixture` copied into a directory of its own under `dir`, beside the
@@ -21,7 +21,10 @@ pub async fn parsed_copy(fixture: &Path, dir: &Path, request: &StatisticsRequest
     std::fs::copy(fixture, &copy).unwrap();
     let source = LocalFileSource::open(&copy).unwrap();
     let cache = CacheMode::enabled(cache::colocated_path(&copy));
-    let run = map_file(&source, &ScanOptions::default(), &cache, request).await.unwrap();
+    let run =
+        map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &cache, request)
+            .await
+            .unwrap();
     assert!(!run.interrupted);
     copy
 }

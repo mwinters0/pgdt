@@ -19,7 +19,7 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, StatisticsView, Unrepresentable};
 
 use pgdt_fixtures::{VERSIONS, types_fixture};
@@ -50,7 +50,10 @@ async fn parsed(fixture: &Path, dir: &Path, request: &StatisticsRequest) -> Dump
     }
     let source = LocalFileSource::open(&dump).unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
-    map_file(&source, &ScanOptions::default(), &mode, request).await.unwrap().index
+    map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &mode, request)
+        .await
+        .unwrap()
+        .index
 }
 
 fn count(format: u64, engine: u64) -> Unrepresentable {

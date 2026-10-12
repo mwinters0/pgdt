@@ -25,6 +25,7 @@ use crate::interior::{CensusPlan, RegionScan, report_shortfall, scan_region};
 use crate::statistics::account::{StatisticsAccount, Term};
 use crate::statistics::density::BlockStatisticsExt;
 use crate::statistics::gather;
+use crate::statistics::request::GatherOptions;
 use crate::statistics::request::{StatisticsBackfill, StatisticsRequest};
 use crate::statistics::stored::bounded_columns;
 
@@ -86,6 +87,7 @@ pub(crate) enum Backfill {
 pub(crate) async fn backfill_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    gather: &GatherOptions,
     cache: &CacheMode,
     watch: &SourceWatch,
     index: &mut DumpIndex,
@@ -97,7 +99,7 @@ pub(crate) async fn backfill_statistics(
 ) -> Result<BackfillRun> {
     // Positions into `index.spans`, which nothing below adds to or reorders.
     let metadata = index.metadata.as_ref();
-    let strict = scan_options.postgres_invalid_values == PostgresInvalidValues::Strict;
+    let strict = gather.postgres_invalid_values == PostgresInvalidValues::Strict;
     let gathers = statistics.gathers() && which == Backfill::Lacking;
     let rereads: Vec<(usize, Option<StatisticsBackfill>, bool)> = index
         .spans
@@ -110,7 +112,7 @@ pub(crate) async fn backfill_statistics(
                     statistics.backfill(
                         block,
                         &bounded_columns(block, metadata),
-                        scan_options.statistics_allowance_bytes,
+                        gather.statistics_allowance_bytes,
                     )
                 })
                 .flatten();
@@ -158,6 +160,7 @@ pub(crate) async fn backfill_statistics(
             let gathered = reread_block(
                 source,
                 scan_options,
+                gather.postgres_invalid_values,
                 cache_path,
                 index.metadata.as_ref(),
                 block,
@@ -221,7 +224,7 @@ pub(crate) async fn backfill_statistics(
                         .backfill(
                             block,
                             &bounded_columns(block, index.metadata.as_ref()),
-                            scan_options.statistics_allowance_bytes,
+                            gather.statistics_allowance_bytes,
                         )
                         .map(Some);
                 }
@@ -359,6 +362,7 @@ pub struct BlockReread {
 pub async fn gather_block_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    gather: &GatherOptions,
     metadata: Option<&DumpMetadata>,
     block: &CopyBlock,
     backfill: &StatisticsBackfill,
@@ -369,6 +373,7 @@ pub async fn gather_block_statistics(
     reread_block(
         source,
         scan_options,
+        gather.postgres_invalid_values,
         None,
         metadata,
         block,
@@ -381,7 +386,8 @@ pub async fn gather_block_statistics(
 }
 
 /// [`gather_block_statistics`] once the source is announced, `size` known, and
-/// with the flag [`report_shortfall`] keeps once per pass. `cache_path` is the
+/// with the flag [`report_shortfall`] keeps once per pass, a refused field read
+/// as `invalid` says. `cache_path` is the
 /// cache the map was loaded from, which a moved block's refusal names; the
 /// observer charges `account`. `None` for `backfill` gathers nothing and
 /// checks every field ([`gather::checker`]).
@@ -389,6 +395,7 @@ pub async fn gather_block_statistics(
 async fn reread_block(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    invalid: PostgresInvalidValues,
     cache_path: Option<&Path>,
     metadata: Option<&DumpMetadata>,
     block: &CopyBlock,
@@ -399,14 +406,9 @@ async fn reread_block(
 ) -> Result<Option<BlockReread>> {
     let database = block.database.as_deref();
     let mut observer = match backfill {
-        Some(backfill) => gather::observer_tracking(
-            backfill,
-            &block.header,
-            metadata,
-            database,
-            account,
-            scan_options.postgres_invalid_values,
-        ),
+        Some(backfill) => {
+            gather::observer_tracking(backfill, &block.header, metadata, database, account, invalid)
+        }
         None => gather::checker(&block.header, metadata, database, account),
     };
     let read = reread_rows(

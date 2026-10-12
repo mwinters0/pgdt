@@ -29,7 +29,7 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSelection};
 use pgdt_model::{CopyBlock, DumpIndex};
 use pgdt_query::{
     ComparisonNote, EarlyStop, Expr, Membership, PlanNote, Predicate, PredicateOp, QueryOptions,
@@ -305,6 +305,7 @@ async fn check_fixture(
     map_file(
         &source,
         &ScanOptions::default(),
+        &GatherOptions::default(),
         &CacheMode::enabled(plain.clone()),
         &StatisticsRequest::METADATA,
     )

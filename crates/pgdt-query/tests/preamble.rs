@@ -12,7 +12,7 @@ use pgdt_codec::ResolvedSchema;
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ScanOptions, cache};
 use pgdt_io::LocalFileSource;
-use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::{CollationDef, ColumnDef, NotNull, TypeDef, TypeKind};
 use pgdt_model::{DatabaseMetadata, DumpMetadata, PostgresInvalidValues};
@@ -803,10 +803,16 @@ async fn every_dumpall_database_keeps_its_own_version_headers() {
         let (_dir, dump) = sandboxed(&fixture, "dumpall.sql");
         let source = LocalFileSource::open(&dump).unwrap();
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
-        let mapped = map_file(&source, &ScanOptions::default(), &mode, &StatisticsRequest::DATA)
-            .await
-            .unwrap()
-            .index;
+        let mapped = map_file(
+            &source,
+            &ScanOptions::default(),
+            &GatherOptions::default(),
+            &mode,
+            &StatisticsRequest::DATA,
+        )
+        .await
+        .unwrap()
+        .index;
         assert_eq!(versions(mapped.metadata.as_ref().unwrap()), want, "pg_dump {version}: mapped");
     }
 }
@@ -902,9 +908,9 @@ async fn a_composite_s_dropped_attribute_is_dropped_under_binary_upgrade() {
 /// (I22).
 #[tokio::test]
 async fn a_base_type_s_delimiter_splits_its_array_in_a_strict_parse() {
-    let strict = ScanOptions {
+    let strict = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..ScanOptions::default()
+        ..GatherOptions::default()
     };
     for version in VERSIONS {
         for flag_set in ["default", "binary-upgrade"] {
@@ -918,9 +924,15 @@ async fn a_base_type_s_delimiter_splits_its_array_in_a_strict_parse() {
             );
             assert_eq!(find_type(&db, "emitters.bt_char").kind, TypeKind::base(), "{label}");
             let source = LocalFileSource::open(&path).unwrap();
-            map_file(&source, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA)
-                .await
-                .unwrap_or_else(|e| panic!("{label}: a strict parse refused: {e}"));
+            map_file(
+                &source,
+                &ScanOptions::default(),
+                &strict,
+                &CacheMode::DISABLED,
+                &StatisticsRequest::DATA,
+            )
+            .await
+            .unwrap_or_else(|e| panic!("{label}: a strict parse refused: {e}"));
         }
     }
 }
@@ -1277,10 +1289,10 @@ async fn a_raw_cr_inside_a_literal_is_the_value_s_own_byte() {
              COPY public.p1 (m) FROM stdin;\n{row}\n\\.\n\n"
         )
     };
-    let strict = ScanOptions {
+    let chunked = ScanOptions { chunk_size_bytes: 7, ..ScanOptions::default() };
+    let strict = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Strict,
-        chunk_size_bytes: 7,
-        ..ScanOptions::default()
+        ..GatherOptions::default()
     };
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cr.sql");
@@ -1307,13 +1319,15 @@ async fn a_raw_cr_inside_a_literal_is_the_value_s_own_byte() {
             "crlf {crlf}"
         );
         let source = LocalFileSource::open(&path).unwrap();
-        map_file(&source, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA)
+        map_file(&source, &chunked, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA)
             .await
             .unwrap_or_else(|e| panic!("crlf {crlf}: a strict parse refused: {e}"));
 
         std::fs::write(&path, file("a\\nb")).unwrap();
         let source = LocalFileSource::open(&path).unwrap();
-        match map_file(&source, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA).await {
+        match map_file(&source, &chunked, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA)
+            .await
+        {
             Err(pgdt_core::Error::FieldRefused { column, value, .. }) => {
                 assert_eq!((column.as_str(), value.as_str()), ("m", "a\nb"), "crlf {crlf}")
             }

@@ -28,7 +28,7 @@ use futures::StreamExt;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism, WaitPolicy};
-use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_mapping::{build_index, map_file};
 use pgdt_query::{QueryOptions, table_stream};
 
@@ -143,7 +143,15 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
-    map_file(&source, &options, &CacheMode::DISABLED, &StatisticsRequest::DATA).await.unwrap();
+    map_file(
+        &source,
+        &options,
+        &GatherOptions::default(),
+        &CacheMode::DISABLED,
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
     // `policies()` collapses consecutive repeats, so the sequence alternates by
     // construction and what is left to check is its ends and its length.
     let policies = source.policies();
@@ -159,7 +167,15 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
-    map_file(&source, &options, &CacheMode::DISABLED, &StatisticsRequest::DATA).await.unwrap();
+    map_file(
+        &source,
+        &options,
+        &GatherOptions::default(),
+        &CacheMode::DISABLED,
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
     assert_eq!(source.policies(), vec![WaitPolicy::NeverWait], "every region was declined");
 }
 

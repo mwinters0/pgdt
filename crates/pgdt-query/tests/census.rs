@@ -19,7 +19,7 @@ use pgdt_core::Error;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};
 use pgdt_io::{ByteRangeSource, LocalFileSource};
-use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::ArrayShape;
 use pgdt_model::union_census;
@@ -235,7 +235,15 @@ async fn a_metadata_level_table_is_censused_by_its_query_and_refused_by_a_held_p
     let path = cache::colocated_path(&dump);
     let mode = CacheMode::enabled(path.clone());
     let metadata = StatisticsRequest::METADATA;
-    let run = map_file(source.as_ref(), &ScanOptions::default(), &mode, &metadata).await.unwrap();
+    let run = map_file(
+        source.as_ref(),
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &mode,
+        &metadata,
+    )
+    .await
+    .unwrap();
     assert!(run.index.blocks().all(|block| block.array_shapes.is_none()));
     let written = std::fs::read(&path).unwrap();
 
