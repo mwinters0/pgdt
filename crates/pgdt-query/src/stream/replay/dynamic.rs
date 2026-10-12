@@ -77,21 +77,21 @@ pub enum RowEvaluation {
 /// A [`DynamicFilter`] as one sub-stream's replay reads it: the filter, the
 /// statistics of the blocks it may prune, and the block being read.
 pub(in crate::stream) struct DynamicRead {
-    pub(in crate::stream) filter: Arc<dyn DynamicFilter>,
+    filter: Arc<dyn DynamicFilter>,
     /// Whether each row is evaluated against the state.
-    pub(in crate::stream) evaluation: RowEvaluation,
-    pub(in crate::stream) statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
+    evaluation: RowEvaluation,
+    statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
     /// The cut the sub-stream was handed, whose verdicts a state it read is
     /// read with again rather than asked of each group anew.
-    pub(in crate::stream) cut: Arc<Cut>,
+    cut: Arc<Cut>,
     /// The block last entered, by `header_offset`, as the filter reads it —
     /// `None` before any is, and the inner `None` for one whose schema does
     /// not resolve.
-    pub(in crate::stream) block: Option<(u64, Option<DynamicBlock>)>,
+    block: Option<(u64, Option<DynamicBlock>)>,
     /// The groups ruled out so far ([`TableStream::dynamic_filter_pruned_groups`](crate::stream::table::TableStream::dynamic_filter_pruned_groups)).
-    pub(in crate::stream) pruned: Arc<AtomicU64>,
+    pruned: Arc<AtomicU64>,
     /// The rows dropped so far ([`TableStream::dynamic_filter_pruned_rows`](crate::stream::table::TableStream::dynamic_filter_pruned_rows)).
-    pub(in crate::stream) rows: Arc<AtomicU64>,
+    rows: Arc<AtomicU64>,
 }
 
 /// One block as a [`DynamicFilter`] reads it: its unprojected schema, which
@@ -197,6 +197,20 @@ pub(in crate::stream) enum Skip {
 }
 
 impl DynamicRead {
+    /// A sub-stream's read of `filter` under `evaluation`, pruning the blocks
+    /// `statistics` holds by `cut`, counting the groups it rules out into
+    /// `pruned` and the rows it drops into `rows` — no block yet entered.
+    pub(in crate::stream) fn new(
+        filter: Arc<dyn DynamicFilter>,
+        evaluation: RowEvaluation,
+        statistics: Arc<BTreeMap<u64, Arc<BlockStatistics>>>,
+        cut: Arc<Cut>,
+        pruned: Arc<AtomicU64>,
+        rows: Arc<AtomicU64>,
+    ) -> Self {
+        Self { filter, evaluation, statistics, cut, block: None, pruned, rows }
+    }
+
     /// Make `block` the block being read, unless it already is. Its state is
     /// first read at the first group it enters or chunk it takes.
     pub(in crate::stream) fn enter(&mut self, block: &CopyBlock, plan: &ReplayPlan) {

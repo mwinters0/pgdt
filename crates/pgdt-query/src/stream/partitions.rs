@@ -410,9 +410,7 @@ impl TablePartitions {
                     let groups = Arc::clone(&cut.groups);
                     let (filter, evaluation) = (under.filter, under.evaluation);
                     let rows = Arc::clone(&shared_for_stream.dynamic_rows);
-                    let block = None;
-                    let read =
-                        DynamicRead { filter, evaluation, statistics, cut, block, pruned, rows };
+                    let read = DynamicRead::new(filter, evaluation, statistics, cut, pruned, rows);
                     (groups, Some(read))
                 }
             };
