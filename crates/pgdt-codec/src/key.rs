@@ -32,7 +32,7 @@ use crate::value::datetime::{
 use crate::value::float::{float_field, float_in};
 use crate::value::int::{int_in, oid_unread};
 use crate::value::json::{Jsonb, parse_jsonb};
-use crate::value::network::{NetworkKey, macaddr_unread, macaddr8_in, network_in};
+use crate::value::network::{NetworkKey, macaddr_octets, macaddr_unread, macaddr8_in, network_in};
 use crate::value::numeric::{
     NumericColumn, NumericKey, decimal_unscaled_digits, numeric_in_stores, numeric_unread,
     typmod_unscaled_digits,
@@ -197,24 +197,6 @@ fn network_key(text: &str, cidr: bool) -> Read<OrderKey> {
     Ok(OrderKey::Network(NetworkKey { v6, bits, addr }))
 }
 
-/// A `macaddr`/`macaddr8` value: `octets` hex pairs of either case joined by
-/// colons, `macaddr_out` and `macaddr8_out` writing lowercase (I40). The
-/// server's input function takes other separator conventions and this takes
-/// none of them (`docs/design/decisions.md`, "D55").
-fn macaddr_key(text: &str, octets: usize) -> Option<OrderKey> {
-    let mut bytes = Vec::with_capacity(octets);
-    for part in text.split(':') {
-        // The digit check is not what `from_str_radix` does: it accepts a
-        // leading sign, so `+f` would otherwise pass as a two-character pair.
-        if part.len() != 2 || bytes.len() == octets || !part.bytes().all(|b| b.is_ascii_hexdigit())
-        {
-            return None;
-        }
-        bytes.push(u8::from_str_radix(part, 16).ok()?);
-    }
-    (bytes.len() == octets).then_some(OrderKey::Bytes(bytes))
-}
-
 /// Decode one already-COPY-unescaped value into a comparable key. `None` when
 /// the text is not a value of that type — for a *field* `Error::FieldDecode`,
 /// for the filter's own literal `Error::PredicateValueDecode`, raised before
@@ -353,11 +335,11 @@ pub(crate) fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
         CompareKind::TimeTz => datetime_read(timetz_key(text), DateTimeInput::TimeTz, text)?,
         CompareKind::Network { cidr } => network_key(text, *cidr)?,
         CompareKind::MacAddr { octets } => {
-            macaddr_key(text, *octets).ok_or_else(|| match octets {
+            OrderKey::Bytes(macaddr_octets(text, *octets).ok_or_else(|| match octets {
                 8 if macaddr8_in(text).is_none() => Unread::Refused,
                 8 => unparsed,
                 _ => macaddr_unread(text),
-            })?
+            })?)
         }
         CompareKind::Jsonb => jsonb_key(text)?,
         // Every refusal of the reader is `uuid_in`'s (I64).
@@ -485,17 +467,6 @@ pub fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
         _ if rank_a != FINITE => Ordering::Equal,
         _ => unreachable!("both sides of a comparison decode through one column's `CompareKind`"),
     }
-}
-
-/// A `macaddr`/`macaddr8` literal in `macaddr_out`'s own spelling: `octets`
-/// lowercase hex pairs joined by colons (I40). Those two rules are the whole
-/// of that output function, which is why this type canonicalizes where the
-/// two beside it decode per row — see `pgdt_query::predicate::resolve::equality_comparison`.
-pub fn render_macaddr(text: &str, octets: usize) -> Option<String> {
-    let OrderKey::Bytes(bytes) = macaddr_key(text, octets)? else {
-        unreachable!("`macaddr_key` yields its octets")
-    };
-    Some(bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":"))
 }
 
 #[cfg(test)]

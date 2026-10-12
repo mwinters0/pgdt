@@ -1,7 +1,8 @@
 //! Whether `inet`, `cidr`, `macaddr` and `macaddr8` input reads a text: ports
 //! of `inet_net_pton.c` and the `macaddr` scanners, read or refused. Not
 //! `decode`'s API; a strict parse and a filter's literal call them. And an
-//! `inet` or `cidr` value's order key ([`NetworkKey`]).
+//! `inet` or `cidr` value's order key ([`NetworkKey`]), and a `macaddr`'s
+//! octets as `macaddr_out` writes them, read and rendered.
 
 use std::cmp::Ordering;
 
@@ -378,6 +379,33 @@ fn getv4(b: &[u8], dst: &mut [u8], bits: &mut i32) -> bool {
     }
     dst[len] = val as u8;
     true
+}
+
+/// A `macaddr`/`macaddr8` value's octets: `octets` hex pairs of either case
+/// joined by colons, `macaddr_out` and `macaddr8_out` writing lowercase (I40).
+/// The server's input function takes other separator conventions and this
+/// takes none of them (`docs/design/decisions.md`, "D55").
+pub(crate) fn macaddr_octets(text: &str, octets: usize) -> Option<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(octets);
+    for part in text.split(':') {
+        // The digit check is not what `from_str_radix` does: it accepts a
+        // leading sign, so `+f` would otherwise pass as a two-character pair.
+        if part.len() != 2 || bytes.len() == octets || !part.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return None;
+        }
+        bytes.push(u8::from_str_radix(part, 16).ok()?);
+    }
+    (bytes.len() == octets).then_some(bytes)
+}
+
+/// A `macaddr`/`macaddr8` literal in `macaddr_out`'s own spelling: `octets`
+/// lowercase hex pairs joined by colons (I40). Those two rules are the whole
+/// of that output function, which is why this type canonicalizes where the
+/// two beside it decode per row — see `pgdt_query::predicate::resolve::equality_comparison`.
+pub fn render_macaddr(text: &str, octets: usize) -> Option<String> {
+    let bytes = macaddr_octets(text, octets)?;
+    Some(bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":"))
 }
 
 /// Why a `macaddr` this build does not read is no value: `macaddr_in`

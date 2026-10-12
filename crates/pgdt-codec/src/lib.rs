@@ -29,8 +29,7 @@ pub mod internal {
     };
     pub use crate::grammar::form::{accepted_form, nested_accepted_form};
     pub use crate::key::{
-        OrderKey, Side, compare_keys, literal_key, order_key, read_key, render_macaddr,
-        special_order_key,
+        OrderKey, Side, compare_keys, literal_key, order_key, read_key, special_order_key,
     };
     pub use crate::resolve::{database_for_name, read_as_text};
     pub use crate::unrepresentable::{
@@ -48,6 +47,7 @@ pub mod internal {
     pub use crate::value::int::int_in;
     pub use crate::value::nested::key::{NestedKey, compare_nested, nested_key};
     pub use crate::value::nested::{push_array_null, quote_array_element};
+    pub use crate::value::network::render_macaddr;
     pub use crate::value::numeric::{
         NUMERIC_DSCALE_MAX, NUMERIC_INTEGER_DIGITS_MAX, numeric_in_stores,
     };
