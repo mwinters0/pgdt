@@ -18,7 +18,7 @@ use crate::partition::Partitioning;
 use crate::source::pool::BufferPool;
 use crate::source::{ByteRangeSource, WaitPolicy};
 
-use super::blocks::{BlockCache, BlockView, DecodedBlock, XzBudget};
+use super::blocks::{BlockCache, DecodedBlock, XzBudget};
 use super::{LiveBlock, piece_of, xz_short_read};
 
 /// A `ByteRangeSource` decoding an `.xz`-compressed local file on the fly
@@ -211,9 +211,10 @@ impl XzSource {
 
     /// A read served by decoding the blocks it lands in.
     ///
-    /// A read inside one block is a **slice of that block**, so the common
-    /// case copies nothing; one that straddles a boundary is assembled into a
-    /// chunk-pool buffer.
+    /// A read inside one block is a **slice of that block**
+    /// ([`DecodedBlock::slice`]), so the common case copies nothing; one that
+    /// straddles a boundary is assembled into a chunk-pool buffer
+    /// ([`DecodedBlock::copy_piece`]), one covering block held at a time.
     fn read_by_blocks(
         offset: u64,
         len: usize,
@@ -231,30 +232,15 @@ impl XzSource {
         if covering.len() == 1 {
             let index = covering.start;
             let block = Self::block(index, cache, layout, file)?;
-            let base = table.blocks[index].uncompressed_offset;
-            // `blocks_in` answers the block *covering* the start, so `base` is
-            // at or below `offset`; the checked form is what keeps a table
-            // that says otherwise a refusal rather than a panic.
-            let start = offset
-                .checked_sub(base)
-                .and_then(|at| usize::try_from(at).ok())
-                .ok_or_else(xz_short_read)?;
-            if start + len > block.len {
-                return Err(xz_short_read());
-            }
-            return Ok(Bytes::from_owner(BlockView(block)).slice(start..start + len));
+            // `blocks_in` answers the block *covering* the start.
+            return block.slice(table.blocks[index].uncompressed_offset, offset, len);
         }
         let mut out = chunks.obtain(len);
         let mut covered = 0usize;
         for index in covering {
             let block = Self::block(index, cache, layout, file)?;
             let base = table.blocks[index].uncompressed_offset;
-            let Some((at, from, n)) = piece_of(base..base + block.len as u64, offset, end) else {
-                continue;
-            };
-            let within = (from - base) as usize;
-            out.as_mut()[at..at + n].copy_from_slice(&block.bytes()[within..within + n]);
-            covered += n;
+            covered += block.copy_piece(base, offset, end, out.as_mut());
         }
         if covered != len {
             return Err(xz_short_read());

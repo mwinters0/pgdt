@@ -18,7 +18,7 @@ use crate::partition::Partitioning;
 use crate::source::pool::PooledBuffer;
 use crate::source::{ByteRangeSource, RemoteIdentity, WaitPolicy};
 
-use super::blocks::{BlockCache, BlockView, DecodedBlock, XzBudget};
+use super::blocks::{BlockCache, DecodedBlock, XzBudget};
 use super::{LiveBlock, piece_of, xz_short_read};
 
 /// A `ByteRangeSource` decoding an `.xz`-compressed dump the bytes of which
@@ -182,7 +182,8 @@ impl FetchedXzSource {
     }
 
     /// A read served by decoding whole blocks — [`XzSource::read_by_blocks`](crate::XzSource::read_by_blocks)'s
-    /// arithmetic over fetched windows.
+    /// loop over fetched windows, its own only because the fetch awaits; the
+    /// slice and the piece copy are [`DecodedBlock`]'s.
     async fn read_by_blocks(
         &self,
         offset: u64,
@@ -197,27 +198,14 @@ impl FetchedXzSource {
         if covering.len() == 1 {
             let index = covering.start;
             let block = self.block(index, cache).await?;
-            let base = self.table.blocks[index].uncompressed_offset;
-            let start = offset
-                .checked_sub(base)
-                .and_then(|at| usize::try_from(at).ok())
-                .ok_or_else(xz_short_read)?;
-            if start + len > block.len {
-                return Err(xz_short_read());
-            }
-            return Ok(Bytes::from_owner(BlockView(block)).slice(start..start + len));
+            return block.slice(self.table.blocks[index].uncompressed_offset, offset, len);
         }
         let mut out = self.budget.pool.obtain(len);
         let mut covered = 0usize;
         for index in covering {
             let block = self.block(index, cache).await?;
             let base = self.table.blocks[index].uncompressed_offset;
-            let Some((at, from, n)) = piece_of(base..base + block.len as u64, offset, end) else {
-                continue;
-            };
-            let within = (from - base) as usize;
-            out.as_mut()[at..at + n].copy_from_slice(&block.bytes()[within..within + n]);
-            covered += n;
+            covered += block.copy_piece(base, offset, end, out.as_mut());
         }
         if covered != len {
             return Err(xz_short_read());

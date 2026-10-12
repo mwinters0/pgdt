@@ -1,17 +1,23 @@
 //! The decoded-block cache and the decode budget every `.xz` source reads
-//! through: a block decoded once into a pooled slot, sliced zero-copy, what a
-//! decoder may hold beside it, and how a range may be cut given which of the
-//! two a read takes.
+//! through: a block decoded once into a pooled slot, sliced zero-copy or
+//! copied into a read straddling it, what a decoder may hold beside it, and
+//! how a range may be cut given which of the two a read takes.
 
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+
+use bytes::Bytes;
+
+use pgdt_core::Result;
 
 use crate::memory::DEFAULT_MEMORY_BUDGET;
 use crate::parallelism::{Parallelism, WorkerMemory};
 use crate::partition::{PartitionRead, Partitioning, RetainedUnit};
 use crate::source::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
 use crate::source::pool::{BufferPool, POOL_DEPTH, PooledBuffer, budget_bytes};
+
+use super::{piece_of, xz_short_read};
 
 /// One block's plaintext, decoded whole into a pooled slot.
 ///
@@ -28,14 +34,45 @@ pub(super) struct DecodedBlock {
 
 impl DecodedBlock {
     /// This block's plaintext — the slot cut down to what the block holds.
-    pub(super) fn bytes(&self) -> &[u8] {
+    fn bytes(&self) -> &[u8] {
         &self.slot.as_ref()[..self.len]
+    }
+
+    /// The `len` bytes at uncompressed `offset`, a read lying inside this
+    /// block, whose first byte is at `base`: a **slice of the block**, so the
+    /// common case copies nothing.
+    ///
+    /// The read's covering block is the one at or below `offset`, so the
+    /// checked subtraction is what keeps a table that says otherwise a refusal
+    /// rather than a panic.
+    pub(super) fn slice(self: Arc<Self>, base: u64, offset: u64, len: usize) -> Result<Bytes> {
+        let start = offset
+            .checked_sub(base)
+            .and_then(|at| usize::try_from(at).ok())
+            .ok_or_else(xz_short_read)?;
+        if start + len > self.len {
+            return Err(xz_short_read());
+        }
+        Ok(Bytes::from_owner(BlockView(self)).slice(start..start + len))
+    }
+
+    /// Copy what this block, whose first byte is at `base`, answers of the
+    /// read `offset..end` into `out`, the read's own buffer, and say how many
+    /// bytes that was — none where the two do not overlap. A read straddling
+    /// a boundary is assembled from one call a covering block.
+    pub(super) fn copy_piece(&self, base: u64, offset: u64, end: u64, out: &mut [u8]) -> usize {
+        let Some((at, from, n)) = piece_of(base..base + self.len as u64, offset, end) else {
+            return 0;
+        };
+        let within = (from - base) as usize;
+        out[at..at + n].copy_from_slice(&self.bytes()[within..within + n]);
+        n
     }
 }
 
-/// The owner behind a [`Bytes`](bytes::Bytes) sliced out of a decoded block: a share of the
+/// The owner behind a [`Bytes`] sliced out of a decoded block: a share of the
 /// block, so the slot outlives every view into it.
-pub(super) struct BlockView(pub(super) Arc<DecodedBlock>);
+struct BlockView(Arc<DecodedBlock>);
 
 impl AsRef<[u8]> for BlockView {
     fn as_ref(&self) -> &[u8] {
