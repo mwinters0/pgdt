@@ -1017,13 +1017,13 @@ READS: tuple[Read | Clause, ...] = (
         ),
     ),
     Read(_MAP, "SELECT pg_catalog.set_config(", ("dumpSearchPath",)),
-    Read(_MAP, "ALTER TYPE", ("dumpEnumType", "dumpCompositeType")),
     # The preamble: each statement it folds, and the forms of each.
     Read(_DDL, "CREATE TABLE", ("dumpTableSchema",)),
     Read(_DDL, "CREATE UNLOGGED TABLE", ("dumpTableSchema",)),
     Read(_DDL, "CREATE FOREIGN TABLE", ("dumpTableSchema",)),
     Read(_DDL, "OF", ("dumpTableSchema",)),
     Read(_DDL, "PARTITION", ("dumpTableSchema", "dumpTableAttach")),
+    Read(_DDL, "ALTER TYPE", ("dumpEnumType", "dumpCompositeType")),
     Read(_DDL, "ALTER TABLE", _ALTER_TABLE_EMITTERS),
     Read(_DDL, "ALTER FOREIGN TABLE", _ALTER_TABLE_EMITTERS),
     # v13 writes `ATTACH PARTITION` in dumpTableSchema, 14 on in its own.
