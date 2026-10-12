@@ -16,6 +16,7 @@ use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
+use crate::identifier::Cursor;
 use crate::{Error, Result};
 
 /// The default COPY TEXT field delimiter. `pg_dump` plain-format output never
@@ -509,106 +510,6 @@ pub fn hex_val(b: u8) -> Option<u32> {
         b'a'..=b'f' => Some(u32::from(b - b'a') + 10),
         b'A'..=b'F' => Some(u32::from(b - b'A') + 10),
         _ => None,
-    }
-}
-
-/// Minimal byte cursor for the `COPY` header grammar. Also reused by
-/// `pgdt_dump::ddl` for the preamble's DDL grammars (`CREATE TABLE` /
-/// `TYPE` / `DOMAIN` / `EXTENSION`), by `type_name.rs` for a type name, and
-/// by pgdt-codec's `compare` for a collation's name, which share the same
-/// identifier and keyword rules.
-pub struct Cursor<'a> {
-    buf: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> Cursor<'a> {
-    pub fn new(buf: &'a [u8]) -> Self {
-        Self { buf, pos: 0 }
-    }
-
-    fn at_end(&self) -> bool {
-        self.pos >= self.buf.len()
-    }
-
-    fn peek(&self) -> Option<u8> {
-        self.buf.get(self.pos).copied()
-    }
-
-    pub fn skip_spaces(&mut self) {
-        while matches!(self.peek(), Some(b' ' | b'\t')) {
-            self.pos += 1;
-        }
-    }
-
-    /// Whitespace that the grammar requires to be present (keyword separator).
-    fn skip_spaces_required(&mut self) -> Option<()> {
-        let before = self.pos;
-        self.skip_spaces();
-        (self.pos > before).then_some(())
-    }
-
-    pub fn eat_byte(&mut self, b: u8) -> bool {
-        if self.peek() == Some(b) {
-            self.pos += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Match an ASCII-lowercase keyword case-insensitively.
-    fn eat_keyword(&mut self, kw: &[u8]) -> Option<()> {
-        let end = self.pos.checked_add(kw.len())?;
-        let slice = self.buf.get(self.pos..end)?;
-        if slice.iter().zip(kw).all(|(a, b)| a.to_ascii_lowercase() == *b) {
-            self.pos = end;
-            Some(())
-        } else {
-            None
-        }
-    }
-
-    /// Byte offset of the next unconsumed byte, usable to slice the original
-    /// `&str`/`&[u8]` this cursor was built over.
-    pub fn pos(&self) -> usize {
-        self.pos
-    }
-
-    /// Parse a SQL identifier: either double-quoted (with `""` escaping) or
-    /// bare (ASCII-case-folded, as unquoted SQL identifiers are).
-    pub fn parse_ident(&mut self) -> Option<String> {
-        if self.eat_byte(b'"') {
-            let mut out: Vec<u8> = Vec::new();
-            loop {
-                let b = self.peek()?;
-                self.pos += 1;
-                if b == b'"' {
-                    if self.peek() == Some(b'"') {
-                        self.pos += 1;
-                        out.push(b'"');
-                        continue;
-                    }
-                    break;
-                }
-                out.push(b);
-            }
-            return String::from_utf8(out).ok();
-        }
-
-        let start = self.pos;
-        while let Some(b) = self.peek() {
-            if b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80 {
-                self.pos += 1;
-            } else {
-                break;
-            }
-        }
-        if self.pos == start {
-            return None;
-        }
-        let s = std::str::from_utf8(&self.buf[start..self.pos]).ok()?;
-        Some(s.to_ascii_lowercase())
     }
 }
 

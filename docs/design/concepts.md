@@ -86,14 +86,16 @@ escaped ([`decisions.md`](decisions.md), "The scanner").
 ## SQL lexing
 
 Which bytes of a line outside a `COPY` block are code, and which are inside a
-string, a quoted identifier or a comment; a type name canonicalized.
+string, a quoted identifier or a comment; an identifier read as the server
+reads it; a type name canonicalized.
 
 - **pgdt-dump** — `lex.rs`: read by the scanner, the map's statement scan
   and the DDL grammar.
-- **pgdt-core** — `type_name.rs`: a type name's canonical form, read by the
-  DDL grammar and by the catalog and the type register, so below the model
-  and the codec, and kept out of the model, whose edits ask whether the
-  cache format bumps.
+- **pgdt-core** — `identifier.rs`: the SQL identifier rule, the cursor the
+  `COPY` header, the DDL grammar and the collation lookup read with, and a
+  type name's canonical form, read by the DDL grammar and by the catalog and
+  the type register; so below the model and the codec, and kept out of the
+  model, whose edits ask whether the cache format bumps.
 
 **Not in one place.** A schema-qualified name is read four ways: pgdt-core's
 `COPY` header splits and unquotes it, its type-name canonical form re-quotes
