@@ -1,7 +1,7 @@
 //! What a column's statistics are stored against: its columns resolved as a
-//! gathering observer resolved them, its declaration, and which statistics a
-//! column of a type keeps — read by gathering and by pruning and summaries
-//! above it.
+//! gathering observer resolved them, its declaration and whether they are
+//! believed under it, and which statistics a column of a type keeps — read by
+//! gathering and by pruning and summaries above it.
 
 use arrow_schema::DataType;
 
@@ -10,7 +10,7 @@ use pgdt_codec::decode::typmod_unscaled_digits;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_core::CopyHeader;
-use pgdt_model::{ColumnDef, CopyBlock, DumpMetadata};
+use pgdt_model::{ColumnDef, ColumnStatistics, CopyBlock, DumpMetadata};
 
 /// The kinds each of `header`'s columns' stored sets of bounds are ordered
 /// by, positionally, resolved as `gather::observer_tracking` resolves them — so for
@@ -92,6 +92,14 @@ pub fn declared_column<'m>(
     metadata
         .and_then(|m| m.databases.iter().find(|db| db.name.as_deref() == database))
         .and_then(|db| db.declared_column(qualified, name))
+}
+
+/// Whether `column`'s bounds, row order and dictionary were gathered under the
+/// declared type and `COLLATE` clause its declaration `def` still gives it:
+/// the only DDL they are believed under (`docs/design/decisions.md`, "D78").
+pub fn believed_under(column: &ColumnStatistics, def: Option<&ColumnDef>) -> bool {
+    column.declared_type.as_deref() == def.map(|d| d.declared_type.as_str())
+        && column.collation.as_deref() == def.and_then(|d| d.collation.as_deref())
 }
 
 /// How a column's values are summed: parsed as the typed read parses them

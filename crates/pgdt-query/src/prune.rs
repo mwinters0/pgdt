@@ -26,7 +26,7 @@ use std::sync::Arc;
 use crate::predicate::{GroupStatistics, PredicateOp, ResolvedExpr, ResolvedTerm, Truth};
 use pgdt_codec::compare::{CompareKind, bounds_set_keyed_by};
 use pgdt_core::{RawRow, RowSplit};
-use pgdt_mapping::internal::{declared_column, stored_bounds_kinds};
+use pgdt_mapping::internal::{believed_under, declared_column, stored_bounds_kinds};
 use pgdt_model::internal::ColumnStatisticsExt;
 use pgdt_model::{
     BlockStatistics, BoundsSet, ColumnStatistics, CopyBlock, DumpMetadata, Sortedness,
@@ -223,9 +223,7 @@ fn believed_columns(
         .zip(&statistics.columns)
         .map(|(name, column)| {
             let Some(column) = column else { return false };
-            let def = declared_column(metadata, database, &qualified, name);
-            column.declared_type.as_deref() == def.map(|d| d.declared_type.as_str())
-                && column.collation.as_deref() == def.and_then(|d| d.collation.as_deref())
+            believed_under(column, declared_column(metadata, database, &qualified, name))
         })
         .collect();
     let kinds = stored_bounds_kinds(&block.header, metadata, block.database.as_deref());

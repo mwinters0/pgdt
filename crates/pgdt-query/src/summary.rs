@@ -24,11 +24,11 @@ use pgdt_codec::compare::{CompareKind, ComparisonSemantics, bounds_set_keyed_by}
 use pgdt_codec::internal::column_tiers;
 use pgdt_codec::key::ValueKey;
 use pgdt_mapping::internal::{
-    declared_column, dictionary_holds_field_text, keeps_sums, stored_resolution,
+    believed_under, declared_column, dictionary_holds_field_text, keeps_sums, stored_resolution,
 };
 use pgdt_model::{
-    Bounds, ColumnDef, ColumnDictionary, ColumnStatistics, CopyBlock, DumpIndex, DumpMetadata,
-    Sortedness, StatisticsView, TableName, UnrepresentableTier,
+    Bounds, ColumnDictionary, CopyBlock, DumpIndex, DumpMetadata, Sortedness, StatisticsView,
+    TableName, UnrepresentableTier,
 };
 
 /// What a table's stored statistics amount to, one entry per column of the
@@ -170,7 +170,8 @@ pub fn table_summary(
             // under the DDL they were gathered under; the NULL counts are
             // read off the text and are believed regardless, bar a value a
             // view adds to them, counted under that DDL too (D78, D97).
-            let believed = believed(column, declared_column(metadata, database, &qualified, name));
+            let believed =
+                believed_under(column, declared_column(metadata, database, &qualified, name));
             let groups = statistics.groups.len();
             let view_nulls = |g: usize| match believed || reading == StatisticsView::Every {
                 true => column.null_count(g, reading),
@@ -372,14 +373,6 @@ impl<'a> Accumulator<'a> {
     }
 }
 
-/// Whether `column`'s bounds, row order and dictionary were gathered under the
-/// declared type and `COLLATE` clause its declaration `def` still gives it:
-/// the only DDL they are believed under (`docs/design/decisions.md`, "D78").
-fn believed(column: &ColumnStatistics, def: Option<&ColumnDef>) -> bool {
-    column.declared_type.as_deref() == def.map(|d| d.declared_type.as_str())
-        && column.collation.as_deref() == def.and_then(|d| d.collation.as_deref())
-}
-
 /// **The order every partition of a replay emits each column of `resolved`
 /// in, under Arrow's comparator** — the order DataFusion sorts by — or
 /// [`Sortedness::Unsorted`] where the map proves none. `matches` are the
@@ -447,7 +440,7 @@ fn column_order(
         let c = block.header.columns.iter().position(|column| column == name)?;
         let column = statistics.columns[c].as_ref()?;
         let (database, qualified) = (block.database.as_deref(), block.header.qualified_name());
-        if !believed(column, declared_column(metadata, database, &qualified, name)) {
+        if !believed_under(column, declared_column(metadata, database, &qualified, name)) {
             return None;
         }
         if column.null_counts.len() != statistics.groups.len()

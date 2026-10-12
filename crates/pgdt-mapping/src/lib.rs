@@ -26,7 +26,7 @@ pub mod internal {
     #[cfg(feature = "test-support")]
     pub use crate::statistics::gather::one_group_bounds;
     pub use crate::statistics::stored::{
-        declared_column, dictionary_holds_field_text, keeps_sums, stored_bounds_kinds,
-        stored_resolution,
+        believed_under, declared_column, dictionary_holds_field_text, keeps_sums,
+        stored_bounds_kinds, stored_resolution,
     };
 }
