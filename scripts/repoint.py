@@ -61,11 +61,13 @@ HISTORY_LINES = 350
 HISTORY_CAP_FROM = "2026-09-13"
 #: Orientation is what the read-triggers pull into context, so these are the
 #: caps that decide what a session costs before it has done anything.
+#: `docs/process.md`'s raised from 525, and the skills' from 200, on 2026-10-12
+#: by the maintainer, for the seam register.
 ORIENTATION_CAPS = {
     "CLAUDE.md": 150,
-    "docs/process.md": 525,
+    "docs/process.md": 550,
 }
-SKILL_LINES = 200
+SKILL_LINES = 225
 #: Net lines the live record may grow between repoints before this goes red.
 #: P19 grew it by about 1,900 a day, so this is two such days; under the caps
 #: and the citation rule it should be many more. Tune it, never to fit.

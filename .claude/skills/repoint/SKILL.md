@@ -27,7 +27,8 @@ one exactly this and nothing else:
   `docs/design/decisions.md`, `docs/design/roadmap.md`,
   `docs/design/*-invariants.md`, `docs/design/measurements.md`,
   `docs/status/STATUS.md`, `docs/status/deficiencies.md`, `docs/manual/` and
-  `README.md`, plus the register section headed with that module's name.
+  `README.md`, plus the register section headed with that module's name and
+  the `docs/status/seam-findings.md` line of each `seam: S<k>` marker in it.
 
 > Read the source in full. Then read only the record lines given. For every
 > sentence in those lines, and for every comment in the source that asserts a
@@ -61,10 +62,11 @@ trimmed or struck (`docs/process.md`, "Where does this fact go?").
 
 Trim whatever `repoint.py` names to its cap — striking, never raising the
 cap. Run `uv run repoint.py`, `uv run citations.py`, `uv run deficiencies.py`,
-and `uv run measure.py --check` if a figure's consumer moved. Move the stamp
-to `HEAD`'s short sha — the commit you are about to make counts from it. One
-commit, subject `repoint: <n> claims corrected, <m> entries struck`, body
-naming each correction by file and what was true.
+`uv run seam_register.py`, and `uv run measure.py --check` if a figure's
+consumer moved. Move the stamp to `HEAD`'s short sha — the commit you are
+about to make counts from it. One commit, subject `repoint: <n> claims
+corrected, <m> entries struck`, body naming each correction by file and what
+was true.
 
 ## Driven unattended
 

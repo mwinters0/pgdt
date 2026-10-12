@@ -14,7 +14,8 @@ destination. **(c)** a defect with a known fix and no owner — a legitimate
 resting state, said in those words, naming whatever would promote it. A
 limitation whose remedy the user already has today is not here at all: it is a
 property of how the system works, and it lives beside its mechanism with no
-identifier.
+identifier. Nor is a defect in the code's layout that costs only the next
+person reading it: that is an `S<k>` in [`seam-findings.md`](seam-findings.md).
 
 A coverage statement is not a deficiency:
 [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)'s

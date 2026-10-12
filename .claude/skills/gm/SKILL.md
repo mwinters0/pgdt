@@ -25,7 +25,8 @@ then return one of five verdicts.
 - **`misfiled`** — not a decision at all, by `process.md`'s "Name the decision,
   or file it elsewhere". Say whether it is a known deficiency, an inbox entry or
   an out-of-band row, and have the round file it there — checking
-  `docs/status/deficiencies.md` first, since it may already be indexed.
+  `docs/status/deficiencies.md` first, since it may already be indexed (a
+  layout finding costing no user, `docs/status/seam-findings.md`).
   Counted.
 - **`refuted`** — it contradicts the record **and the record is wrong**; not an
   escalation, see below. Counted, and watched most closely.

@@ -89,9 +89,10 @@ design contains; the notes doc holds the design until the last lands.
 ### Antipatterns
 
 Each is what a cut leaves when it serves one file rather than the tree. Read
-the scope for them before the design and again after the cuts. None is counted
-against a threshold: each one found is removed by the design or kept with its
-reason (a dispatcher and its feature-gated arm do import each other).
+the scope for them before the design and again after the cuts, not opening
+`docs/status/seam-findings.md` until done, then reconcile it by its header.
+None is counted: each one found is removed by the design, kept with its reason
+(a dispatcher and its feature-gated arm do import each other), or filed there.
 
 - **One concept, several files** — the antipattern that matters most, every
   other one below being a way of arriving at it or a symptom of it. A type
@@ -139,16 +140,16 @@ reason (a dispatcher and its feature-gated arm do import each other).
 
 **What moves with the code.** Its claim in `docs/design/concepts.md`, and the
 **Not in one place** line the cut settles, struck (`uv run concepts.py`).
-Every marker on it — `deficiency: KD<k>`,
-`upstream: UF<k>`, `pg-refuses: I<n>` — and the register line naming the
-file: run `uv run deficiencies.py`, `uv run upstream.py`, `uv run
-pg_refuses.py`. Every script that reads the file by path (`rg -n
-'<module>\.rs' scripts/`): `emitter_register.py`, `oracle_register.py`,
-`floor_mapping.py` each name readers by file. Every citation by filename in
-`docs/` and `README.md` (`rg -n '`<module>\.rs`' docs/ README.md`), repointed
-to the file that now holds what the sentence names. A module's crate is the
-directory it lives under, and `scripts/layering.py` holds each crate's
-dependencies to D68's graph: a cut inside a crate leaves both alone.
+Every marker on it — `deficiency: KD<k>`, `upstream: UF<k>`, `pg-refuses:
+I<n>`, `seam: S<k>` — and the register line naming the file: run `uv run
+deficiencies.py`, `upstream.py`, `pg_refuses.py` and `seam_register.py`. Every
+script that reads the file by path (`rg -n '<module>\.rs' scripts/`):
+`emitter_register.py`, `oracle_register.py`, `floor_mapping.py` each name
+readers by file. Every citation by filename in `docs/` and `README.md` (`rg -n
+'`<module>\.rs`' docs/ README.md`), repointed to the file that now holds what
+the sentence names. A module's crate is the directory it lives under, and
+`scripts/layering.py` holds each crate's dependencies to D68's graph: a cut
+inside a crate leaves both alone.
 
 ## 4. A crate is a seam too
 

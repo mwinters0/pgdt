@@ -49,6 +49,10 @@ Every one of these is in the *same* change as the code, never a follow-up.
    and code-marker detail together in this change, a part closing into a
    *property* migrating beside its mechanism; partial closure rewrites the
    entry to what is still true and never annotates it with what was fixed.
+10. **The seam register** (`docs/status/seam-findings.md`) **re-read** for
+    every `seam: S<k>` marker in a file the slice touched: a change removing
+    the symptom strikes the entry and its markers together, whether or not it
+    set out to, and one adding an antipattern it leaves names it in the notes.
 
 ## Writing or re-slicing a slice list
 

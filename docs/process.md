@@ -327,6 +327,11 @@ next version, so it is drawn across crates, never one crate at a time. Feature
 work keeps the map true as it grows: the spec places what a phase adds, and
 `scripts/concepts.py` fails on a production file no concept claims, or two do.
 
+**A phase closes on a tree that is not yet ideal.** What a round's read finds,
+rules a defect and does not remove goes to the seam register, marked at its
+sites, to be removed by whoever is next there; the read stays the authority,
+re-finding or striking each entry, and no count of entries weighs a design.
+
 ## The keystone: striking the centering
 
 A masonry arch is built over *centering*, a temporary frame holding every stone
@@ -406,6 +411,7 @@ high-water mark, unlanded items' numbers being spent too.
 | A measured quantity | **measurements.md**, once; everything else cites the figure |
 | What exists right now | **STATUS.md** |
 | A deficiency we know about and are not fixing now | the **`KD<k>` register** — one indexed line in `deficiencies.md`, the detail at the code marker |
+| An antipattern a seams read ruled a defect and left for later, costing only the code's reader | the **seam register**, `status/seam-findings.md` — one indexed line, the detail at its `seam: S<k>` markers; rules in its header |
 | A limitation whose remedy the user already has today | beside the **mechanism**; it is a property, not a deficiency |
 | A call made unattended, reviewed, and **affirmed with nothing changed** | the `D<k>` entry it governs, as its `Rejected` line — then the STATUS entry is deleted |
 | Why we changed our mind, and the evidence | a **history** entry, cited from the doc holding the decision — never inlined into it |

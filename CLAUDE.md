@@ -27,6 +27,7 @@ python3 scripts/debian_window.py      # the image's Debian pin against the windo
 cd scripts && uv run citations.py     # every `<doc>.md`, "section" citation resolved
 cd scripts && uv run deficiencies.py  # KD index vs the code marker carrying each detail, vs phase index
 cd scripts && uv run upstream.py      # the upstream register vs the `upstream: UF<k>` marker at each site
+cd scripts && uv run seam_register.py # the `S<k>` register vs the `seam: S<k>` marker at each site
 cd scripts && uv run pg_refuses.py    # each `pg-refuses: I<n>` marker vs its invariant's "Relied on by"
 cd scripts && uv run major_differences.py  # the `VD<n>` register, and no `VD<n>` cited outside it
 cd scripts && uv run repoint.py       # the record's caps, and its growth since the last blind read; red means /repoint
@@ -77,7 +78,8 @@ Never edit a `runs/` orchestration script while it is running.
   before allocating an `M<k>`** and before picking up unscheduled work.
 - `docs/status/deficiencies.md` — the `KD<k>` register. **Read it before
   grilling or specifying a phase, admitting an `M<k>`, or proposing a change
-  to a mechanism**; each entry's detail is at its code marker.
+  to a mechanism**; each entry's detail is at its code marker. Beside it,
+  `seam-findings.md`, the `S<k>` register of antipatterns left for later.
 - `docs/status/upstream.md` — the `UF<k>` register: dependency defects and
   limits we wait on upstream to fix. **Invoke `upstream-issue` before working
   around a dependency's defect, and `upgrade-deps` before any dependency
