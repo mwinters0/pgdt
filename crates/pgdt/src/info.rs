@@ -13,12 +13,13 @@ use pgdt_model::{CACHE_FORMAT_VERSION, DumpIndex};
 use crate::args::IdentityArgs;
 use crate::source::{Opened, naming_the_source, open_with_cache};
 use json::print_index_json;
-use text::print_index;
+// `parse` prints the map it leaves as the listing prints it.
+pub(crate) use text::{print_diagnostics, print_index, print_metadata};
 
 mod json;
 mod labels;
 mod statistics;
-pub(crate) mod text;
+mod text;
 
 /// `pgdt info`'s flags.
 #[derive(Args)]

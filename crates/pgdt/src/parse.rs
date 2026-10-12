@@ -18,7 +18,7 @@ use crate::args::{
     CliParseInvalidValues, IdentityArgs, OverwriteArgs, ReadFlags, parse_chunk_size,
     parse_max_line_bytes, parse_row_group_size, parse_statistics_level, scan_options,
 };
-use crate::info::text::{print_diagnostics, print_index, print_metadata};
+use crate::info::{print_diagnostics, print_index, print_metadata};
 use crate::interrupt::install_interrupt_guard;
 use crate::introspect;
 use crate::parallel::ParallelArgs;
