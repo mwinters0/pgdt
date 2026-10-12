@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **24 of the 25 figures below come from that sitting.** The other carries its own sitting commit inside its marker, and every reader of this stamp argues from that instead: `release-profile` (`2df93720`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **24 of the 25 figures below come from that sitting.** The other carries its own sitting commit inside its marker, and every reader of this stamp argues from that instead: `release-profile` (`ef442ad6`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -1371,15 +1371,24 @@ allocator name, so nothing would notice. The tell in a run log: `building the
 
 ## What link-time optimization buys the shipped build
 
-<!-- figure: release-profile — taken at `2df93720` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure release-profile` -->
+<!-- figure: release-profile — taken at `ef442ad6` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure release-profile` -->
 
 | Warm, on tmpfs | `release-default` — Cargo's default: no cross-crate LTO, 16 codegen units | `release-thin` — thin LTO, 16 codegen units | `release-fat` — fat LTO, one codegen unit |
 |---|---|---|---|
-| `pgdt parse` — structure discovery | **0.448 s** (0.389–0.481) | **0.430 s** (0.382–0.459) — 0.96× | **0.434 s** (0.396–0.558) — 0.97× |
-| `query --schema-mode strings` — zero-copy extraction | **3.03 s** (2.94–3.04) | **3.02 s** (3.00–3.10) — 1.00× | **2.92 s** (2.89–2.95) — 0.96× |
-| `query --schema-mode typed` | **4.42 s** (4.39–4.46) | **4.38 s** (4.38–4.42) — 0.99× | **4.30 s** (4.28–4.34) — 0.97× |
-| `pgdt sql -c` — a typed DataFusion scan | **2.87 s** (2.85–2.90) | **2.89 s** (2.87–3.03) — 1.01× | **2.80 s** (2.75–2.81) — 0.98× |
-| `dd` → `/dev/null` — the co-measured floor | **0.329 s** (0.323–0.338) | — | — |
+| `pgdt parse` — structure discovery | **0.486 s** (0.456–0.504) | **0.487 s** (0.466–0.498) — 1.00× | **0.454 s** (0.442–0.471) — 0.93× |
+| `query --schema-mode strings` — zero-copy extraction | **3.02 s** (2.98–3.06) | **3.03 s** (3.01–3.08) — 1.01× | **2.91 s** (2.90–3.05) — 0.96× |
+| `query --schema-mode typed` | **4.44 s** (4.43–4.63) | **4.36 s** (4.34–4.57) — 0.98× | **4.33 s** (4.29–4.64) — 0.98× |
+| `pgdt sql -c` — a typed DataFusion scan | **2.91 s** (2.89–3.08) | **2.93 s** (2.88–3.26) — 1.01× | **2.85 s** (2.84–2.92) — 0.98× |
+| `dd` → `/dev/null` — the co-measured floor | **0.354 s** (0.346–0.360) | — | — |
+
+| `instructions:u`, the same runs | `release-default` | `release-thin` | `release-fat` |
+|---|---|---|---|
+| `pgdt parse` — structure discovery | **0.996 G** (0.996–0.996) | **0.982 G** (0.982–0.982) — 0.986× | **0.984 G** (0.984–0.984) — 0.988× |
+| `query --schema-mode strings` — zero-copy extraction | **18.738 G** (18.738–18.738) | **18.842 G** (18.842–18.842) — 1.006× | **18.464 G** (18.464–18.464) — 0.985× |
+| `query --schema-mode typed` | **33.621 G** (33.621–33.621) | **33.484 G** (33.484–33.484) — 0.996× | **32.877 G** (32.877–32.877) — 0.978× |
+| `pgdt sql -c` — a typed DataFusion scan | **22.364 G** (22.364–22.392) | **22.539 G** (22.539–22.567) — 1.008× | **21.977 G** (21.977–22.004) — 0.983× |
+
+Each count is the timed command's own, every thread's, from its `exec` to its exit, taken by `count-instructions` in the run its wall clock is: user space only, never scaled.
 
 Every leg was asked which profile built it before it was timed — `release-default`, `release-thin`, `release-fat` — and each links `mimalloc`, the shipped allocator, so the columns differ by the profile alone.
 
@@ -1387,73 +1396,115 @@ Each `query` row reads a cache one untimed `pgdt parse` stating `--statistics-le
 
 The `pgdt sql` row runs `SELECT count(id), …, count(v_escaped) FROM public.perf WHERE id IS NOT NULL` at `DATAFUSION_EXECUTION_TARGET_PARTITIONS=1`, stating no allowance — `parallel-scan-throughput`'s query at the apparatus's count — over a cache an untimed `pgdt parse` stating `--statistics-level data --row-group-size 1048576` wrote beside the dump: every column decoded typed and one row out, the filter keeping every row, so its statistics skip no group. Its reading carries the program's startup and the dump's registration, which the `pgdt query` rows' do not, so it is read across its own row and never against theirs. Every leg answered alike, byte for byte.
 
+The downstream-build rule, `release-default` against `release-fat` (`roadmap.md`, "A downstream build is within 3% of ours"):
+- `pgdt parse` — structure discovery: passes — +6.58% in wall clock, unresolved, the two legs' readings meeting; `instructions:u` +1.23%, resolved.
+- `query --schema-mode strings` — zero-copy extraction: passes — +3.55% in wall clock, unresolved, the two legs' readings meeting; `instructions:u` +1.46%, resolved.
+- `query --schema-mode typed`: passes — +2.43% in wall clock, unresolved, the two legs' readings meeting; `instructions:u` +2.21%, resolved.
+- `pgdt sql -c` — a typed DataFusion scan: passes — +1.82% in wall clock, unresolved, the two legs' readings meeting; `instructions:u` +1.73%, resolved.
+
 Per-rep readings (s):
-- `pgdt parse` — structure discovery (release-default): 0.389, 0.481, 0.448, 0.480, 0.436
-- `pgdt parse` — structure discovery (release-thin): 0.382, 0.459, 0.436, 0.429, 0.430
-- `pgdt parse` — structure discovery (release-fat): 0.396, 0.558, 0.418, 0.434, 0.460
-- `query --schema-mode strings` — zero-copy extraction (release-default): 2.94, 3.04, 3.03, 3.03, 3.03
-- `query --schema-mode strings` — zero-copy extraction (release-thin): 3.02, 3.10, 3.01, 3.02, 3.00
-- `query --schema-mode strings` — zero-copy extraction (release-fat): 2.95, 2.92, 2.92, 2.89, 2.91
-- `query --schema-mode typed` (release-default): 4.42, 4.46, 4.43, 4.39, 4.42
-- `query --schema-mode typed` (release-thin): 4.38, 4.42, 4.38, 4.38, 4.38
-- `query --schema-mode typed` (release-fat): 4.30, 4.34, 4.32, 4.28, 4.29
-- `pgdt sql -c` — a typed DataFusion scan (release-default): 2.87, 2.90, 2.88, 2.85, 2.87
-- `pgdt sql -c` — a typed DataFusion scan (release-thin): 2.89, 2.93, 2.89, 2.87, 3.03
-- `pgdt sql -c` — a typed DataFusion scan (release-fat): 2.81, 2.81, 2.75, 2.80, 2.79
-- `dd` → `/dev/null` (warm): 0.338, 0.327, 0.329, 0.337, 0.323
+- `pgdt parse` — structure discovery (release-default): 0.504, 0.486, 0.478, 0.501, 0.456
+- `pgdt parse` — structure discovery (release-thin): 0.498, 0.466, 0.468, 0.487, 0.487
+- `pgdt parse` — structure discovery (release-fat): 0.447, 0.454, 0.459, 0.471, 0.442
+- `query --schema-mode strings` — zero-copy extraction (release-default): 3.00, 3.06, 3.02, 3.02, 2.98
+- `query --schema-mode strings` — zero-copy extraction (release-thin): 3.05, 3.08, 3.02, 3.03, 3.01
+- `query --schema-mode strings` — zero-copy extraction (release-fat): 2.94, 3.05, 2.91, 2.90, 2.91
+- `query --schema-mode typed` (release-default): 4.50, 4.63, 4.44, 4.43, 4.44
+- `query --schema-mode typed` (release-thin): 4.36, 4.57, 4.39, 4.35, 4.34
+- `query --schema-mode typed` (release-fat): 4.39, 4.64, 4.32, 4.29, 4.33
+- `pgdt sql -c` — a typed DataFusion scan (release-default): 2.92, 3.08, 2.91, 2.89, 2.91
+- `pgdt sql -c` — a typed DataFusion scan (release-thin): 2.92, 3.26, 2.88, 2.99, 2.93
+- `pgdt sql -c` — a typed DataFusion scan (release-fat): 2.92, 2.91, 2.85, 2.84, 2.85
+- `dd` → `/dev/null` (warm): 0.360, 0.354, 0.347, 0.358, 0.346
 
-Apparatus over every run in this table: CPU stall ≤0.24%, I/O stall ≤9.10%, machine ≤9% busy, steal ≤0.00%, busiest core ≥3.86 GHz, ≤66°C.
+Per-rep `instructions:u` (G):
+- `pgdt parse` — structure discovery (release-default): 0.996, 0.996, 0.996, 0.996, 0.996
+- `pgdt parse` — structure discovery (release-thin): 0.982, 0.982, 0.982, 0.982, 0.982
+- `pgdt parse` — structure discovery (release-fat): 0.984, 0.984, 0.984, 0.984, 0.984
+- `query --schema-mode strings` — zero-copy extraction (release-default): 18.738, 18.738, 18.738, 18.738, 18.738
+- `query --schema-mode strings` — zero-copy extraction (release-thin): 18.842, 18.842, 18.842, 18.842, 18.842
+- `query --schema-mode strings` — zero-copy extraction (release-fat): 18.464, 18.464, 18.464, 18.464, 18.464
+- `query --schema-mode typed` (release-default): 33.621, 33.621, 33.621, 33.621, 33.621
+- `query --schema-mode typed` (release-thin): 33.484, 33.484, 33.484, 33.484, 33.484
+- `query --schema-mode typed` (release-fat): 32.877, 32.877, 32.877, 32.877, 32.877
+- `pgdt sql -c` — a typed DataFusion scan (release-default): 22.364, 22.364, 22.364, 22.392, 22.391
+- `pgdt sql -c` — a typed DataFusion scan (release-thin): 22.539, 22.567, 22.539, 22.539, 22.539
+- `pgdt sql -c` — a typed DataFusion scan (release-fat): 21.977, 21.977, 22.004, 21.977, 22.004
 
-**The default leg is within 3% of `release-fat` in wall clock on the two
-shapes ranked above `strings`, and wider on `strings`, where the cells
-meet** ([`roadmap.md`](roadmap.md), "A downstream build is within 3% of
-ours"). On `pgdt sql` it reads 0.98×, 0.065 s, its 2.85–2.90 s wholly above
-fat's 2.75–2.81 s; on `typed` 0.97×, 0.124 s, as wholly above; on `strings`
-0.96×, 0.112 s, the default's one low rep, 2.94 s, inside fat's 2.89–2.95 s,
-so unresolved and the rule holds, by one rep.
-In user time, what a codegen change moves (`raw.json`'s `cpu_seconds`), all
-three are resolved: 0.077 s of the default's 2.432 s on `pgdt sql`, 0.117 s
-of 3.869 s on `typed`, 0.127 s of 2.502 s on `strings`. `parse` cannot
-resolve a codegen difference: user time is about a fifth of its wall clock in
-every leg, the rest being the kernel's reads, and its spreads are wider than
-any of its gaps.
+Apparatus over every run in this table: CPU stall ≤0.38%, I/O stall ≤54.62%, machine ≤12% busy, steal ≤0.00%, busiest core ≥3.69 GHz, ≤67°C.
 
-**The `pgdt sql` row puts fat ahead of thin, and thin level with the
-default.** Fat's 2.75–2.81 s lies below thin's 2.87–3.03 s, and in user time
-its 2.335–2.366 s below thin's 2.423–2.570 s; thin's cells overlap the
-default's in both clocks. The three legs answered the one row alike.
+**The default leg passes the downstream-build rule on every workload**
+([`roadmap.md`](roadmap.md), "A downstream build is within 3% of ours"):
+within 3% of `release-fat` in wall clock on `pgdt sql` and `typed`, and past
+it on `strings` and `parse` with the cells meeting. On `strings` they meet
+through one run: fat's second rep, 3.05 s, taken with the machine 8% busy
+(below); without it fat's most is 2.94 s, under the default's fewest,
+2.98 s — the second sitting running in which `strings` passes by one rep.
+`parse` resolves no codegen difference: user time is a fifth of its wall
+clock in every leg, and its spreads are wider than its gaps. No workload
+fails, so the rule's attribution clause owes nothing here.
 
-**Which of thin and fat leads has moved with the tree, so the figure ranks
-neither.** Their user-time gap on `strings` was fat 0.053 s *behind* at
-`881c76f1` (`runs/measure-20261010T034321/raw.json`), 0.011 s ahead at
-`6b759eaf` (`runs/measure-20261010T175655/raw.json`) and 0.138 s ahead here;
-on `typed`, 0.007 s and 0.002 s ahead at the first two, 0.083 s here. No
-profile changed between the three sittings, only the tree: the carve, then
-its tail and the facade's retirement. Layout is the candidate ("Two builds
-of one source can differ by layout" above), and it stays unattributed: this
-sitting took no `instructions:u`, which is what would tell fat LTO's code
-from where one codegen unit places it. So fat's lead on `pgdt sql` is this
-sitting's, and no larger than this pair has moved by between neighbouring
-trees.
+**The default leg retires more `instructions:u` than fat on every row, by
+less than its user-time gap.** On the three query rows the user-time gaps
+(`raw.json`'s `cpu_seconds`) are 0.047 s of the default's 2.429 s on
+`pgdt sql`, 0.125 s of 3.866 s on `typed` and 0.087 s of 2.467 s on
+`strings`, against the count's 1.73%, 2.21% and 1.46%. On `pgdt sql` the two
+agree; on `strings` under half the gap is retired instructions, and what
+carries the rest is unattributed, the figure taking no cycle count. The
+`pgdt sql` counts fall on two values about 28 M apart in every leg, on
+different reps in each; unattributed, and smaller than any gap here.
 
-**The default leg held still across the three sittings, and the gaps moved
+**The count tells thin from fat on every row; wall clock tells them apart
+on none.** Thin retires 2.56% more than fat on `pgdt sql`, 1.85% on `typed`
+and 2.05% on `strings` — more than the default leg on `pgdt sql` and
+`strings` — and 0.21% fewer on `parse`; no leg's count spreads by more than
+0.13% across its reps, so each of these is resolved. In wall clock the two
+legs' cells meet on every row, and in user time on all but `pgdt sql`, where
+thin's fewest, 2.419 s, clears fat's most, 2.410 s. This is the reading
+D105's Reopens names ([`decisions.md`](decisions.md), "D105").
+
+**Which of thin and fat leads in time has moved with the tree.** Their
+user-time gap on `strings` was fat 0.053 s *behind* at `881c76f1`
+(`runs/measure-20261010T034321/raw.json`), 0.011 s ahead at `6b759eaf`
+(`runs/measure-20261010T175655/raw.json`), 0.138 s ahead at `2df93720`
+(`runs/measure-20261011T013910/raw.json`) and 0.113 s here; on `typed`
+0.007 s, 0.002 s, 0.083 s and 0.054 s ahead; on `pgdt sql`, timed at the last
+two, 0.119 s and 0.080 s. No profile changed between the four sittings, only
+the tree. At this tree the count puts the difference in fat LTO's code, not
+only in where one codegen unit places it; the earlier swings stay
+unattributed, no count having been taken at those trees ("Two builds of one
+source can differ by layout" above).
+
+**The default leg held still across the four sittings, and the gaps moved
 with the fat leg.** Compared as gaps, never as absolutes
 (`run_release_profile`'s rustdoc), and with every move of an absolute
 between them inside the warm floor ("A move smaller than the apparatus
 resolves is not a finding"): the default leg's user time on `typed` read
-3.882 s, 3.875 s and 3.869 s, and on `strings` 2.504 s, 2.520 s and
-2.502 s; its gap to fat on `typed` read 0.097 s, 0.093 s and 0.117 s, and on
-`strings` 0.032 s, 0.019 s and 0.127 s. The carve cost nothing link-time
-optimization recovers that this figure resolves — the gap was no wider on
-the split tree than on the one-crate one, on any shape — and `strings`'
-wider gap here is the fat leg's swing above, not the default leg slowing.
+3.882 s, 3.875 s, 3.869 s and 3.866 s, on `strings` 2.504 s, 2.520 s,
+2.502 s and 2.467 s, and on `pgdt sql` 2.432 s and 2.429 s; its gap to fat on
+`typed` read 0.097 s, 0.093 s, 0.117 s and 0.125 s, on `strings` 0.032 s,
+0.019 s, 0.127 s and 0.087 s, and on `pgdt sql` 0.077 s and 0.047 s. The
+carve cost nothing link-time optimization recovers that this figure
+resolves, on the tree the split closes on as on the split one: the default
+leg slowed on no shape, and each widening of its gap is the fat leg moving,
+by no more than fat has moved against thin between neighbouring trees.
+`parse`'s absolutes moved with the floor — `dd` read 0.329 s at `2df93720`
+and 0.354 s here, every leg's system time moving with it and its user time
+by 0.01 s or less — and its user-time gap to fat read 0.011 s there and
+0.009 s here, so the crate boundary the interior split now crosses on
+`parse`'s path widened nothing this figure resolves; its count gap is 12 M
+instructions.
 
 **The I/O stall in the apparatus line is the container's, not the
 reading's**: PSI's I/O counter is machine-wide and brackets the whole
-container, and every run carries 29–153 ms of it whatever its shape. The
-`≤9.10%` is 117 ms in a `release-default` `parse` window of 1.29 s, a run
-reading 0.389 s against its cell's median of 0.448 s. What the
-per-container term is made of is unattributed.
+container. Here it is the first two reps': each leg's first `parse` carries
+about 670 ms of it, and the default's first `strings` run 4.74 s — the
+`≤54.62%`, of an 8.67 s window around a 3.00 s reading inside its cell's
+2.98–3.06 s — while from the third rep every run carries 33–285 ms. That the
+first reps follow the three leg builds is a candidate; it stays
+unattributed. The second rep also ran with the machine up to 12% busy, under
+the gate's limit, and sets the top of every `typed` cell, of `pgdt sql`'s
+default and thin cells, and of fat's `strings` cell above.
 
 ## Scan throughput by input shape
 

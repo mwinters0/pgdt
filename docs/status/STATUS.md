@@ -64,7 +64,7 @@ figure but `session-drift` and `release-profile` was taken in one sitting at
 `3a34f062`, on the mimalloc build made in the release image under Cargo's default profile, before D105 made it fat LTO, and run in
 `debian:trixie` under its glibc, with its binaries staged on tmpfs**, the scan figures at the
 metadata level and the query figures over a data-level cache.
-`session-drift` is the `da05a72` pair's, `release-profile` its own sitting's at `2df93720`, and `reserve`'s 128 MiB-block `rule`
+`session-drift` is the `da05a72` pair's, `release-profile` its own sitting's at `ef442ad6`, and `reserve`'s 128 MiB-block `rule`
 cells are a reading `KD34` names.
 What a sweep does not re-take: `session-drift`, which only a second sweep on
 a first's commit does, and the koji section, outside the register and red,
@@ -112,7 +112,7 @@ Spec: [`../design/roadmap-P35-seams.md`](../design/roadmap-P35-seams.md).
 - [x] **35.25** pgdt-codec's `grammar` an API namespace declaring `TextGrammar`, `Geometric` and `Unchecked`, defined in `grammar/input.rs` and `grammar/check.rs`; `compare`'s `pub use` of them removed, `layering.py`'s `NAMESPACES` gaining `grammar`, and every `compare::` path to them repointed — [notes](../design/roadmap-P35.25-grammar-namespace-notes.md)
 - [x] **35.26** `pgdt-fixtures`, a test-only member at the bottom of the graph holding the fixture vocabulary — paths, the sweep's enumerator, the sandboxes, `REFUSED_FIELDS`, `edge_cases.sql` — and behind a `mapping` feature the sweep's request builders; the tests of every crate reading a fixture dev-depend on it, every cross-crate `#[path]` include and every copy in `pgdt` and `datafusion-pgdump` replaced, `check.py`'s `#[path]` arm removed, and D68 and `layering.py`'s `GRAPH` amended — [notes](../design/roadmap-P35.26-fixtures-notes.md)
 - [x] **35.12** The closing seams round: no file past any limit but the exemption, `value/nested.rs` cut into its two scanners, every crate read for the `seams` skill's "Antipatterns" and what no reviewer would dispute removed, and the design findings cut as the maintainer ruled — B1–B28, B30–B44, B29 kept — the gathering options out of `ScanOptions`, one error rule across DataFusion's boundary, one session `install`, a registration's uncollated columns one library finding and each mode's words stated once among them — [notes](../design/roadmap-P35.12-closing-seams-notes.md)
-- [ ] **35.24** The `release-profile` figure's third sitting, on the tree 35.12 leaves and carrying M222's `instructions:u`: the downstream-build rule read on it, its attribution clause applied to any workload failing the gate, and D105's Reopens read against the count
+- [x] **35.24** The `release-profile` figure's third sitting, on the tree 35.12 leaves and carrying M222's `instructions:u`: the downstream-build rule read on it, its attribution clause applied to any workload failing the gate, and D105's Reopens read against the count — [notes](../design/roadmap-P35.24-third-sitting-notes.md)
 
 ## Not started
 
@@ -144,3 +144,21 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **35.24's fold left D105 as it stands, its Reopens' first half met.** The
+  `release-profile` sitting at `ef442ad6`
+  ([`../design/measurements.md`](../design/measurements.md), "What link-time
+  optimization buys the shipped build") counts `instructions:u`, and the
+  count tells thin from fat on every row, resolved: fat retires fewer on the
+  three query rows, `pgdt sql` first, and thin fewer on `parse`. In wall
+  clock, the clock the downstream-build rule gates on, thin's and fat's cells
+  meet on every row, and so do the default's and fat's on `typed` and
+  `pgdt sql`, the shapes D105's Why says fat beats the default on at every
+  sitting. The fold changed neither the profile nor D105's text: a met
+  Reopens is the maintainer's to weigh, and the count favours the shipped
+  profile on the first-ranked workload. Reconsidering decides what
+  may rank a profile. If the count may, D105 rests on the reading rather than
+  on DataFusion's precedent: its Why becomes fat's code ahead of thin's on
+  every query row, its Rejected thin as retiring more there, and its Reopens
+  thin's count at or below fat's on `pgdt sql`. If only wall clock may, the
+  precedent still breaks the tie, the Reopens' count half is spent and wants
+  a condition of its own, and the Why's "at every sitting" is read in medians.
