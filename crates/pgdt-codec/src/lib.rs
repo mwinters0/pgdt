@@ -27,7 +27,7 @@ pub mod internal {
     pub use crate::grammar::check::{
         column_grammar, field_refused, grammar_refuses, unchecked_positions,
     };
-    pub use crate::grammar::form::{accepted_form, nested_accepted_form};
+    pub use crate::key::form::{accepted_form, nested_accepted_form};
     pub use crate::key::{
         OrderKey, Side, compare_keys, literal_key, order_key, read_key, special_order_key,
     };

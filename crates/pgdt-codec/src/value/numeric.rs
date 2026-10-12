@@ -601,7 +601,7 @@ impl NumericKey {
 
     /// `[-]digits[.digits]`: no exponent, no sign but `-`, at least one digit
     /// somewhere, and a point at either end or leading zeros allowed, which
-    /// `numeric_out` never writes (`grammar::form::accepted_form` lists them). It is
+    /// `numeric_out` never writes (`key::form::accepted_form` lists them). It is
     /// the same *lexical* grammar
     /// [`typmod_unscaled_digits`](crate::value::numeric::typmod_unscaled_digits)
     /// accepts for a typmod'd column's field, which is read through it and

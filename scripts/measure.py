@@ -6541,6 +6541,7 @@ PREDICATE = (
         for name in ("eval", "notes", "resolve", "truths")
     ),
     "crates/pgdt-codec/src/key.rs",
+    "crates/pgdt-codec/src/key/form.rs",
     "crates/pgdt-codec/src/value.rs",
     "crates/pgdt-codec/src/value/datetime.rs",
     "crates/pgdt-codec/src/value/int.rs",
@@ -6592,7 +6593,6 @@ PGTYPE = (
     "crates/pgdt-codec/src/compare/walk.rs",
     "crates/pgdt-codec/src/grammar.rs",
     "crates/pgdt-codec/src/grammar/check.rs",
-    "crates/pgdt-codec/src/grammar/form.rs",
     "crates/pgdt-codec/src/grammar/input.rs",
 )
 #: The unrepresentable count, which every data-level mapping pass takes beside

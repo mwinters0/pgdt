@@ -208,11 +208,13 @@ How PostgreSQL orders a value: the comparison register — plans, collation,
 where DataFusion's comparison diverges — and the order keys read from a
 value's text ([`decisions.md`](decisions.md), "Predicates").
 
-- **pgdt-codec** — `compare/`, `key.rs`: value semantics, shared by a filter
+- **pgdt-codec** — `compare/`, `key/`: value semantics, shared by a filter
   and the gatherer, so below both (D68). The key is the dispatch building an
   `OrderKey` over the families' key types, which are each family's own
-  (Values), the nested keys included. The built-in table answering a type's
-  comparison beside its Arrow type is the type mapping's (D40).
+  (Values), the nested keys included; its `form` is the form a filter's
+  literal has to take, what the literal reader reads. The built-in table
+  answering a type's comparison beside its Arrow type is the type mapping's
+  (D40).
 
 ## Arrow batches
 
@@ -249,8 +251,8 @@ typmod ([`decisions.md`](decisions.md), "D103").
   observer, built where a block's gatherer is.
 - **pgdt-codec** — `grammar/`, the namespace declaring the types a strict
   parse's listing and the register's plans carry: what a column's fields are
-  read by, whether PostgreSQL refuses one, dispatching to the readers a key is
-  built by, and the form a filter's literal has to take.
+  read by, and whether PostgreSQL refuses one, dispatching to the readers a
+  key is built by.
 
 ## Statistics
 

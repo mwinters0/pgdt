@@ -6,14 +6,12 @@
 //! register's plans carry; and [`Unchecked`], why a strict parse checks
 //! nothing of a value, which its listing of a column carries.
 //!
-//! `input` reads a column's grammar off its declaration, `check` holds the
+//! `input` reads a column's grammar off its declaration, and `check` holds the
 //! refusal checks a field is put to and what a strict parse checks nothing
-//! of, and `form` the form a filter's literal has to take; `internal`
-//! re-exports what a crate above calls. A field with an order is checked
-//! through its key's reader ([`crate::key`]).
+//! of; `internal` re-exports what a crate above calls. A field with an order
+//! is checked through its key's reader ([`crate::key`]).
 
 pub(crate) mod check;
-pub(crate) mod form;
 pub(crate) mod input;
 
 pub use self::check::Unchecked;

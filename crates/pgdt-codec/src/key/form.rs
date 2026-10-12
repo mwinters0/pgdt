@@ -1,5 +1,6 @@
 //! The form a filter's literal has to take, by the kind it is compared as:
-//! the text a refusal naming a literal quotes.
+//! what [`literal_key`](crate::key::literal_key) and its nested counterpart
+//! read, written as the text a refusal naming a literal quotes.
 
 use crate::compare::{CompareKind, NestedCompare};
 use crate::value::int::int_range;

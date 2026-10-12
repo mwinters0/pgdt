@@ -197,8 +197,8 @@ pub enum Error {
         /// about this build's grammar rather than about the type: a `boolean`
         /// is refused `true` because it is written `t` or `f`, not because
         /// `boolean` has no such value. Supplied by
-        /// `pgdt_codec::internal::accepted_form`, which sits beside the grammar
-        /// it describes. A `String` because two arms answer with the column's
+        /// `pgdt_codec::internal::accepted_form`, which sits in the codec's
+        /// `key` beside the literal reader whose grammar it describes. A `String` because two arms answer with the column's
         /// own comparison payload — an enum's declared labels, a
         /// `numeric(p,s)`'s scale.
         accepted: String,

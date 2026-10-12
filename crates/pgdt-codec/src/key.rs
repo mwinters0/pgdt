@@ -12,8 +12,11 @@
 //! own key type; it is not the codec's API, an ordering over these
 //! representations being a surface nobody has designed (`KD116`), so
 //! `internal` re-exports what a crate above calls. What a literal of each kind
-//! has to look like, for the refusal naming it, and the refusal checks a
-//! strict parse dispatches through these readers, are `crate::grammar`'s.
+//! has to look like, for the refusal naming it, is `form`'s; the refusal
+//! checks a strict parse dispatches through these readers are
+//! `crate::grammar`'s.
+
+pub(crate) mod form;
 
 use std::cmp::Ordering;
 
