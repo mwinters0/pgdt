@@ -501,7 +501,7 @@ filter shape a reading shows common. Code: `ResolvedTerm::truths`, `prune::Sorte
 may run to `--max-line-bytes`. Values agreeing on the head share every byte a stored bound reads, so bounds stay valid and only row
 order is lost (`Unsorted`), where a decoded-kind value past the cap loses its group's bounds too. A truncated text `max` replaces its
 last character by the next scalar value (`text_upper`), `bytea`'s increments its decoded bytes. Rejected: the byte successor for text,
-which can end mid-character. Evidence: `gather/tests.rs`'s `a_long_texts_stored_bounds_are_on_the_right_side_of_it`.
+which can end mid-character. Evidence: `bounds/tests.rs`'s `a_long_texts_stored_bounds_are_on_the_right_side_of_it`.
 
 ### D77 The statistics request is the mapping pass's argument, and the metadata level is a selection
 `map_file` takes a `&StatisticsRequest` and no query entry point does, so no option a query is handed

@@ -86,7 +86,7 @@ impl Canonical {
 /// that a value cut there renders past [`CLIP_BYTES`], so its head is the
 /// whole value's and it reads as no whole value, as the value itself does
 /// (`docs/design/decisions.md`, "D76").
-pub(super) const BYTEA_ESCAPE_HEAD_BYTES: usize = CLIP_BYTES / 2;
+const BYTEA_ESCAPE_HEAD_BYTES: usize = CLIP_BYTES / 2;
 
 pub(super) struct BoundsGatherer {
     order: Order,
@@ -648,7 +648,7 @@ fn clipped_bounds(canonical: Canonical, min: Clipped, max: Clipped) -> Option<Bo
 /// the prefix begins. `padded` is `character`, whose comparison drops trailing
 /// blanks first: the prefix gives its own up, and a successor that is a blank
 /// is skipped. `None` when no character of the prefix has a successor.
-pub(super) fn text_upper(text: &str, padded: bool) -> Option<String> {
+fn text_upper(text: &str, padded: bool) -> Option<String> {
     // Room for a successor one byte longer than the character it replaces.
     let mut prefix: String =
         text_prefix(text, DICTIONARY_ENTRY_MAX_BYTES - char::MAX.len_utf8() + 1).to_owned();
@@ -679,7 +679,7 @@ const BYTEA_CAP_BYTES: usize = (DICTIONARY_ENTRY_MAX_BYTES - 2) / 2;
 /// A rendered `bytea` above the value: its prefix with trailing `0xFF` bytes
 /// dropped and the last byte incremented. `None` when every byte of that
 /// prefix is `0xFF`.
-pub(super) fn bytea_upper(text: &str) -> Option<String> {
+fn bytea_upper(text: &str) -> Option<String> {
     let mut bytes = decode_bytea(text)?;
     bytes.truncate(BYTEA_CAP_BYTES);
     while bytes.last() == Some(&0xFF) {
@@ -688,3 +688,6 @@ pub(super) fn bytea_upper(text: &str) -> Option<String> {
     *bytes.last_mut()? += 1;
     Some(render_bytea(&bytes))
 }
+
+#[cfg(test)]
+mod tests;

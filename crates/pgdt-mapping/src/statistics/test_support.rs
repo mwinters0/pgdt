@@ -1,6 +1,12 @@
 //! What more than one statistics module's tests build: a seeded generator,
-//! and the density rule's reference model, the ladder of sizes
+//! values drawn to collide and the type a kind's column is read as, and the
+//! density rule's reference model, the ladder of sizes
 //! `scripts/row_density.py` walks.
+
+use arrow_schema::DataType;
+use pgdt_codec::compare::CompareKind;
+use pgdt_codec::decode::render_bytea;
+use pgdt_model::DICTIONARY_ENTRY_MAX_BYTES;
 
 use super::density::{max_rows_group, min_rows_group};
 
@@ -18,6 +24,62 @@ impl Rng {
 
     pub(super) fn below(&mut self, n: u64) -> u64 {
         self.next() % n
+    }
+}
+
+/// A value of `kind` drawn to collide: short and long, sharing long
+/// prefixes, padded, and — for text — past the ASCII range.
+pub(super) fn value(rng: &mut Rng, kind: &CompareKind) -> String {
+    let length = match rng.below(4) {
+        0 => rng.below(4) as usize,
+        1 => DICTIONARY_ENTRY_MAX_BYTES - 2 + rng.below(8) as usize,
+        _ => 250 + rng.below(40) as usize,
+    };
+    let alphabet: &[char] = &['a', 'b', ' ', 'é', '\u{10FFFF}', '\u{1f}'];
+    match kind {
+        CompareKind::Int { .. } => (rng.below(20) as i64 - 10).to_string(),
+        // Finite dates either side of the calendar's end, and the
+        // infinities, which no format holds.
+        CompareKind::Date => match rng.below(10) {
+            0 => "infinity".into(),
+            1 => "-infinity".into(),
+            2 => format!("{}-01-0{}", 262142 + rng.below(3), 1 + rng.below(9)),
+            _ => format!("20{:02}-0{}-1{}", rng.below(30), 1 + rng.below(9), rng.below(10)),
+        },
+        // As a date, and past `i64` microseconds from 1970 too, which
+        // keys from PostgreSQL's epoch (I49).
+        CompareKind::Timestamp { .. } => match rng.below(12) {
+            0 => "infinity".into(),
+            1 => "-infinity".into(),
+            2 => format!("262143-01-0{} 00:00:00", 1 + rng.below(9)),
+            3 => format!("29427{}-12-31 23:59:59", 1 + rng.below(5)),
+            _ => format!("20{:02}-01-01 0{}:00:00", rng.below(30), rng.below(10)),
+        },
+        CompareKind::Bytea => {
+            let bytes: Vec<u8> =
+                (0..length / 2).map(|_| [0x00, 0x7f, 0xfe, 0xff][rng.below(4) as usize]).collect();
+            render_bytea(&bytes)
+        }
+        _ => {
+            let mut text = String::new();
+            while text.len() < length {
+                text.push(alphabet[rng.below(alphabet.len() as u64) as usize]);
+            }
+            text
+        }
+    }
+}
+
+/// The type the typed read emits a column compared by `kind` as.
+pub(super) fn join_type(kind: &CompareKind) -> DataType {
+    match kind {
+        CompareKind::Int { .. } => DataType::Int64,
+        CompareKind::Bytea => DataType::Binary,
+        CompareKind::Date => DataType::Date32,
+        CompareKind::Timestamp { .. } => {
+            DataType::Timestamp(arrow_schema::TimeUnit::Microsecond, None)
+        }
+        _ => DataType::Utf8View,
     }
 }
 
