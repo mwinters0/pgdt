@@ -2,7 +2,6 @@ use arrow_schema::TimeUnit;
 
 use super::*;
 use crate::compare::comparison_for;
-use crate::declared::domain_not_null;
 use crate::grammar::TextGrammar;
 use crate::grammar::input::text_grammar;
 use pgdt_model::ColumnDef;
@@ -938,32 +937,6 @@ fn a_quoted_type_name_resolves_as_an_ordinary_one() {
         resolve_declared_type(r#""s"."R_multi""#, &ranges),
         TypeOutcome::Mapped(_, NestedPlan::Multirange(_))
     ));
-}
-
-/// **A domain's `NOT NULL` binds every domain over it, and no array of
-/// it** (I76), found in any spelling of its name; a cycle ends.
-#[test]
-fn a_domain_not_null_binds_the_domains_over_it() {
-    let not_null = |base: &str| TypeKind::Domain {
-        base_type: base.into(),
-        collation: None,
-        not_null: true,
-        check: false,
-    };
-    let types = [
-        ty("public.nn", not_null("integer")),
-        ty("public.over", TypeKind::domain("PUBLIC.nn")),
-        ty("public.plain", TypeKind::domain("integer")),
-        ty("public.a", TypeKind::domain("public.b")),
-        ty("public.b", TypeKind::domain("public.a")),
-    ];
-    assert!(domain_not_null("public.nn", &types));
-    assert!(domain_not_null("public.over", &types));
-    assert!(domain_not_null(r#""public"."over""#, &types));
-    assert!(!domain_not_null("public.nn[]", &types));
-    assert!(!domain_not_null("public.plain", &types));
-    assert!(!domain_not_null("integer", &types));
-    assert!(!domain_not_null("public.a", &types));
 }
 
 /// **A `NOT NULL` domain's position refuses a NULL in both plans** — an

@@ -454,3 +454,6 @@ pub(crate) fn typdelim(declared: &str, types: &[TypeDef]) -> Option<u8> {
 pub(crate) fn is_box(terminal: &str) -> bool {
     !split_typmod(terminal).0.contains('.') && builtin_name(terminal).0 == "box"
 }
+
+#[cfg(test)]
+mod tests;
