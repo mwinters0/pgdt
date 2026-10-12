@@ -1,7 +1,7 @@
 //! `uuid`: its reader and its renderer.
 
+use crate::value::digits::HEX_NIBBLE;
 use crate::value::digits::push_hex_pair;
-use crate::value::libc::HEX_NIBBLE;
 
 /// `uuid_in`'s grammar, field and literal alike: 32 hex digits in either case
 /// (PostgreSQL always dumps the canonical lowercase `8-4-4-4-12`, but nothing

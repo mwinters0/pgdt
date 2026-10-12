@@ -1,6 +1,6 @@
 //! The C library calls PostgreSQL's input functions make, as glibc answers
-//! them: `isspace`, a hex nibble, `strtod` and `pg_strtoint`'s grammar.
-//! Shared by the families whose input functions call them.
+//! them: `isspace` and `strtod`. Shared by the families whose input functions
+//! call them.
 
 /// `b[at]` as C reads it, `0` past the end.
 pub(crate) fn c_at(b: &[u8], at: usize) -> u8 {
@@ -169,46 +169,6 @@ pub(crate) fn is_c_space(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
 }
 
-/// `pg_strtoint64_safe`'s grammar from v16, its slow path: the value of `b`,
-/// its magnitude saturated past any width, or `None` where it refuses `b` as
-/// syntax. An underscore stands between two digits, and may follow a prefix
-/// but not open a decimal.
-pub(crate) fn strtoint(b: &[u8]) -> Option<i128> {
-    let mut at = b.iter().take_while(|&&c| is_c_space(c)).count();
-    let negative = b.get(at) == Some(&b'-');
-    at += usize::from(matches!(b.get(at), Some(b'+' | b'-')));
-    let radix = match b.get(at..at + 2) {
-        Some([b'0', b'x' | b'X']) => 16,
-        Some([b'0', b'o' | b'O']) => 8,
-        Some([b'0', b'b' | b'B']) => 2,
-        _ => 10,
-    };
-    if radix != 10 {
-        at += 2;
-    }
-    let first = at;
-    let digit = |at: usize| b.get(at).and_then(|&c| char::from(c).to_digit(radix));
-    let mut magnitude: i128 = 0;
-    loop {
-        if let Some(d) = digit(at) {
-            magnitude = magnitude.saturating_mul(i128::from(radix)).saturating_add(i128::from(d));
-            at += 1;
-        } else if b.get(at) == Some(&b'_') {
-            if radix == 10 && at == first {
-                return None;
-            }
-            at += 1;
-            digit(at)?;
-        } else {
-            break;
-        }
-    }
-    if at == first || !b[at..].iter().all(|&c| is_c_space(c)) {
-        return None;
-    }
-    Some(if negative { -magnitude } else { magnitude })
-}
-
 /// What [`strtod_token`] found.
 pub(crate) enum StrtodToken {
     Decimal,
@@ -302,27 +262,3 @@ pub(crate) fn strtod_token(b: &[u8]) -> Option<(usize, StrtodToken)> {
     let (exponent_len, _) = exponent(at + len, b'e');
     Some((at + len + exponent_len, StrtodToken::Decimal))
 }
-
-/// Nibble value per byte, `BAD_NIBBLE` for anything that is not a hex digit.
-/// The hex decoders reading it loop per *byte* over a field of any length,
-/// so they read a table rather than branching through
-/// [`pgdt_core::internal::hex_val`]'s three ranges: a pair becomes two loads, a
-/// shift and an or, and validity is one bit test on the accumulated `or`.
-pub(crate) const HEX_NIBBLE: [u8; 256] = {
-    let mut table = [BAD_NIBBLE; 256];
-    let mut b = 0usize;
-    while b < 256 {
-        table[b] = match b as u8 {
-            d @ b'0'..=b'9' => d - b'0',
-            d @ b'a'..=b'f' => d - b'a' + 10,
-            d @ b'A'..=b'F' => d - b'A' + 10,
-            _ => BAD_NIBBLE,
-        };
-        b += 1;
-    }
-    table
-};
-
-/// Out of a nibble's range, and out of the low four bits, so `hi | lo` of a
-/// pair carries "either was bad" in its high nibble.
-const BAD_NIBBLE: u8 = 0xFF;

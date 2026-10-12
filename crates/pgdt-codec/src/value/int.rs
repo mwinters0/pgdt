@@ -2,7 +2,7 @@
 //! text, and the readers an order key and a strict parse read one by.
 
 use crate::decode::{Read, Unread};
-use crate::value::libc::{is_c_space, strtoint};
+use crate::value::libc::is_c_space;
 
 /// Why `int2in`, `int4in` or `int8in` reads no value within `range` here from
 /// `text`, Rust's parse having read none: from v16 `pg_strtoint16`, `32` and
@@ -13,12 +13,52 @@ use crate::value::libc::{is_c_space, strtoint};
 /// prefixed. What it reads within `range` is unparsed.
 // pg-refuses: I80 — every refusal here is `pg_strtoint*`'s from v16.
 pub(crate) fn int_unread(text: &str, range: std::ops::RangeInclusive<i64>) -> Unread {
-    match strtoint(text.as_bytes()) {
+    match pg_strtoint(text.as_bytes()) {
         Some(value) if i128::from(*range.start()) <= value && value <= i128::from(*range.end()) => {
             Unread::Unparsed
         }
         _ => Unread::Refused,
     }
+}
+
+/// `pg_strtoint64_safe`'s grammar from v16, its slow path: the value of `b`,
+/// its magnitude saturated past any width, or `None` where it refuses `b` as
+/// syntax. An underscore stands between two digits, and may follow a prefix
+/// but not open a decimal.
+fn pg_strtoint(b: &[u8]) -> Option<i128> {
+    let mut at = b.iter().take_while(|&&c| is_c_space(c)).count();
+    let negative = b.get(at) == Some(&b'-');
+    at += usize::from(matches!(b.get(at), Some(b'+' | b'-')));
+    let radix = match b.get(at..at + 2) {
+        Some([b'0', b'x' | b'X']) => 16,
+        Some([b'0', b'o' | b'O']) => 8,
+        Some([b'0', b'b' | b'B']) => 2,
+        _ => 10,
+    };
+    if radix != 10 {
+        at += 2;
+    }
+    let first = at;
+    let digit = |at: usize| b.get(at).and_then(|&c| char::from(c).to_digit(radix));
+    let mut magnitude: i128 = 0;
+    loop {
+        if let Some(d) = digit(at) {
+            magnitude = magnitude.saturating_mul(i128::from(radix)).saturating_add(i128::from(d));
+            at += 1;
+        } else if b.get(at) == Some(&b'_') {
+            if radix == 10 && at == first {
+                return None;
+            }
+            at += 1;
+            digit(at)?;
+        } else {
+            break;
+        }
+    }
+    if at == first || !b[at..].iter().all(|&c| is_c_space(c)) {
+        return None;
+    }
+    Some(if negative { -magnitude } else { magnitude })
 }
 
 /// Why an `oid` this build does not read is no value: every supported

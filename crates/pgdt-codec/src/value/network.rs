@@ -7,7 +7,8 @@
 use std::cmp::Ordering;
 
 use crate::decode::Unread;
-use crate::value::libc::{HEX_NIBBLE, is_c_space};
+use crate::value::digits::HEX_NIBBLE;
+use crate::value::libc::is_c_space;
 
 /// An `inet` or `cidr` value as `network_in` reads it: its family (`true`
 /// for IPv6), its netmask's bits, and its address left-aligned in sixteen

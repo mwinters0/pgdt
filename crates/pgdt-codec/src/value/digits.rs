@@ -1,7 +1,9 @@
 //! The decimal digit writers every renderer appends a number through, off
-//! one table of digit pairs, and the hex pairs `bytea` and `uuid` are written
-//! with. Private to the families but for [`push_integer`], which a crate above
-//! calls, so `internal` re-exports it.
+//! one table of digit pairs, and hex digits both ways: the nibble table the
+//! hex readers — `bytea`, `uuid`, the network types — read a digit by, and
+//! the hex pairs `bytea` and `uuid` are written with. Private to the families
+//! but for [`push_integer`], which a crate above calls, so `internal`
+//! re-exports it.
 
 /// The 100 two-digit decimal pairs end to end, so `v`'s pair is the two bytes
 /// at `v * 2` — [`HEX_PAIRS`]'s decimal counterpart. Every
@@ -136,8 +138,32 @@ pub(super) fn push_fraction(out: &mut String, micros: i64) {
     out.truncate(end);
 }
 
+/// Nibble value per byte, `BAD_NIBBLE` for anything that is not a hex digit.
+/// The hex decoders reading it loop per *byte* over a field of any length,
+/// so they read a table rather than branching through
+/// [`pgdt_core::internal::hex_val`]'s three ranges: a pair becomes two loads, a
+/// shift and an or, and validity is one bit test on the accumulated `or`.
+pub(crate) const HEX_NIBBLE: [u8; 256] = {
+    let mut table = [BAD_NIBBLE; 256];
+    let mut b = 0usize;
+    while b < 256 {
+        table[b] = match b as u8 {
+            d @ b'0'..=b'9' => d - b'0',
+            d @ b'a'..=b'f' => d - b'a' + 10,
+            d @ b'A'..=b'F' => d - b'A' + 10,
+            _ => BAD_NIBBLE,
+        };
+        b += 1;
+    }
+    table
+};
+
+/// Out of a nibble's range, and out of the low four bits, so `hi | lo` of a
+/// pair carries "either was bad" in its high nibble.
+const BAD_NIBBLE: u8 = 0xFF;
+
 /// The 256 lowercase hex pairs end to end, so byte `b`'s pair is the two bytes
-/// at `b * 2` — [`HEX_NIBBLE`](crate::value::libc::HEX_NIBBLE)'s counterpart in
+/// at `b * 2` — [`HEX_NIBBLE`]'s counterpart in
 /// the render direction. `render_bytea` and `render_uuid` loop per *byte* over a value
 /// of any length, and each knows its whole output length before it starts, so a
 /// byte becomes an indexed slice and a two-byte copy into a pre-sized `String`

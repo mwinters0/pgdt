@@ -2,8 +2,8 @@
 //! refuses a text.
 
 use crate::decode::Unread;
+use crate::value::digits::HEX_NIBBLE;
 use crate::value::digits::push_hex_pair;
-use crate::value::libc::HEX_NIBBLE;
 
 /// Why [`decode_bytea`] read no value from `s`: `byteain`
 /// refuses it, or reads a spelling this build does not — a blank between hex
