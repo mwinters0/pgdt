@@ -828,13 +828,6 @@ impl ComparisonPlan {
         }
     }
 
-    /// Whether gathering keeps bounds and row order for a scalar column of
-    /// this plan: wherever some semantics' order over its text is exact
-    /// ([`Self::bounds_kinds`]).
-    pub fn gathers_bounds(&self) -> bool {
-        self.bounds_kinds()[0].is_some()
-    }
-
     /// Which stored set of bounds and row order is ordered as `semantics`
     /// orders the column, if any — `None` where gathering keeps none in that
     /// order. PostgreSQL's reads the primary set where the register's order
