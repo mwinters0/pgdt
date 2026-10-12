@@ -18,7 +18,7 @@ use pgdt_dump::{ChunkCarry, CopyEnd, CopyScanner, Event, ScanOptions};
 use pgdt_io::{ByteRangeSource, internal::memory_budget_display};
 use pgdt_model::{DumpIndex, Span, SpanBody};
 
-use crate::interior::{CensusPlan, RegionScan, Shortfall, scan_region};
+use crate::interior::{CensusPlan, RegionScan, report_shortfall, scan_region};
 use crate::statistics::account::StatisticsAccount;
 use crate::statistics::gather;
 use crate::statistics::request::StatisticsRequest;
@@ -546,36 +546,6 @@ pub async fn map_forward(
     // `Ok(MapStop::Reached)`s above that stop a query at its settled target.
     tracing::info!(bytes = size, reached_eof = true, "scan complete");
     Ok(MapStop::Reached)
-}
-
-/// Correct `scan started`'s `jobs=` where the leader delivered fewer readers
-/// than the caller asked for, **once per scan**, and say what would buy the
-/// arrangement back (`docs/design/decisions.md`, "D64"). `scan started` names
-/// what was asked for, the source's advice not having been read when it fires;
-/// on a query the same fact is a `pgdt_query::PlanNote` on a `TableStream`.
-///
-/// **Silence means the leader dispatched the announced count, or refused the
-/// block on its own account** — and never
-/// that every worker read at once. A decline is *not* silent: the shortfall is
-/// computed before it and returned with it ([`Shortfall`]), so
-/// a region left serial by the budget or by the source still prints. Only
-/// `scan_region`'s refusals about its own block are unreported, deliberately:
-/// its floor, and a region the source advises one partition of where the
-/// whole file advises more. `flag` keeps one scan-wide fact from printing
-/// once per block, which is also why [`Shortfall`] reports no
-/// reason a later block could answer differently.
-pub(crate) fn report_shortfall(flag: &mut bool, shortfall: Option<Shortfall>) {
-    let Some(shortfall) = shortfall.filter(|_| !*flag) else {
-        return;
-    };
-    *flag = true;
-    tracing::info!(
-        jobs = shortfall.delivered,
-        asked = shortfall.asked,
-        bound_by = shortfall.bound_by.as_str(),
-        would_hold_bytes = shortfall.would_hold_bytes,
-        "scan arrangement",
-    );
 }
 
 /// What closing one `COPY` block asks of the loop that closed it.

@@ -678,7 +678,7 @@ fn an_xz_parse_defaults_to_the_cores_and_a_plain_one_to_serial() {
     assert!(plain.contains("jobs=1"), "{plain}");
 }
 
-/// Lines correcting the arrangement (`stream::report_shortfall`).
+/// Lines correcting the arrangement (`pgdt_mapping`'s `interior::report_shortfall`).
 fn arrangement_lines(stderr: &str) -> Vec<&str> {
     stderr.lines().filter(|l| l.contains("scan arrangement")).collect()
 }

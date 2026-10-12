@@ -1,15 +1,17 @@
-use super::region::BoundBy;
 use super::*;
 use pgdt_core::Error;
 use pgdt_dump::ChunkCarry;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::internal::Builder;
+use pgdt_dump::{CopyScanner, Event};
 use pgdt_fixtures::{edge_cases, fixture};
 use pgdt_io::Cancellation;
 use pgdt_io::{ByteRangeSource, PartitionRead};
 use pgdt_io::{LocalFileSource, Parallelism};
-use pgdt_model::UnrepresentableTier;
+use pgdt_model::internal::FieldCount;
+use pgdt_model::{BlockCensus, UnrepresentableTier};
 use pgdt_model::{DataBlock, SpanBody};
+use std::sync::Arc;
 
 /// A cancellation already asked for, so the scan under it stops at its
 /// first poll rather than at a moment a test would have to arrange.

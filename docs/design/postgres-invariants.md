@@ -5786,7 +5786,7 @@ restoring psql's major being outside the file.
 v16.15 (observed).
 
 **Relied on by:** `scan.rs`, `CopyScanner::next_event` and `RowEnding`;
-`interior.rs`, `BlockEndings`.
+`interior/piece.rs`, `BlockEndings`.
 
 **Re-verify.**
 

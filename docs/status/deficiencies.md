@@ -150,7 +150,7 @@ than reading as a phase nobody has sliced.
   blocks much smaller than that window is read and parsed two orders of
   magnitude over, worse at every worker added and reached with no flag typed.
   **(c) unowned**; promoted by a phase taking up leader scheduling. Detail:
-  `crates/pgdt-mapping/src/interior/region.rs`.
+  `crates/pgdt-mapping/src/interior.rs`.
 
 - **KD23** — a `pgdt query` sub-stream can pin several decoded blocks where the
   budget bills one: a query partition is cut over a whole `CopyBlock` rather

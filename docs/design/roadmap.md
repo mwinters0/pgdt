@@ -1118,7 +1118,7 @@ which is what makes the difference worth minding at the moment one is found.
   no-limit cap".
 
 - **The `POOL_MAX_BYTES` cap on the plain partition product, lifted, so a
-  raised `--chunk-size` keeps its multiple.** `interior::region::scan_partition` reads a
+  raised `--chunk-size` keeps its multiple.** `interior::scan_partition` reads a
   plain piece a chunk at a time (`pgdt_io::PartitionRead`), so the plain source is
   single-unit, every chunk-sized buffer a worker takes is pooled, and no partition-length
   buffer is allocated for an arena to retain — a probe on the build that

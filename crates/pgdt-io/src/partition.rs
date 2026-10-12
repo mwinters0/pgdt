@@ -102,7 +102,7 @@ pub enum PartitionRead {
     /// chunk on the chunked arm.
     ///
     /// **The unit is what bounds the buffer, and it is the source's number
-    /// rather than the cut's.** `pgdt_mapping::interior::region::scan_partition` reads
+    /// rather than the cut's.** `pgdt_mapping::interior::scan_partition` reads
     /// `min(piece, unit)`, so at the shipped width — where a piece *is* one
     /// unit — this is the piece exactly, and above it the buffer is capped at
     /// one unit instead of growing with the width. It does not remove the
@@ -234,7 +234,7 @@ impl Partitioning {
     }
 
     /// How a worker should read one of these partitions — see
-    /// [`PartitionRead`], and `pgdt_mapping::interior::region::run_region`, which is the
+    /// [`PartitionRead`], and `pgdt_mapping::interior::run_region`, which is the
     /// one caller that reads it.
     pub fn partition_read(&self) -> PartitionRead {
         self.read
@@ -265,7 +265,7 @@ impl Partitioning {
     }
 
     /// Where a window of `want` partitions starting at `start` ends, never
-    /// past `limit` — the number `pgdt_mapping::interior::region::run_region` hands
+    /// past `limit` — the number `pgdt_mapping::interior::run_region` hands
     /// `cut`, and **the cut size, which is not the memory
     /// charge**.
     ///

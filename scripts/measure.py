@@ -6481,7 +6481,7 @@ STREAM = (
 #: the scheduler handing them out.
 INTERIOR = (
     "crates/pgdt-mapping/src/interior.rs",
-    "crates/pgdt-mapping/src/interior/region.rs",
+    "crates/pgdt-mapping/src/interior/piece.rs",
 )
 SCAN = (
     "crates/pgdt-dump/src/scan.rs",

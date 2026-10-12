@@ -41,7 +41,7 @@ retention list is flat below `POOL_DEPTH` and a unit per reader above, which no 
 never shrunk (`BlockCache::affordable`). Evidence: `reserve`, `parallel-peak-rss`.
 
 ### D5 A wait is a permission the read loop grants
-`NeverWait` is the default and allocates past the budget. Only `interior::region::scan_region` grants
+`NeverWait` is the default and allocates past the budget. Only `interior::scan_region` grants
 `MayWait`, and restores it on exit: each leader worker holds one read, so a blocked one waits on a
 sibling that finishes. A loop retaining into a batch holds the buffers it would wait on, and the
 block pool never waits whatever the loop said. Rejected: gating on `Parallelism`.

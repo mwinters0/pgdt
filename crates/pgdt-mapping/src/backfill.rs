@@ -20,8 +20,8 @@ use pgdt_model::{
     IgnoredRefusals, PostgresInvalidValues, SpanBody, internal::BlockObserver,
 };
 
-use crate::forward::{SaveThrottle, cancelled_read, report_shortfall};
-use crate::interior::{CensusPlan, RegionScan, scan_region};
+use crate::forward::{SaveThrottle, cancelled_read};
+use crate::interior::{CensusPlan, RegionScan, report_shortfall, scan_region};
 use crate::statistics::account::{StatisticsAccount, Term};
 use crate::statistics::density::BlockStatisticsExt;
 use crate::statistics::gather;
