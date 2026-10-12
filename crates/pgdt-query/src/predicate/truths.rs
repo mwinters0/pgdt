@@ -1,7 +1,7 @@
-//! A row group's verdict: every value a resolved tree could take over the
-//! rows of one group, read off the group's statistics instead of its rows
-//! (`docs/design/decisions.md`, "D75"), and the ordering terms a sorted run's
-//! stop reads.
+//! What a resolved tree answers off a group's statistics: its verdict, every
+//! value it could take over the rows of one group, read off the statistics
+//! instead of the rows (`docs/design/decisions.md`, "D75"); and the terms a
+//! sorted run's stop reads.
 
 use pgdt_codec::compare::CompareKind;
 use pgdt_codec::internal::{OrderKey, compare_keys, order_key};
@@ -364,10 +364,11 @@ impl ResolvedExpr {
     /// ([`BelievedStatistics::bounds`](super::resolve::BelievedStatistics::bounds)). A term
     /// beneath an `Or` or a `Not` is not one: a row can be kept while it is `False`.
     pub(crate) fn required_ordering_terms(&self) -> Vec<&ResolvedTerm> {
-        let mut out = Vec::new();
-        let mut pending = vec![self];
-        while let Some(node) = pending.pop() {
-            match node {
+        let mut conjuncts = Vec::new();
+        self.conjuncts(&mut conjuncts);
+        conjuncts
+            .into_iter()
+            .filter_map(|conjunct| match conjunct {
                 Self::Term(term)
                     if term.op.is_ordering()
                         && term
@@ -375,13 +376,11 @@ impl ResolvedExpr {
                             .as_ref()
                             .is_some_and(|c| c.statistics.bounds.is_some()) =>
                 {
-                    out.push(term);
+                    Some(term)
                 }
-                Self::And(children) => pending.extend(children.iter().rev()),
-                Self::Term(_) | Self::In(_) | Self::Or(_) | Self::Not(_) => {}
-            }
-        }
-        out
+                _ => None,
+            })
+            .collect()
     }
 }
 

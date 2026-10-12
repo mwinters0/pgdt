@@ -896,6 +896,15 @@ impl ResolvedExpr {
             Self::Not(inner) => inner.collect_notes(out),
         }
     }
+
+    /// This node's conjuncts, in order, a conjunction nested in it read as
+    /// part of it.
+    pub(super) fn conjuncts<'a>(&'a self, out: &mut Vec<&'a ResolvedExpr>) {
+        match self {
+            Self::And(children) => children.iter().for_each(|child| child.conjuncts(out)),
+            other => out.push(other),
+        }
+    }
 }
 
 /// Resolve `filter` against `resolved` — the block's own **unprojected**

@@ -389,15 +389,6 @@ impl ResolvedExpr {
         }
     }
 
-    /// This node's conjuncts, in order, a conjunction nested in it read as
-    /// part of it.
-    fn conjuncts<'a>(&'a self, out: &mut Vec<&'a ResolvedExpr>) {
-        match self {
-            Self::And(children) => children.iter().for_each(|child| child.conjuncts(out)),
-            other => out.push(other),
-        }
-    }
-
     /// Whether evaluating this tree reads a field at all. An empty
     /// conjunction — the `Expr::And(vec![])` a query with no filter carries —
     /// reads nothing, and a stream whose projection is also empty therefore
