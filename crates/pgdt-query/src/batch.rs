@@ -14,9 +14,7 @@ mod chunks;
 
 #[cfg(test)]
 pub(crate) use self::builder::column_of;
-pub(crate) use self::builder::{
-    ColumnBuilder, append_typed, finish_column, new_column_builder, text_refused,
-};
+pub(crate) use self::builder::{ColumnBuilder, append_typed, finish_column, new_column_builder};
 pub(crate) use self::chunks::RetainedChunks;
 
 use std::ops::Range;
@@ -30,7 +28,7 @@ use pgdt_core::{Error, Result};
 use pgdt_core::{RawRow, RowSplit};
 use pgdt_model::PostgresInvalidValues;
 
-use self::builder::append_null;
+use self::builder::{append_null, text_refused};
 use self::chunks::push_utf8view_field;
 use crate::options::QueryOptions;
 
@@ -273,13 +271,13 @@ impl RowBatcher {
             append_null(builder);
             return Ok(());
         }
+        // The scan's own path for a text column: a view into the retained
+        // read buffer where it can be one, ahead of `append_typed`'s copy,
+        // which also answers the text its length typmod refuses.
         let appended = match builder {
-            ColumnBuilder::Utf8View(_, length)
-                if text_refused(&text, *length, options.postgres_invalid_values) =>
+            ColumnBuilder::Utf8View(b, length)
+                if !text_refused(&text, *length, options.postgres_invalid_values) =>
             {
-                Err(text.into_owned())
-            }
-            ColumnBuilder::Utf8View(b, _) => {
                 push_utf8view_field(b, col, field_offset, field_len, text, chunks);
                 Ok(())
             }

@@ -301,9 +301,9 @@ pub(super) fn append_null(builder: &mut ColumnBuilder) {
 }
 
 /// Append one already-COPY-unescaped value — or SQL NULL — into a builder
-/// sitting *inside* a nested value. Unlike the top level, a `Utf8View` here
-/// copies (`docs/design/decisions.md`, "D29"; `measurements.md`,
-/// `nested-decode-micro`).
+/// sitting *inside* a nested value. Unlike the scan's top level, a
+/// `Utf8View` here copies (`docs/design/decisions.md`, "D29";
+/// `measurements.md`, `nested-decode-micro`).
 ///
 /// The error is unit rather than the offending text: `Error::FieldDecode`
 /// reports the *field*'s value, so [`append_typed`] attributes a failure deep
@@ -322,16 +322,7 @@ fn append_nested(
             append_null(builder);
             Ok(())
         }
-        Some(text) => match builder {
-            ColumnBuilder::Utf8View(b, length) => {
-                if text_refused(text, *length, invalid) {
-                    return Err(());
-                }
-                b.append_value(text);
-                Ok(())
-            }
-            _ => append_typed(builder, text, invalid).map_err(|_| ()),
-        },
+        Some(text) => append_typed(builder, text, invalid).map_err(|_| ()),
     }
 }
 
@@ -390,7 +381,7 @@ fn append_range(
 /// Whether a text held to `length` — a `character varying(n)`'s or
 /// `character(n)`'s — is refused, as `COPY` refuses it (I75), unless `invalid`
 /// says to read it as it is.
-pub(crate) fn text_refused(
+pub(super) fn text_refused(
     text: &str,
     length: Option<u32>,
     invalid: PostgresInvalidValues,
@@ -402,11 +393,12 @@ pub(crate) fn text_refused(
 /// Decode `text` (already COPY-unescaped) per `builder`'s type and append it,
 /// via `pgdt_codec::decode`'s per-type decoders and `pgdt_codec::nested`'s literal
 /// codecs. `Err(text)` on a decode failure — the caller wraps it into
-/// `Error::FieldDecode` with the table/column/row context. Never called for a
-/// *top-level* `ColumnBuilder::Utf8View`, which `push_field` handles itself
-/// (its zero-copy path needs the raw field's byte offset); a nested one
-/// reaches [`append_nested`] instead and copies. `invalid` is how a field its
-/// type's `*_in` refuses is read, at any depth.
+/// `Error::FieldDecode` with the table/column/row context. A
+/// `ColumnBuilder::Utf8View` copies `text`, refused where its length typmod
+/// refuses it ([`text_refused`]); the scan's `push_field` takes its zero-copy
+/// path ahead of this one, which needs the raw field's byte offset
+/// (`docs/design/decisions.md`, "D29"). `invalid` is how a field its type's
+/// `*_in` refuses is read, at any depth.
 pub(crate) fn append_typed(
     builder: &mut ColumnBuilder,
     text: &str,
@@ -414,7 +406,12 @@ pub(crate) fn append_typed(
 ) -> std::result::Result<(), String> {
     let fail = || text.to_string();
     match builder {
-        ColumnBuilder::Utf8View(..) => unreachable!("caller handles Utf8View directly"),
+        ColumnBuilder::Utf8View(b, length) => {
+            if text_refused(text, *length, invalid) {
+                return Err(fail());
+            }
+            b.append_value(text);
+        }
         ColumnBuilder::Array(parts) => {
             let literal = decode_array(text).ok_or_else(fail)?;
             if literal.is_decorated() {
@@ -608,15 +605,7 @@ pub(crate) fn column_of(
 ) -> std::result::Result<ArrayRef, String> {
     let mut builder = new_column_builder(data_type, plan);
     for text in values {
-        match &mut builder {
-            ColumnBuilder::Utf8View(_, length)
-                if text_refused(text, *length, PostgresInvalidValues::Default) =>
-            {
-                return Err(text.to_string());
-            }
-            ColumnBuilder::Utf8View(b, _) => b.append_value(text),
-            typed => append_typed(typed, text, PostgresInvalidValues::Default)?,
-        }
+        append_typed(&mut builder, text, PostgresInvalidValues::Default)?;
     }
     Ok(finish_column(&mut builder))
 }

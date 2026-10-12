@@ -19,7 +19,7 @@ use pgdt_codec::pgtype::NestedPlan;
 use pgdt_core::{Error, Result};
 use pgdt_model::PostgresInvalidValues;
 
-use crate::batch::{ColumnBuilder, append_typed, finish_column, new_column_builder, text_refused};
+use crate::batch::{append_typed, finish_column, new_column_builder};
 
 /// Render one row of `column` back to the same PostgreSQL text form
 /// `pgdt_core::decode_field` would have produced for it
@@ -33,8 +33,9 @@ use crate::batch::{ColumnBuilder, append_typed, finish_column, new_column_builde
 /// crate builds can reach it, so it is a statement about arrays a caller
 /// assembled itself.
 ///
-/// `plan` is needed for the same reason [`ColumnBuilder`] needs it: the Arrow
-/// type does not say which literal form a nested value is written in, and
+/// `plan` is needed for the same reason
+/// [`ColumnBuilder`](crate::batch::ColumnBuilder) needs it: the Arrow type
+/// does not say which literal form a nested value is written in, and
 /// `int4range[]` and `int4multirange` share one. It comes from
 /// [`pgdt_codec::ResolvedSchema::plans`], positionally; a caller that
 /// knows its column is scalar passes `&NestedPlan::Scalar`, which is
@@ -64,17 +65,7 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
 /// `plan` travels beside the Arrow type as it does for [`render_field`].
 pub fn decode_field(data_type: &DataType, plan: &NestedPlan, text: &str) -> Option<ArrayRef> {
     let mut builder = new_column_builder(data_type, plan);
-    match &mut builder {
-        // `append_typed` leaves this one to its caller, the scan's path being
-        // the borrowing one.
-        ColumnBuilder::Utf8View(_, length)
-            if text_refused(text, *length, PostgresInvalidValues::Default) =>
-        {
-            return None;
-        }
-        ColumnBuilder::Utf8View(b, _) => b.append_value(text),
-        _ => append_typed(&mut builder, text, PostgresInvalidValues::Default).ok()?,
-    }
+    append_typed(&mut builder, text, PostgresInvalidValues::Default).ok()?;
     Some(finish_column(&mut builder))
 }
 
