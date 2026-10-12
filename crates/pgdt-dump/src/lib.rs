@@ -32,5 +32,5 @@ pub mod internal {
         Builder, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
     };
     pub use crate::preamble::scan_preamble;
-    pub use crate::scan::{CopyScannerExt, PieceEndings, RowEnding, announce_cancellation};
+    pub use crate::scan::{CopyScannerExt, PieceEndings, RowEnding, announce_read_loop};
 }

@@ -21,7 +21,7 @@ pub use whole_file::{MapRun, build_index, build_map, map_file};
 /// because a crate boundary forced it, and named here so a caller reaching
 /// past the API names the word.
 pub mod internal {
-    pub use crate::backfill::{announce_read_loop, reread_rows};
+    pub use crate::backfill::reread_rows;
     pub use crate::forward::{MapStop, Pass, map_forward, splice};
     pub use crate::statistics::account::StatisticsAccount;
     #[cfg(feature = "test-support")]

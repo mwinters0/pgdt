@@ -11,13 +11,13 @@ use pgdt_core::{Error, Result};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::attach_text;
 use pgdt_dump::cache::{CacheLoad, CacheMode, SourceWatch};
-use pgdt_dump::internal::scan_preamble;
+use pgdt_dump::internal::{announce_read_loop, scan_preamble};
 use pgdt_io::ByteRangeSource;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata};
 
 use super::resume::ResumeToken;
 use crate::options::{QueryOptions, ScanExtent};
-use pgdt_mapping::internal::{MapStop, Pass, announce_read_loop, map_forward, reread_rows, splice};
+use pgdt_mapping::internal::{MapStop, Pass, map_forward, reread_rows, splice};
 
 /// What a query's mapping pass settled: the blocks this query will replay,
 /// and the DDL to type them against.
@@ -215,7 +215,7 @@ async fn census_metadata_level(
         blocks = lacking.len(),
         "table mapped at the metadata level: reading its rows again for this query's census",
     );
-    announce_read_loop(source, scan_options);
+    announce_read_loop(source, scan_options, scan_options.parallelism);
     let cache_path = match cache {
         CacheMode::Enabled { path, .. } => Some(path.as_path()),
         CacheMode::Disabled { .. } | CacheMode::Offline(_) => None,

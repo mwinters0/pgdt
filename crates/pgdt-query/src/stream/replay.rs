@@ -20,9 +20,9 @@ use pgdt_codec::ResolvedSchema;
 use pgdt_core::CopyHeader;
 use pgdt_core::{Error, Result};
 use pgdt_core::{RawRow, RowSplit, validated_prefix};
-use pgdt_dump::internal::announce_cancellation;
+use pgdt_dump::internal::announce_read_loop;
 use pgdt_dump::{ChunkCarry, CopyScanner, Event, Row};
-use pgdt_io::{ByteRangeSource, WaitPolicy};
+use pgdt_io::ByteRangeSource;
 
 use self::dynamic::{DynamicRead, Skip};
 use self::plan::{ReplayPlan, resolve_for_query};
@@ -65,19 +65,15 @@ pub(super) fn replay<'a>(
         let semantics = query_options.semantics;
 
         // The chunk length every segment's replay repeats, announced once for
-        // the whole sub-stream (`ByteRangeSource::hint_read_size`). The budget
-        // comes from `QueryOptions`, not `ScanOptions`: a query states the two
-        // passes' parallelism separately because they split differently.
-        source.hint_read_size(scan_options.chunk_size_bytes);
-        source.hint_parallelism(query_options.parallelism);
-        announce_cancellation(source, scan_options);
-        // **The replay loop could not grant a wait**
-        // (`docs/design/decisions.md`, "D5"): a batch's `StringViewBuilder`
-        // holds every chunk it has taken a `Utf8View` into until it flushes,
-        // so this loop can never be the task that frees one it waits on.
-        // Stated rather than left to the default, so whatever the mapping pass
-        // granted is un-stated on the same source.
-        source.hint_wait_policy(WaitPolicy::NeverWait);
+        // the whole sub-stream. The budget comes from `QueryOptions`, not
+        // `ScanOptions`: a query states the two passes' parallelism separately
+        // because they split differently. **The replay loop could not grant a
+        // wait** (`docs/design/decisions.md`, "D5"): a batch's
+        // `StringViewBuilder` holds every chunk it has taken a `Utf8View` into
+        // until it flushes, so this loop can never be the task that frees one
+        // it waits on. Stated rather than left to the default, so whatever the
+        // mapping pass granted is un-stated on the same source.
+        announce_read_loop(source, scan_options, query_options.parallelism);
 
         let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
         // Where a token paused inside a block, and which block: its scanner

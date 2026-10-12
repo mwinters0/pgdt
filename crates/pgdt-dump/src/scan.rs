@@ -806,10 +806,32 @@ impl ScanOptions {
 /// Hand a source the caller's cancellation where there is one, so a source
 /// whose wait is not a `pread` can drop the read in flight rather than be
 /// polled at the far side of it ([`ByteRangeSource::hint_cancellation`]).
-pub fn announce_cancellation(source: &dyn ByteRangeSource, options: &ScanOptions) {
+fn announce_cancellation(source: &dyn ByteRangeSource, options: &ScanOptions) {
     if let Some(cancel) = &options.cancel {
         source.hint_cancellation(Arc::clone(cancel));
     }
+}
+
+/// **The hints every top-level read loop announces before its first read**:
+/// the chunk length it repeats until it stops, so a buffer-recycling source
+/// can keep one of that size whatever it is
+/// ([`ByteRangeSource::hint_read_size`]); `parallelism`, the budget the
+/// caller allows it to keep them inside
+/// ([`ByteRangeSource::hint_parallelism`]) — a scan's own, or one a query
+/// states for its replay apart from its mapping pass; the caller's
+/// cancellation where there is one; and that the loop grants no wait
+/// ([`ByteRangeSource::hint_wait_policy`]): the leader's fused worker is the
+/// holder that needs the bound and is where one is granted (`pgdt_mapping`'s
+/// `scan_region`, and `docs/design/decisions.md`, "D5").
+pub fn announce_read_loop(
+    source: &dyn ByteRangeSource,
+    options: &ScanOptions,
+    parallelism: Parallelism,
+) {
+    source.hint_read_size(options.chunk_size_bytes);
+    source.hint_parallelism(parallelism);
+    announce_cancellation(source, options);
+    source.hint_wait_policy(WaitPolicy::NeverWait);
 }
 
 /// Scan `source` from the beginning, invoking `on_event` for every event.
@@ -836,18 +858,7 @@ where
         memory_bytes = %memory_budget_display(options.parallelism),
         "preamble scan started",
     );
-    // The chunk length this loop will ask for until EOF, announced once so a
-    // buffer-recycling source can keep one of that size whatever it is
-    // (`ByteRangeSource::hint_read_size`), and the budget the caller allows it
-    // to keep them inside (`ByteRangeSource::hint_parallelism`).
-    source.hint_read_size(options.chunk_size_bytes);
-    source.hint_parallelism(options.parallelism);
-    announce_cancellation(source, options);
-    // This loop grants no wait (`ByteRangeSource::hint_wait_policy`): the
-    // leader's fused worker is the holder that needs the bound and is where
-    // one is granted (`pgdt_mapping`'s `scan_region`, and
-    // `docs/design/decisions.md`, "D5").
-    source.hint_wait_policy(WaitPolicy::NeverWait);
+    announce_read_loop(source, options, options.parallelism);
     let mut scanner = CopyScanner::new();
     let mut carry = ChunkCarry::new();
     let mut read_pos = 0u64;

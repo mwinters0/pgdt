@@ -12,10 +12,10 @@ use pgdt_dump::attach_text;
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
-use pgdt_dump::internal::announce_cancellation;
+use pgdt_dump::internal::announce_read_loop;
 use pgdt_dump::internal::{tiling_diagnostics, toc_coverage_diagnostic};
 use pgdt_dump::{ChunkCarry, CopyEnd, CopyScanner, Event, ScanOptions};
-use pgdt_io::{ByteRangeSource, WaitPolicy, internal::memory_budget_display};
+use pgdt_io::{ByteRangeSource, internal::memory_budget_display};
 use pgdt_model::{DumpIndex, Span, SpanBody};
 
 use crate::interior::{CensusPlan, RegionScan, Shortfall, scan_region};
@@ -236,15 +236,10 @@ pub async fn map_forward(
     let mut metadata_covers: Option<Option<String>> =
         index.metadata.as_ref().and_then(|m| m.databases.last()).map(|db| db.name.clone());
 
-    // The chunk length this loop repeats to the frontier, and the budget it
-    // may keep buffers inside (`ByteRangeSource::hint_read_size`).
-    source.hint_read_size(scan_options.chunk_size_bytes);
-    source.hint_parallelism(scan_options.parallelism);
-    announce_cancellation(source, scan_options);
     // **This loop grants no wait** (`docs/design/decisions.md`, "D5"): the
     // leader's fused worker grants it for itself and restores this policy on
     // the way out ([`scan_region`]).
-    source.hint_wait_policy(WaitPolicy::NeverWait);
+    announce_read_loop(source, scan_options, scan_options.parallelism);
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
     let mut carry = ChunkCarry::new();

@@ -11,9 +11,9 @@ use pgdt_codec::internal::counter_for;
 use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{Error, Result};
 use pgdt_dump::cache::{CacheMode, SourceWatch};
-use pgdt_dump::internal::announce_cancellation;
+use pgdt_dump::internal::announce_read_loop;
 use pgdt_dump::{ChunkCarry, CopyEnd, CopyScanner, Event, ScanOptions};
-use pgdt_io::{ByteRangeSource, WaitPolicy};
+use pgdt_io::ByteRangeSource;
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
     BlockCensus, BlockGathered, BlockStatistics, CopyBlock, DataBlock, DumpIndex, DumpMetadata,
@@ -130,7 +130,7 @@ pub(crate) async fn backfill_statistics(
     if unchecked > 0 {
         tracing::info!(blocks = unchecked, "check of blocks no strict parse checked started");
     }
-    announce_read_loop(source, scan_options);
+    announce_read_loop(source, scan_options, scan_options.parallelism);
     // There is no cache file to name in a `CachedBlockChanged` refusal
     // unless one is enabled. A block can lack what was asked under any mode —
     // a stated maximum no single read delivers leaves a freshly mapped block
@@ -306,16 +306,6 @@ pub(crate) fn report_statistics_declines(
     declined
 }
 
-/// The hints every top-level read loop announces before its first read
-/// (`pgdt_dump::scan`, [`map_forward`](crate::forward::map_forward)): its chunk length, its budget, the
-/// caller's cancellation where there is one, and that it grants no wait.
-pub fn announce_read_loop(source: &dyn ByteRangeSource, scan_options: &ScanOptions) {
-    source.hint_read_size(scan_options.chunk_size_bytes);
-    source.hint_parallelism(scan_options.parallelism);
-    announce_cancellation(source, scan_options);
-    source.hint_wait_policy(WaitPolicy::NeverWait);
-}
-
 /// What re-reading one block the map already holds yields
 /// ([`gather_block_statistics`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -374,7 +364,7 @@ pub async fn gather_block_statistics(
     backfill: &StatisticsBackfill,
 ) -> Result<Option<BlockReread>> {
     let size = source.size().await?;
-    announce_read_loop(source, scan_options);
+    announce_read_loop(source, scan_options, scan_options.parallelism);
     let mut shortfall_reported = false;
     reread_block(
         source,
