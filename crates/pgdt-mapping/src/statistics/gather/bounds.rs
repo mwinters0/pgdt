@@ -17,12 +17,12 @@ use pgdt_codec::{
 };
 use pgdt_model::{
     Bounds, BoundsView, ColumnBounds, DICTIONARY_ENTRY_MAX_BYTES, UnrepresentableTier,
-    internal::text_heap,
+    internal::{text_heap, vec_heap},
 };
 
 use super::charge::{push_charged, reserve_charged};
 use super::clip::{CLIP_BYTES, Clipped, text_prefix};
-use super::order::{FirstValue, Previous, ViewOrders};
+use super::order::ViewOrders;
 use crate::statistics::account::Charge;
 #[cfg(any(test, feature = "test-support"))]
 use crate::statistics::account::Term;
@@ -98,18 +98,18 @@ pub(super) struct BoundsGatherer {
     /// does (`docs/design/decisions.md`, "D82"). **Over the values every
     /// layer's type holds**: a value past a tier is kept apart, in
     /// [`Self::tiers`].
-    pub(super) groups: Vec<Option<Bounds>>,
+    groups: Vec<Option<Bounds>>,
     /// Per closed group, [`LOST`].
-    pub(super) flags: Vec<u8>,
+    flags: Vec<u8>,
     /// Per closed group, its values past each tier as `groups` and `flags`
     /// hold them, `None` for a group holding none — **empty until a group
     /// holds one**, then one per closed group, so a column never meeting such
     /// a value pays nothing for the views (`docs/design/decisions.md`, "D97").
-    pub(super) tiers: Vec<Option<Box<ClosedTiers>>>,
+    tiers: Vec<Option<Box<ClosedTiers>>>,
     /// The text every entry of `groups` and `tiers` holds, summed as they are
     /// pushed, and each boxed entry of `tiers`.
-    pub(super) stored: u64,
-    pub(super) rows: ViewOrders,
+    stored: u64,
+    rows: ViewOrders,
 }
 
 /// One closed group's values past each tier, in [`tier_slot`] order, as
@@ -292,6 +292,27 @@ impl BoundsGatherer {
         Self::of(self.order.clone())
     }
 
+    /// The heap this gatherer holds: its closed groups, the text they hold
+    /// and its row order.
+    pub(super) fn held(&self) -> u64 {
+        vec_heap(&self.groups)
+            + vec_heap(&self.flags)
+            + vec_heap(&self.tiers)
+            + self.stored
+            + self.rows.heap_bytes()
+    }
+
+    /// The heap a row can change: the row order.
+    pub(super) fn open_heap(&self) -> u64 {
+        self.rows.heap_bytes()
+    }
+
+    /// Fold `later`'s row order, over the rows following these, into this
+    /// one's, leaving `later`'s empty.
+    pub(super) fn absorb_rows(&mut self, later: &mut BoundsGatherer) {
+        self.rows.absorb(mem::take(&mut later.rows));
+    }
+
     pub(super) fn fresh_group(&self) -> GroupBounds {
         match self.order {
             Order::Bytewise(_) => GroupBounds::Bytewise { min: None, max: None, lost: false },
@@ -353,20 +374,7 @@ impl BoundsGatherer {
                 if max.as_ref().is_none_or(|m| m.locate(text) == Some(Ordering::Greater)) {
                     *max = Some(Clipped::of(text));
                 }
-                let rows = &mut self.rows.plain;
-                let step = match &rows.previous {
-                    Some(Previous::Bytewise(previous)) => Some(previous.locate(text)),
-                    Some(Previous::Keyed(_)) => unreachable!("a bytewise order places no key"),
-                    None => {
-                        let prefix = text.as_bytes()[..text.len().min(CLIP_BYTES)].to_vec();
-                        rows.first = Some(FirstValue::Bytewise { prefix, len: text.len() });
-                        None
-                    }
-                };
-                rows.previous = Some(Previous::Bytewise(Clipped::of(text)));
-                if let Some(step) = step {
-                    rows.step(step);
-                }
+                self.rows.place_bytewise(text);
             }
             Order::Keyed(kind) => {
                 if text.len() > DICTIONARY_ENTRY_MAX_BYTES {
@@ -473,9 +481,23 @@ impl BoundsGatherer {
             + self.tiers.iter().map(tiers_heap).sum::<u64>();
     }
 
+    /// Append `later`'s closed groups, which follow this gatherer's,
+    /// **draining `later` in place**: its tiers first, then its groups and
+    /// their flags, the text they hold moving with them. The caller moves
+    /// the account by what the move changed.
+    pub(super) fn append(&mut self, later: &mut BoundsGatherer, charge: &mut Charge) {
+        self.append_tiers(later, charge);
+        reserve_charged(&mut self.groups, later.groups.len(), charge);
+        reserve_charged(&mut self.flags, later.flags.len(), charge);
+        self.groups.append(&mut later.groups);
+        self.flags.append(&mut later.flags);
+        self.stored += mem::take(&mut later.stored);
+        (later.groups, later.flags) = (Vec::new(), Vec::new());
+    }
+
     /// Append `later`'s tiers, which follow this gatherer's, ahead of its
     /// groups: both lists keep one per closed group where either holds any.
-    pub(super) fn append_tiers(&mut self, later: &mut BoundsGatherer, charge: &mut Charge) {
+    fn append_tiers(&mut self, later: &mut BoundsGatherer, charge: &mut Charge) {
         if self.tiers.is_empty() && later.tiers.is_empty() {
             return;
         }

@@ -51,12 +51,12 @@ pub(super) struct ColumnGatherer {
     /// ([`ColumnStatistics::unrepresentable`]).
     unrepresentable: Option<Vec<Unrepresentable>>,
     /// One per [`pgdt_model::BoundsSet`], in its order.
-    pub(super) bounds: [Option<BoundsGatherer>; 2],
+    bounds: [Option<BoundsGatherer>; 2],
     dictionary: Option<DictionaryGatherer>,
     /// The column over the open group.
-    pub(super) group: GroupState,
+    group: GroupState,
     /// The column over a piece's held first group ([`Gatherer::head`](super::gatherer::Gatherer::head)).
-    pub(super) head: Option<GroupState>,
+    head: Option<GroupState>,
     /// Whether a field its type's `*_in` refuses stops the block, or is kept
     /// out of the group's statistics ([`Self::observe`]).
     invalid: PostgresInvalidValues,
@@ -137,11 +137,7 @@ impl ColumnGatherer {
             + self.unrepresentable.as_ref().map_or(0, vec_heap);
         let mut structure = named + per_group + self.group.heap_bytes() + head;
         for bounds in self.bounds.iter().flatten() {
-            structure += vec_heap(&bounds.groups)
-                + vec_heap(&bounds.flags)
-                + vec_heap(&bounds.tiers)
-                + bounds.stored
-                + bounds.rows.heap_bytes();
+            structure += bounds.held();
         }
         let mut interned = 0;
         if let Some(dictionary) = &self.dictionary {
@@ -155,7 +151,7 @@ impl ColumnGatherer {
     /// The heap a row can change: the open group and the row order.
     fn open_heap(&self) -> u64 {
         self.group.heap_bytes()
-            + self.bounds.iter().flatten().map(|b| b.rows.heap_bytes()).sum::<u64>()
+            + self.bounds.iter().flatten().map(BoundsGatherer::open_heap).sum::<u64>()
     }
 
     /// A column of this one's kind that has gathered nothing: what a piece
@@ -174,13 +170,42 @@ impl ColumnGatherer {
     }
 
     /// The open group's state, leaving a fresh one open.
-    pub(super) fn take_group(&mut self) -> GroupState {
+    fn take_group(&mut self) -> GroupState {
         let fresh = GroupState::fresh(&self.bounds);
         mem::replace(&mut self.group, fresh)
     }
 
     pub(super) fn hold_head(&mut self) {
         self.head = Some(self.take_group());
+    }
+
+    /// Join `later`'s first group, which a piece's rows began, onto this
+    /// column's open group ([`Gatherer::join`](super::gatherer::Gatherer::join)):
+    /// `later`'s held head where the piece moved past that group
+    /// (`past_first`), else its open group, folded into this column's where
+    /// it `continues` it and taken as this column's open group otherwise; and
+    /// each bounds set's row order folded after this one's.
+    pub(super) fn join_first(
+        &mut self,
+        later: &mut ColumnGatherer,
+        past_first: bool,
+        continues: bool,
+    ) {
+        let state = if past_first {
+            later.head.take().expect("a piece past its first group holds it")
+        } else {
+            later.take_group()
+        };
+        if continues {
+            self.group.absorb(state);
+        } else {
+            self.group = state;
+        }
+        for (mine, theirs) in self.bounds.iter_mut().zip(&mut later.bounds) {
+            if let (Some(mine), Some(theirs)) = (mine, theirs) {
+                mine.absorb_rows(theirs);
+            }
+        }
     }
 
     /// Observe one field, answering what the column's heap grew by and
@@ -398,13 +423,7 @@ impl ColumnGatherer {
             let (Some(mine), Some(theirs)) = (&mut self.bounds[set], &mut later.bounds[set]) else {
                 continue;
             };
-            mine.append_tiers(theirs, charge);
-            reserve_charged(&mut mine.groups, theirs.groups.len(), charge);
-            reserve_charged(&mut mine.flags, theirs.flags.len(), charge);
-            mine.groups.append(&mut theirs.groups);
-            mine.flags.append(&mut theirs.flags);
-            mine.stored += mem::take(&mut theirs.stored);
-            (theirs.groups, theirs.flags) = (Vec::new(), Vec::new());
+            mine.append(theirs, charge);
             resync(pair(self, later), charge);
         }
         let fresh = GroupState::fresh(&later.bounds);

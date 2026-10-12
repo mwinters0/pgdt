@@ -11,7 +11,7 @@ use pgdt_model::{
     internal::{text_heap, vec_heap},
 };
 
-use super::clip::Clipped;
+use super::clip::{CLIP_BYTES, Clipped};
 
 /// A column's row order over the rows observed so far: the block's
 /// [`Sortedness`] once every row is in.
@@ -19,9 +19,9 @@ use super::clip::Clipped;
 pub(super) struct RowOrder {
     /// The first value placed, carried to a join as much as places it against
     /// the value before it.
-    pub(super) first: Option<FirstValue>,
+    first: Option<FirstValue>,
     /// The last value placed.
-    pub(super) previous: Option<Previous>,
+    previous: Option<Previous>,
     never_decreased: bool,
     never_increased: bool,
     /// A value the order cannot place was seen.
@@ -30,7 +30,7 @@ pub(super) struct RowOrder {
 
 /// A column's first value, kept for the join.
 #[derive(Clone)]
-pub(super) enum FirstValue {
+enum FirstValue {
     /// Its length and its first `CLIP_BYTES` bytes, cut at a byte rather
     /// than a character: [`Clipped::locate_bytes`] reads no more.
     Bytewise {
@@ -41,7 +41,7 @@ pub(super) enum FirstValue {
 }
 
 #[derive(Clone)]
-pub(super) enum Previous {
+enum Previous {
     Bytewise(Clipped),
     Keyed(ValueKey),
 }
@@ -76,12 +76,29 @@ impl RowOrder {
 
     /// Fold one step of the row order: `step` is where the value orders
     /// against the previous one, `None` where that is unknown.
-    pub(super) fn step(&mut self, step: Option<Ordering>) {
+    fn step(&mut self, step: Option<Ordering>) {
         match step {
             Some(Ordering::Less) => self.never_decreased = false,
             Some(Ordering::Greater) => self.never_increased = false,
             Some(Ordering::Equal) => {}
             None => self.lost = true,
+        }
+    }
+
+    /// Place a bytewise value after the one placed before it.
+    fn place_bytewise(&mut self, text: &str) {
+        let step = match &self.previous {
+            Some(Previous::Bytewise(previous)) => Some(previous.locate(text)),
+            Some(Previous::Keyed(_)) => unreachable!("a bytewise order places no key"),
+            None => {
+                let prefix = text.as_bytes()[..text.len().min(CLIP_BYTES)].to_vec();
+                self.first = Some(FirstValue::Bytewise { prefix, len: text.len() });
+                None
+            }
+        };
+        self.previous = Some(Previous::Bytewise(Clipped::of(text)));
+        if let Some(step) = step {
+            self.step(step);
         }
     }
 
@@ -147,7 +164,7 @@ impl RowOrder {
 /// three are one order, which is what a fork copies.
 #[derive(Default)]
 pub(super) struct ViewOrders {
-    pub(super) plain: RowOrder,
+    plain: RowOrder,
     /// Over the values the format spec holds, then over every value.
     wider: Option<Box<[RowOrder; 2]>>,
 }
@@ -156,6 +173,12 @@ impl ViewOrders {
     fn fork(&mut self) -> &mut [RowOrder; 2] {
         let plain = &self.plain;
         self.wider.get_or_insert_with(|| Box::new([plain.clone(), plain.clone()]))
+    }
+
+    /// Place `text`, a bytewise kind's canonical value: its type holds every
+    /// value, so the plain order is the only one.
+    pub(super) fn place_bytewise(&mut self, text: &str) {
+        self.plain.place_bytewise(text);
     }
 
     /// Place `key`, a value past `tier`, in each order that takes it.

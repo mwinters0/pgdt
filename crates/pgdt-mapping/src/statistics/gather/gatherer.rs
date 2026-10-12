@@ -440,20 +440,7 @@ impl Gatherer {
         }
         for (mine, theirs) in self.columns.iter_mut().zip(&mut later.columns) {
             let (Some(mine), Some(theirs)) = (mine, theirs) else { continue };
-            let state = match first_end {
-                Some(_) => theirs.head.take().expect("a piece past its first group holds it"),
-                None => theirs.take_group(),
-            };
-            if continues {
-                mine.group.absorb(state);
-            } else {
-                mine.group = state;
-            }
-            for (mine, theirs) in mine.bounds.iter_mut().zip(&mut theirs.bounds) {
-                if let (Some(mine), Some(theirs)) = (mine, theirs) {
-                    mine.rows.absorb(mem::take(&mut theirs.rows));
-                }
-            }
+            mine.join_first(theirs, first_end.is_some(), continues);
         }
         self.carried = later.held();
         self.charge_held();
