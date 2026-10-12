@@ -22,7 +22,9 @@
 //!
 //! **What a registration finds is handed to the caller's sink**
 //! (`pgdt_model::DiagnosticSink`): the dump's file-level findings, and each
-//! table's column notes and divergence from PostgreSQL; and what a scan's
+//! table's column notes and divergence from PostgreSQL, the columns compared
+//! bytewise for want of a recorded collation one finding a registration
+//! ([`UncollatedColumns`]); and what a scan's
 //! plan settles is handed to it when the scan is planned ([`crate::report`]).
 //! What a scan finds while reading is a plan metric under `EXPLAIN ANALYZE`.
 //! `CREATE EXTERNAL TABLE … STORED AS PGDUMP` is [`register_table_factory`]'s.
@@ -74,7 +76,7 @@ pub use error::Error;
 pub use factory::{
     PGDUMP_FILE_TYPE, PgDumpTableFactory, PgDumpTableOptions, register_table_factory,
 };
-pub use report::{BudgetedPlanNote, RefusedTable};
+pub use report::{BudgetedPlanNote, RefusedTable, UncollatedColumns};
 pub use session::install;
 pub use settings::PgDumpSettings;
 pub use table::PgDumpTable;

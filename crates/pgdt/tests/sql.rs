@@ -3,10 +3,15 @@
 
 mod common;
 
-use std::path::PathBuf;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 
+use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
+use pgdt_dump::ScanOptions;
+use pgdt_io::LocalFileSource;
 use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_query::{QueryOptions, column_divergences};
 
 fn fixture(schema: &str) -> PathBuf {
     common::fixture(16, schema, "default")
@@ -54,9 +59,32 @@ async fn a_dump_answers_through_both_registrations() {
     assert!(text(&out.stdout).trim().ends_with("m\n102"), "{}", text(&out.stdout));
 }
 
+/// How many columns, in how many tables, a registration of `dump` compares
+/// bytewise for want of a recorded collation, counted off the library's own
+/// per-column divergences rather than the provider's finding.
+async fn uncollated(dump: &Path) -> (usize, usize) {
+    let source = LocalFileSource::open(dump).unwrap();
+    let index = pgdt_mapping::build_index(&source, &ScanOptions::default()).await.unwrap();
+    let options =
+        QueryOptions { semantics: ComparisonSemantics::DataFusion, ..QueryOptions::default() };
+    let (mut columns, mut tables) = (0, 0);
+    for name in index.tables() {
+        let Ok(resolved) = pgdt_query::table_schema(&index, &name, &options) else { continue };
+        let named: BTreeSet<String> = column_divergences(&resolved, options.semantics)
+            .into_iter()
+            .filter(|note| note.divergence == ComparisonDivergence::UnknownCollation)
+            .map(|note| note.column)
+            .collect();
+        columns += named.len();
+        tables += usize::from(!named.is_empty());
+    }
+    (columns, tables)
+}
+
 /// **Registration's warnings reach stderr, named, and `--quiet` keeps them
 /// off**; an `Info` never prints. The columns whose collation the dump does
-/// not record are one line, naming the dump, after the rest.
+/// not record are one line, naming the dump, after the rest, counting them
+/// and the tables apart.
 #[tokio::test]
 async fn registration_warnings_reach_stderr_unless_quiet() {
     let dir = tempfile::tempdir().unwrap();
@@ -72,8 +100,13 @@ async fn registration_warnings_reach_stderr_unless_quiet() {
     assert!(!columns.is_empty());
     assert!(columns.iter().all(|line| line.starts_with("warning: shop.")), "{stderr}");
     assert!(columns.iter().any(|line| line.contains("public.mood")), "{stderr}");
-    assert!(folded.starts_with(&format!("warning: {}: ", copy.display())), "{stderr}");
-    assert!(folded.contains(" table(s) are each compared bytewise: "), "{stderr}");
+    let (columns, tables) = uncollated(&copy).await;
+    assert!(tables > 1, "the fixture's uncollated columns span tables");
+    let counted = format!(
+        "warning: {}: {columns} column(s) in {tables} table(s) are each compared bytewise: ",
+        copy.display()
+    );
+    assert!(folded.starts_with(&counted), "{counted}\n{stderr}");
     assert_eq!(lines.iter().filter(|line| line.contains("no COLLATE clause")).count(), 1);
 
     let out = run(&["-q", "--dump", &dump, "-c", "SELECT 1"]);

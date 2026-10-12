@@ -14,7 +14,7 @@ use pgdt_model::{DiagnosticSink, TableName};
 
 use crate::dump::PgDump;
 use crate::error::Error;
-use crate::report::RefusedTable;
+use crate::report::{RefusedTable, UncollatedColumns};
 use crate::session::install;
 use crate::table::PgDumpTable;
 
@@ -38,7 +38,9 @@ pub const UNQUALIFIED_SCHEMA: &str = "public";
 /// `sink` hears the dump's findings and then every table's, each table named
 /// `catalog.schema.table`, and is kept to hear each scan's plan notes under
 /// that name; a table whose plan refuses is not listed, and is one
-/// [`RefusedTable`] finding instead.
+/// [`RefusedTable`] finding instead. Every table's columns compared bytewise
+/// for want of a recorded collation are one finding, last, naming the dump
+/// by its origin ([`UncollatedColumns`]).
 pub fn register_dump(
     ctx: &SessionContext,
     name: Option<&str>,
@@ -81,15 +83,18 @@ pub fn register_dump(
     };
     dump.bill(&install(ctx));
     dump.report(sink.as_ref());
-    Ok(named
+    let mut uncollated = UncollatedColumns::of(dump.origin());
+    let names = named
         .into_iter()
         .map(|(database, name)| {
             let catalog = Arc::new(PgDumpCatalog::new(dump, database.as_deref()));
             ctx.register_catalog(&name, Arc::clone(&catalog) as _);
-            catalog.report(&name, &sink);
+            catalog.report(&name, &sink, &mut uncollated);
             name
         })
-        .collect())
+        .collect();
+    uncollated.report(sink.as_ref());
+    Ok(names)
 }
 
 /// One database of a dump.
@@ -148,12 +153,19 @@ impl PgDumpCatalog {
 
     /// Hand every table's findings to `sink`, each named as SQL would reach
     /// it under `catalog`, and make it the sink the listed tables' scans
-    /// report to ([`PgDumpTable::report`]). A table left unlisted is one
-    /// [`RefusedTable`] finding, its refusal.
-    pub(crate) fn report(&self, catalog: &str, sink: &Arc<dyn DiagnosticSink>) {
+    /// report to ([`PgDumpTable::report`]), the uncollated columns counted
+    /// into `uncollated`. A table left unlisted is one [`RefusedTable`]
+    /// finding, its refusal.
+    pub(crate) fn report(
+        &self,
+        catalog: &str,
+        sink: &Arc<dyn DiagnosticSink>,
+        uncollated: &mut UncollatedColumns,
+    ) {
         for (schema_name, schema) in &self.schemas {
             for (table, provider) in &schema.tables {
-                provider.report(&format!("{catalog}.{schema_name}.{table}"), Arc::clone(sink));
+                let subject = format!("{catalog}.{schema_name}.{table}");
+                provider.report_counting(&subject, Arc::clone(sink), uncollated);
             }
             for (table, refused) in &schema.refused {
                 refused.report(&format!("{catalog}.{schema_name}.{table}"), sink.as_ref());

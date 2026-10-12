@@ -20,7 +20,7 @@ use crate::dump::PgDump;
 use crate::error::{Error, external};
 use crate::exec::{PgDumpExec, Replay, ScanMetrics, StaticFilter};
 use crate::filter::translate;
-use crate::report::{BudgetedPlanNote, Located, Reporting};
+use crate::report::{BudgetedPlanNote, Located, Reporting, UncollatedColumns};
 use crate::settings::PgDumpSettings;
 use crate::statistics::{output_orderings, scanned, table_statistics};
 
@@ -90,7 +90,8 @@ impl PgDumpTable {
     /// Hand this table's findings to `sink`, each prefixed with `subject` —
     /// the name SQL reaches the table by: how each column resolved, and how
     /// each column's comparison in DataFusion's semantics diverges from
-    /// PostgreSQL's.
+    /// PostgreSQL's, the columns no collation is recorded for last, as one
+    /// [`UncollatedColumns`] finding.
     ///
     /// **`sink` is kept, and hears every scan's plan notes from then on**
     /// (`pgdt_query::PlanNote`), under the same `subject`: what the memory
@@ -99,12 +100,28 @@ impl PgDumpTable {
     /// [`BudgetedPlanNote`]. A table reported again reports its scans to the
     /// latest sink; one never reported reports no scan.
     pub fn report(&self, subject: &str, sink: Arc<dyn DiagnosticSink>) {
+        let mut uncollated = UncollatedColumns::of(subject);
+        self.report_counting(subject, Arc::clone(&sink), &mut uncollated);
+        uncollated.report(sink.as_ref());
+    }
+
+    /// [`Self::report`], the uncollated columns counted into `uncollated`
+    /// rather than reported, a registration of several tables reporting
+    /// them once.
+    pub(crate) fn report_counting(
+        &self,
+        subject: &str,
+        sink: Arc<dyn DiagnosticSink>,
+        uncollated: &mut UncollatedColumns,
+    ) {
         let resolved = self.resolved_schema();
         for finding in &resolved.notes {
             sink.report(&Located { subject, finding });
         }
         for finding in &column_divergences(resolved, ComparisonSemantics::DataFusion) {
-            sink.report(&Located { subject, finding });
+            if !uncollated.count(subject, finding) {
+                sink.report(&Located { subject, finding });
+            }
         }
         let reporting = Reporting { subject: subject.to_string(), sink };
         *self.reporting.lock().unwrap() = Some(Arc::new(reporting));

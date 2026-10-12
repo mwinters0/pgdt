@@ -453,7 +453,9 @@ comparing operator, the NULL tests reading no value (I44–I47).
 ### D59 Divergence is per position on its own channel: per term, and per column at registration
 `ComparisonNote` carries a path and its declared type, per term from `comparison_notes` (operator-
 conditional, so query's) and per column from `column_divergences` in a query's semantics — DataFusion's variants
-there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45, `KD7`, `KD10`.
+there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45, `KD7`, `KD10`. A provider registration
+folds its `UnknownCollation` columns into one `UncollatedColumns` finding, every text column of a real dump earning one.
+Rejected: the front end folding them, re-reading the provider's sentences to recover a table and a reason.
 
 ### D60 `--where` is a second flag and the tokenizer defines the refusal set
 `refuse_where_structure` refuses a `--filter` term tokenizing to anything but one leaf, an empty one `parse_filter`'s, so a string

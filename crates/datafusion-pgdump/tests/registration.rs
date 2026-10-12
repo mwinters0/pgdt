@@ -7,6 +7,7 @@
 //! it is about in front of its sentence. What a refusal is across
 //! DataFusion's boundary is held here too.
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -14,8 +15,10 @@ use arrow::array::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
-    PgDump, PgDumpOptions, PgDumpTable, RefusedTable, register_dump, register_table_factory,
+    PgDump, PgDumpOptions, PgDumpTable, RefusedTable, UncollatedColumns, register_dump,
+    register_table_factory,
 };
+use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
 use pgdt_codec::{ColumnNote, SchemaMode};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, StrictIdentity};
@@ -26,19 +29,23 @@ use pgdt_mapping::statistics::{
     GatherOptions, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
 use pgdt_model::{Diagnostic, DiagnosticSink, Finding, PostgresInvalidValues, Severity};
-use pgdt_query::ComparisonNote;
+use pgdt_query::{ComparisonNote, column_divergences};
 
 fn fixture(schema: &str, flag_set: &str) -> PathBuf {
     pgdt_fixtures::fixture(16, schema, flag_set)
 }
 
-/// What a sink heard: each finding's severity, sentence and channel.
+/// What a sink heard: each finding's severity, sentence and channel, and
+/// each registration's uncollated columns whole.
 #[derive(Default)]
-struct Heard(Mutex<Vec<(Severity, String, &'static str)>>);
+struct Heard(Mutex<Vec<(Severity, String, &'static str)>>, Mutex<Vec<UncollatedColumns>>);
 
 impl DiagnosticSink for Heard {
     fn report(&self, finding: &dyn Finding) {
         let any = finding.as_any();
+        if let Some(uncollated) = any.downcast_ref::<UncollatedColumns>() {
+            self.1.lock().unwrap().push(uncollated.clone());
+        }
         let channel = if any.is::<Diagnostic>() {
             "file"
         } else if any.is::<ColumnNote>() {
@@ -47,6 +54,8 @@ impl DiagnosticSink for Heard {
             "comparison"
         } else if any.is::<RefusedTable>() {
             "refused"
+        } else if any.is::<UncollatedColumns>() {
+            "uncollated"
         } else {
             "unknown"
         };
@@ -57,6 +66,10 @@ impl DiagnosticSink for Heard {
 impl Heard {
     fn take(&self) -> Vec<(Severity, String, &'static str)> {
         std::mem::take(&mut self.0.lock().unwrap())
+    }
+
+    fn uncollated(&self) -> Vec<UncollatedColumns> {
+        std::mem::take(&mut self.1.lock().unwrap())
     }
 }
 
@@ -494,4 +507,77 @@ async fn a_table_asked_for_at_the_metadata_level_is_refused_as_such() {
     let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let err = dump.table(None, None, "meta").unwrap_err();
     assert!(matches!(err, datafusion_pgdump::Error::MetadataLevel { .. }), "{err:?}");
+}
+
+/// **A registration's columns compared bytewise for want of a recorded
+/// collation are one finding, last**, naming the registration, every such
+/// column of every table it lists and the library's reason, counting the
+/// tables apart; no column of them is a finding of its own. The dump's is
+/// named by its origin, a statement's by the table it names.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_registration_s_uncollated_columns_are_one_finding() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy =
+        parsed_copy(&fixture("types", "default"), dir.path(), &StatisticsRequest::DATA).await;
+    ungathered(&copy).await;
+    let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
+    let heard = Arc::new(Heard::default());
+    let ctx = SessionContext::new();
+    register_dump(&ctx, Some("shop"), &dump, Arc::clone(&heard) as _).unwrap();
+
+    let mut expected = BTreeSet::new();
+    let mut reason = None;
+    let catalog = ctx.catalog("shop").unwrap();
+    for schema in catalog.schema_names() {
+        for table in catalog.schema(&schema).unwrap().table_names() {
+            let provider = dump.table(None, Some(&schema), &table).unwrap();
+            let named = format!("shop.{schema}.{table}");
+            let divergences =
+                column_divergences(provider.resolved_schema(), ComparisonSemantics::DataFusion);
+            for note in divergences {
+                if note.divergence == ComparisonDivergence::UnknownCollation {
+                    expected.insert((named.clone(), note.column.clone()));
+                    reason = note.bytewise_reason();
+                }
+            }
+        }
+    }
+    let tables: BTreeSet<_> = expected.iter().map(|(table, _)| table).collect();
+    assert!(tables.len() > 1, "the fixture's uncollated columns span tables: {expected:?}");
+
+    let all = heard.take();
+    let [uncollated] = heard.uncollated().try_into().unwrap();
+    assert_eq!(uncollated.subject, dump.origin());
+    assert_eq!(uncollated.columns, expected);
+    assert_eq!(Some(uncollated.reason.as_str()), reason);
+    assert_eq!(
+        uncollated.message(),
+        format!(
+            "{}: {} column(s) in {} table(s) are each compared bytewise: {}",
+            dump.origin(),
+            expected.len(),
+            tables.len(),
+            reason.unwrap()
+        )
+    );
+    assert_eq!(all.last().map(|(_, _, channel)| *channel), Some("uncollated"), "{all:#?}");
+    assert!(
+        !all.iter().any(|(_, message, channel)| *channel == "comparison"
+            && message.contains("no COLLATE clause")),
+        "{all:#?}"
+    );
+
+    let (table, _) = expected.first().unwrap();
+    let [_, schema, table] = table.split('.').collect::<Vec<_>>().try_into().unwrap();
+    register_table_factory(&ctx, Arc::clone(&heard) as _, StrictIdentity::ADVISORY);
+    let create = format!(
+        "CREATE EXTERNAL TABLE named STORED AS PGDUMP LOCATION '{}' \
+         OPTIONS ('pgdump.table' '{table}', 'pgdump.schema' '{schema}')",
+        copy.display(),
+    );
+    rows(&ctx, &create).await.unwrap();
+    let [statement] = heard.uncollated().try_into().unwrap();
+    assert_eq!(statement.subject, "named");
+    assert!(!statement.columns.is_empty());
+    assert!(statement.columns.iter().all(|(table, _)| table == "named"), "{statement:?}");
 }

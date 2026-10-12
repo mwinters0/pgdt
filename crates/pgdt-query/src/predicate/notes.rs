@@ -43,6 +43,64 @@ pub struct ComparisonNote {
     pub divergence: ComparisonDivergence,
 }
 
+impl ComparisonNote {
+    /// **Why the position is compared bytewise**, the clause
+    /// [`Finding::message`] ends with after "is compared bytewise: ", whatever
+    /// the column — so a caller folding many columns' notes into one sentence
+    /// states it once. `None` for a divergence whose sentence is not a
+    /// bytewise one.
+    pub fn bytewise_reason(&self) -> Option<&'static str> {
+        Some(match self.divergence {
+            // Not "PostgreSQL orders this differently": it does not order it
+            // at all, and the sentence has to say which way the difference
+            // runs.
+            ComparisonDivergence::AsText => {
+                "PostgreSQL defines no comparison for this type at all — no equality, no \
+                 ordering, no operator class — so this comparison is one the server does not \
+                 have"
+            }
+            ComparisonDivergence::UnknownCollation => {
+                "the column declares no COLLATE clause, so its collation is the database's, which \
+                 a plain dump does not record — this matches the server only if that collation is \
+                 C or POSIX"
+            }
+            ComparisonDivergence::NonBytewiseCollation => {
+                "the column declares a collation other than C/POSIX, and PostgreSQL orders it by \
+                 that collation"
+            }
+            // The one sentence reporting what the dump *said* rather than
+            // what it left out, which is why it names equality outright.
+            ComparisonDivergence::NonDeterministicCollation => {
+                "the column declares a collation this dump declares non-deterministic, so \
+                 PostgreSQL neither orders nor compares it byte for byte — two values spelled \
+                 differently can be equal to the server"
+            }
+            ComparisonDivergence::UnmodelledType => {
+                "this build models no comparison for the column's declared type — the four \
+                 ordering operators are refused on it, and PostgreSQL's own equality for such a \
+                 type need not be a byte comparison (`box` compares areas)"
+            }
+            ComparisonDivergence::ValueAsText => {
+                "DataFusion compares the text it is emitted as, where PostgreSQL compares it by \
+                 value — the orders can differ, and so can equality: a literal matches only the \
+                 spelling the server writes (`'12:00+00'` misses `12:00:00+00`, `'10.0.0.1/32'` \
+                 misses an inet's `10.0.0.1`, uppercase hex misses a macaddr), and some types \
+                 write one value two ways (`1.5` and `1.50`)"
+            }
+            ComparisonDivergence::PaddedText => {
+                "DataFusion compares the value with its blank padding, as it is emitted, where \
+                 PostgreSQL ignores trailing blanks on both sides — so a literal matches only \
+                 when padded to the column's width (`'abc'` misses `abc  ` in a character(5))"
+            }
+            ComparisonDivergence::JsonbStringCollation
+            | ComparisonDivergence::LabelText
+            | ComparisonDivergence::IntervalFields
+            | ComparisonDivergence::NestedOrder
+            | ComparisonDivergence::UnnormalizedZero => return None,
+        })
+    }
+}
+
 impl Finding for ComparisonNote {
     /// Always `Warning`: the rows a query returns are not the server's
     /// wherever the divergence reaches them.
@@ -59,38 +117,11 @@ impl Finding for ComparisonNote {
             "" => format!("`{column}`"),
             declared => format!("`{column}` ({declared})"),
         };
-        let bytewise = |why: &str| format!("{subject} is compared bytewise: {why}");
+        if let Some(why) = self.bytewise_reason() {
+            return format!("{subject} is compared bytewise: {why}");
+        }
         match self.divergence {
-            // Not "PostgreSQL orders this differently": it does not order it
-            // at all, and the sentence has to say which way the difference
-            // runs.
-            ComparisonDivergence::AsText => bytewise(
-                "PostgreSQL defines no comparison for this type at all — no equality, no \
-                 ordering, no operator class — so this comparison is one the server does not \
-                 have",
-            ),
-            ComparisonDivergence::UnknownCollation => bytewise(
-                "the column declares no COLLATE clause, so its collation is the database's, which \
-                 a plain dump does not record — this matches the server only if that collation is \
-                 C or POSIX",
-            ),
-            ComparisonDivergence::NonBytewiseCollation => bytewise(
-                "the column declares a collation other than C/POSIX, and PostgreSQL orders it by \
-                 that collation",
-            ),
-            // The one sentence reporting what the dump *said* rather than
-            // what it left out, which is why it names equality outright.
-            ComparisonDivergence::NonDeterministicCollation => bytewise(
-                "the column declares a collation this dump declares non-deterministic, so \
-                 PostgreSQL neither orders nor compares it byte for byte — two values spelled \
-                 differently can be equal to the server",
-            ),
-            ComparisonDivergence::UnmodelledType => bytewise(
-                "this build models no comparison for the column's declared type — the four \
-                 ordering operators are refused on it, and PostgreSQL's own equality for such a \
-                 type need not be a byte comparison (`box` compares areas)",
-            ),
-            // Not a `bytewise` sentence: the structure *is* compared the way
+            // Not a bytewise sentence: the structure *is* compared the way
             // PostgreSQL compares it, and only a string leaf is left.
             ComparisonDivergence::JsonbStringCollation => format!(
                 "{subject} is compared structurally, but every string value and object key inside \
@@ -101,22 +132,10 @@ impl Finding for ComparisonNote {
                 "{subject} is compared by its labels' text, as DataFusion compares the emitted \
                  dictionary, where PostgreSQL orders an enum's labels as its type declares them"
             ),
-            ComparisonDivergence::ValueAsText => bytewise(
-                "DataFusion compares the text it is emitted as, where PostgreSQL compares it by \
-                 value — the orders can differ, and so can equality: a literal matches only the \
-                 spelling the server writes (`'12:00+00'` misses `12:00:00+00`, `'10.0.0.1/32'` \
-                 misses an inet's `10.0.0.1`, uppercase hex misses a macaddr), and some types \
-                 write one value two ways (`1.5` and `1.50`)",
-            ),
             ComparisonDivergence::IntervalFields => format!(
                 "{subject} is compared as DataFusion compares an Interval(MonthDayNano) — months, \
                  then days, then the time part — where PostgreSQL compares the whole span, so \
                  `1 mon` and `30 days` are equal to the server and not here"
-            ),
-            ComparisonDivergence::PaddedText => bytewise(
-                "DataFusion compares the value with its blank padding, as it is emitted, where \
-                 PostgreSQL ignores trailing blanks on both sides — so a literal matches only \
-                 when padded to the column's width (`'abc'` misses `abc  ` in a character(5))",
             ),
             ComparisonDivergence::NestedOrder => format!(
                 "{subject} is ordered as DataFusion orders the emitted list or struct, a NULL \
@@ -129,6 +148,13 @@ impl Finding for ComparisonNote {
                  by IEEE totalOrder with no sign dropped from zero, so `-0` is below `0` and \
                  unequal to it, where PostgreSQL equates them"
             ),
+            ComparisonDivergence::AsText
+            | ComparisonDivergence::UnknownCollation
+            | ComparisonDivergence::NonBytewiseCollation
+            | ComparisonDivergence::NonDeterministicCollation
+            | ComparisonDivergence::UnmodelledType
+            | ComparisonDivergence::ValueAsText
+            | ComparisonDivergence::PaddedText => unreachable!("a bytewise sentence is above"),
         }
     }
 

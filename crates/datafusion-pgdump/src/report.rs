@@ -3,7 +3,9 @@
 //! **What a dump or a table is, is reported when it is registered**: the
 //! file-level channel once per registration, and each table's per-column notes and
 //! its columns' divergence from PostgreSQL in the semantics every scan asks
-//! for — or, for a table the catalog does not list, its [`RefusedTable`]. **What a scan's plan settled is reported when it is planned**, from
+//! for — or, for a table the catalog does not list, its [`RefusedTable`] —
+//! save the columns compared bytewise for want of a recorded collation, which
+//! are one [`UncollatedColumns`] finding per registration, after the rest. **What a scan's plan settled is reported when it is planned**, from
 //! `scan()`, to the sink the table was registered with. A query raises nothing
 //! on the comparison channel here — a pushed filter is one the library answers
 //! as DataFusion does, so that channel is empty
@@ -21,10 +23,12 @@
 //! Parquet's pruning already is.
 
 use std::any::Any;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use pgdt_codec::compare::ComparisonDivergence;
 use pgdt_model::{DiagnosticSink, Finding, Severity, TableName};
-use pgdt_query::{PlanLever, PlanNote};
+use pgdt_query::{ComparisonNote, PlanLever, PlanNote};
 
 use crate::budget::{AllowanceOrigin, BudgetAccount};
 use crate::dump::PgDump;
@@ -109,6 +113,78 @@ impl RefusedTable {
     /// would have reached the table by.
     pub(crate) fn report(&self, subject: &str, sink: &dyn DiagnosticSink) {
         sink.report(&Located { subject, finding: self });
+    }
+}
+
+/// **The columns one registration compares bytewise because the dump records
+/// no collation for them** ([`ComparisonDivergence::UnknownCollation`]), as
+/// one finding in place of a [`ComparisonNote`] a column: on a real dump that
+/// is every text column of every table. [`crate::register_dump`] reports one
+/// for the dump, every catalog's tables in it, and [`crate::PgDumpTable::report`]
+/// one for its table — the factory's registration of a statement's table.
+/// None is reported where no column is uncollated.
+///
+/// Its message is the one sentence for them all, counting columns and tables;
+/// a caller wanting its own reads the fields by downcasting
+/// ([`Finding::as_any`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UncollatedColumns {
+    /// What the registration is named by: the dump's origin, or the table as
+    /// the statement registering it names it.
+    pub subject: String,
+    /// `(table, column)`, each table as SQL reaches it; a nested column
+    /// diverging at several positions is one column.
+    pub columns: BTreeSet<(String, String)>,
+    /// Why each is compared bytewise, the library's own clause
+    /// ([`ComparisonNote::bytewise_reason`]).
+    pub reason: String,
+}
+
+impl Finding for UncollatedColumns {
+    /// A warning, as each column's note would have been.
+    fn severity(&self) -> Severity {
+        Severity::Warning
+    }
+
+    fn message(&self) -> String {
+        let tables = self.columns.iter().map(|(table, _)| table).collect::<BTreeSet<_>>().len();
+        format!(
+            "{}: {} column(s) in {tables} table(s) are each compared bytewise: {}",
+            self.subject,
+            self.columns.len(),
+            self.reason
+        )
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl UncollatedColumns {
+    /// None yet, of the registration named `subject`.
+    pub(crate) fn of(subject: &str) -> Self {
+        Self { subject: subject.to_string(), columns: BTreeSet::new(), reason: String::new() }
+    }
+
+    /// Count `note` under `table` if it is an uncollated column's, saying
+    /// whether it was.
+    pub(crate) fn count(&mut self, table: &str, note: &ComparisonNote) -> bool {
+        if note.divergence != ComparisonDivergence::UnknownCollation {
+            return false;
+        }
+        self.columns.insert((table.to_string(), note.column.clone()));
+        if self.reason.is_empty() {
+            self.reason = note.bytewise_reason().unwrap_or_default().to_string();
+        }
+        true
+    }
+
+    /// Hand this to `sink`, if it counted any column.
+    pub(crate) fn report(&self, sink: &dyn DiagnosticSink) {
+        if !self.columns.is_empty() {
+            sink.report(self);
+        }
     }
 }
 

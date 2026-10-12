@@ -30,7 +30,6 @@ introspect = ["pgdt-query/introspect"]
 # `datafusion-cli`'s own manifest carries upstream's requirements into the one
 # lockfile; a version stated here, the workspace's or this crate's own, can
 # only narrow one of them.
-async-trait = { workspace = true }
 clap = { workspace = true, features = ["cargo", "derive"] }
 datafusion = { workspace = true }
 datafusion-cli = "=55.1.0"
