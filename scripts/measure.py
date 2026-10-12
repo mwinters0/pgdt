@@ -6618,11 +6618,12 @@ PREAMBLE = (
     "crates/pgdt-dump/src/preamble.rs",
     "crates/pgdt-dump/src/ddl.rs",
     "crates/pgdt-dump/src/ddl/column.rs",
-    "crates/pgdt-dump/src/ddl/lex.rs",
     "crates/pgdt-dump/src/ddl/metadata.rs",
     "crates/pgdt-dump/src/ddl/refs.rs",
+    "crates/pgdt-dump/src/ddl/syntax.rs",
     "crates/pgdt-dump/src/ddl/table.rs",
     "crates/pgdt-dump/src/ddl/types.rs",
+    "crates/pgdt-dump/src/lex.rs",
     "crates/pgdt-model/src/catalog.rs",
 )
 #: A query figure also reads through the CLI's own row rendering. The whole

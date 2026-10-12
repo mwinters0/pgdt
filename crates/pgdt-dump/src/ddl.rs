@@ -5,8 +5,8 @@
 //! (`docs/design/decisions.md`, "D36"). Tables are [`table`], a column's
 //! grammar, which a table's list, a composite's fields and a domain's tail
 //! share, [`column`], the other declarations [`types`], the references
-//! [`refs`], the derived view [`metadata`], and the keyword and quoting
-//! helpers they share [`lex`].
+//! [`refs`], the derived view [`metadata`], and the syntax they all read a
+//! statement by, [`syntax`].
 //!
 //! **This module owns the DDL grammar, not a second pass over the file.**
 //! [`classify`] turns a complete statement into a [`pgdt_model::SpanBody`],
@@ -31,22 +31,22 @@
 //! default_tablespace`).
 
 mod column;
-mod lex;
 mod metadata;
 mod refs;
+mod syntax;
 mod table;
 mod types;
 
-pub(crate) use self::lex::parse_qualified_name;
-use self::lex::strip_kw;
 pub use self::metadata::dump_metadata_from_spans;
 pub(crate) use self::refs::{extract_statement_cross_refs, insert_role, insert_tablespace};
+pub(crate) use self::syntax::parse_qualified_name;
 use self::table::{parse_alter_table_reference, parse_create_table};
 use self::types::{
     alter_type_labels_unread, parse_alter_type_add_value_body,
     parse_alter_type_drop_attribute_body, parse_create_collation, parse_create_domain,
     parse_create_extension, parse_create_type,
 };
+use crate::lex::strip_kw;
 use pgdt_core::internal::Cursor;
 use pgdt_model::{Extension, SpanBody, TypeDef};
 

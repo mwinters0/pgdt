@@ -3,10 +3,11 @@
 //! [`column`](super::column)'s.
 
 use super::column::{check_constraints, not_null_clause, parse_column_fragment};
-use super::lex::{
+use super::syntax::{
     collapse_spacing, matching_paren, parse_qualified_name, split_top_level_commas,
-    strip_block_comments, strip_kw,
+    strip_block_comments,
 };
+use crate::lex::strip_kw;
 use pgdt_core::internal::{Cursor, parse_type_name};
 use pgdt_model::{CheckConstraint, ColumnDef, NotNull, PartitionOf, TableDef, TableReference};
 

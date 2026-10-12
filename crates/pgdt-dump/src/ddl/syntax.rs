@@ -1,8 +1,9 @@
-//! The statement grammar's own lexing: keywords matched at a word boundary,
-//! `'…'` literals and `"…"` identifiers stepped over, parens matched, a list
-//! split at its top-level commas, a qualified name read. Not the SQL lexer
-//! ([`crate::lex`]), which tells code from a literal across a line; these
-//! read one complete statement the map builder already holds.
+//! The syntax the statement grammar reads a statement by: a keyword found or
+//! a word told apart at a word boundary, `'…'` literals and `"…"` identifiers
+//! stepped over, parens matched, a list split at its top-level commas, a
+//! qualified name read. Each reads one complete statement the map builder
+//! already holds; telling code from a literal across lines, and the keyword
+//! strip, are the SQL lexer's ([`crate::lex`]).
 
 use crate::lex::ident_cont;
 use pgdt_core::internal::Cursor;
@@ -17,21 +18,6 @@ pub(super) fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
         return None;
     }
     (0..=hay.len() - pat.len()).find(|&i| hay[i..i + pat.len()].eq_ignore_ascii_case(pat))
-}
-
-/// Case-insensitively strip a leading keyword ending at a word boundary,
-/// returning the (whitespace stripped) remainder: the byte after it may not
-/// continue an identifier, so `CREATE TABLE` is no prefix of
-/// `CREATE TABLESPACE`.
-pub(super) fn strip_kw<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
-    let bytes = s.as_bytes();
-    if bytes.len() < kw.len()
-        || !bytes[..kw.len()].eq_ignore_ascii_case(kw.as_bytes())
-        || bytes.get(kw.len()).is_some_and(|&b| ident_cont(b))
-    {
-        return None;
-    }
-    Some(s[kw.len()..].trim_start())
 }
 
 /// Parse a (possibly schema-qualified) identifier from the start of `s`,

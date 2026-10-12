@@ -105,8 +105,8 @@ const fn dolq_cont(b: u8) -> bool {
     ident_start(b) || b.is_ascii_digit()
 }
 
-/// `scan.l`'s `ident_cont`, which the DDL grammar's word boundaries read
-/// too ([`crate::ddl::strip_kw`]).
+/// `scan.l`'s `ident_cont`, which [`strip_kw`] and the DDL grammar's word
+/// boundaries read too.
 pub(crate) const fn ident_cont(b: u8) -> bool {
     dolq_cont(b) || b == b'$'
 }
@@ -361,11 +361,11 @@ fn dollar_token(line: &[u8], boundary: usize, at: usize) -> DollarToken {
 /// other line is `None`.
 pub(crate) fn standard_conforming_strings(line: &[u8]) -> Option<bool> {
     let line = std::str::from_utf8(line).ok()?.trim();
-    let rest = strip_word(line, "SET")?;
-    let rest = strip_word(rest, "standard_conforming_strings")?;
+    let rest = strip_kw(line, "SET")?;
+    let rest = strip_kw(rest, "standard_conforming_strings")?;
     let rest = rest
         .strip_prefix('=')
-        .or_else(|| strip_word(rest, "TO").map(|r| r.trim_start()))?
+        .or_else(|| strip_kw(rest, "TO").map(|r| r.trim_start()))?
         .trim_start();
     let value = rest.strip_suffix(';')?.trim_end();
     let value = value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')).unwrap_or(value);
@@ -376,18 +376,20 @@ pub(crate) fn standard_conforming_strings(line: &[u8]) -> Option<bool> {
     }
 }
 
-/// `text` with the keyword `word` taken off its front, case-insensitively,
-/// and the space after it; `None` unless `word` ends at a non-identifier byte.
-fn strip_word<'a>(text: &'a str, word: &str) -> Option<&'a str> {
-    let head = text.get(..word.len())?;
-    if !head.eq_ignore_ascii_case(word) {
+/// Case-insensitively strip a leading keyword ending at a word boundary,
+/// returning the (whitespace stripped) remainder: the byte after it may not
+/// continue an identifier ([`ident_cont`]), so `CREATE TABLE` is no prefix of
+/// `CREATE TABLESPACE`. Read by the `standard_conforming_strings` setting
+/// above and throughout the DDL grammar.
+pub(crate) fn strip_kw<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
+    let bytes = s.as_bytes();
+    if bytes.len() < kw.len()
+        || !bytes[..kw.len()].eq_ignore_ascii_case(kw.as_bytes())
+        || bytes.get(kw.len()).is_some_and(|&b| ident_cont(b))
+    {
         return None;
     }
-    let rest = &text[word.len()..];
-    if rest.bytes().next().is_some_and(ident_cont) {
-        return None;
-    }
-    Some(rest.trim_start())
+    Some(s[kw.len()..].trim_start())
 }
 
 #[cfg(test)]

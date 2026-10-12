@@ -5,7 +5,8 @@
 
 use std::collections::BTreeSet;
 
-use super::lex::{find_ci, strip_kw};
+use super::syntax::find_ci;
+use crate::lex::strip_kw;
 use pgdt_core::internal::Cursor;
 
 /// Extract every role/tablespace a complete statement (see

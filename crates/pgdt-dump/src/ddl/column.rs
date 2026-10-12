@@ -2,7 +2,7 @@
 //! domain's tail share: its declared type, its `COLLATE`, its `NOT NULL` and
 //! its `CHECK`s.
 
-use super::lex::{
+use super::syntax::{
     is_word_start, parse_qualified_name, skip_double_quoted, skip_quoted, strip_block_comments,
     top_level_words, type_tokens,
 };
