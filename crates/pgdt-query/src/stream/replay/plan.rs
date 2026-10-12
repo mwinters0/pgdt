@@ -83,9 +83,7 @@ impl ReplayPlan {
         matches: &[CopyBlock],
         metadata: Option<DumpMetadata>,
     ) -> Result<Self> {
-        refuse_metadata_level(matches, &query_options)?;
-        let table = TableColumns::settle(matches, metadata.as_ref(), &query_options)?;
-        let blocks = plan_blocks(matches, &query_options, metadata.as_ref(), &table)?;
+        let (table, blocks) = plan_table(matches, &query_options, metadata.as_ref())?;
         let mut unrepresentable = materialized_unrepresentable(matches, &blocks, &query_options);
         if query_options.unrepresentable == UnrepresentableMode::Refuse
             && !unrepresentable.is_empty()
@@ -134,6 +132,25 @@ impl ReplayPlan {
         };
         kept.iter().map(|run| Segment::over(block, run.clone())).collect()
     }
+}
+
+/// What every plan of `matches` opens with, before anything is read: the
+/// metadata level refused where a typed plan cannot read it
+/// ([`refuse_metadata_level`]), the table's columns settled
+/// ([`TableColumns::settle`]), and every block resolved against them
+/// ([`plan_blocks`]) — or the first of those refusals. [`ReplayPlan::new`]
+/// plans the replay from it, and `table_schema` reads a query's schema off
+/// it, so the schema a provider declares is the one the stream's batches
+/// carry.
+pub(in crate::stream) fn plan_table(
+    matches: &[CopyBlock],
+    query_options: &QueryOptions,
+    metadata: Option<&DumpMetadata>,
+) -> Result<(TableColumns, BTreeMap<u64, PlannedBlock>)> {
+    refuse_metadata_level(matches, query_options)?;
+    let table = TableColumns::settle(matches, metadata, query_options)?;
+    let blocks = plan_blocks(matches, query_options, metadata, &table)?;
+    Ok((table, blocks))
 }
 
 /// What [`prune_blocks`] settles for a [`ReplayPlan`].
@@ -450,7 +467,7 @@ fn query_tests(
 /// whose [`resolve_for_query`] refuses — its schema, its filter or its
 /// projection, in that order — is the error, before any row of any block
 /// (`docs/design/decisions.md`, "D54").
-pub(in crate::stream) fn plan_blocks(
+fn plan_blocks(
     matches: &[CopyBlock],
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
@@ -517,7 +534,7 @@ impl TableColumns {
     /// The table `matches` are the blocks of — one `(database, table)`
     /// target, already narrowed (`docs/design/decisions.md`, "D49") — as
     /// `query_options` reads it.
-    pub(in crate::stream) fn settle(
+    fn settle(
         matches: &[CopyBlock],
         metadata: Option<&DumpMetadata>,
         query_options: &QueryOptions,
@@ -632,10 +649,7 @@ pub(super) fn resolve_block(
 /// deeper than its DDL says (`docs/design/decisions.md`, "D35"). A query that
 /// maps for itself has censused every block before it plans
 /// (`census_metadata_level`); [`SchemaMode::Strings`] reads no census.
-pub(in crate::stream) fn refuse_metadata_level(
-    matches: &[CopyBlock],
-    query_options: &QueryOptions,
-) -> Result<()> {
+fn refuse_metadata_level(matches: &[CopyBlock], query_options: &QueryOptions) -> Result<()> {
     if query_options.schema_mode != SchemaMode::Typed {
         return Ok(());
     }

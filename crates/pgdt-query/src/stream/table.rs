@@ -14,7 +14,7 @@ use pgdt_core::Result;
 use pgdt_model::{CopyBlock, DumpIndex, TableName};
 
 use super::note::{EarlyStop, PlanNote};
-use super::replay::plan::{TableColumns, plan_blocks, refuse_metadata_level};
+use super::replay::plan::plan_table;
 use super::resume::ResumeToken;
 use crate::options::QueryOptions;
 use crate::predicate::ComparisonNote;
@@ -53,7 +53,8 @@ impl<'a> TableStream<'a> {
     }
 
     /// This query's resolved schema and diagnostics — one schema per table,
-    /// whichever of its blocks a batch came from ([`TableColumns`]). The empty
+    /// whichever of its blocks a batch came from
+    /// ([`TableColumns`](super::replay::plan::TableColumns)). The empty
     /// schema (`ResolvedSchema::default`) until the query's matching `COPY`
     /// block has been found, which for a table that never appears in the dump
     /// is forever.
@@ -210,13 +211,14 @@ impl StreamShared {
 /// source.
 ///
 /// It is the schema every batch of that query carries, projection included
-/// ([`TableColumns`]), or the refusal its plan would raise — a table whose
-/// blocks name different column sets, a projected name no block carries —
-/// but for the refuse mode's, which only planning the replay raises, and a
-/// projection naming a column twice, which only the query's request check
-/// refuses: here the column comes back twice. A
-/// table the map holds no block for has the empty schema, as its stream has
-/// no rows. **Believe it only over a complete map**: a table's later blocks
+/// ([`TableColumns`](super::replay::plan::TableColumns)), read off the
+/// opening every plan of the table shares (`plan_table`), or the refusal its
+/// plan would raise — a table whose blocks name different column sets, a
+/// projected name no block carries — but for the refuse mode's, which only
+/// planning the replay raises, and a projection naming a column twice, which
+/// only the query's request check refuses: here the column comes back twice.
+/// A table the map holds no block for has the empty schema, as its stream
+/// has no rows. **Believe it only over a complete map**: a table's later blocks
 /// are part of its census and of its column-set check
 /// ([`pgdt_model::DumpIndex::is_complete`]).
 pub fn table_schema(
@@ -225,10 +227,7 @@ pub fn table_schema(
     query_options: &QueryOptions,
 ) -> Result<ResolvedSchema> {
     let matches: Vec<CopyBlock> = index.blocks_of(table).cloned().collect();
-    refuse_metadata_level(&matches, query_options)?;
-    let metadata = index.metadata.as_ref();
-    let columns = TableColumns::settle(&matches, metadata, query_options)?;
-    let blocks = plan_blocks(&matches, query_options, metadata, &columns)?;
+    let (_, blocks) = plan_table(&matches, query_options, index.metadata.as_ref())?;
     Ok(blocks.into_values().next().map(|planned| planned.resolved).unwrap_or_default())
 }
 

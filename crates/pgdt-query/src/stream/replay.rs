@@ -472,7 +472,7 @@ type Active = (u64, CopyHeader, RowBatcher, Arc<ResolvedExpr>, Option<String>);
 type Opened = (Active, ResolvedSchema, Vec<ComparisonNote>);
 
 /// Take one block's resolution from `plan` — resolving it here where the
-/// plan holds none ([`plan_blocks`](self::plan::plan_blocks)) — and build the [`RowBatcher`] that will
+/// plan holds none (`plan_blocks`) — and build the [`RowBatcher`] that will
 /// hold its rows.
 ///
 /// The three places a block becomes active — a `COPY` header the scanner
