@@ -112,7 +112,7 @@ from `cargo metadata` and holds every member's dependencies to the list
 above, the codec synchronous and naming no `arrow_buffer` item but `i256`,
 no embedder naming an `internal` path or
 `timed!` or `row_evaluated!`, which Rust roots at their crate whatever module
-declares them, no library module loaded by `#[path]`, and no namespaced API
+declares them, no module loaded by `#[path]`, tests included, and no namespaced API
 item re-exported at its crate's root too. Why `pgdt-model` exists: without it the
 codec sits above the preamble grammar, so a change to how `CREATE TABLE` is
 read recompiles every decoder; with it the codec and the parsers are siblings.

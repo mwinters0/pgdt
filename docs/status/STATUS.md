@@ -144,11 +144,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **35.26: `layering.py` refuses `#[path]` in every member's sources, tests
-  included**, where it had refused it in a library's alone. Removing
-  `check.py`'s `#[path]` arm left `--affected` blind to a test including a
-  file by path, so the refusal is what keeps its selection true; the spec
-  asked only that the includes be replaced. Reconsidering means either
-  allowing a test's `#[path]` again and restoring the arm with it, or keeping
-  the refusal and naming it in the spec's "The crate graph" list of what the
-  script holds.

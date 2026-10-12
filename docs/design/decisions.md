@@ -628,7 +628,7 @@ held to tables in `scripts/layering.py`. Model is what the cache persists, apart
 below the parsers so the codec does not recompile with the grammar. Gathering decodes and builds no array, so is mapping's, with the pass handing it rows and the interior split
 that pass leads; the ordering keys it shares with a filter are value semantics, so codec's; worker sizing and the cut are io's, the leader asking them. The tests' fixture vocabulary is `pgdt-fixtures`,
 a member only a dev-dependency reaches, its one edge, to mapping, behind a feature. Rejected: four layers
-in one crate with upward deviations; the cache a crate of its own (the loader scans, so it is dump's); the mapping pass query's (it reads nothing of query); the graph held to the libraries alone (a new member unplaced, `namespace-init` open to a library); any `pub mod` a namespace (one line past `internal`); a test module included across crates by `#[path]` (rust-analyzer resolves nothing outside its package).
+in one crate with upward deviations; the cache a crate of its own (the loader scans, so it is dump's); the mapping pass query's (it reads nothing of query); the graph held to the libraries alone (a new member unplaced, `namespace-init` open to a library); any `pub mod` a namespace (one line past `internal`); a test module included across crates by `#[path]` (rust-analyzer resolves nothing outside its package), or a test's own `#[path]` within one (`check.py --affected` reads a test's files off its `mod` lines).
 
 ### D74 Below the codec no Arrow, the codec pure, and the core's error naming no dependency
 Core, model, io and dump never name Arrow; the codec and mapping only its schema types, and the codec `i256`; the codec is synchronous and does no I/O, nor does
