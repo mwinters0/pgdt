@@ -19,8 +19,7 @@ links against the edges rose from 192 to 194: `info/text.rs`'s to `info.rs`'s
   `naming_the_source`, which reads it; `init_status_output` stayed at the root
   with `main` and `commands`, the dispatch.
 - **Widened to compile**: what a sibling reads is `pub(crate)`; what `info`'s
-  and `query/filter`'s children read of each other is `pub(super)`, and
-  `ParseArgs::identity` is `pub(crate)` for the root's test reading it.
+  and `query/filter`'s children read of each other is `pub(super)`.
   `query/filter.rs` re-exports `parse_where` for `query.rs`, as
   `predicate.rs` re-exports for its readers; `expr.rs` names the term grammar
   by `super::term::` paths, where it named `crate::` ones.
@@ -32,8 +31,8 @@ links against the edges rose from 192 to 194: `info/text.rs`'s to `info.rs`'s
 ## Tests
 
 - **The suite is the same 48 unit tests.** The root's `tests.rs` keeps the
-  three that read `Cli` — the two-tunables rule, `sql`'s exemption, the bare
-  `--strict-identity` — and the rest split beside `version`, `args`, `source`,
+  two that read `Cli` — the two-tunables rule and `sql`'s exemption — and the
+  rest split beside `version`, `args`, `source`,
   `parallel`, `info/labels`, `query/filter` and `query/filter/term`.
   `expr.rs`'s and `info/statistics.rs`'s inline modules moved whole with their
   files, neither file being cut.

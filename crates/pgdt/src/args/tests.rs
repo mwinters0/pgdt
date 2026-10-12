@@ -22,9 +22,8 @@ fn the_strict_identity_selection_is_read_and_its_contradictions_refused() {
     for text in ["time", "location", "time,location", "advisory", "none"] {
         assert_eq!(binds(text).to_string(), text, "a selection reads back as written");
     }
-    // What the bare flag means, spelled as clap substitutes it (the crate
-    // root's `tests::the_bare_strict_identity_flag_binds_both_terms` reads the
-    // attribute).
+    // What the bare flag means, spelled as clap substitutes it (the test
+    // below reads the attribute).
     assert_eq!(binds("time,location"), StrictIdentity::binding(true, true));
 
     assert!(parse_strict_identity("none,time").is_err(), "`none` is exclusive");
@@ -34,4 +33,29 @@ fn the_strict_identity_selection_is_read_and_its_contradictions_refused() {
     assert!(unknown.contains("`advisory`"), "an unknown term names the four: {unknown}");
     assert!(parse_strict_identity("time,").is_err(), "an empty term is not silence");
     assert!(parse_strict_identity("").is_err());
+}
+
+/// A command flattening [`IdentityArgs`] as every subcommand does, beside the
+/// `--source` its attribute requires.
+#[derive(clap::Parser)]
+struct Flattened {
+    // Read by nothing but the attribute's `requires`.
+    #[allow(dead_code)]
+    #[arg(long)]
+    source: Option<String>,
+    #[command(flatten)]
+    identity: IdentityArgs,
+}
+
+/// The bare flag is `time,location`, stated once — in the attribute — and
+/// read back here, so what it binds is pinned.
+#[test]
+fn the_bare_strict_identity_flag_binds_both_terms() {
+    use clap::Parser;
+    let flattened = Flattened::try_parse_from(["pgdt", "--source", "d.sql", "--strict-identity"])
+        .expect("the flag takes no value");
+    assert_eq!(flattened.identity.resolve(), StrictIdentity::binding(true, true));
+
+    let flattened = Flattened::try_parse_from(["pgdt", "--source", "d.sql"]).unwrap();
+    assert_eq!(flattened.identity.resolve(), StrictIdentity::ADVISORY);
 }

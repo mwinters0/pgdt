@@ -175,7 +175,7 @@ pub(crate) struct ParseArgs {
     )]
     postgres_invalid_values: CliParseInvalidValues,
     #[command(flatten)]
-    pub(crate) identity: IdentityArgs,
+    identity: IdentityArgs,
     #[command(flatten)]
     overwrite: OverwriteArgs,
     #[command(flatten)]

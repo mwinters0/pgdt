@@ -1,20 +1,5 @@
 use super::*;
-use pgdt_dump::cache::StrictIdentity;
 use std::collections::{BTreeMap, BTreeSet};
-
-/// The bare flag is `time,location`, stated once — in the attribute — and
-/// read back here, so what it binds is pinned.
-#[test]
-fn the_bare_strict_identity_flag_binds_both_terms() {
-    let cli = Cli::try_parse_from(["pgdt", "parse", "--source", "d.sql", "--strict-identity"])
-        .expect("the flag takes no value");
-    let Invocation::Native(Command::Parse(args)) = cli.command else { panic!("parse") };
-    assert_eq!(args.identity.resolve(), StrictIdentity::binding(true, true));
-
-    let cli = Cli::try_parse_from(["pgdt", "parse", "--source", "d.sql"]).unwrap();
-    let Invocation::Native(Command::Parse(args)) = cli.command else { panic!("parse") };
-    assert_eq!(args.identity.resolve(), StrictIdentity::ADVISORY);
-}
 
 /// Every numeric flag on every command, classified — the check behind
 /// `docs/design/roadmap.md`, "Two tunables fit pgdt to hardware: memory and
