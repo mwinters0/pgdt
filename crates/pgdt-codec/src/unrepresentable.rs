@@ -213,6 +213,36 @@ pub enum UnrepresentableMode {
     Refuse,
 }
 
+impl UnrepresentableMode {
+    /// Every mode, in the order a front end lists them.
+    pub const ALL: [Self; 3] = [Self::Null, Self::Text, Self::Refuse];
+}
+
+/// A mode's word, which every front end writes and reads it by.
+impl std::fmt::Display for UnrepresentableMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Null => "null",
+            Self::Text => "text",
+            Self::Refuse => "refuse",
+        })
+    }
+}
+
+/// A mode by its word ([`Display`](std::fmt::Display)'s), in any case.
+impl std::str::FromStr for UnrepresentableMode {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|mode| mode.to_string().eq_ignore_ascii_case(text)).ok_or_else(
+            || {
+                let words: Vec<String> = Self::ALL.iter().map(|mode| format!("`{mode}`")).collect();
+                format!("`{text}` is not one of {}", words.join(", "))
+            },
+        )
+    }
+}
+
 /// **How one query reads one column's values its type cannot hold as NULL**:
 /// the column's tier test and the tiers the query's front end cannot hold
 /// (`docs/design/decisions.md`, "D98").

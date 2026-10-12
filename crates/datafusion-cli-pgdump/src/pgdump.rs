@@ -84,9 +84,10 @@ pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict
 /// be part of a path or a URL** — no `/`, `\`, `.` or `:` — so a URL's query
 /// string is never read as a name; a local path holding `=` is written
 /// `./a=b.sql`. **The suffixes are stripped from the right, in any order**,
-/// each at most once: TERMS hold `,` and never `:`, and MODE is `null`,
-/// `text` or `refuse` for `:unrepresentable=`, `default` or `ignore` for
-/// `:postgres-invalid-values=`.
+/// each at most once: TERMS hold `,` and never `:`, and MODE is a word of
+/// [`UnrepresentableMode`] for `:unrepresentable=` and of a
+/// [`PostgresInvalidValues`] a query reads under for
+/// `:postgres-invalid-values=`, in any case, as the library reads them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DumpArg {
     pub name: Option<String>,
@@ -119,16 +120,8 @@ impl DumpArg {
             } else if let Some((rest, mode)) =
                 arg.rsplit_once(UNREPRESENTABLE).filter(|(_, mode)| !mode.contains(':'))
             {
-                let mode = match mode {
-                    "null" => UnrepresentableMode::Null,
-                    "text" => UnrepresentableMode::Text,
-                    "refuse" => UnrepresentableMode::Refuse,
-                    _ => {
-                        return Err(format!(
-                            "--dump {UNREPRESENTABLE}{mode}: the mode is `null`, `text` or `refuse`"
-                        ));
-                    }
-                };
+                let mode =
+                    mode.parse().map_err(|why| format!("--dump {UNREPRESENTABLE}{mode}: {why}"))?;
                 if unrepresentable.replace(mode).is_some() {
                     return Err(format!("--dump states {UNREPRESENTABLE} twice"));
                 }
@@ -136,15 +129,10 @@ impl DumpArg {
             } else if let Some((rest, mode)) =
                 arg.rsplit_once(INVALID).filter(|(_, mode)| !mode.contains(':'))
             {
-                let mode = match mode {
-                    "default" => PostgresInvalidValues::Default,
-                    "ignore" => PostgresInvalidValues::Ignore,
-                    _ => {
-                        return Err(format!(
-                            "--dump {INVALID}{mode}: the mode is `default` or `ignore`"
-                        ));
-                    }
-                };
+                let mode = mode
+                    .parse()
+                    .and_then(PostgresInvalidValues::queryable)
+                    .map_err(|why| format!("--dump {INVALID}{mode}: {why}"))?;
                 if invalid.replace(mode).is_some() {
                     return Err(format!("--dump states {INVALID} twice"));
                 }
@@ -391,6 +379,23 @@ mod tests {
             "koji.dump:postgres-invalid-values=ignore:postgres-invalid-values=default",
         ] {
             assert!(DumpArg::parse(refused).is_err(), "{refused}");
+        }
+    }
+
+    /// **A mode suffix reads the library's words in any case**, and
+    /// `:postgres-invalid-values=` refuses a parse's `strict` in the
+    /// library's one sentence for it.
+    #[test]
+    fn a_mode_suffix_reads_the_library_s_words_in_any_case() {
+        let parsed = parsed("koji.dump:unrepresentable=Refuse:postgres-invalid-values=IGNORE");
+        assert_eq!(
+            (parsed.source.as_str(), parsed.unrepresentable, parsed.postgres_invalid_values),
+            ("koji.dump", UnrepresentableMode::Refuse, PostgresInvalidValues::Ignore)
+        );
+        let why = PostgresInvalidValues::Strict.queryable().unwrap_err();
+        for strict in ["strict", "Strict"] {
+            let err = DumpArg::parse(&format!("koji.dump:postgres-invalid-values={strict}"));
+            assert!(err.unwrap_err().ends_with(&why), "{strict}");
         }
     }
 }

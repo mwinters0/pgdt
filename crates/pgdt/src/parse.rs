@@ -10,14 +10,15 @@ use namespace_init::InitShutdown;
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ScanOptions, preamble_only};
 use pgdt_io::{Cancellation, Origin};
-use pgdt_mapping::statistics::GatherOptions;
 use pgdt_mapping::statistics::{
-    ROW_GROUP_DEFAULT_MIN_ROWS, StatisticsRequest, StatisticsSelection,
+    GatherOptions, ROW_GROUP_DEFAULT_MIN_ROWS, StatisticsLevel, StatisticsRequest,
+    StatisticsSelection, StatisticsTarget,
 };
+use pgdt_model::PostgresInvalidValues;
 
 use crate::args::{
-    CliParseInvalidValues, IdentityArgs, OverwriteArgs, ReadFlags, parse_chunk_size,
-    parse_max_line_bytes, parse_row_group_size, parse_statistics_level, scan_options,
+    IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, parse_chunk_size, parse_max_line_bytes,
+    scan_options,
 };
 use crate::info::{print_diagnostics, print_index, print_metadata};
 use crate::interrupt::install_interrupt_guard;
@@ -170,11 +171,11 @@ pub(crate) struct ParseArgs {
     #[arg(
         long,
         value_name = "MODE",
-        value_enum,
         default_value_t,
+        value_parser = ModeParser::every(&PostgresInvalidValues::ALL),
         conflicts_with = "preamble_only"
     )]
-    postgres_invalid_values: CliParseInvalidValues,
+    postgres_invalid_values: PostgresInvalidValues,
     #[command(flatten)]
     identity: IdentityArgs,
     #[command(flatten)]
@@ -245,7 +246,7 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
     let scan_options = ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
     let gather = GatherOptions {
         statistics_allowance_bytes: parallel.statistics_allowance(),
-        postgres_invalid_values: postgres_invalid_values.into(),
+        postgres_invalid_values,
     };
     let run = pgdt_mapping::map_file(source.as_ref(), &scan_options, &gather, &mode, &statistics)
         .await
@@ -313,7 +314,7 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
     // `--detail` is off, so the container line is not printed and
     // nothing has to be read for it; a strict parse names what it
     // left unchecked, any other gives the count alone.
-    let strict = matches!(postgres_invalid_values, CliParseInvalidValues::Strict);
+    let strict = postgres_invalid_values == PostgresInvalidValues::Strict;
     print_index(&run.index, None, false, false, true, strict);
     println!();
     println!("wrote cache to {}", path.display());
@@ -393,5 +394,70 @@ fn resume_notice(
             Some(format!("nothing to scan: the cache already covers all {size} byte(s)"))
         }
         n => Some(format!("resumed a previous scan at byte {n} of {size}")),
+    }
+}
+
+/// A `--statistics-level` value: a level, then comma-separated
+/// `target=level` overrides, a target being a table or a
+/// `schema.table.column`. A name is split at its dots, so a quoted identifier
+/// holding one cannot be named here. **One target named twice is refused**,
+/// whatever the two levels: the library reads the later of two equally
+/// specific entries, and a person writing both meant one of them.
+fn parse_statistics_level(text: &str) -> std::result::Result<StatisticsSelection, String> {
+    fn level(word: &str) -> std::result::Result<StatisticsLevel, String> {
+        match word.trim() {
+            "data" => Ok(StatisticsLevel::Data),
+            "metadata" => Ok(StatisticsLevel::Metadata),
+            other => Err(format!("{other:?} is not a level: `data` or `metadata`")),
+        }
+    }
+    let mut entries = text.split(',').map(str::trim);
+    let first = entries.next().unwrap_or_default();
+    if first.contains('=') {
+        return Err(format!(
+            "{first:?} is an override, and the first entry is the level of every table: start \
+             with `data` or `metadata`"
+        ));
+    }
+    let default = level(first)?;
+    let mut overrides: Vec<(StatisticsTarget, StatisticsLevel)> = Vec::new();
+    for entry in entries {
+        let Some((name, stated)) = entry.split_once('=') else {
+            return Err(format!(
+                "{entry:?} states no level: write `{entry}=data` or `{entry}=metadata`"
+            ));
+        };
+        let name = name.trim();
+        let parts: Vec<&str> = name.split('.').collect();
+        if parts.iter().any(|part| part.is_empty()) {
+            return Err(format!("{name:?} is not a table or a schema.table.column"));
+        }
+        let target = match parts.as_slice() {
+            [_] | [_, _] => StatisticsTarget::Table(name.to_string()),
+            [schema, table, column] => StatisticsTarget::Column {
+                table: format!("{schema}.{table}"),
+                column: (*column).to_string(),
+            },
+            _ => return Err(format!("{name:?} has more parts than schema.table.column")),
+        };
+        if overrides.iter().any(|(named, _)| *named == target) {
+            return Err(format!("{name:?} is named twice — give each table or column one level"));
+        }
+        overrides.push((target, level(stated)?));
+    }
+    Ok(StatisticsSelection { default, overrides })
+}
+
+/// A `--row-group-size` value: a byte count, never zero, which would
+/// put every row in a group of its own past the end of the data, and a power
+/// of two, so that every size a block's groups can merge to nests in it.
+fn parse_row_group_size(text: &str) -> std::result::Result<NonZeroU64, String> {
+    match text.parse::<u64>() {
+        Ok(0) => Err("a group size of 0 covers no bytes".to_string()),
+        Ok(n) if !n.is_power_of_two() => {
+            Err(format!("a group size must be a power of two, and {n} is not"))
+        }
+        Ok(n) => Ok(NonZeroU64::new(n).expect("not zero")),
+        Err(e) => Err(e.to_string()),
     }
 }

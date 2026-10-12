@@ -847,6 +847,36 @@ fn a_strict_parse_lists_a_partition_s_bound_and_its_root_s_routing() {
     );
 }
 
+/// **A mode flag reads its library type's words in any case**, and `query`
+/// refuses `--postgres-invalid-values strict`, a parse's mode alone, in the
+/// library's one sentence for it, where `parse` takes it.
+#[test]
+fn a_mode_flag_reads_its_words_in_any_case() {
+    let (_dir, dump) = sandboxed(&fixture(16, "edge_cases", "default"), "modes.sql");
+    let source = dump.to_str().unwrap();
+    run_ok(&["parse", "--source", source, "--postgres-invalid-values", "STRICT"]);
+    let query = |extra: &[&str]| {
+        let mut args = vec!["query", "--source", source, "--table", "logs.events"];
+        args.extend_from_slice(extra);
+        run(&args)
+    };
+    let mixed = query(&[
+        "--schema-mode",
+        "Strings",
+        "--unrepresentable",
+        "Text",
+        "--postgres-invalid-values",
+        "IGNORE",
+    ]);
+    assert!(mixed.status.success(), "{}", stderr_of(&mixed));
+    let why = pgdt_model::PostgresInvalidValues::Strict.queryable().unwrap_err();
+    for strict in ["strict", "Strict"] {
+        let refused = query(&["--postgres-invalid-values", strict]);
+        assert!(!refused.status.success());
+        assert!(stderr_of(&refused).contains(&why), "{}", stderr_of(&refused));
+    }
+}
+
 /// **`--postgres-invalid-values` reaches both commands.** `parse` stops at the
 /// float `--extra-float-digits=0` rounds past `DBL_MAX` unless told `ignore`,
 /// which leaves a cache; `query` over it refuses the field unless told

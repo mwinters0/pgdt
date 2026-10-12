@@ -33,6 +33,35 @@ pub enum SchemaMode {
     Strings,
 }
 
+impl SchemaMode {
+    /// Every mode, in the order a front end lists them.
+    pub const ALL: [Self; 2] = [Self::Typed, Self::Strings];
+}
+
+/// A mode's word, which every front end writes and reads it by.
+impl std::fmt::Display for SchemaMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Typed => "typed",
+            Self::Strings => "strings",
+        })
+    }
+}
+
+/// A mode by its word ([`Display`](std::fmt::Display)'s), in any case.
+impl std::str::FromStr for SchemaMode {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|mode| mode.to_string().eq_ignore_ascii_case(text)).ok_or_else(
+            || {
+                let words: Vec<String> = Self::ALL.iter().map(|mode| format!("`{mode}`")).collect();
+                format!("`{text}` is not one of {}", words.join(", "))
+            },
+        )
+    }
+}
+
 /// Per-column outcome of resolving one declared type against this build's
 /// mapping table. Distinct from [`crate::pgtype::TypeOutcome`]: this adds
 /// the "no DDL explained this column at all" case, which is a

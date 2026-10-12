@@ -1045,8 +1045,9 @@ of a table whose statistics did not fit `--memory` — a query reading one still
 refuses it, but for an enum label, which a query refuses only where `<`, `<=`,
 `>` or `>=` reads the column.
 
-**`--postgres-invalid-values strict` checks every value instead**, those
-included, so a `parse` that finishes means no value in the dump is one
+**`--postgres-invalid-values strict` checks every value instead** — a
+`parse`'s mode alone, which `query` refuses — those included, so a `parse`
+that finishes means no value in the dump is one
 PostgreSQL's input function for its type refuses. It checks a value of a type
 pgdt keeps as its text where it reads that type's input — `json`, `bit`, `bit
 varying`, the geometric types, `"char"`, `refcursor`, `xid`, `xid8` and `cid`,

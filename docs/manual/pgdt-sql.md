@@ -64,7 +64,10 @@ which is left out and named on stderr with why
   type"). The cache it reads is the one a `pgdt parse` told the same leaves.
 - **`:strict-identity=TERMS` is this dump's `--strict-identity`**
   ([below](#--strict-identity-when-a-moved-file-should-stop-the-session)),
-  in place of the session's. The suffixes may come in any order.
+  in place of the session's. The suffixes may come in any order, and a mode
+  is read in any case, as `pgdt query`'s flags and the `pgdump.` options read
+  it; `:postgres-invalid-values=strict`, a `pgdt parse` mode alone, is
+  refused.
 - **The source is anything `pgdt --source` takes**: a path, an `.xz` file, or
   an `http(s)://` URL. A path containing `=` is written `./a=b.sql`; a URL's
   `=` is never read as a name.
@@ -86,8 +89,10 @@ CREATE EXTERNAL TABLE build STORED AS PGDUMP LOCATION 'koji.dump'
 | `pgdump.postgres_invalid_values` | `default`, refusing a value PostgreSQL refuses for its column's type, or `ignore`, reading it as `:postgres-invalid-values=ignore` does. |
 | `pgdump.strict_identity` | This dump's `--strict-identity` terms, in place of the session's (below). |
 
-A name that matches more than one table is refused, naming them. The table's
-columns are the dump's, so the statement declares none.
+A mode is read in any case, `Strings` as `strings`, and
+`pgdump.postgres_invalid_values` refuses `strict`, a `pgdt parse` mode
+alone. A name that matches more than one table is refused, naming them. The
+table's columns are the dump's, so the statement declares none.
 
 ## `--strict-identity`: when a moved file should stop the session
 

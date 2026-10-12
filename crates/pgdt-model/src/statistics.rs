@@ -59,8 +59,54 @@ pub enum PostgresInvalidValues {
     /// ([`crate::CopyBlock::checked_in_full`]), and one the cache holds
     /// unchecked is re-read and checked, so a clean run has checked every field
     /// whichever runs built the cache. A query reads under it as under
-    /// `Default`.
+    /// `Default`, and a query front end refuses it ([`Self::queryable`]).
     Strict,
+}
+
+impl PostgresInvalidValues {
+    /// Every mode, in the order a front end lists them.
+    pub const ALL: [Self; 3] = [Self::Default, Self::Ignore, Self::Strict];
+
+    /// **This mode as a query front end may state it**: [`Self::Strict`] is
+    /// refused, a parse's alone (`docs/design/decisions.md`, "D103"), in the
+    /// one sentence every query front end gives.
+    pub fn queryable(self) -> Result<Self, String> {
+        match self {
+            Self::Strict => Err(format!(
+                "`{}` checks every field as a parse maps it, so it is a parse's mode alone; a \
+                 query reads under `{}` or `{}`",
+                Self::Strict,
+                Self::Default,
+                Self::Ignore
+            )),
+            mode => Ok(mode),
+        }
+    }
+}
+
+/// A mode's word, which every front end writes and reads it by.
+impl std::fmt::Display for PostgresInvalidValues {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Default => "default",
+            Self::Ignore => "ignore",
+            Self::Strict => "strict",
+        })
+    }
+}
+
+/// A mode by its word ([`Display`](std::fmt::Display)'s), in any case.
+impl std::str::FromStr for PostgresInvalidValues {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, String> {
+        Self::ALL.into_iter().find(|mode| mode.to_string().eq_ignore_ascii_case(text)).ok_or_else(
+            || {
+                let words: Vec<String> = Self::ALL.iter().map(|mode| format!("`{mode}`")).collect();
+                format!("`{text}` is not one of {}", words.join(", "))
+            },
+        )
+    }
 }
 
 /// The longest text any stored bound or dictionary entry may be, in bytes.

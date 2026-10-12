@@ -50,8 +50,9 @@ arrow = { workspace = true }
 # by. A flag's help *is* its doc comment here
 # (`docs/design/decisions.md`, "D67"), so those paragraphs are the normal case rather than the
 # exception. `tests/help_text.rs` snapshots every page so the rendering is
-# reviewable at all.
-clap = { workspace = true, features = ["derive", "wrap_help"] }
+# reviewable at all. `string`, so a mode flag's `--help` lists its library
+# type's words as that type displays them, owned (`src/args.rs`'s `ModeParser`).
+clap = { workspace = true, features = ["derive", "string", "wrap_help"] }
 # `pgdt sql`: DataFusion's own CLI, whose copied arguments are the
 # subcommand's and whose entry point it calls. Unconditional, so the binary
 # every figure times is the one a release ships (`docs/design/decisions.md`,

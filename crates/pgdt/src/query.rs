@@ -7,15 +7,16 @@ use arrow::array::RecordBatch;
 use clap::Args;
 use futures::StreamExt;
 use pgdt_codec::pgtype::NestedPlan;
+use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::Origin;
-use pgdt_model::{Finding, Severity};
+use pgdt_model::{Finding, PostgresInvalidValues, Severity};
 use pgdt_query::{QueryOptions, render_field_into};
 use tracing::Instrument;
 
 use crate::args::{
-    CliInvalidValues, CliSchemaMode, CliUnrepresentable, IdentityArgs, OverwriteArgs, ReadFlags,
-    parse_chunk_size, parse_max_line_bytes, scan_options,
+    IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, parse_chunk_size, parse_max_line_bytes,
+    scan_options,
 };
 use crate::parallel::{ParallelArgs, QueryPasses, Resolved};
 use crate::source::{about_the_source, naming_the_source, open_for_scan};
@@ -131,8 +132,8 @@ pub(crate) struct QueryArgs {
     /// `strings` skips that lookup entirely, matching the untyped
     /// byte-for-byte output — the way out of `Error::MetadataNotScanned`
     /// for a database an incremental scan hasn't read the DDL for yet.
-    #[arg(long, value_enum, default_value_t)]
-    schema_mode: CliSchemaMode,
+    #[arg(long, default_value_t, value_parser = ModeParser::every(&SchemaMode::ALL))]
+    schema_mode: SchemaMode,
     /// What to do with a value PostgreSQL accepts for a column's declared
     /// type and the column's type cannot hold — `infinity` in a `date`,
     /// `NaN` in a `numeric(p,s)`, `24:00:00` in a `time`: `null`, the
@@ -145,8 +146,13 @@ pub(crate) struct QueryArgs {
     /// a row is read, a query printing a column that holds one, whatever
     /// its filter keeps, and compares one a filter reads in PostgreSQL's
     /// order. `--schema-mode strings` reads every value as its text.
-    #[arg(long, value_name = "MODE", value_enum, default_value_t)]
-    unrepresentable: CliUnrepresentable,
+    #[arg(
+        long,
+        value_name = "MODE",
+        default_value_t,
+        value_parser = ModeParser::every(&UnrepresentableMode::ALL)
+    )]
+    unrepresentable: UnrepresentableMode,
     /// What to do with a value PostgreSQL refuses for its column's type —
     /// `70000` in a `smallint`, a `double precision` written past its
     /// range: `default` refuses a query reading one, as a restore refuses
@@ -157,8 +163,16 @@ pub(crate) struct QueryArgs {
     /// column as NULL, for printing and filtering alike, and still
     /// refuses every other. A filter's own value
     /// PostgreSQL refuses is refused either way.
-    #[arg(long, value_name = "MODE", value_enum, default_value_t)]
-    postgres_invalid_values: CliInvalidValues,
+    #[arg(
+        long,
+        value_name = "MODE",
+        default_value_t,
+        value_parser = ModeParser::accepting(
+            &PostgresInvalidValues::ALL,
+            PostgresInvalidValues::queryable
+        )
+    )]
+    postgres_invalid_values: PostgresInvalidValues,
     /// Bytes requested per read from the dump — the same knob `parse`
     /// carries, and with the same measured answer behind its default.
     #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
@@ -254,9 +268,9 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     let mut rows = 0u64;
     let query_options = QueryOptions {
         database,
-        schema_mode: schema_mode.into(),
-        unrepresentable: unrepresentable.into(),
-        postgres_invalid_values: postgres_invalid_values.into(),
+        schema_mode,
+        unrepresentable,
+        postgres_invalid_values,
         filter,
         projection: projection(column, no_columns),
         parallelism: replay.parallelism(),

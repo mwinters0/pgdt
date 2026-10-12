@@ -1,88 +1,54 @@
-//! The flag groups subcommands share, the CLI spelling of each library mode a
-//! flag selects, and the value parsers of the subcommands' flags.
+//! The flag groups and value parsers more than one subcommand reads.
 
-use clap::Args;
-use pgdt_codec::{SchemaMode, UnrepresentableMode};
+use std::ffi::OsStr;
+use std::fmt::Display;
+use std::str::FromStr;
+
+use clap::builder::{PossibleValue, StringValueParser, TypedValueParser};
+use clap::{Arg, Args, Command};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::StrictIdentity;
-use pgdt_mapping::statistics::{StatisticsLevel, StatisticsSelection, StatisticsTarget};
-use pgdt_model::PostgresInvalidValues;
-use std::num::NonZeroU64;
 
 use crate::parallel::Resolved;
 
-/// CLI spelling of [`SchemaMode`] (`docs/design/decisions.md`, "D66").
-#[derive(Clone, Copy, Default, clap::ValueEnum)]
-pub(crate) enum CliSchemaMode {
-    #[default]
-    Typed,
-    Strings,
+/// A flag naming a library mode by the library's own words — its type's
+/// `FromStr`, in any case — `--help` listing those of `modes` that `accept`
+/// takes, by their `Display`. `accept` refuses, in the library's words too,
+/// a mode the flag's command may not state.
+#[derive(Clone, Copy)]
+pub(crate) struct ModeParser<T: 'static> {
+    modes: &'static [T],
+    accept: fn(T) -> Result<T, String>,
 }
 
-impl From<CliSchemaMode> for SchemaMode {
-    fn from(mode: CliSchemaMode) -> Self {
-        match mode {
-            CliSchemaMode::Typed => SchemaMode::Typed,
-            CliSchemaMode::Strings => SchemaMode::Strings,
-        }
+impl<T> ModeParser<T> {
+    /// A flag taking every one of `modes`.
+    pub(crate) fn every(modes: &'static [T]) -> Self {
+        Self { modes, accept: Ok }
+    }
+
+    /// A flag taking those of `modes` that `accept` does.
+    pub(crate) fn accepting(modes: &'static [T], accept: fn(T) -> Result<T, String>) -> Self {
+        Self { modes, accept }
     }
 }
 
-/// CLI spelling of [`UnrepresentableMode`] (`docs/design/decisions.md`,
-/// "D98").
-#[derive(Clone, Copy, Default, clap::ValueEnum)]
-pub(crate) enum CliUnrepresentable {
-    #[default]
-    Null,
-    Text,
-    Refuse,
-}
+impl<T> TypedValueParser for ModeParser<T>
+where
+    T: Copy + Display + FromStr<Err = String> + Send + Sync + 'static,
+{
+    type Value = T;
 
-impl From<CliUnrepresentable> for UnrepresentableMode {
-    fn from(mode: CliUnrepresentable) -> Self {
-        match mode {
-            CliUnrepresentable::Null => UnrepresentableMode::Null,
-            CliUnrepresentable::Text => UnrepresentableMode::Text,
-            CliUnrepresentable::Refuse => UnrepresentableMode::Refuse,
-        }
+    fn parse_ref(&self, cmd: &Command, arg: Option<&Arg>, value: &OsStr) -> Result<T, clap::Error> {
+        let accept = self.accept;
+        StringValueParser::new()
+            .try_map(move |word| word.parse::<T>().and_then(accept))
+            .parse_ref(cmd, arg, value)
     }
-}
 
-/// CLI spelling of [`PostgresInvalidValues`] (`docs/design/decisions.md`,
-/// "D103").
-#[derive(Clone, Copy, Default, clap::ValueEnum)]
-pub(crate) enum CliInvalidValues {
-    #[default]
-    Default,
-    Ignore,
-}
-
-impl From<CliInvalidValues> for PostgresInvalidValues {
-    fn from(mode: CliInvalidValues) -> Self {
-        match mode {
-            CliInvalidValues::Default => PostgresInvalidValues::Default,
-            CliInvalidValues::Ignore => PostgresInvalidValues::Ignore,
-        }
-    }
-}
-
-/// `parse`'s spelling of [`PostgresInvalidValues`], which adds the mode only a
-/// parse has: `strict`, checking every field.
-#[derive(Clone, Copy, Default, clap::ValueEnum)]
-pub(crate) enum CliParseInvalidValues {
-    #[default]
-    Default,
-    Ignore,
-    Strict,
-}
-
-impl From<CliParseInvalidValues> for PostgresInvalidValues {
-    fn from(mode: CliParseInvalidValues) -> Self {
-        match mode {
-            CliParseInvalidValues::Default => PostgresInvalidValues::Default,
-            CliParseInvalidValues::Ignore => PostgresInvalidValues::Ignore,
-            CliParseInvalidValues::Strict => PostgresInvalidValues::Strict,
-        }
+    fn possible_values(&self) -> Option<Box<dyn Iterator<Item = PossibleValue> + '_>> {
+        let accepted = self.modes.iter().filter(|mode| (self.accept)(**mode).is_ok());
+        Some(Box::new(accepted.map(|mode| PossibleValue::new(mode.to_string()))))
     }
 }
 
@@ -179,73 +145,6 @@ pub(crate) fn parse_max_line_bytes(text: &str) -> std::result::Result<usize, Str
     match text.parse::<usize>() {
         Ok(0) => Err("a line limit of 0 would refuse every line a read splits".to_string()),
         Ok(n) => Ok(n),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
-/// A `--statistics-level` value: a level, then comma-separated
-/// `target=level` overrides, a target being a table or a
-/// `schema.table.column`. A name is split at its dots, so a quoted identifier
-/// holding one cannot be named here. **One target named twice is refused**,
-/// whatever the two levels: the library reads the later of two equally
-/// specific entries, and a person writing both meant one of them.
-pub(crate) fn parse_statistics_level(
-    text: &str,
-) -> std::result::Result<StatisticsSelection, String> {
-    fn level(word: &str) -> std::result::Result<StatisticsLevel, String> {
-        match word.trim() {
-            "data" => Ok(StatisticsLevel::Data),
-            "metadata" => Ok(StatisticsLevel::Metadata),
-            other => Err(format!("{other:?} is not a level: `data` or `metadata`")),
-        }
-    }
-    let mut entries = text.split(',').map(str::trim);
-    let first = entries.next().unwrap_or_default();
-    if first.contains('=') {
-        return Err(format!(
-            "{first:?} is an override, and the first entry is the level of every table: start \
-             with `data` or `metadata`"
-        ));
-    }
-    let default = level(first)?;
-    let mut overrides: Vec<(StatisticsTarget, StatisticsLevel)> = Vec::new();
-    for entry in entries {
-        let Some((name, stated)) = entry.split_once('=') else {
-            return Err(format!(
-                "{entry:?} states no level: write `{entry}=data` or `{entry}=metadata`"
-            ));
-        };
-        let name = name.trim();
-        let parts: Vec<&str> = name.split('.').collect();
-        if parts.iter().any(|part| part.is_empty()) {
-            return Err(format!("{name:?} is not a table or a schema.table.column"));
-        }
-        let target = match parts.as_slice() {
-            [_] | [_, _] => StatisticsTarget::Table(name.to_string()),
-            [schema, table, column] => StatisticsTarget::Column {
-                table: format!("{schema}.{table}"),
-                column: (*column).to_string(),
-            },
-            _ => return Err(format!("{name:?} has more parts than schema.table.column")),
-        };
-        if overrides.iter().any(|(named, _)| *named == target) {
-            return Err(format!("{name:?} is named twice — give each table or column one level"));
-        }
-        overrides.push((target, level(stated)?));
-    }
-    Ok(StatisticsSelection { default, overrides })
-}
-
-/// A `--row-group-size` value: a byte count, never zero, which would
-/// put every row in a group of its own past the end of the data, and a power
-/// of two, so that every size a block's groups can merge to nests in it.
-pub(crate) fn parse_row_group_size(text: &str) -> std::result::Result<NonZeroU64, String> {
-    match text.parse::<u64>() {
-        Ok(0) => Err("a group size of 0 covers no bytes".to_string()),
-        Ok(n) if !n.is_power_of_two() => {
-            Err(format!("a group size must be a power of two, and {n} is not"))
-        }
-        Ok(n) => Ok(NonZeroU64::new(n).expect("not zero")),
         Err(e) => Err(e.to_string()),
     }
 }

@@ -85,38 +85,18 @@ impl ExtensionOptions for PgDumpTableOptions {
             "table" => self.table = Some(value.to_string()),
             "schema" => self.schema = Some(value.to_string()),
             "database" => self.database = Some(value.to_string()),
-            "schema_mode" => {
-                self.schema_mode = match value.to_ascii_lowercase().as_str() {
-                    "typed" => SchemaMode::Typed,
-                    "strings" => SchemaMode::Strings,
-                    _ => {
-                        return plan_err!(
-                            "pgdump.schema_mode is `typed` or `strings`, not `{value}`"
-                        );
-                    }
-                }
-            }
-            "unrepresentable" => {
-                self.unrepresentable = match value.to_ascii_lowercase().as_str() {
-                    "null" => UnrepresentableMode::Null,
-                    "text" => UnrepresentableMode::Text,
-                    "refuse" => UnrepresentableMode::Refuse,
-                    _ => {
-                        return plan_err!(
-                            "pgdump.unrepresentable is `null`, `text` or `refuse`, not `{value}`"
-                        );
-                    }
-                }
-            }
+            "schema_mode" => match value.parse() {
+                Ok(mode) => self.schema_mode = mode,
+                Err(why) => return plan_err!("pgdump.schema_mode: {why}"),
+            },
+            "unrepresentable" => match value.parse() {
+                Ok(mode) => self.unrepresentable = mode,
+                Err(why) => return plan_err!("pgdump.unrepresentable: {why}"),
+            },
             "postgres_invalid_values" => {
-                self.postgres_invalid_values = match value.to_ascii_lowercase().as_str() {
-                    "default" => PostgresInvalidValues::Default,
-                    "ignore" => PostgresInvalidValues::Ignore,
-                    _ => {
-                        return plan_err!(
-                            "pgdump.postgres_invalid_values is `default` or `ignore`, not `{value}`"
-                        );
-                    }
+                match value.parse().and_then(PostgresInvalidValues::queryable) {
+                    Ok(mode) => self.postgres_invalid_values = mode,
+                    Err(why) => return plan_err!("pgdump.postgres_invalid_values: {why}"),
                 }
             }
             "strict_identity" => match value.parse() {
@@ -141,19 +121,11 @@ impl ExtensionOptions for PgDumpTableOptions {
             value,
             description,
         };
-        let mode = match self.schema_mode {
-            SchemaMode::Typed => "typed",
-            SchemaMode::Strings => "strings",
-        };
-        let unrepresentable = match self.unrepresentable {
-            UnrepresentableMode::Null => "null",
-            UnrepresentableMode::Text => "text",
-            UnrepresentableMode::Refuse => "refuse",
-        };
         let invalid = match self.postgres_invalid_values {
-            // A scan reads under `Strict`, a parse's mode, as under `Default`.
-            PostgresInvalidValues::Default | PostgresInvalidValues::Strict => "default",
-            PostgresInvalidValues::Ignore => "ignore",
+            // `set` refuses `Strict`, a parse's mode, and a scan reads under
+            // one stated on the field as under `Default`.
+            PostgresInvalidValues::Strict => PostgresInvalidValues::Default,
+            mode => mode,
         };
         vec![
             entry("table", self.table.clone(), "The table to register; required."),
@@ -161,12 +133,12 @@ impl ExtensionOptions for PgDumpTableOptions {
             entry("database", self.database.clone(), "The table's database."),
             entry(
                 "schema_mode",
-                Some(mode.to_string()),
+                Some(self.schema_mode.to_string()),
                 "`typed`, or `strings` for every column as the file's text.",
             ),
             entry(
                 "unrepresentable",
-                Some(unrepresentable.to_string()),
+                Some(self.unrepresentable.to_string()),
                 "`null`, a value its column's type cannot hold read as NULL, `text`, a column holding one read as its text, or `refuse`.",
             ),
             entry(
@@ -307,6 +279,26 @@ mod tests {
                 assert!(entry.description.contains(&format!("`{mode}`")), "{}", entry.description);
             }
             assert!(PgDumpTableOptions::default().set(key, "strict").is_err(), "{key}");
+        }
+    }
+
+    /// **A mode option reads its library type's words in any case**, and
+    /// `pgdump.postgres_invalid_values` refuses a parse's `strict`, in any
+    /// case, with the library's one sentence for it.
+    #[test]
+    fn a_mode_option_reads_its_words_in_any_case() {
+        let mut options = PgDumpTableOptions::default();
+        options.set("pgdump.schema_mode", "Strings").unwrap();
+        options.set("pgdump.unrepresentable", "REFUSE").unwrap();
+        options.set("pgdump.postgres_invalid_values", "Ignore").unwrap();
+        assert_eq!(
+            (options.schema_mode, options.unrepresentable, options.postgres_invalid_values),
+            (SchemaMode::Strings, UnrepresentableMode::Refuse, PostgresInvalidValues::Ignore)
+        );
+        let why = PostgresInvalidValues::Strict.queryable().unwrap_err();
+        for strict in ["strict", "Strict"] {
+            let err = options.set("pgdump.postgres_invalid_values", strict).unwrap_err();
+            assert!(err.to_string().contains(&why), "{err}");
         }
     }
 }
