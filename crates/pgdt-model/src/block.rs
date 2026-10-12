@@ -47,15 +47,7 @@ impl ArrayShape {
         };
         self.lower_bound_prefix |= other.lower_bound_prefix;
     }
-}
 
-/// What a crate above calls on [`ArrayShape`] that is not its API: public only
-/// because a crate boundary forced it, and reached through `internal`.
-pub trait ArrayShapeExt {
-    fn observe(&mut self, field: &[u8]);
-}
-
-impl ArrayShapeExt for ArrayShape {
     /// Fold one still-COPY-escaped field into this column's census. The
     /// field is not decoded first: neither `{` nor the `[lb:ub]=` prefix is
     /// in COPY TEXT's escape set (I15). A field that does not open with `{`,

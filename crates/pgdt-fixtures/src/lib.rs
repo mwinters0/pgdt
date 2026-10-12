@@ -1,6 +1,6 @@
 //! The fixture vocabulary every crate's tests speak: where the fixtures are,
-//! the sweep's enumerator, the sandboxes, the fields PostgreSQL refuses, and
-//! the hand-written `edge_cases.sql`.
+//! the sweep's enumerator, the sandboxes, the multi-database concatenation,
+//! the fields PostgreSQL refuses, and the hand-written `edge_cases.sql`.
 //!
 //! Each `tests/*.rs` file is its own crate, so without one shared home every
 //! file that needs a fixture path carries its own copy of one — and copies of

@@ -3604,7 +3604,7 @@ mod oracle {
     /// `True` only where the two are one value here as they are on the
     /// server, and each refused row is asked for the refusal — which is
     /// where `[10,1)` lands, a `22000` the container grammar cannot see
-    /// (I44) and `key::make_range` raises.
+    /// (I44) and pgdt-codec's `make_range` (`value/nested/key.rs`) raises.
     #[tokio::test]
     async fn a_range_literal_is_canonicalized_before_it_is_compared() {
         let mut asked = 0usize;

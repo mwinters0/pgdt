@@ -8,10 +8,10 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::statistics::deserialize_block_statistics;
 use crate::{
     ArrayShape, BlockCensus, BlockStatistics, CollationDef, Diagnostic, DumpMetadata,
     IgnoredRefusals, TableDef, TableReference, TypeKind, Unrepresentable,
-    deserialize_block_statistics,
 };
 use pgdt_core::CopyHeader;
 
@@ -65,7 +65,8 @@ pub struct Span {
 /// The fields of a TOC header comment (I3/I16) — `-- Name: <name>; Type:
 /// <kind>; Schema: <schema>; Owner: <owner>[; Tablespace: <tablespace>]`, or
 /// its `-- Data for Name: ...` sibling ahead of a `COPY` block. Parsed by
-/// `pgdt_dump::map::parse_toc_header_line`; see the module docs' "TOC enrichment" bullet.
+/// `pgdt_dump::map::toc::parse_toc_header_line`; see pgdt-dump's `map.rs`
+/// module doc, its "TOC enrichment" bullet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TocHeader {
     /// `te->tag`, sanitized — the object's own name as `pg_dump` wrote it,

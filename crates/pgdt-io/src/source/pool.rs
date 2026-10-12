@@ -1,6 +1,6 @@
-//! The buffer pool every source reads into — a source's chunk pool, and the
-//! block pool a block-decoding source decodes into — and the byte budget a
-//! caller's parallelism hands it.
+//! The buffer pool every source but the remote one reads into — a source's
+//! chunk pool, and the block pool a block-decoding source decodes into — and
+//! the byte budget a caller's parallelism hands it.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};

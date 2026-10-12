@@ -367,22 +367,22 @@ fn fetched(statistics: &Statistics, limit: Option<usize>) -> Statistics {
 /// The metric counting the row groups statistics ruled out, named as Parquet's
 /// scan names its own, so a reader of `EXPLAIN ANALYZE` meets one word for one
 /// thing.
-pub(crate) const ROW_GROUPS_PRUNED_STATISTICS: &str = "row_groups_pruned_statistics";
+const ROW_GROUPS_PRUNED_STATISTICS: &str = "row_groups_pruned_statistics";
 
 /// The metric counting the bytes of rows an early stop on sorted data left
 /// unread.
-pub(crate) const BYTES_UNREAD_EARLY_STOP: &str = "bytes_unread_early_stop";
+const BYTES_UNREAD_EARLY_STOP: &str = "bytes_unread_early_stop";
 
 /// The metric counting the row groups a dynamic filter ruled out as the
 /// replay reached them, named as Parquet's scan names its own.
-pub(crate) const ROW_GROUPS_PRUNED_DYNAMIC_FILTER: &str = "row_groups_pruned_dynamic_filter";
+const ROW_GROUPS_PRUNED_DYNAMIC_FILTER: &str = "row_groups_pruned_dynamic_filter";
 
 /// The metric counting the rows a dynamic filter dropped before decoding
 /// them, of those the replay read — none unless the scan was planned under
 /// `pgdump.dynamic_filter_rows`: named beside
 /// [`ROW_GROUPS_PRUNED_DYNAMIC_FILTER`] rather than as Parquet's
 /// `pushdown_rows_pruned`, which counts the rows its static filter drops too.
-pub(crate) const ROWS_PRUNED_DYNAMIC_FILTER: &str = "rows_pruned_dynamic_filter";
+const ROWS_PRUNED_DYNAMIC_FILTER: &str = "rows_pruned_dynamic_filter";
 
 /// What a scan reports under `EXPLAIN ANALYZE`, beside the streaming exec's
 /// rows and time: the row groups the map's statistics ruled out, of those its
@@ -430,7 +430,7 @@ impl ScanMetrics {
     /// stops left unread and what its dynamic filter pruned and dropped once
     /// it ends or is dropped — a `LIMIT` met drops a partition before its
     /// end, and what was skipped by then was still not read.
-    pub(crate) fn counted(&self, stream: TableStream<'static>, partition: usize) -> Counted {
+    fn counted(&self, stream: TableStream<'static>, partition: usize) -> Counted {
         let unread = MetricBuilder::new(&self.set)
             .with_type(MetricType::Summary)
             .with_category(MetricCategory::Bytes)
@@ -454,7 +454,7 @@ impl ScanMetrics {
 /// (`pgdt_query::EarlyStop::unread_bytes`); a group, by the one partition
 /// the library counts it in
 /// (`pgdt_query::TableStream::dynamic_filter_pruned_groups`).
-pub(crate) struct Counted {
+struct Counted {
     stream: TableStream<'static>,
     unread: Count,
     pruned: Count,

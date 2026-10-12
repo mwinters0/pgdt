@@ -23,8 +23,8 @@ the `.xz` file pulled or fetched, the remote object
 
 - **pgdt-io** — `source/`: the whole concept, below the parsers that read
   through it — the read contract with its arms nested under it, the buffer
-  pool they all read into, and what both `.xz` sources share above the two of
-  them.
+  pool every arm but the remote one reads into, and what both `.xz` sources
+  share above the two of them.
 
 ## Memory and parallelism
 

@@ -78,7 +78,7 @@ pub struct FetchedXzSource {
     /// What the caller announced and everything derived from it, which
     /// [`XzSource`](crate::XzSource) holds the same value of: only the decoder charge inside it
     /// is this source's own ([`XzBudget`]).
-    pub(super) budget: XzBudget,
+    budget: XzBudget,
 }
 
 impl FetchedXzSource {

@@ -361,7 +361,7 @@ fn array_delimiter(element: &NestedCompare) -> Option<u8> {
 /// here, a position this build does not order or a spelling it does not read.
 /// **Every element is read whatever an earlier one answered**, so a refusal
 /// anywhere in the value is found.
-pub(crate) fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
+fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
     let refused = Unread::Refused;
     Ok(match plan {
         NestedCompare::Leaf { kind, .. } => match field_key(kind, text) {

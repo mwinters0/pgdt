@@ -596,3 +596,6 @@ impl TypeKind {
         Self::Enum { labels: labels.into_iter().map(Into::into).collect(), exact: true }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,7 +1,8 @@
-//! PostgreSQL values: every decoder, the datetime grammar, nested literals,
-//! the type register, the comparison plans and their ordering keys, and
-//! column resolution (`docs/design/decisions.md`, "D68"). Synchronous, no
-//! I/O, and Arrow's schema types only but `i256` (D74).
+//! PostgreSQL values: every decoder and renderer, the datetime grammar, nested
+//! literals, a declared type's Arrow mapping, the comparison register and its
+//! order keys, whether PostgreSQL refuses a field, a value's unrepresentable
+//! tier, and column resolution (`docs/design/decisions.md`, "D68").
+//! Synchronous, no I/O, and Arrow's schema types only but `i256` (D74).
 
 pub mod compare;
 mod declared;

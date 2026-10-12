@@ -19,7 +19,7 @@
 //!
 //! [`crate::scan::CopyScanner`] lexes every line outside a block, so a `$$`
 //! inside any of these opens no body (`docs/design/decisions.md`, "D23"), and
-//! [`crate::map`]'s `StatementScan` lexes a statement's lines with the
+//! `crate::map::statement`'s `StatementScan` lexes a statement's lines with the
 //! same rules, so a statement's end agrees with the scanner's regions.
 //!
 //! **Line at a time.** Every caller holds whole lines, and nothing in a

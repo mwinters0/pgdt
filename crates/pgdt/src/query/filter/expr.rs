@@ -23,7 +23,7 @@ use pgdt_query::Expr;
 ///
 /// Every fault — a malformed leaf included — is raised here, before the dump
 /// is opened, exactly as a malformed `--filter` term is.
-pub fn parse_where(spec: &str) -> Result<Expr> {
+pub(crate) fn parse_where(spec: &str) -> Result<Expr> {
     let tokens = tokenize(spec);
     let mut parser = Parser { tokens: &tokens, pos: 0, spec };
     let expr = parser.parse_or()?;
@@ -64,7 +64,7 @@ pub fn parse_where(spec: &str) -> Result<Expr> {
 /// it returns no wrong rows: a string one flag accepts and the other rejects
 /// cannot be moved between them either. The remedy is the term grammar's own
 /// — `--filter '"and" is null'`.
-pub(crate) fn refuse_where_structure(spec: &str) -> Result<()> {
+pub(super) fn refuse_where_structure(spec: &str) -> Result<()> {
     let tokens = tokenize(spec);
     // Nothing at all is not structure: an empty or all-whitespace term holds
     // no reserved spelling to disagree about, and neither flag accepts it, so

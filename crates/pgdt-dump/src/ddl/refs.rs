@@ -9,7 +9,7 @@ use super::lex::{find_ci, strip_kw};
 use pgdt_core::internal::Cursor;
 
 /// Extract every role/tablespace a complete statement (see
-/// `crate::map`'s `statement_complete`) references —
+/// `crate::map::statement`'s `statement_complete`) references —
 /// the two sources [`pgdt_model::Span::toc`] alone can't cover, since none of
 /// these three statement shapes is its own TOC entry:
 ///
@@ -26,7 +26,7 @@ use pgdt_core::internal::Cursor;
 ///   the database's own default," not a reference to a real tablespace.
 ///
 /// Matching is by marker substring, the same tolerance
-/// [`parse_toc_header_line`] documents: this only feeds enrichment, never a
+/// `map::toc`'s `parse_toc_header_line` documents: this only feeds enrichment, never a
 /// span boundary, so an identifier containing a marker text (`" TO "`,
 /// `" FROM "`) is an accepted source of a missed or mis-attributed
 /// reference.

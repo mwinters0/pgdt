@@ -6606,6 +6606,8 @@ UNREPRESENTABLE = (
 #: chunks, and the render back to text; their tests are not declared.
 NESTED = (
     "crates/pgdt-codec/src/value/nested.rs",
+    "crates/pgdt-codec/src/value/nested/output.rs",
+    "crates/pgdt-codec/src/value/nested/input.rs",
     *(
         f"crates/pgdt-query/src/{name}.rs"
         for name in ("batch", "batch/builder", "batch/chunks", "options", "render")
@@ -10636,7 +10638,11 @@ FIGURES: list[Figure] = [
         id="nested-decode-micro",
         section="Nested decode costs what it copies, and an element is now a borrowed slice",
         stage="criterion",
-        depends=("crates/pgdt-codec/src/value/nested.rs", "crates/pgdt-codec/benches/decoders.rs"),
+        depends=(
+            "crates/pgdt-codec/src/value/nested.rs",
+            "crates/pgdt-codec/src/value/nested/output.rs",
+            "crates/pgdt-codec/benches/decoders.rs",
+        ),
         run=run_nested_decode_micro,
     ),
     # `depends` carries the scan path as well as the decode one, which no other

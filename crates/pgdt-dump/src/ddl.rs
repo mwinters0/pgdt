@@ -20,7 +20,7 @@
 //! kept as the words written (`character varying(16)`, not a parsed
 //! `(base, typmod)` pair), the model being unable to hold a codec conclusion
 //! (`docs/design/decisions.md`, "D74"). Resolving those strings into Arrow
-//! types is [`pgdt_codec::pgtype`]'s job.
+//! types is `pgdt_codec::pgtype`'s job.
 //!
 //! [`extract_statement_cross_refs`] is a second, independent kind
 //! of statement scan this module owns: unlike [`classify_statement`], it

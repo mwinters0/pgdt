@@ -219,3 +219,6 @@ pub(crate) fn parse_alter_type_drop_attribute_body(rest: &str) -> Option<(String
     let attribute = cur.parse_ident()?;
     (after[cur.pos()..].trim() == ";").then_some((name, attribute))
 }
+
+#[cfg(test)]
+mod tests;

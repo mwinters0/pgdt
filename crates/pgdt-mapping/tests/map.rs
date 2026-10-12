@@ -1,6 +1,7 @@
-//! The full file map (`crate::map`): the tiling invariant over every
-//! generated fixture plus the hand-written edge-case dump, targeted
-//! targeted classification checks, and TOC-enrichment checks.
+//! The full file map (`pgdt_dump`'s `map/`, built through `build_index` and
+//! `build_map`): the tiling invariant over every generated fixture plus the
+//! hand-written edge-case dump, targeted classification checks, and
+//! TOC-enrichment checks.
 
 use std::path::Path;
 

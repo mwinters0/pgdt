@@ -20,7 +20,7 @@ use super::{
 
 /// What the leader made of one open `COPY` region.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RegionScan {
+pub(crate) enum RegionScan {
     /// The block closed, and these are its totals — what the serial scanner
     /// would have stated at its `CopyEnd`.
     Closed(Interior),
@@ -38,7 +38,7 @@ pub enum RegionScan {
 /// the same instant and nowhere else: [`scan_region`] is the only party that
 /// sees the source's advice (`docs/design/decisions.md`, "D64").
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RegionOutcome {
+pub(crate) struct RegionOutcome {
     /// What happened to the region.
     pub scan: RegionScan,
     /// What the arrangement delivered, where it delivered less than
@@ -52,7 +52,7 @@ pub struct RegionOutcome {
 
 /// Which rule cut the delivered reader count below the count asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BoundBy {
+pub(crate) enum BoundBy {
     /// The source advises a single partition **over the whole file**, so it
     /// declines to be split at all — the shape a compressed source whose
     /// largest block the budget cannot hold reaches
@@ -90,7 +90,7 @@ impl BoundBy {
 /// worker read at once or that the arrangement was a good one
 /// (`KD22`, `docs/design/decisions.md`, "D52").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Shortfall {
+pub(crate) struct Shortfall {
     /// Readers the caller asked for — [`pgdt_io::Parallelism::jobs`], the number
     /// `scan started` already announced.
     pub asked: usize,
@@ -163,7 +163,7 @@ pub struct Shortfall {
 /// costs. Erring towards the serial scanner is the direction this bound is
 /// wanted in — the alternative admits readers the budget never granted.
 #[allow(clippy::too_many_arguments)]
-pub async fn scan_region(
+pub(crate) async fn scan_region(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
     table: &str,

@@ -583,7 +583,7 @@ impl<'a> JsonCursor<'a> {
 }
 
 /// `n` zeros, for the padding a moved decimal point needs on either side.
-pub(crate) fn zeros(n: i64) -> String {
+fn zeros(n: i64) -> String {
     "0".repeat(usize::try_from(n).unwrap_or(0))
 }
 

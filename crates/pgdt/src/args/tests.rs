@@ -22,8 +22,9 @@ fn the_strict_identity_selection_is_read_and_its_contradictions_refused() {
     for text in ["time", "location", "time,location", "advisory", "none"] {
         assert_eq!(binds(text).to_string(), text, "a selection reads back as written");
     }
-    // What the bare flag means, spelled as clap substitutes it (the test
-    // below reads the attribute).
+    // What the bare flag means, spelled as clap substitutes it (the crate
+    // root's `tests::the_bare_strict_identity_flag_binds_both_terms` reads the
+    // attribute).
     assert_eq!(binds("time,location"), StrictIdentity::binding(true, true));
 
     assert!(parse_strict_identity("none,time").is_err(), "`none` is exclusive");

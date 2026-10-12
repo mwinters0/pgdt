@@ -188,7 +188,7 @@ impl DynamicFilter for ReplayFilter {
 /// `table` is the scan's own schema: a physical column is read by its index,
 /// as DataFusion evaluates it, and stands for nothing unless the field there
 /// carries its name.
-pub(crate) fn loosened(filter: &Arc<dyn PhysicalExpr>, table: &ResolvedSchema) -> L {
+fn loosened(filter: &Arc<dyn PhysicalExpr>, table: &ResolvedSchema) -> L {
     translate(filter, Parity::Even, table)
 }
 

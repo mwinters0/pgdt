@@ -3,8 +3,10 @@
 //! [`CopyScanner`] is a pure synchronous state machine. It never owns or
 //! copies the bytes it scans: the caller owns a buffer, hands it out as a
 //! slice, and the scanner reports how much of it was consumed. That keeps the
-//! events zero-copy and lets the same state machine serve both the async
-//! driver here ([`scan`]) and the pull-mode stream (`pgdt_query::stream`).
+//! events zero-copy and lets the same state machine serve every driver: the
+//! async one here ([`scan`]), `pgdt_mapping`'s forward pass, interior split
+//! and statistics back-fill (`map_forward`, `scan_piece`, `observe_rows`),
+//! and the pull-mode stream's replay (`pgdt_query::stream`).
 //!
 //! Robustness rules this implements (see `docs/design/decisions.md`,
 //! "D23"):
@@ -732,7 +734,7 @@ pub struct ScanOptions {
     ///
     /// Chunk granularity — a window of pieces while the leader holds a region
     /// — not `CopyEnd` granularity, and read by
-    /// [`pgdt_mapping::map_file`]'s two passes alone — the mapping loop and
+    /// `pgdt_mapping::map_file`'s two passes alone — the mapping loop and
     /// the statistics back-fill, the drivers with somewhere to put a partial
     /// result and a way to report the stop. [`scan`] and the eager producers
     /// built on it never read the polled bit
@@ -769,14 +771,14 @@ pub struct ScanOptions {
     /// recorded in the map as having declined under this number
     /// ([`pgdt_model::CopyBlock::statistics_declined`]).
     ///
-    /// **Read by [`pgdt_mapping::map_file`] alone**: a query gathers nothing,
+    /// **Read by `pgdt_mapping::map_file` alone**: a query gathers nothing,
     /// so on every other entry point it bounds nothing.
     pub statistics_allowance_bytes: Option<u64>,
     /// What gathering does with a field its type's `*_in` refuses: fails the
     /// pass at the first, by default, or goes on past it, or checks every
-    /// field ([`PostgresInvalidValues`]). Read by [`pgdt_mapping::map_file`] and
-    /// [`pgdt_mapping::gather_block_statistics`] alone, as gathering is; a
-    /// query's reads are [`pgdt_query::QueryOptions::postgres_invalid_values`]'.
+    /// field ([`PostgresInvalidValues`]). Read by `pgdt_mapping::map_file` and
+    /// `pgdt_mapping::gather_block_statistics` alone, as gathering is; a
+    /// query's reads are `pgdt_query::QueryOptions::postgres_invalid_values`'.
     pub postgres_invalid_values: PostgresInvalidValues,
 }
 

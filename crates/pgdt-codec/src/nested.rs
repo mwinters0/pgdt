@@ -1,6 +1,7 @@
 //! The nested literal: arrays, records, ranges, multiranges and
 //! `int2vector`, one grammar with two scanners (`docs/design/decisions.md`,
-//! "D45"), read and written as text. Their order is `crate::key`'s.
+//! "D45"), read and written as text. Their order is `value::nested::key`'s,
+//! its leaves read through `crate::key`.
 
 pub use crate::value::nested::{
     ArrayLiteral, RangeLiteral, RecordLiteral, decode_array, decode_int2vector, decode_multirange,

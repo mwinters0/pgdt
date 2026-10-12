@@ -469,11 +469,11 @@ fn record_unread(early_stops: &mut Vec<EarlyStop>, header_offset: u64, unread: u
 /// **unprojected** column list — plus the typed comparison it makes. Shared
 /// with the block's [`PlannedBlock`](self::plan::PlannedBlock), so every piece of a block evaluates one
 /// tree.
-pub(super) type Active = (u64, CopyHeader, RowBatcher, Arc<ResolvedExpr>, Option<String>);
+type Active = (u64, CopyHeader, RowBatcher, Arc<ResolvedExpr>, Option<String>);
 
 /// What [`activate`] hands back: the block's state, and the schema and notes
 /// a stream publishes for it.
-pub(super) type Opened = (Active, ResolvedSchema, Vec<ComparisonNote>);
+type Opened = (Active, ResolvedSchema, Vec<ComparisonNote>);
 
 /// Take one block's resolution from `plan` — resolving it here where the
 /// plan holds none ([`plan_blocks`](self::plan::plan_blocks)) — and build the [`RowBatcher`] that will
@@ -522,10 +522,7 @@ pub(super) fn activate(
 /// Reconstruct the in-progress block state a [`ResumeToken`] captured, if any:
 /// the scanner's row counter (so a later `CopyEnd` reports the block's true
 /// total) and a fresh [`RowBatcher`](crate::batch::RowBatcher) on the original block's schema.
-pub(super) fn resume_state(
-    token: &ResumeToken,
-    plan: &ReplayPlan,
-) -> Result<(CopyScanner, Option<Opened>)> {
+fn resume_state(token: &ResumeToken, plan: &ReplayPlan) -> Result<(CopyScanner, Option<Opened>)> {
     let scanner = CopyScanner::resume(
         token.offset,
         token.in_copy.as_ref().map(|ic| (ic.header_offset, ic.rows_in_block)),
@@ -538,7 +535,7 @@ pub(super) fn resume_state(
     Ok((scanner, active))
 }
 
-pub(super) fn snapshot(
+fn snapshot(
     scanner: &CopyScanner,
     active: &Option<Active>,
     rows_emitted: u64,
@@ -564,7 +561,7 @@ pub(super) fn snapshot(
 /// every row of a span whose validation failed and none of one whose
 /// validation held. `str::get` rather than an index, so a mis-derived offset
 /// costs the row its fast path instead of panicking.
-pub(super) fn row_text<'a>(prefix: &'a str, span_base: u64, row: &Row<'_>) -> Option<&'a str> {
+fn row_text<'a>(prefix: &'a str, span_base: u64, row: &Row<'_>) -> Option<&'a str> {
     let start = usize::try_from(row.offset.checked_sub(span_base)?).ok()?;
     prefix.get(start..start.checked_add(row.raw.len())?)
 }

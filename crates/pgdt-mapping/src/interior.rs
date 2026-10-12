@@ -46,7 +46,7 @@ pub(crate) use self::region::{RegionScan, Shortfall, scan_region};
 
 /// Where a piece's first byte sits relative to the rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PieceEntry {
+enum PieceEntry {
     /// The piece begins exactly on a row start — the block's own
     /// `data_offset`, just past the header line's LF, or where the piece
     /// before it read through — and needs no resync.
@@ -62,14 +62,14 @@ pub(crate) enum PieceEntry {
 /// is a block at the metadata level, whose rows are counted and split into
 /// fields by a strict parse alone.
 #[derive(Clone)]
-pub struct CensusPlan {
+pub(crate) struct CensusPlan {
     pub width: usize,
     pub counter: Arc<dyn FieldCount>,
 }
 
 /// What one worker found in its piece of a `COPY` block's interior.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PieceScan {
+struct PieceScan {
     /// Data rows this piece owns: every line it consumed before the
     /// terminator, or every line it consumed at all.
     pub rows: u64,
@@ -103,7 +103,7 @@ pub(crate) struct PieceScan {
 
 /// The block's totals, as the leader states them at `CopyEnd`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Interior {
+pub(crate) struct Interior {
     /// The union of the pieces' censuses and counts, through the one that
     /// held the terminator.
     pub census: BlockCensus,
@@ -114,7 +114,7 @@ pub struct Interior {
 
 /// A piece's statistics observer ([`BlockObserver::piece`]), and the block's
 /// first data byte, which the rows it is handed are placed against.
-pub(crate) struct PieceObserver {
+struct PieceObserver {
     observer: Box<dyn BlockObserver>,
     data_offset: u64,
 }
@@ -133,7 +133,7 @@ pub(crate) struct PieceObserver {
 /// gathers statistics. **Synchronous and free of I/O**: this is the body a
 /// `spawn_blocking` task runs, once per read of the piece, so it takes a slice
 /// rather than a source (`docs/design/decisions.md`, "D52").
-pub(crate) fn scan_piece(
+fn scan_piece(
     bytes: &[u8],
     base: u64,
     entry: PieceEntry,
@@ -275,7 +275,7 @@ fn empty_census(plan: Option<&CensusPlan>) -> BlockCensus {
 /// a bounded semilattice. What the
 /// order decides is which pieces are *in* the fold, everything past the
 /// terminator not being part of the block at all.
-pub(crate) fn merge(pieces: &[PieceScan]) -> Option<Interior> {
+fn merge(pieces: &[PieceScan]) -> Option<Interior> {
     let mut census = BlockCensus::default();
     let mut row_count = 0u64;
     for piece in pieces {

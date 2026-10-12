@@ -3526,7 +3526,7 @@ probe below run against 16.15.
 
 **Relied on by:** [`decisions.md`](decisions.md), "Type resolution and decoders" (the
 `List<Int16>` mapping and `NestedPlan::Int2Vector`), "D44"
-(`value/nested.rs`'s `decode_int2vector`/`render_int2vector`/`parse_int2vector`) and
+(`value/nested/output.rs`'s `decode_int2vector`/`render_int2vector`, `value/nested/input.rs`'s `parse_int2vector`) and
 "D55" (`NestedCompare::Int2Vector`, and the
 constant `dims`/`lower_bounds` `nested_key` builds).
 

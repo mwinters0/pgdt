@@ -28,7 +28,6 @@ pub use span::{
     CopyBlock, DataBlock, DumpIndex, InsertRun, LargeObjectRegion, SPAN_STORED_TEXT_MAX_BYTES,
     Span, SpanBody, SpanText, TableName, TocHeader, union_census,
 };
-use statistics::deserialize_block_statistics;
 pub use statistics::{
     BlockGathered, BlockStatistics, Bounds, BoundsSet, BoundsView, ColumnBounds, ColumnDictionary,
     ColumnRefusals, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
@@ -40,7 +39,7 @@ pub use statistics::{
 /// because a crate boundary forced it, and named here so a caller reaching
 /// past the API names the word.
 pub mod internal {
-    pub use crate::block::{ArrayShapeExt, BlockCensusExt, FieldCount, UnrepresentableExt};
+    pub use crate::block::{BlockCensusExt, FieldCount, UnrepresentableExt};
     pub use crate::catalog::{DatabaseMetadataExt, TableDefExt};
     pub use crate::diagnostic::DiagnosticExt;
     pub use crate::statistics::{

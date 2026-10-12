@@ -12,8 +12,6 @@ use crate::source::ByteRangeSource;
 pub(crate) mod blocks;
 mod fetched;
 mod file;
-#[cfg(test)]
-mod tests;
 
 pub use self::fetched::FetchedXzSource;
 pub use self::file::XzSource;

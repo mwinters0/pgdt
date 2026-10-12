@@ -70,7 +70,7 @@
 //! `pgdt --version` names the instrument and `binary_allocator` in
 //! `scripts/measure.py` refuses such a binary.
 //!
-//! The instrument must not move the plan it reports on, so `parallel.rs`'s
+//! The instrument must not move the plan it reports on, so `parallel/tests.rs`'s
 //! `the_instrument_build_resolves_what_the_default_build_resolves` pins the
 //! resolved `jobs=`/`memory_bytes=` pair across every committed runtime root.
 //! It is compiled into **both** configurations, so

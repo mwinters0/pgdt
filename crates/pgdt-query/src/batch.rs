@@ -166,7 +166,7 @@ impl RowBatcher {
     /// Append one raw (still-escaped) COPY TEXT data row.
     ///
     /// **The whole row is walked whatever the projection is.** Skipping is
-    /// per column — `decode_field` and the builder append — never an early
+    /// per column — `RawRow::decode` and the builder append — never an early
     /// stop at the last projected field, because this is the system's only
     /// field-count check: the sole site that raises
     /// `Error::ColumnCountMismatch`, the mapping pass never erroring on a

@@ -1,6 +1,6 @@
-//! Byte sources — local, `.xz`, fetched, remote — the memory limit and its
-//! discovery, and worker sizing (`docs/design/decisions.md`, "D68"). The
-//! `http` feature is this crate's.
+//! The byte sources — local, `.xz`, fetched, remote — memory and
+//! parallelism, and stopping (`docs/design/decisions.md`, "D68"). The `http`
+//! feature is this crate's.
 //!
 //! Three concepts, one tree each: the byte sources, `source` and the arms
 //! nested under its read contract; memory and parallelism — the allowance

@@ -10,7 +10,7 @@ use pgdt_core::{instrument::EvaluationPart as Part, internal::timed};
 use pgdt_model::PostgresInvalidValues;
 
 use super::resolve::{
-    Comparison, Lookup, ResolvedExpr, ResolvedMembership, ResolvedTerm, null_refused,
+    Comparison, Lookup, ResolvedExpr, ResolvedMembership, ResolvedTerm, Spellings,
 };
 use super::{PredicateOp, Truth};
 
@@ -93,7 +93,7 @@ impl ResolvedTerm {
     /// (`docs/design/decisions.md`, "D98") — but by the two unrepresentable
     /// tests, which ask of the text itself whether it is such a value.
     #[inline]
-    pub(crate) fn eval_value(&self, value: Option<&str>) -> Option<Truth> {
+    pub(super) fn eval_value(&self, value: Option<&str>) -> Option<Truth> {
         let Some(compared) = self.compared.as_ref() else {
             return Some(Truth::of(match self.op {
                 PredicateOp::IsNull => self.as_read(value).is_none(),
@@ -192,7 +192,7 @@ impl ResolvedMembership {
     /// The membership's answer for one already unescaped value, `None`
     /// being SQL NULL — [`ResolvedTerm::eval_value`]'s counterpart, `None`
     /// back where the value is not of the column's type.
-    pub(crate) fn eval_value(&self, value: Option<&str>) -> Option<Truth> {
+    pub(super) fn eval_value(&self, value: Option<&str>) -> Option<Truth> {
         if self.terms.is_empty() {
             return Some(self.unmatched());
         }
@@ -446,6 +446,29 @@ impl Lookup {
             }
         })
     }
+}
+
+impl Spellings {
+    fn matches(&self, text: &str) -> bool {
+        text == self.first || self.other.as_deref() == Some(text)
+    }
+}
+
+/// The [`Error::NullRefused`] a term or a membership raises over a NULL field
+/// of `column`, where it is read under `invalid`, or `None`.
+fn null_refused(
+    not_null: Option<&str>,
+    invalid: PostgresInvalidValues,
+    table: &str,
+    row_offset: u64,
+) -> Option<Error> {
+    let column = not_null.filter(|_| invalid != PostgresInvalidValues::Ignore)?;
+    Some(Error::NullRefused {
+        table: table.to_string(),
+        column: column.to_string(),
+        line: None,
+        line_offset: row_offset,
+    })
 }
 
 #[cfg(test)]

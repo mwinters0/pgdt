@@ -56,20 +56,20 @@ pub struct XzSource {
     /// The file, read positionally and never seeked: `stat` and every decode
     /// share it, and `Arc<std::fs::File>` is itself an
     /// `xz_seek::CompressedSource`.
-    pub(super) file: Arc<std::fs::File>,
+    file: Arc<std::fs::File>,
     /// The table, the memory limit, the verification state and the backend as
     /// one value — everything a decode needs that is not bytes, and the only
     /// thing that hands out an `xz_seek::BlockTask`. It holds no source and
     /// needs no lock (`docs/design/decisions.md`, "D14").
-    pub(super) layout: xz_seek::Layout,
+    layout: xz_seek::Layout,
     /// The layout's own table, aliased rather than copied, so `size()`,
     /// `seek_table()` and the per-read `blocks_in` lookup read one table.
-    pub(super) table: Arc<xz_seek::SeekTable>,
+    table: Arc<xz_seek::SeekTable>,
     /// The live piecewise decode, or `None` where no read has taken that arm
     /// yet, its last decode failed or `complete_reads` has left it. Behind a `Mutex` because a handle goes forward only and one
     /// position cannot serve two readers — which is why that arm advises a
     /// single partition ([`xz_partition_advice`](super::blocks::xz_partition_advice)).
-    pub(super) live: Arc<Mutex<Option<LiveBlock>>>,
+    live: Arc<Mutex<Option<LiveBlock>>>,
     /// What the caller announced and everything derived from it: the two
     /// pools, which arm a read takes, and what a reader of this file costs.
     /// [`FetchedXzSource`](crate::FetchedXzSource) holds the same value ([`XzBudget`]).
@@ -214,7 +214,7 @@ impl XzSource {
     /// A read inside one block is a **slice of that block**, so the common
     /// case copies nothing; one that straddles a boundary is assembled into a
     /// chunk-pool buffer.
-    pub(super) fn read_by_blocks(
+    fn read_by_blocks(
         offset: u64,
         len: usize,
         table: &xz_seek::SeekTable,

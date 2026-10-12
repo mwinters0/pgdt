@@ -1,4 +1,5 @@
-//! The flag groups and value parsers more than one subcommand reads.
+//! The flag groups subcommands share, the CLI spelling of each library mode a
+//! flag selects, and the value parsers of the subcommands' flags.
 
 use clap::Args;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};

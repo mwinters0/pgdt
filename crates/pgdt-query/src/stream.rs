@@ -185,8 +185,6 @@ pub async fn read_table<F>(
 where
     F: FnMut(RecordBatch) -> ControlFlow<()>,
 {
-    use futures::StreamExt;
-
     if matches!(cache, CacheMode::Offline(_)) {
         return Err(Error::CacheModeMismatch(
             "query requires a live dump source; CacheMode::Offline is cache-only",

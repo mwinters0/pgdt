@@ -1,7 +1,9 @@
 //! `COPY` header grammar and COPY TEXT-format field decoding/encoding.
 //!
 //! This module is pure, synchronous, byte-slice-level code: it knows nothing
-//! about files, offsets, or chunking. [`pgdt_dump::scan`] drives it.
+//! about files or offsets. pgdt-dump's scanner reads a block's header through
+//! it, and pgdt-query's batcher, filter and replay split and unescape a
+//! block's rows, the replay checking a chunk's with [`validated_prefix`].
 //!
 //! [`decode_field`]/[`encode_field`] are the one place in the codebase that
 //! converts between a field's on-disk COPY-escaped bytes and its unescaped
@@ -512,8 +514,9 @@ pub fn hex_val(b: u8) -> Option<u32> {
 
 /// Minimal byte cursor for the `COPY` header grammar. Also reused by
 /// `pgdt_dump::ddl` for the preamble's DDL grammars (`CREATE TABLE` /
-/// `TYPE` / `DOMAIN` / `EXTENSION`), which share the same identifier and
-/// keyword rules.
+/// `TYPE` / `DOMAIN` / `EXTENSION`), by `type_name.rs` for a type name, and
+/// by pgdt-codec's `compare` for a collation's name, which share the same
+/// identifier and keyword rules.
 pub struct Cursor<'a> {
     buf: &'a [u8],
     pos: usize,

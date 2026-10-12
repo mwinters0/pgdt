@@ -99,7 +99,7 @@ fn whole_table_name(s: &str) -> Option<String> {
 /// gram.y's `PartitionBoundSpec` at the start of `s` — `DEFAULT`, or `FOR
 /// VALUES` then `IN (…)`, `FROM (…) TO (…)` or `WITH (…)` — as
 /// [`PartitionOf::bound`] holds it, and what follows it.
-pub(super) fn partition_bound(s: &str) -> Option<(String, &str)> {
+fn partition_bound(s: &str) -> Option<(String, &str)> {
     fn parenthesized<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
         let open = strip_kw(s, kw)?;
         if !open.starts_with('(') {
@@ -328,7 +328,7 @@ pub(super) fn extract_type_words(rest: &str) -> String {
 
 /// The `COLLATE <collation>` clause of a column or domain definition, with
 /// the reference returned **verbatim** (`pg_catalog."C"`) — the model stores what the
-/// dump said, and [`pgdt_codec::pgtype`] decides what it means.
+/// dump said, and `pgdt_codec::pgtype` decides what it means.
 ///
 /// `rest` is the tail after a column's name, or a domain's base-type tail, so
 /// the clause is not adjacent to the type: `pg_dump` writes it *after*
@@ -429,3 +429,6 @@ pub(super) fn check_constraints(rest: &str) -> Vec<CheckConstraint> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

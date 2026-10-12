@@ -448,9 +448,9 @@ pub(super) struct GroupState {
     /// The group's distinct texts in first-seen order, `None` once past a
     /// cap, at a field that is not text or at one an ignoring parse went past;
     /// read only for a column keeping a dictionary.
-    pub(super) texts: Option<Vec<String>>,
+    texts: Option<Vec<String>>,
     /// The heap `texts`' strings hold, summed as each is pushed.
-    pub(super) text_bytes: u64,
+    text_bytes: u64,
 }
 
 impl GroupState {
@@ -468,7 +468,7 @@ impl GroupState {
 
     /// No distinct texts for this group: a cap passed, a field not text, or
     /// one an ignoring parse went past.
-    pub(super) fn lose_texts(&mut self) {
+    fn lose_texts(&mut self) {
         self.texts = None;
         self.text_bytes = 0;
     }
@@ -534,9 +534,9 @@ pub(super) struct DictionaryGatherer {
     /// text the interning map's keys hold too.
     entry_text: u64,
     interned: HashMap<String, u32>,
-    pub(super) groups: Vec<Option<Vec<u32>>>,
+    groups: Vec<Option<Vec<u32>>>,
     /// The heap every group's index list holds, summed as each is pushed.
-    pub(super) indices: u64,
+    indices: u64,
 }
 
 impl DictionaryGatherer {
@@ -666,7 +666,7 @@ impl DictionaryGatherer {
     /// one released in one update with every text let go: a table pruned in
     /// place keeps its size while its reported capacity stops naming it
     /// (`docs/design/runtime-invariants.md`, "RT11").
-    pub(super) fn renumber(&mut self, charge: &mut Charge) {
+    fn renumber(&mut self, charge: &mut Charge) {
         let scratch = (self.entries.len() * size_of::<u32>()) as u64;
         let mut to = charge.ahead((scratch, 0), (0, 0), || vec![u32::MAX; self.entries.len()]);
         let mut kept = 0u32;
@@ -720,7 +720,7 @@ impl DictionaryGatherer {
 /// One group's distinct texts, as indices, merged with the following group's
 /// as one pass over both groups' values gathers them: the first's, then the
 /// second's not already listed, and none past [`DICTIONARY_MAX_ENTRIES`].
-pub(super) fn union_indices(first: Option<Vec<u32>>, second: Option<Vec<u32>>) -> Option<Vec<u32>> {
+fn union_indices(first: Option<Vec<u32>>, second: Option<Vec<u32>>) -> Option<Vec<u32>> {
     let (first, second) = (first?, second?);
     let added = second.iter().filter(|id| !first.contains(id)).count();
     if added == 0 {

@@ -14,7 +14,7 @@ use super::{PredicateOp, Truth};
 /// term or a tree evaluate to, read off the group's statistics instead of its
 /// rows ([`ResolvedExpr::truths`]).
 ///
-/// A set rather than a "may match" flag because of [`Expr::Not`]: a flag
+/// A set rather than a "may match" flag because of [`Expr::Not`](super::Expr::Not): a flag
 /// saying `True` is impossible under a `Not` says nothing about whether
 /// `False` is, which is what the negation turns into `True`. Carrying all
 /// three keeps every node's answer an over-approximation its parent can
@@ -31,7 +31,7 @@ impl std::fmt::Debug for TruthSet {
 
 impl TruthSet {
     /// No value at all — the answer over a group no row starts in.
-    pub(crate) const EMPTY: Self = Self(0);
+    pub(super) const EMPTY: Self = Self(0);
     /// `True` and `False`: a comparison over a non-NULL value it knows
     /// nothing more about.
     const TWO_VALUED: Self = Self(Self::bit(Truth::True) | Self::bit(Truth::False));
@@ -45,7 +45,7 @@ impl TruthSet {
         }
     }
 
-    pub(crate) fn of(truth: Truth) -> Self {
+    pub(super) fn of(truth: Truth) -> Self {
         Self(Self::bit(truth))
     }
 
@@ -293,7 +293,7 @@ impl ResolvedMembership {
     /// agreement with the `Or` its generated check proves, for pruning
     /// nobody has measured; so only the row path answers by one lookup — a
     /// hash, or a binary search over the sorted keys, but for
-    /// [`Lookup::Each`] — a group being answered term by term.
+    /// [`Lookup::Each`](super::resolve::Lookup::Each) — a group being answered term by term.
     #[cfg(test)]
     fn truths(&self, group: &impl GroupStatistics) -> TruthSet {
         self.truths_keyed(group, &mut KeyedBounds::default())
@@ -361,8 +361,8 @@ impl ResolvedExpr {
     /// root when it is one, and each member of a conjunction at the root,
     /// conjunctions nested in it flattened — whose column's stored row order
     /// is ordered as the term's semantics orders it
-    /// ([`BelievedStatistics::bounds`]). A term beneath an `Or` or a
-    /// `Not` is not one: a row can be kept while it is `False`.
+    /// ([`BelievedStatistics::bounds`](super::resolve::BelievedStatistics::bounds)). A term
+    /// beneath an `Or` or a `Not` is not one: a row can be kept while it is `False`.
     pub(crate) fn required_ordering_terms(&self) -> Vec<&ResolvedTerm> {
         let mut out = Vec::new();
         let mut pending = vec![self];

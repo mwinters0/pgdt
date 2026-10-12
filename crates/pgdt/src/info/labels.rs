@@ -1,5 +1,7 @@
-//! What both of `info`'s renderings read: the labels, and the one resolution
-//! pass the listing and `--json` share.
+//! How `info` names what the cache holds — a column's resolution and Arrow
+//! type, a type's kind and an enum's labels, a span — and the per-block passes
+//! the listing and `--json` share: the one resolution pass, and what a strict
+//! parse checks nothing of.
 
 use arrow::datatypes::DataType;
 use pgdt_codec::compare::{CompareKind, ComparisonPlan};

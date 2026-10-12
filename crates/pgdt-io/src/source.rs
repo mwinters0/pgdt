@@ -2,7 +2,8 @@
 //! a source exchange through it — identity and wait policy — the read size a
 //! caller scales from, and beneath it the sources themselves: the plain file,
 //! the `.xz` file pulled or fetched, the remote object, the origin a
-//! `--source` argument resolves to, and the buffer pool they all read into.
+//! `--source` argument resolves to, and the buffer pool every source but the
+//! remote one reads into.
 
 use std::future::Future;
 use std::ops::Range;

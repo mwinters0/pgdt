@@ -244,7 +244,7 @@ async fn census_metadata_level(
 /// `database`, rendered as `database.schema.table`, or just `schema.table`
 /// when the file had no `\connect` at all — the form `Error::AmbiguousTable`
 /// names its candidates in.
-pub(super) fn render_candidate((database, qualified_name): &(Option<String>, String)) -> String {
+fn render_candidate((database, qualified_name): &(Option<String>, String)) -> String {
     match database {
         Some(db) => format!("{db}.{qualified_name}"),
         None => qualified_name.clone(),

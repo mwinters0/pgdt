@@ -15,7 +15,7 @@
 //! would have returned for a correctly-formed value — never the raw
 //! COPY-escaped bytes on disk. Converting between the two is
 //! `pgdt_core::encode_field`'s job (`docs/design/decisions.md`, "D68").
-//! `tests/decode.rs`'s round-trip test compares against `SchemaMode::Strings`,
+//! pgdt-query's `tests/decode.rs` round-trip test compares against `SchemaMode::Strings`,
 //! which is also decoded text; the on-disk-byte leg is covered separately in
 //! `pgdt-mapping`'s `tests/scan.rs`.
 

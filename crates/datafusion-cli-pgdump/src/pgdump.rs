@@ -1,7 +1,11 @@
 //! What this crate adds to `datafusion-cli`: `--dump`, `STORED AS PGDUMP`,
-//! and the sink printing what a registration finds to stderr. It never
-//! parses: a dump without a complete cache is refused naming the `pgdt parse`
-//! that builds one (`docs/design/decisions.md`, "D90").
+//! and the sink printing what a registration finds to stderr; ending as its
+//! PID namespace's init (`docs/design/decisions.md`, "D26"); and what a caller
+//! composing the CLI reads of it — the copied release's version, `--dump`'s
+//! and `--strict-identity`'s help texts, and the introspection build's report
+//! section. It never parses: a dump without a complete cache is refused
+//! naming the `pgdt parse` that builds one (`docs/design/decisions.md`,
+//! "D90").
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};

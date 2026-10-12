@@ -1,6 +1,7 @@
-//! The remote source, over `object_store`'s HTTP backend, and what an
-//! [`Origin`] needs to name one. Everything here is behind the `http`
-//! feature.
+//! The remote source, over `object_store`'s HTTP backend; what an
+//! [`Origin`] needs to name one; and opening a remote origin — recognising
+//! its compression, and the seek-table walk an uncached `.xz` pays, announced
+//! before it starts. Everything here is behind the `http` feature.
 
 use std::future::Future;
 use std::pin::Pin;

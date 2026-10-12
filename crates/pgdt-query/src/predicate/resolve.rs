@@ -151,10 +151,6 @@ impl Spellings {
         Self { first: text, other: None }
     }
 
-    pub(super) fn matches(&self, text: &str) -> bool {
-        text == self.first || self.other.as_deref() == Some(text)
-    }
-
     pub(super) fn iter(&self) -> impl Iterator<Item = &String> {
         std::iter::once(&self.first).chain(&self.other)
     }
@@ -295,29 +291,12 @@ fn not_null_column(resolved: &ResolvedSchema, index: usize, column: &str) -> Opt
     resolved.not_null.get(index).copied().unwrap_or(false).then(|| column.to_string())
 }
 
-/// The [`Error::NullRefused`] a term or a membership raises over a NULL field
-/// of `column`, where it is read under `invalid`, or `None`.
-pub(super) fn null_refused(
-    not_null: Option<&str>,
-    invalid: PostgresInvalidValues,
-    table: &str,
-    row_offset: u64,
-) -> Option<Error> {
-    let column = not_null.filter(|_| invalid != PostgresInvalidValues::Ignore)?;
-    Some(Error::NullRefused {
-        table: table.to_string(),
-        column: column.to_string(),
-        line: None,
-        line_offset: row_offset,
-    })
-}
-
 impl ResolvedTerm {
     /// This term's divergences from PostgreSQL's own comparison. Empty for
     /// the operators taking no value, and for every term whose column answers
     /// this operator the way the server does; more than one only for a
     /// nested column with more than one diverging position.
-    pub(crate) fn comparison_notes(&self) -> Vec<ComparisonNote> {
+    pub(super) fn comparison_notes(&self) -> Vec<ComparisonNote> {
         let Some(compared) = self.compared.as_ref() else { return Vec::new() };
         compared
             .divergences
@@ -381,7 +360,7 @@ impl ResolvedTerm {
 /// that way, and no term announces a divergence from PostgreSQL, which is a
 /// property of the column rather than of the term ([`column_divergences`](super::column_divergences);
 /// `docs/design/decisions.md`, "D40").
-pub(crate) fn resolve_term(
+pub(super) fn resolve_term(
     predicate: &Predicate,
     index: usize,
     resolved: &ResolvedSchema,
@@ -748,7 +727,7 @@ impl Lookup {
 /// its column already found at `index`: each non-NULL value as the `=` term
 /// [`resolve_term`] makes of it, in list order, so the first value that
 /// refuses is the one refused — its error naming the operator `IN`.
-pub(crate) fn resolve_membership(
+pub(super) fn resolve_membership(
     membership: &Membership,
     index: usize,
     resolved: &ResolvedSchema,

@@ -1,7 +1,7 @@
 //! The unrepresentable count a data-level mapping pass takes beside the
 //! census (`docs/design/decisions.md`, "D96").
 //!
-//! `src/unrepresentable.rs`'s unit tests pin what one field is. These pin
+//! `pgdt-codec`'s `src/unrepresentable.rs` unit tests pin what one field is. These pin
 //! what only a real dump shows: that `fixtures/*/types/default.sql`'s blocks
 //! count the values their typed columns cannot hold, by column and tier, and
 //! nothing else — a `text` field reading `infinity` and a bare `numeric`'s

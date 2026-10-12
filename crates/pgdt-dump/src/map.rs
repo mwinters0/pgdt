@@ -284,11 +284,10 @@ impl Builder {
         Self::with_database(None)
     }
 
-    /// A builder with `database` already in scope — what
-    /// [`pgdt_query::table_stream`]'s mapping pass needs, starting at the
-    /// map's frontier rather than at byte 0 and possibly well inside an
-    /// already-`\connect`ed database's territory whose `\connect` line it
-    /// never reads.
+    /// A builder with `database` already in scope — what `pgdt_mapping`'s
+    /// `map_forward` needs, starting at the map's frontier rather than at
+    /// byte 0 and possibly well inside an already-`\connect`ed database's
+    /// territory whose `\connect` line it never reads.
     pub fn with_database(database: Option<String>) -> Self {
         Self {
             mode: Mode::Idle,

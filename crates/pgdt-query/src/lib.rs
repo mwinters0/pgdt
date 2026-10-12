@@ -1,4 +1,5 @@
-//! Arrow batches, the streams, the filter expression, pruning, and summaries
+//! Arrow batches, the streams, the filter expression, pruning, summaries, and
+//! the render — an Arrow value read back as PostgreSQL text
 //! (`docs/design/decisions.md`, "D68"): what an embedder —
 //! `datafusion-pgdump`, `datafusion-cli-pgdump`, `pgdt` — reads a dump
 //! through.

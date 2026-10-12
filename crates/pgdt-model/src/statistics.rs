@@ -1,6 +1,8 @@
 //! Per-row-group column statistics as a block persists them, what a
 //! field's refusal leaves behind (`docs/design/decisions.md`, "D34", "D103"),
-//! and the contract over a block's rows that answers both ([`BlockObserver`]).
+//! and the contract over a block's rows that answers both ([`BlockObserver`]);
+//! and what a read does with a refused field ([`PostgresInvalidValues`]), the
+//! mode that record answers to.
 //! What a mapping pass is asked to gather, and the account of what it holds,
 //! are `pgdt_mapping::statistics`'.
 //!

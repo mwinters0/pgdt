@@ -20,11 +20,8 @@ const SAVE_THROTTLE_K: u32 = 20;
 /// since it. **Exits are exempt** — EOF, a settled target and an interrupt all
 /// save unconditionally, an interrupt before the first read included.
 ///
-/// **The gate also decides when the map is rebuilt.** [`splice`](super::splice) fires
-/// at the openings of this gate rather than at every `CopyEnd` (see
-/// [`map_forward`](super::map_forward)'s `CopyEnd` arm). With a disabled cache `save` is ~free, so
-/// the gate always clears and the map is rebuilt per block — the residual
-/// `KD5` names.
+/// The gate also decides when the map is rebuilt (`close_copy_block`; the
+/// cost is [`splice`](super::splice)'s `KD5`).
 pub(crate) struct SaveThrottle {
     last_save: Instant,
     last_cost: Duration,

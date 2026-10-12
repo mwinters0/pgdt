@@ -1,5 +1,8 @@
-//! A filter the query's consumer refines while the query runs, as one
-//! sub-stream's replay reads it.
+//! A filter the query's consumer refines while the query runs: its public
+//! contract ([`DynamicFilter`], [`RowEvaluation`]), the [`Cut`] a
+//! `DynamicPartitions` makes under it at its first poll, outside any
+//! sub-stream, and the filter as one sub-stream's replay reads it, block by
+//! block ([`DynamicRead`], [`DynamicBlock`]).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

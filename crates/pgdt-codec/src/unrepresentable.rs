@@ -121,7 +121,7 @@ impl Leaf {
 /// **One block's count**: each of its columns' leaves, and the calendar end
 /// the engine tier is counted against ([`calendar_end`]).
 #[derive(Debug, Clone)]
-pub(crate) struct Counter {
+struct Counter {
     columns: Vec<Leaf>,
     /// The first microsecond past the calendar, from 1970 UTC.
     calendar_past_micros: i128,

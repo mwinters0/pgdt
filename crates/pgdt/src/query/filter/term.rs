@@ -78,7 +78,7 @@ fn in_at(bytes: &[u8], i: usize) -> Option<(usize, TermOp)> {
 
 /// A term's operator: one comparison, or `IN` before a list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum TermOp {
+pub(super) enum TermOp {
     Compare(PredicateOp),
     In,
 }
@@ -86,9 +86,9 @@ pub(crate) enum TermOp {
 /// What [`in_list`] found after an `IN`: each value's text, untrimmed and
 /// still quoted, and the byte past the `)` that closes the list — `None`
 /// where nothing closes it.
-pub(crate) struct InList<'a> {
-    pub(crate) values: Vec<&'a str>,
-    pub(crate) end: Option<usize>,
+pub(super) struct InList<'a> {
+    pub(super) values: Vec<&'a str>,
+    pub(super) end: Option<usize>,
 }
 
 /// The list opening at the `(` at `open`, read as the term grammar reads a
@@ -97,7 +97,7 @@ pub(crate) struct InList<'a> {
 /// ends the value. `--where`'s tokenizer asks here too, so it ends the term
 /// at the paren this ends the list at, and a paren or keyword inside the list
 /// is never structure there.
-pub(crate) fn in_list(spec: &str, open: usize) -> InList<'_> {
+pub(super) fn in_list(spec: &str, open: usize) -> InList<'_> {
     let bytes = spec.as_bytes();
     let mut values = Vec::new();
     let mut start = open + 1;
@@ -246,7 +246,7 @@ fn split_filter_op(spec: &str) -> FilterSplit<'_> {
 /// [`in_at`] read the term's start as no boundary. [`split_filter_op`] and
 /// `--where`'s tokenizer both ask here, so the tokenizer knows where a term's
 /// value begins by the rule that splits it.
-pub(crate) fn filter_op_at(bytes: &[u8], i: usize) -> Option<(usize, TermOp)> {
+pub(super) fn filter_op_at(bytes: &[u8], i: usize) -> Option<(usize, TermOp)> {
     FILTER_OPS
         .into_iter()
         .find(|(symbol, _)| bytes[i..].starts_with(symbol.as_bytes()))

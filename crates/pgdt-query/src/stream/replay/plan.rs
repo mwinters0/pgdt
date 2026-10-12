@@ -113,8 +113,9 @@ impl ReplayPlan {
     }
 
     /// What the plan settled before any row is read, as every sub-stream
-    /// carries it ([`TableStream::plan_notes`](crate::stream::table::TableStream::plan_notes)(crate::stream::table::TableStream::plan_notes)) bar what cutting it into
-    /// sub-streams adds.
+    /// carries it
+    /// ([`TableStream::plan_notes`](crate::stream::table::TableStream::plan_notes))
+    /// bar what cutting it into sub-streams adds.
     pub(in crate::stream) fn notes(&self) -> impl Iterator<Item = PlanNote> + '_ {
         self.read_as_null.iter().chain(&self.pruned).cloned()
     }
@@ -258,11 +259,7 @@ fn materialized_unrepresentable(
 
 /// The map's count of column `name`'s values past the tiers `reach` names,
 /// over every one of `matches`, the blocks of one table.
-pub(in crate::stream) fn unrepresentable_values(
-    matches: &[CopyBlock],
-    name: &str,
-    reach: UnrepresentableTier,
-) -> u64 {
+fn unrepresentable_values(matches: &[CopyBlock], name: &str, reach: UnrepresentableTier) -> u64 {
     matches
         .iter()
         .filter_map(|block| {
@@ -658,7 +655,7 @@ pub(in crate::stream) fn refuse_metadata_level(
 /// projection is every column, in file order. Duplicate names are the caller's
 /// to reject: this resolves each requested name independently and would
 /// silently accept one twice.
-pub(in crate::stream) fn project(
+fn project(
     resolved: &ResolvedSchema,
     projection: Option<&[String]>,
     header_offset: u64,

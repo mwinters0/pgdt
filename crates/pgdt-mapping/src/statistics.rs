@@ -4,6 +4,11 @@
 //! `pgdt_model`'s ([`pgdt_model::BlockStatistics`]); which column gets which
 //! statistic, and how a value is ordered, is decided by the observer a block
 //! gets, the mapping pass handing it every row and staying type-blind.
+//!
+//! The namespace also holds a strict parse's check (`docs/design/decisions.md`,
+//! "D103"): the observer checking every field against its type's `*_in` and
+//! its column's `NOT NULL`, and what that check leaves unchecked
+//! ([`strict_unchecked`](crate::strict_unchecked)).
 
 pub(crate) mod account;
 pub(crate) mod gather;

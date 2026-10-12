@@ -22,15 +22,15 @@ use crate::predicate::ComparisonNote;
 /// A pull-mode stream of `RecordBatch`es for one table query.
 /// Construct with [`table_stream`](crate::stream::table_stream).
 pub struct TableStream<'a> {
-    pub(super) inner: Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send + 'a>>,
-    pub(super) position: Arc<Mutex<ResumeToken>>,
-    pub(super) resolved_schema: Arc<Mutex<ResolvedSchema>>,
-    pub(super) comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
-    pub(super) batch_offset: Arc<Mutex<u64>>,
-    pub(super) plan_notes: Arc<Mutex<Vec<PlanNote>>>,
-    pub(super) early_stops: Arc<Mutex<Vec<EarlyStop>>>,
-    pub(super) dynamic_pruned: Arc<AtomicU64>,
-    pub(super) dynamic_rows: Arc<AtomicU64>,
+    inner: Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send + 'a>>,
+    position: Arc<Mutex<ResumeToken>>,
+    resolved_schema: Arc<Mutex<ResolvedSchema>>,
+    comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
+    batch_offset: Arc<Mutex<u64>>,
+    plan_notes: Arc<Mutex<Vec<PlanNote>>>,
+    early_stops: Arc<Mutex<Vec<EarlyStop>>>,
+    dynamic_pruned: Arc<AtomicU64>,
+    dynamic_rows: Arc<AtomicU64>,
 }
 
 impl<'a> Stream for TableStream<'a> {

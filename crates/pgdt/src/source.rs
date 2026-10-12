@@ -1,5 +1,5 @@
-//! Opening the dump against its cache, and naming the source in what a
-//! refusal says.
+//! Opening the dump against its cache, naming the source in what a refusal
+//! says, and the sentences an unusable cache and a name not found earn.
 
 use std::path::Path;
 use std::sync::Arc;

@@ -106,17 +106,17 @@ fn bytecount(b: &[u8], byte: u8) -> usize {
 
 /// `MaxAllocSize`, past which `palloc` refuses the value a path or polygon
 /// of so many points would need.
-pub(super) const MAX_ALLOC_SIZE: usize = 0x3fff_ffff;
+const MAX_ALLOC_SIZE: usize = 0x3fff_ffff;
 
 /// `offsetof(PATH, p)` and `offsetof(POLYGON, p)`: the bytes ahead of the
 /// sixteen each point takes.
-pub(super) const PATH_HEADER: usize = 16;
-pub(super) const POLYGON_HEADER: usize = 40;
+const PATH_HEADER: usize = 16;
+const POLYGON_HEADER: usize = 40;
 
 /// Whether `npts` points after `header` fit one allocation — what `path_in`
 /// and `poly_in` ask before reading a point, their own overflow check
 /// refusing only counts past this already.
-pub(super) fn fits_allocation(header: usize, npts: usize) -> bool {
+fn fits_allocation(header: usize, npts: usize) -> bool {
     npts.checked_mul(16).and_then(|n| n.checked_add(header)).is_some_and(|n| n <= MAX_ALLOC_SIZE)
 }
 

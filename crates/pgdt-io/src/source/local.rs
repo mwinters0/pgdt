@@ -49,7 +49,7 @@ pub(crate) const PLAIN_PARTITION_CHUNKS: usize = 8;
 pub struct LocalFileSource {
     path: PathBuf,
     file: Arc<std::fs::File>,
-    pub(super) pool: Arc<BufferPool>,
+    pool: Arc<BufferPool>,
 }
 
 impl LocalFileSource {

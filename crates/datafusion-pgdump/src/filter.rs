@@ -67,7 +67,8 @@ fn null_term(index: usize, op: PredicateOp, table: &ResolvedSchema) -> Predicate
     Predicate { column: table.schema.field(index).name().clone(), op, value: None }
 }
 
-/// [`pushdown`]'s `boolean` on column `index` of `table`: `None` unless it is `Boolean`.
+/// `op` on column `index` of `table` against the boolean `value`, spelled as the file spells
+/// one: `None` unless the column is `Boolean`.
 fn boolean_term(
     index: usize,
     op: PredicateOp,
