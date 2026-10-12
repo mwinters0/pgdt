@@ -276,7 +276,7 @@ a table's summary, DataFusion's statistics, `pgdt info --detail`
 - **pgdt-query** — `prune.rs`, `summary.rs`: what reads the statistics —
   pruning through the filter expression, a summary folding every group.
 - **datafusion-pgdump** — `statistics.rs`: the map's statistics as
-  DataFusion's.
+  DataFusion's, and what a pushed filter or a fetch leaves of them.
 - **pgdt** — `info/statistics.rs`: what `pgdt info --detail` prints of them.
 
 ## The replay

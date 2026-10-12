@@ -35,7 +35,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use arrow::datatypes::SchemaRef;
-use datafusion::common::stats::Precision;
 use datafusion::common::tree_node::TreeNodeRecursion;
 use datafusion::common::{Result, Statistics, internal_err};
 use datafusion::config::ConfigOptions;
@@ -65,6 +64,7 @@ use pgdt_query::{
 use crate::budget::Draw;
 use crate::error::external;
 use crate::filter::{DynamicFilters, ReplayFilter};
+use crate::statistics::fetched;
 
 /// The replay of one table, with its statistics.
 #[derive(Debug, Clone)]
@@ -349,19 +349,6 @@ impl ExecutionPlan for PgDumpExec {
             Some(_) => Arc::new(Statistics::new_unknown(&self.schema())),
         })
     }
-}
-
-/// `statistics` describing at most `limit` of the rows they were taken over:
-/// a fetch cuts the rows the node emits, so the table's own counts and
-/// extremes stop describing them and become estimates.
-fn fetched(statistics: &Statistics, limit: Option<usize>) -> Statistics {
-    let Some(limit) = limit else { return statistics.clone() };
-    let mut statistics = statistics.clone();
-    if statistics.num_rows.get_value().is_none_or(|rows| *rows > limit) {
-        statistics = statistics.to_inexact();
-        statistics.num_rows = Precision::Inexact(limit);
-    }
-    statistics
 }
 
 /// The metric counting the row groups statistics ruled out, named as Parquet's

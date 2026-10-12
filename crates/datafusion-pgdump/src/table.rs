@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
 use datafusion::catalog::{Session, TableProvider};
-use datafusion::common::stats::Precision;
 use datafusion::common::{DataFusionError, Result, Statistics};
 use datafusion::datasource::TableType;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
@@ -23,7 +22,7 @@ use crate::exec::{PgDumpExec, Replay, ScanMetrics, StaticFilter};
 use crate::filter::translate;
 use crate::report::{BudgetedPlanNote, Located, Reporting};
 use crate::settings::PgDumpSettings;
-use crate::statistics::{byte_size, output_orderings, table_statistics, total_byte_size};
+use crate::statistics::{output_orderings, scanned, table_statistics};
 
 /// One table of an opened [`PgDump`]. Its schema is settled when it is built,
 /// from the map and the DDL alone (`pgdt_query::table_schema`), so asking for
@@ -303,36 +302,12 @@ impl TableProvider for PgDumpTable {
         let metrics = ScanMetrics::planned(partitions.plan_notes());
         let partitions = Arc::new(partitions);
         let schema = partitions.resolved_schema().schema;
-        let mut statistics = self
-            .statistics
-            .get_or_init(|| {
-                Arc::new(table_statistics(self.dump.index(), &self.name, &self.resolved, reading))
-            })
-            .as_ref()
-            .clone()
-            .project(projection);
-        // A pushed-down filter takes rows out, so the table's counts and
-        // extremes stop describing what the node emits and are handed over as
-        // estimates, and its rows and each column's bytes are bounded by what
-        // pruning kept, with no selectivity guessed below that
-        // (`docs/design/decisions.md`, "D89", "D91"). `limit` is the plan
-        // node's, and is applied there.
-        if !filters.is_empty() {
-            statistics = statistics.to_inexact();
-            statistics.num_rows = match usize::try_from(partitions.kept_rows()) {
-                Ok(rows) => Precision::Inexact(rows),
-                Err(_) => Precision::Absent,
-            };
-            let kept_bytes = partitions.kept_value_bytes();
-            for (i, column) in statistics.column_statistics.iter_mut().enumerate() {
-                let value_bytes = kept_bytes.get(i).copied().flatten();
-                column.byte_size =
-                    byte_size(schema.field(i).data_type(), statistics.num_rows, value_bytes);
-            }
-        }
-        // The projection keeps the whole table's total, which only the
-        // projected columns' own sum describes.
-        statistics.total_byte_size = total_byte_size(&statistics.column_statistics);
+        let table = self.statistics.get_or_init(|| {
+            Arc::new(table_statistics(self.dump.index(), &self.name, &self.resolved, reading))
+        });
+        let kept =
+            (!filters.is_empty()).then(|| (partitions.kept_rows(), partitions.kept_value_bytes()));
+        let statistics = scanned(table, projection, &schema, kept);
         let orderings = output_orderings(&schema, partitions.orders());
         let replay = Replay::new(partitions, schema, draw, metrics, settings.dynamic_filter_rows);
         let answered = StaticFilter::new(answered);

@@ -2,7 +2,9 @@
 //! `MIN`, `MAX`, `SUM` and a `COUNT(DISTINCT <column>)` beside another count
 //! can be answered without reading a row (`docs/design/decisions.md`, "D89"), a join's sides can be
 //! weighed by the bytes each emits ([`byte_size`]), and a sort the scan's
-//! recorded order already satisfies is not planned ([`output_orderings`]).
+//! recorded order already satisfies is not planned ([`output_orderings`]); and
+//! what is left of them under a pushed-down filter ([`scanned`]) or a fetch
+//! ([`fetched`]), estimates both.
 //!
 //! **`Exact` is a promise, and a wrong one is a wrong answer with no error**:
 //! DataFusion's `AggregateStatistics` rule replaces the aggregate with the
@@ -70,6 +72,52 @@ pub(crate) fn table_statistics(
     Statistics { num_rows: rows, total_byte_size, column_statistics }
 }
 
+/// The statistics a scan of `projection` emits, `table` being the whole
+/// table's and `schema` the projected one. A pushed-down filter takes rows
+/// out, so under one — `kept` holding the rows pruning kept and each projected
+/// column's values' text bytes over them — the table's counts and extremes
+/// stop describing what the node emits and are handed over as estimates, and
+/// its rows and each column's bytes are bounded by what pruning kept, with no
+/// selectivity guessed below that (`docs/design/decisions.md`, "D89", "D91").
+/// A fetch is the plan node's, and is applied there ([`fetched`]).
+pub(crate) fn scanned(
+    table: &Statistics,
+    projection: Option<&Vec<usize>>,
+    schema: &Schema,
+    kept: Option<(u64, &[Option<u64>])>,
+) -> Statistics {
+    let mut statistics = table.clone().project(projection);
+    if let Some((kept_rows, kept_bytes)) = kept {
+        statistics = statistics.to_inexact();
+        statistics.num_rows = match usize::try_from(kept_rows) {
+            Ok(rows) => Precision::Inexact(rows),
+            Err(_) => Precision::Absent,
+        };
+        for (i, column) in statistics.column_statistics.iter_mut().enumerate() {
+            let value_bytes = kept_bytes.get(i).copied().flatten();
+            column.byte_size =
+                byte_size(schema.field(i).data_type(), statistics.num_rows, value_bytes);
+        }
+    }
+    // The projection keeps the whole table's total, which only the
+    // projected columns' own sum describes.
+    statistics.total_byte_size = total_byte_size(&statistics.column_statistics);
+    statistics
+}
+
+/// `statistics` describing at most `limit` of the rows they were taken over:
+/// a fetch cuts the rows the node emits, so the table's own counts and
+/// extremes stop describing them and become estimates.
+pub(crate) fn fetched(statistics: &Statistics, limit: Option<usize>) -> Statistics {
+    let Some(limit) = limit else { return statistics.clone() };
+    let mut statistics = statistics.clone();
+    if statistics.num_rows.get_value().is_none_or(|rows| *rows > limit) {
+        statistics = statistics.to_inexact();
+        statistics.num_rows = Precision::Inexact(limit);
+    }
+    statistics
+}
+
 /// A column's sum as DataFusion's `SUM` would answer it: a 16-, 32- or 64-bit
 /// integer's wrapped at 64 bits, as the `Int64` its argument is cast to wraps,
 /// an `oid`'s at 64 unsigned ones, and a `Decimal128`'s at 128, in the
@@ -108,7 +156,7 @@ fn sum(sum: Option<i128>, data_type: &DataType) -> Precision<ScalarValue> {
 ///   last `finish`, which the estimate target in `tests/statistics.rs`
 ///   measures batch by batch;
 /// - and `Absent` for a nested type, whose text bounds nothing of its leaves'.
-pub(crate) fn byte_size(
+fn byte_size(
     data_type: &DataType,
     rows: Precision<usize>,
     value_bytes: Option<u64>,
@@ -145,7 +193,7 @@ fn per_row(rows: Precision<usize>, bytes: impl Fn(usize) -> Option<usize>) -> Pr
 
 /// The bytes a scan emits of every column `columns` describes: their sum,
 /// `Exact` only where every one is, and `Absent` where any is.
-pub(crate) fn total_byte_size(columns: &[ColumnStatistics]) -> Precision<usize> {
+fn total_byte_size(columns: &[ColumnStatistics]) -> Precision<usize> {
     let exact = Precision::Exact(0usize);
     columns
         .iter()
