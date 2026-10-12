@@ -18,7 +18,8 @@ use pgdt_core::{Error, Result};
 use crate::cancel::Cancellation;
 
 use super::origin::{
-    KnownCompression, Location, ORIGIN_LEADING_BYTES, Origin, OriginProbe, Recognized, XZ_MAGIC,
+    KnownCompression, Location, ORIGIN_LEADING_BYTES, Origin, OriginProbe, Recognized, Verdict,
+    over_known_table,
 };
 use super::xz::{FetchedXzSource, walk_seek_table};
 use super::{ByteRangeSource, RemoteIdentity, is_weak_tag};
@@ -395,9 +396,8 @@ impl ByteRangeSource for RemoteSource {
 
 /// Open `origin`, which must name a remote object, as a [`ByteRangeSource`].
 ///
-/// [`open_local`](crate::open_local)'s sibling, making the same two choices: the compression
-/// layer is read off the probe's magic bytes, and `known` is checked rather
-/// than believed.
+/// [`open_local`](super::origin::open_local)'s sibling, acting on the same
+/// [`Verdict`] over the probe's magic bytes and `known`.
 ///
 /// **A remote `.xz` is read exactly as a local one is**, through
 /// [`FetchedXzSource`] over the plain source rather than through [`XzSource`](crate::XzSource),
@@ -413,7 +413,7 @@ impl ByteRangeSource for RemoteSource {
 /// strictness passed to every open for the sake of one pairing — an uncached
 /// `.xz` from a server stating no usable validator. **(c) unowned**; promoted
 /// by a user who meets it on a dump of many streams.
-pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
+pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
     let Location::Remote(object) = &origin.location else {
         return Err(Error::SourceNotReadable {
             origin: origin.to_string(),
@@ -421,25 +421,16 @@ pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Rec
         });
     };
     let probe = origin.probe().await?;
-    let is_xz = probe.leading().starts_with(&XZ_MAGIC);
     let fetched =
         || -> Arc<dyn ByteRangeSource> { Arc::new(RemoteSource::new(Arc::clone(object), probe)) };
-    match (is_xz, known) {
+    match Verdict::of(probe.leading(), known) {
         // The saving, and the reason the cold walk below is worth announcing
         // rather than refusing: a table from a previous walk of this object
         // costs no round trip at all (`docs/design/decisions.md`, "D18").
-        (true, KnownCompression::Xz(table)) => {
-            match FetchedXzSource::with_table(fetched(), probe.stored_size(), table) {
-                Ok(source) => Ok(Recognized::Source(Arc::new(source))),
-                Err(error)
-                    if matches!(error.xz_cause(), Some(xz_seek::Error::InvalidTable { .. })) =>
-                {
-                    Ok(Recognized::Mismatch)
-                }
-                Err(e) => Err(e),
-            }
+        Verdict::XzKnown(table) => {
+            over_known_table(FetchedXzSource::with_table(fetched(), probe.stored_size(), table))
         }
-        (true, KnownCompression::Unknown) => {
+        Verdict::XzUnknown => {
             let source = fetched();
             announce_remote_walk(origin);
             let (table, fetches) =
@@ -457,14 +448,8 @@ pub async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Rec
                 table,
             )?)))
         }
-        // Both directions of "the cache describes a different file", exactly
-        // as `open_local` reads them.
-        (true, KnownCompression::Plain) | (false, KnownCompression::Xz(_)) => {
-            Ok(Recognized::Mismatch)
-        }
-        (false, KnownCompression::Unknown | KnownCompression::Plain) => {
-            Ok(Recognized::Source(fetched()))
-        }
+        Verdict::Mismatch => Ok(Recognized::Mismatch),
+        Verdict::Plain => Ok(Recognized::Source(fetched())),
     }
 }
 

@@ -22,7 +22,6 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{
     ByteRangeSource, Cancellation, KnownCompression, Origin, Parallelism, Recognized, open,
-    open_local,
 };
 use pgdt_mapping::statistics::StatisticsRequest;
 
@@ -109,16 +108,6 @@ fn a_url_carrying_a_credential_is_refused_rather_than_stripped() {
     assert!(err.contains("https://example.com/koji.dump"), "{err}");
     assert!(!err.contains("secret"), "{err}");
     assert!(!err.contains("user:"), "{err}");
-}
-
-#[tokio::test]
-async fn open_local_refuses_a_remote_origin_rather_than_asserting_it_is_local() {
-    let origin = Origin::resolve("http://example.com/koji.dump").unwrap();
-    let Err(err) = open_local(&origin, KnownCompression::Unknown).await else {
-        panic!("`open_local` answered for a URL");
-    };
-    let err = err.to_string();
-    assert!(err.contains("not a file on this filesystem"), "{err}");
 }
 
 // ---------------------------------------------------------------------------

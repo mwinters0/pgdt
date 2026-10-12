@@ -29,9 +29,9 @@ mod tests;
 pub(crate) mod xz;
 
 pub use self::local::LocalFileSource;
-pub use self::origin::{KnownCompression, Origin, OriginProbe, Recognized, open, open_local};
+pub use self::origin::{KnownCompression, Origin, OriginProbe, Recognized, open};
 #[cfg(feature = "http")]
-pub use self::remote::{REMOTE_READ_TIMEOUT, RemoteSource, open_remote};
+pub use self::remote::{REMOTE_READ_TIMEOUT, RemoteSource};
 pub use self::xz::{FetchedXzSource, XzSource, walk_seek_table};
 
 /// Minimal async byte-range read abstraction.
@@ -106,7 +106,7 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// `None` by default, right for a source with no compression layer. Both
     /// compressed sources answer `Some`, and the table is either the one
-    /// walked for at open ([`XzSource::open`](crate::XzSource::open), [`open_remote`](crate::open_remote)) or the one
+    /// walked for at open ([`XzSource::open`](crate::XzSource::open), [`open`](crate::open) over a URL) or the one
     /// handed in from a cache ([`XzSource::with_table`](crate::XzSource::with_table),
     /// [`FetchedXzSource::with_table`](crate::FetchedXzSource::with_table)), which walks nothing at all —
     /// that saving being the point (`docs/design/decisions.md`, "D18").

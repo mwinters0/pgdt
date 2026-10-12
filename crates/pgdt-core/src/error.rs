@@ -37,7 +37,7 @@ pub enum Error {
     /// scheme it speaks nothing for, a `file:` URL naming another machine, a
     /// URL carrying a credential it would have to send, or a place whose kind
     /// the opener it reached does not serve. Raised by `pgdt_io::Origin`'s
-    /// constructors and by `pgdt_io::open_local` / `pgdt_io::open_remote`, before
+    /// constructors and by the per-place openers below `pgdt_io::open`, before
     /// anything is fetched.
     ///
     /// **It refuses by name**: `origin` is the argument as the user wrote it

@@ -223,3 +223,14 @@ async fn open_local_accepts_a_plain_claim_about_a_plain_file() {
     assert!(source.seek_table().is_none());
     assert_eq!(source.size().await.unwrap(), 16);
 }
+
+#[cfg(feature = "http")]
+#[tokio::test]
+async fn open_local_refuses_a_remote_origin_rather_than_asserting_it_is_local() {
+    let origin = Origin::resolve("http://example.com/koji.dump").unwrap();
+    let Err(err) = open_local(&origin, KnownCompression::Unknown).await else {
+        panic!("`open_local` answered for a URL");
+    };
+    let err = err.to_string();
+    assert!(err.contains("not a file on this filesystem"), "{err}");
+}

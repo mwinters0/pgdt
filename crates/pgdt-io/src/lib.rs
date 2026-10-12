@@ -27,10 +27,10 @@ pub use partition::{PartitionBoundaries, PartitionRead, Partitioning, RetainedUn
 pub use source::{
     ByteRangeSource, FetchedXzSource, KnownCompression, LocalFileSource, Origin, OriginProbe,
     Recognized, RemoteIdentity, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy, XzSource, open,
-    open_local, walk_seek_table,
+    walk_seek_table,
 };
 #[cfg(feature = "http")]
-pub use source::{REMOTE_READ_TIMEOUT, RemoteSource, open_remote};
+pub use source::{REMOTE_READ_TIMEOUT, RemoteSource};
 
 /// What a crate above reaches that is not this crate's API: public only
 /// because a crate boundary forced it, and named here so a caller reaching

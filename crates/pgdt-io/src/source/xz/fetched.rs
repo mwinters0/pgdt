@@ -90,7 +90,7 @@ impl FetchedXzSource {
     /// has from its [`Origin`](crate::Origin) probe; `xz_seek` validates the table against it
     /// and for internal consistency, reading **no bytes**. A table that does
     /// not describe this object is an `Error::Xz` carrying `xz_seek::Error::InvalidTable`,
-    /// which is what [`open_remote`](crate::open_remote) turns into [`Recognized::Mismatch`](crate::Recognized::Mismatch)
+    /// which is what [`open`](crate::open) turns into [`Recognized::Mismatch`](crate::Recognized::Mismatch)
     /// rather than a walk.
     pub fn with_table(
         source: Arc<dyn ByteRangeSource>,

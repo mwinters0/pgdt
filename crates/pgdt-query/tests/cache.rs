@@ -14,7 +14,7 @@ use pgdt_dump::cache::{
 use pgdt_dump::{ScanOptions, cache, check_tiling, preamble_only};
 use pgdt_io::{
     ByteRangeSource, KnownCompression, LocalFileSource, Origin, Parallelism, Recognized, XzSource,
-    open_local,
+    open,
 };
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
@@ -850,7 +850,7 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
     };
     assert_eq!(known, KnownCompression::Xz(xz.seek_table().unwrap()));
 
-    let source = match open_local(&Origin::local(compressed.path()), known).await.unwrap() {
+    let source = match open(&Origin::local(compressed.path()), known).await.unwrap() {
         Recognized::Source(source) => source,
         Recognized::Mismatch => panic!("the file's own cache must describe it"),
     };

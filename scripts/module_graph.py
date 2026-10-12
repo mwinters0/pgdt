@@ -77,7 +77,8 @@ REPO = Path(__file__).resolve().parent.parent
 #: Cycles kept by design, each with its reason, keyed by the cycle's modules.
 ACCEPTED: dict[frozenset[str], str] = {
     frozenset({"pgdt-io::source::origin", "pgdt-io::source::remote"}): (
-        "a dispatcher and its `http` arm: the arm answers the probe the dispatcher defines"
+        "a dispatcher and its `http` arm: the arm answers the probe the dispatcher defines,"
+        " and acts on the verdict it gives over the probe"
     ),
 }
 

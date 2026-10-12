@@ -1,5 +1,7 @@
 //! Where a dump is, the one probe everything before a source reads from,
-//! and recognition: which source a local origin's bytes call for.
+//! and recognition: the verdict an origin's first bytes and a caller's claim
+//! give on its compression layer, written once for both kinds of place, and
+//! which source a local origin's verdict calls for.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -282,7 +284,7 @@ async fn probe_local_file(path: &Path) -> Result<OriginProbe> {
 }
 
 /// What a caller already knows about a file's compression layer before
-/// [`open_local`] has looked at it — normally read out of a cache written from
+/// [`open`] has looked at it — normally read out of a cache written from
 /// that same file (`pgdt_dump::cache::claim`), and the reason an `.xz` source need
 /// not re-walk its stream footers (`docs/design/decisions.md`, "D18").
 ///
@@ -305,7 +307,7 @@ pub enum KnownCompression {
     Xz(xz_seek::SeekTable),
 }
 
-/// What [`open_local`] made of a file, given what its caller claimed to know.
+/// What [`open`] made of a dump, given what its caller claimed to know.
 pub enum Recognized {
     /// The source, ready to read.
     Source(Arc<dyn ByteRangeSource>),
@@ -326,11 +328,11 @@ pub enum Recognized {
 /// Open whatever `origin` names, choosing the source kind by where the dump
 /// is and its compression layer by what its first bytes are.
 ///
-/// **The entry point above [`open_local`] and [`open_remote`]**, and the one a
-/// caller with an origin in hand wants: the two below it each answer for one
-/// kind of place and refuse the other, so dispatching here is what keeps a
-/// caller from having to know which it has. Every argument and every answer is
-/// the same whichever it dispatches to.
+/// **The entry point above `open_local` and `open_remote`**, and the only
+/// one: the two below it each answer for one kind of place and refuse the
+/// other, so dispatching here is what keeps a caller from having to know which
+/// it has. Every argument and every answer is the same whichever it dispatches
+/// to, both acting on one verdict over the probe's first bytes.
 pub async fn open(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
     match &origin.location {
         Location::LocalFile(_) => open_local(origin, known).await,
@@ -364,7 +366,7 @@ pub async fn open(origin: &Origin, known: KnownCompression) -> Result<Recognized
 /// hang. An embedder opening one inside a busy runtime would want it on a
 /// blocking thread; the DataFusion provider never walks, reading the table
 /// its complete cache holds.
-pub async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
+pub(crate) async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
     // The kind is settled before the probe, so an origin this cannot open is
     // refused without a round trip being spent on it. The match has a second
     // arm only where the remote source is compiled in; without it there is one
@@ -380,30 +382,59 @@ pub async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Reco
             });
         }
     };
-    let is_xz = origin.probe().await?.leading().starts_with(&XZ_MAGIC);
-    match (is_xz, known) {
+    match Verdict::of(origin.probe().await?.leading(), known) {
         // The saving: a table from a previous walk of this file, validated
         // against the file's length and its own internal consistency without
         // reading a byte, and never walked for.
-        (true, KnownCompression::Xz(table)) => match XzSource::with_table(path, table) {
-            Ok(source) => Ok(Recognized::Source(Arc::new(source))),
-            Err(error) if matches!(error.xz_cause(), Some(xz_seek::Error::InvalidTable { .. })) => {
-                Ok(Recognized::Mismatch)
-            }
-            Err(e) => Err(e),
-        },
-        (true, KnownCompression::Unknown) => {
-            Ok(Recognized::Source(Arc::new(XzSource::open(path)?)))
+        Verdict::XzKnown(table) => over_known_table(XzSource::with_table(path, table)),
+        Verdict::XzUnknown => Ok(Recognized::Source(Arc::new(XzSource::open(path)?))),
+        Verdict::Mismatch => Ok(Recognized::Mismatch),
+        Verdict::Plain => Ok(Recognized::Source(Arc::new(LocalFileSource::open(path)?))),
+    }
+}
+
+/// What a source's first bytes and its caller's claim make of its compression
+/// layer: the verdict both openers act on, each building its own kind of
+/// source from it (`docs/design/decisions.md`, "D14", "D18").
+pub(super) enum Verdict {
+    /// `.xz`, with the seek table a previous walk produced: validated against
+    /// the source, never walked for.
+    XzKnown(xz_seek::SeekTable),
+    /// `.xz` with nothing known: the footer walk is paid.
+    XzUnknown,
+    /// No compression layer, claimed or found.
+    Plain,
+    /// Both directions of "the cache describes a different file": a
+    /// compression index for a source whose bytes are plain, and a plain
+    /// cache for one whose bytes are `.xz`.
+    Mismatch,
+}
+
+impl Verdict {
+    /// Recognition by **content**, not by name: `leading` compared with
+    /// `.xz`'s magic, and `known` checked against it rather than believed.
+    pub(super) fn of(leading: &[u8], known: KnownCompression) -> Self {
+        match (leading.starts_with(&XZ_MAGIC), known) {
+            (true, KnownCompression::Xz(table)) => Self::XzKnown(table),
+            (true, KnownCompression::Unknown) => Self::XzUnknown,
+            (true, KnownCompression::Plain) | (false, KnownCompression::Xz(_)) => Self::Mismatch,
+            (false, KnownCompression::Unknown | KnownCompression::Plain) => Self::Plain,
         }
-        // Both directions of "the cache describes a different file": a
-        // compression index for a file whose bytes are plain, and a plain
-        // cache for a file whose bytes are `.xz`.
-        (true, KnownCompression::Plain) | (false, KnownCompression::Xz(_)) => {
+    }
+}
+
+/// A source built over a seek table its caller handed in: a table
+/// `xz_seek`'s validation refuses does not describe this source, which is
+/// [`Recognized::Mismatch`] rather than an error.
+pub(super) fn over_known_table<S: ByteRangeSource + 'static>(
+    built: Result<S>,
+) -> Result<Recognized> {
+    match built {
+        Ok(source) => Ok(Recognized::Source(Arc::new(source))),
+        Err(error) if matches!(error.xz_cause(), Some(xz_seek::Error::InvalidTable { .. })) => {
             Ok(Recognized::Mismatch)
         }
-        (false, KnownCompression::Unknown | KnownCompression::Plain) => {
-            Ok(Recognized::Source(Arc::new(LocalFileSource::open(path)?)))
-        }
+        Err(e) => Err(e),
     }
 }
 

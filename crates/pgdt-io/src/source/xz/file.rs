@@ -81,7 +81,7 @@ impl XzSource {
     /// build the seek table before this call returns.
     ///
     /// This does not sniff the magic bytes; content-sniffing recognition
-    /// across both source kinds is [`open_local`](crate::open_local).
+    /// across both source kinds is [`open`](crate::open).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         // The walk this names is the one [`XzSource::with_table`] exists to
@@ -110,7 +110,7 @@ impl XzSource {
     /// table that does not describe this file costs nothing to reject, and a
     /// block header's own CRC32 is what catches one that survives validation.
     /// A rejected table is an `Error::Xz` carrying `xz_seek::Error::InvalidTable`,
-    /// which is the error [`open_local`](crate::open_local) turns into [`Recognized::Mismatch`](crate::Recognized::Mismatch)
+    /// which is the error [`open`](crate::open) turns into [`Recognized::Mismatch`](crate::Recognized::Mismatch)
     /// rather than a walk.
     pub fn with_table(path: impl AsRef<Path>, table: xz_seek::SeekTable) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
@@ -130,7 +130,7 @@ impl XzSource {
     /// for: it cross-checks the table against the file it claims to describe
     /// and reads **no bytes**, so a table that does not describe this file is
     /// an `Error::Xz` carrying `xz_seek::Error::InvalidTable` — the error
-    /// [`open_local`](crate::open_local) turns into [`Recognized::Mismatch`](crate::Recognized::Mismatch) rather than a walk.
+    /// [`open`](crate::open) turns into [`Recognized::Mismatch`](crate::Recognized::Mismatch) rather than a walk.
     ///
     /// **What the alias buys is every table read with no lock at all** —
     /// [`ByteRangeSource::size`], [`XzBudget::partitions`],
