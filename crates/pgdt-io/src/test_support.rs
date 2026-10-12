@@ -48,13 +48,7 @@ impl ByteRangeSource for BareSource {
 /// synthetic one lets a slot be small enough for a budget to be stated in
 /// whole slots.
 pub(crate) fn four_block_table() -> xz_seek::SeekTable {
-    block_table(4)
-}
-
-/// The same table at `count` blocks, for the one test that needs more
-/// boundaries than workers: a bound on how many units a piece spans is
-/// vacuous on a file whose windows run out of boundaries first.
-pub(crate) fn block_table(count: u64) -> xz_seek::SeekTable {
+    let count = 4;
     let block = |i: u64| xz_seek::BlockEntry {
         compressed_offset: 12 + i * 128,
         uncompressed_offset: i * 4096,

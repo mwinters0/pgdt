@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::partition::{BOUNDARIED_PARTITION_UNITS, cut};
 use crate::test_support::*;
 
 use super::*;
@@ -177,55 +176,4 @@ fn a_streaming_fallback_source_advises_one_partition() {
         "the stated unit is the table's largest block, not the piece"
     );
     assert_eq!(streaming.partition_read(), PartitionRead::Chunked);
-}
-
-/// **Every partition the leader hands a worker covers at most
-/// [`BOUNDARIED_PARTITION_UNITS`] of this source's units**, whatever the
-/// charge says and whatever the worker count is — which is what makes the
-/// cut width a number somebody chose rather than a consequence of the
-/// memory charge.
-///
-/// The failure mode it guards is `partition_bytes` serving as both the
-/// memory charge and `run_region`'s cut size
-/// (`docs/design/decisions.md`, "D8").
-///
-/// It walks the window loop rather than one window, a *mid-block* start
-/// being the case a single aligned window would never show.
-#[test]
-fn a_block_decoding_partition_spans_at_most_the_cut_width() {
-    // Enough blocks that a window of `workers × BOUNDARIED_PARTITION_UNITS`
-    // is satisfied out of the boundary list rather than running off the end
-    // of the file, which is what makes the bound below bind.
-    let blocks = 8 * BOUNDARIED_PARTITION_UNITS as u64 + 4;
-    let table = block_table(blocks);
-    let size = blocks * 4096;
-    let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
-    let advice = xz_partition_advice(&table, Some(&cache), 1 << 20, 9 << 20, 0..size);
-    // The charge is a block, a chunk and the decoder — orders of
-    // magnitude above the 4 KiB unit here, so a window sized by it would
-    // swallow the whole file.
-    assert!(advice.partition_bytes() > size, "the charge is not the cut size");
-
-    for workers in [2usize, 3, 4, 8] {
-        for start in [0u64, 1, 4095, 4096, 5000, 8192, 12287] {
-            assert!(start < size, "a frontier inside the file");
-            let end = advice.window_end(start, workers, size);
-            assert!(end > start, "a window must advance: {workers} workers from {start}");
-            let ranges = cut(start..end, &advice, workers);
-            assert!(
-                ranges.len() <= workers,
-                "{workers} workers were handed {} pieces from {start}",
-                ranges.len()
-            );
-            for piece in ranges {
-                let covering = table.blocks_in(piece.clone());
-                assert!(
-                    covering.len() <= BOUNDARIED_PARTITION_UNITS,
-                    "{piece:?} spans {} blocks at {workers} workers from {start}, \
-                         against a cut width of {BOUNDARIED_PARTITION_UNITS}",
-                    covering.len()
-                );
-            }
-        }
-    }
 }

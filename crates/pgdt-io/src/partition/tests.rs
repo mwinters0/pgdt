@@ -81,3 +81,58 @@ fn an_at_source_is_cut_only_where_it_offered() {
 fn a_source_that_declines_to_be_split_is_not() {
     assert_eq!(cut(0..1000, &Partitioning::single(0), 16), vec![0..1000]);
 }
+
+/// **Every partition the leader hands a worker covers at most
+/// [`BOUNDARIED_PARTITION_UNITS`] of a boundaried source's units**, whatever
+/// the charge says and whatever the worker count is — which is what makes
+/// the cut width a number somebody chose rather than a consequence of the
+/// memory charge.
+///
+/// The failure mode it guards is `partition_bytes` serving as both the
+/// memory charge and `run_region`'s cut size
+/// (`docs/design/decisions.md`, "D8").
+///
+/// It walks the window loop rather than one window, a *mid-unit* start
+/// being the case a single aligned window would never show. The advice is a
+/// block-decoding `.xz` source's: a boundary at every 4 KiB block start
+/// inside the range, and a charge of a block, a chunk and the decoder;
+/// that `xz_partition_advice` offers those starts is the block cache's to
+/// assert.
+#[test]
+fn a_boundaried_partition_spans_at_most_the_cut_width() {
+    const UNIT: u64 = 4096;
+    // Enough units that a window of `workers × BOUNDARIED_PARTITION_UNITS`
+    // is satisfied out of the boundary list rather than running off the end
+    // of the range, which is what makes the bound below bind.
+    let units = 8 * BOUNDARIED_PARTITION_UNITS as u64 + 4;
+    let size = units * UNIT;
+    let advice =
+        Partitioning::at((1..units).map(|i| i * UNIT).collect(), UNIT + (1 << 20) + (9 << 20));
+    // The charge is orders of magnitude above the 4 KiB unit here, so a
+    // window sized by it would swallow the whole range.
+    assert!(advice.partition_bytes() > size, "the charge is not the cut size");
+    let covering = |piece: &Range<u64>| piece.start / UNIT..piece.end.div_ceil(UNIT);
+
+    for workers in [2usize, 3, 4, 8] {
+        for start in [0u64, 1, 4095, 4096, 5000, 8192, 12287] {
+            assert!(start < size, "a frontier inside the range");
+            let end = advice.window_end(start, workers, size);
+            assert!(end > start, "a window must advance: {workers} workers from {start}");
+            let ranges = cut(start..end, &advice, workers);
+            assert!(
+                ranges.len() <= workers,
+                "{workers} workers were handed {} pieces from {start}",
+                ranges.len()
+            );
+            for piece in ranges {
+                let covering = covering(&piece);
+                assert!(
+                    covering.end - covering.start <= BOUNDARIED_PARTITION_UNITS as u64,
+                    "{piece:?} spans {} units at {workers} workers from {start}, \
+                         against a cut width of {BOUNDARIED_PARTITION_UNITS}",
+                    covering.end - covering.start
+                );
+            }
+        }
+    }
+}

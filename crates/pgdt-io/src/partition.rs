@@ -16,7 +16,7 @@ use crate::parallelism::WorkerMemory;
 /// the successor decodes that block too (`KD20`). It does not widen what a
 /// reader holds — retention is capped by [`BufferPool::slots`](crate::source::pool::BufferPool::slots), not by the
 /// piece — and it costs granularity, a window being `want × k` units wide.
-pub(super) const BOUNDARIED_PARTITION_UNITS: usize = 1;
+const BOUNDARIED_PARTITION_UNITS: usize = 1;
 
 /// Where a source is willing to be split. See `docs/design/decisions.md`,
 /// "D7".
@@ -286,8 +286,8 @@ impl Partitioning {
     /// that window contains `want` boundaries, [`cut`] is asked
     /// for `want` pieces, and the thinning drops the first — putting two
     /// blocks in the first piece. Hence "strictly past `start`" and the `× k`.
-    /// Asserted by
-    /// [`a_block_decoding_partition_spans_at_most_the_cut_width`].
+    /// Asserted by `partition/tests.rs`'s
+    /// `a_boundaried_partition_spans_at_most_the_cut_width`.
     pub fn window_end(&self, start: u64, want: usize, limit: u64) -> u64 {
         let want = want.max(1);
         match &self.boundaries {
