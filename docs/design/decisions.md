@@ -690,11 +690,11 @@ glibc, the floor and every figure's runtime; `rust-toolchain.toml` pins one comp
 apparatus change. Rejected: `cargo zigbuild` (zig's clang for every C dependency, a floor suffix synced by hand, a stray `CC` silently compiling against the host's headers); a build
 runner per architecture (arm64 rehearsed nowhere locally); cargo-dist (no glibc floor, no text from an annotated tag); the Rust pin in the image alone (the register timing host `stable`).
 
-### D105 The shipped build is fat LTO in one codegen unit, as DataFusion's own release profile is
-`[profile.release]` restates the `release-fat` leg, so `profiling`, `bench`, the instrument and a release inherit it. Fat LTO beats Cargo's default on `pgdt query`'s typed shape at every
-sitting, and on `pgdt sql`'s typed scan, the first-ranked workload, and loses on no shape; thin beats the default on the first and not the second. Which of thin and fat leads has moved with
-the tree between sittings, so the figure ranks neither, and the tie goes to the profile DataFusion's workspace declares and benchmarks its engine under (D13's precedent); `cargo install
-datafusion-cli` builds under Cargo's default, a published crate carrying no profile. The default leg is held to this one by the roadmap's downstream-build rule, closed in the code where it fails, never here.
-Rejected: Cargo's default (a resolved gain traded for nothing); thin LTO (never ahead of fat on `pgdt sql`, where it is level with the default; its quicker build a cost to us, not a user).
-Reopens: an `instructions:u` count telling thin from fat, or thin ahead of fat on `pgdt sql` at successive trees; DataFusion moving its own release profile. Code: `Cargo.toml`'s `[profile.release]`,
-`test_the_shipped_profile_is_the_fat_leg_restated`. Evidence: `release-profile`.
+### D105 The shipped build is fat LTO in one codegen unit, the leg retiring the fewest instructions on the typed query
+`[profile.release]` restates the `release-fat` leg, so `profiling`, `bench`, the instrument and a release inherit it. Of the three legs fat retires the fewest `instructions:u` on every query
+row, `pgdt sql`'s typed scan, the first-ranked workload, first, and the default more than fat on every row. Wall clock ranks no pair there: which leg leads in time has moved with the tree
+between sittings, the layout one tree's clock carries, and a profile outlives every tree; so the count ranks a profile where wall clock does not resolve the legs. The default leg is held to
+it in wall clock by the roadmap's downstream-build rule, closed in the code where it fails; every other setting's "small" stays in wall clock, no other figure counting. Fat is DataFusion's own profile (D13).
+Rejected: Cargo's default (more retired on every row, a resolved gain traded for nothing); thin LTO (more retired than fat on every query row, and than the default on `pgdt sql`; its quicker build
+a cost to us, not a user); user time as the ranker (as layout-exposed as wall clock). Reopens: thin's or the default's count at or below fat's on `pgdt sql`; another leg ahead of fat there in wall
+clock, resolved, at successive trees; DataFusion moving its own release profile. Code: `Cargo.toml`'s `[profile.release]`, `test_the_shipped_profile_is_the_fat_leg_restated`. Evidence: `release-profile`.

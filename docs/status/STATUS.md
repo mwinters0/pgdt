@@ -143,22 +143,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **35.24's fold left D105 as it stands, its Reopens' first half met.** The
-  `release-profile` sitting at `ef442ad6`
-  ([`../design/measurements.md`](../design/measurements.md), "What link-time
-  optimization buys the shipped build") counts `instructions:u`, and the
-  count tells thin from fat on every row, resolved: fat retires fewer on the
-  three query rows, `pgdt sql` first, and thin fewer on `parse`. In wall
-  clock, the clock the downstream-build rule gates on, thin's and fat's cells
-  meet on every row, and so do the default's and fat's on `typed` and
-  `pgdt sql`, the shapes D105's Why says fat beats the default on at every
-  sitting. The fold changed neither the profile nor D105's text: a met
-  Reopens is the maintainer's to weigh, and the count favours the shipped
-  profile on the first-ranked workload. Reconsidering decides what
-  may rank a profile. If the count may, D105 rests on the reading rather than
-  on DataFusion's precedent: its Why becomes fat's code ahead of thin's on
-  every query row, its Rejected thin as retiring more there, and its Reopens
-  thin's count at or below fat's on `pgdt sql`. If only wall clock may, the
-  precedent still breaks the tie, the Reopens' count half is spent and wants
-  a condition of its own, and the Why's "at every sitting" is read in medians.

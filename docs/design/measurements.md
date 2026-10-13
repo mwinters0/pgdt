@@ -1460,8 +1460,8 @@ and 2.05% on `strings` — more than the default leg on `pgdt sql` and
 `strings` — and 0.21% fewer on `parse`; no leg's count spreads by more than
 0.13% across its reps, so each of these is resolved. In wall clock the two
 legs' cells meet on every row, and in user time on all but `pgdt sql`, where
-thin's fewest, 2.419 s, clears fat's most, 2.410 s. This is the reading
-D105's Reopens names ([`decisions.md`](decisions.md), "D105").
+thin's fewest, 2.419 s, clears fat's most, 2.410 s. D105 rests on this
+reading ([`decisions.md`](decisions.md), "D105").
 
 **Which of thin and fat leads in time has moved with the tree.** Their
 user-time gap on `strings` was fat 0.053 s *behind* at `881c76f1`

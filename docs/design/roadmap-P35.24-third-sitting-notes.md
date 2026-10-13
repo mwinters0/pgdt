@@ -18,11 +18,10 @@ the shipped build", whose prose is the account. No code changed.
   leg slowed on no shape across the four sittings, and every widening of its
   gap to fat is the fat leg moving. This figure owes no `#[inline]` at a
   crate boundary, `pgdt-mapping`'s on `parse`'s path included.
-- **D105's Reopens is met in its first half**: the count tells thin from fat
-  on every row, fat retiring fewer instructions on the three query rows,
-  `pgdt sql` first. The profile is not decided here; the call is under
-  STATUS's "Decisions worth another look", and D105's text stands until it is
-  heard.
+- **The count ranks the profile**: it tells thin from fat on every row, fat
+  retiring fewer instructions on the three query rows, `pgdt sql` first, and
+  the default more than fat on every row; D105 rests on it
+  ([`decisions.md`](decisions.md), "D105").
 - **The legs answered alike and none was killed**: every `pgdt sql` run
   returned one byte-identical answer, and no `memory.events` reported an OOM
   in the 512 MB container.
