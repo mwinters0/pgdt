@@ -14755,8 +14755,8 @@ def count_pair_argv(
 def count_pair_table(counts: Mapping[str, Mapping[str, int]]) -> str:
     """The comparison: one row per shape, each leg's `instructions:u` and the
     tree's change against the parent's. **No verdict**: whether a change is
-    beyond the instrument's noise is the reader's to say, against the pair's
-    own first reading of two identical sources."""
+    beyond the instrument's noise is the reader's to say, against one
+    build's run-to-run spread on that row."""
     rows = []
     for command, label, _ in COUNT_PAIR_SHAPES:
         parent, tree = (counts[command][leg] for leg in COUNT_PAIR_LEGS)
@@ -14774,8 +14774,10 @@ def cmd_count_pair(rev: str, cfg: Config) -> int:
     `measurements.md` or to a sitting directory, and the binaries are
     overwritten by the next pair.
 
-    **Once per shape**, because a count does not move with the machine;
-    a shape whose answer differs between the legs is refused, since its two
+    **Once per shape**: a count holds still where a wall clock moves with
+    the machine, though not to the instruction between runs of one build, so
+    a change is read against that spread and never against zero. A shape
+    whose answer differs between the legs is refused, since its two
     counts would be two workloads'. **Refused unless `rev` is the tree's
     parent** (`count_pair_refusal`), or where the two would build under
     different toolchains (`count_pair_image_refusal`). The parent is built from

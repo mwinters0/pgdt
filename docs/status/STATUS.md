@@ -85,7 +85,7 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
 
 Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-api.md).
 
-- [ ] **36.1** `measure.py --count-pair <rev>`: the shipped leg built at the parent and at the tree, `instructions:u` on `parse` (metadata and data level), `query` strings and typed, and `pgdt sql`; refused unless `<rev>` is the parent; says whether a run fits under ten minutes — the instrument landed ([notes](../design/roadmap-P36.1-count-pair-notes.md)); its first run, `--count-pair HEAD~1` from the slice's commit, remains
+- [x] **36.1** `measure.py --count-pair <rev>`: the shipped leg built at the parent and at the tree, `instructions:u` on `parse` (metadata and data level), `query` strings and typed, and `pgdt sql`; refused unless `<rev>` is the parent; says whether a run fits under ten minutes, and a run does not ([notes](../design/roadmap-P36.1-count-pair-notes.md))
 - [ ] **36.2** pgdt-io: one arrangement resolution, `Parallelism`'s constructors cut to three, the statistics allowance and `AllowanceOrigin` in it, D11 rewritten with its seams and constants `internal`, the seek table opaque; closes `KD29`
 - [ ] **36.3** pgdt-core and pgdt-model: the escape and qualified-name renames, the fields a view interprets private, one census field, one stored database (cache bump), `StatisticsRequest`'s sizing one enum, `instrument` to `internal`
 - [ ] **36.4** pgdt-codec: `ValueKey` from a plan, for every value, never panicking across kinds; closes `KD116` and `KD117`; counted by `measure.py --count-pair HEAD~1`
@@ -127,3 +127,21 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **36.1 ticked with the pair counting each shape once a leg, as specified,
+  though the spec's reason for once does not hold to the instruction.** The
+  spec says a count need be taken once because `release-profile`'s per-rep
+  counts repeat exactly; at full precision one fat build's reps spread on
+  every row, and the first pair's change column, between two builds of one
+  source, is non-zero on every row and inside that spread on each
+  ([36.1's notes](../design/roadmap-P36.1-count-pair-notes.md), "The first
+  reading: two builds of one source"). Ticked because the row's deliverables
+  — the instrument and the ten-minute answer — are delivered, and because the
+  gate a hot-path slice applies, "beyond the instrument's noise", can be read
+  against one build's spread for every row but the data-level `parse`; the
+  instrument's shape is the spec's "What a hot-path slice owes", the
+  maintainer's to change. **Reconsidering it changes** `--count-pair` to count
+  each shape several times a leg and print each leg's spread beside the
+  change, which costs minutes against the pair's builds and gives 36.4's
+  data-level row the spread it lacks, and amends that section's "repeat
+  exactly" to match.
