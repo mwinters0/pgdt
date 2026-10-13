@@ -51,20 +51,18 @@ nulls.
 
 ## The library P24 binds is seven crates with no facade
 
-**Fact.** P35 splits `pgdump_query` into `pgdt-core`, `pgdt-model`,
-`pgdt-io`, `pgdt-dump`, `pgdt-codec`, `pgdt-mapping` and `pgdt-query`, and
-retires the
-`pgdump_query` facade rather than keeping it as a public face; what a
-boundary forces public that is not API sits in each crate's `internal`
-module, and no embedder may name one
-([`roadmap-P35-seams.md`](roadmap-P35-seams.md), "Naming and layout").
+**Fact.** The library is `pgdt-core`, `pgdt-model`, `pgdt-io`, `pgdt-dump`,
+`pgdt-codec`, `pgdt-mapping` and `pgdt-query`, with no facade and no public
+face; what a boundary forces public that is not API sits in each crate's
+`internal` module, and no embedder may name one
+([`decisions.md`](decisions.md), "D68", "D106").
 
 **Why P24 cares.** The binding is an embedder like `datafusion-pgdump`, and
 which crates it depends on, and whether it wants one entry crate of its own,
-is its to decide — the spec says P24 makes its own entry point. Whatever
-it decides, `scripts/layering.py` refuses a member its `GRAPH` does not
-list, and reads an embedder's sources for `internal` only once `EMBEDDERS`
-names it, so the binding's crate takes a row in both.
+is its to decide — D106 leaves a binding to make its own entry point.
+Whatever it decides, `scripts/layering.py` refuses a member its `GRAPH` does
+not list, and reads an embedder's sources for `internal` only once
+`EMBEDDERS` names it, so the binding's crate takes a row in both.
 
-**Origin.** Filed 2026-10-10, grilling P35; contingent on P35 landing as
-specified.
+**Origin.** Filed 2026-10-10, grilling the crate split; contingent on D68's
+graph and D106.

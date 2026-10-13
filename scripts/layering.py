@@ -2,11 +2,9 @@
 """The crate graph and each crate's boundary, read off `cargo metadata` and
 the members' sources.
 
-The rules are `docs/design/decisions.md`, "D68" and "D74", and
-`docs/design/roadmap-P35-seams.md`, "The crate graph" and "What this phase
-does not do". Cargo refuses a cycle but not an edge the graph does not draw,
-and nothing in Rust refuses a name a crate could reach but should not, so
-this holds:
+The rules are `docs/design/decisions.md`, "D68", "D74" and "D106". Cargo
+refuses a cycle but not an edge the graph does not draw, and nothing in Rust
+refuses a name a crate could reach but should not, so this holds:
 
 * **every member is in the graph** (`GRAPH`), and only those, and **each
   member's dependencies on another member are the ones its row lists** --

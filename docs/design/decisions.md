@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D105 -->
+<!-- decision-watermark: D106 -->
 
 ## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
@@ -554,15 +554,6 @@ as meant. `finish`'s last close is kept even past it; the next block declines at
 an OOM on a wide table; coarsening to fit, a cache depending on its container; retrying every run; skipping the piece;
 MEMORY_RESERVE again, carving the cap, not this. Reopens: the check's cost, or declining's saving. Code: `Gatherer::decline`.
 
-### D86 Statistics volume follows columns and groups, not row width
-Dictionary text is interned once per block and column, not per group, so an input of wide distinct text
-cannot fill an allowance — the attribution sitting's wide-text leg was deleted rather than corrected.
-Final groups are about `min(block bytes / group size, BLOCK_MAX_ROW_GROUPS, rows / minimum)`, so above one
-group size per minimum row count the density merge binds and doubling a row's width halves the volume;
-many short columns raise it, as does a bytewise-comparable column earning per-group bounds. The allowance
-is itself non-monotone in the container limit, being `margin_allowance(allowance) − budget`. Rejected:
-sizing an attribution input by row width. Evidence: `statistics-gathering`.
-
 ### D89 Statistics reach DataFusion on a leaf plan node, and `Exact` means the bound is the value
 `TableProvider` has no statistics method in 55 and `StreamingTableExec` answers unknown, so `PgDumpExec` *holds* one instead of parenting it: a
 parent's child can be replaced under it. Rows are `Exact` off block counts; a bound where every group of every block contributed and the stored text
@@ -630,7 +621,7 @@ held to tables in `scripts/layering.py`. Model is what the cache persists, apart
 below the parsers so the codec does not recompile with the grammar. Gathering decodes and builds no array, so is mapping's, with the pass handing it rows and the interior split
 that pass leads; the ordering keys it shares with a filter are value semantics, so codec's; worker sizing and the cut are io's, the leader asking them. The tests' fixture vocabulary is `pgdt-fixtures`,
 a member only a dev-dependency reaches, its edges, to mapping and what a call to it names, behind a feature. Rejected: four layers
-in one crate with upward deviations; the cache a crate of its own (the loader scans, so it is dump's); the mapping pass query's (it reads nothing of query); the graph held to the libraries alone (a new member unplaced, `namespace-init` open to a library); any `pub mod` a namespace (one line past `internal`); a test module included across crates by `#[path]` (rust-analyzer resolves nothing outside its package), or a test's own `#[path]` within one (`check.py --affected` reads a test's files off its `mod` lines).
+in one crate with upward deviations; the cache a crate of its own (the loader scans, so it is dump's); the mapping pass query's (it reads nothing of query); the graph held to the libraries alone (a new member unplaced, `namespace-init` open to a library); any `pub mod` a namespace (one line past `internal`); a test module included across crates by `#[path]` (rust-analyzer resolves nothing outside its package), or a test's own `#[path]` within one (`check.py --affected` reads a test's files off its `mod` lines); statistics a crate apart from query (its edges run both ways); codec and query, or dump and query, one crate (D74's boundaries).
 
 ### D74 Below the codec no Arrow, the codec pure, and the core's error naming no dependency
 Core, model, io and dump never name Arrow; the codec and mapping only its schema types, and the codec `i256`; the codec is synchronous and does no I/O, nor does
@@ -640,6 +631,15 @@ rows is model, implemented above (`pgdt_model::internal::BlockObserver`, `pgdt_m
 opaque `Cause`, built by `map_err` where a crate meets it and reached by downcast; every refusal of a dump the provider hands DataFusion is `External(datafusion_pgdump::Error)`,
 the core error its `source()`. Rejected: a `#[from]` variant per dependency's error, compiling Arrow, xz-seek and bincode into every crate; the core error
 crossing bare on some paths; a decimal key (`OrderKey::Decimal`) of digit strings, a heap per field, or of a 256-bit integer other than `Decimal256`'s.
+
+### D106 A crate's API is a designed surface, and what a boundary forces public that is not API is `internal`'s
+A library's API is its root and the namespaces `NAMESPACES` lists, each its file's own module made public, declaring the API by `pub use` from `pub(crate) mod` children (E0364
+refusing a `pub(crate) use` re-exported `pub`); an API item has one path, never also its crate's root. API is what an embedder of the crate would call given what its `lib.rs` says the crate is
+for, whether or not one does today. What a crate above reaches that is not API is `internal`'s, a method so reached on an `internal` `<Type>Ext` trait, and no embedder names one; a crate above
+adopts a lower `internal` item into its own API by re-exporting it, where it must be defined low but means something only above. No facade: nothing is published (D104), a crate is reached
+directly, and a binding makes its own entry point. Library crates are `pgdt-<name>`; the DataFusion crates keep `datafusion-*`, the prefix that ecosystem finds a provider by.
+Rejected: what was `pub` before the carve (forced by one crate's integration tests), or what an embedder names today, as the test of API; a facade re-exporting the crates (every public name
+spelled twice); a published `pgtypes` crate out of the codec (its own catalog types, Arrow behind a feature: a product decision). Code: `scripts/layering.py`, each crate's `internal`.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family

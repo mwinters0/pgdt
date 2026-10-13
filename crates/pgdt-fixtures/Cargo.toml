@@ -10,7 +10,9 @@ publish.workspace = true
 # It depends on no member, so the tests of any crate reach it with the graph
 # one-way, but behind `mapping`, which a sweep's request builders and a
 # fixture mapped beside its cache need: the mapping pass and the crates its
-# call takes.
+# call takes. Feature unification turns `mapping` on for pgdt-codec's and
+# pgdt-mapping's own unit tests too, linking a second copy of their crate whose
+# types are not the test's; nothing passes one across today.
 [features]
 mapping = ["dep:pgdt-mapping", "dep:pgdt-dump", "dep:pgdt-io", "dep:pgdt-model"]
 

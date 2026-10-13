@@ -7,7 +7,8 @@ the numbers are stated. A file is read three ways:
 * **code lines** -- lines of its production code holding something that is
   neither a comment nor whitespace, every `#[cfg(test)] mod` block excluded;
 * **functions** -- `fn` items in that same production code, methods included,
-  closures and `fn` pointer types not;
+  closures, `fn` pointer types and test functions not: counted, test
+  functions named files no reader would;
 * **total lines** -- the file as it is, tests and comments included.
 
 The first two carry a soft limit, past which a split is due when someone is

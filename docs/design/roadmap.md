@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27–P31 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P35 — crate seams and file limits | **Complete** | [`roadmap-P35-seams.md`](roadmap-P35-seams.md); [notes](roadmap-P35-seams-notes.md) |
+| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27–P31, P35 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P36 — the embedder API | Sketched; not grilled | this file, below; its rough edges are `KD<k>`s it owns — the maintainer sets its order |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
@@ -696,8 +695,8 @@ item; see below.
 ## P36 — The embedder API
 
 **A clean API is half of what this project delivers, a clean architecture
-the other.** P35 sorted each crate's API by what an embedder of it would
-call and laid it out; this phase reshapes what that sort leaves rough — a pairing the caller must keep that the API could keep for
+the other.** Each crate's API is already sorted by what an embedder of it
+would call ([`decisions.md`](decisions.md), "D106"); this phase reshapes what that sort leaves rough — a pairing the caller must keep that the API could keep for
 it, a value an embedder can read but not order — so each crate reads as a
 surface designed for its embedder. `datafusion-pgdump` is the first such
 embedder and P24's bindings present what this leaves. Sketched to
@@ -895,7 +894,8 @@ What it inherits:
 
 **Statistics a gather could keep in the pass it already runs, refused because
 of what keeping them costs** — CPU, memory under the statistics account
-([`decisions.md`](decisions.md), "D85", "D86") or cache volume — reconsidered
+([`decisions.md`](decisions.md), "D85"; [`measurements.md`](measurements.md),
+"What the data level costs a parse") or cache volume — reconsidered
 together, against what each would let a query skip or answer. Sketched to
 corner-avoidance depth. What it starts from:
 

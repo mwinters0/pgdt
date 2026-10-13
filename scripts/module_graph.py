@@ -44,7 +44,9 @@ explained against. But a doc link that runs against the code's edges, one
 module's doc naming a module that reads it, says the concept does not yet
 stand on its own. `--docs` lists those links, and they never fail the check.
 A doc link here is a `crate::`, `super::`, `self::` or `pgdt_*::` path in a
-comment, since rust-analyzer's index carries none.
+comment, since rust-analyzer's index carries none. Nothing runs `cargo doc`'s
+link check, and a doc link into a higher crate or into another module's
+private child does not resolve, so such a reference is a code span instead.
 
 rust-analyzer is the `rust-toolchain.toml` component that `rustup which
 rust-analyzer` names. Its `scip` index covers the whole workspace, so a

@@ -48,7 +48,7 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M220 are struck**, and nothing at or below `M220` is reused. That is a
+**M1–M223 are struck**, and nothing at or below `M223` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour, folded into a phase slice or withdrawn, and their
 numbers are spent all the same. What each struck item decided is filed by kind —
@@ -73,6 +73,3 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M221 | 2026-10-11 | The `release-profile` figure times a warm typed `pgdt sql -c` shape, its sitting at `2df93720` folded and D105 re-read against it | | [2026-10-10](../status/history/2026-10-10.md), "The shipped profile, reviewed"; [2026-10-11](../status/history/2026-10-11.md), "M221: the `release-profile` figure's `pgdt sql` row" |
-| M222 | 2026-10-11 | The `release-profile` figure takes `instructions:u` per leg beside its wall clock, and the downstream-build rule gains its attribution clause with it | | [2026-10-11](../status/history/2026-10-11.md), "The downstream-build rule, read in wall clock"; [2026-10-11](../status/history/2026-10-11.md), "M222: the `release-profile` figure counts `instructions:u`" |
-| M223 | 2026-10-11 | The profile recipe prints a differential flat profile of a `release-profile` sitting's `release-default` and `release-fat` binaries on a workload's own argv, and the downstream-build rule's attribution clause names it | | [2026-10-11](../status/history/2026-10-11.md), "The attribution clause's profile, reviewed"; [2026-10-11](../status/history/2026-10-11.md), "M223: the attribution clause's differential" |

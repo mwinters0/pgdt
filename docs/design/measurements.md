@@ -2717,6 +2717,18 @@ nothing. It is recorded and not attributed; the control's five data-level reps
 agree within 0.62 MiB (40.83–41.45). The 2g container left nearly all of itself
 unused.
 
+**Statistics volume follows columns and groups, not row width**, so an input
+meant to stress the statistics account is sized by those, never by row width.
+Dictionary text is interned once per block and column, not per group, so wide
+distinct text cannot fill an allowance — the attribution sitting's wide-text
+leg was deleted rather than corrected. Final groups are about
+`min(block bytes / group size, BLOCK_MAX_ROW_GROUPS, rows / minimum)`, so above
+one group size per minimum row count the density merge binds and doubling a
+row's width halves the volume; many short columns raise it, as does a
+bytewise-comparable column earning per-group bounds. The allowance is itself
+non-monotone in the container limit, being
+`margin_allowance(allowance) − budget`.
+
 Per-rep readings (s; peak RSS):
 - `COPY` block, metadata level: 0.411, 0.410, 0.418, 0.469, 0.417; 23.02 MiB, 23.12 MiB, 22.86 MiB, 23.19 MiB, 23.12 MiB
 - `COPY` block, data level: 4.56, 4.63, 4.65, 4.54, 4.60; 41.34 MiB, 41.30 MiB, 41.45 MiB, 41.22 MiB, 40.83 MiB

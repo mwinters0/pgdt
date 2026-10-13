@@ -4,4 +4,6 @@ description: Bump `CACHE_FORMAT_VERSION`. Use whenever a change alters what a ca
 ---
 
 Pre-1.0: just do it and stop worrying about it. The constant is
-`crates/pgdt-model/src/lib.rs`'s, beside the model it versions.
+`crates/pgdt-model/src/lib.rs`'s, beside the model it versions. Moving a
+persisted type between modules or crates moves no cache byte — bincode encodes
+no path and serde names fields — so a move alone owes no bump.
