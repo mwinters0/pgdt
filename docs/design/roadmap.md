@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27–P31 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P35 — crate seams and file limits | **Current** | [`roadmap-P35-seams.md`](roadmap-P35-seams.md); progress in [`STATUS.md`](../status/STATUS.md) |
+| P35 — crate seams and file limits | **Complete** | [`roadmap-P35-seams.md`](roadmap-P35-seams.md); [notes](roadmap-P35-seams-notes.md) |
 | P36 — the embedder API | Sketched; not grilled | this file, below; its rough edges are `KD<k>`s it owns — the maintainer sets its order |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
@@ -696,9 +696,8 @@ item; see below.
 ## P36 — The embedder API
 
 **A clean API is half of what this project delivers, a clean architecture
-the other.** P35 sorts each crate's API by what an embedder of it would call
-and lays it out, changing no signature; this phase reshapes what that sort
-leaves rough — a pairing the caller must keep that the API could keep for
+the other.** P35 sorted each crate's API by what an embedder of it would
+call and laid it out; this phase reshapes what that sort leaves rough — a pairing the caller must keep that the API could keep for
 it, a value an embedder can read but not order — so each crate reads as a
 surface designed for its embedder. `datafusion-pgdump` is the first such
 embedder and P24's bindings present what this leaves. Sketched to
