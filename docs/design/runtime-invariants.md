@@ -264,7 +264,7 @@ machine runs a pure v2 unified hierarchy, and the memory controller lives in
 exactly one hierarchy at a time (`RT6`), so it cannot be mounted v1 alongside;
 observing this entry needs a host booted with
 `systemd.unified_cgroup_hierarchy=0`, which is what the `Re-verify` below runs.
-`crates/pgdt-io/src/memory.rs`'s unit tests cover our reader instead: a fixture tree shaped as this
+`crates/pgdt-io/src/memory/tests.rs` covers our reader instead: a fixture tree shaped as this
 entry claims, driven through `discover_memory_limit`'s filesystem-root seam
 (D11). That observes no kernel and does not upgrade `Verified against`.
 
@@ -1022,8 +1022,8 @@ namespace's init, `pgdt` handles every signal that ends it elsewhere by
 exiting `128 + n` but a fault's, which it leaves to the forced default
 (`crates/namespace-init/src/lib.rs`), and `SIGINT` in `sql`'s REPL, which upstream's
 `ctrl_c` answers, and an interrupted `parse` exits `128 + n`
-rather than re-raising. `crates/pgdt/tests/namespace_init.rs` pins both under
-`unshare`, `sql` among the commands.
+rather than re-raising. `crates/pgdt/tests/namespace_init.rs` pins the `128 + n`
+exits under `unshare`, `sql` among the commands.
 
 **Re-verify:**
 

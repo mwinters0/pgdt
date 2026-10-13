@@ -297,7 +297,7 @@ fn hex_render_agrees_with_the_shape_it_replaced() {
 /// than panic on.
 #[test]
 fn date_and_time_render_agrees_with_the_shape_it_replaced() {
-    // Every day of a six-century window around the epoch, then a stride
+    // Every day of an eleven-century window around the epoch, then a stride
     // over the whole of `i32` — which reaches years either side of five
     // million and so the wide-year path — and both ends exactly.
     for days in -200_000..=200_000i32 {

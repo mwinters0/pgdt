@@ -196,8 +196,8 @@ pub struct RowSplit {
 
 impl RowSplit {
     /// Begin a new row, keeping the capacity the last one discovered. Every
-    /// row of a block has the same width, so once one row has been split to
-    /// its end the buffer never grows again.
+    /// row of a well-formed block has the same width, so once one row has been
+    /// split to its end the buffer grows again only for a row wider than it.
     pub fn restart(&mut self) {
         self.ends.clear();
         self.complete = false;
@@ -355,9 +355,9 @@ impl<'a> RawRow<'a> {
     /// gives it.
     ///
     /// **The `str` path is a total fallback, not an assertion.** `str::get`
-    /// answers `None` for a range that is out of bounds or not on a character
-    /// boundary, and this drops back to the checked decode there rather than
-    /// panicking. Neither can happen for a range this module produced: fields
+    /// answers `None` for a range not on a character boundary, and this drops
+    /// back to the checked decode there rather than panicking; a range out of
+    /// bounds panics on either path. Neither can happen for a range this module produced: fields
     /// are delimited by ASCII bytes, which are always character boundaries.
     pub fn decode(&self, field: Range<usize>) -> Result<Option<Cow<'a, str>>> {
         match self.text.and_then(|text| text.get(field.clone())) {

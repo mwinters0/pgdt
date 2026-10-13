@@ -146,7 +146,7 @@ fn days_in_month(y: i64, m: i64) -> i64 {
 ///
 /// The year is three digits or more, as `pg_dump` writes four: a shorter one
 /// is read by `DateOrder` (`20-01-01` is a month 20 under `MDY`, the year 2020
-/// under `YMD`), so it is refused as a shortfall, as is a month of three
+/// under `YMD`), so it is [`Unread::Unparsed`], as is a month of three
 /// digits, which the server reads as a day of the year (D55).
 fn civil_days(s: &str, bc: bool) -> Read<i64> {
     let unparsed = Unread::Unparsed;
@@ -256,9 +256,9 @@ pub(crate) fn parse_time_of_day(s: &str) -> Read<(i64, i64)> {
     if h > 24 || mi > 59 || se > 60 {
         return Err(Unread::Refused);
     }
-    // `frac` is checked above to be at most six ASCII digits, so padding it
-    // to six and parsing the result — two allocations per field — is exactly
-    // a scale by a power of ten: `.5` is 500000 µs, `.000001` is 1.
+    // `frac` is checked above to be at most six ASCII digits, so its digits
+    // scaled by a power of ten are what padding it to six and parsing would
+    // read, with no allocation: `.5` is 500000 µs, `.000001` is 1.
     let mut micros: i64 = 0;
     for b in frac.bytes() {
         micros = micros * 10 + i64::from(b - b'0');

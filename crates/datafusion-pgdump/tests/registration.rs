@@ -429,8 +429,8 @@ fn core_beneath<'a>(err: &'a (dyn std::error::Error + 'static)) -> &'a pgdt_core
     panic!("no library error beneath {err}")
 }
 
-/// **Whatever crosses DataFusion's boundary is the provider's `Error`, the
-/// library's beneath it** (`docs/design/decisions.md`, "D74"): a scan's
+/// **Every refusal of a dump crossing DataFusion's boundary is the provider's
+/// `Error`, the library's beneath it** (`docs/design/decisions.md`, "D74"): a scan's
 /// refusal, a `STORED AS PGDUMP` statement's and a table built by hand each
 /// downcast to `datafusion_pgdump::Error` and reach `pgdt_core::Error` by a
 /// walk of their sources; `PgDump::table` returns its own variants unwrapped.

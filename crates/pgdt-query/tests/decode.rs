@@ -856,12 +856,12 @@ fn char_typmod_dump(dir: &Path, declared: &str, field: &str) -> PathBuf {
 /// **A `character varying(n)` or `character(n)` field longer than `n`
 /// characters is refused wherever it is read, but for trailing blanks**
 /// (I75): a data-level `parse` keying it fails naming it, a query decoding it
-/// fails, an ordering filter keying it fails, and a strict parse finds it
-/// beneath an array, a composite or a domain, which a default one leaves to
-/// the query; told to ignore it, a query reads its text. A field longer only
-/// by blanks, or by none counted in characters, is read as the file holds
-/// it, and a literal of any length is read, the server coercing it with no
-/// typmod. Bare `character` is `character(1)` and `bpchar` has no length.
+/// fails and an ordering filter keying it fails, a domain over it included;
+/// beneath an array or a composite a default parse leaves it to the query
+/// and a strict one finds it; told to ignore it, a query reads its text. A
+/// field longer only by blanks, or by none counted in characters, is read as
+/// the file holds it, and a literal of any length is read, the server
+/// coercing it with no typmod. Bare `character` is `character(1)` and `bpchar` has no length.
 #[tokio::test]
 async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
     let dir = tempfile::tempdir().unwrap();

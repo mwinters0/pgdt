@@ -34,7 +34,7 @@ pub fn namespace_init() -> bool {
 /// Every signal whose default action ends a process, with or without a core,
 /// less those no handler here could change:
 ///
-/// - `SIGKILL` and `SIGSTOP`, which nothing catches;
+/// - `SIGKILL`, which nothing catches;
 /// - `SIGPIPE`, which the Rust runtime ignores before `main`, so it ends
 ///   `pgdt` nowhere;
 /// - the six a fault raises, `SIGILL`, `SIGTRAP`, `SIGBUS`, `SIGFPE`,

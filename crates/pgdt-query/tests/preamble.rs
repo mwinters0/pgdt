@@ -471,7 +471,7 @@ async fn the_types_schema_declares_one_deterministic_and_one_non_deterministic_c
 /// [`the_types_schema_declares_one_deterministic_and_one_non_deterministic_collation`]'s
 /// prose: the version is absent from `default`, absent from
 /// `data-only` — which emits no `CREATE COLLATION` at all — and absent from
-/// `public.c_collation` under every flag set, a `C` libc collation having no
+/// `public.c_collation` under every flag set read here, a `C` libc collation having no
 /// `collversion` to record.
 #[test]
 fn the_icu_collversion_reaches_binary_upgrade_alone_and_agrees_across_majors() {
@@ -712,9 +712,8 @@ async fn concatenated_create_dumps_yield_two_named_databases_each_fully_parsed()
         let source = LocalFileSource::open(&path).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
-        // I2: this is the only shape in which one qualified table name owns
-        // more than one `COPY` block — one per database, both present in the
-        // flat block list.
+        // I2: one qualified table name owns more than one `COPY` block here,
+        // one per database, both present in the flat block list.
         let widget_blocks: Vec<_> = index.blocks_for("public.widgets").collect();
         assert_eq!(widget_blocks.len(), 2, "pg_dump {version}");
         assert_eq!(index.total_rows(), 2 * 144, "pg_dump {version}: doubled row count");

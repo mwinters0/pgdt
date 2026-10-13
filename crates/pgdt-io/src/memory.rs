@@ -175,8 +175,8 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
 /// **Which of the two bounds binds decides what is left, and the bands run the
 /// other way round from the intuition.** [`Parallelism::fit`](crate::Parallelism::fit) solves the count
 /// against `cap.min(ceiling)`, so below `5 × (MEMORY_RESERVE −
-/// MEMORY_UNPOOLED_BOUND)` the *cap* binds and what is left here is at least
-/// `ceiling − cap`, positive but in the few hundred bytes under the line the
+/// MEMORY_UNPOOLED_BOUND)` the *cap* binds and, above the zero line below,
+/// what is left here is at least `ceiling − cap`, positive but in the few hundred bytes under the line the
 /// ceiling's rounding reaches — an allowance in that band cannot starve
 /// statistics. At and above it the *ceiling* binds, the count is solved right up
 /// against the number this subtracts from, and statistics get only the slack one

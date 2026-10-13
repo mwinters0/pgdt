@@ -28,9 +28,9 @@ async fn metadata(path: &Path) -> DumpMetadata {
     index.metadata.expect("build_index always populates metadata")
 }
 
-/// Resolve every declared column of `qualified`, in DDL order — this fixture
-/// never drops or generates a column, so DDL order matches `COPY` header
-/// order.
+/// Resolve every declared column of `qualified`, in DDL order, as though a
+/// `COPY` header named each — a generated column included, which a real
+/// header omits.
 fn resolve_table(meta: &DumpMetadata, qualified: &str) -> pgdt_codec::ResolvedSchema {
     let db = meta.databases.first().unwrap();
     let cols: Vec<String> =

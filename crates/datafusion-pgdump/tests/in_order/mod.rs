@@ -16,9 +16,9 @@
 //! must poll them in the stated order**, or it waits forever; every consumer
 //! a SQL plan puts above a scan here polls its inputs concurrently.
 //!
-//! It is added as the session's last physical optimizer rule
-//! ([`RunScansInOrder`]), after every rule that plans a filter or reads a
-//! statistic, so it changes nothing either sees.
+//! It is added as a physical optimizer rule ([`RunScansInOrder`]) after
+//! every rule that plans a filter or reads a statistic, so it changes nothing
+//! either sees.
 
 // Each target including this module uses a part of it.
 #![allow(dead_code)]

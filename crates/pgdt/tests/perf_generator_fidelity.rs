@@ -27,7 +27,7 @@ use common::{require_uv, run, run_ok as pgdt, scripts_dir, stderr_of};
 
 /// A ~2 MiB dump — a few hundred rows, which is enough for every value shape
 /// the generator draws from to appear many times over, and small enough that
-/// generating two of them per test run is not felt.
+/// generating a few of them per test run is not felt.
 fn generate(out: &Path, extra: &[&str]) {
     let mut cmd = Command::new("uv");
     cmd.current_dir(scripts_dir())

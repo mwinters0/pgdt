@@ -28,8 +28,7 @@ mod common;
 use common::{fixture, run, stderr_of};
 
 /// A small plain fixture with several `COPY` blocks — any one with more than
-/// one block will do, since `an_interrupted_and_resumed_parse_is_told_apart_from_a_fresh_one`
-/// needs a real mid-file resume point.
+/// one block will do.
 fn plain_dump() -> PathBuf {
     fixture(16, "edge_cases", "default")
 }
@@ -290,8 +289,8 @@ fn scan_started_names_jobs_and_the_stated_memory_budget_as_a_quantity() {
 ///
 /// **Which arrangement that is now depends on the machine.** A plain file
 /// recommends no budget, so a flagless scan reads `67108864 (default)` where no
-/// memory limit is discovered and the discovered allowance, bare, where one is
-/// — so the assertion is written against `discover_memory_limit` rather than
+/// memory limit is discovered and, unmarked, the default carved from the
+/// discovered allowance where one is — so the assertion is written against `discover_memory_limit` rather than
 /// against the constant, which would pass on a bare host and fail in exactly
 /// the container this default exists for.
 #[test]

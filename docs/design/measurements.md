@@ -295,7 +295,7 @@ Eighteen standing rules for reading anything below:
   bench group is worth having one.
 - **A mode difference and a per-column delta are CLI numbers, so neither sizes
   a library change.** Every `query` figure here is a `pgdt query` figure, which
-  means `pgdt::print_batch` — the CLI turning each batch back into TSV — is
+  means `pgdt`'s `query::print_batch` — the CLI turning each batch back into TSV — is
   inside it, and it is not a rounding error: on the control **most of the
   `typed` − `strings` gap is still that one function** — 0.76 s of a 1.35 s
   gap — and a typed query spends **36.42%** of its user time there against a
@@ -4102,7 +4102,7 @@ is the shape a scan of a file twice as long should have. Two mechanisms
 produced that between them and they are not separable here, because the second
 changed the input to the first: the save throttle skips a save unless 20× the
 last save's own duration has elapsed, and the gate it opens also decides when
-`stream::splice` rebuilds the map ([`decisions.md`](decisions.md), "D62").
+pgdt-mapping's `forward::splice` rebuilds the map ([`decisions.md`](decisions.md), "D62").
 Removing the per-block rebuild shortened the scan, and a shorter scan earns
 fewer saves under a rule that is a ratio against elapsed time — so the save
 count is **6** at every size rather than tracking the block count at `1/K` of

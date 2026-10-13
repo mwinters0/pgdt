@@ -475,9 +475,10 @@ impl Builder {
     /// behind it. `true` when this line is fully accounted for; `false`
     /// leaves it to [`feed_line`](Self::feed_line)'s ordinary path.
     ///
-    /// `KD9`'s discharge: `feed_line`'s per-line validate-and-allocate plus
-    /// `statement_complete` re-walking an accumulated `String` is most of an
-    /// `INSERT` scan's cost (`docs/design/decisions.md`, "D33").
+    /// It skips `feed_line`'s per-line validate-and-allocate and
+    /// `statement_complete`'s re-walk of an accumulated `String`, which would
+    /// be most of an `INSERT` scan's cost (`docs/design/decisions.md`, "D33");
+    /// what remains is `KD9`'s.
     ///
     /// Anything the ordinary path might classify differently is handed back:
     /// a line whose first non-ASCII-whitespace byte is not ASCII (`feed_line`'s

@@ -272,8 +272,8 @@ pub(crate) fn report_density_shortfall(statistics: &StatisticsRequest, index: &D
     }
 }
 
-/// **Say which blocks hold no statistics because the allowance could not hold
-/// them**, one line each, and answer how many — what
+/// **Say which blocks declined statistics an allowance could not hold**, one
+/// line each, and answer how many — what
 /// [`MapRun::declined_statistics`](crate::MapRun::declined_statistics) carries.
 ///
 /// **Every run under an allowance says it, not only the run that declined**: a
@@ -356,8 +356,9 @@ pub struct BlockReread {
 /// type's `*_in` refuses fails the re-read** in a column `backfill`'s request
 /// tracks — in every column under [`pgdt_model::PostgresInvalidValues::Strict`],
 /// which checks every field ([`BlockReread::checked`]) — with
-/// [`Error::FieldRefused`], as it fails a mapping pass, so the result never
-/// holds [`BlockGathered::Refused`]; in any other column it is recorded
+/// [`Error::FieldRefused`], as it fails a mapping pass, unless the run's mode
+/// ignores it, so the result never holds [`BlockGathered::Refused`]; in any
+/// other column it is recorded
 /// ([`BlockReread::ignored`]).
 pub async fn gather_block_statistics(
     source: &dyn ByteRangeSource,

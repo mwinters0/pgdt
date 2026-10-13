@@ -1037,9 +1037,9 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
     }
 }
 
-/// One assertion per reachable column of `public.t_collate`, which is the
-/// whole of what a real dump can say about the collation rule. `v_gen_nn` is
-/// the one column of that table absent from here: it is `STORED` generated,
+/// One assertion for each of eight columns of `public.t_collate` a stream
+/// reaches, between them the whole of what a real dump can say about the
+/// collation rule. `v_gen_nn` is absent from here: it is `STORED` generated,
 /// so the dump omits it from `COPY` and no stream can reach it — its
 /// assertion is in `tests/preamble.rs`, over `DatabaseMetadata`.
 ///
@@ -1111,7 +1111,7 @@ async fn a_collated_column_is_judged_by_its_clause() {
     }
 }
 
-/// The eight reachable columns hold one alphabet, so the note is the only
+/// The eight columns hold one alphabet, so the note is the only
 /// thing that separates them: every one answers bytewise, including the four
 /// the note says PostgreSQL would order differently. `a` and `ax` surviving
 /// `> B` are the divergence made concrete — lower case is above `B` in ASCII,

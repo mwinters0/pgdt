@@ -236,12 +236,12 @@ impl Jsonb {
     /// `compareJsonbContainers`, as a recursion rather than as a lockstep walk
     /// over two token streams; the two agree because both stop at the first
     /// position where the values differ. An object is ordered by its pair
-    /// *count* before its first key, and its keys are compared by
-    /// `varstr_cmp` while being *stored* by length-then-bytes (I41).
+    /// *count* before its first key, its keys *stored* by length-then-bytes
+    /// (I41) and compared here bytewise.
     ///
-    /// A string leaf is where this stops being PostgreSQL's answer:
-    /// `compareJsonbScalarValue` orders it by the database's collation, which
-    /// a plain dump does not record (I32), and
+    /// A string, a leaf or a key, is where this stops being PostgreSQL's
+    /// answer: `compareJsonbScalarValue` orders it by `varstr_cmp` under the
+    /// database's collation, which a plain dump does not record (I32), and
     /// `ComparisonDivergence::JsonbStringCollation` announces that.
     pub(crate) fn cmp(&self, other: &Self) -> Ordering {
         if self.rank() != other.rank() {
@@ -288,9 +288,9 @@ const JSONB_MAX_DEPTH: usize = 1000;
 const NUMERIC_EXPONENT_MAX: i64 = i32::MAX as i64 / 2;
 
 /// A recursive-descent reader over one JSON document, implementing what
-/// `jsonb_in` accepts and nothing wider (I41): RFC 8259 with PostgreSQL's two
-/// extra refusals — `\u0000`, which cannot be part of a `text` value, and a
-/// lone surrogate half.
+/// `jsonb_in` accepts and nothing wider (I41): RFC 8259 with PostgreSQL's
+/// extra refusals — `\u0000`, which cannot be part of a `text` value, a lone
+/// surrogate half, and a number past `numeric`'s bounds (I63).
 struct JsonCursor<'a> {
     bytes: &'a [u8],
     at: usize,

@@ -98,7 +98,7 @@ macro_rules! timed {
 /// `$body`, one row's evaluation against a dynamic filter's state, timed as
 /// [`EvaluationPart::Row`] with every leaf part it reaches, where the
 /// instrument is built in, through [`evaluated_row`]; without it, `$body`
-/// alone, as [`timed!`] is.
+/// alone.
 #[macro_export]
 macro_rules! row_evaluated {
     ($body:expr) => {{

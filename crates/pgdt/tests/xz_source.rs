@@ -3,8 +3,8 @@
 //! (`docs/design/decisions.md`, "D73").
 //!
 //! `crates/pgdt-query/tests/cache.rs` covers the same ground at the library level,
-//! through `open`/`build_index` directly. This file is the only one that
-//! drives the actual `pgdt` binary against a `.xz` source — its own argument
+//! through `open`/`build_index` directly. This file is the one whose subject is
+//! the actual `pgdt` binary against a `.xz` source — its own argument
 //! parsing, its cache round trip, and its text/JSON rendering, run the way a
 //! user would run them.
 //!

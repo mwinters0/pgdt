@@ -116,10 +116,10 @@ fn an_unknown_or_repeated_column_name_is_refused() {
     assert!(stderr_of(&repeated).contains("more than once"), "{}", stderr_of(&repeated));
 }
 
-/// **Projecting a column away is the per-column escape from a hard decode
-/// failure**, and it is reachable from the CLI. `t_numeric.v_small` holds a
+/// **Projecting a column away is the per-column escape from a value it cannot
+/// hold**, and it is reachable from the CLI. `t_numeric.v_small` holds a
 /// `NaN` its mapped `numeric(10,2)` cannot represent, so the unprojected
-/// query fails; dropping that one column leaves every other column typed,
+/// query names it; dropping that one column leaves every other column typed,
 /// where `--schema-mode strings` would have untyped all of them.
 #[test]
 fn projecting_a_column_away_escapes_its_decode_failure() {

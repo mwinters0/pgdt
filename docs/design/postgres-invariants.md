@@ -1250,7 +1250,7 @@ and "D45" — it is why the opaque-element refusal tests the
 element type *after* domain unwrapping rather than the declared string, and why
 the array separator can stay hardcoded to `,` once it does; and
 `ddl::types::base_type_delimiter`, `declared::typdelim` and
-`key::array_delimiter`, which split a strict parse's array of `box` at
+`grammar::check::array_delimiter`, which split a strict parse's array of `box` at
 `;` and of a base type at its `DELIMITER`.
 
 **Re-verify:**
@@ -2160,7 +2160,7 @@ different strings.
 **Verified against.** 13.23, 14.24, 15.19, 16.15, 17.11, 18.6 (Debian PGDG),
 and `pg_dump` 16.14 (koji, no extra version).
 
-**Relied on by.** `crate::map`'s `version_header_field`, which keeps the rest
+**Relied on by.** pgdt-dump's `map::toc::version_header_field`, which keeps the rest
 of the line whole, and `DatabaseMetadata::{server_version, pg_dump_version}`,
 which are reported and never compared or ordered.
 
@@ -3995,7 +3995,7 @@ both branches identical bar v17's overflow check).
 
 **Relied on by:** `decode::decode_bytea`, which tells the forms apart by the
 prefix; `predicate/resolve.rs`'s `Spellings`, an equality literal rendered in both;
-`gather::Canonical::of`, which puts an `escape` value's head in `hex`.
+`gather::bounds::Canonical::of`, which puts an `escape` value's head in `hex`.
 
 **Re-verify.**
 
@@ -4044,7 +4044,7 @@ literal is guaranteed in `*_out`'s form and never read past `*_in`'s").
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** the `types` fixtures' `common::REFUSED_FIELDS` row, which
+**Relied on by:** the `types` fixtures' `pgdt_fixtures::REFUSED_FIELDS` row, which
 holds that a data-level parse of a `pg_dump` output fails on the spelling
 `value::float::float_in` refuses (I59) — no decoder reading it as a value but under
 `ignore`.

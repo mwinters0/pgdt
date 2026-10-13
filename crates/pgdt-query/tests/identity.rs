@@ -37,8 +37,8 @@ mod common;
 use common::{edge_cases, sandboxed_edge_cases as sandboxed};
 
 /// A source whose identity moves under the run reading it: the first
-/// `observations` answers about `stored_size`/`modified` are the file's, and
-/// every one after that reports the file a second later. Reads are the real
+/// `observations` answers about `modified` are the file's, and every one
+/// after that reports the file a second later; its size is the file's. Reads are the real
 /// file's unless [`Shifting::dropping`] asked otherwise, which is the point —
 /// the bytes a run has already returned are exactly what a changed identity
 /// condemns.

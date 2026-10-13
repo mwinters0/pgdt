@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD116 -->
-**`KD1`–`KD116` are allocated, and nothing at or below `KD116` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD117 -->
+**`KD1`–`KD117` are allocated, and nothing at or below `KD117` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -528,3 +528,9 @@ than reading as a phase nobody has sliced.
   multirange only through `internal`'s `NestedKey`, which exposes its
   representation. **(b) owned by P36**. Detail:
   `crates/pgdt-codec/src/value/nested/key.rs`.
+
+- **KD117** — pgdt-codec's `OrderKey`, `Side` and the functions building and
+  comparing one, which the crate says are not its API, are `pub` at
+  `pgdt_codec::key::` as well as through `internal`, so an embedder names them
+  without naming `internal` and `layering.py` refuses nothing. **(b) owned by
+  P36**. Detail: `crates/pgdt-codec/src/key.rs`.

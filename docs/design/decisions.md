@@ -29,7 +29,7 @@ per-reader term. `DEFAULT_MEMORY_BUDGET` stays small enough to decline block dec
 ### D83 `--memory` states what the process may hold; one carving serves stated and discovered
 A read-buffer budget is a number an operator cannot size a container from, so the flag states
 resident and `Parallelism::within` carves it — reserve off the top, `margin_allowance` on the count
-— with `discover_in` calling the same function, so provenance still never enters `Parallelism`
+— with `discover_in` reaching the same carve (`within_shared`), so provenance still never enters `Parallelism`
 (D64). Consequences: a source recommending nothing is left on `DEFAULT_MEMORY_BUDGET` capped by the
 allowance less `MEMORY_RESERVE` whatever is stated, and the margin now binds a typed number. Rejected: a second flag; keeping the budget and
 giving statistics what it leaves. Code: `parallelism.rs`, `memory.rs`. Evidence: `reserve`.
@@ -394,7 +394,7 @@ Under `UnrepresentableMode::Refuse` a plan refuses the first column it materiali
 value in the tiers its semantics cannot hold (D96, D98), before a row is read: over every block, not the groups a filter keeps, which
 survive by statistics, and statistics never change an answer. A column only a filter the library answers reads is not materialized, and
 compares every value in PostgreSQL's order (D56), so no read refuses one. Rejected: refusing where a read reaches one (timing decides);
-over the kept groups; a read-time refusal beside it, the count being exact (D96). Code: `stream::materialized_unrepresentable`.
+over the kept groups; a read-time refusal beside it, the count being exact (D96). Code: `stream::replay::plan::materialized_unrepresentable`.
 Evidence: the refuse mode's cases, `a_selected_special_value_still_cannot_be_materialized`.
 
 ### D100 The untyped mode widens a column per table from the map's count, and compares it in each semantics
@@ -445,7 +445,7 @@ A narrowed `*_in` refuses only where every major does (`oidin`, `line_in`). Reje
 A `bytea` literal renders in both `bytea_output` forms, which share no spelling (I56); decoding per row is refused.
 
 ### D58 A nested column has one comparison path, and the leaf grammar does not widen
-Structural key walk for both operator families; `nested_key`'s `input` flag stops at the container
+Structural key walk for both operator families; `nested_key`'s literal `Side` stops at the container
 but for `int2vector`, whose elements `int2vectorin` reads. Both sides of a range go through
 `make_range`, keyed on the range type; a user range declaring `canonical` is refused under every
 comparing operator, the NULL tests reading no value (I44–I47).
@@ -534,7 +534,7 @@ vector or map charged ahead of its growth, in flight made when short, unmade whe
 per-group bound, bytes never held; growth charged after it; atomic terms, a moving charge read in
 neither; in-flight growth unmade both ways, faulting a table another worker holds; walking every
 block; proportional slack. Reopens: a leg past its tolerance (`statistics_account.rs`); an unseen
-term growing with the dump; the lock in `statistics-gathering`. Code: `statistics::Charge`.
+term growing with the dump; the lock in `statistics-gathering`. Code: `statistics::account::Charge`.
 
 ### D82 A block merges pairwise, exactly, between its minimum and its maximum, never mid-scan while a piece lives
 Exact, so serial, split and stated agree: a bytewise closed group keeps its extremes' heads till
@@ -637,7 +637,7 @@ Core, model, io and dump never name Arrow; the codec and mapping only its schema
 the model; a decoder takes an unescaped field and returns a value, never a builder (query's, whose views marry array building to the read buffers, D46). Anything
 persisted is model vocabulary — declared type strings, never a `DataType` or another codec conclusion, a statistic's bounds included. A contract over a block's
 rows is model, implemented above (`pgdt_model::internal::BlockObserver`, `pgdt_model::internal::FieldCount`). The core error carries a dependency's error as an
-opaque `Cause`, built by `map_err` where a crate meets it and reached by downcast; whatever the provider hands DataFusion is `External(datafusion_pgdump::Error)`,
+opaque `Cause`, built by `map_err` where a crate meets it and reached by downcast; every refusal of a dump the provider hands DataFusion is `External(datafusion_pgdump::Error)`,
 the core error its `source()`. Rejected: a `#[from]` variant per dependency's error, compiling Arrow, xz-seek and bincode into every crate; the core error
 crossing bare on some paths; a decimal key (`OrderKey::Decimal`) of digit strings, a heap per field, or of a 256-bit integer other than `Decimal256`'s.
 

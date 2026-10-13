@@ -236,7 +236,7 @@ are not bent to reach it. A long dump of ordinary rows is not such a shape.
 against an allowlist classifying each as hardware, intent, input contract or
 expert override, and fails on a flag nobody has classified — so a third
 hardware knob is a decision somebody wrote down, not one that arrived quietly
-(`crates/pgdt/src/main.rs`, `every_numeric_flag_is_classified`). **It skips `pgdt
+(`crates/pgdt/src/tests.rs`, `every_numeric_flag_is_classified`). **It skips `pgdt
 sql` alone**, whose flags are the DataFusion CLI's as upstream ships it — its
 `--memory-limit` sizing DataFusion's pool, which the provider bills against its
 allowance — bar `--dump` and `--strict-identity`, ours and taking no number; a
@@ -630,7 +630,7 @@ tool is a misconfigured environment, and the honest report is a failure naming
 **Why it is a rule.** A conditional skip is invisible in a passing suite, and
 the test most likely to carry one is a test nothing else covers — which is
 exactly when its silent absence costs the most.
-`crates/pgdt/tests/perf_generator_fidelity.rs` is the whole example: one test, the
+`crates/pgdt/tests/perf_generator_fidelity.rs` is the whole example: its first test, the
 suite's only guard against `scripts/generate_perf_data.py` drifting away from
 what `pg_dump` writes, and it skipped itself when `uv` was absent. Three
 infidelities had already survived in that generator for want of any guard at

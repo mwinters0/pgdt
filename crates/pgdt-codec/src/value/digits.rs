@@ -7,9 +7,10 @@
 
 /// The 100 two-digit decimal pairs end to end, so `v`'s pair is the two bytes
 /// at `v * 2` — [`HEX_PAIRS`]'s decimal counterpart. Every
-/// zero-padded field a `date`, a `time` or a `timestamp` is written from is two
-/// digits wide, or a four-digit year's two of them, so a field becomes an
-/// indexed slice and a two-byte copy rather than a trip through `core::fmt`
+/// zero-padded field a `date`, a `time` or a `timestamp` is written from is
+/// pairs — two digits, a four-digit year two of them, a fraction three — so a
+/// pair becomes an indexed slice and a two-byte copy rather than a trip
+/// through `core::fmt`, a year past four digits alone taking the general path
 /// (`docs/design/decisions.md`, "D44").
 const DEC_PAIRS_BYTES: [u8; 200] = {
     let digits = *b"0123456789";

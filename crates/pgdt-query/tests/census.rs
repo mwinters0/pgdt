@@ -1,13 +1,14 @@
 //! The array-shape census a full scan records on every `COPY` block
 //! (`docs/design/decisions.md`, "D35").
 //!
-//! `src/model/block.rs`'s unit tests pin what a single field contributes. These
-//! pin the four things only a real dump can show: that the shapes recorded
+//! pgdt-model's `block.rs` unit tests pin what a single field contributes.
+//! These pin what only a real dump can show: that the shapes recorded
 //! for `fixtures/*/types/default.sql` are the ones its literals actually
 //! carry, that every mapping pass a query makes records them whatever its
 //! `ScanExtent`, that a query's schema is retyped from them before its
 //! first batch, and that a table mapped at the metadata level, which records
-//! none, is censused by the query that reads it.
+//! none, is censused by the query that reads it; and that a partitioned
+//! table's census is the union of its blocks'.
 
 use std::path::Path;
 use std::sync::Arc;

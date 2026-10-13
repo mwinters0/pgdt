@@ -192,8 +192,9 @@ fn nested_family(c: &mut Criterion) {
     });
     // Control 2: the borrowed arm — one view write into a block the builder
     // does not own, which is what an unescaped text field of *any* length
-    // costs. A fresh builder per iteration (its construction is not timed)
-    // keeps the view vector from growing without bound across the run.
+    // costs. A fresh builder per iteration, its construction and drop timed
+    // with the appends, keeps the view vector from growing without bound
+    // across the run.
     // Reports 1024 appends; divide. See the module header for why it is
     // batched and why the result is a floor rather than the borrowed arm.
     const VIEW_BATCH: usize = 1024;

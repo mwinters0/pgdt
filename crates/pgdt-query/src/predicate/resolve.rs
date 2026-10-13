@@ -865,8 +865,8 @@ impl ResolvedExpr {
 /// **This is where a predicate is validated against a block**, and the only
 /// place (`docs/design/decisions.md`, "D54"): a term naming a column this
 /// block does not carry is `Error::UnknownPredicateColumn`, an ordering
-/// operator on a column the register gives no order is
-/// `Error::UnorderedPredicateColumn`, any comparing operator on a column whose
+/// operator on a column the register gives no order is, in PostgreSQL's
+/// semantics, `Error::UnorderedPredicateColumn`, any comparing operator on a column whose
 /// server comparison is not a text one is `Error::UncomparablePredicateColumn`,
 /// and a literal that is not a value of
 /// the column's type — `=` included — is `Error::PredicateValueDecode`. All

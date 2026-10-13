@@ -10,10 +10,11 @@
 //! no member but behind `mapping`, so every crate's tests reach it with the
 //! graph one-way (`docs/design/decisions.md`, "D68").
 //!
-//! Everything here is a *path* or an *expectation*, but for one call into the
-//! library: a fixture copied out of the tree and mapped beside its cache,
-//! behind `mapping`, which every test reading a map starts from and which
-//! differs per test only in the request it states. Anything else that drives
+//! Everything here is a *path* or an *expectation*, but for two calls into the
+//! library, behind `mapping`: a fixture copied out of the tree and mapped
+//! beside its cache, which every test reading a map starts from and which
+//! differs per test only in the request it states, and that cache with its
+//! statistics stripped. Anything else that drives
 //! the library — a `collect`, a `drain`, a `census_of` — stays in the file
 //! whose subject it is: those differ per test file in ways that matter, and
 //! merging them here would be the second mistake this crate exists to undo.

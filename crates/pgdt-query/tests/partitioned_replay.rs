@@ -4,11 +4,11 @@
 //! **The whole file is one differential test in several shapes.** A
 //! partitioned replay has no output of its own to assert against — its
 //! contract is that it returns exactly what the serial [`table_stream`]
-//! returns, in exactly that order, however the file was cut. So every test
-//! here takes the serial rows as the oracle and varies one thing: the worker
-//! count, the source's own partitioning advice (a plain file says anywhere, a
-//! seekable `.xz` says block boundaries, a single-block `.xz` declines), the
-//! filter, the projection, and the block count.
+//! returns, in exactly that order, however the file was cut. So the tests
+//! here that read rows take the serial rows as the oracle, each varying one
+//! thing: the worker count, the source's own partitioning advice (a plain
+//! file says anywhere, a seekable `.xz` says block boundaries, a single-block
+//! `.xz` declines), the filter, the projection, and the block count.
 //!
 //! What that buys over asserting fixed row lists is that the cut points move
 //! with the worker count and land wherever they land — mid-row, mid-header,
@@ -422,7 +422,7 @@ async fn a_small_batch_size_flushes_at_a_piece_boundary_without_losing_a_row() {
 /// caller polling them concurrently sees — and it is asserted here to be
 /// something other than file order, so that the sort below is doing work
 /// rather than re-confirming an order the draining already had. That is why
-/// the fixture is the eight-row `edge_cases` widgets against two sub-streams
+/// the fixture is the six-row `edge_cases` widgets against two sub-streams
 /// rather than a table with one row per partition, where round-robin *is*
 /// file order and the assertion would hold for the wrong reason.
 #[tokio::test]

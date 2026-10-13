@@ -593,8 +593,8 @@ struct Tm {
 }
 
 /// The transaction's start, as `now` and `today` read it: a date within every
-/// range, so its date decides nothing, and noon, the one hour both `am` and
-/// `pm` read.
+/// range, so its date decides nothing, and noon, an hour both `am` and `pm`
+/// read.
 const NOW: Tm = Tm { year: 2026, mon: 6, mday: 15, hour: 12, min: 0, sec: 0, yday: 0 };
 
 /// A zone's offset as the decode leaves it: one the text fixes, or one the

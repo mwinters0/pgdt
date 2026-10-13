@@ -69,8 +69,8 @@ fn counts() -> Vec<u64> {
 }
 
 /// `ordered`'s `id`, read serially with statistics off — so every row is
-/// evaluated where `evaluation` evaluates rows — under `filter` as the static
-/// filter, `dynamic` as the dynamic one, or both; the rows emitted.
+/// evaluated where `evaluation` evaluates rows — under `static_filter` as the
+/// static filter, `dynamic` as the dynamic one, or both; the rows emitted.
 async fn read(
     static_filter: Option<Expr>,
     dynamic: Option<Expr>,

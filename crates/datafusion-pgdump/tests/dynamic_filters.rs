@@ -583,7 +583,7 @@ const ZEROS: [&str; 6] = [
 /// evaluation calls them equal, so a scan pruning by such a threshold loses
 /// the zero it rules out only where the partition holding the other zero has
 /// already published it — which a schedule decides. Each order is run, so
-/// the translator's rule for a zero (`dynamic_filter.rs`, `comparison`) is
+/// the translator's rule for a zero (`filter/dynamic.rs`, `comparison`) is
 /// held to both.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_float_s_zeros_at_its_extremes_answer_alike_in_either_order() {

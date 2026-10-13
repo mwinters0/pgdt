@@ -1,7 +1,7 @@
 //! The oracle's own tests: proof that it misbehaves exactly as asked.
 //!
 //! **The instrument precedes its subject**, which is why this file exists
-//! before anything reads a URL. Nothing here names a remote source, `object_store` or the
+//! before anything reads a URL. Nothing here uses a remote source, `object_store` or the
 //! `http` feature: every assertion is against bytes on a socket, so the proof
 //! that the server ignores a `Range` does not rest on the crate whose handling
 //! of that case is the thing being tested.

@@ -4,7 +4,7 @@ use crate::ddl::tests::parse_type;
 use pgdt_model::{CollationDef, ColumnDef, NotNull, TableDef, TableReference};
 
 /// The `--binary-upgrade` fold (I6) is [`dump_metadata_from_spans`]'s
-/// job, not `classify_statement`'s, needing an already-open `TypeDef` to
+/// job, not `classify`'s, needing an already-open `TypeDef` to
 /// fold the label into: a `TypeDef` span for the empty enum, an unrelated
 /// `Unparsed` span for the `binary_upgrade_set_next_pg_enum_oid` noise
 /// every real dump interleaves (I6), and two `AlterTypeAddValue` spans.
@@ -159,7 +159,7 @@ fn plain_dump_has_no_connect_and_names_no_database() {
 
 #[test]
 fn connect_starts_a_new_named_database_and_drops_the_preconnect_segment() {
-    // `CREATE DATABASE koji ...;` isn't one of `classify`'s four shapes
+    // `CREATE DATABASE koji ...;` isn't a shape `classify` reads
     // (I5: it never carries a real table or type), so it's `Unparsed`
     // like any other statement this module doesn't model.
     let meta = dump_metadata_from_spans(&[

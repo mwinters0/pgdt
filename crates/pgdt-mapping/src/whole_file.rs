@@ -144,7 +144,9 @@ pub struct MapRun {
     /// reached EOF, whatever it checked and banked before the interrupt.
     pub checked: usize,
     /// **How many blocks of the finished map declined to gather statistics**,
-    /// under this run's allowance or an earlier, larger one
+    /// under this run's allowance or an earlier, larger one, or under an
+    /// earlier, smaller one where the statistics the block holds already cover
+    /// this request, so nothing re-reads it
     /// ([`pgdt_model::CopyBlock::statistics_declined`]) — zero for a run the
     /// interrupt reached before the back-fill finished, which is where the
     /// count is taken. A run stating no allowance declines nothing itself, so

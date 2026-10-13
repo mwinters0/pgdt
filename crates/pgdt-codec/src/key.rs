@@ -11,10 +11,18 @@
 //! the dispatch over the type families under `crate::value`, each holding its
 //! own key type; it is not the codec's API, an ordering over these
 //! representations being a surface nobody has designed (`KD116`), so
-//! `internal` re-exports what a crate above calls. What a literal of each kind
-//! has to look like, for the refusal naming it, is `form`'s; the refusal
-//! checks a strict parse dispatches through these readers are
-//! `crate::grammar`'s.
+//! `internal` re-exports what a crate above calls.
+//!
+//! Deficiency register: `deficiency: KD117` — defined in the namespace's own
+//! file, each item `internal` re-exports from here is `pub` at
+//! `pgdt_codec::key::` too, a second path an embedder can name without naming
+//! `internal`; every other namespace keeps what is not API in a `pub(crate)`
+//! child `internal` re-exports from. **(b) owned by P36**, whose codec surface
+//! decides where an ordering key lives.
+//!
+//! What a literal of each kind has to look like, for the refusal naming it,
+//! is `form`'s; the refusal checks a strict parse dispatches through these
+//! readers are `crate::grammar`'s.
 
 pub(crate) mod form;
 

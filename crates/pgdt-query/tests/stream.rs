@@ -188,8 +188,8 @@ async fn resolved_schema_matches_the_batches_it_describes() {
     assert!(resolved.schema.fields().iter().all(|f| f.is_nullable()));
 }
 
-/// `SchemaMode::Strings` never looks at the DDL at all — every column comes
-/// back `NotDeclared`, matching the untyped path exactly.
+/// `SchemaMode::Strings` resolves no column's type from the DDL — every
+/// column comes back `NotDeclared`, matching the untyped path exactly.
 #[tokio::test]
 async fn strings_mode_never_resolves_types() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();

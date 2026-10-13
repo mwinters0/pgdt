@@ -36,12 +36,14 @@ pub enum Error {
     Table(String),
 }
 
-/// **Whatever of ours crosses DataFusion's boundary is
-/// [`DataFusionError::External`] holding an [`Error`]**, from a scan, a pushed
-/// filter, a table built or registered and a `CREATE EXTERNAL TABLE` alike,
-/// so an embedder downcasts the top to [`Error`] on every path and reaches
-/// `pgdt_core::Error` below it by [`std::error::Error::source`]
-/// (`docs/design/decisions.md`, "D74").
+/// **Every refusal of a dump or of the library crosses DataFusion's boundary
+/// as [`DataFusionError::External`] holding an [`Error`]**, from a scan, a
+/// pushed filter, a table built or registered and a `CREATE EXTERNAL TABLE`
+/// alike, so an embedder downcasts the top to [`Error`] on every path and
+/// reaches `pgdt_core::Error` below it by [`std::error::Error::source`]
+/// (`docs/design/decisions.md`, "D74"). A statement or a setting refused for
+/// its own shape — columns declared, an unknown `pgdump.` option — is
+/// DataFusion's plan error.
 impl From<Error> for DataFusionError {
     fn from(err: Error) -> Self {
         DataFusionError::External(Box::new(err))

@@ -280,7 +280,7 @@ fn query_over_a_real_origin_streams_the_same_rows_a_local_query_streams() {
 /// [`KnownCompression::Unknown`] is where the footer walk is paid.
 ///
 /// What the object must be is checked here rather than in each test, so that
-/// an object placed wrong is one message rather than five, and so that no test
+/// an object placed wrong is one message rather than one per test, and so that no test
 /// below computes an offset from a length that is not the fixture's.
 ///
 /// **It is the right dump**, by the plaintext length the walked index accounts

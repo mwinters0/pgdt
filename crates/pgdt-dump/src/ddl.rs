@@ -55,12 +55,14 @@ use pgdt_model::{Extension, SpanBody, TypeDef};
 /// map builder has already taken the framing statements out
 /// (`looks_like_framing_statement`), which are the map's, not the grammar's.
 ///
-/// Three `ALTER` statements are spans of their own rather than declarations:
+/// Four `ALTER` statements are spans of their own rather than declarations:
 /// each amends an already-declared object rather than introducing one, so it
-/// is folded into it later — `ALTER TYPE ADD VALUE` and `DROP ATTRIBUTE` by
-/// `fold_alter_type_add_value` and `fold_alter_type_drop_attribute` in
-/// [`dump_metadata_from_spans`], an `ALTER TABLE` adding a
-/// [`pgdt_model::TableReference`] by [`pgdt_model::TableDef`]. The rest are
+/// is folded into it later — `ALTER TYPE ADD VALUE`, `DROP ATTRIBUTE` and an
+/// `ALTER TYPE` whose labels this grammar does not read by
+/// `fold_alter_type_add_value`, `fold_alter_type_drop_attribute` and
+/// `fold_enum_labels_unread` in [`dump_metadata_from_spans`], an `ALTER
+/// TABLE` adding a [`pgdt_model::TableReference`] by
+/// [`pgdt_model::TableDef`]. The rest are
 /// the `CREATE` shapes introducing one ([`classify_create`]).
 pub(crate) fn classify(stmt: &str) -> SpanBody {
     if let Some(rest) = strip_kw(stmt.trim_start(), "ALTER TYPE") {

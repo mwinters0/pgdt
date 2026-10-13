@@ -42,7 +42,7 @@ fn a_record_keeps_each_columns_first_and_count() {
     IgnoredRefusals::merge(&mut merged, declined.clone());
     assert_eq!(counts(&merged), [(0, 5, 2), (1, 12, 1), (2, 3, 4), (3, 4, 1)]);
     IgnoredRefusals::merge(&mut declined, held);
-    assert_eq!(counts(&declined), counts(&merged), "a merge is symmetric");
+    assert_eq!(counts(&declined), counts(&merged), "these two merge symmetrically");
 
     let record = merged.expect("held some");
     let first = |tracked: &[bool]| record.first_among(tracked).map(|f| (f.line, f.column));
