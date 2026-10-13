@@ -22,9 +22,9 @@ It exited 0: every shape's legs answered alike, both legs report the
   fall on two values ([`measurements.md`](measurements.md), "What link-time
   optimization buys the shipped build") and spread by 211,787 within the
   lower. So counts repeat to the million the register publishes, not to the
-  instruction, and the spec's "repeat exactly"
-  ([`roadmap-P36-embedder-api.md`](roadmap-P36-embedder-api.md), "What a
-  hot-path slice owes") holds only at that precision. **The data level has
+  instruction, which is why the spec's "What a hot-path slice owes"
+  ([`roadmap-P36-embedder-api.md`](roadmap-P36-embedder-api.md)) counts
+  each shape more than once a leg from 36.1.1. **The data level has
   no per-rep count anywhere**: `release-profile` does not run it, so 36.4's
   row has this pair's one difference and no spread.
 - **Two builds of one source are not one binary.** mimalloc's C source

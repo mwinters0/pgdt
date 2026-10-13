@@ -471,7 +471,9 @@ Three reshapes touch per-chunk or per-field code:
 
 **Each of those slices takes `instructions:u` (`count-instructions`) on the
 `parse` and `typed` shapes, at its parent commit and at its own**, and is
-refused if the count rises beyond the instrument's noise. The two commits are
+refused if the count rises beyond the instrument's noise: **a rise is beyond
+it where it is resolved on any row**, the tree's fewest above the parent's
+most, the rule `downstream_verdict` already reads counts by. The two commits are
 adjacent, so the difference is the slice and nothing else
 (`.claude/skills/evidence/SKILL.md`, rule 7). The count is the reading D105
 already ranks by. Each slice row names its instrument
@@ -482,10 +484,22 @@ names its instrument"). The command that takes it is **`measure.py
   working tree. Each build runs in the release image, in its own target
   directory under the scratch alloc-builds root, from a git worktree, as
   `--check`'s generator verification already does.
-- **It counts `instructions:u` once per shape**, because the counts are
-  deterministic (`release-profile`'s per-rep readings repeat exactly). The
-  shapes are: `parse` at the metadata level; `parse` at the data level,
+- **It counts `instructions:u` `release-profile`'s number of reps a shape on
+  each leg**, because one build's counts move between runs (36.1's notes,
+  "The first reading: two builds of one source"), so a change is read against
+  a spread the pair takes at its own two trees, never at another tree's.
+  The shapes are: `parse` at the metadata level; `parse` at the data level,
   which covers gathering; `query` strings; `query` typed; and `pgdt sql`.
+- **It prints each leg's fewest and most, and each row resolved or
+  unresolved**, a fact rather than a verdict. On `pgdt sql` the count's two
+  values lie inside both legs' ranges, so a rise smaller than their step is
+  unresolved there; the `typed` row counts the same decode at a finer
+  resolution.
+- **Its first run is a pair of identical sources**, `--count-pair HEAD~1`
+  after the commit that adds the reps, which touches only `scripts/`. **Any
+  row resolving there falsifies the instrument**: it would be pricing the
+  build (mimalloc's `__TIME__` moves each leg's layout) and not the change,
+  and no hot-path slice is counted until that is answered.
 - **It refuses unless `<rev>` is the working tree's parent commit**, so it
   can never price more than one slice.
 - **It prints a comparison and publishes no figure.** Nothing reaches
