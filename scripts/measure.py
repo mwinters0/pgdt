@@ -55,12 +55,14 @@ with `pgdt parse` building the cache it reads first: it states its worker
 count as its session's `target_partitions` — held by a test and said in its
 tables.
 
-**No build of another tree is measured here.** A subtraction between two
+**No figure is a build of another tree.** A subtraction between two
 builds measures everything that differs between the two trees, which grows
 every time the tree moves and the pinned side does not; what one mechanism
 costs inside a run is an attribution, read off a profile
 (`docs/design/roadmap.md`, "Attribution is introspective; only the gate is
-blind"), not a second build differenced against the first.
+blind"), not a second build differenced against the first. The one build of
+another tree, `--count-pair`'s, is of the working tree's parent alone and
+publishes nothing: it prices one slice's change in `instructions:u`.
 
 Machine facts stay out of here: every path is an environment variable whose
 default suits the machine CLAUDE.local.md describes, and the procedure lives in
@@ -74,6 +76,7 @@ Usage:
     uv run measure.py --stage warm
     uv run measure.py --all
     uv run measure.py --stale --since <rev>
+    uv run measure.py --count-pair HEAD~1
     uv run measure.py --profile-recipe
     uv run measure.py --heaptrack-recipe
     uv run python -m unittest test_measure -v
@@ -3890,11 +3893,18 @@ def _script(command: str) -> str:
         )
     if command.startswith(STATISTICS_FAMILY):
         # `statistics-gathering`: the same wrapped `parse` as `parse-rss`, its
-        # level stated by the leg.
+        # level stated by the leg. Unsuffixed, the same `parse` unwrapped,
+        # which is what `--count-pair` counts: the counter must sit directly
+        # around the timed `/pgdt` (`counted_script`).
         leg, _, suffix = command.removeprefix(STATISTICS_FAMILY).partition("-")
         flags = dict(STATISTICS_LEGS)
-        if leg not in flags or suffix != "rss":
+        if leg not in flags or suffix not in ("rss", ""):
             raise ValueError(f"unknown command shape {command!r}")
+        if not suffix:
+            return (
+                f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache {j} {flags[leg]} "
+                ">/dev/null"
+            )
         return (
             f"time {PEAK_RSS} /pgdt parse --source /dump.sql "
             f"--dtcache /tmp/x.dtcache {j} {flags[leg]} >/dev/null"
@@ -4125,7 +4135,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"query-project-{w}" for w in PROJECTION_WIDTHS),
         *(f"query-where-{s}" for s in PREDICATE_SHAPES),
         *(f"parse-chunk-{n}" for n in CHUNK_SIZES),
-        *(f"{STATISTICS_FAMILY}{leg}-rss" for leg, _ in STATISTICS_LEGS),
+        *(f"{STATISTICS_FAMILY}{leg}{rss}" for leg, _ in STATISTICS_LEGS for rss in ("-rss", "")),
         *(f"{PRUNING_FAMILY}{name}-{leg}" for name in PRUNING_FILTERS for leg in PRUNING_LEGS),
         *dynfilter_shapes(),
         DYNFILTER_STARTUP,
@@ -5421,7 +5431,9 @@ def ensure_pgdt_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     return cfg.bin_pgdt
 
 
-def build_in_image(cfg: Config, build: release.Build, target_dir: Path | None = None) -> Path:
+def build_in_image(
+    cfg: Config, build: release.Build, target_dir: Path | None = None, tree: Path = REPO
+) -> Path:
     """`build` run in the release image, its binary held to the floor there
     (`release.step_build`), and where that binary lands on the host.
 
@@ -5431,12 +5443,16 @@ def build_in_image(cfg: Config, build: release.Build, target_dir: Path | None = 
     differ by what it names, never by a compiler or a glibc the image supplies
     to one of them alone. `target_dir` is a cargo target directory of the
     build's own (`image_target_dir`), for a build writing the shipped one's
-    output path; `None` is the release state's, where that binary lives."""
+    output path; `None` is the release state's, where that binary lives.
+    `tree` is the checkout built, another commit's worktree for
+    `cmd_count_pair`'s parent leg."""
     container = cfg.container_argv()
     tag = release.ensure_image(container)
     release.prepare_state(target=target_dir)
     run(
-        release.run_in_image(container, tag, release.build_step([build]), target=target_dir),
+        release.run_in_image(
+            container, tag, release.build_step([build]), target=target_dir, tree=tree
+        ),
         cwd=REPO,
     )
     return build.binary(target_dir if target_dir is not None else release.STATE / "target")
@@ -14593,6 +14609,255 @@ def cmd_verify_additive(since: str | None) -> int:
     return 0
 
 
+# -- the count pair ---------------------------------------------------------
+
+#: `--count-pair`'s shapes, in its comparison's row order, each with what the
+#: row is called and the container limit it runs under (`None`: the recorded
+#: 512 MB). The hot paths a reshape can move: discovery; the data level, the
+#: only shape reaching statistics gathering, under `statistics-gathering`'s
+#: limit, since the allowance it gathers within is discovered from the
+#: container (D85); both `query` modes; and the provider's typed scan. The
+#: same shapes the register times, so a count here and a figure there are one
+#: workload.
+COUNT_PAIR_SHAPES: tuple[tuple[str, str, str | None], ...] = (
+    ("parse", "`pgdt parse` at the metadata level", None),
+    (f"{STATISTICS_FAMILY}data", "`pgdt parse` at the data level", STATISTICS_MEMORY),
+    ("query-strings", "`query --schema-mode strings`", None),
+    ("query-typed", "`query --schema-mode typed`", None),
+    (PARALLEL_SCAN, "`pgdt sql -c` — a typed DataFusion scan", None),
+)
+
+#: The input every shape reads: the register's control file, at
+#: `Config.size_gib`, off the SSD cache. A count is user space alone, so the
+#: device it is read from moves nothing it reports, and nothing is staged.
+COUNT_PAIR_INPUT = "control"
+
+#: The pair's two legs, in each row's column order.
+COUNT_PAIR_LEGS: tuple[str, ...] = ("parent", "tree")
+
+#: `CLAUDE.md`'s "Long-running processes" line, past which a run is launched
+#: detached rather than waited on. `--count-pair` says which side of it a run
+#: fell, which decides how a hot-path slice takes its count.
+DETACH_SECONDS = 10 * 60
+
+
+def count_pair_parent() -> tuple[str, bool]:
+    """The commit the working tree is one change on, and whether it carries
+    that change uncommitted: `HEAD` where `git status` names anything,
+    untracked files included, since a slice landed unattended adds its new
+    files untracked; `HEAD`'s first parent where the tree is clean, the change
+    then being `HEAD` itself."""
+    dirty = bool(run(["git", "status", "--porcelain"], cwd=REPO, capture=True).strip())
+    rev = "HEAD" if dirty else "HEAD^"
+    return run(["git", "rev-parse", "--verify", rev], cwd=REPO, capture=True).strip(), dirty
+
+
+def count_pair_refusal(rev: str, parent: str, dirty: bool) -> str | None:
+    """Why `rev` cannot be the pair's parent leg, or `None`.
+
+    **The parent and nothing else** (`.claude/skills/evidence/SKILL.md`, rule
+    7): two adjacent trees differ by one change, so the difference is that
+    change's. Any older commit prices every commit between, under the name of
+    the last one, and no reading would look wrong."""
+    try:
+        resolved = run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
+            cwd=REPO,
+            capture=True,
+        ).strip()
+    except subprocess.CalledProcessError:
+        return f"{rev!r} names no commit"
+    if resolved == parent:
+        return None
+    tree = "the uncommitted tree" if dirty else "HEAD, the tree being clean"
+    return (
+        f"{rev} is {resolved[:10]}, but the working tree's parent is {parent[:10]} "
+        f"(the change measured is {tree}): a pair across more than one change prices every "
+        "commit between under the last one's name"
+    )
+
+
+def image_inputs_at(rev: str) -> dict[str, bytes]:
+    """`release.image_inputs` as `rev` has them, read out of git."""
+    paths = {"Dockerfile": "release/Dockerfile", **{n: n for n in release.CONTEXT_FILES}}
+    return {
+        name: subprocess.run(
+            ["git", "show", f"{rev}:{path}"], cwd=REPO, capture_output=True, check=True
+        ).stdout
+        for name, path in paths.items()
+    }
+
+
+def count_pair_image_refusal(rev: str) -> str | None:
+    """Why the two legs cannot be built in one image, or `None`.
+
+    Both legs are built in the image `release.ensure_image` makes of the
+    tree's toolchain files, and the parent's own `release.py --inside`
+    refuses an image made from other copies than its checkout's. Asked here
+    first, so a change that moves the toolchain or the image is named as such
+    before a build is spent: a compiler's difference is not a slice's, and is
+    priced by `release-profile`'s re-take on the new toolchain."""
+    here, there = release.image_inputs(), image_inputs_at(rev)
+    moved = sorted(name for name in here if here[name] != there.get(name))
+    if not moved:
+        return None
+    return (
+        f"{', '.join(moved)} differ(s) between {rev} and the tree, so the two legs would be "
+        "built by different toolchains or images and the count would price that too"
+    )
+
+
+def count_pair_binary(cfg: Config, leg: str, tree: Path, log: Callable[[str], None]) -> Path:
+    """One leg of the pair: the shipped build — `release`, at the default
+    features — of `tree`, in the release image, in a cargo target directory
+    of its own (`image_target_dir`), so neither leg nor the register's own
+    build ever finds another's output fresh. Copied into `Config.out_dir` and
+    asked which profile built it, for `binary_profile`'s reason."""
+    target = image_target_dir(cfg, f"count-pair-{leg}")
+    out = cfg.out_dir / f"pgdt-count-pair-{leg}"
+    if cfg.dry_run:
+        log(f"  [dry-run] would build the {leg} leg from {tree} into {target}")
+        return out
+    log(f"  building the {leg} leg from {tree} into {target}")
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    built = build_in_image(cfg, release.Build(), target_dir=target, tree=tree)
+    shutil.copyfile(built, out)
+    out.chmod(0o755)
+    got = binary_profile(out)
+    if got != "release":
+        out.unlink()
+        raise RuntimeError(
+            f"the {leg} leg reports profile `{got}`: the pair is two shipped builds, "
+            "or it counts something else"
+        )
+    return out
+
+
+def count_pair_argv(
+    cfg: Config, binary: Path, counter: Path, dump: Path, command: str, memory: str | None
+) -> list[str]:
+    """One counted run of `command`: `time_run`'s container, `_script`'s
+    shape under the counter (`counted_script`), and nothing staged — a count
+    is not a wall clock, so no binary is read ahead of it and no cache is
+    dropped."""
+    limit = memory or cfg.memory
+    return [
+        *cfg.container_argv(), "run", "--rm",
+        "-m", limit, "--memory-swap", limit,
+        *(a for cap in COUNT_INSTRUCTIONS_CAPS for a in ("--cap-add", cap)),
+        "-v", f"{binary}:/pgdt:ro",
+        "-v", f"{counter}:{COUNT_INSTRUCTIONS}:ro",
+        "-v", f"{dump}:/dump.sql:ro",
+        cfg.image, "bash", "-c", counted_script(_script(command)),
+    ]  # fmt: skip
+
+
+def count_pair_table(counts: Mapping[str, Mapping[str, int]]) -> str:
+    """The comparison: one row per shape, each leg's `instructions:u` and the
+    tree's change against the parent's. **No verdict**: whether a change is
+    beyond the instrument's noise is the reader's to say, against the pair's
+    own first reading of two identical sources."""
+    rows = []
+    for command, label, _ in COUNT_PAIR_SHAPES:
+        parent, tree = (counts[command][leg] for leg in COUNT_PAIR_LEGS)
+        delta = tree - parent
+        rows.append(
+            [label, f"{parent:,}", f"{tree:,}", f"{delta:+,}", f"{delta / parent * 100:+.3f}%"]
+        )
+    return md_table(["`instructions:u`", "parent", "tree", "change", "%"], rows)
+
+
+def cmd_count_pair(rev: str, cfg: Config) -> int:
+    """`--count-pair <rev>`: the shipped build at `rev` and at the working
+    tree, each shape of `COUNT_PAIR_SHAPES` counted once on each, and the
+    comparison printed. **No figure**: nothing is written to
+    `measurements.md` or to a sitting directory, and the binaries are
+    overwritten by the next pair.
+
+    **Once per shape**, because a count does not move with the machine;
+    a shape whose answer differs between the legs is refused, since its two
+    counts would be two workloads'. **Refused unless `rev` is the tree's
+    parent** (`count_pair_refusal`), or where the two would build under
+    different toolchains (`count_pair_image_refusal`). The parent is built from
+    a worktree under `Config.out_dir`, removed after; the tree from the
+    checkout itself, uncommitted files included. Ends by saying whether the run
+    fit under `DETACH_SECONDS`."""
+    started = time.monotonic()
+    dry_run = cfg.dry_run
+    parent, dirty = count_pair_parent()
+    for refusal in (count_pair_refusal(rev, parent, dirty), count_pair_image_refusal(parent)):
+        if refusal:
+            print(f"--count-pair refused: {refusal}.", file=sys.stderr)
+            return 2
+
+    def log(msg: str) -> None:
+        print(msg, flush=True)
+
+    change = "the uncommitted tree" if dirty else f"HEAD ({parent[:10]}..HEAD)"
+    log(f"count pair: {parent[:10]} against {change}")
+    problems = counter_preflight(cfg, log)
+    if problems:
+        for problem in problems:
+            log(f"!! {problem}")
+        return 2
+    counter = ensure_count_instructions_binary(cfg, log)
+    dump = Stager(cfg, log).cold_path(COUNT_PAIR_INPUT)
+
+    work = cfg.out_dir / f"count-pair-worktree-{parent[:10]}"
+    binaries: dict[str, Path] = {}
+    if dry_run:
+        log(f"  [dry-run] would check {parent[:10]} out at {work}")
+        binaries["parent"] = count_pair_binary(cfg, "parent", work, log)
+    else:
+        cfg.out_dir.mkdir(parents=True, exist_ok=True)
+        if work.exists():
+            run(["git", "worktree", "remove", "--force", str(work)], cwd=REPO, quiet=True)
+        run(["git", "worktree", "add", "--detach", str(work), parent], cwd=REPO, quiet=True)
+        try:
+            binaries["parent"] = count_pair_binary(cfg, "parent", work, log)
+        finally:
+            run(["git", "worktree", "remove", "--force", str(work)], cwd=REPO, quiet=True)
+    binaries["tree"] = count_pair_binary(cfg, "tree", REPO, log)
+
+    counts: dict[str, dict[str, int]] = {}
+    for command, label, memory in COUNT_PAIR_SHAPES:
+        answers: dict[str, dict[str, str]] = {}
+        for leg in COUNT_PAIR_LEGS:
+            argv = count_pair_argv(cfg, binaries[leg], counter, dump, command, memory)
+            if dry_run:
+                log("  [dry-run] " + shlex.join(argv))
+                digest = hashlib.sha256(f"{command}/{leg}".encode()).digest()
+                counts.setdefault(command, {})[leg] = 3_000_000_000 + digest[0] * 1_000_000
+                continue
+            proc = subprocess.run(argv, text=True, capture_output=True)
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"{label} on the {leg} leg exited {proc.returncode}\n{proc.stderr[-2000:]}"
+                )
+            counts.setdefault(command, {})[leg] = parse_instructions(proc.stderr)
+            answers[leg] = parse_reported(proc.stdout)
+            log(f"  {label}, {leg}: {counts[command][leg]:,} instructions:u")
+        if len({json.dumps(a, sort_keys=True) for a in answers.values()}) > 1:
+            log(f"!! {label}: the legs answered differently ({answers}), so no count is compared")
+            return 1
+
+    took = time.monotonic() - started
+    log("\n" + count_pair_table(counts))
+    fits = took < DETACH_SECONDS
+    log(
+        f"\nThe pair took {took / 60:.1f} min, "
+        + (
+            f"under the {DETACH_SECONDS // 60}-minute line: a hot-path slice runs it in the "
+            "foreground."
+            if fits
+            else f"over the {DETACH_SECONDS // 60}-minute line: a hot-path slice launches it "
+            "detached, logging under runs/, and the slice after it opens by reading the result."
+        )
+        + (" (A dry run: the time is the harness's, not a build's.)" if dry_run else "")
+    )
+    return 0
+
+
 def cmd_stale(since: str | None) -> int:
     """Which figures a diff has invalidated, each argued from its own base —
     and, in a stanza of its own, which section the register does not hold.
@@ -14871,6 +15136,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="print the libc-level heap-attribution sequence — the harness owns it but "
         "never runs it",
     )
+    parser.add_argument(
+        "--count-pair",
+        metavar="REV",
+        help="the shipped build at REV, which must be the working tree's parent, and at the "
+        "tree, each hot-path shape's instructions:u counted once on each and compared — "
+        "a slice's price, never a figure",
+    )
     parser.add_argument("--reps", type=int, help="override every figure's rep count (smoke runs only)")
     parser.add_argument("--dry-run", action="store_true", help="print what would run, measure nothing")
     parser.add_argument("--keep-warm", action="store_true", help="leave staged inputs on tmpfs")
@@ -14919,6 +15191,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return render(Config(), Path(args.render))
     if args.verify_additive:
         return cmd_verify_additive(args.since)
+    if args.count_pair:
+        return cmd_count_pair(args.count_pair, Config(dry_run=args.dry_run))
 
     ids: list[str] = []
     for item in args.figure:

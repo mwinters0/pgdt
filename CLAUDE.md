@@ -19,7 +19,7 @@ cargo run -p pgdt -- info --source <file> [--detail]   # never scans; reads the 
 cargo build --release -p pgdt --features introspect --target-dir <own>  # the instrument; never timed
 
 cd scripts && uv run generate_fixtures.py [--version 13|16|18] [--skip-dumps] [--skip-oracle]
-cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--render <run-dir>
+cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--render <run-dir>|--count-pair <parent>
 cd scripts && uv run measure.py --koji-recipe [--wrap] | --profile-recipe | --heaptrack-recipe   # printed, never run
 cd scripts && uv run release.py image|build|bench|suite|notices   # the release image; pgdt built in it, held to its glibc; a bench, the suite, the notices there
 python3 scripts/release_ci.py preflight|archive|smoke|checksums|draft|publish   # what the two release workflows run beside release.py

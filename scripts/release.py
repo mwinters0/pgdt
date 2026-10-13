@@ -250,10 +250,16 @@ def run_in_image(
     gid: int | None = None,
     git: Path | None = None,
     env: Mapping[str, str] = {},
+    tree: Path = REPO,
 ) -> list[str]:
     """The container run that executes `release.py <step> --inside` in the
     image, as the invoking user, the tree mounted at `WORKDIR`. `env` is the
     host's only say in the container's environment.
+
+    `tree` is the checkout mounted, the repository's own unless another is
+    named: a worktree of another commit, built at the same path in the image
+    so the two builds differ by their sources alone (`scripts/measure.py`,
+    `cmd_count_pair`). Its own `release.py` runs the step.
 
     `target` replaces `state`'s cargo target directory, `CARGO_HOME` staying
     shared: a build of other features writes the same output path, so one
@@ -271,7 +277,7 @@ def run_in_image(
         "--security-opt", "seccomp=unconfined",
         "--user", f"{uid}:{gid}",
         "-e", "HOME=/tmp",
-        "-v", f"{REPO}:{WORKDIR}",
+        "-v", f"{tree}:{WORKDIR}",
         "-w", WORKDIR,
     ]  # fmt: skip
     if git is not None:

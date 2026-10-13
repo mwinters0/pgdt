@@ -1524,6 +1524,201 @@ class ReleaseProfile(unittest.TestCase):
         )
 
 
+class CountPair(unittest.TestCase):
+    """`--count-pair`: one slice's change priced in `instructions:u`, the
+    shipped build at the tree's parent against the tree, and refused for any
+    other pair (`.claude/skills/evidence/SKILL.md`, rule 7)."""
+
+    PARENT = "a" * 40
+
+    def _cfg(self, tmp: str) -> "measure.Config":
+        return measure.Config(
+            out_dir=Path(tmp) / "runs",
+            alloc_build_root=Path(tmp) / "builds",
+            cache_dir=Path(tmp) / "cache",
+        )
+
+    def test_the_parent_is_head_under_an_uncommitted_change_and_its_parent_otherwise(self):
+        for status, rev in ((" M crates/x.rs\n", "HEAD"), ("?? crates/new.rs\n", "HEAD"), ("", "HEAD^")):
+            asked = []
+
+            def fake_run(argv, cwd=None, capture=False, quiet=False, status=status):
+                if argv[:2] == ["git", "status"]:
+                    return status
+                asked.append(argv[-1])
+                return self.PARENT + "\n"
+
+            with self.subTest(status=status), unittest.mock.patch.object(measure, "run", fake_run):
+                self.assertEqual(measure.count_pair_parent(), (self.PARENT, bool(status)))
+                self.assertEqual(asked, [rev])
+
+    def test_only_the_parent_is_accepted(self):
+        def resolving(to):
+            return lambda argv, cwd=None, capture=False, quiet=False: to + "\n"
+
+        with unittest.mock.patch.object(measure, "run", resolving(self.PARENT)):
+            self.assertIsNone(measure.count_pair_refusal("HEAD~1", self.PARENT, False))
+        with unittest.mock.patch.object(measure, "run", resolving("b" * 40)):
+            refusal = measure.count_pair_refusal("HEAD~2", self.PARENT, False)
+        self.assertIn("parent is aaaaaaaaaa", refusal)
+
+        def missing(argv, cwd=None, capture=False, quiet=False):
+            raise subprocess.CalledProcessError(1, argv)
+
+        with unittest.mock.patch.object(measure, "run", missing):
+            self.assertIn("names no commit", measure.count_pair_refusal("nope", self.PARENT, True))
+
+    def test_a_moved_toolchain_or_image_is_refused(self):
+        here = {"Dockerfile": b"FROM x", "rust-toolchain.toml": b"1.90", "mise.toml": b"m"}
+        with unittest.mock.patch.object(measure.release, "image_inputs", return_value=here):
+            with unittest.mock.patch.object(measure, "image_inputs_at", return_value=dict(here)):
+                self.assertIsNone(measure.count_pair_image_refusal(self.PARENT))
+            moved = {**here, "rust-toolchain.toml": b"1.89"}
+            with unittest.mock.patch.object(measure, "image_inputs_at", return_value=moved):
+                self.assertIn("rust-toolchain.toml", measure.count_pair_image_refusal(self.PARENT))
+
+    def test_the_image_inputs_at_a_commit_are_the_ones_release_reads(self):
+        at = measure.image_inputs_at("HEAD")
+        self.assertEqual(set(at), set(measure.release.image_inputs()))
+
+    def test_the_shapes_are_the_spec_s_five_each_counted_around_one_pgdt(self):
+        commands = [command for command, _, _ in measure.COUNT_PAIR_SHAPES]
+        self.assertEqual(
+            commands,
+            ["parse", "parse-statistics-data", "query-strings", "query-typed", measure.PARALLEL_SCAN],
+        )
+        shapes = set(measure.command_shapes())
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertIn(command, shapes)
+                # Raises unless exactly one timed `/pgdt` goes under the counter.
+                measure.counted_script(measure._script(command))
+        self.assertIn(measure.NO_STATISTICS, measure._script("parse"))
+        gathering = measure._script("parse-statistics-data")
+        self.assertIn(measure.GATHER_STATISTICS, gathering)
+        self.assertNotIn(measure.PEAK_RSS, gathering)
+
+    def test_the_data_level_runs_under_the_statistics_figure_s_limit(self):
+        limits = {command: memory for command, _, memory in measure.COUNT_PAIR_SHAPES}
+        self.assertEqual(limits.pop("parse-statistics-data"), measure.STATISTICS_MEMORY)
+        self.assertEqual(set(limits.values()), {None})
+
+    def test_a_run_is_the_counted_shape_in_the_register_s_image(self):
+        cfg = measure.Config()
+        argv = measure.count_pair_argv(
+            cfg, Path("/b/pgdt-x"), Path("/c/counter"), Path("/d/control.sql"), "query-typed", None
+        )
+        joined = " ".join(argv)
+        self.assertIn(f"-m {cfg.memory} --memory-swap {cfg.memory}", joined)
+        self.assertIn("--cap-add PERFMON", joined)
+        self.assertIn("-v /b/pgdt-x:/pgdt:ro", joined)
+        self.assertIn(f"-v /c/counter:{measure.COUNT_INSTRUCTIONS}:ro", joined)
+        self.assertIn("-v /d/control.sql:/dump.sql:ro", joined)
+        self.assertEqual(argv[-4:-1], [cfg.image, "bash", "-c"])
+        self.assertEqual(argv[-1], measure.counted_script(measure._script("query-typed")))
+        wide = measure.count_pair_argv(cfg, Path("/b"), Path("/c"), Path("/d"), "parse", "2g")
+        self.assertIn("-m 2g --memory-swap 2g", " ".join(wide))
+
+    def test_a_leg_naming_another_profile_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp)
+
+            def built(_cfg, build, target_dir=None, tree=measure.REPO):
+                self.assertEqual(build, measure.release.Build())
+                self.assertEqual(target_dir, measure.image_target_dir(cfg, "count-pair-parent"))
+                self.assertEqual(tree, Path(tmp) / "wt")
+                out = Path(tmp) / "built"
+                out.write_text("")
+                return out
+
+            with unittest.mock.patch.object(measure, "build_in_image", built):
+                with unittest.mock.patch.object(measure, "binary_profile", return_value="release"):
+                    out = measure.count_pair_binary(cfg, "parent", Path(tmp) / "wt", lambda _: None)
+                self.assertEqual(out, cfg.out_dir / "pgdt-count-pair-parent")
+                with unittest.mock.patch.object(measure, "binary_profile", return_value="release-thin"):
+                    with self.assertRaises(RuntimeError):
+                        measure.count_pair_binary(cfg, "parent", Path(tmp) / "wt", lambda _: None)
+                self.assertFalse(out.exists())
+
+    def test_the_table_carries_both_counts_and_the_change(self):
+        counts = {c: {"parent": 1_000_000, "tree": 1_000_000} for c, _, _ in measure.COUNT_PAIR_SHAPES}
+        counts["query-typed"]["tree"] = 1_010_000
+        table = measure.count_pair_table(counts)
+        self.assertIn("| `query --schema-mode typed` | 1,000,000 | 1,010,000 | +10,000 | +1.000% |", table)
+        self.assertIn("| `pgdt parse` at the metadata level | 1,000,000 | 1,000,000 | +0 | +0.000% |", table)
+
+    def _pair(self, tmp, answer):
+        """`cmd_count_pair` with every outside effect stood in: each run's
+        count, and the answer `answer(leg)` gives on its stdout."""
+        cfg = self._cfg(tmp)
+        ran, out = [], io.StringIO()
+
+        def fake_subprocess(argv, **_kw):
+            leg = "parent" if "pgdt-count-pair-parent:/pgdt:ro" in " ".join(argv) else "tree"
+            ran.append(leg)
+            count = 1000 if leg == "parent" else 1001
+            return subprocess.CompletedProcess(argv, 0, answer(leg), f"instructions_u={count}\n")
+
+        def fake_binary(_cfg, leg, tree, _log):
+            return cfg.out_dir / f"pgdt-count-pair-{leg}"
+
+        git = []
+        stager = unittest.mock.Mock()
+        stager.return_value.cold_path.return_value = Path(tmp) / "control.sql"
+        patches = (
+            unittest.mock.patch.object(measure, "count_pair_parent", return_value=(self.PARENT, True)),
+            unittest.mock.patch.object(measure, "count_pair_refusal", return_value=None),
+            unittest.mock.patch.object(measure, "count_pair_image_refusal", return_value=None),
+            unittest.mock.patch.object(measure, "counter_preflight", return_value=[]),
+            unittest.mock.patch.object(
+                measure, "ensure_count_instructions_binary", return_value=Path("/c")
+            ),
+            unittest.mock.patch.object(measure, "Stager", stager),
+            unittest.mock.patch.object(measure, "count_pair_binary", fake_binary),
+            unittest.mock.patch.object(measure, "run", lambda argv, **_kw: git.append(argv) or ""),
+            unittest.mock.patch.object(measure.subprocess, "run", fake_subprocess),
+        )
+        with contextlib.ExitStack() as stack, contextlib.redirect_stdout(out):
+            for patch in patches:
+                stack.enter_context(patch)
+            code = measure.cmd_count_pair("HEAD", cfg)
+        return code, ran, git, out.getvalue()
+
+    def test_each_shape_is_counted_once_on_each_leg_and_the_worktree_goes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, ran, git, out = self._pair(tmp, lambda _leg: "")
+        self.assertEqual(code, 0)
+        self.assertEqual(ran, ["parent", "tree"] * len(measure.COUNT_PAIR_SHAPES))
+        self.assertEqual([argv[:3] for argv in git], [["git", "worktree", "add"], ["git", "worktree", "remove"]])
+        self.assertIn("| 1,000 | 1,001 | +1 | +0.100% |", out)
+        self.assertIn("under the 10-minute line", out)
+
+    def test_a_shape_answering_differently_on_the_two_legs_compares_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _, git, out = self._pair(tmp, lambda leg: f"result_rows={1 if leg == 'parent' else 2}\n")
+        self.assertEqual(code, 1)
+        self.assertIn("answered differently", out)
+        self.assertNotIn("| change |", out)
+        self.assertEqual(git[-1][:3], ["git", "worktree", "remove"])
+
+    def test_a_refused_pair_builds_nothing(self):
+        with unittest.mock.patch.object(measure, "count_pair_parent", return_value=(self.PARENT, False)), \
+             unittest.mock.patch.object(measure, "count_pair_refusal", return_value="not the parent"), \
+             unittest.mock.patch.object(measure, "count_pair_image_refusal", return_value=None), \
+             unittest.mock.patch.object(measure, "count_pair_binary") as binary, \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(measure.cmd_count_pair("HEAD~3", measure.Config()), 2)
+        binary.assert_not_called()
+        self.assertIn("not the parent", err.getvalue())
+
+    def test_the_flag_reaches_the_command(self):
+        with unittest.mock.patch.object(measure, "cmd_count_pair", return_value=0) as cmd:
+            self.assertEqual(measure.main(["--count-pair", "HEAD~1", "--dry-run"]), 0)
+        rev, cfg = cmd.call_args.args
+        self.assertEqual(rev, "HEAD~1")
+        self.assertTrue(cfg.dry_run)
+
+
 class InstructionCounter(unittest.TestCase):
     """`count-instructions` under the `release-profile` figure: every `pgdt`
     leg counted in the run its wall clock is, the count read back or the rep

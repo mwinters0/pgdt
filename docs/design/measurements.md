@@ -321,7 +321,9 @@ Eighteen standing rules for reading anything below:
   move memory behaviour rather than instruction count, which the allocator,
   zero-copy views and chunk sizing all are. Inside a figure's container,
   where the host's `perf` does not run, `count-instructions` counts the same
-  event in the timed run itself (`release-profile`).
+  event in the timed run itself (`release-profile`). `--count-pair <rev>`
+  counts it on the shipped build at the tree's parent and at the tree, which
+  prices one change and publishes nothing.
 - **A landed lever invalidates the tables that time its path, so a campaign's
   sweep goes last.** This binds by construction rather than by taste: a phase
   that admits levers from its own profiles is profiling the shape its figures

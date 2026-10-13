@@ -218,6 +218,16 @@ class Image(unittest.TestCase):
         self.assertNotIn("/work/.git", " ".join(plain))
         self.assertIn(f"-v {Path(tmp).resolve()}/git:/work/.git", " ".join(viewed))
 
+    def test_another_checkout_is_mounted_where_the_tree_would_be(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = release.run_in_image(
+                ["docker"], "t", ["build"], state=Path(tmp), tree=Path(tmp) / "worktree"
+            )
+        joined = " ".join(argv)
+        self.assertIn(f"-v {Path(tmp) / 'worktree'}:/work", joined)
+        self.assertNotIn(f"-v {release.REPO}:/work", joined)
+        self.assertEqual(argv[-5:], ["t", "python3", "scripts/release.py", "build", "--inside"])
+
     def test_a_target_dir_of_its_own_replaces_the_state_s_alone(self):
         with tempfile.TemporaryDirectory() as tmp:
             own = Path(tmp) / "legs" / "system"

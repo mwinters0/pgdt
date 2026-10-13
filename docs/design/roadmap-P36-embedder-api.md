@@ -418,7 +418,7 @@ This closes cluster M.
   `pgdump_unrepresentable` at planning, what `install` does today, and
   `enable_aggregate_dynamic_filter_pushdown` off (`KD56`), unless the caller
   already set that option. The crate doc's two "an embedder should" requests
-  become this call. The `upstream: UF1` marker moves with the workaround.
+  become this call. UF1's code marker moves with the workaround.
   The environment override stays `pgdt sql`'s.
 - **A finding keeps its subject.** `Located` becomes public, so a structured
   sink that downcasts a finding still knows the table it concerns.

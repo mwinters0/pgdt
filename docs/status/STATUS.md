@@ -74,17 +74,18 @@ state, and a red figure is re-taken before anything reasons from it
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
 not oblige a sweep").
 
-**Profiles and heap recordings are not figures.** `measure.py --profile-recipe`
-and `--heaptrack-recipe` print an instrument sequence and run none of it; what
-either produces is a `runs/` artifact with no median, no apparatus gate and no
-marker ([`../design/measurements.md`](../design/measurements.md), "What an
-instrument can see").
+**Profiles, heap recordings and count pairs are not figures.** `measure.py
+--profile-recipe` and `--heaptrack-recipe` print an instrument sequence and run
+none of it; what either produces is a `runs/` artifact with no median, no
+apparatus gate and no marker ([`../design/measurements.md`](../design/measurements.md),
+"What an instrument can see"). `--count-pair <rev>` counts one change's
+`instructions:u` against the tree's parent and prints the comparison alone.
 
 ## P36 progress
 
 Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-api.md).
 
-- [ ] **36.1** `measure.py --count-pair <rev>`: the shipped leg built at the parent and at the tree, `instructions:u` on `parse` (metadata and data level), `query` strings and typed, and `pgdt sql`; refused unless `<rev>` is the parent; says whether a run fits under ten minutes
+- [ ] **36.1** `measure.py --count-pair <rev>`: the shipped leg built at the parent and at the tree, `instructions:u` on `parse` (metadata and data level), `query` strings and typed, and `pgdt sql`; refused unless `<rev>` is the parent; says whether a run fits under ten minutes — the instrument landed ([notes](../design/roadmap-P36.1-count-pair-notes.md)); its first run, `--count-pair HEAD~1` from the slice's commit, remains
 - [ ] **36.2** pgdt-io: one arrangement resolution, `Parallelism`'s constructors cut to three, the statistics allowance and `AllowanceOrigin` in it, D11 rewritten with its seams and constants `internal`, the seek table opaque; closes `KD29`
 - [ ] **36.3** pgdt-core and pgdt-model: the escape and qualified-name renames, the fields a view interprets private, one census field, one stored database (cache bump), `StatisticsRequest`'s sizing one enum, `instrument` to `internal`
 - [ ] **36.4** pgdt-codec: `ValueKey` from a plan, for every value, never panicking across kinds; closes `KD116` and `KD117`; counted by `measure.py --count-pair HEAD~1`
