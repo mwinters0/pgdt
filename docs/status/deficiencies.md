@@ -202,9 +202,8 @@ than reading as a phase nobody has sliced.
   status lines and the statistics allowance and again inside
   `Parallelism::discover_holding_in` for each read-buffer budget it carves, so
   a limit rewritten between two reads is announced and carved for statistics as
-  one number while the pools are budgeted from another. **(c) unowned**; promoted by a limit
-  seen to move inside a run, or by discovery that can take a limit already
-  read. Detail: `crates/pgdt/src/parallel.rs`.
+  one number while the pools are budgeted from another. **(b) owned by P36**,
+  36.2. Detail: `crates/pgdt/src/parallel.rs`.
 
 - **KD31** — `attach_text` caps a run's one read at `SPAN_STORED_TEXT_MAX_BYTES` per span from
   the run's start, so a span following one longer than the cap can be stored
@@ -396,7 +395,7 @@ than reading as a phase nobody has sliced.
 - **KD92** — a provider opened to ignore what PostgreSQL refuses, refused for
   want of a complete cache, names a `pgdt parse` without
   `--postgres-invalid-values ignore`, which fails at the first such field it
-  keys. **(c) unowned**; promoted by a user meeting it. Detail:
+  keys. **(b) owned by P36**, 36.10. Detail:
   `crates/datafusion-pgdump/src/dump.rs`.
 
 - **KD93** — a `COPY` line past `max_line_bytes`, 64 MiB by default, is
@@ -519,18 +518,18 @@ than reading as a phase nobody has sliced.
 - **KD115** — `StatisticsRequest::backfill` takes a `bounded` mask the caller
   must compute with `bounded_columns` over the same block and metadata, and
   nothing checks the two agree, so an embedder back-filling one block can ask
-  for the wrong columns silently. **(b) owned by P36**; closing it leaves
+  for the wrong columns silently. **(b) owned by P36**, 36.7; closing it leaves
   `bounded_columns` `pub(crate)`. Detail:
   `crates/pgdt-mapping/src/statistics/request.rs`.
 
 - **KD116** — a nested value has no API key: an embedder orders a scalar as
   PostgreSQL does through `ValueKey`, but an array, record, range or
   multirange only through `internal`'s `NestedKey`, which exposes its
-  representation. **(b) owned by P36**. Detail:
+  representation. **(b) owned by P36**, 36.4. Detail:
   `crates/pgdt-codec/src/value/nested/key.rs`.
 
 - **KD117** — pgdt-codec's `OrderKey`, `Side` and the functions building and
   comparing one, which the crate says are not its API, are `pub` at
   `pgdt_codec::key::` as well as through `internal`, so an embedder names them
   without naming `internal` and `layering.py` refuses nothing. **(b) owned by
-  P36**. Detail: `crates/pgdt-codec/src/key.rs`.
+  P36**, 36.4. Detail: `crates/pgdt-codec/src/key.rs`.

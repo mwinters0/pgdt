@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27–P31, P35 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P36 — the embedder API | Sketched; not grilled | this file, below; its rough edges are `KD<k>`s it owns — the maintainer sets its order |
+| P36 — the embedder API | **Current** | [spec](roadmap-P36-embedder-api.md); checklist in [`STATUS.md`](../status/STATUS.md) |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
@@ -509,6 +509,19 @@ it a slice number.
 which later phases it expects to survive and what it made simpler. If neither
 can be stated, the rule did not apply and the change is a preference.
 
+### The public surfaces lead; the architecture follows
+
+**What the project delivers is its public surfaces**: each library crate's
+API, `datafusion-pgdump`'s, and the CLIs. The module tree and the crate graph
+exist to serve them. So a phase may make any change that keeps the design
+coherent under the seams discipline ([`../process.md`](../process.md),
+"Seams"; [`concepts.md`](concepts.md)). That includes splitting or merging a
+crate, or moving a concept's part to another crate, when a surface needs it.
+**A change made to improve a surface carries through into the structure
+underneath it.** A spec does not fence itself off from architectural change.
+It is bounded by what its surfaces need and by the seams, and every structural
+change goes through the same grilling and concept-map placement as any other.
+
 ### A slice row that commits to a measurement names its instrument
 
 **A slice row promising a figure says what will take it.** Not the number, not
@@ -694,14 +707,10 @@ item; see below.
 
 ## P36 — The embedder API
 
-**A clean API is half of what this project delivers, a clean architecture
-the other.** Each crate's API is already sorted by what an embedder of it
-would call ([`decisions.md`](decisions.md), "D106"); this phase reshapes what that sort leaves rough — a pairing the caller must keep that the API could keep for
-it, a value an embedder can read but not order — so each crate reads as a
-surface designed for its embedder. `datafusion-pgdump` is the first such
-embedder and P24's bindings present what this leaves. Sketched to
-corner-avoidance depth; its known rough edges are the `KD<k>` entries
-owned by P36 in [`../status/deficiencies.md`](../status/deficiencies.md).
+**Current.** Each library crate's surface, and `datafusion-pgdump`'s,
+reshaped for its embedder, with the orchestration every embedder repeats
+moved into the library. The spec is
+[`roadmap-P36-embedder-api.md`](roadmap-P36-embedder-api.md).
 
 ## P33 — Every line PostgreSQL writes and reads
 
