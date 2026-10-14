@@ -10,6 +10,7 @@ use bytes::Bytes;
 use pgdt_core::{Error, Result};
 
 use crate::source::origin::ORIGIN_LEADING_BYTES;
+use crate::source::xz::walk_seek_table;
 use crate::test_support::*;
 use crate::*;
 
@@ -52,7 +53,7 @@ async fn the_two_piecewise_arms_and_the_block_arm_read_one_file_alike() {
 /// field of a block's padded extent, so that byte is always the check's.
 fn corrupt_check(path: &Path, index: usize) {
     let table = XzSource::open(path).unwrap().seek_table().unwrap();
-    let block = &table.blocks[index];
+    let block = &table.0.blocks[index];
     let at = usize::try_from(block.compressed_offset + block.total_size() - 1).unwrap();
     let mut bytes = std::fs::read(path).unwrap();
     bytes[at] ^= 0xFF;
@@ -169,7 +170,7 @@ async fn fetched_xz(path: &Path) -> (FetchedXzSource, usize) {
     let stored_size = transport.size().await.unwrap();
     let leading = transport.read_range(0, ORIGIN_LEADING_BYTES).await.unwrap();
     let (table, fetches) = walk_seek_table(&*transport, stored_size, &leading).await.unwrap();
-    (FetchedXzSource::with_table(transport, stored_size, table).unwrap(), fetches)
+    (FetchedXzSource::with_table(transport, stored_size, SeekTable(table)).unwrap(), fetches)
 }
 
 /// The composition, end to end: a table built by driving the walk over a
@@ -261,7 +262,7 @@ async fn a_fetched_piecewise_scan_inside_one_block_decodes_it_once() {
     source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
     assert!(source.budget.block_path().is_none(), "the piecewise arm, not the block cache");
     let table = source.seek_table().unwrap();
-    let first = table.blocks[0].uncompressed_size as usize;
+    let first = table.0.blocks[0].uncompressed_size as usize;
     let step = first / 8;
     assert!(step > 0, "the fixture's blocks hold several reads apiece: {first} byte(s)");
 
@@ -273,7 +274,7 @@ async fn a_fetched_piecewise_scan_inside_one_block_decodes_it_once() {
 
     // Leaving the block and coming back is what costs one apiece, which
     // is the local arm's shape exactly.
-    let second = table.blocks[1].uncompressed_offset as usize;
+    let second = table.0.blocks[1].uncompressed_offset as usize;
     assert_eq!(
         &source.read_range(second as u64, step).await.unwrap()[..],
         &payload[second..second + step]
@@ -359,7 +360,7 @@ async fn the_compressed_window_is_inside_the_charge() {
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let (source, _) = fetched_xz(compressed.path()).await;
     let table = source.seek_table().unwrap();
-    let widest = table.blocks.iter().map(|b| b.total_size()).max().unwrap();
+    let widest = table.0.blocks.iter().map(|b| b.total_size()).max().unwrap();
     assert!(widest > 0);
 
     let local = XzSource::open(compressed.path()).unwrap();

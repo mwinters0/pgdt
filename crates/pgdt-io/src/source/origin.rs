@@ -17,7 +17,7 @@ use super::local::LocalFileSource;
 use super::remote::{
     REMOTE_READ_TIMEOUT, RemoteObject, open_remote, remote_name_of, without_credentials,
 };
-use super::xz::XzSource;
+use super::xz::{SeekTable, XzSource};
 
 /// The six bytes every `.xz` stream opens with
 /// (`docs/design/decisions.md`, "D14").
@@ -288,7 +288,7 @@ async fn probe_local_file(path: &Path) -> Result<OriginProbe> {
 /// that same file (`pgdt_dump::cache::claim`), and the reason an `.xz` source need
 /// not re-walk its stream footers (`docs/design/decisions.md`, "D18").
 ///
-/// **A bare [`xz_seek::SeekTable`], not a cache.** What loads it is the
+/// **A bare [`SeekTable`], not a cache.** What loads it is the
 /// caller's business, which keeps this crate naming nothing in `pgdt_dump::cache`.
 ///
 /// Three states, not an `Option`: "the cache says this file is plain" is a
@@ -304,7 +304,7 @@ pub enum KnownCompression {
     Plain,
     /// Known to be `.xz`, with the seek table a previous walk of this file
     /// produced.
-    Xz(xz_seek::SeekTable),
+    Xz(SeekTable),
 }
 
 /// What [`open`] made of a dump, given what its caller claimed to know.
@@ -399,7 +399,7 @@ pub(crate) async fn open_local(origin: &Origin, known: KnownCompression) -> Resu
 pub(super) enum Verdict {
     /// `.xz`, with the seek table a previous walk produced: validated against
     /// the source, never walked for.
-    XzKnown(xz_seek::SeekTable),
+    XzKnown(SeekTable),
     /// `.xz` with nothing known: the footer walk is paid.
     XzUnknown,
     /// No compression layer, claimed or found.

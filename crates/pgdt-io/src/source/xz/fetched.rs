@@ -19,7 +19,7 @@ use crate::source::pool::PooledBuffer;
 use crate::source::{ByteRangeSource, RemoteIdentity, WaitPolicy};
 
 use super::blocks::{BlockCache, DecodedBlock, XzBudget};
-use super::{LiveBlock, piece_of, xz_short_read};
+use super::{LiveBlock, SeekTable, piece_of, xz_short_read};
 
 /// A `ByteRangeSource` decoding an `.xz`-compressed dump the bytes of which
 /// have to be **fetched** rather than pulled
@@ -95,13 +95,13 @@ impl FetchedXzSource {
     pub fn with_table(
         source: Arc<dyn ByteRangeSource>,
         stored_size: u64,
-        table: xz_seek::SeekTable,
+        table: SeekTable,
     ) -> Result<Self> {
         // `Builder::new()` rather than a configured one, for `XzSource`'s
         // reason: it is the shortcut through exactly the defaults
         // `Reader::new` takes, `Verify::Full` included, so the two sources
         // decode identically.
-        let layout = xz_seek::Builder::new().layout(table, stored_size).map_err(Error::xz)?;
+        let layout = xz_seek::Builder::new().layout(table.0, stored_size).map_err(Error::xz)?;
         Ok(Self::assembled(source, layout))
     }
 
@@ -513,8 +513,8 @@ impl ByteRangeSource for FetchedXzSource {
         self.source.in_flight_unchecked()
     }
 
-    fn seek_table(&self) -> Option<xz_seek::SeekTable> {
-        Some((*self.table).clone())
+    fn seek_table(&self) -> Option<SeekTable> {
+        Some(SeekTable((*self.table).clone()))
     }
 
     /// [`xz_partition_advice`](crate::source::xz::blocks::xz_partition_advice), as the local source's is: the cut points are a

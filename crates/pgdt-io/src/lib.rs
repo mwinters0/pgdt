@@ -24,8 +24,8 @@ pub use parallelism::{Parallelism, WorkerMemory};
 pub use partition::{PartitionBoundaries, PartitionRead, Partitioning, RetainedUnit};
 pub use source::{
     ByteRangeSource, FetchedXzSource, KnownCompression, LocalFileSource, Origin, OriginProbe,
-    Recognized, RemoteIdentity, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy, XzSource, open,
-    walk_seek_table,
+    Recognized, RemoteIdentity, SCAN_CHUNK_DEFAULT_SIZE_BYTES, SeekTable, WaitPolicy, XzSource,
+    open,
 };
 #[cfg(feature = "http")]
 pub use source::{REMOTE_READ_TIMEOUT, RemoteSource};

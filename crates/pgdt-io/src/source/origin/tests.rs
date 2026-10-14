@@ -151,10 +151,10 @@ async fn a_handed_back_table_is_used_rather_than_re_walked() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let mut table = XzSource::open(compressed.path()).unwrap().seek_table().unwrap();
-    let real = table.streams[0].check;
+    let real = table.0.streams[0].check;
     let wrong =
         if real == xz_seek::Check::Crc32 { xz_seek::Check::Crc64 } else { xz_seek::Check::Crc32 };
-    for stream in &mut table.streams {
+    for stream in &mut table.0.streams {
         stream.check = wrong;
     }
 

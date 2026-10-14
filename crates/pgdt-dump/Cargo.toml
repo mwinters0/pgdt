@@ -17,14 +17,13 @@ bytes = { workspace = true }
 futures = { workspace = true }
 memchr = { workspace = true }
 pgdt-core = { path = "../pgdt-core" }
-pgdt-io = { path = "../pgdt-io" }
+# `serde` on for `cache::file::CompressionIndex`, which persists a
+# `pgdt_io::SeekTable` in its `Xz` variant.
+pgdt-io = { path = "../pgdt-io", features = ["serde"] }
 pgdt-model = { path = "../pgdt-model" }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true }
-# `serde` on for `cache::file::CompressionIndex`, which names `xz_seek::SeekTable`
-# in its `Xz` variant.
-xz-seek = { workspace = true, features = ["serde"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

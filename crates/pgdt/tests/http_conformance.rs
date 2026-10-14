@@ -347,7 +347,7 @@ async fn the_footer_walk_over_a_real_origin_builds_the_index_the_object_declares
     // not write. A `Range` we spell in a way only our own server accepts
     // cannot produce an index that adds up.
     assert_eq!(
-        table.compressed_file_size,
+        table.compressed_size(),
         source.stored_size().await.unwrap(),
         "the index the walk built describes another object's length",
     );
@@ -356,7 +356,7 @@ async fn the_footer_walk_over_a_real_origin_builds_the_index_the_object_declares
         body.len() as u64,
         "the plaintext the index accounts for"
     );
-    let accounted: u64 = table.blocks.iter().map(|b| b.uncompressed_size).sum();
+    let accounted: u64 = table.block_ranges().map(|r| r.end - r.start).sum();
     assert_eq!(accounted, body.len() as u64, "every block's share of it");
     assert!(table.is_seekable(), "{table:?}");
 }
@@ -373,15 +373,14 @@ async fn a_ranged_read_of_the_compressed_object_answers_the_plaintext_at_the_off
     // extent is a `Range` computed from the index, so an off-by-one there is
     // a decode that fails or a byte that is wrong, never a short answer.
     let mut spans: Vec<(u64, usize)> = Vec::new();
-    for block in &table.blocks {
-        let range = block.uncompressed_range();
+    for range in table.block_ranges() {
         spans.push((range.start, 1));
         spans.push((range.end - 1, 1));
         spans.push((range.start, (range.end - range.start) as usize));
     }
     // And a read straddling every boundary, which no single block answers.
-    for block in table.blocks.iter().skip(1) {
-        let at = block.uncompressed_offset.saturating_sub(4);
+    for range in table.block_ranges().skip(1) {
+        let at = range.start.saturating_sub(4);
         spans.push((at, 8.min((body.len() as u64 - at) as usize)));
     }
     for (offset, len) in spans {

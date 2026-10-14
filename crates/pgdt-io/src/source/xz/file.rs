@@ -19,7 +19,7 @@ use crate::source::pool::BufferPool;
 use crate::source::{ByteRangeSource, WaitPolicy};
 
 use super::blocks::{BlockCache, DecodedBlock, XzBudget};
-use super::{LiveBlock, piece_of, xz_short_read};
+use super::{LiveBlock, SeekTable, piece_of, xz_short_read};
 
 /// A `ByteRangeSource` decoding an `.xz`-compressed local file on the fly
 /// (`docs/design/decisions.md`, "D14", "D15").
@@ -112,11 +112,11 @@ impl XzSource {
     /// A rejected table is an `Error::Xz` carrying `xz_seek::Error::InvalidTable`,
     /// which is the error [`open`](crate::open) turns into [`Recognized::Mismatch`](crate::Recognized::Mismatch)
     /// rather than a walk.
-    pub fn with_table(path: impl AsRef<Path>, table: xz_seek::SeekTable) -> Result<Self> {
+    pub fn with_table(path: impl AsRef<Path>, table: SeekTable) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let file = Arc::new(std::fs::File::open(&path)?);
         let stored_size = file.metadata()?.len();
-        Self::over(path, file, table, stored_size)
+        Self::over(path, file, table.0, stored_size)
     }
 
     /// The one place the two constructors agree: the table becomes a
@@ -401,8 +401,8 @@ impl ByteRangeSource for XzSource {
         self.budget.pool.set_policy(policy);
     }
 
-    fn seek_table(&self) -> Option<xz_seek::SeekTable> {
-        Some((*self.table).clone())
+    fn seek_table(&self) -> Option<SeekTable> {
+        Some(SeekTable((*self.table).clone()))
     }
 
     fn partitions(&self, range: Range<u64>) -> Partitioning {

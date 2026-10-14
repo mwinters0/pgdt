@@ -32,7 +32,7 @@ pub use self::local::LocalFileSource;
 pub use self::origin::{KnownCompression, Origin, OriginProbe, Recognized, open};
 #[cfg(feature = "http")]
 pub use self::remote::{REMOTE_READ_TIMEOUT, RemoteSource};
-pub use self::xz::{FetchedXzSource, XzSource, walk_seek_table};
+pub use self::xz::{FetchedXzSource, SeekTable, XzSource};
 
 /// Minimal async byte-range read abstraction.
 ///
@@ -56,8 +56,8 @@ pub trait ByteRangeSource: Send + Sync {
     /// `xz_seek::Walk` derives each request from the bytes of the one before
     /// it and reads a short supply as the file being shorter than the size it
     /// was constructed with, so a source answering a prefix would make a
-    /// truncated file and a truncated *read* the same event
-    /// ([`walk_seek_table`](crate::walk_seek_table)).
+    /// truncated file and a truncated *read* the same event (the footer walk
+    /// over a fetched `.xz`, `source/xz.rs`'s `walk_seek_table`).
     fn read_range(
         &self,
         offset: u64,
@@ -112,7 +112,7 @@ pub trait ByteRangeSource: Send + Sync {
     /// that saving being the point (`docs/design/decisions.md`, "D18").
     /// A cloned value rather than a borrow: a caller
     /// building a `CacheFile` needs to own it across an `await`.
-    fn seek_table(&self) -> Option<xz_seek::SeekTable> {
+    fn seek_table(&self) -> Option<SeekTable> {
         None
     }
     /// How this source would like `range` split across concurrent readers,

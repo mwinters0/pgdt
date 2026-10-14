@@ -1,20 +1,21 @@
 //! What both `.xz` sources share — the live piecewise decode, the piece of a
-//! read a block answers, the short read and the seek-table walk — above the
-//! two sources and the block cache they decode into, which advises how a
-//! range over either may be cut.
+//! read a block answers, the short read, the seek table as this crate hands
+//! it out and the walk over a fetched file that builds one — above the two
+//! sources and the block cache they decode into, which advises how a range
+//! over either may be cut.
 
 use std::ops::Range;
 
 use pgdt_core::{Error, Result};
 
-use crate::source::ByteRangeSource;
-
 pub(crate) mod blocks;
 mod fetched;
 mod file;
+mod table;
 
 pub use self::fetched::FetchedXzSource;
 pub use self::file::XzSource;
+pub use self::table::SeekTable;
 
 /// The live piecewise decode: one `xz_seek::BlockRead` and the block it sits
 /// in, kept between reads.
@@ -205,8 +206,9 @@ fn piece_of(block: Range<u64>, offset: u64, end: u64) -> Option<(usize, u64, usi
 /// the walk at all. **(c) unowned**; promoted by a phase that tunes the network,
 /// which is where the fetch policy this source defers belongs, and which is also
 /// what would take the figure.
-pub async fn walk_seek_table(
-    source: &dyn ByteRangeSource,
+#[cfg(any(feature = "http", test))]
+pub(crate) async fn walk_seek_table(
+    source: &dyn crate::ByteRangeSource,
     stored_size: u64,
     leading: &[u8],
 ) -> Result<(xz_seek::SeekTable, usize)> {

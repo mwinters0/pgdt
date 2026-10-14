@@ -17,6 +17,9 @@ introspect = ["pgdt-core/introspect"]
 # turns them on, so a library built with this feature has a runtime that can
 # drive it.
 http = ["dep:object_store", "dep:url", "tokio/net", "tokio/time"]
+# `SeekTable`'s persisted form, which `pgdt-dump`'s cache writes and reads:
+# `xz_seek`'s own table's, unchanged.
+serde = ["dep:serde", "xz-seek/serde"]
 
 [dependencies]
 bytes = { workspace = true }
@@ -30,6 +33,7 @@ object_store = { version = "0.14.2", optional = true, default-features = false, 
     "http",
 ] }
 pgdt-core = { path = "../pgdt-core" }
+serde = { workspace = true, optional = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt", "sync"] }
 # The facade only — no subscriber, no output policy. The library names the
 # phases worth watching (the seek-table walk, the scan's start and

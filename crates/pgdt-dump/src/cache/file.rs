@@ -56,7 +56,7 @@ pub enum ContainerKind {
 /// own sibling variant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompressionIndex {
-    Xz(xz_seek::SeekTable),
+    Xz(pgdt_io::SeekTable),
 }
 
 /// What a cache file holds after [`CACHE_MAGIC`] and its version.

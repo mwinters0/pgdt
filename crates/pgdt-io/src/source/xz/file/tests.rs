@@ -44,6 +44,17 @@ async fn xz_source_seek_table_reports_every_block() {
     let table = source.seek_table().expect("an XzSource always has a table");
     assert!(table.is_seekable(), "block_count = {}", table.block_count());
     assert_eq!(table.uncompressed_size(), payload.len() as u64);
+
+    // What an embedder reads of it without naming `xz_seek`: blocks that
+    // tile the plaintext in order, and the length of the file it describes.
+    let ranges: Vec<_> = table.block_ranges().collect();
+    assert_eq!(ranges.len(), table.block_count());
+    assert_eq!(ranges.first().map(|r| r.start), Some(0));
+    assert!(ranges.windows(2).all(|w| w[0].end == w[1].start), "{ranges:?}");
+    assert_eq!(ranges.last().map(|r| r.end), Some(table.uncompressed_size()));
+    let widest = ranges.iter().map(|r| r.end - r.start).max();
+    assert_eq!(widest, Some(table.max_block_uncompressed()));
+    assert_eq!(table.compressed_size(), std::fs::metadata(compressed.path()).unwrap().len());
 }
 
 /// **A compressed source recommends the cores it was given, capped at its
@@ -552,7 +563,7 @@ async fn an_xz_source_advises_its_block_boundaries() {
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let source = XzSource::open(compressed.path()).unwrap();
     let table = source.seek_table().unwrap();
-    let starts: Vec<u64> = table.blocks.iter().map(|b| b.uncompressed_offset).collect();
+    let starts: Vec<u64> = table.block_ranges().map(|r| r.start).collect();
     assert!(starts.len() > 2, "this test needs several blocks, got {}", starts.len());
 
     let whole = source.partitions(0..payload.len() as u64);

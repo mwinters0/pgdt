@@ -1138,7 +1138,11 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
     let table = intact.seek_table().unwrap();
     drop(intact);
 
-    let block = &table.blocks[0];
+    // Where the block's check sits is `xz_seek`'s to say, `pgdt_io::SeekTable`
+    // giving only plaintext ranges.
+    let file = std::fs::File::open(compressed.path()).unwrap();
+    let walked = xz_seek::SeekTable::from_source(&file).unwrap();
+    let block = &walked.blocks[0];
     let at = usize::try_from(block.compressed_offset + block.total_size() - 1).unwrap();
     let mut bytes = std::fs::read(compressed.path()).unwrap();
     bytes[at] ^= 0xFF;

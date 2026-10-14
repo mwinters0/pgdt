@@ -3702,7 +3702,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "xz-seek",
 ]
 
 [[package]]
@@ -3724,6 +3723,7 @@ dependencies = [
  "futures",
  "object_store 0.14.2",
  "pgdt-core",
+ "serde",
  "tempfile",
  "tokio",
  "tracing",

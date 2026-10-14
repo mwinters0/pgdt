@@ -21,7 +21,7 @@ use super::origin::{
     KnownCompression, Location, ORIGIN_LEADING_BYTES, Origin, OriginProbe, Recognized, Verdict,
     over_known_table,
 };
-use super::xz::{FetchedXzSource, walk_seek_table};
+use super::xz::{FetchedXzSource, SeekTable, walk_seek_table};
 use super::{ByteRangeSource, RemoteIdentity, is_weak_tag};
 
 /// How long a remote request may go without delivering a byte before it is
@@ -445,7 +445,7 @@ pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Res
             Ok(Recognized::Source(Arc::new(FetchedXzSource::with_table(
                 source,
                 probe.stored_size(),
-                table,
+                SeekTable(table),
             )?)))
         }
         Verdict::Mismatch => Ok(Recognized::Mismatch),

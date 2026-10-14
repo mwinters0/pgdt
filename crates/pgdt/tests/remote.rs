@@ -844,7 +844,8 @@ async fn a_fetched_piecewise_scan_inside_one_block_fetches_it_once() {
     source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
     let plain = dump_bytes();
     let table = source.seek_table().expect("a fetched `.xz` source carries its table");
-    let first = table.blocks[0].uncompressed_size as usize;
+    let blocks: Vec<_> = table.block_ranges().collect();
+    let first = (blocks[0].end - blocks[0].start) as usize;
     let step = first / 8;
     assert!(step > 0, "the fixture's blocks hold several reads apiece: {first} byte(s)");
 
@@ -859,7 +860,7 @@ async fn a_fetched_piecewise_scan_inside_one_block_fetches_it_once() {
     // Moving on fetches the next block, which is also what proves the window
     // is released rather than accumulated.
     let mark = oracle.requests().len();
-    let second = table.blocks[1].uncompressed_offset as usize;
+    let second = blocks[1].start as usize;
     assert_eq!(
         &source.read_range(second as u64, step).await.unwrap()[..],
         &plain[second..second + step]

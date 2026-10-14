@@ -137,7 +137,7 @@ pub fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
 /// [`preamble_only`](crate::preamble::preamble_only)) and a persisted cache
 /// (`crate::cache::store::status_from_file`).
 pub fn non_seekable_compression_diagnostic(
-    table: Option<&xz_seek::SeekTable>,
+    table: Option<&pgdt_io::SeekTable>,
 ) -> Option<Diagnostic> {
     let table = table?;
     if table.is_seekable() {
