@@ -51,7 +51,7 @@ use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpTable, register_dump};
 use futures::StreamExt;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy, past_refused, sweep_request};
-use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::{Finding, TableName};
 
 /// A sink for a registration whose findings this target is not about.
@@ -81,8 +81,7 @@ const SMALL_GROUP: u64 = 1024;
 fn in_small_groups(fixture: &Path) -> StatisticsRequest {
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
-        group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
-        ..StatisticsRequest::DATA
+        sizing: StatisticsSizing::Stated(NonZeroU64::new(SMALL_GROUP).unwrap()),
     };
     past_refused(fixture, &request)
 }
@@ -1070,7 +1069,7 @@ async fn estimates_over(fixtures: Vec<PathBuf>) -> Estimates {
             for name in dump.tables() {
                 let Ok(table) = PgDumpTable::new(Arc::clone(&dump), name.clone()) else { continue };
                 let what =
-                    format!("{} in {} ({schema_mode:?})", name.qualified(), fixture.display());
+                    format!("{} in {} ({schema_mode:?})", name.qualified_name(), fixture.display());
                 let projection = readable_columns(&ctx, &table).await;
                 if projection.is_empty() {
                     continue;
@@ -1256,7 +1255,8 @@ async fn orderings_over(fixtures: Vec<PathBuf>) -> BTreeMap<usize, bool> {
             let state = ctx.state();
             for name in dump.tables() {
                 let Ok(table) = PgDumpTable::new(Arc::clone(&dump), name.clone()) else { continue };
-                let what = format!("{} in {} at {partitions}", name.qualified(), fixture.display());
+                let what =
+                    format!("{} in {} at {partitions}", name.qualified_name(), fixture.display());
                 let projection = readable_columns(&ctx, &table).await;
                 if projection.is_empty() {
                     continue;

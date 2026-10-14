@@ -18,7 +18,9 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, SourceWatch, StrictIdentity};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSelection};
+use pgdt_mapping::statistics::{
+    GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing,
+};
 use pgdt_query::{
     DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
     TablePartitions,
@@ -81,7 +83,7 @@ async fn read(
     let source = LocalFileSource::open(&dump).unwrap();
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
-        group_size: Some(NonZeroU64::new(1024).unwrap()),
+        sizing: StatisticsSizing::Stated(NonZeroU64::new(1024).unwrap()),
         ..StatisticsRequest::DATA
     };
     let cache = CacheMode::enabled(cache::colocated_path(&dump));
@@ -93,7 +95,8 @@ async fn read(
     let source: Arc<dyn ByteRangeSource> = Arc::new(source);
     let watch =
         Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
-    let table = index.tables().into_iter().find(|t| t.qualified() == "public.ordered").unwrap();
+    let table =
+        index.tables().into_iter().find(|t| t.qualified_name() == "public.ordered").unwrap();
     let options = QueryOptions {
         projection: Some(vec!["id".into()]),
         filter: static_filter.unwrap_or_default(),

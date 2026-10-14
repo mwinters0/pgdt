@@ -57,7 +57,7 @@ use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::cache::{self, CacheStatus};
 use pgdt_fixtures::{parsed_copy, ungathered};
 use pgdt_io::LocalFileSource;
-use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSizing};
 use pgdt_model::{Finding, Unrepresentable};
 use pgdt_query::{RowEvaluation, decode_field};
 
@@ -512,7 +512,7 @@ const SMALL_GROUP: u64 = 64;
 /// cache in groups [`SMALL_GROUP`] rows long, keeping what `statistics` says.
 async fn parsed_copy_keeping(fixture: &Path, dir: &Path, statistics: Statistics) -> PathBuf {
     let request = StatisticsRequest {
-        group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
+        sizing: StatisticsSizing::Stated(NonZeroU64::new(SMALL_GROUP).unwrap()),
         ..StatisticsRequest::DATA
     };
     let copy = parsed_copy(fixture, dir, &request).await;
@@ -1009,16 +1009,20 @@ fn every_extreme_is_held_by_arrow_or_recorded() {
                 ));
             }
         }
-        let mut by_tier: BTreeMap<String, Unrepresentable> = BTreeMap::new();
+        // Each column's `(format, engine)` count, as the record has it.
+        let mut by_tier: BTreeMap<String, (u64, u64)> = BTreeMap::new();
         for ((column, _), why) in &recorded {
             let count = by_tier.entry(column.clone()).or_default();
             match why {
-                Why::Format => count.format += 1,
-                Why::Engine => count.engine += 1,
+                Why::Format => count.0 += 1,
+                Why::Engine => count.1 += 1,
             }
         }
-        let counted: BTreeMap<String, Unrepresentable> =
-            counted.into_iter().filter(|(_, count)| !count.is_zero()).collect();
+        let counted: BTreeMap<String, (u64, u64)> = counted
+            .into_iter()
+            .filter(|(_, count)| !count.is_zero())
+            .map(|(column, count)| (column, (count.format(), count.engine())))
+            .collect();
         if counted != by_tier {
             wrong.push(format!(
                 "{major}: the library counts {counted:?}, where the record says {by_tier:?}"

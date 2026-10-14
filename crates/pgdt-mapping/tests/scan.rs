@@ -6,7 +6,7 @@ use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 use pgdt_core::RowEndingRefusal;
-use pgdt_core::{decode_field, encode_field, split_fields};
+use pgdt_core::{escape_field, split_fields, unescape_field};
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{Event, ScanOptions, scan};
 use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
@@ -40,7 +40,7 @@ async fn render(path: &Path, chunk_size: usize) -> String {
             }
             Event::Row(row) => {
                 let fields: Vec<String> = split_fields(row.raw)
-                    .map(|f| match decode_field(f).unwrap() {
+                    .map(|f| match unescape_field(f).unwrap() {
                         Some(v) => format!("{v:?}"),
                         None => "NULL".to_string(),
                     })
@@ -175,8 +175,8 @@ async fn data_only_dumps_carry_every_block() {
 /// (`\b \t \n \v \f \r \\`), the raw control bytes it does not escape, and
 /// 2-, 3- and 4-byte UTF-8.
 ///
-/// Also proves the full on-disk-bytes round trip (`raw -> decode_field ->
-/// encode_field -> raw`), not just the decoded-text one above: `encode_field`
+/// Also proves the full on-disk-bytes round trip (`raw -> unescape_field ->
+/// escape_field -> raw`), not just the decoded-text one above: `escape_field`
 /// re-escaping each decoded field must reproduce the exact bytes `pg_dump`
 /// wrote, for every codepoint in the table.
 #[tokio::test]
@@ -194,7 +194,7 @@ async fn copy_text_escaping_round_trips_through_postgres() {
                     let raw_fields: Vec<&[u8]> = split_fields(row.raw).collect();
                     let fields: Vec<Option<String>> = raw_fields
                         .iter()
-                        .map(|f| decode_field(f).unwrap().map(|v| v.into_owned()))
+                        .map(|f| unescape_field(f).unwrap().map(|v| v.into_owned()))
                         .collect();
                     assert_eq!(fields.len(), 2, "pg_dump {version} escapes row {}", row.index);
 
@@ -208,7 +208,7 @@ async fn copy_text_escaping_round_trips_through_postgres() {
 
                     for (raw, decoded) in raw_fields.iter().zip(&fields) {
                         assert_eq!(
-                            encode_field(decoded.as_deref()),
+                            escape_field(decoded.as_deref()),
                             *raw,
                             "pg_dump {version} codepoint {codepoint}",
                         );
@@ -294,7 +294,7 @@ async fn crlf_line_endings_are_tolerated() {
         if let Event::Row(row) = event {
             rows.push(
                 split_fields(row.raw)
-                    .map(|f| decode_field(f).unwrap().map(|v| v.into_owned()))
+                    .map(|f| unescape_field(f).unwrap().map(|v| v.into_owned()))
                     .collect(),
             );
         }
@@ -314,7 +314,7 @@ async fn decoded_blocks(path: &Path) -> Vec<(String, Vec<Vec<Option<String>>>)> 
             Event::CopyStart(start) => blocks.push((start.header.qualified_name(), Vec::new())),
             Event::Row(row) => blocks.last_mut().unwrap().1.push(
                 split_fields(row.raw)
-                    .map(|f| decode_field(f).unwrap().map(|v| v.into_owned()))
+                    .map(|f| unescape_field(f).unwrap().map(|v| v.into_owned()))
                     .collect(),
             ),
             _ => {}

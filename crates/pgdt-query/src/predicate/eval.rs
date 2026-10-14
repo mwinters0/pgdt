@@ -5,7 +5,8 @@
 use pgdt_codec::internal::{OrderKey, Side, compare_keys, compare_nested, nested_key, read_key};
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::timed_span;
-use pgdt_core::{Error, RawRow, Result, RowSplit};
+use pgdt_core::internal::{RawRow, RowSplit};
+use pgdt_core::{Error, Result};
 use pgdt_core::{instrument::EvaluationPart as Part, internal::timed};
 use pgdt_model::PostgresInvalidValues;
 

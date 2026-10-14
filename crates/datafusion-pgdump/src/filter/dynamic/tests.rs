@@ -43,7 +43,7 @@ use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
 use pgdt_fixtures::parsed_copy;
 use pgdt_io::Parallelism;
-use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::TableName;
 use pgdt_query::{QueryOptions, RowEvaluation, TablePartitions};
 
@@ -103,8 +103,7 @@ fn fixtures() -> Vec<PathBuf> {
 fn tiny_groups() -> StatisticsRequest {
     StatisticsRequest {
         selection: StatisticsSelection::DATA,
-        group_size: Some(NonZeroU64::new(TINY_GROUP).unwrap()),
-        ..StatisticsRequest::DATA
+        sizing: StatisticsSizing::Stated(NonZeroU64::new(TINY_GROUP).unwrap()),
     }
 }
 
@@ -493,7 +492,7 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
             let mut generator = Generator { rng: &mut rng, batch: &batch, resolved: &resolved };
             let trees: Vec<Tree> = (0..TREES_PER_TABLE).map(|_| generator.tree(DEPTH)).collect();
             for tree in trees {
-                let at = format!("{} {}: {}", fixture.display(), name.qualified(), tree.expr);
+                let at = format!("{} {}: {}", fixture.display(), name.qualified_name(), tree.expr);
                 let kept = tree.expr.evaluate(&batch).unwrap();
                 let kept = kept.into_array(batch.num_rows()).unwrap();
                 let kept = kept.as_boolean();

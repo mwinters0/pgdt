@@ -23,7 +23,8 @@ use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
 use pgdt_mapping::statistics::{
     BLOCK_MAX_ROW_GROUPS, GatherOptions, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
-    StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsSizing,
+    StatisticsTarget,
 };
 use pgdt_mapping::{MapRun, bounded_columns, gather_block_statistics, map_file};
 use pgdt_model::{
@@ -52,8 +53,8 @@ fn only(targets: Vec<StatisticsTarget>) -> StatisticsSelection {
 }
 
 fn request(selection: StatisticsSelection, group_size: u64) -> StatisticsRequest {
-    let group_size = Some(NonZeroU64::new(group_size).unwrap());
-    StatisticsRequest { selection, group_size, min_rows: None, max_rows: None }
+    let sizing = StatisticsSizing::Stated(NonZeroU64::new(group_size).unwrap());
+    StatisticsRequest { selection, sizing }
 }
 
 async fn gathered(dump: &Path, statistics: &StatisticsRequest) -> DumpIndex {
@@ -446,7 +447,10 @@ async fn the_default_request_gathers_every_column_at_a_mebibyte() {
     let long_value = statistics(block(&index, "public.long_value"));
     assert!(long_value.group_size > pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES);
 
-    let uncoarsened = StatisticsRequest { min_rows: Some(0), ..StatisticsRequest::DATA };
+    let uncoarsened = StatisticsRequest {
+        sizing: StatisticsSizing::Density { min_rows: Some(0), max_rows: None },
+        ..StatisticsRequest::DATA
+    };
     let index = gathered(&dump, &uncoarsened).await;
     let long_value = statistics(block(&index, "public.long_value"));
     assert_eq!(long_value.group_size, pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES);
@@ -1037,8 +1041,10 @@ async fn one_block_is_gathered_on_its_own() {
 async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "sized.sql");
     let options = ScanOptions::default();
-    let with_min =
-        |min_rows| StatisticsRequest { min_rows: Some(min_rows), ..StatisticsRequest::DATA };
+    let with_min = |min_rows| StatisticsRequest {
+        sizing: StatisticsSizing::Density { min_rows: Some(min_rows), max_rows: None },
+        ..StatisticsRequest::DATA
+    };
     let records = |run: &MapRun| {
         ["public.ordered", "public.specials", "public.long_value"]
             .map(|table| statistics(block(&run.index, table)).sizing)
@@ -1158,7 +1164,10 @@ async fn a_block_breaking_a_stated_maximum_is_reread_at_the_size_it_predicts() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dense_and_clustered(dir.path());
     let options = ScanOptions::default();
-    let bounded = StatisticsRequest { max_rows: Some(MAX_ROWS), ..StatisticsRequest::DATA };
+    let bounded = StatisticsRequest {
+        sizing: StatisticsSizing::Density { min_rows: None, max_rows: Some(MAX_ROWS) },
+        ..StatisticsRequest::DATA
+    };
     let sizing =
         GroupSizing::Density { min_rows: ROW_GROUP_DEFAULT_MIN_ROWS, max_rows: Some(MAX_ROWS) };
     let tables = ["public.dense", "public.clustered"];
@@ -1240,7 +1249,10 @@ async fn a_stated_maximum_outranks_the_cap_and_the_minimum() {
     let dump = dense_and_clustered(dir.path());
     let options = ScanOptions::default();
     assert_eq!(StatisticsRequest::DATA.group_cap(), Some(BLOCK_MAX_ROW_GROUPS));
-    let bounded = StatisticsRequest { max_rows: Some(MAX_ROWS), ..StatisticsRequest::DATA };
+    let bounded = StatisticsRequest {
+        sizing: StatisticsSizing::Density { min_rows: None, max_rows: Some(MAX_ROWS) },
+        ..StatisticsRequest::DATA
+    };
     assert_eq!(bounded.group_cap(), None, "a stated maximum is a size a caller asked for");
 
     let run = mapped_into_cache(&dump, &options, &GatherOptions::default(), &bounded).await;
@@ -1663,8 +1675,10 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
     // A back-fill: another group size re-reads the block, gathering `a`, `b`
     // and `c` because the block held them, and fails on none of them.
     let recording = RecordingSource::open(&dump);
-    let resized =
-        StatisticsRequest { group_size: Some(NonZeroU64::new(128).unwrap()), ..tracking(&["d"]) };
+    let resized = StatisticsRequest {
+        sizing: StatisticsSizing::Stated(NonZeroU64::new(128).unwrap()),
+        ..tracking(&["d"])
+    };
     let run =
         map_file(&recording, &ScanOptions::default(), &GatherOptions::default(), &mode, &resized)
             .await

@@ -18,8 +18,8 @@ use futures::Stream;
 
 use pgdt_codec::ResolvedSchema;
 use pgdt_core::CopyHeader;
+use pgdt_core::internal::{RawRow, RowSplit, validated_prefix};
 use pgdt_core::{Error, Result};
-use pgdt_core::{RawRow, RowSplit, validated_prefix};
 use pgdt_dump::internal::announce_read_loop;
 use pgdt_dump::{ChunkCarry, CopyScanner, Event, Row};
 use pgdt_io::ByteRangeSource;

@@ -20,6 +20,7 @@ use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+use pgdt_model::internal::UnrepresentableExt;
 use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, StatisticsView, Unrepresentable};
 
 use pgdt_fixtures::{VERSIONS, types_fixture};
@@ -57,7 +58,7 @@ async fn parsed(fixture: &Path, dir: &Path, request: &StatisticsRequest) -> Dump
 }
 
 fn count(format: u64, engine: u64) -> Unrepresentable {
-    Unrepresentable { format, engine }
+    Unrepresentable::counted(format, engine)
 }
 
 /// **Every column the `types` fixture's typed tables count, and nothing
@@ -153,8 +154,8 @@ async fn statistics_count_by_group_what_the_census_counts_by_block() {
                     "{what}: a count kept only where one is not zero"
                 );
                 for bounds in [&column.bounds, &column.datafusion_bounds].into_iter().flatten() {
-                    assert_eq!(bounds.every.is_some(), summed.format > 0, "{what}");
-                    assert_eq!(bounds.displayable.is_some(), summed.engine > 0, "{what}");
+                    assert_eq!(bounds.every.is_some(), summed.format() > 0, "{what}");
+                    assert_eq!(bounds.displayable.is_some(), summed.engine() > 0, "{what}");
                     viewed += usize::from(bounds.every.is_some() || bounds.displayable.is_some());
                 }
             }

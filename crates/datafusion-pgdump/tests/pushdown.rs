@@ -179,7 +179,7 @@ async fn a_pushed_filter_keeps_the_rows_datafusion_keeps() {
                 for (index, field) in resolved.schema.fields().iter().enumerate() {
                     let what = format!(
                         "{}.{} in {} ({schema_mode:?})",
-                        name.qualified(),
+                        name.qualified_name(),
                         field.name(),
                         fixture.display()
                     );

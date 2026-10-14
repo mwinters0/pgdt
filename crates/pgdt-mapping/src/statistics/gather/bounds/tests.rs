@@ -188,8 +188,8 @@ fn each_view_bounds_and_orders_the_values_it_takes() {
             counts.push(count);
         }
         let bounds = gatherer.finish();
-        assert_eq!(bounds.every.is_some(), counts.iter().any(|c| c.format > 0), "round {round}");
-        assert_eq!(bounds.displayable.is_some(), counts.iter().any(|c| c.engine > 0));
+        assert_eq!(bounds.every.is_some(), counts.iter().any(|c| c.format() > 0), "round {round}");
+        assert_eq!(bounds.displayable.is_some(), counts.iter().any(|c| c.engine() > 0));
         kept[0] += usize::from(bounds.every.is_some());
         kept[1] += usize::from(bounds.displayable.is_some());
         let column = ColumnStatistics {
@@ -235,8 +235,8 @@ fn each_view_bounds_and_orders_the_values_it_takes() {
                     column.null_count(g, view),
                     Some(match view {
                         StatisticsView::Every => 0,
-                        StatisticsView::Representable => counts[g].format,
-                        StatisticsView::Displayable => counts[g].format + counts[g].engine,
+                        StatisticsView::Representable => counts[g].format(),
+                        StatisticsView::Displayable => counts[g].format() + counts[g].engine(),
                     }),
                     "{what}: NULLs"
                 );

@@ -270,7 +270,8 @@ async fn a_metadata_level_table_is_censused_by_its_query_and_refused_by_a_held_p
     drop(stream);
     assert_eq!(std::fs::read(&path).unwrap(), written, "the query wrote nothing");
 
-    let table = run.index.tables().into_iter().find(|t| t.qualified() == "public.t_array_shape");
+    let table =
+        run.index.tables().into_iter().find(|t| t.qualified_name() == "public.t_array_shape");
     let table = table.expect("the map holds the table");
     let refused = |result: pgdt_core::Result<_>| matches!(result, Err(Error::TableAtMetadataLevel { table }) if table == "public.t_array_shape");
     assert!(refused(table_schema(&run.index, &table, &QueryOptions::default()).map(|_| ())));

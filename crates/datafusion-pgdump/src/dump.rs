@@ -249,7 +249,7 @@ impl PgDump {
     /// The `pgdt parse` that puts `table` at the data level, keeping every
     /// other table's level: a parse never records less than a cache holds.
     pub(crate) fn parse_at_data_level(&self, table: &TableName) -> String {
-        format!("{} --statistics-level metadata,{}=data", self.parse, table.qualified())
+        format!("{} --statistics-level metadata,{}=data", self.parse, table.qualified_name())
     }
 }
 

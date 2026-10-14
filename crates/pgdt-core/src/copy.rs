@@ -5,10 +5,10 @@
 //! it, and pgdt-query's batcher, filter and replay split and unescape a
 //! block's rows, the replay checking a chunk's with [`validated_prefix`].
 //!
-//! [`decode_field`]/[`encode_field`] are the one place in the codebase that
+//! [`unescape_field`]/[`escape_field`] are the one place in the codebase that
 //! converts between a field's on-disk COPY-escaped bytes and its unescaped
 //! text — see `docs/design/decisions.md`, "D68". [`pgdt_codec::decode`] (the codec) never
-//! sees escaped bytes at all: it takes `decode_field`'s already-unescaped
+//! sees escaped bytes at all: it takes `unescape_field`'s already-unescaped
 //! `&str` output and works purely in "unescaped text vs. Arrow value" terms.
 
 use std::borrow::Cow;
@@ -361,8 +361,8 @@ impl<'a> RawRow<'a> {
     /// are delimited by ASCII bytes, which are always character boundaries.
     pub fn decode(&self, field: Range<usize>) -> Result<Option<Cow<'a, str>>> {
         match self.text.and_then(|text| text.get(field.clone())) {
-            Some(text) => decode_validated_field(text),
-            None => decode_field(&self.bytes[field]),
+            Some(text) => unescape_validated_field(text),
+            None => unescape_field(&self.bytes[field]),
         }
     }
 }
@@ -372,35 +372,35 @@ impl<'a> RawRow<'a> {
 /// Returns `None` for SQL `NULL` (the field `\N`). The borrowed variant is
 /// returned whenever the field contains no escape sequences, which is the
 /// common case.
-pub fn decode_field(field: &[u8]) -> Result<Option<Cow<'_, str>>> {
+pub fn unescape_field(field: &[u8]) -> Result<Option<Cow<'_, str>>> {
     if field == COPY_TEXT_NULL_MARKER {
         return Ok(None);
     }
     if !field.contains(&b'\\') {
         return Ok(Some(Cow::Borrowed(as_utf8(field)?)));
     }
-    Ok(Some(Cow::Owned(unescape_field(field)?)))
+    Ok(Some(Cow::Owned(unescape_owned(field)?)))
 }
 
-/// [`decode_field`] over a field whose bytes are already known to be UTF-8 —
+/// [`unescape_field`] over a field whose bytes are already known to be UTF-8 —
 /// the borrow path with no per-field validation left in it.
 ///
 /// The escaped path still validates, and must: `\xNN` and the octal forms can
 /// synthesize a byte sequence that is not UTF-8 out of input that is.
-fn decode_validated_field(field: &str) -> Result<Option<Cow<'_, str>>> {
+fn unescape_validated_field(field: &str) -> Result<Option<Cow<'_, str>>> {
     if field.as_bytes() == COPY_TEXT_NULL_MARKER {
         return Ok(None);
     }
     if !field.as_bytes().contains(&b'\\') {
         return Ok(Some(Cow::Borrowed(field)));
     }
-    Ok(Some(Cow::Owned(unescape_field(field.as_bytes())?)))
+    Ok(Some(Cow::Owned(unescape_owned(field.as_bytes())?)))
 }
 
-/// The escaped path of [`decode_field`]: unescape into an owned buffer, and
+/// The escaped path of [`unescape_field`]: unescape into an owned buffer, and
 /// validate that buffer, since an escape can produce bytes the input did not
 /// carry.
-fn unescape_field(field: &[u8]) -> Result<String> {
+fn unescape_owned(field: &[u8]) -> Result<String> {
     let mut out = Vec::with_capacity(field.len());
     let mut i = 0;
     while i < field.len() {
@@ -473,15 +473,15 @@ fn unescape_field(field: &[u8]) -> Result<String> {
 }
 
 /// Re-apply COPY TEXT escaping to already-unescaped text — the exact inverse
-/// of [`decode_field`], restricted to the escapes `pg_dump`'s `COPY TO` ever
+/// of [`unescape_field`], restricted to the escapes `pg_dump`'s `COPY TO` ever
 /// emits: a doubled backslash and the six control-character mnemonics `\b \f
 /// \n \r \t \v`, the delimiter, a tab, among them (postgres-invariants.md
-/// I15). The octal/hex forms `decode_field` accepts on input are a `COPY FROM` reader
-/// convenience only; `COPY TO` never produces them, so `encode_field` doesn't
+/// I15). The octal/hex forms `unescape_field` accepts on input are a `COPY FROM` reader
+/// convenience only; `COPY TO` never produces them, so `escape_field` doesn't
 /// need to reproduce them for a round trip against real `pg_dump` output to
 /// hold — see `copy_text_escaping_round_trips_through_postgres` in
 /// `pgdt-mapping`'s `tests/scan.rs`. `None` encodes as the `\N` null marker.
-pub fn encode_field(field: Option<&str>) -> Vec<u8> {
+pub fn escape_field(field: Option<&str>) -> Vec<u8> {
     let Some(s) = field else {
         return COPY_TEXT_NULL_MARKER.to_vec();
     };
@@ -523,7 +523,7 @@ mod tests {
     }
 
     fn decode(field: &str) -> Option<String> {
-        decode_field(field.as_bytes()).unwrap().map(|v| v.into_owned())
+        unescape_field(field.as_bytes()).unwrap().map(|v| v.into_owned())
     }
 
     #[test]
@@ -618,33 +618,33 @@ mod tests {
 
     #[test]
     fn encodes_null_and_empty_distinctly() {
-        assert_eq!(encode_field(None), b"\\N");
-        assert_eq!(encode_field(Some("")), b"");
-        assert_eq!(encode_field(Some("\\N")), b"\\\\N");
+        assert_eq!(escape_field(None), b"\\N");
+        assert_eq!(escape_field(Some("")), b"");
+        assert_eq!(escape_field(Some("\\N")), b"\\\\N");
     }
 
     #[test]
     fn encodes_character_escapes() {
-        assert_eq!(encode_field(Some("a\nb")), b"a\\nb");
-        assert_eq!(encode_field(Some("a\tb")), b"a\\tb");
-        assert_eq!(encode_field(Some("a\rb")), b"a\\rb");
-        assert_eq!(encode_field(Some("a\\b")), b"a\\\\b");
-        assert_eq!(encode_field(Some("a\u{8}b")), b"a\\bb");
-        assert_eq!(encode_field(Some("a\u{c}b")), b"a\\fb");
-        assert_eq!(encode_field(Some("a\u{b}b")), b"a\\vb");
+        assert_eq!(escape_field(Some("a\nb")), b"a\\nb");
+        assert_eq!(escape_field(Some("a\tb")), b"a\\tb");
+        assert_eq!(escape_field(Some("a\rb")), b"a\\rb");
+        assert_eq!(escape_field(Some("a\\b")), b"a\\\\b");
+        assert_eq!(escape_field(Some("a\u{8}b")), b"a\\bb");
+        assert_eq!(escape_field(Some("a\u{c}b")), b"a\\fb");
+        assert_eq!(escape_field(Some("a\u{b}b")), b"a\\vb");
     }
 
     #[test]
     fn encode_is_the_exact_inverse_of_decode_for_canonical_escapes() {
-        // decode_field also accepts octal/hex escapes and unknown
+        // unescape_field also accepts octal/hex escapes and unknown
         // "stands for itself" escapes, but pg_dump's COPY TO never emits
-        // them (postgres-invariants.md I15), so encode_field only needs to
+        // them (postgres-invariants.md I15), so escape_field only needs to
         // invert the six mnemonics, the tab delimiter's among them, and `\\` -- exercised
         // against real pg_dump output in
         // `copy_text_escaping_round_trips_through_postgres` (`pgdt-mapping`'s `tests/scan.rs`).
         for field in [None, Some(""), Some("plain"), Some("a\\b\tc\nd\re\u{8}f\u{c}g\u{b}h")] {
-            let encoded = encode_field(field);
-            assert_eq!(decode_field(&encoded).unwrap().as_deref(), field);
+            let encoded = escape_field(field);
+            assert_eq!(unescape_field(&encoded).unwrap().as_deref(), field);
         }
     }
 
@@ -663,8 +663,8 @@ mod tests {
 
     #[test]
     fn rejects_invalid_utf8() {
-        assert!(decode_field(b"caf\xff").is_err());
-        assert!(decode_field(br"caf\xff").is_err());
+        assert!(unescape_field(b"caf\xff").is_err());
+        assert!(unescape_field(br"caf\xff").is_err());
     }
 
     #[test]

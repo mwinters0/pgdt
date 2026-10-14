@@ -5,16 +5,16 @@
 //!
 //! Pure, synchronous, no I/O (`docs/design/decisions.md`, "D74"). A decode
 //! function takes an already-COPY-unescaped `&str` field (what
-//! `pgdt_core::decode_field` returns) and returns a plain Rust value; it
+//! `pgdt_core::unescape_field` returns) and returns a plain Rust value; it
 //! never takes an Arrow builder — building the array is query's job
 //! (`batch/builder.rs`), which is also where these are wired to their [`arrow_schema::DataType`].
 //!
 //! Every `render_*` function is the exact inverse of its `decode_*`
 //! counterpart — but [`render_bytea`], which writes the hex form whichever
-//! form [`decode_bytea`] read (`docs/design/decisions.md`, "D66") — and produces the same *decoded* text `pgdt_core::decode_field`
+//! form [`decode_bytea`] read (`docs/design/decisions.md`, "D66") — and produces the same *decoded* text `pgdt_core::unescape_field`
 //! would have returned for a correctly-formed value — never the raw
 //! COPY-escaped bytes on disk. Converting between the two is
-//! `pgdt_core::encode_field`'s job (`docs/design/decisions.md`, "D68").
+//! `pgdt_core::escape_field`'s job (`docs/design/decisions.md`, "D68").
 //! pgdt-query's `tests/decode.rs` round-trip test compares against `SchemaMode::Strings`,
 //! which is also decoded text; the on-disk-byte leg is covered separately in
 //! `pgdt-mapping`'s `tests/scan.rs`.

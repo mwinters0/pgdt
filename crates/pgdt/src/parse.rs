@@ -12,7 +12,7 @@ use pgdt_dump::{ScanOptions, preamble_only};
 use pgdt_io::{Cancellation, Origin};
 use pgdt_mapping::statistics::{
     GatherOptions, ROW_GROUP_DEFAULT_MIN_ROWS, StatisticsLevel, StatisticsRequest,
-    StatisticsSelection, StatisticsTarget,
+    StatisticsSelection, StatisticsSizing, StatisticsTarget,
 };
 use pgdt_model::PostgresInvalidValues;
 
@@ -332,12 +332,12 @@ fn statistics_request(
     min_rows: Option<u64>,
     max_rows: Option<u64>,
 ) -> Result<StatisticsRequest> {
-    let request = StatisticsRequest {
-        selection: selection.unwrap_or_default(),
-        group_size,
-        min_rows,
-        max_rows,
+    // `clap` refuses a bound beside a size, so a stated size has none to drop.
+    let sizing = match group_size {
+        Some(size) => StatisticsSizing::Stated(size),
+        None => StatisticsSizing::Density { min_rows, max_rows },
     };
+    let request = StatisticsRequest { selection: selection.unwrap_or_default(), sizing };
     if !request.gathers() {
         let sizing = [
             (group_size.is_some(), "--row-group-size"),

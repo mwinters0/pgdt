@@ -46,7 +46,7 @@ use datafusion::physical_plan::{ExecutionPlan, ExecutionPlanProperties, collect,
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, register_dump};
 use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy};
-use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::Finding;
 use pgdt_query::RowEvaluation;
 
@@ -75,8 +75,7 @@ const SMALL_GROUP: u64 = 1024;
 fn small_groups() -> StatisticsRequest {
     StatisticsRequest {
         selection: StatisticsSelection::DATA,
-        group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
-        ..StatisticsRequest::DATA
+        sizing: StatisticsSizing::Stated(NonZeroU64::new(SMALL_GROUP).unwrap()),
     }
 }
 

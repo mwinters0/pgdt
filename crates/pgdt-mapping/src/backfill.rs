@@ -258,7 +258,7 @@ pub(crate) async fn backfill_statistics(
 /// reads such a block again, so every run under that maximum says what it
 /// keeps rather than what it will fix.
 pub(crate) fn report_density_shortfall(statistics: &StatisticsRequest, index: &DumpIndex) {
-    let Some(max_rows) = statistics.max_rows() else { return };
+    let Some(max_rows) = statistics.density_max_rows() else { return };
     for block in index.blocks() {
         let Some(held) = block.statistics.as_deref() else { continue };
         if statistics.tracked_columns(&block.header).is_some() && held.breaks_max_rows(max_rows) {

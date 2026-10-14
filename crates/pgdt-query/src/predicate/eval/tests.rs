@@ -5,7 +5,7 @@ use crate::predicate::test_support::*;
 use crate::predicate::{Expr, Predicate};
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::compare::CompareKind;
-use pgdt_core::encode_field;
+use pgdt_core::escape_field;
 use pgdt_model::UnrepresentableTier;
 
 /// One text term's own truth value over `raw_row`.
@@ -92,7 +92,7 @@ fn is_null_and_is_not_null() {
 }
 
 fn row_truth(expr: &ResolvedExpr, field: &str) -> Truth {
-    let row = encode_field((field != "\\N").then_some(field));
+    let row = escape_field((field != "\\N").then_some(field));
     expr.eval(true, RawRow::unchecked(&row), &mut RowSplit::default(), "public.t", 0).unwrap()
 }
 
@@ -579,7 +579,7 @@ fn missing_column_index_is_treated_as_null() {
 /// `None`, and nothing else is.
 #[test]
 fn a_value_outside_any_row_is_answered_as_the_row_holding_it_is() {
-    use pgdt_core::encode_field;
+    use pgdt_core::escape_field;
     let scalar = |declared: &str, op, literal: &str| {
         let schema = one_column(declared, DataType::Utf8View);
         resolve_term(&order_predicate(op, literal), 0, &schema, 0).unwrap()
@@ -615,7 +615,7 @@ fn a_value_outside_any_row_is_answered_as_the_row_holding_it_is() {
     let mut undecodable = 0;
     for (arm, term) in &terms {
         for value in values {
-            let row = encode_field(value);
+            let row = escape_field(value);
             let by_row =
                 term.eval(RawRow::unchecked(&row), &mut RowSplit::default(), "public.t", 0);
             match (term.eval_value(value), by_row) {

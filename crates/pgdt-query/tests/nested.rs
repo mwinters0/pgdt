@@ -4,7 +4,7 @@
 //! `pgdt_codec::nested`'s own unit tests are hand-written literals, which can encode a
 //! misreading of the escaping rules twice. This file cannot: it reads every
 //! nested column of `fixtures/*/types/default.sql` in `SchemaMode::Strings` —
-//! the untyped path, byte-for-byte what `copy::decode_field` produced — and
+//! the untyped path, byte-for-byte what `copy::unescape_field` produced — and
 //! requires `render_*(decode_*(value)) == value` for every one. A force-quote
 //! predicate transcribed even slightly wrong from `arrayfuncs.c`/`rowtypes.c`/
 //! `rangetypes.c` shows up here as an inequality, on values PostgreSQL itself
@@ -72,7 +72,7 @@ use common::types_fixture;
 
 /// One column's non-NULL values, as decoded COPY text. `SchemaMode::Strings`
 /// is deliberate: it never consults the DDL, so what comes back is exactly
-/// what `copy::decode_field` produced, which is this codec's input.
+/// what `copy::unescape_field` produced, which is this codec's input.
 async fn column_values(path: &Path, table: &str, column: &str) -> Vec<String> {
     let source = LocalFileSource::open(path).unwrap();
     let options = QueryOptions { schema_mode: SchemaMode::Strings, ..Default::default() };
@@ -289,7 +289,7 @@ mod oracle {
         render_int2vector, render_multirange, render_range, render_record,
     };
     use pgdt_codec::pgtype::{NestedPlan, TypeOutcome, resolve_declared_type};
-    use pgdt_core::{decode_field, split_fields};
+    use pgdt_core::{split_fields, unescape_field};
     use pgdt_dump::cache::CacheMode;
     use pgdt_dump::{ScanOptions, preamble_only};
     use pgdt_fixtures::{VERSIONS as MAJORS, fixtures_root};
@@ -385,7 +385,7 @@ mod oracle {
             .filter(|line| !line.is_empty())
             .map(|line| {
                 split_fields(line)
-                    .map(|f| decode_field(f).unwrap().map(|v| v.into_owned()))
+                    .map(|f| unescape_field(f).unwrap().map(|v| v.into_owned()))
                     .collect()
             })
             .collect()

@@ -270,7 +270,8 @@ fn the_count_sums_across_pieces() {
         b"COPY public.t (a, b) FROM stdin;\ninfinity\tx\n1\tinfinity\ninfinity\tinfinity\n2\t3\n\\.\n"
             .to_vec();
     let block = &reference(&file)[0];
-    let counts: Vec<u64> = block.interior.census.unrepresentable.iter().map(|c| c.format).collect();
+    let counts: Vec<u64> =
+        block.interior.census.unrepresentable.iter().map(|c| c.format()).collect();
     assert_eq!(counts, [2, 2]);
     for pieces in 2..=4 {
         let (split, working) = cut_up(&file, block, pieces);

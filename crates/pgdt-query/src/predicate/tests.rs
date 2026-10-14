@@ -21,7 +21,8 @@ use pgdt_codec::internal::{DiscreteExt, compare_keys, field_refused, order_key};
 use pgdt_codec::key::ValueKey;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnNote, ColumnResolution, ResolvedSchema};
-use pgdt_core::{Error, RawRow, Result, RowSplit};
+use pgdt_core::internal::{RawRow, RowSplit};
+use pgdt_core::{Error, Result};
 use pgdt_model::{BoundsSet, CollationDef, ColumnDef, Finding, TypeDef, TypeKind};
 
 /// The one note a term announces, or `None` — a scalar column has at most
@@ -2293,7 +2294,7 @@ mod oracle {
 
     use super::*;
     use pgdt_codec::{SchemaMode, resolve_columns};
-    use pgdt_core::{decode_field, encode_field, split_fields};
+    use pgdt_core::{escape_field, split_fields, unescape_field};
     use pgdt_dump::ScanOptions;
     use pgdt_dump::cache::CacheMode;
     use pgdt_dump::preamble_only;
@@ -2489,7 +2490,7 @@ mod oracle {
     /// decoded fields — the same core decoder that reads a dump, because
     /// the server wrote these files with `COPY ... TO STDOUT`.
     fn fields(line: &[u8]) -> Vec<Option<String>> {
-        split_fields(line).map(|f| decode_field(f).unwrap().map(|v| v.into_owned())).collect()
+        split_fields(line).map(|f| unescape_field(f).unwrap().map(|v| v.into_owned())).collect()
     }
 
     fn rows(path: &Path) -> Vec<Vec<Option<String>>> {
@@ -2580,7 +2581,7 @@ mod oracle {
         };
         let announced = !term.comparison_notes().is_empty();
         let got = term
-            .eval(RawRow::unchecked(&encode_field(field)), &mut RowSplit::default(), "public.t", 0)
+            .eval(RawRow::unchecked(&escape_field(field)), &mut RowSplit::default(), "public.t", 0)
             .map_err(|e| e.to_string());
         (got, announced)
     }
@@ -3556,7 +3557,7 @@ mod oracle {
                                 continue;
                             };
                             let Ok(got) = term.eval(
-                                RawRow::unchecked(&encode_field(Some(field))),
+                                RawRow::unchecked(&escape_field(Some(field))),
                                 &mut RowSplit::default(),
                                 "public.t",
                                 0,
@@ -3861,7 +3862,7 @@ mod oracle {
                             .map(|v| {
                                 expr.eval(
                                     true,
-                                    RawRow::unchecked(&encode_field(*v)),
+                                    RawRow::unchecked(&escape_field(*v)),
                                     &mut RowSplit::default(),
                                     "public.t",
                                     0,

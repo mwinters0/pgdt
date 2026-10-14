@@ -29,7 +29,9 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSelection};
+use pgdt_mapping::statistics::{
+    GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing,
+};
 use pgdt_model::{CopyBlock, DumpIndex};
 use pgdt_query::{
     ComparisonNote, EarlyStop, Expr, Membership, PlanNote, Predicate, PredicateOp, QueryOptions,
@@ -136,8 +138,7 @@ async fn gathered(dump: &Path) -> (tempfile::TempDir, PathBuf, DumpIndex) {
     let dir = tempfile::tempdir().unwrap();
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
-        group_size: Some(NonZeroU64::new(TINY_GROUP).unwrap()),
-        ..StatisticsRequest::DATA
+        sizing: StatisticsSizing::Stated(NonZeroU64::new(TINY_GROUP).unwrap()),
     };
     let copy = parsed_copy(dump, dir.path(), &request).await;
     let path = cache::colocated_path(&copy);

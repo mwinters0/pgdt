@@ -469,8 +469,6 @@ fn require_enabled_errors_when_disabled() {
 /// The cache's contents come back intact.
 #[tokio::test]
 async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
-    use pgdt_model::{DiagnosticKind, Severity};
-
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("edge_cases.sql");
     std::fs::copy(edge_cases(), &dump).unwrap();
@@ -492,10 +490,7 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
     };
     assert_eq!(loaded.blocks().count(), index.blocks().count(), "contents survive intact");
     assert!(
-        loaded.diagnostics.contains(&pgdt_model::Diagnostic {
-            severity: Severity::Warning,
-            kind: DiagnosticKind::CacheMtimeChanged,
-        }),
+        loaded.diagnostics.contains(&pgdt_model::Diagnostic::cache_mtime_changed()),
         "diagnostics: {:?}",
         loaded.diagnostics
     );
@@ -505,7 +500,7 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
 /// about a check *this* run performed successfully.
 #[tokio::test]
 async fn diagnostics_do_not_round_trip_through_the_cache() {
-    use pgdt_model::{Diagnostic, DiagnosticKind, Severity};
+    use pgdt_model::{Diagnostic, DiagnosticKind};
 
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("edge_cases.sql");
@@ -517,9 +512,7 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
     // `build_index` always reports a `TocCoverage` figure — cleared here so
     // this test's own pushed diagnostic is the only one in play.
     index.diagnostics.clear();
-    index
-        .diagnostics
-        .push(Diagnostic { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged });
+    index.diagnostics.push(Diagnostic::cache_mtime_changed());
     pgdt_dump::cache::save(&cache_path, &source, &index).await.unwrap();
 
     let CacheLoad::Index(loaded) = CacheMode::enabled(cache_path).load(&source).await.unwrap()
@@ -531,12 +524,12 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
     // What is present is recomputed, not restored — the TOC-coverage figure
     // the load derives from the spans it just read.
     assert!(
-        !loaded.diagnostics.iter().any(|d| d.kind == DiagnosticKind::CacheMtimeChanged),
+        !loaded.diagnostics.iter().any(|d| *d.kind() == DiagnosticKind::CacheMtimeChanged),
         "a persisted diagnostic must not be restored: {:?}",
         loaded.diagnostics
     );
     assert!(
-        loaded.diagnostics.iter().any(|d| matches!(d.kind, DiagnosticKind::TocCoverage { .. })),
+        loaded.diagnostics.iter().any(|d| matches!(d.kind(), DiagnosticKind::TocCoverage { .. })),
         "the file-level figures are recomputed on load: {:?}",
         loaded.diagnostics
     );
@@ -632,7 +625,7 @@ async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
         panic!("expected Valid for a fully scanned cache");
     };
     assert!(
-        loaded.diagnostics.iter().any(|d| d.kind == DiagnosticKind::CacheOffline),
+        loaded.diagnostics.iter().any(|d| *d.kind() == DiagnosticKind::CacheOffline),
         "diagnostics: {:?}",
         loaded.diagnostics
     );
@@ -645,7 +638,7 @@ async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
         panic!("expected Incomplete for a preamble-only cache");
     };
     assert!(
-        loaded.diagnostics.iter().any(|d| d.kind == DiagnosticKind::CacheOffline),
+        loaded.diagnostics.iter().any(|d| *d.kind() == DiagnosticKind::CacheOffline),
         "diagnostics: {:?}",
         loaded.diagnostics
     );
@@ -756,7 +749,9 @@ fn xz_compress_single_block(path: &Path) -> tempfile::NamedTempFile {
 }
 
 fn has_non_seekable_warning(diagnostics: &[pgdt_model::Diagnostic]) -> bool {
-    diagnostics.iter().any(|d| matches!(d.kind, DiagnosticKind::NonSeekableCompressedSource { .. }))
+    diagnostics
+        .iter()
+        .any(|d| matches!(d.kind(), DiagnosticKind::NonSeekableCompressedSource { .. }))
 }
 
 /// `build_index` warns about a source with no seek structure, and does
@@ -820,7 +815,7 @@ async fn preamble_only_warns_without_duplicating_across_calls() {
     assert_eq!(
         diagnostics
             .iter()
-            .filter(|d| matches!(d.kind, DiagnosticKind::NonSeekableCompressedSource { .. }))
+            .filter(|d| matches!(d.kind(), DiagnosticKind::NonSeekableCompressedSource { .. }))
             .count(),
         1,
         "diagnostics: {diagnostics:?}"
@@ -834,7 +829,7 @@ async fn preamble_only_warns_without_duplicating_across_calls() {
     assert_eq!(
         diagnostics
             .iter()
-            .filter(|d| matches!(d.kind, DiagnosticKind::NonSeekableCompressedSource { .. }))
+            .filter(|d| matches!(d.kind(), DiagnosticKind::NonSeekableCompressedSource { .. }))
             .count(),
         1,
         "diagnostics: {diagnostics:?}"

@@ -22,7 +22,7 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSizing};
 use pgdt_model::{CopyBlock, DumpIndex};
 use pgdt_query::{
     EarlyStop, Expr, PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions, table_stream,
@@ -75,8 +75,7 @@ async fn gathered(dump: &Path, group_size: u64) -> (tempfile::TempDir, PathBuf, 
     let dir = tempfile::tempdir().unwrap();
     let request = StatisticsRequest {
         selection: common::sweep_request(dump).selection,
-        group_size: Some(NonZeroU64::new(group_size).unwrap()),
-        ..StatisticsRequest::DATA
+        sizing: StatisticsSizing::Stated(NonZeroU64::new(group_size).unwrap()),
     };
     let copy = parsed_copy(dump, dir.path(), &request).await;
     let path = cache::colocated_path(&copy);
@@ -706,7 +705,8 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let watch =
             Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
-        let table = index.tables().into_iter().find(|t| t.qualified() == "public.ordered").unwrap();
+        let table =
+            index.tables().into_iter().find(|t| t.qualified_name() == "public.ordered").unwrap();
         let filter = Expr::all([term("id", PredicateOp::Ge, Some("990"))]);
         for (options, expected, kept) in [
             (with(filter.clone(), true, SPLIT_JOBS), block.row_count - below, 1),

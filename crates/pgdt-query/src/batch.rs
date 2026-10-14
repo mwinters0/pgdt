@@ -24,8 +24,8 @@ use arrow::datatypes::SchemaRef;
 
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::internal::UnrepresentableRead;
+use pgdt_core::internal::{RawRow, RowSplit};
 use pgdt_core::{Error, Result};
-use pgdt_core::{RawRow, RowSplit};
 use pgdt_model::PostgresInvalidValues;
 
 use self::builder::{append_null, text_refused};

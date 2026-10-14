@@ -77,53 +77,66 @@ pub struct StatisticsRequest {
     /// Each table's and column's level: which blocks are censused, and which
     /// columns statistics are gathered for.
     pub selection: StatisticsSelection,
-    /// The group size, `None` when the caller stated none and
-    /// [`ROW_GROUP_DEFAULT_SIZE_BYTES`] applies, doubled past
-    /// [`BLOCK_MAX_ROW_GROUPS`] groups unless [`Self::max_rows`] is stated,
-    /// and short of [`Self::min_rows`]; a stated size is gathered exactly.
-    /// Kept apart from the default because a stated size and an unstated one
-    /// are different requests to a block already gathered at another. In a
-    /// block the request does not track ([`Self::tracked_columns`] answering
-    /// `None`, as it always does under [`StatisticsSelection::METADATA`]) it sizes
-    /// nothing and is ignored.
-    pub group_size: Option<NonZeroU64>,
-    /// The fewest rows a block's median group should hold, `None` when the
-    /// caller stated none and [`ROW_GROUP_DEFAULT_MIN_ROWS`] applies; `0`
-    /// coarsens nothing. Kept apart from the default for the reason
-    /// [`Self::group_size`] is. Under a stated group size, which is gathered
-    /// exactly, it sizes nothing and is ignored.
-    pub min_rows: Option<u64>,
-    /// The most rows a block's densest tenth of groups should hold — read at
-    /// the 90th-percentile group ([`max_rows_group`](super::density::max_rows_group)) — and **there is no
-    /// default**: a maximum applies only where a caller states one.
-    ///
-    /// Short of a stated group size, it is the only thing that makes a block
-    /// finer than [`ROW_GROUP_DEFAULT_SIZE_BYTES`], so where it is stated it **outranks
-    /// both the minimum and [`BLOCK_MAX_ROW_GROUPS`]**, which it turns off
-    /// ([`Self::group_cap`]) — a person sensitive to what a query reads asked
-    /// for the groups, and neither a default nor a bound on memory quietly
-    /// overrules them. Under a stated group size it sizes nothing and is
-    /// ignored, as [`Self::min_rows`] is.
-    pub max_rows: Option<u64>,
+    /// How a block's groups are sized. In a block the request does not track
+    /// ([`Self::tracked_columns`] answering `None`, as it always does under
+    /// [`StatisticsSelection::METADATA`]) it sizes nothing and is ignored.
+    pub sizing: StatisticsSizing,
+}
+
+/// How a [`StatisticsRequest`] sizes the groups of a block it gathers: a size
+/// gathered exactly, or the default size held between density bounds.
+///
+/// **What was stated is kept apart from the default it stands for**: a stated
+/// size and an unstated one, or a stated minimum and the default minimum, are
+/// different requests to a block already gathered under another
+/// ([`StatisticsRequest::backfill`]), though they gather alike.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatisticsSizing {
+    /// A stated group size, gathered exactly: no merge, and no density bound.
+    Stated(NonZeroU64),
+    /// [`ROW_GROUP_DEFAULT_SIZE_BYTES`], doubled past [`BLOCK_MAX_ROW_GROUPS`]
+    /// groups unless a maximum is stated, and merged at the block's end short
+    /// of the minimum.
+    Density {
+        /// The fewest rows a block's median group should hold, `None` when the
+        /// caller stated none and [`ROW_GROUP_DEFAULT_MIN_ROWS`] applies; `0`
+        /// coarsens nothing.
+        min_rows: Option<u64>,
+        /// The most rows a block's densest tenth of groups should hold — read
+        /// at the 90th-percentile group
+        /// ([`max_rows_group`](super::density::max_rows_group)) — and **there
+        /// is no default**: a maximum applies only where a caller states one.
+        ///
+        /// It is the only thing that makes a block finer than
+        /// [`ROW_GROUP_DEFAULT_SIZE_BYTES`], so where it is stated it
+        /// **outranks both the minimum and [`BLOCK_MAX_ROW_GROUPS`]**, which it
+        /// turns off ([`StatisticsRequest::group_cap`]) — a person sensitive to
+        /// what a query reads asked for the groups, and neither a default nor a
+        /// bound on memory quietly overrules them.
+        max_rows: Option<u64>,
+    },
+}
+
+impl StatisticsSizing {
+    /// The default size between the default minimum and no maximum.
+    pub const DEFAULT: Self = Self::Density { min_rows: None, max_rows: None };
+}
+
+impl Default for StatisticsSizing {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
 }
 
 impl StatisticsRequest {
     /// Every table and column at the data level, at the default group size
     /// and minimum and under no maximum — the default.
-    pub const DATA: Self = Self {
-        selection: StatisticsSelection::DATA,
-        group_size: None,
-        min_rows: None,
-        max_rows: None,
-    };
+    pub const DATA: Self =
+        Self { selection: StatisticsSelection::DATA, sizing: StatisticsSizing::DEFAULT };
 
     /// Every table at the metadata level: no block censused, nothing gathered.
-    pub const METADATA: Self = Self {
-        selection: StatisticsSelection::METADATA,
-        group_size: None,
-        min_rows: None,
-        max_rows: None,
-    };
+    pub const METADATA: Self =
+        Self { selection: StatisticsSelection::METADATA, sizing: StatisticsSizing::DEFAULT };
 
     /// Whether this request may track a column at all — false where no table
     /// or column is at the data level.
@@ -133,8 +146,11 @@ impl StatisticsRequest {
     }
 
     /// The group size this request gathers at, before any merge.
-    pub fn group_size(&self) -> u64 {
-        self.group_size.map_or(ROW_GROUP_DEFAULT_SIZE_BYTES, NonZeroU64::get)
+    pub(crate) fn gathered_size(&self) -> u64 {
+        match self.sizing {
+            StatisticsSizing::Stated(size) => size.get(),
+            StatisticsSizing::Density { .. } => ROW_GROUP_DEFAULT_SIZE_BYTES,
+        }
     }
 
     /// The most groups a block this request gathers may hold:
@@ -142,28 +158,37 @@ impl StatisticsRequest {
     /// maximum, `None` under either: a stated size is gathered exactly, and a
     /// stated maximum bounds the merging in the cap's place.
     pub fn group_cap(&self) -> Option<usize> {
-        (self.group_size.is_none() && self.max_rows.is_none()).then_some(BLOCK_MAX_ROW_GROUPS)
+        matches!(self.sizing, StatisticsSizing::Density { max_rows: None, .. })
+            .then_some(BLOCK_MAX_ROW_GROUPS)
     }
 
     /// The density minimum a block this request gathers is sized by at its
     /// end: the stated or default minimum under an unstated size, `None` under
     /// a stated one.
-    pub fn min_rows(&self) -> Option<u64> {
-        self.group_size.is_none().then(|| self.min_rows.unwrap_or(ROW_GROUP_DEFAULT_MIN_ROWS))
+    pub(crate) fn density_min_rows(&self) -> Option<u64> {
+        match self.sizing {
+            StatisticsSizing::Stated(_) => None,
+            StatisticsSizing::Density { min_rows, .. } => {
+                Some(min_rows.unwrap_or(ROW_GROUP_DEFAULT_MIN_ROWS))
+            }
+        }
     }
 
     /// The density maximum a block this request gathers is sized by at its
     /// end: the stated maximum under an unstated size, and `None` under a
     /// stated size or where no maximum was stated — there being no default.
-    pub fn max_rows(&self) -> Option<u64> {
-        self.group_size.is_none().then_some(self.max_rows).flatten()
+    pub(crate) fn density_max_rows(&self) -> Option<u64> {
+        match self.sizing {
+            StatisticsSizing::Stated(_) => None,
+            StatisticsSizing::Density { max_rows, .. } => max_rows,
+        }
     }
 
     /// What a block this request gathers from its first row records it was
     /// sized under.
-    pub fn sizing(&self) -> GroupSizing {
-        match self.min_rows() {
-            Some(min_rows) => GroupSizing::Density { min_rows, max_rows: self.max_rows() },
+    pub(crate) fn recorded_sizing(&self) -> GroupSizing {
+        match self.density_min_rows() {
+            Some(min_rows) => GroupSizing::Density { min_rows, max_rows: self.density_max_rows() },
             None => GroupSizing::Stated,
         }
     }
@@ -174,11 +199,11 @@ impl StatisticsRequest {
         StatisticsBackfill {
             columns,
             requested,
-            group_size: self.group_size(),
+            group_size: self.gathered_size(),
             group_cap: self.group_cap(),
-            min_rows: self.min_rows(),
-            max_rows: self.max_rows(),
-            sizing: self.sizing(),
+            min_rows: self.density_min_rows(),
+            max_rows: self.density_max_rows(),
+            sizing: self.recorded_sizing(),
         }
     }
 
@@ -267,14 +292,16 @@ impl StatisticsRequest {
         let Some(held) = block.statistics.as_deref() else {
             return Some(self.gathering(requested.clone(), requested));
         };
-        let stated_bound = self.min_rows.is_some() || self.max_rows.is_some();
-        let resized = match self.group_size {
-            Some(size) => size.get() != held.group_size,
-            None => stated_bound && self.sizing() != held.sizing,
+        let resized = match self.sizing {
+            StatisticsSizing::Stated(size) => size.get() != held.group_size,
+            StatisticsSizing::Density { min_rows, max_rows } => {
+                let stated_bound = min_rows.is_some() || max_rows.is_some();
+                stated_bound && self.recorded_sizing() != held.sizing
+            }
         };
         let unmet_max = !resized
-            && held.group_size == self.group_size()
-            && self.max_rows().is_some_and(|max_rows| held.breaks_max_rows(max_rows));
+            && held.group_size == self.gathered_size()
+            && self.density_max_rows().is_some_and(|max_rows| held.breaks_max_rows(max_rows));
         let missing = requested.iter().enumerate().any(|(i, &wanted)| {
             wanted
                 && held.columns.get(i).and_then(Option::as_ref).is_none_or(|column| {
@@ -293,7 +320,7 @@ impl StatisticsRequest {
             return Some(self.gathering(columns, requested));
         }
         if unmet_max {
-            let max_rows = self.max_rows().expect("`unmet_max` read it");
+            let max_rows = self.density_max_rows().expect("`unmet_max` read it");
             return Some(StatisticsBackfill {
                 group_size: held.predicted_group_size(max_rows),
                 ..self.gathering(columns, requested)
@@ -339,12 +366,13 @@ pub struct StatisticsBackfill {
     /// the one the block already held.
     pub group_cap: Option<usize>,
     /// The fewest rows the finished block's median group may hold, its groups
-    /// merging pairwise short of it — [`StatisticsRequest::min_rows`] for a
+    /// merging pairwise short of it — the request's minimum, stated or
+    /// default ([`StatisticsSizing::Density`]), for a
     /// block re-read from its first row — and `None` for a size gathered
     /// exactly.
     pub min_rows: Option<u64>,
     /// The most rows the finished block's 90th-percentile group may hold, no
-    /// merge passing it — [`StatisticsRequest::max_rows`] for a block re-read
+    /// merge passing it — the request's stated maximum for a block re-read
     /// from its first row — and `None` for a size gathered exactly.
     pub max_rows: Option<u64>,
     /// What the gathered block records it was sized under: the request's for

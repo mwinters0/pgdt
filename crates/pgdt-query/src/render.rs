@@ -22,7 +22,7 @@ use pgdt_model::PostgresInvalidValues;
 use crate::batch::{append_typed, finish_column, new_column_builder};
 
 /// Render one row of `column` back to the same PostgreSQL text form
-/// `pgdt_core::decode_field` would have produced for it
+/// `pgdt_core::unescape_field` would have produced for it
 /// (`docs/design/decisions.md`, "D66"), and the round-trip tests' oracle.
 /// `Ok(None)` for SQL NULL. Covers exactly the [`DataType`]s
 /// [`pgdt_codec::resolve_columns`] can ever produce.

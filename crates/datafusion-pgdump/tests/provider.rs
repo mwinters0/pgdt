@@ -93,7 +93,7 @@ async fn library_answer(
     };
     let mut stream = table_stream(
         &source,
-        &table.qualified(),
+        &table.qualified_name(),
         ScanOptions::default(),
         options,
         None,
@@ -122,8 +122,11 @@ async fn every_fixture_table_reads_as_the_library_reads_it() {
             let ctx = session(4, 3);
             let catalogs = register(&ctx, &dump);
             for table in dump.tables() {
-                let what =
-                    format!("{} in {} ({schema_mode:?})", table.qualified(), fixture.display());
+                let what = format!(
+                    "{} in {} ({schema_mode:?})",
+                    table.qualified_name(),
+                    fixture.display()
+                );
                 let expected = library_answer(&copy, table, schema_mode).await;
                 let query = select(&catalog_of(&catalogs, table), table, "*");
                 let plan = ctx.sql(&query).await.unwrap().create_physical_plan().await.unwrap();
@@ -245,7 +248,7 @@ async fn a_stated_strictness_binds_the_cache_s_identity_at_open() {
 
     let advisory = PgDump::open(location, PgDumpOptions::default()).await.unwrap();
     assert!(
-        advisory.diagnostics().iter().any(|d| d.kind == DiagnosticKind::CacheMtimeChanged),
+        advisory.diagnostics().iter().any(|d| *d.kind() == DiagnosticKind::CacheMtimeChanged),
         "{:?}",
         advisory.diagnostics()
     );
@@ -279,7 +282,7 @@ async fn projection_count_and_limit_reach_the_scan() {
             .await
             .unwrap();
         let n = count[0].column(0).as_any().downcast_ref::<arrow::array::Int64Array>().unwrap();
-        assert_eq!(n.value(0) as usize, rows, "{}", table.qualified());
+        assert_eq!(n.value(0) as usize, rows, "{}", table.qualified_name());
 
         let limited = ctx
             .sql(&format!("{} LIMIT 1", select(&catalog, table, "*")))
@@ -292,7 +295,7 @@ async fn projection_count_and_limit_reach_the_scan() {
             limited.iter().map(RecordBatch::num_rows).sum::<usize>(),
             rows.min(1),
             "{}",
-            table.qualified()
+            table.qualified_name()
         );
 
         // The last column alone, and the plan reads nothing else.
@@ -305,7 +308,7 @@ async fn projection_count_and_limit_reach_the_scan() {
         let expected = concat_batches(&schema, &expected).unwrap();
         let expected = expected.project(&[schema.fields().len() - 1]).unwrap();
         let got = concat_batches(&expected.schema(), &got).unwrap();
-        assert_eq!(got, expected, "{}", table.qualified());
+        assert_eq!(got, expected, "{}", table.qualified_name());
     }
 }
 

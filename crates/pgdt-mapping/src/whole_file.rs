@@ -268,7 +268,7 @@ async fn map_file_watched(
         .drain(..)
         .filter(|d| {
             matches!(
-                d.kind,
+                d.kind(),
                 DiagnosticKind::CacheMtimeChanged
                     | DiagnosticKind::CacheEntityTagChanged
                     | DiagnosticKind::CacheOriginChanged

@@ -8,7 +8,7 @@ use std::mem::{self};
 use std::sync::{Arc, OnceLock};
 
 use pgdt_core::internal::StatisticsScope;
-use pgdt_core::{decode_field, split_fields};
+use pgdt_core::{split_fields, unescape_field};
 use pgdt_model::internal::IgnoredRefusalsExt;
 use pgdt_model::{
     BlockGathered, BlockStatistics, FieldRefusal, GroupSizing, IgnoredRefusals, RowGroup,
@@ -520,7 +520,7 @@ impl BlockObserver for Gatherer {
                 line: self.rows,
                 column: at,
                 declared_type: column.declared_type.clone().unwrap_or_default(),
-                value: decode_field(field).ok().flatten().map(Cow::into_owned),
+                value: unescape_field(field).ok().flatten().map(Cow::into_owned),
             };
             match column.observe(field) {
                 Ok(Observed { grew, ignored }) => {

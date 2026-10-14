@@ -11,9 +11,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_codec::internal::UnrepresentableRead;
+use pgdt_core::internal::{RawRow, RowSplit};
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::{evaluated_row, timed_span};
-use pgdt_core::{RawRow, RowSplit};
 use pgdt_core::{
     instrument::EvaluationPart,
     internal::{row_evaluated, timed},

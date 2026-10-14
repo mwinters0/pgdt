@@ -398,7 +398,7 @@ impl TableName {
 
     /// `schema.table`, or `table` where no schema qualifies it — the header's
     /// own [`CopyHeader::qualified_name`], not re-quoted.
-    pub fn qualified(&self) -> String {
+    pub fn qualified_name(&self) -> String {
         match &self.schema {
             Some(schema) => format!("{schema}.{}", self.table),
             None => self.table.clone(),

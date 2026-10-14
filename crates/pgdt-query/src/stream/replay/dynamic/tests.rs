@@ -19,7 +19,9 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
     use crate::predicate::Predicate;
     use pgdt_io::LocalFileSource;
     use pgdt_mapping::map_file;
-    use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSelection};
+    use pgdt_mapping::statistics::{
+        GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing,
+    };
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ascending.sql");
@@ -35,8 +37,7 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
     let source = LocalFileSource::open(&path).unwrap();
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
-        group_size: Some(std::num::NonZeroU64::new(64).unwrap()),
-        ..StatisticsRequest::DATA
+        sizing: StatisticsSizing::Stated(std::num::NonZeroU64::new(64).unwrap()),
     };
     let run = map_file(
         &source,

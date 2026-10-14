@@ -182,8 +182,8 @@ pub enum DiagnosticKind {
 /// it — see the module docs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diagnostic {
-    pub severity: Severity,
-    pub kind: DiagnosticKind,
+    severity: Severity,
+    kind: DiagnosticKind,
 }
 
 impl Finding for Diagnostic {
@@ -227,6 +227,19 @@ impl Finding for Diagnostic {
 }
 
 impl Diagnostic {
+    /// How much it matters — the same answer as [`Finding::severity`], which
+    /// a caller holding the concrete type need not import.
+    pub fn severity(&self) -> Severity {
+        self.severity
+    }
+
+    /// What was found. Its constructors are the crate's own (`DiagnosticExt`)
+    /// but for the three cache warnings below, so a severity always matches
+    /// its kind.
+    pub fn kind(&self) -> &DiagnosticKind {
+        &self.kind
+    }
+
     /// Public, unlike its siblings: the crate above turning a
     /// `pgdt_dump::cache::WeakIdentity::Differs` into this warning,
     /// `pgdt_dump::cache::advisory_identity_diagnostics`, is outside this one —

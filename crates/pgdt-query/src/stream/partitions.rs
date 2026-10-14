@@ -213,7 +213,7 @@ impl TablePartitions {
             groups: Arc::new(groups),
             plan_notes,
             orders,
-            table: table.qualified(),
+            table: table.qualified_name(),
             statistics: Arc::new(statistics),
             matches,
             advice,

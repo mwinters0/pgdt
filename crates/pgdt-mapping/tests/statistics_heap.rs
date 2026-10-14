@@ -23,7 +23,7 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
 use pgdt_mapping::statistics::{
-    GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsTerms,
+    GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing, StatisticsTerms,
 };
 use pgdt_mapping::{MapRun, map_file};
 use pgdt_model::DumpIndex;
@@ -62,8 +62,7 @@ static ALLOCATOR: Counting = Counting;
 fn request(group_size: u64) -> StatisticsRequest {
     StatisticsRequest {
         selection: StatisticsSelection::DATA,
-        group_size: Some(NonZeroU64::new(group_size).unwrap()),
-        ..StatisticsRequest::DATA
+        sizing: StatisticsSizing::Stated(NonZeroU64::new(group_size).unwrap()),
     }
 }
 

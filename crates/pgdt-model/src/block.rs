@@ -107,13 +107,21 @@ pub enum UnrepresentableTier {
 /// neither.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Unrepresentable {
-    /// Values past Arrow's format spec.
-    pub format: u64,
-    /// Values within it and past the engine's calendar.
-    pub engine: u64,
+    format: u64,
+    engine: u64,
 }
 
 impl Unrepresentable {
+    /// Values past Arrow's format spec.
+    pub fn format(&self) -> u64 {
+        self.format
+    }
+
+    /// Values within Arrow's format spec and past the engine's calendar.
+    pub fn engine(&self) -> u64 {
+        self.engine
+    }
+
     /// Fold another block's, or a piece's, count for the same column in.
     pub fn merge(&mut self, other: &Unrepresentable) {
         self.format += other.format;
@@ -129,10 +137,16 @@ impl Unrepresentable {
 /// What a crate above calls on [`Unrepresentable`] that is not its API: public only
 /// because a crate boundary forced it, and reached through `internal`.
 pub trait UnrepresentableExt {
+    fn counted(format: u64, engine: u64) -> Self;
     fn add(&mut self, tier: UnrepresentableTier);
 }
 
 impl UnrepresentableExt for Unrepresentable {
+    /// A count already taken — what a test states and a sum builds.
+    fn counted(format: u64, engine: u64) -> Self {
+        Self { format, engine }
+    }
+
     /// Count one value past `tier`.
     fn add(&mut self, tier: UnrepresentableTier) {
         match tier {

@@ -657,8 +657,10 @@ impl ColumnStatistics {
         let bounds = self.bounds_in(set)?;
         let count = self.unrepresentable_in(group);
         let groups = match view {
-            StatisticsView::Every if count.format > 0 => &bounds.every.as_ref()?.groups,
-            StatisticsView::Displayable if count.engine > 0 => &bounds.displayable.as_ref()?.groups,
+            StatisticsView::Every if count.format() > 0 => &bounds.every.as_ref()?.groups,
+            StatisticsView::Displayable if count.engine() > 0 => {
+                &bounds.displayable.as_ref()?.groups
+            }
             _ => &bounds.groups,
         };
         groups.get(group)?.as_ref()
@@ -682,8 +684,8 @@ impl ColumnStatistics {
         let count = self.unrepresentable_in(group);
         Some(match view {
             StatisticsView::Every => nulls,
-            StatisticsView::Representable => nulls + count.format,
-            StatisticsView::Displayable => nulls + count.format + count.engine,
+            StatisticsView::Representable => nulls + count.format(),
+            StatisticsView::Displayable => nulls + count.format() + count.engine(),
         })
     }
 

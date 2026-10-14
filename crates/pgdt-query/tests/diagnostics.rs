@@ -86,7 +86,7 @@ async fn one_sink_drains_all_three_channels() {
     let of = |channel| seen.iter().filter(|s| s.channel == channel).collect::<Vec<_>>();
     assert_eq!(of("file").len(), index.diagnostics.len(), "{seen:#?}");
     assert!(
-        index.diagnostics.iter().any(|d| matches!(d.kind, DiagnosticKind::TocCoverage { .. })),
+        index.diagnostics.iter().any(|d| matches!(d.kind(), DiagnosticKind::TocCoverage { .. })),
         "{:?}",
         index.diagnostics
     );

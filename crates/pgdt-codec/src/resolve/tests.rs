@@ -563,6 +563,6 @@ fn both_channels_order_on_one_severity_scale() {
         declared: None,
         resolution: ColumnResolution::UnknownType,
     };
-    assert!(file.severity > column.severity());
-    assert!(matches!(file.kind, DiagnosticKind::TilingBroken { .. }));
+    assert!(file.severity() > column.severity());
+    assert!(matches!(file.kind(), DiagnosticKind::TilingBroken { .. }));
 }

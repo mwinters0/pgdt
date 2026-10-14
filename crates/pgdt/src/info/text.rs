@@ -309,13 +309,13 @@ fn unchecked_lines(unchecked: &StrictUnchecked) -> Vec<String> {
 /// its calendar ends (`docs/design/decisions.md`, "D96").
 fn unrepresentable_line(count: &pgdt_model::Unrepresentable) -> String {
     let mut parts = Vec::new();
-    if count.format > 0 {
-        parts.push(format!("{} value(s) Arrow cannot hold", count.format));
+    if count.format() > 0 {
+        parts.push(format!("{} value(s) Arrow cannot hold", count.format()));
     }
-    if count.engine > 0 {
+    if count.engine() > 0 {
         parts.push(format!(
             "{} past {}, which a DataFusion query cannot display",
-            count.engine,
+            count.engine(),
             pgdt_codec::decode::render_date32(pgdt_model::calendar_end())
         ));
     }
@@ -388,7 +388,7 @@ pub(crate) fn print_diagnostics(diagnostics: &[Diagnostic]) -> bool {
     }
     println!("diagnostics:");
     for d in diagnostics {
-        println!("    [{}] {}", severity_label(d.severity), d.message());
+        println!("    [{}] {}", severity_label(d.severity()), d.message());
     }
     true
 }

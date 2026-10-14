@@ -31,7 +31,7 @@ use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::value::datetime::{
     civil_from_days, decode_date32, interval_parts, timestamp_micros_wide,
 };
-use pgdt_core::{CopyHeader, decode_field};
+use pgdt_core::{CopyHeader, unescape_field};
 use pgdt_model::{
     DumpMetadata, Unrepresentable, UnrepresentableTier, calendar_end, internal::FieldCount,
 };
@@ -271,7 +271,7 @@ impl UnrepresentableRead {
     /// How many of the values `count` counts are ones the query's front end
     /// cannot hold.
     pub fn counted(&self, count: Unrepresentable) -> u64 {
-        count.format + if self.reach == Engine { count.engine } else { 0 }
+        count.format() + if self.reach == Engine { count.engine() } else { 0 }
     }
 }
 
@@ -348,9 +348,9 @@ pub fn unrepresentable_tests(
         .enumerate()
         .map(|(i, tier)| {
             let tier = tier?;
-            let held = counts
-                .and_then(|counts| counts.get(i))
-                .is_some_and(|count| count.format == 0 && (reach == Format || count.engine == 0));
+            let held = counts.and_then(|counts| counts.get(i)).is_some_and(|count| {
+                count.format() == 0 && (reach == Format || count.engine() == 0)
+            });
             (!held).then_some(UnrepresentableRead { tier, reach })
         })
         .collect()
@@ -531,7 +531,7 @@ impl FieldCount for Counter {
         }
         // `\N` is NULL, and an escaped field — a container's text position
         // can hold one — is undone before it is walked.
-        let text = decode_field(field).ok()??;
+        let text = unescape_field(field).ok()??;
         self.tier_of(leaf, &text)
     }
 }

@@ -27,7 +27,9 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, SourceWatch, StrictIdentity};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSelection};
+use pgdt_mapping::statistics::{
+    GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing,
+};
 use pgdt_model::{DumpIndex, Sortedness};
 use pgdt_query::{
     DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
@@ -100,8 +102,7 @@ async fn mapped(dump: &Path, group_size: u64) -> DumpIndex {
     let source = LocalFileSource::open(dump).unwrap();
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
-        group_size: Some(NonZeroU64::new(group_size).unwrap()),
-        ..StatisticsRequest::DATA
+        sizing: StatisticsSizing::Stated(NonZeroU64::new(group_size).unwrap()),
     };
     let cache = CacheMode::enabled(cache::colocated_path(dump));
     let run =
@@ -179,7 +180,7 @@ async fn run_evaluating(
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let watch =
         Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
-    let table = index.tables().into_iter().find(|t| t.qualified() == table).unwrap();
+    let table = index.tables().into_iter().find(|t| t.qualified_name() == table).unwrap();
     let options = QueryOptions {
         projection: Some(vec!["id".into()]),
         use_statistics,
@@ -761,7 +762,7 @@ async fn read_both(
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let watch =
         Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
-    let table = index.tables().into_iter().find(|t| t.qualified() == "public.t").unwrap();
+    let table = index.tables().into_iter().find(|t| t.qualified_name() == "public.t").unwrap();
     let options = QueryOptions {
         projection: Some(vec!["id".into(), "v".into()]),
         parallelism: Parallelism::workers(1, 1 << 30),

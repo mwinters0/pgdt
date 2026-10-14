@@ -182,8 +182,8 @@ impl PgDump {
 /// has one.
 fn describe(table: &TableName) -> String {
     match &table.database {
-        Some(database) => format!("{} in database {database}", table.qualified()),
-        None => table.qualified(),
+        Some(database) => format!("{} in database {database}", table.qualified_name()),
+        None => table.qualified_name(),
     }
 }
 

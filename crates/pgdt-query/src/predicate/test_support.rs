@@ -16,7 +16,8 @@ use pgdt_codec::compare::{CompareKind, ComparisonSemantics};
 use pgdt_codec::internal::scalar_read;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnResolution, ResolvedSchema};
-use pgdt_core::{RawRow, Result, RowSplit};
+use pgdt_core::Result;
+use pgdt_core::internal::{RawRow, RowSplit};
 use pgdt_model::{PostgresInvalidValues, Unrepresentable};
 use pgdt_model::{TypeDef, TypeKind, UnrepresentableTier};
 

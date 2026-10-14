@@ -10,8 +10,7 @@ mod identifier;
 pub mod instrument;
 
 pub use copy::{
-    CopyHeader, RawRow, RowSplit, decode_field, encode_field, is_terminator, parse_copy_header,
-    split_fields, validated_prefix,
+    CopyHeader, escape_field, is_terminator, parse_copy_header, split_fields, unescape_field,
 };
 pub use error::{Error, RowEndingRefusal, Unusable};
 
@@ -21,7 +20,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// because a crate boundary forced it, and named here so a caller reaching
 /// past the API names the word.
 pub mod internal {
-    pub use crate::copy::hex_val;
+    pub use crate::copy::{RawRow, RowSplit, hex_val, validated_prefix};
     pub use crate::error::OVERWRITE_WAYS_OUT;
     pub use crate::identifier::{Cursor, canonical_type_name, parse_type_name};
     pub use crate::instrument::decode::DecodeCounter;

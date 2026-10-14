@@ -6,6 +6,7 @@ use super::*;
 use crate::predicate::Predicate;
 use crate::predicate::test_support::*;
 use pgdt_model::UnrepresentableTier;
+use pgdt_model::internal::UnrepresentableExt;
 
 /// A group of `rows` rows whose count, where it kept one, is `count`.
 struct Counted {
@@ -41,8 +42,10 @@ impl GroupStatistics for Counted {
 #[test]
 fn a_group_answers_the_unrepresentable_test_off_its_count() {
     use UnrepresentableTier::{Engine, Format};
-    let group =
-        |rows, format, engine| Counted { rows, count: Some(Unrepresentable { format, engine }) };
+    let group = |rows, format, engine| Counted {
+        rows,
+        count: Some(Unrepresentable::counted(format, engine)),
+    };
     let (t, f) = (Truth::True, Truth::False);
     let is = |reach| date_test(PredicateOp::IsUnrepresentable, Some(reach));
     let is_not = |reach| date_test(PredicateOp::IsNotUnrepresentable, Some(reach));

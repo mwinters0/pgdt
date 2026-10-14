@@ -770,7 +770,7 @@ async fn a_cache_written_for_another_origin_loads_with_a_warning() {
     .await
     .expect("advisory by default");
     assert!(
-        run.index.diagnostics.iter().any(|d| d.kind == DiagnosticKind::CacheOriginChanged),
+        run.index.diagnostics.iter().any(|d| *d.kind() == DiagnosticKind::CacheOriginChanged),
         "{:?}",
         run.index.diagnostics
     );

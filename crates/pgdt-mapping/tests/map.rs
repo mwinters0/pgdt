@@ -636,7 +636,7 @@ async fn build_index_reports_toc_coverage_for_a_real_dump() {
     let coverage = index
         .diagnostics
         .iter()
-        .find_map(|d| match &d.kind {
+        .find_map(|d| match &d.kind() {
             DiagnosticKind::TocCoverage { attributed, spans } => Some((*attributed, *spans)),
             _ => None,
         })
@@ -663,7 +663,7 @@ async fn build_index_reports_zero_toc_coverage_for_a_header_less_dump() {
     let coverage = index
         .diagnostics
         .iter()
-        .find_map(|d| match &d.kind {
+        .find_map(|d| match &d.kind() {
             DiagnosticKind::TocCoverage { attributed, spans } => Some((*attributed, *spans)),
             _ => None,
         })

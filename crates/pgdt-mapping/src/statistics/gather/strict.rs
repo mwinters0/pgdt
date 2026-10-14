@@ -12,7 +12,7 @@ use pgdt_codec::{
     grammar::{TextGrammar, Unchecked},
     internal::{column_grammar, unchecked_positions},
 };
-use pgdt_core::{CopyHeader, decode_field, split_fields};
+use pgdt_core::{CopyHeader, split_fields, unescape_field};
 use pgdt_model::{CopyBlock, DumpMetadata, FieldRefusal};
 
 use crate::statistics::stored::{declared_column, stored_resolution};
@@ -222,7 +222,7 @@ pub(super) fn check_row(
         let Some(check) = check else { continue };
         // A NULL is refused only by a `NOT NULL`, and a field that is not
         // text is no value at all, which no `*_in` is handed.
-        let value = match decode_field(field) {
+        let value = match unescape_field(field) {
             Ok(None) if check.not_null => None,
             Ok(Some(text)) if check.reads => {
                 let refused = match check.grammar {

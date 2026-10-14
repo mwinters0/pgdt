@@ -282,7 +282,10 @@ fn unrepresentable_values(matches: &[CopyBlock], name: &str, reach: Unrepresenta
         .filter_map(|block| {
             let c = block.header.columns.iter().position(|column| column == name)?;
             let count = block.unrepresentable.as_ref()?.get(c)?;
-            Some(count.format + if reach == UnrepresentableTier::Engine { count.engine } else { 0 })
+            Some(
+                count.format()
+                    + if reach == UnrepresentableTier::Engine { count.engine() } else { 0 },
+            )
         })
         .sum()
 }

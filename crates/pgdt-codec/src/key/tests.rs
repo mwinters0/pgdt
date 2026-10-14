@@ -592,7 +592,7 @@ mod oracle {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
 
-    use pgdt_core::{decode_field, split_fields};
+    use pgdt_core::{split_fields, unescape_field};
     use pgdt_dump::ScanOptions;
     use pgdt_dump::cache::CacheMode;
     use pgdt_dump::preamble_only;
@@ -611,7 +611,7 @@ mod oracle {
     /// decoded fields — the same core decoder that reads a dump, because
     /// the server wrote these files with `COPY ... TO STDOUT`.
     fn fields(line: &[u8]) -> Vec<Option<String>> {
-        split_fields(line).map(|f| decode_field(f).unwrap().map(|v| v.into_owned())).collect()
+        split_fields(line).map(|f| unescape_field(f).unwrap().map(|v| v.into_owned())).collect()
     }
 
     fn rows(path: &Path) -> Vec<Vec<Option<String>>> {

@@ -62,7 +62,7 @@ pub struct Row<'a> {
     /// The row line with its terminating newline stripped, and a `\r` before
     /// it unless a backslash escapes it, when it is the last field's own byte
     /// (I91). Fields are still delimiter-separated and still escaped; use
-    /// [`pgdt_core::split_fields`] and [`pgdt_core::decode_field`].
+    /// [`pgdt_core::split_fields`] and [`pgdt_core::unescape_field`].
     pub raw: &'a [u8],
 }
 

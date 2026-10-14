@@ -23,7 +23,7 @@ use datafusion_pgdump::{
 };
 use pgdt_fixtures::{parsed_copy, statistics_fixture};
 use pgdt_io::Allowance;
-use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::{DiagnosticSink, Finding, Severity};
 use pgdt_query::{PlanNote, PlanNoteKind};
 
@@ -41,8 +41,7 @@ const TAKEN_WHOLE: u64 = 1 << 20;
 async fn gathered_copy(dir: &Path) -> PathBuf {
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
-        group_size: Some(NonZeroU64::new(SMALL_GROUP).unwrap()),
-        ..StatisticsRequest::DATA
+        sizing: StatisticsSizing::Stated(NonZeroU64::new(SMALL_GROUP).unwrap()),
     };
     parsed_copy(&statistics_fixture(16, "default"), dir, &request).await
 }

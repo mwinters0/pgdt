@@ -192,7 +192,7 @@ pub fn table_summary(
                 || column
                     .unrepresentable
                     .as_ref()
-                    .is_none_or(|counts| counts.iter().all(|count| count.format == 0));
+                    .is_none_or(|counts| counts.iter().all(|count| count.format() == 0));
             let sums =
                 column.sums.as_ref().filter(|sums| summed && believed && sums.len() == groups);
             accumulator.sum = accumulator

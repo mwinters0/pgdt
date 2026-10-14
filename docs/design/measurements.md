@@ -4207,7 +4207,7 @@ cargo bench -p pgdt-codec -p pgdt-query
 Its input comes from `generate_perf_data.py` (default `--size-mb 256`, sized
 to fit page cache): one wide table, one column per family the decoders cover,
 plus `v_long_text` (very long values) and `v_escaped` (high escape density).
-Its escaping is a Python reimplementation of `copy::encode_field` (I15), since
+Its escaping is a Python reimplementation of `copy::escape_field` (I15), since
 the script has no Rust runtime to call into.
 
 `decoders.rs`'s `nested` group is the one group that is a ratio rather than a

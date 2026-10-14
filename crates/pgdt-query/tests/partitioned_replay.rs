@@ -1112,7 +1112,8 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
     let mut compared = 0;
     for table in index.tables() {
         let (expected, count) =
-            partitioned_rows(source.as_ref(), &table.qualified(), QueryOptions::default(), 4).await;
+            partitioned_rows(source.as_ref(), &table.qualified_name(), QueryOptions::default(), 4)
+                .await;
         let plan = TablePartitions::plan(
             Arc::clone(&source),
             &index,
@@ -1123,7 +1124,7 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
         )
         .await
         .unwrap();
-        assert_eq!(plan.len(), count, "{}", table.qualified());
+        assert_eq!(plan.len(), count, "{}", table.qualified_name());
         let schema = table_schema(&index, &table, &options).unwrap();
         assert_eq!(plan.resolved_schema().schema, schema.schema);
         for _ in 0..2 {
@@ -1137,7 +1138,7 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
                     rows.extend(rows_of(&batch));
                 }
             }
-            assert_eq!(rows, expected, "{}", table.qualified());
+            assert_eq!(rows, expected, "{}", table.qualified_name());
         }
         compared += 1;
     }

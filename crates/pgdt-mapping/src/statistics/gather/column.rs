@@ -11,7 +11,7 @@ use arrow_schema::DataType;
 use pgdt_codec::compare::{CompareKind, ComparisonPlan, ComparisonSemantics};
 use pgdt_codec::internal::ColumnTier;
 use pgdt_codec::pgtype::NestedPlan;
-use pgdt_core::decode_field;
+use pgdt_core::unescape_field;
 use pgdt_model::internal::UnrepresentableExt;
 use pgdt_model::{
     ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
@@ -215,7 +215,7 @@ impl ColumnGatherer {
     pub(super) fn observe(&mut self, field: &[u8]) -> Result<Observed, Refused> {
         let before = self.open_heap();
         let mut ignored = false;
-        match decode_field(field) {
+        match unescape_field(field) {
             // A NULL its `NOT NULL` refuses and that is gone past is counted,
             // the read taking it as the NULL it is: no statistic contradicts
             // it (D103).

@@ -838,11 +838,11 @@ backslash-prefixed. No code path in `copyto.c` ever writes `\NNN` or `\xNN`.
 **Verified against:** `CopyAttributeOutText` in `release-v18.6/src/backend/commands/copyto.c`
 (identical logic in `release-v16.15`), and the `public.escapes` fixture (one
 row per `chr(n)` codepoint) round-tripping through
-`pgdt_core::encode_field`/`decode_field` byte-for-byte —
+`pgdt_core::escape_field`/`unescape_field` byte-for-byte —
 `copy_text_escaping_round_trips_through_postgres`, `tests/scan.rs`.
 
-**Relied on by:** `crates/pgdt-core/src/copy.rs`'s `encode_field`, which
-implements these seven escapes only — `decode_field`'s inverse for text
+**Relied on by:** `crates/pgdt-core/src/copy.rs`'s `escape_field`, which
+implements these seven escapes only — `unescape_field`'s inverse for text
 `pg_dump` could have produced, not a general COPY-text encoder. Also
 `decisions.md`, "D52": `\n` is one of the seven, so a literal LF byte inside a
 data region is always a row boundary and never part of a value, which makes an
@@ -1115,7 +1115,7 @@ Three further asymmetries follow from the same functions:
   by `,`. The member's own bracket characters are what make it re-parseable.
 
 All of this sits *inside* the COPY TEXT field escaping of I15, which is undone
-first: `copy::decode_field` returns the literal exactly as the `*_out` function
+first: `copy::unescape_field` returns the literal exactly as the `*_out` function
 produced it.
 
 **Proof.** `array_out()` in `src/backend/utils/adt/arrayfuncs.c` — the
