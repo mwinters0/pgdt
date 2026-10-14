@@ -366,9 +366,10 @@ Three items get a ruling of their own:
   line limit) becomes one `ChunkedScanner` beside it, and all four call
   that. This places the protocol under [`concepts.md`](concepts.md)'s "The
   scanner", in one place.
-- **pgdt-core's `instrument` namespace moves whole to `internal`.** The
-  `introspect` feature serves this project's measurements, not an embedder.
-  `NAMESPACES` in `scripts/layering.py` loses its entry.
+- **pgdt-core's `instrument` namespace stays API.** Its hooks are already
+  `internal`'s; what it holds is what a binary built with `introspect` reads,
+  and a counting allocator, which only a binary installs, calls `allocated`
+  and `freed` (D106).
 - **`xz_seek::SeekTable` stops showing through the API.** Today it surfaces
   in `KnownCompression::Xz` and `ByteRangeSource::seek_table`. It becomes an
   opaque `pgdt-io` type, because the crate it comes from is vendored and
@@ -547,8 +548,7 @@ the concept map; the slice is not bent around the boundary.
 3. **pgdt-core and pgdt-model.** The escape pair renamed; the qualified-name
    pair given one name; the model fields a view interprets; the census as
    one field and the database stored once, with `CACHE_FORMAT_VERSION`
-   bumped; `StatisticsRequest`'s sizing as one enum; `instrument` moved to
-   `internal`.
+   bumped; `StatisticsRequest`'s sizing as one enum.
 4. **pgdt-codec: a key for every value.** Closes `KD116` and `KD117`.
    Counted: `measure.py --count-pair HEAD~1`.
 5. **pgdt-dump: `ChunkedScanner`.** All four sites that write out the

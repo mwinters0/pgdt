@@ -1,8 +1,8 @@
 # P36.3 notes — the core and the model: names, plumbing and getters
 
 The pieces with no change of behaviour or format. The rest of the spec's row
-is 36.3.1 (the 2026-10-14 history entry). `instrument` is waiting on a
-decision under STATUS's "Decisions worth another look".
+is 36.3.1 (the 2026-10-14 history entry). `instrument` stays a namespace
+(D106).
 
 ## What landed
 

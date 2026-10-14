@@ -89,7 +89,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.1.1** `--count-pair` counts each shape `release-profile`'s reps a leg, prints each leg's fewest and most and each row resolved or unresolved, and is run first on a pair of identical sources, any row resolving there falsifying it (spec, "What a hot-path slice owes"); on that pair no row resolves ([notes](../design/roadmap-P36.1.1-count-reps-notes.md))
 - [x] **36.2** pgdt-io: one arrangement resolution, `Arrangement::resolve` over an `Allowance` carrying its origin, which `pgdt` and `ScanBudget` call; `Parallelism`'s constructors cut to three, the statistics allowance in it, D11 rewritten with its seams and constants `internal`; closes `KD29` ([notes](../design/roadmap-P36.2-arrangement-notes.md))
 - [x] **36.2.1** pgdt-io: the seek table opaque — `pgdt_io::SeekTable` in `KnownCompression::Xz` and `ByteRangeSource::seek_table`, persisted unchanged; `walk_seek_table` `pub(crate)`, nothing above reaching it ([notes](../design/roadmap-P36.2.1-seek-table-notes.md))
-- [x] **36.3** pgdt-core and pgdt-model: `unescape_field`/`escape_field` and `TableName::qualified_name`; `RowSplit`, `RawRow` and `validated_prefix` to `internal`; `Diagnostic`'s and `Unrepresentable`'s fields private with getters; `StatisticsRequest`'s sizing one enum, `StatisticsSizing`; `instrument` not moved, an embedder reading it ("Decisions worth another look") ([notes](../design/roadmap-P36.3-core-model-notes.md))
+- [x] **36.3** pgdt-core and pgdt-model: `unescape_field`/`escape_field` and `TableName::qualified_name`; `RowSplit`, `RawRow` and `validated_prefix` to `internal`; `Diagnostic`'s and `Unrepresentable`'s fields private with getters; `StatisticsRequest`'s sizing one enum, `StatisticsSizing`; `instrument` a namespace still (D106) ([notes](../design/roadmap-P36.3-core-model-notes.md))
 - [ ] **36.3.1** pgdt-model: `ColumnStatistics`' and `ColumnBounds`' view-interpreted fields private, one census field, one stored database (cache bump)
 - [ ] **36.4** pgdt-codec: `ValueKey` from a plan, for every value, never panicking across kinds; closes `KD116` and `KD117`; counted by `measure.py --count-pair HEAD~1`
 - [ ] **36.5** pgdt-dump: `ChunkedScanner`, its four sites calling it; counted by `measure.py --count-pair HEAD~1`
@@ -131,15 +131,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`pgdt_core::instrument` stays a namespace; the spec moves it to
-  `internal`.** The spec's "Demotions" says only this project's measurements
-  read it. But `pgdt` reads it in `src/introspect.rs` (`allocated`, `freed`,
-  `statistics_reading`) and `datafusion-cli-pgdump` reads it in
-  `src/pgdump.rs` (`evaluation_reading`). Both are `EMBEDDERS` in
-  `scripts/layering.py`, and D106 says no embedder names an `internal`
-  module. So the move would fail `layering.py`, and 36.3 left `instrument`
-  where it is, `NAMESPACES` unchanged. To decide: either strike that item
-  from the spec, so `instrument` stays API for an instrumented binary, or
-  exempt `introspect`-gated code from the embedder rule. The exemption
-  changes D106 and `layering.py`, a standing rule, and would become a
-  follow-up slice.

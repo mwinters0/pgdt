@@ -638,7 +638,7 @@ for, whether or not one does today. What a crate above reaches that is not API i
 adopts a lower `internal` item into its own API by re-exporting it, where it must be defined low but means something only above. No facade: nothing is published (D104), a crate is reached
 directly, and a binding makes its own entry point. Library crates are `pgdt-<name>`; the DataFusion crates keep `datafusion-*`, the prefix that ecosystem finds a provider by.
 Rejected: what was `pub` before the carve (forced by one crate's integration tests), or what an embedder names today, as the test of API; a facade re-exporting the crates (every public name
-spelled twice); a published `pgtypes` crate out of the codec (its own catalog types, Arrow behind a feature: a product decision). Code: `scripts/layering.py`, each crate's `internal`.
+spelled twice); a published `pgtypes` crate out of the codec (its own catalog types, Arrow behind a feature: a product decision); an `introspect` reading in `internal`, or that feature exempt from the embedder rule (a counting allocator, which only a binary installs, calls `pgdt_core::instrument`'s `allocated` and `freed`: the readings are API to whoever turns the feature on, the hooks `internal`'s). Code: `scripts/layering.py`, each crate's `internal`.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family
