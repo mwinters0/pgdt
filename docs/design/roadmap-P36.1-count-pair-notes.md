@@ -57,10 +57,10 @@ It exited 0: every shape's legs answered alike, both legs report the
   the slice is committed. An unattended round that leaves its work
   uncommitted runs `--count-pair HEAD` instead. Every other revision is
   refused.
-- **No verdict is printed.** Whether a rise is beyond the instrument's noise
-  is the slice's call. The noise is one build's run-to-run spread on each
-  row (above), never zero. On `pgdt sql` it includes the step between its
-  two values, which a single count per leg can land on either side of.
+- **The single count is gone.** Each row's noise is one build's run-to-run
+  spread (above), never zero; 36.1.1 counts it on both legs and prints
+  each row resolved or not
+  ([36.1.1's notes](roadmap-P36.1.1-count-reps-notes.md)).
 - **Two refusals beyond the spec's.** The pair is refused when the image's
   inputs (`release/Dockerfile`, `rust-toolchain.toml`, `mise.toml`) differ
   between the legs, because the two builds would then differ by compiler.

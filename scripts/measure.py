@@ -1055,6 +1055,13 @@ def spread(values: Sequence[float]) -> tuple[float, float]:
     return (min(values), max(values))
 
 
+def resolved_above(high: Sequence[float], low: Sequence[float]) -> bool:
+    """Whether `high`'s readings lie wholly above `low`'s — its fewest above
+    the other's most. The register's one test of a gap's being **resolved**
+    rather than two spreads meeting (`downstream_verdict`, `--count-pair`)."""
+    return spread(high)[0] > spread(low)[1]
+
+
 def fmt_s(value: float) -> str:
     """Seconds, at the precision measurements.md quotes: three decimals below
     two seconds, two above -- the image's timer resolves a millisecond
@@ -7777,6 +7784,11 @@ RELEASE_PROFILE_SHAPES: tuple[tuple[str, str], ...] = (
     (PARALLEL_SCAN, "`pgdt sql -c` — a typed DataFusion scan"),
 )
 
+#: How many times `release-profile` runs each leg of each shape, and so how
+#: many counts a shape takes on each leg of `--count-pair`, whose spread is
+#: the one build's run-to-run spread this figure first showed.
+RELEASE_PROFILE_REPS = 5
+
 
 def _release_profile_specs() -> list[RunSpec]:
     """Every leg of every `RELEASE_PROFILE_SHAPES` shape, plus the co-measured floor.
@@ -7806,7 +7818,7 @@ def run_release_profile(session: Session) -> str:
     # Every leg built before the first reading, for `run_allocator`'s reason.
     for leg, _ in PROFILE_LEGS:
         ensure_profile_binary(session.cfg, leg, session.log)
-    session.sweep(figure, specs, session.cfg.reps(5))
+    session.sweep(figure, specs, session.cfg.reps(RELEASE_PROFILE_REPS))
     # The three builds are one source, so the query's answer is one answer.
     problems = parallel_answer_problems(
         {
@@ -7959,7 +7971,7 @@ def downstream_verdict(
     resolved too, no second threshold, and is layout where it is not."""
     default, shipped = walls
     gap = 1 - median(shipped) / median(default)
-    resolved = min(default) > max(shipped)
+    resolved = resolved_above(default, shipped)
     fails = gap > DOWNSTREAM_GAP and resolved
     met = "resolved" if resolved else "unresolved, the two legs' readings meeting"
     head = f"{'**fails**' if fails else 'passes'} — {gap * 100:+.2f}% in wall clock, {met}"
@@ -7970,7 +7982,7 @@ def downstream_verdict(
     else:
         cdefault, cshipped = counts
         cgap = 1 - median(cshipped) / median(cdefault)
-        cresolved = min(cdefault) > max(cshipped)
+        cresolved = resolved_above(cdefault, cshipped)
         tail = f"; `instructions:u` {cgap * 100:+.2f}%, {'resolved' if cresolved else 'unresolved'}"
         if fails:
             tail += (
@@ -14752,38 +14764,63 @@ def count_pair_argv(
     ]  # fmt: skip
 
 
-def count_pair_table(counts: Mapping[str, Mapping[str, int]]) -> str:
-    """The comparison: one row per shape, each leg's `instructions:u` and the
-    tree's change against the parent's. **No verdict**: whether a change is
-    beyond the instrument's noise is the reader's to say, against one
-    build's run-to-run spread on that row."""
+def count_pair_resolution(parent: Sequence[int], tree: Sequence[int]) -> str:
+    """Whether a row's two legs' counts meet: **resolved** where one leg's
+    fewest lies above the other's most (`resolved_above`), said with the
+    direction, and **unresolved** otherwise. A fact, not a verdict: a
+    resolved rise is what refuses a hot-path slice, and on a pair of
+    identical sources any resolved row, either way, falsifies the instrument
+    (`roadmap-P36-embedder-api.md`, "What a hot-path slice owes")."""
+    if resolved_above(tree, parent):
+        return "resolved, a rise"
+    if resolved_above(parent, tree):
+        return "resolved, a fall"
+    return "unresolved"
+
+
+def count_pair_table(counts: Mapping[str, Mapping[str, Sequence[int]]]) -> str:
+    """The comparison: one row per shape, each leg's fewest and most
+    `instructions:u`, the tree's median against the parent's, and whether the
+    two legs' counts meet (`count_pair_resolution`)."""
     rows = []
     for command, label, _ in COUNT_PAIR_SHAPES:
         parent, tree = (counts[command][leg] for leg in COUNT_PAIR_LEGS)
-        delta = tree - parent
+        delta = median(tree) - median(parent)
         rows.append(
-            [label, f"{parent:,}", f"{tree:,}", f"{delta:+,}", f"{delta / parent * 100:+.3f}%"]
+            [
+                label,
+                *(f"{lo:,}–{hi:,}" for lo, hi in (spread(parent), spread(tree))),
+                f"{delta:+,.0f}",
+                f"{delta / median(parent) * 100:+.3f}%",
+                count_pair_resolution(parent, tree),
+            ]
         )
-    return md_table(["`instructions:u`", "parent", "tree", "change", "%"], rows)
+    return md_table(
+        ["`instructions:u`", "parent, fewest–most", "tree, fewest–most", "median change", "%", "the legs"],
+        rows,
+    )
 
 
 def cmd_count_pair(rev: str, cfg: Config) -> int:
     """`--count-pair <rev>`: the shipped build at `rev` and at the working
-    tree, each shape of `COUNT_PAIR_SHAPES` counted once on each, and the
-    comparison printed. **No figure**: nothing is written to
-    `measurements.md` or to a sitting directory, and the binaries are
-    overwritten by the next pair.
+    tree, each shape of `COUNT_PAIR_SHAPES` counted `RELEASE_PROFILE_REPS`
+    times on each, and the comparison printed. **No figure**: nothing is
+    written to `measurements.md` or to a sitting directory, and the binaries
+    are overwritten by the next pair.
 
-    **Once per shape**: a count holds still where a wall clock moves with
+    **Reps on both legs**: a count holds still where a wall clock moves with
     the machine, though not to the instruction between runs of one build, so
-    a change is read against that spread and never against zero. A shape
-    whose answer differs between the legs is refused, since its two
-    counts would be two workloads'. **Refused unless `rev` is the tree's
-    parent** (`count_pair_refusal`), or where the two would build under
-    different toolchains (`count_pair_image_refusal`). The parent is built from
-    a worktree under `Config.out_dir`, removed after; the tree from the
-    checkout itself, uncommitted files included. Ends by saying whether the run
-    fit under `DETACH_SECONDS`."""
+    a change is read against the spread this pair takes at its own two trees,
+    never against zero or another tree's. Each rep runs both legs, the leg
+    going first reversed for the second half of the reps, as `_sweep_one`
+    orders a figure's. A shape any of whose runs answers differently from
+    another is refused, since its counts would be two workloads'. **Refused
+    unless `rev` is the tree's parent** (`count_pair_refusal`), or where the
+    two would build under different toolchains (`count_pair_image_refusal`).
+    The parent is built from a worktree under `Config.out_dir`, removed after;
+    the tree from the checkout itself, uncommitted files included. Ends by
+    saying how many rows resolved and whether the run fit under
+    `DETACH_SECONDS`."""
     started = time.monotonic()
     dry_run = cfg.dry_run
     parent, dirty = count_pair_parent()
@@ -14821,33 +14858,48 @@ def cmd_count_pair(rev: str, cfg: Config) -> int:
             run(["git", "worktree", "remove", "--force", str(work)], cwd=REPO, quiet=True)
     binaries["tree"] = count_pair_binary(cfg, "tree", REPO, log)
 
-    counts: dict[str, dict[str, int]] = {}
+    reps = cfg.reps(RELEASE_PROFILE_REPS)
+    counts: dict[str, dict[str, list[int]]] = {}
     for command, label, memory in COUNT_PAIR_SHAPES:
         answers: dict[str, dict[str, str]] = {}
-        for leg in COUNT_PAIR_LEGS:
-            argv = count_pair_argv(cfg, binaries[leg], counter, dump, command, memory)
-            if dry_run:
-                log("  [dry-run] " + shlex.join(argv))
-                digest = hashlib.sha256(f"{command}/{leg}".encode()).digest()
-                counts.setdefault(command, {})[leg] = 3_000_000_000 + digest[0] * 1_000_000
-                continue
-            proc = subprocess.run(argv, text=True, capture_output=True)
-            if proc.returncode != 0:
-                raise RuntimeError(
-                    f"{label} on the {leg} leg exited {proc.returncode}\n{proc.stderr[-2000:]}"
-                )
-            counts.setdefault(command, {})[leg] = parse_instructions(proc.stderr)
-            answers[leg] = parse_reported(proc.stdout)
-            log(f"  {label}, {leg}: {counts[command][leg]:,} instructions:u")
+        for rep in range(reps):
+            legs = COUNT_PAIR_LEGS if rep < (reps + 1) // 2 else COUNT_PAIR_LEGS[::-1]
+            for leg in legs:
+                argv = count_pair_argv(cfg, binaries[leg], counter, dump, command, memory)
+                got = counts.setdefault(command, {}).setdefault(leg, [])
+                if dry_run:
+                    if rep == 0:
+                        log("  [dry-run] " + shlex.join(argv))
+                    digest = hashlib.sha256(f"{command}/{leg}/{rep}".encode()).digest()
+                    got.append(3_000_000_000 + digest[0] * 1_000_000)
+                    continue
+                proc = subprocess.run(argv, text=True, capture_output=True)
+                if proc.returncode != 0:
+                    raise RuntimeError(
+                        f"{label} on the {leg} leg, rep {rep + 1}, exited {proc.returncode}\n"
+                        f"{proc.stderr[-2000:]}"
+                    )
+                got.append(parse_instructions(proc.stderr))
+                answers[f"{leg} {rep + 1}"] = parse_reported(proc.stdout)
+                log(f"  {label}, {leg}, rep {rep + 1}: {got[-1]:,} instructions:u")
         if len({json.dumps(a, sort_keys=True) for a in answers.values()}) > 1:
-            log(f"!! {label}: the legs answered differently ({answers}), so no count is compared")
+            log(f"!! {label}: the runs answered differently ({answers}), so no count is compared")
             return 1
 
     took = time.monotonic() - started
     log("\n" + count_pair_table(counts))
+    resolved = [
+        label
+        for command, label, _ in COUNT_PAIR_SHAPES
+        if count_pair_resolution(*(counts[command][leg] for leg in COUNT_PAIR_LEGS)) != "unresolved"
+    ]
+    log(
+        f"\n{len(resolved)} of {len(COUNT_PAIR_SHAPES)} rows resolved"
+        + (f": {', '.join(resolved)}." if resolved else ".")
+    )
     fits = took < DETACH_SECONDS
     log(
-        f"\nThe pair took {took / 60:.1f} min, "
+        f"The pair took {took / 60:.1f} min, "
         + (
             f"under the {DETACH_SECONDS // 60}-minute line: a hot-path slice runs it in the "
             "foreground."
@@ -15142,8 +15194,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--count-pair",
         metavar="REV",
         help="the shipped build at REV, which must be the working tree's parent, and at the "
-        "tree, each hot-path shape's instructions:u counted once on each and compared — "
-        "a slice's price, never a figure",
+        "tree, each hot-path shape's instructions:u counted release-profile's reps on each, "
+        "each row resolved or not — a slice's price, never a figure",
     )
     parser.add_argument("--reps", type=int, help="override every figure's rep count (smoke runs only)")
     parser.add_argument("--dry-run", action="store_true", help="print what would run, measure nothing")

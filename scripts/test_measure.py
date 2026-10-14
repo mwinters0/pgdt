@@ -1640,12 +1640,38 @@ class CountPair(unittest.TestCase):
                         measure.count_pair_binary(cfg, "parent", Path(tmp) / "wt", lambda _: None)
                 self.assertFalse(out.exists())
 
-    def test_the_table_carries_both_counts_and_the_change(self):
-        counts = {c: {"parent": 1_000_000, "tree": 1_000_000} for c, _, _ in measure.COUNT_PAIR_SHAPES}
-        counts["query-typed"]["tree"] = 1_010_000
+    def test_a_row_resolves_only_where_one_leg_s_fewest_clears_the_other_s_most(self):
+        self.assertEqual(measure.count_pair_resolution([10, 12], [13, 14]), "resolved, a rise")
+        self.assertEqual(measure.count_pair_resolution([13, 14], [10, 12]), "resolved, a fall")
+        # Meeting at one value is not resolved, either way.
+        self.assertEqual(measure.count_pair_resolution([10, 12], [12, 14]), "unresolved")
+        self.assertEqual(measure.count_pair_resolution([10, 14], [11, 12]), "unresolved")
+
+    def test_resolved_is_the_rule_downstream_verdict_reads(self):
+        self.assertTrue(measure.resolved_above([3, 4], [1, 2]))
+        self.assertFalse(measure.resolved_above([2, 4], [1, 2]))
+        verdict = measure.downstream_verdict("x", ([2.0, 2.1], [1.0, 1.1]), ([30, 31], [10, 11]))
+        self.assertIn("`instructions:u` +", verdict)
+        self.assertIn("resolved", verdict)
+        self.assertNotIn("unresolved", verdict)
+
+    def test_the_table_carries_each_leg_s_range_the_change_and_the_resolution(self):
+        counts = {
+            c: {"parent": [1_000_000, 1_000_200], "tree": [1_000_100, 1_000_300]}
+            for c, _, _ in measure.COUNT_PAIR_SHAPES
+        }
+        counts["query-typed"]["tree"] = [1_010_000, 1_010_400]
         table = measure.count_pair_table(counts)
-        self.assertIn("| `query --schema-mode typed` | 1,000,000 | 1,010,000 | +10,000 | +1.000% |", table)
-        self.assertIn("| `pgdt parse` at the metadata level | 1,000,000 | 1,000,000 | +0 | +0.000% |", table)
+        self.assertIn(
+            "| `query --schema-mode typed` | 1,000,000–1,000,200 | 1,010,000–1,010,400 "
+            "| +10,100 | +1.010% | resolved, a rise |",
+            table,
+        )
+        self.assertIn(
+            "| `pgdt parse` at the metadata level | 1,000,000–1,000,200 | 1,000,100–1,000,300 "
+            "| +100 | +0.010% | unresolved |",
+            table,
+        )
 
     def _pair(self, tmp, answer):
         """`cmd_count_pair` with every outside effect stood in: each run's
@@ -1656,7 +1682,7 @@ class CountPair(unittest.TestCase):
         def fake_subprocess(argv, **_kw):
             leg = "parent" if "pgdt-count-pair-parent:/pgdt:ro" in " ".join(argv) else "tree"
             ran.append(leg)
-            count = 1000 if leg == "parent" else 1001
+            count = (1000 if leg == "parent" else 1001) + ran.count(leg)
             return subprocess.CompletedProcess(argv, 0, answer(leg), f"instructions_u={count}\n")
 
         def fake_binary(_cfg, leg, tree, _log):
@@ -1684,21 +1710,36 @@ class CountPair(unittest.TestCase):
             code = measure.cmd_count_pair("HEAD", cfg)
         return code, ran, git, out.getvalue()
 
-    def test_each_shape_is_counted_once_on_each_leg_and_the_worktree_goes(self):
+    def test_each_shape_is_counted_release_profile_s_reps_on_each_leg_and_the_worktree_goes(self):
+        reps = measure.RELEASE_PROFILE_REPS
         with tempfile.TemporaryDirectory() as tmp:
             code, ran, git, out = self._pair(tmp, lambda _leg: "")
         self.assertEqual(code, 0)
-        self.assertEqual(ran, ["parent", "tree"] * len(measure.COUNT_PAIR_SHAPES))
+        # Both legs every rep, the one going first reversed for the second half.
+        first = (reps + 1) // 2
+        one_shape = ["parent", "tree"] * first + ["tree", "parent"] * (reps - first)
+        self.assertEqual(ran, one_shape * len(measure.COUNT_PAIR_SHAPES))
         self.assertEqual([argv[:3] for argv in git], [["git", "worktree", "add"], ["git", "worktree", "remove"]])
-        self.assertIn("| 1,000 | 1,001 | +1 | +0.100% |", out)
+        # The stand-in's counts climb by one a run, so the legs' ranges meet.
+        self.assertIn("| unresolved |", out)
+        self.assertIn(f"0 of {len(measure.COUNT_PAIR_SHAPES)} rows resolved.", out)
         self.assertIn("under the 10-minute line", out)
+
+    def test_a_resolved_row_is_named_after_the_table(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.object(measure, "RELEASE_PROFILE_REPS", 1):
+                code, ran, _, out = self._pair(tmp, lambda _leg: "")
+        self.assertEqual(code, 0)
+        self.assertEqual(ran, ["parent", "tree"] * len(measure.COUNT_PAIR_SHAPES))
+        self.assertIn("| resolved, a rise |", out)
+        self.assertIn(f"{len(measure.COUNT_PAIR_SHAPES)} of {len(measure.COUNT_PAIR_SHAPES)} rows resolved: `pgdt parse` at the metadata level,", out)
 
     def test_a_shape_answering_differently_on_the_two_legs_compares_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
             code, _, git, out = self._pair(tmp, lambda leg: f"result_rows={1 if leg == 'parent' else 2}\n")
         self.assertEqual(code, 1)
         self.assertIn("answered differently", out)
-        self.assertNotIn("| change |", out)
+        self.assertNotIn("| median change |", out)
         self.assertEqual(git[-1][:3], ["git", "worktree", "remove"])
 
     def test_a_refused_pair_builds_nothing(self):
