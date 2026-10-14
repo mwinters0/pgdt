@@ -24,9 +24,9 @@ It exited 0: every shape's legs answered alike, both legs report the
   lower. So counts repeat to the million the register publishes, not to the
   instruction, which is why the spec's "What a hot-path slice owes"
   ([`roadmap-P36-embedder-api.md`](roadmap-P36-embedder-api.md)) counts
-  each shape more than once a leg from 36.1.1. **The data level has
-  no per-rep count anywhere**: `release-profile` does not run it, so 36.4's
-  row has this pair's one difference and no spread.
+  each shape more than once a leg from 36.1.1. `release-profile` does
+  not run the data level, so its first spread is 36.1.1's
+  ([its notes](roadmap-P36.1.1-count-reps-notes.md)).
 - **Two builds of one source are not one binary.** mimalloc's C source
   embeds the build's `__TIME__` (`options.c`, `mi_options_print_out`), so
   each leg carries its own time string and places it differently in
@@ -34,13 +34,13 @@ It exited 0: every shape's legs answered alike, both legs report the
   length, and the `.text` addressing it moves too (sampled: rip-relative
   displacements). The files are the same size and differ in `.rodata`,
   `.text`, `.rela.dyn` and the build id. So the change column is two
-  layouts' difference plus two runs'. **Which of the two carries it is
-  unattributed**; counting each leg more than once would separate them.
+  layouts' difference plus two runs'. **Run-to-run carries it**, by
+  36.1.1's reading of the same pair counted five times a leg
+  ([its notes](roadmap-P36.1.1-count-reps-notes.md)).
 - **A pair does not fit under ten minutes.** This one took 26.4 min, its two
-  cold builds 12m 36s and 12m 29s and the counts the rest. No incremental
-  pair is timed yet, but one fat leg built incrementally took 9m 37s at
-  35.24 (`runs/release-profile-35.24-20261012-0735/log`), so two legs exceed
-  the line either way. A hot-path slice therefore launches its pair
+  cold builds 12m 36s and 12m 29s and the counts the rest. A pair whose
+  target directories are kept still rebuilds the parent's workspace crates
+  each time, and exceeds the line too (36.1.1's notes). A hot-path slice therefore launches its pair
   detached (same section), logging under `runs/`, and the round after reads
   the log.
 - **The log's two `nerdctl` broken-pipe warnings**, after the parent's glibc
