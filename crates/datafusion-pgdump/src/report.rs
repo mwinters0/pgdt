@@ -27,10 +27,11 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use pgdt_codec::compare::ComparisonDivergence;
+use pgdt_io::Allowance;
 use pgdt_model::{DiagnosticSink, Finding, Severity, TableName};
 use pgdt_query::{ComparisonNote, PlanLever, PlanNote};
 
-use crate::budget::{AllowanceOrigin, BudgetAccount};
+use crate::budget::BudgetAccount;
 use crate::dump::PgDump;
 use crate::error::Error;
 
@@ -236,24 +237,21 @@ impl Finding for BudgetedPlanNote {
 impl BudgetedPlanNote {
     /// Where the budget came from, and what moves it.
     fn clause(&self) -> String {
-        let BudgetAccount { allowance, origin, pool_limit, resident, drawn } = &self.account;
-        let carved = match allowance {
-            Some(allowance) => {
-                let origin = match origin {
-                    AllowanceOrigin::Setting => "stated by pgdump.memory".to_string(),
-                    AllowanceOrigin::Stated => {
-                        "stated when the session's budget was built".to_string()
-                    }
-                    AllowanceOrigin::Limit { read_from } => {
-                        format!("the limit {} states", read_from.display())
-                    }
-                    AllowanceOrigin::HalfAvailable => {
-                        "half of what the machine reports available, no memory limit being found"
-                            .to_string()
-                    }
-                    // `ScanBudget` never pairs an allowance with this origin.
-                    AllowanceOrigin::NoneFound => "whose origin was not recorded".to_string(),
-                };
+        let BudgetAccount { allowance, pool_limit, resident, drawn } = &self.account;
+        let origin = match allowance {
+            Allowance::Setting(_) => Some("stated by pgdump.memory".to_string()),
+            Allowance::Stated(_) => Some("stated when the session's budget was built".to_string()),
+            Allowance::Limit(limit) => {
+                Some(format!("the limit {} states", limit.read_from.display()))
+            }
+            Allowance::HalfAvailable(_) => Some(
+                "half of what the machine reports available, no memory limit being found"
+                    .to_string(),
+            ),
+            Allowance::NoneFound => None,
+        };
+        let carved = match (allowance.bytes(), origin) {
+            (Some(allowance), Some(origin)) => {
                 let pool = match pool_limit {
                     0 => "the session's memory pool states no limit".to_string(),
                     bytes => format!("the session's memory pool is granted {bytes} byte(s)"),
@@ -264,7 +262,7 @@ impl BudgetedPlanNote {
                      {resident} byte(s) and the scans still running had drawn {drawn} byte(s)"
                 )
             }
-            None => "no allowance was found — no memory limit, and the machine's available memory \
+            _ => "no allowance was found — no memory limit, and the machine's available memory \
                      could not be read — so that budget is the library's own and nothing the \
                      session holds came off it"
                 .to_string(),
@@ -274,7 +272,7 @@ impl BudgetedPlanNote {
             match lever {
                 PlanLever::LargerAllowance => {
                     keys.push("pgdump.memory (the allowance)");
-                    if allowance.is_some() && *pool_limit > 0 {
+                    if allowance.bytes().is_some() && *pool_limit > 0 {
                         keys.push("datafusion.runtime.memory_limit (the pool's grant)");
                     }
                 }
@@ -299,8 +297,8 @@ mod tests {
 
     use super::*;
 
-    fn account(origin: AllowanceOrigin, pool_limit: u64) -> BudgetAccount {
-        BudgetAccount { allowance: Some(4 << 30), origin, pool_limit, resident: 7, drawn: 11 }
+    fn account(allowance: Allowance, pool_limit: u64) -> BudgetAccount {
+        BudgetAccount { allowance, pool_limit, resident: 7, drawn: 11 }
     }
 
     fn note(kind: PlanNoteKind, levers: &[PlanLever]) -> PlanNote {
@@ -329,10 +327,8 @@ mod tests {
             &[PlanLever::LargerAllowance],
         );
         let read_from = PathBuf::from("/sys/fs/cgroup/memory.max");
-        let wrapped = BudgetedPlanNote {
-            note: floor.clone(),
-            account: account(AllowanceOrigin::Limit { read_from }, 1 << 20),
-        };
+        let limit = Allowance::Limit(pgdt_io::MemoryLimit { bytes: 4 << 30, read_from });
+        let wrapped = BudgetedPlanNote { note: floor.clone(), account: account(limit, 1 << 20) };
         let message = wrapped.message();
         assert!(message.starts_with(&format!("{} — ", floor.message())), "{message}");
         for term in [
@@ -357,7 +353,7 @@ mod tests {
                 },
                 &[PlanLever::LargerAllowance, PlanLever::SmallerReadChunk],
             ),
-            account: account(AllowanceOrigin::Setting, 0),
+            account: account(Allowance::Setting(4 << 30), 0),
         };
         let message = limited.message();
         for term in ["stated by pgdump.memory", "the session's memory pool states no limit"] {
@@ -375,7 +371,7 @@ mod tests {
                 },
                 &[PlanLever::SmallerReadChunk, PlanLever::FewerSubStreams],
             ),
-            account: account(AllowanceOrigin::HalfAvailable, 1 << 20),
+            account: account(Allowance::HalfAvailable(4 << 30), 1 << 20),
         };
         let message = narrowed.message();
         assert!(message.contains("half of what the machine reports available"), "{message}");
@@ -384,8 +380,7 @@ mod tests {
         let unfound = BudgetedPlanNote {
             note: floor,
             account: BudgetAccount {
-                allowance: None,
-                origin: AllowanceOrigin::NoneFound,
+                allowance: Allowance::NoneFound,
                 pool_limit: 1 << 20,
                 resident: 0,
                 drawn: 0,
@@ -409,7 +404,7 @@ mod tests {
                 },
                 &[PlanLever::SmallerReadChunk],
             ),
-            account: account(AllowanceOrigin::Setting, 1 << 20),
+            account: account(Allowance::Setting(4 << 30), 1 << 20),
         };
         let message = capped.message();
         assert_eq!(keys(&message), [CHUNK], "{message}");

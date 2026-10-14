@@ -28,11 +28,11 @@ per-reader term. `DEFAULT_MEMORY_BUDGET` stays small enough to decline block dec
 
 ### D83 `--memory` states what the process may hold; one carving serves stated and discovered
 A read-buffer budget is a number an operator cannot size a container from, so the flag states
-resident and `Parallelism::within` carves it — reserve off the top, `margin_allowance` on the count
-— with `discover_in` reaching the same carve (`within_shared`), so provenance still never enters `Parallelism`
+resident and `Arrangement::resolve` carves it — reserve off the top, `margin_allowance` on the count
+— a discovered limit reaching the same carve (`within_shared`), so provenance rides the `Arrangement`, never `Parallelism`
 (D64). Consequences: a source recommending nothing is left on `DEFAULT_MEMORY_BUDGET` capped by the
 allowance less `MEMORY_RESERVE` whatever is stated, and the margin now binds a typed number. Rejected: a second flag; keeping the budget and
-giving statistics what it leaves. Code: `parallelism.rs`, `memory.rs`. Evidence: `reserve`.
+giving statistics what it leaves. Code: `arrangement.rs`, `parallelism.rs`, `memory.rs`. Evidence: `reserve`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's
@@ -74,11 +74,10 @@ the trait, faults uninterruptibly and errors as `SIGBUS`. Buffers are pooled and
 masked in containers and undefined over LVM/NFS. Reopens: parse CPU exceeding read time. Evidence:
 `scan-throughput-*`, `chunk-size`, `allocator`.
 
-### D11 Limit discovery is a public primitive taking a root
-`discover_memory_limit_in` reads the least of `memory.max` and `memory.high` (RT3), walking
-ancestors to the mount point (RT5); with no limit, a source recommending a charge is capped at half
-of `MemAvailable`, untuned (RT8), uncapped where that is unreadable (`KD113`), and one recommending none is not. The arms worth pinning are ones
-no machine is more than one of, so tests need the seam. Rejected: an env var overriding the root.
+### D11 Limit discovery takes a root; the seam is `internal`'s
+`discover_memory_limit_in` reads the least of `memory.max` and `memory.high` (RT3), walking ancestors to the mount point (RT5); with no limit, a source recommending a charge is capped at half
+of `MemAvailable`, untuned (RT8), uncapped where that is unreadable (`KD113`), and one recommending none is not. The arms worth pinning are ones no machine is more than one of, so tests need the root;
+an embedder discovers at `/` (`Allowance::discover`) or states its allowance, so the root-taking readers and the memory constants are `internal`'s (D106). Rejected: an env var overriding the root; the seam public, only tests reaching it.
 
 ### D12 Workers are `spawn_blocking`; no runtime flavour is imposed
 The library keeps `tokio` at `rt`+`sync`; `pgdt`'s own commands run `current_thread`, so thread count
@@ -600,7 +599,7 @@ Rejected: `select!` over `ctrl_c` (drops the map); a `--restart` flag.
 ### D64 An omitted `--jobs` asks the source; provenance is the CLI's fact
 Absence recommends, a stated count is never lowered, zero is refused. The arrangement is announced
 in two lines, before and after the open, because a fresh `.xz` walks footers first; the limit is
-meant to be read once (`KD29`). Whether a number was typed or discovered never enters `Parallelism`.
+read once, every pass carving from that reading. Whether a number was typed or discovered never enters `Parallelism`.
 Logged durations are diagnostics, never figures: one stderr subscriber, no terminal detection.
 
 ### D66 Output of what `pg_dump` writes is byte-identical whether typing is on or off, but for a value its type cannot hold or an `escape` `bytea`

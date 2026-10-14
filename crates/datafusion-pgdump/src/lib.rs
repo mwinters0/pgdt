@@ -69,7 +69,7 @@ mod statistics;
 mod table;
 mod unrepresentable;
 
-pub use budget::{AllowanceOrigin, BudgetAccount, ScanBudget};
+pub use budget::{BudgetAccount, ScanBudget};
 pub use catalog::{PgDumpCatalog, UNQUALIFIED_SCHEMA, register_dump};
 pub use dump::{PgDump, PgDumpOptions};
 pub use error::Error;

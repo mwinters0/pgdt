@@ -49,7 +49,7 @@ pub struct GatherOptions {
     /// allowance having chosen no bound
     /// (`docs/design/decisions.md`, "D1", "D85").
     ///
-    /// It is what [`pgdt_io::statistics_allowance`] leaves under the margin once
+    /// It is what [`pgdt_io::Arrangement::statistics_allowance`] leaves under the margin once
     /// the scan's parallelism budget is spent, and it bounds the whole account
     /// (`StatisticsAccount`): a `COPY` block whose gathering would pass it
     /// declines, drops what it gathered, and is recorded in the map as having

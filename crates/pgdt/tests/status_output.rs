@@ -313,9 +313,11 @@ fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
     assert!(started.contains("jobs=1"), "{started}");
     match pgdt_io::discover_memory_limit() {
         None => assert!(started.contains("memory_bytes=67108864 (default)"), "{started}"),
-        Some(limit) => {
-            let budget = pgdt_io::DEFAULT_MEMORY_BUDGET
-                .min(limit.bytes.saturating_sub(pgdt_io::MEMORY_RESERVE));
+        Some(_) => {
+            let request = pgdt_io::ArrangementRequest::recommended(1, None);
+            let found = pgdt_io::Allowance::discover();
+            let budget =
+                pgdt_io::Arrangement::resolve(&found, request).parallelism().budget_bytes();
             assert!(started.contains(&format!("memory_bytes={budget}")), "{started}");
             assert!(!started.contains("(default)"), "a discovered budget is not it: {started}");
         }

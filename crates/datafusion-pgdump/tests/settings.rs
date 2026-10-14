@@ -10,17 +10,21 @@ use arrow::util::pretty::pretty_format_batches;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
-    AllowanceOrigin, BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, PgDumpSettings,
-    ScanBudget, install, register_dump, register_table_factory,
+    BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, PgDumpSettings, ScanBudget, install,
+    register_dump, register_table_factory,
 };
 use pgdt_dump::cache::StrictIdentity;
 use pgdt_fixtures::{edge_cases_fixture, parsed_copy, ungathered};
-use pgdt_io::MEMORY_RESERVE;
+use pgdt_io::Allowance;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DiagnosticSink, Finding};
 use pgdt_query::PlanNoteKind;
 
 const EVENTS: &str = "shop.logs.events";
+
+/// A resident allowance the library's reserve takes whole, so a scan carved
+/// from it seats no reader.
+const TAKEN_WHOLE: u64 = 1 << 20;
 
 /// The budget-quoting plan notes a sink heard, each with its account; every
 /// other finding is registration's, or a note quoting no budget.
@@ -85,15 +89,12 @@ async fn a_stated_allowance_binds_the_scans_planned_after_it() {
         parsed_copy(&edge_cases_fixture(16, "default"), dir.path(), &StatisticsRequest::DATA).await;
     ungathered(&copy).await;
     let plans = Arc::new(Plans::default());
-    let ctx = session(&copy, MEMORY_RESERVE, &plans).await;
+    let ctx = session(&copy, TAKEN_WHOLE, &plans).await;
     let query = format!("SELECT * FROM {EVENTS}");
 
     let _floored = plan(&ctx, &query).await;
     let account = plans.floored().expect("the budget's own allowance seats no reader");
-    assert_eq!(
-        (account.allowance, account.origin),
-        (Some(MEMORY_RESERVE), AllowanceOrigin::Stated)
-    );
+    assert_eq!(account.allowance, Allowance::Stated(TAKEN_WHOLE));
 
     run(&ctx, &format!("SET pgdump.memory = {}", 8u64 << 30)).await.unwrap();
     let seated = plan(&ctx, &query).await;
@@ -102,10 +103,10 @@ async fn a_stated_allowance_binds_the_scans_planned_after_it() {
     let drawn = budget.drawn();
     assert!(drawn > 0);
 
-    run(&ctx, &format!("SET pgdump.memory = {MEMORY_RESERVE}")).await.unwrap();
+    run(&ctx, &format!("SET pgdump.memory = {TAKEN_WHOLE}")).await.unwrap();
     let _floored = plan(&ctx, &query).await;
     let account = plans.floored().expect("the next plan is under the one stated now");
-    assert_eq!((account.origin, account.drawn), (AllowanceOrigin::Setting, drawn));
+    assert_eq!((account.allowance, account.drawn), (Allowance::Setting(TAKEN_WHOLE), drawn));
     assert_eq!(budget.drawn(), drawn, "the live plan keeps what it drew");
     drop(seated);
     assert_eq!(budget.drawn(), 0);
@@ -125,7 +126,7 @@ async fn a_zero_allowance_returns_to_the_budgets_own() {
         parsed_copy(&edge_cases_fixture(16, "default"), dir.path(), &StatisticsRequest::DATA).await;
     ungathered(&copy).await;
     let plans = Arc::new(Plans::default());
-    let ctx = session(&copy, MEMORY_RESERVE, &plans).await;
+    let ctx = session(&copy, TAKEN_WHOLE, &plans).await;
     let query = format!("SELECT * FROM {EVENTS}");
 
     run(&ctx, &format!("SET pgdump.memory = {}", 8u64 << 30)).await.unwrap();
@@ -135,7 +136,11 @@ async fn a_zero_allowance_returns_to_the_budgets_own() {
     run(&ctx, "SET pgdump.memory = 0").await.unwrap();
     drop(plan(&ctx, &query).await);
     let account = plans.floored().expect("the budget's own allowance seats none");
-    assert_eq!(account.origin, AllowanceOrigin::Stated, "the budget's own, not a setting");
+    assert_eq!(
+        account.allowance,
+        Allowance::Stated(TAKEN_WHOLE),
+        "the budget's own, not a setting"
+    );
     let state = ctx.state();
     let settings = state.config().options().extensions.get::<PgDumpSettings>().unwrap();
     assert_eq!(settings.memory, None, "the allowance is unstated again");
@@ -223,9 +228,9 @@ async fn a_table_registered_by_hand_reads_an_installed_session_s_settings() {
         SessionContext::new_with_config(SessionConfig::new().with_extension(Arc::clone(&budget)));
     assert!(Arc::ptr_eq(&install(&ctx), &budget), "a session's own budget is kept");
     ctx.register_table("events", events).unwrap();
-    run(&ctx, &format!("SET pgdump.memory = {MEMORY_RESERVE}")).await.unwrap();
+    run(&ctx, &format!("SET pgdump.memory = {TAKEN_WHOLE}")).await.unwrap();
     drop(plan(&ctx, "SELECT * FROM events").await);
     let account = plans.floored().expect("an allowance the reserve takes whole seats no reader");
-    assert_eq!(account.origin, AllowanceOrigin::Setting);
+    assert_eq!(account.allowance, Allowance::Setting(TAKEN_WHOLE));
     assert!(!run(&ctx, unrepresentable).await.unwrap().is_empty());
 }

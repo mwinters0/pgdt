@@ -28,18 +28,21 @@ the `.xz` file pulled or fetched, the remote object
 
 ## Memory and parallelism
 
-The memory allowance and its discovery, a caller's parallelism, what a worker
-holds resident, the partition advice a source gives and the cut
-([`decisions.md`](decisions.md), "I/O, memory and parallelism").
+The memory allowance and its discovery, its resolution into what a pass
+runs under, a caller's parallelism, what a worker holds resident, the
+partition advice a source gives and the cut ([`decisions.md`](decisions.md),
+"I/O, memory and parallelism").
 
-- **pgdt-io** — `memory.rs`, `parallelism.rs`, `partition.rs`: a source says
-  what a worker holds, so sizing sits beside it (D68); the partition advice
-  and the cut read a worker's cost, and nothing in sizing reads them.
+- **pgdt-io** — `memory.rs`, `arrangement.rs`, `parallelism.rs`,
+  `partition.rs`: a source says what a worker holds, so sizing sits beside it
+  (D68), and the one resolution every embedder calls with it, carrying where
+  the allowance came from beside the `Parallelism` that never does (D64); the
+  partition advice and the cut read a worker's cost, and nothing in sizing
+  reads them.
 - **datafusion-pgdump** — `budget.rs`: the one allowance every scan a session
-  runs draws from.
+  runs draws from, and what the session holds against it.
 - **pgdt** — `parallel.rs`: `--jobs` and `--memory` as a front end spells
-  them, and where each number it resolves came from, which the library has
-  nowhere to carry (D64).
+  them, and each resolved number's provenance as its status lines spell it.
 
 ## Stopping
 

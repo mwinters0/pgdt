@@ -3385,8 +3385,8 @@ Apparatus over every run in this table: CPU stall ≤0.99%, I/O stall ≤2.40%, 
 ## What a scan holds above the budget it was given
 
 A flagless `pgdt` scan discovers its own memory limit, keeps
-`pgdt_io::MEMORY_RESERVE` back from it and solves the remainder, held under
-`pgdt_io::MEMORY_MARGIN_PERCENT`, for a worker count
+`pgdt_io::internal::MEMORY_RESERVE` back from it and solves the remainder, held under
+`pgdt_io::internal::MEMORY_MARGIN_PERCENT`, for a worker count
 ([`decisions.md`](decisions.md), "I/O, memory and parallelism"). This
 figure is what says that arithmetic survives contact with a real cgroup: it
 runs the shipped binary flagless at six allocations and two block sizes, and
@@ -3395,7 +3395,7 @@ reaches.
 
 **It checks a model registered before the sitting rather than searching for a
 constant.** The two constants are already shipped — `MEMORY_RESERVE` is
-**384 MiB**, read off five builds and 400 runs on the platform allocator, and `pgdt_io::MEMORY_UNPOOLED_BOUND`
+**384 MiB**, read off five builds and 400 runs on the platform allocator, and `pgdt_io::internal::MEMORY_UNPOOLED_BOUND`
 is **256 MiB**, derived by arithmetic over those same runs under the shipped
 charge — a reading taken once, transcribed in
 [`decisions.md`](decisions.md), "I/O, memory and parallelism", and

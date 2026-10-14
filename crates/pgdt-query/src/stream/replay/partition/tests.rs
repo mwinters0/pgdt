@@ -181,7 +181,9 @@ fn a_plan_note_lists_only_the_levers_that_move_it() {
     let cap = pgdt_io::DEFAULT_MEMORY_BUDGET;
     assert_eq!(floor(2 * cap as usize, cap), vec![SmallerReadChunk]);
     // The cap is what an allowance of any size carves for this source.
-    assert_eq!(Parallelism::within(1, None, 64 << 30).memory_bytes(), Some(cap));
+    let request = pgdt_io::ArrangementRequest::recommended(1, None);
+    let carved = pgdt_io::Arrangement::resolve(&pgdt_io::Allowance::Stated(64 << 30), request);
+    assert_eq!(carved.parallelism().memory_bytes(), Some(cap));
 
     let notes = plan(1 << 20, Parallelism::workers(8, cap), Some(64 << 20));
     let levers: Vec<_> = notes.iter().map(|note| (&note.kind, note.levers.clone())).collect();

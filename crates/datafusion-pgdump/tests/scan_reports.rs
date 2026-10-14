@@ -19,11 +19,10 @@ use datafusion::physical_plan::metrics::MetricValue;
 use datafusion::physical_plan::{ExecutionPlan, collect, displayable};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
-    AllowanceOrigin, BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, ScanBudget,
-    register_dump,
+    BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, ScanBudget, register_dump,
 };
 use pgdt_fixtures::{parsed_copy, statistics_fixture};
-use pgdt_io::MEMORY_RESERVE;
+use pgdt_io::Allowance;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection};
 use pgdt_model::{DiagnosticSink, Finding, Severity};
 use pgdt_query::{PlanNote, PlanNoteKind};
@@ -32,6 +31,10 @@ use pgdt_query::{PlanNote, PlanNoteKind};
 const SMALL_GROUP: u64 = 1024;
 
 const ORDERED: &str = "shop.public.ordered";
+
+/// A resident allowance the library's reserve takes whole, so a scan carved
+/// from it seats no reader.
+const TAKEN_WHOLE: u64 = 1 << 20;
 
 /// The statistics fixture copied into `dir` beside the complete cache a parse
 /// gathering every column's statistics at [`SMALL_GROUP`] leaves.
@@ -130,7 +133,7 @@ async fn a_scan_s_plan_notes_reach_its_table_s_sink_when_it_is_planned() {
 
     // A budget carved from an allowance the reserve takes whole affords no
     // reader, which the plan says rather than refusing.
-    let tight = Arc::new(ScanBudget::new(MEMORY_RESERVE));
+    let tight = Arc::new(ScanBudget::new(TAKEN_WHOLE));
     let ctx = SessionContext::new_with_config(
         SessionConfig::new().with_target_partitions(4).with_extension(tight),
     );
@@ -170,7 +173,7 @@ async fn a_budget_quoting_note_carries_the_scan_s_account() {
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let pool = 64usize << 20;
     let runtime = RuntimeEnvBuilder::new().with_memory_limit(pool, 1.0).build_arc().unwrap();
-    let budget = Arc::new(ScanBudget::new(MEMORY_RESERVE));
+    let budget = Arc::new(ScanBudget::new(TAKEN_WHOLE));
     let ctx = SessionContext::new_with_config_rt(
         SessionConfig::new().with_target_partitions(4).with_extension(Arc::clone(&budget)),
         runtime,
@@ -190,8 +193,7 @@ async fn a_budget_quoting_note_carries_the_scan_s_account() {
     let [floor] = floors.as_slice() else { panic!("{heard:#?}") };
     let accounts = plans.accounts();
     let expected = BudgetAccount {
-        allowance: Some(MEMORY_RESERVE),
-        origin: AllowanceOrigin::Stated,
+        allowance: Allowance::Stated(TAKEN_WHOLE),
         pool_limit: pool as u64,
         resident,
         drawn: 0,
@@ -199,7 +201,7 @@ async fn a_budget_quoting_note_carries_the_scan_s_account() {
     // Every note of that plan quotes its budget, each with the one account.
     assert_eq!(accounts, vec![expected; heard.len()], "{heard:#?}");
     for term in [
-        format!("an allowance of {MEMORY_RESERVE} resident byte(s)"),
+        format!("an allowance of {TAKEN_WHOLE} resident byte(s)"),
         format!("granted {pool} byte(s)"),
         format!("statistics hold {resident} byte(s)"),
         "pgdump.memory".to_string(),

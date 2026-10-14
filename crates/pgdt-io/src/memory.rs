@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 /// `docs/design/decisions.md`, "D3".
 pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 
-/// What [`Parallelism::within`](crate::Parallelism::within) holds back from a memory allowance, discovered
-/// or stated, in bytes: everything the process holds that the pools' budget
+/// What [`Arrangement::resolve`](crate::Arrangement::resolve) holds back from a memory allowance,
+/// discovered or stated, in bytes: everything the process holds that the pools' budget
 /// does not bound — the runtime's threads, the allocators' per-thread state, the
 /// decoder state a compressed source keeps outside its pools, and the binary
 /// itself.
@@ -153,7 +153,8 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
         .saturating_sub(MEMORY_UNPOOLED_BOUND)
 }
 
-/// **What a resolved arrangement leaves for a mapping pass's statistics**: the
+/// **What a resolved arrangement leaves for a mapping pass's statistics**
+/// ([`Arrangement::statistics_allowance`](crate::Arrangement::statistics_allowance)): the
 /// bytes `pgdt_mapping`'s `StatisticsAccount` may hold under `allowance` —
 /// a discovered limit or a stated `--memory` — once `budget`, the read-buffer
 /// budget that arrangement resolved to, comes off [`margin_allowance`]'s
@@ -188,7 +189,7 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
 ///
 /// Saturating, so an arrangement whose budget already fills the margin leaves
 /// zero rather than wrapping, and every block declines.
-pub fn statistics_allowance(allowance: u64, budget: u64) -> u64 {
+pub(crate) fn statistics_allowance(allowance: u64, budget: u64) -> u64 {
     margin_allowance(allowance).saturating_sub(budget)
 }
 
@@ -364,7 +365,7 @@ pub struct MemoryLimit {
 /// `None` where nothing limits it (`docs/design/decisions.md`, "D11").
 ///
 /// **A primitive, not a policy**: what a caller may usefully take from a
-/// limit is [`Parallelism::discover`](crate::Parallelism::discover) (`docs/design/decisions.md`, "D11").
+/// limit is [`Allowance::discover`](crate::Allowance::discover) (`docs/design/decisions.md`, "D11").
 ///
 /// **`None` means no limit is being *enforced*, which is a complete and
 /// checkable statement** — unlike "are we in a container", which no reading of
@@ -381,12 +382,12 @@ pub fn discover_memory_limit() -> Option<MemoryLimit> {
 
 /// [`discover_memory_limit`] against an arbitrary filesystem root.
 ///
-/// **Public because the arms a test must drive are the ones no machine has
-/// both of** (`docs/design/decisions.md`, "D11"). This is the seam a fixture
-/// tree is handed — here, and through [`Parallelism::discover_in`](crate::Parallelism::discover_in) and
-/// [`available_memory_in`] — so a caller's own resolution can be pinned
-/// against a v1 hierarchy, an unlimited one and a below-reserve one
-/// (`crates/pgdt/tests/data/runtime/`). The memory controller lives in exactly one
+/// **The seam the arms a test must drive need, no machine having more than
+/// one of them** (`docs/design/decisions.md`, "D11"): `internal`'s, as are
+/// [`available_memory_in`] and
+/// [`discover_allowance_in`](crate::arrangement::discover_allowance_in) beside it, so the resolution can
+/// be pinned against a v1 hierarchy, an unlimited one and a below-reserve one
+/// (`crates/pgdt-io/tests/data/runtime/`). The memory controller lives in exactly one
 /// hierarchy at a time (`RT6`), so a v1 shape cannot be produced beside a v2
 /// one on the same host.
 ///

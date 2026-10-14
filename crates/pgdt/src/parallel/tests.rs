@@ -2,6 +2,8 @@ use super::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use pgdt_io::MemoryLimit;
+
 /// A source recommending whatever it is built with, so that
 /// [`ParallelArgs::resolve`]'s two halves — ask the source, or honour the
 /// flag — can be told apart without a real file of either shape. The three
@@ -69,12 +71,51 @@ impl ByteRangeSource for Recommends {
     }
 }
 
-/// One of the committed runtime roots
-/// (`crates/pgdt/tests/data/runtime/README.md`) — a filesystem tree shaped like a
-/// Linux one, so a resolution can be pinned against an environment this
-/// machine is not in.
-fn runtime_root(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/runtime").join(name)
+/// A limit discovery found, `bytes` stated by `file`.
+fn limit(bytes: u64, file: &str) -> Allowance {
+    Allowance::Limit(MemoryLimit { bytes, read_from: PathBuf::from(file) })
+}
+
+// What discovery finds on each of `pgdt_io`'s committed runtime roots
+// (`crates/pgdt-io/tests/data/runtime/README.md`), whose reading is that
+// crate's test: environments no one machine is, so a resolution can be
+// pinned against each.
+
+/// cgroup v2, a 1 GiB `memory.max` at the leaf.
+fn v2_limit() -> Allowance {
+    limit(1 << 30, "/sys/fs/cgroup/pgdt/memory.max")
+}
+
+/// cgroup v1, a 512 MiB `memory.limit_in_bytes`.
+fn v1_limit() -> Allowance {
+    limit(512 << 20, "/sys/fs/cgroup/memory/svc/memory.limit_in_bytes")
+}
+
+/// No limit, and ~19 GiB of `MemAvailable`: the roomy unlimited host.
+fn no_limit() -> Allowance {
+    Allowance::HalfAvailable(20002184 * 1024 / 2)
+}
+
+/// No limit, and 512 MiB of `MemAvailable`, where the `RT8` half-cap binds.
+fn cramped() -> Allowance {
+    Allowance::HalfAvailable(256 << 20)
+}
+
+/// A 256 MiB allocation, which the reserve leaves nothing of.
+fn below_reserve() -> Allowance {
+    limit(256 << 20, "/sys/fs/cgroup/pgdt/memory.max")
+}
+
+/// What `pgdt_io` keeps back from an allowance before a reader is counted —
+/// its reserve, which `--memory`'s help names — read off the resolution
+/// rather than restated: one reader costing more than any allowance is
+/// budgeted the whole of what the reserve leaves.
+fn reserve() -> u64 {
+    let allowance = 1u64 << 40;
+    let whole = Some(pgdt_io::WorkerMemory::per_worker(u64::MAX));
+    let request = ArrangementRequest::recommended(1, whole);
+    let left = Arrangement::resolve(&Allowance::Stated(allowance), request).parallelism();
+    allowance - left.budget_bytes()
 }
 
 /// One reader's charge in the flat shape every source but the
@@ -95,27 +136,21 @@ fn a_flagless_run_resolves_inside_a_discovered_limit_on_either_cgroup_version() 
 
     // v2, a 1 GiB `memory.max`: 640 MiB after the reserve, and 563.2 MiB
     // once the margin is left as well — nine readers of 58 MiB.
-    let v2 = flagless.resolve_in(&runtime_root("v2-limit"), &Recommends::reader(24, READER));
+    let v2 = flagless.resolve_under(v2_limit(), &Recommends::reader(24, READER));
     assert_eq!(v2.parallelism().jobs(), 9);
     assert_eq!(v2.parallelism().memory_bytes(), Some(9 * READER));
-    assert_eq!(v2.limit.as_ref().map(|l| l.bytes), Some(1 << 30));
 
     // v1, a 512 MiB `memory.limit_in_bytes`: 128 MiB after the reserve,
     // and the margin is inert below the 640 MiB crossover — it allows
     // 153.6, which is more than the cap — so the cap is what two readers
     // of 58 MiB are fitted inside.
-    let v1 = flagless.resolve_in(&runtime_root("v1-limit"), &Recommends::reader(24, READER));
+    let v1 = flagless.resolve_under(v1_limit(), &Recommends::reader(24, READER));
     assert_eq!(v1.parallelism().jobs(), 2);
     assert_eq!(v1.parallelism().memory_bytes(), Some(2 * READER));
-    assert_eq!(
-        v1.limit.as_ref().map(|l| l.read_from.clone()),
-        Some(runtime_root("v1-limit").join("sys/fs/cgroup/memory/svc/memory.limit_in_bytes")),
-        "the v1 mount is located through mountinfo, not assumed"
-    );
 
     // A plain source recommends nothing and is left where it was, capped
     // by the same limit.
-    let plain = flagless.resolve_in(&runtime_root("v2-limit"), &Recommends::jobs(1));
+    let plain = flagless.resolve_under(v2_limit(), &Recommends::jobs(1));
     assert!(plain.parallelism().is_serial());
     assert_eq!(plain.parallelism().memory_bytes(), Some(pgdt_io::DEFAULT_MEMORY_BUDGET));
 }
@@ -140,14 +175,14 @@ fn a_shared_pool_lowers_a_recommended_count_at_every_allocation() {
     // the per-reader charge calls three readers. The three units the pool
     // retains beside a single reader leave too little for a second, so one
     // is the honest answer.
-    let tight = flagless.resolve_in(&runtime_root("v1-limit"), &source());
+    let tight = flagless.resolve_under(v1_limit(), &source());
     assert_eq!(tight.parallelism().jobs(), 1);
     assert_eq!(tight.parallelism().memory_bytes(), Some(BLOCK_READER + 3 * UNIT));
 
     // v2, a 1 GiB limit, once the reserve and the margin are both left. A
     // division says sixteen readers; the pool slot each of them past the
     // first also takes is what makes it ten.
-    let roomy = flagless.resolve_in(&runtime_root("v2-limit"), &source());
+    let roomy = flagless.resolve_under(v2_limit(), &source());
     assert_eq!(roomy.parallelism().jobs(), 10);
     assert_eq!(roomy.parallelism().memory_bytes(), Some(10 * BLOCK_READER + 9 * UNIT));
 }
@@ -162,22 +197,21 @@ fn no_limit_found_takes_the_sources_own_answer_under_the_memavailable_cap() {
 
     // Enough available that half of it does not bind, so all twenty-four
     // readers stand.
-    let roomy = flagless.resolve_in(&runtime_root("no-limit"), &Recommends::reader(24, READER));
+    let roomy = flagless.resolve_under(no_limit(), &Recommends::reader(24, READER));
     assert_eq!(roomy.parallelism().jobs(), 24);
     assert_eq!(roomy.parallelism().memory_bytes(), Some(24 * READER));
-    assert!(roomy.limit.is_none(), "every limit file states max");
 
     // Less available on the same unlimited arrangement: half of it is
     // four readers — the count coming down with the budget rather than
     // being printed beside one it cannot spend.
-    let cramped = flagless.resolve_in(&runtime_root("cramped"), &Recommends::reader(24, READER));
+    let cramped = flagless.resolve_under(cramped(), &Recommends::reader(24, READER));
     assert_eq!(cramped.parallelism().jobs(), 4);
     assert_eq!(cramped.parallelism().memory_bytes(), Some(4 * READER));
 
     // And a source recommending nothing on an unlimited host is the one
     // arrangement that states no budget at all — what the status line
     // renders `(default: no limit found)`.
-    let plain = flagless.resolve_in(&runtime_root("no-limit"), &Recommends::jobs(1));
+    let plain = flagless.resolve_under(no_limit(), &Recommends::jobs(1));
     assert_eq!(plain.parallelism(), Parallelism::default());
     assert_eq!(plain.budget_display(), format!("{} (default: no limit found)", 64 << 20));
 }
@@ -189,11 +223,11 @@ fn no_limit_found_takes_the_sources_own_answer_under_the_memavailable_cap() {
 /// `a_budget_below_one_readers_worth_says_the_allocation_bound_it`).
 #[test]
 fn an_allocation_under_the_reserve_resolves_to_one_reader_and_no_bytes() {
-    let root = runtime_root("below-reserve");
+    let root = below_reserve();
     let flagless = ParallelArgs { jobs: None, memory: None };
 
     for source in [Recommends::reader(24, READER), Recommends::jobs(1)] {
-        let resolved = flagless.resolve_in(&root, &source);
+        let resolved = flagless.resolve_under(root.clone(), &source);
         assert_eq!(resolved.parallelism().memory_bytes(), Some(0));
         assert_eq!(resolved.parallelism().jobs(), 1, "the floor is on the count");
     }
@@ -203,8 +237,8 @@ fn an_allocation_under_the_reserve_resolves_to_one_reader_and_no_bytes() {
     // the same reserve and the same margin, whose ceiling binds below the
     // 400 MiB past the reserve, and the count beside it is nobody's statement and is cut to
     // what those bytes afford.
-    let stated = ParallelArgs { jobs: None, memory: Some(pgdt_io::MEMORY_RESERVE + (400 << 20)) };
-    let resolved = stated.resolve_in(&root, &Recommends::reader(24, READER));
+    let stated = ParallelArgs { jobs: None, memory: Some(reserve() + (400 << 20)) };
+    let resolved = stated.resolve_under(root.clone(), &Recommends::reader(24, READER));
     assert_eq!(resolved.parallelism().jobs(), 6);
     assert_eq!(resolved.parallelism().memory_bytes(), Some(6 * READER));
 }
@@ -219,14 +253,14 @@ fn an_allocation_under_the_reserve_resolves_to_one_reader_and_no_bytes() {
 /// was typed (`docs/design/decisions.md`, "D83").
 #[test]
 fn a_stated_allowance_lowers_a_recommended_count_and_is_carved_not_kept() {
-    let root = runtime_root("no-limit");
+    let root = no_limit();
     let source = Recommends::reader(24, READER);
     // An allowance leaving 32 MiB after the reserve — and 32 MiB affords
     // no whole reader at all, which is the floor: one.
-    let allowance = pgdt_io::MEMORY_RESERVE + (32 << 20);
+    let allowance = reserve() + (32 << 20);
 
     let tight = ParallelArgs { jobs: None, memory: Some(allowance) };
-    let resolved = tight.resolve_in(&root, &source);
+    let resolved = tight.resolve_under(root.clone(), &source);
     assert_eq!(resolved.parallelism().jobs(), 1);
     assert_eq!(resolved.parallelism().memory_bytes(), Some(32 << 20));
     assert_eq!(
@@ -243,14 +277,14 @@ fn a_stated_allowance_lowers_a_recommended_count_and_is_carved_not_kept() {
     // Room for more than the source asked for leaves the recommendation
     // standing, and the line says nothing about a lowering.
     let roomy = ParallelArgs { jobs: None, memory: Some(64 << 30) };
-    let resolved = roomy.resolve_in(&root, &source);
+    let resolved = roomy.resolve_under(root.clone(), &source);
     assert_eq!(resolved.parallelism().jobs(), 24);
     assert_eq!(resolved.jobs_display(), "24 (recommended by the source)");
 
     // A stated count is still printed as typed and never lowered, with
     // the same budget beside it — the asymmetry this arm preserves.
     let both = ParallelArgs { jobs: Some(24), memory: Some(allowance) };
-    let resolved = both.resolve_in(&root, &source);
+    let resolved = both.resolve_under(root.clone(), &source);
     assert_eq!(resolved.parallelism().jobs(), 24);
     assert_eq!(resolved.jobs_display(), "24 (stated)");
     assert_eq!(resolved.parallelism().memory_bytes(), Some(32 << 20));
@@ -258,7 +292,7 @@ fn a_stated_allowance_lowers_a_recommended_count_and_is_carved_not_kept() {
     // A source recommending no per-worker cost has nothing to divide by,
     // and is left on the library's constant under the cap — exactly what a
     // discovered limit leaves it.
-    let plain = tight.resolve_in(&root, &Recommends::jobs(1));
+    let plain = tight.resolve_under(root.clone(), &Recommends::jobs(1));
     assert_eq!(plain.parallelism().jobs(), 1);
     assert_eq!(plain.parallelism().memory_bytes(), Some(32 << 20));
 }
@@ -272,20 +306,20 @@ fn a_stated_allowance_lowers_a_recommended_count_and_is_carved_not_kept() {
 #[test]
 fn a_cache_s_statistics_lower_the_count_and_then_the_budget() {
     let reader = Recommends::reader(24, READER);
-    let limited = runtime_root("v2-limit");
+    let limited = v2_limit();
     let flagless = ParallelArgs { jobs: None, memory: None };
-    assert_eq!(flagless.discover_in(&limited).resolve(&reader, 0).parallelism().jobs(), 9);
+    assert_eq!(flagless.found(limited.clone()).resolve(&reader, 0).parallelism().jobs(), 9);
     // Two readers' worth held: the 563.2 MiB ceiling less 116 MiB affords
     // seven, and the room seven leave absorbs the holding whole.
-    let holding = flagless.discover_in(&limited).resolve(&reader, 2 * READER);
+    let holding = flagless.found(limited.clone()).resolve(&reader, 2 * READER);
     assert_eq!(holding.parallelism().jobs(), 7);
     assert_eq!(holding.parallelism().memory_bytes(), Some(7 * READER));
 
     let allowance = 1u64 << 30;
-    let unlimited = runtime_root("no-limit");
+    let unlimited = no_limit();
     let stated = ParallelArgs { jobs: None, memory: Some(allowance) };
     assert_eq!(
-        stated.discover_in(&unlimited).resolve(&reader, 2 * READER).parallelism(),
+        stated.found(unlimited.clone()).resolve(&reader, 2 * READER).parallelism(),
         holding.parallelism(),
         "the same number stated is the same carving"
     );
@@ -295,11 +329,11 @@ fn a_cache_s_statistics_lower_the_count_and_then_the_budget() {
     // allowance is then exactly what the cache holds.
     let plain = Recommends::jobs(1);
     let budget = pgdt_io::DEFAULT_MEMORY_BUDGET;
-    let room = pgdt_io::statistics_allowance(allowance, budget);
-    let absorbed = stated.discover_in(&unlimited).resolve(&plain, room);
+    let room = stated.found(unlimited.clone()).resolve(&plain, 0).statistics_allowance().unwrap();
+    let absorbed = stated.found(unlimited.clone()).resolve(&plain, room);
     assert_eq!(absorbed.parallelism().memory_bytes(), Some(budget));
     let short = 16 << 20;
-    let squeezed = stated.discover_in(&unlimited).resolve(&plain, room + short);
+    let squeezed = stated.found(unlimited.clone()).resolve(&plain, room + short);
     assert_eq!(squeezed.parallelism().memory_bytes(), Some(budget - short));
     assert_eq!(squeezed.statistics_allowance(), Some(room + short));
 }
@@ -312,10 +346,10 @@ fn a_cache_s_statistics_lower_the_count_and_then_the_budget() {
 fn a_query_s_replay_is_carved_around_no_statistics() {
     let reader = Recommends::reader(24, READER);
     let flagless = ParallelArgs { jobs: None, memory: None };
-    let limited = runtime_root("v2-limit");
+    let limited = v2_limit();
     let stated = ParallelArgs { jobs: None, memory: Some(1 << 30) };
-    let unlimited = runtime_root("no-limit");
-    for discovered in [flagless.discover_in(&limited), stated.discover_in(&unlimited)] {
+    let unlimited = no_limit();
+    for discovered in [flagless.found(limited.clone()), stated.found(unlimited.clone())] {
         let passes = discovered.resolve_query(&reader, 2 * READER);
         let bare = discovered.resolve(&reader, 0).parallelism();
         assert_eq!(
@@ -332,7 +366,7 @@ fn a_query_s_replay_is_carved_around_no_statistics() {
     }
     // A stated count is never lowered, so only its budget can differ.
     let typed = ParallelArgs { jobs: Some(9), memory: None };
-    let passes = typed.discover_in(&limited).resolve_query(&reader, 2 * READER);
+    let passes = typed.found(limited.clone()).resolve_query(&reader, 2 * READER);
     assert_eq!(passes.mapping_shortfall(), None);
 }
 
@@ -372,8 +406,8 @@ fn the_mapping_span_carries_the_holding_and_a_cut_count() {
     };
 
     let reader = Recommends::reader(24, READER);
-    let limited = runtime_root("v2-limit");
-    let flagless = ParallelArgs { jobs: None, memory: None }.discover_in(&limited);
+    let limited = v2_limit();
+    let flagless = ParallelArgs { jobs: None, memory: None }.found(limited.clone());
     let cut = rendered(&flagless.resolve_query(&reader, 2 * READER));
     let held = 2 * READER;
     assert!(
@@ -381,7 +415,7 @@ fn the_mapping_span_carries_the_holding_and_a_cut_count() {
         "{cut}"
     );
 
-    let typed = ParallelArgs { jobs: Some(9), memory: None }.discover_in(&limited);
+    let typed = ParallelArgs { jobs: Some(9), memory: None }.found(limited.clone());
     let uncut = rendered(&typed.resolve_query(&reader, held));
     assert!(uncut.contains(&format!("mapping{{held_bytes={held}}}: scan started")), "{uncut}");
 
@@ -396,9 +430,10 @@ fn the_mapping_span_carries_the_holding_and_a_cut_count() {
 ///
 /// Compiled into both configurations against the same literals, so
 /// `cargo test -p pgdt` and `cargo test -p pgdt --features introspect` are
-/// the two halves of the comparison. The roots are the committed ones
-/// rather than this machine's `/` (`tests/data/runtime/README.md`), and
-/// every one of them is swept: the arms differ in which term binds — a
+/// the two halves of the comparison. The allowances are what discovery
+/// finds on `pgdt_io`'s committed roots rather than this machine's `/`
+/// (`crates/pgdt-io/tests/data/runtime/README.md`), and every one of them is
+/// swept: the arms differ in which term binds — a
 /// discovered ceiling, `RT8`'s half-`MemAvailable` cap, the reserve
 /// leaving nothing.
 #[test]
@@ -407,10 +442,10 @@ fn the_instrument_build_resolves_what_the_default_build_resolves() {
     let source = Recommends::reader(24, READER);
 
     let resolved: Vec<(usize, Option<u64>)> =
-        ["v2-limit", "v1-limit", "no-limit", "cramped", "below-reserve"]
-            .iter()
-            .map(|name| {
-                let r = flagless.resolve_in(&runtime_root(name), &source);
+        [v2_limit(), v1_limit(), no_limit(), cramped(), below_reserve()]
+            .into_iter()
+            .map(|found| {
+                let r = flagless.resolve_under(found, &source);
                 (r.parallelism().jobs(), r.parallelism().memory_bytes())
             })
             .collect();
@@ -435,11 +470,11 @@ fn the_instrument_build_resolves_what_the_default_build_resolves() {
 /// either, and only the recommended line says what will run.
 #[test]
 fn the_report_says_which_of_the_two_counts_a_reader_is_looking_at() {
-    let root = runtime_root("cramped");
+    let root = cramped();
     let source = Recommends::reader(24, READER);
 
     let flagless = ParallelArgs { jobs: None, memory: None };
-    let recommended = flagless.resolve_in(&root, &source);
+    let recommended = flagless.resolve_under(root.clone(), &source);
     assert_eq!(recommended.parallelism().jobs(), 4);
     assert_eq!(
         recommended.jobs_display(),
@@ -447,7 +482,7 @@ fn the_report_says_which_of_the_two_counts_a_reader_is_looking_at() {
     );
 
     let asked = ParallelArgs { jobs: Some(24), memory: None };
-    let stated = asked.resolve_in(&root, &source);
+    let stated = asked.resolve_under(root.clone(), &source);
     assert_eq!(stated.parallelism().jobs(), 24, "a stated count is not lowered");
     assert_eq!(stated.jobs_display(), "24 (stated)");
     // Both arrangements hold the same bytes, which is why the two lines
@@ -464,26 +499,26 @@ fn the_budget_line_names_where_its_number_came_from() {
     let reader = Recommends::reader(24, READER);
     let plain = Recommends::jobs(1);
 
-    let allowance = pgdt_io::MEMORY_RESERVE + (400 << 20);
+    let allowance = reserve() + (400 << 20);
     let stated = ParallelArgs { jobs: None, memory: Some(allowance) };
     assert_eq!(
-        stated.resolve_in(&runtime_root("no-limit"), &reader).budget_display(),
+        stated.resolve_under(no_limit(), &reader).budget_display(),
         format!("{} (stated: --memory allows {allowance} resident byte(s))", 6 * READER)
     );
 
     let flagless = ParallelArgs { jobs: None, memory: None };
-    let discovered = flagless.resolve_in(&runtime_root("v2-limit"), &reader);
+    let discovered = flagless.resolve_under(v2_limit(), &reader);
     let line = discovered.budget_display();
     assert!(line.starts_with(&format!("{} (discovered:", 9 * READER)), "{line}");
     assert!(line.contains("sys/fs/cgroup/pgdt/memory.max"), "{line}");
     assert!(line.contains(&format!("{}", 1u64 << 30)), "{line}");
 
     assert_eq!(
-        flagless.resolve_in(&runtime_root("no-limit"), &reader).budget_display(),
+        flagless.resolve_under(no_limit(), &reader).budget_display(),
         format!("{} (no limit found: what this source asks for)", 24 * READER)
     );
     assert_eq!(
-        flagless.resolve_in(&runtime_root("no-limit"), &plain).budget_display(),
+        flagless.resolve_under(no_limit(), &plain).budget_display(),
         format!("{} (default: no limit found)", 64 << 20)
     );
 }
@@ -496,16 +531,13 @@ fn the_statistics_line_is_none_only_where_available_memory_is_unreadable() {
     let flagless = ParallelArgs { jobs: None, memory: None };
     let reader = Recommends::reader(24, READER);
 
-    let unreadable = tempfile::tempdir().unwrap();
     assert_eq!(
-        flagless.resolve_in(unreadable.path(), &reader).statistics_allowance_display(),
+        flagless.resolve_under(Allowance::NoneFound, &reader).statistics_allowance_display(),
         "(none: no limit found and the machine's available memory could not be read)"
     );
 
-    let exhausted = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(exhausted.path().join("proc")).unwrap();
-    std::fs::write(exhausted.path().join("proc/meminfo"), "MemAvailable: 0 kB\n").unwrap();
-    let line = flagless.resolve_in(exhausted.path(), &reader).statistics_allowance_display();
+    let exhausted = Allowance::HalfAvailable(0);
+    let line = flagless.resolve_under(exhausted, &reader).statistics_allowance_display();
     assert!(line.ends_with("(half of what the machine reports available)"), "{line}");
 }
 
@@ -522,14 +554,14 @@ fn a_plan_note_says_where_the_budget_that_bound_it_came_from() {
     let reader = Recommends::reader(24, READER);
 
     let flagless = ParallelArgs { jobs: None, memory: None };
-    let clause = flagless.resolve_in(&runtime_root("v1-limit"), &reader).plan_note_origin();
+    let clause = flagless.resolve_under(v1_limit(), &reader).plan_note_origin();
     assert!(clause.starts_with(" — the budget in force is "), "{clause}");
     assert!(clause.contains("memory.limit_in_bytes"), "the file that stated it: {clause}");
     assert!(clause.contains(&format!("{}", 512u64 << 20)), "the limit itself: {clause}");
 
     // No limit found still earns a clause: the budget is the source's own
     // ask, equally not the user's.
-    let unlimited = flagless.resolve_in(&runtime_root("no-limit"), &reader);
+    let unlimited = flagless.resolve_under(no_limit(), &reader);
     assert_eq!(
         unlimited.plan_note_origin(),
         format!(
@@ -538,10 +570,10 @@ fn a_plan_note_says_where_the_budget_that_bound_it_came_from() {
         )
     );
 
-    let allowance = pgdt_io::MEMORY_RESERVE + (400 << 20);
+    let allowance = reserve() + (400 << 20);
     let stated = ParallelArgs { jobs: None, memory: Some(allowance) };
     assert_eq!(
-        stated.resolve_in(&runtime_root("v1-limit"), &reader).plan_note_origin(),
+        stated.resolve_under(v1_limit(), &reader).plan_note_origin(),
         format!(
             " — the budget in force is {} (stated: --memory allows {allowance} resident byte(s))",
             6 * READER
@@ -559,9 +591,8 @@ fn a_plan_note_says_where_the_budget_that_bound_it_came_from() {
 /// constant would pass on a bare host and fail in a container. Every
 /// precedence claim below is asserted against this rather than around it.
 fn flagless_budget() -> Option<u64> {
-    pgdt_io::discover_memory_limit().map(|limit| {
-        pgdt_io::DEFAULT_MEMORY_BUDGET.min(limit.bytes.saturating_sub(pgdt_io::MEMORY_RESERVE))
-    })
+    pgdt_io::discover_memory_limit()
+        .map(|limit| pgdt_io::DEFAULT_MEMORY_BUDGET.min(limit.bytes.saturating_sub(reserve())))
 }
 
 /// **Stating neither flag asks the source**, which is the one thing about
@@ -607,7 +638,7 @@ fn stating_no_parallelism_flag_asks_the_source() {
 /// (`docs/design/decisions.md`, "D83").
 #[test]
 fn a_carved_budget_reaches_the_library_at_a_serial_job_count() {
-    let allowance = pgdt_io::MEMORY_RESERVE + (400 << 20);
+    let allowance = reserve() + (400 << 20);
     let stated = ParallelArgs { jobs: None, memory: Some(allowance) };
     let serial = Recommends::jobs(1);
     assert!(

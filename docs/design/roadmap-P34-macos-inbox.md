@@ -10,12 +10,11 @@ delete this file. See `docs/process.md`, "Inboxes: facts filed by destination".
 
 **Fact.** A flagless run sizes itself from `/proc/meminfo`'s `MemAvailable`
 and the cgroup limit (`crates/pgdt-io/src/memory.rs`, `available_memory_in`,
-`discover_memory_limit_in`; `crates/pgdt-io/src/parallelism.rs`,
-`Parallelism::discover_holding_in`;
-`crates/datafusion-pgdump/src/budget.rs`, `ScanBudget::discover_in`). On macOS each
-read fails into `None`: the CLI falls to `DEFAULT_MEMORY_BUDGET`, a source
-recommending worker memory (`.xz`) keeps its whole recommendation under an
-uncapped bound, and the provider reports `AllowanceOrigin::NoneFound`.
+`discover_memory_limit_in`; `crates/pgdt-io/src/arrangement.rs`,
+`Allowance::discover`, which `pgdt` and the provider's `ScanBudget` both
+take). On macOS each read fails into `Allowance::NoneFound`: the CLI falls to
+`DEFAULT_MEMORY_BUDGET`, and a source recommending worker memory (`.xz`)
+keeps its whole recommendation under an uncapped bound.
 Elsewhere the code compiles there: the I/O layer is `std::os::unix`,
 `namespace-init`'s ending signals are `target_os = "linux"` with an empty
 fallback, and `crates/pgdt/src/introspect.rs`'s glibc arms have a non-gnu stub. There

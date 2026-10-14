@@ -2958,8 +2958,8 @@ RESERVE_BUDGETS: tuple[int, ...] = (64 << 20, 128 << 20, 256 << 20, 512 << 20)
 #: The worker count every reserve reading states.
 #:
 #: The top of `PARALLEL_JOBS`, which is this machine's `available_parallelism()`
-#: and so the count `Parallelism::discover()` recommends here for an `.xz`
-#: source: the stated legs pin that count and vary only the budget.
+#: and so the count an `.xz` source recommends here (`default_workers`): the
+#: stated legs pin that count and vary only the budget.
 #:
 #: **This is a declared axis for `pinned_count_problems`, not an inherited
 #: count.** The family states it on every shape; what makes it exempt from
@@ -3133,7 +3133,7 @@ def reader_bytes(unit: int) -> int:
 #: as a term nothing accounts for.
 LIBRARY_POOL_DEPTH = 4
 
-#: `pgdt_io::MEMORY_RESERVE`, mirrored: what `Parallelism::discover`
+#: `pgdt_io::internal::MEMORY_RESERVE`, mirrored: what `Arrangement::resolve`
 #: holds back from a discovered limit before it divides.
 #:
 #: It is the model's upper bound rather than a term in it. The rule's promise is
@@ -3149,7 +3149,7 @@ def stated_allowance(budget: int) -> int:
     """The `--memory` value that leaves `budget` bytes for the read buffers.
 
     **`--memory` states a *resident* allowance, not a buffer budget**
-    (`docs/design/decisions.md`, "D83"): `Parallelism::within` takes
+    (`docs/design/decisions.md`, "D83"): `Arrangement::resolve` takes
     `MEMORY_RESERVE` off the top before a reader is counted, so a figure
     registered against a buffer budget states that budget plus the reserve and
     goes on measuring what it was registered to measure.
@@ -3169,7 +3169,7 @@ def stated_allowance(budget: int) -> int:
     return budget + LIBRARY_MEMORY_RESERVE
 
 
-#: `pgdt_io::MEMORY_UNPOOLED_BOUND`, mirrored: this crate's bound on
+#: `pgdt_io::internal::MEMORY_UNPOOLED_BOUND`, mirrored: this crate's bound on
 #: what a scan holds resident outside the pools its charge bills, and what
 #: `margin_allowance` predicts a count's resident with.
 #:
@@ -3189,7 +3189,7 @@ def stated_allowance(budget: int) -> int:
 #: to 192 MiB (`docs/design/decisions.md`, "I/O, memory and parallelism").
 LIBRARY_MEMORY_UNPOOLED_BOUND = 256 << 20
 
-#: `pgdt_io::MEMORY_MARGIN_PERCENT`, mirrored: the share of its
+#: `pgdt_io::internal::MEMORY_MARGIN_PERCENT`, mirrored: the share of its
 #: allocation the worst rep of a resolved arrangement must leave unused — the
 #: criterion `MEMORY_RESERVE` was chosen against, which `reserve`'s gate
 #: reports and does not fail on (`REPORTED_MARGIN_PERCENT`). Held to the
@@ -3242,7 +3242,7 @@ def discovered_budget(limit: int) -> int:
     """What a flagless run inside a container of `limit` bytes resolves as its
     budget: `limit − MEMORY_RESERVE`, floored at zero.
 
-    `Parallelism::within`, mirrored — `allowance.saturating_sub(
+    `Parallelism::within_shared`, mirrored — `allowance.saturating_sub(
     MEMORY_RESERVE)` (`parallelism.rs`), which a stated `--memory` reaches by the same
     call (`stated_allowance`).
 
@@ -6523,6 +6523,7 @@ SCAN = (
 READ = tuple(
     f"crates/pgdt-io/src/{name}.rs"
     for name in (
+        "arrangement",
         "cancel",
         "lib",
         "memory",

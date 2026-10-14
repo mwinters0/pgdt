@@ -20,7 +20,7 @@ use pgdt_codec::{SchemaMode, compare::ComparisonSemantics};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
 use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy, sweep_request, ungathered};
-use pgdt_io::LocalFileSource;
+use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_model::{DiagnosticKind, Finding, TableName};
@@ -354,9 +354,7 @@ async fn scans_draw_on_the_session_budget_and_return_it() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot_hold() {
     use datafusion::execution::runtime_env::RuntimeEnvBuilder;
-    use pgdt_io::{
-        DEFAULT_MEMORY_BUDGET, MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MEMORY_UNPOOLED_BOUND,
-    };
+    use pgdt_io::{Allowance, Arrangement, ArrangementRequest, DEFAULT_MEMORY_BUDGET};
 
     let dir = tempfile::tempdir().unwrap();
     let fixture = fixtures_root().join("16/edge_cases/default.sql");
@@ -380,13 +378,20 @@ async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot
 
     // An allowance whose cap past the reserve holds the plain scan's
     // default, and whose margin, once the statistics and the pool are off
-    // it, does not.
+    // it, does not: the resolution's budget for a plain scan holding both,
+    // which the provider must bill both to reach.
     let pool = 128u64 << 20;
-    let allowance = MEMORY_RESERVE + statistics + pool;
-    assert!(allowance - MEMORY_RESERVE > DEFAULT_MEMORY_BUDGET);
-    let ceiling = (allowance / 100 * (100 - MEMORY_MARGIN_PERCENT))
-        .saturating_sub(MEMORY_UNPOOLED_BOUND)
-        .saturating_sub(statistics + pool);
+    let allowance = (512 << 20) + statistics;
+    let plain = |held| {
+        let request = ArrangementRequest {
+            held,
+            carve_estimate: true,
+            ..ArrangementRequest::recommended(4, source.default_worker_memory())
+        };
+        Arrangement::resolve(&Allowance::Stated(allowance), request).parallelism().budget_bytes()
+    };
+    assert_eq!(plain(0), DEFAULT_MEMORY_BUDGET);
+    let ceiling = plain(statistics + pool);
     assert!(0 < ceiling && ceiling < DEFAULT_MEMORY_BUDGET);
     let query = "SELECT * FROM shop.public.widgets";
 

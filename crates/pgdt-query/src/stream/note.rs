@@ -32,7 +32,7 @@ pub struct PlanNote {
 /// library's vocabulary and in the order [`PlanNote::levers`] lists them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PlanLever {
-    /// A larger resident allowance, carved as [`Parallelism::within`](pgdt_io::Parallelism::within) carves
+    /// A larger resident allowance, carved as [`Arrangement::resolve`](pgdt_io::Arrangement::resolve) carves
     /// one — listed only where it would raise the budget the note quotes
     /// ([`Parallelism::allowance_raises_budget`](pgdt_io::Parallelism::allowance_raises_budget)), which on a source
     /// recommending no per-reader cost stops at
@@ -126,7 +126,7 @@ pub enum PlanNoteKind {
     ///
     /// **It is the arrangement below the reserve, named rather than left to
     /// emerge** (`docs/design/decisions.md`, "D3"): a memory limit at or under
-    /// `pgdt_io::MEMORY_RESERVE` leaves the budget at zero, and
+    /// `pgdt_io::internal::MEMORY_RESERVE` leaves the budget at zero, and
     /// [`PlanNoteKind::ParallelismBudgetLimited`] fires only where `requested`
     /// exceeds what was planned, which at one worker is never.
     ///

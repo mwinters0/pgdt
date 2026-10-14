@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 use pgdt_io::{
-    ByteRangeSource, DEFAULT_MEMORY_BUDGET, Parallelism, Partitioning, RetainedUnit, WorkerMemory,
+    ByteRangeSource, Parallelism, Partitioning, RetainedUnit, WorkerMemory,
     internal::{cut, worker_count},
 };
 use pgdt_model::CopyBlock;
@@ -41,7 +41,7 @@ fn compressed_block_path_declined(
     // The budget actually in force, which is what the source compared its
     // reader against: a caller that stated no number leaves every pool on
     // this one.
-    let memory_bytes = parallelism.memory_bytes().unwrap_or(DEFAULT_MEMORY_BUDGET);
+    let memory_bytes = parallelism.budget_bytes();
     Some(PlanNote::compressed_block_path_declined(
         table.block_count(),
         table.max_block_uncompressed(),
@@ -156,7 +156,7 @@ pub(super) fn plan_partitions(
     let footprint = widest.map_or(0, Partitioning::partition_bytes);
     // What the notes below offer, read off the source's cost and the budget
     // it was carved by: both callers carve with this recommendation
-    // (`Parallelism::within`, `Parallelism::discover_for`).
+    // (`pgdt_io::Arrangement::resolve`).
     let chunk_sized = widest.is_some_and(Partitioning::sized_by_read_chunk);
     let recommended = source.default_worker_memory();
     let raises = |budget| Parallelism::allowance_raises_budget(recommended, budget);

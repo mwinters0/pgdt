@@ -3,12 +3,8 @@
 //! leader share.
 
 use std::num::NonZeroUsize;
-use std::path::Path;
 
-use crate::memory::{
-    DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, available_memory_in, discover_memory_limit_in,
-    margin_allowance,
-};
+use crate::memory::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, margin_allowance};
 
 /// What a source holds resident while some number of concurrent workers read
 /// it — **a shape rather than a scalar**, because the cost is not linear in
@@ -39,7 +35,7 @@ use crate::memory::{
 /// duplicate decode — a worker still holding its own block while its tail read
 /// decodes its successor's into a second slot — which only a second reader can
 /// cause; no reading confirms it. Being the program's, it is on every
-/// allocator, and so far [`MEMORY_UNPOOLED_BOUND`](crate::MEMORY_UNPOOLED_BOUND) has absorbed it. **(b) owned
+/// allocator, and so far [`MEMORY_UNPOOLED_BOUND`](crate::internal::MEMORY_UNPOOLED_BOUND) has absorbed it. **(b) owned
 /// by P23**: closing it means billing the unit here, or, if it is `KD20`'s,
 /// not holding it.
 ///
@@ -152,10 +148,15 @@ impl WorkerMemory {
 ///
 /// **The bytes here are a resolved pool budget, not the allowance a person
 /// states.** A caller that means "this is all the memory the process may have"
-/// says so through [`Parallelism::within`], which carves the budget out of it;
-/// what survives into this type is the carved number, because that is the one
+/// says so through [`Arrangement::resolve`](crate::Arrangement::resolve), which carves the budget out of
+/// it; what survives into this type is the carved number, because that is the one
 /// every pool and every affordability test reads
 /// (`docs/design/decisions.md`, "D83").
+///
+/// **Three ways to one**: [`Arrangement::resolve`](crate::Arrangement::resolve), which carves an
+/// allowance; [`Parallelism::workers`], for a caller stating both numbers
+/// already resolved; and [`Parallelism::default`], the serial path stating
+/// nothing.
 ///
 /// **`Serial` is a state, not the number one.** One worker and the serial path
 /// are the same execution, so [`Parallelism::workers`] answers `Serial` for a
@@ -192,7 +193,7 @@ pub enum Parallelism {
         jobs: NonZeroUsize,
         /// What those workers may hold in their source's **pools**, in bytes —
         /// a resolved budget and not the resident allowance it was carved from
-        /// ([`Parallelism::within`]), which is the number a memory cgroup is
+        /// ([`Arrangement::resolve`](crate::Arrangement::resolve)), which is the number a memory cgroup is
         /// denominated in. A worker count cannot be promised to either: what a
         /// given count costs scales with the source's block size
         /// ([`WorkerMemory::at`]).
@@ -245,6 +246,13 @@ impl Parallelism {
         }
     }
 
+    /// The bytes every pool budgets under: [`Parallelism::memory_bytes`], or
+    /// [`DEFAULT_MEMORY_BUDGET`] — what a pool falls back to — where nobody
+    /// stated one.
+    pub fn budget_bytes(&self) -> u64 {
+        self.memory_bytes().unwrap_or(DEFAULT_MEMORY_BUDGET)
+    }
+
     /// The ceiling on concurrent workers: one for [`Parallelism::Serial`],
     /// which *is* one worker rather than none.
     pub fn jobs(&self) -> usize {
@@ -254,143 +262,30 @@ impl Parallelism {
         }
     }
 
-    /// The arrangement to run when the caller has stated neither number and
-    /// has nothing open — the environment's own answer, composed from
-    /// [`discover_memory_limit`](crate::discover_memory_limit) and `std::thread::available_parallelism`
-    /// through [`MEMORY_RESERVE`].
-    ///
-    /// **It is a convenience over two primitives, and taking it is opting
-    /// in**: [`Parallelism::default`] is still the serial path stating no
-    /// budget. See `docs/design/decisions.md`, "D1" and "D11".
-    ///
-    /// **An unlimited environment falls back to the shipped constant**: with
-    /// no limit found and no source to recommend otherwise, this is
-    /// [`DEFAULT_MEMORY_BUDGET`] — or, at a serial count,
-    /// [`Parallelism::default`] itself.
-    pub fn discover() -> Self {
-        Self::discover_for(std::thread::available_parallelism().map_or(1, NonZeroUsize::get), None)
+    /// [`Parallelism::within_shared`] with nothing drawn and nothing held —
+    /// the carving alone, which the tests pin.
+    #[cfg(test)]
+    pub(crate) fn within(jobs: usize, memory: Option<WorkerMemory>, allowance: u64) -> Self {
+        Self::within_shared(jobs, memory, allowance, 0, 0)
     }
 
-    /// [`Parallelism::discover`]'s rule against recommendations a caller has
-    /// already obtained — a source's own worker count
-    /// ([`ByteRangeSource::default_workers`](crate::ByteRangeSource::default_workers)) and what one of those workers
-    /// holds ([`ByteRangeSource::default_worker_memory`](crate::ByteRangeSource::default_worker_memory)).
+    /// The arrangement `jobs` workers take inside a **resident allowance** —
+    /// a discovered limit, `pgdt --memory`, and an embedder that means by its
+    /// number what a container means by one — as one of several arrangements
+    /// drawing on it at once, where `drawn` is the read-buffer budget the
+    /// others already hold, and `held` what the process holds resident besides
+    /// any arrangement: loaded statistics, or memory granted to something other
+    /// than a scan ([`Arrangement::resolve`](crate::Arrangement::resolve)).
     ///
-    /// **It answers with both numbers, because they are a pair**: where the
-    /// allowance affords fewer than `jobs`, the answer is the smaller count
-    /// *and* the budget that count spends (`docs/design/roadmap.md`, "A
-    /// default runs as fast as the allocation permits"). A caller holding a
-    /// count somebody **stated** keeps that count and takes only the budget
-    /// from here (`Discovered::resolve`).
-    ///
-    /// **The composition is not a `min`**, which would collapse a compressed
-    /// scan to serial on an unlimited host (`docs/design/decisions.md`, "D3").
-    /// What distinguishes *no limit found* from *a small limit* is that the
-    /// first takes no reserve and no margin:
-    ///
-    /// - a discovered limit is carved by [`Parallelism::within`], the same
-    ///   arithmetic a stated allowance gets: it caps at `limit −
-    ///   MEMORY_RESERVE`, and [`WorkerMemory::at`] evaluated at the count the
-    ///   budget *affords* — or
-    ///   [`DEFAULT_MEMORY_BUDGET`] where the caller has no recommendation — is
-    ///   taken no higher, and may fall **below**
-    ///   [`DEFAULT_MEMORY_BUDGET`]. It is **not** `jobs × per_worker`: the
-    ///   count is the afforded one rather than the asked-for one, and `at`
-    ///   carries the pool's retention term beside the per-reader charge
-    ///   (`docs/design/decisions.md`, "D4"). The **count** answers to a second
-    ///   condition: its predicted resident must leave
-    ///   [`MEMORY_MARGIN_PERCENT`](crate::MEMORY_MARGIN_PERCENT) of the limit unused ([`margin_allowance`]);
-    /// - no limit found caps at half of [`available_memory`](crate::available_memory), an estimate two
-    ///   processes reading at once each see the whole of, and where that
-    ///   cannot be read, not at all.
-    ///
-    /// **A caller with no recommendation and no limit states nothing**, which
-    /// is [`Parallelism::default`] at a serial count and
-    /// [`DEFAULT_MEMORY_BUDGET`] above one.
-    pub fn discover_for(jobs: usize, memory: Option<WorkerMemory>) -> Self {
-        Self::discover_in(Path::new("/"), jobs, memory)
-    }
-
-    /// [`Parallelism::discover_for`] against an arbitrary filesystem root, for
-    /// the reason [`discover_memory_limit_in`] takes one — and public for the
-    /// same reason it is: a caller's own resolution is pinned against
-    /// environments this machine cannot be put into
-    /// (`crates/pgdt/tests/data/runtime/`).
-    pub fn discover_in(root: &Path, jobs: usize, memory: Option<WorkerMemory>) -> Self {
-        Self::discover_holding_in(root, jobs, memory, 0)
-    }
-
-    /// [`Parallelism::discover_in`] for a caller holding `held` bytes resident
-    /// besides the arrangement — the statistics a cache hands its scan — which
-    /// a discovered limit carves as [`Parallelism::within_shared`] does.
-    ///
-    /// **With no limit found, `held` changes nothing**: that arrangement is
-    /// held under no margin, the halving of what the machine reports free
-    /// being the margin there.
-    pub fn discover_holding_in(
-        root: &Path,
-        jobs: usize,
-        memory: Option<WorkerMemory>,
-        held: u64,
-    ) -> Self {
-        let (cap, ceiling) = match discover_memory_limit_in(root) {
-            // The one carving, shared with a stated allowance
-            // ([`Parallelism::within`]).
-            Some(limit) => return Self::within_shared(jobs, memory, limit.bytes, 0, held),
-            // Nothing discovered and nothing recommended: no cap to state, and
-            // no recommendation to cap, which is the library's own default.
-            None if memory.is_none() => (None, None),
-            // `MemAvailable` unreadable is the one shape with a recommendation
-            // and no ceiling to hold it under — and no limit to take a margin
-            // of either, the halving being the margin there.
-            // deficiency: KD113 — so the recommendation stands whole, at the
-            // count asked for, and `datafusion-pgdump`'s `ScanBudget`, holding
-            // no allowance, lets each scan discover alone, sharing nothing.
-            // The standing rule is that unstated is not unlimited
-            // (`docs/design/roadmap.md`, "A default runs as fast as the
-            // allocation permits"); the fix is a choice between
-            // `DEFAULT_MEMORY_BUDGET` here and refusing a recommendation.
-            None => {
-                (Some(available_memory_in(root).map_or(u64::MAX, |available| available / 2)), None)
-            }
-        };
-        match cap {
-            Some(cap) => {
-                let (jobs, budget) = Self::fit(jobs, memory, cap, ceiling);
-                Self::workers(jobs, budget)
-            }
-            None if jobs > 1 => Self::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            None => Self::default(),
-        }
-    }
-
-    /// The arrangement `jobs` workers take inside a **resident allowance** the
-    /// caller states — `pgdt --memory`, and an embedder that means by its
-    /// number what a container means by one.
-    ///
-    /// **It is [`Parallelism::discover_in`]'s own carving, called with a
-    /// stated number in place of the discovered limit**: [`MEMORY_RESERVE`]
+    /// **One carving, whichever end the allowance came from**: [`MEMORY_RESERVE`]
     /// comes off the top for everything the pools do not bill, the count is
     /// held to [`margin_allowance`], and the budget it answers with is what
     /// that many workers spend. Neither number the caller gets back is the one
     /// it typed, and that is the point — the typed number bounds the
     /// **process**, where the budget bounds the pools
-    /// (`docs/design/decisions.md`, "D83").
-    ///
-    /// **The count it returns is a recommendation lowered to fit**. A caller
-    /// holding a count somebody *stated* keeps that count and takes only the
-    /// budget from here, exactly as against a discovered limit
-    /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
-    /// permits").
-    pub fn within(jobs: usize, memory: Option<WorkerMemory>, allowance: u64) -> Self {
-        Self::within_shared(jobs, memory, allowance, 0, 0)
-    }
-
-    /// [`Parallelism::within`] for one of several arrangements drawing on one
-    /// allowance at once — concurrent scans in one process — where `drawn` is
-    /// the read-buffer budget the others already hold, and `held` what the
-    /// process holds resident besides any arrangement: loaded statistics, or
-    /// memory granted to something other than a scan.
+    /// (`docs/design/decisions.md`, "D83"). The count is a recommendation
+    /// lowered to fit (`docs/design/roadmap.md`, "A default runs as fast as
+    /// the allocation permits").
     ///
     /// **The reserve comes off once, and what is drawn comes off both
     /// bounds**: [`MEMORY_RESERVE`] covers the process however many
@@ -398,11 +293,11 @@ impl Parallelism {
     /// is a byte of the cap and of [`margin_allowance`]'s ceiling this one
     /// cannot spend. An allowance already drawn to nothing leaves a source
     /// recommending a per-worker cost one worker on a budget of zero, the
-    /// floor [`Parallelism::within`] has too, and one recommending none its
-    /// count on that zero.
+    /// floor an allowance under the reserve has too, and one recommending none
+    /// its count on that zero.
     ///
     /// **What is `held` comes off the ceiling alone**, as
-    /// [`statistics_allowance`](crate::statistics_allowance) bills statistics (`docs/design/decisions.md`,
+    /// [`statistics_allowance`](crate::memory::statistics_allowance) bills statistics (`docs/design/decisions.md`,
     /// "D85"): the cap is the reserve's, which stands for the arrangements'
     /// own excess over their budgets, and a holding is none of that excess.
     /// So a holding lowers the count first.
@@ -417,7 +312,7 @@ impl Parallelism {
     /// untouched, and with nothing held the budget is [`Parallelism::fit`]'s.
     /// *Rejected: a plain-source exception*, what a plain budget is worth
     /// being `KD25`'s and `KD32`'s question rather than this rule's.
-    pub fn within_shared(
+    pub(crate) fn within_shared(
         jobs: usize,
         memory: Option<WorkerMemory>,
         allowance: u64,
@@ -452,13 +347,13 @@ impl Parallelism {
     ///
     /// **`charge_ceiling` is the margin, and it bounds the count alone**: the
     /// most this arrangement may be *charged* if its predicted resident —
-    /// `memory.at(n)` plus [`MEMORY_UNPOOLED_BOUND`](crate::MEMORY_UNPOOLED_BOUND) — is to leave
-    /// [`MEMORY_MARGIN_PERCENT`](crate::MEMORY_MARGIN_PERCENT) of the allowance unused
+    /// `memory.at(n)` plus [`MEMORY_UNPOOLED_BOUND`](crate::memory::MEMORY_UNPOOLED_BOUND) — is to leave
+    /// [`MEMORY_MARGIN_PERCENT`](crate::memory::MEMORY_MARGIN_PERCENT) of the allowance unused
     /// ([`margin_allowance`]), whether that allowance was discovered or typed
     /// (`docs/design/decisions.md`, "D83"). The budget stays `cap`-bounded
     /// rather than ceiling-bounded, so what a lowered count reports is still
     /// what it spends (`docs/design/decisions.md`, "D3").
-    pub(super) fn fit(
+    pub(crate) fn fit(
         jobs: usize,
         memory: Option<WorkerMemory>,
         cap: u64,
@@ -472,8 +367,8 @@ impl Parallelism {
         (affords, cap.min(memory.at(affords)))
     }
 
-    /// Whether a larger allowance, carved as [`Parallelism::within`] carves
-    /// one, would raise a budget of `budget` bytes for a source recommending
+    /// Whether a larger allowance, carved as [`Parallelism::within_shared`]
+    /// carves one, would raise a budget of `budget` bytes for a source recommending
     /// `memory` ([`ByteRangeSource::default_worker_memory`](crate::ByteRangeSource::default_worker_memory)) — the question a
     /// plan note's [`pgdt_query::PlanLever::LargerAllowance`] answers.
     ///

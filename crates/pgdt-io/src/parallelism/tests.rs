@@ -1,10 +1,20 @@
 use std::num::NonZeroUsize;
+use std::path::Path;
 
+use crate::internal::{MEMORY_MARGIN_PERCENT, MEMORY_UNPOOLED_BOUND, discover_allowance_in};
 use crate::source::pool::POOL_DEPTH;
 use crate::test_support::*;
 use crate::*;
 
 use super::*;
+
+/// What a caller recommending `jobs` workers, each holding `memory`,
+/// resolves to inside the allowance `root` states — the flagless
+/// arrangement ([`Arrangement::resolve`]).
+fn discover_in(root: &Path, jobs: usize, memory: Option<WorkerMemory>) -> Parallelism {
+    let allowance = discover_allowance_in(root);
+    Arrangement::resolve(&allowance, ArrangementRequest::recommended(jobs, memory)).parallelism()
+}
 
 /// One worker **is** the serial path, so it is spelled that way rather
 /// than as a `Workers` of one nobody can tell from it; zero is a caller's
@@ -47,14 +57,13 @@ fn a_discovered_limit_caps_the_recommendation_at_the_limit_less_the_reserve() {
     // budget rather than being printed beside one it cannot spend. The
     // budget is still `cap`-bounded and not margin-bounded, so the floor
     // arrangement reports what one reader holds.
-    let squeezed =
-        Parallelism::discover_in(root.path(), 8, Some(WorkerMemory::per_worker(512 << 20)));
+    let squeezed = discover_in(root.path(), 8, Some(WorkerMemory::per_worker(512 << 20)));
     assert_eq!(squeezed.memory_bytes(), Some(512 << 20));
     assert_eq!(squeezed.jobs(), 1);
 
     // Inside the margin allowance as well as inside the cap, so both
     // numbers stand.
-    let roomy = Parallelism::discover_in(root.path(), 8, Some(WorkerMemory::per_worker(16 << 20)));
+    let roomy = discover_in(root.path(), 8, Some(WorkerMemory::per_worker(16 << 20)));
     assert_eq!(roomy.memory_bytes(), Some(128 << 20));
     assert_eq!(roomy.jobs(), 8);
 
@@ -62,8 +71,7 @@ fn a_discovered_limit_caps_the_recommendation_at_the_limit_less_the_reserve() {
     // is exactly what that many readers spend — never the cap itself,
     // which is the over-ask this pairing exists to remove. One more reader
     // would fit the cap and is refused.
-    let fitted =
-        Parallelism::discover_in(root.path(), 8, Some(WorkerMemory::per_worker(100 << 20)));
+    let fitted = discover_in(root.path(), 8, Some(WorkerMemory::per_worker(100 << 20)));
     assert_eq!(fitted.jobs(), 5);
     assert_eq!(fitted.memory_bytes(), Some(500 << 20));
     assert!(fitted.memory_bytes() < Some(cap), "the cap itself would be the over-ask");
@@ -83,8 +91,8 @@ fn the_count_answers_to_the_margin_and_not_to_the_recommendation() {
     let reader = 138 << 20;
     let memory = WorkerMemory::per_worker(reader).pooling(128 << 20, POOL_DEPTH);
 
-    let narrow = Parallelism::discover_in(root.path(), 24, Some(memory));
-    let wide = Parallelism::discover_in(root.path(), 64, Some(memory));
+    let narrow = discover_in(root.path(), 24, Some(memory));
+    let wide = discover_in(root.path(), 64, Some(memory));
     assert_eq!(narrow.jobs(), wide.jobs(), "the host's core count is not the answer");
     assert_eq!(narrow.memory_bytes(), wide.memory_bytes());
 
@@ -125,7 +133,7 @@ fn the_margin_never_takes_the_last_reader_or_the_budget_it_spends() {
     // reader of this file is charged, while its cap is above it.
     root.v2("/leaf").v2_limits("/leaf", Some(&(960u64 << 20).to_string()), None);
     let memory = WorkerMemory::per_worker(138 << 20).pooling(128 << 20, POOL_DEPTH);
-    let tight = Parallelism::discover_in(root.path(), 24, Some(memory));
+    let tight = discover_in(root.path(), 24, Some(memory));
     assert_eq!(tight.jobs(), 1);
     assert_eq!(tight.memory_bytes(), Some(memory.at(1)));
     assert!(memory.at(1) > margin_allowance(960 << 20), "the margin cannot afford it");
@@ -162,7 +170,7 @@ fn the_margin_is_the_tighter_condition_only_above_the_crossover() {
 fn a_limit_at_or_under_the_reserve_leaves_no_budget_at_all() {
     let root = FakeRoot::new();
     root.v2("/leaf").v2_limits("/leaf", Some(&MEMORY_RESERVE.to_string()), None);
-    let starved = Parallelism::discover_in(root.path(), 4, Some(WorkerMemory::per_worker(1 << 30)));
+    let starved = discover_in(root.path(), 4, Some(WorkerMemory::per_worker(1 << 30)));
     assert_eq!(starved.memory_bytes(), Some(0));
     // One worker at whatever the cap is, not one worker's worth of bytes:
     // the floor is on the count.
@@ -170,7 +178,7 @@ fn a_limit_at_or_under_the_reserve_leaves_no_budget_at_all() {
 
     let tighter = FakeRoot::new();
     tighter.v2("/leaf").v2_limits("/leaf", Some("134217728"), None);
-    assert_eq!(Parallelism::discover_in(tighter.path(), 4, None).memory_bytes(), Some(0));
+    assert_eq!(discover_in(tighter.path(), 4, None).memory_bytes(), Some(0));
 }
 
 /// **A source with no recommendation is still capped by a discovered
@@ -180,10 +188,7 @@ fn a_limit_at_or_under_the_reserve_leaves_no_budget_at_all() {
 fn a_source_that_recommends_nothing_is_capped_at_the_existing_default() {
     let root = FakeRoot::new();
     root.v2("/leaf").v2_limits("/leaf", Some("3221225472"), None);
-    assert_eq!(
-        Parallelism::discover_in(root.path(), 1, None).memory_bytes(),
-        Some(DEFAULT_MEMORY_BUDGET)
-    );
+    assert_eq!(discover_in(root.path(), 1, None).memory_bytes(), Some(DEFAULT_MEMORY_BUDGET));
 }
 
 /// **The composition is not a `min`.** With no limit found there is no cap
@@ -199,8 +204,7 @@ fn no_limit_found_leaves_the_recommendation_uncapped_but_for_memavailable() {
     // Readers of an ordinary compressed dump, well under half of the
     // `MemAvailable` stated above.
     let per_worker = 58 << 20;
-    let roomy =
-        Parallelism::discover_in(root.path(), 24, Some(WorkerMemory::per_worker(per_worker)));
+    let roomy = discover_in(root.path(), 24, Some(WorkerMemory::per_worker(per_worker)));
     assert_eq!(roomy.memory_bytes(), Some(per_worker * 24));
     assert_eq!(roomy.jobs(), 24);
 
@@ -210,8 +214,7 @@ fn no_limit_found_leaves_the_recommendation_uncapped_but_for_memavailable() {
     // then reduced to what half of it buys rather than left standing.
     let small = FakeRoot::new();
     small.v2("/leaf").write("proc/meminfo", "MemAvailable:     262144 kB\n");
-    let squeezed =
-        Parallelism::discover_in(small.path(), 24, Some(WorkerMemory::per_worker(per_worker)));
+    let squeezed = discover_in(small.path(), 24, Some(WorkerMemory::per_worker(per_worker)));
     assert_eq!(squeezed.jobs(), 2);
     assert_eq!(squeezed.memory_bytes(), Some(per_worker * 2));
 
@@ -220,8 +223,7 @@ fn no_limit_found_leaves_the_recommendation_uncapped_but_for_memavailable() {
     let blind = FakeRoot::new();
     blind.v2("/leaf");
     assert_eq!(
-        Parallelism::discover_in(blind.path(), 24, Some(WorkerMemory::per_worker(per_worker)))
-            .memory_bytes(),
+        discover_in(blind.path(), 24, Some(WorkerMemory::per_worker(per_worker))).memory_bytes(),
         Some(per_worker * 24)
     );
 }
@@ -240,7 +242,7 @@ fn a_stated_allowance_resolves_as_the_same_number_discovered_would() {
         for jobs in [1, 4, 24] {
             assert_eq!(
                 Parallelism::within(jobs, memory, allowance),
-                Parallelism::discover_in(root.path(), jobs, memory),
+                discover_in(root.path(), jobs, memory),
                 "{allowance} bytes at {jobs} jobs",
             );
         }
@@ -380,11 +382,8 @@ fn a_holding_comes_off_the_ceiling_and_never_the_cap() {
 fn nothing_discovered_and_nothing_recommended_is_todays_default() {
     let root = FakeRoot::new();
     root.v2("/leaf").write("proc/meminfo", "MemAvailable:   20002184 kB\n");
-    assert_eq!(Parallelism::discover_in(root.path(), 1, None), Parallelism::default());
-    assert_eq!(
-        Parallelism::discover_in(root.path(), 8, None),
-        Parallelism::workers(8, DEFAULT_MEMORY_BUDGET)
-    );
+    assert_eq!(discover_in(root.path(), 1, None), Parallelism::default());
+    assert_eq!(discover_in(root.path(), 8, None), Parallelism::workers(8, DEFAULT_MEMORY_BUDGET));
 }
 
 /// **The closed form agrees with a search, over the whole grid.**

@@ -198,13 +198,6 @@ than reading as a phase nobody has sliced.
   **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
   in hand being one. Detail: `crates/pgdt-model/src/catalog.rs`.
 
-- **KD29** — a flagless `pgdt` run reads its memory limit once for the
-  status lines and the statistics allowance and again inside
-  `Parallelism::discover_holding_in` for each read-buffer budget it carves, so
-  a limit rewritten between two reads is announced and carved for statistics as
-  one number while the pools are budgeted from another. **(b) owned by P36**,
-  36.2. Detail: `crates/pgdt/src/parallel.rs`.
-
 - **KD31** — `attach_text` caps a run's one read at `SPAN_STORED_TEXT_MAX_BYTES` per span from
   the run's start, so a span following one longer than the cap can be stored
   empty and `truncated` however short it is. **(c) unowned**; promoted by a
@@ -507,7 +500,7 @@ than reading as a phase nobody has sliced.
   a source's recommended charge stands uncapped, at the count asked for, and
   the provider's scans share no budget, though unstated is not unlimited
   (`../design/roadmap.md`). **(c) unowned**; promoted by such a host reaching a
-  user. Detail: `crates/pgdt-io/src/parallelism.rs`.
+  user. Detail: `crates/pgdt-io/src/arrangement.rs`.
 
 - **KD114** — a TOC header whose owner is empty (`; Owner: `, as
   `COMMENT ON EXTENSION` writes it) parses to no header at all, so its entry

@@ -429,7 +429,7 @@ impl ByteRangeSource for XzSource {
     /// at block boundaries — and capped *here*, where the count is
     /// recommended, because the recommendation is multiplied into a budget
     /// request ([`ByteRangeSource::default_worker_memory`]) and printed beside
-    /// it ([`Parallelism::discover_for`]).
+    /// it ([`Arrangement::resolve`](crate::Arrangement::resolve)).
     ///
     /// A failure to read the count answers **one** rather than propagating.
     fn default_workers(&self) -> usize {

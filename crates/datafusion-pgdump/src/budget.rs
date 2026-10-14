@@ -1,13 +1,12 @@
 //! The session's byte budget: one allowance every pgdump scan the session runs
 //! draws from.
 
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use datafusion::catalog::Session;
 use datafusion::execution::memory_pool::MemoryLimit;
 use datafusion::prelude::SessionContext;
-use pgdt_io::{Parallelism, WorkerMemory};
+use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, Parallelism, WorkerMemory};
 
 /// What the pgdump scans of one DataFusion session may hold resident between
 /// them, and how much of it the scans running now have drawn.
@@ -23,7 +22,8 @@ use pgdt_io::{Parallelism, WorkerMemory};
 /// pool does not cover data sources, and nothing in it reads a cgroup. The
 /// allowance means what `pgdt --memory` means — resident, the number a
 /// container is given — and each scan carves its read-buffer budget from it
-/// through [`Parallelism::within_shared`], the reserve once for the process.
+/// through [`Arrangement::resolve`], as `pgdt` does, the reserve once for the
+/// process.
 ///
 /// **What the session holds besides its scans is billed too**, before any scan
 /// draws: a memory pool stating a `Finite` limit — what `datafusion-cli
@@ -31,7 +31,7 @@ use pgdt_io::{Parallelism, WorkerMemory};
 /// and the statistics each dump registered against this budget holds in its
 /// resident map, billed as `pgdt` bills the statistics a cache hands a mapping
 /// pass ([`pgdt_model::DumpIndex::statistics_heap_bytes`]). Both come off
-/// the margin's ceiling alone, as `held` in [`Parallelism::within_shared`]:
+/// the margin's ceiling alone, as [`ArrangementRequest::held`]:
 /// the cap is the reserve's, standing for the scans' own excess over their
 /// budgets, and neither holding is any of it. So they lower a scan's count
 /// first, and whatever of them the ceiling's room cannot absorb at that count
@@ -40,7 +40,7 @@ use pgdt_io::{Parallelism, WorkerMemory};
 /// overruns it no further. *Rejected: taking them off the
 /// allowance the margin is a fraction of*: the container's limit is still the
 /// whole allowance, and a margin taken of less would let the predicted
-/// resident leave less than [`pgdt_io::MEMORY_MARGIN_PERCENT`] of the
+/// resident leave less than `pgdt_io`'s margin percentage of the
 /// container unused, short by that fraction of what the session holds.
 /// *Rejected: taking them off the cap as well*, as another scan's draw comes
 /// off, which bills them against the reserve's excess a second time; *and a
@@ -60,40 +60,23 @@ use pgdt_io::{Parallelism, WorkerMemory};
 /// refuses a unit rather than shrinking it ("D4").
 #[derive(Debug)]
 pub struct ScanBudget {
-    allowance: Option<u64>,
-    origin: AllowanceOrigin,
+    allowance: Allowance,
     held: Mutex<Held>,
 }
 
-/// Where the allowance a scan's budget was carved from came from: the half of
-/// a budget-quoting plan note the library does not tell, provenance being the
-/// caller's fact (`docs/design/decisions.md`, "D64"), and what
-/// [`crate::BudgetedPlanNote`] names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum AllowanceOrigin {
-    /// `pgdump.memory`, stated in the session ([`crate::PgDumpSettings`]).
-    Setting,
-    /// Stated by whoever built the budget ([`ScanBudget::new`]).
-    Stated,
-    /// A memory limit this process runs under, and the file that states it
-    /// ([`pgdt_io::MemoryLimit`]).
-    Limit { read_from: PathBuf },
-    /// Half of what the machine reports available, no limit being found.
-    HalfAvailable,
-    /// Nothing: no limit found, and the machine's available memory unreadable.
-    NoneFound,
-}
-
 /// What one scan's budget was carved from, taken when the scan drew it: the
-/// allowance and where it came from, and the three holdings that came off it
-/// ([`ScanBudget::draw`]'s terms).
+/// allowance and where it came from — the half of a budget-quoting plan note
+/// the library does not tell, provenance being the caller's fact
+/// (`docs/design/decisions.md`, "D64"), and what [`crate::BudgetedPlanNote`]
+/// names — and the three holdings that came off it ([`ScanBudget::draw`]'s
+/// terms).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BudgetAccount {
-    /// The resident allowance carved, or `None` where nothing stated or
-    /// discovered one, and the library's own discovery sized the scan.
-    pub allowance: Option<u64>,
-    /// Where [`BudgetAccount::allowance`] came from.
-    pub origin: AllowanceOrigin,
+    /// The resident allowance carved, and where it came from:
+    /// [`Allowance::Setting`] for `pgdump.memory` ([`crate::PgDumpSettings`]),
+    /// [`Allowance::Stated`] for the number the budget was built with
+    /// ([`ScanBudget::new`]), else what [`ScanBudget::discover`] found.
+    pub allowance: Allowance,
     /// The session memory pool's `Finite` limit, `0` where it states none.
     pub pool_limit: u64,
     /// The statistics the dumps billed to the budget held resident.
@@ -112,52 +95,30 @@ struct Held {
 }
 
 impl ScanBudget {
-    /// The allowance this process runs under, found as `pgdt` finds it: the
-    /// memory limit that binds, else half of what the machine reports
-    /// available (`docs/design/roadmap.md`, "A default runs as fast as the
-    /// allocation permits"). A host that answers neither leaves no allowance,
-    /// and a scan then takes the library's own discovery for its count.
+    /// The allowance this process runs under, found as `pgdt` finds it
+    /// ([`Allowance::discover`]): the memory limit that binds, else half of
+    /// what the machine reports available (`docs/design/roadmap.md`, "A
+    /// default runs as fast as the allocation permits"). A host that answers
+    /// neither leaves no allowance, and a scan's recommendation then stands.
     ///
     /// **The halved figure is carved as an allowance, reserve and margin
-    /// included**, where `pgdt` caps its buffers at it with neither, so the
-    /// provider's budget there is the smaller: the reserve here stands for
-    /// what DataFusion holds resident beyond any pool limit it states, which a
-    /// `pgdt` process does not hold.
+    /// included** ([`ArrangementRequest::carve_estimate`]), where `pgdt` caps
+    /// its buffers at it with neither, so the provider's budget there is the
+    /// smaller: the reserve here stands for what DataFusion holds resident
+    /// beyond any pool limit it states, which a `pgdt` process does not hold.
     pub fn discover() -> Self {
-        Self::discover_in(Path::new("/"))
-    }
-
-    /// [`ScanBudget::discover`] against an arbitrary filesystem root, the
-    /// seam [`pgdt_io::discover_memory_limit_in`] offers, so each origin
-    /// can be pinned on a machine that has only one of them.
-    pub fn discover_in(root: &Path) -> Self {
-        let (allowance, origin) = match pgdt_io::discover_memory_limit_in(root) {
-            Some(limit) => {
-                (Some(limit.bytes), AllowanceOrigin::Limit { read_from: limit.read_from })
-            }
-            None => match pgdt_io::available_memory_in(root) {
-                Some(free) => (Some(free / 2), AllowanceOrigin::HalfAvailable),
-                None => (None, AllowanceOrigin::NoneFound),
-            },
-        };
-        Self { allowance, origin, held: Mutex::default() }
+        Self { allowance: Allowance::discover(), held: Mutex::default() }
     }
 
     /// A stated resident allowance, in bytes, carved exactly as a discovered
     /// one is.
     pub fn new(allowance: u64) -> Self {
-        Self { allowance: Some(allowance), origin: AllowanceOrigin::Stated, held: Mutex::default() }
+        Self { allowance: Allowance::Stated(allowance), held: Mutex::default() }
     }
 
-    /// Where [`ScanBudget::allowance`] came from.
-    pub fn origin(&self) -> &AllowanceOrigin {
-        &self.origin
-    }
-
-    /// The resident allowance, or `None` where nothing stated or discovered
-    /// one.
-    pub fn allowance(&self) -> Option<u64> {
-        self.allowance
+    /// The resident allowance, and where it came from.
+    pub fn allowance(&self) -> &Allowance {
+        &self.allowance
     }
 
     /// The read-buffer bytes the scans alive now hold between them.
@@ -183,7 +144,7 @@ impl ScanBudget {
     /// pool's finite limit, [`pool_limit`] — leave of `stated`, else of this
     /// budget's own allowance, affords, at what that many spend less whatever
     /// of the holdings the margin cannot fit beside them
-    /// ([`Parallelism::within_shared`]). Held until the returned [`Draw`]
+    /// ([`Arrangement::resolve`]). Held until the returned [`Draw`]
     /// drops, which keeps the [`BudgetAccount`] of what it was carved from.
     ///
     /// Deficiency register: `deficiency: KD38` — first planned, first served:
@@ -201,29 +162,23 @@ impl ScanBudget {
         stated: Option<u64>,
     ) -> Draw {
         let mut held = self.held.lock().unwrap();
-        let holdings = held.maps.saturating_add(pool);
-        let allowance = stated.or(self.allowance);
-        let origin = match stated {
-            Some(_) => AllowanceOrigin::Setting,
-            None => self.origin.clone(),
-        };
-        let account = BudgetAccount {
-            allowance,
-            origin,
-            pool_limit: pool,
-            resident: held.maps,
+        let allowance = stated.map_or_else(|| self.allowance.clone(), Allowance::Setting);
+        let request = ArrangementRequest {
+            jobs: Jobs::Recommended(jobs),
+            worker_memory: memory,
             drawn: held.scans,
+            held: held.maps.saturating_add(pool),
+            carve_estimate: true,
         };
-        let parallelism = match allowance {
-            Some(allowance) => {
-                Parallelism::within_shared(jobs, memory, allowance, held.scans, holdings)
-            }
-            None => Parallelism::discover_for(jobs, memory),
-        };
-        let bytes = match allowance {
+        let parallelism = Arrangement::resolve(&allowance, request).parallelism();
+        // Nothing found is no allowance to draw on: such a scan's
+        // recommendation stands (`KD113`), and it draws nothing.
+        let bytes = match allowance.bytes() {
             Some(_) => parallelism.memory_bytes().unwrap_or(0),
             None => 0,
         };
+        let account =
+            BudgetAccount { allowance, pool_limit: pool, resident: held.maps, drawn: held.scans };
         held.scans += bytes;
         Draw { budget: Arc::clone(self), bytes, parallelism, account }
     }
@@ -376,55 +331,26 @@ mod tests {
         assert_eq!(budget.drawn(), 3 * per_worker);
         // The live draw comes off the next one's, whichever allowance it is.
         assert_eq!(budget.draw(24, memory, 0, None).parallelism().jobs(), 4);
-        assert_eq!(budget.allowance(), Some(10 << 30));
+        assert_eq!(budget.allowance(), &Allowance::Stated(10 << 30));
 
-        let unfound = Arc::new(ScanBudget {
-            allowance: None,
-            origin: AllowanceOrigin::NoneFound,
-            held: Mutex::default(),
-        });
+        let unfound =
+            Arc::new(ScanBudget { allowance: Allowance::NoneFound, held: Mutex::default() });
         let stated = unfound.draw(24, memory, 0, Some(10 << 30));
         assert_eq!(stated.parallelism().jobs(), 7);
         assert_eq!(unfound.drawn(), 7 * per_worker);
     }
 
-    /// **A discovered allowance keeps where it came from**: the limit and the
-    /// file stating it, else half of what the machine reports available, else
-    /// nothing; a stated one is `Stated`, and a `pgdump.memory` passed to a
-    /// draw is `Setting` for that draw alone.
+    /// **A draw's allowance says where it came from**: the budget's own —
+    /// `Stated` where it was built with a number, else what discovery found —
+    /// and a `pgdump.memory` passed to a draw, `Setting`, for that draw
+    /// alone. What discovery finds on each kind of host is `pgdt_io`'s test.
     #[test]
-    fn an_allowance_keeps_its_origin() {
-        let root = tempfile::tempdir().unwrap();
-        let write = |path: &str, text: &str| {
-            let path = root.path().join(path);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, text).unwrap();
-        };
-        let found = ScanBudget::discover_in(root.path());
-        assert_eq!((found.allowance(), found.origin()), (None, &AllowanceOrigin::NoneFound));
-
-        write("proc/meminfo", "MemAvailable: 1024 kB\n");
-        let found = ScanBudget::discover_in(root.path());
-        assert_eq!(
-            (found.allowance(), found.origin()),
-            (Some(512 << 10), &AllowanceOrigin::HalfAvailable)
-        );
-
-        write("proc/self/cgroup", "0::/svc\n");
-        write("sys/fs/cgroup/svc/memory.max", "1073741824\n");
-        let found = ScanBudget::discover_in(root.path());
-        let read_from = root.path().join("sys/fs/cgroup/svc/memory.max");
-        assert_eq!(
-            (found.allowance(), found.origin()),
-            (Some(1 << 30), &AllowanceOrigin::Limit { read_from })
-        );
-
+    fn a_draw_s_allowance_keeps_its_origin() {
         let stated = Arc::new(ScanBudget::new(10 << 30));
-        assert_eq!(stated.origin(), &AllowanceOrigin::Stated);
+        assert_eq!(stated.allowance(), &Allowance::Stated(10 << 30));
         let draw = stated.draw(2, None, 0, Some(4 << 30));
-        assert_eq!(draw.account().origin, AllowanceOrigin::Setting);
-        assert_eq!(draw.account().allowance, Some(4 << 30));
-        assert_eq!(stated.draw(2, None, 0, None).account().origin, AllowanceOrigin::Stated);
+        assert_eq!(draw.account().allowance, Allowance::Setting(4 << 30));
+        assert_eq!(stated.draw(2, None, 0, None).account().allowance, Allowance::Stated(10 << 30));
     }
 
     /// **A draw's account is what the budget held when it drew**: the pool's
@@ -440,8 +366,7 @@ mod tests {
         assert_eq!(
             first.account(),
             &BudgetAccount {
-                allowance: Some(10 << 30),
-                origin: AllowanceOrigin::Stated,
+                allowance: Allowance::Stated(10 << 30),
                 pool_limit: 0,
                 resident: 1 << 20,
                 drawn: 0,

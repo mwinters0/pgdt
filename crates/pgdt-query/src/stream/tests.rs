@@ -29,7 +29,12 @@ fn the_count_note_names_a_lever_a_plain_source_has() {
 
     // What makes the budget clause alone inert: twice the allowance is
     // the same budget, both of them `DEFAULT_MEMORY_BUDGET`.
-    let budget = |allowance| Parallelism::within(8, None, allowance).memory_bytes();
+    let budget = |bytes| {
+        let request = pgdt_io::ArrangementRequest::recommended(8, None);
+        pgdt_io::Arrangement::resolve(&pgdt_io::Allowance::Stated(bytes), request)
+            .parallelism()
+            .memory_bytes()
+    };
     assert_eq!(budget(2 << 30), Some(pgdt_io::DEFAULT_MEMORY_BUDGET));
     assert_eq!(budget(4 << 30), budget(2 << 30));
 }

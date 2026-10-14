@@ -168,11 +168,11 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// **It is per worker rather than a total**: the only count a source knows
     /// is its own, so multiplying is the caller's
-    /// ([`Parallelism::discover_for`], where the two meet).
+    /// ([`Arrangement::resolve`](crate::Arrangement::resolve), where the two meet).
     ///
     /// **The default is `None`: no recommendation at all**, which leaves a
     /// caller on [`DEFAULT_MEMORY_BUDGET`](crate::DEFAULT_MEMORY_BUDGET), capped at the discovered allowance
-    /// less [`MEMORY_RESERVE`](crate::MEMORY_RESERVE) where one was found. It is what keeps "no
+    /// less [`MEMORY_RESERVE`](crate::internal::MEMORY_RESERVE) where one was found. It is what keeps "no
     /// limit found" from meaning "serial", that constant affording no
     /// block-decoding reader (`docs/design/decisions.md`, "D3").
     ///
