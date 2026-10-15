@@ -27,8 +27,9 @@ pub mod internal {
     pub use crate::grammar::check::{
         column_grammar, field_refused, grammar_refuses, unchecked_positions,
     };
+    pub use crate::key::by_kind::ValueKeyExt;
     pub use crate::key::form::{accepted_form, nested_accepted_form};
-    pub use crate::key::{
+    pub use crate::key::order::{
         OrderKey, Side, compare_keys, literal_key, order_key, read_key, special_order_key,
     };
     pub use crate::resolve::{database_for_name, read_as_text};

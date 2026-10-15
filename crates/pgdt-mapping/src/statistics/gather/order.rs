@@ -114,7 +114,7 @@ impl RowOrder {
         };
         self.previous = Some(Previous::Keyed(key));
         if let Some(step) = step {
-            self.step(Some(step));
+            self.step(step);
         }
     }
 
@@ -127,7 +127,7 @@ impl RowOrder {
                     previous.locate_bytes(prefix, *len)
                 }
                 (Previous::Keyed(previous), FirstValue::Keyed(first)) => {
-                    Some(first.stored_order(previous))
+                    first.stored_order(previous)
                 }
                 _ => unreachable!("one column's values are ordered one way"),
             };

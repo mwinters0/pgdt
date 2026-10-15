@@ -6566,6 +6566,7 @@ PREDICATE = (
     ),
     "crates/pgdt-codec/src/key.rs",
     "crates/pgdt-codec/src/key/form.rs",
+    "crates/pgdt-codec/src/key/order.rs",
     "crates/pgdt-codec/src/value.rs",
     "crates/pgdt-codec/src/value/datetime.rs",
     "crates/pgdt-codec/src/value/int.rs",

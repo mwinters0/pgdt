@@ -20,7 +20,7 @@ use arrow::array::ArrayRef;
 
 use crate::render::decode_field;
 use pgdt_codec::ResolvedSchema;
-use pgdt_codec::compare::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
+use pgdt_codec::compare::{CompareKind, ComparisonPlan, ComparisonSemantics, bounds_set_keyed_by};
 use pgdt_codec::internal::column_tiers;
 use pgdt_codec::key::ValueKey;
 use pgdt_mapping::internal::{
@@ -214,10 +214,10 @@ pub fn table_summary(
                 accumulator.complete = false;
                 continue;
             };
-            let kind = accumulator.kind.clone().expect("a stored set was found for it");
+            let plan = &resolved.comparisons[i];
             for (g, group) in statistics.groups.iter().enumerate() {
                 match column.group_bounds(set, reading, g) {
-                    Some(bounds) => accumulator.fold(&kind, bounds),
+                    Some(bounds) => accumulator.fold(plan, semantics, bounds),
                     // A group whose every row is NULL has no value to bound,
                     // so it leaves the column's extremes complete; one that
                     // lost a value to gathering does not.
@@ -310,23 +310,21 @@ impl<'a> Accumulator<'a> {
     // leaves the column's extreme `Inexact` where the exact one would answer
     // it. The fix prefers the exact bound on a tie; no fixture reaches one.
     // **(c) unowned**; promoted by an extreme seen read where it could answer.
-    fn fold(&mut self, kind: &CompareKind, bounds: &Bounds) {
-        if let Some(key) = ValueKey::of(kind, &bounds.min) {
-            let lower = self
-                .min
-                .as_ref()
-                .is_none_or(|(held, _, _)| key.stored_order(held) == std::cmp::Ordering::Less);
+    fn fold(&mut self, plan: &ComparisonPlan, semantics: ComparisonSemantics, bounds: &Bounds) {
+        if let Some(key) = ValueKey::of(plan, semantics, &bounds.min) {
+            let lower = self.min.as_ref().is_none_or(|(held, _, _)| {
+                key.stored_order(held) == Some(std::cmp::Ordering::Less)
+            });
             if lower {
                 self.min = Some((key, bounds.min.clone(), bounds.min_exact));
             }
         } else {
             self.complete = false;
         }
-        if let Some(key) = ValueKey::of(kind, &bounds.max) {
-            let higher = self
-                .max
-                .as_ref()
-                .is_none_or(|(held, _, _)| key.stored_order(held) == std::cmp::Ordering::Greater);
+        if let Some(key) = ValueKey::of(plan, semantics, &bounds.max) {
+            let higher = self.max.as_ref().is_none_or(|(held, _, _)| {
+                key.stored_order(held) == Some(std::cmp::Ordering::Greater)
+            });
             if higher {
                 self.max = Some((key, bounds.max.clone(), bounds.max_exact));
             }
@@ -420,7 +418,8 @@ fn column_order(
     runs: &[Vec<u64>],
     reading: StatisticsView,
 ) -> Option<Sortedness> {
-    let kind = resolved.comparisons[i].bounds_read_by(ComparisonSemantics::DataFusion)?;
+    let plan = &resolved.comparisons[i];
+    let kind = plan.bounds_read_by(ComparisonSemantics::DataFusion)?;
     let name = resolved.schema.field(i).name();
     let mut order = None;
     // Each block's first and last group holding a row, by header offset. A
@@ -481,8 +480,8 @@ fn column_order(
                 Sortedness::Descending => (&later.max, &earlier.min),
                 _ => (&earlier.max, &later.min),
             };
-            let (high, low) = (ValueKey::of(&kind, high)?, ValueKey::of(&kind, low)?);
-            if high.stored_order(&low) == std::cmp::Ordering::Greater {
+            let key = |text| ValueKey::of(plan, ComparisonSemantics::DataFusion, text);
+            if key(high)?.stored_order(&key(low)?)? == std::cmp::Ordering::Greater {
                 return None;
             }
         }

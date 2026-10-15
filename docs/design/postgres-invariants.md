@@ -1959,7 +1959,7 @@ infinities as well (I34).
 
 **Relied on by.** The comparison register's *Agrees* and enum rows —
 [`decisions.md`](decisions.md), "D55";
-`compare/walk.rs`'s `comparison_for` and `key.rs`'s `pg_float_cmp`.
+`compare/walk.rs`'s `comparison_for` and `key/order.rs`'s `pg_float_cmp`.
 
 **Re-verify.**
 
@@ -2057,7 +2057,7 @@ answer at 17–18. Live against the koji replica (PostgreSQL 16.15): every one o
 `'Infinity'::numeric > 5` answers `t`; `'NaN'::numeric(5,2)` yields `NaN`;
 `'Infinity'::numeric(5,2)` raises *numeric field overflow*.
 
-**Relied on by.** `key.rs`'s `special_order_key` and `OrderKey`'s three
+**Relied on by.** `key/order.rs`'s `special_order_key` and `OrderKey`'s three
 non-finite variants — [`decisions.md`](decisions.md), "D55", whose `Date32`, `Timestamp`, `Decimal` and
 `interval` register rows are *Agrees* only because of this.
 
@@ -2589,7 +2589,7 @@ matching `printf` conversion — `int`/`%d` at v13–v14, `int64`/`%lld` at
 v15–v17, `int64`/`PRId64` at v18 — which changes no output for any value the
 type can hold.
 
-**Relied on by.** `key.rs`'s `CompareKind::Interval`, `TimeTz`, `Network`
+**Relied on by.** `key/order.rs`'s `CompareKind::Interval`, `TimeTz`, `Network`
 and `MacAddr` arms and the parsers they dispatch to —
 [`decisions.md`](decisions.md), "D55",
 where these are four *Agrees* rows; `cidr_in`'s refusal is I67's. The `macaddr` output form is also what
@@ -2739,7 +2739,7 @@ and the duplicate rule are unchanged. `escape_json`'s body moved into an
 across all six. `json_lex_number` gained the incremental-parser branch at v17,
 which `jsonb_in` does not enter.
 
-**Relied on by.** `key.rs`'s `CompareKind::Jsonb` arm and `value/json.rs`'s
+**Relied on by.** `key/order.rs`'s `CompareKind::Jsonb` arm and `value/json.rs`'s
 `Jsonb`, `JsonCursor` — whose `number`, `string` and `unicode_escape` refuse
 what the input bullet says `jsonb_in` refuses — `jsonb_unread`, which refuses
 what `json_in` refuses (I72), the grammar being one, and `storage_order` —
@@ -3660,7 +3660,7 @@ backward compatibility with no alternative left to select.
 carry both typedefs and the same two limits.
 
 **Relied on by:** [`decisions.md`](decisions.md), "D97" and "D99" — a
-timestamp's comparison key (`key.rs`, `order_key`, through
+timestamp's comparison key (`key/order.rs`, `order_key`, through
 `value::datetime::timestamp_postgres_micros`), so every value's view bounds such a
 value and the refuse mode's filter orders it.
 
@@ -4357,7 +4357,7 @@ which spellings it reads is I82.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `value::numeric::numeric_in_stores`, which `key.rs` applies to
+**Relied on by:** `value::numeric::numeric_in_stores`, which `key/order.rs` applies to
 a bare `numeric`'s field and to every `numeric` literal in PostgreSQL's
 semantics, `value::numeric::NumericSpelling::stored`, which bounds a field spelled
 otherwise, and `JsonCursor::number`, which refuses a `jsonb` number so
@@ -4652,7 +4652,7 @@ meets; no field is refused here for it.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `key.rs`'s `field_key`, which refuses a field naming
+**Relied on by:** `key/order.rs`'s `field_key`, which refuses a field naming
 no label of a type whose labels the preamble holds exactly
 (`TypeKind::Enum`'s `exact`), and one of `NAMEDATALEN` bytes or more whatever
 it holds; `grammar::input::text_grammar`, whose `TextGrammar::RefusesAll` refuses

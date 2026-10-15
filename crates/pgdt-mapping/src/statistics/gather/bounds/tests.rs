@@ -4,6 +4,7 @@ use crate::statistics::gather::clip::text_prefix;
 use crate::statistics::test_support::{Rng, join_type, value};
 use pgdt_codec::compare::CompareKind;
 use pgdt_codec::decode::{decode_bytea, render_bytea};
+use pgdt_codec::internal::ValueKeyExt;
 use pgdt_codec::key::ValueKey;
 use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts, UnrepresentableExt};
 use pgdt_model::{
@@ -52,7 +53,10 @@ fn stored_bounds_and_order_hold_every_value_under_its_key() {
             // Sorted input, so a stated order is sometimes Ascending.
             let mut all: Vec<String> = groups.concat();
             all.sort_by(|a, b| {
-                ValueKey::of(kind, a).unwrap().compare(&ValueKey::of(kind, b).unwrap())
+                ValueKey::keyed_by(kind, a)
+                    .unwrap()
+                    .compare(&ValueKey::keyed_by(kind, b).unwrap())
+                    .unwrap()
             });
             let mut state = gatherer.fresh_group();
             for v in &all {
@@ -86,18 +90,18 @@ fn stored_bounds_and_order_hold_every_value_under_its_key() {
                 b.min.len() <= DICTIONARY_ENTRY_MAX_BYTES
                     && b.max.len() <= DICTIONARY_ENTRY_MAX_BYTES
             );
-            let low = ValueKey::of(kind, &b.min).expect("a stored min keys");
-            let high = ValueKey::of(kind, &b.max).expect("a stored max keys");
+            let low = ValueKey::keyed_by(kind, &b.min).expect("a stored min keys");
+            let high = ValueKey::keyed_by(kind, &b.max).expect("a stored max keys");
             for v in group {
-                let key = ValueKey::of(kind, v).unwrap();
+                let key = ValueKey::keyed_by(kind, v).unwrap();
                 assert_ne!(
-                    low.compare(&key),
+                    low.compare(&key).unwrap(),
                     Ordering::Greater,
                     "{kind:?}: min {:?} above {v:?}",
                     b.min
                 );
                 assert_ne!(
-                    high.compare(&key),
+                    high.compare(&key).unwrap(),
                     Ordering::Less,
                     "{kind:?}: max {:?} below {v:?}",
                     b.max
@@ -105,14 +109,17 @@ fn stored_bounds_and_order_hold_every_value_under_its_key() {
             }
             if b.max_exact {
                 assert!(
-                    group
-                        .iter()
-                        .any(|v| ValueKey::of(kind, v).unwrap().compare(&high) == Ordering::Equal)
+                    group.iter().any(|v| ValueKey::keyed_by(kind, v)
+                        .unwrap()
+                        .compare(&high)
+                        .unwrap()
+                        == Ordering::Equal)
                 );
             }
         }
-        let keys: Vec<ValueKey> = all.iter().map(|v| ValueKey::of(kind, v).unwrap()).collect();
-        let pairs = keys.windows(2).map(|w| w[1].compare(&w[0]));
+        let keys: Vec<ValueKey> =
+            all.iter().map(|v| ValueKey::keyed_by(kind, v).unwrap()).collect();
+        let pairs = keys.windows(2).map(|w| w[1].compare(&w[0]).unwrap());
         match column.sortedness {
             Sortedness::Ascending => {
                 ordered += 1;
@@ -156,9 +163,9 @@ fn each_view_bounds_and_orders_the_values_it_takes() {
         let tier = scalar_tier(&join_type(kind)).expect("a date or timestamp is tested");
         let mut values: Vec<String> = (0..rng.below(16)).map(|_| value(&mut rng, kind)).collect();
         if round % 3 == 0 {
-            let key = |v: &String| ValueKey::of(kind, v);
+            let key = |v: &String| ValueKey::keyed_by(kind, v);
             values.sort_by(|a, b| match (key(a), key(b)) {
-                (Some(a), Some(b)) => a.compare(&b),
+                (Some(a), Some(b)) => a.compare(&b).unwrap(),
                 (a, b) => a.is_none().cmp(&b.is_none()),
             });
             if rng.below(2) == 0 {
@@ -208,7 +215,7 @@ fn each_view_bounds_and_orders_the_values_it_takes() {
                 group
                     .iter()
                     .filter(|value| takes(view, tier.of(value)))
-                    .map(|value| (value.clone(), ValueKey::of(kind, value)))
+                    .map(|value| (value.clone(), ValueKey::keyed_by(kind, value)))
                     .collect()
             };
             for (g, group) in groups.iter().enumerate() {
@@ -223,14 +230,23 @@ fn each_view_bounds_and_orders_the_values_it_takes() {
                 };
                 let b = stored.unwrap_or_else(|| panic!("{what}: keyed values unbounded"));
                 bounded[v] += 1;
-                let (low, high) =
-                    (ValueKey::of(kind, &b.min).unwrap(), ValueKey::of(kind, &b.max).unwrap());
+                let (low, high) = (
+                    ValueKey::keyed_by(kind, &b.min).unwrap(),
+                    ValueKey::keyed_by(kind, &b.max).unwrap(),
+                );
                 assert!(
-                    keys.iter().all(|key| low.compare(key).is_le() && high.compare(key).is_ge()),
+                    keys.iter().all(|key| low.compare(key).unwrap().is_le()
+                        && high.compare(key).unwrap().is_ge()),
                     "{what}: {b:?}"
                 );
-                assert!(keys.iter().any(|key| low.compare(key).is_eq()), "{what}: min {b:?}");
-                assert!(keys.iter().any(|key| high.compare(key).is_eq()), "{what}: max {b:?}");
+                assert!(
+                    keys.iter().any(|key| low.compare(key).unwrap().is_eq()),
+                    "{what}: min {b:?}"
+                );
+                assert!(
+                    keys.iter().any(|key| high.compare(key).unwrap().is_eq()),
+                    "{what}: max {b:?}"
+                );
                 assert_eq!(
                     column.null_count(g, view),
                     Some(match view {
@@ -246,10 +262,10 @@ fn each_view_bounds_and_orders_the_values_it_takes() {
             let expected = match row.iter().map(Option::as_ref).collect::<Option<Vec<&ValueKey>>>()
             {
                 None => Sortedness::Unsorted,
-                Some(keys) if keys.windows(2).all(|w| w[1].compare(w[0]).is_ge()) => {
+                Some(keys) if keys.windows(2).all(|w| w[1].compare(w[0]).unwrap().is_ge()) => {
                     Sortedness::Ascending
                 }
-                Some(keys) if keys.windows(2).all(|w| w[1].compare(w[0]).is_le()) => {
+                Some(keys) if keys.windows(2).all(|w| w[1].compare(w[0]).unwrap().is_le()) => {
                     Sortedness::Descending
                 }
                 Some(_) => Sortedness::Unsorted,

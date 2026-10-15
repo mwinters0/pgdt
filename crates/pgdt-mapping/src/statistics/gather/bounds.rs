@@ -10,6 +10,7 @@ use std::mem::{self, size_of};
 use std::sync::Arc;
 
 use pgdt_codec::compare::CompareKind;
+use pgdt_codec::internal::ValueKeyExt;
 use pgdt_codec::key::ValueKey;
 use pgdt_codec::{
     decode::{Unread, decode_bytea, decode_bytea_escape, render_bytea},
@@ -154,10 +155,10 @@ struct Extremes {
 
 impl Extremes {
     fn observe(&mut self, key: &ValueKey, text: &str) {
-        if self.min.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Ordering::Less) {
+        if self.min.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Some(Ordering::Less)) {
             self.min = Some((key.clone(), text.to_owned()));
         }
-        if self.max.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Ordering::Greater) {
+        if self.max.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Some(Ordering::Greater)) {
             self.max = Some((key.clone(), text.to_owned()));
         }
     }
@@ -167,12 +168,18 @@ impl Extremes {
     fn absorb(&mut self, later: Extremes) {
         self.lost |= later.lost;
         if let Some(value) = later.min
-            && self.min.as_ref().is_none_or(|(m, _)| value.0.stored_order(m) == Ordering::Less)
+            && self
+                .min
+                .as_ref()
+                .is_none_or(|(m, _)| value.0.stored_order(m) == Some(Ordering::Less))
         {
             self.min = Some(value);
         }
         if let Some(value) = later.max
-            && self.max.as_ref().is_none_or(|(m, _)| value.0.stored_order(m) == Ordering::Greater)
+            && self
+                .max
+                .as_ref()
+                .is_none_or(|(m, _)| value.0.stored_order(m) == Some(Ordering::Greater))
         {
             self.max = Some(value);
         }
@@ -199,7 +206,8 @@ impl Extremes {
     fn reopen(kind: &CompareKind, bounds: Option<Bounds>, flags: u8) -> Self {
         match bounds {
             Some(Bounds { min, max, .. }) => {
-                let key = |text: &str| ValueKey::of(kind, text).expect("a stored bound keyed");
+                let key =
+                    |text: &str| ValueKey::keyed_by(kind, text).expect("a stored bound keyed");
                 Extremes { min: Some((key(&min), min)), max: Some((key(&max), max)), lost: false }
             }
             None => Extremes { lost: flags & LOST != 0, ..Extremes::default() },
@@ -381,7 +389,7 @@ impl BoundsGatherer {
                     self.lose_value(group, tier);
                     return Ok(());
                 }
-                let key = match ValueKey::of_field(kind, text) {
+                let key = match ValueKey::field_keyed_by(kind, text) {
                     Ok(key) => key,
                     Err(unread) => {
                         self.lose_value(group, tier);

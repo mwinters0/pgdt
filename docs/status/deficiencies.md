@@ -514,15 +514,3 @@ than reading as a phase nobody has sliced.
   for the wrong columns silently. **(b) owned by P36**, 36.7; closing it leaves
   `bounded_columns` `pub(crate)`. Detail:
   `crates/pgdt-mapping/src/statistics/request.rs`.
-
-- **KD116** — a nested value has no API key: an embedder orders a scalar as
-  PostgreSQL does through `ValueKey`, but an array, record, range or
-  multirange only through `internal`'s `NestedKey`, which exposes its
-  representation. **(b) owned by P36**, 36.4. Detail:
-  `crates/pgdt-codec/src/value/nested/key.rs`.
-
-- **KD117** — pgdt-codec's `OrderKey`, `Side` and the functions building and
-  comparing one, which the crate says are not its API, are `pub` at
-  `pgdt_codec::key::` as well as through `internal`, so an embedder names them
-  without naming `internal` and `layering.py` refuses nothing. **(b) owned by
-  P36**, 36.4. Detail: `crates/pgdt-codec/src/key.rs`.

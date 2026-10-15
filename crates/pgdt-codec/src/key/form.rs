@@ -1,5 +1,5 @@
 //! The form a filter's literal has to take, by the kind it is compared as:
-//! what [`literal_key`](crate::key::literal_key) and its nested counterpart
+//! what [`literal_key`](crate::key::order::literal_key) and its nested counterpart
 //! read, written as the text a refusal naming a literal quotes.
 
 use crate::compare::{CompareKind, NestedCompare};
@@ -16,7 +16,7 @@ use crate::value::int::int_range;
 /// lists (`docs/design/decisions.md`, "D55"). There is no per-leaf clause list, [`nested_key`]
 /// answering only "not a value of this type".
 ///
-/// [`order_key`]: crate::key::order_key
+/// [`order_key`]: crate::key::order::order_key
 /// [`nested_key`]: crate::value::nested::key::nested_key
 pub fn nested_accepted_form(plan: &NestedCompare) -> String {
     // The one form with no leaf clause to add, because it has no leaf: an
@@ -85,7 +85,7 @@ pub fn nested_accepted_form(plan: &NestedCompare) -> String {
 /// `unreachable!` so a future kind's mistake is not a panic on a diagnostic
 /// path.
 ///
-/// [`literal_key`]: crate::key::literal_key
+/// [`literal_key`]: crate::key::order::literal_key
 /// [`comparison_for`]: crate::compare::comparison_for
 pub fn accepted_form(kind: &CompareKind) -> String {
     use CompareKind as K;

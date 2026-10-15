@@ -17,6 +17,7 @@ use pgdt_codec::compare::{
     bounds_set_keyed_by, comparison_for,
 };
 use pgdt_codec::decode;
+use pgdt_codec::internal::ValueKeyExt;
 use pgdt_codec::internal::{DiscreteExt, compare_keys, field_refused, order_key};
 use pgdt_codec::key::ValueKey;
 use pgdt_codec::pgtype::NestedPlan;
@@ -3131,7 +3132,7 @@ mod oracle {
                 agreement.declared.insert(declared.clone());
                 agreement.arrow_types.insert(format!("{data_type}"));
                 let key = |v: &str| {
-                    ValueKey::of(kind, v)
+                    ValueKey::keyed_by(kind, v)
                         .unwrap_or_else(|| panic!("{major} {declared}: the server wrote {v:?}"))
                 };
                 let array = crate::batch::column_of(data_type, plan, &held).unwrap();
@@ -3145,7 +3146,7 @@ mod oracle {
                     };
                     for (i, a) in held.iter().enumerate() {
                         agreement.pairs += 1;
-                        let ours = key(a).compare(&key(b));
+                        let ours = key(a).compare(&key(b)).expect("one kind");
                         if ours != arrow[i] {
                             agreement.order.get_or_insert(format!(
                                 "{major} {declared}: {a:?} against {b:?} is {ours:?} here and \

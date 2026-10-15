@@ -133,7 +133,7 @@ fn oid_in(b: &[u8], base0: bool, binary: bool) -> Option<u32> {
 ///
 /// **A value past the column's width is refused, as the server refuses it**
 /// (I60): `70000` is no value of a `smallint` column, where a literal in
-/// DataFusion's semantics is read as an `i64` ([`literal_key`](crate::key::literal_key)).
+/// DataFusion's semantics is read as an `i64` ([`literal_key`](crate::key::order::literal_key)).
 // pg-refuses: I60 — out of range for the column's width.
 pub fn int_in(text: &str, bytes: u8) -> Read<i64> {
     let value = text.parse::<i64>().map_err(|e| match e.kind() {

@@ -3,13 +3,14 @@
 //! and the comparison operators apply to it (I46).
 
 use std::cmp::Ordering;
+use std::mem::size_of;
 
 use pgdt_model::PostgresInvalidValues;
 
 use crate::compare::discrete::DiscreteExt;
 use crate::compare::{ComparisonSemantics, Discrete, NestedCompare};
 use crate::declared::Position;
-use crate::key::{OrderKey, Side, compare_keys, literal_key, read_key};
+use crate::key::order::{OrderKey, Side, compare_keys, literal_key, order_keys, read_key};
 use crate::value::{first_difference, nested};
 
 /// One side of a **nested** comparison, decoded from a container literal per
@@ -21,13 +22,8 @@ use crate::value::{first_difference, nested};
 /// array. The whole field being NULL is a different fact — the `\N` the row
 /// carries — and is SQL's `Unknown` as it is for a scalar column.
 ///
-/// deficiency: KD116 — a nested value has no API key. An embedder orders a
-/// scalar as PostgreSQL does through `ValueKey`, which hides its `OrderKey`
-/// behind `of` and an order; ordering an array, record, range or multirange
-/// means this enum, whose variants expose `OrderKey`, and [`nested_key`],
-/// whose [`Side`] mixes a filter literal's grammar with a field's. Both are
-/// `internal`. **(b) owned by P36**: closing it means a hidden-representation
-/// key over [`NestedCompare`], read as a field, ordered by [`compare_nested`].
+/// Not the codec's API: an embedder orders a nested value through
+/// `crate::key`'s `ValueKey`, which hides this representation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NestedKey {
     /// A scalar position, through the leaf type's own [`OrderKey`].
@@ -82,7 +78,40 @@ pub(crate) struct RangeBoundKey {
     pub(crate) lower: bool,
 }
 
+impl NestedKey {
+    /// The heap this key holds, as the sizes the allocator was asked for.
+    pub(crate) fn heap_bytes(&self) -> u64 {
+        let slots = |slots: &Vec<Option<NestedKey>>| {
+            (slots.capacity() * size_of::<Option<NestedKey>>()) as u64
+                + slots.iter().flatten().map(NestedKey::heap_bytes).sum::<u64>()
+        };
+        match self {
+            Self::Leaf(key) => key.heap_bytes(),
+            Self::Array { elements, dims, lower_bounds } => {
+                slots(elements)
+                    + (dims.capacity() * size_of::<usize>()) as u64
+                    + (lower_bounds.capacity() * size_of::<i32>()) as u64
+            }
+            Self::Record(fields) => slots(fields),
+            Self::Range(range) => size_of::<RangeKey>() as u64 + range.heap_bytes(),
+            Self::Multirange(members) => {
+                (members.capacity() * size_of::<RangeKey>()) as u64
+                    + members.iter().map(RangeKey::heap_bytes).sum::<u64>()
+            }
+        }
+    }
+}
+
 impl RangeKey {
+    /// The heap this range's bounds hold.
+    fn heap_bytes(&self) -> u64 {
+        [&self.lower, &self.upper]
+            .into_iter()
+            .filter_map(|bound| bound.value.as_ref())
+            .map(NestedKey::heap_bytes)
+            .sum()
+    }
+
     /// The empty range. Its bounds are never read, and are the shape
     /// `range_serialize` leaves behind: absent and exclusive.
     fn empty() -> Self {
@@ -536,4 +565,37 @@ pub fn compare_nested(a: &NestedKey, b: &NestedKey) -> Ordering {
         ),
         _ => unreachable!("both sides of a comparison are read through one column's plan"),
     }
+}
+
+/// Whether [`compare_nested`] orders `a` against `b`: one shape at every
+/// pair of positions it can reach, and one arity for two records. Two keys
+/// read through one plan always are; two read through different plans may
+/// not be, and comparing them would reach an unreachable arm.
+pub(crate) fn comparable(a: &NestedKey, b: &NestedKey) -> bool {
+    let slots = |a: &[Option<NestedKey>], b: &[Option<NestedKey>]| {
+        a.iter().zip(b).all(|pair| match pair {
+            (Some(a), Some(b)) => comparable(a, b),
+            _ => true,
+        })
+    };
+    match (a, b) {
+        (NestedKey::Leaf(a), NestedKey::Leaf(b)) => order_keys(a, b).is_some(),
+        (NestedKey::Array { elements: a, .. }, NestedKey::Array { elements: b, .. }) => slots(a, b),
+        (NestedKey::Record(a), NestedKey::Record(b)) => a.len() == b.len() && slots(a, b),
+        (NestedKey::Range(a), NestedKey::Range(b)) => ranges_comparable(a, b),
+        (NestedKey::Multirange(a), NestedKey::Multirange(b)) => {
+            a.iter().zip(b).all(|(a, b)| ranges_comparable(a, b))
+        }
+        _ => false,
+    }
+}
+
+/// [`comparable`] for two ranges: [`compare_range`] reads a lower bound only
+/// against a lower, and an upper only against an upper.
+fn ranges_comparable(a: &RangeKey, b: &RangeKey) -> bool {
+    let bounds = |a: &RangeBoundKey, b: &RangeBoundKey| match (&a.value, &b.value) {
+        (Some(a), Some(b)) => comparable(a, b),
+        _ => true,
+    };
+    bounds(&a.lower, &b.lower) && bounds(&a.upper, &b.upper)
 }

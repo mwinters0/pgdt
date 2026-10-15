@@ -212,7 +212,8 @@ where DataFusion's comparison diverges — and the order keys read from a
 value's text ([`decisions.md`](decisions.md), "Predicates").
 
 - **pgdt-codec** — `compare/`, `key/`: value semantics, shared by a filter
-  and the gatherer, so below both (D68). The key is the dispatch building an
+  and the gatherer, so below both (D68). The key is `ValueKey`, any value's
+  place read from its column's plan, and its `order` the dispatch building an
   `OrderKey` over the families' key types, which are each family's own
   (Values), the nested keys included; its `form` is the form a filter's
   literal has to take, what the literal reader reads. The built-in table
