@@ -76,20 +76,21 @@ symbols 36.4 changed or that hold a key — `order_keys` against
 falling by 113. The other +465 lie in code 36.4 did not touch, each
 symbol within two or three standard deviations of its parent alone:
 `from_utf8` +165, `unescape_field` +116, `parse_time_of_day` +90,
-`civil_days` +50, `unescape_owned` +48, `memcmp` −93. Unattributed: the
-shipped build carries no line tables, so a sample inside inlined code is
-billed to whichever symbol it was inlined into, and a moved inlining
-decision reads as untouched code growing. The `pgdt sql` row's 6 M is 60
+`civil_days` +50, `unescape_owned` +48, `memcmp` −93. Unattributed: each
+of those symbols has the same machine code in both builds, so how far it
+moved is sampling error or data layout, and not inlining
+([36.4.2's notes](roadmap-P36.4.2-attribution-notes.md)). The `pgdt sql` row's 6 M is 60
 samples, below what a sampled profile resolves; nothing it plans or scans
 builds a `ValueKey` per row, so it is unattributed too.
 
 ## What the next round inherits
 
-- **The slice is refused until 36.4.2 attributes the rise.** The first
-  suspect is fat LTO deciding inlining differently through decode code the
-  slice did not change, which falsifies the notes' earlier suspect, the
-  enum's check on each comparison: holding `internal`'s `OrderKey` in the
-  gatherer would remove a cost the profile does not show.
+- **The slice is refused, and its rise is unattributed**
+  ([36.4.2's notes](roadmap-P36.4.2-attribution-notes.md)). Clearing the
+  refusal is the maintainer's call (STATUS, "Decisions worth another
+  look"). Inlining moved into the unchanged decode code is ruled out. What
+  the changed code costs, including the match on the `Key` wrapper, cannot
+  be told apart from sampling error by any profile taken here.
 - **A count an unrelated commit displaces is taken from a worktree** at the
   slice's commit, as that worktree's own `measure.py --count-pair HEAD~1`
   with `PGDT_MEASURE_OUT_DIR` set to the repo's `runs/`.
