@@ -29,9 +29,26 @@ I want last week's data from it as Parquet.
 
 
 ## Install
-Linux binaries for x86-64 and arm64 (glibc 2.41 or newer) are on the
-[releases page](https://github.com/mwinters0/pgdt/releases), each with a checksum and a
-verifiable build attestation.  See: [installing](docs/manual/installing.md).
+Linux-only for now.  If you're enlightened, add this to your `mise.toml`:
+
+```toml
+[tools]
+"github:mwinters0/pgdt" = "latest"
+```
+
+Otherwise, this bash snippet will download it to `$PWD`:
+
+```bash
+(
+  set -o pipefail
+  PGDT_VERSION=0.1.0
+  NAME="pgdt-v${PGDT_VERSION}-$(uname -m)-unknown-linux-gnu"
+  curl -fsSL "https://github.com/mwinters0/pgdt/releases/download/v${PGDT_VERSION}/${NAME}.tar.xz" \
+    | tar -xJ -O "${NAME}/pgdt" \
+    > pgdt \
+    && chmod +x pgdt
+)
+```
 
 ## Quickstart
 
