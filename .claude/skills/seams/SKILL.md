@@ -167,6 +167,12 @@ ask it two questions, by evidence rather than taste:
   is the only reason it is where it is. Items moving between modules D68
   already assigns to the right crate are a cut; a module changing crate is
   this decision.
+- **Would an embedder need a facade?** Code whose seams are right needs
+  none. Its crates' concepts are an embedder's own, expressed and aligned so
+  clearly that the embedder surface need never change (`docs/design/roadmap.md`, "Pre-1.0: no
+  compatibility obligations"). A facade is not ruled out, but it is never
+  assumed. Wanting one says the seams were drawn to suit our code rather
+  than the concepts.
 
 Either answer is a **decision**, not a cut: it reverses or extends the entry
 that drew the graph, so it goes to the maintainer with the evidence, or under

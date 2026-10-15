@@ -122,11 +122,21 @@ impl ValueKey {
 
     /// The order a filter compares by: a total order over the keys of one
     /// plan in one semantics, of which [`Self::stored_order`] is a
-    /// refinement. **`None` where the two keys' representations differ**,
-    /// which no order relates — a date's key against a text's, an array's
-    /// against a scalar's, a record's against one of another arity. Two keys
-    /// of one representation read under different plans are ordered as that
-    /// representation orders, which is no claim about either column.
+    /// refinement. **`None` where two finite keys' representations differ**
+    /// — a finite date's key against a text's, an array's against a
+    /// scalar's, a record's against one of another arity.
+    ///
+    /// deficiency: KD118 — that is narrower than "`None` wherever no order
+    /// relates the two". `-infinity`, `infinity` and `NaN` are placed by
+    /// rank before any representation is looked at, so a date's
+    /// `-infinity` is below a text. Two keys sharing a representation
+    /// compare as it orders whatever plans they were read under: a `date`'s
+    /// against an `integer`'s or an enum label's position, and two
+    /// DataFusion-order `numeric(p,s)` keys of different scales as unscaled
+    /// integers, so `1.5` and `1.50` are unequal. No caller in this
+    /// workspace compares keys of two plans. **(b) owned by P36**, 36.4.1:
+    /// a variant per order, `Decimal` carrying its scale, and the specials
+    /// their domain, so the variant match already made answers it.
     pub fn compare(&self, other: &Self) -> Option<Ordering> {
         match (&self.0, &other.0) {
             (Key::Scalar(a), Key::Scalar(b)) => order_keys(a, b),

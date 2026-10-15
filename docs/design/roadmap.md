@@ -72,6 +72,20 @@ don't caveat a proposal with migration concerns. The cache's `format_version`
 envelope exists so that a stale cache is *detected* rather than misread — not
 as a promise to keep reading old ones.
 
+**From 1.0, the embedder surface changes only compatibly**, and a breaking
+change to it is 2.0. That surface is what the embedder test in
+`pgdt-query/tests/` names, together with every type those items' signatures
+reach, in whichever crate it is defined. A facade holding a stable surface is
+not ruled out, after 1.0 above all, but none is assumed necessary. The aim is
+a design in which our concepts and an embedder's are expressed so clearly and
+aligned so closely that the surface need never change. Every other `pub` item
+promises nothing: a library's
+"internal public" surface may break in any release, with no announcement and
+no provision for compatibility with the previous commit, and anyone using it
+besides this project should expect that. **Every surface is designed by the
+same principles** (`decisions.md`, "D106"), even one drawn only for our own
+code's clarity; what differs is the promise.
+
 The one place this genuinely costs something is the Arrow schema drifting as
 type coverage grows (a column that resolves to `Utf8View` today may
 resolve to `Int32` after the next release, invalidating a downstream query

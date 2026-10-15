@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD117 -->
+rather than being deleted. <!-- deficiency-watermark: KD118 -->
 **`KD1`–`KD117` are allocated, and nothing at or below `KD117` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -514,3 +514,9 @@ than reading as a phase nobody has sliced.
   for the wrong columns silently. **(b) owned by P36**, 36.7; closing it leaves
   `bounded_columns` `pub(crate)`. Detail:
   `crates/pgdt-mapping/src/statistics/request.rs`.
+
+- **KD118** — `ValueKey::compare` answers `Some` for keys no order relates:
+  `-infinity`, `infinity` and `NaN` against any key, a `date`'s against an
+  `integer`'s, and two DataFusion-order `numeric(p,s)` keys of different
+  scales wrongly, as unscaled integers. **(b) owned by P36**, 36.4.1. Detail:
+  `crates/pgdt-codec/src/key.rs`.

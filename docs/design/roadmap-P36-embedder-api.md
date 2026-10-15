@@ -336,9 +336,11 @@ This closes `KD116` and `KD117`.
 - **A nested value has a key.** A hidden variant wraps `NestedKey`, so an
   array, record, range or multirange is ordered without its representation
   showing. `NestedKey` gains a heap size.
-- **Keys of different kinds never compare.** The comparison answers `None`,
-  as for an incomparable pair, and never panics. There is still no `Ord`
-  (D56).
+- **Keys no order relates never compare**, whatever plans they were read
+  under: a `date` against an `integer`, a special against another type's
+  value. Two an order relates, `int2` against `int8` or two `numeric`
+  scales, compare correctly. The comparison answers `None`, as for an
+  incomparable pair, and never panics. There is still no `Ord` (D56).
 - **KD117**: `OrderKey`, `Side` and the functions that build and compare
   them move to a `pub(crate)` child, and `internal` alone re-exports them.
 
