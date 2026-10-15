@@ -130,7 +130,6 @@ fn dummy_data_span() -> pgdt_model::Span {
             table: "placeholder".to_string(),
             columns: Vec::new(),
         },
-        database: None,
         header_offset: 0,
         data_offset: 0,
         terminator_offset: 0,
@@ -141,8 +140,7 @@ fn dummy_data_span() -> pgdt_model::Span {
         statistics_declined: None,
         ignored_refusals: None,
         checked_in_full: false,
-        array_shapes: Some(Vec::new()),
-        unrepresentable: Some(Vec::new()),
+        census: Some(pgdt_model::BlockCensus::default()),
     })))
 }
 

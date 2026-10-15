@@ -71,7 +71,7 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
         resolve_expr(&below, &full, block.header_offset, ComparisonSemantics::Postgres).unwrap();
     let reading = pgdt_model::StatisticsView::Every;
     let mut pruning =
-        DynamicPruning::new(block, Arc::clone(&statistics), metadata, reading).unwrap();
+        DynamicPruning::new(block, Arc::clone(&statistics), metadata, None, reading).unwrap();
     pruning.read(Arc::new(filter));
 
     let id = statistics.columns[0].as_ref().unwrap();

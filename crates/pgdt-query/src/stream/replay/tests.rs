@@ -47,6 +47,7 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
         ReplayPlan::new(
             ScanOptions::default(),
             query_options.clone(),
+            mapped.database.clone(),
             &mapped.matches,
             mapped.metadata.clone(),
         )
@@ -80,11 +81,11 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
         resolve_for_query(
             &block.header,
             block.header_offset,
-            block.database.as_deref(),
+            mapped.database.as_deref(),
             &query_options,
             mapped.metadata.as_ref(),
             &plan.table,
-            block.unrepresentable.as_deref(),
+            block.unrepresentable(),
         )
     };
     let planned = &plan.blocks[&first.header_offset];
@@ -96,7 +97,7 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
 
     // Activating the planned block hands out the plan's own tree.
     let open = |header: &CopyHeader, block: &CopyBlock| {
-        activate(header.clone(), block.header_offset, block.database.clone(), &plan)
+        activate(header.clone(), block.header_offset, mapped.database.clone(), &plan)
     };
     let ((_, _, _, filter, _), resolved, notes) = open(&first.header, first).unwrap();
     assert!(Arc::ptr_eq(&filter, &planned.filter));

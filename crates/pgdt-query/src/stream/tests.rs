@@ -122,7 +122,6 @@ fn a_plan_note_warns_where_the_budget_declined_what_was_asked() {
 fn a_segment_resumes_from_the_row_its_pause_left() {
     let block = CopyBlock {
         header: pgdt_core::parse_copy_header(b"COPY public.t (id) FROM stdin;").unwrap(),
-        database: None,
         header_offset: 10,
         data_offset: 40,
         terminator_offset: 400,
@@ -133,8 +132,7 @@ fn a_segment_resumes_from_the_row_its_pause_left() {
         statistics_declined: None,
         ignored_refusals: None,
         checked_in_full: false,
-        array_shapes: Some(Vec::new()),
-        unrepresentable: Some(Vec::new()),
+        census: Some(pgdt_model::BlockCensus::default()),
     };
     let whole = Segment::over(&block, 39..403);
     assert_eq!((whole.start, whole.entry), (10, SegmentEntry::Header));
@@ -221,9 +219,15 @@ async fn a_replay_holds_no_block_s_statistics() {
     let held: Vec<_> =
         matches.iter().map(|block| Arc::clone(block.statistics.as_ref().unwrap())).collect();
 
-    let PlannedReplay { plan, groups, .. } =
-        plan_replay(&source, &matches, mapped.metadata, ScanOptions::default(), query_options)
-            .unwrap();
+    let PlannedReplay { plan, groups, .. } = plan_replay(
+        &source,
+        mapped.database,
+        &matches,
+        mapped.metadata,
+        ScanOptions::default(),
+        query_options,
+    )
+    .unwrap();
     let serial: Vec<Segment> = matches.iter().flat_map(|block| plan.segments(block)).collect();
     assert!(groups.iter().flatten().chain(&serial).all(|s| s.block.statistics.is_none()));
     drop(matches);

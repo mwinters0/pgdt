@@ -93,10 +93,7 @@ fn reference(file: &[u8]) -> Vec<Reference> {
                 end_offset: block.end_offset,
                 columns: Some(widths.next().expect("one header per block")),
                 interior: Interior {
-                    census: BlockCensus {
-                        shapes: block.array_shapes.expect("every block is censused here"),
-                        unrepresentable: block.unrepresentable.expect("and counted"),
-                    },
+                    census: block.census.expect("every block is censused and counted here"),
                     end: CopyEnd {
                         terminator_offset: block.terminator_offset,
                         end_offset: block.end_offset,

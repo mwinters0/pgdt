@@ -17,7 +17,7 @@ use super::statistics;
 /// How a database is named in the listing. A `\connect`-less dump has no name
 /// to print, and `(unnamed)` is what the listing calls it — one spelling, so
 /// the metadata header, the block listing and `--map` cannot disagree.
-fn database_label(database: &Option<String>) -> &str {
+fn database_label(database: Option<&str>) -> &str {
     match database {
         Some(name) => name,
         None => "(unnamed)",
@@ -33,18 +33,18 @@ fn database_label(database: &Option<String>) -> &str {
 /// candidate names ones this listing already showed.
 struct DatabaseHeadings<'a> {
     multi: bool,
-    current: Option<&'a Option<String>>,
+    current: Option<Option<&'a str>>,
 }
 
 impl<'a> DatabaseHeadings<'a> {
     /// `databases` is every row's database, in listing order; only its
     /// cardinality is read here.
-    fn new(databases: impl Iterator<Item = &'a Option<String>>) -> Self {
+    fn new(databases: impl Iterator<Item = Option<&'a str>>) -> Self {
         let multi = databases.collect::<BTreeSet<_>>().len() > 1;
         Self { multi, current: None }
     }
 
-    fn before(&mut self, database: &'a Option<String>) {
+    fn before(&mut self, database: Option<&'a str>) {
         if self.multi && self.current != Some(database) {
             self.current = Some(database);
             println!("database: {}", database_label(database));
@@ -66,7 +66,7 @@ pub(crate) fn print_metadata(metadata: &DumpMetadata, detail: bool) {
         let show_name = multi || db.name.is_some();
         let indent = if show_name { "  " } else { "" };
         if show_name {
-            println!("database: {}", database_label(&db.name));
+            println!("database: {}", database_label(db.name.as_deref()));
         }
         if let Some(v) = &db.server_version {
             println!("{indent}server version: {v}");
@@ -164,16 +164,16 @@ pub(crate) fn print_index(
     let mut total_unmapped = 0usize;
     let mut outside_strict = 0usize;
 
-    let mut headings = DatabaseHeadings::new(blocks.iter().map(|(b, _)| &b.database));
+    let mut headings = DatabaseHeadings::new(blocks.iter().map(|(database, ..)| *database));
 
-    for (block, resolved) in &blocks {
-        headings.before(&block.database);
+    for &(database, block, ref resolved) in &blocks {
+        headings.before(database);
         println!("{} ({} rows)", block.header.qualified_name(), block.row_count);
         println!("    level: {}", level_label(block));
         if block.checked_in_full {
             println!("    checked: every value, by a strict parse");
         }
-        let held = block_unchecked(index, block);
+        let held = block_unchecked(index, database, block);
         if unchecked {
             for line in unchecked_lines(&held) {
                 println!("    unchecked by a strict parse: {line}");
@@ -221,7 +221,7 @@ pub(crate) fn print_index(
                     if let Some(labels) = enum_labels(&resolved.comparisons[i]) {
                         println!("        labels: {}", label_list(labels));
                     }
-                    let count = block.unrepresentable.as_deref().and_then(|c| c.get(i));
+                    let count = block.unrepresentable().and_then(|c| c.get(i));
                     if let Some(count) = count.filter(|c| !c.is_zero())
                         && *data_type != DataType::Utf8View
                     {
@@ -349,7 +349,7 @@ fn ignored_refusals_line(
 /// where it holds a census, `metadata` where it holds nothing drawn from its
 /// rows (`docs/design/decisions.md`, "D35").
 fn level_label(block: &pgdt_model::CopyBlock) -> &'static str {
-    match block.array_shapes {
+    match block.census {
         Some(_) => "data",
         None => "metadata",
     }
@@ -453,9 +453,9 @@ fn print_object_kinds(index: &DumpIndex) -> bool {
 /// filters it down to (`docs/design/decisions.md`, "D34"). Grouped by
 /// [`DatabaseHeadings`], as the ordinary block listing is.
 fn print_map(index: &DumpIndex) {
-    let mut headings = DatabaseHeadings::new(index.spans.iter().map(|s| &s.database));
+    let mut headings = DatabaseHeadings::new(index.spans.iter().map(|s| s.database.as_deref()));
     for span in &index.spans {
-        headings.before(&span.database);
+        headings.before(span.database.as_deref());
         println!("[{}, {}) {}", span.start, span.end, span_summary(span));
     }
 }

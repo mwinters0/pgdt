@@ -124,7 +124,7 @@ pub(super) fn replay<'a>(
             let seg_start = segment.start;
             let seg_limit = segment.limit;
             let seg_end = block.end_offset;
-            let block_database = block.database.clone();
+            let block_database = plan.database.clone();
             let stop = plan.stops.get(&block.header_offset);
             if let Some(dynamic) = dynamic.as_mut() {
                 dynamic.enter(block, &plan);

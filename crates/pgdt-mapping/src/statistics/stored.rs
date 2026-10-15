@@ -27,13 +27,17 @@ pub fn stored_bounds_kinds(
 }
 
 /// Which of `block`'s columns gathering keeps bounds and row order for,
-/// positionally to its header, its columns resolved against `metadata` as a
-/// mapping pass resolves them — what
+/// positionally to its header, its columns resolved against `metadata` for
+/// `database`, the one its span records, as a mapping pass resolves them — what
 /// [`StatisticsRequest::backfill`](crate::statistics::StatisticsRequest::backfill)
 /// reads a block's held statistics against, a column held without the bounds
 /// this says it gets lacking them (`docs/design/decisions.md`, "D79").
-pub fn bounded_columns(block: &CopyBlock, metadata: Option<&DumpMetadata>) -> Vec<bool> {
-    stored_bounds_kinds(&block.header, metadata, block.database.as_deref())
+pub fn bounded_columns(
+    block: &CopyBlock,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+) -> Vec<bool> {
+    stored_bounds_kinds(&block.header, metadata, database)
         .iter()
         .map(|kinds| kinds[0].is_some())
         .collect()

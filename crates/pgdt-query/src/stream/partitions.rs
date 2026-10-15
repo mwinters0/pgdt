@@ -73,9 +73,9 @@ pub async fn table_stream_partitions<'a>(
     let watch = Arc::new(SourceWatch::open(source, cache.strict_identity()).await?);
     let mapped = map_for_query(source, &table, &scan_options, &query_options, &cache, &watch).await;
     let mapped = watch.attribute(source, mapped).await?;
-    let MappedTable { matches, metadata } = mapped;
+    let MappedTable { database, matches, metadata } = mapped;
     let PlannedReplay { plan, groups, plan_notes, .. } =
-        plan_replay(source, &matches, metadata, scan_options, query_options)?;
+        plan_replay(source, database, &matches, metadata, scan_options, query_options)?;
     let of = groups.len();
     Ok(groups
         .into_iter()
@@ -174,6 +174,7 @@ impl TablePartitions {
         let matches: Vec<CopyBlock> = index.blocks_of(table).cloned().collect();
         let PlannedReplay { plan, groups, plan_notes, advice } = plan_replay(
             source.as_ref(),
+            table.database.clone(),
             &matches,
             index.metadata.clone(),
             scan_options,
@@ -190,6 +191,7 @@ impl TablePartitions {
         let orders = partition_orders(
             &matches,
             index.metadata.as_ref(),
+            plan.database.as_deref(),
             &resolved,
             &block_runs(&groups),
             reading,
@@ -358,11 +360,11 @@ impl TablePartitions {
         if self.orders.iter().all(|order| *order == Sortedness::Unsorted) {
             return true;
         }
-        let metadata = self.plan.metadata.as_ref();
+        let (metadata, database) = (self.plan.metadata.as_ref(), self.plan.database.as_deref());
         let resolved = self.resolved_schema();
         let reading = self.plan.query_options.statistics_view();
-        let proved =
-            partition_orders(&self.matches, metadata, &resolved, &block_runs(groups), reading);
+        let runs = block_runs(groups);
+        let proved = partition_orders(&self.matches, metadata, database, &resolved, &runs, reading);
         self.orders
             .iter()
             .zip(&proved)

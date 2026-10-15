@@ -621,7 +621,10 @@ async fn a_columns_unrepresentable_count_is_stated_beneath_it() {
         .filter_map(|span| span["body"]["Data"]["Copy"].as_object())
         .find(|block| block["header"]["table"] == "t_date")
         .expect("t_date's block");
-    assert_eq!(block["unrepresentable"][1], serde_json::json!({"format": 2, "engine": 0}));
+    assert_eq!(
+        block["census"]["unrepresentable"][1],
+        serde_json::json!({"format": 2, "engine": 0})
+    );
     assert!(json["calendar_end"].is_i64(), "the calendar the counts were taken against");
 }
 
@@ -757,9 +760,9 @@ async fn a_later_databases_blocks_report_metadata_not_scanned() {
 
     // Stop just past the first block of the *second* database, keeping only
     // the first database's DDL.
-    let second_db = full
-        .blocks()
-        .find(|b| b.database.as_deref() == Some("pgdt_fixture_2"))
+    let (_, second_db) = full
+        .blocks_with_database()
+        .find(|(database, _)| *database == Some("pgdt_fixture_2"))
         .expect("the concatenated fixture has a second database with blocks");
     let frontier = second_db.end_offset;
     write_truncated_cache(&dump, frontier, 1).await;

@@ -106,7 +106,7 @@ fn parse_gathers_every_table_by_default_at_a_mebibyte() {
 #[test]
 fn the_metadata_level_records_nothing_and_a_stated_size_is_recorded() {
     let metadata = blocks_after(&["--statistics-level", "metadata"]);
-    assert!(metadata.iter().all(|(_, b)| b["statistics"].is_null() && b["array_shapes"].is_null()));
+    assert!(metadata.iter().all(|(_, b)| b["statistics"].is_null() && b["census"].is_null()));
     for (table, block) in blocks_after(&["--row-group-size", "4096"]) {
         assert_eq!(block["statistics"]["group_size"], 4096, "{table}");
         assert_eq!(block["statistics"]["sizing"], "Stated", "{table}");
@@ -669,15 +669,15 @@ fn the_most_specific_entry_decides_a_columns_level() {
                     let columns = array(&statistics["columns"]);
                     assert!(columns[0].is_null(), "{levels}: `id` is at the metadata level");
                     assert!(columns[1..].iter().all(|c| !c.is_null()), "{levels}");
-                    assert!(!block["array_shapes"].is_null(), "{levels}: censused");
+                    assert!(!block["census"].is_null(), "{levels}: censused");
                 }
                 "public.specials" => {
                     assert!(statistics.is_null(), "{levels}");
-                    assert!(block["array_shapes"].is_null(), "{levels}: not censused");
+                    assert!(block["census"].is_null(), "{levels}: not censused");
                 }
                 "public.long_value" => assert!(!statistics.is_null(), "{levels}"),
                 _ if levels.starts_with("data") => assert!(!statistics.is_null(), "{table}"),
-                _ => assert!(block["array_shapes"].is_null(), "{levels}: {table}"),
+                _ => assert!(block["census"].is_null(), "{levels}: {table}"),
             }
         }
     }

@@ -108,8 +108,8 @@ fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> boo
         return false;
     }
     let mut matched = false;
-    for block in index.blocks_for(table) {
-        if selector.is_some() && block.database.as_deref() != selector {
+    for (database, block) in index.blocks_with_database() {
+        if !block.header.matches(table) || (selector.is_some() && database != selector) {
             continue;
         }
         if block.partition_root.is_some() {

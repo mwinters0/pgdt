@@ -154,7 +154,7 @@ pub fn table_summary(
             accumulators.iter_mut().for_each(Accumulator::uncounted);
             continue;
         }
-        let (database, qualified) = (block.database.as_deref(), block.header.qualified_name());
+        let (database, qualified) = (table.database.as_deref(), block.header.qualified_name());
         let gathered = stored_resolution(&block.header, metadata, database);
         let tiers = column_tiers(&gathered);
         let mut seen = vec![false; fields.len()];
@@ -368,7 +368,7 @@ impl<'a> Accumulator<'a> {
 /// **The order every partition of a replay emits each column of `resolved`
 /// in, under Arrow's comparator** — the order DataFusion sorts by — or
 /// [`Sortedness::Unsorted`] where the map proves none. `matches` are the
-/// table's blocks, statistics included, and `runs` each partition's blocks by
+/// table's blocks in `database`, statistics included, and `runs` each partition's blocks by
 /// header offset, in the order it replays them; a block may repeat, once per
 /// piece of it.
 ///
@@ -394,13 +394,14 @@ impl<'a> Accumulator<'a> {
 pub(crate) fn partition_orders(
     matches: &[CopyBlock],
     metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
     resolved: &ResolvedSchema,
     runs: &[Vec<u64>],
     reading: StatisticsView,
 ) -> Vec<Sortedness> {
     (0..resolved.schema.fields().len())
         .map(|i| {
-            column_order(matches, metadata, resolved, i, runs, reading)
+            column_order(matches, metadata, database, resolved, i, runs, reading)
                 .unwrap_or(Sortedness::Unsorted)
         })
         .collect()
@@ -413,6 +414,7 @@ pub(crate) fn partition_orders(
 fn column_order(
     matches: &[CopyBlock],
     metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
     resolved: &ResolvedSchema,
     i: usize,
     runs: &[Vec<u64>],
@@ -431,7 +433,7 @@ fn column_order(
         }
         let c = block.header.columns.iter().position(|column| column == name)?;
         let column = statistics.columns[c].as_ref()?;
-        let (database, qualified) = (block.database.as_deref(), block.header.qualified_name());
+        let qualified = block.header.qualified_name();
         if !believed_under(column, declared_column(metadata, database, &qualified, name)) {
             return None;
         }
@@ -440,7 +442,7 @@ fn column_order(
         {
             return None;
         }
-        let gathered = stored_resolution(&block.header, metadata, block.database.as_deref());
+        let gathered = stored_resolution(&block.header, metadata, database);
         let set = bounds_set_keyed_by(&gathered.bounds_kinds(c), &kind)?;
         if column.listed_groups(set)? != statistics.groups.len() {
             return None;

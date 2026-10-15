@@ -243,7 +243,7 @@ pub fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, Cac
         // cache holding none has nothing to be wrong about.
         Ok(file)
             if file.calendar_end != calendar_end()
-                && file.index.blocks().any(|block| block.unrepresentable.is_some()) =>
+                && file.index.blocks().any(|block| block.census.is_some()) =>
         {
             unusable(Unusable::CalendarChanged {
                 counted_under: file.calendar_end,

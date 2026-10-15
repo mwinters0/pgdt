@@ -1516,12 +1516,12 @@ carries three things the text views state differently:
   several `COPY` blocks, and pgdt does not yet have a rule for merging blocks
   that disagree, so grouping them is left to you.
 
-The file map's own `COPY` blocks carry their **`array_shapes`**, one per
-column, `null` for a block recorded at the metadata level, their
-**`unrepresentable`** counts, one `{format, engine}` pair per column and
-`null` exactly where `array_shapes` is — `format` counting the values the
-column's Arrow type cannot hold and `engine` those it holds past the calendar
-end the cache's `calendar_end` states, as days from 1970 — and their
+The file map's own `COPY` blocks carry their **`census`**, `null` for a
+block recorded at the metadata level and otherwise its `shapes`, one per
+column, and its `unrepresentable` counts, one `{format, engine}` pair per
+column — `format` counting the values the column's Arrow type cannot hold and
+`engine` those it holds past the calendar end the cache's `calendar_end`
+states, as days from 1970 — and their
 **`statistics`**, exactly as the cache holds them — `null` for a block `parse`
 gathered nothing for. Each has its `group_size`, its `sizing` — how that size
 was chosen, `"Stated"` or a `Density` object holding the `min_rows` and

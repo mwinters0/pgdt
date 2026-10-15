@@ -965,8 +965,11 @@ async fn a_connection_string_connect_opens_its_own_database() {
             "pg_dump {version}"
         );
         assert!(metadata.databases[at - 1].tables.is_empty(), "pg_dump {version}: {names:?}");
-        let blocks: Vec<Option<&str>> =
-            index.blocks_for("public.named").map(|b| b.database.as_deref()).collect();
+        let blocks: Vec<Option<&str>> = index
+            .blocks_with_database()
+            .filter(|(_, b)| b.header.matches("public.named"))
+            .map(|(database, _)| database)
+            .collect();
         assert_eq!(blocks, [Some("pgdt-emitters")], "pg_dump {version}");
     }
 }
@@ -1027,9 +1030,9 @@ async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() 
             let index = build_index(&source, &ScanOptions::default()).await.unwrap();
             let label = format!("pg_dump {version} {flag_set}");
             assert!(index.blocks().next().is_some(), "{label}");
-            for block in index.blocks() {
+            for (database, block) in index.blocks_with_database() {
                 let table = block.header.qualified_name();
-                let unchecked = strict_unchecked(block, index.metadata.as_ref());
+                let unchecked = strict_unchecked(block, index.metadata.as_ref(), database);
                 if flag_set == "data-only" {
                     assert!(!unchecked.declared, "{label}: {table}");
                     assert_eq!(
@@ -1135,9 +1138,9 @@ async fn a_partition_s_bound_and_its_root_s_routing_are_named_per_block() {
             let label = format!("pg_dump {version} {flag_set}");
             let via_root = flag_set == "load-via-partition-root";
             let mut named = Vec::new();
-            for block in index.blocks() {
+            for (database, block) in index.blocks_with_database() {
                 let table = block.header.qualified_name();
-                let unchecked = strict_unchecked(block, index.metadata.as_ref());
+                let unchecked = strict_unchecked(block, index.metadata.as_ref(), database);
                 let expected = match table.as_str() {
                     "public.evt_a" if !via_root => {
                         vec![bound("public.evt_a", "public.evt", "FOR VALUES IN ('a')")]
@@ -1207,11 +1210,11 @@ async fn a_hand_written_partition_hierarchy_is_named_per_block() {
             let source = LocalFileSource::open(&path).unwrap();
             let index = build_index(&source, &ScanOptions::default()).await.unwrap();
             index
-                .blocks()
-                .map(|block| {
+                .blocks_with_database()
+                .map(|(database, block)| {
                     (
                         block.header.qualified_name(),
-                        strict_unchecked(block, index.metadata.as_ref()),
+                        strict_unchecked(block, index.metadata.as_ref(), database),
                     )
                 })
                 .collect::<Vec<_>>()

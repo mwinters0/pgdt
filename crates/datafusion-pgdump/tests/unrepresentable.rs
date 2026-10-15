@@ -900,7 +900,7 @@ async fn counted(copy: &Path) -> BTreeMap<String, Unrepresentable> {
     };
     let mut out = BTreeMap::new();
     for block in index.blocks().filter(|b| EXTREMES.contains(&b.header.table.as_str())) {
-        let counts = block.unrepresentable.as_deref().expect("a data-level block is counted");
+        let counts = block.unrepresentable().expect("a data-level block is counted");
         for (column, count) in block.header.columns.iter().zip(counts) {
             let key = format!("{}.{column}", block.header.table);
             out.entry(key).or_insert_with(Unrepresentable::default).merge(count);

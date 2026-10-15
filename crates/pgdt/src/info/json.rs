@@ -77,8 +77,8 @@ pub(super) fn print_index_json(
     let resolutions = block_resolutions(index, complete);
     let resolution = resolutions
         .iter()
-        .map(|(block, resolved)| BlockResolutionJson {
-            database: block.database.as_deref(),
+        .map(|&(database, block, ref resolved)| BlockResolutionJson {
+            database,
             table: block.header.qualified_name(),
             header_offset: block.header_offset,
             columns: resolved
@@ -96,7 +96,7 @@ pub(super) fn print_index_json(
                     plan: &resolved.plans[i],
                 })
                 .collect(),
-            unchecked: block_unchecked(index, block),
+            unchecked: block_unchecked(index, database, block),
         })
         .collect();
     let wrapped = IndexJson {

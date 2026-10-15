@@ -170,7 +170,6 @@ enum Mode {
     InsertRun {
         start: u64,
         table: String,
-        database: Option<String>,
         scan: StatementScan,
         prefix: Box<[u8]>,
         row_count: u64,
@@ -307,8 +306,8 @@ impl Builder {
 
     /// The database in scope right now — whatever the last `\\connect` this
     /// builder has seen named, or whatever [`with_database`](Self::with_database)
-    /// seeded it with, and the value [`on_copy_end`](Self::on_copy_end) stamps
-    /// onto a block. Exposed for `pgdt_mapping`'s mapping pass, which has to
+    /// seeded it with, and the value every span is stamped with, a `COPY`
+    /// block's included. Exposed for `pgdt_mapping`'s mapping pass, which has to
     /// notice a `COPY` header belonging to a database whose DDL it has not
     /// stated.
     pub fn database(&self) -> Option<&str> {
@@ -442,8 +441,8 @@ impl Builder {
             Mode::Statement { start, buf, toc, toc_owned } => {
                 self.push_statement_span(start, &buf, toc, toc_owned)
             }
-            Mode::InsertRun { start, table, database, row_count, toc, toc_owned, .. } => {
-                self.push_insert_run(start, table, database, row_count, toc, toc_owned)
+            Mode::InsertRun { start, table, row_count, toc, toc_owned, .. } => {
+                self.push_insert_run(start, table, row_count, toc, toc_owned)
             }
         }
     }
@@ -610,7 +609,6 @@ impl Builder {
                     self.mode = Mode::InsertRun {
                         start,
                         table,
-                        database: self.database.clone(),
                         scan: StatementScan::new(self.standard_strings),
                         prefix: line.as_bytes()[..prefix_len].into(),
                         row_count: 0,
@@ -655,7 +653,6 @@ impl Builder {
                     self.mode = Mode::InsertRun {
                         start,
                         table,
-                        database: self.database.clone(),
                         scan: StatementScan::new(self.standard_strings),
                         prefix: line.as_bytes()[..prefix_len].into(),
                         row_count: 0,
@@ -687,23 +684,17 @@ impl Builder {
             // that may not continue the run. It feeds the
             // *same* `scan`, so a run's classification does not depend on
             // which of the two saw a given line.
-            Mode::InsertRun { start, table, database, scan, row_count, toc, toc_owned, .. } => {
+            Mode::InsertRun { start, table, scan, row_count, toc, toc_owned, .. } => {
                 // Closes the run in place, taking owned copies first so
                 // `self.mode = Mode::Idle` and `push_insert_run`'s
                 // `push_span` do not overlap this arm's borrow of
                 // `self.mode`.
                 macro_rules! close_and_reprocess {
                     () => {{
-                        let (start, table, database, row_count, toc, toc_owned) = (
-                            *start,
-                            table.clone(),
-                            database.clone(),
-                            *row_count,
-                            toc.take(),
-                            *toc_owned,
-                        );
+                        let (start, table, row_count, toc, toc_owned) =
+                            (*start, table.clone(), *row_count, toc.take(), *toc_owned);
                         self.mode = Mode::Idle;
-                        self.push_insert_run(start, table, database, row_count, toc, toc_owned);
+                        self.push_insert_run(start, table, row_count, toc, toc_owned);
                         return true;
                     }};
                 }
@@ -878,9 +869,8 @@ impl Builder {
                 Some(BlockGathered::Checked) | None => (None, None),
             }
         };
-        let mut block = CopyBlock {
+        let block = CopyBlock {
             header: copy_start.header,
-            database: self.database.clone(),
             header_offset: copy_start.header_offset,
             data_offset: copy_start.data_offset,
             terminator_offset: end.terminator_offset,
@@ -891,17 +881,13 @@ impl Builder {
             statistics_declined,
             ignored_refusals,
             checked_in_full,
-            array_shapes: None,
-            unrepresentable: None,
+            census: self.pending_census.take(),
         };
         debug_assert!(
-            self.pending_census.is_none() || self.pending_counter.is_some(),
+            block.census.is_none() || self.pending_counter.is_some(),
             "a censused block is counted too (D96)"
         );
         self.pending_counter = None;
-        if let Some(census) = self.pending_census.take() {
-            block.set_census(census);
-        }
         let owned = toc.is_some();
         self.push_span(start, SpanBody::Data(DataBlock::Copy(block)), toc, owned);
         Ok(())
@@ -967,9 +953,7 @@ impl Builder {
             let owned = toc.is_some();
             self.push_span(
                 start,
-                SpanBody::Data(DataBlock::LargeObjects(LargeObjectRegion {
-                    database: self.database.clone(),
-                })),
+                SpanBody::Data(DataBlock::LargeObjects(LargeObjectRegion {})),
                 toc,
                 owned,
             );
@@ -985,14 +969,13 @@ impl Builder {
         &mut self,
         start: u64,
         table: String,
-        database: Option<String>,
         row_count: u64,
         toc: Option<TocHeader>,
         toc_owned: bool,
     ) {
         self.push_span(
             start,
-            SpanBody::Data(DataBlock::InsertRun(InsertRun { database, table, row_count })),
+            SpanBody::Data(DataBlock::InsertRun(InsertRun { table, row_count })),
             toc,
             toc_owned,
         );
@@ -1006,10 +989,10 @@ impl Builder {
         // a run either one interrupts is dropped: its bytes extend the span
         // before it and no `InsertRun` counts its rows. `pg_dump` follows every
         // run with the next entry's TOC comment, which `step` closes it on.
-        if let Mode::InsertRun { start, table, database, row_count, toc, toc_owned, .. } =
+        if let Mode::InsertRun { start, table, row_count, toc, toc_owned, .. } =
             std::mem::replace(&mut self.mode, Mode::Idle)
         {
-            self.push_insert_run(start, table, database, row_count, toc, toc_owned);
+            self.push_insert_run(start, table, row_count, toc, toc_owned);
         }
     }
 

@@ -607,7 +607,7 @@ async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
         &request(StatisticsSelection::DATA, SMALL_GROUP),
     )
     .await;
-    let name = TableName::of(block(&index, "public.ordered"));
+    let name = TableName::of(None, block(&index, "public.ordered"));
     let summary = |index: &DumpIndex| {
         let resolved = table_schema(index, &name, &QueryOptions::default()).unwrap();
         let id = resolved.schema.index_of("id").unwrap();
@@ -898,9 +898,9 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
             .await
             .index;
     let ordered = block(&fresh, "public.ordered");
-    let bounded = bounded_columns(ordered, fresh.metadata.as_ref());
+    let bounded = bounded_columns(ordered, fresh.metadata.as_ref(), None);
     assert!(bounded.iter().all(|&b| b), "every column of `ordered` is bounded: {bounded:?}");
-    assert_eq!(bounded_columns(ordered, None), bounded, "no DDL, bounded as its text");
+    assert_eq!(bounded_columns(ordered, None, None), bounded, "no DDL, bounded as its text");
 
     let mut older = fresh.clone();
     for span in &mut older.spans {
@@ -1020,13 +1020,14 @@ async fn one_block_is_gathered_on_its_own() {
     let source = LocalFileSource::open(&dump).unwrap();
     let ordered = block(&bare, "public.ordered");
     let backfill = wanted
-        .backfill(ordered, &bounded_columns(ordered, bare.metadata.as_ref()), None)
+        .backfill(ordered, &bounded_columns(ordered, bare.metadata.as_ref(), None), None)
         .expect("a block with no statistics lacks them");
     let gathered = gather_block_statistics(
         &source,
         &ScanOptions::default(),
         &GatherOptions::default(),
         bare.metadata.as_ref(),
+        None,
         ordered,
         &backfill,
     )
@@ -1040,7 +1041,11 @@ async fn one_block_is_gathered_on_its_own() {
     assert_eq!(
         wanted.backfill(
             block(&reference, "public.ordered"),
-            &bounded_columns(block(&reference, "public.ordered"), reference.metadata.as_ref()),
+            &bounded_columns(
+                block(&reference, "public.ordered"),
+                reference.metadata.as_ref(),
+                None,
+            ),
             None,
         ),
         None
@@ -2178,15 +2183,21 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
         // A block holding a field PostgreSQL refuses is refused by every
         // re-read (`tests/decode.rs`'s
         // `every_refused_field_fails_a_data_level_parse_reading_it`).
-        for block in index.blocks().filter(|b| refused != Some(b.header.qualified_name().as_str()))
+        for (database, block) in index
+            .blocks_with_database()
+            .filter(|(_, b)| refused != Some(b.header.qualified_name().as_str()))
         {
             let backfill = unstated
-                .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
+                .backfill(block, &bounded_columns(block, index.metadata.as_ref(), database), None)
                 .expect("the block holds no statistics");
             assert_eq!(backfill.group_cap, Some(BLOCK_MAX_ROW_GROUPS));
             assert_eq!(
                 stated
-                    .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
+                    .backfill(
+                        block,
+                        &bounded_columns(block, index.metadata.as_ref(), database),
+                        None
+                    )
                     .unwrap()
                     .group_cap,
                 None
@@ -2205,6 +2216,7 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
                         &options,
                         &GatherOptions::default(),
                         metadata,
+                        database,
                         block,
                         &backfill,
                     )
@@ -2281,17 +2293,19 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
         // A block holding a field PostgreSQL refuses is refused by every
         // re-read (`tests/decode.rs`'s
         // `every_refused_field_fails_a_data_level_parse_reading_it`).
-        for block in index.blocks().filter(|b| refused != Some(b.header.qualified_name().as_str()))
+        for (database, block) in index
+            .blocks_with_database()
+            .filter(|(_, b)| refused != Some(b.header.qualified_name().as_str()))
         {
             let backfill = unstated
-                .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
+                .backfill(block, &bounded_columns(block, index.metadata.as_ref(), database), None)
                 .expect("the block holds no statistics");
             let default_sizing =
                 GroupSizing::Density { min_rows: ROW_GROUP_DEFAULT_MIN_ROWS, max_rows: None };
             assert_eq!(backfill.min_rows, Some(ROW_GROUP_DEFAULT_MIN_ROWS));
             assert_eq!(backfill.sizing, default_sizing);
             let exact_request = stated
-                .backfill(block, &bounded_columns(block, index.metadata.as_ref()), None)
+                .backfill(block, &bounded_columns(block, index.metadata.as_ref(), database), None)
                 .unwrap();
             assert_eq!((exact_request.min_rows, exact_request.sizing), (None, GroupSizing::Stated));
             let sized = StatisticsBackfill {
@@ -2308,6 +2322,7 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
                         &options,
                         &GatherOptions::default(),
                         metadata,
+                        database,
                         block,
                         &backfill,
                     )
@@ -2398,13 +2413,18 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     assert!(err.to_string().contains(&cache_path.display().to_string()), "{err}");
 
     let backfill = StatisticsRequest::DATA
-        .backfill(mapped_block, &bounded_columns(mapped_block, mapped.metadata.as_ref()), None)
+        .backfill(
+            mapped_block,
+            &bounded_columns(mapped_block, mapped.metadata.as_ref(), None),
+            None,
+        )
         .expect("it holds no statistics");
     let err = gather_block_statistics(
         &source,
         &ScanOptions::default(),
         &GatherOptions::default(),
         mapped.metadata.as_ref(),
+        None,
         mapped_block,
         &backfill,
     )
@@ -2429,6 +2449,7 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         mapped.metadata.as_ref(),
+        None,
         mapped_block,
         &backfill,
     )

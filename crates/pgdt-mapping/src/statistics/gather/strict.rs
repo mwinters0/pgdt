@@ -136,16 +136,19 @@ pub struct UncheckedBound {
 }
 
 /// What a strict parse checks nothing of in `block`, read off the preamble
-/// in `metadata` for the block's database as the parse's own check is
+/// in `metadata` for `database`, the one the block's span records, as the parse's own check is
 /// ([`field_checks`]): the same resolution, the same plan and grammar per
 /// column, so the two cannot disagree.
 ///
 /// A property of the dump's declarations and the block's own framing, not of
 /// any run: the same for a block a strict parse checked and one it never
 /// read.
-pub fn strict_unchecked(block: &CopyBlock, metadata: Option<&DumpMetadata>) -> StrictUnchecked {
+pub fn strict_unchecked(
+    block: &CopyBlock,
+    metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
+) -> StrictUnchecked {
     let header = &block.header;
-    let database = block.database.as_deref();
     let qualified = header.qualified_name();
     let db = metadata.and_then(|m| database_for_name(m, database));
     let routed =

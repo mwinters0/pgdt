@@ -132,7 +132,7 @@ impl DynamicBlock {
         let text = plan.table.text_for(&block.header.columns);
         let (schema_mode, semantics) =
             (plan.query_options.schema_mode, plan.query_options.semantics);
-        let database = block.database.as_deref();
+        let database = plan.database.as_deref();
         let full = resolve_block(
             &block.header,
             metadata,
@@ -143,12 +143,12 @@ impl DynamicBlock {
             semantics,
         )
         .ok()?;
-        let counts = block.unrepresentable.as_deref();
+        let counts = block.unrepresentable();
         let unrepresentable =
             query_reads(&block.header, metadata, database, &full, counts, &plan.query_options);
         let reading = plan.query_options.statistics_view();
         let pruning = statistics.and_then(|statistics| {
-            DynamicPruning::new(block, Arc::clone(statistics), metadata, reading)
+            DynamicPruning::new(block, Arc::clone(statistics), metadata, database, reading)
         });
         Some(Self {
             header_offset: block.header_offset,

@@ -46,6 +46,9 @@ pub(in crate::stream) struct ReplayPlan {
     pub(in crate::stream) scan_options: ScanOptions,
     pub(in crate::stream) query_options: QueryOptions,
     pub(in crate::stream) metadata: Option<DumpMetadata>,
+    /// The database every matched block is in — the one their spans record,
+    /// a table's blocks sharing it (`docs/design/decisions.md`, "D49").
+    pub(in crate::stream) database: Option<String>,
     pub(in crate::stream) table: TableColumns,
     /// Every matched block, resolved and keyed by the
     /// block's `header_offset` — see [`plan_blocks`], which refuses the whole
@@ -80,10 +83,12 @@ impl ReplayPlan {
     pub(in crate::stream) fn new(
         scan_options: ScanOptions,
         query_options: QueryOptions,
+        database: Option<String>,
         matches: &[CopyBlock],
         metadata: Option<DumpMetadata>,
     ) -> Result<Self> {
-        let (table, blocks) = plan_table(matches, &query_options, metadata.as_ref())?;
+        let (table, blocks) =
+            plan_table(database.as_deref(), matches, &query_options, metadata.as_ref())?;
         let mut unrepresentable = materialized_unrepresentable(matches, &blocks, &query_options);
         if query_options.unrepresentable == UnrepresentableMode::Refuse
             && !unrepresentable.is_empty()
@@ -94,11 +99,12 @@ impl ReplayPlan {
         }
         let read_as_null = read_as_null(unrepresentable, &query_options);
         let Pruned { kept, stops, note: pruned, rows: kept_rows, value_bytes: kept_value_bytes } =
-            prune_blocks(matches, &blocks, &query_options, metadata.as_ref());
+            prune_blocks(matches, &blocks, &query_options, metadata.as_ref(), database.as_deref());
         Ok(Self {
             scan_options,
             query_options,
             metadata,
+            database,
             table,
             blocks,
             kept,
@@ -134,7 +140,7 @@ impl ReplayPlan {
     }
 }
 
-/// What every plan of `matches` opens with, before anything is read: the
+/// What every plan of `matches`, the blocks of one table in `database`, opens with, before anything is read: the
 /// metadata level refused where a typed plan cannot read it
 /// ([`refuse_metadata_level`]), the table's columns settled
 /// ([`TableColumns::settle`]), and every block resolved against them
@@ -143,13 +149,14 @@ impl ReplayPlan {
 /// it, so the schema a provider declares is the one the stream's batches
 /// carry.
 pub(in crate::stream) fn plan_table(
+    database: Option<&str>,
     matches: &[CopyBlock],
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
 ) -> Result<(TableColumns, BTreeMap<u64, PlannedBlock>)> {
     refuse_metadata_level(matches, query_options)?;
-    let table = TableColumns::settle(matches, metadata, query_options)?;
-    let blocks = plan_blocks(matches, query_options, metadata, &table)?;
+    let table = TableColumns::settle(database, matches, metadata, query_options)?;
+    let blocks = plan_blocks(database, matches, query_options, metadata, &table)?;
     Ok((table, blocks))
 }
 
@@ -183,6 +190,7 @@ fn prune_blocks(
     blocks: &BTreeMap<u64, PlannedBlock>,
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
 ) -> Pruned {
     let (mut kept, mut stops) = (BTreeMap::new(), BTreeMap::new());
     let mut rows = 0;
@@ -194,7 +202,13 @@ fn prune_blocks(
             .get(&block.header_offset)
             .filter(|planned| query_options.use_statistics && planned.filter.reads_fields())
             .and_then(|planned| {
-                prune_block(block, &planned.filter, metadata, query_options.statistics_view())
+                prune_block(
+                    block,
+                    &planned.filter,
+                    metadata,
+                    database,
+                    query_options.statistics_view(),
+                )
             });
         let kept_groups = pruning.as_ref().map(|pruning| pruning.kept_groups.as_slice());
         let block_bytes = field_value_bytes(block, blocks.get(&block.header_offset), kept_groups);
@@ -281,7 +295,7 @@ fn unrepresentable_values(matches: &[CopyBlock], name: &str, reach: Unrepresenta
         .iter()
         .filter_map(|block| {
             let c = block.header.columns.iter().position(|column| column == name)?;
-            let count = block.unrepresentable.as_ref()?.get(c)?;
+            let count = block.unrepresentable()?.get(c)?;
             Some(
                 count.format()
                     + if reach == UnrepresentableTier::Engine { count.engine() } else { 0 },
@@ -471,6 +485,7 @@ fn query_tests(
 /// projection, in that order — is the error, before any row of any block
 /// (`docs/design/decisions.md`, "D54").
 fn plan_blocks(
+    database: Option<&str>,
     matches: &[CopyBlock],
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
@@ -482,11 +497,11 @@ fn plan_blocks(
             let planned = resolve_for_query(
                 &block.header,
                 block.header_offset,
-                block.database.as_deref(),
+                database,
                 query_options,
                 metadata,
                 table,
-                block.unrepresentable.as_deref(),
+                block.unrepresentable(),
             )?;
             Ok((block.header_offset, planned))
         })
@@ -534,10 +549,11 @@ pub(in crate::stream) struct TableColumns {
 }
 
 impl TableColumns {
-    /// The table `matches` are the blocks of — one `(database, table)`
+    /// The table `matches` are the blocks of, in `database` — one `(database, table)`
     /// target, already narrowed (`docs/design/decisions.md`, "D49") — as
     /// `query_options` reads it.
     fn settle(
+        database: Option<&str>,
         matches: &[CopyBlock],
         metadata: Option<&DumpMetadata>,
         query_options: &QueryOptions,
@@ -559,7 +575,7 @@ impl TableColumns {
             });
         }
         let declared: Option<Vec<&str>> = metadata
-            .and_then(|metadata| database_for_name(metadata, first.database.as_deref()))
+            .and_then(|metadata| database_for_name(metadata, database))
             .map(|db| db.declared_columns(&first.header.qualified_name()))
             .map(|columns| columns.iter().map(|c| c.name.as_str()).collect());
         // Stable, so a name the DDL does not declare keeps the first block's
@@ -656,7 +672,7 @@ fn refuse_metadata_level(matches: &[CopyBlock], query_options: &QueryOptions) ->
     if query_options.schema_mode != SchemaMode::Typed {
         return Ok(());
     }
-    match matches.iter().find(|block| block.array_shapes.is_none()) {
+    match matches.iter().find(|block| block.census.is_none()) {
         Some(block) => Err(Error::TableAtMetadataLevel { table: block.header.qualified_name() }),
         None => Ok(()),
     }
@@ -720,12 +736,13 @@ pub(in crate::stream) struct PlannedReplay {
 /// [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) and [`TablePartitions::plan`](crate::stream::partitions::TablePartitions::plan).
 pub(in crate::stream) fn plan_replay(
     source: &dyn ByteRangeSource,
+    database: Option<String>,
     matches: &[CopyBlock],
     metadata: Option<DumpMetadata>,
     scan_options: ScanOptions,
     query_options: QueryOptions,
 ) -> Result<PlannedReplay> {
-    let mut plan = ReplayPlan::new(scan_options, query_options, matches, metadata)?;
+    let mut plan = ReplayPlan::new(scan_options, query_options, database, matches, metadata)?;
     let (groups, mut plan_notes, span, advice) = plan_partitions(
         source,
         matches,

@@ -144,7 +144,7 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
     // The values each view's pruning keeps a group of, in file order.
     let kept = |table: &str, op: PredicateOp, value: Option<&str>, view: StatisticsView| {
         let (block, filter) = filter(table, op, value);
-        let pruning = prune_block(block, &filter, metadata, view).unwrap();
+        let pruning = prune_block(block, &filter, metadata, None, view).unwrap();
         let statistics = block.statistics.as_ref().unwrap();
         let values = ["2024-01-01", "infinity", "-infinity", "262143-01-01", "NULL"];
         let holding: Vec<usize> =
@@ -169,7 +169,7 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
 
     let stops = |view| {
         let (block, filter) = filter("public.u", PredicateOp::Lt, Some("2021-06-01"));
-        prune_block(block, &filter, metadata, view).unwrap().stop.is_some()
+        prune_block(block, &filter, metadata, None, view).unwrap().stop.is_some()
     };
     assert!(!stops(Every), "-infinity closes the column out of order");
     assert!(stops(Representable) && stops(Displayable));

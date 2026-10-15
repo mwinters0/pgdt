@@ -173,9 +173,11 @@ pub fn calendar_end() -> i32 {
 /// array-shape census and the unrepresentable count, one entry each per
 /// column in `header.columns` order — the data level's two query affordances
 /// (`docs/design/decisions.md`, "D35", "D96"). The census grows for a row
-/// wider than its header; the count never does, a column past the header
-/// having no declared type to be tested against.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// wider than its header, which a query refuses; the count never does, a
+/// column past the header having no declared type to be tested against. A
+/// column that saw no array-shaped literal holds the default shape, and both
+/// are empty only for a header naming no columns.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlockCensus {
     pub shapes: Vec<ArrayShape>,
     pub unrepresentable: Vec<Unrepresentable>,

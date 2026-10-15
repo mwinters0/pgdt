@@ -316,9 +316,9 @@ async fn check_fixture(
     let caches = (dump.as_path(), plain.as_path(), gathered_cache.as_path());
 
     let mut tables: BTreeMap<(Option<String>, String), Vec<&CopyBlock>> = BTreeMap::new();
-    for block in index.blocks().filter(|b| b.statistics.is_some()) {
+    for (database, block) in index.blocks_with_database().filter(|(_, b)| b.statistics.is_some()) {
         tables
-            .entry((block.database.clone(), block.header.qualified_name()))
+            .entry((database.map(str::to_owned), block.header.qualified_name()))
             .or_default()
             .push(block);
     }

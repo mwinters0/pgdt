@@ -110,7 +110,8 @@ impl SortedStop {
 /// **A column's bounds, row order and dictionary are believed only under the
 /// declared type and collation they were gathered under**
 /// (`docs/design/decisions.md`, "D78"), compared against
-/// what `metadata` declares now; its NULL counts are read off the text and
+/// what `metadata` declares now for `database`, the one the block's span
+/// records; its NULL counts are read off the text and
 /// believed regardless where every value is read, and in a view taking some
 /// as NULL only under that same declared type. What the comparison itself believes is settled when
 /// the filter resolved ([`ResolvedExpr::truths`]), **and which stored set of
@@ -126,11 +127,12 @@ pub(crate) fn prune_block(
     block: &CopyBlock,
     filter: &ResolvedExpr,
     metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
     reading: StatisticsView,
 ) -> Option<BlockPruning> {
     let statistics = block.statistics.as_deref()?;
     let last = statistics.groups.len().checked_sub(1)?;
-    let (believed, kinds) = believed_columns(block, statistics, metadata)?;
+    let (believed, kinds) = believed_columns(block, statistics, metadata, database)?;
     let view = Believed { statistics, believed: &believed, kinds: &kinds, reading };
 
     let mut pruning = BlockPruning {
@@ -193,7 +195,7 @@ fn or_header_run(mut runs: Vec<Range<u64>>, data_offset: u64) -> Vec<Range<u64>>
 type StoredKinds = Vec<[Option<CompareKind>; 2]>;
 
 /// Per column of `block`, whether `statistics` — its own — are believed
-/// under the DDL `metadata` states now, and the kinds its stored sets of
+/// under the DDL `metadata` states now for `database`, and the kinds its stored sets of
 /// bounds are ordered by ([`prune_block`]); or `None` where the statistics
 /// answer nothing, not fitting the block's extent or column list, or the
 /// block recording a `data_offset` of zero, which a group's search start
@@ -202,6 +204,7 @@ fn believed_columns(
     block: &CopyBlock,
     statistics: &BlockStatistics,
     metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
 ) -> Option<(Vec<bool>, StoredKinds)> {
     let data = block.terminator_offset.saturating_sub(block.data_offset);
     // The last group is the one the last row starts in, so no index reaches
@@ -215,7 +218,7 @@ fn believed_columns(
     {
         return None;
     }
-    let (database, qualified) = (block.database.as_deref(), block.header.qualified_name());
+    let qualified = block.header.qualified_name();
     let believed: Vec<bool> = block
         .header
         .columns
@@ -226,7 +229,7 @@ fn believed_columns(
             believed_under(column, declared_column(metadata, database, &qualified, name))
         })
         .collect();
-    let kinds = stored_bounds_kinds(&block.header, metadata, block.database.as_deref());
+    let kinds = stored_bounds_kinds(&block.header, metadata, database);
     Some((believed, kinds))
 }
 
@@ -299,15 +302,16 @@ pub(crate) struct DynamicPruning {
 
 impl DynamicPruning {
     /// `block`'s `statistics`, as far as they are believed under `metadata`
-    /// and read in `reading` — or `None` where they answer nothing
+    /// for `database` and read in `reading` — or `None` where they answer nothing
     /// ([`prune_block`]'s conditions).
     pub(crate) fn new(
         block: &CopyBlock,
         statistics: Arc<BlockStatistics>,
         metadata: Option<&DumpMetadata>,
+        database: Option<&str>,
         reading: StatisticsView,
     ) -> Option<Self> {
-        let (believed, kinds) = believed_columns(block, &statistics, metadata)?;
+        let (believed, kinds) = believed_columns(block, &statistics, metadata, database)?;
         let groups = statistics.groups.len();
         Some(Self {
             statistics,

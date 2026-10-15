@@ -133,8 +133,9 @@ pub fn table_stream<'a>(
         // Pass 2: replay each matching block for its rows, as one segment
         // per kept run. A resumed stream picks up inside this same list, every
         // resume point being inside a mapped block by construction.
-        let MappedTable { matches, metadata } = mapped;
-        let plan = Arc::new(ReplayPlan::new(scan_options, query_options, &matches, metadata)?);
+        let MappedTable { database, matches, metadata } = mapped;
+        let plan =
+            Arc::new(ReplayPlan::new(scan_options, query_options, database, &matches, metadata)?);
         *shared_for_stream.plan_notes.lock().unwrap() = plan.notes().collect();
         let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
         let segments: Vec<Segment> = matches

@@ -65,7 +65,7 @@ impl PgDumpTable {
     /// library refuses too and this names the parse for
     /// ([`Error::MetadataLevel`]).
     pub(crate) fn build(dump: Arc<PgDump>, name: TableName) -> Result<Self, Error> {
-        let unmapped = dump.index().blocks_of(&name).any(|block| block.array_shapes.is_none());
+        let unmapped = dump.index().blocks_of(&name).any(|block| block.census.is_none());
         if unmapped && dump.schema_mode() == SchemaMode::Typed {
             return Err(Error::MetadataLevel {
                 table: describe(&name),

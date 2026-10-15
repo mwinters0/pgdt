@@ -34,7 +34,13 @@ async fn census_of(path: &Path, table: &str) -> Vec<(String, ArrayShape)> {
     let source = LocalFileSource::open(path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let block = index.blocks_for(table).next().unwrap_or_else(|| panic!("no block for {table}"));
-    block.header.columns.iter().cloned().zip(block.array_shapes.iter().flatten().copied()).collect()
+    block
+        .header
+        .columns
+        .iter()
+        .cloned()
+        .zip(block.array_shapes().into_iter().flatten().copied())
+        .collect()
 }
 
 fn shape(census: &[(String, ArrayShape)], column: &str) -> ArrayShape {
@@ -114,7 +120,7 @@ async fn a_composite_column_contributes_no_dimensionality() {
 /// that stops at its target already receives every row of every block it
 /// maps, so the census rides a read that happens anyway — and the block it
 /// leaves in the map is indistinguishable from the one a full scan leaves,
-/// which is what lets a consumer read `array_shapes` without a second test
+/// which is what lets a consumer read its census without a second test
 /// beside it.
 #[tokio::test]
 async fn every_mapping_pass_censuses_whatever_its_extent() {
@@ -144,7 +150,7 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
         };
         let block = index.blocks_for("public.t_array").next().unwrap();
         assert_eq!(
-            block.array_shapes.as_ref().map(Vec::len),
+            block.array_shapes().map(<[_]>::len),
             Some(block.header.columns.len()),
             "{extent:?}"
         );
@@ -155,7 +161,7 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
             .columns
             .iter()
             .cloned()
-            .zip(block.array_shapes.iter().flatten().copied())
+            .zip(block.array_shapes().into_iter().flatten().copied())
             .collect();
         assert_eq!(shape(&census, "v_empty").dims, Some((1, 1)), "{extent:?}");
     }
@@ -245,7 +251,7 @@ async fn a_metadata_level_table_is_censused_by_its_query_and_refused_by_a_held_p
     )
     .await
     .unwrap();
-    assert!(run.index.blocks().all(|block| block.array_shapes.is_none()));
+    assert!(run.index.blocks().all(|block| block.census.is_none()));
     let written = std::fs::read(&path).unwrap();
 
     let mut stream = table_stream(

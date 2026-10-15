@@ -1147,13 +1147,13 @@ fn multidb(version: u32) -> (tempfile::TempDir, PathBuf) {
 fn outcomes(index: &DumpIndex) -> Vec<(String, Vec<ColumnResolution>)> {
     let metadata = index.metadata.as_ref();
     index
-        .blocks()
-        .map(|b| {
+        .blocks_with_database()
+        .map(|(database, b)| {
             let schema = resolve_columns(
                 &b.header.qualified_name(),
                 &b.header.columns,
                 metadata,
-                b.database.as_deref(),
+                database,
                 SchemaMode::Typed,
                 &[],
             );
@@ -1228,9 +1228,10 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
 
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
     let end = eager
-        .blocks()
-        .find(|b| b.database.as_deref() == Some(second))
+        .blocks_with_database()
+        .find(|(database, _)| *database == Some(second))
         .unwrap_or_else(|| panic!("{label}: {second} has blocks"))
+        .1
         .end_offset;
 
     let cancel = Arc::new(Cancellation::new());
@@ -1252,8 +1253,11 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
     // would also satisfy. A segment with no blocks (`template1`, and
     // `postgres` past the stopping point) is not this test's subject: it has
     // no rows to type.
-    let banked: std::collections::BTreeSet<String> =
-        run.index.blocks().filter_map(|b| b.database.clone()).collect();
+    let banked: std::collections::BTreeSet<String> = run
+        .index
+        .blocks_with_database()
+        .filter_map(|(database, _)| database.map(str::to_owned))
+        .collect();
     assert!(banked.contains(second), "{label}: the scan banked a {second} block");
     let metadata = run.index.metadata.as_ref().unwrap_or_else(|| panic!("{label}: metadata"));
     for name in &banked {
@@ -1329,18 +1333,17 @@ async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() 
         .index;
 
         let types_of = |database: &str| {
-            let block = index
-                .blocks()
-                .find(|b| {
-                    b.database.as_deref() == Some(database)
-                        && b.header.qualified_name() == "public.widgets"
+            let (_, block) = index
+                .blocks_with_database()
+                .find(|(held, b)| {
+                    *held == Some(database) && b.header.qualified_name() == "public.widgets"
                 })
                 .unwrap_or_else(|| panic!("pg_dump {version}: {database} has a widgets block"));
             let schema = resolve_columns(
                 &block.header.qualified_name(),
                 &block.header.columns,
                 index.metadata.as_ref(),
-                block.database.as_deref(),
+                Some(database),
                 SchemaMode::Typed,
                 &[],
             );

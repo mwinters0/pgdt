@@ -511,7 +511,7 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
                 .collect();
             assert_eq!(declared, spelled, "{label}");
             assert!(block.checked_in_full, "{label}");
-            let unchecked = strict_unchecked(block, Some(meta));
+            let unchecked = strict_unchecked(block, Some(meta), db.name.as_deref());
             assert!(unchecked.is_empty(), "{label}: {unchecked:?}");
         }
         assert!(flag_sets > 2, "pg_dump {version}: {flag_sets} flag sets");
@@ -733,7 +733,7 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
     for path in all_fixtures() {
         let source = LocalFileSource::open(&path).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-        for block in index.blocks() {
+        for (database, block) in index.blocks_with_database() {
             if block.header.columns.is_empty() {
                 continue;
             }
@@ -742,15 +742,15 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
                 &qualified,
                 &block.header.columns,
                 index.metadata.as_ref(),
-                block.database.as_deref(),
+                database,
                 SchemaMode::Typed,
-                block.array_shapes.as_deref().unwrap_or_default(),
+                block.array_shapes().unwrap_or_default(),
             );
             let untyped = QueryOptions {
                 unrepresentable: UnrepresentableMode::Text,
                 ..QueryOptions::default()
             };
-            let queried = table_schema(&index, &TableName::of(block), &untyped).unwrap();
+            let queried = table_schema(&index, &TableName::of(database, block), &untyped).unwrap();
             for note in resolved.notes.iter().chain(&queried.notes) {
                 witnesses
                     .entry(outcome_name(&note.resolution))

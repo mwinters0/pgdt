@@ -18,8 +18,9 @@ use crate::options::{QueryOptions, ScanExtent};
 use pgdt_mapping::internal::{MapStop, Pass, map_forward, reread_rows, splice};
 
 /// What a query's mapping pass settled: the blocks this query will replay,
-/// and the DDL to type them against.
+/// the database they are all in, and the DDL to type them against.
 pub(super) struct MappedTable {
+    pub(super) database: Option<String>,
     pub(super) matches: Vec<CopyBlock>,
     pub(super) metadata: Option<DumpMetadata>,
 }
@@ -130,14 +131,15 @@ pub(super) async fn map_for_query(
     // given, filters candidates first rather than picking among them after
     // the fact. An ambiguous name among the blocks mapped errors before a
     // single row goes out; one past an early stop is never seen (`KD6`).
-    let mut matches: Vec<CopyBlock> = index
-        .blocks_for(table)
-        .filter(|b| selector.is_none() || b.database.as_deref() == selector)
-        .cloned()
+    let candidates: Vec<(Option<&str>, &CopyBlock)> = index
+        .blocks_with_database()
+        .filter(|(database, b)| {
+            b.header.matches(table) && (selector.is_none() || *database == selector)
+        })
         .collect();
     let mut target: Option<(Option<String>, String)> = None;
-    for b in &matches {
-        let key = (b.database.clone(), b.header.qualified_name());
+    for (database, b) in &candidates {
+        let key = (database.map(str::to_owned), b.header.qualified_name());
         match &target {
             None => target = Some(key),
             Some(t) if *t != key => {
@@ -150,12 +152,15 @@ pub(super) async fn map_for_query(
         }
     }
 
+    let mut matches: Vec<CopyBlock> = candidates.into_iter().map(|(_, b)| b.clone()).collect();
+    let database = target.and_then(|(database, _)| database);
     census_metadata_level(
         source,
         scan_options,
         query_options,
         cache,
         metadata.as_ref(),
+        database.as_deref(),
         &mut matches,
         index.scanned_through,
         size,
@@ -167,7 +172,7 @@ pub(super) async fn map_for_query(
     // `matches` is fixed, so the census the plan unions over them is the
     // evidence for exactly the rows this stream will hand back
     // (`docs/design/decisions.md`, "D35").
-    Ok(MappedTable { matches, metadata })
+    Ok(MappedTable { database, matches, metadata })
 }
 
 /// **A query's cold semantics over a table the map holds at the metadata
@@ -186,6 +191,7 @@ async fn census_metadata_level(
     query_options: &QueryOptions,
     cache: &CacheMode,
     metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
     matches: &mut [CopyBlock],
     scanned_through: u64,
     size: u64,
@@ -193,8 +199,7 @@ async fn census_metadata_level(
     if query_options.schema_mode != SchemaMode::Typed {
         return Ok(());
     }
-    let lacking: Vec<usize> =
-        (0..matches.len()).filter(|&i| matches[i].array_shapes.is_none()).collect();
+    let lacking: Vec<usize> = (0..matches.len()).filter(|&i| matches[i].census.is_none()).collect();
     let Some(&first) = lacking.first() else { return Ok(()) };
     tracing::info!(
         table = matches[first].header.qualified_name(),
@@ -213,6 +218,7 @@ async fn census_metadata_level(
             scan_options,
             cache_path,
             metadata,
+            database,
             &matches[at],
             size,
             None,
@@ -222,7 +228,7 @@ async fn census_metadata_level(
         let Some(census) = read else {
             return Err(Error::ScanCancelled { scanned_through });
         };
-        matches[at].set_census(census);
+        matches[at].census = Some(census);
     }
     Ok(())
 }

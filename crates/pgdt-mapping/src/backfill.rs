@@ -111,7 +111,7 @@ pub(crate) async fn backfill_statistics(
                 .then(|| {
                     statistics.backfill(
                         block,
-                        &bounded_columns(block, metadata),
+                        &bounded_columns(block, metadata, span.database.as_deref()),
                         gather.statistics_allowance_bytes,
                     )
                 })
@@ -154,7 +154,8 @@ pub(crate) async fn backfill_statistics(
         let mut plan = Some(backfill);
         for _ in 0..2 {
             let Some(backfill) = plan.take() else { break };
-            let SpanBody::Data(DataBlock::Copy(block)) = &index.spans[at].body else {
+            let span = &index.spans[at];
+            let SpanBody::Data(DataBlock::Copy(block)) = &span.body else {
                 unreachable!("the positions were read off copy blocks of this span list");
             };
             let gathered = reread_block(
@@ -163,6 +164,7 @@ pub(crate) async fn backfill_statistics(
                 gather.postgres_invalid_values,
                 cache_path,
                 index.metadata.as_ref(),
+                span.database.as_deref(),
                 block,
                 backfill.as_ref(),
                 account,
@@ -175,13 +177,14 @@ pub(crate) async fn backfill_statistics(
                 run.interrupted = true;
                 return Ok(run);
             };
-            if let SpanBody::Data(DataBlock::Copy(block)) = &mut index.spans[at].body {
+            let span = &mut index.spans[at];
+            if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
                 // Every row was read, so a block gathering is at the data
                 // level whether its statistics fitted or not; a check alone
                 // records only that it checked, as a strict mapping pass
                 // records nothing more of a block it was not asked to.
                 if backfill.is_some() {
-                    block.set_census(census);
+                    block.census = Some(census);
                 }
                 block.checked_in_full |= checked;
                 let _attributed = StatisticsScope::enter();
@@ -223,7 +226,11 @@ pub(crate) async fn backfill_statistics(
                     plan = statistics
                         .backfill(
                             block,
-                            &bounded_columns(block, index.metadata.as_ref()),
+                            &bounded_columns(
+                                block,
+                                index.metadata.as_ref(),
+                                span.database.as_deref(),
+                            ),
                             gather.statistics_allowance_bytes,
                         )
                         .map(Some);
@@ -335,12 +342,13 @@ pub struct BlockReread {
 /// back-fill runs over every block lacking what its request asks for, this one
 /// charging no account and naming no cache. `metadata` is the map's, whole-file where
 /// it can be, which the block's columns are resolved against as a mapping pass
-/// resolves them; `backfill` is [`StatisticsRequest::backfill`]'s answer for
+/// resolves them, in `database`, the one the block's span records
+/// ([`DumpIndex::blocks_with_database`](pgdt_model::DumpIndex::blocks_with_database)); `backfill` is [`StatisticsRequest::backfill`]'s answer for
 /// `block`. The caller stores the result's `gathered` in
 /// [`CopyBlock::statistics`], or — for [`BlockGathered::Declined`] — the
 /// allowance in [`CopyBlock::statistics_declined`]
-/// (`docs/design/decisions.md`, "D85"), and its `census` through
-/// [`CopyBlock::set_census`], which puts a block mapped at the metadata
+/// (`docs/design/decisions.md`, "D85"), and its `census` in
+/// [`CopyBlock::census`], which puts a block mapped at the metadata
 /// level at the data level, and merges its `ignored` into
 /// [`CopyBlock::ignored_refusals`] ([`IgnoredRefusals::merge`]).
 ///
@@ -365,6 +373,7 @@ pub async fn gather_block_statistics(
     scan_options: &ScanOptions,
     gather: &GatherOptions,
     metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
     block: &CopyBlock,
     backfill: &StatisticsBackfill,
 ) -> Result<Option<BlockReread>> {
@@ -377,6 +386,7 @@ pub async fn gather_block_statistics(
         gather.postgres_invalid_values,
         None,
         metadata,
+        database,
         block,
         Some(backfill),
         &Arc::default(),
@@ -399,13 +409,13 @@ async fn reread_block(
     invalid: PostgresInvalidValues,
     cache_path: Option<&Path>,
     metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
     block: &CopyBlock,
     backfill: Option<&StatisticsBackfill>,
     account: &Arc<StatisticsAccount>,
     size: u64,
     shortfall_reported: &mut bool,
 ) -> Result<Option<BlockReread>> {
-    let database = block.database.as_deref();
     let mut observer = match backfill {
         Some(backfill) => {
             gather::observer_tracking(backfill, &block.header, metadata, database, account, invalid)
@@ -417,6 +427,7 @@ async fn reread_block(
         scan_options,
         cache_path,
         metadata,
+        database,
         block,
         size,
         Some(observer.as_mut()),
@@ -440,7 +451,7 @@ async fn reread_block(
 
 /// Read every row of `block` again, as a mapping pass reads them — offered
 /// to the leader, and serially where it declines — censusing and counting
-/// them against the DDL `metadata` states for the block, handing each to
+/// them against the DDL `metadata` states for the block in `database`, handing each to
 /// `observer` where there is one, and answer the census and count:
 /// what a back-fill ([`reread_block`]) and a query's census of a block mapped
 /// at the metadata level (`census_metadata_level`) both read. `None` is
@@ -452,6 +463,7 @@ pub async fn reread_rows(
     scan_options: &ScanOptions,
     cache_path: Option<&Path>,
     metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
     block: &CopyBlock,
     size: u64,
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
@@ -468,7 +480,7 @@ pub async fn reread_rows(
     }
     let plan = CensusPlan {
         width: block.header.columns.len(),
-        counter: counter_for(&block.header, metadata, block.database.as_deref()),
+        counter: counter_for(&block.header, metadata, database),
     };
     let outcome = scan_region(
         source,

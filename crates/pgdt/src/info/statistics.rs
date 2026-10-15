@@ -21,7 +21,7 @@ use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, Sortedness, StatisticsView};
 /// One table's statistics over the blocks of it the map holds.
 #[derive(Debug, PartialEq, Eq)]
 pub struct TableStatistics<'a> {
-    pub database: &'a Option<String>,
+    pub database: Option<&'a str>,
     pub table: String,
     /// The table's blocks in the map.
     pub blocks: u64,
@@ -79,12 +79,12 @@ impl SortednessCounts {
 /// Every table the map holds a block of, in the file order of its first block.
 pub fn table_statistics(index: &DumpIndex) -> Vec<TableStatistics<'_>> {
     let mut tables: Vec<TableStatistics<'_>> = Vec::new();
-    let mut position: HashMap<(&Option<String>, String), usize> = HashMap::new();
-    for block in index.blocks() {
-        let key = (&block.database, block.header.qualified_name());
+    let mut position: HashMap<(Option<&str>, String), usize> = HashMap::new();
+    for (database, block) in index.blocks_with_database() {
+        let key = (database, block.header.qualified_name());
         let at = *position.entry(key).or_insert_with_key(|(database, table)| {
             tables.push(TableStatistics {
-                database,
+                database: *database,
                 table: table.clone(),
                 blocks: 0,
                 gathered_blocks: 0,
@@ -307,7 +307,6 @@ mod tests {
             toc_owned: false,
             body: SpanBody::Data(DataBlock::Copy(CopyBlock {
                 header,
-                database: database.map(String::from),
                 header_offset: 0,
                 data_offset: 0,
                 terminator_offset: 0,
@@ -318,8 +317,7 @@ mod tests {
                 statistics_declined: None,
                 ignored_refusals: None,
                 checked_in_full: false,
-                array_shapes: Some(Vec::new()),
-                unrepresentable: Some(Vec::new()),
+                census: Some(pgdt_model::BlockCensus::default()),
             })),
         }
     }

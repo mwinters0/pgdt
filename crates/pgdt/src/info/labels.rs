@@ -196,11 +196,11 @@ pub(super) fn type_kind_summary(kind: &TypeKind) -> String {
 pub(super) fn block_resolutions(
     index: &DumpIndex,
     complete: bool,
-) -> Vec<(&pgdt_model::CopyBlock, ResolvedSchema)> {
+) -> Vec<(Option<&str>, &pgdt_model::CopyBlock, ResolvedSchema)> {
     index
-        .blocks()
-        .map(|block| {
-            let census: &[ArrayShape] = match &block.array_shapes {
+        .blocks_with_database()
+        .map(|(database, block)| {
+            let census: &[ArrayShape] = match block.array_shapes() {
                 Some(census) if complete => census,
                 _ => &[],
             };
@@ -208,20 +208,24 @@ pub(super) fn block_resolutions(
                 &block.header.qualified_name(),
                 &block.header.columns,
                 index.metadata.as_ref(),
-                block.database.as_deref(),
+                database,
                 SchemaMode::Typed,
                 census,
             );
-            (block, resolved)
+            (database, block, resolved)
         })
         .collect()
 }
 
-/// What a strict parse checks nothing of in `block`, read off the cache's
+/// What a strict parse checks nothing of in `block`, in `database`, read off the cache's
 /// preamble and the block's own framing (`pgdt_mapping::strict_unchecked`):
 /// a property of the dump, so the same whichever mode built the cache.
-pub(super) fn block_unchecked(index: &DumpIndex, block: &pgdt_model::CopyBlock) -> StrictUnchecked {
-    strict_unchecked(block, index.metadata.as_ref())
+pub(super) fn block_unchecked(
+    index: &DumpIndex,
+    database: Option<&str>,
+    block: &pgdt_model::CopyBlock,
+) -> StrictUnchecked {
+    strict_unchecked(block, index.metadata.as_ref(), database)
 }
 
 /// One-line label for a span in `--map` output.

@@ -227,7 +227,8 @@ pub fn table_schema(
     query_options: &QueryOptions,
 ) -> Result<ResolvedSchema> {
     let matches: Vec<CopyBlock> = index.blocks_of(table).cloned().collect();
-    let (_, blocks) = plan_table(&matches, query_options, index.metadata.as_ref())?;
+    let (_, blocks) =
+        plan_table(table.database.as_deref(), &matches, query_options, index.metadata.as_ref())?;
     Ok(blocks.into_values().next().map(|planned| planned.resolved).unwrap_or_default())
 }
 

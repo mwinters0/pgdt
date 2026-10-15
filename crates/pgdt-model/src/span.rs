@@ -23,9 +23,14 @@ use pgdt_core::CopyHeader;
 pub struct Span {
     pub start: u64,
     pub end: u64,
-    /// The database this span belongs to — same convention as
-    /// [`CopyBlock::database`]: the name from the governing `\connect`, or
-    /// `None` for a plain dump (or content before any `\connect`).
+    /// The database this span belongs to — the name from the governing
+    /// `\connect`, or `None` for a plain dump (or content before any
+    /// `\connect`), which falls back to the single unnamed
+    /// [`crate::DatabaseMetadata`]. Not an ordinal into `metadata.databases`:
+    /// an incremental scan's metadata can hold one entry however many
+    /// databases the file contains. **Stored here alone**, a `COPY` block's
+    /// included (`docs/design/decisions.md`, "D34"):
+    /// [`DumpIndex::blocks_with_database`] pairs a block with it.
     pub database: Option<String>,
     /// The span's own bytes, sliced from the file by offset and stored in the
     /// cache so `pgdt info` answers without re-reading the dump
@@ -122,8 +127,6 @@ pub enum DataBlock {
 /// (`docs/design/decisions.md`, "D33").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InsertRun {
-    /// Same convention as [`CopyBlock::database`].
-    pub database: Option<String>,
     /// The table every statement in this run targets, as its own first
     /// `INSERT INTO` line named it — schema-qualified when the line was,
     /// matching [`CopyHeader::qualified_name`](pgdt_core::CopyHeader::qualified_name)'s
@@ -142,10 +145,7 @@ pub struct InsertRun {
 /// `lo_create('<oid>')` opener, and recovering it costs a walk of the whole
 /// region (`docs/design/decisions.md`, "D33").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LargeObjectRegion {
-    /// Same convention as [`CopyBlock::database`].
-    pub database: Option<String>,
-}
+pub struct LargeObjectRegion {}
 
 /// What a span is, at the granularity the statement-driven pass (no
 /// TOC enrichment) can tell — see `pgdt_dump::map`'s module docs.
@@ -249,12 +249,6 @@ pub enum SpanBody {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CopyBlock {
     pub header: CopyHeader,
-    /// The database this block belongs to — the name from the `\connect`
-    /// governing it. `None` means the file had no `\connect` at all (a plain
-    /// dump), which falls back to the single unnamed [`crate::DatabaseMetadata`].
-    /// Not an ordinal into `metadata.databases`: an incremental scan's
-    /// metadata can hold one entry however many databases the file contains.
-    pub database: Option<String>,
     /// Absolute file offset of the `C` in `COPY`.
     pub header_offset: u64,
     /// Absolute file offset of the block's first data byte.
@@ -309,28 +303,24 @@ pub struct CopyBlock {
     /// built the map; `info --detail` and `--json` report it.
     #[serde(default)]
     pub checked_in_full: bool,
-    /// This block's array-shape census, one [`ArrayShape`] per column in
-    /// `header.columns` order, and `None` for a block mapped at the
-    /// [`pgdt_mapping::statistics::StatisticsLevel::Metadata`] level, which records nothing drawn
-    /// from its rows (`docs/design/decisions.md`, "D35"). A column that saw no
-    /// array-shaped literal holds the default shape, and the vector is empty
-    /// only for a header naming no columns. Shorter than `header.columns`
-    /// never happens; *longer* only where a row is wider than its header,
-    /// which a query refuses.
-    pub array_shapes: Option<Vec<ArrayShape>>,
-    /// This block's unrepresentable count, one [`Unrepresentable`] per column
-    /// in `header.columns` order, and `None` exactly where `array_shapes` is:
-    /// every pass that censuses a block counts it
-    /// (`docs/design/decisions.md`, "D96").
-    pub unrepresentable: Option<Vec<Unrepresentable>>,
+    /// What a pass reading every row of this block found — its array-shape
+    /// census and its unrepresentable count — and `None` for a block mapped
+    /// at the [`pgdt_mapping::statistics::StatisticsLevel::Metadata`] level,
+    /// which records nothing drawn from its rows
+    /// (`docs/design/decisions.md`, "D35", "D96"). Recording one puts the
+    /// block at the data level.
+    pub census: Option<BlockCensus>,
 }
 
 impl CopyBlock {
-    /// Record `census` — what a pass reading every row of this block found —
-    /// which puts the block at the data level.
-    pub fn set_census(&mut self, census: BlockCensus) {
-        self.array_shapes = Some(census.shapes);
-        self.unrepresentable = Some(census.unrepresentable);
+    /// The census's array shapes, where the block holds one.
+    pub fn array_shapes(&self) -> Option<&[ArrayShape]> {
+        self.census.as_ref().map(|census| census.shapes.as_slice())
+    }
+
+    /// The census's unrepresentable counts, where the block holds one.
+    pub fn unrepresentable(&self) -> Option<&[Unrepresentable]> {
+        self.census.as_ref().map(|census| census.unrepresentable.as_slice())
     }
 }
 
@@ -352,7 +342,7 @@ pub fn union_census<'a>(
 ) -> Vec<ArrayShape> {
     let mut out = vec![ArrayShape::default(); columns.len()];
     for block in blocks {
-        let census = block.array_shapes.iter().flatten();
+        let census = block.array_shapes().into_iter().flatten();
         for (name, shape) in block.header.columns.iter().zip(census) {
             let slot = columns.iter().position(|c| c == name);
             if let Some(slot) = slot.and_then(|slot| out.get_mut(slot)) {
@@ -380,18 +370,19 @@ pub struct TableName {
 }
 
 impl TableName {
-    /// The table `block` holds rows for.
-    pub fn of(block: &CopyBlock) -> Self {
+    /// The table `block` holds rows for, in `database` — the one its span
+    /// records ([`DumpIndex::blocks_with_database`]).
+    pub fn of(database: Option<&str>, block: &CopyBlock) -> Self {
         Self {
-            database: block.database.clone(),
+            database: database.map(str::to_owned),
             schema: block.header.schema.clone(),
             table: block.header.table.clone(),
         }
     }
 
-    /// Whether `block` holds rows for this table.
-    pub fn names(&self, block: &CopyBlock) -> bool {
-        self.database == block.database
+    /// Whether `block`, in `database`, holds rows for this table.
+    pub fn names(&self, database: Option<&str>, block: &CopyBlock) -> bool {
+        self.database.as_deref() == database
             && self.schema == block.header.schema
             && self.table == block.header.table
     }
@@ -453,6 +444,16 @@ impl DumpIndex {
         })
     }
 
+    /// The `COPY` blocks among `spans`, in file order, each beside the
+    /// database its span records — the one place a block's database is
+    /// stored (`docs/design/decisions.md`, "D34").
+    pub fn blocks_with_database(&self) -> impl Iterator<Item = (Option<&str>, &CopyBlock)> {
+        self.spans.iter().filter_map(|s| match &s.body {
+            SpanBody::Data(DataBlock::Copy(block)) => Some((s.database.as_deref(), block)),
+            _ => None,
+        })
+    }
+
     /// Blocks whose table matches `name`, given qualified (`schema.table`) or
     /// bare (`table`, any schema).
     pub fn blocks_for(&self, name: &str) -> impl Iterator<Item = &CopyBlock> {
@@ -463,12 +464,17 @@ impl DumpIndex {
     /// its first block appears.
     pub fn tables(&self) -> Vec<TableName> {
         let mut seen = BTreeSet::new();
-        self.blocks().map(TableName::of).filter(|name| seen.insert(name.clone())).collect()
+        self.blocks_with_database()
+            .map(|(database, block)| TableName::of(database, block))
+            .filter(|name| seen.insert(name.clone()))
+            .collect()
     }
 
     /// The blocks of exactly `table`, in file order.
     pub fn blocks_of<'a>(&'a self, table: &'a TableName) -> impl Iterator<Item = &'a CopyBlock> {
-        self.blocks().filter(move |b| table.names(b))
+        self.blocks_with_database()
+            .filter(move |(database, b)| table.names(*database, b))
+            .map(|(_, block)| block)
     }
 
     /// The heap every block's statistics hold

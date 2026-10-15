@@ -139,7 +139,6 @@ fn a_plan_note_lists_only_the_levers_that_move_it() {
     let source = LocalFileSource::open(two_blocks(dir.path())).unwrap();
     let block = CopyBlock {
         header: pgdt_core::parse_copy_header(b"COPY public.t (a, b) FROM stdin;").unwrap(),
-        database: None,
         header_offset: 0,
         data_offset: 33,
         terminator_offset: 42,
@@ -150,8 +149,7 @@ fn a_plan_note_lists_only_the_levers_that_move_it() {
         statistics_declined: None,
         ignored_refusals: None,
         checked_in_full: false,
-        array_shapes: Some(Vec::new()),
-        unrepresentable: Some(Vec::new()),
+        census: Some(pgdt_model::BlockCensus::default()),
     };
     // Nothing is read: the plan prices the chunk the source was last told.
     let planned = |chunk: usize, parallelism, span| {
@@ -245,7 +243,6 @@ fn the_count_note_offers_the_chunk_only_where_the_span_sits_on_it() {
     }
     let block = CopyBlock {
         header: pgdt_core::parse_copy_header(b"COPY public.t (a, b) FROM stdin;").unwrap(),
-        database: None,
         header_offset: 0,
         data_offset: 33,
         terminator_offset: 42,
@@ -256,8 +253,7 @@ fn the_count_note_offers_the_chunk_only_where_the_span_sits_on_it() {
         statistics_declined: None,
         ignored_refusals: None,
         checked_in_full: false,
-        array_shapes: Some(Vec::new()),
-        unrepresentable: Some(Vec::new()),
+        census: Some(pgdt_model::BlockCensus::default()),
     };
     let chunk = 1 << 20;
     let plan = |chunk: usize, budget: u64, span: usize| {
@@ -304,7 +300,6 @@ fn the_count_note_offers_the_chunk_only_where_the_span_sits_on_it() {
 fn sub_streams_get_contiguous_runs_balanced_by_bytes() {
     let block = CopyBlock {
         header: pgdt_core::parse_copy_header(b"COPY public.t (id) FROM stdin;").unwrap(),
-        database: None,
         header_offset: 0,
         data_offset: 0,
         terminator_offset: 0,
@@ -315,8 +310,7 @@ fn sub_streams_get_contiguous_runs_balanced_by_bytes() {
         statistics_declined: None,
         ignored_refusals: None,
         checked_in_full: false,
-        array_shapes: Some(Vec::new()),
-        unrepresentable: Some(Vec::new()),
+        census: Some(pgdt_model::BlockCensus::default()),
     };
     let piece = |start: u64, limit: u64| Segment {
         block: block.clone(),

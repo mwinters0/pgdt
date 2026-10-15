@@ -594,7 +594,7 @@ async fn a_scale_past_the_precision_or_arrows_reach_reads_every_value() {
     .index;
     let mut blocks = 0;
     for block in index.blocks() {
-        let counts = block.unrepresentable.as_deref().expect("a data-level block is counted");
+        let counts = block.unrepresentable().expect("a data-level block is counted");
         assert!(counts.iter().all(|c| c.is_zero()), "{counts:?}");
         blocks += 1;
     }
@@ -683,7 +683,7 @@ async fn a_negative_scale_zero_reads_as_zero_in_every_mode() {
     .index;
     let mut blocks = 0;
     for block in index.blocks() {
-        let counts = block.unrepresentable.as_deref().expect("a data-level block is counted");
+        let counts = block.unrepresentable().expect("a data-level block is counted");
         assert!(counts.iter().all(|c| c.is_zero()), "{counts:?}");
         blocks += 1;
     }

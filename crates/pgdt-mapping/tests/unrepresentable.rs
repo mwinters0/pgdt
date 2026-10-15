@@ -29,7 +29,7 @@ use pgdt_fixtures::{VERSIONS, types_fixture};
 fn counts(index: &DumpIndex) -> BTreeMap<String, Unrepresentable> {
     let mut out = BTreeMap::new();
     for block in index.blocks() {
-        let counts = block.unrepresentable.as_deref().unwrap_or_else(|| {
+        let counts = block.unrepresentable().unwrap_or_else(|| {
             panic!("{}: a data-level block is counted", block.header.qualified_name())
         });
         assert_eq!(counts.len(), block.header.columns.len());
@@ -112,7 +112,7 @@ async fn a_data_level_parse_over_the_metadata_level_counts_what_a_cold_one_does(
 
     let dir = tempfile::tempdir().unwrap();
     let metadata = parsed(&fixture, dir.path(), &StatisticsRequest::METADATA).await;
-    assert!(metadata.blocks().all(|block| block.unrepresentable.is_none()));
+    assert!(metadata.blocks().all(|block| block.census.is_none()));
     let backfilled = parsed(&fixture, dir.path(), &StatisticsRequest::DATA).await;
     assert_eq!(counts(&backfilled), counts(&cold));
     assert!(!counts(&cold).is_empty());
@@ -135,7 +135,7 @@ async fn statistics_count_by_group_what_the_census_counts_by_block() {
             parsed(&types_fixture(version, "default"), dir.path(), &StatisticsRequest::DATA).await;
         let mut viewed = 0;
         for block in index.blocks() {
-            let census = block.unrepresentable.as_deref().unwrap();
+            let census = block.unrepresentable().unwrap();
             let statistics = block.statistics.as_deref().unwrap();
             for (c, column) in statistics.columns.iter().enumerate() {
                 let Some(column) = column else { continue };
