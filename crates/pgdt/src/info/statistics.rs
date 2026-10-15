@@ -245,8 +245,8 @@ mod tests {
 
     use pgdt_core::CopyHeader;
     use pgdt_model::{
-        BlockStatistics, Bounds, ColumnBounds, ColumnDictionary, ColumnStatistics, DataBlock,
-        GroupSizing, RowGroup, Span, SpanBody,
+        BlockStatistics, Bounds, ColumnDictionary, ColumnStatistics, DataBlock, GroupSizing,
+        RowGroup, Span, SpanBody,
     };
 
     use super::*;
@@ -264,27 +264,33 @@ mod tests {
     }
 
     /// A column keeping bounds in `bounded` of its groups, in `sortedness`, and
-    /// a dictionary in every group.
-    fn column(sortedness: Sortedness, bounded: &[bool]) -> Option<ColumnStatistics> {
-        Some(ColumnStatistics {
-            declared_type: Some("integer".into()),
-            collation: None,
-            null_counts: vec![0; bounded.len()],
-            bounds: Some(ColumnBounds {
-                sortedness,
-                groups: bounded.iter().map(|&b| if b { bounds() } else { None }).collect(),
-                every: None,
-                displayable: None,
-            }),
-            datafusion_bounds: None,
-            dictionary: Some(ColumnDictionary {
+    /// a dictionary in every group, as the cache persists it: what this crate
+    /// builds one from, its view-interpreted fields being past the API.
+    fn persisted(sortedness: Sortedness, bounded: &[bool]) -> serde_json::Value {
+        let groups = bounded.len();
+        serde_json::json!({
+            "declared_type": "integer",
+            "collation": null,
+            "null_counts": vec![0; groups],
+            "bounds": {
+                "sortedness": sortedness,
+                "groups": bounded.iter().map(|&b| if b { bounds() } else { None }).collect::<Vec<_>>(),
+                "every": null,
+                "displayable": null,
+            },
+            "datafusion_bounds": null,
+            "dictionary": ColumnDictionary {
                 entries: vec!["1".into()],
                 groups: bounded.iter().map(|_| Some(vec![0])).collect(),
-            }),
-            sums: Some(vec![1; bounded.len()]),
-            value_bytes: vec![1; bounded.len()],
-            unrepresentable: None,
+            },
+            "sums": vec![1; groups],
+            "value_bytes": vec![1; groups],
+            "unrepresentable": null,
         })
+    }
+
+    fn column(sortedness: Sortedness, bounded: &[bool]) -> Option<ColumnStatistics> {
+        Some(serde_json::from_value(persisted(sortedness, bounded)).unwrap())
     }
 
     fn block(
@@ -378,11 +384,10 @@ mod tests {
 
     #[test]
     fn one_state_is_named_alone_and_a_column_without_bounds_says_so() {
-        let mut unbounded = column(Sortedness::Ascending, &[true]);
-        if let Some(c) = &mut unbounded {
-            c.bounds = None;
-            c.dictionary = None;
-        }
+        let mut unbounded = persisted(Sortedness::Ascending, &[true]);
+        unbounded["bounds"] = serde_json::Value::Null;
+        unbounded["dictionary"] = serde_json::Value::Null;
+        let unbounded = Some(serde_json::from_value(unbounded).unwrap());
         let index = DumpIndex {
             spans: vec![
                 block(

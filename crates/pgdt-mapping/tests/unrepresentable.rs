@@ -20,7 +20,7 @@ use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
-use pgdt_model::internal::UnrepresentableExt;
+use pgdt_model::internal::{ColumnStatisticsExt, UnrepresentableExt};
 use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, StatisticsView, Unrepresentable};
 
 use pgdt_fixtures::{VERSIONS, types_fixture};
@@ -139,6 +139,7 @@ async fn statistics_count_by_group_what_the_census_counts_by_block() {
             let statistics = block.statistics.as_deref().unwrap();
             for (c, column) in statistics.columns.iter().enumerate() {
                 let Some(column) = column else { continue };
+                let column = column.clone().into_parts();
                 let what = format!(
                     "pg_dump {version}: {}.{}",
                     block.header.table, block.header.columns[c]

@@ -173,13 +173,11 @@ pub fn table_summary(
             let believed =
                 believed_under(column, declared_column(metadata, database, &qualified, name));
             let groups = statistics.groups.len();
-            let view_nulls = |g: usize| match believed || reading == StatisticsView::Every {
-                true => column.null_count(g, reading),
-                false => column.null_counts.get(g).copied(),
-            };
-            accumulator.nulls += (0..column.null_counts.len()).filter_map(view_nulls).sum::<u64>();
-            if column.null_counts.len() != groups || (!believed && reading != StatisticsView::Every)
-            {
+            let counted = column.counted_groups();
+            let nulls_view = if believed { reading } else { StatisticsView::Every };
+            accumulator.nulls +=
+                (0..counted).filter_map(|g| column.null_count(g, nulls_view)).sum::<u64>();
+            if counted != groups || (!believed && reading != StatisticsView::Every) {
                 accumulator.nulls_complete = false;
             }
             accumulator.value_bytes = accumulator
@@ -189,10 +187,7 @@ pub fn table_summary(
             // A sum is of the values the type holds, so it is the column's
             // only in a view taking the rest as NULL, or where there are none.
             let summed = reading.reads_as_null(Some(UnrepresentableTier::Format))
-                || column
-                    .unrepresentable
-                    .as_ref()
-                    .is_none_or(|counts| counts.iter().all(|count| count.format() == 0));
+                || !column.holds_unrepresentable(UnrepresentableTier::Format);
             let sums =
                 column.sums.as_ref().filter(|sums| summed && believed && sums.len() == groups);
             accumulator.sum = accumulator
@@ -214,10 +209,7 @@ pub fn table_summary(
                 .and_then(|kind| bounds_set_keyed_by(&gathered.bounds_kinds(c), kind))
                 // A set or a NULL count not one to a group describes other
                 // groups, and nothing it says is read.
-                .filter(|&set| {
-                    column.bounds_in(set).is_some_and(|stored| stored.groups.len() == groups)
-                        && column.null_counts.len() == groups
-                });
+                .filter(|&set| column.listed_groups(set) == Some(groups) && counted == groups);
             let Some(set) = set else {
                 accumulator.complete = false;
                 continue;
@@ -443,14 +435,14 @@ fn column_order(
         if !believed_under(column, declared_column(metadata, database, &qualified, name)) {
             return None;
         }
-        if column.null_counts.len() != statistics.groups.len()
+        if column.counted_groups() != statistics.groups.len()
             || (0..statistics.groups.len()).any(|g| column.null_count(g, reading) != Some(0))
         {
             return None;
         }
         let gathered = stored_resolution(&block.header, metadata, block.database.as_deref());
         let set = bounds_set_keyed_by(&gathered.bounds_kinds(c), &kind)?;
-        if column.bounds_in(set)?.groups.len() != statistics.groups.len() {
+        if column.listed_groups(set)? != statistics.groups.len() {
             return None;
         }
         let sortedness = column.sortedness(set, reading)?;

@@ -5,7 +5,7 @@ use crate::statistics::test_support::{Rng, join_type, value};
 use pgdt_codec::compare::CompareKind;
 use pgdt_codec::decode::{decode_bytea, render_bytea};
 use pgdt_codec::key::ValueKey;
-use pgdt_model::internal::UnrepresentableExt;
+use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts, UnrepresentableExt};
 use pgdt_model::{
     ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, Sortedness, Unrepresentable, UnrepresentableTier,
 };
@@ -192,7 +192,7 @@ fn each_view_bounds_and_orders_the_values_it_takes() {
         assert_eq!(bounds.displayable.is_some(), counts.iter().any(|c| c.engine() > 0));
         kept[0] += usize::from(bounds.every.is_some());
         kept[1] += usize::from(bounds.displayable.is_some());
-        let column = ColumnStatistics {
+        let column = ColumnStatistics::from_parts(ColumnStatisticsParts {
             declared_type: None,
             collation: None,
             null_counts: vec![0; groups.len()],
@@ -202,7 +202,7 @@ fn each_view_bounds_and_orders_the_values_it_takes() {
             sums: None,
             value_bytes: vec![0; groups.len()],
             unrepresentable: Some(counts.clone()),
-        };
+        });
         for (v, view) in views.into_iter().enumerate() {
             let taken = |group: &Vec<String>| -> Vec<(String, Option<ValueKey>)> {
                 group

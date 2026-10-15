@@ -23,7 +23,7 @@ use pgdt_dump::cache::{self, CacheMode, CacheStatus};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSizing};
-use pgdt_model::{CopyBlock, DumpIndex};
+use pgdt_model::{Bounds, BoundsSet, ColumnStatistics, CopyBlock, DumpIndex, StatisticsView};
 use pgdt_query::{
     EarlyStop, Expr, PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions, table_stream,
     table_stream_partitions,
@@ -31,6 +31,14 @@ use pgdt_query::{
 
 mod common;
 use common::{VERSIONS, all_fixtures, parsed_copy, statistics_fixture, types_fixture};
+
+/// Each group's bounds in `column`'s stored set `set`, over the values its
+/// type holds: what gathering stored, read through the view that reads it as
+/// stored.
+fn stored_bounds(column: &ColumnStatistics, set: BoundsSet) -> Vec<Option<&Bounds>> {
+    let groups = column.listed_groups(set).expect("the set was kept");
+    (0..groups).map(|g| column.group_bounds(set, StatisticsView::Representable, g)).collect()
+}
 
 /// The group size the generated check gathers at: tens of bytes, where the
 /// shipped mebibyte makes every fixture block one group and pruning has
@@ -203,8 +211,9 @@ fn literals(
         let Some(statistics) = block.statistics.as_deref() else { continue };
         let Some(Some(column)) = statistics.columns.get(column) else { continue };
         declared = declared.or(column.declared_type.clone());
-        if let Some(bounds) = &column.bounds {
-            let present: Vec<_> = bounds.groups.iter().flatten().collect();
+        if column.listed_groups(BoundsSet::Primary).is_some() {
+            let present: Vec<_> =
+                stored_bounds(column, BoundsSet::Primary).into_iter().flatten().collect();
             for _ in 0..present.len().min(3) {
                 let group = present[rng.below(present.len())];
                 stored.insert(group.min.clone());
@@ -629,10 +638,9 @@ async fn a_sorted_column_under_a_range_filter_skips_every_group_before_the_bound
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
         let block = index.blocks_for("public.ordered").next().unwrap();
         let statistics = block.statistics.as_deref().unwrap();
-        let id = statistics.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
+        let id = stored_bounds(statistics.columns[0].as_ref().unwrap(), BoundsSet::Primary);
         let below: u64 =
-            id.groups.iter().flatten().filter(|b| b.max.parse::<i64>().unwrap() < 990).count()
-                as u64;
+            id.iter().flatten().filter(|b| b.max.parse::<i64>().unwrap() < 990).count() as u64;
         assert!(below > 10, "pg_dump {version}: {below} group(s) below the bound");
 
         let filter = Expr::all([term("id", PredicateOp::Ge, Some("990"))]);
@@ -682,11 +690,10 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
         let block = index.blocks_for("public.ordered").next().unwrap();
         let statistics = block.statistics.as_deref().unwrap();
-        let id = statistics.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
+        let id = stored_bounds(statistics.columns[0].as_ref().unwrap(), BoundsSet::Primary);
         let skipped: Vec<bool> = id
-            .groups
             .iter()
-            .map(|bounds| bounds.as_ref().is_some_and(|b| b.max.parse::<i64>().unwrap() < 990))
+            .map(|bounds| bounds.is_some_and(|b| b.max.parse::<i64>().unwrap() < 990))
             .collect();
         let below: u64 =
             statistics.groups.iter().zip(&skipped).filter(|&(_, &s)| s).map(|(g, _)| g.rows).sum();
@@ -752,8 +759,8 @@ async fn collated_text_prunes_by_its_bytewise_bounds_in_datafusion_semantics_alo
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
         let block = index.blocks_for("public.ordered").next().unwrap();
         let statistics = block.statistics.as_deref().unwrap();
-        let bounds = statistics.columns[11].as_ref().unwrap().bounds.as_ref().unwrap();
-        let below = bounds.groups.iter().flatten().filter(|b| b.max.as_str() < "a").count() as u64;
+        let bounds = stored_bounds(statistics.columns[11].as_ref().unwrap(), BoundsSet::Primary);
+        let below = bounds.iter().flatten().filter(|b| b.max.as_str() < "a").count() as u64;
         assert!(below > 10, "pg_dump {version}: {below} group(s) below the bound");
 
         let filter = Expr::all([term("default_text", PredicateOp::Ge, Some("a"))]);
@@ -798,12 +805,12 @@ async fn an_enum_is_pruned_by_the_set_of_bounds_in_the_order_asked_for() {
         let statistics = block.statistics.as_deref().unwrap();
         assert_eq!(statistics.groups.len(), 1, "pg_dump {version}");
         let column = statistics.columns[1].as_ref().unwrap();
-        let extremes = |bounds: Option<&pgdt_model::ColumnBounds>| {
-            let group = bounds.unwrap().groups[0].clone().unwrap();
+        let extremes = |set| {
+            let group = stored_bounds(column, set)[0].unwrap().clone();
             (group.min, group.max)
         };
-        assert_eq!(extremes(column.bounds.as_ref()), ("sad".into(), "has'quote".into()));
-        assert_eq!(extremes(column.datafusion_bounds.as_ref()), ("has space".into(), "sad".into()));
+        assert_eq!(extremes(BoundsSet::Primary), ("sad".into(), "has'quote".into()));
+        assert_eq!(extremes(BoundsSet::DataFusion), ("has space".into(), "sad".into()));
 
         for (semantics, op, literal, rows, skipped) in [
             (Postgres, PredicateOp::Gt, "sad", 3, 0),
@@ -1057,12 +1064,11 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
     let (_dir, dump, index) = gathered(&statistics_fixture(16, "default"), SMALL_GROUP).await;
     let block = index.blocks_for("public.ordered").next().unwrap();
     let statistics = block.statistics.as_deref().unwrap();
-    let id = statistics.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
+    let id = stored_bounds(statistics.columns[0].as_ref().unwrap(), BoundsSet::Primary);
     let skipped: Vec<bool> = id
-        .groups
         .iter()
         .map(|b| {
-            let b = b.as_ref().unwrap();
+            let b = b.unwrap();
             b.min.parse::<i64>().unwrap() >= 40 && b.max.parse::<i64>().unwrap() < 500
         })
         .collect();

@@ -30,7 +30,7 @@ use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{
     GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing,
 };
-use pgdt_model::{DumpIndex, Sortedness};
+use pgdt_model::{BoundsSet, DumpIndex, Sortedness, StatisticsView};
 use pgdt_query::{
     DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
     TablePartitions,
@@ -223,9 +223,10 @@ fn groups_below(index: &DumpIndex, bound: i64) -> (u64, usize) {
 fn below(index: &DumpIndex, bound: i64) -> (u64, u64) {
     let block = index.blocks_for("public.ordered").next().unwrap();
     let statistics = block.statistics.as_deref().unwrap();
-    let id = statistics.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
+    let id = statistics.columns[0].as_ref().unwrap();
+    let max = |g| id.group_bounds(BoundsSet::Primary, StatisticsView::Representable, g).unwrap();
     let below: Vec<usize> = (0..statistics.groups.len())
-        .filter(|&g| id.groups[g].as_ref().unwrap().max.parse::<i64>().unwrap() < bound)
+        .filter(|&g| max(g).max.parse::<i64>().unwrap() < bound)
         .collect();
     let rows = below.iter().map(|&g| statistics.groups[g].rows).sum();
     (below.len() as u64, rows)
@@ -236,11 +237,14 @@ fn below(index: &DumpIndex, bound: i64) -> (u64, u64) {
 fn groups_meeting(index: &DumpIndex, ids: std::ops::RangeInclusive<i64>) -> u64 {
     let block = index.blocks_for("public.ordered").next().unwrap();
     let statistics = block.statistics.as_deref().unwrap();
-    let id = statistics.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
+    let id = statistics.columns[0].as_ref().unwrap();
     let bound = |text: &str| text.parse::<i64>().unwrap();
     let meets =
         |b: &&pgdt_model::Bounds| bound(&b.min) <= *ids.end() && bound(&b.max) >= *ids.start();
-    id.groups.iter().flatten().filter(meets).count() as u64
+    (0..statistics.groups.len())
+        .filter_map(|g| id.group_bounds(BoundsSet::Primary, StatisticsView::Representable, g))
+        .filter(meets)
+        .count() as u64
 }
 
 /// **A dynamic filter's state skips every group it rules out, and drops each

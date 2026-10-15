@@ -16,8 +16,8 @@ use pgdt_codec::{
     internal::{bytea_unread, char_typmod_refuses},
 };
 use pgdt_model::{
-    Bounds, BoundsView, ColumnBounds, DICTIONARY_ENTRY_MAX_BYTES, UnrepresentableTier,
-    internal::{text_heap, vec_heap},
+    Bounds, DICTIONARY_ENTRY_MAX_BYTES, UnrepresentableTier,
+    internal::{BoundsView, ColumnBounds, text_heap, vec_heap},
 };
 
 use super::charge::{push_charged, reserve_charged};

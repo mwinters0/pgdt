@@ -431,6 +431,13 @@ pub struct RowGroup {
 
 /// One column's statistics over a block, every per-group vector as long as
 /// [`BlockStatistics::groups`].
+///
+/// **What a [`StatisticsView`] gives its meaning is read only through it**:
+/// the NULL counts, the bounds, the row order and the unrepresentable counts
+/// are private, and [`Self::null_count`], [`Self::group_bounds`] and
+/// [`Self::sortedness`] read them under a view, a raw read having silently
+/// picked one. A gatherer builds one, and a test takes one apart, through
+/// `internal`'s [`ColumnStatisticsParts`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnStatistics {
     /// The declared type text the statistics were computed under, as the
@@ -438,27 +445,16 @@ pub struct ColumnStatistics {
     pub declared_type: Option<String>,
     /// The column's `COLLATE` clause, verbatim; `None` for no clause.
     pub collation: Option<String>,
-    /// NULLs per group.
-    pub null_counts: Vec<u64>,
-    /// Present for a scalar column, in the register's order where that is
-    /// exact and DataFusion semantics' otherwise — as its text for a column
-    /// nothing declared ([`pgdt_codec::ResolvedSchema::bounds_kinds`]).
-    pub bounds: Option<ColumnBounds>,
-    /// A second set in DataFusion semantics' order, present only where the
-    /// register's order is exact and DataFusion's is another
-    /// (`docs/design/decisions.md`, "D79").
-    pub datafusion_bounds: Option<ColumnBounds>,
+    null_counts: Vec<u64>,
+    bounds: Option<ColumnBounds>,
+    datafusion_bounds: Option<ColumnBounds>,
     /// Present for a column its comparison equates exactly.
     pub dictionary: Option<ColumnDictionary>,
-    /// Per group, its values the column's Arrow type cannot hold, in each tier
-    /// (`docs/design/decisions.md`, "D96") — what a reading taking them as
-    /// NULL adds to [`Self::null_counts`] ([`StatisticsView`]). `None` where
-    /// no group of the block holds one.
-    pub unrepresentable: Option<Vec<Unrepresentable>>,
+    unrepresentable: Option<Vec<Unrepresentable>>,
     /// Per group, the sum of its non-NULL values the type holds as integers —
     /// a decimal's unscaled — wrapped at 128 bits, which reduces exactly to
     /// any narrower wrapping sum; a `NaN` is left out, as a NULL is, and
-    /// counted in [`Self::unrepresentable`]. Kept for a column the typed read
+    /// counted as unrepresentable. Kept for a column the typed read
     /// emits as `Int16`, `Int32`, `Int64`, `UInt32` or `Decimal128` — `int2`,
     /// `int4`, `int8`, `oid` and a `numeric(p,s)` of at most 38 digits — and
     /// `None` for every other, **and for one holding a value that does not
@@ -474,15 +470,50 @@ pub struct ColumnStatistics {
     pub value_bytes: Vec<u64>,
 }
 
+/// A [`ColumnStatistics`]' every field, as it stores them: what a gatherer
+/// builds one from and a test takes one apart into
+/// ([`ColumnStatisticsExt::from_parts`], [`ColumnStatisticsExt::into_parts`]).
+/// The fields a view interprets are read here raw, which no reader past
+/// `internal` does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnStatisticsParts {
+    /// [`ColumnStatistics::declared_type`].
+    pub declared_type: Option<String>,
+    /// [`ColumnStatistics::collation`].
+    pub collation: Option<String>,
+    /// NULLs per group, the values the dump writes as NULL alone.
+    pub null_counts: Vec<u64>,
+    /// Present for a scalar column, in the register's order where that is
+    /// exact and DataFusion semantics' otherwise — as its text for a column
+    /// nothing declared ([`pgdt_codec::ResolvedSchema::bounds_kinds`]):
+    /// [`BoundsSet::Primary`].
+    pub bounds: Option<ColumnBounds>,
+    /// A second set in DataFusion semantics' order, present only where the
+    /// register's order is exact and DataFusion's is another
+    /// (`docs/design/decisions.md`, "D79"): [`BoundsSet::DataFusion`].
+    pub datafusion_bounds: Option<ColumnBounds>,
+    /// [`ColumnStatistics::dictionary`].
+    pub dictionary: Option<ColumnDictionary>,
+    /// Per group, its values the column's Arrow type cannot hold, in each tier
+    /// (`docs/design/decisions.md`, "D96") — what a reading taking them as
+    /// NULL adds to `null_counts` ([`StatisticsView`]). `None` where no group
+    /// of the block holds one.
+    pub unrepresentable: Option<Vec<Unrepresentable>>,
+    /// [`ColumnStatistics::sums`].
+    pub sums: Option<Vec<i128>>,
+    /// [`ColumnStatistics::value_bytes`].
+    pub value_bytes: Vec<u64>,
+}
+
 /// Which of a column's stored sets of bounds and row order a statistic is read
 /// from ([`pgdt_codec::compare::ComparisonPlan::bounds_kinds`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BoundsSet {
-    /// [`ColumnStatistics::bounds`]: the register's order where it is
-    /// exact, DataFusion semantics' otherwise.
+    /// The register's order where it is exact, DataFusion semantics'
+    /// otherwise.
     Primary,
-    /// [`ColumnStatistics::datafusion_bounds`]: DataFusion semantics' order,
-    /// kept beside an exact register order that is not it.
+    /// DataFusion semantics' order, kept beside an exact register order that
+    /// is not it.
     DataFusion,
 }
 
@@ -506,7 +537,9 @@ pub enum StatisticsView {
 
 /// Bounds per group and the block's row order, for one column, **over the
 /// values its Arrow type holds**, and beside them the views that differ where
-/// a group holds one it cannot ([`StatisticsView`]).
+/// a group holds one it cannot ([`StatisticsView`]): one stored set of a
+/// [`ColumnStatistics`], read through its view-taking methods and reached raw
+/// only through `internal`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ColumnBounds {
     /// The order of the non-NULL values the type holds over the whole block,
@@ -637,11 +670,34 @@ impl StatisticsView {
 
 impl ColumnStatistics {
     /// The stored set of bounds `set` names, if it was kept.
-    pub fn bounds_in(&self, set: BoundsSet) -> Option<&ColumnBounds> {
+    fn bounds_in(&self, set: BoundsSet) -> Option<&ColumnBounds> {
         match set {
             BoundsSet::Primary => self.bounds.as_ref(),
             BoundsSet::DataFusion => self.datafusion_bounds.as_ref(),
         }
+    }
+
+    /// How many groups the stored set `set` lists, `None` where it was not
+    /// kept — [`BlockStatistics::groups`]' length for a set gathered over
+    /// the block.
+    pub fn listed_groups(&self, set: BoundsSet) -> Option<usize> {
+        self.bounds_in(set).map(|bounds| bounds.groups.len())
+    }
+
+    /// How many groups its NULLs are counted for — [`BlockStatistics::groups`]'
+    /// length for a column gathered over the block.
+    pub fn counted_groups(&self) -> usize {
+        self.null_counts.len()
+    }
+
+    /// Whether some group holds a value past `tier`, which a view taking it
+    /// as NULL reads as NULL ([`StatisticsView::reads_as_null`]) and which
+    /// [`Self::sums`] leave out.
+    pub fn holds_unrepresentable(&self, tier: UnrepresentableTier) -> bool {
+        self.unrepresentable.iter().flatten().any(|count| match tier {
+            UnrepresentableTier::Format => count.format() > 0,
+            UnrepresentableTier::Engine => count.engine() > 0,
+        })
     }
 
     /// The bounds group `group` of the stored set `set` holds under `view`,
@@ -677,8 +733,8 @@ impl ColumnStatistics {
         Some(differing.map_or(bounds.sortedness, |view| view.sortedness))
     }
 
-    /// Group `group`'s NULLs under `view`: its [`Self::null_counts`], and each
-    /// value the view reads as NULL.
+    /// Group `group`'s NULLs under `view`: those the dump writes, and each
+    /// value the view reads as NULL; `None` past [`Self::counted_groups`].
     pub fn null_count(&self, group: usize, view: StatisticsView) -> Option<u64> {
         let nulls = *self.null_counts.get(group)?;
         let count = self.unrepresentable_in(group);
@@ -734,10 +790,64 @@ impl ColumnStatistics {
 /// What a crate above calls on [`ColumnStatistics`] that is not its API: public only
 /// because a crate boundary forced it, and reached through `internal`.
 pub trait ColumnStatisticsExt {
+    fn from_parts(parts: ColumnStatisticsParts) -> Self;
+    fn into_parts(self) -> ColumnStatisticsParts;
     fn unrepresentable_in(&self, group: usize) -> Unrepresentable;
 }
 
 impl ColumnStatisticsExt for ColumnStatistics {
+    /// One built from its fields as it stores them.
+    fn from_parts(parts: ColumnStatisticsParts) -> Self {
+        let ColumnStatisticsParts {
+            declared_type,
+            collation,
+            null_counts,
+            bounds,
+            datafusion_bounds,
+            dictionary,
+            unrepresentable,
+            sums,
+            value_bytes,
+        } = parts;
+        Self {
+            declared_type,
+            collation,
+            null_counts,
+            bounds,
+            datafusion_bounds,
+            dictionary,
+            unrepresentable,
+            sums,
+            value_bytes,
+        }
+    }
+
+    /// Its fields as it stores them, the ones a view interprets raw.
+    fn into_parts(self) -> ColumnStatisticsParts {
+        let Self {
+            declared_type,
+            collation,
+            null_counts,
+            bounds,
+            datafusion_bounds,
+            dictionary,
+            unrepresentable,
+            sums,
+            value_bytes,
+        } = self;
+        ColumnStatisticsParts {
+            declared_type,
+            collation,
+            null_counts,
+            bounds,
+            datafusion_bounds,
+            dictionary,
+            unrepresentable,
+            sums,
+            value_bytes,
+        }
+    }
+
     /// Group `group`'s count, zero where the block holds no such value.
     fn unrepresentable_in(&self, group: usize) -> Unrepresentable {
         self.unrepresentable

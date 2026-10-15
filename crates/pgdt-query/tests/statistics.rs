@@ -27,9 +27,11 @@ use pgdt_mapping::statistics::{
     StatisticsTarget,
 };
 use pgdt_mapping::{MapRun, bounded_columns, gather_block_statistics, map_file};
+use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts};
 use pgdt_model::{
-    BlockStatistics, ColumnRefusals, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
-    DumpIndex, FieldRefusal, GroupSizing, IgnoredRefusals, PostgresInvalidValues, Sortedness,
+    BlockStatistics, ColumnRefusals, ColumnStatistics, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES,
+    DICTIONARY_MAX_ENTRIES, DumpIndex, FieldRefusal, GroupSizing, IgnoredRefusals,
+    PostgresInvalidValues, Sortedness,
 };
 
 mod common;
@@ -206,7 +208,7 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
             assert_eq!(group.bytes, end - first.offset, "{label}: group {k}'s extent");
         }
         for (c, column) in stats.columns.iter().enumerate() {
-            let Some(column) = column else { continue };
+            let Some(column) = column.as_ref().map(stored) else { continue };
             let declared = column.declared_type.as_deref().unwrap();
             let values: Vec<&str> = members.iter().filter_map(|r| r.fields[c].as_deref()).collect();
             // A blank-padded column's own set, and its dictionary, hold a value
@@ -304,7 +306,13 @@ fn assert_describes_the_file(dump: &Path, block: &CopyBlock, label: &str) {
 
 fn sortedness(block: &CopyBlock, column: &str) -> Option<Sortedness> {
     let at = block.header.columns.iter().position(|c| c == column).unwrap();
-    statistics(block).columns[at].as_ref().unwrap().bounds.as_ref().map(|b| b.sortedness)
+    stored(statistics(block).columns[at].as_ref().unwrap()).bounds.map(|b| b.sortedness)
+}
+
+/// `column` as it is stored, the fields a view interprets read raw: what
+/// gathering wrote, which is what these tests check.
+fn stored(column: &ColumnStatistics) -> ColumnStatisticsParts {
+    column.clone().into_parts()
 }
 
 /// Every block of the fixture gathers at a small group size, on every major,
@@ -386,7 +394,7 @@ async fn sortedness_is_the_blocks_row_order() {
         // An enum descends in its declared order and ascends in DataFusion's, its
         // labels' text.
         let moods = block(&index, "public.moods");
-        let m = statistics(moods).columns[1].as_ref().unwrap();
+        let m = stored(statistics(moods).columns[1].as_ref().unwrap());
         assert_eq!(m.bounds.as_ref().map(|b| b.sortedness), Some(Descending), "m on {version}");
         assert_eq!(
             m.datafusion_bounds.as_ref().map(|b| b.sortedness),
@@ -408,7 +416,7 @@ async fn a_long_value_is_bounded_by_truncated_texts() {
         assert_describes_the_file(&dump, long, &format!("long_value on {version}"));
         let stats = statistics(long);
         assert!(stats.groups.iter().any(|g| g.rows == 0), "empty groups on {version}");
-        let v = stats.columns[1].as_ref().unwrap();
+        let v = stored(stats.columns[1].as_ref().unwrap());
         let groups = || v.bounds.as_ref().unwrap().groups.iter().flatten();
         let truncated: Vec<_> = groups().filter(|b| !b.max_exact).collect();
         assert_eq!(truncated.len(), 2, "the 300-byte and the megabyte value on {version}");
@@ -566,7 +574,7 @@ async fn a_value_that_does_not_key_leaves_its_group_unbounded() {
     // Sixteen bytes a group: the first two rows, then `0x00006`, the NULL and `0003`,
     // then the last two.
     let index = gathered(&dump, &request(StatisticsSelection::DATA, 16)).await;
-    let id = statistics(block(&index, "public.t")).columns[0].as_ref().unwrap();
+    let id = stored(statistics(block(&index, "public.t")).columns[0].as_ref().unwrap());
     let bounds = id.bounds.as_ref().unwrap();
     assert_eq!(bounds.sortedness, Sortedness::Unsorted);
     assert!(bounds.groups[0].is_some());
@@ -617,11 +625,13 @@ async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
             let first = held.groups[0].rows;
             let c = block.header.columns.iter().position(|c| c == "id").unwrap();
             let column = held.columns[c].as_mut().unwrap();
-            for set in [&mut column.bounds, &mut column.datafusion_bounds].into_iter().flatten() {
+            let mut parts = stored(column);
+            for set in [&mut parts.bounds, &mut parts.datafusion_bounds].into_iter().flatten() {
                 set.groups[0] = None;
             }
-            column.null_counts[0] = first;
-            column.null_counts.push(0);
+            parts.null_counts[0] = first;
+            parts.null_counts.push(0);
+            *column = ColumnStatistics::from_parts(parts);
             block.statistics = Some(Arc::new(held));
         }
     }
@@ -650,7 +660,7 @@ async fn a_character_dictionary_entry_drops_its_padding() {
     std::fs::write(&dump, &text).unwrap();
     let index = gathered(&dump, &request(StatisticsSelection::DATA, 1 << 20)).await;
     let columns = &statistics(block(&index, "public.t")).columns;
-    let c = columns[0].as_ref().unwrap();
+    let c = stored(columns[0].as_ref().unwrap());
     let dictionary = c.dictionary.as_ref().expect("equality on `character` is exact");
     assert_eq!(dictionary.entries, vec!["ab", "cd"]);
     assert_eq!(dictionary.groups, vec![Some(vec![0, 1])]);
@@ -898,7 +908,11 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
             && block.header.table == "ordered"
         {
             let mut held = BlockStatistics::clone(block.statistics.as_deref().unwrap());
-            held.columns[11].as_mut().unwrap().bounds = None;
+            let column = held.columns[11].as_mut().unwrap();
+            *column = ColumnStatistics::from_parts(ColumnStatisticsParts {
+                bounds: None,
+                ..stored(column)
+            });
             block.statistics = Some(Arc::new(held));
         }
     }
@@ -949,9 +963,11 @@ async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
             let Some(held) = block.statistics.as_deref() else { continue };
             let mut held = BlockStatistics::clone(held);
             for column in held.columns.iter_mut().flatten() {
-                assert!(column.bounds.is_some(), "{}", block.header.table);
-                assert!(column.declared_type.is_none() && column.datafusion_bounds.is_none());
-                column.bounds = None;
+                let parts = stored(column);
+                assert!(parts.bounds.is_some(), "{}", block.header.table);
+                assert!(parts.declared_type.is_none() && parts.datafusion_bounds.is_none());
+                *column =
+                    ColumnStatistics::from_parts(ColumnStatisticsParts { bounds: None, ..parts });
             }
             block.statistics = Some(Arc::new(held));
             blocks += 1;
@@ -1402,7 +1418,7 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
     let index = gathered_with(&dump, &serial, &GatherOptions::default(), &wanted).await;
     let t = statistics(block(&index, "public.t"));
     for at in [0, 2] {
-        let column = t.columns[at].as_ref().unwrap();
+        let column = stored(t.columns[at].as_ref().unwrap());
         assert!(column.bounds.as_ref().unwrap().groups.iter().any(Option::is_none), "{at}");
     }
 }
@@ -1447,7 +1463,7 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
     let check = |index: &DumpIndex, at: &str| {
         let t = statistics(block(index, "public.t"));
         for (column, refused) in [(0, refused_groups[0]), (1, refused_groups[1])] {
-            let gathered = t.columns[column].as_ref().unwrap();
+            let gathered = stored(t.columns[column].as_ref().unwrap());
             let bounds = &gathered.bounds.as_ref().unwrap().groups;
             let unbounded: Vec<usize> =
                 (0..bounds.len()).filter(|&g| bounds[g].is_none()).collect();
@@ -2068,7 +2084,7 @@ async fn a_parse_fails_where_an_input_function_refuses_and_not_where_it_reads() 
     let index = gathered_with(&dump, &serial, &GatherOptions::default(), &wanted).await;
     let t = statistics(block(&index, "public.t"));
     for (at, [column, ..]) in columns.iter().enumerate() {
-        let bounds = t.columns[at].as_ref().unwrap().bounds.as_ref().unwrap();
+        let bounds = stored(t.columns[at].as_ref().unwrap()).bounds.unwrap();
         // An unread spelling loses its group's bounds; a network is read whole.
         let read = matches!(*column, "i" | "c");
         assert_eq!(bounds.groups.iter().any(Option::is_none), !read, "{column}");
@@ -2130,7 +2146,7 @@ async fn a_parse_fails_at_an_undeclared_label_only_where_the_labels_are_exact() 
         dump_with(preamble);
         let index = gathered_with(&dump, &serial, &GatherOptions::default(), &wanted).await;
         let t = statistics(block(&index, "public.t"));
-        let bounds = t.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
+        let bounds = stored(t.columns[0].as_ref().unwrap()).bounds.unwrap();
         assert!(bounds.groups.iter().any(Option::is_none), "{preamble:?}");
         assert!(bounds.groups.iter().any(Option::is_some), "{preamble:?}");
     }

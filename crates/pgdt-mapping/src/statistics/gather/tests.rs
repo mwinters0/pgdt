@@ -9,7 +9,7 @@ use pgdt_codec::compare::{CompareKind, ComparisonPlan};
 use pgdt_codec::decode::render_bytea;
 use pgdt_codec::key::ValueKey;
 use pgdt_codec::pgtype::NestedPlan;
-use pgdt_model::internal::{BlockObserver, vec_heap};
+use pgdt_model::internal::{BlockObserver, ColumnStatisticsExt, vec_heap};
 use pgdt_model::{
     BlockGathered, BlockStatistics, Bounds, ColumnStatistics, FieldRefusal, GroupSizing,
     PostgresInvalidValues, RowGroup, Sortedness,
@@ -274,6 +274,7 @@ fn pieces_joined_in_file_order_gather_what_one_pass_gathers() {
 
         for (kind, column) in JOIN_KINDS.iter().zip(&joined.columns) {
             let Some(column) = column else { continue };
+            let column = column.clone().into_parts();
             let bounds = column.bounds.as_ref().unwrap();
             if bounds.sortedness != Sortedness::Unsorted && block.lines.len() > 10 {
                 ordered += 1;

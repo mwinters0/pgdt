@@ -16,7 +16,7 @@ use pgdt_model::internal::UnrepresentableExt;
 use pgdt_model::{
     ColumnDictionary, ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, DICTIONARY_MAX_ENTRIES,
     PostgresInvalidValues, Unrepresentable,
-    internal::{text_heap, vec_heap},
+    internal::{ColumnStatisticsExt, ColumnStatisticsParts, text_heap, vec_heap},
 };
 
 use super::bounds::{BoundsGatherer, GroupBounds, Refused, merge_adjacent};
@@ -48,7 +48,7 @@ pub(super) struct ColumnGatherer {
     /// value its declared type can (`pgdt_codec::unrepresentable`).
     tier: Option<ColumnTier>,
     /// Each closed group's count of such values, for a column `tier` tests
-    /// ([`ColumnStatistics::unrepresentable`]).
+    /// ([`ColumnStatisticsParts::unrepresentable`]).
     unrepresentable: Option<Vec<Unrepresentable>>,
     /// One per [`pgdt_model::BoundsSet`], in its order.
     bounds: [Option<BoundsGatherer>; 2],
@@ -436,7 +436,7 @@ impl ColumnGatherer {
 
     pub(super) fn finish(self) -> ColumnStatistics {
         let [primary, datafusion] = self.bounds;
-        ColumnStatistics {
+        ColumnStatistics::from_parts(ColumnStatisticsParts {
             declared_type: self.declared_type,
             collation: self.collation,
             null_counts: self.null_counts,
@@ -448,7 +448,7 @@ impl ColumnGatherer {
             unrepresentable: self
                 .unrepresentable
                 .filter(|counts| counts.iter().any(|count| !count.is_zero())),
-        }
+        })
     }
 }
 

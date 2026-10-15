@@ -4,7 +4,7 @@ use pgdt_codec::SchemaMode;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
-use pgdt_model::ArrayShape;
+use pgdt_model::{ArrayShape, BoundsSet, StatisticsView};
 
 use crate::predicate::{Expr, PredicateOp, resolve_expr};
 use crate::prune::DynamicPruning;
@@ -74,7 +74,7 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
         DynamicPruning::new(block, Arc::clone(&statistics), metadata, reading).unwrap();
     pruning.read(Arc::new(filter));
 
-    let bounds = statistics.columns[0].as_ref().unwrap().bounds.as_ref().unwrap();
+    let id = statistics.columns[0].as_ref().unwrap();
     let (mut armed, mut reaching) = (Vec::new(), Vec::new());
     for group in 0..pruning.groups() {
         if !pruning.keeps(group) {
@@ -82,7 +82,9 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
         }
         pruning.arm(group);
         armed.push(pruning.stop().is_some());
-        let max: i64 = bounds.groups[group].as_ref().unwrap().max.parse().unwrap();
+        let bounds =
+            id.group_bounds(BoundsSet::Primary, StatisticsView::Representable, group).unwrap();
+        let max: i64 = bounds.max.parse().unwrap();
         reaching.push(max >= 150);
     }
     assert!(armed.len() > 3, "{armed:?}");

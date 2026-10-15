@@ -6,7 +6,7 @@
 use std::num::NonZeroU64;
 
 use pgdt_core::CopyHeader;
-use pgdt_model::{CopyBlock, GroupSizing, PostgresInvalidValues};
+use pgdt_model::{BoundsSet, CopyBlock, GroupSizing, PostgresInvalidValues};
 
 use super::density::BlockStatisticsExt;
 
@@ -305,7 +305,8 @@ impl StatisticsRequest {
         let missing = requested.iter().enumerate().any(|(i, &wanted)| {
             wanted
                 && held.columns.get(i).and_then(Option::as_ref).is_none_or(|column| {
-                    column.bounds.is_none() && bounded.get(i).copied().unwrap_or(false)
+                    column.listed_groups(BoundsSet::Primary).is_none()
+                        && bounded.get(i).copied().unwrap_or(false)
                 })
         });
         if !resized && !unmet_max && !missing {

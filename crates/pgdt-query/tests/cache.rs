@@ -1254,7 +1254,7 @@ mod encoding {
     use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
     use pgdt_mapping::map_file;
     use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
-    use pgdt_model::{CACHE_FORMAT_VERSION, DataBlock, SpanBody, calendar_end};
+    use pgdt_model::{BoundsSet, CACHE_FORMAT_VERSION, DataBlock, SpanBody, calendar_end};
 
     /// Real `pg_dump` output whose columns gather bounds and dictionaries.
     fn statistics_fixture() -> PathBuf {
@@ -1298,7 +1298,8 @@ mod encoding {
                     &span.body,
                     SpanBody::Data(DataBlock::Copy(block)) if block.statistics.as_ref().is_some_and(
                         |statistics| statistics.columns.iter().flatten().any(|column| {
-                            column.bounds.is_some() && column.dictionary.is_some()
+                            column.listed_groups(BoundsSet::Primary).is_some()
+                                && column.dictionary.is_some()
                         })
                     )
                 )),

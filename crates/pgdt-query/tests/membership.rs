@@ -32,7 +32,7 @@ use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{
     GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing,
 };
-use pgdt_model::{CopyBlock, DumpIndex};
+use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, StatisticsView};
 use pgdt_query::{
     ComparisonNote, EarlyStop, Expr, Membership, PlanNote, Predicate, PredicateOp, QueryOptions,
     table_stream_partitions,
@@ -163,11 +163,11 @@ fn pool(
         let Some(statistics) = block.statistics.as_deref() else { continue };
         let Some(Some(column)) = statistics.columns.get(column) else { continue };
         declared = declared.or(column.declared_type.clone());
-        if let Some(bounds) = &column.bounds {
-            for group in bounds.groups.iter().flatten() {
-                out.insert(group.min.clone());
-                out.insert(group.max.clone());
-            }
+        let (set, view) = (BoundsSet::Primary, StatisticsView::Representable);
+        let groups = column.listed_groups(set).unwrap_or(0);
+        for group in (0..groups).filter_map(|g| column.group_bounds(set, view, g)) {
+            out.insert(group.min.clone());
+            out.insert(group.max.clone());
         }
         if let Some(dictionary) = &column.dictionary {
             out.extend(dictionary.entries.iter().cloned());
