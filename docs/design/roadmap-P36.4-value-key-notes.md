@@ -150,17 +150,17 @@ minutes, so the job was waited on.
 
 ## What the next round inherits
 
-- **The `pgdt sql` row's rise is neither reworked nor accepted.** The
-  shape that would recover it is the gatherer's. The summary already
-  holds the kind a term reads its bounds by (`Accumulator::kind`, from
-  `bounds_read_by`), and it never reads a nested bound (D79). So it could
-  key through `internal`'s `field_key`, as the gatherer now does. Whether
-  that shape is as clean is the open question STATUS's "Decisions worth
-  another look" puts on the gatherer. If the gatherer's rework is affirmed,
-  the summary is reworked the same way and counted by `--count-pair
-  HEAD~1`. If it is reverted, the gatherer's rise comes back and both
-  rises are accepted. An unattended session does not rework the summary
-  while that question is open.
+- **The summary reads a stored bound by the set's kind.** `fold` and
+  `column_order` key each bound by the kind they chose the set by
+  (`Accumulator::kind`, `column_order`'s `kind`, both from `bounds_read_by`),
+  through `internal`'s `order_key` and `compare_keys_stored`, as the gatherer
+  does. They stop calling `ValueKey::of`, whose second derivation of that kind
+  is the `pgdt sql` row's rise. `ValueKey::stored_order` goes with them,
+  the stored order being `internal`'s alone, and `ValueKey`'s rustdoc names
+  the embedder it serves. The rework is counted by `--count-pair HEAD~1`,
+  and the row is read against `a7b6ef0e`'s range as the data-level row was
+  (history, 2026-10-16, "36.4's rework recovers the data-level rise; the
+  summary reads by kind").
 - **A count an unrelated commit displaces is taken from a worktree** at the
   slice's commit, as that worktree's own `measure.py --count-pair HEAD~1`
   with `PGDT_MEASURE_OUT_DIR` set to the repo's `runs/`.

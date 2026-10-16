@@ -92,7 +92,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.3** pgdt-core and pgdt-model: `unescape_field`/`escape_field` and `TableName::qualified_name`; `RowSplit`, `RawRow` and `validated_prefix` to `internal`; `Diagnostic`'s and `Unrepresentable`'s fields private with getters; `StatisticsRequest`'s sizing one enum, `StatisticsSizing`; `instrument` a namespace still (D106) ([notes](../design/roadmap-P36.3-core-model-notes.md))
 - [x] **36.3.1** pgdt-model: `ColumnStatistics`' view-interpreted fields private, read through a `StatisticsView`; `ColumnBounds` and `BoundsView` `internal`'s, a column built and taken apart through `ColumnStatisticsParts`; no format change ([notes](../design/roadmap-P36.3.1-statistics-views-notes.md))
 - [x] **36.3.2** pgdt-model: `CopyBlock`'s census one `Option<BlockCensus>`; a block's database stored on its span alone, read through `DumpIndex::blocks_with_database`; `CACHE_FORMAT_VERSION` 69 ([notes](../design/roadmap-P36.3.2-census-database-notes.md))
-- [ ] **36.4** pgdt-codec: `ValueKey` from a plan, for every value, never panicking across kinds; counted by `measure.py --count-pair HEAD~1` — the reshape landed and its two deficiencies are struck; the count resolved a rise on the data-level `parse` and `pgdt sql` rows, which refuses it; 36.4.3 found the data-level rise in 36.4's own code; the rework holding the gatherer to `internal`'s scalar key recovers it, its count falling below `a7b6ef0e`'s, and callgrind puts the `pgdt sql` row's remaining rise in 36.4's own code too, the summary keying each stored bound through `ValueKey::of`; what remains is to rework the summary as the gatherer was, or accept the rise, as the open entry on the gatherer's rework is answered ([notes](../design/roadmap-P36.4-value-key-notes.md))
+- [ ] **36.4** pgdt-codec: `ValueKey` from a plan, for every value, never panicking across kinds; counted by `measure.py --count-pair HEAD~1` — the reshape landed and its two deficiencies are struck; the count resolved a rise on the data-level `parse` and `pgdt sql` rows, which refuses it; 36.4.3 found the data-level rise in 36.4's own code; the rework holding the gatherer to `internal`'s scalar key recovers it, its count falling below `a7b6ef0e`'s, and callgrind puts the `pgdt sql` row's remaining rise in 36.4's own code too, the summary keying each stored bound through `ValueKey::of`; what remains is the summary reading each stored bound by the set's kind, as the gatherer does, and `ValueKey::stored_order` leaving the API ([notes](../design/roadmap-P36.4-value-key-notes.md))
 - [x] **36.4.2** Attribute 36.4's count rise, landing no code, before 36.4.1: `a7b6ef0e` and `0588c9e8` built under the `profiling` profile in the release image, each counted against its shipped leg first, any difference falsifying line tables as codegen-neutral; then an `instructions:u` profile of each at the data level by source line, inlined frames included, the rise named per line or said unattributed — line tables move the code at both commits, so the rise is unattributed; the unchanged decode symbols' machine code is identical in both shipped builds ([notes](../design/roadmap-P36.4.2-attribution-notes.md))
 - [x] **36.4.3** Attribute 36.4's count rise exactly, landing no code, before 36.4.1 and 36.5: callgrind's `Ir` on the data-level `parse`, run on the two shipped binaries 36.4.2 kept, in a memory-limited container, launched detached; read as written in advance — the pair's `Ir` difference reproducing the native rise and sitting in code 36.4 changed, or in calls it added, is 36.4's cost, reworked where a shape as clean recovers it and accepted where none does (spec, "What a hot-path slice owes"); reproduced in identical code called as often, or not reproduced, is layout, which clears 36.4 and reopens how `--count-pair` is read before any other slice is counted — reproduced to within 0.2%, and all of it in functions whose machine code 36.4 changed, the gatherer's `heap_bytes` above all, so it is 36.4's cost ([notes](../design/roadmap-P36.4.3-callgrind-notes.md))
 - [ ] **36.4.1** pgdt-codec: keys compare only where an order relates them — a variant per order, `Decimal` carrying its scale, `-infinity`, `infinity` and `NaN` their domain; closes `KD118`; counted by `measure.py --count-pair HEAD~1`
@@ -134,22 +134,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **36.4's rework holds the gatherer to `internal`'s `OrderKey`, not the
-  API's `ValueKey`.** The gatherer's bounds and row order now hold the
-  scalar key. They read it with `field_key` and `order_key` and order it
-  with `compare_keys_stored`, as the predicate already holds it.
-  `ValueKeyExt` goes, and `ValueKey` serves the summary and embedders. *Why:*
-  36.4.3 put the rise in the `Key` wrapper's match and the `Option` at the
-  gatherer's per-row calls. The gatherer never holds a nested key, and it
-  already keyed through `internal` by its sets' kinds (D79). So the API
-  type charged it for a generality it cannot use. I judged the shape as
-  clean, which is the spec's test ("What a hot-path slice owes"). *Asked:*
-  may a crate above hold the codec's internal key on a hot path where the
-  API's key exists? *Reconsidering it* reverts the rework and accepts the
-  rise, keeping one key type for every caller above the codec. The answer
-  also decides the `pgdt sql` row's rise. That rise is the summary keying its
-  stored bounds through `ValueKey::of`, and the summary holds them as the
-  gatherer does. Affirmed, the summary is reworked the same way; reverted,
-  that rise is accepted along with the gatherer's (36.4's notes, "What the
-  next round inherits").

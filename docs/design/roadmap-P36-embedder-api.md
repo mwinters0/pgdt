@@ -470,7 +470,9 @@ Three reshapes touch per-chunk or per-field code:
 - `ChunkedScanner`, in the scan, the mapping pass, the back-fill and the
   replay;
 - rendering through the column record;
-- `ValueKey` built from a plan, while gathering statistics.
+- the key the statistics gatherer holds, which 36.4 built as a `ValueKey`
+  and its rework holds as `internal`'s `OrderKey` (history, 2026-10-16,
+  "36.4's rework recovers the data-level rise; the summary reads by kind").
 
 **Each of those slices takes `instructions:u` (`count-instructions`) on the
 `parse` and `typed` shapes, at its parent commit and at its own**, and is
