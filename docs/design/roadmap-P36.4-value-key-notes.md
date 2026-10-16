@@ -86,9 +86,9 @@ builds a `ValueKey` per row, so it is unattributed too.
 ## What the next round inherits
 
 - **The slice is refused, and its rise is unattributed**
-  ([36.4.2's notes](roadmap-P36.4.2-attribution-notes.md)). Clearing the
-  refusal is the maintainer's call (STATUS, "Decisions worth another
-  look"). Inlining moved into the unchanged decode code is ruled out. What
+  ([36.4.2's notes](roadmap-P36.4.2-attribution-notes.md)). 36.4.3's
+  exact count attributes it, and the spec's "What a hot-path slice owes"
+  says what follows. Inlining moved into the unchanged decode code is ruled out. What
   the changed code costs, including the match on the `Key` wrapper, cannot
   be told apart from sampling error by any profile taken here.
 - **A count an unrelated commit displaces is taken from a worktree** at the

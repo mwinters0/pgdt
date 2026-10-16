@@ -483,6 +483,13 @@ already ranks by. Each slice row names its instrument
 ([`roadmap.md`](roadmap.md), "A slice row that commits to a measurement
 names its instrument"). The command that takes it is **`measure.py
 --count-pair <rev>`, which this phase's first slice builds.**
+
+**A refusal is reworked or accepted, never left standing.** A rise the
+slice's own code costs is reworked where a shape as clean recovers it, and
+accepted where none does: this phase's goal is the architecture, and a rise
+the size of a reshape's indirection does not outweigh it. Reasoning:
+[`../status/history/2026-10-16.md`](../status/history/2026-10-16.md),
+"36.4's refusal: attribute exactly, then rework or accept".
 - **It builds the shipped (fat) leg twice**, once at `<rev>` and once at the
   working tree. Each build runs in the release image, in its own target
   directory under the scratch alloc-builds root, from a git worktree, as

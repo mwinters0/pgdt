@@ -92,8 +92,9 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.3** pgdt-core and pgdt-model: `unescape_field`/`escape_field` and `TableName::qualified_name`; `RowSplit`, `RawRow` and `validated_prefix` to `internal`; `Diagnostic`'s and `Unrepresentable`'s fields private with getters; `StatisticsRequest`'s sizing one enum, `StatisticsSizing`; `instrument` a namespace still (D106) ([notes](../design/roadmap-P36.3-core-model-notes.md))
 - [x] **36.3.1** pgdt-model: `ColumnStatistics`' view-interpreted fields private, read through a `StatisticsView`; `ColumnBounds` and `BoundsView` `internal`'s, a column built and taken apart through `ColumnStatisticsParts`; no format change ([notes](../design/roadmap-P36.3.1-statistics-views-notes.md))
 - [x] **36.3.2** pgdt-model: `CopyBlock`'s census one `Option<BlockCensus>`; a block's database stored on its span alone, read through `DumpIndex::blocks_with_database`; `CACHE_FORMAT_VERSION` 69 ([notes](../design/roadmap-P36.3.2-census-database-notes.md))
-- [ ] **36.4** pgdt-codec: `ValueKey` from a plan, for every value, never panicking across kinds; counted by `measure.py --count-pair HEAD~1` — the reshape landed and its two deficiencies are struck; the count resolved a rise on the data-level `parse` and `pgdt sql` rows, which refuses it; 36.4.2 left the rise unattributed, and what clears the refusal is under "Decisions worth another look" ([notes](../design/roadmap-P36.4-value-key-notes.md))
+- [ ] **36.4** pgdt-codec: `ValueKey` from a plan, for every value, never panicking across kinds; counted by `measure.py --count-pair HEAD~1` — the reshape landed and its two deficiencies are struck; the count resolved a rise on the data-level `parse` and `pgdt sql` rows, which refuses it; 36.4.2 left the rise unattributed, and 36.4.3 attributes it ([notes](../design/roadmap-P36.4-value-key-notes.md))
 - [x] **36.4.2** Attribute 36.4's count rise, landing no code, before 36.4.1: `a7b6ef0e` and `0588c9e8` built under the `profiling` profile in the release image, each counted against its shipped leg first, any difference falsifying line tables as codegen-neutral; then an `instructions:u` profile of each at the data level by source line, inlined frames included, the rise named per line or said unattributed — line tables move the code at both commits, so the rise is unattributed; the unchanged decode symbols' machine code is identical in both shipped builds ([notes](../design/roadmap-P36.4.2-attribution-notes.md))
+- [ ] **36.4.3** Attribute 36.4's count rise exactly, landing no code, before 36.4.1 and 36.5: callgrind's `Ir` on the data-level `parse`, run on the two shipped binaries 36.4.2 kept, in a memory-limited container, launched detached; read as written in advance — the pair's `Ir` difference reproducing the native rise and sitting in code 36.4 changed, or in calls it added, is 36.4's cost, reworked where a shape as clean recovers it and accepted where none does (spec, "What a hot-path slice owes"); reproduced in identical code called as often, or not reproduced, is layout, which clears 36.4 and reopens how `--count-pair` is read before any other slice is counted
 - [ ] **36.4.1** pgdt-codec: keys compare only where an order relates them — a variant per order, `Decimal` carrying its scale, `-infinity`, `infinity` and `NaN` their domain; closes `KD118`; counted by `measure.py --count-pair HEAD~1`
 - [ ] **36.5** pgdt-dump: `ChunkedScanner`, its four sites calling it; counted by `measure.py --count-pair HEAD~1`
 - [ ] **36.6** pgdt-dump: `CacheMode` opens an `Origin` — one decode, no free `load`/`save`, `Valid` and `Incomplete` one, `Offline` its own type, `Disabled` stated; `scan` and `preamble_only` take only what they read
@@ -133,26 +134,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **36.4.2: the rise is called unattributed, and 36.4.1 and 36.5 wait.**
-  In the `profiling` pair the data-level rise is within 1,621 instructions
-  of the shipped pair's. Even so, `diff.txt` was not read as attribution. The gate
-  written in advance said any resolved row falsifies the profile, and rows
-  resolved at both commits; matching totals do not show the instructions sit
-  in the same places. In 36.4.2's notes, the shipped profile itself puts
-  +410 of +478 samples in machine code that is identical in both builds. 36.4
-  stays refused, and no listed slice can clear that. The options:
-  - admit an exact count, callgrind's `Ir` on the two kept shipped binaries,
-    gated on its total matching the native rise (the notes, "What would
-    attribute it");
-  - accept the rise unattributed, since the data-level wall clocks were
-    equal (36.4's notes);
-  - revert the reshape.
-
-  36.4.1 is held back because it reshapes the `Key` match, and that match is
-  one of the changed symbols an exact count would price. 36.5 waits with it:
-  the plan already had both waiting on 36.4.2's answer, and that answer
-  leaves a decision only the maintainer can make. Reconsidering means one of
-  them goes ahead under the refusal, or the gate is reread so that
-  `diff.txt` counts as attributing the rise to the gatherer.
-

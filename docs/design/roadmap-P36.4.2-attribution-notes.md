@@ -84,9 +84,9 @@ does not fit under ten minutes is launched detached.
 
 ## What 36.4's refusal becomes
 
-The refusal stands. 36.4 stays unticked and its rise is unattributed. No
-slice now in the list can clear it, so the next step is the maintainer's
-decision (STATUS, "Decisions worth another look").
+The refusal stands. 36.4 stays unticked and its rise is unattributed.
+36.4.3 takes the exact count below, and the spec's "What a hot-path slice
+owes" says what its reading leads to.
 
 ## What the next round inherits
 
