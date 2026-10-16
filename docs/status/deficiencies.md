@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD118 -->
-**`KD1`–`KD117` are allocated, and nothing at or below `KD117` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD120 -->
+**`KD1`–`KD120` are allocated, and nothing at or below `KD120` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -515,7 +515,15 @@ than reading as a phase nobody has sliced.
   `bounded_columns` `pub(crate)`. Detail:
   `crates/pgdt-mapping/src/statistics/request.rs`.
 
-- **KD118** — `ValueKey::compare` orders two enum types' labels by their
-  positions, where the server relates no two enum types. **(b) owned by
-  36.4.4**, which carries the order a key was read in on `ValueKey`.
+- **KD119** — in DataFusion's semantics `ValueKey::compare` answers `None`
+  for two keys of different orders that DataFusion's comparison coercion
+  relates by a cast — two integer widths, two decimal scales, a text against
+  a number. **(b) owned by 36.4.5**, which answers them as DataFusion casts.
   Detail: `crates/pgdt-codec/src/key.rs`.
+
+- **KD120** — in PostgreSQL's semantics `ValueKey::compare` answers `None`
+  where the server answers and the key's order does not carry what decides
+  it — a `text` ending in a blank against a `character(n)`, two `numeric[]`
+  scales — and answers two range types over one subtype, which the server
+  relates by no operator. **(c) unowned**; promoted by an embedder comparing
+  keys across plans. Detail: `crates/pgdt-codec/src/key/relate.rs`.

@@ -111,8 +111,11 @@ pub enum CompareKind {
     /// dump's `ALTER TYPE … ADD VALUE` run is folded back into (I6).
     ///
     /// `exact` is `TypeKind::Enum`'s: the labels are all the type holds, so
-    /// a field naming another is one `enum_in` refuses (I70).
+    /// a field naming another is one `enum_in` refuses (I70). `name` is the
+    /// type's, schema-qualified as `TypeDef::name` spells it: two enum types
+    /// are two orders, which the server relates by no operator.
     Enum {
+        name: Arc<str>,
         labels: Arc<[String]>,
         exact: bool,
     },

@@ -63,30 +63,81 @@ fn a_nested_value_is_keyed_from_its_plan() {
     assert!(field(&array, "{1,2}").heap_bytes() > 0);
 }
 
-/// **Keys no order relates never compare, and never panic**: a scalar
-/// against a nested value, two scalars of unrelated types — a `date`'s
-/// against an `integer`'s, a special value against another type's — two
-/// arrays whose elements differ, two records of different arity, and a pair
-/// the server orders only under its `TimeZone`.
+/// A composite `public.<name>` of the given column types.
+fn composite(name: &str, columns: &[&str]) -> TypeDef {
+    let columns =
+        columns.iter().enumerate().map(|(i, ty)| ColumnDef::new(format!("f{i}"), *ty)).collect();
+    TypeDef { name: format!("public.{name}"), kind: TypeKind::Composite { fields: Some(columns) } }
+}
+
+/// The types the cross-plan cases read: records, two enum types of one
+/// label list, a domain, and composites of one shape and of two.
+fn cross_plan_types() -> Vec<TypeDef> {
+    let mut mood2 = mood();
+    mood2.name = "public.mood2".to_string();
+    vec![
+        record(1),
+        record(2),
+        mood(),
+        mood2,
+        TypeDef { name: "public.posint".to_string(), kind: TypeKind::domain("integer") },
+        composite("pair", &["integer", "integer"]),
+        composite("labelled", &["integer", "text"]),
+        composite("varied", &["integer", "character varying"]),
+    ]
+}
+
+/// **Keys whose orders the engine does not relate never compare, and never
+/// panic** — each pair probed on a PostgreSQL 16 server, which resolves no
+/// operator for it, resolves one only under `TimeZone`, or refuses the cast
+/// it resolves: a scalar against a nested value, a `date` against an
+/// `integer`, two enum types, a `macaddr` against a `macaddr8`, a `bigint`
+/// past an `oid`'s range, a `numeric` past a double's, two array or range
+/// types, two records of different column types, and two keys read in two
+/// semantics. And the pairs `KD119` and `KD120` name.
 #[test]
 fn keys_no_order_relates_answer_none() {
-    let types = [record(1), record(2), mood()];
+    let types = cross_plan_types();
     let key = |declared: &str, text: &str| field(&plan(declared, &types), text);
+    let datafusion = |declared: &str, text: &str| {
+        ValueKey::of(&plan(declared, &types), ComparisonSemantics::DataFusion, text).unwrap()
+    };
     let pairs = [
         (key("integer", "1"), key("text", "1")),
         (key("integer", "1"), key("integer[]", "{1}")),
-        (key("integer[]", "{1}"), key("text[]", "{1}")),
         (key("public.r1", "(1)"), key("public.r2", "(1,2)")),
-        (key("int4range", "[1,2)"), key("numrange", "[1.5,2)")),
         (key("date", "2020-01-01"), key("integer", "18262")),
         (key("date", "-infinity"), key("text", "a")),
         (key("date", "infinity"), key("interval", "infinity")),
-        (key("numeric", "NaN"), key("double precision", "NaN")),
         (key("public.mood", "ok"), key("integer", "1")),
-        (key("oid", "1"), key("integer", "1")),
+        (key("public.mood", "ok"), key("public.mood2", "ok")),
+        (key("boolean", "t"), key("integer", "1")),
         (key("uuid", "00000000-0000-0000-0000-000000000000"), key("bytea", "\\x00")),
         (key("timestamp", "2020-01-01 00:00:00"), key("timestamptz", "2020-01-01 00:00:00+00")),
         (key("date", "2020-01-01"), key("timestamptz", "2020-01-01 00:00:00+00")),
+        (key("time", "01:00:00"), key("timetz", "01:00:00+00")),
+        (key("date", "2020-01-01"), key("time", "01:00:00")),
+        (key("macaddr", "08:00:2b:01:02:03"), key("macaddr8", "08:00:2b:ff:fe:01:02:03")),
+        (key("bigint", "-1"), key("oid", "5")),
+        (key("bigint", "5000000000"), key("oid", "5")),
+        (key("oid", "1"), key("numeric", "2")),
+        (key("oid", "1"), key("double precision", "2")),
+        (key("double precision", "1"), key("numeric", &format!("1{}", "0".repeat(400)))),
+        (key("double precision", "0"), key("numeric", &format!("0.{}1", "0".repeat(400)))),
+        (key("integer[]", "{1}"), key("text[]", "{1}")),
+        (key("integer[]", "{1}"), key("bigint[]", "{1}")),
+        (key("integer[]", "{1}"), key("public.posint[]", "{1}")),
+        (key("text[]", "{a}"), key("character varying[]", "{a}")),
+        (key("int4range", "[1,2)"), key("int8range", "[1,2)")),
+        (key("int4range", "[1,2)"), key("numrange", "[1.5,2)")),
+        (key("public.labelled", "(1,a)"), key("public.varied", "(1,a)")),
+        (key("integer", "1"), datafusion("integer", "1")),
+        // `KD120`: a `text`'s trailing blank, which a `character
+        // varying`'s cast to `bpchar` would trim.
+        (key("text", "ab "), key("character(3)", "ab ")),
+        // `KD119`: DataFusion widens both.
+        (datafusion("smallint", "7"), datafusion("bigint", "7")),
+        (datafusion("numeric(5,1)", "1.5"), datafusion("numeric(6,2)", "1.50")),
     ];
     for (a, b) in pairs {
         assert_eq!(a.compare(&b), None, "{a:?} against {b:?}");
@@ -94,89 +145,67 @@ fn keys_no_order_relates_answer_none() {
     }
 }
 
-/// **Keys an order relates compare correctly, whatever plans they were read
-/// under**: two integer widths, two `numeric` scales in either semantics, a
-/// `numeric(p,s)` against a bare one, a `date` against a `timestamp` at its
-/// midnight, a `macaddr` against a `macaddr8` as the server widens it, and a
-/// special value against its own domain — `date`'s `infinity` above a
-/// `timestamp` and equal to a `timestamptz`'s.
+/// **Keys whose orders the engine relates compare as it answers, whatever
+/// plans they were read under** — each pair's answer the one a PostgreSQL
+/// 16 server gives: through the cross-type operators of the integer widths
+/// and of `real` and `double precision`; through the cast to `oid`, which
+/// wraps a negative `integer`; to `double precision`, rounding a `bigint`
+/// and a `numeric`; to `numeric`, exactly; `date2timestamp`; a `time` as an
+/// `interval`; a `character(n)` as `text`; `cidr` as `inet`; special values
+/// by their rank; two arrays and two records of one type at every leaf; and
+/// in DataFusion's semantics, an enum's label as text.
 #[test]
 fn keys_an_order_relates_compare_across_plans() {
-    let types = [];
-    let key = |declared: &str, semantics, text: &str| {
-        ValueKey::of(&plan(declared, &types), semantics, text).expect("a value of the type")
+    use Ordering::{Equal, Greater, Less};
+    let types = cross_plan_types();
+    let key = |declared: &str, text: &str| field(&plan(declared, &types), text);
+    let datafusion = |declared: &str, text: &str| {
+        ValueKey::of(&plan(declared, &types), ComparisonSemantics::DataFusion, text).unwrap()
     };
-    let postgres = ComparisonSemantics::Postgres;
-    let datafusion = ComparisonSemantics::DataFusion;
     let ordered = [
-        (key("smallint", postgres, "7"), key("bigint", postgres, "70000"), Ordering::Less),
-        (
-            key("numeric(5,1)", datafusion, "1.5"),
-            key("numeric(6,2)", datafusion, "1.50"),
-            Ordering::Equal,
-        ),
-        (
-            key("numeric(5,1)", datafusion, "1.5"),
-            key("numeric(6,2)", datafusion, "1.49"),
-            Ordering::Greater,
-        ),
-        (key("numeric(5,1)", postgres, "-1.5"), key("numeric", postgres, "-1.50"), Ordering::Equal),
-        (key("numeric(5,1)", postgres, "NaN"), key("numeric", postgres, "NaN"), Ordering::Equal),
-        (
-            key("numeric(5,1)", postgres, "9999.9"),
-            key("numeric", postgres, "Infinity"),
-            Ordering::Less,
-        ),
-        (
-            key("date", postgres, "2020-01-02"),
-            key("timestamp", postgres, "2020-01-01 23:59:59"),
-            Ordering::Greater,
-        ),
-        (
-            key("date", postgres, "2020-01-01"),
-            key("timestamp", postgres, "2020-01-01 00:00:00"),
-            Ordering::Equal,
-        ),
-        (
-            key("date", datafusion, "1999-12-31"),
-            key("timestamp", datafusion, "2000-01-01 00:00:00"),
-            Ordering::Less,
-        ),
-        (
-            key("macaddr", postgres, "08:00:2b:01:02:03"),
-            key("macaddr8", postgres, "08:00:2b:ff:fe:01:02:03"),
-            Ordering::Equal,
-        ),
-        (
-            key("macaddr", postgres, "08:00:2b:01:02:03"),
-            key("macaddr8", postgres, "08:00:2b:ff:fe:01:02:04"),
-            Ordering::Less,
-        ),
-        (
-            key("date", postgres, "infinity"),
-            key("timestamp", postgres, "2020-01-01 00:00:00"),
-            Ordering::Greater,
-        ),
-        (
-            key("date", postgres, "infinity"),
-            key("timestamptz", postgres, "infinity"),
-            Ordering::Equal,
-        ),
-        (
-            key("date", postgres, "-infinity"),
-            key("timestamptz", postgres, "2020-01-01 00:00:00+00"),
-            Ordering::Less,
-        ),
-        (key("character(3)", postgres, "ab "), key("text", postgres, "ab"), Ordering::Equal),
-        (key("inet", postgres, "10.0.0.0/8"), key("cidr", postgres, "10.0.0.0/8"), Ordering::Equal),
+        (key("smallint", "7"), key("bigint", "70000"), Less),
+        (key("integer", "-1"), key("oid", "5"), Greater),
+        (key("smallint", "-1"), key("oid", "4294967295"), Equal),
+        (key("bigint", "4294967295"), key("oid", "5"), Greater),
+        (key("integer", "16777217"), key("real", "16777216"), Greater),
+        (key("bigint", "9007199254740993"), key("double precision", "9007199254740992"), Equal),
+        (key("real", "1"), key("double precision", "2"), Less),
+        (key("integer", "2"), key("numeric(5,1)", "1.5"), Greater),
+        (key("bigint", "1"), key("numeric", "NaN"), Less),
+        (key("integer", "1"), key("numeric", "Infinity"), Less),
+        (key("real", "0.1"), key("numeric", "0.1"), Greater),
+        (key("double precision", "0.1"), key("numeric", "0.1"), Equal),
+        (key("double precision", "Infinity"), key("numeric", "Infinity"), Equal),
+        (key("double precision", "NaN"), key("numeric(5,1)", "NaN"), Equal),
+        (key("double precision", "1"), key("numeric", "NaN"), Less),
+        (key("numeric(5,1)", "-1.5"), key("numeric", "-1.50"), Equal),
+        (key("numeric(5,1)", "1.5"), key("numeric(6,2)", "1.50"), Equal),
+        (key("numeric(5,1)", "1.5"), key("numeric(6,2)", "1.49"), Greater),
+        (key("numeric(5,1)", "NaN"), key("numeric", "NaN"), Equal),
+        (key("numeric(5,1)", "9999.9"), key("numeric", "Infinity"), Less),
+        (key("date", "2020-01-02"), key("timestamp", "2020-01-01 23:59:59"), Greater),
+        (key("date", "2020-01-01"), key("timestamp", "2020-01-01 00:00:00"), Equal),
+        (key("date", "5874897-12-31"), key("timestamp", "294276-12-31 00:00:00"), Greater),
+        (key("date", "infinity"), key("timestamp", "2020-01-01 00:00:00"), Greater),
+        (key("date", "infinity"), key("timestamp", "infinity"), Equal),
+        (key("time", "01:00:00"), key("interval", "01:00:00"), Equal),
+        (key("time", "01:00:00"), key("interval", "1 day"), Less),
+        (key("time", "01:00:00"), key("interval", "infinity"), Less),
+        (key("character(3)", "ab "), key("text", "ab"), Equal),
+        (key("character(5)", "ab   "), key("name", "abc"), Less),
+        (key("character varying(3)", "abc"), key("text", "abc"), Equal),
+        (key("inet", "10.0.0.0/8"), key("cidr", "10.0.0.0/8"), Equal),
+        (key("public.mood", "sad"), field(&plan("public.mood", &[mood()]), "ok"), Less),
+        (key("character varying(3)[]", "{a}"), key("character varying(5)[]", "{b}"), Less),
+        (key("public.pair", "(1,2)"), key("public.r2", "(1,3)"), Less),
+        (datafusion("public.mood", "ok"), datafusion("text", "ok"), Equal),
     ];
     for (a, b, expected) in ordered {
         assert_eq!(a.compare(&b), Some(expected), "{a:?} against {b:?}");
         assert_eq!(b.compare(&a), Some(expected.reverse()), "{b:?} against {a:?}");
     }
     // A special value is ranked within its own type too.
-    let date = |text| key("date", postgres, text);
-    assert_eq!(date("infinity").compare(&date("2020-01-01")), Some(Ordering::Greater));
+    assert_eq!(key("date", "infinity").compare(&key("date", "2020-01-01")), Some(Greater));
 }
 
 /// **A key is ordered as the semantics orders the column**: PostgreSQL's
@@ -240,7 +269,8 @@ fn the_stored_order_breaks_a_float_s_zeros() {
     let float = plan("double precision", &[]);
     let (negative, positive) = (field(&float, "-0"), field(&float, "0"));
     assert_eq!(negative.compare(&positive), Some(Ordering::Equal));
-    let (Key::Scalar(a), Key::Scalar(b)) = (&negative.0, &positive.0) else {
+    let (Key::Scalar { key: a, .. }, Key::Scalar { key: b, .. }) = (&negative.key, &positive.key)
+    else {
         panic!("a float's key is a scalar's");
     };
     assert_eq!(order::compare_keys(a, b), Ordering::Equal);

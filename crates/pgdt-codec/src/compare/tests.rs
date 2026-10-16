@@ -100,6 +100,7 @@ fn the_register_tells_apart_types_that_share_one_arrow_type() {
     assert_eq!(
         comparison_for("public.mood", None, &types, &[]),
         ComparisonPlan::agrees(CompareKind::Enum {
+            name: "public.mood".into(),
             labels: labels.iter().cloned().collect(),
             exact: true
         }),
@@ -169,7 +170,7 @@ fn a_column_is_bounded_in_each_semantics_whose_order_is_exact() {
     let labels: Arc<[String]> = Arc::from(vec!["b".to_string(), "a".to_string()]);
     for kind in [
         CompareKind::PaddedText { length: None },
-        CompareKind::Enum { labels, exact: true },
+        CompareKind::Enum { name: "public.e".into(), labels, exact: true },
         CompareKind::Numeric { infinities: true, typmod: None },
         CompareKind::TimeTz,
         CompareKind::Network { cidr: false },
@@ -218,7 +219,14 @@ fn a_term_reads_the_set_keyed_by_the_kind_it_compares_by() {
     let labels: Arc<[String]> = Arc::from(vec!["b".to_string()]);
     for (declared, stored, want) in [
         ("text", [Some(text.clone()), None], Some(P)),
-        ("an enum", [Some(CompareKind::Enum { labels, exact: true }), Some(text.clone())], Some(F)),
+        (
+            "an enum",
+            [
+                Some(CompareKind::Enum { name: "public.e".into(), labels, exact: true }),
+                Some(text.clone()),
+            ],
+            Some(F),
+        ),
         ("macaddr", [Some(CompareKind::MacAddr { octets: 6 }), None], Some(P)),
         ("integer", [Some(CompareKind::Int { bytes: 4 }), None], None),
         (
@@ -550,8 +558,11 @@ fn a_domain_over_an_enum_compares_by_that_enum_s_declaration_order() {
         ty("public.moodisher", TypeKind::domain("public.moodish")),
         ty("public.nothingish", TypeKind::domain("public.empty_enum")),
     ];
-    let by_declaration =
-        agrees(CompareKind::Enum { labels: labels.iter().cloned().collect(), exact: true });
+    let by_declaration = agrees(CompareKind::Enum {
+        name: "public.mood".into(),
+        labels: labels.iter().cloned().collect(),
+        exact: true,
+    });
     assert_eq!(comparison_for("public.moodish", None, &types, &[]), by_declaration);
     assert_eq!(comparison_for("public.moodisher", None, &types, &[]), by_declaration);
     assert_eq!(comparison_for("public.nothingish", None, &types, &[]), ComparisonPlan::Refused);

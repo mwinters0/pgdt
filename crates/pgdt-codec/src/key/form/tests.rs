@@ -11,6 +11,7 @@ use crate::internal::NUMERIC_INTEGER_DIGITS_MAX;
 #[test]
 fn the_enum_clause_quotes_its_labels_and_caps_the_list() {
     let kind = |labels: &[&str]| CompareKind::Enum {
+        name: "public.e".into(),
         labels: labels.iter().map(|l| (*l).to_string()).collect::<Arc<[String]>>(),
         exact: true,
     };
@@ -20,8 +21,11 @@ fn the_enum_clause_quotes_its_labels_and_caps_the_list() {
     );
 
     let many: Vec<String> = (0..ENUM_LABELS_SHOWN + 3).map(|i| format!("l{i}")).collect();
-    let clause =
-        accepted_form(&CompareKind::Enum { labels: many.iter().cloned().collect(), exact: true });
+    let clause = accepted_form(&CompareKind::Enum {
+        name: "public.e".into(),
+        labels: many.iter().cloned().collect(),
+        exact: true,
+    });
     assert!(clause.contains("'l0'"), "{clause}");
     assert!(clause.contains(&format!("'l{}'", ENUM_LABELS_SHOWN - 1)), "{clause}");
     assert!(!clause.contains(&format!("'l{ENUM_LABELS_SHOWN}'")), "{clause}");

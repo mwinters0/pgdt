@@ -10,7 +10,7 @@ use pgdt_model::PostgresInvalidValues;
 use crate::compare::discrete::DiscreteExt;
 use crate::compare::{ComparisonSemantics, Discrete, NestedCompare};
 use crate::declared::Position;
-use crate::key::order::{OrderKey, Side, compare_keys, literal_key, order_keys, read_key};
+use crate::key::order::{OrderKey, Side, compare_keys, literal_key, read_key};
 use crate::value::{first_difference, nested};
 
 /// One side of a **nested** comparison, decoded from a container literal per
@@ -298,29 +298,21 @@ pub(crate) fn make_range(
     // becomes inclusive at the successor, an inclusive upper becomes
     // exclusive at the successor.
     //
-    // The `Date` pattern is `daterange_canonical`'s `DATE_NOT_FINITE` guard:
-    // a date `infinity` decodes to `OrderKey::PositiveInfinity` rather than
-    // to a day count, so it matches no arm here and is left as written,
-    // which is what makes `[2020-01-01,infinity]` keep its inclusive upper
-    // (I34, I46).
+    // The `Int` pattern is `daterange_canonical`'s `DATE_NOT_FINITE` guard: a
+    // date `infinity` decodes to `OrderKey::PositiveInfinity` rather than to
+    // a day count, so it matches no arm here and is left as written, which is
+    // what makes `[2020-01-01,infinity]` keep its inclusive upper (I34, I46).
     // pg-refuses: I46 — a successor past the subtype's largest value.
-    let successor = |bound: &RangeBoundKey| {
-        let next = match &bound.value {
-            Some(NestedKey::Leaf(OrderKey::Int(n))) if *n < discrete.largest() => {
-                OrderKey::Int(n + 1)
-            }
-            Some(NestedKey::Leaf(OrderKey::Date(n))) if *n < discrete.largest() => {
-                OrderKey::Date(n + 1)
-            }
-            Some(NestedKey::Leaf(OrderKey::Int(_) | OrderKey::Date(_))) => return None,
-            // Not a finite bound, so the canonical function skips it.
-            _ => return Some(None),
-        };
-        Some(Some(RangeBoundKey {
-            value: Some(NestedKey::Leaf(next)),
-            inclusive: !bound.inclusive,
-            lower: bound.lower,
-        }))
+    let successor = |bound: &RangeBoundKey| match &bound.value {
+        Some(NestedKey::Leaf(OrderKey::Int(n))) => (*n < discrete.largest()).then(|| {
+            Some(RangeBoundKey {
+                value: Some(NestedKey::Leaf(OrderKey::Int(n + 1))),
+                inclusive: !bound.inclusive,
+                lower: bound.lower,
+            })
+        }),
+        // Not a finite integer bound, so the canonical function skips it.
+        _ => Some(None),
     };
     let mut lower = serialized.lower;
     let mut upper = serialized.upper;
@@ -573,37 +565,4 @@ pub fn compare_nested(a: &NestedKey, b: &NestedKey) -> Ordering {
         ),
         _ => unreachable!("both sides of a comparison are read through one column's plan"),
     }
-}
-
-/// Whether [`compare_nested`] orders `a` against `b`: one shape at every
-/// pair of positions it can reach, and one arity for two records. Two keys
-/// read through one plan always are; two read through different plans may
-/// not be, and comparing them would reach an unreachable arm.
-pub(crate) fn comparable(a: &NestedKey, b: &NestedKey) -> bool {
-    let slots = |a: &[Option<NestedKey>], b: &[Option<NestedKey>]| {
-        a.iter().zip(b).all(|pair| match pair {
-            (Some(a), Some(b)) => comparable(a, b),
-            _ => true,
-        })
-    };
-    match (a, b) {
-        (NestedKey::Leaf(a), NestedKey::Leaf(b)) => order_keys(a, b).is_some(),
-        (NestedKey::Array { elements: a, .. }, NestedKey::Array { elements: b, .. }) => slots(a, b),
-        (NestedKey::Record(a), NestedKey::Record(b)) => a.len() == b.len() && slots(a, b),
-        (NestedKey::Range(a), NestedKey::Range(b)) => ranges_comparable(a, b),
-        (NestedKey::Multirange(a), NestedKey::Multirange(b)) => {
-            a.iter().zip(b).all(|(a, b)| ranges_comparable(a, b))
-        }
-        _ => false,
-    }
-}
-
-/// [`comparable`] for two ranges: [`compare_range`] reads a lower bound only
-/// against a lower, and an upper only against an upper.
-fn ranges_comparable(a: &RangeKey, b: &RangeKey) -> bool {
-    let bounds = |a: &RangeBoundKey, b: &RangeBoundKey| match (&a.value, &b.value) {
-        (Some(a), Some(b)) => comparable(a, b),
-        _ => true,
-    };
-    bounds(&a.lower, &b.lower) && bounds(&a.upper, &b.upper)
 }

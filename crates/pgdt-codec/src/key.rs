@@ -9,7 +9,8 @@
 //! [`ValueKey`] is the API, for every value a plan orders, a nested one's
 //! included. What builds one — the dispatch over the type families under
 //! `crate::value`, each holding its own key type — is `order`'s, and not the
-//! codec's API: `internal` re-exports what a crate above calls.
+//! codec's API: `internal` re-exports what a crate above calls. The order a
+//! `ValueKey` was read in, and which two orders relate, is `relate`'s.
 //!
 //! What a literal of each kind has to look like, for the refusal naming it,
 //! is `form`'s; the refusal checks a strict parse dispatches through these
@@ -17,6 +18,7 @@
 
 pub(crate) mod form;
 pub(crate) mod order;
+mod relate;
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -25,8 +27,9 @@ use std::mem::size_of;
 use pgdt_model::PostgresInvalidValues;
 
 use self::order::{OrderKey, Side, literal_key, order_key, order_keys};
+use self::relate::{NestedOrder, ScalarOrder};
 use crate::compare::{CompareKind, ComparisonPlan, ComparisonSemantics};
-use crate::value::nested::key::{NestedKey, comparable, compare_nested, nested_key};
+use crate::value::nested::key::{NestedKey, compare_nested, nested_key};
 
 /// A value's place in its column's order, its representation hidden: the key
 /// a filter orders a row by, for an embedder ordering values of a column as
@@ -36,20 +39,25 @@ use crate::value::nested::key::{NestedKey, comparable, compare_nested, nested_ke
 /// stored bound is ordered as gathering kept it, which is `internal`'s
 /// alone (`docs/design/decisions.md`, "D79", "D106").
 ///
-/// There is no `Ord` (`docs/design/decisions.md`, "D56"): two keys are
-/// ordered only where an order relates them ([`ValueKey::compare`]), which
-/// two keys read under one plan in one semantics always are.
+/// **A key carries the order it was read in** — its semantics, and its
+/// plan's order at every level — which [`ValueKey::compare`] checks before
+/// it reads a value, so two keys are ordered only where the semantics'
+/// engine relates their orders. There is no `Ord`
+/// (`docs/design/decisions.md`, "D56").
 #[derive(Debug, Clone)]
-pub struct ValueKey(Key);
+pub struct ValueKey {
+    semantics: ComparisonSemantics,
+    key: Key,
+}
 
 #[derive(Debug, Clone)]
 enum Key {
     /// A scalar column's value, through its kind's representation.
-    Scalar(OrderKey),
+    Scalar { order: ScalarOrder, key: OrderKey },
     /// An array's, a record's, a range's or a multirange's. Boxed: a
     /// `NestedKey` carries three vectors, and a scalar key is the common
     /// one.
-    Nested(Box<NestedKey>),
+    Nested(Box<(NestedOrder, NestedKey)>),
 }
 
 /// The kind a scalar column of `plan` is ordered by in `semantics` — the kind
@@ -98,11 +106,15 @@ impl ValueKey {
     /// refuses it ([`PostgresInvalidValues::Default`]).
     pub fn of(plan: &ComparisonPlan, semantics: ComparisonSemantics, text: &str) -> Option<Self> {
         if let Some(kind) = scalar_kind(plan, semantics) {
-            return order_key(&kind, text).map(|key| Self(Key::Scalar(key)));
+            let key = order_key(&kind, text)?;
+            return Some(Self {
+                semantics,
+                key: Key::Scalar { order: ScalarOrder::of(&kind), key },
+            });
         }
         let tree = nested_tree(plan, semantics)?;
         let key = nested_key(tree, text, Side::Field(PostgresInvalidValues::Default))?;
-        Some(Self(Key::Nested(Box::new(key))))
+        Some(Self { semantics, key: Key::Nested(Box::new((NestedOrder::of(tree)?, key))) })
     }
 
     /// The key of a filter's literal compared against a column of `plan` in
@@ -117,41 +129,63 @@ impl ValueKey {
         text: &str,
     ) -> Option<Self> {
         if let Some(kind) = scalar_kind(plan, semantics) {
-            return literal_key(&kind, text, semantics).map(|key| Self(Key::Scalar(key)));
+            let key = literal_key(&kind, text, semantics)?;
+            return Some(Self {
+                semantics,
+                key: Key::Scalar { order: ScalarOrder::of(&kind), key },
+            });
         }
         let tree = nested_tree(plan, semantics)?;
-        Some(Self(Key::Nested(Box::new(nested_key(tree, text, Side::Literal)?))))
+        let key = nested_key(tree, text, Side::Literal)?;
+        Some(Self { semantics, key: Key::Nested(Box::new((NestedOrder::of(tree)?, key))) })
     }
 
     /// The order a filter compares by: a total order over the keys of one
-    /// plan in one semantics. Two keys of different plans compare where one
-    /// order relates their types — `smallint` against `bigint`, two
-    /// `numeric` scales, a `date` against a `timestamp`, a type's
-    /// `infinity` against its own finite values — and answer **`None` where
-    /// none does**: a `date` against an `integer`, a special value against
-    /// another type's, an array against a scalar, a record against one of
-    /// another arity, and a pair the server orders only under a `TimeZone`
-    /// the key does not carry, a `timestamp` against a `timestamptz`.
+    /// plan in one semantics. Two keys of different plans compare where the
+    /// semantics' engine resolves `a < b` between their orders without
+    /// consulting a setting, with its answer: in PostgreSQL's, `smallint`
+    /// against `bigint`, an integer against a `numeric`, a float or an `oid`,
+    /// two `numeric` scales, a `date` against a `timestamp` and a `time`
+    /// against an `interval`, their special values included. They answer
+    /// **`None` wherever it resolves none**: a `date` against an `integer`,
+    /// a `macaddr` against a `macaddr8`, two enum types, a pair ordered only
+    /// under `TimeZone`, two keys read in two semantics, and two nested keys
+    /// but of one order at every level, as the server relates no two array,
+    /// range or record types.
     ///
-    /// deficiency: KD118 — two enum types' labels compare by their positions
-    /// in their own declarations, where the server relates no two enum types:
-    /// an enum's key is its label's position and carries no type, a variant
-    /// telling an order apart and not a type. **(b) owned by 36.4.4**, which
-    /// carries the order a key was read in on `ValueKey` rather than in
-    /// `OrderKey`'s variants.
+    /// deficiency: KD119 — in DataFusion's semantics two keys compare only
+    /// where their orders are one, where DataFusion's comparison coercion
+    /// relates two emitted types it casts between: two integer widths, an
+    /// integer against a float or a decimal, two decimal scales, a `Date32`
+    /// against a `Timestamp`, and a text against a number or a time, which
+    /// it parses. **(b) owned by 36.4.5**, which answers those pairs as
+    /// DataFusion 55.1.0 casts them.
     pub fn compare(&self, other: &Self) -> Option<Ordering> {
-        match (&self.0, &other.0) {
-            (Key::Scalar(a), Key::Scalar(b)) => order_keys(a, b),
-            (Key::Nested(a), Key::Nested(b)) => comparable(a, b).then(|| compare_nested(a, b)),
+        if self.semantics != other.semantics {
+            return None;
+        }
+        match (&self.key, &other.key) {
+            (Key::Scalar { order: a, key: x }, Key::Scalar { order: b, key: y }) => {
+                match self.semantics {
+                    ComparisonSemantics::Postgres => relate::postgres(a, x, b, y),
+                    ComparisonSemantics::DataFusion => (a == b).then(|| order_keys(x, y))?,
+                }
+            }
+            (Key::Nested(a), Key::Nested(b)) => (a.0 == b.0).then(|| compare_nested(&a.1, &b.1)),
             _ => None,
         }
     }
 
-    /// The heap this key holds, as the sizes the allocator was asked for.
+    /// The heap this key holds, as the sizes the allocator was asked for: a
+    /// nested key's tree of orders beside its value, and none of an enum's
+    /// labels, which its plan shares.
     pub fn heap_bytes(&self) -> u64 {
-        match &self.0 {
-            Key::Scalar(key) => key.heap_bytes(),
-            Key::Nested(key) => size_of::<NestedKey>() as u64 + key.heap_bytes(),
+        match &self.key {
+            Key::Scalar { key, .. } => key.heap_bytes(),
+            Key::Nested(nested) => {
+                let (order, key) = &**nested;
+                size_of::<(NestedOrder, NestedKey)>() as u64 + order.heap_bytes() + key.heap_bytes()
+            }
         }
     }
 }

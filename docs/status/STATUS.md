@@ -96,7 +96,8 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.4.2** Attribute 36.4's count rise, landing no code, before 36.4.1: `a7b6ef0e` and `0588c9e8` built under the `profiling` profile in the release image, each counted against its shipped leg first, any difference falsifying line tables as codegen-neutral; then an `instructions:u` profile of each at the data level by source line, inlined frames included, the rise named per line or said unattributed — line tables move the code at both commits, so the rise is unattributed; the unchanged decode symbols' machine code is identical in both shipped builds ([notes](../design/roadmap-P36.4.2-attribution-notes.md))
 - [x] **36.4.3** Attribute 36.4's count rise exactly, landing no code, before 36.4.1 and 36.5: callgrind's `Ir` on the data-level `parse`, run on the two shipped binaries 36.4.2 kept, in a memory-limited container, launched detached; read as written in advance — the pair's `Ir` difference reproducing the native rise and sitting in code 36.4 changed, or in calls it added, is 36.4's cost, reworked where a shape as clean recovers it and accepted where none does (spec, "What a hot-path slice owes"); reproduced in identical code called as often, or not reproduced, is layout, which clears 36.4 and reopens how `--count-pair` is read before any other slice is counted — reproduced to within 0.2%, and all of it in functions whose machine code 36.4 changed, the gatherer's `heap_bytes` above all, so it is 36.4's cost ([notes](../design/roadmap-P36.4.3-callgrind-notes.md))
 - [x] **36.4.1** pgdt-codec: keys compare only where an order relates them — a variant per order, `Decimal` carrying its scale, `-infinity`, `infinity` and `NaN` their domain; `compare_keys_stored` written over `compare_keys`, `order_keys_stored` gone; counted by `measure.py --count-pair HEAD~1` — landed, two enum types' labels still comparing (`KD118`); the count resolves rises on the data-level `parse` and `pgdt sql`, which callgrind puts wholly in the slice's changed code — the gatherer copying the key twice more, `order_keys` saving more registers, `field_key`'s return — and no shape inside the variant split recovers them, so 36.4.4 replaces the split ([notes](../design/roadmap-P36.4.1-related-keys-notes.md))
-- [ ] **36.4.4** pgdt-codec: the order a key was read in carried by `ValueKey`, not by `OrderKey`'s variants — `compare` checks it first, then relates two keys exactly where the semantics' engine resolves `a < b` without a setting, nested keys and an enum's type name included; the hot path's key carries no identity; D56 rewritten; closes `KD118`; counted by `measure.py --count-pair HEAD~1`
+- [x] **36.4.4** pgdt-codec: the order a key was read in carried by `ValueKey`, not by `OrderKey`'s variants — `compare` checks it first, then relates two keys exactly where PostgreSQL resolves `a < b` without a setting, nested keys at one type and order per leaf and an enum by its type name and labels, and in DataFusion's semantics only keys of one order; the hot path's key carries no identity; D56 rewritten; the enum deficiency it closes struck; counted by `measure.py --count-pair HEAD~1` — the count resolves falls on the data-level `parse` and `pgdt sql` and no rise; what the data-level `parse` keeps above 36.4's code, callgrind puts wholly in `CompareKind`'s added enum name widening a stride the gatherer indexes, and it is accepted ([notes](../design/roadmap-P36.4.4-key-order-notes.md))
+- [ ] **36.4.5** pgdt-codec: in DataFusion's semantics, two keys of different orders compare where its comparison coercion relates their emitted types without consulting session config, with its answer; closes `KD119`
 - [ ] **36.5** pgdt-dump: `ChunkedScanner`, its four sites calling it; counted by `measure.py --count-pair HEAD~1`
 - [ ] **36.6** pgdt-dump: `CacheMode` opens an `Origin` — one decode, no free `load`/`save`, `Valid` and `Incomplete` one, `Offline` its own type, `Disabled` stated; `scan` and `preamble_only` take only what they read
 - [ ] **36.7** pgdt-mapping: back-fill one call; the mapping pass hands back a `Dump`'s parts; closes `KD115`
@@ -135,3 +136,39 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **DataFusion's cross-order answers are split off as 36.4.5 (36.4.4).**
+  In DataFusion's semantics, keys of two orders answer `None` (`KD119`).
+  Why: DataFusion 55.1.0's `comparison_coercion` relates a string to a
+  number or a time by parsing it, and a float to a decimal by casting it to
+  `Decimal128(30, 15)`. Its answer there is arrow-cast's, and `pgdt-codec`
+  does not link arrow-cast (D74; 36.4.4's notes, "The split: DataFusion's cross-order answers are
+  36.4.5's"). Choosing:
+  36.4.5 either takes arrow-cast's parsers and casts into the codec, or
+  answers only the pairs it reads without them (integer widths, decimal
+  scales, a `Date32` against a `Timestamp`), or is struck and leaves
+  `KD119` standing.
+- **A nested key's order names each leaf's type (36.4.4).** The spec says
+  a nested key relates by "its order at every level", and that
+  `varchar(n)` and `text` share an order. `NestedOrder` also names each
+  leaf's declared type, with the typmod cut out. So `text[]` against
+  `varchar[]`, and a record of `(integer, text)` against one of
+  `(integer, varchar)`, answer `None`, as the server does, while
+  `varchar(3)[]` against `varchar(5)[]` compares. Why: the server relates
+  two array, range or record types only where the element, bound or column
+  types are one (probed; 36.4.4's notes, "What landed beside the row's
+  words"). The order alone would relate pairs the server refuses.
+  Reconsidering drops `declared` from `NestedOrder::Leaf`
+  (`crates/pgdt-codec/src/key/relate.rs`).
+- **36.4.4's remainder against 36.4 is accepted (36.4.4).** On the
+  data-level `parse`, 36.4.4 sits above 36.4's code by one instruction at
+  one site in the gatherer's `observe_row`. `CompareKind::Enum`'s added
+  `name` widens an array element that `observe_row` indexes, and the
+  stride's multiply takes two instructions instead of one (36.4.4's notes,
+  "The count: two falls, and what stays above 36.4"). Why: against its
+  parent the slice resolves only falls, which is the rule (spec, "What a
+  hot-path slice owes"). What rose is how one multiply is encoded, not
+  work the gatherer added. Reconsidering puts an
+  enum's name and labels behind one `Arc` in `CompareKind::Enum`, which
+  gives back 36.4's width. It is counted by its own `--count-pair`,
+  and not known to recover the instruction until then.

@@ -274,6 +274,7 @@ fn comparison_user_type(
         // *declaration* order (I33) — so a label's position in this list is
         // the order and its text is not.
         TypeKind::Enum { labels, exact } => ComparisonPlan::agrees(CompareKind::Enum {
+            name: def.name.as_str().into(),
             labels: labels.iter().cloned().collect(),
             exact: *exact,
         }),

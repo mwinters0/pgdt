@@ -663,6 +663,19 @@ impl NumericKey {
         }
     }
 
+    /// The `double precision` `numeric_float8` casts this to, which is
+    /// `float8in` reading its text: the nearest double, as `strtod` rounds,
+    /// and `None` where that overflows or a nonzero value rounds to zero,
+    /// both of which `float8in` refuses as out of range.
+    pub(crate) fn to_f64(&self) -> Option<f64> {
+        let sign = if self.negative { "-" } else { "" };
+        let int = if self.int.is_empty() { "0" } else { &self.int };
+        let frac = if self.frac.is_empty() { "0" } else { &self.frac };
+        let double: f64 = format!("{sign}{int}.{frac}").parse().ok()?;
+        let zero = self.int.is_empty() && self.frac.is_empty();
+        (double.is_finite() && (double != 0.0 || zero)).then_some(double)
+    }
+
     /// Sign first, then magnitude: how many integer digits, then those digits,
     /// then the fraction. Each stage is a byte comparison over ASCII digits,
     /// which is why the normalization above has to have happened — with

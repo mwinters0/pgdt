@@ -347,6 +347,7 @@ fn every_column_carries_a_comparison_plan() {
             ),
             ComparisonPlan::Compared {
                 kind: CompareKind::Enum {
+                    name: "public.mood".into(),
                     labels: ["sad".to_string()].into_iter().collect(),
                     exact: true
                 },

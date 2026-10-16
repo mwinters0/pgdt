@@ -63,10 +63,22 @@ fn a_field_postgresql_refuses_is_told_from_one_this_build_does_not_read() {
         (K::MacAddr { octets: 8 }, "08:00:2b:01:02:03:04"),
         (K::Bytea, "\\x0"),
         (K::Bytea, "\\400"),
-        (K::Enum { labels: Arc::from(["a".to_string()]), exact: true }, "b"),
-        (K::Enum { labels: Arc::from(["a".to_string()]), exact: true }, " a"),
-        (K::Enum { labels: Arc::from(["a".to_string()]), exact: true }, "A"),
-        (K::Enum { labels: Arc::from(["a".to_string()]), exact: false }, &long_label),
+        (
+            K::Enum { name: "public.e".into(), labels: Arc::from(["a".to_string()]), exact: true },
+            "b",
+        ),
+        (
+            K::Enum { name: "public.e".into(), labels: Arc::from(["a".to_string()]), exact: true },
+            " a",
+        ),
+        (
+            K::Enum { name: "public.e".into(), labels: Arc::from(["a".to_string()]), exact: true },
+            "A",
+        ),
+        (
+            K::Enum { name: "public.e".into(), labels: Arc::from(["a".to_string()]), exact: false },
+            &long_label,
+        ),
     ];
     for (kind, text) in &refused {
         assert_eq!(field_key(kind, text).err(), Some(Unread::Refused), "{kind:?} {text:?}");
@@ -91,8 +103,14 @@ fn a_field_postgresql_refuses_is_told_from_one_this_build_does_not_read() {
         (K::MacAddr { octets: 8 }, "08002b0102030405"),
         (K::Bytea, "\\x ab"),
         (K::Bytea, "\\101"),
-        (K::Enum { labels: Arc::from(["a".to_string()]), exact: false }, "b"),
-        (K::Enum { labels: Arc::from(["a".to_string()]), exact: false }, &longest_label),
+        (
+            K::Enum { name: "public.e".into(), labels: Arc::from(["a".to_string()]), exact: false },
+            "b",
+        ),
+        (
+            K::Enum { name: "public.e".into(), labels: Arc::from(["a".to_string()]), exact: false },
+            &longest_label,
+        ),
     ];
     for (kind, text) in &unparsed {
         assert_eq!(field_key(kind, text).err(), Some(Unread::Unparsed), "{kind:?} {text:?}");
