@@ -202,28 +202,36 @@ remainder is 36.4's own code**:
 - `order_keys` costs one `Ir` a call less than `a7b6ef0e`'s
   `compare_keys`: −98,272. The renamed functions net to zero.
 
-**It is accepted** (spec, "What a hot-path slice owes"). It is about 4 `Ir`
-a stored bound, so it grows with the cache's groups, not its rows. One
-candidate shape exists: `compare_keys_stored` written over `compare_keys`,
-as `stored_order` was. It is not taken, for three reasons:
+**It is accepted** (spec, "What a hot-path slice owes"), and 36.4 is not
+reopened for it. It is about 4 `Ir` a stored bound, so it grows with the
+cache's groups, not its rows.
 
-- Its saving rests on codegen choices, which a rework was already refused
-  for resting on (history, 2026-10-16, "36.4's rework recovers the
-  data-level rise; the summary reads by kind").
+**`compare_keys_stored` written over `compare_keys`, as `stored_order` was,
+is the cleaner shape, and 36.4.1 takes it.** That is decided by the code's
+structure, not by the count. `order_keys_stored` existed to give
+`ValueKey::stored_order` an `Option`. Once that left the API, its one caller
+unwraps it at once, and the `unreachable!` is stated twice. So the change
+deletes a function and keeps no unreachable state. The rework refused on
+codegen grounds kept one (history, 2026-10-16, "36.4's rework recovers the
+data-level rise; the summary reads by kind"). It lands in 36.4.1, not ahead
+of it, for two reasons:
+
 - `compare_keys_stored` is the gatherer's comparison too, inlined into
-  `place_keyed` (no symbol of it in the data-level runs), so changing it
-  moves the data-level row.
-- 36.4.1 reshapes the match both callers reach, and is counted by its own
-  pair.
-
-STATUS's "Decisions worth another look" holds the call.
+  `place_keyed` (no symbol of it in the data-level runs). So it moves the
+  data-level row, and 36.4.1 reshapes the `order_keys` match that both
+  callers reach anyway.
+- A count of its own would decide nothing, because the shape is kept
+  whatever it reads. 36.4.1's pair prices both changes, and callgrind
+  separates them by function if that pair rises.
 
 ## What the next round inherits
 
 - **36.4.1 is counted against 36.4's commit**, by `measure.py --count-pair
   HEAD~1`. It reshapes `order_keys`, which `compare_keys_stored` unwraps on
-  every stored comparison, the gatherer's and the summary's alike (above,
-  "The summary's count: the last of the rise, counted and accepted").
+  every stored comparison, the gatherer's and the summary's alike. It also
+  writes `compare_keys_stored` over `compare_keys` and deletes
+  `order_keys_stored` (above, "The summary's count: the last of the rise,
+  counted and accepted").
 - **A count an unrelated commit displaces is taken from a worktree** at the
   slice's commit, as that worktree's own `measure.py --count-pair HEAD~1`
   with `PGDT_MEASURE_OUT_DIR` set to the repo's `runs/`.

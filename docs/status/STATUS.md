@@ -95,7 +95,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.4** pgdt-codec: `ValueKey` from a plan, for every value, never panicking across kinds; counted by `measure.py --count-pair HEAD~1` — the reshape landed and its two deficiencies are struck; the count's rise on the data-level `parse` and `pgdt sql` rows, both 36.4's own code (36.4.3, then callgrind on the rework), is recovered by the gatherer and the summary holding `internal`'s scalar key by the set's kind, `ValueKey::stored_order` leaving the API; the remainder on `pgdt sql` against `a7b6ef0e`, a few instructions a stored bound and 36.4's own code too, is accepted ([notes](../design/roadmap-P36.4-value-key-notes.md))
 - [x] **36.4.2** Attribute 36.4's count rise, landing no code, before 36.4.1: `a7b6ef0e` and `0588c9e8` built under the `profiling` profile in the release image, each counted against its shipped leg first, any difference falsifying line tables as codegen-neutral; then an `instructions:u` profile of each at the data level by source line, inlined frames included, the rise named per line or said unattributed — line tables move the code at both commits, so the rise is unattributed; the unchanged decode symbols' machine code is identical in both shipped builds ([notes](../design/roadmap-P36.4.2-attribution-notes.md))
 - [x] **36.4.3** Attribute 36.4's count rise exactly, landing no code, before 36.4.1 and 36.5: callgrind's `Ir` on the data-level `parse`, run on the two shipped binaries 36.4.2 kept, in a memory-limited container, launched detached; read as written in advance — the pair's `Ir` difference reproducing the native rise and sitting in code 36.4 changed, or in calls it added, is 36.4's cost, reworked where a shape as clean recovers it and accepted where none does (spec, "What a hot-path slice owes"); reproduced in identical code called as often, or not reproduced, is layout, which clears 36.4 and reopens how `--count-pair` is read before any other slice is counted — reproduced to within 0.2%, and all of it in functions whose machine code 36.4 changed, the gatherer's `heap_bytes` above all, so it is 36.4's cost ([notes](../design/roadmap-P36.4.3-callgrind-notes.md))
-- [ ] **36.4.1** pgdt-codec: keys compare only where an order relates them — a variant per order, `Decimal` carrying its scale, `-infinity`, `infinity` and `NaN` their domain; closes `KD118`; counted by `measure.py --count-pair HEAD~1`
+- [ ] **36.4.1** pgdt-codec: keys compare only where an order relates them — a variant per order, `Decimal` carrying its scale, `-infinity`, `infinity` and `NaN` their domain; `compare_keys_stored` written over `compare_keys`, `order_keys_stored` gone; closes `KD118`; counted by `measure.py --count-pair HEAD~1`
 - [ ] **36.5** pgdt-dump: `ChunkedScanner`, its four sites calling it; counted by `measure.py --count-pair HEAD~1`
 - [ ] **36.6** pgdt-dump: `CacheMode` opens an `Origin` — one decode, no free `load`/`save`, `Valid` and `Incomplete` one, `Offline` its own type, `Disabled` stated; `scan` and `preamble_only` take only what they read
 - [ ] **36.7** pgdt-mapping: back-fill one call; the mapping pass hands back a `Dump`'s parts; closes `KD115`
@@ -134,20 +134,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **36.4 is ticked with `pgdt sql`'s last remainder accepted, not
-  reworked.** Against `a7b6ef0e` the row is resolved above by the narrowest
-  margin, and callgrind puts all of it in 36.4's own code:
-  `compare_keys_stored` unwraps `order_keys`' `Option` where `a7b6ef0e`'s
-  `stored_order` called `compare_keys`, and the summary's `fold` grew
-  where it is inlined (36.4's notes, "The summary's count: the last of the
-  rise, counted and accepted"). *Why:* the spec accepts a rise that no
-  shape as clean recovers ("What a hot-path slice owes"). The one candidate
-  is `compare_keys_stored` written over `compare_keys`. It saves only
-  through codegen choices, which a rework was already refused for. It is
-  the gatherer's comparison too, so it would move the data-level row on a
-  judgement call. And 36.4.1 reshapes the match both callers reach, under
-  its own count. *Asked:* is the remainder accepted, or does the candidate
-  earn its own counted rework? *Reconsidering it* reopens 36.4 for that
-  rework ahead of 36.4.1, or folds the candidate into 36.4.1, whose count
-  then prices it.
