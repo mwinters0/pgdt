@@ -298,21 +298,29 @@ pub(crate) fn make_range(
     // becomes inclusive at the successor, an inclusive upper becomes
     // exclusive at the successor.
     //
-    // The `Int` pattern is `daterange_canonical`'s `DATE_NOT_FINITE` guard: a
-    // date `infinity` decodes to `OrderKey::PositiveInfinity` rather than to
-    // a day count, so it matches no arm here and is left as written, which is
-    // what makes `[2020-01-01,infinity]` keep its inclusive upper (I34, I46).
+    // The `Date` pattern is `daterange_canonical`'s `DATE_NOT_FINITE` guard:
+    // a date `infinity` decodes to `OrderKey::PositiveInfinity` rather than
+    // to a day count, so it matches no arm here and is left as written,
+    // which is what makes `[2020-01-01,infinity]` keep its inclusive upper
+    // (I34, I46).
     // pg-refuses: I46 — a successor past the subtype's largest value.
-    let successor = |bound: &RangeBoundKey| match &bound.value {
-        Some(NestedKey::Leaf(OrderKey::Int(n))) => (*n < discrete.largest()).then(|| {
-            Some(RangeBoundKey {
-                value: Some(NestedKey::Leaf(OrderKey::Int(n + 1))),
-                inclusive: !bound.inclusive,
-                lower: bound.lower,
-            })
-        }),
-        // Not a finite integer bound, so the canonical function skips it.
-        _ => Some(None),
+    let successor = |bound: &RangeBoundKey| {
+        let next = match &bound.value {
+            Some(NestedKey::Leaf(OrderKey::Int(n))) if *n < discrete.largest() => {
+                OrderKey::Int(n + 1)
+            }
+            Some(NestedKey::Leaf(OrderKey::Date(n))) if *n < discrete.largest() => {
+                OrderKey::Date(n + 1)
+            }
+            Some(NestedKey::Leaf(OrderKey::Int(_) | OrderKey::Date(_))) => return None,
+            // Not a finite bound, so the canonical function skips it.
+            _ => return Some(None),
+        };
+        Some(Some(RangeBoundKey {
+            value: Some(NestedKey::Leaf(next)),
+            inclusive: !bound.inclusive,
+            lower: bound.lower,
+        }))
     };
     let mut lower = serialized.lower;
     let mut upper = serialized.upper;

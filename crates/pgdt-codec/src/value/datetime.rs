@@ -399,7 +399,7 @@ const END_TIMESTAMP: i64 = 9_223_371_331_200_000_000;
 
 /// PostgreSQL's epoch, 2000-01-01 00:00:00 UTC, in microseconds from the
 /// Unix epoch.
-const POSTGRES_EPOCH_UNIX_MICROS: i128 = 946_684_800_000_000;
+pub(crate) const POSTGRES_EPOCH_UNIX_MICROS: i128 = 946_684_800_000_000;
 
 pub fn render_timestamp_micros(v: i64, with_tz: bool) -> String {
     // `YYYY-MM-DD HH:MM:SS.ffffff+00`, with room for the era marker.

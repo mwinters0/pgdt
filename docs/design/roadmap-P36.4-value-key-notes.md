@@ -26,8 +26,8 @@ representation compare as `None`. The dispatch beneath it lives in the
   not carry the plan it was read from. Two keys whose plans share a
   representation, such as a `date` and an `integer` (both `Int`), compare as
   that representation orders, and the infinities and `NaN` compare against
-  any key by rank. That falls short of the spec, as `KD118`, which 36.4.1
-  closes.
+  any key by rank. That falls short of the spec. 36.4.1 closes the gap,
+  except for two enum types' labels, which `KD118` now holds.
 - **Nothing in the workspace holds a `ValueKey`.** The gatherer, the
   summary and `partition_orders` key by the kind they chose a stored set by,
   not through `ValueKey::of`, which D79's Rejected line explains, and none

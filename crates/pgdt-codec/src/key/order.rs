@@ -5,6 +5,7 @@
 //! so `internal` re-exports what a crate above calls, and an embedder orders
 //! a value through the namespace's `ValueKey`.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use arrow_buffer::i256;
@@ -16,8 +17,8 @@ use crate::value::bool::{bool_unread, decode_bool};
 use crate::value::bytea::{bytea_unread, decode_bytea};
 use crate::value::datetime::grammar::DateTimeInput;
 use crate::value::datetime::{
-    date_days, datetime_read, extract_offset, interval_parts, interval_read, interval_span,
-    parse_time_of_day, time_of_day_micros, timestamp_postgres_micros,
+    POSTGRES_EPOCH_UNIX_MICROS, date_days, datetime_read, extract_offset, interval_parts,
+    interval_read, interval_span, parse_time_of_day, time_of_day_micros, timestamp_postgres_micros,
 };
 use crate::value::float::{float_field, float_in};
 use crate::value::int::{int_in, oid_unread};
@@ -41,26 +42,52 @@ fn jsonb_key(text: &str) -> Read<OrderKey> {
 }
 
 /// One side of an ordering comparison, decoded from text per the column's
-/// [`CompareKind`]. Both sides of any one comparison come from the same kind,
-/// so a *finite* variant mismatch is unreachable by construction.
+/// [`CompareKind`]. **A variant is one order**: two keys of one variant are
+/// ordered by it whatever plans they were read under, two of different
+/// variants only where PostgreSQL's order relates the two types without a
+/// setting the key does not carry — a `date` against a `timestamp`, two
+/// `numeric` scales — and a pair no order relates answers `None` in
+/// [`order_keys`]. Both sides of a comparison inside this workspace come from
+/// one kind, so [`compare_keys`] asserts a pair is related.
 ///
 /// Three variants are not values of the column's Arrow type at all:
 /// `infinity`, `-infinity` and `numeric`'s `NaN` are legal values of their
 /// declared PostgreSQL types with a total order (I34), and are carried as
-/// their position in that order (`docs/design/decisions.md`, "D56"). A
-/// `real`/`double precision` special is not here: IEEE has all three, so the
-/// column's own decoder yields them inside `Float` and [`pg_float_cmp`]
-/// orders them PostgreSQL's way.
+/// their position in that order, within the [`Domain`] of types holding them
+/// (`docs/design/decisions.md`, "D56"). A `real`/`double precision` special
+/// is not here: IEEE has all three, so the column's own decoder yields them
+/// inside `Float` and [`pg_float_cmp`] orders them PostgreSQL's way.
 #[derive(Debug, Clone, PartialEq)]
 pub enum OrderKey {
-    /// PostgreSQL's `-infinity`, below every finite value of its type.
-    NegativeInfinity,
+    /// PostgreSQL's `-infinity`, below every finite value of its domain.
+    NegativeInfinity(Domain),
     Bool(bool),
+    /// A signed integer of any width, `smallint` to `bigint`.
     Int(i64),
+    /// An `oid`. Its own order: PostgreSQL compares an integer against an
+    /// `oid` by casting it, wrapping a negative one (`oidin`), where
+    /// DataFusion widens both.
+    Oid(i64),
     Float(f64),
-    Decimal(i256),
+    /// A `numeric(p,s)` as Arrow's decimal holds it: the unscaled integer
+    /// at `scale`.
+    Decimal {
+        unscaled: i256,
+        scale: i8,
+    },
     /// A bare `numeric`, whose digits do not fit any fixed-width integer.
     Numeric(NumericKey),
+    /// An enum label's position in its type's declaration order.
+    Enum(i64),
+    /// A `date`, in days from 1970.
+    Date(i64),
+    /// A `time`, in microseconds from midnight.
+    Time(i64),
+    /// A `timestamp`, in microseconds from PostgreSQL's epoch.
+    Timestamp(i64),
+    /// A `timestamp with time zone`, in microseconds from PostgreSQL's epoch,
+    /// UTC.
+    TimestampTz(i64),
     /// An `interval`'s span in microseconds, which is 128 bits wide because
     /// PostgreSQL's own `interval_cmp_value` is (I40).
     Interval(i128),
@@ -76,46 +103,70 @@ pub enum OrderKey {
         zone: i64,
     },
     Network(NetworkKey),
+    /// A `macaddr`'s six octets or a `macaddr8`'s eight.
+    MacAddr(Vec<u8>),
     /// A `jsonb` document, with a top-level scalar already wrapped in the
     /// pseudo-array PostgreSQL stores it in — see [`jsonb_key`].
     Jsonb(Jsonb),
-    Bytes(Vec<u8>),
+    Uuid(Vec<u8>),
+    Bytea(Vec<u8>),
+    /// Any text, a `character(n)`'s with its padding given up.
     Text(String),
-    /// PostgreSQL's `infinity`, above every finite value of its type.
-    PositiveInfinity,
+    /// PostgreSQL's `infinity`, above every finite value of its domain.
+    PositiveInfinity(Domain),
     /// `numeric`'s `NaN`, which orders above `infinity` and equals itself
     /// (I34). Reached through [`CompareKind::Decimal`] and
-    /// [`CompareKind::Numeric`].
+    /// [`CompareKind::Numeric`], so its domain is [`Domain::Numeric`].
     NotANumber,
 }
 
+/// The types an infinity is a value of, and so the finite keys it is
+/// ordered against: PostgreSQL relates `date`, `timestamp` and
+/// `timestamptz`'s `infinity`, every `numeric`'s, and an `interval`'s with
+/// no other type's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Domain {
+    /// `date`, `timestamp` and `timestamp with time zone`.
+    DateTime,
+    /// `interval` in PostgreSQL's order.
+    Interval,
+    /// `interval` in Arrow's ([`CompareKind::IntervalFields`]).
+    IntervalFields,
+    /// `numeric`, at any typmod.
+    Numeric,
+}
+
 /// The rank of a finite value — the second of the four [`OrderKey::rank`]
-/// classes, above `-infinity` and below `infinity` and `NaN`, and the only one whose members are compared by value.
+/// classes, above `-infinity` and below `infinity` and `NaN`, and the only
+/// one whose members are compared by value.
 const FINITE: u8 = 1;
 
 impl OrderKey {
     /// Where this key sits in PostgreSQL's total order relative to the finite
-    /// values of its own type. Ranks are compared before values are, so a
+    /// values of its domain. Ranks are compared before values are, so a
     /// special value never collides with a finite one a sentinel could have —
     /// `i64::MAX` micros since 1970 is a date PostgreSQL itself accepts
     /// (`docs/design/decisions.md`, "D56").
     fn rank(&self) -> u8 {
         match self {
-            Self::NegativeInfinity => 0,
-            Self::Bool(_)
-            | Self::Int(_)
-            | Self::Float(_)
-            | Self::Decimal(_)
-            | Self::Numeric(_)
-            | Self::Interval(_)
-            | Self::IntervalFields(..)
-            | Self::TimeTz { .. }
-            | Self::Network(_)
-            | Self::Jsonb(_)
-            | Self::Bytes(_)
-            | Self::Text(_) => FINITE,
-            Self::PositiveInfinity => 2,
+            Self::NegativeInfinity(_) => 0,
+            Self::PositiveInfinity(_) => 2,
             Self::NotANumber => 3,
+            _ => FINITE,
+        }
+    }
+
+    /// The domain a special value of this key's type would be in, or `None`
+    /// for a key of a type holding no special value, which no special is
+    /// ordered against.
+    fn domain(&self) -> Option<Domain> {
+        match self {
+            Self::NegativeInfinity(domain) | Self::PositiveInfinity(domain) => Some(*domain),
+            Self::NotANumber | Self::Decimal { .. } | Self::Numeric(_) => Some(Domain::Numeric),
+            Self::Date(_) | Self::Timestamp(_) | Self::TimestampTz(_) => Some(Domain::DateTime),
+            Self::Interval(_) => Some(Domain::Interval),
+            Self::IntervalFields(..) => Some(Domain::IntervalFields),
+            _ => None,
         }
     }
 
@@ -126,18 +177,26 @@ impl OrderKey {
         match self {
             Self::Numeric(numeric) => numeric.heap_bytes(),
             Self::Jsonb(jsonb) => jsonb.heap_bytes(),
-            Self::Bytes(bytes) => bytes.capacity() as u64,
+            Self::MacAddr(bytes) | Self::Uuid(bytes) | Self::Bytea(bytes) => {
+                bytes.capacity() as u64
+            }
             Self::Text(text) => text.capacity() as u64,
-            Self::NegativeInfinity
+            Self::NegativeInfinity(_)
             | Self::Bool(_)
             | Self::Int(_)
+            | Self::Oid(_)
             | Self::Float(_)
-            | Self::Decimal(_)
+            | Self::Decimal { .. }
+            | Self::Enum(_)
+            | Self::Date(_)
+            | Self::Time(_)
+            | Self::Timestamp(_)
+            | Self::TimestampTz(_)
             | Self::Interval(_)
             | Self::IntervalFields(..)
             | Self::TimeTz { .. }
             | Self::Network(_)
-            | Self::PositiveInfinity
+            | Self::PositiveInfinity(_)
             | Self::NotANumber => 0,
         }
     }
@@ -164,21 +223,25 @@ impl OrderKey {
 /// not.
 pub fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     match kind {
-        CompareKind::Date
-        | CompareKind::Timestamp { .. }
-        | CompareKind::Interval { .. }
-        | CompareKind::IntervalFields { .. } => match text {
-            "infinity" => Some(OrderKey::PositiveInfinity),
-            "-infinity" => Some(OrderKey::NegativeInfinity),
-            _ => None,
-        },
+        CompareKind::Date | CompareKind::Timestamp { .. } => infinity(Domain::DateTime, text),
+        CompareKind::Interval { .. } => infinity(Domain::Interval, text),
+        CompareKind::IntervalFields { .. } => infinity(Domain::IntervalFields, text),
         CompareKind::Decimal { .. } => (text == "NaN").then_some(OrderKey::NotANumber),
         CompareKind::Numeric { infinities, .. } => match text {
             "NaN" => Some(OrderKey::NotANumber),
-            "Infinity" if *infinities => Some(OrderKey::PositiveInfinity),
-            "-Infinity" if *infinities => Some(OrderKey::NegativeInfinity),
+            "Infinity" if *infinities => Some(OrderKey::PositiveInfinity(Domain::Numeric)),
+            "-Infinity" if *infinities => Some(OrderKey::NegativeInfinity(Domain::Numeric)),
             _ => None,
         },
+        _ => None,
+    }
+}
+
+/// `date_out`'s two infinities, in `domain`.
+fn infinity(domain: Domain, text: &str) -> Option<OrderKey> {
+    match text {
+        "infinity" => Some(OrderKey::PositiveInfinity(domain)),
+        "-infinity" => Some(OrderKey::NegativeInfinity(domain)),
         _ => None,
     }
 }
@@ -278,17 +341,22 @@ pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
         // negative literal is `Error::PredicateValueDecode`. Every value the
         // column can hold widens into `i64` unchanged.
         CompareKind::UnsignedInt => {
-            OrderKey::Int(text.parse::<u32>().map_err(|_| oid_unread(text))?.into())
+            OrderKey::Oid(text.parse::<u32>().map_err(|_| oid_unread(text))?.into())
         }
         CompareKind::Float32 => OrderKey::Float(f64::from(float_in::<f32>(text)?)),
         CompareKind::Float64 => OrderKey::Float(float_in::<f64>(text)?),
         // A field is put through its typmod, rounded to the scale and refused
         // past the precision as `COPY` refuses it (I51). A literal is read
         // exactly, by [`literal_key`].
-        CompareKind::Decimal { precision, scale } => OrderKey::Decimal(
-            i256::from_string(&typmod_unscaled_digits(text, *precision, i16::from(*scale))?)
-                .ok_or(unparsed)?,
-        ),
+        CompareKind::Decimal { precision, scale } => OrderKey::Decimal {
+            unscaled: i256::from_string(&typmod_unscaled_digits(
+                text,
+                *precision,
+                i16::from(*scale),
+            )?)
+            .ok_or(unparsed)?,
+            scale: *scale,
+        },
         CompareKind::Numeric { typmod: Some(typmod), .. } => {
             OrderKey::Numeric(NumericKey::from_unscaled(
                 &typmod_unscaled_digits(text, typmod.precision, typmod.scale)?,
@@ -320,20 +388,21 @@ pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
         CompareKind::Enum { labels, exact } => {
             let position = labels.iter().position(|l| l == text);
             let refused = *exact || text.len() >= ENUM_LABEL_LIMIT;
-            OrderKey::Int(position.ok_or(if refused { Unread::Refused } else { unparsed })? as i64)
+            OrderKey::Enum(position.ok_or(if refused { Unread::Refused } else { unparsed })? as i64)
         }
         CompareKind::Date => {
-            OrderKey::Int(datetime_read(date_days(text), DateTimeInput::Date, text)?.into())
+            OrderKey::Date(datetime_read(date_days(text), DateTimeInput::Date, text)?.into())
         }
         CompareKind::Time => {
-            OrderKey::Int(datetime_read(time_of_day_micros(text), DateTimeInput::Time, text)?)
+            OrderKey::Time(datetime_read(time_of_day_micros(text), DateTimeInput::Time, text)?)
         }
         // From PostgreSQL's epoch, not Arrow's: every value the server admits
         // keys, those past what `i64` counts from 1970 among them (I49).
         CompareKind::Timestamp { with_tz } => {
             let input =
                 if *with_tz { DateTimeInput::TimestampTz } else { DateTimeInput::Timestamp };
-            OrderKey::Int(datetime_read(timestamp_postgres_micros(text, *with_tz), input, text)?)
+            let micros = datetime_read(timestamp_postgres_micros(text, *with_tz), input, text)?;
+            if *with_tz { OrderKey::TimestampTz(micros) } else { OrderKey::Timestamp(micros) }
         }
         // A field the reader does not read is refused where `interval_in`
         // refuses it under the column's qualifier. A literal is read under
@@ -348,7 +417,7 @@ pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
         CompareKind::TimeTz => datetime_read(timetz_key(text), DateTimeInput::TimeTz, text)?,
         CompareKind::Network { cidr } => network_key(text, *cidr)?,
         CompareKind::MacAddr { octets } => {
-            OrderKey::Bytes(macaddr_octets(text, *octets).ok_or_else(|| match octets {
+            OrderKey::MacAddr(macaddr_octets(text, *octets).ok_or_else(|| match octets {
                 8 if macaddr8_in(text).is_none() => Unread::Refused,
                 8 => unparsed,
                 _ => macaddr_unread(text),
@@ -356,9 +425,9 @@ pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
         }
         CompareKind::Jsonb => jsonb_key(text)?,
         // Every refusal of the reader is `uuid_in`'s (I64).
-        CompareKind::Uuid => OrderKey::Bytes(decode_uuid(text).ok_or(Unread::Refused)?.to_vec()),
+        CompareKind::Uuid => OrderKey::Uuid(decode_uuid(text).ok_or(Unread::Refused)?.to_vec()),
         CompareKind::Bytea => {
-            OrderKey::Bytes(decode_bytea(text).ok_or_else(|| bytea_unread(text))?)
+            OrderKey::Bytea(decode_bytea(text).ok_or_else(|| bytea_unread(text))?)
         }
         // A field past its typmod's length is refused, and one within it is
         // keyed as written. A literal is coerced with no typmod
@@ -412,7 +481,7 @@ pub fn literal_key(
         ) if !numeric_in_stores(text) => None,
         (_, CompareKind::Decimal { scale, .. }) => special_order_key(kind, text).or_else(|| {
             let unscaled = decimal_unscaled_digits(text, *scale)?;
-            Some(OrderKey::Decimal(i256::from_string(&unscaled)?))
+            Some(OrderKey::Decimal { unscaled: i256::from_string(&unscaled)?, scale: *scale })
         }),
         (_, CompareKind::Numeric { typmod: Some(_), .. }) => special_order_key(kind, text)
             .or_else(|| Some(OrderKey::Numeric(NumericKey::parse(text)?))),
@@ -445,19 +514,18 @@ fn pg_float_cmp(a: f64, b: f64) -> Ordering {
     }
 }
 
-/// Rank first, value second. A special value on either side is decided by
-/// [`OrderKey::rank`] alone, so two of the same special are equal —
-/// `-infinity = -infinity`, `infinity = infinity`, `NaN = NaN` (I34) — and a
-/// special against a finite never has to name a number.
+/// Value within one variant, rank where a special value is on either side:
+/// two of the same special in one domain are equal — `-infinity =
+/// -infinity`, `infinity = infinity`, `NaN = NaN` (I34) — and a special
+/// against a finite never has to name a number.
 ///
 /// Over the keys of one kind this is a **total order** — reflexive,
 /// antisymmetric and transitive — which a running minimum, maximum or
 /// sortedness flag depends on and a single comparison does not; the oracle
 /// test `the_key_is_a_total_order_over_every_committed_value` pins it.
 ///
-/// Both sides come from one column's [`CompareKind`], so a finite pair of
-/// two representations is unreachable here; [`order_keys`] is the comparison
-/// that answers one.
+/// Both sides come from one column's [`CompareKind`], so an unrelated pair
+/// is unreachable here; [`order_keys`] is the comparison that answers one.
 pub fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
     order_keys(a, b).unwrap_or_else(|| {
         unreachable!("both sides of a comparison decode through one column's `CompareKind`")
@@ -465,18 +533,24 @@ pub fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
 }
 
 /// [`compare_keys`] over two keys that may not share a kind: `None` where
-/// both are finite and their representations differ, which no order relates.
+/// no order relates them ([`OrderKey`]). Two keys of one variant are matched
+/// here, and every other pair is [`order_across`]'s.
 #[inline]
 pub(crate) fn order_keys(a: &OrderKey, b: &OrderKey) -> Option<Ordering> {
-    let (rank_a, rank_b) = (a.rank(), b.rank());
-    if rank_a != rank_b {
-        return Some(rank_a.cmp(&rank_b));
-    }
     Some(match (a, b) {
         (OrderKey::Bool(x), OrderKey::Bool(y)) => x.cmp(y),
-        (OrderKey::Int(x), OrderKey::Int(y)) => x.cmp(y),
+        (OrderKey::Int(x), OrderKey::Int(y))
+        | (OrderKey::Oid(x), OrderKey::Oid(y))
+        | (OrderKey::Enum(x), OrderKey::Enum(y))
+        | (OrderKey::Date(x), OrderKey::Date(y))
+        | (OrderKey::Time(x), OrderKey::Time(y))
+        | (OrderKey::Timestamp(x), OrderKey::Timestamp(y))
+        | (OrderKey::TimestampTz(x), OrderKey::TimestampTz(y)) => x.cmp(y),
         (OrderKey::Float(x), OrderKey::Float(y)) => pg_float_cmp(*x, *y),
-        (OrderKey::Decimal(x), OrderKey::Decimal(y)) => x.cmp(y),
+        (
+            OrderKey::Decimal { unscaled: x, scale: s },
+            OrderKey::Decimal { unscaled: y, scale: t },
+        ) if s == t => x.cmp(y),
         (OrderKey::Numeric(x), OrderKey::Numeric(y)) => x.cmp(y),
         (OrderKey::Interval(x), OrderKey::Interval(y)) => x.cmp(y),
         (OrderKey::IntervalFields(m, d, t), OrderKey::IntervalFields(n, e, u)) => {
@@ -488,11 +562,66 @@ pub(crate) fn order_keys(a: &OrderKey, b: &OrderKey) -> Option<Ordering> {
         ) => utc_x.cmp(utc_y).then_with(|| zone_x.cmp(zone_y)),
         (OrderKey::Network(x), OrderKey::Network(y)) => x.cmp(y),
         (OrderKey::Jsonb(x), OrderKey::Jsonb(y)) => x.cmp(y),
-        (OrderKey::Bytes(x), OrderKey::Bytes(y)) => x.cmp(y),
+        (OrderKey::MacAddr(x), OrderKey::MacAddr(y)) if x.len() == y.len() => x.cmp(y),
+        (OrderKey::Uuid(x), OrderKey::Uuid(y)) | (OrderKey::Bytea(x), OrderKey::Bytea(y)) => {
+            x.cmp(y)
+        }
         (OrderKey::Text(x), OrderKey::Text(y)) => x.as_bytes().cmp(y.as_bytes()),
-        _ if rank_a != FINITE => Ordering::Equal,
-        _ => return None,
+        _ => return order_across(a, b),
     })
+}
+
+/// [`order_keys`] for a pair it does not match: a special value against a
+/// key of its domain, or two variants or widths one order relates. Out of
+/// line, a column's own keys reaching it only where a special value is on
+/// one side.
+#[cold]
+#[inline(never)]
+fn order_across(a: &OrderKey, b: &OrderKey) -> Option<Ordering> {
+    let (rank_a, rank_b) = (a.rank(), b.rank());
+    if rank_a != FINITE || rank_b != FINITE {
+        let domain = a.domain()?;
+        return (b.domain()? == domain).then(|| rank_a.cmp(&rank_b));
+    }
+    Some(match (a, b) {
+        // `date2timestamp`: midnight, with no zone, so a `timestamp with time
+        // zone` is related to neither but by the server's `TimeZone`.
+        (OrderKey::Date(days), OrderKey::Timestamp(micros)) => {
+            date_micros(*days).cmp(&(*micros).into())
+        }
+        (OrderKey::Timestamp(micros), OrderKey::Date(days)) => {
+            i128::from(*micros).cmp(&date_micros(*days))
+        }
+        // `macaddr8`'s cast of a `macaddr`: `FF:FE` between its halves.
+        (OrderKey::MacAddr(x), OrderKey::MacAddr(y)) => widened_mac(x).cmp(&widened_mac(y)),
+        _ => numeric_of(a)?.as_ref().cmp(numeric_of(b)?.as_ref()),
+    })
+}
+
+/// A `date`'s midnight in microseconds from PostgreSQL's epoch, a
+/// `timestamp`'s unit.
+fn date_micros(days: i64) -> i128 {
+    i128::from(days) * 86_400_000_000 - POSTGRES_EPOCH_UNIX_MICROS
+}
+
+/// A finite `numeric` key as a [`NumericKey`], whatever its scale; `None`
+/// for any other key.
+fn numeric_of(key: &OrderKey) -> Option<Cow<'_, NumericKey>> {
+    match key {
+        OrderKey::Decimal { unscaled, scale } => {
+            Some(Cow::Owned(NumericKey::from_unscaled(&unscaled.to_string(), i16::from(*scale))))
+        }
+        OrderKey::Numeric(numeric) => Some(Cow::Borrowed(numeric)),
+        _ => None,
+    }
+}
+
+/// A `macaddr`'s six octets as `macaddr8` holds them; eight unchanged.
+fn widened_mac(octets: &[u8]) -> Cow<'_, [u8]> {
+    match octets {
+        [a, b, c, d, e, f] => Cow::Owned(vec![*a, *b, *c, 0xff, 0xfe, *d, *e, *f]),
+        _ => Cow::Borrowed(octets),
+    }
 }
 
 /// **The order a stored bound and a block's row order are kept in**:
@@ -501,25 +630,14 @@ pub(crate) fn order_keys(a: &OrderKey, b: &OrderKey) -> Option<Ordering> {
 /// a float by and DataFusion takes its `MIN`/`MAX` in — places them. A
 /// refinement, so an extreme in it is one in the filter's order and a block
 /// sorted in it is sorted in that order too (`docs/design/decisions.md`,
-/// "D79"). Over two keys of one column's kind, so a finite pair of two
-/// representations is unreachable, as in [`compare_keys`]: the order the
-/// statistics gatherer keeps its bounds and row order in, and a summary reads
-/// them back in.
+/// "D79"). Over two keys of one column's kind, as [`compare_keys`] is: the
+/// order the statistics gatherer keeps its bounds and row order in, and a
+/// summary reads them back in.
 pub fn compare_keys_stored(a: &OrderKey, b: &OrderKey) -> Ordering {
-    order_keys_stored(a, b).unwrap_or_else(|| {
-        unreachable!("both sides of a comparison decode through one column's `CompareKind`")
-    })
-}
-
-/// [`order_keys`], a float's `-0` below `0` where it ties them, as IEEE
-/// `totalOrder` places them: the refinement [`compare_keys_stored`] states.
-#[inline]
-fn order_keys_stored(a: &OrderKey, b: &OrderKey) -> Option<Ordering> {
-    let order = order_keys(a, b)?;
-    Some(order.then_with(|| match (a, b) {
+    compare_keys(a, b).then_with(|| match (a, b) {
         (OrderKey::Float(x), OrderKey::Float(y)) => x.total_cmp(y),
         _ => Ordering::Equal,
-    }))
+    })
 }
 
 #[cfg(test)]

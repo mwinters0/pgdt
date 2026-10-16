@@ -18,6 +18,12 @@ fn record(fields: usize) -> TypeDef {
     }
 }
 
+/// An enum, `public.mood`, whose labels sort the other way as text.
+fn mood() -> TypeDef {
+    let labels = vec!["sad".to_string(), "ok".to_string()];
+    TypeDef { name: "public.mood".to_string(), kind: TypeKind::Enum { labels, exact: true } }
+}
+
 fn field(plan: &ComparisonPlan, text: &str) -> ValueKey {
     ValueKey::of(plan, ComparisonSemantics::Postgres, text).expect("a value of the type")
 }
@@ -57,34 +63,120 @@ fn a_nested_value_is_keyed_from_its_plan() {
     assert!(field(&array, "{1,2}").heap_bytes() > 0);
 }
 
-/// **Keys of different representations never compare, and never panic**: a
-/// scalar against a nested value, two scalars of different kinds, two
-/// arrays whose elements differ, two records of different arity.
+/// **Keys no order relates never compare, and never panic**: a scalar
+/// against a nested value, two scalars of unrelated types — a `date`'s
+/// against an `integer`'s, a special value against another type's — two
+/// arrays whose elements differ, two records of different arity, and a pair
+/// the server orders only under its `TimeZone`.
 #[test]
-fn keys_of_different_representations_answer_none() {
-    let types = [record(1), record(2)];
-    let integer = plan("integer", &types);
-    let text = plan("text", &types);
-    let integers = plan("integer[]", &types);
-    let texts = plan("text[]", &types);
+fn keys_no_order_relates_answer_none() {
+    let types = [record(1), record(2), mood()];
+    let key = |declared: &str, text: &str| field(&plan(declared, &types), text);
     let pairs = [
-        (field(&integer, "1"), field(&text, "1")),
-        (field(&integer, "1"), field(&integers, "{1}")),
-        (field(&integers, "{1}"), field(&texts, "{1}")),
-        (field(&plan("public.r1", &types), "(1)"), field(&plan("public.r2", &types), "(1,2)")),
-        (field(&plan("int4range", &types), "[1,2)"), field(&plan("numrange", &types), "[1.5,2)")),
+        (key("integer", "1"), key("text", "1")),
+        (key("integer", "1"), key("integer[]", "{1}")),
+        (key("integer[]", "{1}"), key("text[]", "{1}")),
+        (key("public.r1", "(1)"), key("public.r2", "(1,2)")),
+        (key("int4range", "[1,2)"), key("numrange", "[1.5,2)")),
+        (key("date", "2020-01-01"), key("integer", "18262")),
+        (key("date", "-infinity"), key("text", "a")),
+        (key("date", "infinity"), key("interval", "infinity")),
+        (key("numeric", "NaN"), key("double precision", "NaN")),
+        (key("public.mood", "ok"), key("integer", "1")),
+        (key("oid", "1"), key("integer", "1")),
+        (key("uuid", "00000000-0000-0000-0000-000000000000"), key("bytea", "\\x00")),
+        (key("timestamp", "2020-01-01 00:00:00"), key("timestamptz", "2020-01-01 00:00:00+00")),
+        (key("date", "2020-01-01"), key("timestamptz", "2020-01-01 00:00:00+00")),
     ];
     for (a, b) in pairs {
         assert_eq!(a.compare(&b), None, "{a:?} against {b:?}");
         assert_eq!(b.compare(&a), None, "{b:?} against {a:?}");
     }
-    // A special value is ranked, not represented: `infinity` is above a
-    // date in any kind holding one.
-    let date = plan("date", &types);
-    assert_eq!(
-        field(&date, "infinity").compare(&field(&date, "2020-01-01")),
-        Some(Ordering::Greater)
-    );
+}
+
+/// **Keys an order relates compare correctly, whatever plans they were read
+/// under**: two integer widths, two `numeric` scales in either semantics, a
+/// `numeric(p,s)` against a bare one, a `date` against a `timestamp` at its
+/// midnight, a `macaddr` against a `macaddr8` as the server widens it, and a
+/// special value against its own domain — `date`'s `infinity` above a
+/// `timestamp` and equal to a `timestamptz`'s.
+#[test]
+fn keys_an_order_relates_compare_across_plans() {
+    let types = [];
+    let key = |declared: &str, semantics, text: &str| {
+        ValueKey::of(&plan(declared, &types), semantics, text).expect("a value of the type")
+    };
+    let postgres = ComparisonSemantics::Postgres;
+    let datafusion = ComparisonSemantics::DataFusion;
+    let ordered = [
+        (key("smallint", postgres, "7"), key("bigint", postgres, "70000"), Ordering::Less),
+        (
+            key("numeric(5,1)", datafusion, "1.5"),
+            key("numeric(6,2)", datafusion, "1.50"),
+            Ordering::Equal,
+        ),
+        (
+            key("numeric(5,1)", datafusion, "1.5"),
+            key("numeric(6,2)", datafusion, "1.49"),
+            Ordering::Greater,
+        ),
+        (key("numeric(5,1)", postgres, "-1.5"), key("numeric", postgres, "-1.50"), Ordering::Equal),
+        (key("numeric(5,1)", postgres, "NaN"), key("numeric", postgres, "NaN"), Ordering::Equal),
+        (
+            key("numeric(5,1)", postgres, "9999.9"),
+            key("numeric", postgres, "Infinity"),
+            Ordering::Less,
+        ),
+        (
+            key("date", postgres, "2020-01-02"),
+            key("timestamp", postgres, "2020-01-01 23:59:59"),
+            Ordering::Greater,
+        ),
+        (
+            key("date", postgres, "2020-01-01"),
+            key("timestamp", postgres, "2020-01-01 00:00:00"),
+            Ordering::Equal,
+        ),
+        (
+            key("date", datafusion, "1999-12-31"),
+            key("timestamp", datafusion, "2000-01-01 00:00:00"),
+            Ordering::Less,
+        ),
+        (
+            key("macaddr", postgres, "08:00:2b:01:02:03"),
+            key("macaddr8", postgres, "08:00:2b:ff:fe:01:02:03"),
+            Ordering::Equal,
+        ),
+        (
+            key("macaddr", postgres, "08:00:2b:01:02:03"),
+            key("macaddr8", postgres, "08:00:2b:ff:fe:01:02:04"),
+            Ordering::Less,
+        ),
+        (
+            key("date", postgres, "infinity"),
+            key("timestamp", postgres, "2020-01-01 00:00:00"),
+            Ordering::Greater,
+        ),
+        (
+            key("date", postgres, "infinity"),
+            key("timestamptz", postgres, "infinity"),
+            Ordering::Equal,
+        ),
+        (
+            key("date", postgres, "-infinity"),
+            key("timestamptz", postgres, "2020-01-01 00:00:00+00"),
+            Ordering::Less,
+        ),
+        (key("character(3)", postgres, "ab "), key("text", postgres, "ab"), Ordering::Equal),
+        (key("inet", postgres, "10.0.0.0/8"), key("cidr", postgres, "10.0.0.0/8"), Ordering::Equal),
+    ];
+    for (a, b, expected) in ordered {
+        assert_eq!(a.compare(&b), Some(expected), "{a:?} against {b:?}");
+        assert_eq!(b.compare(&a), Some(expected.reverse()), "{b:?} against {a:?}");
+    }
+    // A special value is ranked within its own type too.
+    let date = |text| key("date", postgres, text);
+    assert_eq!(date("infinity").compare(&date("2020-01-01")), Some(Ordering::Greater));
 }
 
 /// **A key is ordered as the semantics orders the column**: PostgreSQL's
@@ -95,9 +187,7 @@ fn keys_of_different_representations_answer_none() {
 /// DataFusion's.
 #[test]
 fn the_semantics_decides_the_order_a_key_is_read_in() {
-    let labels = vec!["sad".to_string(), "ok".to_string()];
-    let types =
-        [TypeDef { name: "public.mood".to_string(), kind: TypeKind::Enum { labels, exact: true } }];
+    let types = [mood()];
     let mood = plan("public.mood", &types);
     let order = |semantics| {
         let key = |text| ValueKey::of(&mood, semantics, text).expect("a declared label");

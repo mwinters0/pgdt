@@ -440,6 +440,7 @@ A narrowed `*_in` refuses only where every major does (`oidin`, `line_in`). Reje
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
 `infinity`/`NaN` are their position in PostgreSQL's order; `OrderKey` derives no `Ord`. Rejected: excluding the row like a NULL (I33, I34).
+A key's variant is its order, a special's its domain's, so keys of two plans compare only where one relates them (`KD118`). Rejected: a kind tag (`varchar(n)` and `text` order alike; an enum's carries its labels); calling cross-plan answers unspecified.
 `v=1.5` hits a `numeric(10,2)` written `1.50`; rendering `timetz`, `inet` once is refused (I33, I38, I41).
 A `bytea` literal renders in both `bytea_output` forms, which share no spelling (I56); decoding per row is refused.
 

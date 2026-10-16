@@ -37,8 +37,8 @@ use crate::value::nested::key::{NestedKey, comparable, compare_nested, nested_ke
 /// alone (`docs/design/decisions.md`, "D79", "D106").
 ///
 /// There is no `Ord` (`docs/design/decisions.md`, "D56"): two keys are
-/// ordered only where they share a representation, which two keys read
-/// under one plan in one semantics always do.
+/// ordered only where an order relates them ([`ValueKey::compare`]), which
+/// two keys read under one plan in one semantics always are.
 #[derive(Debug, Clone)]
 pub struct ValueKey(Key);
 
@@ -124,21 +124,22 @@ impl ValueKey {
     }
 
     /// The order a filter compares by: a total order over the keys of one
-    /// plan in one semantics. **`None` where two finite keys' representations differ**
-    /// — a finite date's key against a text's, an array's against a
-    /// scalar's, a record's against one of another arity.
+    /// plan in one semantics. Two keys of different plans compare where one
+    /// order relates their types — `smallint` against `bigint`, two
+    /// `numeric` scales, a `date` against a `timestamp`, a type's
+    /// `infinity` against its own finite values — and answer **`None` where
+    /// none does**: a `date` against an `integer`, a special value against
+    /// another type's, an array against a scalar, a record against one of
+    /// another arity, and a pair the server orders only under a `TimeZone`
+    /// the key does not carry, a `timestamp` against a `timestamptz`.
     ///
-    /// deficiency: KD118 — that is narrower than "`None` wherever no order
-    /// relates the two". `-infinity`, `infinity` and `NaN` are placed by
-    /// rank before any representation is looked at, so a date's
-    /// `-infinity` is below a text. Two keys sharing a representation
-    /// compare as it orders whatever plans they were read under: a `date`'s
-    /// against an `integer`'s or an enum label's position, and two
-    /// DataFusion-order `numeric(p,s)` keys of different scales as unscaled
-    /// integers, so `1.5` and `1.50` are unequal. No caller in this
-    /// workspace compares keys of two plans. **(b) owned by P36**, 36.4.1:
-    /// a variant per order, `Decimal` carrying its scale, and the specials
-    /// their domain, so the variant match already made answers it.
+    /// deficiency: KD118 — two enum types' labels compare by their positions
+    /// in their own declarations, where the server relates no two enum types:
+    /// an enum's key is its label's position and carries no type, a variant
+    /// telling an order apart and not a type. **(a) deliberate tradeoff**:
+    /// telling them apart puts the label list, or a tag standing for it, in
+    /// every key the statistics gatherer holds
+    /// (`docs/design/decisions.md`, "D56").
     pub fn compare(&self, other: &Self) -> Option<Ordering> {
         match (&self.0, &other.0) {
             (Key::Scalar(a), Key::Scalar(b)) => order_keys(a, b),

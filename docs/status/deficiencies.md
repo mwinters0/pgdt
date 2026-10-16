@@ -515,8 +515,7 @@ than reading as a phase nobody has sliced.
   `bounded_columns` `pub(crate)`. Detail:
   `crates/pgdt-mapping/src/statistics/request.rs`.
 
-- **KD118** — `ValueKey::compare` answers `Some` for keys no order relates:
-  `-infinity`, `infinity` and `NaN` against any key, a `date`'s against an
-  `integer`'s, and two DataFusion-order `numeric(p,s)` keys of different
-  scales wrongly, as unscaled integers. **(b) owned by P36**, 36.4.1. Detail:
-  `crates/pgdt-codec/src/key.rs`.
+- **KD118** — `ValueKey::compare` orders two enum types' labels by their
+  positions, where the server relates no two enum types. **(a) deliberate
+  tradeoff**: telling them apart puts a label list in every key the
+  statistics gatherer holds. Detail: `crates/pgdt-codec/src/key.rs`.

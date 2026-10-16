@@ -95,7 +95,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.4** pgdt-codec: `ValueKey` from a plan, for every value, never panicking across kinds; counted by `measure.py --count-pair HEAD~1` — the reshape landed and its two deficiencies are struck; the count's rise on the data-level `parse` and `pgdt sql` rows, both 36.4's own code (36.4.3, then callgrind on the rework), is recovered by the gatherer and the summary holding `internal`'s scalar key by the set's kind, `ValueKey::stored_order` leaving the API; the remainder on `pgdt sql` against `a7b6ef0e`, a few instructions a stored bound and 36.4's own code too, is accepted ([notes](../design/roadmap-P36.4-value-key-notes.md))
 - [x] **36.4.2** Attribute 36.4's count rise, landing no code, before 36.4.1: `a7b6ef0e` and `0588c9e8` built under the `profiling` profile in the release image, each counted against its shipped leg first, any difference falsifying line tables as codegen-neutral; then an `instructions:u` profile of each at the data level by source line, inlined frames included, the rise named per line or said unattributed — line tables move the code at both commits, so the rise is unattributed; the unchanged decode symbols' machine code is identical in both shipped builds ([notes](../design/roadmap-P36.4.2-attribution-notes.md))
 - [x] **36.4.3** Attribute 36.4's count rise exactly, landing no code, before 36.4.1 and 36.5: callgrind's `Ir` on the data-level `parse`, run on the two shipped binaries 36.4.2 kept, in a memory-limited container, launched detached; read as written in advance — the pair's `Ir` difference reproducing the native rise and sitting in code 36.4 changed, or in calls it added, is 36.4's cost, reworked where a shape as clean recovers it and accepted where none does (spec, "What a hot-path slice owes"); reproduced in identical code called as often, or not reproduced, is layout, which clears 36.4 and reopens how `--count-pair` is read before any other slice is counted — reproduced to within 0.2%, and all of it in functions whose machine code 36.4 changed, the gatherer's `heap_bytes` above all, so it is 36.4's cost ([notes](../design/roadmap-P36.4.3-callgrind-notes.md))
-- [ ] **36.4.1** pgdt-codec: keys compare only where an order relates them — a variant per order, `Decimal` carrying its scale, `-infinity`, `infinity` and `NaN` their domain; `compare_keys_stored` written over `compare_keys`, `order_keys_stored` gone; closes `KD118`; counted by `measure.py --count-pair HEAD~1`
+- [x] **36.4.1** pgdt-codec: keys compare only where an order relates them — a variant per order, `Decimal` carrying its scale, `-infinity`, `infinity` and `NaN` their domain; `compare_keys_stored` written over `compare_keys`, `order_keys_stored` gone; counted by `measure.py --count-pair HEAD~1` — landed, two enum types' labels still comparing, which the register holds as a deliberate tradeoff; the count resolves rises on the data-level `parse` and `pgdt sql`, which callgrind puts wholly in the slice's changed code — the gatherer copying the key twice more, `order_keys` saving more registers, `field_key`'s return — and no shape as clean recovers, so the rise is accepted, a call flagged below ([notes](../design/roadmap-P36.4.1-related-keys-notes.md))
 - [ ] **36.5** pgdt-dump: `ChunkedScanner`, its four sites calling it; counted by `measure.py --count-pair HEAD~1`
 - [ ] **36.6** pgdt-dump: `CacheMode` opens an `Origin` — one decode, no free `load`/`save`, `Valid` and `Incomplete` one, `Offline` its own type, `Disabled` stated; `scan` and `preamble_only` take only what they read
 - [ ] **36.7** pgdt-mapping: back-fill one call; the mapping pass hands back a `Dump`'s parts; closes `KD115`
@@ -134,3 +134,31 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **Which keys of two plans an order relates (36.4.1).** `ValueKey::compare`
+  relates a pair where PostgreSQL orders the two types through one
+  comparison or through a cast needing no setting: the integer widths, two
+  `numeric` typmods, `inet` and `cidr`, a `date` against a `timestamp`, a
+  `macaddr` against a `macaddr8`. Every other pair answers `None`, two
+  cases among them that the server does order. The first is a pair it
+  orders only under its `TimeZone`, such as `timestamp` against
+  `timestamptz`. The second is a pair it relates only through an implicit
+  cast across families: an integer against a `numeric` or a float, or an
+  integer against an `oid`, where a negative integer wraps. Why: answering
+  `None` is never wrong, and a key carries no zone. Each cross-family arm
+  would also be an order nobody in the workspace asks for. Reconsidering
+  adds arms to `order_across` (`crates/pgdt-codec/src/key/order.rs`) and
+  changes nothing on a column's own keys.
+- **36.4.1's count rise is accepted (36.4.1).** The key reshape costs
+  about 40 `Ir` a keyed field on the data-level `parse` (+1.0%) and about 20
+  a stored bound on `pgdt sql`. All of it is in functions whose machine code
+  changed, and none of it in a shape the source chose: the gatherer's
+  unchanged code copies the key twice more a field, `order_keys` inlines the
+  network and numeric comparisons and so saves six registers a call, and
+  `field_key` writes its result with more spills. Why: the spec accepts a
+  rise no shape as clean recovers. Fewer variants with a tag is D56's
+  rejected shape, and steering inlining was refused for 36.4 as resting on
+  choices that move. Unlike 36.4's accepted remainder, this one grows with
+  rows. Reconsidering means a rework steering codegen in
+  `crates/pgdt-codec/src/key/order.rs`, counted by its own `--count-pair`
+  (36.4.1's notes, "The rise is accepted").
