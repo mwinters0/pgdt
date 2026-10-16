@@ -213,12 +213,12 @@ value's text ([`decisions.md`](decisions.md), "Predicates").
 
 - **pgdt-codec** — `compare/`, `key/`: value semantics, shared by a filter
   and the gatherer, so below both (D68). The key is `ValueKey`, any value's
-  place read from its column's plan, and its `order` the dispatch building an
-  `OrderKey` over the families' key types, which are each family's own
-  (Values), the nested keys included; its `form` is the form a filter's
-  literal has to take, what the literal reader reads. The built-in table
-  answering a type's comparison beside its Arrow type is the type mapping's
-  (D40).
+  place read from its column's plan, and its `order` the dispatch building the
+  `OrderKey` a filter and the gatherer hold, over the families' key types,
+  which are each family's own (Values), the nested keys included; its
+  `form` is the form a filter's literal has to take, what the literal reader
+  reads. The built-in table answering a type's comparison beside its Arrow
+  type is the type mapping's (D40).
 
 ## Arrow batches
 

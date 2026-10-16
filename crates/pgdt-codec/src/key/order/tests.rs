@@ -584,9 +584,9 @@ fn a_date_or_time_field_is_refused_only_where_no_major_reads_it() {
 }
 
 /// The committed comparison oracle's values against the key alone: what
-/// holds of [`OrderKey`] and [`ValueKey`] over every value the server
-/// wrote, whatever a filter does with them. Every other oracle test drives
-/// a filter, and is pgdt-query's.
+/// holds of [`OrderKey`] over every value the server wrote, whatever a
+/// filter does with them. Every other oracle test drives a filter, and is
+/// pgdt-query's.
 mod oracle {
     use std::cmp::Ordering;
     use std::collections::{BTreeMap, BTreeSet};
@@ -601,9 +601,7 @@ mod oracle {
     use pgdt_model::TypeDef;
 
     use crate::compare::{CompareKind, ComparisonPlan, comparison_for};
-    use crate::key::ValueKey;
-    use crate::key::by_kind::ValueKeyExt;
-    use crate::key::order::{OrderKey, compare_keys, order_key};
+    use crate::key::order::{OrderKey, compare_keys, compare_keys_stored, order_key};
 
     fn fixture(major: u32, rest: &str) -> PathBuf {
         fixtures_root().join(major.to_string()).join(rest)
@@ -749,7 +747,7 @@ mod oracle {
     /// digest with no change to any comparison, and is re-pinned alone.
     ///
     /// The digest is FNV-1a over each major, each declared type and its
-    /// values in stored order ([`ValueKey::stored_order`]), ties broken by
+    /// values in stored order ([`compare_keys_stored`]), ties broken by
     /// text, with whether each value keys equal to the one before it, and
     /// whether only the stored order tells the two apart — so equality
     /// moves it as well as order.
@@ -787,18 +785,19 @@ mod oracle {
                     }
                 }
                 for kind in kinds {
-                    let mut keyed: Vec<(ValueKey, &String)> = values
+                    let mut keyed: Vec<(OrderKey, &String)> = values
                         .iter()
-                        .map(|v| (ValueKey::keyed_by(&kind, v).expect("the server wrote it"), v))
+                        .map(|v| (order_key(&kind, v).expect("the server wrote it"), v))
                         .collect();
                     keyed.sort_by(|(ka, a), (kb, b)| {
-                        ka.stored_order(kb).expect("one kind").then_with(|| a.cmp(b))
+                        compare_keys_stored(ka, kb).then_with(|| a.cmp(b))
                     });
                     let name = kind_name(&kind);
                     fnv(&mut digest, format!("{major}\t{declared}\t{name}\n").as_bytes());
-                    let mut previous: Option<&ValueKey> = None;
+                    let mut previous: Option<&OrderKey> = None;
                     for (key, value) in &keyed {
-                        let tie = previous.and_then(|p| p.compare(key).zip(p.stored_order(key)));
+                        let tie =
+                            previous.map(|p| (compare_keys(p, key), compare_keys_stored(p, key)));
                         fnv(
                             &mut digest,
                             match tie {

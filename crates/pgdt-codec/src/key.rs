@@ -24,14 +24,16 @@ use std::mem::size_of;
 
 use pgdt_model::PostgresInvalidValues;
 
-use self::order::{OrderKey, Side, literal_key, order_key, order_keys};
+use self::order::{OrderKey, Side, literal_key, order_key, order_keys, order_keys_stored};
 use crate::compare::{CompareKind, ComparisonPlan, ComparisonSemantics};
 use crate::value::nested::key::{NestedKey, comparable, compare_nested, nested_key};
 
 /// A value's place in its column's order, its representation hidden: the key
 /// a filter orders a row by, for a caller ordering values that meet no
-/// filter — the statistics gatherer's running bounds and sortedness, a
-/// summary's extremes.
+/// filter — a summary's extremes, a partition's declared ordering. The
+/// statistics gatherer, which keys by its stored sets' kinds and holds no
+/// nested key, orders the scalar key beneath through `internal` instead
+/// (`docs/design/decisions.md`, "D79").
 ///
 /// There is no `Ord` (`docs/design/decisions.md`, "D56"): two keys are
 /// ordered only where they share a representation, which two keys read
@@ -44,8 +46,8 @@ enum Key {
     /// A scalar column's value, through its kind's representation.
     Scalar(OrderKey),
     /// An array's, a record's, a range's or a multirange's. Boxed: a
-    /// `NestedKey` carries three vectors, and a scalar key, which the
-    /// gatherer holds per running bound, is the common one.
+    /// `NestedKey` carries three vectors, and a scalar key is the common
+    /// one.
     Nested(Box<NestedKey>),
 }
 
@@ -154,53 +156,17 @@ impl ValueKey {
     /// (`docs/design/decisions.md`, "D79"). `None` where [`Self::compare`]
     /// is.
     pub fn stored_order(&self, other: &Self) -> Option<Ordering> {
-        let order = self.compare(other)?;
-        Some(order.then_with(|| match (&self.0, &other.0) {
-            (Key::Scalar(OrderKey::Float(x)), Key::Scalar(OrderKey::Float(y))) => x.total_cmp(y),
-            _ => Ordering::Equal,
-        }))
+        match (&self.0, &other.0) {
+            (Key::Scalar(a), Key::Scalar(b)) => order_keys_stored(a, b),
+            _ => self.compare(other),
+        }
     }
 
-    /// The heap this key holds, as the sizes the allocator was asked for:
-    /// what gathering charges a keyed bound or row-order value
-    /// (`pgdt_mapping`'s `StatisticsAccount`).
+    /// The heap this key holds, as the sizes the allocator was asked for.
     pub fn heap_bytes(&self) -> u64 {
         match &self.0 {
             Key::Scalar(key) => key.heap_bytes(),
             Key::Nested(key) => size_of::<NestedKey>() as u64 + key.heap_bytes(),
-        }
-    }
-}
-
-/// What a crate above calls on [`ValueKey`] that is not its API, so
-/// `internal` re-exports it.
-pub(crate) mod by_kind {
-    use super::{Key, ValueKey};
-    use crate::compare::CompareKind;
-    use crate::decode::Read;
-    use crate::key::order::{field_key, order_key};
-
-    /// A key read by a stored set's [`CompareKind`] rather than a plan's: the
-    /// statistics gatherer names each set it keeps by the kind it is ordered
-    /// by (`docs/design/decisions.md`, "D79"), and keys every field it
-    /// gathers without asking the plan again.
-    pub trait ValueKeyExt: Sized {
-        /// One unescaped value's key under `kind`, `None` when the text is
-        /// not a value of it.
-        fn keyed_by(kind: &CompareKind, text: &str) -> Option<Self>;
-
-        /// [`Self::keyed_by`] a field, saying why it has no key: the
-        /// gatherer fails the parse on one the type's `*_in` refuses.
-        fn field_keyed_by(kind: &CompareKind, text: &str) -> Read<Self>;
-    }
-
-    impl ValueKeyExt for ValueKey {
-        fn keyed_by(kind: &CompareKind, text: &str) -> Option<Self> {
-            order_key(kind, text).map(|key| Self(Key::Scalar(key)))
-        }
-
-        fn field_keyed_by(kind: &CompareKind, text: &str) -> Read<Self> {
-            field_key(kind, text).map(|key| Self(Key::Scalar(key)))
         }
     }
 }

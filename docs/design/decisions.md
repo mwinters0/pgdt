@@ -525,7 +525,7 @@ A scalar column keeps bounds and row order per exact order, one set where two co
 the set keyed by its compared kind as gathering resolved the column, not by its plan. A dictionary needs equality alone, reaching
 `KD7`'s text, never an Arrow encoding (D37); nested columns get neither. Rejected: gathering a distinct count (D89 derives one);
 bounds off a dictionary (D75); one slot; a second `macaddr` set, or a float's for one pair of values; the zeros told apart in the
-key, which every term equates them by; a kind stored per set; a DDL flag; gathering keyed by plan and semantics, not the set's kind (the kind names the set where it is stored, read and reopened, no semantics maps onto a set uniformly — a divergent column's primary set is DataFusion's — and `ValueKey::of` reports no `*_in` refusal). Code: `bounds_kinds`, `bounds_set_keyed_by`, `stored_order`, `ValueKeyExt`.
+key, which every term equates them by; a kind stored per set; a DDL flag; gathering keyed by plan and semantics, not the set's kind (the kind names the set where it is stored, read and reopened, no semantics maps onto a set uniformly — a divergent column's primary set is DataFusion's — and `ValueKey::of` reports no `*_in` refusal). Code: `bounds_kinds`, `bounds_set_keyed_by`, `compare_keys_stored`, `ValueKey::stored_order`.
 
 ### D81 The statistics account sums allocation sizes as they change; an instrument scope checks it
 Each term is the allocator's request — capacity, a table's layout (RT11, RT12) — under one lock, a

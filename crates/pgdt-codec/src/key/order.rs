@@ -119,8 +119,10 @@ impl OrderKey {
         }
     }
 
-    /// The heap this key holds, as the sizes the allocator was asked for.
-    pub(crate) fn heap_bytes(&self) -> u64 {
+    /// The heap this key holds, as the sizes the allocator was asked for:
+    /// what gathering charges a keyed bound or row-order value
+    /// (`pgdt_mapping`'s `StatisticsAccount`).
+    pub fn heap_bytes(&self) -> u64 {
         match self {
             Self::Numeric(numeric) => numeric.heap_bytes(),
             Self::Jsonb(jsonb) => jsonb.heap_bytes(),
@@ -261,7 +263,7 @@ const ENUM_LABEL_LIMIT: usize = 64;
 
 /// [`order_key`], saying why a text has no key: refused by the type's `*_in`,
 /// which fails the parse reading it as a field, or not read here.
-pub(crate) fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
+pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
     if let Some(special) = special_order_key(kind, text) {
         return Ok(special);
     }
@@ -491,6 +493,29 @@ pub(crate) fn order_keys(a: &OrderKey, b: &OrderKey) -> Option<Ordering> {
         _ if rank_a != FINITE => Ordering::Equal,
         _ => return None,
     })
+}
+
+/// [`ValueKey::stored_order`](crate::key::ValueKey::stored_order) over two
+/// keys of one column's kind, so a finite pair of two representations is
+/// unreachable, as in [`compare_keys`]: the order the statistics gatherer
+/// keeps its bounds and row order in, over the scalar keys it holds
+/// (`docs/design/decisions.md`, "D79").
+pub fn compare_keys_stored(a: &OrderKey, b: &OrderKey) -> Ordering {
+    order_keys_stored(a, b).unwrap_or_else(|| {
+        unreachable!("both sides of a comparison decode through one column's `CompareKind`")
+    })
+}
+
+/// [`order_keys`], a float's `-0` below `0` where it ties them, as IEEE
+/// `totalOrder` places them: the refinement
+/// [`ValueKey::stored_order`](crate::key::ValueKey::stored_order) states.
+#[inline]
+pub(crate) fn order_keys_stored(a: &OrderKey, b: &OrderKey) -> Option<Ordering> {
+    let order = order_keys(a, b)?;
+    Some(order.then_with(|| match (a, b) {
+        (OrderKey::Float(x), OrderKey::Float(y)) => x.total_cmp(y),
+        _ => Ordering::Equal,
+    }))
 }
 
 #[cfg(test)]

@@ -7,8 +7,7 @@ use crate::statistics::test_support::{
 };
 use pgdt_codec::compare::{CompareKind, ComparisonPlan};
 use pgdt_codec::decode::render_bytea;
-use pgdt_codec::internal::ValueKeyExt;
-use pgdt_codec::key::ValueKey;
+use pgdt_codec::internal::{compare_keys, order_key};
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_model::internal::{BlockObserver, ColumnStatisticsExt, vec_heap};
 use pgdt_model::{
@@ -118,9 +117,9 @@ fn random_block(rng: &mut Rng, round: usize) -> RandomBlock {
                 (0..rows).map(|_| values[rng.below(pool) as usize].clone()).collect();
             if sorted {
                 // A value that does not key sorts last.
-                let key = |v: &String| ValueKey::keyed_by(kind, v);
+                let key = |v: &String| order_key(kind, v);
                 drawn.sort_by(|a, b| match (key(a), key(b)) {
-                    (Some(a), Some(b)) => a.compare(&b).unwrap(),
+                    (Some(a), Some(b)) => compare_keys(&a, &b),
                     (a, b) => a.is_none().cmp(&b.is_none()),
                 });
                 if rng.below(2) == 0 {

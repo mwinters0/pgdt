@@ -6,7 +6,7 @@
 //! schema. Every tracked column counts its NULLs per group; a scalar column
 //! also keeps per-group bounds and the block's row order in each order some
 //! semantics compares it by exactly, under the key a filter orders by, a
-//! float's zeros told apart ([`ValueKey::stored_order`](pgdt_codec::key::ValueKey::stored_order)) — one set where the
+//! float's zeros told apart ([`compare_keys_stored`](pgdt_codec::internal::compare_keys_stored)) — one set where the
 //! orders coincide, two where PostgreSQL's is exact and Arrow's is another
 //! (`pgdt_codec::ResolvedSchema::bounds_kinds`);
 //! a column its comparison equates exactly keeps a dictionary per group; and a

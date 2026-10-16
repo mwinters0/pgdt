@@ -28,13 +28,14 @@ representation compare as `None`. The dispatch beneath it lives in the
   that representation orders, and the infinities and `NaN` compare against
   any key by rank. That falls short of the spec, as `KD118`, which 36.4.1
   closes.
-- **`stored_order` answers `Option` too**, since it refines `compare`. The
-  gatherer's row order reads a `None` step as a lost order, as its bytewise
-  path already does. Two keys of one set never produce one.
-- **The gatherer keys by its sets' kinds** through `internal`'s
-  `ValueKeyExt` (`keyed_by`, `field_keyed_by`), not through `ValueKey::of`,
-  which D79's Rejected line explains. `pgdt-query`'s summary and
-  `partition_orders` key through the plan.
+- **`stored_order` answers `Option` too**, since it refines `compare`.
+- **The gatherer holds no `ValueKey`.** It keys by its sets' kinds, not
+  through `ValueKey::of`, which D79's Rejected line explains, and it never
+  holds a nested key. So it holds `internal`'s `OrderKey`, read by
+  `field_key` and `order_key` and ordered by `compare_keys_stored`, which
+  asserts one kind as `compare_keys` does. `ValueKey::stored_order` is the
+  same refinement over the API's key (`order_keys_stored`). `pgdt-query`'s
+  summary and `partition_orders` key through the plan.
 - **A nested key's comparability is checked before it is compared**
   (`value::nested::key::comparable`), so the range algebra and
   `compare_nested` are unchanged, and the predicate still calls
@@ -73,15 +74,93 @@ sampled per-symbol profile cannot place a rise of this size: one taken
 here (`runs/profile-36.4-count/`) put most of it in unchanged decode code,
 which was sampling error
 ([36.4.2's notes](roadmap-P36.4.2-attribution-notes.md)). The `pgdt sql`
-row's 6 M is 60 samples, below what a sampled profile resolves; nothing it
-plans or scans builds a `ValueKey` per row, so it is unattributed.
+row's 6 M is 60 samples, below what a sampled profile resolves. An exact
+count puts it in the summary, which builds a `ValueKey` for each stored
+bound but none for a row (below, "Both rows counted exactly against
+`a7b6ef0e`").
+
+## The rework: the gatherer off the wrapper
+
+The rise is 36.4's own code, in the gatherer functions its key is inlined
+into ([36.4.3's notes](roadmap-P36.4.3-callgrind-notes.md)). The rework
+takes the 2026-10-16 entry's candidate: the gatherer holds the scalar key,
+as `pgdt-query`'s predicate already does through `internal`, so its
+accounting, its extremes and its row order match no `Key` wrapper and
+unwrap no `Option`. Its key path is then `a7b6ef0e`'s with the names
+changed. `internal`'s `ValueKeyExt` goes, since nothing else called it. The
+golden-order digest now sorts by `compare_keys_stored`, and is unchanged.
+`key/tests.rs` pins `ValueKey::stored_order`'s float zeros against it.
+
+## The rework's count: the data-level rise recovered
+
+`measure.py --count-pair HEAD` on the uncommitted rework, `6cbb04e6` its
+parent, which carries 36.4's code unchanged
+(`runs/count-pair-36.4-rework-20261016-0430/log`, its `HANDOFF.md`
+beside it). It exited 0 and printed 2 of 5 rows resolved, both falls: the
+data-level `parse` by 554.4 M against 36.4, and `pgdt sql` by 0.4 M. It
+was read in the three steps written before it ran:
+
+- **The gate holds.** On the data-level `parse` the parent leg,
+  38,998,593,682–38,998,656,484, meets 36.4's tree leg, and its median is
+  3,389 below that leg's, whose spread is 110,506. On `pgdt sql` the
+  median is 22,493 above. So the two sittings count alike, and
+  `a7b6ef0e`'s leg in 36.4's pair reads beside this tree leg.
+- **The rise is recovered.** The tree leg is not resolved above
+  `a7b6ef0e`'s. Its most is 61.0 M below `a7b6ef0e`'s fewest:
+
+| Row, across the two pairs | `a7b6ef0e` | the rework | median change |
+|---|---|---|---|
+| `parse`, data level | 38,505,290,290–38,505,354,688 | 38,443,477,512–38,444,247,264 | −61,109,078 (−0.159%) |
+| `pgdt sql` | 21,976,066,601–21,976,371,012 | 21,981,887,414–21,982,199,616 | +5,873,572 (+0.027%) |
+
+`parse` at the metadata level and both `query` rows are unresolved in this
+pair, flat to within 50,000, as they were in 36.4's.
+
+## Both rows counted exactly against `a7b6ef0e`
+
+The job is `runs/attr-36.4-rework-20261016-callgrind/`. It is 36.4.3's
+apparatus: the same image, and the same two `a7b6ef0e` data-level runs.
+The rework's shipped binary is copied out of the pair (`run.sh` names it).
+`analyze.py`'s docstring holds each shape's gate and reading, written
+before any count, and `reading.txt` is what it printed. On the `pgdt sql`
+shape the builder runs natively and only the scan runs under callgrind,
+each told the 512 MiB the native container gave. The four builder caches
+hash alike, and so do the four answers. The six runs took five and a half
+minutes, so the job was waited on.
+
+- **The data-level fall is the rework's own code.** The rep pairs differ
+  by −61,181,428 and −61,771,434 `Ir`, so the gate is reproduced. All of
+  it is in functions whose machine code differs, plus the calls they make.
+  Each run's statistics account is 36.4.2's. `observe_row` falls by
+  59.4 M (73 a row), and the comparison by 28.7 M (one `Ir` a call, as
+  36.4.3 found). `place_keyed` rises by 27.6 M (2.9 a call). The renamed
+  functions net to zero. The two `heap_bytes` rows, which held more than
+  half of 36.4's rise, move by under 2,000.
+- **The `pgdt sql` rise is 36.4's own code, in the summary.** The rep
+  pairs differ by +4,807,685 and +5,968,566, so the gate is reproduced.
+  The parent's reps are 1.3 M apart, which is scheduling under valgrind.
+  Every instruction of the +5.39 M mean is in changed code and the calls
+  it makes. `ValueKey::of` holds +5.35 M over 98,304 calls (54 a call).
+  That is the summary's `fold` keying each stored bound through the plan:
+  one key per bound. 98,304 is two for each of 16 columns in each of the
+  table's 3,072 one-MiB groups, so it grows with the cache's groups, not
+  with its rows. `ValueKey::stored_order` holds
+  +1.0 M (10 a call, the wrapper's match), and the provider's statistics
+  `OnceLock` initializer, whose code changed, falls by 0.4 M.
 
 ## What the next round inherits
 
-- **The slice is refused, and the rise is its own code**
-  ([36.4.3's notes](roadmap-P36.4.3-callgrind-notes.md)). It is reworked
-  where a shape as clean recovers it and accepted where none does (spec,
-  "What a hot-path slice owes").
+- **The `pgdt sql` row's rise is neither reworked nor accepted.** The
+  shape that would recover it is the gatherer's. The summary already
+  holds the kind a term reads its bounds by (`Accumulator::kind`, from
+  `bounds_read_by`), and it never reads a nested bound (D79). So it could
+  key through `internal`'s `field_key`, as the gatherer now does. Whether
+  that shape is as clean is the open question STATUS's "Decisions worth
+  another look" puts on the gatherer. If the gatherer's rework is affirmed,
+  the summary is reworked the same way and counted by `--count-pair
+  HEAD~1`. If it is reverted, the gatherer's rise comes back and both
+  rises are accepted. An unattended session does not rework the summary
+  while that question is open.
 - **A count an unrelated commit displaces is taken from a worktree** at the
   slice's commit, as that worktree's own `measure.py --count-pair HEAD~1`
   with `PGDT_MEASURE_OUT_DIR` set to the repo's `runs/`.

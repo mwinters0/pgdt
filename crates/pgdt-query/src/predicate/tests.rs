@@ -17,9 +17,7 @@ use pgdt_codec::compare::{
     bounds_set_keyed_by, comparison_for,
 };
 use pgdt_codec::decode;
-use pgdt_codec::internal::ValueKeyExt;
 use pgdt_codec::internal::{DiscreteExt, compare_keys, field_refused, order_key};
-use pgdt_codec::key::ValueKey;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnNote, ColumnResolution, ResolvedSchema};
 use pgdt_core::internal::{RawRow, RowSplit};
@@ -3089,7 +3087,7 @@ mod oracle {
     /// **Which kinds already order as DataFusion orders the emitted
     /// array**, over every value the server wrote for every declared type
     /// the register compares as a scalar, on six majors: each pair's
-    /// [`ValueKey`] order against [`arrow_against`]'s answer on the array
+    /// key order ([`compare_keys`]) against [`arrow_against`]'s answer on the array
     /// a batch builds from the same texts, and each gathered group's
     /// stored bounds against the group's Arrow minimum and maximum.
     ///
@@ -3132,7 +3130,7 @@ mod oracle {
                 agreement.declared.insert(declared.clone());
                 agreement.arrow_types.insert(format!("{data_type}"));
                 let key = |v: &str| {
-                    ValueKey::keyed_by(kind, v)
+                    order_key(kind, v)
                         .unwrap_or_else(|| panic!("{major} {declared}: the server wrote {v:?}"))
                 };
                 let array = crate::batch::column_of(data_type, plan, &held).unwrap();
@@ -3146,7 +3144,7 @@ mod oracle {
                     };
                     for (i, a) in held.iter().enumerate() {
                         agreement.pairs += 1;
-                        let ours = key(a).compare(&key(b)).expect("one kind");
+                        let ours = compare_keys(&key(a), &key(b));
                         if ours != arrow[i] {
                             agreement.order.get_or_insert(format!(
                                 "{major} {declared}: {a:?} against {b:?} is {ours:?} here and \

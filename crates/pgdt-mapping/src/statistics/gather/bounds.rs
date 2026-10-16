@@ -10,11 +10,11 @@ use std::mem::{self, size_of};
 use std::sync::Arc;
 
 use pgdt_codec::compare::CompareKind;
-use pgdt_codec::internal::ValueKeyExt;
-use pgdt_codec::key::ValueKey;
 use pgdt_codec::{
     decode::{Unread, decode_bytea, decode_bytea_escape, render_bytea},
-    internal::{bytea_unread, char_typmod_refuses},
+    internal::{
+        OrderKey, bytea_unread, char_typmod_refuses, compare_keys_stored, field_key, order_key,
+    },
 };
 use pgdt_model::{
     Bounds, DICTIONARY_ENTRY_MAX_BYTES, UnrepresentableTier,
@@ -41,7 +41,7 @@ enum Order {
     /// keyed, since a key copies the whole value and a value may be hundreds
     /// of megabytes, and a bound past [`DICTIONARY_ENTRY_MAX_BYTES`] is truncated.
     Bytewise(Canonical),
-    /// By [`ValueKey::stored_order`]: the key a filter orders by, a float's
+    /// By [`compare_keys_stored`]: the key a filter orders by, a float's
     /// zeros told apart as Arrow's order tells them. A value past
     /// [`DICTIONARY_ENTRY_MAX_BYTES`] leaves its group unbounded and its block unordered,
     /// no truncation of it being a bound.
@@ -148,17 +148,17 @@ pub(super) struct KeyedGroup {
 /// The extremes of some keyed values, each with its text.
 #[derive(Default)]
 struct Extremes {
-    min: Option<(ValueKey, String)>,
-    max: Option<(ValueKey, String)>,
+    min: Option<(OrderKey, String)>,
+    max: Option<(OrderKey, String)>,
     lost: bool,
 }
 
 impl Extremes {
-    fn observe(&mut self, key: &ValueKey, text: &str) {
-        if self.min.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Some(Ordering::Less)) {
+    fn observe(&mut self, key: &OrderKey, text: &str) {
+        if self.min.as_ref().is_none_or(|(m, _)| compare_keys_stored(key, m) == Ordering::Less) {
             self.min = Some((key.clone(), text.to_owned()));
         }
-        if self.max.as_ref().is_none_or(|(m, _)| key.stored_order(m) == Some(Ordering::Greater)) {
+        if self.max.as_ref().is_none_or(|(m, _)| compare_keys_stored(key, m) == Ordering::Greater) {
             self.max = Some((key.clone(), text.to_owned()));
         }
     }
@@ -171,7 +171,7 @@ impl Extremes {
             && self
                 .min
                 .as_ref()
-                .is_none_or(|(m, _)| value.0.stored_order(m) == Some(Ordering::Less))
+                .is_none_or(|(m, _)| compare_keys_stored(&value.0, m) == Ordering::Less)
         {
             self.min = Some(value);
         }
@@ -179,7 +179,7 @@ impl Extremes {
             && self
                 .max
                 .as_ref()
-                .is_none_or(|(m, _)| value.0.stored_order(m) == Some(Ordering::Greater))
+                .is_none_or(|(m, _)| compare_keys_stored(&value.0, m) == Ordering::Greater)
         {
             self.max = Some(value);
         }
@@ -206,8 +206,7 @@ impl Extremes {
     fn reopen(kind: &CompareKind, bounds: Option<Bounds>, flags: u8) -> Self {
         match bounds {
             Some(Bounds { min, max, .. }) => {
-                let key =
-                    |text: &str| ValueKey::keyed_by(kind, text).expect("a stored bound keyed");
+                let key = |text: &str| order_key(kind, text).expect("a stored bound keyed");
                 Extremes { min: Some((key(&min), min)), max: Some((key(&max), max)), lost: false }
             }
             None => Extremes { lost: flags & LOST != 0, ..Extremes::default() },
@@ -389,7 +388,7 @@ impl BoundsGatherer {
                     self.lose_value(group, tier);
                     return Ok(());
                 }
-                let key = match ValueKey::field_keyed_by(kind, text) {
+                let key = match field_key(kind, text) {
                     Ok(key) => key,
                     Err(unread) => {
                         self.lose_value(group, tier);

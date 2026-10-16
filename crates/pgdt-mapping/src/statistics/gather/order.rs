@@ -5,7 +5,7 @@
 use std::cmp::Ordering;
 use std::mem::size_of;
 
-use pgdt_codec::key::ValueKey;
+use pgdt_codec::internal::{OrderKey, compare_keys_stored};
 use pgdt_model::{
     Sortedness, UnrepresentableTier,
     internal::{text_heap, vec_heap},
@@ -37,13 +37,13 @@ enum FirstValue {
         prefix: Vec<u8>,
         len: usize,
     },
-    Keyed(ValueKey),
+    Keyed(OrderKey),
 }
 
 #[derive(Clone)]
 enum Previous {
     Bytewise(Clipped),
-    Keyed(ValueKey),
+    Keyed(OrderKey),
 }
 
 impl Default for RowOrder {
@@ -103,9 +103,9 @@ impl RowOrder {
     }
 
     /// Place a keyed value after the one placed before it.
-    fn place_keyed(&mut self, key: ValueKey) {
+    fn place_keyed(&mut self, key: OrderKey) {
         let step = match &self.previous {
-            Some(Previous::Keyed(previous)) => Some(key.stored_order(previous)),
+            Some(Previous::Keyed(previous)) => Some(compare_keys_stored(&key, previous)),
             Some(Previous::Bytewise(_)) => unreachable!("a keyed order places no head"),
             None => {
                 self.first = Some(FirstValue::Keyed(key.clone()));
@@ -114,7 +114,7 @@ impl RowOrder {
         };
         self.previous = Some(Previous::Keyed(key));
         if let Some(step) = step {
-            self.step(step);
+            self.step(Some(step));
         }
     }
 
@@ -127,7 +127,7 @@ impl RowOrder {
                     previous.locate_bytes(prefix, *len)
                 }
                 (Previous::Keyed(previous), FirstValue::Keyed(first)) => {
-                    first.stored_order(previous)
+                    Some(compare_keys_stored(first, previous))
                 }
                 _ => unreachable!("one column's values are ordered one way"),
             };
@@ -182,7 +182,7 @@ impl ViewOrders {
     }
 
     /// Place `key`, a value past `tier`, in each order that takes it.
-    pub(super) fn place_keyed(&mut self, key: ValueKey, tier: Option<UnrepresentableTier>) {
+    pub(super) fn place_keyed(&mut self, key: OrderKey, tier: Option<UnrepresentableTier>) {
         match tier {
             None => {
                 if let Some([representable, every]) = self.wider.as_deref_mut() {
