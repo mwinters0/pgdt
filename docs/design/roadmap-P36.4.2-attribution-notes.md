@@ -8,7 +8,7 @@ kept under `/mnt/ssd/fedora/scratch/pgdump_query/attr-36.4.2/`, and
 when the result was read. They compare the shipped pair's machine code symbol
 by symbol, which needs no run.
 
-**The rise is unattributed.** The profiling build is a different build from
+**This slice left the rise unattributed.** The profiling build is a different build from
 the one whose count rose, so its line profile does not explain the rise. The
 shipped pair reproduced 36.4's rise: +493,301,876 `instructions:u` on the
 data-level `parse`, where 36.4's own pair gave +493,303,174.
@@ -84,9 +84,9 @@ does not fit under ten minutes is launched detached.
 
 ## What 36.4's refusal becomes
 
-The refusal stands. 36.4 stays unticked and its rise is unattributed.
-36.4.3 takes the exact count below, and the spec's "What a hot-path slice
-owes" says what its reading leads to.
+The refusal stands and 36.4 stays unticked. 36.4.3 took the exact count
+below and found the rise in 36.4's own code, with the +410 sampling error
+([36.4.3's notes](roadmap-P36.4.3-callgrind-notes.md)).
 
 ## What the next round inherits
 

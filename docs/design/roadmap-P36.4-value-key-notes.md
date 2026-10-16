@@ -66,31 +66,22 @@ pair's two binaries, run on the host under `perf stat`, differ by
 +493.3 M and +6.0 M, each to within 0.5 M across two reps. The data-level
 pair's wall clocks are equal.
 
-**The rise is not on the key path.** A per-symbol `instructions:u` profile
-of each binary at the data level, unthrottled at one sample per million
-(`runs/profile-36.4-count/{parent,tree}.syms`, the commands in that
-directory's `README`), moves +478 samples, matching the count. The
-symbols 36.4 changed or that hold a key — `order_keys` against
-`compare_keys`, `field_key`, the key drops and clones, `GroupState::heap_bytes`,
-`RowOrder::place_keyed`, `observe_row` — net +13, the comparison itself
-falling by 113. The other +465 lie in code 36.4 did not touch, each
-symbol within two or three standard deviations of its parent alone:
-`from_utf8` +165, `unescape_field` +116, `parse_time_of_day` +90,
-`civil_days` +50, `unescape_owned` +48, `memcmp` −93. Unattributed: each
-of those symbols has the same machine code in both builds, so how far it
-moved is sampling error or data layout, and not inlining
-([36.4.2's notes](roadmap-P36.4.2-attribution-notes.md)). The `pgdt sql` row's 6 M is 60
-samples, below what a sampled profile resolves; nothing it plans or scans
-builds a `ValueKey` per row, so it is unattributed too.
+**The data-level rise is 36.4's own code**, in the gatherer functions
+its key code is inlined into, the accounting's `heap_bytes` above all
+([36.4.3's notes](roadmap-P36.4.3-callgrind-notes.md), an exact count). A
+sampled per-symbol profile cannot place a rise of this size: one taken
+here (`runs/profile-36.4-count/`) put most of it in unchanged decode code,
+which was sampling error
+([36.4.2's notes](roadmap-P36.4.2-attribution-notes.md)). The `pgdt sql`
+row's 6 M is 60 samples, below what a sampled profile resolves; nothing it
+plans or scans builds a `ValueKey` per row, so it is unattributed.
 
 ## What the next round inherits
 
-- **The slice is refused, and its rise is unattributed**
-  ([36.4.2's notes](roadmap-P36.4.2-attribution-notes.md)). 36.4.3's
-  exact count attributes it, and the spec's "What a hot-path slice owes"
-  says what follows. Inlining moved into the unchanged decode code is ruled out. What
-  the changed code costs, including the match on the `Key` wrapper, cannot
-  be told apart from sampling error by any profile taken here.
+- **The slice is refused, and the rise is its own code**
+  ([36.4.3's notes](roadmap-P36.4.3-callgrind-notes.md)). It is reworked
+  where a shape as clean recovers it and accepted where none does (spec,
+  "What a hot-path slice owes").
 - **A count an unrelated commit displaces is taken from a worktree** at the
   slice's commit, as that worktree's own `measure.py --count-pair HEAD~1`
   with `PGDT_MEASURE_OUT_DIR` set to the repo's `runs/`.
