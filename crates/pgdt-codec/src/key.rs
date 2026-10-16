@@ -24,16 +24,17 @@ use std::mem::size_of;
 
 use pgdt_model::PostgresInvalidValues;
 
-use self::order::{OrderKey, Side, literal_key, order_key, order_keys, order_keys_stored};
+use self::order::{OrderKey, Side, literal_key, order_key, order_keys};
 use crate::compare::{CompareKind, ComparisonPlan, ComparisonSemantics};
 use crate::value::nested::key::{NestedKey, comparable, compare_nested, nested_key};
 
 /// A value's place in its column's order, its representation hidden: the key
-/// a filter orders a row by, for a caller ordering values that meet no
-/// filter — a summary's extremes, a partition's declared ordering. The
-/// statistics gatherer, which keys by its stored sets' kinds and holds no
-/// nested key, orders the scalar key beneath through `internal` instead
-/// (`docs/design/decisions.md`, "D79").
+/// a filter orders a row by, for an embedder ordering values of a column as
+/// a filter of a semantics would — a nested one's included. Nothing in this
+/// workspace holds one: the filter, the statistics gatherer and the summary
+/// key through `internal` by the kind or tree they already hold, and a
+/// stored bound is ordered as gathering kept it, which is `internal`'s
+/// alone (`docs/design/decisions.md`, "D79", "D106").
 ///
 /// There is no `Ord` (`docs/design/decisions.md`, "D56"): two keys are
 /// ordered only where they share a representation, which two keys read
@@ -123,8 +124,7 @@ impl ValueKey {
     }
 
     /// The order a filter compares by: a total order over the keys of one
-    /// plan in one semantics, of which [`Self::stored_order`] is a
-    /// refinement. **`None` where two finite keys' representations differ**
+    /// plan in one semantics. **`None` where two finite keys' representations differ**
     /// — a finite date's key against a text's, an array's against a
     /// scalar's, a record's against one of another arity.
     ///
@@ -144,21 +144,6 @@ impl ValueKey {
             (Key::Scalar(a), Key::Scalar(b)) => order_keys(a, b),
             (Key::Nested(a), Key::Nested(b)) => comparable(a, b).then(|| compare_nested(a, b)),
             _ => None,
-        }
-    }
-
-    /// **The order a stored bound and a block's row order are kept in**:
-    /// [`Self::compare`], the order a filter compares by, with a float's `-0`
-    /// below `0` where it ties them, as IEEE `totalOrder` — the order Arrow
-    /// sorts a float by and DataFusion takes its `MIN`/`MAX` in — places
-    /// them. A refinement, so an extreme in it is one in the filter's order
-    /// and a block sorted in it is sorted in that order too
-    /// (`docs/design/decisions.md`, "D79"). `None` where [`Self::compare`]
-    /// is.
-    pub fn stored_order(&self, other: &Self) -> Option<Ordering> {
-        match (&self.0, &other.0) {
-            (Key::Scalar(a), Key::Scalar(b)) => order_keys_stored(a, b),
-            _ => self.compare(other),
         }
     }
 

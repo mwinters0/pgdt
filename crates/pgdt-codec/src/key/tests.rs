@@ -76,7 +76,7 @@ fn keys_of_different_representations_answer_none() {
     ];
     for (a, b) in pairs {
         assert_eq!(a.compare(&b), None, "{a:?} against {b:?}");
-        assert_eq!(b.stored_order(&a), None, "{b:?} against {a:?}");
+        assert_eq!(b.compare(&a), None, "{b:?} against {a:?}");
     }
     // A special value is ranked, not represented: `infinity` is above a
     // date in any kind holding one.
@@ -142,19 +142,18 @@ fn a_literal_is_read_in_its_input_grammar() {
 }
 
 /// **The stored order refines the filter's**: a float's `-0` and `0` are
-/// equal to a filter and `-0` is first in the order a bound is kept in,
-/// through the API's key as through the scalar key the gatherer holds
-/// (`order::compare_keys_stored`).
+/// equal to a filter, through the API's key as through the scalar key
+/// beneath it, and `-0` is first in the order a bound is kept in, which is
+/// `internal`'s alone (`order::compare_keys_stored`).
 #[test]
 fn the_stored_order_breaks_a_float_s_zeros() {
     let float = plan("double precision", &[]);
     let (negative, positive) = (field(&float, "-0"), field(&float, "0"));
     assert_eq!(negative.compare(&positive), Some(Ordering::Equal));
-    assert_eq!(negative.stored_order(&positive), Some(Ordering::Less));
-    assert_eq!(positive.stored_order(&negative), Some(Ordering::Greater));
     let (Key::Scalar(a), Key::Scalar(b)) = (&negative.0, &positive.0) else {
         panic!("a float's key is a scalar's");
     };
     assert_eq!(order::compare_keys(a, b), Ordering::Equal);
     assert_eq!(order::compare_keys_stored(a, b), Ordering::Less);
+    assert_eq!(order::compare_keys_stored(b, a), Ordering::Greater);
 }

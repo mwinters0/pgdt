@@ -20,9 +20,8 @@ use arrow::array::ArrayRef;
 
 use crate::render::decode_field;
 use pgdt_codec::ResolvedSchema;
-use pgdt_codec::compare::{CompareKind, ComparisonPlan, ComparisonSemantics, bounds_set_keyed_by};
-use pgdt_codec::internal::column_tiers;
-use pgdt_codec::key::ValueKey;
+use pgdt_codec::compare::{CompareKind, ComparisonSemantics, bounds_set_keyed_by};
+use pgdt_codec::internal::{OrderKey, column_tiers, compare_keys_stored, order_key};
 use pgdt_mapping::internal::{
     believed_under, declared_column, dictionary_holds_field_text, keeps_sums, stored_resolution,
 };
@@ -214,10 +213,9 @@ pub fn table_summary(
                 accumulator.complete = false;
                 continue;
             };
-            let plan = &resolved.comparisons[i];
             for (g, group) in statistics.groups.iter().enumerate() {
                 match column.group_bounds(set, reading, g) {
-                    Some(bounds) => accumulator.fold(plan, semantics, bounds),
+                    Some(bounds) => accumulator.fold(bounds),
                     // A group whose every row is NULL has no value to bound,
                     // so it leaves the column's extremes complete; one that
                     // lost a value to gathering does not.
@@ -241,8 +239,9 @@ pub fn table_summary(
 }
 
 /// One column's extremes while the blocks are walked, each as the stored text
-/// and its key, so two blocks' bounds are compared exactly as the kind that
-/// stored them orders ([`ValueKey::stored_order`]); and the union of its
+/// and its key under the kind the set was chosen by, so two blocks' bounds
+/// are compared exactly as gathering ordered them ([`compare_keys_stored`],
+/// `docs/design/decisions.md`, "D79"); and the union of its
 /// dictionaries, borrowed from the map, while every group so far has kept one
 /// — billed to nothing, since it holds at most a slot per entry the map
 /// already keeps, and only while one table is summarized.
@@ -252,8 +251,8 @@ struct Accumulator<'a> {
     kind: Option<CompareKind>,
     nulls: u64,
     nulls_complete: bool,
-    min: Option<(ValueKey, String, bool)>,
-    max: Option<(ValueKey, String, bool)>,
+    min: Option<(OrderKey, String, bool)>,
+    max: Option<(OrderKey, String, bool)>,
     complete: bool,
     distinct: Option<HashSet<&'a str>>,
     sum: Option<i128>,
@@ -310,10 +309,14 @@ impl<'a> Accumulator<'a> {
     // leaves the column's extreme `Inexact` where the exact one would answer
     // it. The fix prefers the exact bound on a tie; no fixture reaches one.
     // **(c) unowned**; promoted by an extreme seen read where it could answer.
-    fn fold(&mut self, plan: &ComparisonPlan, semantics: ComparisonSemantics, bounds: &Bounds) {
-        if let Some(key) = ValueKey::of(plan, semantics, &bounds.min) {
+    /// Fold one group's bounds into the extremes. Only a set chosen by
+    /// [`Self::kind`] is folded, so every key is of that one kind, as
+    /// [`compare_keys_stored`] asserts.
+    fn fold(&mut self, bounds: &Bounds) {
+        let Some(kind) = self.kind.as_ref() else { return };
+        if let Some(key) = order_key(kind, &bounds.min) {
             let lower = self.min.as_ref().is_none_or(|(held, _, _)| {
-                key.stored_order(held) == Some(std::cmp::Ordering::Less)
+                compare_keys_stored(&key, held) == std::cmp::Ordering::Less
             });
             if lower {
                 self.min = Some((key, bounds.min.clone(), bounds.min_exact));
@@ -321,9 +324,9 @@ impl<'a> Accumulator<'a> {
         } else {
             self.complete = false;
         }
-        if let Some(key) = ValueKey::of(plan, semantics, &bounds.max) {
+        if let Some(key) = order_key(kind, &bounds.max) {
             let higher = self.max.as_ref().is_none_or(|(held, _, _)| {
-                key.stored_order(held) == Some(std::cmp::Ordering::Greater)
+                compare_keys_stored(&key, held) == std::cmp::Ordering::Greater
             });
             if higher {
                 self.max = Some((key, bounds.max.clone(), bounds.max_exact));
@@ -336,7 +339,7 @@ impl<'a> Accumulator<'a> {
     fn finish(self, resolved: &ResolvedSchema, i: usize, rows: u64) -> ColumnSummary {
         let mut complete = self.complete && self.kind.is_some();
         let data_type = resolved.schema.field(i).data_type();
-        let mut decode = |end: Option<(ValueKey, String, bool)>| {
+        let mut decode = |end: Option<(OrderKey, String, bool)>| {
             let (_, text, exact) = end?;
             match decode_field(data_type, &resolved.plans[i], &text) {
                 Some(value) => Some(Bound { value, exact }),
@@ -387,7 +390,7 @@ impl<'a> Accumulator<'a> {
 ///
 /// A float qualifies like any other column: its bounds and row order are
 /// kept with its zeros told apart as Arrow sorts them
-/// ([`ValueKey::stored_order`]). Partitions are not cut at block boundaries
+/// ([`compare_keys_stored`]). Partitions are not cut at block boundaries
 /// to spare the third condition (`docs/design/decisions.md`, "D51").
 pub(crate) fn partition_orders(
     matches: &[CopyBlock],
@@ -418,8 +421,7 @@ fn column_order(
     runs: &[Vec<u64>],
     reading: StatisticsView,
 ) -> Option<Sortedness> {
-    let plan = &resolved.comparisons[i];
-    let kind = plan.bounds_read_by(ComparisonSemantics::DataFusion)?;
+    let kind = resolved.comparisons[i].bounds_read_by(ComparisonSemantics::DataFusion)?;
     let name = resolved.schema.field(i).name();
     let mut order = None;
     // Each block's first and last group holding a row, by header offset. A
@@ -480,8 +482,8 @@ fn column_order(
                 Sortedness::Descending => (&later.max, &earlier.min),
                 _ => (&earlier.max, &later.min),
             };
-            let key = |text| ValueKey::of(plan, ComparisonSemantics::DataFusion, text);
-            if key(high)?.stored_order(&key(low)?)? == std::cmp::Ordering::Greater {
+            let key = |text| order_key(&kind, text);
+            if compare_keys_stored(&key(high)?, &key(low)?) == std::cmp::Ordering::Greater {
                 return None;
             }
         }

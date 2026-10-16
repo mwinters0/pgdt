@@ -495,11 +495,16 @@ pub(crate) fn order_keys(a: &OrderKey, b: &OrderKey) -> Option<Ordering> {
     })
 }
 
-/// [`ValueKey::stored_order`](crate::key::ValueKey::stored_order) over two
-/// keys of one column's kind, so a finite pair of two representations is
-/// unreachable, as in [`compare_keys`]: the order the statistics gatherer
-/// keeps its bounds and row order in, over the scalar keys it holds
-/// (`docs/design/decisions.md`, "D79").
+/// **The order a stored bound and a block's row order are kept in**:
+/// [`compare_keys`], the order a filter compares by, with a float's `-0`
+/// below `0` where it ties them, as IEEE `totalOrder` — the order Arrow sorts
+/// a float by and DataFusion takes its `MIN`/`MAX` in — places them. A
+/// refinement, so an extreme in it is one in the filter's order and a block
+/// sorted in it is sorted in that order too (`docs/design/decisions.md`,
+/// "D79"). Over two keys of one column's kind, so a finite pair of two
+/// representations is unreachable, as in [`compare_keys`]: the order the
+/// statistics gatherer keeps its bounds and row order in, and a summary reads
+/// them back in.
 pub fn compare_keys_stored(a: &OrderKey, b: &OrderKey) -> Ordering {
     order_keys_stored(a, b).unwrap_or_else(|| {
         unreachable!("both sides of a comparison decode through one column's `CompareKind`")
@@ -507,10 +512,9 @@ pub fn compare_keys_stored(a: &OrderKey, b: &OrderKey) -> Ordering {
 }
 
 /// [`order_keys`], a float's `-0` below `0` where it ties them, as IEEE
-/// `totalOrder` places them: the refinement
-/// [`ValueKey::stored_order`](crate::key::ValueKey::stored_order) states.
+/// `totalOrder` places them: the refinement [`compare_keys_stored`] states.
 #[inline]
-pub(crate) fn order_keys_stored(a: &OrderKey, b: &OrderKey) -> Option<Ordering> {
+fn order_keys_stored(a: &OrderKey, b: &OrderKey) -> Option<Ordering> {
     let order = order_keys(a, b)?;
     Some(order.then_with(|| match (a, b) {
         (OrderKey::Float(x), OrderKey::Float(y)) => x.total_cmp(y),

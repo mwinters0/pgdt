@@ -28,14 +28,14 @@ representation compare as `None`. The dispatch beneath it lives in the
   that representation orders, and the infinities and `NaN` compare against
   any key by rank. That falls short of the spec, as `KD118`, which 36.4.1
   closes.
-- **`stored_order` answers `Option` too**, since it refines `compare`.
-- **The gatherer holds no `ValueKey`.** It keys by its sets' kinds, not
-  through `ValueKey::of`, which D79's Rejected line explains, and it never
-  holds a nested key. So it holds `internal`'s `OrderKey`, read by
-  `field_key` and `order_key` and ordered by `compare_keys_stored`, which
-  asserts one kind as `compare_keys` does. `ValueKey::stored_order` is the
-  same refinement over the API's key (`order_keys_stored`). `pgdt-query`'s
-  summary and `partition_orders` key through the plan.
+- **Nothing in the workspace holds a `ValueKey`.** The gatherer, the
+  summary and `partition_orders` key by the kind they chose a stored set by,
+  not through `ValueKey::of`, which D79's Rejected line explains, and none
+  holds a nested key. So each holds `internal`'s `OrderKey`, read by
+  `field_key` or `order_key` and ordered by `compare_keys_stored`, which
+  asserts one kind as `compare_keys` does. The stored order is `internal`'s
+  alone, so `ValueKey` has no `stored_order`: `of`, `literal`, `compare` and
+  `heap_bytes` are the embedder's.
 - **A nested key's comparability is checked before it is compared**
   (`value::nested::key::comparable`), so the range algebra and
   `compare_nested` are unchanged, and the predicate still calls
@@ -89,7 +89,8 @@ accounting, its extremes and its row order match no `Key` wrapper and
 unwrap no `Option`. Its key path is then `a7b6ef0e`'s with the names
 changed. `internal`'s `ValueKeyExt` goes, since nothing else called it. The
 golden-order digest now sorts by `compare_keys_stored`, and is unchanged.
-`key/tests.rs` pins `ValueKey::stored_order`'s float zeros against it.
+`key/tests.rs` pins the float zeros: equal through `ValueKey::compare`, and
+told apart by `compare_keys_stored`.
 
 ## The rework's count: the data-level rise recovered
 
@@ -148,19 +149,81 @@ minutes, so the job was waited on.
   +1.0 M (10 a call, the wrapper's match), and the provider's statistics
   `OnceLock` initializer, whose code changed, falls by 0.4 M.
 
+## The summary off the wrapper
+
+`fold` and `column_order` key each stored bound by the kind they chose the
+set by (`Accumulator::kind`, `column_order`'s `kind`, both from
+`bounds_read_by`), through `internal`'s `order_key`, and order the keys by
+`compare_keys_stored`. `fold` reads the kind off its accumulator, so no kind
+is cloned a block. `ValueKey::stored_order` leaves the API, and
+`order_keys_stored` is private to `key::order`. Both derivations of the kind
+agreed wherever a bound was folded (history, 2026-10-16, "36.4's rework
+recovers the data-level rise; the summary reads by kind"), so no summary or
+declared ordering changes, and the `pgdt-codec` and `pgdt-query` suites pass
+unchanged.
+
+## The summary's count: the last of the rise, counted and accepted
+
+`measure.py --count-pair HEAD` on the uncommitted rework, `dbb1a73f` its
+parent, whose code is `0152fe56`'s
+(`runs/count-pair-36.4-summary-20261016-0635/log`, its `HANDOFF.md`
+beside it). It exited 0 and printed 1 of 5 rows resolved, `pgdt sql`
+falling by 5,666,664 (−0.026%). It was read in the three steps written
+before it ran:
+
+- **The gate holds.** On `pgdt sql` the parent leg,
+  21,981,926,581–21,982,426,306, meets the rework pair's tree leg, and its
+  median is 242,197 above that leg's, within the spread of 312,202. On the
+  data-level `parse` the median is 264 above, within 769,752.
+- **The pair refuses nothing.** The `pgdt sql` fall is the 6 M that
+  `ValueKey::of` and `stored_order` held, and the other four rows are
+  unresolved, flat to within 61,000.
+- **Against `a7b6ef0e` the row is resolved above, barely.** The tree leg,
+  21,976,387,020–21,976,865,791, has its fewest 16,008 above `a7b6ef0e`'s
+  most, and its median is +449,105 (+0.002%) above. So the remainder was
+  counted exactly.
+
+The exact count is `runs/attr-36.4-summary-20261016-callgrind/`, the
+rework job's apparatus on the `pgdt sql` shape, with the tree binary copied
+out (`run.sh` names it). `analyze.py`'s docstring holds the reading,
+written before any count, and `reading.txt` is what it printed. The four
+builder caches hash alike, and so do the four answers. The totals are not
+gated: one binary's two reps differ by 1.4 M, all but 2,179 of it in
+identical code and outside pgdt. The class of functions whose machine code differs is
+deterministic, at +386,829 and +384,736 in the two rep pairs, so **the
+remainder is 36.4's own code**:
+
+- `compare_keys_stored` holds 15.1 `Ir` a call where `a7b6ef0e`'s
+  `stored_order` held 12.3, over the 98,272 comparisons of stored bounds:
+  +275,847. It reaches `order_keys`' `Option` and unwraps it, where
+  `stored_order` called `compare_keys` directly.
+- The provider's statistics `OnceLock` initializer, into which the summary's
+  `fold` is inlined, changed size and rises by 208,301, about 2 a bound.
+- `order_keys` costs one `Ir` a call less than `a7b6ef0e`'s
+  `compare_keys`: −98,272. The renamed functions net to zero.
+
+**It is accepted** (spec, "What a hot-path slice owes"). It is about 4 `Ir`
+a stored bound, so it grows with the cache's groups, not its rows. One
+candidate shape exists: `compare_keys_stored` written over `compare_keys`,
+as `stored_order` was. It is not taken, for three reasons:
+
+- Its saving rests on codegen choices, which a rework was already refused
+  for resting on (history, 2026-10-16, "36.4's rework recovers the
+  data-level rise; the summary reads by kind").
+- `compare_keys_stored` is the gatherer's comparison too, inlined into
+  `place_keyed` (no symbol of it in the data-level runs), so changing it
+  moves the data-level row.
+- 36.4.1 reshapes the match both callers reach, and is counted by its own
+  pair.
+
+STATUS's "Decisions worth another look" holds the call.
+
 ## What the next round inherits
 
-- **The summary reads a stored bound by the set's kind.** `fold` and
-  `column_order` key each bound by the kind they chose the set by
-  (`Accumulator::kind`, `column_order`'s `kind`, both from `bounds_read_by`),
-  through `internal`'s `order_key` and `compare_keys_stored`, as the gatherer
-  does. They stop calling `ValueKey::of`, whose second derivation of that kind
-  is the `pgdt sql` row's rise. `ValueKey::stored_order` goes with them,
-  the stored order being `internal`'s alone, and `ValueKey`'s rustdoc names
-  the embedder it serves. The rework is counted by `--count-pair HEAD~1`,
-  and the row is read against `a7b6ef0e`'s range as the data-level row was
-  (history, 2026-10-16, "36.4's rework recovers the data-level rise; the
-  summary reads by kind").
+- **36.4.1 is counted against 36.4's commit**, by `measure.py --count-pair
+  HEAD~1`. It reshapes `order_keys`, which `compare_keys_stored` unwraps on
+  every stored comparison, the gatherer's and the summary's alike (above,
+  "The summary's count: the last of the rise, counted and accepted").
 - **A count an unrelated commit displaces is taken from a worktree** at the
   slice's commit, as that worktree's own `measure.py --count-pair HEAD~1`
   with `PGDT_MEASURE_OUT_DIR` set to the repo's `runs/`.
