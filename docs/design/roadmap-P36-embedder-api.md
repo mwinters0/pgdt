@@ -336,11 +336,30 @@ This closes `KD116` and `KD117`.
 - **A nested value has a key.** A hidden variant wraps `NestedKey`, so an
   array, record, range or multirange is ordered without its representation
   showing. `NestedKey` gains a heap size.
-- **Keys no order relates never compare**, whatever plans they were read
-  under: a `date` against an `integer`, a special against another type's
-  value. Two an order relates, `int2` against `int8` or two `numeric`
-  scales, compare correctly. The comparison answers `None`, as for an
-  incomparable pair, and never panics. There is still no `Ord` (D56).
+- **Two keys compare exactly where PostgreSQL resolves `a < b` without
+  consulting a setting**, with the server's answer, whatever plans they were
+  read under: `int2` against `int8`, two `numeric` scales, an integer against
+  a `numeric`, a float or an `oid`. Every other pair answers `None` and never
+  panics: a `date` against an `integer`, a special against another type's
+  value, a `macaddr` against a `macaddr8` (the server finds that operator
+  ambiguous), and a pair it orders only under `TimeZone`. There is still no
+  `Ord` (D56).
+- **In DataFusion's semantics, the rule is DataFusion's**: two keys compare
+  where its comparison coercion relates their emitted Arrow types without
+  consulting session config, with its answer. Keys read in two semantics
+  never compare.
+- **A nested key follows the same rule**, and the server resolves no
+  operator across two array, range or multirange types: they compare only
+  with one order at every level. Two records compare only at one arity with
+  one order per column, as `record_cmp` requires. Which slots hold a value
+  never decides it.
+- **A `ValueKey` carries the order it was read in**: its semantics, its kind
+  with what does not change the order folded away, a `numeric`'s scale, an
+  enum's qualified type name and labels, a nested key's order at every
+  level. `compare` checks it first. The key the gatherer and the summary
+  hold, `internal`'s, carries none: nothing in the workspace compares across
+  plans (history, 2026-10-16, "36.4.1's calls reviewed: the order's identity
+  moves to `ValueKey`").
 - **KD117**: `OrderKey`, `Side` and the functions that build and compare
   them move to a `pub(crate)` child, and `internal` alone re-exports them.
 

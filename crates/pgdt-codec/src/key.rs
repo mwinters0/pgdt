@@ -136,10 +136,9 @@ impl ValueKey {
     /// deficiency: KD118 — two enum types' labels compare by their positions
     /// in their own declarations, where the server relates no two enum types:
     /// an enum's key is its label's position and carries no type, a variant
-    /// telling an order apart and not a type. **(a) deliberate tradeoff**:
-    /// telling them apart puts the label list, or a tag standing for it, in
-    /// every key the statistics gatherer holds
-    /// (`docs/design/decisions.md`, "D56").
+    /// telling an order apart and not a type. **(b) owned by 36.4.4**, which
+    /// carries the order a key was read in on `ValueKey` rather than in
+    /// `OrderKey`'s variants.
     pub fn compare(&self, other: &Self) -> Option<Ordering> {
         match (&self.0, &other.0) {
             (Key::Scalar(a), Key::Scalar(b)) => order_keys(a, b),

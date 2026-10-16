@@ -25,11 +25,13 @@ carries the decision and what it rejected.
   and `time` against `timetz`. So do pairs it relates only through an
   implicit cast across families: an integer against a `numeric` or a float,
   a float against a `numeric`, and an integer against an `oid`, where
-  PostgreSQL wraps a negative integer. That boundary is a call made
-  unattended (STATUS, "Decisions worth another look").
+  PostgreSQL wraps a negative integer. The review replaced that boundary
+  with the server's operator resolution, which it contradicts on both
+  sides: the server finds `macaddr < macaddr8` ambiguous and orders the
+  cross-family casts (history, 2026-10-16, "36.4.1's calls reviewed: the
+  order's identity moves to `ValueKey`"). 36.4.4 lands it.
 - **Two enum types still compare by position.** An enum's key carries no
-  type. The 2026-10-15 review rejected putting the label list in every key,
-  so this is a deliberate tradeoff, and `KD118` now records it as (a).
+  type, and `KD118` is 36.4.4's to close.
 - **A special value's domain** is `DateTime` (covering `date`, `timestamp`
   and `timestamptz`), `Interval`, `IntervalFields` or `Numeric`. Within one
   domain, two infinities are equal across types: `date 'infinity'` equals
@@ -114,26 +116,23 @@ and a half minutes, so the job was waited on.
   the summary's `fold` is inlined, rises by 863,116. That is about 20 `Ir`
   a stored bound.
 
-## The rise is accepted
+## The rise is 36.4.4's
 
-**No shape as clean recovers it** (spec, "What a hot-path slice owes").
 None of it is a shape the source chose: the copies are in the gatherer's
 unchanged code, and the rest is which registers `order_keys` saves and how
 `field_key` writes its result. They follow from a key of one variant per
-order with a scale beside `Decimal`'s integer, which is the row's contract.
-Two ways back exist, and the record refuses both. Fewer variants with a tag
-is the shape D56 rejects. Steering inlining, such as `#[inline(never)]` on
-the network and numeric comparisons, was refused for 36.4, because its
-saving rests on inlining choices that 36.4.3 showed move (history,
-2026-10-16, "36.4's rework recovers the data-level rise; the summary reads
-by kind"). Unlike 36.4's accepted remainder, this rise grows with rows, so
-the acceptance is under STATUS's "Decisions worth another look".
+order with a scale beside `Decimal`'s integer, and no shape inside that
+split recovers them. The split buys nothing within a column — the
+golden-order digest did not move — and serves only `ValueKey::compare`
+across plans, which nothing in the workspace calls. So the review moved the
+order's identity onto `ValueKey`, and 36.4.4 returns the hot path's key to
+36.4's shape (history, 2026-10-16, "36.4.1's calls reviewed: the order's
+identity moves to `ValueKey`").
 
 ## What the next round inherits
 
-- **36.5 is counted against 36.4.1's commit.** `pgdt-dump` does not depend
-  on `pgdt-codec`, so 36.5's own pair does not price this slice.
-- **Reconsidering the acceptance starts from the kept legs.** A rework is
-  counted by its own `--count-pair`; the callgrind job counts it exactly
-  with a reworked binary named in `run.sh` and `analyze.py` in place of the
-  tree leg.
+- **36.5's pair prices neither this slice nor 36.4.4**: `pgdt-dump` does
+  not depend on `pgdt-codec`.
+- **36.4.4 starts from the kept legs.** Its rework is counted by its own
+  `--count-pair`; the callgrind job counts it exactly with the reworked
+  binary named in `run.sh` and `analyze.py` in place of the tree leg.

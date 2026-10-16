@@ -516,6 +516,6 @@ than reading as a phase nobody has sliced.
   `crates/pgdt-mapping/src/statistics/request.rs`.
 
 - **KD118** — `ValueKey::compare` orders two enum types' labels by their
-  positions, where the server relates no two enum types. **(a) deliberate
-  tradeoff**: telling them apart puts a label list in every key the
-  statistics gatherer holds. Detail: `crates/pgdt-codec/src/key.rs`.
+  positions, where the server relates no two enum types. **(b) owned by
+  36.4.4**, which carries the order a key was read in on `ValueKey`.
+  Detail: `crates/pgdt-codec/src/key.rs`.
