@@ -102,7 +102,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [ ] **36.6** pgdt-dump: `CacheMode` opens an `Origin` — one decode, no free `load`/`save`, `Valid` and `Incomplete` one, `Offline` its own type, `Disabled` stated; `scan` and `preamble_only` take only what they read
 - [ ] **36.7** pgdt-mapping: back-fill one call; the mapping pass hands back a `Dump`'s parts; closes `KD115`
 - [ ] **36.8** pgdt-query: `Dump`, the selector, `Table::plan` with partitions, a file-ordered stream and serial resume; `read_table` gone; `max_rows` on the stream; filter operators carrying values; `pgdt info` and `pgdt query` on it
-- [ ] **36.9** pgdt-query: one record per column in `ResolvedSchema`, rendering through it; counted by `measure.py --count-pair HEAD~1`
+- [ ] **36.9** pgdt-query: one record per column in `ResolvedSchema`, rendering and `ValueKey` through it; closes `KD121`; counted by `measure.py --count-pair HEAD~1`
 - [ ] **36.10** Errors in library terms, `pgdt`'s spelling layer pinned by a test, the cache's "Not in one place" line struck; closes `KD92`
 - [ ] **36.11** datafusion-pgdump: `PgDump` over a `Dump`, one session-readying function, `Located` public, the sink at construction, `PgDumpTableOptions` folded
 - [ ] **36.12** The embedder test in `pgdt-query/tests/`, held by `layering.py` to the embedder rule
@@ -136,15 +136,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **36.4.5: a `ValueKey` is built from `(&ResolvedSchema, column)`, and its
-  emitted value is the codec's API.** The spec says only "built from the
-  resolved column"; with no column record until 36.9, `ValueKey::of` and
-  `ValueKey::literal` take the schema and an index, so the plan and the Arrow
-  type cannot come from two resolutions, and 36.9 swaps the pair for its
-  record. `EmittedValue` — the value in its emitted type's units — is
-  public, because `datafusion-pgdump` is an embedder and may not name
-  `internal` (`scripts/layering.py`). Reconsidering: a constructor taking a
-  plan and a `DataType` restores 36.4's signature at the price of an
-  unchecked pairing (`KD115`'s shape); keeping `EmittedValue` out of the API
-  means exempting the adapter from the embedder rule.

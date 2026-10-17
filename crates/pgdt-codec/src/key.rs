@@ -154,6 +154,14 @@ impl ValueKey {
         text: &str,
         side: Side,
     ) -> Option<Self> {
+        // deficiency: KD121 — `semantics` is not checked against the one
+        // `resolve::read_as_text` widened `resolved` under, which it does not
+        // record: a column widened under PostgreSQL's keeps its declared plan,
+        // so a key asked for in DataFusion's orders the text as that type
+        // where DataFusion compares it bytewise as `Utf8View`, and one widened
+        // under DataFusion's is `Refused`, so a PostgreSQL key is `None`.
+        // **(b) owned by P36**: the column record carries the widening's
+        // semantics, and a key asked for in the other answers `None`.
         let plan = resolved.comparisons.get(column)?;
         if let Some(kind) = scalar_kind(plan, semantics) {
             let key = match side {

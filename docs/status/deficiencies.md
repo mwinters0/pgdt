@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD120 -->
-**`KD1`–`KD120` are allocated, and nothing at or below `KD120` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD121 -->
+**`KD1`–`KD121` are allocated, and nothing at or below `KD121` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -514,3 +514,10 @@ than reading as a phase nobody has sliced.
   for the wrong columns silently. **(b) owned by P36**, 36.7; closing it leaves
   `bounded_columns` `pub(crate)`. Detail:
   `crates/pgdt-mapping/src/statistics/request.rs`.
+
+- **KD121** — a `ValueKey` takes its semantics beside a `ResolvedSchema` that
+  does not record the semantics its untyped widening was applied under, so a
+  key asked for in DataFusion's semantics over a column widened under
+  PostgreSQL's orders the column's text by its declared type, where DataFusion
+  compares it bytewise. **(b) owned by P36**, 36.9. Detail:
+  `crates/pgdt-codec/src/key.rs`.

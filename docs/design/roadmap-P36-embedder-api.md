@@ -426,6 +426,12 @@ This closes `KD115` and the rest of cluster D.
   `NestedPlan`, the note and the comparison plan, read through accessors. It
   no longer has six parallel `pub` vectors, and the copy of each column's
   resolution in its note goes.
+- **A `ValueKey` is built from the column record.** `ValueKey::of` and
+  `ValueKey::literal` take it in place of the schema and an index. The record
+  carries the semantics a widened column was read as text under (D100), and
+  a key asked for in the other semantics answers `None`, closing `KD121`
+  (history, 2026-10-17, "36.4.5's call reviewed: a key's resolution names its
+  semantics").
 - **Rendering takes the column record.** `render_field`,
   `render_field_into` and the text-to-Arrow reader no longer take a
   `NestedPlan` the caller indexed out, so `pgdt` stops carrying the plans
@@ -613,7 +619,7 @@ the concept map; the slice is not bent around the boundary.
    divergences as table methods. `pgdt info` and `pgdt query` move onto it,
    and `pgdt`'s merge goes.
 9. **pgdt-query: one record per column.** `ResolvedSchema` reshaped, and
-   rendering through the record. Counted: `measure.py --count-pair HEAD~1`.
+   rendering and `ValueKey` through the record. Closes `KD121`. Counted: `measure.py --count-pair HEAD~1`.
 10. **Errors in library terms.** `pgdt` gets a spelling layer, with a test
     pinning each refusal's flag. The concept map's "Not in one place" line on
     the cache's wording is struck. Closes `KD92`: the provider's spelling of
