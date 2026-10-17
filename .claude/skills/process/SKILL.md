@@ -76,6 +76,14 @@ status list ticked** for what the phase delivered — the smallest edit, never a
 rewrite (`docs/process.md`, "Where does this fact go?"). It is checked by
 `mise run check` whole, never `--affected`.
 
+**Before that check, clear the dev builds**: `cargo clean --profile dev`, and
+`rm -rf target/release-image/target/debug`, the check's own, which `cargo clean`
+refuses (`release.py` makes that directory, so it carries no `CACHEDIR.TAG`).
+Every `--affected` package selection, dependency move and compiler change leaves
+another hashed copy of each test binary in them that no build reuses or removes;
+the whole check then rebuilds the one the next phase starts from. The release
+builds, which the figures time, are kept. Never while a sweep runs.
+
 ## A slice that cannot be finished as specified
 
 Do not tick it and describe the gap in prose. Leave the box unchecked, say in the
