@@ -462,7 +462,7 @@ async fn scan_partition(
     let mut start = range.start;
     let mut want = match read {
         PartitionRead::Whole { unit } => range.end.saturating_sub(range.start).min(unit).max(1),
-        PartitionRead::Chunked => (options.chunk_size_bytes as u64).max(1),
+        PartitionRead::Chunked => (options.read.chunk_size_bytes as u64).max(1),
     };
 
     while start < size {
@@ -495,15 +495,18 @@ async fn scan_partition(
         if advanced {
             start = next_start;
             entry = next_entry;
-            want = options.chunk_size_bytes as u64;
+            want = options.read.chunk_size_bytes as u64;
         } else {
             // Not one line boundary in `want` bytes. Growing rather than
             // failing lets a legitimately long row through; `max_line_bytes`
             // is the same ceiling the serial loop enforces.
-            if want >= options.max_line_bytes as u64 {
-                return Err(Error::LineTooLong { offset: start, limit: options.max_line_bytes });
+            if want >= options.read.max_line_bytes as u64 {
+                return Err(Error::LineTooLong {
+                    offset: start,
+                    limit: options.read.max_line_bytes,
+                });
             }
-            want = (want * 2).min(options.max_line_bytes as u64);
+            want = (want * 2).min(options.read.max_line_bytes as u64);
         }
     }
     Ok((out, piece))

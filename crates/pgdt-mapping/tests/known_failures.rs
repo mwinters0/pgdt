@@ -20,8 +20,8 @@
 
 use std::path::{Path, PathBuf};
 
-use pgdt_dump::ScanOptions;
-use pgdt_io::LocalFileSource;
+use pgdt_dump::ReadOptions;
+use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::build_map;
 use pgdt_model::DataBlock;
 use pgdt_model::SpanBody;
@@ -81,7 +81,8 @@ async fn check(case: &Case, path: &Path) -> Result<(), String> {
     match case {
         Case::DataSpansAttributed => {
             let source = LocalFileSource::open(path).unwrap();
-            let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
+            let spans =
+                build_map(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
             let mut data = 0;
             let mut bare = Vec::new();
             for span in &spans {

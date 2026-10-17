@@ -611,11 +611,10 @@ mod oracle {
     use std::path::{Path, PathBuf};
 
     use pgdt_core::{split_fields, unescape_field};
-    use pgdt_dump::ScanOptions;
     use pgdt_dump::cache::CacheMode;
-    use pgdt_dump::preamble_only;
+    use pgdt_dump::{ReadOptions, preamble_only};
     use pgdt_fixtures::{VERSIONS as MAJORS, fixtures_root};
-    use pgdt_io::LocalFileSource;
+    use pgdt_io::{LocalFileSource, Parallelism};
     use pgdt_model::TypeDef;
 
     use crate::compare::{CompareKind, ComparisonPlan, comparison_for};
@@ -644,7 +643,8 @@ mod oracle {
             LocalFileSource::open(fixture(major, "types/default.sql")).unwrap(),
         );
         let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
-        let (metadata, _) = preamble_only(opened, &ScanOptions::default()).await.unwrap();
+        let (metadata, _) =
+            preamble_only(opened, ReadOptions::default(), Parallelism::default()).await.unwrap();
         metadata.databases.into_iter().next().expect("a dump names a database").types
     }
 

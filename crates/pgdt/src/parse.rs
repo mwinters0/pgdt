@@ -236,7 +236,7 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
     let parallel = stated.resolve(source.as_ref(), cached_statistics);
     parallel.announce();
     if preamble_only_flag {
-        let (metadata, diagnostics) = preamble_only(opened, &scan_options(read, &parallel))
+        let (metadata, diagnostics) = preamble_only(opened, read.options(), parallel.parallelism())
             .await
             .map_err(|e| naming_the_source(e, &origin))?;
         print_metadata(&metadata, false);

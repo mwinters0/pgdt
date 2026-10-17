@@ -31,9 +31,9 @@ use arrow::datatypes::{
 use futures::StreamExt;
 use pgdt_codec::SchemaMode;
 use pgdt_codec::pgtype::NestedPlan;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
-use pgdt_io::LocalFileSource;
+use pgdt_dump::{ReadOptions, ScanOptions};
+use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::build_map;
 use pgdt_model::DataBlock;
 use pgdt_model::SpanBody;
@@ -127,7 +127,7 @@ struct Read {
 /// The tables `path`'s `COPY` blocks fill, and each one's columns.
 async fn tables(path: &Path) -> BTreeMap<String, Vec<String>> {
     let source = LocalFileSource::open(path).unwrap();
-    let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
+    let spans = build_map(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     let mut out = BTreeMap::new();
     for span in spans {
         if let SpanBody::Data(DataBlock::Copy(block)) = span.body {

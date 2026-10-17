@@ -19,8 +19,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use pgdt_dump::{ScanOptions, cache};
-use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
+use pgdt_dump::{ReadOptions, cache};
+use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism, XzSource};
 use pgdt_mapping::build_index;
 use pgdt_model::{DumpIndex, DumpMetadata, Span, SpanBody};
 
@@ -64,7 +64,7 @@ fn seekable_xz() -> (tempfile::TempDir, PathBuf) {
 async fn write_truncated_cache(dump: &Path, frontier: u64) -> PathBuf {
     let source = LocalFileSource::open(dump).unwrap();
     let size = std::fs::metadata(dump).unwrap().len();
-    let full = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let full = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
 
     let mut spans: Vec<Span> = full.spans.iter().filter(|s| s.start < frontier).cloned().collect();
     if let Some(last) = spans.last_mut() {
@@ -102,7 +102,7 @@ async fn saved(path: &Path, source: &LocalFileSource, index: &DumpIndex) {
 /// rather than an arbitrary byte.
 async fn block_frontier(dump: &Path, n: usize) -> u64 {
     let source = LocalFileSource::open(dump).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     index.blocks().nth(n).expect("the fixture has this many blocks").end_offset
 }
 

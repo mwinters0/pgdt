@@ -24,7 +24,7 @@ use arrow::datatypes::{DataType, TimeUnit};
 use futures::StreamExt;
 use pgdt_codec::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdt_dump::cache::{CacheLoad, CacheMode, CacheStatus, LoadedCache};
-use pgdt_dump::{ScanOptions, cache, preamble_only};
+use pgdt_dump::{ReadOptions, ScanOptions, cache, preamble_only};
 use pgdt_io::{ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_mapping::{build_index, map_file};
@@ -100,7 +100,10 @@ async fn a_cold_map_file_matches_build_index() {
             .unwrap();
             assert_eq!(run.resumed_from, 0, "{schema_dir}/{flag_set}: nothing to resume from");
             assert!(!run.interrupted);
-            let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+            let eager =
+                build_index(source.as_ref(), ReadOptions::default(), Parallelism::default())
+                    .await
+                    .unwrap();
             assert_matches_eager(&run.index, &eager, &format!("{schema_dir}/{flag_set}"));
         }
     }
@@ -133,7 +136,10 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
             let dump = dir.path().join("dump.sql");
             std::fs::copy(&fixture, &dump).unwrap();
             let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
-            let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+            let eager =
+                build_index(source.as_ref(), ReadOptions::default(), Parallelism::default())
+                    .await
+                    .unwrap();
 
             for chunk_size in [64usize, 512] {
                 for jobs in [2usize, 3, 8] {
@@ -142,7 +148,10 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
                     let mode =
                         CacheMode::enabled(dir.path().join(format!("{chunk_size}-{jobs}.dtcache")));
                     let options = ScanOptions {
-                        chunk_size_bytes: chunk_size,
+                        read: ReadOptions {
+                            chunk_size_bytes: chunk_size,
+                            ..ReadOptions::default()
+                        },
                         parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
                         ..ScanOptions::default()
                     };
@@ -197,7 +206,8 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
     .await
     .unwrap();
     assert_eq!(run.resumed_from, partial.scanned_through, "resumed at the cache's own frontier");
-    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let eager =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
     assert!(
         partial.blocks().count() < eager.blocks().count(),
         "sanity: the query left blocks unmapped for this to find"
@@ -270,7 +280,8 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
     }
     assert_eq!(rows, 3, "the last table's rows");
 
-    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let eager =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
     let last_end = eager.blocks().last().expect("40 blocks").end_offset;
     assert!(last_end < size, "sanity: the file does not end at the last block");
 
@@ -301,9 +312,13 @@ async fn a_preamble_only_cache_is_finished_into_the_same_index() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
-    preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
-        .await
-        .unwrap();
+    preamble_only(
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
+        ReadOptions::default(),
+        Parallelism::default(),
+    )
+    .await
+    .unwrap();
     let CacheLoad::Index(preamble_cache) = mode.load(source.as_ref()).await.unwrap() else {
         panic!("preamble_only wrote a cache")
     };
@@ -319,7 +334,8 @@ async fn a_preamble_only_cache_is_finished_into_the_same_index() {
     .await
     .unwrap();
     assert_eq!(run.resumed_from, preamble_cache.scanned_through);
-    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let eager =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
     assert_matches_eager(&run.index, &eager, "resumed from a preamble-only cache");
 }
 
@@ -423,12 +439,16 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     let size = source.size().await.unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
 
-    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let eager =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
     let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
     assert!(first_block_end < size, "sanity: there is a file left after the first block");
 
     let dying = FailsPast { inner: Arc::clone(&source), fail_at: first_block_end };
-    let slow = ScanOptions { chunk_size_bytes: 1, ..ScanOptions::default() };
+    let slow = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let err = map_file(
         mode.open_source(Arc::new(dying)).await.unwrap(),
         &slow,
@@ -648,10 +668,9 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
     let tripping =
         CancelsPast { inner: Arc::clone(&source), trip: data_offset, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
-        chunk_size_bytes: 64,
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
         cancel: Some(Arc::clone(&cancel)),
         parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
-        ..ScanOptions::default()
     };
 
     let run = map_file(
@@ -667,7 +686,8 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
     assert_eq!(run.index.blocks().count(), 0);
 
     // And it resumes into the index one eager pass builds.
-    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let eager =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
     let resumed = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
@@ -779,7 +799,7 @@ async fn the_lowest_offset_error_is_the_one_a_split_region_raises() {
 
     let failing = FailsOutOfOrder { inner: Arc::clone(&source), fail_at: data_offset };
     let options = ScanOptions {
-        chunk_size_bytes: 64,
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
         parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
@@ -820,7 +840,8 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     let size = source.size().await.unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
 
-    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let eager =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
     let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
     assert!(first_block_end < size, "sanity: there is a file left after the first block");
 
@@ -831,7 +852,7 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
         cancel: Arc::clone(&cancel),
     };
     let options = ScanOptions {
-        chunk_size_bytes: 1,
+        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
@@ -886,7 +907,8 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
     let size = source.size().await.unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
 
-    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let eager =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
     let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
 
     let cancel = Arc::new(Cancellation::new());
@@ -896,7 +918,7 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
         cancel: Arc::clone(&cancel),
     };
     let options = ScanOptions {
-        chunk_size_bytes: 1,
+        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
@@ -949,7 +971,8 @@ async fn a_dropped_read_inside_the_prepass_banks_and_writes_nothing() {
     let cache_path = cache::colocated_path(&dump);
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache_path.clone());
-    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let eager =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
 
     // Every read drops, so the first one the prepass makes is the interrupt.
     let cancel = Arc::new(Cancellation::new());
@@ -1008,7 +1031,7 @@ async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
     let dropping =
         DropsPast { inner: Arc::clone(&source), trip: second, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
-        chunk_size_bytes: 1,
+        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
@@ -1053,7 +1076,7 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     let tripping =
         CancelsPast { inner: Arc::clone(&source), trip: second, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
-        chunk_size_bytes: 1,
+        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
@@ -1212,13 +1235,14 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
-    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let eager =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
     let trip = eager.blocks().nth(1).expect("the fixture has two blocks").end_offset;
 
     let cancel = Arc::new(Cancellation::new());
     let tripping = CancelsPast { inner: Arc::clone(&source), trip, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
-        chunk_size_bytes: 1,
+        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
@@ -1266,7 +1290,8 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(dump));
 
-    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let eager =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
     let end = eager
         .blocks_with_database()
         .find(|(database, _)| *database == Some(second))
@@ -1278,7 +1303,7 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
     let tripping =
         CancelsPast { inner: Arc::clone(&source), trip: end - 1, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
-        chunk_size_bytes: 1,
+        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };

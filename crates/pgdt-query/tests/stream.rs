@@ -4,9 +4,9 @@
 use arrow::datatypes::DataType;
 use futures::StreamExt;
 use pgdt_codec::{ColumnResolution, SchemaMode};
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{CacheLoad, CacheMode};
-use pgdt_io::LocalFileSource;
+use pgdt_dump::{ReadOptions, ScanOptions};
+use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_query::PredicateOp;
 use pgdt_query::{BlockingTableIter, QueryOptions, table_stream};
 
@@ -457,7 +457,10 @@ async fn partition_root_is_recorded_only_on_marked_blocks() {
     for version in [13, 16, 18] {
         let path = partitions_fixture(version, "default");
         let source = LocalFileSource::open(&path).unwrap();
-        let index = pgdt_mapping::build_index(&source, &ScanOptions::default()).await.unwrap();
+        let index =
+            pgdt_mapping::build_index(&source, ReadOptions::default(), Parallelism::default())
+                .await
+                .unwrap();
 
         let marked: Vec<(&str, &str)> = index
             .blocks()
@@ -556,7 +559,10 @@ async fn notes_rows(
     let mut stream = table_stream(
         &source,
         "public.notes",
-        ScanOptions { chunk_size_bytes: chunk_size, ..ScanOptions::default() },
+        ScanOptions {
+            read: ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() },
+            ..ScanOptions::default()
+        },
         options,
         None,
         CacheMode::DISABLED,
@@ -635,7 +641,6 @@ async fn one_table(
     table: &str,
     options: QueryOptions,
 ) -> pgdt_core::Result<Vec<NamedRows>> {
-    use pgdt_io::Parallelism;
     use pgdt_query::table_stream_partitions;
 
     // Past the first block, which would otherwise settle an unmarked table.

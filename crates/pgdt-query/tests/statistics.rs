@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use bytes::Bytes;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
 use pgdt_mapping::statistics::{
     BLOCK_MAX_ROW_GROUPS, GatherOptions, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
@@ -551,7 +551,10 @@ async fn a_gathering_scan_is_the_serial_scan_whatever_the_worker_count() {
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let serial = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let serial_index = gathered_with(&dump, &serial, &GatherOptions::default(), &wanted).await;
     for jobs in [2, 4, 8] {
         let parallel = ScanOptions {
@@ -1268,8 +1271,8 @@ async fn a_block_breaking_a_stated_maximum_is_reread_at_the_size_it_predicts() {
         assert_eq!((&exact.groups, &exact.columns), (&held.groups, &held.columns), "{table}");
     }
     let parallel = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 1 << 16, ..ReadOptions::default() },
         parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
-        chunk_size_bytes: 1 << 16,
         ..ScanOptions::default()
     };
     let split = gathered_with(&dump, &parallel, &GatherOptions::default(), &bounded).await;
@@ -1330,7 +1333,10 @@ async fn a_backfill_the_leader_splits_is_the_serial_scan() {
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let serial = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let reference = gathered_with(&dump, &serial, &GatherOptions::default(), &wanted).await;
     for jobs in [2, 4, 8] {
         let _ = std::fs::remove_file(cache::colocated_path(&dump));
@@ -1399,7 +1405,10 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
         other => panic!("{at}: expected the parse to refuse `70000`, got {other:?}"),
     };
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let serial = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     refused(
         map_file(
@@ -1503,7 +1512,10 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let serial = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let ignoring = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Ignore,
         ..GatherOptions::default()
@@ -1778,7 +1790,11 @@ fn reading(jobs: usize) -> ScanOptions {
     } else {
         ScanOptions::default().parallelism
     };
-    ScanOptions { chunk_size_bytes: 64, parallelism, ..ScanOptions::default() }
+    ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        parallelism,
+        ..ScanOptions::default()
+    }
 }
 
 /// `GatherOptions` reading a refused field under `invalid`.
@@ -2149,7 +2165,10 @@ async fn a_parse_fails_where_an_input_function_refuses_and_not_where_it_reads() 
         std::fs::write(&dump, text).unwrap();
     };
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let serial = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     for (at, [column, declared_type, _, _, refused]) in columns.iter().enumerate() {
         dump_with(Some(at));
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
@@ -2209,7 +2228,10 @@ async fn a_parse_fails_at_an_undeclared_label_only_where_the_labels_are_exact() 
         std::fs::write(&dump, text).unwrap();
     };
     let wanted = request(StatisticsSelection::DATA, 64);
-    let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let serial = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let exact: [&[&str]; 2] = [
         &[declared],
         &[
@@ -2267,7 +2289,10 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
     const CAP: usize = 2;
     let unstated = StatisticsRequest::DATA;
     let stated = request(StatisticsSelection::DATA, BASE);
-    let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let serial = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let (mut blocks, mut merged) = (0, 0);
     for fixture in common::all_fixtures() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&fixture).unwrap());
@@ -2378,7 +2403,10 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
     const MIN_ROWS: u64 = 3;
     let unstated = StatisticsRequest::DATA;
     let stated = request(StatisticsSelection::DATA, BASE);
-    let serial = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let serial = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let (mut blocks, mut coarsened) = (0, 0);
     for fixture in common::all_fixtures() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&fixture).unwrap());
@@ -2618,8 +2646,8 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
         let scan = ScanOptions {
+            read: ReadOptions { chunk_size_bytes: 4096, ..ReadOptions::default() },
             parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            chunk_size_bytes: 4096,
             ..ScanOptions::default()
         };
         let tight = GatherOptions {

@@ -86,7 +86,7 @@ pub enum RetainedUnit {
 /// `docs/design/decisions.md`, "D8").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PartitionRead {
-    /// `ScanOptions::chunk_size_bytes` at a time, repeating until the piece is
+    /// `ReadOptions::chunk_size_bytes` at a time, repeating until the piece is
     /// consumed. A plain file's answer, and **the default, for the reason
     /// [`RetainedUnit::ReadChunk`] is one**: a chunk-sized read is the
     /// announced length, so [`BufferPool::keeps`](crate::source::pool::BufferPool::keeps) pools every buffer a worker

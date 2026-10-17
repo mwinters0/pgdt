@@ -6,7 +6,7 @@
 //! path end to end, the same evidence `tests/preamble.rs` pins the DDL
 //! grammar against.
 
-use pgdt_io::ByteRangeSource;
+use pgdt_io::{ByteRangeSource, Parallelism};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use arrow::datatypes::{DataType, Field, Fields};
 use pgdt_codec::UnrepresentableMode;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnResolution, SchemaMode, resolve_columns};
-use pgdt_dump::ScanOptions;
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::build_index;
 use pgdt_model::{DumpMetadata, TableName};
@@ -25,7 +25,7 @@ use common::{all_fixtures, multidb_fixture, types_fixture};
 
 async fn metadata(path: &Path) -> DumpMetadata {
     let source = LocalFileSource::open(path).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     index.metadata.expect("build_index always populates metadata")
 }
 
@@ -731,7 +731,8 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
     let mut witnesses: BTreeMap<&'static str, String> = BTreeMap::new();
     for path in all_fixtures() {
         let source = LocalFileSource::open(&path).unwrap();
-        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+        let index =
+            build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
         for (database, block) in index.blocks_with_database() {
             if block.header.columns.is_empty() {
                 continue;

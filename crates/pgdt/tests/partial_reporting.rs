@@ -18,8 +18,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use pgdt_dump::cache::OVERWRITE_WAYS_OUT;
-use pgdt_dump::{ScanOptions, cache};
-use pgdt_io::LocalFileSource;
+use pgdt_dump::{ReadOptions, cache};
+use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::build_index;
 use pgdt_model::CACHE_FORMAT_VERSION;
 use pgdt_model::{DumpIndex, DumpMetadata, Span, SpanBody};
@@ -43,7 +43,7 @@ async fn write_truncated_cache(
 ) -> (PathBuf, DumpIndex) {
     let source = LocalFileSource::open(dump).unwrap();
     let size = std::fs::metadata(dump).unwrap().len();
-    let full = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let full = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
 
     // Clamp the last kept span to the frontier, the way `Builder::snapshot`
     // closes spans at a `CopyEnd` watermark. A complete scan's spans are
@@ -88,7 +88,7 @@ async fn saved(path: &Path, source: &LocalFileSource, index: &DumpIndex) {
 /// a real resumable watermark rather than an arbitrary byte.
 async fn block_frontier(dump: &Path, n: usize) -> u64 {
     let source = LocalFileSource::open(dump).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     index.blocks().nth(n).expect("the fixture has this many blocks").end_offset
 }
 
@@ -762,7 +762,7 @@ async fn the_json_export_carries_coverage_as_components() {
 async fn a_later_databases_blocks_report_metadata_not_scanned() {
     let (_dir, dump) = common::multidb_fixture(16);
     let source = LocalFileSource::open(&dump).unwrap();
-    let full = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let full = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
 
     // Stop just past the first block of the *second* database, keeping only
     // the first database's DDL.

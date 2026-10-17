@@ -91,7 +91,7 @@ pub trait ByteRangeSource: Send + Sync {
         true
     }
     /// The read length this caller is about to ask for over and over — a
-    /// read loop's `ScanOptions::chunk_size_bytes`, announced once before the loop
+    /// read loop's `ReadOptions::chunk_size_bytes`, announced once before the loop
     /// starts.
     ///
     /// **Advisory, and it defaults to doing nothing.** One-off-ness is a
@@ -357,7 +357,7 @@ pub enum WaitPolicy {
 /// Shipped, not probed (`docs/design/decisions.md`, "D10"): the default that
 /// is worst-case-best across the device classes measured
 /// (`docs/design/measurements.md`, "What the read chunk size is worth").
-/// Public and named because it is what [`pgdt_dump::ScanOptions::chunk_size_bytes`] is
+/// Public and named because it is what [`pgdt_dump::ReadOptions::chunk_size_bytes`] is
 /// compared against and what callers scale from.
 ///
 /// **Raising it costs memory, not pooling.** Every read loop announces the

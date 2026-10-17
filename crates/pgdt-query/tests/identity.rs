@@ -23,7 +23,7 @@ use pgdt_core::{Error, Result};
 use pgdt_dump::cache::{
     CacheMode, CacheStatus, LoadedCache, OriginMatch, SourceWatch, StrictIdentity, WeakIdentity,
 };
-use pgdt_dump::{ScanOptions, cache, preamble_only};
+use pgdt_dump::{ReadOptions, ScanOptions, cache, preamble_only};
 use pgdt_io::{
     ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism,
     Partitioning,
@@ -285,7 +285,7 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
     // `preamble_only` over that same complete cache saves nothing either.
     let shifting = Shifting::new(dump.clone(), 1);
     let opened = CacheMode::enabled(&path).open_source(Arc::new(shifting)).await.unwrap();
-    let err = preamble_only(opened, &ScanOptions::default())
+    let err = preamble_only(opened, ReadOptions::default(), Parallelism::default())
         .await
         .expect_err("a preamble-only run over a complete cache is checked too");
     assert!(matches!(err, Error::SourceChangedWhileRead { .. }), "got {err:?}");
@@ -338,10 +338,9 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
     let cancel = Arc::new(Cancellation::new());
     let shifting = Shifting::dropping(dump, 1, data_offset, Arc::clone(&cancel));
     let options = ScanOptions {
-        chunk_size_bytes: 64,
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
         cancel: Some(cancel),
         parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
-        ..ScanOptions::default()
     };
     let err = map_file(
         CacheMode::DISABLED.open_source(Arc::new(shifting)).await.unwrap(),
@@ -373,7 +372,10 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
     }
     file.extend_from_slice(b"\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &file).unwrap();
-    let options = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let options = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let changed = |err: &Error| matches!(err, Error::SourceChangedWhileRead { .. });
     let short =
         |err: &Error| matches!(err, Error::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof);
@@ -403,7 +405,7 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
 
     let cut_short = Arc::new(Shifting::cut(dump.clone(), 1, 10));
     let opened = CacheMode::DISABLED.open_source(cut_short).await.unwrap();
-    let err = preamble_only(opened, &options).await.unwrap_err();
+    let err = preamble_only(opened, options.read, options.parallelism).await.unwrap_err();
     assert!(changed(&err), "the preamble names the change: {err:?}");
 
     // A warm query: the map is complete, so every read is the replay's. The

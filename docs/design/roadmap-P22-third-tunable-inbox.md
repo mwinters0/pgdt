@@ -58,7 +58,7 @@ gap.
 
 **Fact.** `PlanNoteKind::ParallelismBudgetLimited` no longer offers "raise the
 memory budget to get more" alone. On a plain source both arms name the
-**announced read chunk** (`crate::scan::ScanOptions::chunk_size_bytes`) as the
+**announced read chunk** (`pgdt_dump::ReadOptions::chunk_size_bytes`) as the
 lever it actually has — a source cutting by it sizes the decode term from it,
 and it floors the span term unless the span was stated below it; the span arm
 names it only where `PlanNote::levers` lists it.

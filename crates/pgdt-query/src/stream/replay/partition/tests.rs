@@ -81,7 +81,7 @@ fn a_stated_span_is_spent_down_to_seat_the_readers_and_no_further() {
 /// **The floor is the chunk this caller announced, not the shipped one**
 /// (`docs/design/decisions.md`, "D84"): the pin is the span rounded out to
 /// what the source retains, and what it retains is what the replay loop
-/// asked it to read in (`pgdt_dump::ScanOptions::chunk_size_bytes`).
+/// asked it to read in (`pgdt_dump::ReadOptions::chunk_size_bytes`).
 ///
 /// The shape is `--chunk-size 64k` on a plain source, whose per-worker
 /// footprint is eight of whatever chunk it was told to read

@@ -64,7 +64,7 @@ pub struct QueryOptions {
     /// are bought at the cost of batch size rather than declined
     /// (`docs/design/decisions.md`, "D84"). The derivation only moves down,
     /// and never narrows past **one announced read chunk**
-    /// ([`pgdt_dump::ScanOptions::chunk_size_bytes`], which is what a
+    /// ([`pgdt_dump::ReadOptions::chunk_size_bytes`], which is what a
     /// chunk-shaped source retains) — a span stated below that floor is left
     /// where it was, the floor bounding the derivation rather than the
     /// result; a serial [`crate::table_stream`] does not derive at all.

@@ -15,7 +15,7 @@ use datafusion::catalog::Session;
 use datafusion::common::config::{ConfigEntry, ConfigExtension, ExtensionOptions};
 use datafusion::common::{Result, plan_err};
 use datafusion::prelude::SessionContext;
-use pgdt_dump::{SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions};
+use pgdt_dump::{ReadOptions, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions};
 use pgdt_io::{Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES};
 use pgdt_query::RowEvaluation;
 
@@ -56,10 +56,10 @@ pub struct PgDumpSettings {
     /// overrides. Unstated, or set to `0`, the budget's own.
     pub memory: Option<u64>,
     /// `pgdump.chunk_size`: bytes asked of the source per read
-    /// ([`ScanOptions::chunk_size_bytes`]).
+    /// ([`ReadOptions::chunk_size_bytes`]).
     pub chunk_size: usize,
     /// `pgdump.max_line_bytes`: the longest line a scan buffers before
-    /// refusing the dump ([`ScanOptions::max_line_bytes`]).
+    /// refusing the dump ([`ReadOptions::max_line_bytes`]).
     pub max_line_bytes: usize,
     /// `pgdump.dynamic_filter_rows`: whether a scan drops each row a join's,
     /// a TopK's or an aggregate's dynamic filter rejects before decoding it,
@@ -89,8 +89,10 @@ impl PgDumpSettings {
     /// The [`ScanOptions`] a scan planned under these settings reads with.
     pub(crate) fn scan_options(&self, parallelism: Parallelism) -> ScanOptions {
         ScanOptions {
-            chunk_size_bytes: self.chunk_size,
-            max_line_bytes: self.max_line_bytes,
+            read: ReadOptions {
+                chunk_size_bytes: self.chunk_size,
+                max_line_bytes: self.max_line_bytes,
+            },
             parallelism,
             ..ScanOptions::default()
         }
@@ -137,7 +139,7 @@ fn boolean(key: &str, value: &str) -> Result<bool> {
     }
 }
 
-/// A byte count as the `usize` a [`ScanOptions`] field holds.
+/// A byte count as the `usize` a [`ReadOptions`] field holds.
 fn usize_bytes(key: &str, value: &str, zero: &str) -> Result<usize> {
     let n = bytes(key, value, zero)?;
     match usize::try_from(n) {
@@ -292,9 +294,7 @@ mod tests {
     fn the_defaults_are_the_library_s() {
         let options =
             PgDumpSettings::default().scan_options(Parallelism::Serial { memory_bytes: None });
-        let library = ScanOptions::default();
-        assert_eq!(options.chunk_size_bytes, library.chunk_size_bytes);
-        assert_eq!(options.max_line_bytes, library.max_line_bytes);
+        assert_eq!(options.read, ReadOptions::default());
         assert_eq!(PgDumpSettings::default().memory, None);
         assert_eq!(PgDumpSettings::default().dynamic_filter_rows, RowEvaluation::Off);
     }

@@ -521,7 +521,7 @@ async fn observe_rows(
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<Option<(CopyEnd, BlockCensus)>> {
     let scanner = CopyScanner::resume(block.data_offset, Some((block.header_offset, 0)));
-    let mut chunked = ChunkedScanner::new(scanner, size, scan_options);
+    let mut chunked = ChunkedScanner::new(scanner, size, scan_options.read);
     let mut census = BlockCensus::new(plan.width);
     loop {
         if scan_options.cancelled() {

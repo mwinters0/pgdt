@@ -43,7 +43,7 @@ pub(crate) const POOL_DEPTH: usize = 4;
 /// announced as a read size.
 ///
 /// The read path's steady state is chunk-sized — [`crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES`],
-/// tunable through `ScanOptions::chunk_size_bytes`. What can be far larger is
+/// tunable through `ReadOptions::chunk_size_bytes`. What can be far larger is
 /// `pgdt_dump::attach_text`'s coalesced span read, which happens once per map
 /// and never again; holding one of those for the rest of a process would trade
 /// what a scan holds resident (`peak-rss`) for an allocation nothing asks for

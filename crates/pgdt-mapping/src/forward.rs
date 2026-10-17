@@ -211,7 +211,7 @@ pub async fn map_forward(
     tracing::info!(
         bytes = size,
         resumed_from = index.scanned_through,
-        chunk_size = scan_options.chunk_size_bytes,
+        chunk_size = scan_options.read.chunk_size_bytes,
         jobs = scan_options.parallelism.jobs(),
         memory_bytes = %memory_budget_display(scan_options.parallelism),
         "scan started",
@@ -239,7 +239,8 @@ pub async fn map_forward(
     // leader's fused worker grants it for itself and restores this policy on
     // the way out ([`scan_region`]).
     announce_read_loop(source, scan_options, scan_options.parallelism);
-    let mut chunked = ChunkedScanner::new(CopyScanner::resume(seg_start, None), size, scan_options);
+    let mut chunked =
+        ChunkedScanner::new(CopyScanner::resume(seg_start, None), size, scan_options.read);
     let mut throttle = SaveThrottle::new();
     // Whether the open `COPY` block is one `target_settled` would count — see
     // the `CopyEnd` arm, its only reader.

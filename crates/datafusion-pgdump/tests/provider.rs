@@ -17,10 +17,10 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{Error, PgDump, PgDumpOptions, ScanBudget, register_dump};
 use futures::StreamExt;
 use pgdt_codec::{SchemaMode, compare::ComparisonSemantics};
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy, sweep_request, ungathered};
-use pgdt_io::{ByteRangeSource, LocalFileSource};
+use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_model::{DiagnosticKind, Finding, TableName};
@@ -219,7 +219,8 @@ async fn only_a_complete_cache_opens() {
     let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
     pgdt_dump::preamble_only(
         cache.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
+        ReadOptions::default(),
+        Parallelism::default(),
     )
     .await
     .unwrap();

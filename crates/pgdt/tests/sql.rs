@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
-use pgdt_dump::ScanOptions;
-use pgdt_io::LocalFileSource;
+use pgdt_dump::ReadOptions;
+use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_query::{QueryOptions, column_divergences};
 
@@ -64,7 +64,9 @@ async fn a_dump_answers_through_both_registrations() {
 /// per-column divergences rather than the provider's finding.
 async fn uncollated(dump: &Path) -> (usize, usize) {
     let source = LocalFileSource::open(dump).unwrap();
-    let index = pgdt_mapping::build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = pgdt_mapping::build_index(&source, ReadOptions::default(), Parallelism::default())
+        .await
+        .unwrap();
     let options =
         QueryOptions { semantics: ComparisonSemantics::DataFusion, ..QueryOptions::default() };
     let (mut columns, mut tables) = (0, 0);

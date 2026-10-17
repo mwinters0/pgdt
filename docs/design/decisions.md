@@ -184,8 +184,8 @@ Evidence: `xz-decode-scaling`, `parallel-scan-throughput`, `scan-throughput-*`.
 
 ### D26 Cancellation is per chunk or leader window, polled by the mapping passes alone
 A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan and back-fill keep a
-partial result. The preamble scan polls no flag, a stop there reading as the first `COPY` header and caching as
-complete, and a read the signal drops fails it unbanked. `Cancellation` carries a signal beside the polled bit, so a waiting reader drops its request. **The shape follows
+partial result. The preamble scan takes no flag (`ReadOptions`), a stop there reading as the first `COPY` header and caching as
+complete, and a read the signal its caller announces drops fails it unbanked. `Cancellation` carries a signal beside the polled bit, so a waiting reader drops its request. **The shape follows
 the command**: `query` errors; `parse` interrupts, at byte 0 too, then dies by the signal, and a second one, mid-save too, or
 one in the listing, ends it in the handler. As init (RT19) `pgdt` exits 128+n on every signal ending them elsewhere
 but a fault's, left to the kernel, and what `parse`'s guard or the REPL's `ctrl_c` catches. Rejected: polling alone; keying
@@ -326,7 +326,7 @@ compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
 
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
 `max_source_span` is a ceiling: `plan_partitions` charges `(budget − charge.at(jobs)) / jobs`, floored at the caller's
-announced `ScanOptions::chunk_size_bytes` — one read chunk, below which the span costs rows and bounds nothing the
+announced `ReadOptions::chunk_size_bytes` — one read chunk, below which the span costs rows and bounds nothing the
 retained unit does not — and `plan_replay` writes it onto the plan the sub-streams share. A plain source stays at most `DEFAULT_MEMORY_BUDGET` whatever
 is stated (D83, `KD32`), which the shipped span spent whole, so `--jobs` bought no readers. Rejected: a third flag
 (`roadmap.md`, "Two tunables fit pgdt to hardware"); pricing a plain reader (`KD25`); a *larger* floor, a performance

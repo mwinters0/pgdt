@@ -21,8 +21,8 @@ use std::path::Path;
 use std::process::Command;
 
 use futures::StreamExt;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism, XzSource};
 use pgdt_model::Finding;
 use pgdt_query::{
@@ -56,10 +56,10 @@ async fn serial_rows(source: &dyn ByteRangeSource, table: &str, options: QueryOp
 /// constant rather than the arithmetic that divides by it. The read size is
 /// announced first because the answer scales with it, exactly as the mapping
 /// pass announces it before the plan is made — and it is the caller's own
-/// `ScanOptions::chunk_size_bytes`, for the reason the span's floor is
+/// `ReadOptions::chunk_size_bytes`, for the reason the span's floor is
 /// (`docs/design/decisions.md`, "D84").
 fn partition_unit(source: &LocalFileSource, scan: &ScanOptions) -> u64 {
-    source.hint_read_size(scan.chunk_size_bytes);
+    source.hint_read_size(scan.read.chunk_size_bytes);
     source.partitions(0..1).partition_bytes()
 }
 
@@ -196,7 +196,7 @@ async fn serial_parallelism_is_exactly_one_sub_stream() {
 async fn a_budget_bound_worker_count_announces_why() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let scan = ScanOptions::default();
-    let floor = scan.chunk_size_bytes as u64;
+    let floor = scan.read.chunk_size_bytes as u64;
     let options = QueryOptions {
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..Default::default()
@@ -656,7 +656,7 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
     // read off the source rather than restated here, so this stays a test of
     // the accounting when the terms of that charge move. It is announced the
     // chunk size the run will announce, that being one of the terms.
-    xz.hint_read_size(ScanOptions::default().chunk_size_bytes);
+    xz.hint_read_size(ScanOptions::default().read.chunk_size_bytes);
     let reader = xz.block_decode_bytes().expect("a compressed source states its block-path cost");
     let budget = 4 * reader;
     let options =
@@ -897,7 +897,7 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
     // One partition-unit read plus a floored span pinned makes a budget of
     // four such units afford three workers however many jobs are asked for.
     let scan = ScanOptions::default();
-    let floor = scan.chunk_size_bytes as u64;
+    let floor = scan.read.chunk_size_bytes as u64;
     let chunk = partition_unit(&source, &scan);
     let planned = (4 * chunk / (chunk + floor)) as usize;
     assert_eq!(planned, 3, "eight jobs at this budget plan down to three");
@@ -951,7 +951,7 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
 /// **The span's floor is the chunk this query announced, not the shipped
 /// default** (`docs/design/decisions.md`, "D84"): what a held batch pins is its
 /// span rounded out to the unit the source retains, and that unit is the read
-/// size the replay loop announces (`ScanOptions::chunk_size_bytes`).
+/// size the replay loop announces (`ReadOptions::chunk_size_bytes`).
 ///
 /// The shape is the test above at a sixteenth of the shipped chunk and at a
 /// budget of exactly what the readers asked for cost, so the room left for a
@@ -966,9 +966,12 @@ async fn the_span_floors_at_the_announced_chunk_not_the_shipped_one() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
 
-    let scan = ScanOptions { chunk_size_bytes: 64 << 10, ..ScanOptions::default() };
-    let floor = scan.chunk_size_bytes as u64;
-    let shipped_floor = ScanOptions::default().chunk_size_bytes as u64;
+    let scan = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64 << 10, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
+    let floor = scan.read.chunk_size_bytes as u64;
+    let shipped_floor = ScanOptions::default().read.chunk_size_bytes as u64;
     let unit = partition_unit(&source, &scan);
     assert!(unit < shipped_floor, "the partition follows the announced chunk down: {unit}");
     let planned = (8 * unit / (unit + floor)) as usize;
@@ -1144,7 +1147,8 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
     assert!(compared > 1);
 
     // A map claiming less than the whole file: nothing is scanned to finish it.
-    let mut partial = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let mut partial =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
     partial.scanned_through = 1;
     let table = TableName { database: None, schema: Some("public".into()), table: "spread".into() };
     let refused = TablePartitions::plan(

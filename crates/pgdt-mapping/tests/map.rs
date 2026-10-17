@@ -5,8 +5,8 @@
 
 use std::path::Path;
 
-use pgdt_dump::{ScanOptions, check_tiling, dump_metadata_from_spans};
-use pgdt_io::LocalFileSource;
+use pgdt_dump::{ReadOptions, check_tiling, dump_metadata_from_spans};
+use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::{build_index, build_map};
 use pgdt_model::DiagnosticKind;
 use pgdt_model::{SpanBody, TilingIssue};
@@ -15,7 +15,7 @@ use pgdt_fixtures::{all_fixtures, edge_cases, edge_cases_fixture, objects_fixtur
 
 async fn map_of(path: &Path) -> (Vec<pgdt_model::Span>, u64) {
     let source = LocalFileSource::open(path).unwrap();
-    let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
+    let spans = build_map(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     use pgdt_io::ByteRangeSource;
     let size = source.size().await.unwrap();
     (spans, size)
@@ -49,7 +49,8 @@ async fn every_fixture_tiles_exactly() {
 async fn build_index_spans_match_build_map_exactly() {
     for path in all_fixtures().into_iter().chain(std::iter::once(edge_cases())) {
         let source = LocalFileSource::open(&path).unwrap();
-        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+        let index =
+            build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
         let (spans, _size) = map_of(&path).await;
         assert_eq!(index.spans, spans, "{}", path.display());
     }
@@ -64,7 +65,8 @@ async fn build_index_spans_match_build_map_exactly() {
 async fn metadata_from_spans_is_a_pure_function_of_the_spans() {
     for path in all_fixtures().into_iter().chain(std::iter::once(edge_cases())) {
         let source = LocalFileSource::open(&path).unwrap();
-        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+        let index =
+            build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
         let from_spans = dump_metadata_from_spans(&index.spans);
         assert_eq!(from_spans, index.metadata.unwrap(), "{}", path.display());
     }
@@ -474,7 +476,7 @@ async fn span_text_includes_dollar_quoted_bodies_events_never_surface() {
     let path = objects_fixture(16, "default");
     let source = LocalFileSource::open(&path).unwrap();
     let raw = std::fs::read_to_string(&path).unwrap();
-    let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
+    let spans = build_map(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
 
     let with_body =
         spans.iter().filter(|s| s.text.as_ref().is_some_and(|t| t.text.contains("$$"))).count();
@@ -501,7 +503,8 @@ async fn span_text_includes_dollar_quoted_bodies_events_never_surface() {
 async fn data_and_unscanned_spans_store_no_text() {
     for path in all_fixtures() {
         let source = LocalFileSource::open(&path).unwrap();
-        let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
+        let spans =
+            build_map(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
         for span in &spans {
             let stores = !matches!(span.body, SpanBody::Data(_) | SpanBody::Unscanned);
             assert_eq!(
@@ -632,7 +635,7 @@ async fn no_owner_fixture_parses_every_toc_header_with_no_owner() {
 async fn build_index_reports_toc_coverage_for_a_real_dump() {
     let path = objects_fixture(18, "default");
     let source = LocalFileSource::open(&path).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     let coverage = index
         .diagnostics
         .iter()
@@ -659,7 +662,7 @@ async fn build_index_reports_toc_coverage_for_a_real_dump() {
 #[tokio::test]
 async fn build_index_reports_zero_toc_coverage_for_a_header_less_dump() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     let coverage = index
         .diagnostics
         .iter()
@@ -685,7 +688,7 @@ async fn build_index_reports_zero_toc_coverage_for_a_header_less_dump() {
 async fn build_index_records_referenced_roles_and_tablespaces() {
     let path = objects_fixture(16, "default");
     let source = LocalFileSource::open(&path).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     assert!(index.roles.contains("postgres"));
     assert!(index.roles.contains("fixture_reader"));
     assert!(!index.roles.iter().any(|r| r.eq_ignore_ascii_case("public")));
@@ -704,7 +707,7 @@ async fn a_role_named_public_and_a_tablespace_named_pg_default_are_kept() {
     let path = dir.path().join("kd91.sql");
     std::fs::write(&path, PUBLIC_ROLE_DUMP).unwrap();
     let source = LocalFileSource::open(&path).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     let roles: Vec<&str> = index.roles.iter().map(String::as_str).collect();
     assert_eq!(roles, ["PUBLIC", "postgres"]);
     assert_eq!(index.tablespaces, ["PG_DEFAULT".to_string()].into_iter().collect());
@@ -715,7 +718,7 @@ async fn a_role_named_public_and_a_tablespace_named_pg_default_are_kept() {
     without_role = without_role.replace("TO \"PUBLIC\";", "TO fixture_reader;");
     std::fs::write(&path, without_role).unwrap();
     let source = LocalFileSource::open(&path).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     let roles: Vec<&str> = index.roles.iter().map(String::as_str).collect();
     assert_eq!(roles, ["fixture_reader", "postgres"]);
 }
@@ -855,7 +858,8 @@ async fn a_dollar_outside_a_body_hides_no_block_on_any_routine_version() {
                 .filter(|line| line.starts_with("COPY ") && line.ends_with(" FROM stdin;"))
                 .count();
             let source = LocalFileSource::open(&path).unwrap();
-            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+            let index =
+                build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
             assert_eq!(index.blocks().count(), headers, "pg_dump {version} {flavor}");
             let rows: Vec<u64> =
                 index.blocks_for("objects.price$$list").map(|b| b.row_count).collect();

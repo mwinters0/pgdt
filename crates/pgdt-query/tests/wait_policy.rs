@@ -26,8 +26,8 @@ use std::time::SystemTime;
 
 use bytes::Bytes;
 use futures::StreamExt;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism, WaitPolicy};
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_mapping::{build_index, map_file};
@@ -111,7 +111,7 @@ impl ByteRangeSource for RecordingSource {
 #[tokio::test]
 async fn a_structural_scan_grants_no_wait() {
     let source = RecordingSource::wrap(LocalFileSource::open(edge_cases()).unwrap());
-    build_index(&source, &ScanOptions::default()).await.unwrap();
+    build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     assert_eq!(source.policies(), vec![WaitPolicy::NeverWait]);
 }
 
@@ -140,7 +140,7 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
     std::fs::copy(edge_cases(), &dump).unwrap();
     let source = Arc::new(RecordingSource::wrap(LocalFileSource::open(&dump).unwrap()));
     let options = ScanOptions {
-        chunk_size_bytes: 64,
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };

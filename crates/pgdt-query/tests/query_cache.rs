@@ -13,8 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bytes::Bytes;
 use futures::StreamExt;
 use pgdt_dump::cache::{CacheLoad, CacheMode};
-use pgdt_dump::{ScanOptions, cache, check_tiling};
-use pgdt_io::{ByteRangeSource, LocalFileSource};
+use pgdt_dump::{ReadOptions, ScanOptions, cache, check_tiling};
+use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::build_index;
 use pgdt_query::{QueryOptions, ScanExtent, table_stream};
 
@@ -130,7 +130,8 @@ async fn non_matching_cached_blocks_cost_zero_bytes() {
     let cache_path = cache::colocated_path(&dump);
 
     let seed_source = LocalFileSource::open(&dump).unwrap();
-    let index = build_index(&seed_source, &ScanOptions::default()).await.unwrap();
+    let index =
+        build_index(&seed_source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     pgdt_dump::internal::save(&cache_path, &seed_source, &index).await.unwrap();
     let empty_table_block =
         index.blocks_for("public.empty_table").next().expect("empty_table was indexed");
@@ -157,7 +158,8 @@ async fn replay_matches_a_fresh_scan() {
     let cache_path = cache::colocated_path(&dump);
 
     let seed_source = LocalFileSource::open(&dump).unwrap();
-    let index = build_index(&seed_source, &ScanOptions::default()).await.unwrap();
+    let index =
+        build_index(&seed_source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     pgdt_dump::internal::save(&cache_path, &seed_source, &index).await.unwrap();
 
     let source = LocalFileSource::open(&dump).unwrap();
@@ -524,7 +526,8 @@ async fn a_query_built_index_tiles_in_every_cache_state() {
             };
             assert_eq!(check_tiling(&full.spans, size), vec![], "{label}: full");
             assert_eq!(full.scanned_through, size, "{label}");
-            let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+            let eager =
+                build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
             // Span for span, array-shape census included: every mapping pass
             // censuses, so the three queries that built this index agree
             // with a single eager scan in every field

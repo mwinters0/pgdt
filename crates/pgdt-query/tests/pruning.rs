@@ -18,8 +18,8 @@ use arrow::compute::concat_batches;
 use futures::StreamExt;
 use pgdt_codec::UnrepresentableMode;
 use pgdt_codec::compare::ComparisonSemantics;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSizing};
@@ -1090,7 +1090,10 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
         starts: std::sync::Mutex::new(Vec::new()),
     };
     let cache = CacheMode::enabled(cache::colocated_path(&dump));
-    let scan = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let scan = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let assert_undeep = |what: &str| {
         let starts = std::mem::take(&mut *source.starts.lock().unwrap());
         assert!(!starts.is_empty(), "{what}: read nothing at all");
@@ -1214,7 +1217,10 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
         starts: std::sync::Mutex::new(Vec::new()),
     };
     let cache = CacheMode::enabled(cache::colocated_path(&dump));
-    let scan = ScanOptions { chunk_size_bytes: 64, ..ScanOptions::default() };
+    let scan = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let single = |column, op, value| Expr::Term(term(column, op, Some(value)));
 
     // A filter, its row count, and where its stop ends reading.
@@ -1292,7 +1298,7 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
                 }
                 Stop::Unreached | Stop::Unplanned => {
                     assert!(
-                        last + scan.chunk_size_bytes as u64 >= block.terminator_offset,
+                        last + scan.read.chunk_size_bytes as u64 >= block.terminator_offset,
                         "{what}: last read at {last}, the block ending at {}",
                         block.terminator_offset
                     );

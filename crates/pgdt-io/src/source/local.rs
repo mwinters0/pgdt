@@ -118,7 +118,7 @@ impl ByteRangeSource for LocalFileSource {
 
     /// **The pool's one non-size rule.** A read loop announcing its chunk size
     /// is what lets a buffer of that length be kept above [`POOL_MAX_BYTES`],
-    /// so a raised `ScanOptions::chunk_size_bytes` keeps its pooling instead of
+    /// so a raised `ReadOptions::chunk_size_bytes` keeps its pooling instead of
     /// paying a fresh `calloc` per chunk. The cost is bounded and is the
     /// caller's own number: [`BufferPool::slots`] buffers of the size it asked
     /// for.

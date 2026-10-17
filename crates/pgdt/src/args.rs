@@ -7,8 +7,8 @@ use std::str::FromStr;
 
 use clap::builder::{PossibleValue, StringValueParser, TypedValueParser};
 use clap::{Arg, Args, Command};
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{CacheMode, StrictIdentity};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::Origin;
 
 use crate::parallel::Resolved;
@@ -168,20 +168,28 @@ pub(crate) struct ReadFlags {
     pub(crate) max_line_bytes: Option<usize>,
 }
 
-/// The [`ScanOptions`] one scanning command runs under: the default, with
-/// `--chunk-size` and `--max-line-bytes` applied where they were given and the
-/// already-resolved arrangement ([`crate::parallel::Discovered::resolve`]).
+impl ReadFlags {
+    /// The [`ReadOptions`] these flags state: the default, with
+    /// `--chunk-size` and `--max-line-bytes` applied where they were given.
+    pub(crate) fn options(self) -> ReadOptions {
+        let default = ReadOptions::default();
+        ReadOptions {
+            chunk_size_bytes: self.chunk_size.unwrap_or(default.chunk_size_bytes),
+            max_line_bytes: self.max_line_bytes.unwrap_or(default.max_line_bytes),
+        }
+    }
+}
+
+/// The [`ScanOptions`] one mapping pass runs under: the read flags'
+/// [`ReadOptions`] and the already-resolved arrangement
+/// ([`crate::parallel::Discovered::resolve`]), with no cancellation, which
+/// `parse` adds.
 ///
 /// **Resolved once per command and passed in, not re-resolved here.** `query`
 /// passes its mapping pass's, its replay's going into [`pgdt_query::QueryOptions`]
 /// ([`crate::parallel::Discovered::resolve_query`]).
 pub(crate) fn scan_options(read: ReadFlags, parallel: &Resolved) -> ScanOptions {
-    ScanOptions {
-        chunk_size_bytes: read.chunk_size.unwrap_or(pgdt_io::SCAN_CHUNK_DEFAULT_SIZE_BYTES),
-        max_line_bytes: read.max_line_bytes.unwrap_or(pgdt_dump::SCAN_LINE_DEFAULT_MAX_BYTES),
-        parallelism: parallel.parallelism(),
-        ..ScanOptions::default()
-    }
+    ScanOptions { read: read.options(), parallelism: parallel.parallelism(), cancel: None }
 }
 
 #[cfg(test)]

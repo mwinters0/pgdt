@@ -9,9 +9,9 @@ use std::ops::ControlFlow;
 use crate::cache::{CacheMode, Held, Opened, SourceWatch};
 use crate::ddl::dump_metadata_from_spans;
 use crate::map::{Builder, attach_text, non_seekable_compression_diagnostic};
-use crate::scan::{Event, ScanOptions, scan};
+use crate::scan::{Event, ReadOptions, scan};
 use pgdt_core::Result;
-use pgdt_io::ByteRangeSource;
+use pgdt_io::{ByteRangeSource, Parallelism};
 use pgdt_model::{Diagnostic, DumpIndex, DumpMetadata, Span, SpanBody};
 
 /// Scan only far enough to recover the first database's preamble — up to (not
@@ -30,13 +30,19 @@ use pgdt_model::{Diagnostic, DumpIndex, DumpMetadata, Span, SpanBody};
 /// for a later scan to continue from — and whatever roles/tablespaces the
 /// preamble region referenced (`DumpIndex::roles`/`tablespaces`'s own
 /// partial-scan caveat applies).
+///
+/// **It takes no cancellation**, and a stop inside it would read as the first
+/// `COPY` header (`docs/design/decisions.md`, "D26"): a caller that has one
+/// announces it to the source first (`crate::internal::announce_cancellation`),
+/// so a read in flight is dropped and fails the prepass, which banks nothing.
 pub async fn scan_preamble(
     source: &dyn ByteRangeSource,
-    options: &ScanOptions,
+    read: ReadOptions,
+    parallelism: Parallelism,
 ) -> Result<(DumpMetadata, Vec<Span>, u64, BTreeSet<String>, BTreeSet<String>)> {
     let mut spans = Builder::new();
     let mut end = source.size().await?;
-    scan(source, options, |event| match event {
+    scan(source, read, parallelism, |event| match event {
         Event::CopyStart(start) => {
             // Not fed to the map builder: it would open a `Data` span this
             // scan never closes. The stop retreats to a pending TOC
@@ -99,12 +105,17 @@ pub async fn scan_preamble(
 /// Also returns whatever the open reported on the loaded index (e.g. a
 /// `CacheMtimeChanged` warning): answering with `DumpMetadata` alone rather
 /// than a whole `DumpIndex`, its diagnostics have nowhere else to go.
+///
+/// It reads in `read`'s chunks, announcing `parallelism` to the source, and
+/// nothing stops it from outside ([`scan_preamble`]).
 pub async fn preamble_only(
     opened: Opened,
-    options: &ScanOptions,
+    read: ReadOptions,
+    parallelism: Parallelism,
 ) -> Result<(DumpMetadata, Vec<Diagnostic>)> {
     let Opened { source, watch, cache, mode } = opened;
-    let answer = preamble_only_watched(source.as_ref(), options, &mode, cache, &watch).await;
+    let answer =
+        preamble_only_watched(source.as_ref(), read, parallelism, &mode, cache, &watch).await;
     watch.attribute(source.as_ref(), answer).await
 }
 
@@ -112,7 +123,8 @@ pub async fn preamble_only(
 /// failure.
 async fn preamble_only_watched(
     source: &dyn ByteRangeSource,
-    options: &ScanOptions,
+    read: ReadOptions,
+    parallelism: Parallelism,
     cache: &CacheMode,
     held: Held,
     watch: &SourceWatch,
@@ -130,7 +142,7 @@ async fn preamble_only_watched(
         .is_some_and(|db| db.preamble_complete);
     if !known {
         let (metadata, mut spans, preamble_end, roles, tablespaces) =
-            scan_preamble(source, options).await?;
+            scan_preamble(source, read, parallelism).await?;
         base_index.metadata = Some(metadata);
         base_index.roles.extend(roles);
         base_index.tablespaces.extend(tablespaces);

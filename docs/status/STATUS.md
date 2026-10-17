@@ -101,7 +101,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.5** pgdt-dump: `ChunkedScanner`, its four sites calling it; counted by `measure.py --count-pair HEAD~1` — all four loops read through it; the count resolves a rise on every row, which callgrind puts wholly in the slice's code, `ChunkEvents::next_event`'s test moving each event once more; no shape of the slice's code as clean recovers it, and it is accepted ([notes](../design/roadmap-P36.5-chunked-scanner-notes.md))
 - [x] **36.6** pgdt-dump: `CacheMode::open` opens an `Origin` — the cache decoded once, the source on the layer it settles, the watch, the judgement — answering `Held`; `CacheStatus` one `Loaded(LoadedCache)`; `OfflineCache` its own type, `CacheMode::Offline` and `Error::CacheModeMismatch` gone; `Disabled` the caller's to state; the free `load`, `save` and `load_offline` `internal`'s; `pgdt info` and `PgDump::open` open through it ([notes](../design/roadmap-P36.6-open-notes.md))
 - [x] **36.6.1** The mapping pass takes the open: `map_file` and `preamble_only` read the cache it decoded, and `pgdt parse` opens through it — both take an `Opened` whole, carrying its mode; `CacheMode::open_source` opens a source already in hand ([notes](../design/roadmap-P36.6.1-mapping-open-notes.md))
-- [ ] **36.6.2** `scan` and `preamble_only` take only the fields they read
+- [x] **36.6.2** `scan` and `preamble_only` take only the fields they read: a `ReadOptions` (the chunk and the line limit) and a `Parallelism`, `build_index` and `build_map` too, `ChunkedScanner::new` the `ReadOptions` alone; `ScanOptions` is a `ReadOptions` beside the parallelism and the cancellation, which the passes opening with the prepass announce before it ([notes](../design/roadmap-P36.6.2-read-options-notes.md))
 - [ ] **36.6.3** pgdt-dump: an uncheckable source refused where a read begins, not by `SourceWatch::open` — the mapping pass and `preamble_only` refusing at their start, `PgDump::open` asking for it at construction, `pgdt info` under the selection as given; `StrictIdentity::between_runs` gone, so `NONE`'s rustdoc and D21's "refused unless `NONE`" hold again
 - [ ] **36.7** pgdt-mapping: back-fill one call; the mapping pass hands back a `Dump`'s parts; closes `KD115`
 - [ ] **36.8** pgdt-query: `Dump`, the selector, `Table::plan` with partitions, a file-ordered stream and serial resume; `read_table` gone; `max_rows` on the stream; filter operators carrying values; `pgdt info` and `pgdt query` on it, `pgdt query` and the stream entry points opening through `CacheMode::open`; `claim`, `CacheMode::load`, `CacheLoad` and `pgdt`'s `open_for_scan` gone
@@ -139,3 +139,16 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **36.6.2 kept the cancellation on `ScanOptions` and gave the reads that
+  poll none a `ReadOptions`**, where D77's shape would have taken `cancel`
+  off `ScanOptions` and made it `map_file`'s argument. The spec's "as D77
+  already requires of the statistics request" can be read either way. It
+  was read as "nothing is handed a field it ignores". The reason is that
+  `pgdt_query`'s mapping pass polls the same field (`map_for_query`, D48),
+  and moving it would rewrite the stream entry points that 36.8 replaces.
+  Reconsidering means 36.8's plan and `map_file` each take a cancellation
+  of their own, and `ScanOptions` shrinks to a `ReadOptions` and a
+  `Parallelism`, or goes
+  ([notes](../design/roadmap-P36.6.2-read-options-notes.md), "Negative
+  results").

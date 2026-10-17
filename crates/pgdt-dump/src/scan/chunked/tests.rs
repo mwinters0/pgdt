@@ -9,18 +9,18 @@ struct Driven {
     scanned: usize,
 }
 
-/// Feed `file` to a [`ChunkedScanner`] over `scanner` in `options`' chunks,
+/// Feed `file` to a [`ChunkedScanner`] over `scanner` in `read`'s chunks,
 /// as `next_chunk` would read them, handing every event to `on_event`.
 fn feed_all(
     scanner: CopyScanner,
     file: &[u8],
-    options: &ScanOptions,
+    read: ReadOptions,
     mut on_event: impl FnMut(&ChunkEvents<'_>, Event<'_>),
 ) -> Result<()> {
-    let mut chunked = ChunkedScanner::new(scanner, file.len() as u64, options);
+    let mut chunked = ChunkedScanner::new(scanner, file.len() as u64, read);
     let mut read_pos = 0usize;
     loop {
-        let want = options.chunk_size_bytes.min(file.len() - read_pos);
+        let want = read.chunk_size_bytes.min(file.len() - read_pos);
         let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]));
         read_pos += want;
         while let Some(event) = chunk.next_event()? {
@@ -32,15 +32,15 @@ fn feed_all(
     }
 }
 
-fn options(chunk_size: usize) -> ScanOptions {
-    ScanOptions { chunk_size_bytes: chunk_size, ..ScanOptions::default() }
+fn options(chunk_size: usize) -> ReadOptions {
+    ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() }
 }
 
 /// Drive [`ChunkedScanner`] over `file` in `chunk_size` pieces.
 fn drive(file: &[u8], chunk_size: usize) -> Driven {
     let mut driven = Driven { events: Vec::new(), high_water: 0, scanned: 0 };
     let mut chunked =
-        ChunkedScanner::new(CopyScanner::new(), file.len() as u64, &options(chunk_size));
+        ChunkedScanner::new(CopyScanner::new(), file.len() as u64, options(chunk_size));
     let mut read_pos = 0usize;
     loop {
         let want = chunk_size.min(file.len() - read_pos);
@@ -144,8 +144,8 @@ fn a_line_many_chunks_long_is_scanned_once() {
 #[test]
 fn a_carried_line_past_the_limit_is_refused() {
     let file = long_lines(64);
-    let limit = ScanOptions { max_line_bytes: 16, ..options(40) };
-    let refused = feed_all(CopyScanner::new(), &file, &limit, |_, _| {});
+    let limit = ReadOptions { max_line_bytes: 16, ..options(40) };
+    let refused = feed_all(CopyScanner::new(), &file, limit, |_, _| {});
     let row_start = file.windows(2).position(|w| w == b"2\t").unwrap() as u64;
     match refused {
         Err(Error::LineTooLong { offset, limit: 16 }) => assert_eq!(offset, row_start),
@@ -155,8 +155,8 @@ fn a_carried_line_past_the_limit_is_refused() {
     // The comment's first fourteen bytes are carried, under the limit; the last
     // chunk ends it past the limit.
     let last_line = b"SELECT 1;\n-- a comment longer than the limit".to_vec();
-    let limit = ScanOptions { max_line_bytes: 16, ..options(24) };
-    feed_all(CopyScanner::new(), &last_line, &limit, |_, _| {})
+    let limit = ReadOptions { max_line_bytes: 16, ..options(24) };
+    feed_all(CopyScanner::new(), &last_line, limit, |_, _| {})
         .expect("the last chunk's line is not measured");
 }
 
@@ -168,7 +168,7 @@ fn a_row_sits_in_its_span_at_its_offset() {
     let file = control();
     for chunk_size in [1usize, 2, 7, 64, 4096] {
         let mut rows = 0;
-        feed_all(CopyScanner::new(), &file, &options(chunk_size), |chunk, event| {
+        feed_all(CopyScanner::new(), &file, options(chunk_size), |chunk, event| {
             if let Event::Row(Row { offset, raw, .. }) = event {
                 let (base, span) = chunk.span();
                 let at = (offset - base) as usize;
@@ -191,7 +191,7 @@ fn skip_to_reads_on_from_a_line_past_the_carry() {
     let reference = drive(&file, 1 << 20).events;
     // The blank line and `SELECT 1;` after the block's `\.`.
     let reference = &reference[reference.len() - 2..];
-    let mut chunked = ChunkedScanner::new(CopyScanner::new(), file.len() as u64, &options(5));
+    let mut chunked = ChunkedScanner::new(CopyScanner::new(), file.len() as u64, options(5));
     // Leave a line carried, as a chunk ends mid-row.
     let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[..5]));
     while chunk.next_event().unwrap().is_some() {}
@@ -233,7 +233,7 @@ fn a_carry_takes_only_the_prefix_that_completes_its_line() {
 }
 
 /// The degenerate case: a chunk with no newline in it joins the carry
-/// whole, which is the growth `ScanOptions::max_line_bytes` bounds, and
+/// whole, which is the growth `ReadOptions::max_line_bytes` bounds, and
 /// neither pass has anything to scan until the file ends.
 #[test]
 fn a_chunk_with_no_newline_joins_the_carry_whole() {
@@ -279,7 +279,7 @@ fn the_carry_pass_is_eof_only_when_the_chunk_is_exhausted() {
 fn a_file_ending_inside_a_copy_block_is_still_rejected() {
     let file = b"COPY public.t (a) FROM stdin;\n1\n2\n3".to_vec();
     for chunk_size in [1usize, 2, 3, 7, 4096] {
-        let err = feed_all(CopyScanner::new(), &file, &options(chunk_size), |_, _| {});
+        let err = feed_all(CopyScanner::new(), &file, options(chunk_size), |_, _| {});
         assert!(
             matches!(err, Err(Error::UnterminatedCopyBlock { header_offset: 0 })),
             "chunk_size {chunk_size} gave {err:?}"

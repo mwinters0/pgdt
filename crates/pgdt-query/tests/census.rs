@@ -17,9 +17,9 @@ use futures::StreamExt;
 
 use pgdt_codec::{ColumnResolution, SchemaMode};
 use pgdt_core::Error;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};
-use pgdt_io::{ByteRangeSource, LocalFileSource};
+use pgdt_dump::{ReadOptions, ScanOptions};
+use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::ArrayShape;
@@ -32,7 +32,7 @@ use common::{VERSIONS, types_fixture};
 /// The census recorded for `table`'s block, by column name.
 async fn census_of(path: &Path, table: &str) -> Vec<(String, ArrayShape)> {
     let source = LocalFileSource::open(path).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
     let block = index.blocks_for(table).next().unwrap_or_else(|| panic!("no block for {table}"));
     block
         .header
@@ -213,7 +213,8 @@ async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
 async fn a_partitioned_table_unions_the_censuses_of_all_its_blocks() {
     let path = common::partitions_fixture(16, "default");
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
-    let index = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    let index =
+        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
 
     let blocks: Vec<_> = index.blocks_for("public.spread").collect();
     assert!(blocks.len() > 1, "`spread` is written as two blocks under one name (I2)");

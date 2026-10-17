@@ -7,9 +7,9 @@ use std::sync::Mutex;
 use futures::StreamExt;
 use pgdt_codec::ColumnNote;
 use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
-use pgdt_io::LocalFileSource;
+use pgdt_dump::{ReadOptions, ScanOptions};
+use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::build_index;
 use pgdt_model::drain;
 use pgdt_model::{Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity};
@@ -49,7 +49,7 @@ fn channel_of(finding: &dyn Finding) -> &'static str {
 #[tokio::test]
 async fn one_sink_drains_all_three_channels() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
 
     let mut stream = table_stream(
         &source,

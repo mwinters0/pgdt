@@ -185,7 +185,7 @@ pub(super) fn replay<'a>(
                     }
                 },
             };
-            let mut chunked = ChunkedScanner::new(scanner, seg_end, scan_options);
+            let mut chunked = ChunkedScanner::new(scanner, seg_end, scan_options.read);
             let mut chunks = RetainedChunks::new();
             // Set once this segment has read the line that ends at or past
             // its limit — the last it owns, and the one the next segment's

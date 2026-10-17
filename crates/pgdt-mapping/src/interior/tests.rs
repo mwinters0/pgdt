@@ -1,8 +1,8 @@
 use super::*;
 use pgdt_core::Error;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::{CopyScanner, Event};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_fixtures::{edge_cases, fixture};
 use pgdt_io::Cancellation;
 use pgdt_io::{ByteRangeSource, PartitionRead};
@@ -335,7 +335,7 @@ fn a_cut_inside_a_row_whose_tail_is_a_backslash_dot_is_resynced_past() {
 fn scheduled(source: &LocalFileSource, jobs: usize) -> ScanOptions {
     source.hint_read_size(8);
     ScanOptions {
-        chunk_size_bytes: 8,
+        read: ReadOptions { chunk_size_bytes: 8, ..ReadOptions::default() },
         parallelism: Parallelism::workers(jobs, pgdt_io::DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     }
@@ -442,7 +442,7 @@ impl pgdt_io::ByteRangeSource for Recording {
 }
 
 /// **No first read a worker makes at an offset on a
-/// `PartitionRead::Chunked` source exceeds `ScanOptions::chunk_size_bytes`** — the
+/// `PartitionRead::Chunked` source exceeds `ReadOptions::chunk_size_bytes`** — the
 /// first read of a piece as much as the tail; a read grown to finish a
 /// longer line is held to `max_line_bytes` alone. It is what keeps every
 /// buffer such a worker takes but a grown one a *pooled* one
@@ -492,17 +492,17 @@ async fn no_read_a_worker_makes_exceeds_the_chunk_size() {
             for &(offset, len) in reads.iter() {
                 if seen.contains(&offset) {
                     assert!(
-                        len <= options.max_line_bytes,
+                        len <= options.read.max_line_bytes,
                         "a {len}-byte read at {offset} is past the growth ceiling"
                     );
                     continue;
                 }
                 seen.push(offset);
                 assert!(
-                    len <= options.chunk_size_bytes,
+                    len <= options.read.chunk_size_bytes,
                     "the first read at {offset} under {jobs} jobs is {len} bytes, past the \
                      {}-byte chunk",
-                    options.chunk_size_bytes
+                    options.read.chunk_size_bytes
                 );
             }
         }
@@ -569,7 +569,7 @@ async fn no_read_a_worker_makes_exceeds_the_stated_unit() {
             for &(offset, len) in reads.iter() {
                 if seen.contains(&offset) {
                     assert!(
-                        len <= options.max_line_bytes,
+                        len <= options.read.max_line_bytes,
                         "a {len}-byte read at {offset} is past the growth ceiling"
                     );
                     continue;
@@ -619,7 +619,7 @@ async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
         parallelism: Parallelism::workers(8, pgdt_io::DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
-    source.hint_read_size(shipped.chunk_size_bytes);
+    source.hint_read_size(shipped.read.chunk_size_bytes);
     let got = scan_region(
         &source,
         &shipped,
@@ -740,7 +740,7 @@ async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
         parallelism: Parallelism::workers(8, pgdt_io::DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
-    source.hint_read_size(shipped.chunk_size_bytes);
+    source.hint_read_size(shipped.read.chunk_size_bytes);
     let got = scan_region(
         &source,
         &shipped,

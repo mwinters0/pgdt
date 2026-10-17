@@ -38,7 +38,7 @@ pub enum PlanLever {
     /// recommending no per-reader cost stops at
     /// `pgdt_io::DEFAULT_MEMORY_BUDGET`.
     LargerAllowance,
-    /// A smaller read chunk (`pgdt_dump::ScanOptions::chunk_size_bytes`) —
+    /// A smaller read chunk (`pgdt_dump::ReadOptions::chunk_size_bytes`) —
     /// listed only where the source sizes a reader from it
     /// ([`pgdt_io::Partitioning::sized_by_read_chunk`]) or the batch span
     /// the plan charged sits on the chunk floor (`derived_source_span`),
@@ -74,7 +74,7 @@ pub enum PlanNoteKind {
     /// (`docs/design/decisions.md`, "D83"), so a message offering the budget
     /// alone is inert exactly where this fires on a plain one. The other is
     /// the announced read chunk
-    /// (`pgdt_dump::ScanOptions::chunk_size_bytes`), which a replay plan
+    /// (`pgdt_dump::ReadOptions::chunk_size_bytes`), which a replay plan
     /// never announces (`KD41`), and which a source cutting by it sizes
     /// `footprint` from, a fixed multiple of it
     /// (`pgdt_io::Partitioning::partition_bytes`), and which floors the
@@ -157,7 +157,7 @@ pub enum PlanNoteKind {
     /// buy, and where it still came up short of what was asked for a
     /// [`PlanNoteKind::ParallelismBudgetLimited`] says so beside this. A span
     /// at one announced read chunk
-    /// (`pgdt_dump::ScanOptions::chunk_size_bytes`) is the floor, and what
+    /// (`pgdt_dump::ReadOptions::chunk_size_bytes`) is the floor, and what
     /// moves a span off it is what `derived_source_span` divides: a larger
     /// `memory_bytes`, a smaller `Parallelism::jobs`, or a smaller charge per
     /// reader — which a source sizing its reader from the read chunk

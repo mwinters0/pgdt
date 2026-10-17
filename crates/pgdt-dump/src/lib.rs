@@ -14,7 +14,8 @@ pub use map::{attach_text, check_tiling};
 pub use preamble::preamble_only;
 pub use scan::{
     ChunkEvents, ChunkedScanner, CopyEnd, CopyScanner, CopyStart, DollarQuoteEnd, Event,
-    LargeObjectEnd, LargeObjectStart, Line, Row, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, scan,
+    LargeObjectEnd, LargeObjectStart, Line, ReadOptions, Row, SCAN_LINE_DEFAULT_MAX_BYTES,
+    ScanOptions, scan,
 };
 
 /// What a crate above reaches that is not this crate's API: public only
@@ -38,5 +39,7 @@ pub mod internal {
         Builder, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
     };
     pub use crate::preamble::scan_preamble;
-    pub use crate::scan::{CopyScannerExt, PieceEndings, RowEnding, announce_read_loop};
+    pub use crate::scan::{
+        CopyScannerExt, PieceEndings, RowEnding, announce_cancellation, announce_read_loop,
+    };
 }

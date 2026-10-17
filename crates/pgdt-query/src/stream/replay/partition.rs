@@ -315,7 +315,7 @@ pub(in crate::stream) fn cut_blocks(
 /// hands.
 ///
 /// **The floor is `chunk_size`**, the length the replay loop announces to the
-/// source (`pgdt_dump::ScanOptions::chunk_size_bytes`,
+/// source (`pgdt_dump::ReadOptions::chunk_size_bytes`,
 /// [`pgdt_io::ByteRangeSource::hint_read_size`]), so a budget that affords
 /// the count at no span at all narrows to one read chunk and leaves the
 /// shortfall to [`worker_count`]; below that the span would cost rows per

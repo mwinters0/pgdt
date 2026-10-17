@@ -76,7 +76,7 @@ above is per block as well as per byte.
 
 ## `--max-line-bytes` and `pgdump.max_line_bytes` lose their meaning
 
-**Fact.** Both set `ScanOptions::max_line_bytes`, today the one bound on a
+**Fact.** Both set `ReadOptions::max_line_bytes`, today the one bound on a
 line. Under I71 the refusal is PostgreSQL's and fixed, so neither decides
 which dumps are read. The Future item "A query's line limit taken from the
 map" — the cache recording the longest line a parse saw, so a query reads

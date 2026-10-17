@@ -2508,7 +2508,7 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 #:
 #: **A span is spent before a count is cut.** `plan_partitions` narrows the
 #: held batch's span to what the budget leaves once the readers asked for are
-#: paid for, stopping at one *announced* read chunk — `ScanOptions::chunk_size_bytes`
+#: paid for, stopping at one *announced* read chunk — `ReadOptions::chunk_size_bytes`
 #: (`docs/design/decisions.md`, "D84"), which no leg here states, so the shipped
 #: default — so a plain leg's count is solved against that narrowed span and
 #: not against the shipped 64 MiB ceiling.

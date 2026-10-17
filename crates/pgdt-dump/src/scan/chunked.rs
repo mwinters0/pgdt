@@ -1,8 +1,8 @@
 //! The chunked read loop: a [`CopyScanner`] driven over a source a chunk at a
 //! time, the one line straddling each chunk boundary carried across it under
-//! the line limit. Every serial pass reads through [`ChunkedScanner`] — the
-//! preamble scan here ([`scan`]), `pgdt_mapping`'s forward pass and
-//! statistics back-fill, and `pgdt_query`'s replay.
+//! the line limit ([`ReadOptions`]). Every serial pass reads through
+//! [`ChunkedScanner`] — the preamble scan here ([`scan`]), `pgdt_mapping`'s
+//! forward pass and statistics back-fill, and `pgdt_query`'s replay.
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -53,7 +53,7 @@ enum ChunkPass {
 /// it joins the carry, and from the second such chunk on the in-place pass is
 /// empty — the first is handed over whole, finds no newline and consumes
 /// nothing, there being no carry yet to base it against. That is the growth
-/// [`ScanOptions::max_line_bytes`] bounds. **Its carry pass is empty too**
+/// [`ReadOptions::max_line_bytes`] bounds. **Its carry pass is empty too**
 /// short of the end of the file, since a span holding no newline is one the
 /// scanner can neither consume nor emit anything from; handing it over anyway
 /// would search the carried line again from its first byte at every chunk it
@@ -177,7 +177,7 @@ impl<'a> Passes<'a> {
     }
 
     /// Bytes carried over into the next chunk, once both passes have recorded
-    /// what they used. This is what [`ScanOptions::max_line_bytes`] bounds: it
+    /// what they used. This is what [`ReadOptions::max_line_bytes`] bounds: it
     /// is a single line's prefix, so a file whose lines fit stays flat here
     /// however large it is.
     fn carried(&self) -> usize {
@@ -212,16 +212,16 @@ pub struct ChunkedScanner {
 impl ChunkedScanner {
     /// Read `scanner` on from its [`position`](CopyScanner::position) to
     /// `end`, which is the true end of what it scans — the file's, or a replay
-    /// segment's block's — in `options`' chunks under its line limit.
-    pub fn new(scanner: CopyScanner, end: u64, options: &ScanOptions) -> Self {
+    /// segment's block's — in `read`'s chunks under its line limit.
+    pub fn new(scanner: CopyScanner, end: u64, read: ReadOptions) -> Self {
         Self {
             read_pos: scanner.position(),
             scanner,
             carry: ChunkCarry::default(),
             chunk: Bytes::new(),
             end,
-            chunk_size: options.chunk_size_bytes,
-            max_line_bytes: options.max_line_bytes,
+            chunk_size: read.chunk_size_bytes,
+            max_line_bytes: read.max_line_bytes,
             open: false,
         }
     }
@@ -310,7 +310,7 @@ pub struct ChunkEvents<'a> {
 impl<'a> ChunkEvents<'a> {
     /// The chunk's next event, or `None` once it has none left. Where the
     /// chunk was not the last, the line it leaves for the next is held to
-    /// [`ScanOptions::max_line_bytes`] there: one longer is
+    /// [`ReadOptions::max_line_bytes`] there: one longer is
     /// [`Error::LineTooLong`].
     #[inline]
     pub fn next_event(&mut self) -> Result<Option<Event<'a>>> {
@@ -384,15 +384,20 @@ impl<'a> ChunkEvents<'a> {
 }
 
 /// The longest line a scan carries across a chunk boundary unless a caller
-/// says otherwise ([`ScanOptions::max_line_bytes`], which says where a line
+/// says otherwise ([`ReadOptions::max_line_bytes`], which says where a line
 /// is measured). A row is held whole before it is emitted, so this and the
 /// chunk size bound what one row may cost in memory; a dump holding larger
 /// values states a larger limit.
 pub const SCAN_LINE_DEFAULT_MAX_BYTES: usize = 64 << 20;
 
-/// Tuning knobs for a full-file scan.
-#[derive(Debug, Clone)]
-pub struct ScanOptions {
+/// **How a chunked read loop reads**: the chunk it asks of the source and the
+/// longest line it carries across a chunk boundary — all [`ChunkedScanner`]
+/// reads, and with a [`Parallelism`] all [`scan`] does. It carries no
+/// cancellation, so a read that polls none is never handed one it ignores
+/// (`docs/design/decisions.md`, "D26", "D77"); the mapping passes that poll
+/// one take a [`ScanOptions`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReadOptions {
     /// Bytes requested per read from the source. Defaults to
     /// [`SCAN_CHUNK_DEFAULT_SIZE_BYTES`].
     pub chunk_size_bytes: usize,
@@ -409,6 +414,23 @@ pub struct ScanOptions {
     // refused by where the reads fall — `chunk_size_bytes`, the leader's
     // split, a resume point — not by its length.
     pub max_line_bytes: usize,
+}
+
+impl Default for ReadOptions {
+    fn default() -> Self {
+        Self {
+            chunk_size_bytes: SCAN_CHUNK_DEFAULT_SIZE_BYTES,
+            max_line_bytes: SCAN_LINE_DEFAULT_MAX_BYTES,
+        }
+    }
+}
+
+/// What a pass a caller may cancel reads with: its [`ReadOptions`], the
+/// concurrency it may use, and the cancellation.
+#[derive(Debug, Clone, Default)]
+pub struct ScanOptions {
+    /// The chunk and the line limit every read loop of the pass reads with.
+    pub read: ReadOptions,
     /// Cooperative cancellation: call [`Cancellation::cancel`] from another
     /// task and the mapping loop stops at the next chunk boundary, persists
     /// what it holds and reports that it was interrupted
@@ -419,10 +441,10 @@ pub struct ScanOptions {
     /// `pgdt_mapping::map_file`'s two passes alone — the mapping loop and
     /// the statistics back-fill, the drivers with somewhere to put a partial
     /// result and a way to report the stop. [`scan`] and the eager producers
-    /// built on it never read the polled bit
-    /// (`docs/design/decisions.md`, "D26") — but [`scan`] does announce this
-    /// to the source, so a read already in flight can still be dropped and
-    /// arrive as `ScanCancelled`.
+    /// built on it take none (`docs/design/decisions.md`, "D26"); a pass
+    /// opening with the preamble prepass announces this to the source first
+    /// (`internal::announce_cancellation`), so a read the prepass has in
+    /// flight can still be dropped and arrive as `ScanCancelled`.
     ///
     /// A source may also hold a clone of this and await
     /// [`Cancellation::cancelled`], which is what bounds a stop by the request
@@ -443,17 +465,6 @@ pub struct ScanOptions {
     pub parallelism: Parallelism,
 }
 
-impl Default for ScanOptions {
-    fn default() -> Self {
-        Self {
-            chunk_size_bytes: SCAN_CHUNK_DEFAULT_SIZE_BYTES,
-            max_line_bytes: SCAN_LINE_DEFAULT_MAX_BYTES,
-            cancel: None,
-            parallelism: Parallelism::default(),
-        }
-    }
-}
-
 impl ScanOptions {
     /// Whether a caller has asked this scan to stop — the polled half of
     /// [`ScanOptions::cancel`], read once per chunk or leader window.
@@ -465,7 +476,10 @@ impl ScanOptions {
 /// Hand a source the caller's cancellation where there is one, so a source
 /// whose wait is not a `pread` can drop the read in flight rather than be
 /// polled at the far side of it ([`ByteRangeSource::hint_cancellation`]).
-fn announce_cancellation(source: &dyn ByteRangeSource, options: &ScanOptions) {
+/// [`announce_read_loop`] makes it for a pass's own loops; a pass makes it
+/// itself before a read that takes no cancellation, [`scan`]'s, whose read
+/// in flight it would drop (`docs/design/decisions.md`, "D26").
+pub fn announce_cancellation(source: &dyn ByteRangeSource, options: &ScanOptions) {
     if let Some(cancel) = &options.cancel {
         source.hint_cancellation(Arc::clone(cancel));
     }
@@ -476,29 +490,39 @@ fn announce_cancellation(source: &dyn ByteRangeSource, options: &ScanOptions) {
 /// can keep one of that size whatever it is
 /// ([`ByteRangeSource::hint_read_size`]); `parallelism`, the budget the
 /// caller allows it to keep them inside
-/// ([`ByteRangeSource::hint_parallelism`]) — a scan's own, or one a query
-/// states for its replay apart from its mapping pass; the caller's
-/// cancellation where there is one; and that the loop grants no wait
+/// ([`ByteRangeSource::hint_parallelism`]); and that the loop grants no wait
 /// ([`ByteRangeSource::hint_wait_policy`]): the leader's fused worker is the
 /// holder that needs the bound and is where one is granted (`pgdt_mapping`'s
 /// `scan_region`, and `docs/design/decisions.md`, "D5").
+fn announce_read_hints(source: &dyn ByteRangeSource, read: ReadOptions, parallelism: Parallelism) {
+    source.hint_read_size(read.chunk_size_bytes);
+    source.hint_parallelism(parallelism);
+    source.hint_wait_policy(WaitPolicy::NeverWait);
+}
+
+/// [`announce_read_hints`] for a pass's loop, with the pass's cancellation
+/// where there is one ([`announce_cancellation`]); `parallelism` is the
+/// pass's own, or one a query states for its replay apart from its mapping
+/// pass.
 pub fn announce_read_loop(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
     parallelism: Parallelism,
 ) {
-    source.hint_read_size(options.chunk_size_bytes);
-    source.hint_parallelism(parallelism);
+    announce_read_hints(source, options.read, parallelism);
     announce_cancellation(source, options);
-    source.hint_wait_policy(WaitPolicy::NeverWait);
 }
 
-/// Scan `source` from the beginning, invoking `on_event` for every event.
+/// Scan `source` from the beginning, invoking `on_event` for every event, in
+/// `read`'s chunks, announcing `parallelism` to the source.
 ///
-/// The callback may return [`ControlFlow::Break`] to stop early.
+/// The callback may return [`ControlFlow::Break`] to stop early. Nothing
+/// stops it from outside: it polls no cancellation and announces none
+/// ([`ReadOptions`]).
 pub async fn scan<F>(
     source: &dyn ByteRangeSource,
-    options: &ScanOptions,
+    read: ReadOptions,
+    parallelism: Parallelism,
     mut on_event: F,
 ) -> Result<()>
 where
@@ -512,13 +536,13 @@ where
     // one name would read as an interrupted-and-resumed run.
     tracing::info!(
         bytes = size,
-        chunk_size = options.chunk_size_bytes,
-        jobs = options.parallelism.jobs(),
-        memory_bytes = %memory_budget_display(options.parallelism),
+        chunk_size = read.chunk_size_bytes,
+        jobs = parallelism.jobs(),
+        memory_bytes = %memory_budget_display(parallelism),
         "preamble scan started",
     );
-    announce_read_loop(source, options, options.parallelism);
-    let mut chunked = ChunkedScanner::new(CopyScanner::new(), size, options);
+    announce_read_hints(source, read, parallelism);
+    let mut chunked = ChunkedScanner::new(CopyScanner::new(), size, read);
 
     loop {
         let mut chunk = chunked.next_chunk(source).await?;
@@ -527,8 +551,8 @@ where
                 // The ordinary outcome for `scan_preamble`, which breaks
                 // here at the first `COPY` header — still this call's
                 // completion, just not at EOF, which `reached_eof` says.
-                let (offset, read) = chunk.read();
-                let bytes = offset + read.len() as u64;
+                let (offset, chunk_bytes) = chunk.read();
+                let bytes = offset + chunk_bytes.len() as u64;
                 tracing::info!(bytes, reached_eof = false, "preamble scan complete");
                 return Ok(());
             }

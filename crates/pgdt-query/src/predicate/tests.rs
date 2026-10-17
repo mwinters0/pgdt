@@ -2294,11 +2294,10 @@ mod oracle {
     use super::*;
     use pgdt_codec::{SchemaMode, resolve_columns};
     use pgdt_core::{escape_field, split_fields, unescape_field};
-    use pgdt_dump::ScanOptions;
     use pgdt_dump::cache::CacheMode;
-    use pgdt_dump::preamble_only;
+    use pgdt_dump::{ReadOptions, preamble_only};
     use pgdt_fixtures::{VERSIONS as MAJORS, fixtures_root};
-    use pgdt_io::LocalFileSource;
+    use pgdt_io::{LocalFileSource, Parallelism};
     use pgdt_model::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef};
 
     /// The six operators this asserts, in `comparisons.tsv`'s own column
@@ -2594,7 +2593,8 @@ mod oracle {
             LocalFileSource::open(fixture(major, "types/default.sql")).unwrap(),
         );
         let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
-        let (metadata, _) = preamble_only(opened, &ScanOptions::default()).await.unwrap();
+        let (metadata, _) =
+            preamble_only(opened, ReadOptions::default(), Parallelism::default()).await.unwrap();
         metadata.databases.into_iter().next().expect("a dump names a database").types
     }
 

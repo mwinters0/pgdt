@@ -14,10 +14,11 @@ use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch};
 use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::{
-    non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
+    announce_cancellation, non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics,
+    toc_coverage_diagnostic,
 };
-use pgdt_dump::{Event, ScanOptions, scan as scan_events};
-use pgdt_io::ByteRangeSource;
+use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
+use pgdt_io::{ByteRangeSource, Parallelism};
 use pgdt_model::internal::IgnoredRefusalsExt;
 use pgdt_model::{
     Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, PostgresInvalidValues, Span,
@@ -36,14 +37,19 @@ use crate::statistics::request::{GatherOptions, StatisticsRequest};
 /// [`pgdt_dump::internal::Builder`] is fed the whole [`Event`] stream, and
 /// `DumpIndex::metadata` is [`dump_metadata_from_spans`] over the result and
 /// [`DumpIndex::blocks`] a filter over it (`docs/design/decisions.md`,
-/// "D34").
+/// "D34"). It reads in `read`'s chunks, announcing `parallelism` to the
+/// source, and nothing stops it from outside ([`pgdt_dump::scan`]).
 ///
 /// **Here rather than beside the index**, which is dump's: counting a block's
 /// values resolves its columns' declared types, so the pass states each
 /// database's DDL at its first `COPY` block as [`map_forward`] does
 /// (`docs/design/decisions.md`, "D96").
-pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<DumpIndex> {
-    let builder = eager_pass(source, options).await?;
+pub async fn build_index(
+    source: &dyn ByteRangeSource,
+    read: ReadOptions,
+    parallelism: Parallelism,
+) -> Result<DumpIndex> {
+    let builder = eager_pass(source, read, parallelism).await?;
     let size = source.size().await?;
     let roles = builder.roles().clone();
     let tablespaces = builder.tablespaces().clone();
@@ -59,8 +65,12 @@ pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) ->
 /// Scan `source` end to end and build its full file map as a span list —
 /// [`build_index`]'s spans, alone. Always scans to EOF, so
 /// [`SpanBody::Unscanned`] never appears in the result.
-pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Vec<Span>> {
-    let builder = eager_pass(source, options).await?;
+pub async fn build_map(
+    source: &dyn ByteRangeSource,
+    read: ReadOptions,
+    parallelism: Parallelism,
+) -> Result<Vec<Span>> {
+    let builder = eager_pass(source, read, parallelism).await?;
     let mut spans = builder.finish(source.size().await?);
     attach_text(source, &mut spans).await?;
     Ok(spans)
@@ -68,14 +78,18 @@ pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> R
 
 /// [`build_index`] and [`build_map`]'s one scan: every event to one builder,
 /// each block counted against the DDL above it, restated once per database.
-async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Builder> {
+async fn eager_pass(
+    source: &dyn ByteRangeSource,
+    read: ReadOptions,
+    parallelism: Parallelism,
+) -> Result<Builder> {
     let mut builder = Builder::new();
     // What stopped the scan, a block's close failing it. None can: this pass
     // gathers no statistics, so no block meets a refused field.
     let mut failed: Option<Error> = None;
     // The database the metadata in hand was stated for, and that metadata.
     let mut stated: Option<(Option<String>, DumpMetadata)> = None;
-    scan_events(source, options, |event| {
+    scan_events(source, read, parallelism, |event| {
         match event {
             Event::CopyStart(start) => {
                 let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
@@ -288,14 +302,15 @@ async fn map_file_watched(
     if resumed_from == 0 && !first_db_preamble_known {
         // Persisted before `map_forward` runs, so an interrupt in the very
         // first chunk still finds banked metadata. `scan_preamble` itself
-        // ignores the cancel flag (`docs/design/decisions.md`, "D26") — but a
-        // source whose read is dropped in flight answers it anyway, and none
-        // of a half-read preamble may be banked, which is that entry's reason.
+        // takes no cancel flag (`docs/design/decisions.md`, "D26") — but a
+        // source told of it drops a read in flight anyway, and none of a
+        // half-read preamble may be banked, which is that entry's reason.
         // Everything the prepass reads is therefore held aside until it is
         // whole.
+        announce_cancellation(source, scan_options);
         let prepass = async {
             let (metadata, spans, preamble_end, roles, tablespaces) =
-                scan_preamble(source, scan_options).await?;
+                scan_preamble(source, scan_options.read, scan_options.parallelism).await?;
             let mut spans = splice(&[], spans, 0, preamble_end, size);
             attach_text(source, &mut spans).await?;
             Ok::<_, Error>((metadata, spans, preamble_end, roles, tablespaces))

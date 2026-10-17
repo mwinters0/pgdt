@@ -749,7 +749,7 @@ pub(in crate::stream) fn plan_replay(
         &plan.kept,
         plan.query_options.parallelism,
         plan.query_options.max_source_span,
-        plan.scan_options.chunk_size_bytes,
+        plan.scan_options.read.chunk_size_bytes,
     );
     // **The span the plan was solved against is the span the batches use**, or
     // the charge bounds nothing (`docs/design/decisions.md`, "D84"). It is

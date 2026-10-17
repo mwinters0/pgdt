@@ -23,8 +23,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use arrow::array::{AsArray, RecordBatch};
 use arrow::datatypes::Int32Type;
 use futures::StreamExt;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, SourceWatch, StrictIdentity};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{
@@ -368,7 +368,10 @@ async fn a_state_moving_inside_a_group_is_read_at_the_next_chunk() {
     let index = mapped(&dump, 1 << 20).await;
     let block = index.blocks_for("public.t").next().unwrap();
     assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
-    let scan = ScanOptions { chunk_size_bytes: SMALL_CHUNK, ..ScanOptions::default() };
+    let scan = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: SMALL_CHUNK, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let past = || term("id", PredicateOp::Gt, "1500");
 
     for use_statistics in [true, false] {
@@ -414,7 +417,10 @@ async fn a_state_read_inside_a_group_it_rules_out_skips_the_rest() {
     let dir = tempfile::tempdir().unwrap();
     let dump = long_block(dir.path());
     let index = mapped(&dump, 1 << 20).await;
-    let scan = ScanOptions { chunk_size_bytes: SMALL_CHUNK, ..ScanOptions::default() };
+    let scan = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: SMALL_CHUNK, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
     let beyond = || term("id", PredicateOp::Gt, "5000");
 
     let moving = Moving::new(Expr::default(), beyond(), 4);

@@ -9,7 +9,7 @@ use pgdt_core::{Error, Result};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::attach_text;
 use pgdt_dump::cache::{CacheLoad, CacheMode, SourceWatch};
-use pgdt_dump::internal::{announce_read_loop, scan_preamble};
+use pgdt_dump::internal::{announce_cancellation, announce_read_loop, scan_preamble};
 use pgdt_io::ByteRangeSource;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata};
 
@@ -91,9 +91,12 @@ pub(super) async fn map_for_query(
     if !first_db_preamble_known {
         // The prepass's spans are kept, not discarded: they tile
         // `[0, preamble_end)`, which is the prefix `map_forward` splices its
-        // own output onto.
+        // own output onto. It takes no cancellation, so the source is told of
+        // one first and drops a read in flight (`docs/design/decisions.md`,
+        // "D26").
+        announce_cancellation(source, scan_options);
         let (metadata, spans, preamble_end, roles, tablespaces) =
-            scan_preamble(source, scan_options).await?;
+            scan_preamble(source, scan_options.read, scan_options.parallelism).await?;
         index.metadata = Some(metadata);
         index.spans = splice(&[], spans, 0, preamble_end, size);
         index.roles.extend(roles);

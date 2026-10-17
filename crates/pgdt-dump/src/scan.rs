@@ -34,7 +34,8 @@ use pgdt_core::{CopyHeader, is_terminator, parse_copy_header};
 use pgdt_core::{Error, Result, RowEndingRefusal};
 
 pub use self::chunked::{
-    ChunkEvents, ChunkedScanner, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, announce_read_loop, scan,
+    ChunkEvents, ChunkedScanner, ReadOptions, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions,
+    announce_cancellation, announce_read_loop, scan,
 };
 
 /// The start of a COPY data block.

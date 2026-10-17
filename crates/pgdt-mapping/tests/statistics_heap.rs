@@ -20,8 +20,8 @@ use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::Arc;
 
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
 use pgdt_mapping::statistics::{
     GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing, StatisticsTerms,
@@ -179,7 +179,7 @@ async fn a_split_blocks_pieces_are_charged_and_released() {
     for jobs in [2, 4, 8] {
         let _ = std::fs::remove_file(pgdt_dump::cache::colocated_path(&dump));
         let options = ScanOptions {
-            chunk_size_bytes: 64,
+            read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
             parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
             ..ScanOptions::default()
         };
