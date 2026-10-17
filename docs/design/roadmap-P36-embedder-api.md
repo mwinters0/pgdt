@@ -362,15 +362,17 @@ This closes `KD116` and `KD117`.
   - **DataFusion is its oracle**: a test runs `a < b` over two fixture
     tables' columns in a session, pair by pair, a query error meaning
     `None`.
-- **A nested key follows the same rule**, and the server resolves no
-  operator across two array, range or multirange types: they compare only
-  with one order at every level. Two records compare only at one arity with
-  one order per column, as `record_cmp` requires. Which slots hold a value
-  never decides it.
+- **A nested key follows the same rule**: the server relates two
+  containers only where the types beneath them are one — each leaf's, a
+  range's at every level, a composite's below the top, a domain's where it
+  is an element's or a field's — and then their leaves as it relates two
+  scalars, so `numeric[]` compares at two scales. Two records compare only
+  at one arity. Which slots hold a value never decides it (history,
+  2026-10-17, "A nested key names its types at every level").
 - **A `ValueKey` carries the order it was read in**: its semantics, its kind
   with what does not change the order folded away, a `numeric`'s scale, an
-  enum's qualified type name and labels, a nested key's order at every
-  level. `compare` checks it first. The key the gatherer and the summary
+  enum's qualified type name and labels, whether a text is `character
+  varying`, a nested key's order and types at every level. `compare` checks it first. The key the gatherer and the summary
   hold, `internal`'s, carries none: nothing in the workspace compares across
   plans (history, 2026-10-16, "36.4.1's calls reviewed: the order's identity
   moves to `ValueKey`").

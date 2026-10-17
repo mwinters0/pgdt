@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// each canonical form and three keyed ones, two of whose types cannot
 /// hold every value.
 const JOIN_KINDS: [CompareKind; 6] = [
-    CompareKind::Text { length: None },
+    CompareKind::Text { length: None, varying: false },
     CompareKind::PaddedText { length: None },
     CompareKind::Bytea,
     CompareKind::Int { bytes: 8 },

@@ -49,13 +49,13 @@ fn the_register_answers_every_builtin_scalar() {
         // cannot; `character(n)` carries a comparison of its own (the
         // padding is trimmed off both sides, I38).
         // A `varchar(n)` and a `character(n)` carry their length (I75).
-        ("text", unknown(K::Text { length: None })),
-        ("character varying(10)", unknown(K::Text { length: Some(10) })),
-        ("character varying", unknown(K::Text { length: None })),
+        ("text", unknown(K::Text { length: None, varying: false })),
+        ("character varying(10)", unknown(K::Text { length: Some(10), varying: true })),
+        ("character varying", unknown(K::Text { length: None, varying: true })),
         ("character(10)", unknown(K::PaddedText { length: Some(10) })),
         ("character", unknown(K::PaddedText { length: Some(1) })),
         ("bpchar", unknown(K::PaddedText { length: None })),
-        ("name", agrees(K::Text { length: None })),
+        ("name", agrees(K::Text { length: None, varying: false })),
         ("date", agrees(K::Date)),
         ("timestamp without time zone", agrees(K::Timestamp { with_tz: false })),
         ("timestamp with time zone", agrees(K::Timestamp { with_tz: true })),
@@ -125,7 +125,7 @@ fn the_register_tells_apart_types_that_share_one_arrow_type() {
     assert_eq!(
         comparison_for("text", None, &[], &[]),
         ComparisonPlan::diverging(
-            CompareKind::Text { length: None },
+            CompareKind::Text { length: None, varying: false },
             ComparisonDivergence::UnknownCollation
         ),
     );
@@ -146,16 +146,19 @@ fn a_column_is_bounded_in_each_semantics_whose_order_is_exact() {
     use BoundsSet::{DataFusion as F, Primary as P};
     use ComparisonDivergence::*;
     use ComparisonSemantics::{DataFusion, Postgres};
-    let text = || Some(CompareKind::Text { length: None });
+    let text = || Some(CompareKind::Text { length: None, varying: false });
     let read = |plan: &ComparisonPlan| {
         (plan.bounds_kinds(), plan.bounds_in(Postgres), plan.bounds_in(DataFusion))
     };
     assert_eq!(
-        read(&ComparisonPlan::agrees(CompareKind::Text { length: None })),
+        read(&ComparisonPlan::agrees(CompareKind::Text { length: None, varying: false })),
         ([text(), None], Some(P), Some(P))
     );
     for divergence in [AsText, UnknownCollation, NonBytewiseCollation, NonDeterministicCollation] {
-        let plan = ComparisonPlan::diverging(CompareKind::Text { length: None }, divergence);
+        let plan = ComparisonPlan::diverging(
+            CompareKind::Text { length: None, varying: false },
+            divergence,
+        );
         assert_eq!(read(&plan), ([text(), None], None, Some(P)), "{divergence:?}");
     }
     for (kind, divergence) in [
@@ -212,7 +215,7 @@ fn a_column_is_bounded_in_each_semantics_whose_order_is_exact() {
 #[test]
 fn a_term_reads_the_set_keyed_by_the_kind_it_compares_by() {
     use BoundsSet::{DataFusion as F, Primary as P};
-    let text = CompareKind::Text { length: None };
+    let text = CompareKind::Text { length: None, varying: false };
     let refused = ComparisonPlan::Refused.bounds_read_by(ComparisonSemantics::DataFusion);
     assert_eq!(refused.as_ref(), Some(&text));
     assert_eq!(ComparisonPlan::Refused.bounds_read_by(ComparisonSemantics::Postgres), None);
@@ -252,16 +255,16 @@ fn a_term_reads_the_set_keyed_by_the_kind_it_compares_by() {
 /// verdict. **The comparison never moves — only the verdict does.**
 #[test]
 fn a_text_column_is_judged_by_the_collation_it_states() {
-    let agrees_text = || ComparisonPlan::agrees(CompareKind::Text { length: None });
+    let agrees_text = || ComparisonPlan::agrees(CompareKind::Text { length: None, varying: false });
     let unknown = || {
         ComparisonPlan::diverging(
-            CompareKind::Text { length: None },
+            CompareKind::Text { length: None, varying: false },
             ComparisonDivergence::UnknownCollation,
         )
     };
     let named = || {
         ComparisonPlan::diverging(
-            CompareKind::Text { length: None },
+            CompareKind::Text { length: None, varying: false },
             ComparisonDivergence::NonBytewiseCollation,
         )
     };
@@ -273,7 +276,7 @@ fn a_text_column_is_judged_by_the_collation_it_states() {
             "character varying(10)",
             None,
             ComparisonPlan::diverging(
-                CompareKind::Text { length: Some(10) },
+                CompareKind::Text { length: Some(10), varying: true },
                 ComparisonDivergence::UnknownCollation,
             ),
         ),
@@ -354,18 +357,18 @@ fn a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too()
     // Nothing declared: the clause is read off its name alone.
     assert_eq!(
         comparison_for("text", Some("public.icu_ci"), &[], &[]),
-        ComparisonPlan::diverging(K::Text { length: None }, named)
+        ComparisonPlan::diverging(K::Text { length: None, varying: false }, named)
     );
     // Declared deterministic moves nothing either.
     assert_eq!(
         comparison_for("text", Some("public.icu_ci"), &[], &[coll("public.icu_ci", true)]),
-        ComparisonPlan::diverging(K::Text { length: None }, named)
+        ComparisonPlan::diverging(K::Text { length: None, varying: false }, named)
     );
     // Declared non-deterministic: same comparison, stronger verdict.
     let declared = [coll("public.other", true), coll("public.icu_ci", false)];
     assert_eq!(
         comparison_for("text", Some("public.icu_ci"), &[], &declared),
-        ComparisonPlan::diverging(K::Text { length: None }, nd)
+        ComparisonPlan::diverging(K::Text { length: None, varying: false }, nd)
     );
     // `character(n)` and `character varying` reach the same branch, and
     // `character(n)` keeps its own trim (I38).
@@ -375,7 +378,7 @@ fn a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too()
     );
     assert_eq!(
         comparison_for("character varying(10)", Some("public.icu_ci"), &[], &declared),
-        ComparisonPlan::diverging(K::Text { length: Some(10) }, nd)
+        ComparisonPlan::diverging(K::Text { length: Some(10), varying: true }, nd)
     );
     // A domain's own clause is the column's default, so it reaches the
     // branch the same way a column-level clause does.
@@ -390,12 +393,12 @@ fn a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too()
     )];
     assert_eq!(
         comparison_for("public.dom_nd", None, &types, &declared),
-        ComparisonPlan::diverging(K::Text { length: None }, nd)
+        ComparisonPlan::diverging(K::Text { length: None, varying: false }, nd)
     );
     // A column of a *different* collation is untouched by the entry.
     assert_eq!(
         comparison_for("text", Some("public.other"), &[], &declared),
-        ComparisonPlan::diverging(K::Text { length: None }, named)
+        ComparisonPlan::diverging(K::Text { length: None, varying: false }, named)
     );
     // A non-collatable type carries no clause and so never reaches it.
     assert_eq!(
@@ -406,23 +409,23 @@ fn a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too()
     // `pg_dump` paths and either may quote what the other leaves bare.
     assert_eq!(
         comparison_for("text", Some("public.\"icu_ci\""), &[], &[coll("\"public\".icu_ci", false)]),
-        ComparisonPlan::diverging(K::Text { length: None }, nd)
+        ComparisonPlan::diverging(K::Text { length: None, varying: false }, nd)
     );
     // An unqualified reference matches on the name alone — the
     // announcing direction, since a file's search path is not read.
     assert_eq!(
         comparison_for("text", Some("icu_ci"), &[], &declared),
-        ComparisonPlan::diverging(K::Text { length: None }, nd)
+        ComparisonPlan::diverging(K::Text { length: None, varying: false }, nd)
     );
     // ... but a *qualified* reference must agree on the schema.
     assert_eq!(
         comparison_for("text", Some("elsewhere.icu_ci"), &[], &declared),
-        ComparisonPlan::diverging(K::Text { length: None }, named)
+        ComparisonPlan::diverging(K::Text { length: None, varying: false }, named)
     );
     // An unqualified `"C"` is the built-in unless the dump declares one of
     // that name, which a path naming `pg_catalog` after it puts first (`KD48`):
     // then it is the weaker verdict, and never both branches at once.
-    let c = ComparisonPlan::agrees(K::Text { length: None });
+    let c = ComparisonPlan::agrees(K::Text { length: None, varying: false });
     assert_eq!(comparison_for("text", Some("\"C\""), &[], &declared), c);
     assert_eq!(
         comparison_for("text", Some("pg_catalog.\"C\""), &[], &[coll("public.\"C\"", true)]),
@@ -430,11 +433,11 @@ fn a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too()
     );
     assert_eq!(
         comparison_for("text", Some("\"C\""), &[], &[coll("public.\"C\"", true)]),
-        ComparisonPlan::diverging(K::Text { length: None }, named)
+        ComparisonPlan::diverging(K::Text { length: None, varying: false }, named)
     );
     assert_eq!(
         comparison_for("text", Some("\"POSIX\""), &[], &[coll("public.\"POSIX\"", false)]),
-        ComparisonPlan::diverging(K::Text { length: None }, nd)
+        ComparisonPlan::diverging(K::Text { length: None, varying: false }, nd)
     );
 }
 
@@ -469,16 +472,16 @@ fn a_domain_s_collation_is_the_column_s_default_and_the_column_may_override() {
         ty("public.dom_plain", TypeKind::domain("text")),
         ty("public.dom_over_c", TypeKind::domain("public.dom_c")),
     ];
-    let agrees_text = || ComparisonPlan::agrees(CompareKind::Text { length: None });
+    let agrees_text = || ComparisonPlan::agrees(CompareKind::Text { length: None, varying: false });
     let unknown = || {
         ComparisonPlan::diverging(
-            CompareKind::Text { length: None },
+            CompareKind::Text { length: None, varying: false },
             ComparisonDivergence::UnknownCollation,
         )
     };
     let named = || {
         ComparisonPlan::diverging(
-            CompareKind::Text { length: None },
+            CompareKind::Text { length: None, varying: false },
             ComparisonDivergence::NonBytewiseCollation,
         )
     };
@@ -521,7 +524,7 @@ fn a_domain_compares_as_the_type_it_bottoms_out_at() {
     assert_eq!(
         comparison_for("public.dtext", None, &types, &[]),
         ComparisonPlan::diverging(
-            CompareKind::Text { length: None },
+            CompareKind::Text { length: None, varying: false },
             ComparisonDivergence::UnknownCollation
         ),
     );
@@ -529,13 +532,14 @@ fn a_domain_compares_as_the_type_it_bottoms_out_at() {
     // through the same recursion.
     assert_eq!(
         comparison_for("public.darr", None, &types, &[]),
-        ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::nullable(
-            NestedCompare::Leaf {
+        ComparisonPlan::Nested(NestedCompare::Array {
+            declared: "integer[]".to_string(),
+            element: Box::new(Position::nullable(NestedCompare::Leaf {
                 declared: "integer".to_string(),
                 kind: CompareKind::Int { bytes: 4 },
                 divergence: None,
-            }
-        )))),
+            })),
+        }),
     );
     // A domain over something with no order here has none either.
     assert_eq!(comparison_for("public.dmoney", None, &types, &[]), ComparisonPlan::Refused);
@@ -596,38 +600,46 @@ fn every_container_kind_compares_structurally() {
         kind: CompareKind::Int { bytes: 4 },
         divergence: None,
     };
-    let array_of_int =
-        || ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::nullable(int_leaf()))));
+    let array = |declared: &str, element| NestedCompare::Array {
+        declared: declared.to_string(),
+        element: Box::new(Position::nullable(element)),
+    };
     for declared in ["integer[]", "integer ARRAY"] {
-        assert_eq!(comparison_for(declared, None, &types, &[]), array_of_int(), "{declared}");
+        assert_eq!(
+            comparison_for(declared, None, &types, &[]),
+            ComparisonPlan::Nested(array(declared, int_leaf())),
+            "{declared}"
+        );
     }
     // The element carries the column's own clause, because an array type
     // is not collatable and the clause is about its elements (I37).
     assert_eq!(
         comparison_for("text[]", None, &types, &[]),
-        ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::nullable(
+        ComparisonPlan::Nested(array(
+            "text[]",
             NestedCompare::Leaf {
                 declared: "text".to_string(),
-                kind: CompareKind::Text { length: None },
+                kind: CompareKind::Text { length: None, varying: false },
                 divergence: Some(ComparisonDivergence::UnknownCollation),
             }
-        )))),
+        )),
     );
     assert_eq!(
         comparison_for("text[]", Some("pg_catalog.\"C\""), &types, &[]),
-        ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::nullable(
+        ComparisonPlan::Nested(array(
+            "text[]",
             NestedCompare::Leaf {
                 declared: "text".to_string(),
-                kind: CompareKind::Text { length: None },
+                kind: CompareKind::Text { length: None, varying: false },
                 divergence: None,
             }
-        )))),
+        )),
     );
     let point2d = || {
-        ComparisonPlan::Nested(NestedCompare::Record(vec![(
-            "x".to_string(),
-            Position::nullable(int_leaf()),
-        )]))
+        ComparisonPlan::Nested(NestedCompare::Record {
+            declared: "public.point2d".to_string(),
+            fields: vec![("x".to_string(), Position::nullable(int_leaf()))],
+        })
     };
     assert_eq!(comparison_for("public.point2d", None, &types, &[]), point2d());
     // Nesting composes with no special case: an array of composites is
@@ -635,7 +647,7 @@ fn every_container_kind_compares_structurally() {
     let ComparisonPlan::Nested(record) = point2d() else { unreachable!() };
     assert_eq!(
         comparison_for("public.point2d[]", None, &types, &[]),
-        ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::nullable(record)))),
+        ComparisonPlan::Nested(array("public.point2d[]", record)),
     );
     // A user-defined range and the companion multirange `pg_dump` writes
     // no `CREATE TYPE` for (I10) reach the same bound through two
@@ -643,6 +655,7 @@ fn every_container_kind_compares_structurally() {
     assert_eq!(
         comparison_for("public.myrange", None, &types, &[]),
         ComparisonPlan::Nested(NestedCompare::Range {
+            declared: "public.myrange".to_string(),
             bound: Box::new(int_leaf()),
             discrete: None,
         }),
@@ -650,6 +663,7 @@ fn every_container_kind_compares_structurally() {
     assert_eq!(
         comparison_for("public.myrange_multi", None, &types, &[]),
         ComparisonPlan::Nested(NestedCompare::Multirange {
+            declared: "public.myrange_multi".to_string(),
             bound: Box::new(int_leaf()),
             discrete: None,
         }),
@@ -660,6 +674,7 @@ fn every_container_kind_compares_structurally() {
     assert_eq!(
         comparison_for("int4range", None, &types, &[]),
         ComparisonPlan::Nested(NestedCompare::Range {
+            declared: "int4range".to_string(),
             bound: Box::new(int_leaf()),
             discrete: Some(Discrete::Int4),
         }),
@@ -667,6 +682,7 @@ fn every_container_kind_compares_structurally() {
     assert_eq!(
         comparison_for("int4multirange", None, &types, &[]),
         ComparisonPlan::Nested(NestedCompare::Multirange {
+            declared: "int4multirange".to_string(),
             bound: Box::new(int_leaf()),
             discrete: Some(Discrete::Int4),
         }),
@@ -888,13 +904,13 @@ fn a_quoted_collation_name_is_found_by_its_clause() {
     assert_eq!(
         comparison_for("text", Some(r#"public."CI""#), &[], &declared),
         ComparisonPlan::diverging(
-            CompareKind::Text { length: None },
+            CompareKind::Text { length: None, varying: false },
             ComparisonDivergence::NonDeterministicCollation
         )
     );
     let c = [CollationDef { name: r#"public."C""#.to_string(), deterministic: true }];
     assert_ne!(
         comparison_for("text", Some(r#""C""#), &[], &c),
-        agrees(CompareKind::Text { length: None })
+        agrees(CompareKind::Text { length: None, varying: false })
     );
 }

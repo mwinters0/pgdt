@@ -276,7 +276,7 @@ impl GroupBounds {
 impl BoundsGatherer {
     pub(super) fn new(kind: CompareKind) -> Self {
         let order = match kind {
-            CompareKind::Text { length } => Order::Bytewise(Canonical::Text { length }),
+            CompareKind::Text { length, .. } => Order::Bytewise(Canonical::Text { length }),
             CompareKind::PaddedText { length } => Order::Bytewise(Canonical::PaddedText { length }),
             CompareKind::Bytea => Order::Bytewise(Canonical::Bytea),
             kind => Order::Keyed(kind),

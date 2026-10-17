@@ -300,7 +300,7 @@ pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
         // Every text within its length is a value of these, and keying one
         // copies it.
         ComparisonPlan::Compared {
-            kind: CompareKind::Text { length } | CompareKind::PaddedText { length },
+            kind: CompareKind::Text { length, .. } | CompareKind::PaddedText { length },
             ..
         } => length.is_some_and(|length| char_typmod_refuses(text, length)),
         ComparisonPlan::Compared { kind, .. } => {
@@ -331,7 +331,9 @@ pub fn grammar_refuses(grammar: TextGrammar, text: &str) -> bool {
                 delimiter: Some(b';'),
             };
             let element = Position { plan: element, not_null };
-            checked_key(&NestedCompare::Array(Box::new(element)), text).is_ok()
+            let array =
+                NestedCompare::Array { declared: "box[]".into(), element: Box::new(element) };
+            checked_key(&array, text).is_ok()
         }
         TextGrammar::RefusesAll => false,
         TextGrammar::RefusesNothing => true,
@@ -381,7 +383,7 @@ fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
             return Err(refused);
         }
         NestedCompare::Uncomparable { .. } => None,
-        NestedCompare::Array(element) => {
+        NestedCompare::Array { element, .. } => {
             let Some(delimiter) = array_delimiter(&element.plan) else { return Ok(None) };
             let literal = nested::parse_array_delimited(text, delimiter).ok_or(refused)?;
             let mut elements = Vec::with_capacity(literal.elements.len());
@@ -402,7 +404,7 @@ fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
                 lower_bounds: literal.lower_bounds,
             })
         }
-        NestedCompare::Int2Vector => {
+        NestedCompare::Int2Vector { .. } => {
             let values = nested::parse_int2vector(text).ok_or(refused)?;
             Some(NestedKey::Array {
                 dims: vec![values.len()],
@@ -413,7 +415,7 @@ fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
                 lower_bounds: vec![0],
             })
         }
-        NestedCompare::Record(plans) => {
+        NestedCompare::Record { fields: plans, .. } => {
             let fields = nested::parse_record(text, plans.len()).ok_or(refused)?.fields;
             let mut out = Vec::with_capacity(plans.len());
             let mut keyed = true;
@@ -429,12 +431,12 @@ fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
             }
             keyed.then_some(NestedKey::Record(out))
         }
-        NestedCompare::Range { bound, discrete } => {
+        NestedCompare::Range { bound, discrete, .. } => {
             let literal = nested::parse_range(text).ok_or(refused)?;
             checked_range(bound, &literal, *discrete)?
                 .map(|range| NestedKey::Range(Box::new(range)))
         }
-        NestedCompare::Multirange { bound, discrete } => {
+        NestedCompare::Multirange { bound, discrete, .. } => {
             let literals = nested::parse_multirange(text).ok_or(refused)?;
             let mut members = Vec::with_capacity(literals.len());
             let mut keyed = true;

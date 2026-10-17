@@ -287,12 +287,17 @@ pub(crate) fn builtin_scalar(
         // A `varchar(n)` carries its length, which its field is held to (I75).
         "text" => (
             Utf8View,
-            collated_text(K::Text { length: None }, collation, TypeCollation::Database, collations),
+            collated_text(
+                K::Text { length: None, varying: false },
+                collation,
+                TypeCollation::Database,
+                collations,
+            ),
         ),
         "character varying" => (
             Utf8View,
             collated_text(
-                K::Text { length: char_length(typmod) },
+                K::Text { length: char_length(typmod), varying: true },
                 collation,
                 TypeCollation::Database,
                 collations,
@@ -300,7 +305,12 @@ pub(crate) fn builtin_scalar(
         ),
         "name" => (
             Utf8View,
-            collated_text(K::Text { length: None }, collation, TypeCollation::Bytewise, collations),
+            collated_text(
+                K::Text { length: None, varying: false },
+                collation,
+                TypeCollation::Bytewise,
+                collations,
+            ),
         ),
         // The fourth collatable arm, with a comparison of its own: the dump
         // writes every `character(n)` value blank-padded to `n` and
@@ -364,7 +374,10 @@ pub(crate) fn builtin_scalar(
         // quoting, no escaping and no possible NULL element (I47), so the
         // value space is exactly `List<Int16>`'s; the comparison is
         // `array_cmp`'s, via `anyarray` polymorphism.
-        "int2vector" => (list_of(Int16), ComparisonPlan::Nested(NestedCompare::Int2Vector)),
+        "int2vector" => (
+            list_of(Int16),
+            ComparisonPlan::Nested(NestedCompare::Int2Vector { declared: "int2vector".into() }),
+        ),
         _ => return None,
     })
 }
@@ -483,7 +496,7 @@ fn map_builtin(
                 _,
                 ComparisonPlan::Compared {
                     kind:
-                        CompareKind::Text { length: Some(length) }
+                        CompareKind::Text { length: Some(length), .. }
                         | CompareKind::PaddedText { length: Some(length) },
                     ..
                 },

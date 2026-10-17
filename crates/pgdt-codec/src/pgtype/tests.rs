@@ -161,7 +161,7 @@ fn an_interval_s_field_qualifier_reaches_its_comparison_kind() {
     let kind = |declared: &str, types: &[TypeDef]| match comparison_for(declared, None, types, &[])
     {
         ComparisonPlan::Compared { kind, .. } => kind,
-        ComparisonPlan::Nested(NestedCompare::Array(leaf)) => match leaf.plan {
+        ComparisonPlan::Nested(NestedCompare::Array { element, .. }) => match element.plan {
             NestedCompare::Leaf { kind, .. } => kind,
             other => panic!("`{declared}`: {other:?}"),
         },
@@ -838,7 +838,7 @@ fn a_type_walk_is_bounded_by_the_definitions_the_file_declares() {
     ));
     assert!(matches!(
         comparison_for("public.holder", None, &holder, &[]),
-        ComparisonPlan::Nested(NestedCompare::Record(_))
+        ComparisonPlan::Nested(NestedCompare::Record { .. })
     ));
 }
 
@@ -862,7 +862,10 @@ fn int2vector_is_a_list_with_a_literal_form_and_an_order_of_its_own() {
     assert_eq!(array_plan, NestedPlan::array(NestedPlan::Scalar));
 
     let comparison = comparison_for("int2vector", None, &[], &[]);
-    assert_eq!(comparison, ComparisonPlan::Nested(NestedCompare::Int2Vector));
+    assert_eq!(
+        comparison,
+        ComparisonPlan::Nested(NestedCompare::Int2Vector { declared: "int2vector".into() })
+    );
     assert!(comparison.orders());
     let ComparisonPlan::Nested(tree) = &comparison else { panic!("nested") };
     assert_eq!(tree.uncomparable(), None);
@@ -875,7 +878,12 @@ fn int2vector_is_a_list_with_a_literal_form_and_an_order_of_its_own() {
     };
     assert_eq!(
         outer,
-        NestedCompare::Array(Box::new(Position::nullable(NestedCompare::Int2Vector)))
+        NestedCompare::Array {
+            declared: "int2vector[]".into(),
+            element: Box::new(Position::nullable(NestedCompare::Int2Vector {
+                declared: "int2vector".into()
+            })),
+        }
     );
 }
 
@@ -1002,16 +1010,28 @@ fn a_not_null_domain_beneath_a_container_marks_its_position() {
     assert_eq!(plan("public.comp[]"), NestedPlan::array(comp));
     assert_eq!(plan("public.nnrange"), NestedPlan::Range(Box::new(NestedPlan::Scalar)));
 
-    assert_eq!(compare("public.nn[]"), NestedCompare::Array(Box::new(refusing(leaf("public.nn")))));
-    let comp = NestedCompare::Record(vec![
-        ("a".to_string(), refusing(leaf("public.over"))),
-        ("b".to_string(), Position::nullable(leaf("integer"))),
-    ]);
-    assert_eq!(compare("public.comp"), comp);
-    assert_eq!(compare("public.nncomp[]"), NestedCompare::Array(Box::new(refusing(comp))));
+    let array = |declared: &str, element| NestedCompare::Array {
+        declared: declared.to_string(),
+        element: Box::new(refusing(element)),
+    };
+    assert_eq!(compare("public.nn[]"), array("public.nn[]", leaf("public.nn")));
+    let comp = |declared: &str| NestedCompare::Record {
+        declared: declared.to_string(),
+        fields: vec![
+            ("a".to_string(), refusing(leaf("public.over"))),
+            ("b".to_string(), Position::nullable(leaf("integer"))),
+        ],
+    };
+    assert_eq!(compare("public.comp"), comp("public.comp"));
+    // An element names the domain it is declared as, not its base.
+    assert_eq!(compare("public.nncomp[]"), array("public.nncomp[]", comp("public.nncomp")));
     assert_eq!(
         compare("public.nnrange"),
-        NestedCompare::Range { bound: Box::new(leaf("public.nn")), discrete: None }
+        NestedCompare::Range {
+            declared: "public.nnrange".to_string(),
+            bound: Box::new(leaf("public.nn")),
+            discrete: None
+        }
     );
     assert_eq!(
         text_grammar("public.nnbox[]", &types),

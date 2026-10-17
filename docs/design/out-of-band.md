@@ -73,4 +73,4 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M224 | | pgdt-codec: PostgreSQL's cross-order answers closed — a range's, a multirange's and a nested composite's type named in the order, leaves of one type related as scalars are, `text` and `varchar` two orders; closes `KD120` | | [2026-10-17](../status/history/2026-10-17.md), "A nested key names its types at every level" |
+| M224 | 2026-10-17 | pgdt-codec: PostgreSQL's cross-order answers closed — a range's, a multirange's and a nested composite's type named in the order, leaves of one type related as scalars are, `text` and `varchar` two orders; closes `KD120` | | [2026-10-17](../status/history/2026-10-17.md), "A nested key names its types at every level" |

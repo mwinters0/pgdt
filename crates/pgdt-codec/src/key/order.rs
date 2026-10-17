@@ -363,7 +363,7 @@ pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
         // A field past its typmod's length is refused, and one within it is
         // keyed as written. A literal is coerced with no typmod
         // ([`literal_key`]).
-        CompareKind::Text { length } => {
+        CompareKind::Text { length, .. } => {
             if length.is_some_and(|length| char_typmod_refuses(text, length)) {
                 return Err(Unread::Refused);
             }
@@ -416,7 +416,9 @@ pub fn literal_key(
         }),
         (_, CompareKind::Numeric { typmod: Some(_), .. }) => special_order_key(kind, text)
             .or_else(|| Some(OrderKey::Numeric(NumericKey::parse(text)?))),
-        (_, CompareKind::Text { .. }) => order_key(&CompareKind::Text { length: None }, text),
+        (_, CompareKind::Text { .. }) => {
+            order_key(&CompareKind::Text { length: None, varying: false }, text)
+        }
         (_, CompareKind::PaddedText { .. }) => {
             order_key(&CompareKind::PaddedText { length: None }, text)
         }

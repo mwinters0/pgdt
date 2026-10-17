@@ -398,7 +398,7 @@ fn each_comparison_shape_is_looked_up_as_its_equality_compares() {
     assert_eq!(
         shape,
         std::mem::discriminant(&Lookup::Decoded {
-            kind: CompareKind::Text { length: None },
+            kind: CompareKind::Text { length: None, varying: false },
             keys: vec![]
         })
     );

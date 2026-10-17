@@ -5800,3 +5800,70 @@ grep -n -A4 'memcmp(fgresult, "\\\\.\\n", 3)\|strcmp(buf, "\\\\.\\n")' src/bin/p
 The first shows `eol_type` fixed as CR LF, CR and LF, the two refusals in
 each form, the backslash skip and the marker refused without its line end; the second the marker test and whether the line
 is dropped, buffered or removed after it.
+
+## I92 — Two text types meet as `text` or as `bpchar`, and two containers compare only where the types beneath them are one
+
+**Claim.** Two statements about `a < b` across two declared types:
+
+- **A `character(n)` against a `text` or a `name` is compared as `text`**,
+  the `character(n)` cast by `rtrim1`, which drops its trailing blanks, and
+  the other side's kept. **Against a `character varying` it is compared as
+  `bpchar`**, the `character varying` binary-coerced, so `bpcharcmp` drops
+  both sides' trailing blanks (I38). A `text`, a `name` and a `character
+  varying` compare as `text` among themselves.
+- **Two containers compare only where the types beneath them are one.**
+  `array_cmp` refuses two arrays of different element types, `record_cmp` two
+  records whose columns at one position are of different types — a domain
+  differing from its base — and the range and (from v14) multirange
+  operators take `anyrange` and `anymultirange`, so two range types over one subtype
+  resolve no operator. At the top, `record_cmp` compares two composite
+  types whose column types are one, and a domain over a range is cast to
+  its base. A typmod never decides: `numeric(5,1)[]` compares with
+  `numeric[]`.
+
+**Proof.** `src/include/catalog/pg_cast.dat`: `bpchar` to `text` by
+`text(bpchar)`, implicit, which `pg_proc.dat` binds to `rtrim1`; `varchar` to
+`bpchar` and to `text`, implicit and binary (`castmethod => 'b'`). `text` is
+its category's preferred type (`pg_type.dat`, `typispreferred`), which
+`func_select_candidate` (`src/backend/parser/parse_func.c`) favours where
+each candidate matches one argument exactly: `bpchar < text` resolves
+`text`'s operator, `bpchar < varchar` `bpchar`'s, `varchar` being no
+preferred type. `src/backend/utils/adt/rowtypes.c`, `record_cmp`: `cannot
+compare dissimilar column types` where `atttypid` differs;
+`src/backend/utils/adt/arrayfuncs.c`, `array_cmp`: `cannot compare arrays
+of different element types`; `pg_operator.dat`: `<` over `anyrange` and
+`anymultirange`.
+
+**Observed.** The koji replica (PG16) in a rolled-back transaction:
+`'a'::char(3) < 'a '::text` and `< 'a '::name` are true, `= 'a '::varchar`
+is true; `r1 < r2` and `r1_multirange < r2_multirange`, two ranges over
+`float8`, resolve no operator; a domain over `r1` compares with `r1`;
+records `(integer, integer[])` against `(integer, dint)`, `dint` a domain
+over `integer[]`, and two composites each holding one of two composites of
+one shape, raise `cannot compare dissimilar column types`; `c1[] < c3[]`, two
+composites of one shape, resolves no operator, where `c1 < c3` compares;
+`numeric(5,1)[] '{1.5}' < numeric[] '{1.50,2}'` is true.
+
+**Scope limit.** Operators the catalog resolves without a setting; a
+collation conflict between two columns is outside it (pgdt compares text
+bytewise, `KD7`). A pair resolved only under `TimeZone` is no answer.
+
+**Verified against:** v13.23, v16.15, v18.6 (source); v16.15 (observed).
+
+**Relied on by:** `pgdt-codec`'s `key/relate.rs`, `postgres`, `NestedOrder`
+and `nested`; `compare/walk.rs`, `at_position`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n "castsource => 'bpchar', casttarget => 'text'\|castsource => 'varchar', casttarget => 'bpchar'" src/include/catalog/pg_cast.dat
+grep -n -B3 "prosrc => 'rtrim1'" src/include/catalog/pg_proc.dat
+grep -n 'dissimilar column types' src/backend/utils/adt/rowtypes.c
+grep -n 'arrays of different element types' src/backend/utils/adt/arrayfuncs.c
+grep -n "oprname => '<', oprleft => 'any\(multi\)\?range'" src/include/catalog/pg_operator.dat
+```
+
+The first shows both casts implicit, `bpchar`'s through `text(bpchar)`; the
+second that function bound to `rtrim1`; the rest each refusal and the two
+polymorphic operators.

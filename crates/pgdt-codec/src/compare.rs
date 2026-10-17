@@ -73,8 +73,15 @@ pub enum CompareKind {
     /// blanks ([`char_typmod_refuses`](crate::value::text::char_typmod_refuses)); `None` for every
     /// other text, and for a literal's reading, which no typmod reaches.
     /// The length refuses a field and never moves a key.
+    ///
+    /// `varying` is `character varying`'s, `text` and `name` holding none.
+    /// It moves no key either: it is what the server tells apart against a
+    /// `character(n)`, casting a `character varying` to `bpchar`, its
+    /// trailing blanks trimmed, where it casts the `character(n)` to `text`
+    /// against the other two (I92).
     Text {
         length: Option<u32>,
+        varying: bool,
     },
     /// `character(n)`: bytewise over the text the file holds, after **both**
     /// sides give up their trailing blanks. A dump writes every value padded
@@ -218,10 +225,10 @@ impl CompareKind {
             | Self::TimeTz
             | Self::Network { .. }
             | Self::MacAddr { .. }
-            | Self::Jsonb => Self::Text { length: None },
+            | Self::Jsonb => Self::Text { length: None, varying: false },
             // The emitted text is the field's, so its length refuses as it
             // did.
-            Self::PaddedText { length } => Self::Text { length: *length },
+            Self::PaddedText { length } => Self::Text { length: *length, varying: false },
             kind => kind.clone(),
         }
     }
@@ -478,6 +485,11 @@ pub(crate) enum TypeCollation {
 /// server's way carries its own [`ComparisonDivergence`], so a `text[]`
 /// column diverges for the reason its element does.
 ///
+/// **Every node carries `declared`**, its type as the DDL spelled it where
+/// the node sits: what a key's order names, the server relating two
+/// containers only where the types beneath them are one
+/// (`docs/design/decisions.md`, "D56").
+///
 /// **`json` beneath a nested type is a refusal, not a divergence**:
 /// `array_cmp` raises when the element type has no comparison proc, so a
 /// `json[]` column has no `=` and no `<` on the server either.
@@ -514,12 +526,12 @@ pub enum NestedCompare {
     /// **One node whatever the dimensionality** — an `array_out` literal
     /// carries its own shape and [`crate::nested::ArrayLiteral`] flattens it,
     /// so `integer[]` is one `Array` node at any depth.
-    Array(Box<Position<NestedCompare>>),
+    Array { declared: String, element: Box<Position<NestedCompare>> },
     /// `record_cmp`: field-wise in declaration order, which is also the order
     /// `record_out` writes them in. The name is carried for the diagnostic
     /// path alone — `record_out` is positional (I23) and no comparison reads
     /// it.
-    Record(Vec<(String, Position<NestedCompare>)>),
+    Record { declared: String, fields: Vec<(String, Position<NestedCompare>)> },
     /// `range_cmp`: `empty` below every other value, then lower bound, then
     /// upper, with a bound settling infinity before value and value before
     /// inclusivity (I46). `bound` is the subtype's own node, so a range over
@@ -531,21 +543,21 @@ pub enum NestedCompare {
     /// user-defined range never reaches this node with it set — one declaring
     /// a `canonical` function is [`ComparisonPlan::Unanswerable`] rather than
     /// a tree (I46).
-    Range { bound: Box<NestedCompare>, discrete: Option<Discrete> },
+    Range { declared: String, bound: Box<NestedCompare>, discrete: Option<Discrete> },
     /// `multirange_cmp`: member-wise over members the server has already
     /// sorted, coalesced and emptied out, the shorter multirange first
     /// (I46). The fields are the *member range's*, since a multirange has no
     /// comparison of its own beyond the sequence.
-    Multirange { bound: Box<NestedCompare>, discrete: Option<Discrete> },
+    Multirange { declared: String, bound: Box<NestedCompare>, discrete: Option<Discrete> },
     /// `int2vector`, compared by `array_cmp` over `smallint` elements: the
     /// type names no operator of its own, and `anyarray` polymorphism
     /// resolves `<` and `=` for it (I47). [`Self::Array`]'s comparison over a
     /// fixed element node, read in `int2vectorout`'s grammar rather than
     /// `array_out`'s — which is why it is a variant of its own.
     ///
-    /// It carries nothing: the element is always `smallint`, so no position
+    /// It carries no element: that is always `smallint`, so no position
     /// here could refuse an order or announce a divergence.
-    Int2Vector,
+    Int2Vector { declared: String },
 }
 
 /// The canonical function of a built-in discrete range type —
@@ -665,12 +677,18 @@ impl NestedCompare {
         out
     }
 
-    /// A leaf's declared type as the DDL spelled it; `int2vector` for its
-    /// fixed element.
+    /// The node's type as the DDL spelled it where the node sits: a
+    /// position's own declared type, a domain included, and the column's
+    /// type, through any domain, at the top.
     pub(crate) fn declared(&self) -> &str {
         match self {
-            Self::Leaf { declared, .. } | Self::Uncomparable { declared, .. } => declared,
-            _ => "int2vector",
+            Self::Leaf { declared, .. }
+            | Self::Uncomparable { declared, .. }
+            | Self::Array { declared, .. }
+            | Self::Record { declared, .. }
+            | Self::Range { declared, .. }
+            | Self::Multirange { declared, .. }
+            | Self::Int2Vector { declared } => declared,
         }
     }
 
@@ -678,14 +696,16 @@ impl NestedCompare {
     /// or [`Self::Int2Vector`] — handing each its path and the node.
     pub(crate) fn walk(&self, path: &mut String, visit: &mut impl FnMut(&str, &Self)) {
         match self {
-            Self::Leaf { .. } | Self::Int2Vector | Self::Uncomparable { .. } => visit(path, self),
-            Self::Array(element) => {
+            Self::Leaf { .. } | Self::Int2Vector { .. } | Self::Uncomparable { .. } => {
+                visit(path, self)
+            }
+            Self::Array { element, .. } => {
                 let len = path.len();
                 path.push_str("[]");
                 element.plan.walk(path, visit);
                 path.truncate(len);
             }
-            Self::Record(fields) => {
+            Self::Record { fields, .. } => {
                 for (name, field) in fields {
                     let len = path.len();
                     path.push('.');
@@ -826,7 +846,7 @@ impl ComparisonPlan {
                 [Some(kind.clone()), second]
             }
             Self::Compared { kind, divergence: Some(_) } => [Some(kind.datafusion_order()), None],
-            Self::Refused => [Some(CompareKind::Text { length: None }), None],
+            Self::Refused => [Some(CompareKind::Text { length: None, varying: false }), None],
             Self::Nested(_) | Self::Unanswerable(_) => [None, None],
         }
     }
@@ -857,7 +877,7 @@ impl ComparisonPlan {
                 Some(kind.datafusion_order())
             }
             (Self::Refused, ComparisonSemantics::DataFusion) => {
-                Some(CompareKind::Text { length: None })
+                Some(CompareKind::Text { length: None, varying: false })
             }
             _ => None,
         }
@@ -900,7 +920,7 @@ impl ComparisonPlan {
     /// which is why it is not a deficiency: there is no order to disagree
     /// with. The note it produces says so.
     pub(crate) const AS_TEXT: Self = Self::Compared {
-        kind: CompareKind::Text { length: None },
+        kind: CompareKind::Text { length: None, varying: false },
         divergence: Some(ComparisonDivergence::AsText),
     };
 

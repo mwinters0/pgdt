@@ -20,7 +20,7 @@ use std::sync::Arc;
 fn stored_bounds_and_order_hold_every_value_under_its_key() {
     let mut rng = Rng(0x5eed);
     let kinds = [
-        CompareKind::Text { length: None },
+        CompareKind::Text { length: None, varying: false },
         CompareKind::PaddedText { length: None },
         CompareKind::Bytea,
         CompareKind::Int { bytes: 8 },

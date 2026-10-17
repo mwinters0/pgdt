@@ -46,7 +46,7 @@ fn a_bit_string_s_grammar_is_read_off_every_spelling() {
     ] {
         assert_eq!(text_grammar(declared, &types), expected, "`{declared}`");
     }
-    let ComparisonPlan::Nested(NestedCompare::Array(element)) =
+    let ComparisonPlan::Nested(NestedCompare::Array { element, .. }) =
         comparison_for("public.b3[]", None, &types, &[])
     else {
         panic!("an array of a domain over `bit(3)` is nested");
@@ -54,7 +54,7 @@ fn a_bit_string_s_grammar_is_read_off_every_spelling() {
     assert!(
         matches!(element.plan, NestedCompare::Uncomparable { grammar, .. } if grammar == bit(Some(3)))
     );
-    let ComparisonPlan::Nested(NestedCompare::Record(fields)) =
+    let ComparisonPlan::Nested(NestedCompare::Record { fields, .. }) =
         comparison_for("public.flags", None, &types, &[])
     else {
         panic!("a composite is nested");
@@ -105,7 +105,7 @@ fn a_geometric_type_s_grammar_is_read_off_every_spelling() {
         assert_eq!(text_grammar(declared, &types), expected, "`{declared}`");
     }
     let element_grammar = |declared| match comparison_for(declared, None, &types, &[]) {
-        ComparisonPlan::Nested(NestedCompare::Array(element)) => match element.plan {
+        ComparisonPlan::Nested(NestedCompare::Array { element, .. }) => match element.plan {
             NestedCompare::Uncomparable { grammar, .. } => grammar,
             other => panic!("`{declared}`'s element is {other:?}"),
         },
@@ -114,14 +114,14 @@ fn a_geometric_type_s_grammar_is_read_off_every_spelling() {
     assert_eq!(element_grammar("point[]"), geometric(Geometric::Point));
     assert_eq!(element_grammar("box[]"), geometric(Geometric::Box));
     assert_eq!(element_grammar("public.boxes[]"), geometric(Geometric::Box));
-    let ComparisonPlan::Nested(NestedCompare::Record(fields)) =
+    let ComparisonPlan::Nested(NestedCompare::Record { fields, .. }) =
         comparison_for("public.shapes", None, &types, &[])
     else {
         panic!("a composite is nested");
     };
     assert!(matches!(
         &fields[0].1.plan,
-        NestedCompare::Array(element) if matches!(element.plan, NestedCompare::Uncomparable {
+        NestedCompare::Array { element, .. } if matches!(element.plan, NestedCompare::Uncomparable {
             grammar: Some(TextGrammar::Geometric(Geometric::Box)), ..
         })
     ));
@@ -169,7 +169,7 @@ fn a_type_refusing_every_value_or_none_has_a_grammar_saying_so() {
     ] {
         assert_eq!(text_grammar(declared, &types), expected, "`{declared}`");
     }
-    let ComparisonPlan::Nested(NestedCompare::Array(element)) =
+    let ComparisonPlan::Nested(NestedCompare::Array { element, .. }) =
         comparison_for("xid8[]", None, &types, &[])
     else {
         panic!("an array of `xid8` is nested");

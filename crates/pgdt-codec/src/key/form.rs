@@ -23,22 +23,24 @@ pub fn nested_accepted_form(plan: &NestedCompare) -> String {
     // `int2vector`'s elements are read by `int2vectorin` itself, so the
     // superset reaches all the way down and the sentence below would be false
     // here.
-    if matches!(plan, NestedCompare::Int2Vector) {
+    if matches!(plan, NestedCompare::Int2Vector { .. }) {
         return "as whole numbers from -32768 to 32767 separated by spaces, and as nothing at \
                 all for the empty vector"
             .to_string();
     }
     let container = match plan {
-        NestedCompare::Array(element) if element.not_null => {
+        NestedCompare::Array { element, .. } if element.not_null => {
             "as an array literal — `{a,b}`, `{}` — with no `NULL` element, which its element \
              type, a `NOT NULL` domain, refuses"
         }
-        NestedCompare::Array(_) => "as an array literal — `{a,b}`, `{}`, a bare `NULL` element",
-        NestedCompare::Record(fields) if fields.iter().any(|(_, field)| field.not_null) => {
+        NestedCompare::Array { .. } => "as an array literal — `{a,b}`, `{}`, a bare `NULL` element",
+        NestedCompare::Record { fields, .. } if fields.iter().any(|(_, field)| field.not_null) => {
             "as a composite literal — `(a,b)`, a field left empty for NULL but where its type is \
              a `NOT NULL` domain"
         }
-        NestedCompare::Record(_) => "as a composite literal — `(a,b)`, a field left empty for NULL",
+        NestedCompare::Record { .. } => {
+            "as a composite literal — `(a,b)`, a field left empty for NULL"
+        }
         NestedCompare::Range { .. } => {
             "as a range literal — `[a,b)`, `empty`, a bound left empty for unbounded — whose \
              lower bound is not above its upper"
@@ -48,7 +50,7 @@ pub fn nested_accepted_form(plan: &NestedCompare) -> String {
              bound is not above its upper"
         }
         // Answered above, before the leaf clause this arm cannot carry.
-        NestedCompare::Int2Vector => "as an int2vector literal",
+        NestedCompare::Int2Vector { .. } => "as an int2vector literal",
         // Neither is reachable: a leaf plan is never a column's whole
         // comparison, and an uncomparable one refuses before a literal is
         // read.

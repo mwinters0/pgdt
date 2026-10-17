@@ -500,15 +500,17 @@ pub(super) fn resolve_term(
         // gathered for it.
         _ if ordering && arrow => (
             Comparison::Ordered {
-                kind: CompareKind::Text { length: None },
-                bound: order_key(&CompareKind::Text { length: None }, text)
-                    .ok_or_else(|| refuse_literal(&CompareKind::Text { length: None }))?,
+                kind: CompareKind::Text { length: None, varying: false },
+                bound: order_key(&CompareKind::Text { length: None, varying: false }, text)
+                    .ok_or_else(|| {
+                        refuse_literal(&CompareKind::Text { length: None, varying: false })
+                    })?,
             },
             BelievedStatistics {
                 bounds: believed_bounds(
                     &resolved.comparisons[index],
                     semantics,
-                    &CompareKind::Text { length: None },
+                    &CompareKind::Text { length: None, varying: false },
                     text,
                 ),
                 dictionary: false,
@@ -521,7 +523,7 @@ pub(super) fn resolve_term(
                 bounds: believed_bounds(
                     &resolved.comparisons[index],
                     semantics,
-                    &CompareKind::Text { length: None },
+                    &CompareKind::Text { length: None, varying: false },
                     text,
                 ),
                 dictionary: false,

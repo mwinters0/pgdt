@@ -1004,7 +1004,7 @@ fn datafusion_semantics_orders_a_column_with_no_plan_bytewise() {
             assert!(term.comparison_notes().is_empty());
             let statistics = &term.compared.as_ref().unwrap().statistics;
             let kind = statistics.bounds.as_deref().map(|(kind, _)| kind.clone());
-            assert_eq!(kind, Some(CompareKind::Text { length: None }));
+            assert_eq!(kind, Some(CompareKind::Text { length: None, varying: false }));
             assert!(!statistics.dictionary);
             for (value, want) in values.iter().zip(want) {
                 assert_eq!(
@@ -1665,7 +1665,7 @@ fn equality_canonicalizes_the_literal_once() {
 }
 
 /// `=` on a `text` or `varchar` column is a byte comparison:
-/// `CompareKind::Text { length: None }` renders the literal to itself, so the commonest
+/// `CompareKind::Text { length: None, varying: false }` renders the literal to itself, so the commonest
 /// column there is carries no per-row work.
 #[test]
 fn equality_on_a_text_column_is_unchanged() {
@@ -1949,7 +1949,7 @@ fn a_position_the_resolver_declined_announces_nothing() {
         let mut resolved = one_column(declared, DataType::Utf8View);
         resolved.comparisons = vec![comparison_for(declared, None, &types, &[])];
         assert!(
-            matches!(resolved.comparisons[0], ComparisonPlan::Nested(NestedCompare::Array(_))),
+            matches!(resolved.comparisons[0], ComparisonPlan::Nested(NestedCompare::Array { .. })),
             "{declared} carries a tree with an uncomparable position"
         );
         resolved.columns[0] = resolution;
@@ -3216,7 +3216,7 @@ mod oracle {
     /// [`ARROW_AGREEMENT`] records: a kind [`CompareKind::datafusion_order`]
     /// leaves alone is one whose order and gathered bounds were found
     /// to be DataFusion's. And **every kind emitted as text —
-    /// `Utf8View` or a `Dictionary` of `Utf8` — is [`CompareKind::Text { length: None }`]
+    /// `Utf8View` or a `Dictionary` of `Utf8` — is [`CompareKind::Text { length: None, varying: false }`]
     /// there**: the walk's literals are the server's own spellings, so
     /// agreeing over them cannot show that a user's literal is compared
     /// as DataFusion compares it, and only bytewise is.

@@ -342,7 +342,7 @@ fn every_column_carries_a_comparison_plan() {
         [
             ComparisonPlan::Compared { kind: CompareKind::Int { bytes: 4 }, divergence: None },
             ComparisonPlan::diverging(
-                CompareKind::Text { length: None },
+                CompareKind::Text { length: None, varying: false },
                 crate::compare::ComparisonDivergence::UnknownCollation,
             ),
             ComparisonPlan::Compared {
@@ -354,13 +354,16 @@ fn every_column_carries_a_comparison_plan() {
                 divergence: None,
             },
             // Nested: compared structurally, one node per level.
-            ComparisonPlan::Nested(crate::compare::NestedCompare::Array(Box::new(
-                crate::pgtype::Position::nullable(crate::compare::NestedCompare::Leaf {
-                    declared: "integer".to_string(),
-                    kind: CompareKind::Int { bytes: 4 },
-                    divergence: None,
-                },)
-            ))),
+            ComparisonPlan::Nested(crate::compare::NestedCompare::Array {
+                declared: "integer[]".to_string(),
+                element: Box::new(crate::pgtype::Position::nullable(
+                    crate::compare::NestedCompare::Leaf {
+                        declared: "integer".to_string(),
+                        kind: CompareKind::Int { bytes: 4 },
+                        divergence: None,
+                    }
+                )),
+            }),
             // A type this build never mapped has no order here.
             ComparisonPlan::Refused,
         ]
@@ -389,10 +392,13 @@ fn two_text_columns_of_one_table_can_compare_differently() {
         resolved.comparisons,
         [
             ComparisonPlan::diverging(
-                CompareKind::Text { length: None },
+                CompareKind::Text { length: None, varying: false },
                 ComparisonDivergence::UnknownCollation
             ),
-            ComparisonPlan::Compared { kind: CompareKind::Text { length: None }, divergence: None },
+            ComparisonPlan::Compared {
+                kind: CompareKind::Text { length: None, varying: false },
+                divergence: None
+            },
         ]
     );
     // Both are still the same Arrow type and the same comparison — only
@@ -423,14 +429,14 @@ fn the_dumps_own_collation_list_decides_whether_a_clause_is_deterministic() {
     assert_eq!(
         build(true).comparisons,
         [ComparisonPlan::diverging(
-            CompareKind::Text { length: None },
+            CompareKind::Text { length: None, varying: false },
             ComparisonDivergence::NonBytewiseCollation
         )]
     );
     assert_eq!(
         build(false).comparisons,
         [ComparisonPlan::diverging(
-            CompareKind::Text { length: None },
+            CompareKind::Text { length: None, varying: false },
             ComparisonDivergence::NonDeterministicCollation
         )]
     );
@@ -449,7 +455,7 @@ fn a_census_refused_column_claims_no_order() {
     assert_eq!(
         text.comparisons,
         [ComparisonPlan::diverging(
-            crate::compare::CompareKind::Text { length: None },
+            crate::compare::CompareKind::Text { length: None, varying: false },
             crate::compare::ComparisonDivergence::UnknownCollation,
         )]
     );

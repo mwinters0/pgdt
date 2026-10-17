@@ -149,7 +149,7 @@ pub fn nested_key(plan: &NestedCompare, text: &str, side: Side) -> Option<Nested
         // Refused before any value is read: `resolve_term` never builds a
         // comparison over a tree holding one.
         NestedCompare::Uncomparable { .. } => return None,
-        NestedCompare::Array(element) => {
+        NestedCompare::Array { element, .. } => {
             let literal =
                 if input { nested::parse_array(text) } else { nested::decode_array(text) }?;
             let mut elements = Vec::with_capacity(literal.elements.len());
@@ -171,7 +171,7 @@ pub fn nested_key(plan: &NestedCompare, text: &str, side: Side) -> Option<Nested
         // `lbound1 = 0` unconditionally, where `array_out`'s `{}` is
         // zero-dimensional, so an empty `int2vector` is not the empty array
         // (I47).
-        NestedCompare::Int2Vector => {
+        NestedCompare::Int2Vector { .. } => {
             let values = if input {
                 nested::parse_int2vector(text)
             } else {
@@ -186,7 +186,7 @@ pub fn nested_key(plan: &NestedCompare, text: &str, side: Side) -> Option<Nested
                 lower_bounds: vec![0],
             }
         }
-        NestedCompare::Record(plans) => {
+        NestedCompare::Record { fields: plans, .. } => {
             let mut fields = if input {
                 nested::parse_record(text, plans.len())?.fields
             } else {
@@ -214,12 +214,12 @@ pub fn nested_key(plan: &NestedCompare, text: &str, side: Side) -> Option<Nested
             }
             NestedKey::Record(out)
         }
-        NestedCompare::Range { bound, discrete } => {
+        NestedCompare::Range { bound, discrete, .. } => {
             let literal =
                 if input { nested::parse_range(text) } else { nested::decode_range(text) }?;
             NestedKey::Range(Box::new(range_key(bound, &literal, *discrete, side)?))
         }
-        NestedCompare::Multirange { bound, discrete } => {
+        NestedCompare::Multirange { bound, discrete, .. } => {
             let literals = if input {
                 nested::parse_multirange(text)
             } else {
@@ -518,11 +518,31 @@ fn range_union(a: &RangeKey, b: &RangeKey, discrete: Option<Discrete>) -> Option
 /// a nested comparison two-valued throughout, never SQL's `Unknown`.
 fn compare_slot(a: Option<&NestedKey>, b: Option<&NestedKey>) -> Ordering {
     match (a, b) {
-        (None, None) => Ordering::Equal,
-        (None, Some(_)) => Ordering::Greater,
-        (Some(_), None) => Ordering::Less,
         (Some(a), Some(b)) => compare_nested(a, b),
+        _ => null_order(a.is_some(), b.is_some()),
     }
+}
+
+/// [`compare_slot`]'s NULL rule, over two slots at least one of which is
+/// NULL, by whether each holds a value.
+pub(crate) fn null_order(a: bool, b: bool) -> Ordering {
+    b.cmp(&a)
+}
+
+/// `array_cmp` past the elements, once those up to the shorter array's
+/// length agree: element count, then dimension count, then the dimensions,
+/// then the lower bounds (I45). Each side is its element count, dimensions
+/// and lower bounds.
+pub(crate) fn array_shape(
+    (a_count, a_dims, a_lower): (usize, &[usize], &[i32]),
+    (b_count, b_dims, b_lower): (usize, &[usize], &[i32]),
+) -> Ordering {
+    first_difference(
+        std::iter::once(a_count.cmp(&b_count))
+            .chain(std::iter::once(a_dims.len().cmp(&b_dims.len())))
+            .chain(a_dims.iter().zip(b_dims).map(|(a, b)| a.cmp(b)))
+            .chain(a_lower.iter().zip(b_lower).map(|(a, b)| a.cmp(b))),
+    )
 }
 
 /// `array_cmp`/`record_cmp`, structurally.
@@ -542,14 +562,9 @@ pub fn compare_nested(a: &NestedKey, b: &NestedKey) -> Ordering {
             NestedKey::Array { elements: ae, dims: ad, lower_bounds: al },
             NestedKey::Array { elements: be, dims: bd, lower_bounds: bl },
         ) => first_difference(
-            ae.iter()
-                .zip(be.iter())
-                .map(|(a, b)| compare_slot(a.as_ref(), b.as_ref()))
-                .chain(std::iter::once(ae.len().cmp(&be.len())))
-                .chain(std::iter::once(ad.len().cmp(&bd.len())))
-                .chain(ad.iter().zip(bd.iter()).map(|(a, b)| a.cmp(b)))
-                .chain(al.iter().zip(bl.iter()).map(|(a, b)| a.cmp(b))),
-        ),
+            ae.iter().zip(be.iter()).map(|(a, b)| compare_slot(a.as_ref(), b.as_ref())),
+        )
+        .then_with(|| array_shape((ae.len(), ad, al), (be.len(), bd, bl))),
         (NestedKey::Record(a), NestedKey::Record(b)) => first_difference(
             a.iter().zip(b.iter()).map(|(a, b)| compare_slot(a.as_ref(), b.as_ref())),
         ),

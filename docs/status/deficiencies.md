@@ -523,8 +523,3 @@ than reading as a phase nobody has sliced.
   them in `datafusion-pgdump` by DataFusion's own coercion and cast.
   Detail: `crates/pgdt-codec/src/key.rs`.
 
-- **KD120** — in PostgreSQL's semantics `ValueKey::compare` answers `None`
-  where the server answers and the key's order does not carry what decides
-  it — a `text` ending in a blank against a `character(n)`, two `numeric[]`
-  scales — and answers two range types over one subtype, which the server
-  relates by no operator. **(b) owned by `M224`**. Detail: `crates/pgdt-codec/src/key/relate.rs`.

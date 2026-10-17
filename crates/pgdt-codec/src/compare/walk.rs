@@ -63,11 +63,14 @@ fn array_comparison(
             Err(reason) => return ComparisonPlan::Unanswerable(reason),
         }
     };
-    ComparisonPlan::Nested(NestedCompare::Array(Box::new(Position::of(child, element, types))))
+    ComparisonPlan::Nested(NestedCompare::Array {
+        declared: declared.to_string(),
+        element: Box::new(Position::of(child, element, types)),
+    })
 }
 
-/// The comparison for a range or multirange column, from its bound type and
-/// whether the range type canonicalizes.
+/// The comparison for a range or multirange column `declared`, from its
+/// bound type and whether the range type canonicalizes.
 ///
 /// **The bound is asked with no `COLLATE` clause**, which is the one place
 /// this walk knowingly answers weaker than the file allows: a range type
@@ -82,6 +85,7 @@ fn array_comparison(
 /// outright rather than a tree with an unnameable position in it: there is no
 /// declared type to put in the refusal.
 fn range_comparison(
+    declared: &str,
     subtype: Option<&str>,
     discrete: Option<Discrete>,
     multi: bool,
@@ -94,10 +98,11 @@ fn range_comparison(
         Ok(bound) => Box::new(bound),
         Err(reason) => return ComparisonPlan::Unanswerable(reason),
     };
+    let declared = declared.to_string();
     ComparisonPlan::Nested(if multi {
-        NestedCompare::Multirange { bound, discrete }
+        NestedCompare::Multirange { declared, bound, discrete }
     } else {
-        NestedCompare::Range { bound, discrete }
+        NestedCompare::Range { declared, bound, discrete }
     })
 }
 
@@ -159,9 +164,26 @@ fn nested_position(
         ComparisonPlan::Compared { kind, divergence } => {
             NestedCompare::Leaf { declared: declared.to_string(), kind, divergence }
         }
-        ComparisonPlan::Nested(inner) => inner,
+        ComparisonPlan::Nested(inner) => at_position(inner, declared),
         ComparisonPlan::Unanswerable(reason) => return Err(reason),
     })
+}
+
+/// A nested position's node named for the position's own declared type: a
+/// domain's where the position is declared one, which the walk passed
+/// through to its base. The server tells a domain from its base wherever it
+/// is an element's or a field's type (I92), and a column's top-level node
+/// keeps its base's name, a domain there being cast to it.
+fn at_position(mut node: NestedCompare, position: &str) -> NestedCompare {
+    match &mut node {
+        NestedCompare::Array { declared, .. }
+        | NestedCompare::Record { declared, .. }
+        | NestedCompare::Range { declared, .. }
+        | NestedCompare::Multirange { declared, .. }
+        | NestedCompare::Int2Vector { declared } => *declared = position.to_string(),
+        NestedCompare::Leaf { .. } | NestedCompare::Uncomparable { .. } => {}
+    }
+    node
 }
 
 /// **The comparison register**: how a column declared `declared` compares, and
@@ -219,6 +241,7 @@ fn comparison_walk(
     // step `map_builtin` takes, so the two walks agree.
     match builtin_range_subtype(&base) {
         Some(range) => range_comparison(
+            &base,
             Some(range.subtype),
             range.discrete,
             range.multi,
@@ -255,12 +278,18 @@ fn comparison_user_type(
             // A multirange over a range that canonicalizes is unanswerable
             // for the same reason the range is, and names the *range* type:
             // the companion has no DDL of its own to name (I10).
-            Some(TypeDef { name, kind: TypeKind::Range { subtype, canonical, .. } }) => {
+            Some(TypeDef { name: range, kind: TypeKind::Range { subtype, canonical, .. } }) => {
                 match canonical {
-                    Some(function) => unanswerable_range(name, function),
-                    None => {
-                        range_comparison(subtype.as_deref(), None, true, types, collations, visits)
-                    }
+                    Some(function) => unanswerable_range(range, function),
+                    None => range_comparison(
+                        name,
+                        subtype.as_deref(),
+                        None,
+                        true,
+                        types,
+                        collations,
+                        visits,
+                    ),
                 }
             }
             _ => ComparisonPlan::Refused,
@@ -313,7 +342,10 @@ fn comparison_user_type(
                     })
                     .collect();
                 match positions {
-                    Ok(positions) => ComparisonPlan::Nested(NestedCompare::Record(positions)),
+                    Ok(fields) => ComparisonPlan::Nested(NestedCompare::Record {
+                        declared: def.name.clone(),
+                        fields,
+                    }),
                     Err(reason) => ComparisonPlan::Unanswerable(reason),
                 }
             }
@@ -326,7 +358,15 @@ fn comparison_user_type(
         // none.
         TypeKind::Range { subtype, canonical, .. } => match canonical {
             Some(function) => unanswerable_range(&def.name, function),
-            None => range_comparison(subtype.as_deref(), None, false, types, collations, visits),
+            None => range_comparison(
+                &def.name,
+                subtype.as_deref(),
+                None,
+                false,
+                types,
+                collations,
+                visits,
+            ),
         },
         TypeKind::Base { .. } | TypeKind::Shell => ComparisonPlan::Refused,
     }

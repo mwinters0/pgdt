@@ -29,7 +29,7 @@ use pgdt_model::PostgresInvalidValues;
 use self::order::{OrderKey, Side, literal_key, order_key, order_keys};
 use self::relate::{NestedOrder, ScalarOrder};
 use crate::compare::{CompareKind, ComparisonPlan, ComparisonSemantics};
-use crate::value::nested::key::{NestedKey, compare_nested, nested_key};
+use crate::value::nested::key::{NestedKey, nested_key};
 
 /// A value's place in its column's order, its representation hidden: the key
 /// a filter orders a row by, for an embedder ordering values of a column as
@@ -77,7 +77,7 @@ fn scalar_kind(
             Some(Cow::Owned(kind.datafusion_order()))
         }
         (ComparisonPlan::Refused, ComparisonSemantics::DataFusion) => {
-            Some(Cow::Owned(CompareKind::Text { length: None }))
+            Some(Cow::Owned(CompareKind::Text { length: None, varying: false }))
         }
         _ => None,
     }
@@ -109,7 +109,7 @@ impl ValueKey {
             let key = order_key(&kind, text)?;
             return Some(Self {
                 semantics,
-                key: Key::Scalar { order: ScalarOrder::of(&kind), key },
+                key: Key::Scalar { order: ScalarOrder::of(&kind, semantics), key },
             });
         }
         let tree = nested_tree(plan, semantics)?;
@@ -132,7 +132,7 @@ impl ValueKey {
             let key = literal_key(&kind, text, semantics)?;
             return Some(Self {
                 semantics,
-                key: Key::Scalar { order: ScalarOrder::of(&kind), key },
+                key: Key::Scalar { order: ScalarOrder::of(&kind, semantics), key },
             });
         }
         let tree = nested_tree(plan, semantics)?;
@@ -145,13 +145,18 @@ impl ValueKey {
     /// semantics' engine resolves `a < b` between their orders without
     /// consulting a setting, with its answer: in PostgreSQL's, `smallint`
     /// against `bigint`, an integer against a `numeric`, a float or an `oid`,
-    /// two `numeric` scales, a `date` against a `timestamp` and a `time`
-    /// against an `interval`, their special values included. They answer
-    /// **`None` wherever it resolves none**: a `date` against an `integer`,
-    /// a `macaddr` against a `macaddr8`, two enum types, a pair ordered only
+    /// two `numeric` scales, a `date` against a `timestamp`, a `time`
+    /// against an `interval` and a `character(n)` against a `text` or a
+    /// `character varying`, each its own way, their special values included;
+    /// and two nested keys of one type at every level, their leaves related
+    /// so, as `numeric(5,1)[]` against `numeric[]`. They answer **`None`
+    /// wherever it resolves none**: a `date` against an `integer`, a
+    /// `macaddr` against a `macaddr8`, two enum types, a pair ordered only
     /// under `TimeZone`, two keys read in two semantics, and two nested keys
-    /// but of one order at every level, as the server relates no two array,
-    /// range or record types.
+    /// whose types differ at any level — two range types over one subtype,
+    /// two records whose columns are two composite types of one shape — but
+    /// two composite types at the top, which compare where their column
+    /// types are one.
     ///
     /// deficiency: KD119 — in DataFusion's semantics two keys compare only
     /// where their orders are one, where DataFusion's comparison coercion
@@ -173,7 +178,8 @@ impl ValueKey {
                     ComparisonSemantics::DataFusion => (a == b).then(|| order_keys(x, y))?,
                 }
             }
-            (Key::Nested(a), Key::Nested(b)) => (a.0 == b.0).then(|| compare_nested(&a.1, &b.1)),
+            // Only PostgreSQL's semantics keys a nested value.
+            (Key::Nested(a), Key::Nested(b)) => relate::nested(&a.0, &a.1, &b.0, &b.1),
             _ => None,
         }
     }

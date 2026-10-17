@@ -70,11 +70,27 @@ fn composite(name: &str, columns: &[&str]) -> TypeDef {
     TypeDef { name: format!("public.{name}"), kind: TypeKind::Composite { fields: Some(columns) } }
 }
 
+/// A range type `public.<name>` over `double precision`, with no canonical
+/// function, and its multirange `public.<name>_multirange`.
+fn float_range(name: &str) -> TypeDef {
+    TypeDef {
+        name: format!("public.{name}"),
+        kind: TypeKind::Range {
+            subtype: Some("double precision".to_string()),
+            multirange_type_name: Some(format!("public.{name}_multirange")),
+            canonical: None,
+        },
+    }
+}
+
 /// The types the cross-plan cases read: records, two enum types of one
-/// label list, a domain, and composites of one shape and of two.
+/// label list, domains, composites of one shape and of two, composites
+/// holding those, and two range types over one subtype.
 fn cross_plan_types() -> Vec<TypeDef> {
     let mut mood2 = mood();
     mood2.name = "public.mood2".to_string();
+    let domain =
+        |name: &str, base| TypeDef { name: name.to_string(), kind: TypeKind::domain(base) };
     vec![
         record(1),
         record(2),
@@ -84,6 +100,16 @@ fn cross_plan_types() -> Vec<TypeDef> {
         composite("pair", &["integer", "integer"]),
         composite("labelled", &["integer", "text"]),
         composite("varied", &["integer", "character varying"]),
+        composite("wrapped_pair", &["public.pair"]),
+        composite("wrapped_r2", &["public.r2"]),
+        domain("public.intarr", "integer[]"),
+        composite("listed", &["integer[]"]),
+        composite("domain_listed", &["public.intarr"]),
+        composite("scaled", &["numeric(5,1)"]),
+        composite("unscaled", &["numeric"]),
+        float_range("floats"),
+        float_range("doubles"),
+        domain("public.dfloats", "public.floats"),
     ]
 }
 
@@ -94,7 +120,8 @@ fn cross_plan_types() -> Vec<TypeDef> {
 /// `integer`, two enum types, a `macaddr` against a `macaddr8`, a `bigint`
 /// past an `oid`'s range, a `numeric` past a double's, two array or range
 /// types, two records of different column types, and two keys read in two
-/// semantics. And the pairs `KD119` and `KD120` name.
+/// semantics; and below the top, a range type, a composite type or a domain
+/// told from another of one shape. And the pairs `KD119` names.
 #[test]
 fn keys_no_order_relates_answer_none() {
     let types = cross_plan_types();
@@ -131,10 +158,12 @@ fn keys_no_order_relates_answer_none() {
         (key("int4range", "[1,2)"), key("int8range", "[1,2)")),
         (key("int4range", "[1,2)"), key("numrange", "[1.5,2)")),
         (key("public.labelled", "(1,a)"), key("public.varied", "(1,a)")),
+        (key("public.floats", "[1,2)"), key("public.doubles", "[1,2)")),
+        (key("public.floats_multirange", "{[1,2)}"), key("public.doubles_multirange", "{}")),
+        (key("public.wrapped_pair", "(\"(1,2)\")"), key("public.wrapped_r2", "(\"(1,2)\")")),
+        (key("public.pair[]", "{}"), key("public.r2[]", "{}")),
+        (key("public.listed", "(\"{1}\")"), key("public.domain_listed", "(\"{1}\")")),
         (key("integer", "1"), datafusion("integer", "1")),
-        // `KD120`: a `text`'s trailing blank, which a `character
-        // varying`'s cast to `bpchar` would trim.
-        (key("text", "ab "), key("character(3)", "ab ")),
         // `KD119`: DataFusion widens both.
         (datafusion("smallint", "7"), datafusion("bigint", "7")),
         (datafusion("numeric(5,1)", "1.5"), datafusion("numeric(6,2)", "1.50")),
@@ -151,9 +180,12 @@ fn keys_no_order_relates_answer_none() {
 /// and of `real` and `double precision`; through the cast to `oid`, which
 /// wraps a negative `integer`; to `double precision`, rounding a `bigint`
 /// and a `numeric`; to `numeric`, exactly; `date2timestamp`; a `time` as an
-/// `interval`; a `character(n)` as `text`; `cidr` as `inet`; special values
-/// by their rank; two arrays and two records of one type at every leaf; and
-/// in DataFusion's semantics, an enum's label as text.
+/// `interval`; a `character(n)` as `text` against a `text` or a `name`, and
+/// a `character varying` as `bpchar`; `cidr` as `inet`; special values by
+/// their rank; two arrays and two records of one type at every leaf, their
+/// leaves related as scalars, two composite types at the top, and a domain
+/// over a range there as its base; and in DataFusion's semantics, an enum's
+/// label as text and a `character varying` as one.
 #[test]
 fn keys_an_order_relates_compare_across_plans() {
     use Ordering::{Equal, Greater, Less};
@@ -192,13 +224,23 @@ fn keys_an_order_relates_compare_across_plans() {
         (key("time", "01:00:00"), key("interval", "1 day"), Less),
         (key("time", "01:00:00"), key("interval", "infinity"), Less),
         (key("character(3)", "ab "), key("text", "ab"), Equal),
+        (key("character(3)", "ab "), key("text", "ab "), Less),
+        (key("character(3)", "ab "), key("name", "ab "), Less),
+        (key("character(3)", "ab "), key("character varying", "ab  "), Equal),
+        (key("character varying", "ab "), key("text", "ab"), Greater),
         (key("character(5)", "ab   "), key("name", "abc"), Less),
         (key("character varying(3)", "abc"), key("text", "abc"), Equal),
         (key("inet", "10.0.0.0/8"), key("cidr", "10.0.0.0/8"), Equal),
         (key("public.mood", "sad"), field(&plan("public.mood", &[mood()]), "ok"), Less),
         (key("character varying(3)[]", "{a}"), key("character varying(5)[]", "{b}"), Less),
         (key("public.pair", "(1,2)"), key("public.r2", "(1,3)"), Less),
+        (key("numeric(5,1)[]", "{1.5}"), key("numeric[]", "{1.50,2}"), Less),
+        (key("numeric(5,1)[]", "{1.5,NULL}"), key("numeric(6,2)[]", "{1.50,NULL}"), Equal),
+        (key("numeric(5,1)[]", "{NULL}"), key("numeric[]", "{NaN}"), Greater),
+        (key("public.scaled", "(1.5)"), key("public.unscaled", "(1.49)"), Greater),
+        (key("public.dfloats", "[1,3)"), key("public.floats", "[1,2)"), Greater),
         (datafusion("public.mood", "ok"), datafusion("text", "ok"), Equal),
+        (datafusion("character varying", "b"), datafusion("text", "a"), Greater),
     ];
     for (a, b, expected) in ordered {
         assert_eq!(a.compare(&b), Some(expected), "{a:?} against {b:?}");
