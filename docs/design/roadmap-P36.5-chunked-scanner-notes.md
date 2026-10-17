@@ -106,9 +106,10 @@ ticked. The rise is the size of the indirection the reshape adds.
 
 ## What the next round inherits
 
-- **36.6 is counted against the commit that carries this slice.**
-- **Boxing `CopyStart` is the candidate the count found**, admitted as
-  `M225` ([ledger](out-of-band.md)). It is counted by its own
-  `--count-pair`, and `probe/probe.sh` re-probes it before then.
+- **36.6 is counted against its parent**, which carries this slice and
+  `M225`.
+- **Boxing `CopyStart` is the candidate the count found**, landed as
+  `M225` ([ledger](out-of-band.md)), its own `--count-pair` a fall on
+  every row.
 - `ChunkedScanner::new` takes a `&ScanOptions` for its chunk size and line
   limit, so 36.6's narrowing of what `scan` takes reaches it too.

@@ -133,9 +133,14 @@ pub struct DollarQuoteEnd {
 }
 
 /// An event emitted while scanning.
+///
+/// [`CopyStart`] is boxed because it alone would set the enum's size, and
+/// every event is moved several times on its way out of a read loop. The box
+/// costs one allocation a block and keeps every event's move to a [`Row`]'s
+/// length.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event<'a> {
-    CopyStart(CopyStart),
+    CopyStart(Box<CopyStart>),
     Row(Row<'a>),
     CopyEnd(CopyEnd),
     Line(Line<'a>),
@@ -143,6 +148,10 @@ pub enum Event<'a> {
     LargeObjectStart(LargeObjectStart),
     LargeObjectEnd(LargeObjectEnd),
 }
+
+// An `Event` is no larger than a `Row` and its tag, so a variant regrowing it
+// fails to build rather than lengthening every row's move.
+const _: () = assert!(size_of::<Event<'static>>() <= size_of::<Row<'static>>() + size_of::<u64>());
 
 /// How a `COPY` row's line ends, as `CopyReadLineText` reads it (I91): by the
 /// first raw CR no backslash escapes, or by its LF where it holds none.
@@ -477,11 +486,11 @@ impl CopyScanner {
                         self.state = State::InCopy { rows: 0, header_offset: line_offset };
                         self.endings =
                             Endings::Refused { table: header.qualified_name(), first: None };
-                        return Ok(Some(Event::CopyStart(CopyStart {
+                        return Ok(Some(Event::CopyStart(Box::new(CopyStart {
                             header,
                             header_offset: line_offset,
                             data_offset: self.position(),
-                        })));
+                        }))));
                     }
                     // Line-anchored and exact, the same as `\.` below — see
                     // `LargeObjectStart`'s docs for why a bare `BEGIN;` is

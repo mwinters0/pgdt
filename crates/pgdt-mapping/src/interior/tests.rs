@@ -64,7 +64,7 @@ fn reference(file: &[u8]) -> Vec<Reference> {
         match event {
             Event::CopyStart(start) => {
                 columns.push(start.header.columns.len());
-                builder.on_copy_start(start, true);
+                builder.on_copy_start(*start, true);
                 builder.count_block(Arc::new(Infinities));
             }
             Event::Row(row) => builder.on_row(row.offset, row.raw),

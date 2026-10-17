@@ -80,7 +80,7 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
             Event::CopyStart(start) => {
                 let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
                 let header = start.header.clone();
-                builder.on_copy_start(start, true);
+                builder.on_copy_start(*start, true);
                 let db = builder.database().map(str::to_owned);
                 if stated.as_ref().is_none_or(|(covers, _)| *covers != db) {
                     let metadata = dump_metadata_from_spans(&builder.snapshot(boundary));

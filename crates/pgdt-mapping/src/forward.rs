@@ -304,7 +304,7 @@ pub async fn map_forward(
                         ),
                     };
                     let header = start.header.clone();
-                    builder.on_copy_start(start, census);
+                    builder.on_copy_start(*start, census);
                     // **Once per database, not once per block**:
                     // recomputing at every `CopyStart` would put a third
                     // whole-index-sized cost in this loop.
