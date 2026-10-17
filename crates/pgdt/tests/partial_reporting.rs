@@ -74,8 +74,14 @@ async fn write_truncated_cache(
         diagnostics: Vec::new(),
     };
     let path = cache::colocated_path(dump);
-    cache::save(&path, &source, &index).await.unwrap();
+    saved(&path, &source, &index).await;
     (path, index)
+}
+
+/// `index` written to the cache at `path` as a run saves it, for `source`.
+async fn saved(path: &Path, source: &LocalFileSource, index: &DumpIndex) {
+    let watch = cache::SourceWatch::open(source, cache::StrictIdentity::ADVISORY).await.unwrap();
+    cache::CacheMode::enabled(path).save(&watch, source, index).await.unwrap();
 }
 
 /// The `end_offset` of the `n`-th `COPY` block, as a truncation point that is

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use pgdt_core::{Error, Result};
 use pgdt_io::{ByteRangeSource, internal::is_weak_tag};
 use pgdt_model::Diagnostic;
+use pgdt_model::internal::DiagnosticExt;
 
 /// What the origin recorded in a cache said against the live source's — the
 /// second half of what a cache load compares, beside [`WeakIdentity`]
@@ -159,17 +160,8 @@ fn epoch_stamp(t: SystemTime) -> String {
 ///
 /// **Recomputed on every load and never persisted**, exactly as the coverage
 /// diagnostics are (see the module docs). A caller a term it binds fails is
-/// refused by
-/// [`CacheMode::strict_identity_refusal`](super::CacheMode::strict_identity_refusal)
-/// instead and never reaches here; one whose bound terms hold still hears of
-/// those it left unbound.
-///
-/// Public for that method's reason, and it is the same caller: one that
-/// *reports* what a cache holds reads the full
-/// [`CacheStatus`](super::CacheStatus) through [`load`](super::load) and so
-/// never passes through [`CacheMode::load`](super::CacheMode::load), where both
-/// of these are pushed. Writing the routing out a second time there is what
-/// this exists to prevent.
+/// refused instead and never reaches here; one whose bound terms hold still
+/// hears of those it left unbound.
 pub fn advisory_identity_diagnostics(
     weak: &WeakIdentity,
     origin: &OriginMatch,
@@ -242,6 +234,16 @@ impl StrictIdentity {
     /// ([`SourceWatch::open`]).
     pub fn in_flight(self) -> bool {
         self.in_flight
+    }
+
+    /// This selection's between-runs terms alone, its in-flight check off —
+    /// what binds for a caller that reads nothing of the dump past opening
+    /// it, `pgdt info` among them, which never scans
+    /// (`docs/design/decisions.md`, "D61"): with no read for the check to
+    /// protect, refusing a source nothing can check during one refuses a
+    /// question the caller never asks.
+    pub const fn between_runs(self) -> Self {
+        Self { in_flight: false, ..self }
     }
 }
 

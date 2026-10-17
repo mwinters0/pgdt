@@ -19,7 +19,7 @@ use std::time::SystemTime;
 
 use bytes::Bytes;
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode, CacheStatus};
+use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
 use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
 use pgdt_mapping::statistics::{
     BLOCK_MAX_ROW_GROUPS, GatherOptions, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
@@ -509,11 +509,12 @@ async fn statistics_round_trip_through_the_cache() {
     for (a, b) in index.blocks().zip(clone.blocks()) {
         assert!(Arc::ptr_eq(a.statistics.as_ref().unwrap(), b.statistics.as_ref().unwrap()));
     }
-    let CacheStatus::Valid { index: loaded, .. } =
-        cache::load(&cache::colocated_path(&dump), &source).await.unwrap()
+    let CacheStatus::Loaded(LoadedCache { index: loaded, total_size, .. }) =
+        pgdt_dump::internal::load(&cache::colocated_path(&dump), &source).await.unwrap()
     else {
         panic!("a finished parse leaves a valid cache");
     };
+    assert!(loaded.is_complete(total_size));
     assert_eq!(loaded.spans, index.spans);
 }
 
@@ -778,11 +779,12 @@ async fn a_block_lacking_the_requested_statistics_is_reread_into_what_one_pass_g
             assert_eq!((run.lacking_statistics, run.backfilled), (*lacking, *lacking), "{label}");
             assert_eq!(run.index.spans, reference.spans, "{label}");
             let source = LocalFileSource::open(&dump).unwrap();
-            let CacheStatus::Valid { index: loaded, .. } =
-                cache::load(&cache::colocated_path(&dump), &source).await.unwrap()
+            let CacheStatus::Loaded(LoadedCache { index: loaded, total_size, .. }) =
+                pgdt_dump::internal::load(&cache::colocated_path(&dump), &source).await.unwrap()
             else {
                 panic!("{label}: a back-filled parse leaves a valid cache");
             };
+            assert!(loaded.is_complete(total_size));
             assert_eq!(loaded.spans, reference.spans, "{label}: the cache holds the back-fill");
 
             let again =
@@ -928,7 +930,7 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
         "a column bounded nowhere lacks nothing"
     );
     let source = LocalFileSource::open(&dump).unwrap();
-    cache::save(&cache::colocated_path(&dump), &source, &older).await.unwrap();
+    pgdt_dump::internal::save(&cache::colocated_path(&dump), &source, &older).await.unwrap();
 
     let run =
         mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::DATA)
@@ -975,7 +977,7 @@ async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
     }
     assert!(blocks > 0);
     let source = LocalFileSource::open(&dump).unwrap();
-    cache::save(&cache::colocated_path(&dump), &source, &older).await.unwrap();
+    pgdt_dump::internal::save(&cache::colocated_path(&dump), &source, &older).await.unwrap();
 
     let run =
         mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::DATA)

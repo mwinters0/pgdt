@@ -165,8 +165,8 @@ pub enum DiagnosticKind {
     /// to check it against (`docs/design/decisions.md`,
     /// "The compressed source and the cache") — unverified, there being no
     /// live source to compare its recorded size and mtime with. Pushed unconditionally by
-    /// [`pgdt_dump::cache::CacheMode::load_offline`] on every successful
-    /// cache-only load, `Incomplete` included.
+    /// [`pgdt_dump::cache::OfflineCache::load`] on every successful
+    /// cache-only load, an incomplete one included.
     CacheOffline,
     /// A `.xz` source has no usable seek structure — one stream, one block —
     /// so every read (forward included) decodes from byte zero. Never a
@@ -233,34 +233,10 @@ impl Diagnostic {
         self.severity
     }
 
-    /// What was found. Its constructors are the crate's own (`DiagnosticExt`)
-    /// but for the three cache warnings below, so a severity always matches
-    /// its kind.
+    /// What was found. Its constructors are the crate's own (`DiagnosticExt`),
+    /// so a severity always matches its kind.
     pub fn kind(&self) -> &DiagnosticKind {
         &self.kind
-    }
-
-    /// Public, unlike its siblings: the crate above turning a
-    /// `pgdt_dump::cache::WeakIdentity::Differs` into this warning,
-    /// `pgdt_dump::cache::advisory_identity_diagnostics`, is outside this one —
-    /// and `pgdt info`, matching on `CacheStatus` itself rather than going
-    /// through `CacheMode::load`, reaches it there.
-    pub fn cache_mtime_changed() -> Self {
-        Self { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged }
-    }
-
-    /// Public for [`Diagnostic::cache_mtime_changed`]'s reason, and pushed by
-    /// the same callers: both sides' entity tags differ
-    /// (`pgdt_dump::cache::WeakIdentity::TagDiffers`).
-    pub fn cache_entity_tag_changed() -> Self {
-        Self { severity: Severity::Warning, kind: DiagnosticKind::CacheEntityTagChanged }
-    }
-
-    /// Public for [`Diagnostic::cache_mtime_changed`]'s reason, and pushed by
-    /// the same callers: a cache written for another origin than this run
-    /// reads (`pgdt_dump::cache::OriginMatch`).
-    pub fn cache_origin_changed() -> Self {
-        Self { severity: Severity::Warning, kind: DiagnosticKind::CacheOriginChanged }
     }
 }
 
@@ -271,6 +247,9 @@ pub trait DiagnosticExt {
     fn toc_coverage(attributed: usize, spans: usize) -> Self;
     fn cache_offline() -> Self;
     fn non_seekable_compressed_source(block_count: usize) -> Self;
+    fn cache_mtime_changed() -> Self;
+    fn cache_entity_tag_changed() -> Self;
+    fn cache_origin_changed() -> Self;
 }
 
 impl DiagnosticExt for Diagnostic {
@@ -292,5 +271,22 @@ impl DiagnosticExt for Diagnostic {
             severity: Severity::Warning,
             kind: DiagnosticKind::NonSeekableCompressedSource { block_count },
         }
+    }
+
+    /// A weak signal that moved, too weak to invalidate the cache
+    /// (`pgdt_dump::cache::WeakIdentity::Differs`).
+    fn cache_mtime_changed() -> Self {
+        Self { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged }
+    }
+
+    /// Both sides' entity tags differ (`pgdt_dump::cache::WeakIdentity::TagDiffers`).
+    fn cache_entity_tag_changed() -> Self {
+        Self { severity: Severity::Warning, kind: DiagnosticKind::CacheEntityTagChanged }
+    }
+
+    /// A cache written for another origin than this run reads
+    /// (`pgdt_dump::cache::OriginMatch`).
+    fn cache_origin_changed() -> Self {
+        Self { severity: Severity::Warning, kind: DiagnosticKind::CacheOriginChanged }
     }
 }

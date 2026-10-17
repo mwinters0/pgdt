@@ -21,7 +21,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use pgdt_core::{Error, Result};
 use pgdt_dump::cache::{
-    CacheMode, CacheStatus, OriginMatch, SourceWatch, StrictIdentity, WeakIdentity,
+    CacheMode, CacheStatus, LoadedCache, OriginMatch, SourceWatch, StrictIdentity, WeakIdentity,
 };
 use pgdt_dump::{ScanOptions, cache, preamble_only};
 use pgdt_io::{
@@ -747,10 +747,11 @@ async fn a_cache_written_for_another_origin_loads_with_a_warning() {
     mapped(&here, &path, StrictIdentity::ADVISORY).await.unwrap();
 
     let elsewhere = Fetched::new(&dump, "https://two.example/koji.dump", Some("\"abc\""));
-    let status = cache::load(&path, &elsewhere).await.unwrap();
-    let CacheStatus::Valid { origin, weak, .. } = status else {
+    let status = pgdt_dump::internal::load(&path, &elsewhere).await.unwrap();
+    let CacheStatus::Loaded(LoadedCache { origin, weak, index, total_size, .. }) = status else {
         panic!("an origin difference must not invalidate the cache, got {status:?}")
     };
+    assert!(index.is_complete(total_size));
     assert_eq!(weak, WeakIdentity::Agrees, "the entity tag is unchanged");
     let OriginMatch::Differs { cached, live } = origin else {
         panic!("the two origins differ, got {origin:?}")
@@ -806,8 +807,11 @@ async fn a_local_cache_read_over_a_fetched_source_differs_in_origin() {
     mapped(&local, &path, StrictIdentity::ADVISORY).await.unwrap();
 
     let fetched = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
-    let status = cache::load(&path, &fetched).await.unwrap();
-    let CacheStatus::Valid { origin, .. } = status else { panic!("still usable, got {status:?}") };
+    let status = pgdt_dump::internal::load(&path, &fetched).await.unwrap();
+    let CacheStatus::Loaded(LoadedCache { origin, index, total_size, .. }) = status else {
+        panic!("still usable, got {status:?}")
+    };
+    assert!(index.is_complete(total_size));
     assert_eq!(
         origin,
         OriginMatch::Differs {
@@ -830,10 +834,11 @@ async fn an_entity_tag_outranks_a_modification_time_that_agrees_with_nothing() {
 
     // Same origin, same `Last-Modified`, a tag the server has changed.
     let second = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"def\""));
-    let status = cache::load(&path, &second).await.unwrap();
-    let CacheStatus::Valid { weak, origin, .. } = status else {
+    let status = pgdt_dump::internal::load(&path, &second).await.unwrap();
+    let CacheStatus::Loaded(LoadedCache { weak, origin, index, total_size, .. }) = status else {
         panic!("a tag difference must not invalidate the cache, got {status:?}")
     };
+    assert!(index.is_complete(total_size));
     assert_eq!(origin, OriginMatch::Agrees);
     assert_eq!(
         weak,
@@ -859,16 +864,19 @@ async fn a_missing_entity_tag_falls_back_to_the_modification_time() {
     mapped(&tagged, &path, StrictIdentity::ADVISORY).await.unwrap();
 
     let mut untagged = Fetched::new(&dump, "https://one.example/koji.dump", None);
-    let status = cache::load(&path, &untagged).await.unwrap();
+    let status = pgdt_dump::internal::load(&path, &untagged).await.unwrap();
     assert!(
-        matches!(status, CacheStatus::Valid { weak: WeakIdentity::Agrees, .. }),
+        matches!(&status, CacheStatus::Loaded(LoadedCache { weak: WeakIdentity::Agrees, .. })),
         "the two `Last-Modified`s agree, got {status:?}"
     );
 
     untagged.modified = Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_784_768_400));
-    let status = cache::load(&path, &untagged).await.unwrap();
+    let status = pgdt_dump::internal::load(&path, &untagged).await.unwrap();
     assert!(
-        matches!(status, CacheStatus::Valid { weak: WeakIdentity::Differs { .. }, .. }),
+        matches!(
+            &status,
+            CacheStatus::Loaded(LoadedCache { weak: WeakIdentity::Differs { .. }, .. })
+        ),
         "the times differ, got {status:?}"
     );
 }
@@ -892,8 +900,8 @@ async fn a_weak_entity_tag_decides_only_where_no_modification_time_is_stated() {
     let weak_of = |source: Fetched| {
         let path = path.clone();
         async move {
-            match cache::load(&path, &source).await.unwrap() {
-                CacheStatus::Valid { weak, .. } => weak,
+            match pgdt_dump::internal::load(&path, &source).await.unwrap() {
+                CacheStatus::Loaded(LoadedCache { weak, .. }) => weak,
                 other => panic!("a weak difference never invalidates the cache, got {other:?}"),
             }
         }
@@ -942,8 +950,8 @@ async fn an_equal_weak_entity_tag_confirms_nothing() {
     let weak_of = |source: Fetched| {
         let path = path.clone();
         async move {
-            match cache::load(&path, &source).await.unwrap() {
-                CacheStatus::Valid { weak, .. } => weak,
+            match pgdt_dump::internal::load(&path, &source).await.unwrap() {
+                CacheStatus::Loaded(LoadedCache { weak, .. }) => weak,
                 other => panic!("a weak tag never invalidates the cache, got {other:?}"),
             }
         }
@@ -959,7 +967,7 @@ async fn an_equal_weak_entity_tag_confirms_nothing() {
             "an equal tag where the cache's is weak"
         );
         assert_eq!(
-            cache::advisory_identity_diagnostics(&weak, &OriginMatch::Agrees).count(),
+            pgdt_dump::internal::advisory_identity_diagnostics(&weak, &OriginMatch::Agrees).count(),
             0,
             "silent under the default: nothing shows a change"
         );
@@ -1046,5 +1054,8 @@ async fn a_source_nothing_can_check_is_refused_unless_nothing_binds() {
 
     let path = cache::colocated_path(&dump);
     mapped(&source, &path, StrictIdentity::NONE).await.unwrap();
-    assert!(matches!(cache::load(&path, &source).await.unwrap(), CacheStatus::Valid { .. }));
+    assert!(matches!(
+        pgdt_dump::internal::load(&path, &source).await.unwrap(),
+        CacheStatus::Loaded(loaded) if loaded.is_complete()
+    ));
 }

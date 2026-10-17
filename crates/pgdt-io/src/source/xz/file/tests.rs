@@ -33,7 +33,7 @@ async fn xz_source_stored_size_is_the_compressed_files_on_disk_length() {
     assert_ne!(source.stored_size().await.unwrap(), source.size().await.unwrap());
 }
 
-/// `seek_table()` is what `cache::save` wraps into
+/// `seek_table()` is what the cache's save wraps into
 /// `CompressionIndex::Xz` — a multi-block file must actually report more
 /// than one block, or the "seekable" half of this test proves nothing.
 #[tokio::test]

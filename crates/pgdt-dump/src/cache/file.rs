@@ -1,10 +1,10 @@
 //! The cache file — its format, its header, what it encodes, and the reading
 //! and the writing of it ([`read_cache_file`], [`write_cache_file`]) that
-//! [`super::load`] and [`super::save`] go through — and
-//! what a read of it finds ([`CacheStatus`]), with the shape of the container
-//! under its offsets ([`CompressionShape`]) and the rest it persists
-//! ([`CacheEnvelope`]). Those three are the cache's API; the format is not,
-//! reached through `internal` for the tests that write a cache by hand.
+//! every load and save goes through — and what a read of it finds
+//! ([`CacheStatus`], [`LoadedCache`]), with the shape of the container under
+//! its offsets ([`CompressionShape`]) and the rest it persists
+//! ([`CacheEnvelope`]). Those are the cache's API; the format is not, reached
+//! through `internal` for the tests that write a cache by hand.
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
@@ -47,12 +47,12 @@ pub enum ContainerKind {
 /// (`docs/design/decisions.md`, "D21"). A sibling of
 /// [`ContainerKind`], not a value of it: see that type's docs.
 ///
-/// Built at [`save`](super::save) time from
+/// Built when a cache is saved, from
 /// [`ByteRangeSource::seek_table`](pgdt_io::ByteRangeSource::seek_table), which
 /// [`pgdt_io::XzSource`] answers from the table it already built while opening,
-/// so persisting a cache never re-walks the file; read back by
-/// [`claim`](super::claim) before any source exists, which spares every later
-/// command that walk. A future gzip index is a different *shape* and gets its
+/// so persisting a cache never re-walks the file; read back before any source
+/// exists ([`CacheMode::open`](super::CacheMode::open)), which spares every
+/// later command that walk. A future gzip index is a different *shape* and gets its
 /// own sibling variant.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompressionIndex {
@@ -71,8 +71,7 @@ pub struct CacheFile {
     /// [`ByteRangeSource::size`](pgdt_io::ByteRangeSource::size) as observed at
     /// save time. Its own field, not an alias of `identity`'s stored size
     /// (`docs/design/decisions.md`, "D21"), and the number
-    /// [`CacheStatus::Valid`]/[`CacheStatus::Incomplete`] hand out as
-    /// `total_size` for the coverage arithmetic.
+    /// [`LoadedCache::total_size`] hands out for the coverage arithmetic.
     pub total_size: u64,
     /// The last day of the calendar the index's unrepresentable counts were
     /// taken under ([`pgdt_model::calendar_end`]): a build whose calendar
@@ -125,8 +124,7 @@ impl CompressionShape {
 }
 
 /// Everything a cache file persists beside its index and `total_size`, as it
-/// was read — handed out on [`CacheStatus::Valid`]/[`CacheStatus::Incomplete`]
-/// so a reporting caller can export the whole file, which `pgdt info --json`
+/// was read — handed out on [`LoadedCache`] so a reporting caller can export the whole file, which `pgdt info --json`
 /// does (`docs/design/decisions.md`, "D67").
 ///
 /// **Opaque to Rust, whole to serde**: the fields stay private, so no caller
@@ -145,64 +143,70 @@ pub struct CacheEnvelope {
     pub(super) calendar_end: i32,
 }
 
-/// What [`load`](super::load) found at a cache path, once checked against the
-/// live source's identity — see the parent module's docs.
+/// What a read of a cache path found: nothing, something that cannot be
+/// used and why, or a cache this build can read, checked against the live
+/// source's identity where there is one — see the parent module's docs.
 ///
 /// Each unusable outcome is named and stays named all the way to the caller:
 /// [`CacheMode::load`](super::CacheMode::load) carries it across as
 /// [`CacheLoad::Unusable`](super::CacheLoad::Unusable) rather
 /// than answering `None` (`docs/design/decisions.md`, "D22").
+// One value a run, moved once or twice and never stored in bulk, so boxing
+// the loaded cache would buy an allocation and save nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheStatus {
     /// Nothing at this path.
     Missing,
     /// Something is at this path that cannot be used, and why.
     Unusable(Unusable),
-    /// A usable cache whose `index.scanned_through` reaches the file's
-    /// recorded size — the whole file is mapped. `weak` is what the source's
-    /// current modification signal says against the one recorded at save time
-    /// and `origin` what its origin says against the recorded one, neither of
-    /// which itself makes the cache unusable (see the module docs).
-    /// `total_size` is [`CacheFile::total_size`]: a reporting caller
-    /// states coverage against it, and a cache-only caller has no live source
-    /// to stat. `compression` is the container's shape where one sits under
-    /// these offsets and `None` for a plain file — read off the persisted
-    /// seek table, so a cache-only caller answers it with no dump present
-    /// ([`CompressionShape`]). `envelope` is the rest of what the file
-    /// persists, for a caller exporting it ([`CacheEnvelope`]).
-    Valid {
-        index: DumpIndex,
-        weak: WeakIdentity,
-        origin: OriginMatch,
-        total_size: u64,
-        compression: Option<CompressionShape>,
-        envelope: CacheEnvelope,
-    },
-    /// A usable cache whose `index.scanned_through` falls short of
-    /// `total_size` — a real, not-yet-finished scan (a preamble-only scan, or
-    /// a query that stopped once its target settled), not a defect
-    /// (`docs/design/decisions.md`, "D22"). What "not enough" means is
-    /// caller-specific: `pgdt info` states the coverage
-    /// (`docs/design/decisions.md`, "The CLI"), while a caller resuming an
-    /// incremental scan (`pgdt_mapping::map_file`,
-    /// `pgdt_query::table_stream`, `crate::preamble::preamble_only`) builds
-    /// on this partial index, the same as [`Valid`](CacheStatus::Valid).
-    /// `total_size`, `compression` and `envelope` are
-    /// [`Valid`](CacheStatus::Valid)'s and mean the same thing.
-    Incomplete {
-        index: DumpIndex,
-        weak: WeakIdentity,
-        origin: OriginMatch,
-        total_size: u64,
-        compression: Option<CompressionShape>,
-        envelope: CacheEnvelope,
-    },
+    /// A cache this build can read, mapping the whole file or a prefix of it
+    /// ([`LoadedCache::is_complete`]).
+    Loaded(LoadedCache),
 }
 
-/// Read and header-check the cache at `path`, shared by [`load`](super::load),
-/// [`load_offline`](super::load_offline) and [`claim`](super::claim).
+/// A cache this build can read, and what its file records beside the index.
+///
+/// **Complete or not is the index's own coverage**, asked of
+/// [`LoadedCache::is_complete`]: a short one is a real, not-yet-finished scan
+/// (a preamble-only scan, or a query that stopped once its target settled),
+/// not a defect (`docs/design/decisions.md`, "D22"). What "not enough" means is
+/// the caller's: `pgdt info` states the coverage
+/// (`docs/design/decisions.md`, "The CLI"), a scan resuming builds on the
+/// partial index, and the DataFusion provider refuses it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedCache {
+    pub index: DumpIndex,
+    /// What the source's current modification signal says against the one
+    /// recorded at save time, which itself never makes the cache unusable
+    /// (see the module docs); always agreeing where no source was compared.
+    pub weak: WeakIdentity,
+    /// What the source's origin says against the recorded one, as advisory
+    /// as `weak`.
+    pub origin: OriginMatch,
+    /// [`CacheFile::total_size`]: a reporting caller states coverage against
+    /// it, and a cache-only caller has no live source to stat.
+    pub total_size: u64,
+    /// The container's shape where one sits under these offsets and `None` for
+    /// a plain file — read off the persisted seek table, so a cache-only
+    /// caller answers it with no dump present ([`CompressionShape`]).
+    pub compression: Option<CompressionShape>,
+    /// The rest of what the file persists, for a caller exporting it
+    /// ([`CacheEnvelope`]).
+    pub envelope: CacheEnvelope,
+}
+
+impl LoadedCache {
+    /// Whether the index's `scanned_through` reaches the file's recorded
+    /// size — the whole file is mapped.
+    pub fn is_complete(&self) -> bool {
+        self.index.is_complete(self.total_size)
+    }
+}
+
+/// Read and header-check the cache at `path`, shared by every read of one.
 /// `Err(status)` is an outcome that needs no live source to reach; the two that
-/// compare against one are [`load`](super::load)'s.
+/// compare against one are the store's (`super::store`).
 ///
 /// **The header is read before anything is decoded** ([`CACHE_MAGIC`]), so
 /// another build's cache is told from foreign bytes whatever its shape; the
@@ -258,7 +262,7 @@ pub fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, Cac
     }
 }
 
-/// What [`write_cache_file`] encodes for [`save`](super::save): [`CacheFile`]'s
+/// What [`write_cache_file`] encodes for a save: [`CacheFile`]'s
 /// fields in [`CacheFile`]'s order, the index borrowed rather than cloned, so
 /// the bytes are the ones an owned `CacheFile` encodes to and
 /// [`read_cache_file`] decodes.

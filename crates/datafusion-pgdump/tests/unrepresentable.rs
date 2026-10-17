@@ -54,9 +54,8 @@ use datafusion_pgdump::{
     PgDump, PgDumpOptions, PgDumpSettings, register_dump, with_unrepresentable_guard,
 };
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
-use pgdt_dump::cache::{self, CacheStatus};
+use pgdt_dump::cache::{self, CacheStatus, OfflineCache};
 use pgdt_fixtures::{parsed_copy, ungathered};
-use pgdt_io::LocalFileSource;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSizing};
 use pgdt_model::{Finding, Unrepresentable};
 use pgdt_query::{RowEvaluation, decode_field};
@@ -892,12 +891,13 @@ struct Extremes {
 /// The library's count of each column of [`EXTREMES`]' blocks in the cache
 /// beside `copy`, as `table.column`.
 async fn counted(copy: &Path) -> BTreeMap<String, Unrepresentable> {
-    let source = LocalFileSource::open(copy).unwrap();
-    let CacheStatus::Valid { index, .. } =
-        cache::load(&cache::colocated_path(copy), &source).await.unwrap()
+    let CacheStatus::Loaded(loaded) =
+        OfflineCache::new(cache::colocated_path(copy)).load().await.unwrap()
     else {
-        panic!("the parse left a complete cache")
+        panic!("the parse left a cache")
     };
+    assert!(loaded.is_complete(), "the parse left a complete cache");
+    let index = loaded.index;
     let mut out = BTreeMap::new();
     for block in index.blocks().filter(|b| EXTREMES.contains(&b.header.table.as_str())) {
         let counts = block.unrepresentable().expect("a data-level block is counted");

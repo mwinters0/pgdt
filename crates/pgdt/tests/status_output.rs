@@ -88,8 +88,14 @@ async fn write_truncated_cache(dump: &Path, frontier: u64) -> PathBuf {
         diagnostics: Vec::new(),
     };
     let path = cache::colocated_path(dump);
-    cache::save(&path, &source, &index).await.unwrap();
+    saved(&path, &source, &index).await;
     path
+}
+
+/// `index` written to the cache at `path` as a run saves it, for `source`.
+async fn saved(path: &Path, source: &LocalFileSource, index: &DumpIndex) {
+    let watch = cache::SourceWatch::open(source, cache::StrictIdentity::ADVISORY).await.unwrap();
+    cache::CacheMode::enabled(path).save(&watch, source, index).await.unwrap();
 }
 
 /// The `end_offset` of the `n`-th `COPY` block — a real resumable watermark
@@ -845,11 +851,13 @@ async fn a_query_s_mapping_pass_says_what_it_was_carved_around() {
     // Cut back to its first two blocks, keeping their statistics, so the
     // query's mapping pass reads on from there under what they hold.
     let source = LocalFileSource::open(&dump).unwrap();
-    let cache::CacheStatus::Valid { index: full, .. } =
-        cache::load(&cache_path, &source).await.unwrap()
+    let cache::CacheStatus::Loaded(loaded) =
+        cache::OfflineCache::new(&cache_path).load().await.unwrap()
     else {
-        panic!("the parse wrote a complete cache");
+        panic!("the parse wrote a cache");
     };
+    assert!(loaded.is_complete(), "the parse wrote a complete cache");
+    let full = loaded.index;
     let frontier = full.blocks().nth(1).expect("the fixture has two blocks").end_offset;
     let mut spans: Vec<Span> = full.spans.iter().filter(|s| s.start < frontier).cloned().collect();
     spans.last_mut().unwrap().end = frontier;
@@ -865,7 +873,7 @@ async fn a_query_s_mapping_pass_says_what_it_was_carved_around() {
     let truncated = DumpIndex { spans, scanned_through: frontier, ..full };
     let held = truncated.statistics_heap_bytes();
     assert!(held > 0, "the kept blocks hold statistics");
-    cache::save(&cache_path, &source, &truncated).await.unwrap();
+    saved(&cache_path, &source, &truncated).await;
 
     let stderr = query();
     let main = main_scan_lines(&stderr);

@@ -5,14 +5,15 @@
 //! **A cache that cannot be used is refused, not scanned over**
 //! (`docs/design/decisions.md`, "D20"): one that is another file's, another
 //! build's, or damaged is almost always a user's accident — the wrong path, or
-//! a file that changed — so the four scan entry points answer
+//! a file that changed — so an open and the four scan entry points answer
 //! [`Error::CacheUnusable`](pgdt_core::Error::CacheUnusable) before the dump
 //! is read past its magic, naming which of those it is ([`Unusable`]). [`CacheMode::with_overwrite_unusable`] opts into
 //! starting cold and replacing it instead, for a source whose file is replaced
 //! under a stable name; a file that is not a pgdt cache at all is refused
 //! whatever is asked. Only a missing cache starts cold unasked. Writing is not
-//! best-effort either: [`save`] propagates I/O failures rather than silently
-//! degrading every future run of the same command back to a full scan.
+//! best-effort either: [`CacheMode::save`] propagates I/O failures rather than
+//! silently degrading every future run of the same command back to a full
+//! scan.
 //!
 //! **The dump file's identity is checked, not assumed**
 //! (`docs/design/decisions.md`, "D21"). Every cache records the source's
@@ -20,16 +21,15 @@
 //! the device, not the addressable (possibly decompressed) length — and, for a
 //! source that was fetched from somewhere, **where it came from** and the
 //! server's entity tag
-//! (`docs/design/decisions.md`, "D87"); [`load`]
+//! (`docs/design/decisions.md`, "D87"); a load
 //! re-observes the live source and compares. A stored-size mismatch means
 //! every byte offset in the cache could be wrong, so the cache is unusable.
 //! Neither weak signal invalidates it by default: they are surfaced on
-//! [`CacheStatus::Valid`] as a [`WeakIdentity`] and an [`OriginMatch`], and
-//! [`CacheMode::load`] turns each into a warning on the loaded index,
+//! [`LoadedCache`] as a [`WeakIdentity`] and an [`OriginMatch`], and a load
+//! through [`CacheMode`] turns each into a warning on the loaded index,
 //! recomputed on every load and never persisted. A caller that asked for
 //! [`StrictIdentity::time`] or [`StrictIdentity::location`] is refused
-//! instead — there, or at [`CacheMode::strict_identity_refusal`] where it read
-//! the status itself.
+//! instead.
 //!
 //! **Two different questions hide under one word.** *Between* runs a moved,
 //! copied or touched dump is a different weak identity holding the same
@@ -39,21 +39,25 @@
 //! error under every selection but `none`, which only warns, and
 //! [`SourceWatch`] is the mechanism.
 //!
+//! **A caller opens a source through its cache** ([`CacheMode::open`]),
+//! every step of that protocol in one call; a caller with no source reads the
+//! cache alone ([`OfflineCache`]).
+//!
 //! The comparisons, and which signals bind, are [`identity`]'s; the file's
 //! format and what a read of it finds, [`file`]'s; a cache read against its
-//! source and written beside it, [`store`]'s; and how a caller asks for the
-//! cache handled, [`mode`]'s.
+//! source and written beside it, [`store`]'s; how a caller asks for the
+//! cache handled, [`mode`]'s; and the open, [`open`]'s.
 
 pub(crate) mod file;
 pub(crate) mod identity;
 mod mode;
-mod store;
+mod open;
+pub(crate) mod store;
 
-pub use self::file::{CacheEnvelope, CacheStatus, CompressionShape};
-pub use self::identity::{
-    OriginMatch, SourceWatch, StrictIdentity, WeakIdentity, advisory_identity_diagnostics,
-};
-pub use self::mode::{CacheLoad, CacheMode};
-pub use self::store::{CacheClaim, claim, colocated_path, load, load_offline, save};
+pub use self::file::{CacheEnvelope, CacheStatus, CompressionShape, LoadedCache};
+pub use self::identity::{OriginMatch, SourceWatch, StrictIdentity, WeakIdentity};
+pub use self::mode::{CacheLoad, CacheMode, OfflineCache};
+pub use self::open::{Held, Opened};
+pub use self::store::{CacheClaim, claim, colocated_path};
 pub use pgdt_core::Unusable;
 pub use pgdt_core::internal::OVERWRITE_WAYS_OUT;

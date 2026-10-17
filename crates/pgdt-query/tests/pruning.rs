@@ -19,7 +19,7 @@ use futures::StreamExt;
 use pgdt_codec::UnrepresentableMode;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode, CacheStatus};
+use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSizing};
@@ -87,9 +87,12 @@ async fn gathered(dump: &Path, group_size: u64) -> (tempfile::TempDir, PathBuf, 
     };
     let copy = parsed_copy(dump, dir.path(), &request).await;
     let path = cache::colocated_path(&copy);
-    let CacheStatus::Valid { index, .. } = cache::load_offline(&path).await.unwrap() else {
+    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) =
+        pgdt_dump::internal::load_offline(&path).await.unwrap()
+    else {
         panic!("the parse left a complete cache")
     };
+    assert!(index.is_complete(total_size));
     (dir, copy, index)
 }
 
@@ -948,7 +951,7 @@ async fn statistics_gathered_under_another_declared_type_prune_nothing() {
         }
     }
     let source = LocalFileSource::open(&dump).unwrap();
-    cache::save(&cache::colocated_path(&dump), &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&cache::colocated_path(&dump), &source, &index).await.unwrap();
     let (_, notes, ..) =
         answer(&dump, &cache::colocated_path(&dump), "public.ordered", with(absent, true, 1))
             .await

@@ -135,10 +135,7 @@ pub(crate) async fn backfill_statistics(
     // unless one is enabled. A block can lack what was asked under any mode —
     // a stated maximum no single read delivers leaves a freshly mapped block
     // lacking, `CacheMode::Disabled` included (see this function's doc).
-    let cache_path = match cache {
-        CacheMode::Enabled { path, .. } => Some(path.as_path()),
-        CacheMode::Disabled { .. } | CacheMode::Offline(_) => None,
-    };
+    let cache_path = cache.path();
     let mut throttle = SaveThrottle::new();
     let mut shortfall_reported = false;
     let blocks = rereads.len();

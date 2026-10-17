@@ -74,8 +74,6 @@ pub enum Error {
     CacheEncode(#[source] Cause),
     #[error("cache is disabled (`--dtcache none`), but `{operation}` requires a cache file")]
     CacheDisabled { operation: &'static str },
-    #[error("cache mode mismatch: {0}")]
-    CacheModeMismatch(&'static str),
     /// A scan was asked to build forward from a cache it cannot use — one
     /// that is not a pgdt cache, is damaged, is another build's, or describes
     /// another file — so it refuses rather than starting cold and overwriting
@@ -84,8 +82,9 @@ pub enum Error {
     /// `pgdt_query::table_stream_partitions` and `pgdt_dump::preamble_only` —
     /// before any byte of the dump is read, through
     /// `pgdt_dump::cache::CacheMode::refusal`, which answers none where the mode
-    /// may overwrite the cache instead; and by a caller pre-empting them, as
-    /// the DataFusion provider does from the cache's claim.
+    /// may overwrite the cache instead; by an open through the cache
+    /// (`pgdt_dump::cache::CacheMode::open`), through the same; and by a
+    /// caller pre-empting them from the cache's claim, as `pgdt` does.
     #[error("{}", cache_unusable(path, unusable))]
     CacheUnusable { path: PathBuf, unusable: Unusable },
     /// The source changed while this run was reading it, so every byte the
@@ -120,7 +119,7 @@ pub enum Error {
     )]
     SourceUncheckable { why: String },
     /// A weak identity signal the caller asked to *bind* does not hold, or
-    /// cannot be had at all. Raised by `pgdt_dump::cache::CacheMode::load` under
+    /// cannot be had at all. Raised by a load through `pgdt_dump::cache::CacheMode` under
     /// `pgdt_dump::cache::StrictIdentity::time` or `location`, where an advisory
     /// diagnostic would otherwise be. Under `time` a missing modification
     /// signal fails too, silence being what strict identity exists to refuse,
@@ -441,7 +440,7 @@ pub enum Unusable {
     /// stored size, so it was written for another file
     /// (`docs/design/decisions.md`, "D18"). Recognition reaches it first
     /// (`pgdt_io::Recognized::Mismatch`) wherever the cache's claim was handed
-    /// to it; `pgdt_dump::cache::load` answers it for a source opened without one.
+    /// to it; a load against the live source answers it for a source opened without one.
     CompressionContradicted,
     /// A cache whose unrepresentable counts were taken under a calendar
     /// ending on another day than this build's — `pgdt_model::calendar_end`,

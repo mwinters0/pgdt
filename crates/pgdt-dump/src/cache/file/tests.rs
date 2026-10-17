@@ -34,9 +34,9 @@ fn a_save_leaves_the_previous_cache_whole_until_it_renames() {
             "the partial file is named for its cache: {partial}"
         );
         assert_eq!(std::fs::read(dir.path().join(partial)).unwrap(), b"the first half of the next");
-        Err(Error::CacheModeMismatch("the save stops here"))
+        Err(Error::CacheDisabled { operation: "the save stops here" })
     });
-    assert!(matches!(failed, Err(Error::CacheModeMismatch(_))));
+    assert!(matches!(failed, Err(Error::CacheDisabled { .. })));
     assert_eq!(std::fs::read(&path).unwrap(), b"the previous cache");
     assert_eq!(listing(dir.path()), ["dump.sql.dtcache"]);
 

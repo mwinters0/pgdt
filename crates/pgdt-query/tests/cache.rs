@@ -8,8 +8,8 @@ use std::process::Command;
 use futures::StreamExt;
 use pgdt_core::Error;
 use pgdt_dump::cache::{
-    CacheClaim, CacheLoad, CacheMode, CacheStatus, SourceWatch, StrictIdentity, Unusable,
-    WeakIdentity,
+    CacheClaim, CacheLoad, CacheMode, CacheStatus, Held, LoadedCache, OfflineCache, SourceWatch,
+    StrictIdentity, Unusable, WeakIdentity,
 };
 use pgdt_dump::{ScanOptions, cache, check_tiling, preamble_only};
 use pgdt_io::{
@@ -51,24 +51,24 @@ async fn an_unusable_cache_says_which_kind_of_unusable_it_is() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
 
     let missing = dir.path().join("nonexistent.dtcache");
-    assert_eq!(cache::load(&missing, &source).await.unwrap(), CacheStatus::Missing);
+    assert_eq!(pgdt_dump::internal::load(&missing, &source).await.unwrap(), CacheStatus::Missing);
 
     let foreign = dir.path().join("garbage.dtcache");
     std::fs::write(&foreign, b"not a cache file").unwrap();
     assert_eq!(
-        cache::load(&foreign, &source).await.unwrap(),
+        pgdt_dump::internal::load(&foreign, &source).await.unwrap(),
         CacheStatus::Unusable(Unusable::NotACache)
     );
     assert!(!Unusable::NotACache.overwritable());
 
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let damaged = dir.path().join("damaged.dtcache");
-    cache::save(&damaged, &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&damaged, &source, &index).await.unwrap();
     let mut bytes = std::fs::read(&damaged).unwrap();
     bytes.truncate(bytes.len() / 2);
     std::fs::write(&damaged, &bytes).unwrap();
     assert_eq!(
-        cache::load(&damaged, &source).await.unwrap(),
+        pgdt_dump::internal::load(&damaged, &source).await.unwrap(),
         CacheStatus::Unusable(Unusable::Unreadable)
     );
     assert!(Unusable::Unreadable.overwritable());
@@ -94,17 +94,17 @@ async fn a_cache_from_another_build_is_told_apart_from_foreign_bytes() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
-    cache::save(&path, &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
 
     restamp(&path, CACHE_FORMAT_VERSION - 1);
     let other_build =
         CacheStatus::Unusable(Unusable::UnsupportedVersion { found: CACHE_FORMAT_VERSION - 1 });
-    assert_eq!(cache::load(&path, &source).await.unwrap(), other_build);
+    assert_eq!(pgdt_dump::internal::load(&path, &source).await.unwrap(), other_build);
 
     let mut bytes = std::fs::read(&path).unwrap();
     bytes.truncate(12);
     std::fs::write(&path, &bytes).unwrap();
-    assert_eq!(cache::load(&path, &source).await.unwrap(), other_build);
+    assert_eq!(pgdt_dump::internal::load(&path, &source).await.unwrap(), other_build);
 }
 
 /// A saved index round-trips exactly. `DumpIndex::metadata` is populated by
@@ -120,9 +120,11 @@ async fn saved_index_round_trips_exactly() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
-    cache::save(&path, &source, &index).await.unwrap();
-    let loaded = match cache::load(&path, &source).await.unwrap() {
-        CacheStatus::Valid { index, weak, total_size, compression, .. } => {
+    pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
+    let loaded = match pgdt_dump::internal::load(&path, &source).await.unwrap() {
+        CacheStatus::Loaded(loaded) => {
+            assert!(loaded.is_complete(), "build_index always scans the whole file");
+            let LoadedCache { index, weak, total_size, compression, .. } = loaded;
             assert_eq!(
                 weak,
                 WeakIdentity::Agrees,
@@ -132,7 +134,6 @@ async fn saved_index_round_trips_exactly() {
             assert_eq!(compression, None, "a plain source sits under no container");
             index
         }
-        CacheStatus::Incomplete { .. } => panic!("build_index always scans the whole file"),
         unusable => panic!("a freshly saved cache must load, got {unusable:?}"),
     };
 
@@ -159,14 +160,15 @@ async fn preamble_only_persists_a_real_unscanned_tail() {
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
 
     // A preamble-only scan never reaches EOF (that's the point of it), so
-    // the cache it persists is `Incomplete` by the same completeness check
+    // the cache it persists is incomplete by the same completeness check
     // `pgdt info`'s default listing uses to decide whether to trust a cache
-    // as the whole file's map — not `Valid`, and not `Absent` either, since
-    // it's a real, usable partial scan (`docs/design/decisions.md`,
-    // "D22").
-    let index = match cache::load(&path, &source).await.unwrap() {
-        CacheStatus::Incomplete { index, .. } => index,
-        CacheStatus::Valid { .. } => panic!("a preamble-only scan cannot reach EOF"),
+    // as the whole file's map — and not missing either, since it's a real,
+    // usable partial scan (`docs/design/decisions.md`, "D22").
+    let index = match pgdt_dump::internal::load(&path, &source).await.unwrap() {
+        CacheStatus::Loaded(loaded) => {
+            assert!(!loaded.is_complete(), "a preamble-only scan cannot reach EOF");
+            loaded.index
+        }
         unusable => panic!("preamble_only must persist a cache, got {unusable:?}"),
     };
     let size = source.size().await.unwrap();
@@ -187,20 +189,16 @@ async fn save_overwrites_an_existing_cache() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
     std::fs::write(&path, b"stale placeholder").unwrap();
-    cache::save(&path, &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
 
     let total_size = source.size().await.unwrap();
-    let CacheStatus::Valid {
-        index: loaded,
-        weak: WeakIdentity::Agrees,
-        total_size: loaded_size,
-        compression: None,
-        ..
-    } = cache::load(&path, &source).await.unwrap()
+    let CacheStatus::Loaded(loaded) = pgdt_dump::internal::load(&path, &source).await.unwrap()
     else {
         panic!("the overwritten cache must load as the fresh save");
     };
-    assert_eq!((loaded, loaded_size), (index, total_size));
+    assert!(loaded.is_complete());
+    assert_eq!((&loaded.weak, loaded.compression), (&WeakIdentity::Agrees, None));
+    assert_eq!((loaded.index, loaded.total_size), (index, total_size));
 }
 
 /// A write failure (here: parent directory doesn't exist) must propagate as
@@ -212,7 +210,7 @@ async fn save_propagates_write_failures() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("no-such-subdir").join("edge_cases.sql.dtcache");
-    assert!(matches!(cache::save(&path, &source, &index).await, Err(Error::Io(_))));
+    assert!(matches!(pgdt_dump::internal::save(&path, &source, &index).await, Err(Error::Io(_))));
 }
 
 /// A cache saved against a differently-sized file is invalidated outright —
@@ -226,7 +224,7 @@ async fn size_mismatch_invalidates_the_cache() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
-    cache::save(&path, &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
 
     let dump_bytes = std::fs::read(edge_cases()).unwrap();
     let grown = dir.path().join("grown.sql");
@@ -237,7 +235,7 @@ async fn size_mismatch_invalidates_the_cache() {
     assert_ne!(grown_source.size().await.unwrap(), source.size().await.unwrap());
 
     assert_eq!(
-        cache::load(&path, &grown_source).await.unwrap(),
+        pgdt_dump::internal::load(&path, &grown_source).await.unwrap(),
         CacheStatus::Unusable(Unusable::SourceChanged {
             cached_stored_size: source.stored_size().await.unwrap(),
             live_stored_size: grown_source.stored_size().await.unwrap(),
@@ -249,7 +247,7 @@ async fn size_mismatch_invalidates_the_cache() {
 /// rather than answering "no index" for each
 /// (`docs/design/decisions.md`, "D22"). It is the same ones
 /// `an_unusable_cache_says_which_kind_of_unusable_it_is` and
-/// `size_mismatch_invalidates_the_cache` put to `cache::load`; what this pins
+/// `size_mismatch_invalidates_the_cache` put to a bare load; what this pins
 /// is that the reason survives the trip to a caller that holds a live source
 /// and could scan.
 #[tokio::test]
@@ -269,7 +267,7 @@ async fn cache_mode_load_names_each_unusable_status() {
     );
 
     let stale = dir.path().join("stale.dtcache");
-    cache::save(&stale, &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&stale, &source, &index).await.unwrap();
     restamp(&stale, CACHE_FORMAT_VERSION + 1);
     assert_eq!(
         CacheMode::enabled(stale).load(&source).await.unwrap(),
@@ -277,7 +275,7 @@ async fn cache_mode_load_names_each_unusable_status() {
     );
 
     let path = dir.path().join("edge_cases.sql.dtcache");
-    cache::save(&path, &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
     let grown = dir.path().join("grown.sql");
     let mut grown_bytes = std::fs::read(edge_cases()).unwrap();
     grown_bytes.push(b'\n');
@@ -378,7 +376,7 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
 }
 
 /// An mtime mismatch alone is a loud warning, not grounds for invalidation
-/// — the cache still loads as `Valid`. Simulated by touching the dump file's
+/// — the cache still loads, whole. Simulated by touching the dump file's
 /// mtime forward after the cache was saved, without changing its size.
 #[tokio::test]
 async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
@@ -389,13 +387,14 @@ async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let path = cache::colocated_path(&dump);
-    cache::save(&path, &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
 
     let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
     std::fs::File::options().write(true).open(&dump).unwrap().set_modified(future).unwrap();
 
-    match cache::load(&path, &source).await.unwrap() {
-        CacheStatus::Valid { index: loaded, weak, .. } => {
+    match pgdt_dump::internal::load(&path, &source).await.unwrap() {
+        CacheStatus::Loaded(LoadedCache { index: loaded, weak, total_size, .. }) => {
+            assert!(loaded.is_complete(total_size), "build_index always scans the whole file");
             let WeakIdentity::Differs { cached, live } = weak else {
                 panic!("a moved mtime differs, got {weak:?}")
             };
@@ -405,15 +404,16 @@ async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
             // spans, so the two agree without either being persisted.
             assert_eq!(loaded, index);
         }
-        CacheStatus::Incomplete { .. } => panic!("build_index always scans the whole file"),
         unusable => {
             panic!("an mtime-only mismatch must not invalidate the cache, got {unusable:?}")
         }
     }
 }
 
+/// A path is used as given, `none` included: no path is a disabled cache's
+/// spelling, which is a front end's to parse.
 #[test]
-fn cache_mode_resolves_default_explicit_and_disabled() {
+fn cache_mode_resolves_the_default_and_an_explicit_path() {
     let dump = Origin::local("/a/b/dump.sql");
 
     assert_eq!(
@@ -424,7 +424,11 @@ fn cache_mode_resolves_default_explicit_and_disabled() {
         CacheMode::resolve(&dump, Some(Path::new("/other/path.dtcache"))),
         CacheMode::enabled(PathBuf::from("/other/path.dtcache"))
     );
-    assert_eq!(CacheMode::resolve(&dump, Some(Path::new("none"))), CacheMode::DISABLED);
+    assert_eq!(
+        CacheMode::resolve(&dump, Some(Path::new("none"))),
+        CacheMode::enabled(PathBuf::from("none"))
+    );
+    assert_eq!(CacheMode::DISABLED.path(), None);
 }
 
 #[tokio::test]
@@ -435,11 +439,10 @@ async fn disabled_cache_ignores_an_existing_file_and_persists_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("edge_cases.sql");
     let path = cache::colocated_path(&dump);
-    cache::save(&path, &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
     assert!(path.exists());
 
-    let mode = CacheMode::resolve(&Origin::local(&dump), Some(Path::new("none")));
-    assert_eq!(mode, CacheMode::DISABLED);
+    let mode = CacheMode::DISABLED;
 
     // The existing valid cache at the colocated path is ignored, not read —
     // and the reason says so: `Disabled` is about the caller, not about
@@ -476,7 +479,7 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
     let source = LocalFileSource::open(&dump).unwrap();
 
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    pgdt_dump::cache::save(&cache_path, &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&cache_path, &source, &index).await.unwrap();
 
     // Same bytes, new mtime — exactly the ambiguous case the design refuses
     // to treat as conclusive.
@@ -490,7 +493,9 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
     };
     assert_eq!(loaded.blocks().count(), index.blocks().count(), "contents survive intact");
     assert!(
-        loaded.diagnostics.contains(&pgdt_model::Diagnostic::cache_mtime_changed()),
+        loaded.diagnostics.contains(
+            &<pgdt_model::Diagnostic as pgdt_model::internal::DiagnosticExt>::cache_mtime_changed()
+        ),
         "diagnostics: {:?}",
         loaded.diagnostics
     );
@@ -500,6 +505,7 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
 /// about a check *this* run performed successfully.
 #[tokio::test]
 async fn diagnostics_do_not_round_trip_through_the_cache() {
+    use pgdt_model::internal::DiagnosticExt;
     use pgdt_model::{Diagnostic, DiagnosticKind};
 
     let dir = tempfile::tempdir().unwrap();
@@ -513,7 +519,7 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
     // this test's own pushed diagnostic is the only one in play.
     index.diagnostics.clear();
     index.diagnostics.push(Diagnostic::cache_mtime_changed());
-    pgdt_dump::cache::save(&cache_path, &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&cache_path, &source, &index).await.unwrap();
 
     let CacheLoad::Index(loaded) = CacheMode::enabled(cache_path).load(&source).await.unwrap()
     else {
@@ -536,9 +542,9 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
 }
 
 /// A cache whose `scanned_through` falls short of its recorded size loads as
-/// `Incomplete`, not `Valid` — the case `preamble_only_persists_a_real_unscanned_tail`
+/// incomplete — the case `preamble_only_persists_a_real_unscanned_tail`
 /// already exercises through `preamble_only` — but `CacheMode::load` still
-/// hands it back as `CacheLoad::Index`, the same as a `Valid` cache, since its
+/// hands it back as `CacheLoad::Index`, the same as a complete cache, since its
 /// callers (`table_stream`, `preamble_only`) want a partial map to build
 /// forward from rather than a signal to start over
 /// (`docs/design/decisions.md`, "D22").
@@ -558,38 +564,13 @@ async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
     assert!(index.scanned_through < size, "a preamble-only cache never reaches EOF");
 }
 
-/// `docs/design/decisions.md`, "The compressed source and the cache": `CacheMode::Offline` is rejected by every method that
-/// requires a live source, and `CacheMode::load_offline` rejects the other
-/// two variants the opposite way.
-#[tokio::test]
-async fn offline_mode_is_rejected_by_live_methods_and_vice_versa() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dtcache");
-
-    let offline = CacheMode::Offline(path.clone());
-    assert!(matches!(offline.load(&source).await, Err(Error::CacheModeMismatch(_))));
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    assert!(matches!(
-        offline.save(&watching(&source).await, &source, &index).await,
-        Err(Error::CacheModeMismatch(_))
-    ));
-    assert!(matches!(offline.require_enabled("parse"), Err(Error::CacheModeMismatch(_))));
-
-    assert!(matches!(
-        CacheMode::enabled(path).load_offline().await,
-        Err(Error::CacheModeMismatch(_))
-    ));
-    assert!(matches!(CacheMode::DISABLED.load_offline().await, Err(Error::CacheModeMismatch(_))));
-}
-
-/// `load_offline` against a cache that was never fully scanned reports
-/// `Incomplete` with the total size it fell short of, the same way `load`
+/// A cache-only load of a cache that was never fully scanned reports it
+/// incomplete against the total size it fell short of, the same way a load
 /// does for a live source — the completeness check reads the cache's own
 /// recorded size, since there is no live file to stat
 /// (`docs/design/decisions.md`, "The compressed source and the cache").
 #[tokio::test]
-async fn load_offline_reports_incomplete_for_a_partial_scan() {
+async fn an_offline_load_reports_a_partial_scan_incomplete() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
@@ -597,33 +578,34 @@ async fn load_offline_reports_incomplete_for_a_partial_scan() {
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
 
     let size = source.size().await.unwrap();
-    match CacheMode::Offline(path).load_offline().await.unwrap() {
-        CacheStatus::Incomplete { index, total_size, .. } => {
+    match OfflineCache::new(path).load().await.unwrap() {
+        CacheStatus::Loaded(LoadedCache { index, total_size, .. }) => {
             assert_eq!(total_size, size);
             assert!(index.scanned_through < total_size);
         }
-        other => panic!("expected Incomplete, got {other:?}"),
+        other => panic!("expected an incomplete cache, got {other:?}"),
     }
 }
 
-/// A cache-only load — `Valid` or `Incomplete` — always carries a
+/// A cache-only load — complete or not — always carries a
 /// `CacheOffline` diagnostic: there is no live file to check it against, so
 /// the result is unverified and historical regardless of completeness
 /// (`docs/design/decisions.md`, "The compressed source and the cache").
 #[tokio::test]
-async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
+async fn an_offline_load_always_pushes_the_cache_offline_diagnostic() {
     use pgdt_model::DiagnosticKind;
 
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let full_path = dir.path().join("full.dtcache");
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    pgdt_dump::cache::save(&full_path, &source, &index).await.unwrap();
+    pgdt_dump::internal::save(&full_path, &source, &index).await.unwrap();
 
-    let status = CacheMode::Offline(full_path).load_offline().await.unwrap();
-    let CacheStatus::Valid { index: loaded, .. } = status else {
-        panic!("expected Valid for a fully scanned cache");
+    let status = OfflineCache::new(full_path).load().await.unwrap();
+    let CacheStatus::Loaded(LoadedCache { index: loaded, total_size, .. }) = status else {
+        panic!("expected a fully scanned cache");
     };
+    assert!(loaded.is_complete(total_size));
     assert!(
         loaded.diagnostics.iter().any(|d| *d.kind() == DiagnosticKind::CacheOffline),
         "diagnostics: {:?}",
@@ -633,10 +615,11 @@ async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
     let partial_path = dir.path().join("partial.dtcache");
     let mode = CacheMode::enabled(partial_path.clone());
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
-    let status = CacheMode::Offline(partial_path).load_offline().await.unwrap();
-    let CacheStatus::Incomplete { index: loaded, .. } = status else {
-        panic!("expected Incomplete for a preamble-only cache");
+    let status = OfflineCache::new(partial_path).load().await.unwrap();
+    let CacheStatus::Loaded(LoadedCache { index: loaded, total_size, .. }) = status else {
+        panic!("expected a preamble-only cache");
     };
+    assert!(!loaded.is_complete(total_size));
     assert!(
         loaded.diagnostics.iter().any(|d| *d.kind() == DiagnosticKind::CacheOffline),
         "diagnostics: {:?}",
@@ -647,10 +630,10 @@ async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
 /// A cache path that doesn't exist is `Missing` offline too, and gets no
 /// diagnostic pushed onto it — there is no index to push one onto.
 #[tokio::test]
-async fn load_offline_missing_file_is_missing() {
+async fn an_offline_load_of_a_missing_file_is_missing() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("nonexistent.dtcache");
-    assert_eq!(CacheMode::Offline(path).load_offline().await.unwrap(), CacheStatus::Missing);
+    assert_eq!(OfflineCache::new(path).load().await.unwrap(), CacheStatus::Missing);
 }
 
 /// Compress `path` with `xz`, forcing several blocks so this exercises the
@@ -679,7 +662,7 @@ fn xz_compress(path: &Path) -> tempfile::NamedTempFile {
 
 /// `XzSource` is just another `ByteRangeSource` to everything above `pgdt-io`
 /// (`docs/design/decisions.md`, "D6"): `build_index`'s scan and
-/// `cache::save`/`load`'s round trip produce the same `DumpIndex` whether the
+/// the cache's save and load round trip produce the same `DumpIndex` whether the
 /// bytes came straight off disk or through the decoder — the differential
 /// parity at the library level. The CLI-level parity against generated
 /// fixtures is `crates/pgdt/tests/xz_source.rs`.
@@ -707,9 +690,11 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.xz.dtcache");
-    cache::save(&path, &xz, &xz_index).await.unwrap();
-    match cache::load(&path, &xz).await.unwrap() {
-        CacheStatus::Valid { index, weak, total_size, compression, .. } => {
+    pgdt_dump::internal::save(&path, &xz, &xz_index).await.unwrap();
+    match pgdt_dump::internal::load(&path, &xz).await.unwrap() {
+        CacheStatus::Loaded(LoadedCache { index, weak, total_size, compression, .. })
+            if index.is_complete(total_size) =>
+        {
             assert_eq!(
                 weak,
                 WeakIdentity::Agrees,
@@ -787,16 +772,18 @@ async fn a_non_seekable_warning_survives_the_cache_round_trip() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("single_block.xz.dtcache");
-    cache::save(&path, &xz, &index).await.unwrap();
-    match cache::load(&path, &xz).await.unwrap() {
-        CacheStatus::Valid { index, .. } => {
+    pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
+    match pgdt_dump::internal::load(&path, &xz).await.unwrap() {
+        CacheStatus::Loaded(LoadedCache { index, total_size, .. })
+            if index.is_complete(total_size) =>
+        {
             assert!(
                 has_non_seekable_warning(&index.diagnostics),
                 "diagnostics: {:?}",
                 index.diagnostics
             );
         }
-        other => panic!("expected Valid, got {other:?}"),
+        other => panic!("expected a complete cache, got {other:?}"),
     }
 }
 
@@ -851,7 +838,7 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.xz.dtcache");
-    cache::save(&path, &xz, &index).await.unwrap();
+    pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
 
     let known = match cache::claim(&path, &Origin::local(compressed.path())).await.unwrap() {
         CacheClaim::Settles { compression, .. } => compression,
@@ -877,7 +864,7 @@ async fn a_cache_saved_from_a_plain_source_claims_plain() {
     let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
-    cache::save(&path, &plain, &index).await.unwrap();
+    pgdt_dump::internal::save(&path, &plain, &index).await.unwrap();
 
     assert_eq!(
         cache::claim(&path, &Origin::local(edge_cases())).await.unwrap(),
@@ -942,7 +929,7 @@ async fn a_claim_is_unknown_wherever_nothing_is_cached_to_compare() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
-    cache::save(&path, &plain, &index).await.unwrap();
+    pgdt_dump::internal::save(&path, &plain, &index).await.unwrap();
     // A real cache, and a dump path with nothing at it at all: there is no
     // size to compare against, and the open that follows is where that has a
     // sentence to say.
@@ -969,7 +956,7 @@ async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exis
     let xz = XzSource::open(compressed.path()).unwrap();
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
     let path = dir.path().join("edge_cases.sql.xz.dtcache");
-    cache::save(&path, &xz, &index).await.unwrap();
+    pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
 
     // The compressed file's own cache, put to the plain file it decompresses
     // to: same content, different stored size.
@@ -986,7 +973,7 @@ async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exis
     // makes the early refusal a pre-emption rather than a second rule.
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     assert_eq!(
-        cache::load(&path, &plain).await.unwrap(),
+        pgdt_dump::internal::load(&path, &plain).await.unwrap(),
         CacheStatus::Unusable(Unusable::SourceChanged {
             cached_stored_size: std::fs::metadata(compressed.path()).unwrap().len(),
             live_stored_size: std::fs::metadata(edge_cases()).unwrap().len(),
@@ -1013,13 +1000,13 @@ async fn a_load_refuses_a_cache_whose_compression_layer_is_not_the_sources() {
         [(&xz as &dyn ByteRangeSource, &as_plain as &dyn ByteRangeSource), (&as_plain, &xz)]
     {
         let path = dir.path().join("layer.dtcache");
-        cache::save(&path, saved_by, &index).await.unwrap();
+        pgdt_dump::internal::save(&path, saved_by, &index).await.unwrap();
         assert!(matches!(
-            cache::load(&path, saved_by).await.unwrap(),
-            CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. }
+            pgdt_dump::internal::load(&path, saved_by).await.unwrap(),
+            CacheStatus::Loaded(_)
         ));
         assert_eq!(
-            cache::load(&path, loaded_by).await.unwrap(),
+            pgdt_dump::internal::load(&path, loaded_by).await.unwrap(),
             CacheStatus::Unusable(Unusable::CompressionContradicted)
         );
     }
@@ -1053,7 +1040,9 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
     std::fs::write(&other, b"-- a dump of another size\n").unwrap();
     let other_source = LocalFileSource::open(&other).unwrap();
     let other_path = dir.path().join("other.dtcache");
-    cache::save(&other_path, &other_source, &pgdt_model::DumpIndex::default()).await.unwrap();
+    pgdt_dump::internal::save(&other_path, &other_source, &pgdt_model::DumpIndex::default())
+        .await
+        .unwrap();
 
     let mut other_build = good.clone();
     other_build[8..12].copy_from_slice(&(CACHE_FORMAT_VERSION + 1).to_le_bytes());
@@ -1095,7 +1084,10 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
         if why.overwritable() {
             run.unwrap();
             assert!(
-                matches!(cache::load(&path, &source).await.unwrap(), CacheStatus::Valid { .. }),
+                matches!(
+                    pgdt_dump::internal::load(&path, &source).await.unwrap(),
+                    CacheStatus::Loaded(loaded) if loaded.is_complete()
+                ),
                 "{why:?}: replaced by a cache of this source"
             );
         } else {
@@ -1106,6 +1098,167 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
             assert_eq!(std::fs::read(&path).unwrap(), bytes, "{why:?}: still untouched");
         }
     }
+}
+
+/// **An open hands back what the cache holds, the source and the watch
+/// beside it** (`CacheMode::open`): nothing at the path, a partial map, a
+/// whole one — judged as a load judges it — and, for a disabled mode, no
+/// path consulted even with a cache sitting at the default one.
+#[tokio::test]
+async fn an_open_hands_back_what_the_cache_holds() {
+    let (_dir, dump) = sandboxed();
+    let origin = Origin::local(&dump);
+    let path = cache::colocated_path(&dump);
+    let mode = CacheMode::enabled(path.clone());
+
+    let opened = mode.open(&origin).await.unwrap();
+    assert_eq!(opened.cache, Held::Missing);
+    assert_eq!(opened.source.size().await.unwrap(), std::fs::metadata(&dump).unwrap().len());
+
+    preamble_only(opened.source.as_ref(), &ScanOptions::default(), &mode).await.unwrap();
+    let Held::Loaded(partial) = mode.open(&origin).await.unwrap().cache else {
+        panic!("a preamble-only scan leaves a cache")
+    };
+    assert!(!partial.is_complete(), "a preamble-only scan cannot reach EOF");
+
+    let source = LocalFileSource::open(&dump).unwrap();
+    map_file(
+        &source,
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &mode,
+        &StatisticsRequest::METADATA,
+    )
+    .await
+    .unwrap();
+    let Held::Loaded(whole) = mode.open(&origin).await.unwrap().cache else {
+        panic!("a parse leaves a cache")
+    };
+    assert!(whole.is_complete());
+    let CacheLoad::Index(loaded) = mode.load(&source).await.unwrap() else {
+        panic!("the same cache loads")
+    };
+    assert_eq!(whole.index, loaded, "an open judges the cache as a load does");
+    assert_eq!(whole.weak, WeakIdentity::Agrees);
+
+    let disabled = CacheMode::DISABLED.open(&origin).await.unwrap();
+    assert_eq!(disabled.cache, Held::Disabled, "a cache sits at the default path, unread");
+}
+
+/// **An open refuses every unusable cache as a scan does, word for word, and
+/// one recognisably ours is answered as replaced where the mode may replace
+/// it** (`docs/design/decisions.md`, "D20"): the source then opened claiming
+/// nothing. A file that is not a pgdt cache is refused whatever is asked.
+#[tokio::test]
+async fn an_open_refuses_an_unusable_cache_unless_it_may_be_replaced() {
+    let (dir, dump) = sandboxed();
+    let origin = Origin::local(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+    let path = cache::colocated_path(&dump);
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
+    let good = std::fs::read(&path).unwrap();
+
+    let other = dir.path().join("other.sql");
+    std::fs::write(&other, b"-- a dump of another size\n").unwrap();
+    let other_path = dir.path().join("other.dtcache");
+    let other_source = LocalFileSource::open(&other).unwrap();
+    pgdt_dump::internal::save(&other_path, &other_source, &pgdt_model::DumpIndex::default())
+        .await
+        .unwrap();
+
+    let mut other_build = good.clone();
+    other_build[8..12].copy_from_slice(&(CACHE_FORMAT_VERSION + 1).to_le_bytes());
+    let cases: [(&[u8], Unusable); 3] = [
+        (b"not a cache at all", Unusable::NotACache),
+        (&other_build, Unusable::UnsupportedVersion { found: CACHE_FORMAT_VERSION + 1 }),
+        (
+            &std::fs::read(&other_path).unwrap(),
+            Unusable::SourceChanged {
+                cached_stored_size: std::fs::metadata(&other).unwrap().len(),
+                live_stored_size: source.stored_size().await.unwrap(),
+            },
+        ),
+    ];
+    for (bytes, why) in cases {
+        std::fs::write(&path, bytes).unwrap();
+        let mode = CacheMode::enabled(path.clone());
+        let refused = mode.open(&origin).await.unwrap_err();
+        assert_eq!(
+            refused.to_string(),
+            mode.refusal(&why).expect("an enabled mode refuses").to_string(),
+            "{why:?}: the scans' refusal"
+        );
+        let replacing = mode.with_overwrite_unusable(true);
+        match replacing.open(&origin).await {
+            Ok(opened) => {
+                assert!(why.overwritable(), "{why:?}");
+                assert_eq!(opened.cache, Held::Replacing(why.clone()));
+                assert_eq!(opened.source.seek_table(), None, "claiming nothing");
+            }
+            Err(Error::CacheUnusable { unusable, .. }) => {
+                assert!(!why.overwritable(), "{why:?}");
+                assert_eq!(unusable, why);
+            }
+            Err(other) => panic!("{why:?}: {other:?}"),
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "{why:?}: an open writes nothing");
+    }
+}
+
+/// **An open hands recognition the seek table the cache holds**, and refuses
+/// a cache whose compression layer recognition contradicts — one saved from
+/// the same bytes read as plain (`docs/design/decisions.md`, "D18").
+#[tokio::test]
+async fn an_open_builds_the_source_on_the_layer_the_cache_settles() {
+    let dir = tempfile::tempdir().unwrap();
+    let compressed = xz_compress(&edge_cases());
+    let origin = Origin::local(compressed.path());
+    let xz = XzSource::open(compressed.path()).unwrap();
+    let path = dir.path().join("layer.dtcache");
+    let index = pgdt_model::DumpIndex::default();
+
+    pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
+    let opened = CacheMode::enabled(path.clone()).open(&origin).await.unwrap();
+    assert_eq!(opened.source.seek_table(), xz.seek_table());
+    assert!(matches!(opened.cache, Held::Loaded(_)));
+
+    let as_plain = LocalFileSource::open(compressed.path()).unwrap();
+    pgdt_dump::internal::save(&path, &as_plain, &index).await.unwrap();
+    assert!(matches!(
+        CacheMode::enabled(path.clone()).open(&origin).await,
+        Err(Error::CacheUnusable { unusable: Unusable::CompressionContradicted, .. })
+    ));
+}
+
+/// **An open judges the weak signals as a load does**: a moved modification
+/// time warns on the index by default and refuses where `time` binds it
+/// (`docs/design/decisions.md`, "D21").
+#[tokio::test]
+async fn an_open_judges_a_moved_modification_time_as_a_load_does() {
+    let (_dir, dump) = sandboxed();
+    let origin = Origin::local(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+    let path = cache::colocated_path(&dump);
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+    std::fs::File::options().write(true).open(&dump).unwrap().set_modified(future).unwrap();
+
+    let Held::Loaded(loaded) = CacheMode::enabled(path.clone()).open(&origin).await.unwrap().cache
+    else {
+        panic!("a moved time does not invalidate")
+    };
+    assert!(
+        loaded.index.diagnostics.iter().any(|d| *d.kind() == DiagnosticKind::CacheMtimeChanged),
+        "{:?}",
+        loaded.index.diagnostics
+    );
+    let bound = CacheMode::enabled(path).with_strict_identity(StrictIdentity::binding(true, false));
+    assert!(matches!(
+        bound.open(&origin).await,
+        Err(Error::StrictIdentityUnmet { term: "time", .. })
+    ));
 }
 
 /// **A query succeeds only once the block it stopped inside has passed its
@@ -1174,7 +1327,7 @@ const PERSISTED_INDEX: (u32, u64) = (69, 978_577_509_141_645_967);
 /// digest re-pinned. A regenerated or added fixture moves the digest with no
 /// change to any parse, and is re-pinned alone.
 ///
-/// The bytes are the index exactly as [`cache::save`] encodes it — spans with
+/// The bytes are the index exactly as a save encodes it — spans with
 /// their bodies and text, `scanned_through`, metadata, roles, tablespaces and
 /// every block's statistics — and nothing else the file holds: the source's
 /// identity, its size and the calendar are the envelope's, and observed
@@ -1246,11 +1399,12 @@ mod encoding {
 
     use pgdt_core::Error;
     use pgdt_dump::ScanOptions;
-    use pgdt_dump::cache::{CacheMode, CacheStatus, Unusable, load, save};
+    use pgdt_dump::cache::{CacheMode, CacheStatus, Unusable};
     use pgdt_dump::internal::{
         CACHE_MAGIC, CacheFile, CacheFileRef, CompressionIndex, ContainerKind, SourceIdentity,
         read_cache_file, write_cache_file,
     };
+    use pgdt_dump::internal::{load, save};
     use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
     use pgdt_mapping::map_file;
     use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
@@ -1416,7 +1570,10 @@ mod encoding {
                     "{message}"
                 );
             } else {
-                assert!(matches!(status, CacheStatus::Valid { .. }), "{name}: {status:?}");
+                assert!(
+                    matches!(&status, CacheStatus::Loaded(loaded) if loaded.is_complete()),
+                    "{name}: {status:?}"
+                );
             }
         }
     }

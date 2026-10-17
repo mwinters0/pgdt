@@ -2,14 +2,26 @@
 
 use std::ffi::OsStr;
 use std::fmt::Display;
+use std::path::Path;
 use std::str::FromStr;
 
 use clap::builder::{PossibleValue, StringValueParser, TypedValueParser};
 use clap::{Arg, Args, Command};
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::StrictIdentity;
+use pgdt_dump::cache::{CacheMode, StrictIdentity};
+use pgdt_io::Origin;
 
 use crate::parallel::Resolved;
+
+/// The cache a `--dtcache` names for `origin`: the default where it is
+/// absent, none at all for the literal path `none` — `pgdt`'s spelling, the
+/// library taking every path as given — and any other path as given.
+pub(crate) fn cache_mode(origin: &Origin, dtcache: Option<&Path>) -> CacheMode {
+    match dtcache {
+        Some(path) if path == Path::new("none") => CacheMode::DISABLED,
+        dtcache => CacheMode::resolve(origin, dtcache),
+    }
+}
 
 /// A flag naming a library mode by the library's own words — its type's
 /// `FromStr`, in any case — `--help` listing those of `modes` that `accept`

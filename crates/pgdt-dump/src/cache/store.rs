@@ -1,14 +1,18 @@
 //! A cache read against its source and written beside it: where one sits by
 //! default ([`colocated_path`]), what the cache at a path settles before any
-//! source exists ([`claim`]), a load against a live source ([`load`]) and
-//! without one ([`load_offline`]), and the writer ([`save`]) — see the parent
-//! module's docs for what each refuses and why.
+//! source exists ([`claim`], [`settled_by`]), a decoded cache checked against a
+//! live source ([`against_source`]), a load with no source ([`load_offline`]),
+//! and the writer ([`save`]) — see the parent module's docs for what each
+//! refuses and why. [`load`] and [`save`] are no entry point of their own: a
+//! caller loads through [`CacheMode`](super::CacheMode) and saves through its
+//! watched [`save`](super::CacheMode::save), and tests that write a cache by
+//! hand reach them through `internal`.
 
 use std::path::{Path, PathBuf};
 
 use super::file::{
     CacheEnvelope, CacheFile, CacheFileRef, CacheStatus, CompressionIndex, CompressionShape,
-    ContainerKind, read_cache_file, write_cache_file,
+    ContainerKind, LoadedCache, read_cache_file, write_cache_file,
 };
 use super::identity::{OriginMatch, SourceIdentity, WeakIdentity};
 use crate::map::{
@@ -31,17 +35,25 @@ pub fn colocated_path(dump_path: &Path) -> PathBuf {
 /// identity. See [`CacheStatus`] and the module docs for what "validate"
 /// means. A hard I/O error reading `path` (anything but "not found") still
 /// propagates; what the file *holds* is answered as a status.
+pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStatus> {
+    match read_cache_file(path)? {
+        Ok(file) => against_source(file, source).await,
+        Err(status) => Ok(status),
+    }
+}
+
+/// A decoded cache file checked against `source`'s current identity: the
+/// stored size, which refuses, then the weak signals, which do not.
 ///
 /// **The compression layer is compared as well as the size**: a source opened
-/// without the cache's claim — an embedder's, or `pgdt` under
-/// `--overwrite-unusable-cache` after recognition refused the claim — would
-/// otherwise be handed offsets another file's seek table produced
-/// ([`Unusable::CompressionContradicted`]; `docs/design/decisions.md`, "D20").
-pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStatus> {
-    let file = match read_cache_file(path)? {
-        Ok(file) => file,
-        Err(status) => return Ok(status),
-    };
+/// without the cache's claim — an embedder's, or one opened claiming nothing
+/// after recognition refused the claim — would otherwise be handed offsets
+/// another file's seek table produced ([`Unusable::CompressionContradicted`];
+/// `docs/design/decisions.md`, "D20").
+pub(super) async fn against_source(
+    file: CacheFile,
+    source: &dyn ByteRangeSource,
+) -> Result<CacheStatus> {
     let live = SourceIdentity::observe(source).await?;
     let (cached_stored_size, live_stored_size) = (file.identity.stored_size(), live.stored_size());
     if cached_stored_size != live_stored_size {
@@ -117,31 +129,41 @@ pub async fn claim(cache_path: &Path, origin: &Origin) -> Result<CacheClaim> {
             });
         }
     };
-    let stored_size = file.identity.stored_size();
+    let settled = settled_by(&file, origin).await;
     // The index is decoded only to be sized and dropped, its statistics freed
     // as they were decoded: inside a statistics scope (`pgdt_core::instrument`).
-    let CacheFile { compression, index, .. } = file;
-    let statistics_heap_bytes = index.statistics_heap_bytes();
-    drop_attributed(index);
-    // An origin that cannot be probed is left to the open that follows,
-    // which is where that failure has a sentence to say.
+    let statistics_heap_bytes = file.index.statistics_heap_bytes();
+    drop_attributed(file.index);
+    Ok(match settled {
+        Ok(compression) => CacheClaim::Settles { compression, statistics_heap_bytes },
+        Err(why) => CacheClaim::Unusable(why),
+    })
+}
+
+/// What a decoded cache file settles about `origin` before any source exists:
+/// the compression layer recognition is handed, or the reason the file is
+/// another one's — its stored size against [`pgdt_io::Origin::probe`]'s, the
+/// same rule the live comparison applies ([`against_source`]). An origin that
+/// cannot be probed settles [`KnownCompression::Unknown`], that failure being
+/// left to the open that follows, which is where it has a sentence to say.
+pub(super) async fn settled_by(
+    file: &CacheFile,
+    origin: &Origin,
+) -> std::result::Result<KnownCompression, Unusable> {
     let Ok(live) = origin.probe().await else {
-        return Ok(CacheClaim::Settles {
-            compression: KnownCompression::Unknown,
-            statistics_heap_bytes,
-        });
+        return Ok(KnownCompression::Unknown);
     };
+    let stored_size = file.identity.stored_size();
     if stored_size != live.stored_size() {
-        return Ok(CacheClaim::Unusable(Unusable::SourceChanged {
+        return Err(Unusable::SourceChanged {
             cached_stored_size: stored_size,
             live_stored_size: live.stored_size(),
-        }));
+        });
     }
-    let compression = match compression {
-        Some(CompressionIndex::Xz(table)) => KnownCompression::Xz(table),
+    Ok(match &file.compression {
+        Some(CompressionIndex::Xz(table)) => KnownCompression::Xz(table.clone()),
         None => KnownCompression::Plain,
-    };
-    Ok(CacheClaim::Settles { compression, statistics_heap_bytes })
+    })
 }
 
 /// Drop each block's statistics — the `Arc` sharing them included — inside a
@@ -149,7 +171,7 @@ pub async fn claim(cache_path: &Path, origin: &Origin) -> Result<CacheClaim> {
 /// allocations are *not* freed in the scope: it is a parameter, so it outlives
 /// the guard and is released once this returns, which is right, their decode
 /// having been attributed to nobody.
-fn drop_attributed(mut index: DumpIndex) {
+pub(super) fn drop_attributed(mut index: DumpIndex) {
     let _attributed = StatisticsScope::enter();
     for span in &mut index.spans {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
@@ -164,7 +186,7 @@ fn drop_attributed(mut index: DumpIndex) {
 /// against, `weak` and `origin` are always the agreeing answer here;
 /// "unverified, historical" is a
 /// [`pgdt_model::DiagnosticKind::CacheOffline`] pushed by
-/// [`CacheMode::load_offline`](super::CacheMode::load_offline) instead.
+/// [`OfflineCache::load`](super::OfflineCache::load) instead.
 pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
     match read_cache_file(path)? {
         Ok(file) => Ok(status_from_file(file, WeakIdentity::Agrees, OriginMatch::Agrees)),
@@ -172,11 +194,10 @@ pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
     }
 }
 
-/// Shared by [`load`] and [`load_offline`] once a `CacheFile` has passed its
-/// header and (when live) stored-size and compression checks: `Valid` when the index's
-/// own `scanned_through` reaches the file's recorded addressable length,
-/// `Incomplete` otherwise, with the index's unpersisted diagnostics
-/// recomputed either way. Reads [`CacheFile::total_size`] rather than
+/// Shared by every load once a `CacheFile` has passed its header and (when
+/// live) stored-size and compression checks: the index with its unpersisted
+/// diagnostics recomputed, complete or not by its own coverage of the file's
+/// recorded addressable length ([`LoadedCache::is_complete`]). Reads [`CacheFile::total_size`] rather than
 /// re-deriving one from a live source: by this point the stored sizes are
 /// known equal wherever a live source exists, and `load_offline` has none.
 fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) -> CacheStatus {
@@ -201,11 +222,7 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
         identity: file.identity,
         calendar_end: file.calendar_end,
     };
-    if index.is_complete(total_size) {
-        CacheStatus::Valid { index, weak, origin, total_size, compression, envelope }
-    } else {
-        CacheStatus::Incomplete { index, weak, origin, total_size, compression, envelope }
-    }
+    CacheStatus::Loaded(LoadedCache { index, weak, origin, total_size, compression, envelope })
 }
 
 /// Write `index` to `path` (colocated or explicit — whichever the caller
@@ -215,8 +232,9 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
 /// swallowing them — see the module docs.
 ///
 /// **This is the writer, not the run's save**: the in-flight identity check a
-/// scan makes rides [`CacheMode::save`](super::CacheMode::save), which is what every scan entry point
-/// calls ([`SourceWatch`](super::SourceWatch)).
+/// scan makes rides [`CacheMode::save`](super::CacheMode::save), which is
+/// what every scan entry point calls ([`SourceWatch`](super::SourceWatch)),
+/// and this function is reached only from there and from tests.
 ///
 /// **The index is encoded straight into a file beside `path`, which is then
 /// renamed over it** (`docs/design/decisions.md`, "D78"), so no encoded copy

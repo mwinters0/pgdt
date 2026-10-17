@@ -1,0 +1,163 @@
+//! A source opened through its cache ([`CacheMode::open`]): the cache read
+//! once, the source opened on what it settles, the watch taken, and the cache
+//! judged against the live source — and what that hands back ([`Opened`],
+//! [`Held`]).
+
+use std::sync::Arc;
+
+use super::file::{CacheFile, CacheStatus, LoadedCache, read_cache_file};
+use super::identity::SourceWatch;
+use super::mode::CacheMode;
+use super::store::{against_source, drop_attributed, settled_by};
+use pgdt_core::{Result, Unusable};
+use pgdt_io::{ByteRangeSource, KnownCompression, Origin, Recognized};
+
+/// A source opened through its cache: the source, the watch its run keeps on
+/// it, and what the cache held — every step of the open protocol taken, in
+/// its order, by [`CacheMode::open`].
+pub struct Opened {
+    /// The source, ready to read: built from the compression layer the cache
+    /// settled, so an `.xz` file whose seek table the cache holds is not
+    /// walked again (`docs/design/decisions.md`, "D18").
+    pub source: Arc<dyn ByteRangeSource>,
+    /// The baseline every later check of the source compares against, taken
+    /// before the cache was judged against it.
+    pub watch: SourceWatch,
+    /// What the cache held.
+    pub cache: Held,
+}
+
+/// What an open found at the mode's path, short of a refusal.
+///
+/// **An unusable cache is no outcome here**: it is the open's refusal, the
+/// one a scan entry point makes (`CacheMode::refusal`), unless the mode may
+/// replace it, which is [`Held::Replacing`].
+// One value a run, moved once or twice and never stored in bulk, so boxing
+// the loaded cache would buy an allocation and save nothing.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Held {
+    /// A cache this build reads, judged on its identity: complete or not
+    /// ([`LoadedCache::is_complete`]), carrying the advisory diagnostics its
+    /// weak signals earned.
+    Loaded(LoadedCache),
+    /// Nothing at the path, which every scan starts cold on unasked.
+    Missing,
+    /// The mode is disabled: no path was consulted, and whatever sits where
+    /// the cache would otherwise be is untouched. A statement about the
+    /// caller (`docs/design/decisions.md`, "D22").
+    Disabled,
+    /// A cache this mode cannot use and may replace, and why: a scan starts
+    /// cold over it and writes over it at its first save. The source was
+    /// opened claiming nothing, so nothing the cache recorded reaches it.
+    Replacing(Unusable),
+}
+
+impl std::fmt::Debug for Opened {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Opened")
+            .field("watch", &self.watch)
+            .field("cache", &self.cache)
+            .finish_non_exhaustive()
+    }
+}
+
+impl CacheMode {
+    /// Open `origin` through the cache this mode names, **decoding the cache
+    /// once**.
+    ///
+    /// The steps, in their order:
+    ///
+    /// 1. **What the cache settles before a source exists**: its compression
+    ///    layer, or its refusal — a cache this build cannot read, or one whose
+    ///    stored size the origin's probe contradicts — so an `.xz` file never
+    ///    walks its stream footers to reach a refusal the cache alone settles.
+    /// 2. **The source, opened on that layer**, a contradiction between the
+    ///    two refused as [`Unusable::CompressionContradicted`]
+    ///    (`docs/design/decisions.md`, "D18").
+    /// 3. **The watch** ([`SourceWatch::open`]), taken before the cache is
+    ///    believed, so a source that changes from here on is caught — and a
+    ///    source nothing can check during a run is refused here, before it
+    ///    reads, unless the mode's selection turns that check off.
+    /// 4. **The cache judged against the live source**: the stored size and
+    ///    the compression layer again, which refuse, then the weak signals,
+    ///    which refuse only where the mode binds them and otherwise warn
+    ///    (`docs/design/decisions.md`, "D21").
+    ///
+    /// **Every refusal is word for word the one a scan entry point makes**,
+    /// being `CacheMode::refusal`'s, and a mode that may replace the cache
+    /// opens the source claiming nothing and answers [`Held::Replacing`]
+    /// instead (`docs/design/decisions.md`, "D20").
+    pub async fn open(&self, origin: &Origin) -> Result<Opened> {
+        let claimed = match self.path() {
+            None => Claimed::Nothing(Held::Disabled),
+            Some(path) => match read_cache_file(path)? {
+                Ok(file) => match settled_by(&file, origin).await {
+                    Ok(known) => Claimed::File(file, known),
+                    Err(why) => {
+                        drop_attributed(file.index);
+                        Claimed::Nothing(self.replacing(why)?)
+                    }
+                },
+                Err(CacheStatus::Unusable(why)) => Claimed::Nothing(self.replacing(why)?),
+                Err(_) => Claimed::Nothing(Held::Missing),
+            },
+        };
+        let (source, file) = match claimed {
+            Claimed::File(file, known) => match pgdt_io::open(origin, known).await? {
+                Recognized::Source(source) => (source, Ok(file)),
+                Recognized::Mismatch => {
+                    drop_attributed(file.index);
+                    let held = self.replacing(Unusable::CompressionContradicted)?;
+                    (open_claiming_nothing(origin).await?, Err(held))
+                }
+            },
+            Claimed::Nothing(held) => (open_claiming_nothing(origin).await?, Err(held)),
+        };
+        let watch = SourceWatch::open(source.as_ref(), self.strict_identity()).await?;
+        let file = match file {
+            Ok(file) => file,
+            Err(cache) => return Ok(Opened { source, watch, cache }),
+        };
+        match against_source(file, source.as_ref()).await? {
+            CacheStatus::Loaded(loaded) => {
+                Ok(Opened { source, watch, cache: Held::Loaded(self.judged(loaded)?) })
+            }
+            // The file moved between the probe and the open, so the source
+            // was built on a claim about another file: opened again on none.
+            CacheStatus::Unusable(why) => {
+                let cache = self.replacing(why)?;
+                let source = open_claiming_nothing(origin).await?;
+                let watch = SourceWatch::open(source.as_ref(), self.strict_identity()).await?;
+                Ok(Opened { source, watch, cache })
+            }
+            CacheStatus::Missing => unreachable!("a decoded file is never missing"),
+        }
+    }
+
+    /// `why`'s refusal, or [`Held::Replacing`] where this mode may replace
+    /// the cache.
+    fn replacing(&self, why: Unusable) -> Result<Held> {
+        match self.refusal(&why) {
+            Some(refusal) => Err(refusal),
+            None => Ok(Held::Replacing(why)),
+        }
+    }
+}
+
+/// What the cache settled before the source was opened.
+enum Claimed {
+    /// A decoded cache file, and the compression layer it settles.
+    File(CacheFile, KnownCompression),
+    /// No cache to believe, and what the open will say of it.
+    Nothing(Held),
+}
+
+/// Open `origin` with nothing claimed about its compression layer, which
+/// recognition then cannot be contradicted on.
+async fn open_claiming_nothing(origin: &Origin) -> Result<Arc<dyn ByteRangeSource>> {
+    match pgdt_io::open(origin, KnownCompression::Unknown).await? {
+        Recognized::Source(source) => Ok(source),
+        Recognized::Mismatch => unreachable!("`Unknown` claims nothing to contradict"),
+    }
+}

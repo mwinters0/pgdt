@@ -23,7 +23,7 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, TimeUnit};
 use futures::StreamExt;
 use pgdt_codec::{ColumnResolution, SchemaMode, resolve_columns};
-use pgdt_dump::cache::{CacheLoad, CacheMode, CacheStatus};
+use pgdt_dump::cache::{CacheLoad, CacheMode, CacheStatus, LoadedCache};
 use pgdt_dump::{ScanOptions, cache, preamble_only};
 use pgdt_io::{ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
@@ -439,10 +439,11 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
         .expect_err("the source dies mid-scan");
     assert!(matches!(err, pgdt_core::Error::Io(_)), "{err:?}");
 
-    let status = cache::load(&cache_path, &source).await.unwrap();
-    let CacheStatus::Incomplete { index, total_size, .. } = status else {
+    let status = pgdt_dump::internal::load(&cache_path, &source).await.unwrap();
+    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
         panic!("an interrupted scan must leave an incomplete cache, got {status:?}");
     };
+    assert!(!index.is_complete(total_size));
     assert_eq!(total_size, size);
     assert_eq!(index.scanned_through, first_block_end, "banked exactly the block that completed");
     assert_eq!(index.blocks().count(), 1);
@@ -834,10 +835,11 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     assert_eq!(run.index.scanned_through, first_block_end, "banked the first spliced watermark");
     assert!(!run.index.is_complete(size), "and does not claim the whole file");
 
-    let status = cache::load(&cache_path, &source).await.unwrap();
-    let CacheStatus::Incomplete { index, .. } = status else {
+    let status = pgdt_dump::internal::load(&cache_path, &source).await.unwrap();
+    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
         panic!("a cancelled scan must leave an incomplete cache, got {status:?}");
     };
+    assert!(!index.is_complete(total_size));
     assert_eq!(index.scanned_through, first_block_end);
     assert_eq!(index.blocks().count(), 1);
 
@@ -891,10 +893,11 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
     assert_eq!(run.index.scanned_through, first_block_end, "banked the first spliced watermark");
     assert!(!run.index.is_complete(size), "and does not claim the whole file");
 
-    let status = cache::load(&cache_path, &source).await.unwrap();
-    let CacheStatus::Incomplete { index, .. } = status else {
+    let status = pgdt_dump::internal::load(&cache_path, &source).await.unwrap();
+    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
         panic!("a dropped read must leave an incomplete cache, got {status:?}");
     };
+    assert!(!index.is_complete(total_size));
     assert_eq!(index.scanned_through, first_block_end);
 
     let resumed = map_file(
@@ -1035,10 +1038,11 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     assert!(run.interrupted, "a cancelled back-fill says so");
     assert_eq!((run.lacking_statistics, run.backfilled), (blocks, 1));
 
-    let status = cache::load(&cache_path, &source).await.unwrap();
-    let CacheStatus::Valid { index, .. } = status else {
+    let status = pgdt_dump::internal::load(&cache_path, &source).await.unwrap();
+    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
         panic!("a back-fill leaves the map complete, got {status:?}");
     };
+    assert!(index.is_complete(total_size));
     let gathered: Vec<bool> = index.blocks().map(|b| b.statistics.is_some()).collect();
     assert_eq!(gathered.iter().filter(|g| **g).count(), 1, "{gathered:?}");
     assert!(gathered[0], "the first block is the one banked: {gathered:?}");

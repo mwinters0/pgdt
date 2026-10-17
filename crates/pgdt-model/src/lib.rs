@@ -54,7 +54,7 @@ pub mod internal {
 /// additive"); pre-1.0 a bump is free, nothing migrates (`CLAUDE.md`,
 /// "Pre-1.0"), and nothing records it (`docs/design/decisions.md`, "D22").
 /// A new way of *reading* an existing on-disk shape needs no bump:
-/// [`pgdt_dump::cache::CacheStatus::Incomplete`] reinterprets `scanned_through` against a size
+/// [`pgdt_dump::cache::LoadedCache::is_complete`] reinterprets `scanned_through` against a size
 /// already stored. A new way of *choosing* what an unchanged field holds does:
 /// a block recording the request that sized it is read back as already sized
 /// under it, so a cache whose sizes today's rule would not choose is as

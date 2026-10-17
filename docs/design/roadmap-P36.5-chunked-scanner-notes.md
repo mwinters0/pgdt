@@ -106,10 +106,11 @@ ticked. The rise is the size of the indirection the reshape adds.
 
 ## What the next round inherits
 
-- **36.6 is counted against its parent**, which carries this slice and
-  `M225`.
+- **The next counted slice is counted against its own parent**, which
+  carries this slice and `M225`. 36.6 touches no per-chunk code and is not
+  counted (spec, "What a hot-path slice owes").
 - **Boxing `CopyStart` is the candidate the count found**, landed as
   `M225` ([ledger](out-of-band.md)), its own `--count-pair` a fall on
   every row.
 - `ChunkedScanner::new` takes a `&ScanOptions` for its chunk size and line
-  limit, so 36.6's narrowing of what `scan` takes reaches it too.
+  limit, so 36.6.2's narrowing of what `scan` takes reaches it too.

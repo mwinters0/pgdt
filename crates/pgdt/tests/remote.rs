@@ -595,7 +595,8 @@ async fn a_server_that_states_neither_validator_is_read_unpinned() {
 /// stated**, on every command that reads the dump and under every other
 /// selection — before it reads, so nothing is saved — and `none` reads it,
 /// as it reads a pinned one through a rewrite
-/// (`docs/design/decisions.md`, "D21").
+/// (`docs/design/decisions.md`, "D21"). `info`, which reads none of it, is
+/// not refused.
 #[test]
 fn a_remote_run_nothing_can_check_is_refused_unless_none_is_stated() {
     let unpinnable = || Oracle::serving(dump_bytes()).without_etag().without_last_modified();
@@ -620,6 +621,10 @@ fn a_remote_run_nothing_can_check_is_refused_unless_none_is_stated() {
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "no cache was written");
 
     run_ok_in(&dir, &["parse", "--source", &url, "--strict-identity=none"]);
+    // `info` reads nothing of the dump past opening it, so no in-flight check
+    // binds it, under any selection: it reports the cache that parse left.
+    run_ok_in(&dir, &["info", "--source", &url]);
+    run_ok_in(&dir, &["info", "--source", &url, "--strict-identity=location"]);
 
     let oracle = Oracle::serving(dump_bytes()).with_weak_etag().without_last_modified().start();
     let refused = run_in(&dir, &["parse", "--source", &oracle.url()]);

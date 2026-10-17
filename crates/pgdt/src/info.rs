@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::Args;
 use pgdt_dump::cache::{
-    CacheEnvelope, CacheMode, CacheStatus, CompressionShape, OVERWRITE_WAYS_OUT, Unusable,
+    CacheStatus, Held, LoadedCache, OVERWRITE_WAYS_OUT, OfflineCache, Opened, Unusable,
 };
 use pgdt_io::Origin;
-use pgdt_model::{CACHE_FORMAT_VERSION, DumpIndex};
+use pgdt_model::CACHE_FORMAT_VERSION;
 
-use crate::args::IdentityArgs;
-use crate::source::{Opened, naming_the_source, open_with_cache};
+use crate::args::{IdentityArgs, cache_mode};
+use crate::source::naming_the_source;
 use json::print_index_json;
 // `parse` prints the map it leaves as the listing prints it.
 pub(crate) use text::{print_diagnostics, print_index, print_metadata};
@@ -97,8 +97,10 @@ pub(crate) async fn run(args: InfoArgs) -> Result<()> {
     // it interpolates the user's own `--source` path, which the
     // library error does not have.
     let origin = Origin::resolve(&file)?;
-    let mode =
-        CacheMode::resolve(&origin, dtcache.as_deref()).with_strict_identity(identity.resolve());
+    // `info` reads nothing of the dump past opening it, so no in-flight
+    // check has a read to protect (`StrictIdentity::between_runs`).
+    let mode = cache_mode(&origin, dtcache.as_deref())
+        .with_strict_identity(identity.resolve().between_runs());
     let path = mode
         .require_enabled("info")
         .with_context(|| {
@@ -112,57 +114,42 @@ pub(crate) async fn run(args: InfoArgs) -> Result<()> {
     // A cache `info` cannot use leaves it nothing to report from, and
     // it says so having read no more than the file's leading bytes, in
     // its own sentence: it never writes, so what it names is the
-    // `parse` the ways out enable.
-    let source = match open_with_cache(&origin, &mode).await? {
-        Opened::Source { source, .. } => source,
-        Opened::Unusable(why) => {
-            anyhow::bail!(unusable_cache_message(&CacheStatus::Unusable(why), &path, Some(&origin)))
+    // `parse` the ways out enable. A strict-identity refusal is about a
+    // source that moved, so it goes out through the classifier the
+    // scanning commands use; the selection means here what it means on
+    // the commands that scan (`docs/design/decisions.md`, "D21").
+    let Opened { cache, .. } = match mode.open(&origin).await {
+        Ok(opened) => opened,
+        Err(pgdt_core::Error::CacheUnusable { unusable, .. }) => {
+            anyhow::bail!(unusable_cache_message(
+                &CacheStatus::Unusable(unusable),
+                &path,
+                Some(&origin)
+            ))
+        }
+        Err(e) => return Err(naming_the_source(e, &origin)),
+    };
+    let loaded = match cache {
+        Held::Loaded(loaded) => loaded,
+        Held::Missing => {
+            anyhow::bail!(unusable_cache_message(&CacheStatus::Missing, &path, Some(&origin)))
+        }
+        Held::Disabled | Held::Replacing(_) => {
+            unreachable!("`info` opens an enabled cache it never replaces")
         }
     };
-    let status = pgdt_dump::cache::load(&path, source.as_ref()).await?;
-    let (mut index, weak, cache_origin, total_size, compression, envelope) = match status {
-        CacheStatus::Valid { index, weak, origin, total_size, compression, envelope }
-        | CacheStatus::Incomplete { index, weak, origin, total_size, compression, envelope } => {
-            (index, weak, origin, total_size, compression, envelope)
-        }
-        unusable => {
-            anyhow::bail!(unusable_cache_message(&unusable, &path, Some(&origin)))
-        }
-    };
-    // `info` reads the whole status rather than going through
-    // `CacheMode::load`, so it asks for that method's check by name;
-    // the selection means here what it means on the commands that
-    // scan (`docs/design/decisions.md`, "D21"). One meaning is one
-    // rendering too: the refusal is about a source that moved, so it
-    // goes out through the classifier the scanning commands use
-    // rather than straight into `anyhow`.
-    if let Some(refusal) = mode.strict_identity_refusal(&weak, &cache_origin) {
-        return Err(naming_the_source(refusal, &origin));
-    }
-    // Reported rather than acted on: between runs the weak signals are
-    // advisory unless a selection binds them
-    // (`docs/design/decisions.md`, "D21";
-    // `docs/design/decisions.md`, "D87"). Asked for by
-    // name, for the same reason the refusal above is.
-    index.diagnostics.extend(pgdt_dump::cache::advisory_identity_diagnostics(&weak, &cache_origin));
-    report(&index, total_size, compression, &envelope, detail, map, json)?;
-    Ok(())
+    report(&loaded, detail, map, json)
 }
 
 /// `pgdt info` with no `--source`: answer strictly from the cache at `path`
-/// (`docs/design/decisions.md`, "D61"). An `Incomplete` cache is
+/// (`docs/design/decisions.md`, "D61"). An incomplete cache is
 /// reported like any other, with its coverage stated — cache-only mode has no
 /// scan to extend it with, but "as far as the scan got" is still an answer.
 async fn info_offline(path: &Path, detail: bool, map: bool, json: bool) -> Result<()> {
-    let mode = CacheMode::Offline(path.to_path_buf());
-    let (index, total_size, compression, envelope) = match mode.load_offline().await? {
-        CacheStatus::Valid { index, total_size, compression, envelope, .. }
-        | CacheStatus::Incomplete { index, total_size, compression, envelope, .. } => {
-            (index, total_size, compression, envelope)
-        }
+    match OfflineCache::new(path).load().await? {
+        CacheStatus::Loaded(loaded) => report(&loaded, detail, map, json),
         unusable => anyhow::bail!(unusable_cache_message(&unusable, path, None)),
-    };
-    report(&index, total_size, compression, &envelope, detail, map, json)
+    }
 }
 
 /// The sentence `pgdt info` prints for a cache it cannot use — one per cause,
@@ -219,9 +206,7 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Ori
             pgdt_codec::decode::render_date32(*counted_under),
             pgdt_codec::decode::render_date32(*build),
         ),
-        CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. } => {
-            unreachable!("a usable cache is reported, not refused")
-        }
+        CacheStatus::Loaded(_) => unreachable!("a usable cache is reported, not refused"),
     };
     match source {
         Some(s) => format!(
@@ -247,21 +232,14 @@ fn completion_line(scanned_through: u64, total_size: u64) -> String {
 
 /// Every `pgdt info` rendering goes through here: the coverage line, then the
 /// listing — or the export alone, which carries its coverage as fields.
-fn report(
-    index: &DumpIndex,
-    total_size: u64,
-    compression: Option<CompressionShape>,
-    envelope: &CacheEnvelope,
-    detail: bool,
-    map: bool,
-    json: bool,
-) -> Result<()> {
-    let complete = index.is_complete(total_size);
+fn report(loaded: &LoadedCache, detail: bool, map: bool, json: bool) -> Result<()> {
+    let LoadedCache { index, total_size, compression, envelope, .. } = loaded;
+    let complete = loaded.is_complete();
     if json {
-        return print_index_json(index, total_size, compression, envelope, complete);
+        return print_index_json(index, *total_size, *compression, envelope, complete);
     }
-    println!("{}", completion_line(index.scanned_through, total_size));
+    println!("{}", completion_line(index.scanned_through, *total_size));
     println!();
-    print_index(index, compression, detail, map, complete, detail);
+    print_index(index, *compression, detail, map, complete, detail);
     Ok(())
 }

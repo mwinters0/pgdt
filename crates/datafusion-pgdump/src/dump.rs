@@ -5,10 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
-use pgdt_dump::cache::{
-    self, CacheClaim, CacheMode, CacheStatus, SourceWatch, StrictIdentity, Unusable,
-};
-use pgdt_io::{ByteRangeSource, Origin, Recognized};
+use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch, StrictIdentity};
+use pgdt_io::{ByteRangeSource, Origin};
 use pgdt_model::{Diagnostic, DumpIndex, PostgresInvalidValues, TableName};
 
 use crate::budget::{Hold, ScanBudget};
@@ -19,7 +17,8 @@ use crate::error::Error;
 pub struct PgDumpOptions {
     /// The cache to read, where it is not the one `pgdt parse` writes by
     /// default — beside a local dump, or in the working directory named after
-    /// a URL's last segment ([`CacheMode::resolve`]).
+    /// a URL's last segment ([`CacheMode::resolve`]). A path is read as given:
+    /// the provider always reads a cache.
     pub cache_path: Option<PathBuf>,
     /// Typed columns, or every column as text — the escape hatch from a wrong
     /// type mapping, per dump.
@@ -101,13 +100,6 @@ impl PgDump {
         let origin = Origin::local(location);
         let mode = CacheMode::resolve(&origin, options.cache_path.as_deref())
             .with_strict_identity(options.strict_identity);
-        let CacheMode::Enabled { path, .. } = &mode else {
-            return Err(Error::CacheNotComplete {
-                parse: parse_command(location, options.cache_path.as_deref()),
-                why: "no cache was named — `none` disables the cache this provider reads"
-                    .to_string(),
-            });
-        };
         let incomplete = |why: String| Error::CacheNotComplete {
             parse: parse_command(location, options.cache_path.as_deref()),
             why,
@@ -115,42 +107,26 @@ impl PgDump {
         // An unusable cache is the scans' own refusal, word for word: this
         // provider never writes, so nothing here may overwrite one, and the
         // remedy it names is `pgdt`'s (`docs/design/decisions.md`, "D20").
-        let unusable = |unusable| pgdt_core::Error::CacheUnusable { path: path.clone(), unusable };
-        // The claim first, as `pgdt` opens: it spares a compressed file's
-        // footer walk, and refuses an unusable cache before one.
-        let known = match cache::claim(path, &origin).await? {
-            CacheClaim::Settles { compression, .. } => compression,
-            CacheClaim::Unusable(why) => return Err(unusable(why).into()),
-        };
-        let source = match pgdt_io::open(&origin, known).await? {
-            Recognized::Source(source) => source,
-            Recognized::Mismatch => {
-                return Err(unusable(Unusable::CompressionContradicted).into());
-            }
-        };
-        // The baseline every scan's end checks the file against, taken before
-        // the map it is about to trust is read.
-        let watch = Arc::new(SourceWatch::open(source.as_ref(), options.strict_identity).await?);
-        let index = match cache::load(path, source.as_ref()).await? {
-            CacheStatus::Valid { mut index, weak, origin: matched, .. } => {
-                if let Some(refusal) = mode.strict_identity_refusal(&weak, &matched) {
-                    return Err(refusal.into());
-                }
-                index.diagnostics.extend(cache::advisory_identity_diagnostics(&weak, &matched));
-                index
-            }
-            CacheStatus::Incomplete { index, total_size, .. } => {
+        let Opened { source, watch, cache } = mode.open(&origin).await?;
+        let shown = || mode.path().map(Path::display).expect("a resolved cache has a path");
+        let index = match cache {
+            Held::Loaded(loaded) if loaded.is_complete() => loaded.index,
+            Held::Loaded(loaded) => {
                 return Err(incomplete(format!(
-                    "the cache at {} covers {} of {total_size} byte(s)",
-                    path.display(),
-                    index.scanned_through
+                    "the cache at {} covers {} of {} byte(s)",
+                    shown(),
+                    loaded.index.scanned_through,
+                    loaded.total_size
                 )));
             }
-            CacheStatus::Missing => {
-                return Err(incomplete(format!("there is no cache at {}", path.display())));
+            Held::Missing => {
+                return Err(incomplete(format!("there is no cache at {}", shown())));
             }
-            CacheStatus::Unusable(why) => return Err(unusable(why).into()),
+            Held::Disabled | Held::Replacing(_) => {
+                unreachable!("the provider opens a cache it names and never replaces")
+            }
         };
+        let watch = Arc::new(watch);
         let tables = index.tables();
         let statistics_bytes = index.statistics_heap_bytes();
         Ok(Arc::new(Self {

@@ -131,7 +131,7 @@ async fn non_matching_cached_blocks_cost_zero_bytes() {
 
     let seed_source = LocalFileSource::open(&dump).unwrap();
     let index = build_index(&seed_source, &ScanOptions::default()).await.unwrap();
-    cache::save(&cache_path, &seed_source, &index).await.unwrap();
+    pgdt_dump::internal::save(&cache_path, &seed_source, &index).await.unwrap();
     let empty_table_block =
         index.blocks_for("public.empty_table").next().expect("empty_table was indexed");
     let expected_bytes = empty_table_block.end_offset - empty_table_block.header_offset;
@@ -158,7 +158,7 @@ async fn replay_matches_a_fresh_scan() {
 
     let seed_source = LocalFileSource::open(&dump).unwrap();
     let index = build_index(&seed_source, &ScanOptions::default()).await.unwrap();
-    cache::save(&cache_path, &seed_source, &index).await.unwrap();
+    pgdt_dump::internal::save(&cache_path, &seed_source, &index).await.unwrap();
 
     let source = LocalFileSource::open(&dump).unwrap();
     let widgets = drain(

@@ -161,7 +161,8 @@ Persisting a map and reloading it, the dump it was saved from identified
 format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
 
 - **pgdt-dump** — `cache/`: the loader scans, so the cache sits beside the
-  parsers (D68).
+  parsers (D68); its part is opening a source through its cache too, which
+  needs the source and the persisted map, both at or below it.
 - **datafusion-pgdump** — `dump.rs`: a dump opened through its complete
   cache (D90).
 

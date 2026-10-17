@@ -5,8 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode, CacheStatus};
-use pgdt_io::LocalFileSource;
+use pgdt_dump::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};
+use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_model::{DataBlock, SpanBody};
@@ -34,14 +34,16 @@ pub async fn parsed_copy(fixture: &Path, dir: &Path, request: &StatisticsRequest
 /// cache (`docs/design/decisions.md`, "D35").
 pub async fn ungathered(dump: &Path) {
     let source = LocalFileSource::open(dump).unwrap();
-    let path = cache::colocated_path(dump);
-    let CacheStatus::Valid { mut index, .. } = cache::load(&path, &source).await.unwrap() else {
-        panic!("the parse left a complete cache")
+    let mode = CacheMode::enabled(cache::colocated_path(dump));
+    let CacheLoad::Index(mut index) = mode.load(&source).await.unwrap() else {
+        panic!("the parse left a cache")
     };
+    assert!(index.is_complete(source.size().await.unwrap()), "the parse left a complete cache");
     for span in &mut index.spans {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
             block.statistics = None;
         }
     }
-    cache::save(&path, &source, &index).await.unwrap();
+    let watch = SourceWatch::open(&source, StrictIdentity::ADVISORY).await.unwrap();
+    mode.save(&watch, &source, &index).await.unwrap();
 }

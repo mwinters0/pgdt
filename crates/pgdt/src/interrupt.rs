@@ -20,7 +20,7 @@ use crate::introspect;
 /// signal: its number is stored in the returned [`InterruptGuard::signalled`];
 /// if [`InterruptGuard::armed`] is set, the signal's default action ends the
 /// process; then `armed` is set. So a **second** signal, of either kind, ends
-/// the process at once — `cache::save` writes synchronously on this thread, so
+/// the process at once — the cache's save writes synchronously on this thread, so
 /// nothing a task does could cut a wedged save short — and so does any signal
 /// once the caller arms the guard as the scan returns: the cache is saved by
 /// then, and a listing blocked on a pipe nobody drains cannot hold the

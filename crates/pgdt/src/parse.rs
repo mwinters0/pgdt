@@ -7,7 +7,6 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Args;
 use namespace_init::InitShutdown;
-use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ScanOptions, preamble_only};
 use pgdt_io::{Cancellation, Origin};
 use pgdt_mapping::statistics::{
@@ -17,8 +16,8 @@ use pgdt_mapping::statistics::{
 use pgdt_model::PostgresInvalidValues;
 
 use crate::args::{
-    IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, parse_chunk_size, parse_max_line_bytes,
-    scan_options,
+    IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, cache_mode, parse_chunk_size,
+    parse_max_line_bytes, scan_options,
 };
 use crate::info::{print_diagnostics, print_index, print_metadata};
 use crate::interrupt::install_interrupt_guard;
@@ -212,7 +211,7 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
     // Reject `--dtcache none` up front, before paying for a scan we
     // won't be allowed to persist.
     let origin = Origin::resolve(&file)?;
-    let mode = CacheMode::resolve(&origin, dtcache.as_deref())
+    let mode = cache_mode(&origin, dtcache.as_deref())
         .with_strict_identity(identity.resolve())
         .with_overwrite_unusable(overwrite.overwrite_unusable_cache);
     let path = mode

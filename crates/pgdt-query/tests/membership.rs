@@ -26,7 +26,7 @@ use futures::StreamExt;
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode, CacheStatus};
+use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{
@@ -142,9 +142,12 @@ async fn gathered(dump: &Path) -> (tempfile::TempDir, PathBuf, DumpIndex) {
     };
     let copy = parsed_copy(dump, dir.path(), &request).await;
     let path = cache::colocated_path(&copy);
-    let CacheStatus::Valid { index, .. } = cache::load_offline(&path).await.unwrap() else {
+    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) =
+        pgdt_dump::internal::load_offline(&path).await.unwrap()
+    else {
         panic!("the parse left a complete cache")
     };
+    assert!(index.is_complete(total_size));
     (dir, copy, index)
 }
 

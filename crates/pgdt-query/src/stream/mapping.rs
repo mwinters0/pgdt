@@ -207,10 +207,7 @@ async fn census_metadata_level(
         "table mapped at the metadata level: reading its rows again for this query's census",
     );
     announce_read_loop(source, scan_options, scan_options.parallelism);
-    let cache_path = match cache {
-        CacheMode::Enabled { path, .. } => Some(path.as_path()),
-        CacheMode::Disabled { .. } | CacheMode::Offline(_) => None,
-    };
+    let cache_path = cache.path();
     let mut shortfall_reported = false;
     for at in lacking {
         let read = reread_rows(

@@ -131,7 +131,7 @@ which naming the columns lacking a statistic would answer.
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
 contradicts) is almost always a wrong path or a changed file, so `CacheMode::refusal` refuses it before the dump
-is read past its magic, at every scan entry point and after `cache::claim`. `--overwrite-unusable-cache` (`with_overwrite_unusable`)
+is read past its magic, at every scan entry point, at `CacheMode::open` and after `cache::claim`. `--overwrite-unusable-cache` (`with_overwrite_unusable`)
 starts cold over one recognisably ours, by a header read first, for a file replaced under a stable name; foreign
 bytes never. Rejected: a cold start (a silent re-scan after a typo or an upgrade); the guard in `cache::save` (policy
 an embedder cannot override); refusing a damaged one of ours (nothing readable lost, an unbumped version its likely
@@ -161,7 +161,7 @@ no partial map to keep, a dropped stream is its whole cancellation, no `ScanOpti
 falling back to a cold query's early-stopping map, which brings each of those back. Code: `crates/datafusion-pgdump/src/dump.rs`.
 
 ### D22 `CacheLoad` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
-`Incomplete` is usable (or `map_forward` restarts from zero), `Disabled` is about the caller and
+An incomplete cache is usable (or `map_forward` restarts from zero), `Disabled` is about the caller and
 `Unusable` carries its reason to every caller. Bump on any persisted reshape, a parse fix changing what a span or
 the metadata holds included; record it nowhere: an older cache is then refused until replaced by the flag or deleted
 (D20), which is what a user hears of first. Rejected: an unbumped parse fix, its cache answering as the old parse did.

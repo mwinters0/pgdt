@@ -27,7 +27,13 @@ pub mod internal {
         write_cache_file,
     };
     #[cfg(any(test, feature = "test-support"))]
-    pub use crate::cache::identity::SourceIdentity;
+    pub use crate::cache::identity::{SourceIdentity, advisory_identity_diagnostics};
+    /// A cache loaded or written with no [`CacheMode`](crate::cache::CacheMode)
+    /// around it — for the tests that write one by hand or read back what a
+    /// run saved; a caller loads through the mode and saves through its
+    /// watched save.
+    #[cfg(any(test, feature = "test-support"))]
+    pub use crate::cache::store::{load, load_offline, save};
     pub use crate::map::{
         Builder, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
     };

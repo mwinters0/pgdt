@@ -61,7 +61,7 @@ use async_stream::try_stream;
 use futures::StreamExt;
 
 use pgdt_codec::ResolvedSchema;
-use pgdt_core::{Error, Result};
+use pgdt_core::Result;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_io::ByteRangeSource;
@@ -171,10 +171,7 @@ pub fn table_stream<'a>(
 /// scan loop. The callback may return [`ControlFlow::Break`] to stop early,
 /// in which case the returned token resumes from just past the last batch
 /// delivered to it — see [`crate::stream::TableStream::resume_token`].
-/// `query_options` and `cache` mean what they do on `table_stream`. Rejects
-/// `CacheMode::Offline` up front: `source` is mandatory here, and `Span::text`
-/// is `None` for every `Data` span regardless, so `query` could never answer
-/// from a cache alone (`docs/design/decisions.md`, "D30").
+/// `query_options` and `cache` mean what they do on `table_stream`.
 pub async fn read_table<F>(
     source: &dyn ByteRangeSource,
     table: &str,
@@ -186,12 +183,6 @@ pub async fn read_table<F>(
 where
     F: FnMut(RecordBatch) -> ControlFlow<()>,
 {
-    if matches!(cache, CacheMode::Offline(_)) {
-        return Err(Error::CacheModeMismatch(
-            "query requires a live dump source; CacheMode::Offline is cache-only",
-        ));
-    }
-
     let mut stream =
         table_stream(source, table, scan_options.clone(), query_options.clone(), None, cache);
     while let Some(batch) = stream.next().await.transpose()? {

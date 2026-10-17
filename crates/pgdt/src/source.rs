@@ -67,7 +67,6 @@ pub(crate) fn about_the_source(err: &pgdt_core::Error) -> bool {
         | Lib::InvalidUtf8 { .. }
         | Lib::ColumnCountMismatch { .. }
         | Lib::CacheDisabled { .. }
-        | Lib::CacheModeMismatch(_)
         | Lib::UnknownPredicateColumn { .. }
         | Lib::UnorderedPredicateColumn { .. }
         | Lib::UncomparablePredicateColumn { .. }
@@ -98,73 +97,49 @@ pub(crate) fn naming_the_source(err: pgdt_core::Error, source: &Origin) -> anyho
     err.into()
 }
 
-/// What [`open_with_cache`] found: the source to read, or why the cache at
-/// the mode's path cannot be used, settled before a stream-footer walk.
-/// **What to do about the second is the caller's**: `parse` and `query` ask
-/// `CacheMode::refusal`, and `info`, which never writes, prints its own
-/// sentence (`docs/design/decisions.md`, "D20").
-pub(crate) enum Opened {
-    /// The source, ready to read, and the heap the cache's statistics will
-    /// hold once a scan loads them (`CacheClaim::Settles`).
-    Source { source: Arc<dyn pgdt_io::ByteRangeSource>, cached_statistics: u64 },
-    /// The reason `cache::load` would answer once a source existed — or, for
-    /// a compression claim recognition refused, the reason it answers for a
-    /// source opened without one.
-    Unusable(Unusable),
-}
-
-/// Open `file`, handing recognition whatever the cache at `cache` says about
-/// its compression layer, so an `.xz` source is built from the seek table a
-/// previous walk already produced instead of re-walking the file's stream
-/// footers (`docs/design/decisions.md`, "D18"). `--dtcache none` claims
-/// nothing; cache-only mode never reaches here at all, having no live source.
+/// Open `origin` for the two commands that scan, handing recognition whatever
+/// the cache says about its compression layer, so an `.xz` source is built
+/// from the seek table a previous walk already produced instead of re-walking
+/// the file's stream footers (`docs/design/decisions.md`, "D18"). `--dtcache
+/// none` claims nothing.
 ///
-/// An unusable cache stops here rather than at each of the three call sites,
-/// so an `.xz` source never walks its stream footers to reach a refusal the
-/// cache path alone settles. The comparisons stay in `cache::claim` and in
-/// recognition (D20).
-pub(crate) async fn open_with_cache(origin: &Origin, cache: &CacheMode) -> Result<Opened> {
-    let claimed_by = match cache {
-        CacheMode::Enabled { path, .. } => Some(path.as_path()),
-        CacheMode::Disabled { .. } | CacheMode::Offline(_) => None,
-    };
-    let (known, cached_statistics) = match claimed_by {
-        Some(path) => match pgdt_dump::cache::claim(path, origin).await? {
-            CacheClaim::Settles { compression, statistics_heap_bytes } => {
-                (compression, statistics_heap_bytes)
-            }
-            CacheClaim::Unusable(why) => return Ok(Opened::Unusable(why)),
-        },
-        None => (KnownCompression::Unknown, 0),
-    };
-    match open(origin, known).await? {
-        Recognized::Source(source) => Ok(Opened::Source { source, cached_statistics }),
-        Recognized::Mismatch => Ok(Opened::Unusable(Unusable::CompressionContradicted)),
-    }
-}
-
-/// [`open_with_cache`] for the two commands that scan: an unusable cache is
-/// `CacheMode::refusal`'s to decide — the one decision the four scan entry
-/// points make, so this refusal is word for word the one it pre-empts, and the
-/// library still refuses on its own: this spares the walk, it does not replace
-/// the guarantee (`docs/design/decisions.md`, "D20"). Under
-/// `--overwrite-unusable-cache` the source is opened claiming nothing, and the
-/// scan's own load meets the same reason and starts cold. Beside the source it
-/// answers the heap the cache's statistics will hold, which
-/// [`crate::parallel::Discovered::resolve`] carves the workers around — none, for a cache about
-/// to be replaced.
+/// An unusable cache is `CacheMode::refusal`'s to decide — the one decision
+/// the four scan entry points make, so this refusal is word for word the one
+/// it pre-empts, and the library still refuses on its own: this spares the
+/// walk, it does not replace the guarantee (`docs/design/decisions.md`,
+/// "D20"). Under `--overwrite-unusable-cache` the source is opened claiming
+/// nothing, and the scan's own load meets the same reason and starts cold.
+/// Beside the source it answers the heap the cache's statistics will hold,
+/// which [`crate::parallel::Discovered::resolve`] carves the workers around —
+/// none, for a cache about to be replaced.
+///
+/// **Not `CacheMode::open`**, which `info` opens through: a scan entry point
+/// loads the cache itself, so opening through the mode would decode it twice.
 pub(crate) async fn open_for_scan(
     origin: &Origin,
     cache: &CacheMode,
 ) -> Result<(Arc<dyn pgdt_io::ByteRangeSource>, u64)> {
-    match open_with_cache(origin, cache).await? {
-        Opened::Source { source, cached_statistics } => Ok((source, cached_statistics)),
-        Opened::Unusable(why) => match cache.refusal(&why) {
-            Some(refusal) => Err(naming_the_source(refusal, origin)),
-            None => match open(origin, KnownCompression::Unknown).await? {
-                Recognized::Source(source) => Ok((source, 0)),
-                Recognized::Mismatch => unreachable!("`Unknown` claims nothing to contradict"),
-            },
+    let claimed = match cache.path() {
+        Some(path) => match pgdt_dump::cache::claim(path, origin).await? {
+            CacheClaim::Settles { compression, statistics_heap_bytes } => {
+                Ok((compression, statistics_heap_bytes))
+            }
+            CacheClaim::Unusable(why) => Err(why),
+        },
+        None => Ok((KnownCompression::Unknown, 0)),
+    };
+    let unusable = match claimed {
+        Ok((known, cached_statistics)) => match open(origin, known).await? {
+            Recognized::Source(source) => return Ok((source, cached_statistics)),
+            Recognized::Mismatch => Unusable::CompressionContradicted,
+        },
+        Err(why) => why,
+    };
+    match cache.refusal(&unusable) {
+        Some(refusal) => Err(naming_the_source(refusal, origin)),
+        None => match open(origin, KnownCompression::Unknown).await? {
+            Recognized::Source(source) => Ok((source, 0)),
+            Recognized::Mismatch => unreachable!("`Unknown` claims nothing to contradict"),
         },
     }
 }

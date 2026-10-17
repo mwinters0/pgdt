@@ -8,15 +8,14 @@ use clap::Args;
 use futures::StreamExt;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
-use pgdt_dump::cache::CacheMode;
 use pgdt_io::Origin;
 use pgdt_model::{Finding, PostgresInvalidValues, Severity};
 use pgdt_query::{QueryOptions, render_field_into};
 use tracing::Instrument;
 
 use crate::args::{
-    IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, parse_chunk_size, parse_max_line_bytes,
-    scan_options,
+    IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, cache_mode, parse_chunk_size,
+    parse_max_line_bytes, scan_options,
 };
 use crate::parallel::{ParallelArgs, QueryPasses, Resolved};
 use crate::source::{about_the_source, naming_the_source, open_for_scan};
@@ -221,7 +220,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     } = args;
     let read = ReadFlags { chunk_size, max_line_bytes };
     let origin = Origin::resolve(&file)?;
-    let mode = CacheMode::resolve(&origin, dtcache.as_deref())
+    let mode = cache_mode(&origin, dtcache.as_deref())
         .with_strict_identity(identity.resolve())
         .with_overwrite_unusable(overwrite.overwrite_unusable_cache);
     // Every term is parsed before the file is opened, so a

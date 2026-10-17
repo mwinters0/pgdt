@@ -3,7 +3,7 @@
 //! event-stream level).
 
 use std::ops::ControlFlow;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_dump::ScanOptions;
@@ -710,23 +710,4 @@ async fn escapes_table_round_trips_through_postgres_batched() {
             }
         }
     }
-}
-
-/// `query` requires a live source and can never answer from a cache alone —
-/// `Span::text` is `None` for every `Data` span
-/// (`docs/design/decisions.md`, "D30") — so `read_table` rejects
-/// `CacheMode::Offline` up front rather than silently doing the wrong thing.
-#[tokio::test]
-async fn read_table_rejects_offline_cache_mode() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let result = read_table(
-        &source,
-        "widgets",
-        &ScanOptions::default(),
-        &QueryOptions::default(),
-        CacheMode::Offline(PathBuf::from("/nonexistent.dtcache")),
-        |_batch| ControlFlow::Continue(()),
-    )
-    .await;
-    assert!(matches!(result, Err(pgdt_core::Error::CacheModeMismatch(_))));
 }
