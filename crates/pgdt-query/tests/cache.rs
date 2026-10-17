@@ -4,6 +4,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use futures::StreamExt;
 use pgdt_core::Error;
@@ -152,19 +153,21 @@ async fn saved_index_round_trips_exactly() {
 /// (`docs/design/decisions.md`, "D30").
 #[tokio::test]
 async fn preamble_only_persists_a_real_unscanned_tail() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(edge_cases()).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
     let mode = CacheMode::enabled(path.clone());
 
-    preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
+    preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
+        .await
+        .unwrap();
 
     // A preamble-only scan never reaches EOF (that's the point of it), so
     // the cache it persists is incomplete by the same completeness check
     // `pgdt info`'s default listing uses to decide whether to trust a cache
     // as the whole file's map — and not missing either, since it's a real,
     // usable partial scan (`docs/design/decisions.md`, "D22").
-    let index = match pgdt_dump::internal::load(&path, &source).await.unwrap() {
+    let index = match pgdt_dump::internal::load(&path, source.as_ref()).await.unwrap() {
         CacheStatus::Loaded(loaded) => {
             assert!(!loaded.is_complete(), "a preamble-only scan cannot reach EOF");
             loaded.index
@@ -291,16 +294,17 @@ async fn cache_mode_load_names_each_unusable_status() {
     );
 }
 
-/// **The library never replaces cache data automatically.** All four scan
-/// entry points refuse a cache that records another file's stored size —
-/// naming the path, what the cache expected and what the source is — rather
-/// than starting cold and overwriting it at their first save
-/// (`docs/design/decisions.md`, "D20"); every other unusable status is
-/// refused the same way (`an_unusable_cache_is_refused_unless_it_may_be_replaced`).
+/// **The library never replaces cache data automatically.** The open the
+/// mapping pass and `preamble_only` take, and both query entry points, refuse
+/// a cache that records another file's stored size — naming the path, what
+/// the cache expected and what the source is — rather than starting cold and
+/// overwriting it at their first save (`docs/design/decisions.md`, "D20");
+/// every other unusable status is refused the same way
+/// (`an_unusable_cache_is_refused_unless_it_may_be_replaced`).
 ///
-/// **Three of the four are exercised here** — `map_file`, `preamble_only` and
-/// `table_stream`. `table_stream_partitions` reaches the same refusal through
-/// the same `map_for_query`, and nothing below pins it.
+/// **The open and `table_stream` are exercised here.**
+/// `table_stream_partitions` reaches the same refusal through the same
+/// `map_for_query`, and nothing below pins it.
 ///
 /// The cache is read back byte for byte afterwards, which is the half that
 /// would fail silently: a refusal that still wrote is indistinguishable from
@@ -308,15 +312,14 @@ async fn cache_mode_load_names_each_unusable_status() {
 #[tokio::test]
 async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone() {
     let (_dir, dump) = sandboxed();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let cached_stored_size = source.stored_size().await.unwrap();
     let path = cache::colocated_path(&dump);
     let mode = CacheMode::enabled(path.clone());
     map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::default(),
     )
     .await
@@ -329,7 +332,7 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
     let mut grown = std::fs::read(&dump).unwrap();
     grown.push(b'\n');
     std::fs::write(&dump, &grown).unwrap();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let live_stored_size = source.stored_size().await.unwrap();
     assert_ne!(live_stored_size, cached_stored_size);
 
@@ -345,24 +348,11 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
         other => panic!("{what}: expected a source mismatch, got {other:?}"),
     };
 
-    expected(
-        "map_file",
-        map_file(
-            &source,
-            &ScanOptions::default(),
-            &GatherOptions::default(),
-            &mode,
-            &StatisticsRequest::default(),
-        )
-        .await
-        .unwrap_err(),
-    );
-    expected(
-        "preamble_only",
-        preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap_err(),
-    );
+    // `map_file` and `preamble_only` take what the open hands back, so
+    // their refusal is the open's.
+    expected("the open", mode.open_source(Arc::clone(&source)).await.unwrap_err());
     let mut stream = table_stream(
-        &source,
+        source.as_ref(),
         "public.widgets",
         ScanOptions::default(),
         QueryOptions::default(),
@@ -550,14 +540,16 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
 /// (`docs/design/decisions.md`, "D22").
 #[tokio::test]
 async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(edge_cases()).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
     let mode = CacheMode::enabled(path.clone());
 
-    preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
+    preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
+        .await
+        .unwrap();
 
-    let CacheLoad::Index(index) = mode.load(&source).await.unwrap() else {
+    let CacheLoad::Index(index) = mode.load(source.as_ref()).await.unwrap() else {
         panic!("Incomplete still yields an index")
     };
     let size = source.size().await.unwrap();
@@ -571,11 +563,13 @@ async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
 /// (`docs/design/decisions.md`, "The compressed source and the cache").
 #[tokio::test]
 async fn an_offline_load_reports_a_partial_scan_incomplete() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(edge_cases()).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
     let mode = CacheMode::enabled(path.clone());
-    preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
+    preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
+        .await
+        .unwrap();
 
     let size = source.size().await.unwrap();
     match OfflineCache::new(path).load().await.unwrap() {
@@ -595,11 +589,11 @@ async fn an_offline_load_reports_a_partial_scan_incomplete() {
 async fn an_offline_load_always_pushes_the_cache_offline_diagnostic() {
     use pgdt_model::DiagnosticKind;
 
-    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(edge_cases()).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let full_path = dir.path().join("full.dtcache");
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    pgdt_dump::internal::save(&full_path, &source, &index).await.unwrap();
+    let index = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
+    pgdt_dump::internal::save(&full_path, source.as_ref(), &index).await.unwrap();
 
     let status = OfflineCache::new(full_path).load().await.unwrap();
     let CacheStatus::Loaded(LoadedCache { index: loaded, total_size, .. }) = status else {
@@ -614,7 +608,9 @@ async fn an_offline_load_always_pushes_the_cache_offline_diagnostic() {
 
     let partial_path = dir.path().join("partial.dtcache");
     let mode = CacheMode::enabled(partial_path.clone());
-    preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
+    preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
+        .await
+        .unwrap();
     let status = OfflineCache::new(partial_path).load().await.unwrap();
     let CacheStatus::Loaded(LoadedCache { index: loaded, total_size, .. }) = status else {
         panic!("expected a preamble-only cache");
@@ -793,12 +789,14 @@ async fn a_non_seekable_warning_survives_the_cache_round_trip() {
 #[tokio::test]
 async fn preamble_only_warns_without_duplicating_across_calls() {
     let non_seekable = xz_compress_single_block(&edge_cases());
-    let xz = XzSource::open(non_seekable.path()).unwrap();
+    let xz: Arc<dyn ByteRangeSource> = Arc::new(XzSource::open(non_seekable.path()).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let mode = CacheMode::enabled(dir.path().join("preamble.xz.dtcache"));
 
     let (_metadata, diagnostics) =
-        preamble_only(&xz, &ScanOptions::default(), &mode).await.unwrap();
+        preamble_only(mode.open_source(Arc::clone(&xz)).await.unwrap(), &ScanOptions::default())
+            .await
+            .unwrap();
     assert_eq!(
         diagnostics
             .iter()
@@ -812,7 +810,9 @@ async fn preamble_only_warns_without_duplicating_across_calls() {
     // second call takes the `known` branch — the warning it inherits from
     // the cache load must not be pushed a second time.
     let (_metadata, diagnostics) =
-        preamble_only(&xz, &ScanOptions::default(), &mode).await.unwrap();
+        preamble_only(mode.open_source(Arc::clone(&xz)).await.unwrap(), &ScanOptions::default())
+            .await
+            .unwrap();
     assert_eq!(
         diagnostics
             .iter()
@@ -881,14 +881,13 @@ async fn a_cache_saved_from_a_plain_source_claims_plain() {
 #[tokio::test]
 async fn a_claim_sizes_the_statistics_a_load_hands_back() {
     let (_dir, dump) = sandboxed();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let path = cache::colocated_path(&dump);
     let mode = CacheMode::enabled(path.clone());
     map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::default(),
     )
     .await
@@ -898,7 +897,7 @@ async fn a_claim_sizes_the_statistics_a_load_hands_back() {
         CacheClaim::Settles { statistics_heap_bytes, .. } => statistics_heap_bytes,
         other => panic!("the file's own cache describes it: {other:?}"),
     };
-    let loaded = match mode.load(&source).await.unwrap() {
+    let loaded = match mode.load(source.as_ref()).await.unwrap() {
         CacheLoad::Index(index) => index.statistics_heap_bytes(),
         other => panic!("the file's own cache loads: {other:?}"),
     };
@@ -1014,22 +1013,21 @@ async fn a_load_refuses_a_cache_whose_compression_layer_is_not_the_sources() {
 
 /// **Every unusable cache is refused, and one recognisably ours may be
 /// replaced when the caller says so** (`docs/design/decisions.md`, "D20").
-/// Each reason is put to `map_file` twice: under the default mode it refuses
-/// naming the reason and leaves the file byte for byte, and under
-/// `with_overwrite_unusable` it starts cold and saves a cache that describes
-/// this source. A file that is not a pgdt cache is refused under both.
+/// Each reason is put to the open `map_file` takes twice: under the default
+/// mode it refuses naming the reason and leaves the file byte for byte, and
+/// under `with_overwrite_unusable` the pass starts cold and saves a cache that
+/// describes this source. A file that is not a pgdt cache is refused under both.
 #[tokio::test]
 async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
     let (dir, dump) = sandboxed();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let path = cache::colocated_path(&dump);
     let options = ScanOptions::default();
     let statistics = StatisticsRequest::default();
     map_file(
-        &source,
+        CacheMode::enabled(path.clone()).open_source(Arc::clone(&source)).await.unwrap(),
         &options,
         &GatherOptions::default(),
-        &CacheMode::enabled(path.clone()),
         &statistics,
     )
     .await
@@ -1060,15 +1058,8 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
     ];
     for (bytes, why) in cases {
         std::fs::write(&path, bytes).unwrap();
-        let refused = map_file(
-            &source,
-            &options,
-            &GatherOptions::default(),
-            &CacheMode::enabled(path.clone()),
-            &statistics,
-        )
-        .await
-        .unwrap_err();
+        let refused =
+            CacheMode::enabled(path.clone()).open_source(Arc::clone(&source)).await.unwrap_err();
         match refused {
             Error::CacheUnusable { path: named, unusable } => {
                 assert_eq!(named, path);
@@ -1079,13 +1070,15 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
         assert_eq!(std::fs::read(&path).unwrap(), bytes, "{why:?}: the refused file is untouched");
 
         let replacing = CacheMode::enabled(path.clone()).with_overwrite_unusable(true);
-        let run =
-            map_file(&source, &options, &GatherOptions::default(), &replacing, &statistics).await;
+        let run = match replacing.open_source(Arc::clone(&source)).await {
+            Ok(opened) => map_file(opened, &options, &GatherOptions::default(), &statistics).await,
+            Err(refused) => Err(refused),
+        };
         if why.overwritable() {
             run.unwrap();
             assert!(
                 matches!(
-                    pgdt_dump::internal::load(&path, &source).await.unwrap(),
+                    pgdt_dump::internal::load(&path, source.as_ref()).await.unwrap(),
                     CacheStatus::Loaded(loaded) if loaded.is_complete()
                 ),
                 "{why:?}: replaced by a cache of this source"
@@ -1115,18 +1108,17 @@ async fn an_open_hands_back_what_the_cache_holds() {
     assert_eq!(opened.cache, Held::Missing);
     assert_eq!(opened.source.size().await.unwrap(), std::fs::metadata(&dump).unwrap().len());
 
-    preamble_only(opened.source.as_ref(), &ScanOptions::default(), &mode).await.unwrap();
+    preamble_only(opened, &ScanOptions::default()).await.unwrap();
     let Held::Loaded(partial) = mode.open(&origin).await.unwrap().cache else {
         panic!("a preamble-only scan leaves a cache")
     };
     assert!(!partial.is_complete(), "a preamble-only scan cannot reach EOF");
 
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::METADATA,
     )
     .await
@@ -1135,7 +1127,7 @@ async fn an_open_hands_back_what_the_cache_holds() {
         panic!("a parse leaves a cache")
     };
     assert!(whole.is_complete());
-    let CacheLoad::Index(loaded) = mode.load(&source).await.unwrap() else {
+    let CacheLoad::Index(loaded) = mode.load(source.as_ref()).await.unwrap() else {
         panic!("the same cache loads")
     };
     assert_eq!(whole.index, loaded, "an open judges the cache as a load does");
@@ -1274,17 +1266,15 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
     let dir = tempfile::tempdir().unwrap();
     let mode = CacheMode::enabled(dir.path().join("single_block.xz.dtcache"));
     let intact = XzSource::open(compressed.path()).unwrap();
+    let table = intact.seek_table().unwrap();
     map_file(
-        &intact,
+        mode.open_source(Arc::new(intact)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::default(),
     )
     .await
     .unwrap();
-    let table = intact.seek_table().unwrap();
-    drop(intact);
 
     // Where the block's check sits is `xz_seek`'s to say, `pgdt_io::SeekTable`
     // giving only plaintext ranges.
@@ -1363,13 +1353,12 @@ async fn persisted_index_is_pinned_to_the_format_version() {
     files.sort();
     let mut digest = 0xcbf2_9ce4_8422_2325u64;
     for (name, path) in &files {
-        let source = LocalFileSource::open(path).unwrap();
+        let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(path).unwrap());
         let request = common::sweep_request(path);
         let run = map_file(
-            &source,
+            CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
             &ScanOptions::default(),
             &GatherOptions::default(),
-            &CacheMode::DISABLED,
             &request,
         )
         .await
@@ -1396,6 +1385,7 @@ async fn persisted_index_is_pinned_to_the_format_version() {
 mod encoding {
     use std::path::PathBuf;
     use std::process::Command;
+    use std::sync::Arc;
 
     use pgdt_core::Error;
     use pgdt_dump::ScanOptions;
@@ -1436,13 +1426,13 @@ mod encoding {
 
         let plain = LocalFileSource::open(statistics_fixture()).unwrap();
         let xz = XzSource::open(&compressed).unwrap();
-        let sources: [(&str, &dyn ByteRangeSource); 2] = [("plain", &plain), ("xz", &xz)];
+        let sources: [(&str, Arc<dyn ByteRangeSource>); 2] =
+            [("plain", Arc::new(plain)), ("xz", Arc::new(xz))];
         for (name, source) in sources {
             let run = map_file(
-                source,
+                CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
                 &ScanOptions::default(),
                 &GatherOptions::default(),
-                &CacheMode::DISABLED,
                 &StatisticsRequest::default(),
             )
             .await
@@ -1462,11 +1452,11 @@ mod encoding {
             assert_eq!(source.seek_table().is_some(), name == "xz");
 
             let path = dir.path().join(format!("{name}.dtcache"));
-            save(&path, source, &run.index).await.unwrap();
+            save(&path, source.as_ref(), &run.index).await.unwrap();
             let whole = CacheFile {
                 container_kind: ContainerKind::Plain,
                 compression: source.seek_table().map(CompressionIndex::Xz),
-                identity: SourceIdentity::observe(source).await.unwrap(),
+                identity: SourceIdentity::observe(source.as_ref()).await.unwrap(),
                 total_size: source.size().await.unwrap(),
                 calendar_end: calendar_end(),
                 index: run.index.clone(),
@@ -1527,18 +1517,21 @@ mod encoding {
         let dir = tempfile::tempdir().unwrap();
         let dump = dir.path().join("dump.sql");
         std::fs::copy(statistics_fixture(), &dump).unwrap();
-        let source = LocalFileSource::open(&dump).unwrap();
+        let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let mode = CacheMode::enabled(dir.path().join("scratch.dtcache"));
         let options = ScanOptions::default();
-        let data =
-            map_file(&source, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-                .await
-                .unwrap();
-        let metadata = map_file(
-            &source,
+        let data = map_file(
+            mode.open_source(Arc::clone(&source)).await.unwrap(),
             &options,
             &GatherOptions::default(),
-            &CacheMode::DISABLED,
+            &StatisticsRequest::DATA,
+        )
+        .await
+        .unwrap();
+        let metadata = map_file(
+            CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
+            &options,
+            &GatherOptions::default(),
             &StatisticsRequest::METADATA,
         )
         .await
@@ -1552,13 +1545,13 @@ mod encoding {
             let file = CacheFileRef {
                 container_kind: ContainerKind::Plain,
                 compression: None,
-                identity: SourceIdentity::observe(&source).await.unwrap(),
+                identity: SourceIdentity::observe(source.as_ref()).await.unwrap(),
                 total_size: source.size().await.unwrap(),
                 calendar_end: other,
                 index,
             };
             write_cache_file(&path, &file).unwrap();
-            let status = load(&path, &source).await.unwrap();
+            let status = load(&path, source.as_ref()).await.unwrap();
             if refused {
                 let why = Unusable::CalendarChanged { counted_under: other, build: calendar_end() };
                 assert_eq!(status, CacheStatus::Unusable(why.clone()), "{name}");

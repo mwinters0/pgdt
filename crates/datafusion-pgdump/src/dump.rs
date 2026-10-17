@@ -107,7 +107,7 @@ impl PgDump {
         // An unusable cache is the scans' own refusal, word for word: this
         // provider never writes, so nothing here may overwrite one, and the
         // remedy it names is `pgdt`'s (`docs/design/decisions.md`, "D20").
-        let Opened { source, watch, cache } = mode.open(&origin).await?;
+        let Opened { source, watch, cache, .. } = mode.open(&origin).await?;
         let shown = || mode.path().map(Path::display).expect("a resolved cache has a path");
         let index = match cache {
             Held::Loaded(loaded) if loaded.is_complete() => loaded.index,

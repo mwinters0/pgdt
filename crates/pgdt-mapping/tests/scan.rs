@@ -1,9 +1,11 @@
 //! End-to-end scanner tests over both the hand-written edge-case dump and the
 //! generated `fixtures/` tree.
 
+use pgdt_io::ByteRangeSource;
 use std::fmt::Write as _;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use pgdt_core::RowEndingRefusal;
 use pgdt_core::{escape_field, split_fields, unescape_field};
@@ -368,12 +370,11 @@ async fn a_crlf_conversion_reads_alike_and_a_stray_ending_is_refused() {
     let expected_counts: Vec<(String, u64)> =
         expected.iter().map(|(table, rows)| (table.clone(), rows.len() as u64)).collect();
     for options in serial_and_split() {
-        let source = LocalFileSource::open(&crlf_path).unwrap();
+        let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&crlf_path).unwrap());
         let run = map_file(
-            &source,
+            CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
             &options,
             &GatherOptions::default(),
-            &CacheMode::DISABLED,
             &StatisticsRequest::DATA,
         )
         .await
@@ -400,12 +401,11 @@ async fn a_crlf_conversion_reads_alike_and_a_stray_ending_is_refused() {
         let path = dir.path().join("stray.sql");
         std::fs::write(&path, &stray).unwrap();
         for options in serial_and_split() {
-            let source = LocalFileSource::open(&path).unwrap();
+            let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
             match map_file(
-                &source,
+                CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
                 &options,
                 &GatherOptions::default(),
-                &CacheMode::DISABLED,
                 &StatisticsRequest::DATA,
             )
             .await

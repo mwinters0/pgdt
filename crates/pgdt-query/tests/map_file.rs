@@ -87,21 +87,20 @@ async fn a_cold_map_file_matches_build_index() {
             let dir = tempfile::tempdir().unwrap();
             let dump = dir.path().join("dump.sql");
             std::fs::copy(&fixture, &dump).unwrap();
-            let source = LocalFileSource::open(&dump).unwrap();
+            let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
             let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
             let run = map_file(
-                &source,
+                mode.open_source(Arc::clone(&source)).await.unwrap(),
                 &ScanOptions::default(),
                 &GatherOptions::default(),
-                &mode,
                 &StatisticsRequest::DATA,
             )
             .await
             .unwrap();
             assert_eq!(run.resumed_from, 0, "{schema_dir}/{flag_set}: nothing to resume from");
             assert!(!run.interrupted);
-            let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+            let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
             assert_matches_eager(&run.index, &eager, &format!("{schema_dir}/{flag_set}"));
         }
     }
@@ -133,8 +132,8 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
             let dir = tempfile::tempdir().unwrap();
             let dump = dir.path().join("dump.sql");
             std::fs::copy(&fixture, &dump).unwrap();
-            let source = LocalFileSource::open(&dump).unwrap();
-            let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+            let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+            let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
 
             for chunk_size in [64usize, 512] {
                 for jobs in [2usize, 3, 8] {
@@ -148,10 +147,9 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
                         ..ScanOptions::default()
                     };
                     let run = map_file(
-                        &source,
+                        mode.open_source(Arc::clone(&source)).await.unwrap(),
                         &options,
                         &GatherOptions::default(),
-                        &mode,
                         &StatisticsRequest::DATA,
                     )
                     .await
@@ -171,13 +169,13 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
 async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() {
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let size = source.size().await.unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
 
     // A cold query stops once `widgets` is settled, well short of EOF.
     let mut stream = table_stream(
-        &source,
+        source.as_ref(),
         "public.widgets",
         ScanOptions::default(),
         QueryOptions::default(),
@@ -185,22 +183,21 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
         mode.clone(),
     );
     while stream.next().await.is_some() {}
-    let CacheLoad::Index(partial) = mode.load(&source).await.unwrap() else {
+    let CacheLoad::Index(partial) = mode.load(source.as_ref()).await.unwrap() else {
         panic!("the query wrote a cache")
     };
     assert!(partial.scanned_through < size, "sanity: the query really did stop short");
 
     let run = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
     .unwrap();
     assert_eq!(run.resumed_from, partial.scanned_through, "resumed at the cache's own frontier");
-    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     assert!(
         partial.blocks().count() < eager.blocks().count(),
         "sanity: the query left blocks unmapped for this to find"
@@ -208,7 +205,7 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
     assert_matches_eager(&run.index, &eager, "resumed from a query's partial cache");
 
     // And what landed on disk is the finished index, not the partial one.
-    let CacheLoad::Index(reloaded) = mode.load(&source).await.unwrap() else {
+    let CacheLoad::Index(reloaded) = mode.load(source.as_ref()).await.unwrap() else {
         panic!("the map wrote a cache")
     };
     assert_eq!(reloaded.scanned_through, size);
@@ -255,12 +252,12 @@ fn block_rich(dir: &Path, tables: usize) -> PathBuf {
 async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
     let dir = tempfile::tempdir().unwrap();
     let dump = block_rich(dir.path(), 40);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let size = source.size().await.unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let mut stream = table_stream(
-        &source,
+        source.as_ref(),
         "public.t39",
         ScanOptions::default(),
         QueryOptions::default(),
@@ -273,21 +270,20 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
     }
     assert_eq!(rows, 3, "the last table's rows");
 
-    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     let last_end = eager.blocks().last().expect("40 blocks").end_offset;
     assert!(last_end < size, "sanity: the file does not end at the last block");
 
-    let CacheLoad::Index(banked) = mode.load(&source).await.unwrap() else {
+    let CacheLoad::Index(banked) = mode.load(source.as_ref()).await.unwrap() else {
         panic!("the query wrote a cache")
     };
     assert_eq!(banked.scanned_through, last_end, "stopped on the settling block, not at EOF");
     assert_eq!(banked.blocks().count(), 40, "every block before it is in the map too");
 
     let run = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
@@ -302,27 +298,28 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
 #[tokio::test]
 async fn a_preamble_only_cache_is_finished_into_the_same_index() {
     let (_dir, dump) = sandboxed();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
-    preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
-    let CacheLoad::Index(preamble_cache) = mode.load(&source).await.unwrap() else {
+    preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
+        .await
+        .unwrap();
+    let CacheLoad::Index(preamble_cache) = mode.load(source.as_ref()).await.unwrap() else {
         panic!("preamble_only wrote a cache")
     };
     assert!(preamble_cache.scanned_through > 0);
     assert!(preamble_cache.blocks().next().is_none(), "the prepass stops before the first block");
 
     let run = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
     .unwrap();
     assert_eq!(run.resumed_from, preamble_cache.scanned_through);
-    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     assert_matches_eager(&run.index, &eager, "resumed from a preamble-only cache");
 }
 
@@ -334,25 +331,23 @@ async fn a_preamble_only_cache_is_finished_into_the_same_index() {
 #[tokio::test]
 async fn a_complete_cache_is_reported_without_rescanning() {
     let (_dir, dump) = sandboxed();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let size = source.size().await.unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let first = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
     .unwrap()
     .index;
     let second = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
@@ -370,12 +365,12 @@ async fn a_complete_cache_is_reported_without_rescanning() {
 /// `pgdt parse` these tests cannot produce with a signal. Everything below
 /// `fail_at` reads normally, so the scan makes real progress and banks real
 /// saves before it dies.
-struct FailsPast<'a> {
-    inner: &'a LocalFileSource,
+struct FailsPast {
+    inner: Arc<dyn ByteRangeSource>,
     fail_at: u64,
 }
 
-impl ByteRangeSource for FailsPast<'_> {
+impl ByteRangeSource for FailsPast {
     fn read_range(
         &self,
         offset: u64,
@@ -424,22 +419,27 @@ impl ByteRangeSource for FailsPast<'_> {
 async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let size = source.size().await.unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
 
-    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
     assert!(first_block_end < size, "sanity: there is a file left after the first block");
 
-    let dying = FailsPast { inner: &source, fail_at: first_block_end };
+    let dying = FailsPast { inner: Arc::clone(&source), fail_at: first_block_end };
     let slow = ScanOptions { chunk_size_bytes: 1, ..ScanOptions::default() };
-    let err = map_file(&dying, &slow, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-        .await
-        .expect_err("the source dies mid-scan");
+    let err = map_file(
+        mode.open_source(Arc::new(dying)).await.unwrap(),
+        &slow,
+        &GatherOptions::default(),
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .expect_err("the source dies mid-scan");
     assert!(matches!(err, pgdt_core::Error::Io(_)), "{err:?}");
 
-    let status = pgdt_dump::internal::load(&cache_path, &source).await.unwrap();
+    let status = pgdt_dump::internal::load(&cache_path, source.as_ref()).await.unwrap();
     let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
         panic!("an interrupted scan must leave an incomplete cache, got {status:?}");
     };
@@ -451,10 +451,9 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     // Finishing it from there agrees with one eager pass, like any other
     // partial cache.
     let run = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
@@ -477,14 +476,13 @@ async fn a_full_scan_recovers_every_databases_ddl() {
         let dump = dir.path().join("multidb.sql");
         std::fs::write(&dump, format!("{content}{}", content.replace("pgdt_fixture", "pgdt_2")))
             .unwrap();
-        let source = LocalFileSource::open(&dump).unwrap();
+        let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
         let index = map_file(
-            &source,
+            mode.open_source(Arc::clone(&source)).await.unwrap(),
             &ScanOptions::default(),
             &GatherOptions::default(),
-            &mode,
             &StatisticsRequest::DATA,
         )
         .await
@@ -504,13 +502,13 @@ async fn a_full_scan_recovers_every_databases_ddl() {
 /// arriving at a file offset instead of at a wall-clock moment. The read
 /// itself succeeds, so the scan is stopped by the flag alone and never by an
 /// I/O failure.
-struct CancelsPast<'a> {
-    inner: &'a LocalFileSource,
+struct CancelsPast {
+    inner: Arc<dyn ByteRangeSource>,
     trip: u64,
     cancel: Arc<Cancellation>,
 }
 
-impl ByteRangeSource for CancelsPast<'_> {
+impl ByteRangeSource for CancelsPast {
     fn read_range(
         &self,
         offset: u64,
@@ -566,13 +564,13 @@ impl ByteRangeSource for CancelsPast<'_> {
 /// (`docs/design/decisions.md`, "D26"). [`CancelsPast`] is the other provider
 /// at the same offset — flag set, bytes delivered — so a pair of tests over
 /// the two says whether the run's shape follows the run or the provider.
-struct DropsPast<'a> {
-    inner: &'a LocalFileSource,
+struct DropsPast {
+    inner: Arc<dyn ByteRangeSource>,
     trip: u64,
     cancel: Arc<Cancellation>,
 }
 
-impl ByteRangeSource for DropsPast<'_> {
+impl ByteRangeSource for DropsPast {
     fn read_range(
         &self,
         offset: u64,
@@ -643,11 +641,12 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("dump.sql");
     std::fs::write(&dump, &file).unwrap();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let cancel = Arc::new(Cancellation::new());
-    let tripping = CancelsPast { inner: &source, trip: data_offset, cancel: Arc::clone(&cancel) };
+    let tripping =
+        CancelsPast { inner: Arc::clone(&source), trip: data_offset, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
         chunk_size_bytes: 64,
         cancel: Some(Arc::clone(&cancel)),
@@ -655,21 +654,24 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
         ..ScanOptions::default()
     };
 
-    let run =
-        map_file(&tripping, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-            .await
-            .unwrap();
+    let run = map_file(
+        mode.open_source(Arc::new(tripping)).await.unwrap(),
+        &options,
+        &GatherOptions::default(),
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
     assert!(run.interrupted, "a cancelled region interrupts the scan");
     assert_eq!(run.index.scanned_through, 0, "the abandoned block banks nothing");
     assert_eq!(run.index.blocks().count(), 0);
 
     // And it resumes into the index one eager pass builds.
-    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     let resumed = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
@@ -687,12 +689,12 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
 /// source produces only by luck — four workers reading four pieces of one
 /// region, the earliest of them the slowest to come back. The failure names its
 /// own offset, so the test can say *which* read the scan reported.
-struct FailsOutOfOrder<'a> {
-    inner: &'a LocalFileSource,
+struct FailsOutOfOrder {
+    inner: Arc<dyn ByteRangeSource>,
     fail_at: u64,
 }
 
-impl ByteRangeSource for FailsOutOfOrder<'_> {
+impl ByteRangeSource for FailsOutOfOrder {
     fn read_range(
         &self,
         offset: u64,
@@ -772,20 +774,24 @@ async fn the_lowest_offset_error_is_the_one_a_split_region_raises() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("dump.sql");
     std::fs::write(&dump, &file).unwrap();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::DISABLED;
 
-    let failing = FailsOutOfOrder { inner: &source, fail_at: data_offset };
+    let failing = FailsOutOfOrder { inner: Arc::clone(&source), fail_at: data_offset };
     let options = ScanOptions {
         chunk_size_bytes: 64,
         parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
 
-    let err =
-        map_file(&failing, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-            .await
-            .expect_err("every worker's read fails");
+    let err = map_file(
+        mode.open_source(Arc::new(failing)).await.unwrap(),
+        &options,
+        &GatherOptions::default(),
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .expect_err("every worker's read fails");
     assert_eq!(
         err.to_string(),
         format!("io error: read failed at {data_offset}"),
@@ -810,32 +816,39 @@ async fn the_lowest_offset_error_is_the_one_a_split_region_raises() {
 async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let size = source.size().await.unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
 
-    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
     assert!(first_block_end < size, "sanity: there is a file left after the first block");
 
     let cancel = Arc::new(Cancellation::new());
-    let tripping =
-        CancelsPast { inner: &source, trip: first_block_end, cancel: Arc::clone(&cancel) };
+    let tripping = CancelsPast {
+        inner: Arc::clone(&source),
+        trip: first_block_end,
+        cancel: Arc::clone(&cancel),
+    };
     let options = ScanOptions {
         chunk_size_bytes: 1,
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
 
-    let run =
-        map_file(&tripping, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-            .await
-            .unwrap();
+    let run = map_file(
+        mode.open_source(Arc::new(tripping)).await.unwrap(),
+        &options,
+        &GatherOptions::default(),
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
     assert!(run.interrupted, "a cancelled scan says so");
     assert_eq!(run.index.scanned_through, first_block_end, "banked the first spliced watermark");
     assert!(!run.index.is_complete(size), "and does not claim the whole file");
 
-    let status = pgdt_dump::internal::load(&cache_path, &source).await.unwrap();
+    let status = pgdt_dump::internal::load(&cache_path, source.as_ref()).await.unwrap();
     let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
         panic!("a cancelled scan must leave an incomplete cache, got {status:?}");
     };
@@ -845,10 +858,9 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
 
     // And it is a resume point like any other.
     let resumed = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
@@ -870,30 +882,38 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
 async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let size = source.size().await.unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
 
-    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
 
     let cancel = Arc::new(Cancellation::new());
-    let dropping = DropsPast { inner: &source, trip: first_block_end, cancel: Arc::clone(&cancel) };
+    let dropping = DropsPast {
+        inner: Arc::clone(&source),
+        trip: first_block_end,
+        cancel: Arc::clone(&cancel),
+    };
     let options = ScanOptions {
         chunk_size_bytes: 1,
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
 
-    let run =
-        map_file(&dropping, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-            .await
-            .expect("a dropped read is an interrupted run, not an error");
+    let run = map_file(
+        mode.open_source(Arc::new(dropping)).await.unwrap(),
+        &options,
+        &GatherOptions::default(),
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .expect("a dropped read is an interrupted run, not an error");
     assert!(run.interrupted, "a dropped read says so");
     assert_eq!(run.index.scanned_through, first_block_end, "banked the first spliced watermark");
     assert!(!run.index.is_complete(size), "and does not claim the whole file");
 
-    let status = pgdt_dump::internal::load(&cache_path, &source).await.unwrap();
+    let status = pgdt_dump::internal::load(&cache_path, source.as_ref()).await.unwrap();
     let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
         panic!("a dropped read must leave an incomplete cache, got {status:?}");
     };
@@ -901,10 +921,9 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
     assert_eq!(index.scanned_through, first_block_end);
 
     let resumed = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
@@ -928,19 +947,23 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
 async fn a_dropped_read_inside_the_prepass_banks_and_writes_nothing() {
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache_path.clone());
-    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
 
     // Every read drops, so the first one the prepass makes is the interrupt.
     let cancel = Arc::new(Cancellation::new());
-    let dropping = DropsPast { inner: &source, trip: 0, cancel: Arc::clone(&cancel) };
+    let dropping = DropsPast { inner: Arc::clone(&source), trip: 0, cancel: Arc::clone(&cancel) };
     let options = ScanOptions { cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
 
-    let run =
-        map_file(&dropping, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-            .await
-            .expect("a dropped read is an interrupted run, not an error");
+    let run = map_file(
+        mode.open_source(Arc::new(dropping)).await.unwrap(),
+        &options,
+        &GatherOptions::default(),
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .expect("a dropped read is an interrupted run, not an error");
     assert!(run.interrupted, "a dropped prepass read says so");
     assert_eq!(run.index.scanned_through, 0, "nothing was banked");
     assert!(run.index.metadata.is_none(), "and no half-read preamble came back");
@@ -948,10 +971,9 @@ async fn a_dropped_read_inside_the_prepass_banks_and_writes_nothing() {
 
     // And the next run is a cold scan, not a resume onto an empty prefix.
     let resumed = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
@@ -969,13 +991,12 @@ async fn a_dropped_read_inside_the_prepass_banks_and_writes_nothing() {
 async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache_path.clone());
     let bare = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::METADATA,
     )
     .await
@@ -984,16 +1005,21 @@ async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
     let second = bare.index.blocks().nth(1).unwrap().data_offset;
 
     let cancel = Arc::new(Cancellation::new());
-    let dropping = DropsPast { inner: &source, trip: second, cancel: Arc::clone(&cancel) };
+    let dropping =
+        DropsPast { inner: Arc::clone(&source), trip: second, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
         chunk_size_bytes: 1,
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
-    let run =
-        map_file(&dropping, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-            .await
-            .expect("a dropped read is an interrupted run, not an error");
+    let run = map_file(
+        mode.open_source(Arc::new(dropping)).await.unwrap(),
+        &options,
+        &GatherOptions::default(),
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .expect("a dropped read is an interrupted run, not an error");
     assert!(run.interrupted, "a cancelled back-fill says so");
     assert_eq!((run.lacking_statistics, run.backfilled), (blocks, 1));
 }
@@ -1009,13 +1035,12 @@ async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
 async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache_path.clone());
     let bare = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::METADATA,
     )
     .await
@@ -1025,20 +1050,25 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     let second = bare.index.blocks().nth(1).unwrap().data_offset;
 
     let cancel = Arc::new(Cancellation::new());
-    let tripping = CancelsPast { inner: &source, trip: second, cancel: Arc::clone(&cancel) };
+    let tripping =
+        CancelsPast { inner: Arc::clone(&source), trip: second, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
         chunk_size_bytes: 1,
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
-    let run =
-        map_file(&tripping, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-            .await
-            .unwrap();
+    let run = map_file(
+        mode.open_source(Arc::new(tripping)).await.unwrap(),
+        &options,
+        &GatherOptions::default(),
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
     assert!(run.interrupted, "a cancelled back-fill says so");
     assert_eq!((run.lacking_statistics, run.backfilled), (blocks, 1));
 
-    let status = pgdt_dump::internal::load(&cache_path, &source).await.unwrap();
+    let status = pgdt_dump::internal::load(&cache_path, source.as_ref()).await.unwrap();
     let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
         panic!("a back-fill leaves the map complete, got {status:?}");
     };
@@ -1048,10 +1078,9 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     assert!(gathered[0], "the first block is the one banked: {gathered:?}");
 
     let resumed = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
@@ -1059,10 +1088,9 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     assert!(!resumed.interrupted);
     assert_eq!((resumed.lacking_statistics, resumed.backfilled), (blocks - 1, blocks - 1));
     let straight = map_file(
-        &source,
+        CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::DISABLED,
         &StatisticsRequest::DATA,
     )
     .await
@@ -1087,14 +1115,18 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
 #[tokio::test]
 async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
     let (_dir, dump) = sandboxed();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let options = ScanOptions { cancel: Some(already_cancelled()), ..ScanOptions::default() };
-    let run =
-        map_file(&source, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-            .await
-            .unwrap();
+    let run = map_file(
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
+        &options,
+        &GatherOptions::default(),
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
 
     assert!(run.interrupted);
     assert_eq!(run.resumed_from, 0, "the prepass is this run's work, not a resume point");
@@ -1104,7 +1136,7 @@ async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
     assert!(metadata.databases.first().unwrap().preamble_complete);
 
     // On disk, and resumable from where the prepass stopped.
-    let CacheLoad::Index(reloaded) = mode.load(&source).await.unwrap() else {
+    let CacheLoad::Index(reloaded) = mode.load(source.as_ref()).await.unwrap() else {
         panic!("the prepass wrote a cache")
     };
     assert_eq!(reloaded.scanned_through, run.index.scanned_through);
@@ -1177,23 +1209,27 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("dump.sql");
     std::fs::copy(common::edge_cases_fixture(16, "default"), &dump).unwrap();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
-    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     let trip = eager.blocks().nth(1).expect("the fixture has two blocks").end_offset;
 
     let cancel = Arc::new(Cancellation::new());
-    let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
+    let tripping = CancelsPast { inner: Arc::clone(&source), trip, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
         chunk_size_bytes: 1,
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
-    let run =
-        map_file(&tripping, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-            .await
-            .unwrap();
+    let run = map_file(
+        mode.open_source(Arc::new(tripping)).await.unwrap(),
+        &options,
+        &GatherOptions::default(),
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
 
     assert!(run.interrupted);
     assert!(!run.index.is_complete(source.size().await.unwrap()));
@@ -1227,10 +1263,10 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
 /// the last *spliced* watermark — this block only where the throttle was due
 /// at its close, a clock a loaded machine moves.
 async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
-    let source = LocalFileSource::open(dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(dump));
 
-    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     let end = eager
         .blocks_with_database()
         .find(|(database, _)| *database == Some(second))
@@ -1239,16 +1275,21 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
         .end_offset;
 
     let cancel = Arc::new(Cancellation::new());
-    let tripping = CancelsPast { inner: &source, trip: end - 1, cancel: Arc::clone(&cancel) };
+    let tripping =
+        CancelsPast { inner: Arc::clone(&source), trip: end - 1, cancel: Arc::clone(&cancel) };
     let options = ScanOptions {
         chunk_size_bytes: 1,
         cancel: Some(Arc::clone(&cancel)),
         ..ScanOptions::default()
     };
-    let run =
-        map_file(&tripping, &options, &GatherOptions::default(), &mode, &StatisticsRequest::DATA)
-            .await
-            .unwrap();
+    let run = map_file(
+        mode.open_source(Arc::new(tripping)).await.unwrap(),
+        &options,
+        &GatherOptions::default(),
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
     assert!(run.interrupted, "{label}");
     assert_eq!(run.index.scanned_through, end, "{label}: the interrupt banked its own block");
 
@@ -1283,10 +1324,9 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
 
     // And finishing it is still span for span what one eager pass gives.
     let resumed = map_file(
-        &source,
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &StatisticsRequest::DATA,
     )
     .await
@@ -1324,12 +1364,11 @@ async fn an_interrupt_inside_a_later_database_types_the_segments_it_finished() {
 async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() {
     for version in [13, 16, 18] {
         let dump = common::edge_cases_fixture(version, "dumpall");
-        let source = LocalFileSource::open(&dump).unwrap();
+        let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let index = map_file(
-            &source,
+            CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
             &ScanOptions::default(),
             &GatherOptions::default(),
-            &CacheMode::DISABLED,
             &StatisticsRequest::DATA,
         )
         .await

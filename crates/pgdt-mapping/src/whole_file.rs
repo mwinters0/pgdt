@@ -10,7 +10,7 @@ use pgdt_codec::internal::counter_for;
 use pgdt_core::internal::statistics_loaded;
 use pgdt_core::{Error, Result};
 use pgdt_dump::attach_text;
-use pgdt_dump::cache::{CacheLoad, CacheMode, SourceWatch};
+use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch};
 use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::{
@@ -158,8 +158,13 @@ pub struct MapRun {
     pub statistics: StatisticsHeld,
 }
 
-/// Map `source` end to end, **continuing from whatever `cache` already
-/// holds** — `pgdt parse`'s scan (`docs/design/decisions.md`, "D61"). This is
+/// Map the source `opened` holds end to end, **continuing from whatever its
+/// cache already holds** — `pgdt parse`'s scan (`docs/design/decisions.md`,
+/// "D61"). The cache is the one the open decoded and judged
+/// ([`CacheMode::open`]), so its refusals are made before this is called and
+/// an unusable cache reaches it only as one the mode may replace, which it
+/// starts cold over; the watch is the open's, taken before the cache was
+/// believed, and saves go to the open's mode. This is
 /// [`map_forward`] with no stop target, plus the three whole-file facts that
 /// only a scan reaching EOF may state; `pgdt_mapping::build_index` stays the
 /// eager, cache-blind producer. Rejected: teaching *it* to resume, which
@@ -197,25 +202,27 @@ pub struct MapRun {
 /// - `diagnostics` are the tiling and TOC-coverage figures, recomputed
 ///   rather than inherited, being `#[serde(skip)]` — [`map_forward`]
 ///   recomputes them at its own EOF exit too — and what is this function's
-///   is keeping what [`CacheMode::load`] reported about the cache file's
-///   identity ahead of them.
+///   is keeping what the open reported about the cache file's identity ahead
+///   of them.
 /// - The cache is saved once more at the end, persisting the finished index.
 ///
 /// **A run interrupted before EOF states none of the three**, and returns
 /// [`MapRun::interrupted`]: a span list cut at a `CopyEnd` watermark is not a
 /// boundary `dump_metadata_from_spans` may be called at.
 pub async fn map_file(
-    source: &dyn ByteRangeSource,
+    opened: Opened,
     scan_options: &ScanOptions,
     gather: &GatherOptions,
-    cache: &CacheMode,
     statistics: &StatisticsRequest,
 ) -> Result<MapRun> {
-    // Taken before anything is read, so every later observation compares
-    // against what this run started from (`pgdt_dump::cache::SourceWatch`).
-    let watch = SourceWatch::open(source, cache.strict_identity()).await?;
-    let run = map_file_watched(source, scan_options, gather, cache, statistics, &watch).await;
-    watch.attribute(source, run).await
+    // The open's watch, taken before anything was read, so every later
+    // observation compares against what this run started from
+    // (`pgdt_dump::cache::SourceWatch`).
+    let Opened { source, watch, cache, mode } = opened;
+    let run =
+        map_file_watched(source.as_ref(), scan_options, gather, &mode, cache, statistics, &watch)
+            .await;
+    watch.attribute(source.as_ref(), run).await
 }
 
 /// [`map_file`] once its watch is open, which then attributes any failure.
@@ -224,20 +231,16 @@ async fn map_file_watched(
     scan_options: &ScanOptions,
     gather: &GatherOptions,
     cache: &CacheMode,
+    held: Held,
     statistics: &StatisticsRequest,
     watch: &SourceWatch,
 ) -> Result<MapRun> {
     let size = source.size().await?;
-    let mut index = match cache.load(source).await? {
-        CacheLoad::Index(index) => index,
-        // Nothing to build forward from, and nothing at the path to keep.
-        CacheLoad::Disabled | CacheLoad::Missing => DumpIndex::default(),
-        // Refused before the dump is read past its magic, unless the caller said
-        // this cache may be replaced (`docs/design/decisions.md`, "D20").
-        CacheLoad::Unusable(unusable) => match cache.refusal(&unusable) {
-            Some(refusal) => return Err(refusal),
-            None => DumpIndex::default(),
-        },
+    let mut index = match held {
+        Held::Loaded(loaded) => loaded.index,
+        // Nothing to build forward from, or a cache the mode may replace,
+        // which the first save writes over (`docs/design/decisions.md`, "D20").
+        Held::Disabled | Held::Missing | Held::Replacing(_) => DumpIndex::default(),
     };
     refuse_recorded(gather.postgres_invalid_values, cache, statistics, &index)?;
     let account = Arc::new(StatisticsAccount::bounded_by(gather.statistics_allowance_bytes));

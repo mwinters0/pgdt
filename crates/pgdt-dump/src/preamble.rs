@@ -6,7 +6,7 @@
 use std::collections::BTreeSet;
 use std::ops::ControlFlow;
 
-use crate::cache::{CacheLoad, CacheMode, SourceWatch};
+use crate::cache::{CacheMode, Held, Opened, SourceWatch};
 use crate::ddl::dump_metadata_from_spans;
 use crate::map::{Builder, attach_text, non_seekable_compression_diagnostic};
 use crate::scan::{Event, ScanOptions, scan};
@@ -80,29 +80,32 @@ pub async fn scan_preamble(
 }
 
 /// Answer from the preamble alone (`docs/design/decisions.md`,
-/// "D61", `--preamble-only`): reuse a cache's already-known metadata when
-/// present, falling back to a fresh [`scan_preamble`] otherwise and
+/// "D61", `--preamble-only`): reuse the opened cache's already-known metadata
+/// when present, falling back to a fresh [`scan_preamble`] otherwise and
 /// persisting the result when the cache is enabled (a no-op when it isn't —
 /// see [`CacheMode::save`]). Bounded to the file's first `COPY` block
 /// regardless of dump size (I1), independent of `build_index`'s full
 /// structural scan.
+///
+/// **It reads the cache `opened` decoded** ([`CacheMode::open`]), whose
+/// refusals have already been made: an unusable cache reaches it only as one
+/// the mode may replace, which it starts cold over.
 ///
 /// A fresh scan's spans are persisted alongside the metadata, with a
 /// trailing [`SpanBody::Unscanned`] span covering the rest of the file — a
 /// genuinely partial scan, unlike `build_index`, which always reaches EOF
 /// (`docs/design/decisions.md`, "D30").
 ///
-/// Also returns whatever [`CacheMode::load`] reported on the loaded index
-/// (e.g. a `CacheMtimeChanged` warning): answering with `DumpMetadata` alone
-/// rather than a whole `DumpIndex`, its diagnostics have nowhere else to go.
+/// Also returns whatever the open reported on the loaded index (e.g. a
+/// `CacheMtimeChanged` warning): answering with `DumpMetadata` alone rather
+/// than a whole `DumpIndex`, its diagnostics have nowhere else to go.
 pub async fn preamble_only(
-    source: &dyn ByteRangeSource,
+    opened: Opened,
     options: &ScanOptions,
-    cache: &CacheMode,
 ) -> Result<(DumpMetadata, Vec<Diagnostic>)> {
-    let watch = SourceWatch::open(source, cache.strict_identity()).await?;
-    let answer = preamble_only_watched(source, options, cache, &watch).await;
-    watch.attribute(source, answer).await
+    let Opened { source, watch, cache, mode } = opened;
+    let answer = preamble_only_watched(source.as_ref(), options, &mode, cache, &watch).await;
+    watch.attribute(source.as_ref(), answer).await
 }
 
 /// [`preamble_only`] once its watch is open, which then attributes any
@@ -111,18 +114,14 @@ async fn preamble_only_watched(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
     cache: &CacheMode,
+    held: Held,
     watch: &SourceWatch,
 ) -> Result<(DumpMetadata, Vec<Diagnostic>)> {
-    let mut base_index = match cache.load(source).await? {
-        CacheLoad::Index(index) => index,
-        // Nothing to build forward from, and nothing at the path to keep.
-        CacheLoad::Disabled | CacheLoad::Missing => DumpIndex::default(),
-        // Refused before the dump is read past its magic, unless the caller said
-        // this cache may be replaced (`docs/design/decisions.md`, "D20").
-        CacheLoad::Unusable(unusable) => match cache.refusal(&unusable) {
-            Some(refusal) => return Err(refusal),
-            None => DumpIndex::default(),
-        },
+    let mut base_index = match held {
+        Held::Loaded(loaded) => loaded.index,
+        // Nothing to build forward from, or a cache the mode may replace,
+        // which a save writes over (`docs/design/decisions.md`, "D20").
+        Held::Disabled | Held::Missing | Held::Replacing(_) => DumpIndex::default(),
     };
     let known = base_index
         .metadata

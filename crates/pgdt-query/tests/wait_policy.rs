@@ -20,6 +20,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
@@ -137,17 +138,16 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("dump.sql");
     std::fs::copy(edge_cases(), &dump).unwrap();
-    let source = RecordingSource::wrap(LocalFileSource::open(&dump).unwrap());
+    let source = Arc::new(RecordingSource::wrap(LocalFileSource::open(&dump).unwrap()));
     let options = ScanOptions {
         chunk_size_bytes: 64,
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
     map_file(
-        &source,
+        CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
         &options,
         &GatherOptions::default(),
-        &CacheMode::DISABLED,
         &StatisticsRequest::DATA,
     )
     .await
@@ -162,16 +162,15 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
 
     // The same scan at the shipped chunk size declines every one of this
     // fixture's blocks, so the leader is reached and grants nothing.
-    let source = RecordingSource::wrap(LocalFileSource::open(&dump).unwrap());
+    let source = Arc::new(RecordingSource::wrap(LocalFileSource::open(&dump).unwrap()));
     let options = ScanOptions {
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..ScanOptions::default()
     };
     map_file(
-        &source,
+        CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
         &options,
         &GatherOptions::default(),
-        &CacheMode::DISABLED,
         &StatisticsRequest::DATA,
     )
     .await

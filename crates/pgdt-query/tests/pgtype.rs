@@ -6,6 +6,7 @@
 //! path end to end, the same evidence `tests/preamble.rs` pins the DDL
 //! grammar against.
 
+use pgdt_io::ByteRangeSource;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -486,12 +487,11 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
             }
             flag_sets += 1;
             let label = format!("pg_dump {version} {}", path.display());
-            let source = LocalFileSource::open(&path).unwrap();
+            let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
             let run = map_file(
-                &source,
+                CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
                 &ScanOptions::default(),
                 &strict,
-                &CacheMode::DISABLED,
                 &StatisticsRequest::DATA,
             )
             .await
@@ -538,12 +538,11 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
             let path = tmp.path().join(format!("{version}-{column}-{field}.sql"));
             std::fs::write(&path, text.replace(row, &mutated)).unwrap();
             let label = format!("pg_dump {version}: {column} `{field}`");
-            let source = LocalFileSource::open(&path).unwrap();
+            let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
             match map_file(
-                &source,
+                CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
                 &ScanOptions::default(),
                 &strict,
-                &CacheMode::DISABLED,
                 &StatisticsRequest::DATA,
             )
             .await

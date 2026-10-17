@@ -4,7 +4,9 @@
 //! statement text), this pins the parser against what `pg_dump` actually
 //! emits.
 
+use pgdt_io::ByteRangeSource;
 use std::path::Path;
+use std::sync::Arc;
 
 use futures::StreamExt;
 use pgdt_codec::ColumnResolution;
@@ -800,13 +802,12 @@ async fn every_dumpall_database_keeps_its_own_version_headers() {
         assert_eq!(versions(index.metadata.as_ref().unwrap()), want, "pg_dump {version}: eager");
 
         let (_dir, dump) = sandboxed(&fixture, "dumpall.sql");
-        let source = LocalFileSource::open(&dump).unwrap();
+        let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
         let mapped = map_file(
-            &source,
+            mode.open_source(Arc::clone(&source)).await.unwrap(),
             &ScanOptions::default(),
             &GatherOptions::default(),
-            &mode,
             &StatisticsRequest::DATA,
         )
         .await
@@ -922,12 +923,11 @@ async fn a_base_type_s_delimiter_splits_its_array_in_a_strict_parse() {
                 "{label}"
             );
             assert_eq!(find_type(&db, "emitters.bt_char").kind, TypeKind::base(), "{label}");
-            let source = LocalFileSource::open(&path).unwrap();
+            let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
             map_file(
-                &source,
+                CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
                 &ScanOptions::default(),
                 &strict,
-                &CacheMode::DISABLED,
                 &StatisticsRequest::DATA,
             )
             .await
@@ -1320,15 +1320,25 @@ async fn a_raw_cr_inside_a_literal_is_the_value_s_own_byte() {
             }),
             "crlf {crlf}"
         );
-        let source = LocalFileSource::open(&path).unwrap();
-        map_file(&source, &chunked, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA)
-            .await
-            .unwrap_or_else(|e| panic!("crlf {crlf}: a strict parse refused: {e}"));
+        let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
+        map_file(
+            CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
+            &chunked,
+            &strict,
+            &StatisticsRequest::DATA,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("crlf {crlf}: a strict parse refused: {e}"));
 
         std::fs::write(&path, file("a\\nb")).unwrap();
-        let source = LocalFileSource::open(&path).unwrap();
-        match map_file(&source, &chunked, &strict, &CacheMode::DISABLED, &StatisticsRequest::DATA)
-            .await
+        let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
+        match map_file(
+            CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
+            &chunked,
+            &strict,
+            &StatisticsRequest::DATA,
+        )
+        .await
         {
             Err(pgdt_core::Error::FieldRefused { column, value, .. }) => {
                 assert_eq!((column.as_str(), value.as_str()), ("m", "a\nb"), "crlf {crlf}")

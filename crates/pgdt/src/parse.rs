@@ -7,6 +7,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::Args;
 use namespace_init::InitShutdown;
+use pgdt_dump::cache::Held;
 use pgdt_dump::{ScanOptions, preamble_only};
 use pgdt_io::{Cancellation, Origin};
 use pgdt_mapping::statistics::{
@@ -23,7 +24,7 @@ use crate::info::{print_diagnostics, print_index, print_metadata};
 use crate::interrupt::install_interrupt_guard;
 use crate::introspect;
 use crate::parallel::ParallelArgs;
-use crate::source::{naming_the_source, open_for_scan};
+use crate::source::naming_the_source;
 
 /// `pgdt parse`'s flags.
 #[derive(Args)]
@@ -218,21 +219,26 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
         .require_enabled("parse")
         .context("`--dtcache none` cannot be combined with `parse`")?
         .to_path_buf();
-    // A cache that cannot be used is refused here as it is by `info`
-    // and `query`, having read no more than the file's leading bytes,
-    // unless `--overwrite-unusable-cache` says it may be replaced
-    // (`docs/design/decisions.md`, "D20"). The flags and the limit
-    // are announced ahead of it, neither waiting on the file (D64).
+    // The dump is opened through its cache once, the cache decoded once
+    // and handed to the pass: one that cannot be used is refused here as
+    // it is by `info` and `query`, having read no more than the file's
+    // leading bytes, unless `--overwrite-unusable-cache` says it may be
+    // replaced (`docs/design/decisions.md`, "D20"). The flags and the
+    // limit are announced ahead of it, neither waiting on the file (D64).
     let stated = parallel.discover();
     stated.announce();
-    let (source, cached_statistics) = open_for_scan(&origin, &mode).await?;
+    let opened = mode.open(&origin).await.map_err(|e| naming_the_source(e, &origin))?;
+    let source = Arc::clone(&opened.source);
+    let cached_statistics = match &opened.cache {
+        Held::Loaded(loaded) => loaded.index.statistics_heap_bytes(),
+        Held::Missing | Held::Disabled | Held::Replacing(_) => 0,
+    };
     let parallel = stated.resolve(source.as_ref(), cached_statistics);
     parallel.announce();
     if preamble_only_flag {
-        let (metadata, diagnostics) =
-            preamble_only(source.as_ref(), &scan_options(read, &parallel), &mode)
-                .await
-                .map_err(|e| naming_the_source(e, &origin))?;
+        let (metadata, diagnostics) = preamble_only(opened, &scan_options(read, &parallel))
+            .await
+            .map_err(|e| naming_the_source(e, &origin))?;
         print_metadata(&metadata, false);
         print_diagnostics(&diagnostics);
         println!();
@@ -247,7 +253,7 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
         statistics_allowance_bytes: parallel.statistics_allowance(),
         postgres_invalid_values,
     };
-    let run = pgdt_mapping::map_file(source.as_ref(), &scan_options, &gather, &mode, &statistics)
+    let run = pgdt_mapping::map_file(opened, &scan_options, &gather, &statistics)
         .await
         .map_err(|e| naming_the_source(e, &origin))?;
     introspect::statistics_returned(&run.statistics);

@@ -394,9 +394,11 @@ mod oracle {
     /// Every major's `CREATE TYPE`/`CREATE DOMAIN` list, read from the `types`
     /// fixture that major's oracle database was loaded from.
     async fn types_of(major: u32) -> Vec<TypeDef> {
-        let source = LocalFileSource::open(fixture(major, "types/default.sql")).unwrap();
-        let (metadata, _) =
-            preamble_only(&source, &ScanOptions::default(), &CacheMode::DISABLED).await.unwrap();
+        let source = std::sync::Arc::new(
+            LocalFileSource::open(fixture(major, "types/default.sql")).unwrap(),
+        );
+        let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
+        let (metadata, _) = preamble_only(opened, &ScanOptions::default()).await.unwrap();
         metadata.databases.into_iter().next().expect("a dump names a database").types
     }
 

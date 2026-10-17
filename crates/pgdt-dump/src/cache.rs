@@ -5,7 +5,7 @@
 //! **A cache that cannot be used is refused, not scanned over**
 //! (`docs/design/decisions.md`, "D20"): one that is another file's, another
 //! build's, or damaged is almost always a user's accident — the wrong path, or
-//! a file that changed — so an open and the four scan entry points answer
+//! a file that changed — so an open and the two query entry points answer
 //! [`Error::CacheUnusable`](pgdt_core::Error::CacheUnusable) before the dump
 //! is read past its magic, naming which of those it is ([`Unusable`]). [`CacheMode::with_overwrite_unusable`] opts into
 //! starting cold and replacing it instead, for a source whose file is replaced

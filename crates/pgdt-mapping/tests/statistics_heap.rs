@@ -13,6 +13,7 @@
 //! why it is a test file of its own: a drop on the test thread frees what it
 //! frees on that thread, whatever the blocking pool is doing.
 
+use pgdt_io::ByteRangeSource;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::num::NonZeroU64;
@@ -67,10 +68,16 @@ fn request(group_size: u64) -> StatisticsRequest {
 }
 
 async fn parse(dump: &Path, options: &ScanOptions, statistics: &StatisticsRequest) -> MapRun {
-    let source = LocalFileSource::open(dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let mode = CacheMode::enabled(pgdt_dump::cache::colocated_path(dump));
-    let run =
-        map_file(&source, options, &GatherOptions::default(), &mode, statistics).await.unwrap();
+    let run = map_file(
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
+        options,
+        &GatherOptions::default(),
+        statistics,
+    )
+    .await
+    .unwrap();
     assert!(!run.interrupted);
     run
 }

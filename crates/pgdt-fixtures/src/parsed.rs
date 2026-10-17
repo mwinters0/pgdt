@@ -3,6 +3,7 @@
 //! from, each stating the request it maps at.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};
@@ -19,12 +20,16 @@ pub async fn parsed_copy(fixture: &Path, dir: &Path, request: &StatisticsRequest
     let dir = tempfile::tempdir_in(dir).unwrap().keep();
     let copy = dir.join(fixture.file_name().unwrap());
     std::fs::copy(fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&copy).unwrap());
     let cache = CacheMode::enabled(cache::colocated_path(&copy));
-    let run =
-        map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &cache, request)
-            .await
-            .unwrap();
+    let run = map_file(
+        cache.open_source(Arc::clone(&source)).await.unwrap(),
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        request,
+    )
+    .await
+    .unwrap();
     assert!(!run.interrupted);
     copy
 }

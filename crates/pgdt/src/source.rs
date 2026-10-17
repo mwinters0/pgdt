@@ -97,15 +97,15 @@ pub(crate) fn naming_the_source(err: pgdt_core::Error, source: &Origin) -> anyho
     err.into()
 }
 
-/// Open `origin` for the two commands that scan, handing recognition whatever
+/// Open `origin` for `query`, handing recognition whatever
 /// the cache says about its compression layer, so an `.xz` source is built
 /// from the seek table a previous walk already produced instead of re-walking
 /// the file's stream footers (`docs/design/decisions.md`, "D18"). `--dtcache
 /// none` claims nothing.
 ///
 /// An unusable cache is `CacheMode::refusal`'s to decide — the one decision
-/// the four scan entry points make, so this refusal is word for word the one
-/// it pre-empts, and the library still refuses on its own: this spares the
+/// the open and the two query entry points make, so this refusal is word for
+/// word the one it pre-empts, and the library still refuses on its own: this spares the
 /// walk, it does not replace the guarantee (`docs/design/decisions.md`,
 /// "D20"). Under `--overwrite-unusable-cache` the source is opened claiming
 /// nothing, and the scan's own load meets the same reason and starts cold.
@@ -113,8 +113,9 @@ pub(crate) fn naming_the_source(err: pgdt_core::Error, source: &Origin) -> anyho
 /// which [`crate::parallel::Discovered::resolve`] carves the workers around —
 /// none, for a cache about to be replaced.
 ///
-/// **Not `CacheMode::open`**, which `info` opens through: a scan entry point
-/// loads the cache itself, so opening through the mode would decode it twice.
+/// **Not `CacheMode::open`**, which `info` and `parse` open through: a query
+/// entry point loads the cache itself, so opening through the mode would
+/// decode it twice.
 pub(crate) async fn open_for_scan(
     origin: &Origin,
     cache: &CacheMode,

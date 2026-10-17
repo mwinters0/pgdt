@@ -1,3 +1,4 @@
+use pgdt_io::ByteRangeSource;
 use std::sync::Arc;
 
 use pgdt_codec::SchemaMode;
@@ -34,16 +35,15 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
         ),
     )
     .unwrap();
-    let source = LocalFileSource::open(&path).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
         sizing: StatisticsSizing::Stated(std::num::NonZeroU64::new(64).unwrap()),
     };
     let run = map_file(
-        &source,
+        CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::DISABLED,
         &request,
     )
     .await

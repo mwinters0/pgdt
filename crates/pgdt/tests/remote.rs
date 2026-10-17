@@ -725,10 +725,9 @@ async fn a_cancelled_remote_read_is_an_interrupted_run_rather_than_an_error() {
 
     let started = Instant::now();
     let run = pgdt_mapping::map_file(
-        source.as_ref(),
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &options,
         &pgdt_mapping::statistics::GatherOptions::default(),
-        &mode,
         &StatisticsRequest::METADATA,
     )
     .await

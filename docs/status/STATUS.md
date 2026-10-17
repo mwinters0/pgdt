@@ -100,7 +100,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.4.5** datafusion-pgdump: in DataFusion's semantics, two keys of different orders compare where its comparison coercion relates their emitted types, answered by `compare_value_keys` through DataFusion's own coercion, cast and comparison kernel, a refused cast answering `None`; the key built from the resolved column, carrying its emitted Arrow type and handing over its value in that type's units (`ValueKey::emitted`), none where the type cannot hold it; DataFusion the oracle, over the `types` fixture's scalar columns pair by pair; closes `KD119` ([notes](../design/roadmap-P36.4.5-datafusion-orders-notes.md))
 - [x] **36.5** pgdt-dump: `ChunkedScanner`, its four sites calling it; counted by `measure.py --count-pair HEAD~1` — all four loops read through it; the count resolves a rise on every row, which callgrind puts wholly in the slice's code, `ChunkEvents::next_event`'s test moving each event once more; no shape of the slice's code as clean recovers it, and it is accepted ([notes](../design/roadmap-P36.5-chunked-scanner-notes.md))
 - [x] **36.6** pgdt-dump: `CacheMode::open` opens an `Origin` — the cache decoded once, the source on the layer it settles, the watch, the judgement — answering `Held`; `CacheStatus` one `Loaded(LoadedCache)`; `OfflineCache` its own type, `CacheMode::Offline` and `Error::CacheModeMismatch` gone; `Disabled` the caller's to state; the free `load`, `save` and `load_offline` `internal`'s; `pgdt info` and `PgDump::open` open through it ([notes](../design/roadmap-P36.6-open-notes.md))
-- [ ] **36.6.1** The mapping pass takes the open: `map_file` and `preamble_only` read the cache it decoded, and `pgdt parse` opens through it
+- [x] **36.6.1** The mapping pass takes the open: `map_file` and `preamble_only` read the cache it decoded, and `pgdt parse` opens through it — both take an `Opened` whole, carrying its mode; `CacheMode::open_source` opens a source already in hand ([notes](../design/roadmap-P36.6.1-mapping-open-notes.md))
 - [ ] **36.6.2** `scan` and `preamble_only` take only the fields they read
 - [ ] **36.6.3** pgdt-dump: an uncheckable source refused where a read begins, not by `SourceWatch::open` — the mapping pass and `preamble_only` refusing at their start, `PgDump::open` asking for it at construction, `pgdt info` under the selection as given; `StrictIdentity::between_runs` gone, so `NONE`'s rustdoc and D21's "refused unless `NONE`" hold again
 - [ ] **36.7** pgdt-mapping: back-fill one call; the mapping pass hands back a `Dump`'s parts; closes `KD115`
@@ -140,3 +140,11 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **`Opened` carries the mode it was opened under** (36.6.1).
+  `map_file` and `preamble_only` take an `Opened` whole and save under
+  `Opened::mode`, instead of taking a `CacheMode` beside it. The call: the
+  pass needs the mode to save and to refuse a recorded field, and a mode
+  passed apart could name another cache than the one the open read, which
+  is `KD115`'s shape. Reconsidering it puts `&CacheMode` back in both
+  signatures, and decides whether 36.8's `Dump`, whose resume writes no
+  cache (spec, "Streams over a table"), keeps the field.

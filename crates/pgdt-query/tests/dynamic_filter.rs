@@ -99,16 +99,20 @@ async fn gathered(version: u32) -> (tempfile::TempDir, std::path::PathBuf, DumpI
 /// The map of `dump`, cached beside it, gathering every statistic at
 /// `group_size`.
 async fn mapped(dump: &Path, group_size: u64) -> DumpIndex {
-    let source = LocalFileSource::open(dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
         sizing: StatisticsSizing::Stated(NonZeroU64::new(group_size).unwrap()),
     };
     let cache = CacheMode::enabled(cache::colocated_path(dump));
-    let run =
-        map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &cache, &request)
-            .await
-            .unwrap();
+    let run = map_file(
+        cache.open_source(Arc::clone(&source)).await.unwrap(),
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &request,
+    )
+    .await
+    .unwrap();
     assert!(!run.interrupted);
     run.index
 }

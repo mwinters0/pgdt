@@ -1095,10 +1095,9 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
     let path = partitions_fixture(16, "load-via-partition-root");
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
     let run = map_file(
-        source.as_ref(),
+        CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::DISABLED,
         &StatisticsRequest::DATA,
     )
     .await

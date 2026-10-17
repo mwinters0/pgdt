@@ -134,14 +134,14 @@ impl CacheMode {
     /// method's only `Err`: the load's own I/O failures propagate.
     ///
     /// A complete cache and an incomplete one are both [`CacheLoad::Index`],
-    /// because every caller of this method (`pgdt_mapping::map_file`,
-    /// `pgdt_query`'s `map_for_query`, which serves both
-    /// `pgdt_query::table_stream` and `pgdt_query::table_stream_partitions`,
-    /// and `crate::preamble::preamble_only`) builds forward from whatever
-    /// partial map exists (`docs/design/decisions.md`, "D22"). A caller that
-    /// instead *reports* what a cache holds opens it
-    /// ([`CacheMode::open`]), as `pgdt info` does, or reads it with no source
-    /// ([`OfflineCache`]). Neither an unusable cache's reason nor the caller's
+    /// because the caller of this method (`pgdt_query`'s `map_for_query`,
+    /// which serves both `pgdt_query::table_stream` and
+    /// `pgdt_query::table_stream_partitions`) builds forward from whatever
+    /// partial map exists (`docs/design/decisions.md`, "D22"). The mapping
+    /// pass and `crate::preamble::preamble_only` build forward from the cache
+    /// an open decoded instead ([`CacheMode::open`]), which is also how a
+    /// caller that *reports* what a cache holds reads it, as `pgdt info`
+    /// does; a caller with no source reads it alone ([`OfflineCache`]). Neither an unusable cache's reason nor the caller's
     /// own opt-out is collapsed. An unusable cache is answered, not refused,
     /// here: whether to refuse is [`CacheMode::refusal`]'s, asked by the
     /// caller that would scan.
@@ -192,8 +192,9 @@ impl CacheMode {
     /// What a scan entry point does about a cache it cannot use: the refusal,
     /// or `None` where this mode may start cold and replace it at its first
     /// save (`docs/design/decisions.md`, "D20"). One decision for every caller
-    /// — the four scan entry points on [`CacheLoad::Unusable`], an open
-    /// ([`CacheMode::open`]), and one pre-empting them on
+    /// — an open ([`CacheMode::open`], [`CacheMode::open_source`]), which the
+    /// mapping pass and `crate::preamble_only` take, the two query entry
+    /// points on [`CacheLoad::Unusable`], and one pre-empting them on
     /// [`CacheClaim::Unusable`](super::CacheClaim::Unusable) or on recognition
     /// refusing the cache's claim — so a refusal is word for word the one it
     /// pre-empts. The path lives here rather than on [`Unusable`] because
@@ -314,7 +315,7 @@ pub enum CacheLoad {
     /// [`CacheStatus::Missing`] — nothing at the cache path, the one outcome
     /// every scan entry point starts cold on unasked.
     Missing,
-    /// [`CacheStatus::Unusable`]. **The four scan entry points refuse on it**
+    /// [`CacheStatus::Unusable`]. **The two query entry points refuse on it**
     /// before the dump is read past its magic, unless the mode may overwrite it —
     /// [`CacheMode::refusal`] is that decision, in one place
     /// (`docs/design/decisions.md`, "D20").

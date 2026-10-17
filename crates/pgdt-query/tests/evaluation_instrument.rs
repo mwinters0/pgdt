@@ -80,19 +80,22 @@ async fn read(
 ) -> u64 {
     let version = *VERSIONS.last().unwrap();
     let (_dir, dump) = sandboxed(&statistics_fixture(version, "default"), "dump.sql");
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
         sizing: StatisticsSizing::Stated(NonZeroU64::new(1024).unwrap()),
         ..StatisticsRequest::DATA
     };
     let cache = CacheMode::enabled(cache::colocated_path(&dump));
-    let index =
-        map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &cache, &request)
-            .await
-            .unwrap()
-            .index;
-    let source: Arc<dyn ByteRangeSource> = Arc::new(source);
+    let index = map_file(
+        cache.open_source(Arc::clone(&source)).await.unwrap(),
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &request,
+    )
+    .await
+    .unwrap()
+    .index;
     let watch =
         Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
     let table =

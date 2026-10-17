@@ -7,6 +7,7 @@
 //! it is about in front of its sentence. What a refusal is across
 //! DataFusion's boundary is held here too.
 
+use pgdt_io::ByteRangeSource;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -164,13 +165,12 @@ async fn a_table_whose_plan_refuses_is_reported_and_not_listed() {
          COPY public.ok (a) FROM stdin;\n7\n\\.\n",
     )
     .unwrap();
-    let source = LocalFileSource::open(&dump_path).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump_path).unwrap());
     let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
     map_file(
-        &source,
+        cache.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &cache,
         &StatisticsRequest::DATA,
     )
     .await
@@ -216,7 +216,7 @@ async fn a_metadata_level_table_is_refused_naming_its_parse() {
          COPY public.ok (a) FROM stdin;\n7\n\\.\n",
     )
     .unwrap();
-    let source = LocalFileSource::open(&dump_path).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump_path).unwrap());
     let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
     let levels = StatisticsRequest {
         selection: StatisticsSelection {
@@ -225,9 +225,14 @@ async fn a_metadata_level_table_is_refused_naming_its_parse() {
         },
         ..StatisticsRequest::DATA
     };
-    map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &cache, &levels)
-        .await
-        .unwrap();
+    map_file(
+        cache.open_source(Arc::clone(&source)).await.unwrap(),
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &levels,
+    )
+    .await
+    .unwrap();
     let location = dump_path.to_str().unwrap();
 
     let dump = PgDump::open(location, PgDumpOptions::default()).await.unwrap();
@@ -446,15 +451,20 @@ async fn every_refusal_is_the_provider_s_error_over_the_library_s() {
          COPY public.u (a, c) FROM stdin;\n4\tz\n\\.\n",
     )
     .unwrap();
-    let source = LocalFileSource::open(&dump_path).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump_path).unwrap());
     let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
     let ignoring = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Ignore,
         ..GatherOptions::default()
     };
-    map_file(&source, &ScanOptions::default(), &ignoring, &cache, &StatisticsRequest::DATA)
-        .await
-        .unwrap();
+    map_file(
+        cache.open_source(Arc::clone(&source)).await.unwrap(),
+        &ScanOptions::default(),
+        &ignoring,
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
     let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
 
     let err = dump.table(None, None, "u").unwrap_err();
@@ -493,13 +503,12 @@ async fn a_table_asked_for_at_the_metadata_level_is_refused_as_such() {
     let dir = tempfile::tempdir().unwrap();
     let dump_path = dir.path().join("meta.sql");
     std::fs::write(&dump_path, "COPY public.meta (a) FROM stdin;\n1\n\\.\n").unwrap();
-    let source = LocalFileSource::open(&dump_path).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump_path).unwrap());
     let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
     map_file(
-        &source,
+        cache.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &cache,
         &StatisticsRequest::METADATA,
     )
     .await

@@ -1,7 +1,8 @@
 //! A source opened through its cache ([`CacheMode::open`]): the cache read
 //! once, the source opened on what it settles, the watch taken, and the cache
 //! judged against the live source — and what that hands back ([`Opened`],
-//! [`Held`]).
+//! [`Held`]). A source already in hand is opened the same way, short of the
+//! step that builds it ([`CacheMode::open_source`]).
 
 use std::sync::Arc;
 
@@ -13,8 +14,11 @@ use pgdt_core::{Result, Unusable};
 use pgdt_io::{ByteRangeSource, KnownCompression, Origin, Recognized};
 
 /// A source opened through its cache: the source, the watch its run keeps on
-/// it, and what the cache held — every step of the open protocol taken, in
-/// its order, by [`CacheMode::open`].
+/// it, what the cache held, and the mode it was opened under — every step of
+/// the open protocol taken, in its order, by [`CacheMode::open`] or
+/// [`CacheMode::open_source`]. The mapping pass and `crate::preamble_only`
+/// take one whole, so the cache they build forward from is the one the open
+/// decoded and judged, and the cache they save to is the one it read.
 pub struct Opened {
     /// The source, ready to read: built from the compression layer the cache
     /// settled, so an `.xz` file whose seek table the cache holds is not
@@ -25,6 +29,9 @@ pub struct Opened {
     pub watch: SourceWatch,
     /// What the cache held.
     pub cache: Held,
+    /// The mode the cache was opened under: the path a pass saves to, and
+    /// the selection its watch and its refusals were taken under.
+    pub mode: CacheMode,
 }
 
 /// What an open found at the mode's path, short of a refusal.
@@ -58,6 +65,7 @@ impl std::fmt::Debug for Opened {
         f.debug_struct("Opened")
             .field("watch", &self.watch)
             .field("cache", &self.cache)
+            .field("mode", &self.mode)
             .finish_non_exhaustive()
     }
 }
@@ -117,11 +125,11 @@ impl CacheMode {
         let watch = SourceWatch::open(source.as_ref(), self.strict_identity()).await?;
         let file = match file {
             Ok(file) => file,
-            Err(cache) => return Ok(Opened { source, watch, cache }),
+            Err(cache) => return Ok(self.opened(source, watch, cache)),
         };
         match against_source(file, source.as_ref()).await? {
             CacheStatus::Loaded(loaded) => {
-                Ok(Opened { source, watch, cache: Held::Loaded(self.judged(loaded)?) })
+                Ok(self.opened(source, watch, Held::Loaded(self.judged(loaded)?)))
             }
             // The file moved between the probe and the open, so the source
             // was built on a claim about another file: opened again on none.
@@ -129,10 +137,45 @@ impl CacheMode {
                 let cache = self.replacing(why)?;
                 let source = open_claiming_nothing(origin).await?;
                 let watch = SourceWatch::open(source.as_ref(), self.strict_identity()).await?;
-                Ok(Opened { source, watch, cache })
+                Ok(self.opened(source, watch, cache))
             }
             CacheStatus::Missing => unreachable!("a decoded file is never missing"),
         }
+    }
+
+    /// Open `source`, **already in hand**, through the cache this mode
+    /// names: [`CacheMode::open`] short of building the source, for a caller
+    /// that built its own — a wrapper over another, or one opened before the
+    /// cache was chosen.
+    ///
+    /// The watch is taken first, then the cache decoded once and judged
+    /// against the source — its stored size and compression layer, which
+    /// refuse, then the weak signals — each refusal word for word
+    /// [`CacheMode::open`]'s. **Nothing the cache records reaches `source`**,
+    /// which was built before it was read: a caller holding an `.xz` file
+    /// whose seek table a cache holds opens it from its [`Origin`] instead,
+    /// so the stream footers are not walked again
+    /// (`docs/design/decisions.md`, "D18").
+    pub async fn open_source(&self, source: Arc<dyn ByteRangeSource>) -> Result<Opened> {
+        let watch = SourceWatch::open(source.as_ref(), self.strict_identity()).await?;
+        let cache = match self.path() {
+            None => Held::Disabled,
+            Some(path) => match read_cache_file(path)? {
+                Ok(file) => match against_source(file, source.as_ref()).await? {
+                    CacheStatus::Loaded(loaded) => Held::Loaded(self.judged(loaded)?),
+                    CacheStatus::Unusable(why) => self.replacing(why)?,
+                    CacheStatus::Missing => unreachable!("a decoded file is never missing"),
+                },
+                Err(CacheStatus::Unusable(why)) => self.replacing(why)?,
+                Err(_) => Held::Missing,
+            },
+        };
+        Ok(self.opened(source, watch, cache))
+    }
+
+    /// What an open hands back, under this mode.
+    fn opened(&self, source: Arc<dyn ByteRangeSource>, watch: SourceWatch, cache: Held) -> Opened {
+        Opened { source, watch, cache, mode: self.clone() }
     }
 
     /// `why`'s refusal, or [`Held::Replacing`] where this mode may replace

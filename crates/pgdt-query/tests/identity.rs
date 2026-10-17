@@ -193,12 +193,11 @@ async fn an_aborted_run_leaves_the_cache_on_disk_exactly_as_it_was() {
     let path = cache::colocated_path(&dump);
 
     // A real, complete cache to be preserved, written from an unmoving source.
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
-        &source,
+        CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(&path),
         &StatisticsRequest::METADATA,
     )
     .await
@@ -210,10 +209,9 @@ async fn an_aborted_run_leaves_the_cache_on_disk_exactly_as_it_was() {
     // whose identity moves after the baseline aborts at that save.
     let shifting = Shifting::new(dump.clone(), 1);
     let err = map_file(
-        &shifting,
+        CacheMode::enabled(&path).open_source(Arc::new(shifting)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(&path),
         &StatisticsRequest::METADATA,
     )
     .await
@@ -238,10 +236,9 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
     // the baseline is the only one before the end-of-run check.
     let shifting = Shifting::new(dump.clone(), 1);
     let err = map_file(
-        &shifting,
+        CacheMode::DISABLED.open_source(Arc::new(shifting)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::DISABLED,
         &StatisticsRequest::METADATA,
     )
     .await
@@ -252,12 +249,11 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
     // replays out of the cache. The rows come out and the failure lands after
     // them, which is the most that is recoverable by then.
     let path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
-        &source,
+        CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(&path),
         &StatisticsRequest::METADATA,
     )
     .await
@@ -288,7 +284,8 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
 
     // `preamble_only` over that same complete cache saves nothing either.
     let shifting = Shifting::new(dump.clone(), 1);
-    let err = preamble_only(&shifting, &ScanOptions::default(), &CacheMode::enabled(&path))
+    let opened = CacheMode::enabled(&path).open_source(Arc::new(shifting)).await.unwrap();
+    let err = preamble_only(opened, &ScanOptions::default())
         .await
         .expect_err("a preamble-only run over a complete cache is checked too");
     assert!(matches!(err, Error::SourceChangedWhileRead { .. }), "got {err:?}");
@@ -317,10 +314,9 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
     let shifting = Shifting::dropping(dump, 1, 0, Arc::clone(&cancel));
     let options = ScanOptions { cancel: Some(cancel), ..ScanOptions::default() };
     let err = map_file(
-        &shifting,
+        CacheMode::DISABLED.open_source(Arc::new(shifting)).await.unwrap(),
         &options,
         &GatherOptions::default(),
-        &CacheMode::DISABLED,
         &StatisticsRequest::METADATA,
     )
     .await
@@ -348,10 +344,9 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
         ..ScanOptions::default()
     };
     let err = map_file(
-        &shifting,
+        CacheMode::DISABLED.open_source(Arc::new(shifting)).await.unwrap(),
         &options,
         &GatherOptions::default(),
-        &CacheMode::DISABLED,
         &StatisticsRequest::METADATA,
     )
     .await
@@ -389,10 +384,9 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
         let options = options.clone();
         async move {
             map_file(
-                &source,
+                cache.open_source(Arc::new(source)).await.unwrap(),
                 &options,
                 &GatherOptions::default(),
-                &cache,
                 &StatisticsRequest::METADATA,
             )
             .await
@@ -407,20 +401,19 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
     let err = map(Shifting::cut(dump.clone(), 1, cut), none).await.unwrap_err();
     assert!(short(&err), "`none` reports the failure, the move a warning: {err:?}");
 
-    let err = preamble_only(&Shifting::cut(dump.clone(), 1, 10), &options, &CacheMode::DISABLED)
-        .await
-        .unwrap_err();
+    let cut_short = Arc::new(Shifting::cut(dump.clone(), 1, 10));
+    let opened = CacheMode::DISABLED.open_source(cut_short).await.unwrap();
+    let err = preamble_only(opened, &options).await.unwrap_err();
     assert!(changed(&err), "the preamble names the change: {err:?}");
 
     // A warm query: the map is complete, so every read is the replay's. The
     // baseline and the load are the two observations before it fails.
     let path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
-        &source,
+        CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
         &options,
         &GatherOptions::default(),
-        &CacheMode::enabled(&path),
         &StatisticsRequest::DATA,
     )
     .await
@@ -473,7 +466,7 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
 #[tokio::test]
 async fn a_dump_replaced_by_rename_under_an_open_source_is_not_a_change() {
     let (dir, dump) = sandboxed();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
 
     // A different file of a different length, renamed over the dump's name
     // while the source above holds the original open.
@@ -482,10 +475,12 @@ async fn a_dump_replaced_by_rename_under_an_open_source_is_not_a_change() {
     std::fs::rename(&replacement, &dump).unwrap();
 
     let run = map_file(
-        &source,
+        CacheMode::enabled(cache::colocated_path(&dump))
+            .open_source(Arc::clone(&source))
+            .await
+            .unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(cache::colocated_path(&dump)),
         &StatisticsRequest::METADATA,
     )
     .await
@@ -511,13 +506,12 @@ fn epoch_stamp(t: SystemTime) -> String {
 async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
     let (_dir, dump) = sandboxed();
     let path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let recorded = std::fs::metadata(&dump).unwrap().modified().unwrap();
     map_file(
-        &source,
+        CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(&path),
         &StatisticsRequest::METADATA,
     )
     .await
@@ -532,16 +526,11 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
     // difference the strict one is about.
     let strict =
         CacheMode::enabled(&path).with_strict_identity(StrictIdentity::binding(true, false));
-    let source = LocalFileSource::open(&dump).unwrap();
-    let err = map_file(
-        &source,
-        &ScanOptions::default(),
-        &GatherOptions::default(),
-        &strict,
-        &StatisticsRequest::METADATA,
-    )
-    .await
-    .expect_err("`time` binds the modification time");
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+    let err = strict
+        .open_source(Arc::clone(&source))
+        .await
+        .expect_err("`time` binds the modification time");
     let Error::StrictIdentityUnmet { unmet, .. } = &err else {
         panic!("the strict refusal, got {err:?}")
     };
@@ -552,12 +541,11 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
     );
 
     // The default reads it: the mtime is advisory and the map is reused.
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
-        &source,
+        CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(&path),
         &StatisticsRequest::METADATA,
     )
     .await
@@ -569,24 +557,19 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
     let path = cache::colocated_path(&dump);
     let silent = Shifting::silent(dump.clone());
     map_file(
-        &silent,
+        CacheMode::enabled(&path).open_source(Arc::new(silent)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(&path),
         &StatisticsRequest::METADATA,
     )
     .await
     .unwrap();
     let silent = Shifting::silent(dump);
-    let err = map_file(
-        &silent,
-        &ScanOptions::default(),
-        &GatherOptions::default(),
-        &CacheMode::enabled(&path).with_strict_identity(StrictIdentity::binding(true, false)),
-        &StatisticsRequest::METADATA,
-    )
-    .await
-    .expect_err("absence is a failure under a selected term");
+    let err = CacheMode::enabled(&path)
+        .with_strict_identity(StrictIdentity::binding(true, false))
+        .open_source(Arc::new(silent))
+        .await
+        .expect_err("absence is a failure under a selected term");
     let Error::StrictIdentityUnmet { unmet, .. } = &err else {
         panic!("the strict refusal, got {err:?}")
     };
@@ -601,27 +584,22 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
     // quiet and names the time the other one has.
     let (_dir, dump) = sandboxed();
     let path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let recorded = std::fs::metadata(&dump).unwrap().modified().unwrap();
     map_file(
-        &source,
+        CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(&path),
         &StatisticsRequest::METADATA,
     )
     .await
     .unwrap();
     let silent = Shifting::silent(dump);
-    let err = map_file(
-        &silent,
-        &ScanOptions::default(),
-        &GatherOptions::default(),
-        &CacheMode::enabled(&path).with_strict_identity(StrictIdentity::binding(true, false)),
-        &StatisticsRequest::METADATA,
-    )
-    .await
-    .expect_err("a source that has gone silent cannot give the guarantee either");
+    let err = CacheMode::enabled(&path)
+        .with_strict_identity(StrictIdentity::binding(true, false))
+        .open_source(Arc::new(silent))
+        .await
+        .expect_err("a source that has gone silent cannot give the guarantee either");
     let Error::StrictIdentityUnmet { unmet, .. } = &err else {
         panic!("the strict refusal, got {err:?}")
     };
@@ -639,12 +617,11 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
 async fn location_binds_nothing_on_a_local_source() {
     let (_dir, dump) = sandboxed();
     let path = cache::colocated_path(&dump);
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
-        &source,
+        CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(&path),
         &StatisticsRequest::METADATA,
     )
     .await
@@ -652,12 +629,15 @@ async fn location_binds_nothing_on_a_local_source() {
 
     let future = SystemTime::now() + Duration::from_secs(3600);
     std::fs::File::options().write(true).open(&dump).unwrap().set_modified(future).unwrap();
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
-        &source,
+        CacheMode::enabled(&path)
+            .with_strict_identity(StrictIdentity::binding(false, true))
+            .open_source(Arc::clone(&source))
+            .await
+            .unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(&path).with_strict_identity(StrictIdentity::binding(false, true)),
         &StatisticsRequest::METADATA,
     )
     .await
@@ -716,17 +696,18 @@ impl ByteRangeSource for Fetched {
     }
 }
 
-/// Map `dump` through `source`, saving to `path` under `strict`.
+/// Map `dump` through `source`, saving to `path` under `strict`: the open and
+/// the pass, either refusing.
 async fn mapped(
-    source: &dyn ByteRangeSource,
+    source: Arc<dyn ByteRangeSource>,
     path: &std::path::Path,
     strict: StrictIdentity,
 ) -> Result<()> {
+    let opened = CacheMode::enabled(path).with_strict_identity(strict).open_source(source).await?;
     map_file(
-        source,
+        opened,
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(path).with_strict_identity(strict),
         &StatisticsRequest::METADATA,
     )
     .await
@@ -744,7 +725,7 @@ async fn a_cache_written_for_another_origin_loads_with_a_warning() {
     let (_dir, dump) = sandboxed();
     let path = cache::colocated_path(&dump);
     let here = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
-    mapped(&here, &path, StrictIdentity::ADVISORY).await.unwrap();
+    mapped(Arc::new(here), &path, StrictIdentity::ADVISORY).await.unwrap();
 
     let elsewhere = Fetched::new(&dump, "https://two.example/koji.dump", Some("\"abc\""));
     let status = pgdt_dump::internal::load(&path, &elsewhere).await.unwrap();
@@ -762,10 +743,9 @@ async fn a_cache_written_for_another_origin_loads_with_a_warning() {
     // And the advisory answer reaches a scan as a diagnostic rather than
     // stopping it.
     let run = map_file(
-        &elsewhere,
+        CacheMode::enabled(&path).open_source(Arc::new(elsewhere)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(&path),
         &StatisticsRequest::METADATA,
     )
     .await
@@ -784,10 +764,11 @@ async fn location_refuses_a_cache_written_for_another_origin() {
     let (_dir, dump) = sandboxed();
     let path = cache::colocated_path(&dump);
     let here = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
-    mapped(&here, &path, StrictIdentity::ADVISORY).await.unwrap();
+    mapped(Arc::new(here), &path, StrictIdentity::ADVISORY).await.unwrap();
 
     let elsewhere = Fetched::new(&dump, "https://two.example/koji.dump", Some("\"abc\""));
-    let err = mapped(&elsewhere, &path, StrictIdentity::binding(false, true)).await.unwrap_err();
+    let err =
+        mapped(Arc::new(elsewhere), &path, StrictIdentity::binding(false, true)).await.unwrap_err();
     let Error::StrictIdentityUnmet { term, unmet, .. } = &err else {
         panic!("`location` refuses a differing origin, got {err:?}")
     };
@@ -804,7 +785,7 @@ async fn a_local_cache_read_over_a_fetched_source_differs_in_origin() {
     let (_dir, dump) = sandboxed();
     let path = cache::colocated_path(&dump);
     let local = LocalFileSource::open(&dump).unwrap();
-    mapped(&local, &path, StrictIdentity::ADVISORY).await.unwrap();
+    mapped(Arc::new(local), &path, StrictIdentity::ADVISORY).await.unwrap();
 
     let fetched = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
     let status = pgdt_dump::internal::load(&path, &fetched).await.unwrap();
@@ -830,7 +811,7 @@ async fn an_entity_tag_outranks_a_modification_time_that_agrees_with_nothing() {
     let (_dir, dump) = sandboxed();
     let path = cache::colocated_path(&dump);
     let first = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
-    mapped(&first, &path, StrictIdentity::ADVISORY).await.unwrap();
+    mapped(Arc::new(first), &path, StrictIdentity::ADVISORY).await.unwrap();
 
     // Same origin, same `Last-Modified`, a tag the server has changed.
     let second = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"def\""));
@@ -845,7 +826,8 @@ async fn an_entity_tag_outranks_a_modification_time_that_agrees_with_nothing() {
         WeakIdentity::TagDiffers { cached: "\"abc\"".to_string(), live: "\"def\"".to_string() }
     );
 
-    let err = mapped(&second, &path, StrictIdentity::binding(true, false)).await.unwrap_err();
+    let err =
+        mapped(Arc::new(second), &path, StrictIdentity::binding(true, false)).await.unwrap_err();
     let Error::StrictIdentityUnmet { term, unmet, .. } = &err else {
         panic!("`time` binds the entity tag too, got {err:?}")
     };
@@ -861,7 +843,7 @@ async fn a_missing_entity_tag_falls_back_to_the_modification_time() {
     let (_dir, dump) = sandboxed();
     let path = cache::colocated_path(&dump);
     let tagged = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
-    mapped(&tagged, &path, StrictIdentity::ADVISORY).await.unwrap();
+    mapped(Arc::new(tagged), &path, StrictIdentity::ADVISORY).await.unwrap();
 
     let mut untagged = Fetched::new(&dump, "https://one.example/koji.dump", None);
     let status = pgdt_dump::internal::load(&path, &untagged).await.unwrap();
@@ -907,7 +889,7 @@ async fn a_weak_entity_tag_decides_only_where_no_modification_time_is_stated() {
         }
     };
 
-    mapped(&weak("W/\"abc\"", then), &path, StrictIdentity::ADVISORY).await.unwrap();
+    mapped(Arc::new(weak("W/\"abc\"", then)), &path, StrictIdentity::ADVISORY).await.unwrap();
     assert_eq!(
         weak_of(weak("W/\"def\"", then)).await,
         WeakIdentity::Agrees,
@@ -925,7 +907,7 @@ async fn a_weak_entity_tag_decides_only_where_no_modification_time_is_stated() {
         "one side stating a `Last-Modified` leaves the weak tag undeciding"
     );
 
-    mapped(&weak("W/\"abc\"", None), &path, StrictIdentity::ADVISORY).await.unwrap();
+    mapped(Arc::new(weak("W/\"abc\"", None)), &path, StrictIdentity::ADVISORY).await.unwrap();
     assert_eq!(
         weak_of(weak("W/\"def\"", None)).await,
         WeakIdentity::TagDiffers { cached: "W/\"abc\"".to_string(), live: "W/\"def\"".to_string() },
@@ -958,7 +940,7 @@ async fn an_equal_weak_entity_tag_confirms_nothing() {
     };
     let time = StrictIdentity::binding(true, false);
 
-    mapped(&tagged("W/\"abc\""), &path, StrictIdentity::ADVISORY).await.unwrap();
+    mapped(Arc::new(tagged("W/\"abc\"")), &path, StrictIdentity::ADVISORY).await.unwrap();
     for live in ["W/\"abc\"", "\"abc\""] {
         let weak = weak_of(tagged(live)).await;
         assert_eq!(
@@ -971,7 +953,7 @@ async fn an_equal_weak_entity_tag_confirms_nothing() {
             0,
             "silent under the default: nothing shows a change"
         );
-        let err = mapped(&tagged(live), &path, time).await.unwrap_err();
+        let err = mapped(Arc::new(tagged(live)), &path, time).await.unwrap_err();
         let Error::StrictIdentityUnmet { term, unmet, .. } = &err else {
             panic!("`time` wants a guarantee a weak tag cannot give, got {err:?}")
         };
@@ -983,8 +965,8 @@ async fn an_equal_weak_entity_tag_confirms_nothing() {
     // source's, and the cache is not called silent.
     let strong = tempfile::tempdir().unwrap();
     let path = strong.path().join("strong.dtcache");
-    mapped(&tagged("\"abc\""), &path, StrictIdentity::ADVISORY).await.unwrap();
-    let err = mapped(&tagged("W/\"abc\""), &path, time).await.unwrap_err();
+    mapped(Arc::new(tagged("\"abc\"")), &path, StrictIdentity::ADVISORY).await.unwrap();
+    let err = mapped(Arc::new(tagged("W/\"abc\"")), &path, time).await.unwrap_err();
     let Error::StrictIdentityUnmet { unmet, .. } = &err else {
         panic!("`time` refuses a live weak tag too, got {err:?}")
     };
@@ -1029,21 +1011,18 @@ impl ByteRangeSource for Unpinnable {
 #[tokio::test]
 async fn a_source_nothing_can_check_is_refused_unless_nothing_binds() {
     let (_dir, dump) = sandboxed();
-    let source = Unpinnable { inner: LocalFileSource::open(&dump).unwrap(), reads: 0.into() };
+    let source =
+        Arc::new(Unpinnable { inner: LocalFileSource::open(&dump).unwrap(), reads: 0.into() });
     for strict in [
         StrictIdentity::ADVISORY,
         StrictIdentity::binding(true, false),
         StrictIdentity::binding(false, true),
     ] {
-        let refused = map_file(
-            &source,
-            &ScanOptions::default(),
-            &GatherOptions::default(),
-            &CacheMode::DISABLED.with_strict_identity(strict),
-            &StatisticsRequest::METADATA,
-        )
-        .await
-        .unwrap_err();
+        let refused = CacheMode::DISABLED
+            .with_strict_identity(strict)
+            .open_source(source.clone())
+            .await
+            .unwrap_err();
         let Error::SourceUncheckable { why } = &refused else {
             panic!("{strict:?} binds the in-flight check, got {refused:?}")
         };
@@ -1053,9 +1032,9 @@ async fn a_source_nothing_can_check_is_refused_unless_nothing_binds() {
     assert_eq!(source.reads.load(Ordering::Relaxed), 0, "refused before a byte was read");
 
     let path = cache::colocated_path(&dump);
-    mapped(&source, &path, StrictIdentity::NONE).await.unwrap();
+    mapped(source.clone(), &path, StrictIdentity::NONE).await.unwrap();
     assert!(matches!(
-        pgdt_dump::internal::load(&path, &source).await.unwrap(),
+        pgdt_dump::internal::load(&path, source.as_ref()).await.unwrap(),
         CacheStatus::Loaded(loaded) if loaded.is_complete()
     ));
 }

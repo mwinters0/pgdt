@@ -3,7 +3,9 @@ use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_core::Error;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
+use pgdt_io::ByteRangeSource;
 use pgdt_model::{ArrayShape, DumpMetadata};
+use std::sync::Arc;
 
 use super::resolve_block;
 use crate::predicate::{Expr, PredicateOp, resolve_expr};
@@ -105,17 +107,16 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
              2020-01-01\n2021-01-01\n2022-01-01\n-infinity\n\\.\n",
     )
     .unwrap();
-    let source = LocalFileSource::open(&path).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
     // One row a group: a row's first byte is all a group holds.
     let request = StatisticsRequest {
         sizing: StatisticsSizing::Stated(std::num::NonZeroU64::new(1).unwrap()),
         ..StatisticsRequest::DATA
     };
     let run = map_file(
-        &source,
+        CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::DISABLED,
         &request,
     )
     .await

@@ -212,8 +212,8 @@ async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
 #[tokio::test]
 async fn a_partitioned_table_unions_the_censuses_of_all_its_blocks() {
     let path = common::partitions_fixture(16, "default");
-    let source = LocalFileSource::open(&path).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
+    let index = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
 
     let blocks: Vec<_> = index.blocks_for("public.spread").collect();
     assert!(blocks.len() > 1, "`spread` is written as two blocks under one name (I2)");
@@ -243,10 +243,9 @@ async fn a_metadata_level_table_is_censused_by_its_query_and_refused_by_a_held_p
     let mode = CacheMode::enabled(path.clone());
     let metadata = StatisticsRequest::METADATA;
     let run = map_file(
-        source.as_ref(),
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &mode,
         &metadata,
     )
     .await

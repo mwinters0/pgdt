@@ -482,13 +482,12 @@ async fn check_fixture(
     // Resolution reads no statistic, so what refuses is asked of a cache
     // holding none, which loads in a fraction of the time.
     let plain = dir.path().join("plain.dtcache");
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn pgdt_io::ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let request = StatisticsRequest::METADATA;
     map_file(
-        &source,
+        CacheMode::enabled(plain.clone()).open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(plain.clone()),
         &request,
     )
     .await

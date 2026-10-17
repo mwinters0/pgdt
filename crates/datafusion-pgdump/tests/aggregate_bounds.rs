@@ -7,6 +7,7 @@
 //! fails them, and that failure is the cue to act on the register entry.
 // upstream: UF1
 
+use pgdt_io::ByteRangeSource;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -73,15 +74,20 @@ COPY public.t (id, x, a, b) FROM stdin;\n"
 async fn parsed(dir: &Path) -> PathBuf {
     let copy = dir.join("default.sql");
     std::fs::write(&copy, dump_text()).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&copy).unwrap());
     let cache = CacheMode::enabled(cache::colocated_path(&copy));
     let request = StatisticsRequest {
         sizing: StatisticsSizing::Stated(NonZeroU64::new(GROUP_ROWS).unwrap()),
         ..StatisticsRequest::DATA
     };
-    map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &cache, &request)
-        .await
-        .unwrap();
+    map_file(
+        cache.open_source(Arc::clone(&source)).await.unwrap(),
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &request,
+    )
+    .await
+    .unwrap();
     copy
 }
 

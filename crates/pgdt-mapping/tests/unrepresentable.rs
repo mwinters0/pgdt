@@ -12,8 +12,10 @@
 //! DataFusion's own path by `datafusion-pgdump`'s
 //! `every_extreme_is_held_by_arrow_or_recorded`.
 
+use pgdt_io::ByteRangeSource;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
@@ -49,12 +51,17 @@ async fn parsed(fixture: &Path, dir: &Path, request: &StatisticsRequest) -> Dump
     if !dump.exists() {
         std::fs::copy(fixture, &dump).unwrap();
     }
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
-    map_file(&source, &ScanOptions::default(), &GatherOptions::default(), &mode, request)
-        .await
-        .unwrap()
-        .index
+    map_file(
+        mode.open_source(Arc::clone(&source)).await.unwrap(),
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        request,
+    )
+    .await
+    .unwrap()
+    .index
 }
 
 fn count(format: u64, engine: u64) -> Unrepresentable {

@@ -215,9 +215,14 @@ async fn only_a_complete_cache_opens() {
     assert!(missing.to_string().contains(&format!("pgdt parse --source {location}")), "{missing}");
 
     // A preamble-only scan leaves a cache that stops short of the end.
-    let source = LocalFileSource::open(&copy).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&copy).unwrap());
     let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
-    pgdt_dump::preamble_only(&source, &ScanOptions::default(), &cache).await.unwrap();
+    pgdt_dump::preamble_only(
+        cache.open_source(Arc::clone(&source)).await.unwrap(),
+        &ScanOptions::default(),
+    )
+    .await
+    .unwrap();
     let partial = PgDump::open(location, PgDumpOptions::default()).await.unwrap_err();
     assert!(partial.to_string().contains("covers"), "{partial}");
     let before = std::fs::read(pgdt_dump::cache::colocated_path(&copy)).unwrap();
@@ -364,13 +369,12 @@ async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot
     let dir = tempfile::tempdir_in(dir.path()).unwrap().keep();
     let copy = dir.join("default.sql");
     std::fs::copy(&fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&copy).unwrap());
     let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
     map_file(
-        &source,
+        cache.open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &cache,
         &StatisticsRequest::DATA,
     )
     .await
@@ -473,15 +477,20 @@ async fn a_dump_opened_ignoring_refused_values_reads_a_float_past_its_range() {
     let dir = tempfile::tempdir().unwrap();
     let copy = dir.path().join("dump.sql");
     std::fs::copy(&fixture, &copy).unwrap();
-    let source = LocalFileSource::open(&copy).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&copy).unwrap());
     let scan = GatherOptions {
         postgres_invalid_values: PostgresInvalidValues::Ignore,
         ..GatherOptions::default()
     };
     let cached = CacheMode::enabled(cache::colocated_path(&copy));
-    map_file(&source, &ScanOptions::default(), &scan, &cached, &StatisticsRequest::DATA)
-        .await
-        .unwrap();
+    map_file(
+        cached.open_source(Arc::clone(&source)).await.unwrap(),
+        &ScanOptions::default(),
+        &scan,
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .unwrap();
     let modes = [
         PostgresInvalidValues::Default,
         PostgresInvalidValues::Strict,

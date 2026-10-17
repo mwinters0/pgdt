@@ -16,9 +16,11 @@
 //! `c = a OR c IN (NULL)`. What `c IN (NULL)` answers is pinned apart, by
 //! `predicate/eval/tests.rs`, against a term over a field the row lacks.
 
+use pgdt_io::ByteRangeSource;
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use arrow::array::RecordBatch;
 use arrow::compute::concat_batches;
@@ -305,12 +307,11 @@ async fn check_fixture(
 ) {
     let (dir, dump, index) = gathered(fixture).await;
     let plain = dir.path().join("plain.dtcache");
-    let source = LocalFileSource::open(&dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
-        &source,
+        CacheMode::enabled(plain.clone()).open_source(Arc::clone(&source)).await.unwrap(),
         &ScanOptions::default(),
         &GatherOptions::default(),
-        &CacheMode::enabled(plain.clone()),
         &StatisticsRequest::METADATA,
     )
     .await

@@ -206,9 +206,9 @@ impl Discovered<'_> {
     ///
     /// **`held` is what the pass keeps resident besides its workers while
     /// they are carved**: the heap a cache's statistics hold once a pass loads
-    /// them (`CacheClaim::Settles`), billed against the margin's ceiling as the
-    /// provider bills a resident map, so it lowers the count first and, where
-    /// the count cannot fall, the budget (`pgdt_io::ArrangementRequest::held`;
+    /// them — the opened cache's index, or `CacheClaim::Settles` — billed
+    /// against the margin's ceiling as the provider bills a resident map, so
+    /// it lowers the count first and, where the count cannot fall, the budget (`pgdt_io::ArrangementRequest::held`;
     /// `docs/design/decisions.md`, "D85"). A pass holding none passes `0`
     /// ([`Discovered::resolve_query`]).
     pub(crate) fn resolve(&self, source: &dyn ByteRangeSource, held: u64) -> Resolved {
