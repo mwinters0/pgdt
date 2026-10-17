@@ -100,10 +100,11 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.4.5** datafusion-pgdump: in DataFusion's semantics, two keys of different orders compare where its comparison coercion relates their emitted types, answered by `compare_value_keys` through DataFusion's own coercion, cast and comparison kernel, a refused cast answering `None`; the key built from the resolved column, carrying its emitted Arrow type and handing over its value in that type's units (`ValueKey::emitted`), none where the type cannot hold it; DataFusion the oracle, over the `types` fixture's scalar columns pair by pair; closes `KD119` ([notes](../design/roadmap-P36.4.5-datafusion-orders-notes.md))
 - [x] **36.5** pgdt-dump: `ChunkedScanner`, its four sites calling it; counted by `measure.py --count-pair HEAD~1` — all four loops read through it; the count resolves a rise on every row, which callgrind puts wholly in the slice's code, `ChunkEvents::next_event`'s test moving each event once more; no shape of the slice's code as clean recovers it, and it is accepted ([notes](../design/roadmap-P36.5-chunked-scanner-notes.md))
 - [x] **36.6** pgdt-dump: `CacheMode::open` opens an `Origin` — the cache decoded once, the source on the layer it settles, the watch, the judgement — answering `Held`; `CacheStatus` one `Loaded(LoadedCache)`; `OfflineCache` its own type, `CacheMode::Offline` and `Error::CacheModeMismatch` gone; `Disabled` the caller's to state; the free `load`, `save` and `load_offline` `internal`'s; `pgdt info` and `PgDump::open` open through it ([notes](../design/roadmap-P36.6-open-notes.md))
-- [ ] **36.6.1** The scan entry points take the open: `map_file`, `preamble_only` and the query entry points read the cache it decoded, `pgdt parse` and `pgdt query` open through it, and `claim`, `CacheMode::load` and `CacheLoad` go
+- [ ] **36.6.1** The mapping pass takes the open: `map_file` and `preamble_only` read the cache it decoded, and `pgdt parse` opens through it
 - [ ] **36.6.2** `scan` and `preamble_only` take only the fields they read
+- [ ] **36.6.3** pgdt-dump: an uncheckable source refused where a read begins, not by `SourceWatch::open` — the mapping pass and `preamble_only` refusing at their start, `PgDump::open` asking for it at construction, `pgdt info` under the selection as given; `StrictIdentity::between_runs` gone, so `NONE`'s rustdoc and D21's "refused unless `NONE`" hold again
 - [ ] **36.7** pgdt-mapping: back-fill one call; the mapping pass hands back a `Dump`'s parts; closes `KD115`
-- [ ] **36.8** pgdt-query: `Dump`, the selector, `Table::plan` with partitions, a file-ordered stream and serial resume; `read_table` gone; `max_rows` on the stream; filter operators carrying values; `pgdt info` and `pgdt query` on it
+- [ ] **36.8** pgdt-query: `Dump`, the selector, `Table::plan` with partitions, a file-ordered stream and serial resume; `read_table` gone; `max_rows` on the stream; filter operators carrying values; `pgdt info` and `pgdt query` on it, `pgdt query` and the stream entry points opening through `CacheMode::open`; `claim`, `CacheMode::load`, `CacheLoad` and `pgdt`'s `open_for_scan` gone
 - [ ] **36.9** pgdt-query: one record per column in `ResolvedSchema`, rendering and `ValueKey` through it; closes `KD121`; counted by `measure.py --count-pair HEAD~1`
 - [ ] **36.10** Errors in library terms, `pgdt`'s spelling layer pinned by a test, the cache's "Not in one place" line struck; closes `KD92`
 - [ ] **36.11** datafusion-pgdump: `PgDump` over a `Dump`, one session-readying function, `Located` public, the sink at construction, `PgDumpTableOptions` folded
@@ -139,23 +140,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **36.6 split, and where its remainder lands.** 36.6 landed the open protocol
-  with `pgdt info` and the provider on it. Moving `pgdt parse` and `pgdt
-  query` onto it needs the scan entry points to take the open, or the cache is
-  decoded twice; that rework touches every test calling `map_file`,
-  `table_stream` or `preamble_only`, so it became 36.6.1, and narrowing
-  `scan`'s options 36.6.2 ([notes](../design/roadmap-P36.6-open-notes.md),
-  "Negative results"). The call is to land 36.6.1 next, as its own slice.
-  Reconsidering would fold the query half into 36.8, which replaces
-  `table_stream` with `Table::plan` anyway, sparing that half one rework,
-  and leave only `map_file` and `preamble_only` to 36.6.1.
-- **`pgdt info` opens with no in-flight check.** It opens under
-  `StrictIdentity::between_runs`, the selection with its in-flight term off,
-  because it reads nothing of the dump past the open. A watch under the
-  plain selection would refuse a remote dump whose server states neither
-  validator, which `info` never refused before (`crates/pgdt/tests/remote.rs`
-  now pins that). The call adds one method to `StrictIdentity`.
-  Reconsidering would mean either refusing such a dump in `info` too, a
-  behaviour change, or having `CacheMode::open` take no watch for a caller
-  that will not read, which would put a second shape into the open
-  protocol.

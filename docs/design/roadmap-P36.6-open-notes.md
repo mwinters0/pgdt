@@ -5,8 +5,8 @@ The open protocol is `CacheMode::open`, in
 source on the compression layer the cache settles, takes the `SourceWatch`,
 and judges the cache against the live source. It answers an `Opened`, which
 holds the source, the watch and a `Held`. `pgdt info` and `PgDump::open`
-open through it. `pgdt parse` and `pgdt query` do not yet: the slice split,
-and their move is 36.6.1.
+open through it. `pgdt parse` and `pgdt query` do not yet: the slice split.
+`pgdt parse` moves in 36.6.1, `pgdt query` in 36.8.
 
 ## The shape
 
@@ -55,7 +55,8 @@ turned off. `info` opens under it because it reads nothing of the dump past
 the open. Under the plain selection, `SourceWatch::open` would refuse a
 remote dump whose server offers neither validator. `info` has never refused
 one (it opened no watch), and `crates/pgdt/tests/remote.rs` now pins that.
-This call is listed under STATUS's "Decisions worth another look".
+36.6.3 replaces it: the refusal moves to where a read begins, and
+`between_runs` goes (history, 2026-10-17, "36.6's calls reviewed").
 
 ## Negative results
 
@@ -66,18 +67,23 @@ This call is listed under STATUS's "Decisions worth another look".
   statistics reading would never come down. The entry points would also
   open a second watch, and the strict-identity refusal would move ahead of
   the arrangement's announcement on stderr. So the two commands keep
-  `claim` until the entry points take the open (36.6.1).
+  `claim` until their entry points take the open: 36.6.1 for `pgdt parse`,
+  36.8 for `pgdt query`.
 - **`Held` as an `Option<LoadedCache>`** was refused. It folds three
   reasons for having no index into one, which is D22's rejected collapse.
 
 ## What the next round inherits
 
-- **36.6.1: the scan entry points take the open.** That means `map_file`,
-  `preamble_only` and the query entry points read the cache the open
-  decoded. `pgdt parse` and `pgdt query` then open through it, `claim`,
-  `CacheMode::load` and `CacheLoad` go, and `pgdt/src/source.rs`'s
-  `open_for_scan` with them. Tests that build their own sources need a way
-  to open over a source already in hand.
+- **36.6.1: the mapping pass takes the open.** `map_file` and
+  `preamble_only` read the cache the open decoded, and `pgdt parse` opens
+  through it. Tests that build their own sources need a way to open over a
+  source already in hand.
+- **36.8 moves the rest.** `pgdt-query`'s stream entry points load the
+  cache and open their own watch (`stream/mapping.rs`, `stream.rs`,
+  `stream/partitions.rs`); 36.8 replaces them with the `Dump`, so `pgdt
+  query` opens through `CacheMode::open` there, and `claim`,
+  `CacheMode::load`, `CacheLoad` and `pgdt/src/source.rs`'s `open_for_scan`
+  go once it does.
 - **36.6.2: `scan` and `preamble_only` take only the fields they read.**
   `scan` announces `ScanOptions::cancel` to the source, and `map_file`'s
   preamble prepass relies on that announcement to drop a read in flight
