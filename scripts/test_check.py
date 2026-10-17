@@ -15,6 +15,7 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from dataclasses import replace
 from pathlib import Path
 
@@ -427,6 +428,34 @@ class RunAndVerify(unittest.TestCase):
         for c in check.CHECKS:
             self.assertTrue((check.REPO / c.cwd).is_dir(), c.cwd)
 
+    def test_every_cargo_check_runs_in_the_image_and_the_scripts_on_the_host(self):
+        on_host = {c.name for c in check.CHECKS if not c.image}
+        self.assertEqual(on_host, set(check.ALWAYS))
+        self.assertTrue(check.doctest_check(["base"]).image)
+
+    def test_an_image_check_is_run_and_recorded_as_release_py_runs_it(self):
+        graph = next(c for c in check.CHECKS if c.name == "graph")
+        argv, cwd = graph.command()
+        self.assertEqual(
+            list(argv),
+            ["python3", "scripts/release.py", "run", "--cwd=scripts", "--", "uv", "run", "module_graph.py"],
+        )
+        self.assertEqual(cwd, ".")
+        self.assertTrue((check.REPO / argv[1]).is_file())
+        self.assertEqual(graph.key(), ["graph", list(argv), "."])
+        on_host = next(c for c in check.CHECKS if c.name == "unittest")
+        self.assertEqual(on_host.command(), (on_host.argv, "scripts"))
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = repo_with_runs_ignored(tmp)
+            boxed = replace(stand_in("boxed", "pass"), image=True)
+            stub = (sys.executable, "-c", "pass")
+            with unittest.mock.patch.object(check, "IMAGE_RUN", stub):
+                self.assertEqual(check.run(repo, [boxed], io.StringIO()), 0)
+                ran = list(boxed.command()[0])
+            record = check.runs_of(repo, check.tree_stamp(repo))[-1]
+            self.assertEqual(record["checks"][0]["argv"], ran)
+            self.assertEqual(ran[:3], list(stub))
+
     def test_a_note_is_printed_and_kept_in_the_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = repo_with_runs_ignored(tmp)
@@ -600,6 +629,12 @@ class Affected(unittest.TestCase):
         )
         (t,) = [t for t in by["base"].targets if t.kind == "test"]
         self.assertEqual(t.sources, ("base/tests/t.rs", "base/tests/common/mod.rs"))
+
+    def test_an_affected_run_builds_in_the_image_as_a_whole_one_does(self):
+        plan = self.plan("base/src/lib.rs")
+        built = [c for c in plan.checks if c.name not in check.ALWAYS]
+        self.assertEqual([c.name for c in built], ["fmt", "clippy", "nextest", "doctest", "graph"])
+        self.assertTrue(all(c.image for c in built))
 
     def test_a_markdown_file_is_read_only_by_a_literal_naming_it(self):
         self.assertFalse(check.reads("p/tests/data", "p/tests/data/README.md"))

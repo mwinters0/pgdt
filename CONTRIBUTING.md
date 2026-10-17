@@ -14,6 +14,12 @@ doctests to `cargo test --workspace --doc`. The Python-side checks under `script
 generator, the oracles, the measurement harness — run under `uv`, from that
 directory. [`CLAUDE.md`](CLAUDE.md) lists every one of them with its purpose.
 
+**`mise run check`, the round's checks, needs a container runtime as well**:
+it runs its cargo checks in the release image, `release/Dockerfile`, under a
+memory limit (`scripts/check.py`), so the runtime must build and run that
+image — `sudo nerdctl` unless `PGDT_RELEASE_CONTAINER` names another, such as
+`docker`.
+
 **Taking a figure needs two things more**: a container runtime that can build
 the release image, `release/Dockerfile`, in which the harness builds every
 binary it times, and run that image's base, which every figure runs in

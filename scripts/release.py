@@ -45,6 +45,10 @@ two binaries a figure compares differ by what the figure names.
 A `cargo bench` a figure runs runs here as well (`Bench`), on the same compiler
 and glibc, criterion's output landing in the release state's target directory.
 
+**So does the round's check, its cargo side** (`scripts/check.py`, "The cargo
+checks run in the release image"): `run` runs one command, from the directory
+it names, under the same limit and in the same state as `suite`.
+
 **Each archive's `THIRD-PARTY-NOTICES` is made here too** (`step_notices`):
 `cargo-about`, pinned in `mise.toml`, reads every crate's licence under
 `release/about.toml`'s allow-list, and this script cuts that reading to what
@@ -58,6 +62,7 @@ Usage:
     cd scripts && uv run release.py build --profile release-fat --target-dir D
     cd scripts && uv run release.py build --release       # a release's build: names the version
     cd scripts && uv run release.py suite                 # the host-native suite, in the image
+    cd scripts && uv run release.py run --cwd=scripts -- uv run module_graph.py   # one command, in the image
     cd scripts && uv run release.py notices [--target T]  # each target's THIRD-PARTY-NOTICES, beside its binary
     cd scripts && uv run release.py bench --package pgdt-codec --bench decoders --filter nested
     cd scripts && uv run release.py floor <binary> --floor 2.41   # the floor check alone
@@ -289,7 +294,9 @@ def run_in_image(
         argv += ["-v", f"{dirs[name]}:{at}"]
         for key, value in env.items():
             argv += ["-e", f"{key}={value}"]
-    return [*argv, tag, "python3", "scripts/release.py", *step, "--inside"]
+    # `--inside` goes before a `--`, past which a `run` step's command is.
+    at = step.index("--") if "--" in step else len(step)
+    return [*argv, tag, "python3", "scripts/release.py", *step[:at], "--inside", *step[at:]]
 
 
 def check_inside(copies: Path = IN_IMAGE_COPIES, repo: Path = REPO) -> None:
@@ -899,6 +906,17 @@ def step_suite() -> int:
     return 1 if status else 0
 
 
+#: What the host passes a `run` step of its own environment: the colour
+#: settings `check.py` sets, so a log reads as it did on the host.
+RUN_PASSES = ("CARGO_TERM_COLOR", "NO_COLOR")
+
+
+def step_run(command: Sequence[str], cwd: str) -> int:
+    """One command, from `cwd` under the tree: a check `check.py` runs in the
+    image (`check.Check.image`)."""
+    return subprocess.run(command, cwd=REPO / cwd).returncode
+
+
 # --- the command line ------------------------------------------------------
 
 
@@ -950,6 +968,10 @@ def build_parser() -> argparse.ArgumentParser:
     n.add_argument("--inside", action="store_true", help="run here: this is the image")
     s = sub.add_parser("suite", help="the suite, built and run in the image for its architecture")
     s.add_argument("--inside", action="store_true", help="run here: this is the image")
+    u = sub.add_parser("run", help="one command in the image: a check of check.py's")
+    u.add_argument("--cwd", default=".", help="where it runs, under the tree (default: its root)")
+    u.add_argument("--inside", action="store_true", help="run here: this is the image")
+    u.add_argument("command", nargs=argparse.REMAINDER, help="the command, after --")
     f = sub.add_parser("floor", help="hold one binary to a glibc floor")
     f.add_argument("binary", type=Path)
     f.add_argument("--floor", required=True, help="a glibc release, such as 2.41")
@@ -984,8 +1006,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.inside and args.release:
                 raise ReleaseError(f"--release is the host's; inside, {RELEASE_VARIABLE} names the version")
         bench = Bench(args.package, args.bench, args.filter) if args.cmd == "bench" else None
+        command: list[str] = []
+        if args.cmd == "run":
+            command = args.command[1:] if args.command[:1] == ["--"] else args.command
+            if not command:
+                raise ReleaseError("run takes a command, after --")
         if args.inside:
             check_inside()
+            if args.cmd == "run":
+                return step_run(command, args.cwd)
             if bench is not None:
                 return step_bench(bench)
             if args.cmd == "notices":
@@ -996,6 +1025,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         env: dict[str, str] = {}
         if args.cmd == "suite":
             step, git = ["suite"], git_view()
+        elif args.cmd == "run":
+            step, git = ["run", f"--cwd={args.cwd}", "--", *command], git_view()
+            env = {key: os.environ[key] for key in RUN_PASSES if key in os.environ}
         elif bench is not None:
             step, git = bench.step(), None
         elif args.cmd == "notices":

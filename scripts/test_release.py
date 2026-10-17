@@ -656,6 +656,33 @@ class ThisRepo(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 release.main(argv)
 
+    def test_a_run_step_runs_its_command_where_it_names_with_only_the_colours_passed(self):
+        ran: list[list[str]] = []
+        with tempfile.TemporaryDirectory() as tmp, \
+                unittest.mock.patch.dict(release.os.environ, {"NO_COLOR": "1", "SECRET": "x"}), \
+                unittest.mock.patch.object(release, "ensure_image", return_value="t"), \
+                unittest.mock.patch.object(release, "prepare_state"), \
+                unittest.mock.patch.object(release, "git_view", return_value=None), \
+                unittest.mock.patch.object(release, "STATE", Path(tmp)), \
+                unittest.mock.patch.object(
+                    release.subprocess, "run", lambda argv, **_: ran.append(argv) or unittest.mock.Mock(returncode=0)
+                ):  # fmt: skip
+            self.assertEqual(release.main(["run", "--cwd=scripts", "--", "uv", "run", "x.py", "--inside"]), 0)
+        (argv,) = ran
+        self.assertEqual(
+            argv[argv.index("t"):],
+            ["t", "python3", "scripts/release.py", "run", "--cwd=scripts", "--inside",
+             "--", "uv", "run", "x.py", "--inside"],
+        )  # fmt: skip
+        self.assertIn("-e NO_COLOR=1", " ".join(argv))
+        self.assertNotIn("SECRET", " ".join(argv))
+        seen = []
+        with unittest.mock.patch.object(release, "check_inside"), \
+                unittest.mock.patch.object(release, "step_run", lambda c, cwd: seen.append((c, cwd)) or 0):
+            self.assertEqual(release.main(argv[argv.index("scripts/release.py") + 1 :]), 0)
+        self.assertEqual(seen, [(["uv", "run", "x.py", "--inside"], "scripts")])
+        self.assertEqual(release.main(["run", "--"]), 2)
+
     def test_a_target_dir_is_the_host_s(self):
         self.assertEqual(release.main(["build", "--target-dir", "/x", "--inside"]), 2)
 

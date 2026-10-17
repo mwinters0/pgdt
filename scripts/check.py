@@ -45,6 +45,19 @@ fails.
 **Clippy passes only with no diagnostic**: its exit status is zero over
 warnings, and a warning left for the next round is one nobody fixes.
 
+**The cargo checks run in the release image** (`release.py run`), as the
+invoking user under its memory limit: fmt, clippy, the suite, the doctests and
+the module graph, whose rust-analyzer builds and runs the workspace's build
+scripts. A whole-workspace test build compiles and links dozens of binaries at
+once, and on a host without swap one outgrowing memory stalls the whole machine
+rather than failing; under the limit the kernel kills a compiler or a linker
+inside the container, and the check fails naming it. The image is where CI's
+suite runs too (`docs/design/decisions.md`, "D104"), so the round builds what
+CI builds, in the release state's target directory (`target/release-image/`),
+never the host's `target/`, which a session's own `cargo` keeps. The scripts'
+checks stay on the host, building nothing. `PGDT_RELEASE_CONTAINER` and
+`PGDT_RELEASE_MEMORY` name the runtime and the limit (`release.py`).
+
 **The doctests run only for a library holding one** (`has_doctest`, by
 rustdoc's own reading of a code block), because `cargo test --doc` compiles
 every library it is given once more just to find nothing to run; with none,
@@ -124,6 +137,11 @@ class Outcome:
     details: tuple[str, ...] = ()
 
 
+#: How a check runs in the release image: `release.py run`, from the
+#: repository root, naming the directory the command runs from there.
+IMAGE_RUN = ("python3", "scripts/release.py", "run")
+
+
 @dataclass(frozen=True)
 class Check:
     name: str
@@ -131,9 +149,18 @@ class Check:
     #: Relative to the repository root.
     cwd: str
     summarize: Callable[[str, int], Outcome]
+    #: Whether it runs in the release image rather than on the host.
+    image: bool = False
+
+    def command(self) -> tuple[tuple[str, ...], str]:
+        """The argv the host runs, and the directory it runs it from."""
+        if not self.image:
+            return self.argv, self.cwd
+        return (*IMAGE_RUN, f"--cwd={self.cwd}", "--", *self.argv), "."
 
     def key(self) -> list:
-        return [self.name, list(self.argv), self.cwd]
+        argv, cwd = self.command()
+        return [self.name, list(argv), cwd]
 
 
 def _tail(text: str, n: int = 5) -> tuple[str, ...]:
@@ -303,21 +330,31 @@ def summarize_file_limits(text: str, exit_code: int) -> Outcome:
 #: The round's eight commands. `every_check` is what a run without
 #: `--affected` runs: these, the doctests narrowed to the libraries holding one.
 CHECKS: tuple[Check, ...] = (
-    Check("fmt", ("cargo", "fmt", "--check"), ".", summarize_fmt),
-    Check("clippy", ("cargo", "clippy", "--workspace", "--all-targets"), ".", summarize_clippy),
+    Check("fmt", ("cargo", "fmt", "--check"), ".", summarize_fmt, image=True),
+    Check(
+        "clippy",
+        ("cargo", "clippy", "--workspace", "--all-targets"),
+        ".",
+        summarize_clippy,
+        image=True,
+    ),
     Check(
         "nextest",
         ("cargo", "nextest", "run", "--workspace", "--no-fail-fast"),
         ".",
         summarize_nextest,
+        image=True,
     ),
     Check(
         "doctest",
         ("cargo", "test", "--workspace", "--doc", "--no-fail-fast"),
         ".",
         summarize_doctest,
+        image=True,
     ),
-    Check("graph", ("uv", "run", "module_graph.py"), "scripts", summarize_module_graph),
+    Check(
+        "graph", ("uv", "run", "module_graph.py"), "scripts", summarize_module_graph, image=True
+    ),
     Check("unittest", ("uv", "run", "python", "-m", "unittest"), "scripts", summarize_unittest),
     Check("repoint", ("uv", "run", "repoint.py"), "scripts", summarize_repoint),
     Check("seams", ("uv", "run", "file_limits.py"), "scripts", summarize_file_limits),
@@ -731,7 +768,7 @@ def doctest_packages(repo: Path, packages: Sequence[Package]) -> set[str]:
 
 def doctest_check(pkgs: Collection[str]) -> Check:
     argv = ("cargo", "test", "--doc", "--no-fail-fast", *(a for n in sorted(pkgs) for a in ("-p", n)))
-    return Check("doctest", argv, ".", summarize_doctest)
+    return Check("doctest", argv, ".", summarize_doctest, image=True)
 
 
 def every_check(repo: Path, load: Callable[[Path], list[Package]] = workspace) -> tuple[Check, ...]:
@@ -826,10 +863,10 @@ def plan_changes(
     checks: list[Check] = []
     p_args = tuple(a for n in sorted({*whole_pkgs, *lint_only}) for a in ("-p", n))
     if p_args:
-        checks.append(Check("fmt", ("cargo", "fmt", "--check", *p_args), ".", summarize_fmt))
-        checks.append(
-            Check("clippy", ("cargo", "clippy", "--all-targets", *p_args), ".", summarize_clippy)
-        )
+        fmt = ("cargo", "fmt", "--check", *p_args)
+        checks.append(Check("fmt", fmt, ".", summarize_fmt, image=True))
+        clippy = ("cargo", "clippy", "--all-targets", *p_args)
+        checks.append(Check("clippy", clippy, ".", summarize_clippy, image=True))
     if whole_pkgs or binaries:
         run_pkgs = sorted(set(whole_pkgs) | {pkg for pkg, _ in binaries})
         argv = ["cargo", "nextest", "run", "--no-fail-fast"]
@@ -837,7 +874,7 @@ def plan_changes(
         if binaries:
             terms = [f"package(={n})" for n in whole_pkgs] + [f"binary_id(={b})" for _, b in binaries]
             argv += ["-E", " | ".join(terms)]
-        checks.append(Check("nextest", tuple(argv), ".", summarize_nextest))
+        checks.append(Check("nextest", tuple(argv), ".", summarize_nextest, image=True))
     if doc_pkgs:
         checks.append(doctest_check(doc_pkgs))
     if whole_pkgs:
@@ -928,12 +965,13 @@ def run(
     env = dict(os.environ, CARGO_TERM_COLOR="never", NO_COLOR="1")
     for check in checks:
         log = rel / f"{check.name}.log"
+        argv, cwd = check.command()
         t0 = time.monotonic()
         with open(repo / log, "w", encoding="utf-8") as sink:
             try:
                 code = subprocess.run(
-                    check.argv,
-                    cwd=repo / check.cwd,
+                    argv,
+                    cwd=repo / cwd,
                     env=env,
                     stdin=subprocess.DEVNULL,
                     stdout=sink,
@@ -946,8 +984,8 @@ def run(
         outcome = check.summarize(text, code)
         entry = {
             "name": check.name,
-            "argv": list(check.argv),
-            "cwd": check.cwd,
+            "argv": list(argv),
+            "cwd": cwd,
             "exit": code,
             "seconds": time.monotonic() - t0,
             "status": outcome.status,

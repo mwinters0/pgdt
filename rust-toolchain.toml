@@ -8,9 +8,11 @@
 # second, and the static one `peak-rss` and `count-instructions` are built
 # for on an x86-64 host (`scripts/measure.py`, `peak_rss_target`).
 # `rust-analyzer` is what `scripts/module_graph.py` reads the code's
-# references with, the release of it this compiler ships.
+# references with, the release of it this compiler ships, and `rust-src` is
+# what it resolves the standard library through: without it every reference
+# reached through a `std` type goes unresolved, and the graph loses its edge.
 [toolchain]
 channel = "1.98.0"
 profile = "minimal"
-components = ["clippy", "rustfmt", "rust-analyzer"]
+components = ["clippy", "rustfmt", "rust-analyzer", "rust-src"]
 targets = ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-musl"]
