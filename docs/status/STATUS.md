@@ -139,12 +139,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`Opened` carries the mode it was opened under** (36.6.1).
-  `map_file` and `preamble_only` take an `Opened` whole and save under
-  `Opened::mode`, instead of taking a `CacheMode` beside it. The call: the
-  pass needs the mode to save and to refuse a recorded field, and a mode
-  passed apart could name another cache than the one the open read, which
-  is `KD115`'s shape. Reconsidering it puts `&CacheMode` back in both
-  signatures, and decides whether 36.8's `Dump`, whose resume writes no
-  cache (spec, "Streams over a table"), keeps the field.

@@ -50,6 +50,14 @@ cache is decoded once: the claim's decode before the scan is gone from
 - **`map_file` taking the source, the watch and the `Held` as separate
   arguments** was refused. They are one open's values, and passing them back
   apart is `KD115`'s shape.
+- **`map_file` and `preamble_only` taking `&CacheMode` beside the
+  `Opened`** was refused: a mode passed apart can name a cache other than
+  the one the open read and judged, which the pass would then save over.
+- **`Opened` carrying only what the mode still decides after the open**,
+  where it saves, was refused. Its strictness is the watch's and its
+  `overwrite_unusable` is spent into `Held::Replacing`, but both are the
+  open's own values, so they cannot disagree with what was done, and a
+  narrower type would be a second public name and a second `save`.
 - **`Opened` generic over a borrowed source**, so a test wrapper could keep
   borrowing the source it wraps, was refused. It would put a lifetime on the
   type the `Dump` is to own. The wrappers own their inner source instead.
