@@ -136,17 +136,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **36.5: the count's rise is accepted, and `Event::CopyStart` stays
-  unboxed.** Every row rises by the one more move of each event that
-  `ChunkEvents::next_event`'s test costs. The shapes of the slice's own
-  code that recover part of it rest on inlining attributes, or move where
-  a long line is refused. Boxing `CopyStart` recovers most of it, but it
-  is a change to `Event`, not to this slice, and would cut the parent's
-  moves as much. The counts are in [the
-  notes](../design/roadmap-P36.5-chunked-scanner-notes.md), "The count:
-  the slice's own move, accepted".
-  Reconsidering: box `CopyStart`, alone or with the cold continuation,
-  as its own change with its own `--count-pair`. It adds one allocation
-  per `COPY` block and changes `Event`, which every read loop and the
-  preamble match.
