@@ -160,9 +160,10 @@ fn type_name(declared: &str) -> String {
 /// each one's own. And the reverse, a nested pair answered where the server
 /// resolves no operator: two range types over one subtype, neither
 /// discrete, which the tree does not name, and two records whose columns
-/// are two composite types of one shape. **(c) unowned**: closing it means
-/// the plan naming a text's type and a range's, and a nested comparison
-/// reading each leaf in its own order.
+/// are two composite types of one shape. **(b) owned**, by the ledger row
+/// the index names: the plan naming a text's type, a range's and a nested
+/// composite's, and a nested comparison relating leaves of one type as
+/// scalars relate.
 pub(crate) fn postgres(
     a: &ScalarOrder,
     x: &OrderKey,

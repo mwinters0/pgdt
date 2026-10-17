@@ -156,10 +156,12 @@ impl ValueKey {
     /// deficiency: KD119 — in DataFusion's semantics two keys compare only
     /// where their orders are one, where DataFusion's comparison coercion
     /// relates two emitted types it casts between: two integer widths, an
-    /// integer against a float or a decimal, two decimal scales, a `Date32`
-    /// against a `Timestamp`, and a text against a number or a time, which
-    /// it parses. **(b) owned by 36.4.5**, which answers those pairs as
-    /// DataFusion 55.1.0 casts them.
+    /// integer against a float, a decimal or a `Date32`, two decimal scales,
+    /// a `Date32` against a `Timestamp` or a time, a text against a number
+    /// or a time, which it parses, and a text or a `uuid` against a `bytea`,
+    /// as bytes. Nothing answers those pairs. **(b) owned by 36.4.5**, which
+    /// answers them in `datafusion-pgdump` by DataFusion's own coercion and
+    /// cast; the codec links no arrow-cast (D74).
     pub fn compare(&self, other: &Self) -> Option<Ordering> {
         if self.semantics != other.semantics {
             return None;

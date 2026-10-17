@@ -347,7 +347,21 @@ This closes `KD116` and `KD117`.
 - **In DataFusion's semantics, the rule is DataFusion's**: two keys compare
   where its comparison coercion relates their emitted Arrow types without
   consulting session config, with its answer. Keys read in two semantics
-  never compare.
+  never compare. `ValueKey::compare` relates keys of one order; keys of two
+  are answered in `datafusion-pgdump`, by DataFusion's own coercion and
+  cast, a cast DataFusion refuses answering `None`. The codec reproduces no
+  arrow-cast (history, 2026-10-17, "DataFusion's cross-order answer is
+  DataFusion's own").
+  - **A key read in DataFusion's semantics carries its column's emitted
+    Arrow type**, built from the resolved column: its order does not
+    determine the type DataFusion coerces. The type is never read to order
+    a key. A key whose value the emitted type cannot hold (D96) answers
+    `None` against another order.
+  - **One `datafusion-pgdump` function answers every pair** of keys read in
+    DataFusion's semantics, a pair of one order through `ValueKey::compare`.
+  - **DataFusion is its oracle**: a test runs `a < b` over two fixture
+    tables' columns in a session, pair by pair, a query error meaning
+    `None`.
 - **A nested key follows the same rule**, and the server resolves no
   operator across two array, range or multirange types: they compare only
   with one order at every level. Two records compare only at one arity with
@@ -364,7 +378,9 @@ This closes `KD116` and `KD117`.
   them move to a `pub(crate)` child, and `internal` alone re-exports them.
 
 **Placement**: [`concepts.md`](concepts.md)'s "Comparison semantics", in
-pgdt-codec's `key`.
+pgdt-codec's `key`; DataFusion's answer across two orders in
+`datafusion-pgdump`, the only library linking DataFusion's coercion (D74
+keeps arrow-cast out of the codec).
 
 ## Demotions: D106 applied as written
 

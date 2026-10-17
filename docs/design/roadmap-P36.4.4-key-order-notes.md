@@ -26,7 +26,8 @@ that coercion (`datafusion/expr-common/src/type_coercion/binary.rs`,
 
 The answer in those cases is arrow-cast's parse and cast. `pgdt-codec`
 links only `arrow-buffer` and `arrow-schema` (its `Cargo.toml`, D74), so
-which way 36.4.5 goes is under STATUS's "Decisions worth another look".
+36.4.5 answers them in `datafusion-pgdump` (history, 2026-10-17,
+"DataFusion's cross-order answer is DataFusion's own").
 
 ## What landed beside the row's words
 
@@ -57,8 +58,8 @@ which way 36.4.5 goes is under STATUS's "Decisions worth another look".
   a domain over it. It compared `varchar(3)[]` with `varchar(5)[]`, and two
   composite types with the same column types. A range carries its
   canonical function, which tells `int4range` from a user range over
-  `integer`. This is a judgement call, made under STATUS's "Decisions worth
-  another look".
+  `integer`. The maintainer affirmed it (D56; history, 2026-10-17, "A
+  nested key names its types at every level").
 - **What a key's order cannot tell apart is `KD120`.** A `text` key that
   ends in a blank, against a `character(n)`, answers `None`: `text` and
   `character varying` are one `CompareKind::Text`, and the server casts
@@ -122,7 +123,16 @@ names them. `analyze.py`'s rules were written before the count, and
   compiler now multiplies with `lea` and `shl` instead of one `imul`:
   +25,572,940. A register reassignment nearby nets −970,429.
 
-Accepting it is under STATUS's "Decisions worth another look".
+**It is accepted** (spec, "What a hot-path slice owes"), and 36.4.4 is
+not reopened for it. Against its parent the slice only falls, which is the
+rule; what rose against 36.4 is how one multiply is encoded, and a rework
+whose saving rests on codegen choices was refused before (history,
+2026-10-16, "36.4's rework recovers the data-level rise; the summary reads
+by kind"). An enum's name and labels behind one `Arc` is not taken: it
+narrows the stride but adds a dependent load to the label scan every enum
+key read makes (`key/order.rs`), and the two have different readers, the
+name `relate` alone. Nor is the name taken off what the gatherer holds,
+which splits the plan for the same instruction.
 
 ## What the next round inherits
 

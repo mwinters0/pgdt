@@ -440,7 +440,7 @@ A narrowed `*_in` refuses only where every major does (`oidin`, `line_in`). Reje
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
 `infinity`/`NaN` are their position in PostgreSQL's order; `OrderKey` derives no `Ord`. Rejected: excluding the row like a NULL (I33, I34).
-`ValueKey` carries the order it was read in, checked first, so two keys compare where the semantics' engine relates their orders without a setting, nested ones at one type and order per leaf; the `OrderKey` a column's own keys share carries none (`KD119`, `KD120`). Rejected: a variant per order (every keyed field pays, for a comparison nothing here makes); a declared-type tag on a scalar (`varchar(n)` and `text` order alike); cross-plan answers left unspecified.
+`ValueKey` carries the order it was read in, checked first, so two keys compare where the semantics' engine relates their orders without a setting, nested ones at one type and order per leaf; the `OrderKey` a column's own keys share carries none (`KD119`, `KD120`). Rejected: a variant per order (every keyed field pays, for a comparison nothing here makes); a declared-type tag on a scalar (`varchar(n)` and `text` order alike); a nested key related by orders alone (relates `text[]` to `varchar[]`, and composites differing only by `text`/`varchar`, which the server refuses); cross-plan answers left unspecified.
 `v=1.5` hits a `numeric(10,2)` written `1.50`; rendering `timetz`, `inet` once is refused (I33, I38, I41).
 A `bytea` literal renders in both `bytea_output` forms, which share no spelling (I56); decoding per row is refused.
 

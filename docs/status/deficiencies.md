@@ -515,15 +515,16 @@ than reading as a phase nobody has sliced.
   `bounded_columns` `pub(crate)`. Detail:
   `crates/pgdt-mapping/src/statistics/request.rs`.
 
-- **KD119** — in DataFusion's semantics `ValueKey::compare` answers `None`
-  for two keys of different orders that DataFusion's comparison coercion
-  relates by a cast — two integer widths, two decimal scales, a text against
-  a number. **(b) owned by 36.4.5**, which answers them as DataFusion casts.
+- **KD119** — in DataFusion's semantics nothing answers two keys of
+  different orders that DataFusion's comparison coercion relates by a cast —
+  two integer widths or decimal scales, an integer against a float, a decimal
+  or a date, a text against a number, a time or bytes — and
+  `ValueKey::compare` answers `None`. **(b) owned by 36.4.5**, which answers
+  them in `datafusion-pgdump` by DataFusion's own coercion and cast.
   Detail: `crates/pgdt-codec/src/key.rs`.
 
 - **KD120** — in PostgreSQL's semantics `ValueKey::compare` answers `None`
   where the server answers and the key's order does not carry what decides
   it — a `text` ending in a blank against a `character(n)`, two `numeric[]`
   scales — and answers two range types over one subtype, which the server
-  relates by no operator. **(c) unowned**; promoted by an embedder comparing
-  keys across plans. Detail: `crates/pgdt-codec/src/key/relate.rs`.
+  relates by no operator. **(b) owned by `M224`**. Detail: `crates/pgdt-codec/src/key/relate.rs`.
