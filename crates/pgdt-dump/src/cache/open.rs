@@ -19,6 +19,11 @@ use pgdt_io::{ByteRangeSource, KnownCompression, Origin, Recognized};
 /// [`CacheMode::open_source`]. The mapping pass and `crate::preamble_only`
 /// take one whole, so the cache they build forward from is the one the open
 /// decoded and judged, and the cache they save to is the one it read.
+///
+/// **Only an open builds one**: its fields are readable, but it is
+/// `#[non_exhaustive]`, so no crate above assembles one from the parts of
+/// different opens, and a destructuring names `..`.
+#[non_exhaustive]
 pub struct Opened {
     /// The source, ready to read: built from the compression layer the cache
     /// settled, so an `.xz` file whose seek table the cache holds is not

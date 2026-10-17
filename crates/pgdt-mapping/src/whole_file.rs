@@ -218,7 +218,7 @@ pub async fn map_file(
     // The open's watch, taken before anything was read, so every later
     // observation compares against what this run started from
     // (`pgdt_dump::cache::SourceWatch`).
-    let Opened { source, watch, cache, mode } = opened;
+    let Opened { source, watch, cache, mode, .. } = opened;
     let run =
         map_file_watched(source.as_ref(), scan_options, gather, &mode, cache, statistics, &watch)
             .await;
