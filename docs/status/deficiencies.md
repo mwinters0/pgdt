@@ -514,12 +514,3 @@ than reading as a phase nobody has sliced.
   for the wrong columns silently. **(b) owned by P36**, 36.7; closing it leaves
   `bounded_columns` `pub(crate)`. Detail:
   `crates/pgdt-mapping/src/statistics/request.rs`.
-
-- **KD119** — in DataFusion's semantics nothing answers two keys of
-  different orders that DataFusion's comparison coercion relates by a cast —
-  two integer widths or decimal scales, an integer against a float, a decimal
-  or a date, a text against a number, a time or bytes — and
-  `ValueKey::compare` answers `None`. **(b) owned by 36.4.5**, which answers
-  them in `datafusion-pgdump` by DataFusion's own coercion and cast.
-  Detail: `crates/pgdt-codec/src/key.rs`.
-

@@ -28,6 +28,8 @@
 //! plan settles is handed to it when the scan is planned ([`crate::report`]).
 //! What a scan finds while reading is a plan metric under `EXPLAIN ANALYZE`.
 //! `CREATE EXTERNAL TABLE … STORED AS PGDUMP` is [`register_table_factory`]'s.
+//! Two values keyed in DataFusion's semantics under two orders are ordered
+//! as DataFusion answers `a < b` by [`compare_value_keys`].
 //!
 //! **It reads only the complete cache `pgdt parse` leaves, and never maps**
 //! (`docs/design/decisions.md`, "D90"). A partition's error is the first
@@ -62,6 +64,7 @@ mod error;
 mod exec;
 mod factory;
 mod filter;
+mod key;
 mod report;
 mod session;
 mod settings;
@@ -76,6 +79,7 @@ pub use error::Error;
 pub use factory::{
     PGDUMP_FILE_TYPE, PgDumpTableFactory, PgDumpTableOptions, register_table_factory,
 };
+pub use key::compare_value_keys;
 pub use report::{BudgetedPlanNote, RefusedTable, UncollatedColumns};
 pub use session::install;
 pub use settings::PgDumpSettings;

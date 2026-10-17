@@ -217,9 +217,13 @@ value's text ([`decisions.md`](decisions.md), "Predicates").
   `OrderKey` a filter, the gatherer and the summary hold, over the families'
   key types, which are each family's own (Values), the nested keys included; its
   `relate` the order a `ValueKey` was read in and which two orders relate; its
-  `form` is the form a filter's literal has to take, what the literal reader
-  reads. The built-in table answering a type's comparison beside its Arrow
-  type is the type mapping's (D40).
+  `emitted` the value a key read in DataFusion's semantics hands over in its
+  column's emitted type; its `form` is the form a filter's literal has to take,
+  what the literal reader reads. The built-in table answering a type's
+  comparison beside its Arrow type is the type mapping's (D40).
+- **datafusion-pgdump** — `key.rs`: two of DataFusion's orders related by its
+  own coercion, cast and comparison kernel, the only library linking them
+  (D74).
 
 ## Arrow batches
 

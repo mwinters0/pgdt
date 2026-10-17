@@ -356,6 +356,15 @@ pub fn unrepresentable_tests(
         .collect()
 }
 
+/// Whether `text`, one value of a column the typed read emits as `data_type`
+/// filled as `plan` says, is past neither tier: what a key read in
+/// DataFusion's semantics carries its emitted value by (`crate::key`), the
+/// provider reading both tiers as unrepresentable.
+pub(crate) fn holds_value(data_type: &DataType, plan: &NestedPlan, text: &str) -> bool {
+    let leaf = Leaf::of(data_type, plan);
+    leaf == Leaf::Held || Counter::new(Vec::new(), calendar_end()).tier_of(&leaf, text).is_none()
+}
+
 /// The tier test of a scalar column the typed read emits as `data_type`, for
 /// a test holding no resolved schema.
 #[cfg(any(test, feature = "test-support"))]
