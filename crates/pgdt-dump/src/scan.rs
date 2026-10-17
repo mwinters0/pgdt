@@ -4,9 +4,9 @@
 //! copies the bytes it scans: the caller owns a buffer, hands it out as a
 //! slice, and the scanner reports how much of it was consumed. That keeps the
 //! events zero-copy and lets the same state machine serve every driver: the
-//! async one here ([`scan`]), `pgdt_mapping`'s forward pass, interior split
-//! and statistics back-fill (`map_forward`, `scan_piece`, `observe_rows`),
-//! and the pull-mode stream's replay (`pgdt_query::stream`).
+//! serial read loops through [`ChunkedScanner`] (`chunked`), and a leader
+//! piece of `pgdt_mapping`'s interior split over each read it makes
+//! (`scan_piece`).
 //!
 //! Robustness rules this implements (see `docs/design/decisions.md`,
 //! "D23"):
@@ -27,17 +27,14 @@
 //!   structural: one that begins inside a string, a quoted identifier or a
 //!   comment is that region's content.
 
-use std::ops::ControlFlow;
-use std::sync::Arc;
-
-use bytes::Bytes;
+mod chunked;
 
 use crate::lex::{Lexer, Region, standard_conforming_strings};
 use pgdt_core::{CopyHeader, is_terminator, parse_copy_header};
 use pgdt_core::{Error, Result, RowEndingRefusal};
-use pgdt_io::{
-    ByteRangeSource, Cancellation, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
-    internal::memory_budget_display,
+
+pub use self::chunked::{
+    ChunkEvents, ChunkedScanner, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, announce_read_loop, scan,
 };
 
 /// The start of a COPY data block.
@@ -278,9 +275,9 @@ enum State {
 /// Usage: repeatedly fill a buffer, drain [`next_event`](Self::next_event)
 /// until it yields `None`, then call [`take_consumed`](Self::take_consumed)
 /// and drop that many bytes from the front of the buffer before refilling.
-/// [`ChunkCarry`] is that protocol done without copying the buffer, and is
-/// what the serial read loops drive the scanner through; a leader piece scans
-/// each of its reads as a slice of its own.
+/// [`ChunkedScanner`] is that protocol done without copying the buffer, and
+/// is what the serial read loops drive the scanner through; a leader piece
+/// scans each of its reads as a slice of its own.
 #[derive(Debug)]
 pub struct CopyScanner {
     /// Absolute file offset that `buf[0]` corresponds to.
@@ -565,315 +562,6 @@ impl CopyScanner {
                     continue;
                 }
             }
-        }
-    }
-}
-
-/// Which of a chunk's two spans a read loop is scanning.
-///
-/// [`ChunkCarry::PASSES`] is the order, and it is the whole of the protocol:
-/// the straddling line first, then the rest of the chunk in place.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChunkPass {
-    /// The line straddling the chunk's front edge — what was carried over
-    /// from the previous chunk, completed by this one's first line-terminated
-    /// prefix. The only bytes a read loop copies.
-    Carry,
-    /// The rest of the chunk, scanned where the reader left it.
-    InPlace,
-}
-
-/// The one line a chunked read loop has to carry across a chunk boundary.
-///
-/// [`CopyScanner`] consumes whole lines, so whatever a chunk leaves
-/// unconsumed is always a **single unterminated line** — never more, since
-/// [`next_event`](CopyScanner::next_event) stops only where it finds no
-/// newline. That is the entirety of what the next chunk needs joined to it,
-/// so a chunk is scanned in two passes: the carry with the chunk's first
-/// line-terminated prefix appended, then the chunk's remainder **where it
-/// lies** (`docs/design/decisions.md`, "D23"). Per chunk that is one row's
-/// worth of copying instead of the chunk's whole length.
-///
-/// **Handing the scanner two buffers within one chunk costs it nothing**:
-/// [`CopyScanner::base`] is an absolute file offset, and each pass is
-/// bracketed by [`take_consumed`](CopyScanner::take_consumed) exactly as a
-/// single buffer's refill would be.
-///
-/// The degenerate case is a chunk containing no newline at all: the whole of
-/// it joins the carry, and from the second such chunk on the in-place pass is
-/// empty — the first is handed over whole, finds no newline and consumes
-/// nothing, there being no carry yet to base it against. That is the growth
-/// [`ScanOptions::max_line_bytes`] bounds. **Its carry pass is empty too**
-/// short of the end of the file, since a span holding no newline is one the
-/// scanner can neither consume nor emit anything from; handing it over anyway
-/// would search the carried line again from its first byte at every chunk it
-/// spans, quadratic in the line.
-#[derive(Debug, Default)]
-pub struct ChunkCarry {
-    /// The unterminated line carried over, extended by [`absorb`](Self::absorb)
-    /// with the chunk bytes that complete it.
-    buf: Vec<u8>,
-    /// Where in the current chunk [`ChunkPass::InPlace`] begins — set by
-    /// [`absorb`](Self::absorb), meaningless before the first call.
-    split: usize,
-    /// Whether the carry still holds no newline after the current chunk was
-    /// absorbed — the chunk held none — so its carry pass has nothing to scan
-    /// unless the file ends here.
-    unfinished: bool,
-}
-
-impl ChunkCarry {
-    /// The passes of one chunk, in the order they must be scanned.
-    pub const PASSES: [ChunkPass; 2] = [ChunkPass::Carry, ChunkPass::InPlace];
-
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Bytes carried over from earlier chunks. This is what
-    /// [`ScanOptions::max_line_bytes`] bounds: it is a single line's prefix,
-    /// so a file whose lines fit stays flat here however large it is.
-    pub fn len(&self) -> usize {
-        self.buf.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.buf.is_empty()
-    }
-
-    /// Take onto the carry whatever prefix of `chunk` completes the line it
-    /// holds, and fix where the in-place pass begins.
-    ///
-    /// With nothing carried that is `0` — the chunk is scanned whole, where it
-    /// lies. With a carry and no newline anywhere in `chunk`, it is
-    /// `chunk.len()`, and the carry is left unfinished.
-    pub fn absorb(&mut self, chunk: &[u8]) {
-        if self.buf.is_empty() {
-            self.split = 0;
-            self.unfinished = false;
-            return;
-        }
-        let newline = memchr::memchr(b'\n', chunk);
-        self.split = newline.map_or(chunk.len(), |nl| nl + 1);
-        self.unfinished = newline.is_none();
-        self.buf.extend_from_slice(&chunk[..self.split]);
-    }
-
-    /// The bytes `pass` scans, and whether they run to the true end of the
-    /// file — which the carry pass does only when nothing of the chunk is
-    /// left over for the in-place pass to see.
-    pub fn span<'a>(&'a self, pass: ChunkPass, chunk: &'a [u8], eof: bool) -> (&'a [u8], bool) {
-        match pass {
-            // Nothing in an unfinished carry is consumable before the end of
-            // the file, so it is not searched again (the type's docs).
-            ChunkPass::Carry if self.unfinished && !eof => (&[], false),
-            ChunkPass::Carry => (&self.buf, eof && self.split == chunk.len()),
-            ChunkPass::InPlace => {
-                // **The carry is empty here whenever this span has anything in
-                // it**, and that is what keeps `CopyScanner::base` correct
-                // across the switch of buffers: a carry the scanner did not
-                // finish would leave `base` short of `chunk[self.split]`, and
-                // the in-place span would be mis-based by exactly the residue.
-                // It holds because a carry that gained a line-terminated prefix
-                // is entirely consumable, and the only carry that is not — a
-                // chunk with no newline in it — took the whole chunk, leaving
-                // this span empty.
-                debug_assert!(
-                    self.buf.is_empty() || self.split == chunk.len(),
-                    "an unfinished carry beside a non-empty in-place span mis-bases the scanner"
-                );
-                (&chunk[self.split..], eof)
-            }
-        }
-    }
-
-    /// Record that the scanner consumed `used` bytes of `pass`'s span. After
-    /// the in-place pass this is what makes the next chunk's carry: the tail
-    /// the scanner could not finish, which is at most one line.
-    pub fn consumed(&mut self, pass: ChunkPass, chunk: &[u8], used: usize) {
-        match pass {
-            ChunkPass::Carry => {
-                self.buf.drain(..used);
-            }
-            ChunkPass::InPlace => self.buf.extend_from_slice(&chunk[self.split + used..]),
-        }
-    }
-}
-
-/// The longest line a scan carries across a chunk boundary unless a caller
-/// says otherwise ([`ScanOptions::max_line_bytes`], which says where a line
-/// is measured). A row is held whole before it is emitted, so this and the
-/// chunk size bound what one row may cost in memory; a dump holding larger
-/// values states a larger limit.
-pub const SCAN_LINE_DEFAULT_MAX_BYTES: usize = 64 << 20;
-
-/// Tuning knobs for a full-file scan.
-#[derive(Debug, Clone)]
-pub struct ScanOptions {
-    /// Bytes requested per read from the source. Defaults to
-    /// [`SCAN_CHUNK_DEFAULT_SIZE_BYTES`].
-    pub chunk_size_bytes: usize,
-    /// Hard cap on a line carried across a chunk boundary. One still
-    /// incomplete at a chunk's end and longer than this is rejected rather
-    /// than buffered without bound; a line whole inside one chunk, or ended
-    /// by the last, is not measured. The scanner cannot emit a row until it
-    /// has the whole line, so this is the only thing standing between a
-    /// malformed input and unbounded memory growth. Defaults to
-    /// [`SCAN_LINE_DEFAULT_MAX_BYTES`].
-    // deficiency: KD93 — a line PostgreSQL writes and reads, up to I71's
-    // bound, is refused past this limit; and a line is measured only where a
-    // read ends inside it, so one up to a chunk past the limit is read or
-    // refused by where the reads fall — `chunk_size_bytes`, the leader's
-    // split, a resume point — not by its length.
-    pub max_line_bytes: usize,
-    /// Cooperative cancellation: call [`Cancellation::cancel`] from another
-    /// task and the mapping loop stops at the next chunk boundary, persists
-    /// what it holds and reports that it was interrupted
-    /// (`docs/design/decisions.md`, "D63"). `None` — the default — is a scan nobody can stop.
-    ///
-    /// Chunk granularity — a window of pieces while the leader holds a region
-    /// — not `CopyEnd` granularity, and read by
-    /// `pgdt_mapping::map_file`'s two passes alone — the mapping loop and
-    /// the statistics back-fill, the drivers with somewhere to put a partial
-    /// result and a way to report the stop. [`scan`] and the eager producers
-    /// built on it never read the polled bit
-    /// (`docs/design/decisions.md`, "D26") — but [`scan`] does announce this
-    /// to the source, so a read already in flight can still be dropped and
-    /// arrive as `ScanCancelled`.
-    ///
-    /// A source may also hold a clone of this and await
-    /// [`Cancellation::cancelled`], which is what bounds a stop by the request
-    /// in flight rather than by the loop's next poll.
-    pub cancel: Option<Arc<Cancellation>>,
-    /// How much concurrency this scan may use, and what it may hold while it
-    /// does — [`Parallelism::Serial`] by default, which is the serial code
-    /// path this build has rather than a pool of one
-    /// (`docs/design/decisions.md`, "D1").
-    ///
-    /// Every read loop announces it to the source
-    /// ([`pgdt_io::ByteRangeSource::hint_parallelism`]), which sizes its pools
-    /// from the byte half and — for a compressed source — decides from it
-    /// whether a whole block can be decoded at all. The `jobs` half is that
-    /// source's retention depth, one decoded block per concurrent reader, and
-    /// the ceiling on the workers `pgdt_mapping`'s `scan_region` runs over an
-    /// open `COPY` block's interior, which is what a `parse` splits by.
-    pub parallelism: Parallelism,
-}
-
-impl Default for ScanOptions {
-    fn default() -> Self {
-        Self {
-            chunk_size_bytes: SCAN_CHUNK_DEFAULT_SIZE_BYTES,
-            max_line_bytes: SCAN_LINE_DEFAULT_MAX_BYTES,
-            cancel: None,
-            parallelism: Parallelism::default(),
-        }
-    }
-}
-
-impl ScanOptions {
-    /// Whether a caller has asked this scan to stop — the polled half of
-    /// [`ScanOptions::cancel`], read once per chunk or leader window.
-    pub fn cancelled(&self) -> bool {
-        self.cancel.as_ref().is_some_and(|cancel| cancel.is_cancelled())
-    }
-}
-
-/// Hand a source the caller's cancellation where there is one, so a source
-/// whose wait is not a `pread` can drop the read in flight rather than be
-/// polled at the far side of it ([`ByteRangeSource::hint_cancellation`]).
-fn announce_cancellation(source: &dyn ByteRangeSource, options: &ScanOptions) {
-    if let Some(cancel) = &options.cancel {
-        source.hint_cancellation(Arc::clone(cancel));
-    }
-}
-
-/// **The hints every top-level read loop announces before its first read**:
-/// the chunk length it repeats until it stops, so a buffer-recycling source
-/// can keep one of that size whatever it is
-/// ([`ByteRangeSource::hint_read_size`]); `parallelism`, the budget the
-/// caller allows it to keep them inside
-/// ([`ByteRangeSource::hint_parallelism`]) — a scan's own, or one a query
-/// states for its replay apart from its mapping pass; the caller's
-/// cancellation where there is one; and that the loop grants no wait
-/// ([`ByteRangeSource::hint_wait_policy`]): the leader's fused worker is the
-/// holder that needs the bound and is where one is granted (`pgdt_mapping`'s
-/// `scan_region`, and `docs/design/decisions.md`, "D5").
-pub fn announce_read_loop(
-    source: &dyn ByteRangeSource,
-    options: &ScanOptions,
-    parallelism: Parallelism,
-) {
-    source.hint_read_size(options.chunk_size_bytes);
-    source.hint_parallelism(parallelism);
-    announce_cancellation(source, options);
-    source.hint_wait_policy(WaitPolicy::NeverWait);
-}
-
-/// Scan `source` from the beginning, invoking `on_event` for every event.
-///
-/// The callback may return [`ControlFlow::Break`] to stop early.
-pub async fn scan<F>(
-    source: &dyn ByteRangeSource,
-    options: &ScanOptions,
-    mut on_event: F,
-) -> Result<()>
-where
-    F: FnMut(Event<'_>) -> ControlFlow<()>,
-{
-    let size = source.size().await?;
-    // Named "preamble scan", not "scan": the caller a `parse` runs is
-    // `preamble::scan_preamble`, and `pgdt_mapping`'s `map_forward` announces
-    // itself as "scan". Its `build_index` and `build_map` share this label
-    // while scanning to EOF; neither is reached from the CLI. A single `parse` runs both in sequence, so two passes sharing
-    // one name would read as an interrupted-and-resumed run.
-    tracing::info!(
-        bytes = size,
-        chunk_size = options.chunk_size_bytes,
-        jobs = options.parallelism.jobs(),
-        memory_bytes = %memory_budget_display(options.parallelism),
-        "preamble scan started",
-    );
-    announce_read_loop(source, options, options.parallelism);
-    let mut scanner = CopyScanner::new();
-    let mut carry = ChunkCarry::new();
-    let mut read_pos = 0u64;
-
-    loop {
-        let want = options.chunk_size_bytes.min((size - read_pos) as usize);
-        let chunk = if want > 0 {
-            let bytes = source.read_range(read_pos, want).await?;
-            read_pos += bytes.len() as u64;
-            bytes
-        } else {
-            Bytes::new()
-        };
-        let eof = read_pos >= size;
-
-        carry.absorb(&chunk);
-        for pass in ChunkCarry::PASSES {
-            let (span, span_eof) = carry.span(pass, &chunk, eof);
-            while let Some(event) = scanner.next_event(span, span_eof)? {
-                if on_event(event).is_break() {
-                    // The ordinary outcome for `scan_preamble`, which breaks
-                    // here at the first `COPY` header — still this call's
-                    // completion, just not at EOF, which `reached_eof` says.
-                    tracing::info!(bytes = read_pos, reached_eof = false, "preamble scan complete");
-                    return Ok(());
-                }
-            }
-            carry.consumed(pass, &chunk, scanner.take_consumed());
-        }
-
-        if eof {
-            tracing::info!(bytes = read_pos, reached_eof = true, "preamble scan complete");
-            return Ok(());
-        }
-        if carry.len() > options.max_line_bytes {
-            return Err(Error::LineTooLong {
-                offset: scanner.position(),
-                limit: options.max_line_bytes,
-            });
         }
     }
 }

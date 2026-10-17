@@ -4,8 +4,6 @@
 
 use std::sync::Arc;
 
-use bytes::Bytes;
-
 use pgdt_codec::internal::counter_for;
 use pgdt_core::{Error, Result};
 use pgdt_dump::attach_text;
@@ -14,7 +12,7 @@ use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::announce_read_loop;
 use pgdt_dump::internal::{tiling_diagnostics, toc_coverage_diagnostic};
-use pgdt_dump::{ChunkCarry, CopyEnd, CopyScanner, Event, ScanOptions};
+use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ScanOptions};
 use pgdt_io::{ByteRangeSource, internal::memory_budget_display};
 use pgdt_model::{DumpIndex, PostgresInvalidValues, Span, SpanBody};
 
@@ -241,9 +239,7 @@ pub async fn map_forward(
     // leader's fused worker grants it for itself and restores this policy on
     // the way out ([`scan_region`]).
     announce_read_loop(source, scan_options, scan_options.parallelism);
-    let mut scanner = CopyScanner::resume(seg_start, None);
-    let mut read_pos = seg_start;
-    let mut carry = ChunkCarry::new();
+    let mut chunked = ChunkedScanner::new(CopyScanner::resume(seg_start, None), size, scan_options);
     let mut throttle = SaveThrottle::new();
     // Whether the open `COPY` block is one `target_settled` would count — see
     // the `CopyEnd` arm, its only reader.
@@ -261,247 +257,217 @@ pub async fn map_forward(
             cache.save(watch, source, index).await?;
             return Ok(MapStop::Interrupted);
         }
-        let want = scan_options.chunk_size_bytes.min((size - read_pos) as usize);
-        let chunk = if want > 0 {
-            let bytes = match source.read_range(read_pos, want).await {
-                Ok(bytes) => bytes,
-                // The check point above, reached through the read rather than
-                // through the flag ([`cancelled_read`]): the same chunk and
-                // the same watermark, so this banks what that would have
-                // banked.
-                Err(e) if cancelled_read(&e, scan_options) => {
-                    cache.save(watch, source, index).await?;
-                    return Ok(MapStop::Interrupted);
-                }
-                Err(e) => return Err(e),
-            };
-            read_pos += bytes.len() as u64;
-            bytes
-        } else {
-            Bytes::new()
+        let mut chunk = match chunked.next_chunk(source).await {
+            Ok(chunk) => chunk,
+            // The check point above, reached through the read rather than
+            // through the flag ([`cancelled_read`]): the same chunk and the
+            // same watermark, so this banks what that would have banked.
+            Err(e) if cancelled_read(&e, scan_options) => {
+                cache.save(watch, source, index).await?;
+                return Ok(MapStop::Interrupted);
+            }
+            Err(e) => return Err(e),
         };
-        let eof = read_pos >= size;
 
-        carry.absorb(&chunk);
         // Where the leader closed a block the workers scanned, and so where
         // the serial scanner has to be put back down. `None` for a chunk no
         // region was taken out of.
         let mut resume_at: Option<u64> = None;
-        for pass in ChunkCarry::PASSES {
-            let (span, span_eof) = carry.span(pass, &chunk, eof);
-            while let Some(event) = scanner.next_event(span, span_eof)? {
-                match event {
-                    Event::CopyStart(start) => {
-                        // The current database's first `COPY` block is the
-                        // recurring one of the two boundaries
-                        // `dump_metadata_from_spans` may be called at (I1).
-                        // Retreat to a pending TOC comment's own start as
-                        // `pgdt_dump::internal::scan_preamble` does, so the span list
-                        // ends where the `Data` span is about to begin.
-                        let boundary =
-                            builder.pending_comment_start().unwrap_or(start.header_offset);
-                        // Whether this block can be the one that settles
-                        // `target` — the `CopyEnd` arm's reason to splice for
-                        // a block the throttle would have skipped.
-                        // **Deliberately the header alone**, a superset:
-                        // repeating `target_settled`'s selector test here
-                        // would tie the gate's width to that function's body.
-                        open_block_targets =
-                            target.is_some_and(|(table, _)| start.header.matches(table));
-                        // Read off the header, for the offer below.
-                        let header_offset = start.header_offset;
-                        let data_offset = start.data_offset;
-                        // The block's level: censused, and gathering where
-                        // a statistics request tracks its columns.
-                        let (census, request) = match mapping {
-                            Pass::Query => (true, None),
-                            Pass::Parse(request, account, invalid) => (
-                                request.tracked_columns(&start.header).is_some(),
-                                Some((request, account, invalid)),
-                            ),
-                        };
-                        let header = start.header.clone();
-                        builder.on_copy_start(start, census);
-                        // **Once per database, not once per block**:
-                        // recomputing at every `CopyStart` would put a third
-                        // whole-index-sized cost in this loop.
-                        let db = builder.database().map(str::to_owned);
-                        if metadata_covers.as_ref() != Some(&db) {
-                            let spans = splice(
+        while let Some(event) = chunk.next_event()? {
+            match event {
+                Event::CopyStart(start) => {
+                    // The current database's first `COPY` block is the
+                    // recurring one of the two boundaries
+                    // `dump_metadata_from_spans` may be called at (I1).
+                    // Retreat to a pending TOC comment's own start as
+                    // `pgdt_dump::internal::scan_preamble` does, so the span list
+                    // ends where the `Data` span is about to begin.
+                    let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
+                    // Whether this block can be the one that settles
+                    // `target` — the `CopyEnd` arm's reason to splice for
+                    // a block the throttle would have skipped.
+                    // **Deliberately the header alone**, a superset:
+                    // repeating `target_settled`'s selector test here
+                    // would tie the gate's width to that function's body.
+                    open_block_targets =
+                        target.is_some_and(|(table, _)| start.header.matches(table));
+                    // Read off the header, for the offer below.
+                    let header_offset = start.header_offset;
+                    let data_offset = start.data_offset;
+                    // The block's level: censused, and gathering where
+                    // a statistics request tracks its columns.
+                    let (census, request) = match mapping {
+                        Pass::Query => (true, None),
+                        Pass::Parse(request, account, invalid) => (
+                            request.tracked_columns(&start.header).is_some(),
+                            Some((request, account, invalid)),
+                        ),
+                    };
+                    let header = start.header.clone();
+                    builder.on_copy_start(start, census);
+                    // **Once per database, not once per block**:
+                    // recomputing at every `CopyStart` would put a third
+                    // whole-index-sized cost in this loop.
+                    let db = builder.database().map(str::to_owned);
+                    if metadata_covers.as_ref() != Some(&db) {
+                        let spans =
+                            splice(&prefix, builder.snapshot(boundary), seg_start, boundary, size);
+                        index.metadata = Some(dump_metadata_from_spans(&spans));
+                        metadata_covers = Some(db.clone());
+                    }
+                    // After the restatement, so the count and the
+                    // observer resolve the block against its own
+                    // database's DDL.
+                    let plan = census.then(|| {
+                        let counter = counter_for(&header, index.metadata.as_ref(), db.as_deref());
+                        builder.count_block(Arc::clone(&counter));
+                        CensusPlan { width: header.columns.len(), counter }
+                    });
+                    // A block no request tracks is observed too under
+                    // `PostgresInvalidValues::Strict`, to check its fields.
+                    let observer = request.and_then(|(request, account, invalid)| {
+                        gather::observer_for(
+                            request,
+                            &header,
+                            index.metadata.as_ref(),
+                            db.as_deref(),
+                            account,
+                            invalid,
+                        )
+                    });
+                    if let Some(observer) = observer {
+                        builder.observe_block(observer);
+                    }
+                    // **The offer, and this loop is the leader making it**
+                    // ([`scan_region`]): everything from
+                    // `data_offset` until `\.` is line-structured rows, so
+                    // the region may be handed to workers that never parse
+                    // structure. It answers the block's totals as the
+                    // serial scanner would have, or declines — and a
+                    // block it closes holds the statistics its pieces
+                    // observed, as a declined one does the rows this loop
+                    // hands on.
+                    let outcome = scan_region(
+                        source,
+                        scan_options,
+                        &header.qualified_name(),
+                        header_offset,
+                        data_offset,
+                        plan,
+                        size,
+                        builder.block_observer(),
+                    )
+                    .await?;
+                    report_shortfall(&mut shortfall_reported, outcome.shortfall);
+                    match outcome.scan {
+                        RegionScan::Closed(interior) => {
+                            // The workers counted the rows, so their
+                            // census stands in for the `on_row` calls this
+                            // loop never made.
+                            builder.absorb_census(&interior.census);
+                            let watermark = interior.end.end_offset;
+                            let targets = std::mem::take(&mut open_block_targets);
+                            match close_copy_block(
+                                source,
+                                scan_options,
+                                cache,
+                                watch,
+                                index,
+                                &mut builder,
+                                &mut throttle,
                                 &prefix,
-                                builder.snapshot(boundary),
                                 seg_start,
-                                boundary,
                                 size,
-                            );
-                            index.metadata = Some(dump_metadata_from_spans(&spans));
-                            metadata_covers = Some(db.clone());
-                        }
-                        // After the restatement, so the count and the
-                        // observer resolve the block against its own
-                        // database's DDL.
-                        let plan = census.then(|| {
-                            let counter =
-                                counter_for(&header, index.metadata.as_ref(), db.as_deref());
-                            builder.count_block(Arc::clone(&counter));
-                            CensusPlan { width: header.columns.len(), counter }
-                        });
-                        // A block no request tracks is observed too under
-                        // `PostgresInvalidValues::Strict`, to check its fields.
-                        let observer = request.and_then(|(request, account, invalid)| {
-                            gather::observer_for(
-                                request,
-                                &header,
-                                index.metadata.as_ref(),
-                                db.as_deref(),
-                                account,
-                                invalid,
+                                target,
+                                targets,
+                                interior.end,
                             )
-                        });
-                        if let Some(observer) = observer {
-                            builder.observe_block(observer);
-                        }
-                        // **The offer, and this loop is the leader making it**
-                        // ([`scan_region`]): everything from
-                        // `data_offset` until `\.` is line-structured rows, so
-                        // the region may be handed to workers that never parse
-                        // structure. It answers the block's totals as the
-                        // serial scanner would have, or declines — and a
-                        // block it closes holds the statistics its pieces
-                        // observed, as a declined one does the rows this loop
-                        // hands on.
-                        let outcome = scan_region(
-                            source,
-                            scan_options,
-                            &header.qualified_name(),
-                            header_offset,
-                            data_offset,
-                            plan,
-                            size,
-                            builder.block_observer(),
-                        )
-                        .await?;
-                        report_shortfall(&mut shortfall_reported, outcome.shortfall);
-                        match outcome.scan {
-                            RegionScan::Closed(interior) => {
-                                // The workers counted the rows, so their
-                                // census stands in for the `on_row` calls this
-                                // loop never made.
-                                builder.absorb_census(&interior.census);
-                                let watermark = interior.end.end_offset;
-                                let targets = std::mem::take(&mut open_block_targets);
-                                match close_copy_block(
-                                    source,
-                                    scan_options,
-                                    cache,
-                                    watch,
-                                    index,
-                                    &mut builder,
-                                    &mut throttle,
-                                    &prefix,
-                                    seg_start,
-                                    size,
-                                    target,
-                                    targets,
-                                    interior.end,
-                                )
-                                .await?
-                                {
-                                    // The serial scanner is still at this
-                                    // block's `data_offset` and the chunk in
-                                    // hand is bytes the workers already read,
-                                    // so both are dropped — after the event
-                                    // loop, where they can be moved at all.
-                                    BlockClose::Continue => {
-                                        resume_at = Some(watermark);
-                                        break;
-                                    }
-                                    BlockClose::Settled => {
-                                        // A query stopping at its own target,
-                                        // not at EOF.
-                                        tracing::info!(
-                                            bytes = watermark,
-                                            reached_eof = false,
-                                            "scan complete",
-                                        );
-                                        return Ok(MapStop::Reached);
-                                    }
-                                    BlockClose::Interrupted => return Ok(MapStop::Interrupted),
+                            .await?
+                            {
+                                // The serial scanner is still at this
+                                // block's `data_offset` and the chunk in
+                                // hand is bytes the workers already read,
+                                // so both are dropped — after the event
+                                // loop, where they can be moved at all.
+                                BlockClose::Continue => {
+                                    resume_at = Some(watermark);
+                                    break;
                                 }
-                            }
-                            // Nothing happened: the serial scanner owns the
-                            // region and reads on into it.
-                            RegionScan::Declined => {}
-                            // Cancelled between two windows, so nothing about
-                            // this block is known. `index` is consistent at
-                            // the last spliced watermark, which is before it.
-                            RegionScan::Cancelled => {
-                                cache.save(watch, source, index).await?;
-                                return Ok(MapStop::Interrupted);
+                                BlockClose::Settled => {
+                                    // A query stopping at its own target,
+                                    // not at EOF.
+                                    tracing::info!(
+                                        bytes = watermark,
+                                        reached_eof = false,
+                                        "scan complete",
+                                    );
+                                    return Ok(MapStop::Reached);
+                                }
+                                BlockClose::Interrupted => return Ok(MapStop::Interrupted),
                             }
                         }
-                    }
-                    // This pass needs only the block's extent; row bytes
-                    // become batches in the replay phase. Rows are read here
-                    // for a data-level block's census and count
-                    // (`docs/design/decisions.md`, "D35", "D96") and a
-                    // gathering block's statistics.
-                    Event::Row(row) => builder.on_row(row.offset, row.raw),
-                    Event::CopyEnd(end) => {
-                        let targets = std::mem::take(&mut open_block_targets);
-                        let end_offset = end.end_offset;
-                        match close_copy_block(
-                            source,
-                            scan_options,
-                            cache,
-                            watch,
-                            index,
-                            &mut builder,
-                            &mut throttle,
-                            &prefix,
-                            seg_start,
-                            size,
-                            target,
-                            targets,
-                            end,
-                        )
-                        .await?
-                        {
-                            BlockClose::Continue => {}
-                            BlockClose::Settled => {
-                                tracing::info!(
-                                    bytes = end_offset,
-                                    reached_eof = false,
-                                    "scan complete",
-                                );
-                                return Ok(MapStop::Reached);
-                            }
-                            BlockClose::Interrupted => return Ok(MapStop::Interrupted),
+                        // Nothing happened: the serial scanner owns the
+                        // region and reads on into it.
+                        RegionScan::Declined => {}
+                        // Cancelled between two windows, so nothing about
+                        // this block is known. `index` is consistent at
+                        // the last spliced watermark, which is before it.
+                        RegionScan::Cancelled => {
+                            cache.save(watch, source, index).await?;
+                            return Ok(MapStop::Interrupted);
                         }
                     }
-                    Event::Line(line) => builder.feed_line(line.offset, line.raw),
-                    Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
-                    Event::LargeObjectStart(start) => {
-                        builder.on_large_object_start(start.start_offset)
-                    }
-                    Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
                 }
+                // This pass needs only the block's extent; row bytes
+                // become batches in the replay phase. Rows are read here
+                // for a data-level block's census and count
+                // (`docs/design/decisions.md`, "D35", "D96") and a
+                // gathering block's statistics.
+                Event::Row(row) => builder.on_row(row.offset, row.raw),
+                Event::CopyEnd(end) => {
+                    let targets = std::mem::take(&mut open_block_targets);
+                    let end_offset = end.end_offset;
+                    match close_copy_block(
+                        source,
+                        scan_options,
+                        cache,
+                        watch,
+                        index,
+                        &mut builder,
+                        &mut throttle,
+                        &prefix,
+                        seg_start,
+                        size,
+                        target,
+                        targets,
+                        end,
+                    )
+                    .await?
+                    {
+                        BlockClose::Continue => {}
+                        BlockClose::Settled => {
+                            tracing::info!(
+                                bytes = end_offset,
+                                reached_eof = false,
+                                "scan complete",
+                            );
+                            return Ok(MapStop::Reached);
+                        }
+                        BlockClose::Interrupted => return Ok(MapStop::Interrupted),
+                    }
+                }
+                Event::Line(line) => builder.feed_line(line.offset, line.raw),
+                Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
+                Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
+                Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
             }
-            if resume_at.is_some() {
-                break;
-            }
-            carry.consumed(pass, &chunk, scanner.take_consumed());
         }
 
         // **The leader took a region, so the serial scanner is put back down
-        // past it.** The carry is discarded rather than fixed up — whatever it
-        // held is inside bytes the workers have since read whole, and
-        // `end_offset` is a line start — and `read_pos` follows it.
+        // past it**, `end_offset` being a line start past every byte the
+        // carry held.
         if let Some(at) = resume_at {
-            scanner =
-                CopyScanner::resume(at, None).with_standard_strings(scanner.standard_strings());
-            carry = ChunkCarry::new();
-            read_pos = at;
+            chunked.skip_to(at);
             // The four hints this loop announced still stand: `scan_region`
             // restores `WaitPolicy::NeverWait` on its way out, announces the
             // same `Parallelism`, and never touches the read size or the
@@ -509,14 +475,8 @@ pub async fn map_forward(
             continue;
         }
 
-        if eof {
+        if chunked.at_end() {
             break;
-        }
-        if carry.len() > scan_options.max_line_bytes {
-            Err(Error::LineTooLong {
-                offset: scanner.position(),
-                limit: scan_options.max_line_bytes,
-            })?;
         }
     }
 

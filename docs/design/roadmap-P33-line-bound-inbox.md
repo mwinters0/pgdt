@@ -11,7 +11,7 @@ the spec or discard it as stale, and delete this file. See
 
 **Fact.** A block source states its per-worker cost as its chunk and decoder
 (`source/xz/blocks.rs`, `worker_memory`, from `reader_bytes`); the line a reader carries
-across chunks (`ChunkCarry`) is charged nowhere, `MEMORY_RESERVE` absorbing
+across chunks (`ChunkedScanner`) is charged nowhere, `MEMORY_RESERVE` absorbing
 it while it is bounded at 64 MiB. Under I71 each concurrent reader may carry
 up to 1 GiB, and the scanner holds a line whole before emitting its row
 (`decisions.md`, "D23").

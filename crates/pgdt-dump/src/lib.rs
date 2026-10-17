@@ -13,8 +13,8 @@ pub use ddl::dump_metadata_from_spans;
 pub use map::{attach_text, check_tiling};
 pub use preamble::preamble_only;
 pub use scan::{
-    ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, DollarQuoteEnd, Event, LargeObjectEnd,
-    LargeObjectStart, Line, Row, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, scan,
+    ChunkEvents, ChunkedScanner, CopyEnd, CopyScanner, CopyStart, DollarQuoteEnd, Event,
+    LargeObjectEnd, LargeObjectStart, Line, Row, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, scan,
 };
 
 /// What a crate above reaches that is not this crate's API: public only

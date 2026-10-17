@@ -5,14 +5,12 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use bytes::Bytes;
-
 use pgdt_codec::internal::counter_for;
 use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{Error, Result};
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::internal::announce_read_loop;
-use pgdt_dump::{ChunkCarry, CopyEnd, CopyScanner, Event, ScanOptions};
+use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ScanOptions};
 use pgdt_io::ByteRangeSource;
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
@@ -525,58 +523,38 @@ async fn observe_rows(
     size: u64,
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<Option<(CopyEnd, BlockCensus)>> {
-    let mut scanner = CopyScanner::resume(block.data_offset, Some((block.header_offset, 0)));
-    let mut carry = ChunkCarry::new();
-    let mut read_pos = block.data_offset;
+    let scanner = CopyScanner::resume(block.data_offset, Some((block.header_offset, 0)));
+    let mut chunked = ChunkedScanner::new(scanner, size, scan_options);
     let mut census = BlockCensus::new(plan.width);
     loop {
         if scan_options.cancelled() {
             return Ok(None);
         }
-        let want = scan_options.chunk_size_bytes.min((size - read_pos) as usize);
-        let chunk = if want > 0 {
-            let bytes = match source.read_range(read_pos, want).await {
-                Ok(bytes) => bytes,
-                // The check above, reached through the read rather than
-                // through the flag ([`cancelled_read`]). This block's re-read
-                // is abandoned either way, so the caller hears the same
-                // `None`.
-                Err(e) if cancelled_read(&e, scan_options) => return Ok(None),
-                Err(e) => return Err(e),
-            };
-            read_pos += bytes.len() as u64;
-            bytes
-        } else {
-            Bytes::new()
+        let mut chunk = match chunked.next_chunk(source).await {
+            Ok(chunk) => chunk,
+            // The check above, reached through the read rather than
+            // through the flag ([`cancelled_read`]). This block's re-read
+            // is abandoned either way, so the caller hears the same
+            // `None`.
+            Err(e) if cancelled_read(&e, scan_options) => return Ok(None),
+            Err(e) => return Err(e),
         };
-        let eof = read_pos >= size;
-        carry.absorb(&chunk);
-        for pass in ChunkCarry::PASSES {
-            let (span, span_eof) = carry.span(pass, &chunk, eof);
-            while let Some(event) = scanner.next_event(span, span_eof)? {
-                match event {
-                    Event::Row(row) => {
-                        census.observe_row(plan.counter.as_ref(), row.raw);
-                        if let Some(observer) = observer.as_deref_mut() {
-                            observer.observe_row(row.offset - block.data_offset, row.raw);
-                        }
+        while let Some(event) = chunk.next_event()? {
+            match event {
+                Event::Row(row) => {
+                    census.observe_row(plan.counter.as_ref(), row.raw);
+                    if let Some(observer) = observer.as_deref_mut() {
+                        observer.observe_row(row.offset - block.data_offset, row.raw);
                     }
-                    Event::CopyEnd(end) => return Ok(Some((end, census))),
-                    // A scanner inside a block's rows emits nothing else
-                    // before its `CopyEnd`.
-                    _ => {}
                 }
+                Event::CopyEnd(end) => return Ok(Some((end, census))),
+                // A scanner inside a block's rows emits nothing else
+                // before its `CopyEnd`.
+                _ => {}
             }
-            carry.consumed(pass, &chunk, scanner.take_consumed());
         }
-        if eof {
+        if chunked.at_end() {
             return Err(Error::UnterminatedCopyBlock { header_offset: block.header_offset });
-        }
-        if carry.len() > scan_options.max_line_bytes {
-            return Err(Error::LineTooLong {
-                offset: scanner.position(),
-                limit: scan_options.max_line_bytes,
-            });
         }
     }
 }

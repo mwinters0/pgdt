@@ -6508,6 +6508,7 @@ INTERIOR = (
 )
 SCAN = (
     "crates/pgdt-dump/src/scan.rs",
+    "crates/pgdt-dump/src/scan/chunked.rs",
     "crates/pgdt-core/src/copy.rs",
     "crates/pgdt-core/src/identifier.rs",
     "crates/pgdt-dump/src/lex.rs",

@@ -1,6 +1,5 @@
 use super::*;
 use pgdt_core::Error;
-use pgdt_dump::ChunkCarry;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::{CopyScanner, Event};
@@ -53,34 +52,28 @@ struct Reference {
     interior: Interior,
 }
 
-/// Drive the serial scanner and `map::Builder` over `file` exactly as
-/// `crate::forward::map_forward` does, and report every `COPY` block it found.
+/// Drive the serial scanner and `map::Builder` over `file`, one buffer, as
+/// `crate::forward::map_forward` does over its chunks, and report every `COPY` block it found.
 /// Synchronous on purpose: the reference must not depend on a source, a
 /// runtime or a chunk size, the very things the split may differ in.
 fn reference(file: &[u8]) -> Vec<Reference> {
     let mut scanner = CopyScanner::new();
-    let mut carry = ChunkCarry::new();
     let mut builder = Builder::with_database(None);
     let mut columns: Vec<usize> = Vec::new();
-    carry.absorb(file);
-    for pass in ChunkCarry::PASSES {
-        let (span, span_eof) = carry.span(pass, file, true);
-        while let Some(event) = scanner.next_event(span, span_eof).expect("a scannable file") {
-            match event {
-                Event::CopyStart(start) => {
-                    columns.push(start.header.columns.len());
-                    builder.on_copy_start(start, true);
-                    builder.count_block(Arc::new(Infinities));
-                }
-                Event::Row(row) => builder.on_row(row.offset, row.raw),
-                Event::CopyEnd(end) => builder.on_copy_end(end).expect("nothing gathers here"),
-                Event::Line(line) => builder.feed_line(line.offset, line.raw),
-                Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
-                Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
-                Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
+    while let Some(event) = scanner.next_event(file, true).expect("a scannable file") {
+        match event {
+            Event::CopyStart(start) => {
+                columns.push(start.header.columns.len());
+                builder.on_copy_start(start, true);
+                builder.count_block(Arc::new(Infinities));
             }
+            Event::Row(row) => builder.on_row(row.offset, row.raw),
+            Event::CopyEnd(end) => builder.on_copy_end(end).expect("nothing gathers here"),
+            Event::Line(line) => builder.feed_line(line.offset, line.raw),
+            Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
+            Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
+            Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
         }
-        carry.consumed(pass, file, scanner.take_consumed());
     }
     let spans = builder.finish(file.len() as u64);
     let mut widths = columns.into_iter();

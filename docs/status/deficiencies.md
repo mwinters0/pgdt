@@ -395,7 +395,7 @@ than reading as a phase nobody has sliced.
   refused though PostgreSQL writes and reads one up to I71's bound, and one up
   to a read chunk past the limit is read or refused by where the reads fall —
   the chunk size, `--jobs`, a resume point — not by its length. **(b) owned by
-  `P33`**. Detail: `crates/pgdt-dump/src/scan.rs`.
+  `P33`**. Detail: `crates/pgdt-dump/src/scan/chunked.rs`.
 
 - **KD96** — a `varchar(n)` or `char(n)` field is read as written, not as
   PostgreSQL stores it (I75): one longer than `n` only by trailing blanks

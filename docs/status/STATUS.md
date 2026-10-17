@@ -98,7 +98,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.4.1** pgdt-codec: keys compare only where an order relates them — a variant per order, `Decimal` carrying its scale, `-infinity`, `infinity` and `NaN` their domain; `compare_keys_stored` written over `compare_keys`, `order_keys_stored` gone; counted by `measure.py --count-pair HEAD~1` — landed, two enum types' labels still comparing (`KD118`); the count resolves rises on the data-level `parse` and `pgdt sql`, which callgrind puts wholly in the slice's changed code — the gatherer copying the key twice more, `order_keys` saving more registers, `field_key`'s return — and no shape inside the variant split recovers them, so 36.4.4 replaces the split ([notes](../design/roadmap-P36.4.1-related-keys-notes.md))
 - [x] **36.4.4** pgdt-codec: the order a key was read in carried by `ValueKey`, not by `OrderKey`'s variants — `compare` checks it first, then relates two keys exactly where PostgreSQL resolves `a < b` without a setting, nested keys at one type and order per leaf and an enum by its type name and labels, and in DataFusion's semantics only keys of one order; the hot path's key carries no identity; D56 rewritten; the enum deficiency it closes struck; counted by `measure.py --count-pair HEAD~1` — the count resolves falls on the data-level `parse` and `pgdt sql` and no rise; what the data-level `parse` keeps above 36.4's code, callgrind puts wholly in `CompareKind`'s added enum name widening a stride the gatherer indexes, and it is accepted ([notes](../design/roadmap-P36.4.4-key-order-notes.md))
 - [x] **36.4.5** datafusion-pgdump: in DataFusion's semantics, two keys of different orders compare where its comparison coercion relates their emitted types, answered by `compare_value_keys` through DataFusion's own coercion, cast and comparison kernel, a refused cast answering `None`; the key built from the resolved column, carrying its emitted Arrow type and handing over its value in that type's units (`ValueKey::emitted`), none where the type cannot hold it; DataFusion the oracle, over the `types` fixture's scalar columns pair by pair; closes `KD119` ([notes](../design/roadmap-P36.4.5-datafusion-orders-notes.md))
-- [ ] **36.5** pgdt-dump: `ChunkedScanner`, its four sites calling it; counted by `measure.py --count-pair HEAD~1`
+- [x] **36.5** pgdt-dump: `ChunkedScanner`, its four sites calling it; counted by `measure.py --count-pair HEAD~1` — all four loops read through it; the count resolves a rise on every row, which callgrind puts wholly in the slice's code, `ChunkEvents::next_event`'s test moving each event once more; no shape of the slice's code as clean recovers it, and it is accepted ([notes](../design/roadmap-P36.5-chunked-scanner-notes.md))
 - [ ] **36.6** pgdt-dump: `CacheMode` opens an `Origin` — one decode, no free `load`/`save`, `Valid` and `Incomplete` one, `Offline` its own type, `Disabled` stated; `scan` and `preamble_only` take only what they read
 - [ ] **36.7** pgdt-mapping: back-fill one call; the mapping pass hands back a `Dump`'s parts; closes `KD115`
 - [ ] **36.8** pgdt-query: `Dump`, the selector, `Table::plan` with partitions, a file-ordered stream and serial resume; `read_table` gone; `max_rows` on the stream; filter operators carrying values; `pgdt info` and `pgdt query` on it
@@ -136,3 +136,17 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **36.5: the count's rise is accepted, and `Event::CopyStart` stays
+  unboxed.** Every row rises by the one more move of each event that
+  `ChunkEvents::next_event`'s test costs. The shapes of the slice's own
+  code that recover part of it rest on inlining attributes, or move where
+  a long line is refused. Boxing `CopyStart` recovers most of it, but it
+  is a change to `Event`, not to this slice, and would cut the parent's
+  moves as much. The counts are in [the
+  notes](../design/roadmap-P36.5-chunked-scanner-notes.md), "The count:
+  the slice's own move, accepted".
+  Reconsidering: box `CopyStart`, alone or with the cold continuation,
+  as its own change with its own `--count-pair`. It adds one allocation
+  per `COPY` block and changes `Event`, which every read loop and the
+  preamble match.

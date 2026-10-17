@@ -13,15 +13,14 @@ use std::sync::Arc;
 
 use arrow::array::RecordBatch;
 use async_stream::try_stream;
-use bytes::Bytes;
 use futures::Stream;
 
 use pgdt_codec::ResolvedSchema;
 use pgdt_core::CopyHeader;
+use pgdt_core::Result;
 use pgdt_core::internal::{RawRow, RowSplit, validated_prefix};
-use pgdt_core::{Error, Result};
 use pgdt_dump::internal::announce_read_loop;
-use pgdt_dump::{ChunkCarry, CopyScanner, Event, Row};
+use pgdt_dump::{ChunkedScanner, CopyScanner, Event, Row};
 use pgdt_io::ByteRangeSource;
 
 use self::dynamic::{DynamicRead, Skip};
@@ -142,7 +141,7 @@ pub(super) fn replay<'a>(
                 // state holds nothing and is dropped.
                 active = None;
             }
-            let mut scanner = match resumed.filter(|_| resumes_here) {
+            let scanner = match resumed.filter(|_| resumes_here) {
                 Some(scanner) => scanner,
                 None => match segment.entry {
                     SegmentEntry::Header => CopyScanner::resume(segment.start, None),
@@ -186,8 +185,7 @@ pub(super) fn replay<'a>(
                     }
                 },
             };
-            let mut read_pos = scanner.position();
-            let mut carry = ChunkCarry::new();
+            let mut chunked = ChunkedScanner::new(scanner, seg_end, scan_options);
             let mut chunks = RetainedChunks::new();
             // Set once this segment has read the line that ends at or past
             // its limit — the last it owns, and the one the next segment's
@@ -208,7 +206,12 @@ pub(super) fn replay<'a>(
                 // moved, and a group it now rules out ends the segment before
                 // the chunk is read (`docs/design/decisions.md`, "D93").
                 if let Some(dynamic) = dynamic.as_mut() {
-                    match dynamic.at_chunk(scanner.position(), seg_start, seg_limit, semantics) {
+                    match dynamic.at_chunk(
+                        chunked.scanner().position(),
+                        seg_start,
+                        seg_limit,
+                        semantics,
+                    ) {
                         Skip::Read => {}
                         Skip::To(start) => {
                             rest_from = Some(start);
@@ -217,180 +220,175 @@ pub(super) fn replay<'a>(
                         Skip::Rest => break,
                     }
                 }
-                let want = scan_options.chunk_size_bytes.min((seg_end - read_pos) as usize);
-                let chunk = if want > 0 {
-                    let bytes = source.read_range(read_pos, want).await?;
-                    chunks.retain(read_pos, &bytes);
-                    read_pos += bytes.len() as u64;
-                    bytes
-                } else {
-                    Bytes::new()
-                };
-                let eof = read_pos >= seg_end;
-
-                carry.absorb(&chunk);
-                for pass in ChunkCarry::PASSES {
-                    let (span, span_eof) = carry.span(pass, &chunk, eof);
-                    // `pos` is 0 at the top of every pass — `take_consumed`
-                    // resets it — so this is the absolute offset of `span[0]`,
-                    // which turns a row's file offset into a position in
-                    // `validated` below.
-                    let span_base = scanner.position();
-                    // The span's rows, validated as UTF-8 in one pass rather
-                    // than one `from_utf8` per field. **Taken on the first row
-                    // that will decode something**, so a query that decodes
-                    // nothing pays nothing (`docs/design/decisions.md`, "D27").
-                    let mut validated: Option<&str> = None;
-                    while let Some(event) = scanner.next_event(span, span_eof)? {
-                        // Whether the scanner now stands at a row's start
-                        // inside the block's data.
-                        let at_row = matches!(event, Event::CopyStart(_) | Event::Row(_));
-                        match event {
-                            Event::CopyStart(start) => {
-                                let (opened, resolved, notes) = activate(
-                                    start.header,
-                                    start.header_offset,
-                                    block_database.clone(),
-                                    &plan,
-                                )?;
-                                *shared.comparison_notes.lock().unwrap() = notes;
-                                *shared.resolved_schema.lock().unwrap() = resolved;
-                                active = Some(opened);
-                            }
-                            Event::Row(row) => {
-                                if let Some((header_offset, _, batcher, filter, _)) =
-                                    active.as_mut()
+                let mut chunk = chunked.next_chunk(source).await?;
+                let (offset, bytes) = chunk.read();
+                if !bytes.is_empty() {
+                    chunks.retain(offset, bytes);
+                }
+                // The rows of the span being scanned, validated as UTF-8 in one
+                // pass rather than one `from_utf8` per field, and where the span
+                // starts, which turns a row's file offset into a position in
+                // them. **Taken on the first row that will decode something**,
+                // so a query that decodes nothing pays nothing
+                // (`docs/design/decisions.md`, "D27").
+                let mut validated: Option<(u64, &str)> = None;
+                while let Some(event) = chunk.next_event()? {
+                    // Whether the scanner now stands at a row's start
+                    // inside the block's data.
+                    let at_row = matches!(event, Event::CopyStart(_) | Event::Row(_));
+                    match event {
+                        Event::CopyStart(start) => {
+                            let (opened, resolved, notes) = activate(
+                                start.header,
+                                start.header_offset,
+                                block_database.clone(),
+                                &plan,
+                            )?;
+                            *shared.comparison_notes.lock().unwrap() = notes;
+                            *shared.resolved_schema.lock().unwrap() = resolved;
+                            active = Some(opened);
+                        }
+                        Event::Row(row) => {
+                            if let Some((header_offset, _, batcher, filter, _)) =
+                                active.as_mut()
+                            {
+                                let unchecked = RawRow::unchecked(row.raw);
+                                let raw = if batcher.decodes_fields()
+                                    || filter.reads_fields()
+                                    || dynamic.as_ref().is_some_and(DynamicRead::reads_fields)
                                 {
-                                    let unchecked = RawRow::unchecked(row.raw);
-                                    let raw = if batcher.decodes_fields()
-                                        || filter.reads_fields()
-                                        || dynamic.as_ref().is_some_and(DynamicRead::reads_fields)
-                                    {
-                                        let prefix = *validated
-                                            .get_or_insert_with(|| validated_prefix(span));
-                                        row_text(prefix, span_base, &row)
-                                            .map_or(unchecked, RawRow::validated)
-                                    } else {
-                                        unchecked
+                                    let (span_base, span) = chunk.span();
+                                    let prefix = match validated {
+                                        Some((base, prefix)) if base == span_base => prefix,
+                                        _ => {
+                                            let prefix = validated_prefix(span);
+                                            validated = Some((span_base, prefix));
+                                            prefix
+                                        }
                                     };
-                                    // One split per row, shared
-                                    // (`docs/design/decisions.md`, "D28").
-                                    split.restart();
-                                    let keep = filter.matches(
-                                        raw,
-                                        &mut split,
-                                        batcher.table(),
-                                        row.offset,
-                                    )?;
-                                    // A kept row a dynamic filter's state
-                                    // rejects is dropped before a column of
-                                    // it decodes (`DynamicRead::rejects`).
-                                    let rejected = keep
-                                        && dynamic.as_ref().is_some_and(|dynamic| {
-                                            dynamic.rejects(
-                                                raw,
-                                                &mut split,
-                                                batcher.table(),
-                                                row.offset,
-                                            )
-                                        });
-                                    // A row a filter keeps makes every term
-                                    // of its stop `True`, so each stop is
-                                    // asked only of a row its filter
-                                    // rejected — the dynamic one's in a
-                                    // group it is armed in
-                                    // (`DynamicPruning::arm`), and of every
-                                    // row there where its rows are not
-                                    // evaluated.
-                                    let dynamic_stop = dynamic.as_ref().and_then(DynamicRead::stop);
-                                    let unevaluated = dynamic
-                                        .as_ref()
-                                        .is_some_and(|dynamic| !dynamic.evaluates_rows());
-                                    let passed = if keep {
-                                        (rejected || unevaluated)
-                                            && dynamic_stop
-                                                .is_some_and(|stop| stop.passed(raw, &mut split))
-                                    } else {
-                                        stop.is_some_and(|stop| stop.passed(raw, &mut split))
-                                            || dynamic_stop
-                                                .is_some_and(|stop| stop.passed(raw, &mut split))
-                                    };
-                                    if passed {
-                                        past_limit = true;
-                                        stopped_at = Some(scanner.position());
-                                    } else if keep && !rejected {
-                                        batcher.push_row(
-                                            *header_offset,
-                                            row.offset,
+                                    row_text(prefix, span_base, &row)
+                                        .map_or(unchecked, RawRow::validated)
+                                } else {
+                                    unchecked
+                                };
+                                // One split per row, shared
+                                // (`docs/design/decisions.md`, "D28").
+                                split.restart();
+                                let keep = filter.matches(
+                                    raw,
+                                    &mut split,
+                                    batcher.table(),
+                                    row.offset,
+                                )?;
+                                // A kept row a dynamic filter's state
+                                // rejects is dropped before a column of
+                                // it decodes (`DynamicRead::rejects`).
+                                let rejected = keep
+                                    && dynamic.as_ref().is_some_and(|dynamic| {
+                                        dynamic.rejects(
                                             raw,
                                             &mut split,
-                                            &mut chunks,
-                                        )?;
-                                    }
-                                    if batcher.should_flush() {
-                                        let begins_at = batcher
-                                            .batch_start()
-                                            .unwrap_or_else(|| scanner.position());
-                                        let batch = batcher.flush()?;
-                                        chunks.invalidate_block_cache();
-                                        rows_emitted += batch.num_rows() as u64;
-                                        *shared.batch_offset.lock().unwrap() = begins_at;
-                                        *shared.position.lock().unwrap() =
-                                            snapshot(&scanner, &active, rows_emitted, fingerprint);
-                                        yield batch;
-                                    }
+                                            batcher.table(),
+                                            row.offset,
+                                        )
+                                    });
+                                // A row a filter keeps makes every term
+                                // of its stop `True`, so each stop is
+                                // asked only of a row its filter
+                                // rejected — the dynamic one's in a
+                                // group it is armed in
+                                // (`DynamicPruning::arm`), and of every
+                                // row there where its rows are not
+                                // evaluated.
+                                let dynamic_stop = dynamic.as_ref().and_then(DynamicRead::stop);
+                                let unevaluated = dynamic
+                                    .as_ref()
+                                    .is_some_and(|dynamic| !dynamic.evaluates_rows());
+                                let passed = if keep {
+                                    (rejected || unevaluated)
+                                        && dynamic_stop
+                                            .is_some_and(|stop| stop.passed(raw, &mut split))
+                                } else {
+                                    stop.is_some_and(|stop| stop.passed(raw, &mut split))
+                                        || dynamic_stop
+                                            .is_some_and(|stop| stop.passed(raw, &mut split))
+                                };
+                                if passed {
+                                    past_limit = true;
+                                    stopped_at = Some(chunk.scanner().position());
+                                } else if keep && !rejected {
+                                    batcher.push_row(
+                                        *header_offset,
+                                        row.offset,
+                                        raw,
+                                        &mut split,
+                                        &mut chunks,
+                                    )?;
                                 }
-                            }
-                            Event::CopyEnd(_) => {
-                                if let Some((_, _, mut batcher, _, _)) = active.take()
-                                    && !batcher.is_empty()
-                                {
-                                    let begins_at =
-                                        batcher.batch_start().unwrap_or_else(|| scanner.position());
+                                if batcher.should_flush() {
+                                    let begins_at = batcher
+                                        .batch_start()
+                                        .unwrap_or_else(|| chunk.scanner().position());
                                     let batch = batcher.flush()?;
                                     chunks.invalidate_block_cache();
                                     rows_emitted += batch.num_rows() as u64;
                                     *shared.batch_offset.lock().unwrap() = begins_at;
                                     *shared.position.lock().unwrap() =
-                                        snapshot(&scanner, &active, rows_emitted, fingerprint);
+                                        snapshot(chunk.scanner(), &active, rows_emitted, fingerprint);
                                     yield batch;
                                 }
                             }
-                            // A replay segment covers exactly one block, so
-                            // the only non-row line in range is the `COPY`
-                            // header itself, which arrives as `CopyStart`.
-                            Event::Line(_) | Event::DollarQuoteEnd(_) => {}
-                            Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
                         }
-                        // The line just consumed ended at or past this
-                        // segment's limit, so it was its last. Checked after
-                        // the event, the straddling row being *this*
-                        // segment's.
-                        if past_limit || scanner.position() > seg_limit {
-                            past_limit = true;
-                            break;
-                        }
-                        // The next row is this segment's: where it enters a
-                        // group a dynamic filter rules out, the segment ends.
-                        if at_row && let Some(dynamic) = dynamic.as_mut() {
-                            match dynamic.at_row(scanner.position(), seg_start, seg_limit, semantics)
+                        Event::CopyEnd(_) => {
+                            if let Some((_, _, mut batcher, _, _)) = active.take()
+                                && !batcher.is_empty()
                             {
-                                Skip::Read => {}
-                                Skip::To(start) => {
-                                    rest_from = Some(start);
-                                    past_limit = true;
-                                    break;
-                                }
-                                Skip::Rest => {
-                                    past_limit = true;
-                                    break;
-                                }
+                                let begins_at = batcher
+                                    .batch_start()
+                                    .unwrap_or_else(|| chunk.scanner().position());
+                                let batch = batcher.flush()?;
+                                chunks.invalidate_block_cache();
+                                rows_emitted += batch.num_rows() as u64;
+                                *shared.batch_offset.lock().unwrap() = begins_at;
+                                *shared.position.lock().unwrap() =
+                                    snapshot(chunk.scanner(), &active, rows_emitted, fingerprint);
+                                yield batch;
                             }
                         }
+                        // A replay segment covers exactly one block, so
+                        // the only non-row line in range is the `COPY`
+                        // header itself, which arrives as `CopyStart`.
+                        Event::Line(_) | Event::DollarQuoteEnd(_) => {}
+                        Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
                     }
-                    carry.consumed(pass, &chunk, scanner.take_consumed());
-                    if past_limit {
+                    // The line just consumed ended at or past this
+                    // segment's limit, so it was its last. Checked after
+                    // the event, the straddling row being *this*
+                    // segment's.
+                    if past_limit || chunk.scanner().position() > seg_limit {
+                        past_limit = true;
                         break;
+                    }
+                    // The next row is this segment's: where it enters a
+                    // group a dynamic filter rules out, the segment ends.
+                    if at_row && let Some(dynamic) = dynamic.as_mut() {
+                        match dynamic.at_row(
+                            chunk.scanner().position(),
+                            seg_start,
+                            seg_limit,
+                            semantics,
+                        ) {
+                            Skip::Read => {}
+                            Skip::To(start) => {
+                                rest_from = Some(start);
+                                past_limit = true;
+                                break;
+                            }
+                            Skip::Rest => {
+                                past_limit = true;
+                                break;
+                            }
+                        }
                     }
                 }
 
@@ -398,16 +396,10 @@ pub(super) fn replay<'a>(
                 // its chance to be referenced by a zero-copy view, so it is
                 // safe to drop. Which chunks that releases is
                 // `RetainedChunks`' rule, not this loop's.
-                chunks.release_through(scanner.position());
+                chunks.release_through(chunked.scanner().position());
 
-                if past_limit || eof {
+                if past_limit || chunked.at_end() {
                     break;
-                }
-                if carry.len() > scan_options.max_line_bytes {
-                    Err(Error::LineTooLong {
-                        offset: scanner.position(),
-                        limit: scan_options.max_line_bytes,
-                    })?;
                 }
             }
 
@@ -430,12 +422,13 @@ pub(super) fn replay<'a>(
             if let Some((_, _, mut batcher, _, _)) = active.take()
                 && !batcher.is_empty()
             {
-                let begins_at = batcher.batch_start().unwrap_or_else(|| scanner.position());
+                let begins_at =
+                    batcher.batch_start().unwrap_or_else(|| chunked.scanner().position());
                 let batch = batcher.flush()?;
                 rows_emitted += batch.num_rows() as u64;
                 *shared.batch_offset.lock().unwrap() = begins_at;
                 *shared.position.lock().unwrap() =
-                    snapshot(&scanner, &active, rows_emitted, fingerprint);
+                    snapshot(chunked.scanner(), &active, rows_emitted, fingerprint);
                 yield batch;
             }
         }

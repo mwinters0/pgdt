@@ -171,7 +171,7 @@ Code: `pgdt_model::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_t
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
 `CopyScanner` is a synchronous state machine over a caller-owned buffer; the only memory bound is `max_line_bytes`,
 and exceeding it errors, never truncates (`KD93`). A chunk is scanned in two passes, carried line then chunk in place
-(`ChunkCarry`); a growing buffer copied every byte twice. Only a line matching the whole `COPY … FROM stdin;` grammar,
+(`ChunkedScanner`, every serial loop's, a chunk's boundary the loop's own to poll at); a growing buffer copied every byte twice. Only a line matching the whole `COPY … FROM stdin;` grammar,
 or a bare `BEGIN;` (below), is structural, an off-grammar one being ordinary SQL; inside a block only an exact `\.` line and a row's ending are looked at (I7, I91). Outside
 one every line is lexed as psql lexes it (`lex.rs`, I50), a line beginning inside a region is never structure, and a
 dollar-quoted one emits no lines, only a closing offset (I1). A bare `BEGIN;`/`COMMIT;` pair is the large-object

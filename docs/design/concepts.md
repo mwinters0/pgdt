@@ -108,9 +108,12 @@ splits it without skipping the spaces around the dot the others skip.
 ## The scanner
 
 The line-anchored state machine finding statements and `COPY` blocks in a
-plain-format dump ([`decisions.md`](decisions.md), "The scanner").
+plain-format dump, and the chunked read loop every serial pass drives it
+through ([`decisions.md`](decisions.md), "The scanner").
 
-- **pgdt-dump** — `scan.rs`: no decoding and no Arrow (D74).
+- **pgdt-dump** — `scan.rs`: the state machine; `scan/chunked.rs`: the read
+  loop, its carried line and line limit, and the preamble scan over it. No
+  decoding and no Arrow (D74).
 
 ## The file map
 
