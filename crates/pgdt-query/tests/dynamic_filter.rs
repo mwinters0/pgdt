@@ -23,15 +23,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use arrow::array::{AsArray, RecordBatch};
 use arrow::datatypes::Int32Type;
 use futures::StreamExt;
-use pgdt_dump::cache::{self, CacheMode, SourceWatch, StrictIdentity};
+use pgdt_dump::cache::{self, CacheMode};
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::{BoundsSet, DumpIndex, Sortedness, StatisticsView};
 use pgdt_query::{
-    DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
-    TablePartitions,
+    Dump, DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
 };
 
 mod common;
@@ -120,6 +119,13 @@ async fn mapped(dump: &Path, group_size: u64) -> DumpIndex {
     run.index
 }
 
+/// `dump` opened through the cache [`mapped`] left beside it.
+async fn opened(dump: &Path) -> Dump {
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
+    let mode = CacheMode::enabled(cache::colocated_path(dump));
+    Dump::opened(mode.open_source(source).await.unwrap()).await.unwrap()
+}
+
 /// What a replay of a table's `id` emitted under `dynamic`: the ids in file
 /// order and each sub-stream's, the groups its sub-streams pruned, the rows
 /// they dropped, the bytes its early stops left unread, and the order the
@@ -184,17 +190,16 @@ async fn run_evaluating(
     dynamic: Option<Arc<dyn DynamicFilter>>,
     evaluation: RowEvaluation,
 ) -> Run {
-    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
-    let watch =
-        Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
-    let table = index.tables().into_iter().find(|t| t.qualified_name() == table).unwrap();
+    let opened = opened(dump).await;
+    let name = index.tables().into_iter().find(|t| t.qualified_name() == table).unwrap();
     let options = QueryOptions {
         projection: Some(vec!["id".into()]),
         use_statistics,
         parallelism: Parallelism::workers(jobs, 1 << 30),
         ..QueryOptions::default()
     };
-    let plan = TablePartitions::plan(source, index, watch, &table, scan, options).await.unwrap();
+    let table = opened.table(&name.into()).unwrap().unwrap();
+    let plan = table.plan(scan.read, options).unwrap();
     let plan = Arc::new(plan);
     let dynamic = dynamic.map(|filter| plan.under(filter, evaluation));
     let (mut partitions, mut pruned, mut dropped, mut unread) = (Vec::new(), 0, 0, 0);
@@ -768,18 +773,15 @@ async fn read_both(
     index: &DumpIndex,
     dynamic: Option<Arc<dyn DynamicFilter>>,
 ) -> Result<(Vec<i32>, u64), String> {
-    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
-    let watch =
-        Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
-    let table = index.tables().into_iter().find(|t| t.qualified_name() == "public.t").unwrap();
+    let opened = opened(dump).await;
+    let name = index.tables().into_iter().find(|t| t.qualified_name() == "public.t").unwrap();
     let options = QueryOptions {
         projection: Some(vec!["id".into(), "v".into()]),
         parallelism: Parallelism::workers(1, 1 << 30),
         ..QueryOptions::default()
     };
-    let plan = TablePartitions::plan(source, index, watch, &table, ScanOptions::default(), options)
-        .await
-        .unwrap();
+    let table = opened.table(&name.into()).unwrap().unwrap();
+    let plan = table.plan(ReadOptions::default(), options).unwrap();
     let plan = Arc::new(plan);
     let mut stream = match dynamic {
         Some(filter) => plan.under(filter, RowEvaluation::On).stream(0, 64),

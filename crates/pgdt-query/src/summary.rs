@@ -112,7 +112,7 @@ pub struct Bound {
 /// out of the bounds and the distinct values, and out of the sum, which a
 /// view taking every value reads nowhere such a value is
 /// (`docs/design/decisions.md`, "D97", "D98").
-pub fn table_summary(
+pub(crate) fn table_summary(
     index: &DumpIndex,
     table: &TableName,
     resolved: &ResolvedSchema,

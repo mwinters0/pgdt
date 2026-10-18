@@ -8,10 +8,12 @@ use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
-use pgdt_dump::ScanOptions;
-use pgdt_io::LocalFileSource;
+use std::sync::Arc;
+
+use pgdt_dump::cache::{self, CacheMode};
+use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_query::{QueryOptions, column_divergences};
+use pgdt_query::{Dump, QueryOptions};
 
 fn fixture(schema: &str) -> PathBuf {
     common::fixture(16, schema, "default")
@@ -63,14 +65,16 @@ async fn a_dump_answers_through_both_registrations() {
 /// bytewise for want of a recorded collation, counted off the library's own
 /// per-column divergences rather than the provider's finding.
 async fn uncollated(dump: &Path) -> (usize, usize) {
-    let source = LocalFileSource::open(dump).unwrap();
-    let index = pgdt_mapping::build_index(&source, &ScanOptions::default()).await.unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
+    let mode = CacheMode::enabled(cache::colocated_path(dump));
+    let dump = Dump::opened(mode.open_source(source).await.unwrap()).await.unwrap();
     let options =
         QueryOptions { semantics: ComparisonSemantics::DataFusion, ..QueryOptions::default() };
     let (mut columns, mut tables) = (0, 0);
-    for name in index.tables() {
-        let Ok(resolved) = pgdt_query::table_schema(&index, &name, &options) else { continue };
-        let named: BTreeSet<String> = column_divergences(&resolved, options.semantics)
+    for name in dump.tables() {
+        let table = dump.table(&name.into()).unwrap().unwrap();
+        let Ok(divergences) = table.divergences(&options) else { continue };
+        let named: BTreeSet<String> = divergences
             .into_iter()
             .filter(|note| note.divergence == ComparisonDivergence::UnknownCollation)
             .map(|note| note.column)

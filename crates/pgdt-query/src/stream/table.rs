@@ -206,9 +206,9 @@ impl StreamShared {
     }
 }
 
-/// The schema a query of `table` would resolve over `index`, read off the map
-/// and the DDL alone: no byte of the dump is read, and nothing is asked of a
-/// source.
+/// The schema a query of `table` would resolve over `index`, a complete map,
+/// read off the map and the DDL alone ([`Table::schema`](crate::Table::schema)):
+/// no byte of the dump is read, and nothing is asked of a source.
 ///
 /// It is the schema every batch of that query carries, projection included
 /// ([`TableColumns`](super::replay::plan::TableColumns)), read off the
@@ -218,10 +218,10 @@ impl StreamShared {
 /// planning the replay raises, and a projection naming a column twice, which
 /// only the query's request check refuses: here the column comes back twice.
 /// A table the map holds no block for has the empty schema, as its stream
-/// has no rows. **Believe it only over a complete map**: a table's later blocks
-/// are part of its census and of its column-set check
-/// ([`pgdt_model::DumpIndex::is_complete`]).
-pub fn table_schema(
+/// has no rows. A complete map is what [`Dump`](crate::Dump) holds by
+/// construction: a table's later blocks are part of its census and of its
+/// column-set check.
+pub(crate) fn table_schema(
     index: &DumpIndex,
     table: &TableName,
     query_options: &QueryOptions,

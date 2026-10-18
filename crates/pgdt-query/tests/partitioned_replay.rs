@@ -31,10 +31,7 @@ use pgdt_query::{
 };
 
 mod common;
-use common::{edge_cases, partitions_fixture, rows_of, types_fixture};
-use pgdt_fixtures::arranged;
-use pgdt_model::PostgresInvalidValues;
-use tokio_util::sync::CancellationToken;
+use common::{dump_over, edge_cases, mapped, partitions_fixture, rows_of, types_fixture};
 
 type Rows = Vec<Vec<Option<String>>>;
 
@@ -1082,57 +1079,34 @@ async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
     assert_eq!(rows, expected);
 }
 
-/// **A plan over a map the caller holds replays what the query's own mapping
-/// pass would**: the same partitions, the same rows, a schema known before
-/// any is read — and each partition started afresh as often as it is asked
-/// for, at whatever batch size. A map short of the file's end is refused
-/// before a byte is read.
+/// **A `Dump`'s plan replays what the query's own mapping pass would**: the
+/// same partitions, the same rows, a schema known before any is read — and
+/// each partition started afresh as often as it is asked for, at whatever
+/// batch size. A map short of the file's end builds no `Dump`, and so is
+/// refused before a byte is read.
 #[tokio::test]
-async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
+async fn a_dump_s_plan_replays_as_the_mapping_pass_would() {
     use std::sync::Arc;
 
     use pgdt_core::Error;
-    use pgdt_dump::cache::{SourceWatch, StrictIdentity};
+    use pgdt_mapping::build_index;
     use pgdt_mapping::statistics::StatisticsRequest;
-    use pgdt_mapping::{build_index, map_file};
-    use pgdt_model::TableName;
-    use pgdt_query::{TablePartitions, table_schema};
 
     let path = partitions_fixture(16, "load-via-partition-root");
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
-    let run = map_file(
-        CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-        ReadOptions::default(),
-        &arranged(1),
-        PostgresInvalidValues::Default,
-        &StatisticsRequest::DATA,
-        &CancellationToken::new(),
-    )
-    .await
-    .unwrap();
-    let index = run.index;
-    let watch =
-        Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
+    let dump = mapped(Arc::clone(&source), &StatisticsRequest::DATA).await;
     let options =
         QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..QueryOptions::default() };
 
     let mut compared = 0;
-    for table in index.tables() {
+    for name in dump.tables() {
         let (expected, count) =
-            partitioned_rows(source.as_ref(), &table.qualified_name(), QueryOptions::default(), 4)
+            partitioned_rows(source.as_ref(), &name.qualified_name(), QueryOptions::default(), 4)
                 .await;
-        let plan = TablePartitions::plan(
-            Arc::clone(&source),
-            &index,
-            Arc::clone(&watch),
-            &table,
-            ScanOptions::default(),
-            options.clone(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(plan.len(), count, "{}", table.qualified_name());
-        let schema = table_schema(&index, &table, &options).unwrap();
+        let table = dump.table(&name.into()).unwrap().unwrap();
+        let plan = table.plan(ReadOptions::default(), options.clone()).unwrap();
+        assert_eq!(plan.len(), count, "{}", name.qualified_name());
+        let schema = table.schema(&options).unwrap();
         assert_eq!(plan.resolved_schema().schema, schema.schema);
         for _ in 0..2 {
             let mut rows = Rows::new();
@@ -1145,7 +1119,7 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
                     rows.extend(rows_of(&batch));
                 }
             }
-            assert_eq!(rows, expected, "{}", table.qualified_name());
+            assert_eq!(rows, expected, "{}", name.qualified_name());
         }
         compared += 1;
     }
@@ -1154,17 +1128,7 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
     // A map claiming less than the whole file: nothing is scanned to finish it.
     let mut partial = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     partial.scanned_through = 1;
-    let table = TableName { database: None, schema: Some("public".into()), table: "spread".into() };
-    let refused = TablePartitions::plan(
-        Arc::clone(&source),
-        &partial,
-        watch,
-        &table,
-        ScanOptions::default(),
-        options,
-    )
-    .await
-    .err()
-    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let refused = dump_over(source, &partial, dir.path()).await.err().unwrap();
     assert!(matches!(refused, Error::MapIncomplete { scanned_through: 1, .. }), "{refused}");
 }

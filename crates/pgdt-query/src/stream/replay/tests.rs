@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use pgdt_core::{CopyHeader, Error};
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{CacheMode, SourceWatch, StrictIdentity};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_model::CopyBlock;
 
 use super::activate;
@@ -45,7 +45,7 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
     let [first, second] = &mapped.matches[..] else { panic!("two blocks: {:?}", mapped.matches) };
     let plan_for = |query_options: &QueryOptions| {
         ReplayPlan::new(
-            ScanOptions::default(),
+            ReadOptions::default(),
             query_options.clone(),
             mapped.database.clone(),
             &mapped.matches,

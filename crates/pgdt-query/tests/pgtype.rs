@@ -18,10 +18,10 @@ use pgdt_dump::ScanOptions;
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::build_index;
 use pgdt_model::{DumpMetadata, TableName};
-use pgdt_query::{QueryOptions, table_schema};
+use pgdt_query::QueryOptions;
 
 mod common;
-use common::{all_fixtures, multidb_fixture, types_fixture};
+use common::{all_fixtures, mapped, multidb_fixture, sweep_request, types_fixture};
 use pgdt_dump::ReadOptions;
 use pgdt_fixtures::arranged;
 use tokio_util::sync::CancellationToken;
@@ -734,8 +734,9 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
 
     let mut witnesses: BTreeMap<&'static str, String> = BTreeMap::new();
     for path in all_fixtures() {
-        let source = LocalFileSource::open(&path).unwrap();
-        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+        let source = Arc::new(LocalFileSource::open(&path).unwrap());
+        let dump = mapped(source, &sweep_request(&path)).await;
+        let index = dump.index();
         for (database, block) in index.blocks_with_database() {
             if block.header.columns.is_empty() {
                 continue;
@@ -753,7 +754,8 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
                 unrepresentable: UnrepresentableMode::Text,
                 ..QueryOptions::default()
             };
-            let queried = table_schema(&index, &TableName::of(database, block), &untyped).unwrap();
+            let table = dump.table(&TableName::of(database, block).into()).unwrap().unwrap();
+            let queried = table.schema(&untyped).unwrap();
             for note in resolved.notes.iter().chain(&queried.notes) {
                 witnesses
                     .entry(outcome_name(&note.resolution))

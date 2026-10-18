@@ -163,8 +163,13 @@ format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
 - **pgdt-dump** — `cache/`: the loader scans, so the cache sits beside the
   parsers (D68); its part is opening a source through its cache too, which
   needs the source and the persisted map, both at or below it.
+- **pgdt-query** — `dump.rs`: the complete dump an embedder reads tables
+  through, a table named by a selector, and its schema, summary and plan;
+  schema resolution, summaries and the replay are query's, so the handle
+  offering them is too.
 - **datafusion-pgdump** — `dump.rs`: a dump opened through its complete
-  cache (D90).
+  cache, with the modes and the budget holds every scan of it reads under
+  (D90).
 
 **Not in one place.** Why a cache cannot be used is worded twice, by
 pgdt-core's `Error` and by the `pgdt` binary's `info`, and the two disagree

@@ -4,7 +4,7 @@
 use std::ops::Range;
 
 use pgdt_core::{Error, Result};
-use pgdt_dump::ScanOptions;
+use pgdt_dump::ReadOptions;
 use pgdt_io::ByteRangeSource;
 use pgdt_model::CopyBlock;
 
@@ -120,11 +120,11 @@ pub(in crate::stream) async fn first_row_start(
     source: &dyn ByteRangeSource,
     from: u64,
     end: u64,
-    options: &ScanOptions,
+    read: ReadOptions,
 ) -> Result<Option<u64>> {
     let mut pos = from;
     while pos < end {
-        let want = options.read.chunk_size_bytes.min((end - pos) as usize);
+        let want = read.chunk_size_bytes.min((end - pos) as usize);
         let bytes = source.read_range(pos, want).await?;
         if bytes.is_empty() {
             return Ok(None);
@@ -133,8 +133,8 @@ pub(in crate::stream) async fn first_row_start(
             return Ok(Some(pos + nl as u64 + 1));
         }
         pos += bytes.len() as u64;
-        if pos - from > options.read.max_line_bytes as u64 {
-            return Err(Error::LineTooLong { offset: from, limit: options.read.max_line_bytes });
+        if pos - from > read.max_line_bytes as u64 {
+            return Err(Error::LineTooLong { offset: from, limit: read.max_line_bytes });
         }
     }
     Ok(None)

@@ -2,7 +2,7 @@
 //! drained into one caller-supplied `DiagnosticSink`, each finding on the
 //! shared `Severity` scale with its own sentence.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
 use pgdt_codec::ColumnNote;
@@ -11,14 +11,15 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::build_index;
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::drain;
 use pgdt_model::{Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity};
 use pgdt_query::{
-    ComparisonNote, Expr, Predicate, PredicateOp, QueryOptions, column_divergences, table_stream,
+    ComparisonNote, Expr, Predicate, PredicateOp, QueryOptions, TableSelector, table_stream,
 };
 
 mod common;
-use common::types_fixture;
+use common::{mapped, types_fixture};
 
 /// What a sink saw of one finding: which channel's type it was, recovered by
 /// downcasting, its severity and its sentence.
@@ -134,17 +135,11 @@ async fn a_column_note_reads_as_a_finding() {
 /// neither.
 #[tokio::test]
 async fn a_table_s_divergences_drain_at_registration() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let mut stream = table_stream(
-        &source,
-        "public.t_enum_domain",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
-    while stream.next().await.transpose().unwrap().is_some() {}
-    let resolved = stream.resolved_schema();
+    let source = Arc::new(LocalFileSource::open(types_fixture(16, "default")).unwrap());
+    let dump = mapped(source, &StatisticsRequest::DATA).await;
+    let selector = TableSelector::named("t_enum_domain").in_schema("public");
+    let table = dump.table(&selector).unwrap().unwrap();
+    let resolved = table.schema(&QueryOptions::default()).unwrap();
 
     let drained = |semantics| {
         let seen = Mutex::new(Vec::new());
@@ -153,7 +148,8 @@ async fn a_table_s_divergences_drain_at_registration() {
             assert_eq!(finding.severity(), Severity::Warning);
             seen.lock().unwrap().push((note.column.clone(), note.divergence, finding.message()));
         };
-        drain(&sink, &column_divergences(&resolved, semantics));
+        let options = QueryOptions { semantics, ..QueryOptions::default() };
+        drain(&sink, &table.divergences(&options).unwrap());
         seen.into_inner().unwrap()
     };
     assert_eq!(drained(ComparisonSemantics::Postgres), []);

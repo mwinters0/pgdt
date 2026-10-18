@@ -33,12 +33,16 @@ use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpTable};
 use futures::StreamExt;
 use pgdt_codec::{
     ResolvedSchema, SchemaMode, compare::ComparisonDivergence, compare::ComparisonSemantics,
-    resolve_columns,
 };
-use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy};
+use pgdt_dump::ReadOptions;
+use pgdt_dump::cache::CacheMode;
+use pgdt_fixtures::{all_fixtures, arranged, fixtures_root, parsed_copy};
+use pgdt_io::{ByteRangeSource, LocalFileSource};
+use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_model::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef};
-use pgdt_query::column_divergences;
+use pgdt_model::PostgresInvalidValues;
+use pgdt_query::{ComparisonNote, Dump, QueryOptions, TableSelector};
+use tokio_util::sync::CancellationToken;
 
 /// Every major's `default.sql` of every schema: each kind the register has,
 /// and the statistics fixture's groups, so a pushed filter is also pruned.
@@ -453,27 +457,31 @@ async fn sql_pushes_down_what_the_library_answers_and_answers_alike() {
     assert!(misplaced.is_empty(), "{misplaced:#?}");
 }
 
-/// A one-column table declaring `declared`, resolved as the provider
-/// resolves it.
-fn one_column(declared: &str) -> ResolvedSchema {
-    let metadata = DumpMetadata {
-        databases: vec![DatabaseMetadata {
-            name: None,
-            preamble_complete: true,
-            server_version: None,
-            pg_dump_version: None,
-            extensions: Vec::new(),
-            types: Vec::new(),
-            collations: Vec::new(),
-            tables: [(
-                "public.t".to_string(),
-                TableDef::with_columns(vec![ColumnDef::new("v", declared)]),
-            )]
-            .into_iter()
-            .collect(),
-        }],
-    };
-    resolve_columns("public.t", &["v".to_string()], Some(&metadata), None, SchemaMode::Typed, &[])
+/// A one-column table declaring `declared`, its rows none, resolved as the
+/// provider resolves it, and the divergences registration reports of it.
+async fn one_column(declared: &str) -> (ResolvedSchema, Vec<ComparisonNote>) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("dump.sql");
+    let text = format!(
+        "CREATE TABLE public.t (\n    v {declared}\n);\n\nCOPY public.t (v) FROM stdin;\n\\.\n"
+    );
+    std::fs::write(&path, text).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
+    let run = map_file(
+        CacheMode::DISABLED.open_source(source).await.unwrap(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let dump = Dump::mapped(run).await.unwrap();
+    let table = dump.table(&TableSelector::named("t")).unwrap().unwrap();
+    let options =
+        QueryOptions { semantics: ComparisonSemantics::DataFusion, ..QueryOptions::default() };
+    (table.schema(&options).unwrap(), table.divergences(&options).unwrap())
 }
 
 /// **What registration announces about a nested column in DataFusion semantics
@@ -481,8 +489,8 @@ fn one_column(declared: &str) -> ResolvedSchema {
 /// inside a list is below `0` and unequal to it — each note found on the
 /// column, and its claim checked through `compare_op_for_nested`, which is
 /// DataFusion's comparison of a list, on arrays of the type the column emits.
-#[test]
-fn a_nested_column_s_arrow_notes_are_datafusion_s_comparison() {
+#[tokio::test]
+async fn a_nested_column_s_arrow_notes_are_datafusion_s_comparison() {
     let list = |resolved: &ResolvedSchema, values: ArrayRef| {
         let DataType::List(field) = resolved.schema.field(0).data_type() else {
             panic!("{resolved:?}")
@@ -490,20 +498,18 @@ fn a_nested_column_s_arrow_notes_are_datafusion_s_comparison() {
         let item = Arc::clone(field);
         ListArray::new(item, OffsetBuffer::from_lengths([values.len()]), values, None)
     };
-    let announced = |resolved: &ResolvedSchema, divergence| {
-        column_divergences(resolved, ComparisonSemantics::DataFusion)
-            .iter()
-            .any(|note| note.divergence == divergence)
+    let announced = |notes: &[ComparisonNote], divergence| {
+        notes.iter().any(|note| note.divergence == divergence)
     };
 
-    let integers = one_column("integer[]");
-    assert!(announced(&integers, ComparisonDivergence::NestedOrder));
+    let (integers, notes) = one_column("integer[]").await;
+    assert!(announced(&notes, ComparisonDivergence::NestedOrder));
     let with_null = list(&integers, Arc::new(Int32Array::from(vec![None])));
     let one = list(&integers, Arc::new(Int32Array::from(vec![Some(1)])));
     assert!(compare_op_for_nested(Operator::Lt, &with_null, &one).unwrap().value(0));
 
-    let reals = one_column("real[]");
-    assert!(announced(&reals, ComparisonDivergence::UnnormalizedZero));
+    let (reals, notes) = one_column("real[]").await;
+    assert!(announced(&notes, ComparisonDivergence::UnnormalizedZero));
     let negative = list(&reals, Arc::new(Float32Array::from(vec![-0.0])));
     let positive = list(&reals, Arc::new(Float32Array::from(vec![0.0])));
     assert!(compare_op_for_nested(Operator::Lt, &negative, &positive).unwrap().value(0));

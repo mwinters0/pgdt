@@ -1,6 +1,6 @@
 //! A partitioned replay — over the map a query's own mapping pass settles,
-//! or over a complete map the caller holds — and its partitions under one
-//! dynamic filter.
+//! or over a [`Dump`](crate::Dump)'s complete map — and its partitions under
+//! one dynamic filter.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -11,9 +11,9 @@ use futures::StreamExt;
 use tokio::sync::OnceCell;
 
 use pgdt_codec::ResolvedSchema;
-use pgdt_core::{Error, Result};
-use pgdt_dump::ScanOptions;
+use pgdt_core::Result;
 use pgdt_dump::cache::{CacheMode, SourceWatch};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, Partitioning};
 use pgdt_model::{BlockStatistics, CopyBlock, DumpIndex, Sortedness, TableName};
 
@@ -75,7 +75,7 @@ pub async fn table_stream_partitions<'a>(
     let mapped = watch.attribute(source, mapped).await?;
     let MappedTable { database, matches, metadata } = mapped;
     let PlannedReplay { plan, groups, plan_notes, .. } =
-        plan_replay(source, database, &matches, metadata, scan_options, query_options)?;
+        plan_replay(source, database, &matches, metadata, scan_options.read, query_options)?;
     let of = groups.len();
     Ok(groups
         .into_iter()
@@ -111,29 +111,26 @@ pub async fn table_stream_partitions<'a>(
         .collect())
 }
 
-/// A partitioned replay of one table over **a complete map the caller holds**,
-/// planned once and streamed per partition, for an embedder that schedules
-/// partitions itself and runs them in any order, or more than once
-/// (`docs/design/decisions.md`, "D90").
+/// A partitioned replay of one table of a [`Dump`](crate::Dump), planned once
+/// ([`Table::plan`](crate::Table::plan)) and streamed per partition, for an
+/// embedder that schedules partitions itself and runs them in any order, or
+/// more than once (`docs/design/decisions.md`, "D90").
 ///
 /// [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) with the mapping pass taken out: no cache is
-/// loaded or written and no byte is scanned for structure, so the map is
-/// believed exactly as handed over, which is why a map that stops short of
-/// the source's end is refused ([`Error::MapIncomplete`]). **The table is
-/// named exactly** ([`TableName`]), so nothing is matched and no ambiguity can
-/// arise.
+/// loaded or written and no byte is scanned for structure, the dump's map
+/// being complete by construction.
 ///
 /// **It owns its source**, so its sub-streams outlive the call that planned
 /// them — `'static`, which is what a scheduler holding a plan across tasks
-/// needs. `watch` is the caller's: its baseline is what each sub-stream
-/// checks the source against when it ends, so a caller opens it before
-/// trusting the map it loaded and shares it across every replay of that map.
+/// needs. Its watch is the dump's: its baseline is what each sub-stream
+/// checks the source against when it ends, taken by the open the map was
+/// loaded or built under and shared across every replay of that map.
 ///
-/// **It shares each matched block's statistics with the caller's map**, where
+/// **It shares each matched block's statistics with the dump's map**, where
 /// the query uses them, for a [`DynamicFilter`] to be read against as its
 /// sub-streams run ([`Self::under`]): nothing is copied, so they cost
-/// nothing the map does not while the caller holds it, and a plan kept after
-/// the map is dropped keeps them.
+/// nothing the map does not while the dump is held, and a plan kept after
+/// the dump is dropped keeps them.
 pub struct TablePartitions {
     source: Arc<dyn ByteRangeSource>,
     watch: Arc<SourceWatch>,
@@ -153,31 +150,30 @@ pub struct TablePartitions {
 }
 
 impl TablePartitions {
-    /// Plan the replay of `table` over `index`: its columns, every block
-    /// resolved, statistics consulted, and the blocks cut into as many
-    /// partitions as `query_options.parallelism` and the source's own advice
-    /// allow — the same plan [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) makes after its
-    /// mapping pass.
-    pub async fn plan(
+    /// Plan the replay of `table` over `index`, a complete map of `source`:
+    /// its columns, every block resolved, statistics consulted, and the blocks
+    /// cut into as many partitions as `query_options.parallelism` and the
+    /// source's own advice allow — the same plan
+    /// [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) makes after its mapping pass. A
+    /// source `watch` cannot check during a read is refused here, where the
+    /// replay's reads are planned ([`SourceWatch::require_checkable`]).
+    pub(crate) fn new(
         source: Arc<dyn ByteRangeSource>,
-        index: &DumpIndex,
         watch: Arc<SourceWatch>,
+        index: &DumpIndex,
         table: &TableName,
-        scan_options: ScanOptions,
+        read: ReadOptions,
         query_options: QueryOptions,
     ) -> Result<Self> {
         validate_request(&query_options, None, 0)?;
-        let size = source.size().await?;
-        if !index.is_complete(size) {
-            return Err(Error::MapIncomplete { scanned_through: index.scanned_through, size });
-        }
+        watch.require_checkable(source.as_ref())?;
         let matches: Vec<CopyBlock> = index.blocks_of(table).cloned().collect();
         let PlannedReplay { plan, groups, plan_notes, advice } = plan_replay(
             source.as_ref(),
             table.database.clone(),
             &matches,
             index.metadata.clone(),
-            scan_options,
+            read,
             query_options,
         )?;
         let resolved = plan

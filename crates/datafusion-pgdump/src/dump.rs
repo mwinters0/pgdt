@@ -5,9 +5,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
-use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch, StrictIdentity};
+use pgdt_dump::cache::{CacheMode, Held, StrictIdentity};
 use pgdt_io::{ByteRangeSource, Origin};
 use pgdt_model::{Diagnostic, DumpIndex, PostgresInvalidValues, TableName};
+use pgdt_query::{Dump, Table, TableSelector};
 
 use crate::budget::{Hold, ScanBudget};
 use crate::error::Error;
@@ -45,8 +46,10 @@ pub struct PgDumpOptions {
     pub strict_identity: StrictIdentity,
 }
 
-/// A dump and the complete map of it its cache holds, opened once and shared
-/// by every catalog, table and scan registered over it.
+/// A dump and the complete map of it its cache holds ([`Dump`]), opened once
+/// and shared by every catalog, table and scan registered over it, with the
+/// modes every scan of it reads under and the budgets its statistics are
+/// billed to.
 ///
 /// **It never maps and never writes.** The map is the one `pgdt parse` left,
 /// loaded whole at open and believed only where it reaches the end of the file
@@ -70,10 +73,7 @@ pub struct PgDumpOptions {
 /// resident whether or not a scan runs.
 pub struct PgDump {
     origin: String,
-    source: Arc<dyn ByteRangeSource>,
-    watch: Arc<SourceWatch>,
-    index: DumpIndex,
-    tables: Vec<TableName>,
+    dump: Dump,
     schema_mode: SchemaMode,
     unrepresentable: UnrepresentableMode,
     postgres_invalid_values: PostgresInvalidValues,
@@ -107,13 +107,13 @@ impl PgDump {
         // An unusable cache is the scans' own refusal, word for word: this
         // provider never writes, so nothing here may overwrite one, and the
         // remedy it names is `pgdt`'s (`docs/design/decisions.md`, "D20").
-        let Opened { source, watch, cache, .. } = mode.open(&origin).await?;
+        let opened = mode.open(&origin).await?;
         // Every scan reads, so a source its in-flight check cannot cover is
         // refused at registration rather than at a scan.
-        watch.require_checkable(source.as_ref())?;
+        opened.watch.require_checkable(opened.source.as_ref())?;
         let shown = || mode.path().map(Path::display).expect("a resolved cache has a path");
-        let index = match cache {
-            Held::Loaded(loaded) if loaded.is_complete() => loaded.index,
+        match &opened.cache {
+            Held::Loaded(loaded) if loaded.is_complete() => {}
             Held::Loaded(loaded) => {
                 return Err(incomplete(format!(
                     "the cache at {} covers {} of {} byte(s)",
@@ -128,16 +128,12 @@ impl PgDump {
             Held::Disabled | Held::Replacing(_) => {
                 unreachable!("the provider opens a cache it names and never replaces")
             }
-        };
-        let watch = Arc::new(watch);
-        let tables = index.tables();
-        let statistics_bytes = index.statistics_heap_bytes();
+        }
+        let dump = Dump::opened(opened).await?;
+        let statistics_bytes = dump.index().statistics_heap_bytes();
         Ok(Arc::new(Self {
             origin: origin.to_string(),
-            source,
-            watch,
-            index,
-            tables,
+            dump,
             schema_mode: options.schema_mode,
             unrepresentable: options.unrepresentable,
             postgres_invalid_values: options.postgres_invalid_values,
@@ -155,31 +151,12 @@ impl PgDump {
     /// Every table the dump holds rows for, in the order its first block
     /// appears.
     pub fn tables(&self) -> &[TableName] {
-        &self.tables
+        self.dump.tables()
     }
 
-    /// The databases the file holds: each `\connect`ed database by name, in
-    /// file order, then `None` for one no `\connect` names — a plain
-    /// single-database dump taken without `--create` — where it holds a
-    /// table, one holding none yielding no entry. The stretch of a
-    /// `pg_dumpall` file before its first `\connect`, which holds roles and
-    /// no table, is not one.
+    /// The databases the file holds ([`Dump::databases`]).
     pub fn databases(&self) -> Vec<Option<String>> {
-        let mut names: Vec<Option<String>> = Vec::new();
-        let declared = self
-            .index
-            .metadata
-            .iter()
-            .flat_map(|m| &m.databases)
-            .map(|db| &db.name)
-            .filter(|name| name.is_some());
-        let holding = self.tables.iter().map(|t| &t.database);
-        for name in declared.chain(holding) {
-            if !names.contains(name) {
-                names.push(name.clone());
-            }
-        }
-        names
+        self.dump.databases()
     }
 
     /// The heap the statistics in this dump's resident map hold — what it
@@ -198,19 +175,23 @@ impl PgDump {
 
     /// What the file-level channel says about this dump and its cache.
     pub fn diagnostics(&self) -> &[Diagnostic] {
-        &self.index.diagnostics
+        &self.dump.index().diagnostics
     }
 
     pub(crate) fn index(&self) -> &DumpIndex {
-        &self.index
+        self.dump.index()
     }
 
     pub(crate) fn source(&self) -> &Arc<dyn ByteRangeSource> {
-        &self.source
+        self.dump.source()
     }
 
-    pub(crate) fn watch(&self) -> &Arc<SourceWatch> {
-        &self.watch
+    /// `name`, one of [`Self::tables`], as the library plans it.
+    pub(crate) fn table_of(&self, name: &TableName) -> Table<'_> {
+        self.dump
+            .table(&TableSelector::from(name))
+            .expect("a selector stating every part selects one table at most")
+            .expect("a table registered over a dump is one of its tables")
     }
 
     pub(crate) fn schema_mode(&self) -> SchemaMode {

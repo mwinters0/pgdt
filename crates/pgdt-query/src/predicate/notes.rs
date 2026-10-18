@@ -22,7 +22,8 @@ use pgdt_model::{Finding, Severity};
 /// ([`ComparisonDivergence::affects_equality`]): a `text` column with no
 /// `COLLATE` clause earns a note under `<` and none under `=`, so a query
 /// filtering it with both operators carries one note. The same record is also
-/// a column's, from [`column_divergences`], whatever terms a query names.
+/// a column's, from [`Table::divergences`](crate::Table::divergences),
+/// whatever terms a query names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComparisonNote {
     pub column: String,

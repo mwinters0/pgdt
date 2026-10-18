@@ -9,7 +9,8 @@ mod notes;
 mod resolve;
 mod truths;
 
-pub use notes::{ComparisonNote, column_divergences};
+pub use notes::ComparisonNote;
+pub(crate) use notes::column_divergences;
 pub(crate) use resolve::{ResolvedExpr, ResolvedTerm, resolve_expr, resolve_loosened};
 pub(crate) use truths::GroupStatistics;
 

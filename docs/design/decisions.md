@@ -158,7 +158,7 @@ builds anything short; `pgdt sql` never parses either, a parse wanting `pgdt`'s 
 guard, status lines and cache rules. So every block a table owns is seen (`KD6` is the cold query's), a schema is
 stated from every block's census, no database's DDL is unread, and the partitioned replay is always available. With
 no partial map to keep, a dropped stream is its whole cancellation, as every query's is (D26). Rejected:
-falling back to a cold query's early-stopping map, which brings each of those back. Code: `crates/datafusion-pgdump/src/dump.rs`.
+falling back to a cold query's early-stopping map, which brings each of those back. Code: `crates/pgdt-query/src/dump.rs`, `crates/datafusion-pgdump/src/dump.rs`.
 
 ### D22 `CacheLoad` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
 An incomplete cache is usable (or `map_forward` restarts from zero), `Disabled` is about the caller and
@@ -244,7 +244,7 @@ padded `character` bounds and entries, keyed alike but past the cap; a back-fill
 max depth, or `{1,2}` beside `{{1,2}}` resolves to a wrong `List`. A table any column of which is at
 the data level is censused, and so is every block a query's pass maps: gating on a full scan left
 early blocks uncensused. The metadata level records `None` and, but under a strict parse, splits no field; a typed query re-reads
-such a table for itself, writing nothing, and a plan over a held map refuses it. Rejected: degrading
+such a table for itself, writing nothing, and a `Dump`'s plan refuses it. Rejected: degrading
 to the DDL's `List`; a census-only level a user can reach. Evidence: `statistics-gathering`, profiled.
 
 ### D96 The unrepresentable count rides the census, typed by the DDL, in two tiers, under a recorded calendar
@@ -452,7 +452,7 @@ comparing operator, the NULL tests reading no value (I44–I47).
 
 ### D59 Divergence is per position on its own channel: per term, and per column at registration
 `ComparisonNote` carries a path and its declared type, per term from `comparison_notes` (operator-
-conditional, so query's) and per column from `column_divergences` in a query's semantics — DataFusion's variants
+conditional, so query's) and per column from `Table::divergences` in a query's semantics — DataFusion's variants
 there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45, `KD7`, `KD10`. A provider registration
 folds its `UnknownCollation` columns into one `UncollatedColumns` finding, every text column of a real dump earning one.
 Rejected: the front end folding them, re-reading the provider's sentences to recover a table and a reason.
@@ -464,7 +464,7 @@ and `NOT` after `is` stays in the term. A term splits at the earliest operator o
 first; quotes are stripped in a term, under either flag, and in no name flag. Rejected: `&&`/`||`; backslash escaping.
 
 ### D88 A pushed filter is `Exact` where the plan resolves it; a literal is the renderer's text
-`supports_filters_pushdown` asks `table_schema` to resolve the translated term in DataFusion semantics,
+`supports_filters_pushdown` asks `Table::schema` to resolve the translated term in DataFusion semantics,
 the scan's own refusals. A typed literal must be the column's Arrow type and is written by
 `render_field`, the decoders' inverse; a string one stands only where the library compares text.
 Rejected: a formatter per type in the provider, a second grammar to drift; pushing `IN` on a float,

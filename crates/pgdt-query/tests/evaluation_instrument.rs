@@ -14,14 +14,13 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use pgdt_core::instrument::{EvaluationPart, evaluation_reading};
-use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheMode, SourceWatch, StrictIdentity};
+use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_query::{
-    DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
-    TablePartitions,
+    Dump, DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
+    TableSelector,
 };
 
 mod common;
@@ -89,8 +88,8 @@ async fn read(
         ..StatisticsRequest::DATA
     };
     let cache = CacheMode::enabled(cache::colocated_path(&dump));
-    let index = map_file(
-        cache.open_source(Arc::clone(&source)).await.unwrap(),
+    let run = map_file(
+        cache.open_source(source).await.unwrap(),
         ReadOptions::default(),
         &arranged(1),
         PostgresInvalidValues::Default,
@@ -98,12 +97,10 @@ async fn read(
         &CancellationToken::new(),
     )
     .await
-    .unwrap()
-    .index;
-    let watch =
-        Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
-    let table =
-        index.tables().into_iter().find(|t| t.qualified_name() == "public.ordered").unwrap();
+    .unwrap();
+    let opened = Dump::mapped(run).await.unwrap();
+    let selector = TableSelector::named("ordered").in_schema("public");
+    let table = opened.table(&selector).unwrap().unwrap();
     let options = QueryOptions {
         projection: Some(vec!["id".into()]),
         filter: static_filter.unwrap_or_default(),
@@ -111,8 +108,7 @@ async fn read(
         parallelism: Parallelism::workers(1, 1 << 30),
         ..QueryOptions::default()
     };
-    let scan = ScanOptions::default();
-    let plan = TablePartitions::plan(source, &index, watch, &table, scan, options).await.unwrap();
+    let plan = table.plan(ReadOptions::default(), options).unwrap();
     let plan = Arc::new(plan);
     let dynamic = dynamic.map(|state| plan.under(Arc::new(Constant(Arc::new(state))), evaluation));
     let mut rows = 0;

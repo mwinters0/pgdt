@@ -59,20 +59,20 @@ pub(super) fn replay<'a>(
     mut dynamic: Option<DynamicRead>,
 ) -> impl Stream<Item = Result<RecordBatch>> + Send + 'a {
     try_stream! {
-        let scan_options = &plan.scan_options;
+        let read = plan.read;
         let query_options = &plan.query_options;
         let semantics = query_options.semantics;
 
         // The chunk length every segment's replay repeats, announced once for
-        // the whole sub-stream. The budget comes from `QueryOptions`, not
-        // `ScanOptions`: a query states the two passes' parallelism separately
-        // because they split differently. **The replay loop could not grant a
+        // the whole sub-stream. The budget comes from `QueryOptions`, the plan
+        // holding only a `ReadOptions`: a cold query states the two passes'
+        // parallelism separately because they split differently. **The replay loop could not grant a
         // wait** (`docs/design/decisions.md`, "D5"): a batch's
         // `StringViewBuilder` holds every chunk it has taken a `Utf8View` into
         // until it flushes, so this loop can never be the task that frees one
         // it waits on. Stated rather than left to the default, so whatever the
         // mapping pass granted is un-stated on the same source.
-        announce_read_loop(source, scan_options.read, query_options.parallelism);
+        announce_read_loop(source, read, query_options.parallelism);
 
         let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
         // Where a token paused inside a block, and which block: its scanner
@@ -151,7 +151,7 @@ pub(super) fn replay<'a>(
                         // its own limit had two cuts fall inside one row: the
                         // row belongs to the piece before it.
                         let row_start =
-                            first_row_start(source, segment.start, seg_end, scan_options)
+                            first_row_start(source, segment.start, seg_end, read)
                                 .await?
                                 .filter(|&start| start <= seg_limit && start < seg_end);
                         // No header line is in range, so the schema comes off
@@ -185,7 +185,7 @@ pub(super) fn replay<'a>(
                     }
                 },
             };
-            let mut chunked = ChunkedScanner::new(scanner, seg_end, scan_options.read);
+            let mut chunked = ChunkedScanner::new(scanner, seg_end, read);
             let mut chunks = RetainedChunks::new();
             // Set once this segment has read the line that ends at or past
             // its limit — the last it owns, and the one the next segment's

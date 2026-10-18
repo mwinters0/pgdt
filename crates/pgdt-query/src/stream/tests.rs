@@ -4,9 +4,9 @@ use super::replay::segment::{Segment, SegmentEntry};
 use super::resume::query_fingerprint;
 use super::*;
 use crate::options::{QueryOptions, ScanExtent};
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::StrictIdentity;
 use pgdt_dump::cache::{CacheMode, SourceWatch};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::Parallelism;
 use pgdt_model::{CopyBlock, Finding, Severity};
 use std::sync::Arc;
@@ -224,7 +224,7 @@ async fn a_replay_holds_no_block_s_statistics() {
         mapped.database,
         &matches,
         mapped.metadata,
-        ScanOptions::default(),
+        ReadOptions::default(),
         query_options,
     )
     .unwrap();

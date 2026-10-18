@@ -18,13 +18,13 @@ use futures::StreamExt;
 use pgdt_codec::{ColumnResolution, SchemaMode};
 use pgdt_core::Error;
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};
+use pgdt_dump::cache::{self, CacheLoad, CacheMode};
 use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::ArrayShape;
 use pgdt_model::union_census;
-use pgdt_query::{QueryOptions, ScanExtent, TablePartitions, table_schema, table_stream};
+use pgdt_query::{Dump, QueryOptions, ScanExtent, TableSelector, table_stream};
 
 mod common;
 use common::{VERSIONS, types_fixture};
@@ -230,8 +230,8 @@ async fn a_partitioned_table_unions_the_censuses_of_all_its_blocks() {
 }
 
 /// **A table the cache holds at the metadata level is censused by the query
-/// that reads it, for that query alone, and refused by a plan over a map the
-/// caller holds** (`docs/design/decisions.md`, "D35"). `parse` at the
+/// that reads it, for that query alone, and refused by a plan over a `Dump`
+/// holding it** (`docs/design/decisions.md`, "D35"). `parse` at the
 /// metadata level records no block's census; a query of `t_array_shape` reads
 /// its rows once more and retypes as a data-level map would, writing nothing,
 /// where a census-less union would leave every array column optimistically
@@ -281,25 +281,14 @@ async fn a_metadata_level_table_is_censused_by_its_query_and_refused_by_a_held_p
     drop(stream);
     assert_eq!(std::fs::read(&path).unwrap(), written, "the query wrote nothing");
 
-    let table =
-        run.index.tables().into_iter().find(|t| t.qualified_name() == "public.t_array_shape");
-    let table = table.expect("the map holds the table");
+    let dump = Dump::mapped(run).await.unwrap();
+    let selector = TableSelector::named("t_array_shape").in_schema("public");
+    let table = dump.table(&selector).unwrap().expect("the map holds the table");
     let refused = |result: pgdt_core::Result<_>| matches!(result, Err(Error::TableAtMetadataLevel { table }) if table == "public.t_array_shape");
-    assert!(refused(table_schema(&run.index, &table, &QueryOptions::default()).map(|_| ())));
-    let watch =
-        Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
-    let plan = |options: QueryOptions| {
-        TablePartitions::plan(
-            Arc::clone(&source),
-            &run.index,
-            Arc::clone(&watch),
-            &table,
-            ScanOptions::default(),
-            options,
-        )
-    };
-    assert!(refused(plan(QueryOptions::default()).await.map(|_| ())));
+    assert!(refused(table.schema(&QueryOptions::default()).map(|_| ())));
+    let plan = |options: QueryOptions| table.plan(ReadOptions::default(), options);
+    assert!(refused(plan(QueryOptions::default()).map(|_| ())));
     let strings = QueryOptions { schema_mode: SchemaMode::Strings, ..QueryOptions::default() };
-    table_schema(&run.index, &table, &strings).unwrap();
-    plan(strings).await.unwrap();
+    table.schema(&strings).unwrap();
+    plan(strings).unwrap();
 }

@@ -18,7 +18,7 @@ use pgdt_codec::{
 };
 use pgdt_core::CopyHeader;
 use pgdt_core::{Error, Result};
-use pgdt_dump::ScanOptions;
+use pgdt_dump::ReadOptions;
 use pgdt_io::{ByteRangeSource, Partitioning};
 use pgdt_model::{
     ArrayShape, CopyBlock, DumpMetadata, Unrepresentable, UnrepresentableTier, union_census,
@@ -43,7 +43,8 @@ use crate::stream::note::{PlanNote, PlanNoteKind};
 /// (`docs/design/decisions.md`, "D35").
 #[derive(Clone)]
 pub(in crate::stream) struct ReplayPlan {
-    pub(in crate::stream) scan_options: ScanOptions,
+    /// The chunk and the line limit every piece of the replay reads with.
+    pub(in crate::stream) read: ReadOptions,
     pub(in crate::stream) query_options: QueryOptions,
     pub(in crate::stream) metadata: Option<DumpMetadata>,
     /// The database every matched block is in — the one their spans record,
@@ -81,7 +82,7 @@ impl ReplayPlan {
     /// under the refuse mode, its first materialized column holding a value
     /// the query cannot hold ([`materialized_unrepresentable`]).
     pub(in crate::stream) fn new(
-        scan_options: ScanOptions,
+        read: ReadOptions,
         query_options: QueryOptions,
         database: Option<String>,
         matches: &[CopyBlock],
@@ -101,7 +102,7 @@ impl ReplayPlan {
         let Pruned { kept, stops, note: pruned, rows: kept_rows, value_bytes: kept_value_bytes } =
             prune_blocks(matches, &blocks, &query_options, metadata.as_ref(), database.as_deref());
         Ok(Self {
-            scan_options,
+            read,
             query_options,
             metadata,
             database,
@@ -145,9 +146,9 @@ impl ReplayPlan {
 /// ([`refuse_metadata_level`]), the table's columns settled
 /// ([`TableColumns::settle`]), and every block resolved against them
 /// ([`plan_blocks`]) — or the first of those refusals. [`ReplayPlan::new`]
-/// plans the replay from it, and `table_schema` reads a query's schema off
-/// it, so the schema a provider declares is the one the stream's batches
-/// carry.
+/// plans the replay from it, and [`Table::schema`](crate::Table::schema)
+/// reads a query's schema off it, so the schema a provider declares is the
+/// one the stream's batches carry.
 pub(in crate::stream) fn plan_table(
     database: Option<&str>,
     matches: &[CopyBlock],
@@ -628,9 +629,9 @@ impl TableColumns {
 /// is `Error::MetadataNotScanned` rather than a silent `NotDeclared`
 /// degradation. **No map a mapping pass produced can trip it**: a block
 /// enters the map only past its database's first `COPY` header, where the
-/// pass marks that database's DDL complete. `table_schema` and
-/// `TablePartitions::plan` take a caller's `DumpIndex`, whose fields are
-/// public, so a hand-built one can. The check is pinned by a unit test.
+/// pass marks that database's DDL complete. A [`Dump`](crate::Dump) holds the
+/// map a cache records, whose fields are public, so one written by hand can.
+/// The check is pinned by a unit test.
 ///
 /// `text` marks, as `census` is taken, each column the untyped mode reads as
 /// its text ([`TableColumns::text_for`]), compared in `semantics`
@@ -733,23 +734,23 @@ pub(in crate::stream) struct PlannedReplay {
 }
 
 /// The plan and the sub-streams' segments for replaying `matches`, shared by
-/// [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) and [`TablePartitions::plan`](crate::stream::partitions::TablePartitions::plan).
+/// [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) and [`Table::plan`](crate::Table::plan).
 pub(in crate::stream) fn plan_replay(
     source: &dyn ByteRangeSource,
     database: Option<String>,
     matches: &[CopyBlock],
     metadata: Option<DumpMetadata>,
-    scan_options: ScanOptions,
+    read: ReadOptions,
     query_options: QueryOptions,
 ) -> Result<PlannedReplay> {
-    let mut plan = ReplayPlan::new(scan_options, query_options, database, matches, metadata)?;
+    let mut plan = ReplayPlan::new(read, query_options, database, matches, metadata)?;
     let (groups, mut plan_notes, span, advice) = plan_partitions(
         source,
         matches,
         &plan.kept,
         plan.query_options.parallelism,
         plan.query_options.max_source_span,
-        plan.scan_options.read.chunk_size_bytes,
+        plan.read.chunk_size_bytes,
     );
     // **The span the plan was solved against is the span the batches use**, or
     // the charge bounds nothing (`docs/design/decisions.md`, "D84"). It is

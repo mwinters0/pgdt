@@ -9,7 +9,7 @@
 //! `scan()`, to the sink the table was registered with. A query raises nothing
 //! on the comparison channel here — a pushed filter is one the library answers
 //! as DataFusion does, so that channel is empty
-//! (`pgdt_query::column_divergences` said it already, per column) — and what
+//! (`pgdt_query::Table::divergences` said it already, per column) — and what
 //! a scan finds while reading is a plan metric, not a finding
 //! ([`crate::exec`]). **A plan note quoting a budget is wrapped in a
 //! [`BudgetedPlanNote`]**, which says where that budget came from.

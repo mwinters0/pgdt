@@ -13,7 +13,7 @@ use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use pgdt_codec::{ResolvedSchema, SchemaMode, compare::ComparisonSemantics};
 use pgdt_model::{DiagnosticSink, TableName};
-use pgdt_query::{PlanNote, QueryOptions, TablePartitions, column_divergences};
+use pgdt_query::{ComparisonNote, PlanNote, QueryOptions, TableSelector};
 
 use crate::budget::{BudgetAccount, ScanBudget, pool_limit};
 use crate::dump::PgDump;
@@ -25,13 +25,16 @@ use crate::settings::PgDumpSettings;
 use crate::statistics::{output_orderings, scanned, table_statistics};
 
 /// One table of an opened [`PgDump`]. Its schema is settled when it is built,
-/// from the map and the DDL alone (`pgdt_query::table_schema`), so asking for
-/// it reads nothing; a scan is the library's partitioned replay over the
-/// dump's complete map.
+/// from the map and the DDL alone ([`pgdt_query::Table::schema`]), so asking
+/// for it reads nothing; a scan is the library's partitioned replay over the
+/// dump's complete map ([`pgdt_query::Table::plan`]).
 pub struct PgDumpTable {
     dump: Arc<PgDump>,
     name: TableName,
     resolved: ResolvedSchema,
+    /// How each column's comparison in DataFusion's semantics diverges from
+    /// PostgreSQL's, settled with the schema and reported with it.
+    divergences: Vec<ComparisonNote>,
     /// What the map's statistics say about the whole table, in the schema's
     /// own column order. Read off the resident map, so it never changes; and
     /// taken on the first scan rather than here, because a catalog builds
@@ -72,8 +75,17 @@ impl PgDumpTable {
                 parse: dump.parse_at_data_level(&name),
             });
         }
-        let resolved = pgdt_query::table_schema(dump.index(), &name, &query_options(&dump))?;
-        Ok(Self { dump, name, resolved, statistics: OnceLock::new(), reporting: Mutex::default() })
+        let (table, options) = (dump.table_of(&name), query_options(&dump));
+        let resolved = table.schema(&options)?;
+        let divergences = table.divergences(&options)?;
+        Ok(Self {
+            dump,
+            name,
+            resolved,
+            divergences,
+            statistics: OnceLock::new(),
+            reporting: Mutex::default(),
+        })
     }
 
     /// The table this provider reads.
@@ -118,7 +130,7 @@ impl PgDumpTable {
         for finding in &resolved.notes {
             sink.report(&Located { subject, finding });
         }
-        for finding in &column_divergences(resolved, ComparisonSemantics::DataFusion) {
+        for finding in &self.divergences {
             if !uncollated.count(subject, finding) {
                 sink.report(&Located { subject, finding });
             }
@@ -144,6 +156,17 @@ impl PgDumpTable {
             }
         }
     }
+
+    /// What the map's statistics say about the whole table, in the schema it
+    /// was built with: taken on the first scan, and kept.
+    fn table_statistics(&self) -> pgdt_core::Result<Arc<Statistics>> {
+        if let Some(statistics) = self.statistics.get() {
+            return Ok(Arc::clone(statistics));
+        }
+        let summary = self.dump.table_of(&self.name).summary(&query_options(&self.dump))?;
+        let statistics = Arc::new(table_statistics(&summary, &self.resolved));
+        Ok(Arc::clone(self.statistics.get_or_init(|| statistics)))
+    }
 }
 
 impl PgDump {
@@ -158,13 +181,15 @@ impl PgDump {
         schema: Option<&str>,
         table: &str,
     ) -> Result<Arc<PgDumpTable>, Error> {
-        let candidates: Vec<&TableName> = self
-            .tables()
-            .iter()
-            .filter(|t| database.is_none_or(|d| t.database.as_deref() == Some(d)))
-            .filter(|t| schema.is_none_or(|s| t.schema.as_deref() == Some(s)))
-            .filter(|t| t.table == table)
-            .collect();
+        let mut selector = TableSelector::named(table);
+        if let Some(schema) = schema {
+            selector = selector.in_schema(schema);
+        }
+        if let Some(database) = database {
+            selector = selector.in_database(database);
+        }
+        let candidates: Vec<&TableName> =
+            self.tables().iter().filter(|t| selector.selects(t)).collect();
         match candidates.as_slice() {
             [one] => Ok(Arc::new(PgDumpTable::build(Arc::clone(self), (*one).clone())?)),
             [] => Err(Error::Table(format!("{} holds no table `{table}`", self.origin()))),
@@ -232,7 +257,7 @@ impl TableProvider for PgDumpTable {
                 };
                 let tests = translated.tests_unrepresentable();
                 let options = QueryOptions { filter: translated, ..query_options(&self.dump) };
-                match pgdt_query::table_schema(self.dump.index(), &self.name, &options) {
+                match self.dump.table_of(&self.name).schema(&options) {
                     Ok(_) => Ok(TableProviderFilterPushDown::Exact),
                     Err(err) if tests => Err(external(err)),
                     Err(_) => Ok(TableProviderFilterPushDown::Unsupported),
@@ -301,28 +326,19 @@ impl TableProvider for PgDumpTable {
             max_rows: state.config().batch_size(),
             ..query_options(&self.dump)
         };
-        let reading = query_options.statistics_view();
-        let scan_options = settings.scan_options(parallelism);
-        let partitions = TablePartitions::plan(
-            source,
-            self.dump.index(),
-            Arc::clone(self.dump.watch()),
-            &self.name,
-            scan_options,
-            query_options,
-        )
-        .await
-        .map_err(external)?;
+        let partitions = self
+            .dump
+            .table_of(&self.name)
+            .plan(settings.read_options(), query_options)
+            .map_err(external)?;
         self.report_plan(partitions.plan_notes(), draw.account());
         let metrics = ScanMetrics::planned(partitions.plan_notes());
         let partitions = Arc::new(partitions);
         let schema = partitions.resolved_schema().schema;
-        let table = self.statistics.get_or_init(|| {
-            Arc::new(table_statistics(self.dump.index(), &self.name, &self.resolved, reading))
-        });
+        let table = self.table_statistics().map_err(external)?;
         let kept =
             (!filters.is_empty()).then(|| (partitions.kept_rows(), partitions.kept_value_bytes()));
-        let statistics = scanned(table, projection, &schema, kept);
+        let statistics = scanned(&table, projection, &schema, kept);
         let orderings = output_orderings(&schema, partitions.orders());
         let replay = Replay::new(partitions, schema, draw, metrics, settings.dynamic_filter_rows);
         let answered = StaticFilter::new(answered);

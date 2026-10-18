@@ -28,21 +28,16 @@ use datafusion::common::stats::Precision;
 use datafusion::common::{ColumnStatistics, ScalarValue, Statistics};
 use datafusion::physical_expr::expressions::Column;
 use datafusion::physical_expr::{LexOrdering, PhysicalSortExpr};
-use pgdt_codec::{ResolvedSchema, compare::ComparisonSemantics};
-use pgdt_model::{DumpIndex, Sortedness, StatisticsView, TableName};
+use pgdt_codec::ResolvedSchema;
+use pgdt_model::Sortedness;
+use pgdt_query::TableSummary;
 
-/// What the dump's map says about `table`, in the schema `resolved` states and
-/// in DataFusion's own comparison semantics — the order the emitted values
+/// What the dump's map says about a table, `summary` taken
+/// ([`pgdt_query::Table::summary`]) in the schema `resolved` states and in
+/// DataFusion's own comparison semantics — the order the emitted values
 /// carry, which is the order a `MIN` or `MAX` of them would be taken in — each
-/// value its type cannot hold read as the scan reads it, in `reading`.
-pub(crate) fn table_statistics(
-    index: &DumpIndex,
-    table: &TableName,
-    resolved: &ResolvedSchema,
-    reading: StatisticsView,
-) -> Statistics {
-    let semantics = ComparisonSemantics::DataFusion;
-    let summary = pgdt_query::table_summary(index, table, resolved, semantics, reading);
+/// value its type cannot hold read as the scan reads it.
+pub(crate) fn table_statistics(summary: &TableSummary, resolved: &ResolvedSchema) -> Statistics {
     // Every block of a complete map carries its row count, whether or not it
     // gathered statistics.
     let rows = Precision::Exact(summary.rows as usize);

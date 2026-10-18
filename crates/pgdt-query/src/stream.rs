@@ -51,7 +51,8 @@ pub use self::note::{EarlyStop, PlanLever, PlanNote, PlanNoteKind};
 pub use self::partitions::{DynamicPartitions, TablePartitions, table_stream_partitions};
 pub use self::replay::dynamic::{DynamicFilter, RowEvaluation};
 pub use self::resume::ResumeToken;
-pub use self::table::{BlockingTableIter, TableStream, table_schema};
+pub(crate) use self::table::table_schema;
+pub use self::table::{BlockingTableIter, TableStream};
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -135,7 +136,7 @@ pub fn table_stream<'a>(
         // resume point being inside a mapped block by construction.
         let MappedTable { database, matches, metadata } = mapped;
         let plan =
-            Arc::new(ReplayPlan::new(scan_options, query_options, database, &matches, metadata)?);
+            Arc::new(ReplayPlan::new(scan_options.read, query_options, database, &matches, metadata)?);
         *shared_for_stream.plan_notes.lock().unwrap() = plan.notes().collect();
         let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
         let segments: Vec<Segment> = matches

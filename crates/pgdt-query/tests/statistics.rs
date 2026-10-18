@@ -34,7 +34,7 @@ use pgdt_model::{
 };
 
 mod common;
-use common::{VERSIONS, sandboxed, statistics_fixture, types_fixture};
+use common::{VERSIONS, dump_over, sandboxed, statistics_fixture, types_fixture};
 use pgdt_fixtures::arranged;
 use tokio_util::sync::CancellationToken;
 
@@ -664,24 +664,30 @@ async fn a_value_that_does_not_key_leaves_its_group_unbounded() {
 /// incomplete rather than `Exact` over the groups that kept a bound.
 #[tokio::test]
 async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
+    use pgdt_codec::UnrepresentableMode;
     use pgdt_codec::compare::ComparisonSemantics;
     use pgdt_model::{DataBlock, SpanBody};
     use pgdt_model::{StatisticsView, TableName};
-    use pgdt_query::{QueryOptions, table_schema, table_summary};
+    use pgdt_query::{ColumnSummary, QueryOptions};
 
-    let mut index = gathered(
-        &statistics_fixture(16, "default"),
-        &request(StatisticsSelection::DATA, SMALL_GROUP),
-    )
-    .await;
+    let fixture = statistics_fixture(16, "default");
+    let mut index = gathered(&fixture, &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&fixture).unwrap());
+    let dir = tempfile::tempdir().unwrap();
     let name = TableName::of(None, block(&index, "public.ordered"));
-    let summary = |index: &DumpIndex| {
-        let resolved = table_schema(index, &name, &QueryOptions::default()).unwrap();
-        let id = resolved.schema.index_of("id").unwrap();
-        let (semantics, reading) = (ComparisonSemantics::DataFusion, StatisticsView::Every);
-        table_summary(index, &name, &resolved, semantics, reading).columns[id].clone()
+    let options = QueryOptions {
+        semantics: ComparisonSemantics::DataFusion,
+        unrepresentable: UnrepresentableMode::Refuse,
+        ..QueryOptions::default()
     };
-    assert!(summary(&index).bounds_complete, "every group of `id` is bounded");
+    assert_eq!(options.statistics_view(), StatisticsView::Every);
+    let summary = async |index: &DumpIndex| -> ColumnSummary {
+        let dump = dump_over(Arc::clone(&source), index, dir.path()).await.unwrap();
+        let table = dump.table(&(&name).into()).unwrap().unwrap();
+        let id = table.schema(&options).unwrap().schema.index_of("id").unwrap();
+        table.summary(&options).unwrap().columns[id].clone()
+    };
+    assert!(summary(&index).await.bounds_complete, "every group of `id` is bounded");
 
     for span in &mut index.spans {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body
@@ -702,7 +708,7 @@ async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
             block.statistics = Some(Arc::new(held));
         }
     }
-    assert!(!summary(&index).bounds_complete);
+    assert!(!summary(&index).await.bounds_complete);
 }
 
 /// **A `character` dictionary entry is stored and measured without its

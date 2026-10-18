@@ -31,7 +31,7 @@ use pgdt_mapping::statistics::{
     StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
 use pgdt_model::{Diagnostic, DiagnosticSink, Finding, PostgresInvalidValues, Severity};
-use pgdt_query::{ComparisonNote, column_divergences};
+use pgdt_query::{ComparisonNote, Dump, QueryOptions, TableSelector};
 use tokio_util::sync::CancellationToken;
 
 fn fixture(schema: &str, flag_set: &str) -> PathBuf {
@@ -541,15 +541,22 @@ async fn a_registration_s_uncollated_columns_are_one_finding() {
     let ctx = SessionContext::new();
     register_dump(&ctx, Some("shop"), &dump, Arc::clone(&heard) as _).unwrap();
 
+    // The library's own divergences, over a dump opened apart from the
+    // provider's.
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&copy).unwrap());
+    let mode = CacheMode::enabled(cache::colocated_path(&copy));
+    let library = Dump::opened(mode.open_source(source).await.unwrap()).await.unwrap();
+    let options =
+        QueryOptions { semantics: ComparisonSemantics::DataFusion, ..QueryOptions::default() };
     let mut expected = BTreeSet::new();
     let mut reason = None;
     let catalog = ctx.catalog("shop").unwrap();
     for schema in catalog.schema_names() {
         for table in catalog.schema(&schema).unwrap().table_names() {
-            let provider = dump.table(None, Some(&schema), &table).unwrap();
+            let selector = TableSelector::named(table.as_str()).in_schema(schema.as_str());
             let named = format!("shop.{schema}.{table}");
             let divergences =
-                column_divergences(provider.resolved_schema(), ComparisonSemantics::DataFusion);
+                library.table(&selector).unwrap().unwrap().divergences(&options).unwrap();
             for note in divergences {
                 if note.divergence == ComparisonDivergence::UnknownCollation {
                     expected.insert((named.clone(), note.column.clone()));

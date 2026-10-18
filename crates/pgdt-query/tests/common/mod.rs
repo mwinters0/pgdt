@@ -2,20 +2,56 @@
 //! what reading a batch back adds to it.
 //!
 //! Everything here is a *path* or an *expectation*, but `pgdt-fixtures`'
-//! fixture mapped beside its cache. Anything else that drives the library — a
-//! `collect`, a `drain`, a `census_of` — stays in the file whose subject it
-//! is.
+//! fixture mapped beside its cache, and the [`Dump`] a test plans a table's
+//! reads over ([`mapped`], [`dump_over`]). Anything else that drives the
+//! library — a `collect`, a `drain`, a `census_of` — stays in the file whose
+//! subject it is.
 
 // Each test binary compiles the whole module and uses a subset of it, so
 // per-binary dead-code warnings are structural rather than informative.
 #![allow(dead_code)]
 
+use std::path::Path;
+use std::sync::Arc;
+
 use arrow::array::RecordBatch;
 use pgdt_codec::pgtype::NestedPlan;
-use pgdt_query::render_field;
+use pgdt_dump::ReadOptions;
+use pgdt_dump::cache::{CacheMode, SourceWatch, StrictIdentity};
+use pgdt_io::ByteRangeSource;
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_model::{DumpIndex, PostgresInvalidValues};
+use pgdt_query::{Dump, render_field};
+use tokio_util::sync::CancellationToken;
 
 #[allow(unused_imports)]
 pub use pgdt_fixtures::*;
+
+/// `source` mapped whole under `request`, serially and writing no cache, as
+/// the [`Dump`] a test plans a table's reads over.
+pub async fn mapped(source: Arc<dyn ByteRangeSource>, request: &StatisticsRequest) -> Dump {
+    let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
+    let read = ReadOptions::default();
+    let invalid = PostgresInvalidValues::Default;
+    let token = CancellationToken::new();
+    let run = map_file(opened, read, &arranged(1), invalid, request, &token).await.unwrap();
+    Dump::mapped(run).await.unwrap()
+}
+
+/// The [`Dump`] over `index`, a map of `source` a test has reshaped by hand:
+/// saved as a cache in `dir` and opened through it, as any cache is, so the
+/// refusal of one short of the file's end is the open's.
+pub async fn dump_over(
+    source: Arc<dyn ByteRangeSource>,
+    index: &DumpIndex,
+    dir: &Path,
+) -> pgdt_core::Result<Dump> {
+    let mode = CacheMode::enabled(dir.join("held.dtcache"));
+    let watch = SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await?;
+    mode.save(&watch, source.as_ref(), index).await?;
+    Dump::opened(mode.open_source(source).await?).await
+}
 
 /// Every column of `batch` rendered back to PostgreSQL text via
 /// [`render_field`] — which works regardless of `SchemaMode`: a hand-written

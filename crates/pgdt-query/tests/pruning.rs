@@ -688,9 +688,8 @@ async fn a_sorted_column_under_a_range_filter_skips_every_group_before_the_bound
 /// groups: `id`'s, an integer's, as `low_card`'s, a text's.
 #[tokio::test]
 async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
-    use pgdt_dump::cache::{SourceWatch, StrictIdentity};
     use pgdt_io::ByteRangeSource;
-    use pgdt_query::TablePartitions;
+    use pgdt_query::{Dump, TableSelector};
 
     for version in VERSIONS {
         let (_dir, dump, index) =
@@ -717,10 +716,10 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
         assert!(low_card[1] < low_card[0], "pg_dump {version}: no text below the bound");
 
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
-        let watch =
-            Arc::new(SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await.unwrap());
-        let table =
-            index.tables().into_iter().find(|t| t.qualified_name() == "public.ordered").unwrap();
+        let mode = CacheMode::enabled(cache::colocated_path(&dump));
+        let opened = Dump::opened(mode.open_source(source).await.unwrap()).await.unwrap();
+        let selector = TableSelector::named("ordered").in_schema("public");
+        let table = opened.table(&selector).unwrap().unwrap();
         let filter = Expr::all([term("id", PredicateOp::Ge, Some("990"))]);
         for (options, expected, kept) in [
             (with(filter.clone(), true, SPLIT_JOBS), block.row_count - below, 1),
@@ -728,16 +727,7 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
             (with(Expr::all(Vec::new()), true, SPLIT_JOBS), block.row_count, 0),
         ] {
             let what = format!("pg_dump {version} under {:?}", options.filter);
-            let plan = TablePartitions::plan(
-                Arc::clone(&source),
-                &index,
-                Arc::clone(&watch),
-                &table,
-                ScanOptions::default(),
-                options,
-            )
-            .await
-            .unwrap();
+            let plan = table.plan(ReadOptions::default(), options).unwrap();
             assert_eq!(plan.kept_rows(), expected, "{what}");
             assert_eq!(plan.kept_value_bytes()[0], Some(ids[kept]), "{what}: id");
             assert_eq!(plan.kept_value_bytes()[8], Some(low_card[kept]), "{what}: low_card");

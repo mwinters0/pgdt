@@ -15,8 +15,8 @@ use datafusion::catalog::Session;
 use datafusion::common::config::{ConfigEntry, ConfigExtension, ExtensionOptions};
 use datafusion::common::{Result, plan_err};
 use datafusion::prelude::SessionContext;
-use pgdt_dump::{ReadOptions, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions};
-use pgdt_io::{Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES};
+use pgdt_dump::{ReadOptions, SCAN_LINE_DEFAULT_MAX_BYTES};
+use pgdt_io::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
 use pgdt_query::RowEvaluation;
 
 /// The scan settings one DataFusion session states, under `pgdump.` in its
@@ -86,15 +86,9 @@ impl PgDumpSettings {
         state.config().options().extensions.get::<Self>().cloned().unwrap_or_default()
     }
 
-    /// The [`ScanOptions`] a scan planned under these settings reads with.
-    pub(crate) fn scan_options(&self, parallelism: Parallelism) -> ScanOptions {
-        ScanOptions {
-            read: ReadOptions {
-                chunk_size_bytes: self.chunk_size,
-                max_line_bytes: self.max_line_bytes,
-            },
-            parallelism,
-        }
+    /// The [`ReadOptions`] a scan planned under these settings reads with.
+    pub(crate) fn read_options(&self) -> ReadOptions {
+        ReadOptions { chunk_size_bytes: self.chunk_size, max_line_bytes: self.max_line_bytes }
     }
 
     /// Give `ctx` these settings at their defaults, unless it already carries
@@ -291,9 +285,7 @@ mod tests {
     /// library's defaults and a dynamic filter's rows are not evaluated.
     #[test]
     fn the_defaults_are_the_library_s() {
-        let options =
-            PgDumpSettings::default().scan_options(Parallelism::Serial { memory_bytes: None });
-        assert_eq!(options.read, ReadOptions::default());
+        assert_eq!(PgDumpSettings::default().read_options(), ReadOptions::default());
         assert_eq!(PgDumpSettings::default().memory, None);
         assert_eq!(PgDumpSettings::default().dynamic_filter_rows, RowEvaluation::Off);
     }
