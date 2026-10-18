@@ -62,9 +62,8 @@ source and the watch beside the index.
 - **`backfill_block` taking `map_file`'s `&ScanOptions` and `&GatherOptions`**
   was refused. That pair states the parallelism and the statistics allowance
   in two values that can disagree, and the spec and 36.2's notes give the
-  call the arrangement, which carries both. So the two entry points now state
-  the same configuration differently; STATUS's "Decisions worth another
-  look" asks which way they should meet.
+  call the arrangement, which carries both. `map_file` takes it too at
+  36.7.1 (history, 2026-10-18, "The mapping pass takes the arrangement").
 - **Taking `&mut DumpIndex` and a header offset**, so the metadata and the
   database could not be passed apart from the block, was refused. It needs a
   lookup that can fail, and the spec and 36.3.2's rule ("a function that

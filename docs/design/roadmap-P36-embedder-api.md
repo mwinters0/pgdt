@@ -275,6 +275,15 @@ copied `memory_bytes().unwrap_or(DEFAULT_MEMORY_BUDGET)` becomes a method.
 resolution. That gathers what the concept map's "Memory and parallelism"
 holds today in three crates.
 
+**A gathering pass takes the arrangement, never its two halves.**
+`map_file` and the block back-fill both take the `ReadOptions`, the
+`Arrangement` and the invalid-values mode, as three arguments in that
+order, reading the parallelism and the statistics allowance out of the one
+carve. `GatherOptions` goes. `resolve` stays the arrangement's only
+constructor, so no caller can pair a parallelism with an allowance not
+carved from it. Reasoning: [history, 2026-10-18](../status/history/2026-10-18.md),
+"The mapping pass takes the arrangement".
+
 **D11 is rewritten** to "limit discovery takes a root; the seam is
 `internal`'s". The `_in` variants and the tuning constants (`MEMORY_RESERVE`,
 `MEMORY_UNPOOLED_BOUND`, `MEMORY_MARGIN_PERCENT`) move to `pgdt-io`'s
@@ -504,8 +513,9 @@ These close the rest of clusters C, G and L.
   and `pgdt query`. The token is `tokio_util::sync::CancellationToken`,
   which a tokio embedder already holds, in place of pgdt-io's own
   `Cancellation`. `ScanOptions` is then a `ReadOptions` and a `Parallelism`,
-  all that `scan`, `preamble_only`, `build_index`, `build_map` and
-  `map_file` read, and they take it. `ChunkedScanner` and the replay take
+  all that `scan`, `preamble_only`, `build_index` and `build_map` read,
+  and they take it; `map_file` gathers, and takes the arrangement (The
+  arrangement). `ChunkedScanner` and the replay take
   a `ReadOptions`. Reasoning: [history, 2026-10-18](../status/history/2026-10-18.md),
   "The cancellation is the mapping pass's argument".
 
