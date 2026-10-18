@@ -86,7 +86,11 @@ Hunt every copy of any fact the change moved, by handle and by wording
 needs to where the record names it, delete the rest. Run `mise run check
 --affected` once, as the last thing that touches the tree, and report its
 summary verbatim — it names every failing test, and the log it names answers
-anything more, so it is never piped or re-run to read it. A cap `repoint.py` names fails it and is
+anything more, so it is never piped or re-run to read it. **A failing check is
+this round's to fix**: diagnose it from that log, fix the cause, and run the
+check again on the tree the fix leaves — "once" is once on the final tree, not
+once whatever it says. **No box is ticked while the check is red**; a failure
+the round cannot fix leaves the box empty, with the diagnosis beside it. A cap `repoint.py` names fails it and is
 this change's to fix; a red *meter* passes it and is not — a repoint is a round
 of its own — so report it and stop there. Then
 check the change carries everything the `process` skill lists: the notes doc, the `D<k>`
