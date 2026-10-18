@@ -10,11 +10,10 @@ mod interior;
 pub mod statistics;
 mod whole_file;
 
-pub use backfill::{BlockReread, gather_block_statistics};
+pub use backfill::backfill_block;
 pub use statistics::gather::strict::{
     StrictUnchecked, UncheckedBound, UncheckedCheck, UncheckedColumn, strict_unchecked,
 };
-pub use statistics::stored::bounded_columns;
 pub use whole_file::{MapRun, build_index, build_map, map_file};
 
 /// What a crate above reaches that is not this crate's API: public only

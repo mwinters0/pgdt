@@ -6,9 +6,10 @@
 use std::num::NonZeroU64;
 
 use pgdt_core::CopyHeader;
-use pgdt_model::{BoundsSet, CopyBlock, GroupSizing, PostgresInvalidValues};
+use pgdt_model::{BoundsSet, CopyBlock, DumpMetadata, GroupSizing, PostgresInvalidValues};
 
 use super::density::BlockStatisticsExt;
+use super::stored::bounded_columns;
 
 /// The group size a request that states none gathers at: one mebibyte of a
 /// block's data per group.
@@ -35,9 +36,10 @@ pub const ROW_GROUP_DEFAULT_MIN_ROWS: u64 = 1 << 10;
 
 /// What a mapping pass does beside its scan: how much heap its statistics may
 /// hold, and what it does with a field its type's `*_in` refuses. Read by
-/// [`crate::map_file`] and [`crate::gather_block_statistics`]
-/// alone, gathering being theirs; a query gathers nothing, and reads a refused
-/// field as `pgdt_query::QueryOptions::postgres_invalid_values` says.
+/// [`crate::map_file`] alone: [`crate::backfill_block`] takes the allowance
+/// from the arrangement it is handed and the mode beside it, and a query
+/// gathers nothing, reading a refused field as
+/// `pgdt_query::QueryOptions::postgres_invalid_values` says.
 ///
 /// **Neither is part of a [`StatisticsRequest`]**, which a cache's statistics
 /// are compared against: a run's allowance and its mode are the run's, not
@@ -89,7 +91,7 @@ pub struct StatisticsRequest {
 /// **What was stated is kept apart from the default it stands for**: a stated
 /// size and an unstated one, or a stated minimum and the default minimum, are
 /// different requests to a block already gathered under another
-/// ([`StatisticsRequest::backfill`]), though they gather alike.
+/// ([`crate::backfill_block`]), though they gather alike.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatisticsSizing {
     /// A stated group size, gathered exactly: no merge, and no density bound.
@@ -228,28 +230,20 @@ impl StatisticsRequest {
 
     /// What re-reading `block`, already mapped, must gather for it to hold
     /// what this request asks of it — `None` when it holds that already, or
-    /// when the request tracks nothing in it.
-    ///
-    /// deficiency: KD115 — `bounded` must be `bounded_columns` of this same
-    /// block and the metadata the re-read will resolve it against, and nothing
-    /// checks that it is: a caller passing another block's mask, or one
-    /// resolved against other metadata, is answered for columns the re-read
-    /// will not bound as the mask says. `map_file`'s back-fill is the only
-    /// caller today and computes both together. **(b) owned by P36**: closing
-    /// it means this taking the metadata and computing the mask itself, which
-    /// leaves `bounded_columns` `pub(crate)`.
+    /// when the request tracks nothing in it. Its columns are resolved against
+    /// `metadata` in `database`, the one its span records, as the re-read will
+    /// resolve them.
     ///
     /// **A block lacks the requested statistics** where it holds none — every
     /// block mapped at the metadata level that this request puts at the data
     /// level among them, the re-read censusing it too — where a
     /// column the request tracks was not gathered or was gathered without the
-    /// bounds `bounded` says gathering keeps for it, positionally to the
-    /// block's header ([`crate::bounded_columns`];
-    /// `docs/design/decisions.md`, "D79"), where the request
-    /// **states** a group size other than the one the block was gathered at,
-    /// or where it states no size, **states** a bound — minimum or maximum —
-    /// and the sizing that makes, the other bound at its default, is not the
-    /// block's record ([`pgdt_model::BlockStatistics::sizing`]). A
+    /// bounds gathering keeps for it under that resolution
+    /// ([`bounded_columns`]; `docs/design/decisions.md`, "D79"), where the
+    /// request **states** a group size other than the one the block was
+    /// gathered at, or where it states no size, **states** a bound — minimum
+    /// or maximum — and the sizing that makes, the other bound at its default,
+    /// is not the block's record ([`pgdt_model::BlockStatistics::sizing`]). A
     /// resized block is re-read from its first row as the request sizes it; an
     /// unstated size and bounds lack nothing a gathered block holds, and
     /// re-read a block lacking a column at the size it holds, exactly, keeping
@@ -277,11 +271,24 @@ impl StatisticsRequest {
     /// maximum. Rejected: predicting the finer size from the groups another
     /// sizing left, which saves that first read by guessing where the read
     /// would have measured.
-    pub fn backfill(
+    pub(crate) fn backfill(
         &self,
         block: &CopyBlock,
-        bounded: &[bool],
+        metadata: Option<&DumpMetadata>,
+        database: Option<&str>,
         allowance: Option<u64>,
+    ) -> Option<StatisticsBackfill> {
+        self.backfill_bounded(block, allowance, || bounded_columns(block, metadata, database))
+    }
+
+    /// [`Self::backfill`] with the block's bounded columns read from
+    /// `bounded` — positionally to its header, and asked only of a block that
+    /// holds statistics, the one whose held columns are weighed against it.
+    pub(crate) fn backfill_bounded(
+        &self,
+        block: &CopyBlock,
+        allowance: Option<u64>,
+        bounded: impl FnOnce() -> Vec<bool>,
     ) -> Option<StatisticsBackfill> {
         let requested = self.tracked_columns(&block.header)?;
         if let (Some(declined), Some(allowance)) = (block.statistics_declined, allowance)
@@ -302,6 +309,7 @@ impl StatisticsRequest {
         let unmet_max = !resized
             && held.group_size == self.gathered_size()
             && self.density_max_rows().is_some_and(|max_rows| held.breaks_max_rows(max_rows));
+        let bounded = bounded();
         let missing = requested.iter().enumerate().any(|(i, &wanted)| {
             wanted
                 && held.columns.get(i).and_then(Option::as_ref).is_none_or(|column| {
@@ -344,9 +352,9 @@ impl StatisticsRequest {
 /// well as everything asked for**, so a back-fill never loses a statistic an
 /// earlier pass gathered.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StatisticsBackfill {
+pub(crate) struct StatisticsBackfill {
     /// The columns gathered, positionally to the block's header.
-    pub columns: Vec<bool>,
+    pub(crate) columns: Vec<bool>,
     /// Those of `columns` the request tracks. A field its type's `*_in`
     /// refuses is met as the pass's [`pgdt_model::PostgresInvalidValues`] says in
     /// these alone; in a column gathered only because the block held it, it
@@ -354,32 +362,32 @@ pub struct StatisticsBackfill {
     /// ([`pgdt_model::IgnoredRefusals`]), so a refusing parse fails on exactly the columns
     /// it tracks, whichever runs gathered the block — but a strict one, which
     /// checks every column's fields first ([`pgdt_model::PostgresInvalidValues::Strict`]).
-    pub requested: Vec<bool>,
+    pub(crate) requested: Vec<bool>,
     /// The group size gathered at: for a block re-read from its first row,
     /// the request's stated size, else [`ROW_GROUP_DEFAULT_SIZE_BYTES`]; for
     /// a block whose groups break a stated maximum, the finer size
     /// [`BlockStatisticsExt::predicted_group_size`] predicts; and for one lacking
     /// only a column, the size it already held.
-    pub group_size: u64,
+    pub(crate) group_size: u64,
     /// The most groups the block may hold, adjacent ones merging pairwise
     /// past it — [`StatisticsRequest::group_cap`] for a block re-read from its
     /// first row — and `None` for a size gathered exactly: a stated one, or
     /// the one the block already held.
-    pub group_cap: Option<usize>,
+    pub(crate) group_cap: Option<usize>,
     /// The fewest rows the finished block's median group may hold, its groups
     /// merging pairwise short of it — the request's minimum, stated or
     /// default ([`StatisticsSizing::Density`]), for a
     /// block re-read from its first row — and `None` for a size gathered
     /// exactly.
-    pub min_rows: Option<u64>,
+    pub(crate) min_rows: Option<u64>,
     /// The most rows the finished block's 90th-percentile group may hold, no
     /// merge passing it — the request's stated maximum for a block re-read
     /// from its first row — and `None` for a size gathered exactly.
-    pub max_rows: Option<u64>,
+    pub(crate) max_rows: Option<u64>,
     /// What the gathered block records it was sized under: the request's for
     /// a block re-read from its first row, the block's own record for one
     /// re-read at the size it held.
-    pub sizing: GroupSizing,
+    pub(crate) sizing: GroupSizing,
 }
 
 /// How much a mapping pass records of a table or a column

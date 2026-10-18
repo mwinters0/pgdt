@@ -508,13 +508,6 @@ than reading as a phase nobody has sliced.
   it and TOC coverage reads it as unattributed. **(c) unowned**; promoted by
   any change to the TOC header parser. Detail: `crates/pgdt-dump/src/map/toc.rs`.
 
-- **KD115** — `StatisticsRequest::backfill` takes a `bounded` mask the caller
-  must compute with `bounded_columns` over the same block and metadata, and
-  nothing checks the two agree, so an embedder back-filling one block can ask
-  for the wrong columns silently. **(b) owned by P36**, 36.7; closing it leaves
-  `bounded_columns` `pub(crate)`. Detail:
-  `crates/pgdt-mapping/src/statistics/request.rs`.
-
 - **KD121** — a `ValueKey` takes its semantics beside a `ResolvedSchema` that
   does not record the semantics its untyped widening was applied under, so a
   key asked for in DataFusion's semantics over a column widened under

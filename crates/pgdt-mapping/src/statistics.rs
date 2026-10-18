@@ -21,6 +21,5 @@ mod test_support;
 pub use self::account::{StatisticsHeld, StatisticsTerms};
 pub use self::request::{
     BLOCK_MAX_ROW_GROUPS, GatherOptions, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
-    StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsSizing,
-    StatisticsTarget,
+    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsSizing, StatisticsTarget,
 };

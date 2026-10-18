@@ -20,17 +20,19 @@ use std::time::SystemTime;
 use bytes::Bytes;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
 use pgdt_dump::{ReadOptions, ScanOptions};
-use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
+use pgdt_io::{
+    Allowance, Arrangement, ArrangementRequest, ByteRangeSource, DEFAULT_MEMORY_BUDGET,
+    LocalFileSource, Parallelism,
+};
 use pgdt_mapping::statistics::{
     BLOCK_MAX_ROW_GROUPS, GatherOptions, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
-    StatisticsBackfill, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsSizing,
-    StatisticsTarget,
+    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsSizing, StatisticsTarget,
 };
-use pgdt_mapping::{MapRun, bounded_columns, gather_block_statistics, map_file};
+use pgdt_mapping::{MapRun, backfill_block, map_file};
 use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts};
 use pgdt_model::{
     BlockStatistics, ColumnRefusals, ColumnStatistics, CopyBlock, DICTIONARY_ENTRY_MAX_BYTES,
-    DICTIONARY_MAX_ENTRIES, DumpIndex, FieldRefusal, GroupSizing, IgnoredRefusals,
+    DICTIONARY_MAX_ENTRIES, DumpIndex, DumpMetadata, FieldRefusal, GroupSizing, IgnoredRefusals,
     PostgresInvalidValues, Sortedness,
 };
 
@@ -90,6 +92,26 @@ fn block<'a>(index: &'a DumpIndex, table: &str) -> &'a CopyBlock {
 
 fn statistics(block: &CopyBlock) -> &BlockStatistics {
     block.statistics.as_deref().unwrap_or_else(|| panic!("{} gathered nothing", block.header.table))
+}
+
+/// One worker under no allowance: what [`backfill_block`] reads a block
+/// under here.
+fn serial() -> Arrangement {
+    Arrangement::resolve(&Allowance::NoneFound, ArrangementRequest::recommended(1, None))
+}
+
+/// `block` of a map whose metadata is `metadata` back-filled under `request`
+/// ([`backfill_block`]) and `arrangement`, reading as by default and failing
+/// at a field PostgreSQL refuses.
+async fn backfilled(
+    source: &dyn ByteRangeSource,
+    arrangement: &Arrangement,
+    request: &StatisticsRequest,
+    metadata: Option<&DumpMetadata>,
+    block: &mut CopyBlock,
+) -> pgdt_core::Result<bool> {
+    let (read, invalid) = (ReadOptions::default(), PostgresInvalidValues::Default);
+    backfill_block(source, read, arrangement, invalid, request, metadata, None, block).await
 }
 
 /// One row of a block as the file holds it: where its line starts relative to
@@ -918,8 +940,8 @@ async fn a_backfill_never_drops_a_column_the_block_held() {
 /// dictionary and no bounds, as a build bounding only exact orders stored it,
 /// is re-read by a `parse` asking for nothing more, into exactly what one
 /// gathering pass now stores, and nothing is re-read after that. No other
-/// block lacks anything, and a column whose declared type is bounded nowhere
-/// never reads as lacking.
+/// block lacks anything, and the block back-filled alone is what the pass
+/// makes of it.
 #[tokio::test]
 async fn a_text_column_held_without_bounds_is_reread_for_them() {
     use pgdt_model::{DataBlock, SpanBody};
@@ -929,11 +951,6 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
         mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::DATA)
             .await
             .index;
-    let ordered = block(&fresh, "public.ordered");
-    let bounded = bounded_columns(ordered, fresh.metadata.as_ref(), None);
-    assert!(bounded.iter().all(|&b| b), "every column of `ordered` is bounded: {bounded:?}");
-    assert_eq!(bounded_columns(ordered, None, None), bounded, "no DDL, bounded as its text");
-
     let mut older = fresh.clone();
     for span in &mut older.spans {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body
@@ -948,18 +965,13 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
             block.statistics = Some(Arc::new(held));
         }
     }
-    let unbounded = block(&older, "public.ordered");
-    let backfill = StatisticsRequest::DATA
-        .backfill(unbounded, &bounded, None)
-        .expect("a bounded column held without bounds lacks them");
-    let held = statistics(unbounded);
-    assert_eq!((backfill.group_size, backfill.sizing), (held.group_size, held.sizing));
-    assert_eq!(
-        StatisticsRequest::DATA.backfill(unbounded, &vec![false; bounded.len()], None),
-        None,
-        "a column bounded nowhere lacks nothing"
-    );
+    // The block alone, back-filled, is what the pass below makes of it.
     let source = LocalFileSource::open(&dump).unwrap();
+    let mut unbounded = block(&older, "public.ordered").clone();
+    let (request, metadata) = (StatisticsRequest::DATA, older.metadata.as_ref());
+    let read = backfilled(&source, &serial(), &request, metadata, &mut unbounded).await;
+    assert!(read.unwrap(), "a bounded column held without bounds lacks them");
+    assert_eq!(&unbounded, block(&fresh, "public.ordered"));
     pgdt_dump::internal::save(&cache::colocated_path(&dump), &source, &older).await.unwrap();
 
     let run =
@@ -1041,8 +1053,9 @@ async fn a_backfill_rereads_only_the_blocks_its_request_tracks() {
 }
 
 /// **The per-block entry point is the back-fill**: one block of a map holding
-/// no statistics, re-read through `gather_block_statistics` under what its
-/// request answers for it, holds what a gathering pass stores for it.
+/// no statistics, back-filled under a request, holds what a gathering pass
+/// stores for it, its census included, and a block holding that is not read
+/// again.
 #[tokio::test]
 async fn one_block_is_gathered_on_its_own() {
     let dump = statistics_fixture(16, "default");
@@ -1050,37 +1063,17 @@ async fn one_block_is_gathered_on_its_own() {
     let bare = gathered(&dump, &StatisticsRequest::METADATA).await;
     let reference = gathered(&dump, &wanted).await;
     let source = LocalFileSource::open(&dump).unwrap();
-    let ordered = block(&bare, "public.ordered");
-    let backfill = wanted
-        .backfill(ordered, &bounded_columns(ordered, bare.metadata.as_ref(), None), None)
-        .expect("a block with no statistics lacks them");
-    let gathered = gather_block_statistics(
-        &source,
-        &ScanOptions::default(),
-        &GatherOptions::default(),
-        bare.metadata.as_ref(),
-        None,
-        ordered,
-        &backfill,
-    )
-    .await
-    .unwrap()
-    .gathered
-    .gathered()
-    .expect("an unbounded allowance declines nothing");
-    assert_eq!(Some(&gathered), block(&reference, "public.ordered").statistics.as_deref());
-    assert_eq!(
-        wanted.backfill(
-            block(&reference, "public.ordered"),
-            &bounded_columns(
-                block(&reference, "public.ordered"),
-                reference.metadata.as_ref(),
-                None,
-            ),
-            None,
-        ),
-        None
-    );
+    let mut ordered = block(&bare, "public.ordered").clone();
+    assert!(ordered.census.is_none(), "mapped at the metadata level");
+    let read = backfilled(&source, &serial(), &wanted, bare.metadata.as_ref(), &mut ordered).await;
+    assert!(read.unwrap(), "it holds no statistics");
+    let gathered = block(&reference, "public.ordered");
+    assert_eq!(&ordered, gathered);
+    let mut again = gathered.clone();
+    let read =
+        backfilled(&source, &serial(), &wanted, reference.metadata.as_ref(), &mut again).await;
+    assert!(!read.unwrap(), "it lacks nothing");
+    assert_eq!(&again, gathered);
 }
 
 /// **A block records the request its size was chosen under, and a back-fill
@@ -2318,224 +2311,6 @@ async fn a_parse_fails_at_an_undeclared_label_only_where_the_labels_are_exact() 
     }
 }
 
-/// **A block past its cap gathers, split by the leader, what the serial pass
-/// gathers, and that is what gathering exactly at the size it reaches
-/// gathers** — every block of every fixture, re-read at a group size of a few
-/// bytes under a cap of two groups, so most blocks merge, many of them
-/// several times over, at chunks the leader cuts inside a group. What reaches the cap
-/// under a request is [`StatisticsRequest::backfill`]'s answer, asserted
-/// first.
-#[tokio::test]
-async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() {
-    const BASE: u64 = 8;
-    const CAP: usize = 2;
-    let unstated = StatisticsRequest::DATA;
-    let stated = request(StatisticsSelection::DATA, BASE);
-    let serial = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
-    let (mut blocks, mut merged) = (0, 0);
-    for fixture in common::all_fixtures() {
-        let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&fixture).unwrap());
-        let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
-        let metadata = StatisticsRequest::METADATA;
-        let gather = GatherOptions::default();
-        let cancel = CancellationToken::new();
-        let run = map_file(
-            mode.open_source(source.clone()).await.unwrap(),
-            &options,
-            &gather,
-            &metadata,
-            &cancel,
-        );
-        let index = run.await.unwrap().index;
-        let refused = common::refused_field(&fixture).map(|r| r.table);
-        // A block holding a field PostgreSQL refuses is refused by every
-        // re-read (`tests/decode.rs`'s
-        // `every_refused_field_fails_a_data_level_parse_reading_it`).
-        for (database, block) in index
-            .blocks_with_database()
-            .filter(|(_, b)| refused != Some(b.header.qualified_name().as_str()))
-        {
-            let backfill = unstated
-                .backfill(block, &bounded_columns(block, index.metadata.as_ref(), database), None)
-                .expect("the block holds no statistics");
-            assert_eq!(backfill.group_cap, Some(BLOCK_MAX_ROW_GROUPS));
-            assert_eq!(
-                stated
-                    .backfill(
-                        block,
-                        &bounded_columns(block, index.metadata.as_ref(), database),
-                        None
-                    )
-                    .unwrap()
-                    .group_cap,
-                None
-            );
-            let capped = StatisticsBackfill {
-                group_size: BASE,
-                group_cap: Some(CAP),
-                min_rows: None,
-                ..backfill
-            };
-            let gather = |options: ScanOptions, backfill: StatisticsBackfill| {
-                let (source, metadata) = (source.as_ref(), index.metadata.as_ref());
-                async move {
-                    gather_block_statistics(
-                        source,
-                        &options,
-                        &GatherOptions::default(),
-                        metadata,
-                        database,
-                        block,
-                        &backfill,
-                    )
-                    .await
-                    .unwrap()
-                    .gathered
-                    .gathered()
-                    .expect("an unbounded allowance declines nothing")
-                }
-            };
-            let reference = gather(serial, capped.clone()).await;
-            let label = format!("{}: {}", fixture.display(), block.header.table);
-            assert!(reference.groups.len() <= CAP, "{label}");
-            let exact = StatisticsBackfill {
-                group_size: reference.group_size,
-                group_cap: None,
-                ..capped.clone()
-            };
-            assert_eq!(gather(serial, exact).await, reference, "{label}");
-            for jobs in [3, 8] {
-                let parallelism = Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET);
-                let parallel = ScanOptions { parallelism, ..serial };
-                let split = gather(parallel, capped.clone()).await;
-                assert_eq!(split, reference, "{label}: {jobs} jobs");
-            }
-            blocks += 1;
-            merged += usize::from(reference.group_size > BASE);
-        }
-    }
-    assert!(merged * 2 > blocks, "only {merged} of {blocks} blocks merged");
-}
-
-/// The merges the density minimum must choose over a block gathered exactly
-/// at its base size, written as `scripts/row_density.py` chooses: the first
-/// size, from the base to a single group, whose upper middle group holds
-/// `min_rows`, else the single group.
-fn chosen_merges(rows: &[u64], min_rows: u64) -> u32 {
-    let mut level = rows.to_vec();
-    let mut merges = 0;
-    loop {
-        let mut sorted = level.clone();
-        sorted.sort_unstable();
-        if level.len() <= 1 || sorted[sorted.len() / 2] >= min_rows {
-            return merges;
-        }
-        level = level.chunks(2).map(|pair| pair.iter().sum()).collect();
-        merges += 1;
-    }
-}
-
-/// **A block sized by its density minimum gathers, split by the leader, what
-/// the serial pass gathers, at the size the rows its base size gathered
-/// choose, and that is what gathering exactly at that size gathers** — every
-/// block of every fixture, re-read at a group size of a few bytes under a
-/// minimum of a few rows, so most blocks coarsen. What sizes a block under a
-/// request is [`StatisticsRequest::backfill`]'s answer, asserted first.
-#[tokio::test]
-async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_gathers() {
-    const BASE: u64 = 8;
-    const MIN_ROWS: u64 = 3;
-    let unstated = StatisticsRequest::DATA;
-    let stated = request(StatisticsSelection::DATA, BASE);
-    let serial = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
-    let (mut blocks, mut coarsened) = (0, 0);
-    for fixture in common::all_fixtures() {
-        let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&fixture).unwrap());
-        let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
-        let metadata = StatisticsRequest::METADATA;
-        let gather = GatherOptions::default();
-        let cancel = CancellationToken::new();
-        let run = map_file(
-            mode.open_source(source.clone()).await.unwrap(),
-            &options,
-            &gather,
-            &metadata,
-            &cancel,
-        );
-        let index = run.await.unwrap().index;
-        let refused = common::refused_field(&fixture).map(|r| r.table);
-        // A block holding a field PostgreSQL refuses is refused by every
-        // re-read (`tests/decode.rs`'s
-        // `every_refused_field_fails_a_data_level_parse_reading_it`).
-        for (database, block) in index
-            .blocks_with_database()
-            .filter(|(_, b)| refused != Some(b.header.qualified_name().as_str()))
-        {
-            let backfill = unstated
-                .backfill(block, &bounded_columns(block, index.metadata.as_ref(), database), None)
-                .expect("the block holds no statistics");
-            let default_sizing =
-                GroupSizing::Density { min_rows: ROW_GROUP_DEFAULT_MIN_ROWS, max_rows: None };
-            assert_eq!(backfill.min_rows, Some(ROW_GROUP_DEFAULT_MIN_ROWS));
-            assert_eq!(backfill.sizing, default_sizing);
-            let exact_request = stated
-                .backfill(block, &bounded_columns(block, index.metadata.as_ref(), database), None)
-                .unwrap();
-            assert_eq!((exact_request.min_rows, exact_request.sizing), (None, GroupSizing::Stated));
-            let sized = StatisticsBackfill {
-                group_size: BASE,
-                group_cap: None,
-                min_rows: Some(MIN_ROWS),
-                ..backfill
-            };
-            let gather = |options: ScanOptions, backfill: StatisticsBackfill| {
-                let (source, metadata) = (source.as_ref(), index.metadata.as_ref());
-                async move {
-                    gather_block_statistics(
-                        source,
-                        &options,
-                        &GatherOptions::default(),
-                        metadata,
-                        database,
-                        block,
-                        &backfill,
-                    )
-                    .await
-                    .unwrap()
-                    .gathered
-                    .gathered()
-                    .expect("an unbounded allowance declines nothing")
-                }
-            };
-            let label = format!("{}: {}", fixture.display(), block.header.table);
-            let reference = gather(serial, sized.clone()).await;
-            assert_eq!(reference.sizing, default_sizing, "{label}: the record is the plan's");
-            let exact =
-                |group_size| StatisticsBackfill { group_size, min_rows: None, ..sized.clone() };
-            let base = gather(serial, exact(BASE)).await;
-            let rows: Vec<u64> = base.groups.iter().map(|g| g.rows).collect();
-            let merges = chosen_merges(&rows, MIN_ROWS);
-            assert_eq!(reference.group_size, BASE << merges, "{label}: {rows:?}");
-            assert_eq!(gather(serial, exact(reference.group_size)).await, reference, "{label}");
-            for jobs in [3, 8] {
-                let parallelism = Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET);
-                let parallel = ScanOptions { parallelism, ..serial };
-                let split = gather(parallel, sized.clone()).await;
-                assert_eq!(split, reference, "{label}: {jobs} jobs");
-            }
-            blocks += 1;
-            coarsened += usize::from(merges > 0);
-        }
-    }
-    assert!(coarsened * 2 > blocks, "only {coarsened} of {blocks} blocks coarsened");
-}
-
 /// **A block that no longer ends where the map says is refused**, rather than
 /// given statistics of other bytes: the file is rewritten at its own size with
 /// the block's terminator moved, which the cache's identity check cannot see.
@@ -2587,24 +2362,10 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     );
     assert!(err.to_string().contains(&cache_path.display().to_string()), "{err}");
 
-    let backfill = StatisticsRequest::DATA
-        .backfill(
-            mapped_block,
-            &bounded_columns(mapped_block, mapped.metadata.as_ref(), None),
-            None,
-        )
-        .expect("it holds no statistics");
-    let err = gather_block_statistics(
-        source.as_ref(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
-        mapped.metadata.as_ref(),
-        None,
-        mapped_block,
-        &backfill,
-    )
-    .await
-    .expect_err("the block moved");
+    let (request, metadata) = (StatisticsRequest::DATA, mapped.metadata.as_ref());
+    let mut moved = mapped_block.clone();
+    let read = backfilled(source.as_ref(), &serial(), &request, metadata, &mut moved).await;
+    let err = read.expect_err("the block moved");
     assert!(
         matches!(
             &err,
@@ -2619,17 +2380,8 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     // by its stored size.
     std::fs::write(&dump, &before[..mapped_block.data_offset as usize - 1]).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
-    let err = gather_block_statistics(
-        &source,
-        &ScanOptions::default(),
-        &GatherOptions::default(),
-        mapped.metadata.as_ref(),
-        None,
-        mapped_block,
-        &backfill,
-    )
-    .await
-    .expect_err("the block no longer ends where the map says");
+    let read = backfilled(&source, &serial(), &request, metadata, &mut moved).await;
+    let err = read.expect_err("the block no longer ends where the map says");
     assert!(
         matches!(
             &err,
@@ -2754,4 +2506,54 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         assert_eq!(filled.statistics_declined, None, "{at}");
         assert_eq!(statistics(filled), &reference, "{at}");
     }
+}
+
+/// **One block back-filled past its arrangement's statistics allowance
+/// declines and records it, and is read again only under a larger one**, as
+/// the pass's back-fill does (`docs/design/decisions.md`, "D85"): its census
+/// is taken all the same, the same arrangement reads nothing, and one with no
+/// allowance reads it into what an unbounded pass gathers, clearing the
+/// record. **Not vacuous**: the allowance is at most a quarter of the
+/// unbounded pass's own peak.
+#[tokio::test]
+async fn one_block_backfilled_past_its_allowance_declines_until_a_larger_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = long_block(dir.path());
+    let wanted = request(StatisticsSelection::DATA, 256);
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+    let free = map_file(
+        CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
+        &ScanOptions::default(),
+        &GatherOptions::default(),
+        &wanted,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let reference = block(&free.index, "public.t");
+    let quarter = free.statistics.peak / 4;
+    // The first stated allowance whose statistics share is under a quarter.
+    let tight = (1..1 << 20)
+        .map(|kib| {
+            let request = ArrangementRequest::recommended(1, None);
+            Arrangement::resolve(&Allowance::Stated(kib << 10), request)
+        })
+        .find(|a| a.statistics_allowance().is_some_and(|bytes| bytes > 0 && bytes <= quarter))
+        .expect("some allowance leaves statistics under a quarter of the peak");
+    let allowance = tight.statistics_allowance().unwrap();
+
+    let bare = gathered(&dump, &StatisticsRequest::METADATA).await;
+    let metadata = bare.metadata.as_ref();
+    let mut held = block(&bare, "public.t").clone();
+    let source = source.as_ref();
+    let read = backfilled(source, &tight, &wanted, metadata, &mut held).await;
+    assert!(read.unwrap(), "it holds no statistics");
+    assert_eq!(held.statistics_declined, Some(allowance));
+    assert!(held.statistics.is_none());
+    assert_eq!(held.census, reference.census, "a declined read censuses the block");
+    let read = backfilled(source, &tight, &wanted, metadata, &mut held).await;
+    assert!(!read.unwrap(), "the allowance it declined under reads nothing");
+    let read = backfilled(source, &serial(), &wanted, metadata, &mut held).await;
+    assert!(read.unwrap(), "no allowance reads it again");
+    assert_eq!(&held, reference);
 }

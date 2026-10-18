@@ -112,11 +112,23 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
     }
 }
 
-/// What one [`map_file`] run did. `resumed_from` is the frontier the run
+/// What one [`map_file`] run did, and **what a dump read through its map is
+/// built from**: the source and the watch the open took, handed back beside
+/// the map the run built over them. `resumed_from` is the frontier the run
 /// *started* at: `0` for a scan that began at byte 0, the cache's
 /// `scanned_through` for one that resumed.
-#[derive(Debug)]
+///
+/// **Only a run builds one**: its fields are readable, but it is
+/// `#[non_exhaustive]`, so no crate above pairs a map with a source or a
+/// watch it was not built over, as [`Opened`] is not assembled from the parts
+/// of different opens.
+#[non_exhaustive]
 pub struct MapRun {
+    /// The source the run read, as the open handed it over.
+    pub source: Arc<dyn ByteRangeSource>,
+    /// The open's watch on it: every later check of the source compares
+    /// against the baseline this run started from.
+    pub watch: SourceWatch,
     /// The map as it stands after the run: whole-file when `interrupted` is
     /// false or the interrupt came during the back-fill, and otherwise
     /// everything up to the last *spliced* watermark, which is also the last
@@ -132,7 +144,7 @@ pub struct MapRun {
     /// apart from a stop inside the back-fill.
     pub interrupted: bool,
     /// How many blocks the scan had already mapped lacked the statistics this
-    /// run asked for ([`StatisticsRequest::backfill`]) — zero for a run
+    /// run asked for ([`backfill_block`](crate::backfill_block)) — zero for a run
     /// interrupted before its map reached EOF, which is where the count is
     /// taken.
     pub lacking_statistics: usize,
@@ -160,13 +172,71 @@ pub struct MapRun {
     pub statistics: StatisticsHeld,
 }
 
+impl std::fmt::Debug for MapRun {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The source states nothing of itself; the watch is its baseline.
+        f.debug_struct("MapRun")
+            .field("watch", &self.watch)
+            .field("index", &self.index)
+            .field("resumed_from", &self.resumed_from)
+            .field("interrupted", &self.interrupted)
+            .field("lacking_statistics", &self.lacking_statistics)
+            .field("backfilled", &self.backfilled)
+            .field("checked", &self.checked)
+            .field("declined_statistics", &self.declined_statistics)
+            .field("statistics", &self.statistics)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A [`MapRun`] short of the source and the watch, which [`map_file`] holds
+/// while the pass borrows them and hands back once it is over.
+struct Mapped {
+    index: DumpIndex,
+    resumed_from: u64,
+    interrupted: bool,
+    lacking_statistics: usize,
+    backfilled: usize,
+    checked: usize,
+    declined_statistics: usize,
+    statistics: StatisticsHeld,
+}
+
+impl Mapped {
+    fn handing_back(self, source: Arc<dyn ByteRangeSource>, watch: SourceWatch) -> MapRun {
+        let Self {
+            index,
+            resumed_from,
+            interrupted,
+            lacking_statistics,
+            backfilled,
+            checked,
+            declined_statistics,
+            statistics,
+        } = self;
+        MapRun {
+            source,
+            watch,
+            index,
+            resumed_from,
+            interrupted,
+            lacking_statistics,
+            backfilled,
+            checked,
+            declined_statistics,
+            statistics,
+        }
+    }
+}
+
 /// Map the source `opened` holds end to end, **continuing from whatever its
 /// cache already holds** — `pgdt parse`'s scan (`docs/design/decisions.md`,
 /// "D61"). The cache is the one the open decoded and judged
 /// ([`CacheMode::open`]), so its refusals are made before this is called and
 /// an unusable cache reaches it only as one the mode may replace, which it
 /// starts cold over; the watch is the open's, taken before the cache was
-/// believed, and saves go to the open's mode. This is
+/// believed, and saves go to the open's mode; the source and the watch come
+/// back in the [`MapRun`], beside the map built over them. This is
 /// [`map_forward`] with no stop target, plus the three whole-file facts that
 /// only a scan reaching EOF may state; `pgdt_mapping::build_index` stays the
 /// eager, cache-blind producer. Rejected: teaching *it* to resume, which
@@ -183,9 +253,9 @@ pub struct MapRun {
 /// and of a metadata-level table nothing drawn from its rows — and then
 /// **re-reads every block that lacks it** — one the cache already held,
 /// a metadata-level one among them, or one this run gathered too coarsely for
-/// a stated maximum ([`StatisticsRequest::backfill`]) — never replacing what a
+/// a stated maximum ([`backfill_block`](crate::backfill_block)) — never replacing what a
 /// block holds with less, one at a time in file order through the
-/// same per-block re-read [`gather_block_statistics`](crate::gather_block_statistics) exposes, saving as it
+/// same per-block step [`backfill_block`](crate::backfill_block) takes, saving as it
 /// goes and charging the run's own account. The back-fill runs once the
 /// map has reached EOF, so each block resolves against whole-file metadata,
 /// and a run interrupted inside it resumes into it, the blocks still lacking
@@ -244,7 +314,8 @@ pub async fn map_file(
         &watch,
     )
     .await;
-    watch.attribute(source.as_ref(), run).await
+    let mapped = watch.attribute(source.as_ref(), run).await?;
+    Ok(mapped.handing_back(source, watch))
 }
 
 /// [`map_file`] once its watch is open, which then attributes any failure.
@@ -258,7 +329,7 @@ async fn map_file_watched(
     held: Held,
     statistics: &StatisticsRequest,
     watch: &SourceWatch,
-) -> Result<MapRun> {
+) -> Result<Mapped> {
     let size = source.size().await?;
     let mut index = match held {
         Held::Loaded(loaded) => loaded.index,
@@ -453,7 +524,7 @@ async fn map_file_watched(
         declined_statistics =
             report_statistics_declines(statistics, gather.statistics_allowance_bytes, &index);
     }
-    Ok(MapRun {
+    Ok(Mapped {
         index,
         resumed_from,
         interrupted: backfill.interrupted,
@@ -478,8 +549,8 @@ fn interrupted_run(
     index: DumpIndex,
     resumed_from: u64,
     account: &Arc<StatisticsAccount>,
-) -> MapRun {
-    MapRun {
+) -> Mapped {
+    Mapped {
         index,
         resumed_from,
         interrupted: true,

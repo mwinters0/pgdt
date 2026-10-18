@@ -32,7 +32,7 @@ pub fn stored_bounds_kinds(
 /// [`StatisticsRequest::backfill`](crate::statistics::StatisticsRequest::backfill)
 /// reads a block's held statistics against, a column held without the bounds
 /// this says it gets lacking them (`docs/design/decisions.md`, "D79").
-pub fn bounded_columns(
+pub(crate) fn bounded_columns(
     block: &CopyBlock,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
