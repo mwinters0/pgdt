@@ -110,7 +110,8 @@ pub enum Error {
     /// check during it: a remote server stating neither a strong entity tag
     /// nor a `Last-Modified`, so no read can be pinned and the source's size
     /// and modification time are the probe's. Raised by
-    /// `pgdt_dump::cache::SourceWatch::open`, before anything is read, since the
+    /// `pgdt_dump::cache::SourceWatch::require_checkable` where a read begins,
+    /// before anything is read, since the
     /// promise [`Error::SourceChangedWhileRead`] makes would otherwise be
     /// stated and not kept (`docs/design/decisions.md`, "D21"). `why` is the
     /// source's own sentence ([`pgdt_io::ByteRangeSource::in_flight_unchecked`]).

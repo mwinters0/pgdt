@@ -89,9 +89,9 @@ impl CacheMode {
     ///    two refused as [`Unusable::CompressionContradicted`]
     ///    (`docs/design/decisions.md`, "D18").
     /// 3. **The watch** ([`SourceWatch::open`]), taken before the cache is
-    ///    believed, so a source that changes from here on is caught — and a
-    ///    source nothing can check during a run is refused here, before it
-    ///    reads, unless the mode's selection turns that check off.
+    ///    believed, so a source that changes from here on is caught. A source
+    ///    nothing can check during a run opens all the same, and is refused
+    ///    where a read of it begins ([`SourceWatch::require_checkable`]).
     /// 4. **The cache judged against the live source**: the stored size and
     ///    the compression layer again, which refuse, then the weak signals,
     ///    which refuse only where the mode binds them and otherwise warn

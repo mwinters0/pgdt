@@ -246,9 +246,10 @@ pub trait ByteRangeSource: Send + Sync {
     /// has never heard it.
     fn hint_in_flight_identity(&self, _binds: bool) {}
     /// Why nothing during a run can tell this source changed under it, or
-    /// `None` where something can — asked by `pgdt_dump::cache::SourceWatch::open`,
-    /// which refuses a run binding the in-flight identity over a source
-    /// answering `Some` before it reads anything
+    /// `None` where something can — asked by
+    /// `pgdt_dump::cache::SourceWatch::require_checkable`, which refuses a run
+    /// binding the in-flight identity over a source answering `Some` before it
+    /// reads anything
     /// (`docs/design/decisions.md`, "D21").
     ///
     /// **The default is `None`: the watch's own re-read is the check**, which

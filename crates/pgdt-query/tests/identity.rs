@@ -1008,28 +1008,55 @@ impl ByteRangeSource for Unpinnable {
 }
 
 /// **A run binding the in-flight identity over a source nothing can check is
-/// refused before it reads**, under every selection but `none`, which maps it
-/// as any other (`docs/design/decisions.md`, "D21").
+/// refused where a read begins, before it reads**, under every selection but
+/// `none`, which maps it as any other (`docs/design/decisions.md`, "D21"). The
+/// open itself is not refused: a caller that reads nothing past it — `pgdt
+/// info` — has no read for the check to protect.
 #[tokio::test]
-async fn a_source_nothing_can_check_is_refused_unless_nothing_binds() {
+async fn a_source_nothing_can_check_is_refused_where_a_read_begins_unless_nothing_binds() {
     let (_dir, dump) = sandboxed();
     let source =
         Arc::new(Unpinnable { inner: LocalFileSource::open(&dump).unwrap(), reads: 0.into() });
+    let uncheckable = |refused: &Error, strict: StrictIdentity| {
+        let Error::SourceUncheckable { why } = refused else {
+            panic!("{strict:?} binds the in-flight check, got {refused:?}")
+        };
+        assert_eq!(why, "nothing pins it");
+        assert!(refused.to_string().contains("--strict-identity=none"), "{refused}");
+    };
     for strict in [
         StrictIdentity::ADVISORY,
         StrictIdentity::binding(true, false),
         StrictIdentity::binding(false, true),
     ] {
-        let refused = CacheMode::DISABLED
-            .with_strict_identity(strict)
-            .open_source(source.clone())
+        let mode = CacheMode::DISABLED.with_strict_identity(strict);
+        let opened = mode.open_source(source.clone()).await.expect("an open reads nothing");
+        let refused = map_file(
+            opened,
+            &ScanOptions::default(),
+            &GatherOptions::default(),
+            &StatisticsRequest::METADATA,
+        )
+        .await
+        .unwrap_err();
+        uncheckable(&refused, strict);
+
+        let opened = mode.open_source(source.clone()).await.unwrap();
+        let refused = preamble_only(opened, ReadOptions::default(), Parallelism::default())
             .await
             .unwrap_err();
-        let Error::SourceUncheckable { why } = &refused else {
-            panic!("{strict:?} binds the in-flight check, got {refused:?}")
-        };
-        assert_eq!(why, "nothing pins it");
-        assert!(refused.to_string().contains("--strict-identity=none"), "{refused}");
+        uncheckable(&refused, strict);
+
+        let mut stream = table_stream(
+            source.as_ref(),
+            "public.widgets",
+            ScanOptions::default(),
+            QueryOptions::default(),
+            None,
+            mode.clone(),
+        );
+        let refused = stream.next().await.expect("the query answers").unwrap_err();
+        uncheckable(&refused, strict);
     }
     assert_eq!(source.reads.load(Ordering::Relaxed), 0, "refused before a byte was read");
 

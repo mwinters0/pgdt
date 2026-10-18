@@ -114,6 +114,7 @@ pub async fn preamble_only(
     parallelism: Parallelism,
 ) -> Result<(DumpMetadata, Vec<Diagnostic>)> {
     let Opened { source, watch, cache, mode } = opened;
+    watch.require_checkable(source.as_ref())?;
     let answer =
         preamble_only_watched(source.as_ref(), read, parallelism, &mode, cache, &watch).await;
     watch.attribute(source.as_ref(), answer).await

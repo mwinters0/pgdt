@@ -108,6 +108,9 @@ impl PgDump {
         // provider never writes, so nothing here may overwrite one, and the
         // remedy it names is `pgdt`'s (`docs/design/decisions.md`, "D20").
         let Opened { source, watch, cache, .. } = mode.open(&origin).await?;
+        // Every scan reads, so a source its in-flight check cannot cover is
+        // refused at registration rather than at a scan.
+        watch.require_checkable(source.as_ref())?;
         let shown = || mode.path().map(Path::display).expect("a resolved cache has a path");
         let index = match cache {
             Held::Loaded(loaded) if loaded.is_complete() => loaded.index,

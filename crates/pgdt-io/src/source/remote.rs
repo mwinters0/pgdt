@@ -407,9 +407,10 @@ impl ByteRangeSource for RemoteSource {
 /// ([`announce_remote_walk`]).
 ///
 /// Deficiency register: `deficiency: KD51` — a run that
-/// `pgdt_dump::cache::SourceWatch::open` will refuse for a server nothing can pin
-/// ([`ByteRangeSource::in_flight_unchecked`]) pays that walk first, the watch
-/// opening only over the source this returns. Refusing here would need the
+/// `pgdt_dump::cache::SourceWatch::require_checkable` will refuse for a server
+/// nothing can pin ([`ByteRangeSource::in_flight_unchecked`]) pays that walk
+/// first, the refusal coming only where a read of the source this returns
+/// begins. Refusing here would need the
 /// strictness passed to every open for the sake of one pairing — an uncached
 /// `.xz` from a server stating no usable validator. **(c) unowned**; promoted
 /// by a user who meets it on a dump of many streams.

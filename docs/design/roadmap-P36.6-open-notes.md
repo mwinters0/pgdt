@@ -48,15 +48,11 @@ open through it. `pgdt parse` and `pgdt query` do not yet: the slice split.
   with a watch: `pgdt-fixtures`, and `pgdt`'s and `datafusion-pgdump`'s
   tests. They read back through `CacheMode::load` or `OfflineCache`.
 
-## `info` opens with its in-flight check off
+## `info` and an uncheckable source
 
-`StrictIdentity::between_runs` is the selection with its in-flight term
-turned off. `info` opens under it because it reads nothing of the dump past
-the open. Under the plain selection, `SourceWatch::open` would refuse a
-remote dump whose server offers neither validator. `info` has never refused
-one (it opened no watch), and `crates/pgdt/tests/remote.rs` now pins that.
-36.6.3 replaces it: the refusal moves to where a read begins, and
-`between_runs` goes (history, 2026-10-17, "36.6's calls reviewed").
+`info` opens under the selection as given. The open does not refuse a
+source nothing can check during a run; a read does, where it begins
+([36.6.3 notes](roadmap-P36.6.3-read-refusal-notes.md)).
 
 ## Negative results
 

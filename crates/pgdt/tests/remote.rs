@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use common::oracle::Oracle;
-use common::{fixture, run, run_ok, stderr_of, strip_cache_line};
+use common::{fixture, run, run_in, run_ok, run_ok_in, stderr_of, strip_cache_line};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::{
@@ -409,19 +409,6 @@ fn query_over_a_url_streams_the_same_rows_a_local_query_streams() {
 // The derived cache path, and the origin it records (D4, D18, D19)
 // ---------------------------------------------------------------------------
 
-/// Run `pgdt` with `dir` as the working directory — which is where a remote
-/// dump's default cache goes, there being no place beside the object for one
-/// to sit.
-fn run_in(dir: &tempfile::TempDir, args: &[&str]) -> std::process::Output {
-    common::pgdt().current_dir(dir.path()).args(args).output().expect("the pgdt binary runs")
-}
-
-fn run_ok_in(dir: &tempfile::TempDir, args: &[&str]) -> String {
-    let out = run_in(dir, args);
-    assert!(out.status.success(), "pgdt {args:?} failed: {}", stderr_of(&out));
-    String::from_utf8(out.stdout).expect("pgdt writes UTF-8")
-}
-
 #[test]
 fn a_url_naming_no_object_is_refused_by_name() {
     for url in ["http://example.com", "http://example.com/", "https://example.com/dumps/"] {
@@ -595,7 +582,8 @@ async fn a_server_that_states_neither_validator_is_read_unpinned() {
 /// stated**, on every command that reads the dump and under every other
 /// selection — before it reads, so nothing is saved — and `none` reads it,
 /// as it reads a pinned one through a rewrite
-/// (`docs/design/decisions.md`, "D21"). `info`, which reads none of it, is
+/// (`docs/design/decisions.md`, "D21"). `pgdt sql` is refused as it
+/// registers the dump, its cache complete. `info`, which reads none of it, is
 /// not refused.
 #[test]
 fn a_remote_run_nothing_can_check_is_refused_unless_none_is_stated() {
@@ -607,6 +595,7 @@ fn a_remote_run_nothing_can_check_is_refused_unless_none_is_stated() {
         vec!["parse", "--source", &url],
         vec!["parse", "--source", &url, "--strict-identity=time"],
         vec!["parse", "--source", &url, "--strict-identity"],
+        vec!["parse", "--source", &url, "--preamble-only"],
         vec!["query", "--source", &url, "--table", "public.widgets", "--dtcache", "none"],
     ] {
         let refused = run_in(&dir, &args);
@@ -625,6 +614,15 @@ fn a_remote_run_nothing_can_check_is_refused_unless_none_is_stated() {
     // binds it, under any selection: it reports the cache that parse left.
     run_ok_in(&dir, &["info", "--source", &url]);
     run_ok_in(&dir, &["info", "--source", &url, "--strict-identity=location"]);
+    // The fixture names no database, so its catalog is named here.
+    let dump = format!("edge={url}");
+    let sql = ["sql", "-q", "--dump", &dump, "-c", "SELECT 1"];
+    // The shell prints its error to stdout, as upstream's `datafusion-cli` does.
+    let refused = run_in(&dir, &sql);
+    let said = String::from_utf8_lossy(&refused.stdout);
+    assert!(!refused.status.success(), "{said}");
+    assert!(said.contains("nothing can tell whether the dump changes"), "{said}");
+    run_ok_in(&dir, &[&sql[..], &["--strict-identity=none"]].concat());
 
     let oracle = Oracle::serving(dump_bytes()).with_weak_etag().without_last_modified().start();
     let refused = run_in(&dir, &["parse", "--source", &oracle.url()]);

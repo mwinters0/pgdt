@@ -97,10 +97,10 @@ pub(crate) async fn run(args: InfoArgs) -> Result<()> {
     // it interpolates the user's own `--source` path, which the
     // library error does not have.
     let origin = Origin::resolve(&file)?;
-    // `info` reads nothing of the dump past opening it, so no in-flight
-    // check has a read to protect (`StrictIdentity::between_runs`).
-    let mode = cache_mode(&origin, dtcache.as_deref())
-        .with_strict_identity(identity.resolve().between_runs());
+    // `info` reads nothing of the dump past opening it, so a source no
+    // in-flight check can cover is never refused here
+    // (`SourceWatch::require_checkable` is where a read begins).
+    let mode = cache_mode(&origin, dtcache.as_deref()).with_strict_identity(identity.resolve());
     let path = mode
         .require_enabled("info")
         .with_context(|| {

@@ -60,6 +60,7 @@ pub(super) async fn map_for_query(
     cache: &CacheMode,
     watch: &SourceWatch,
 ) -> Result<MappedTable> {
+    watch.require_checkable(source)?;
     let size = source.size().await?;
 
     let mut index = match cache.load(source).await? {

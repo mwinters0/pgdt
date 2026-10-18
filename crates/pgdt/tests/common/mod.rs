@@ -35,8 +35,32 @@ pub fn run(args: &[&str]) -> Output {
 /// Run `pgdt`, require it to succeed, and hand back stdout — for a test that
 /// treats a non-zero exit as a failure of the test rather than as its subject.
 pub fn run_ok(args: &[&str]) -> String {
-    let out = run(args);
-    assert!(out.status.success(), "pgdt {args:?} failed: {}", stderr_of(&out));
+    succeeded(args, run(args))
+}
+
+/// [`run`] with `dir` as the working directory — which is where a remote
+/// dump's default cache goes, there being no place beside the object for one
+/// to sit.
+pub fn run_in(dir: impl AsRef<Path>, args: &[&str]) -> Output {
+    pgdt().current_dir(dir).args(args).output().expect("the pgdt binary runs")
+}
+
+/// [`run_ok`] with `dir` as the working directory ([`run_in`]).
+pub fn run_ok_in(dir: impl AsRef<Path>, args: &[&str]) -> String {
+    succeeded(args, run_in(dir, args))
+}
+
+/// `out`'s stdout, once its status says `pgdt` succeeded. **A failure shows
+/// both streams**: `pgdt sql` prints its errors to stdout, as upstream's
+/// `datafusion-cli` does, and every other command to stderr, so a message
+/// showing only one of them is empty for part of the binary.
+fn succeeded(args: &[&str], out: Output) -> String {
+    assert!(
+        out.status.success(),
+        "pgdt {args:?} failed\n--- stdout\n{}\n--- stderr\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     stdout_of(&out)
 }
 

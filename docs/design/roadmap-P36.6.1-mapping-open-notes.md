@@ -21,9 +21,10 @@ cache is decoded once: the claim's decode before the scan is gone from
   before it was read, so an `.xz` whose seek table the cache holds is opened
   from its `Origin` instead. Every test that built its own source, a wrapper
   over another included, opens through it.
-- **A cache refusal is the open's, not the pass's.** An unusable cache, a
-  strict-identity refusal and an uncheckable source are refused before
-  `map_file` or `preamble_only` is called. A cache the mode may replace
+- **A cache refusal is the open's, not the pass's.** An unusable cache and
+  a strict-identity refusal are refused before `map_file` or
+  `preamble_only` is called; an uncheckable source is refused at their
+  start (36.6.3). A cache the mode may replace
   reaches them as `Held::Replacing`, which starts cold, as
   `CacheLoad::Unusable` with no refusal did.
 - **`parse` takes the cached statistics heap from the open**, the loaded
@@ -36,10 +37,11 @@ cache is decoded once: the claim's decode before the scan is gone from
 
 ## Consequences
 
-- **On `parse`, a strict-identity refusal and an uncheckable source now
-  come before the resolved arrangement's announcement.** The stated flags
-  and the limit are still announced first. Before, both refusals came from
-  inside `map_file`, after the arrangement line. 36.6's notes named this as
+- **On `parse`, a strict-identity refusal now comes before the resolved
+  arrangement's announcement.** The stated flags
+  and the limit are still announced first. Before, it came from inside
+  `map_file`, after the arrangement line, where the uncheckable-source
+  refusal still comes from. 36.6's notes named this as
   a cost of moving `parse` ("Negative results"); nothing pins the order.
 - **`map_file` consumes the `Opened`**, so a caller wanting the source
   afterwards clones the `Arc` first, as `parse` does for its size and its

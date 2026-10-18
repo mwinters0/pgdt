@@ -230,20 +230,10 @@ impl StrictIdentity {
 
     /// Whether a source that changes under an in-flight read aborts the run
     /// rather than merely warning ([`SourceWatch`]) — and so whether a source
-    /// nothing can check during a run is refused before it reads
-    /// ([`SourceWatch::open`]).
+    /// nothing can check during a run is refused where a read of it begins
+    /// ([`SourceWatch::require_checkable`]).
     pub fn in_flight(self) -> bool {
         self.in_flight
-    }
-
-    /// This selection's between-runs terms alone, its in-flight check off —
-    /// what binds for a caller that reads nothing of the dump past opening
-    /// it, `pgdt info` among them, which never scans
-    /// (`docs/design/decisions.md`, "D61"): with no read for the check to
-    /// protect, refusing a source nothing can check during one refuses a
-    /// question the caller never asks.
-    pub const fn between_runs(self) -> Self {
-        Self { in_flight: false, ..self }
     }
 }
 
@@ -352,18 +342,28 @@ impl SourceWatch {
     /// (`docs/design/decisions.md`, "D21",
     /// [`ByteRangeSource::hint_in_flight_identity`]).
     ///
-    /// **A binding run over a source nothing can check is refused here**,
-    /// before it reads ([`Error::SourceUncheckable`],
-    /// [`ByteRangeSource::in_flight_unchecked`]); under `NONE` it opens as any
-    /// other, there being no check to turn off.
+    ///
+    /// **A source nothing can check opens all the same**: the watch is taken
+    /// by whatever opens a dump, and a caller that reads nothing of it past
+    /// the open — `pgdt info` — has no read for the check to protect. The
+    /// refusal is [`Self::require_checkable`], where a read begins.
     pub async fn open(source: &dyn ByteRangeSource, strict: StrictIdentity) -> Result<Self> {
         source.hint_in_flight_identity(strict.in_flight());
-        if strict.in_flight()
-            && let Some(why) = source.in_flight_unchecked()
-        {
-            return Err(Error::SourceUncheckable { why });
-        }
         Ok(Self { baseline: SourceIdentity::observe(source).await?, strict })
+    }
+
+    /// Refuse a read of `source` that this watch's in-flight check binds and
+    /// nothing can make ([`Error::SourceUncheckable`],
+    /// [`ByteRangeSource::in_flight_unchecked`]): called where a read begins —
+    /// the mapping pass and `crate::preamble_only` at their start, a query's
+    /// mapping pass at its — before it reads a byte. Under
+    /// [`StrictIdentity::NONE`] it answers `Ok`, there being no check to turn
+    /// off.
+    pub fn require_checkable(&self, source: &dyn ByteRangeSource) -> Result<()> {
+        match source.in_flight_unchecked() {
+            Some(why) if self.strict.in_flight() => Err(Error::SourceUncheckable { why }),
+            _ => Ok(()),
+        }
     }
 
     /// Re-observe `source` and compare. A change is
