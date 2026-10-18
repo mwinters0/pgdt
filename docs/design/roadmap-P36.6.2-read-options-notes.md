@@ -35,7 +35,9 @@ handed a cancellation it would ignore (D26, D77).
   mapping pass polls the same field: `map_for_query` turns an interrupt
   into `ScanCancelled` (D48). Its entry points take the field through
   `ScanOptions`, so moving it would rewrite the stream entry points that
-  36.8 replaces. This is under "Decisions worth another look".
+  36.8 replaces. The maintainer reversed this, and 36.6.4 takes the
+  cancellation off `ScanOptions` ([history, 2026-10-18](../status/history/2026-10-18.md),
+  "The cancellation is the mapping pass's argument").
 - **A flat `ReadOptions` beside a flat `ScanOptions`** was refused. Two
   structs would declare the same two fields, and something would have to
   keep them equal.

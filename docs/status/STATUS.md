@@ -103,6 +103,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.6.1** The mapping pass takes the open: `map_file` and `preamble_only` read the cache it decoded, and `pgdt parse` opens through it — both take an `Opened` whole, carrying its mode; `CacheMode::open_source` opens a source already in hand ([notes](../design/roadmap-P36.6.1-mapping-open-notes.md))
 - [x] **36.6.2** `scan` and `preamble_only` take only the fields they read: a `ReadOptions` (the chunk and the line limit) and a `Parallelism`, `build_index` and `build_map` too, `ChunkedScanner::new` the `ReadOptions` alone; `ScanOptions` is a `ReadOptions` beside the parallelism and the cancellation, which the passes opening with the prepass announce before it ([notes](../design/roadmap-P36.6.2-read-options-notes.md))
 - [ ] **36.6.3** pgdt-dump: an uncheckable source refused where a read begins, not by `SourceWatch::open` — the mapping pass and `preamble_only` refusing at their start, `PgDump::open` asking for it at construction, `pgdt info` under the selection as given; `StrictIdentity::between_runs` gone, so `NONE`'s rustdoc and D21's "refused unless `NONE`" hold again
+- [ ] **36.6.4** The cancellation is `map_file`'s required argument, a `tokio_util::sync::CancellationToken` in place of pgdt-io's `Cancellation`; `ScanOptions` a `ReadOptions` and a `Parallelism`, which `scan`, `preamble_only`, `build_index`, `build_map` and `map_file` take; the query entry points take no cancellation, a drop being theirs; D26, D48, D77 and D90 rewritten; not counted ([history, 2026-10-18](history/2026-10-18.md), "The cancellation is the mapping pass's argument")
 - [ ] **36.7** pgdt-mapping: back-fill one call; the mapping pass hands back a `Dump`'s parts; closes `KD115`
 - [ ] **36.8** pgdt-query: `Dump`, the selector, `Table::plan` with partitions, a file-ordered stream and serial resume; `read_table` gone; `max_rows` on the stream; filter operators carrying values; `pgdt info` and `pgdt query` on it, `pgdt query` and the stream entry points opening through `CacheMode::open`; `claim`, `CacheMode::load`, `CacheLoad` and `pgdt`'s `open_for_scan` gone
 - [ ] **36.9** pgdt-query: one record per column in `ResolvedSchema`, rendering and `ValueKey` through it; closes `KD121`; counted by `measure.py --count-pair HEAD~1`
@@ -139,16 +140,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **36.6.2 kept the cancellation on `ScanOptions` and gave the reads that
-  poll none a `ReadOptions`**, where D77's shape would have taken `cancel`
-  off `ScanOptions` and made it `map_file`'s argument. The spec's "as D77
-  already requires of the statistics request" can be read either way. It
-  was read as "nothing is handed a field it ignores". The reason is that
-  `pgdt_query`'s mapping pass polls the same field (`map_for_query`, D48),
-  and moving it would rewrite the stream entry points that 36.8 replaces.
-  Reconsidering means 36.8's plan and `map_file` each take a cancellation
-  of their own, and `ScanOptions` shrinks to a `ReadOptions` and a
-  `Parallelism`, or goes
-  ([notes](../design/roadmap-P36.6.2-read-options-notes.md), "Negative
-  results").

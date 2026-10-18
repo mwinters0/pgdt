@@ -228,6 +228,13 @@ the crate that already owns its part.**
   two layers. A cold `pgdt query` maps first, then plans over the `Dump` the
   mapping pass completes, exactly as a warm one does.
 
+**A cold query keeps its early stop** (`ScanExtent::UntilTargetSettled`, the
+default today), since this phase changes no behaviour. Only a pass run to the
+file's end builds a `Dump`. A pass that stops once its target is settled
+yields something that plans that table alone, and 36.8 designs its shape.
+Either pass is one the caller runs, and so it takes the cancellation (The
+small fixes); the plan and its streams take none.
+
 Consequences for the other clusters:
 - **C.** A plan over a `Dump` takes no `ScanOptions`, so the provider stops
   setting a parallelism that nothing reads. Each pass's options carry only
@@ -488,6 +495,19 @@ These close the rest of clusters C, G and L.
 - **`scan` and `preamble_only` take only the fields they read.** They stop
   taking a `ScanOptions` whose `cancel` they ignore by design (D26), as D77
   already requires of the statistics request.
+- **The cancellation is the mapping pass's own argument, and only the
+  mapping pass takes one.** `map_file` takes it as a required argument
+  beside the statistics request, not inside an options value. Options are
+  configuration, reused across runs, and a fired one-shot token cloned
+  inside one stops every later run at byte 0. A query takes none. Dropping
+  its stream is its cancellation, as it already is for the provider (D90)
+  and `pgdt query`. The token is `tokio_util::sync::CancellationToken`,
+  which a tokio embedder already holds, in place of pgdt-io's own
+  `Cancellation`. `ScanOptions` is then a `ReadOptions` and a `Parallelism`,
+  all that `scan`, `preamble_only`, `build_index`, `build_map` and
+  `map_file` read, and they take it. `ChunkedScanner` and the replay take
+  a `ReadOptions`. Reasoning: [history, 2026-10-18](../status/history/2026-10-18.md),
+  "The cancellation is the mapping pass's argument".
 
 ## Proof: a test written as an embedder
 
