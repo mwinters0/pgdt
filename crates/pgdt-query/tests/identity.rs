@@ -24,14 +24,16 @@ use pgdt_dump::cache::{
     CacheMode, CacheStatus, LoadedCache, OriginMatch, SourceWatch, StrictIdentity, WeakIdentity,
 };
 use pgdt_dump::{ReadOptions, ScanOptions, cache, preamble_only};
-use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism, Partitioning};
+use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism, Partitioning};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::DiagnosticKind;
 use pgdt_query::{QueryOptions, table_stream, table_stream_partitions};
 
 mod common;
 use common::{edge_cases, sandboxed_edge_cases as sandboxed};
+use pgdt_fixtures::arranged;
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 /// A source whose identity moves under the run reading it: the first
@@ -194,8 +196,9 @@ async fn an_aborted_run_leaves_the_cache_on_disk_exactly_as_it_was() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
         CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -209,8 +212,9 @@ async fn an_aborted_run_leaves_the_cache_on_disk_exactly_as_it_was() {
     let shifting = Shifting::new(dump.clone(), 1);
     let err = map_file(
         CacheMode::enabled(&path).open_source(Arc::new(shifting)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -237,8 +241,9 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
     let shifting = Shifting::new(dump.clone(), 1);
     let err = map_file(
         CacheMode::DISABLED.open_source(Arc::new(shifting)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -253,8 +258,9 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
         CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -314,11 +320,12 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
     // Every read drops, so the interrupt lands on the prepass's first one.
     let cancel = CancellationToken::new();
     let shifting = Shifting::dropping(dump, 1, 0, cancel.clone());
-    let options = ScanOptions::default();
+
     let err = map_file(
         CacheMode::DISABLED.open_source(Arc::new(shifting)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &cancel,
     )
@@ -340,14 +347,12 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
     std::fs::write(&dump, &file).unwrap();
     let cancel = CancellationToken::new();
     let shifting = Shifting::dropping(dump, 1, data_offset, cancel.clone());
-    let options = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
-    };
+    let options = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
     let err = map_file(
         CacheMode::DISABLED.open_source(Arc::new(shifting)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        options,
+        &arranged(4),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &cancel,
     )
@@ -388,8 +393,9 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
     let map = |source: Shifting, cache: CacheMode| async move {
         map_file(
             cache.open_source(Arc::new(source)).await.unwrap(),
-            &options,
-            &GatherOptions::default(),
+            options.read,
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::METADATA,
             &CancellationToken::new(),
         )
@@ -415,8 +421,9 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
         CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        options.read,
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -483,8 +490,9 @@ async fn a_dump_replaced_by_rename_under_an_open_source_is_not_a_change() {
             .open_source(Arc::clone(&source))
             .await
             .unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -515,8 +523,9 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
     let recorded = std::fs::metadata(&dump).unwrap().modified().unwrap();
     map_file(
         CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -550,8 +559,9 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
         CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -565,8 +575,9 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
     let silent = Shifting::silent(dump.clone());
     map_file(
         CacheMode::enabled(&path).open_source(Arc::new(silent)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -596,8 +607,9 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
     let recorded = std::fs::metadata(&dump).unwrap().modified().unwrap();
     map_file(
         CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -629,8 +641,9 @@ async fn location_binds_nothing_on_a_local_source() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
         CacheMode::enabled(&path).open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -646,8 +659,9 @@ async fn location_binds_nothing_on_a_local_source() {
             .open_source(Arc::clone(&source))
             .await
             .unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -717,8 +731,9 @@ async fn mapped(
     let opened = CacheMode::enabled(path).with_strict_identity(strict).open_source(source).await?;
     map_file(
         opened,
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -756,8 +771,9 @@ async fn a_cache_written_for_another_origin_loads_with_a_warning() {
     // stopping it.
     let run = map_file(
         CacheMode::enabled(&path).open_source(Arc::new(elsewhere)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -1044,8 +1060,9 @@ async fn a_source_nothing_can_check_is_refused_where_a_read_begins_unless_nothin
         let opened = mode.open_source(source.clone()).await.expect("an open reads nothing");
         let refused = map_file(
             opened,
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::METADATA,
             &CancellationToken::new(),
         )

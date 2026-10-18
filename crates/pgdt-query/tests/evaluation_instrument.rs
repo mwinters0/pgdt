@@ -18,9 +18,7 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, SourceWatch, StrictIdentity};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{
-    GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing,
-};
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_query::{
     DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
     TablePartitions,
@@ -28,6 +26,9 @@ use pgdt_query::{
 
 mod common;
 use common::{VERSIONS, sandboxed, statistics_fixture};
+use pgdt_dump::ReadOptions;
+use pgdt_fixtures::arranged;
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 /// `ordered`'s rows: `id` ascends from 1 to this.
@@ -90,8 +91,9 @@ async fn read(
     let cache = CacheMode::enabled(cache::colocated_path(&dump));
     let index = map_file(
         cache.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &request,
         &CancellationToken::new(),
     )

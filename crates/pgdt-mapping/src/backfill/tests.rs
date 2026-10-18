@@ -3,7 +3,7 @@ use std::num::NonZeroU64;
 
 use pgdt_dump::cache::CacheMode;
 use pgdt_fixtures::{all_fixtures, refused_field, statistics_fixture};
-use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
+use pgdt_io::{Allowance, ArrangementRequest, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
 use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts};
 use pgdt_model::{ColumnStatistics, GroupSizing};
 
@@ -23,8 +23,13 @@ fn stated(group_size: u64) -> StatisticsRequest {
 async fn mapped(source: Arc<dyn ByteRangeSource>, request: &StatisticsRequest) -> DumpIndex {
     let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
     let cancel = CancellationToken::new();
-    let (options, gather) = (ScanOptions::default(), GatherOptions::default());
-    map_file(opened, &options, &gather, request, &cancel).await.unwrap().index
+    let serial =
+        Arrangement::resolve(&Allowance::NoneFound, ArrangementRequest::recommended(1, None));
+    let invalid = PostgresInvalidValues::Default;
+    map_file(opened, ReadOptions::default(), &serial, invalid, request, &cancel)
+        .await
+        .unwrap()
+        .index
 }
 
 /// One read of `block` gathering what `plan` names, under `options` and no

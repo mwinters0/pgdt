@@ -3,13 +3,15 @@ use std::sync::Arc;
 
 use pgdt_codec::SchemaMode;
 use pgdt_codec::compare::ComparisonSemantics;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_model::{ArrayShape, BoundsSet, StatisticsView};
 
 use crate::predicate::{Expr, PredicateOp, resolve_expr};
 use crate::prune::DynamicPruning;
 use crate::stream::replay::plan::resolve_block;
+use pgdt_dump::ReadOptions;
+use pgdt_fixtures::arranged;
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 /// **A dynamic filter's stop is armed only in a group a row of which can
@@ -21,9 +23,7 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
     use crate::predicate::Predicate;
     use pgdt_io::LocalFileSource;
     use pgdt_mapping::map_file;
-    use pgdt_mapping::statistics::{
-        GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing,
-    };
+    use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("ascending.sql");
@@ -43,8 +43,9 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
     };
     let run = map_file(
         CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &request,
         &CancellationToken::new(),
     )

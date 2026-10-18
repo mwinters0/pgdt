@@ -214,9 +214,9 @@ impl Arrangement {
 
     /// **What a gathering pass's statistics may hold**: what the margin
     /// leaves once the read-buffer budget and what others drew come off it,
-    /// carved after the workers (`docs/design/decisions.md`, "D85") —
-    /// `GatherOptions::statistics_allowance_bytes`. `None`, where no allowance
-    /// was found, declines nothing.
+    /// carved after the workers (`docs/design/decisions.md`, "D85"), which
+    /// `pgdt_mapping::map_file` and `pgdt_mapping::backfill_block` bound their
+    /// statistics by. `None`, where no allowance was found, declines nothing.
     pub fn statistics_allowance(&self) -> Option<u64> {
         self.statistics_allowance
     }

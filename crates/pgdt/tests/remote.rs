@@ -18,10 +18,12 @@ use std::time::{Duration, Instant};
 
 use common::oracle::Oracle;
 use common::{fixture, run, run_in, run_ok, run_ok_in, stderr_of, strip_cache_line};
-use pgdt_dump::ScanOptions;
+use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::CacheMode;
+use pgdt_fixtures::arranged;
 use pgdt_io::{ByteRangeSource, KnownCompression, Origin, Parallelism, Recognized, open};
 use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 /// The dump every test here serves: real `pg_dump` output, so a scan over it
@@ -710,7 +712,6 @@ async fn a_cancelled_remote_read_is_an_interrupted_run_rather_than_an_error() {
     let dir = tempfile::tempdir().unwrap();
     let mode = CacheMode::enabled(dir.path().join("remote.dtcache"));
     let cancel = CancellationToken::new();
-    let options = ScanOptions::default();
 
     // Cancel while the stalled read is in flight, so the flag lands inside a
     // wait rather than at a check point: the stall outlasts this sleep by two
@@ -724,8 +725,9 @@ async fn a_cancelled_remote_read_is_an_interrupted_run_rather_than_an_error() {
     let started = Instant::now();
     let run = pgdt_mapping::map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &options,
-        &pgdt_mapping::statistics::GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &cancel,
     )

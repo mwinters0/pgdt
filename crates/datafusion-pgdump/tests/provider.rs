@@ -17,12 +17,15 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{Error, PgDump, PgDumpOptions, ScanBudget, register_dump};
 use futures::StreamExt;
 use pgdt_codec::{SchemaMode, compare::ComparisonSemantics};
+use pgdt_dump::ReadOptions;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
+use pgdt_fixtures::arranged;
 use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy, sweep_request, ungathered};
 use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_model::PostgresInvalidValues;
 use pgdt_model::{DiagnosticKind, Finding, TableName};
 use pgdt_query::{QueryOptions, table_stream};
 use tokio_util::sync::CancellationToken;
@@ -374,8 +377,9 @@ async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot
     let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
     map_file(
         cache.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -480,15 +484,13 @@ async fn a_dump_opened_ignoring_refused_values_reads_a_float_past_its_range() {
     let copy = dir.path().join("dump.sql");
     std::fs::copy(&fixture, &copy).unwrap();
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&copy).unwrap());
-    let scan = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Ignore,
-        ..GatherOptions::default()
-    };
+    let ignoring = PostgresInvalidValues::Ignore;
     let cached = CacheMode::enabled(cache::colocated_path(&copy));
     map_file(
         cached.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &scan,
+        ReadOptions::default(),
+        &arranged(1),
+        ignoring,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )

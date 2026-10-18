@@ -22,6 +22,8 @@ use pgdt_query::{QueryOptions, table_schema};
 
 mod common;
 use common::{all_fixtures, multidb_fixture, types_fixture};
+use pgdt_dump::ReadOptions;
+use pgdt_fixtures::arranged;
 use tokio_util::sync::CancellationToken;
 
 async fn metadata(path: &Path) -> DumpMetadata {
@@ -462,13 +464,10 @@ async fn every_column_resolves_alike_with_every_identifier_quoted() {
 async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
     use pgdt_core::Error;
     use pgdt_dump::cache::CacheMode;
-    use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+    use pgdt_mapping::statistics::StatisticsRequest;
     use pgdt_mapping::{map_file, strict_unchecked};
     use pgdt_model::PostgresInvalidValues;
-    let strict = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..GatherOptions::default()
-    };
+    let strict = PostgresInvalidValues::Strict;
     let spelled = [
         ("id", "integer"),
         ("v_bit", "bit(1)"),
@@ -491,8 +490,9 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
             let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
             let run = map_file(
                 CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-                &ScanOptions::default(),
-                &strict,
+                ReadOptions::default(),
+                &arranged(1),
+                strict,
                 &StatisticsRequest::DATA,
                 &CancellationToken::new(),
             )
@@ -543,8 +543,9 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
             let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
             match map_file(
                 CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-                &ScanOptions::default(),
-                &strict,
+                ReadOptions::default(),
+                &arranged(1),
+                strict,
                 &StatisticsRequest::DATA,
                 &CancellationToken::new(),
             )

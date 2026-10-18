@@ -16,8 +16,8 @@ use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::{
     non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
 };
-use pgdt_dump::{Event, ScanOptions, scan as scan_events};
-use pgdt_io::ByteRangeSource;
+use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
+use pgdt_io::{Arrangement, ByteRangeSource};
 use pgdt_model::internal::IgnoredRefusalsExt;
 use pgdt_model::{
     Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, PostgresInvalidValues, Span,
@@ -29,7 +29,7 @@ use crate::backfill::{
 };
 use crate::forward::{MapStop, Pass, cancelled_read, map_forward, splice};
 use crate::statistics::account::{StatisticsAccount, StatisticsHeld, Term};
-use crate::statistics::request::{GatherOptions, StatisticsRequest};
+use crate::statistics::request::StatisticsRequest;
 
 /// Scan `source` end to end and build its full file map, every block
 /// censused and counted and none gathering statistics — the eager, serial
@@ -282,6 +282,19 @@ impl Mapped {
 /// [`MapRun::interrupted`]: a span list cut at a `CopyEnd` watermark is not a
 /// boundary `dump_metadata_from_spans` may be called at.
 ///
+/// **The arrangement is the run's, taken whole**, so its two halves are one
+/// carve (`docs/design/decisions.md`, "D83"): the pass reads under its
+/// parallelism, and its statistics allowance ([`Arrangement::statistics_allowance`])
+/// bounds what the run's statistics hold alive, the cache's loaded ones
+/// included, a block whose gathering would pass it declining and recording
+/// the number it declined under
+/// ([`CopyBlock::statistics_declined`](pgdt_model::CopyBlock::statistics_declined);
+/// `docs/design/decisions.md`, "D85"). `invalid` is what gathering does with
+/// a field its type's `*_in` refuses ([`PostgresInvalidValues`]). **Neither
+/// is part of `statistics`**, which a cache's statistics are compared
+/// against: they are the run's, not what the cache holds
+/// (`docs/design/decisions.md`, "D19", "D103").
+///
 /// **`cancel` is the caller's ask that the run stop**
 /// (`docs/design/decisions.md`, "D26"): polled once per chunk, leader window
 /// and closed block, and handed to the source first so one whose wait is a
@@ -290,8 +303,9 @@ impl Mapped {
 /// never stops a run passes a token it never fires.
 pub async fn map_file(
     opened: Opened,
-    scan_options: &ScanOptions,
-    gather: &GatherOptions,
+    read: ReadOptions,
+    arrangement: &Arrangement,
+    invalid: PostgresInvalidValues,
     statistics: &StatisticsRequest,
     cancel: &CancellationToken,
 ) -> Result<MapRun> {
@@ -303,11 +317,13 @@ pub async fn map_file(
     // Before the first read, the prepass's included: it polls nothing, so a
     // source told of the token is what stops a read it has in flight.
     source.hint_cancellation(cancel.clone());
+    let scan_options = ScanOptions { read, parallelism: arrangement.parallelism() };
     let run = map_file_watched(
         source.as_ref(),
-        scan_options,
+        &scan_options,
         cancel,
-        gather,
+        invalid,
+        arrangement.statistics_allowance(),
         &mode,
         cache,
         statistics,
@@ -318,13 +334,17 @@ pub async fn map_file(
     Ok(mapped.handing_back(source, watch))
 }
 
-/// [`map_file`] once its watch is open, which then attributes any failure.
+/// [`map_file`] once its watch is open, which then attributes any failure:
+/// reading with `scan_options`, its parallelism the arrangement's, and
+/// bounding the account by `allowance`, the arrangement's statistics
+/// allowance.
 #[allow(clippy::too_many_arguments)]
 async fn map_file_watched(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cancel: &CancellationToken,
-    gather: &GatherOptions,
+    invalid: PostgresInvalidValues,
+    allowance: Option<u64>,
     cache: &CacheMode,
     held: Held,
     statistics: &StatisticsRequest,
@@ -337,8 +357,8 @@ async fn map_file_watched(
         // which the first save writes over (`docs/design/decisions.md`, "D20").
         Held::Disabled | Held::Missing | Held::Replacing(_) => DumpIndex::default(),
     };
-    refuse_recorded(gather.postgres_invalid_values, cache, statistics, &index)?;
-    let account = Arc::new(StatisticsAccount::bounded_by(gather.statistics_allowance_bytes));
+    refuse_recorded(invalid, cache, statistics, &index)?;
+    let account = Arc::new(StatisticsAccount::bounded_by(allowance));
     let loaded = index.statistics_heap_bytes();
     #[cfg(feature = "introspect")]
     statistics_loaded(loaded);
@@ -431,7 +451,8 @@ async fn map_file_watched(
             source,
             scan_options,
             cancel,
-            gather,
+            invalid,
+            allowance,
             cache,
             watch,
             &mut index,
@@ -461,7 +482,7 @@ async fn map_file_watched(
         watch,
         &mut index,
         None,
-        Pass::Parse(statistics, &account, gather.postgres_invalid_values),
+        Pass::Parse(statistics, &account, invalid),
         size,
     )
     .await
@@ -499,7 +520,8 @@ async fn map_file_watched(
         source,
         scan_options,
         cancel,
-        gather,
+        invalid,
+        allowance,
         cache,
         watch,
         &mut index,
@@ -521,8 +543,7 @@ async fn map_file_watched(
         watch.finish(source).await?;
         cache.save(watch, source, &index).await?;
         report_density_shortfall(statistics, &index);
-        declined_statistics =
-            report_statistics_declines(statistics, gather.statistics_allowance_bytes, &index);
+        declined_statistics = report_statistics_declines(statistics, allowance, &index);
     }
     Ok(Mapped {
         index,

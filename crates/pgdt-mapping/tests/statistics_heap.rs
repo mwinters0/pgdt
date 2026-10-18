@@ -20,18 +20,30 @@ use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::Arc;
 
+use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::CacheMode;
-use pgdt_dump::{ReadOptions, ScanOptions};
-use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
+use pgdt_io::LocalFileSource;
 use pgdt_mapping::statistics::{
-    GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing, StatisticsTerms,
+    StatisticsRequest, StatisticsSelection, StatisticsSizing, StatisticsTerms,
 };
 use pgdt_mapping::{MapRun, map_file};
 use pgdt_model::DumpIndex;
 use pgdt_model::{DataBlock, SpanBody};
 
 use pgdt_fixtures::{VERSIONS, sandboxed, statistics_fixture, types_fixture};
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
+
+/// `jobs` workers stated under no allowance, which `map_file` reads under
+/// here: `pgdt_fixtures::arranged`, written again because this crate's tests
+/// take `pgdt-fixtures` without the `mapping` feature carrying it.
+fn arranged(jobs: usize) -> pgdt_io::Arrangement {
+    let request = pgdt_io::ArrangementRequest {
+        jobs: pgdt_io::Jobs::Stated(jobs),
+        ..pgdt_io::ArrangementRequest::recommended(jobs, None)
+    };
+    pgdt_io::Arrangement::resolve(&pgdt_io::Allowance::NoneFound, request)
+}
 
 struct Counting;
 
@@ -68,13 +80,19 @@ fn request(group_size: u64) -> StatisticsRequest {
     }
 }
 
-async fn parse(dump: &Path, options: &ScanOptions, statistics: &StatisticsRequest) -> MapRun {
+async fn parse(
+    dump: &Path,
+    read: ReadOptions,
+    jobs: usize,
+    statistics: &StatisticsRequest,
+) -> MapRun {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let mode = CacheMode::enabled(pgdt_dump::cache::colocated_path(dump));
     let run = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        options,
-        &GatherOptions::default(),
+        read,
+        &arranged(jobs),
+        PostgresInvalidValues::Default,
         statistics,
         &CancellationToken::new(),
     )
@@ -123,9 +141,8 @@ async fn a_block_reports_exactly_the_heap_it_frees() {
     for version in VERSIONS {
         for fixture in [statistics_fixture(version, "default"), types_fixture(version, "default")] {
             let (_dir, dump) = sandboxed(&fixture, "heap.sql");
-            let options = ScanOptions::default();
 
-            let gathered = parse(&dump, &options, &request(4096)).await;
+            let gathered = parse(&dump, ReadOptions::default(), 1, &request(4096)).await;
             let label = format!("{} gathered", fixture.display());
             assert_only_blocks_are_held(&gathered, &label);
             assert_eq!(gathered.statistics.now.loaded, 0, "{label}");
@@ -137,7 +154,7 @@ async fn a_block_reports_exactly_the_heap_it_frees() {
                 blocks += 1;
             }
 
-            let loaded = parse(&dump, &options, &request(4096)).await;
+            let loaded = parse(&dump, ReadOptions::default(), 1, &request(4096)).await;
             let label = format!("{} loaded", fixture.display());
             assert_only_blocks_are_held(&loaded, &label);
             assert_eq!(loaded.statistics.now.retained, 0, "{label}: nothing was lacking");
@@ -148,7 +165,7 @@ async fn a_block_reports_exactly_the_heap_it_frees() {
                 assert_eq!(reported, freed, "{label}");
             }
 
-            let refilled = parse(&dump, &options, &request(8192)).await;
+            let refilled = parse(&dump, ReadOptions::default(), 1, &request(8192)).await;
             let label = format!("{} back-filled", fixture.display());
             assert_only_blocks_are_held(&refilled, &label);
             assert_eq!(refilled.statistics.now.loaded, 0, "{label}: every block was replaced");
@@ -180,11 +197,8 @@ async fn a_split_blocks_pieces_are_charged_and_released() {
     std::fs::write(&dump, &text).unwrap();
     for jobs in [2, 4, 8] {
         let _ = std::fs::remove_file(pgdt_dump::cache::colocated_path(&dump));
-        let options = ScanOptions {
-            read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-            parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-        };
-        let run = parse(&dump, &options, &request(256)).await;
+        let read = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+        let run = parse(&dump, read, jobs, &request(256)).await;
         let label = format!("{jobs} jobs");
         assert_only_blocks_are_held(&run, &label);
         assert!(run.statistics.term_peaks.pieces > 0, "{label}: no piece was charged");

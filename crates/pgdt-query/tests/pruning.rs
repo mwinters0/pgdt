@@ -22,7 +22,7 @@ use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSizing};
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSizing};
 use pgdt_model::{Bounds, BoundsSet, ColumnStatistics, CopyBlock, DumpIndex, StatisticsView};
 use pgdt_query::{
     EarlyStop, Expr, PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions, table_stream,
@@ -31,6 +31,8 @@ use pgdt_query::{
 
 mod common;
 use common::{VERSIONS, all_fixtures, parsed_copy, statistics_fixture, types_fixture};
+use pgdt_fixtures::arranged;
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 /// Each group's bounds in `column`'s stored set `set`, over the values its
@@ -487,8 +489,9 @@ async fn check_fixture(
     let request = StatisticsRequest::METADATA;
     map_file(
         CacheMode::enabled(plain.clone()).open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &request,
         &CancellationToken::new(),
     )

@@ -31,9 +31,7 @@ use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{
-    GatherOptions, StatisticsRequest, StatisticsSelection, StatisticsSizing,
-};
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, StatisticsView};
 use pgdt_query::{
     ComparisonNote, EarlyStop, Expr, Membership, PlanNote, Predicate, PredicateOp, QueryOptions,
@@ -42,6 +40,9 @@ use pgdt_query::{
 
 mod common;
 use common::{VERSIONS, fixture, fixtures_root, parsed_copy};
+use pgdt_dump::ReadOptions;
+use pgdt_fixtures::arranged;
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 /// The group size statistics are gathered at: tens of bytes, so a fixture's
@@ -311,8 +312,9 @@ async fn check_fixture(
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
         CacheMode::enabled(plain.clone()).open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )

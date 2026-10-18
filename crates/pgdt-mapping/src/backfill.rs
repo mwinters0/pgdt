@@ -24,7 +24,6 @@ use crate::interior::{CensusPlan, RegionScan, report_shortfall, scan_region};
 use crate::statistics::account::{StatisticsAccount, Term};
 use crate::statistics::density::BlockStatisticsExt;
 use crate::statistics::gather;
-use crate::statistics::request::GatherOptions;
 use crate::statistics::request::{StatisticsBackfill, StatisticsRequest};
 
 /// What [`backfill_statistics`] did.
@@ -86,7 +85,8 @@ pub(crate) async fn backfill_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cancel: &CancellationToken,
-    gather: &GatherOptions,
+    invalid: PostgresInvalidValues,
+    allowance: Option<u64>,
     cache: &CacheMode,
     watch: &SourceWatch,
     index: &mut DumpIndex,
@@ -98,9 +98,8 @@ pub(crate) async fn backfill_statistics(
 ) -> Result<BackfillRun> {
     // Positions into `index.spans`, which nothing below adds to or reorders.
     let metadata = index.metadata.as_ref();
-    let strict = gather.postgres_invalid_values == PostgresInvalidValues::Strict;
+    let strict = invalid == PostgresInvalidValues::Strict;
     let gathers = statistics.gathers() && which == Backfill::Lacking;
-    let allowance = gather.statistics_allowance_bytes;
     let rereads: Vec<(usize, Option<StatisticsBackfill>, bool)> = index
         .spans
         .iter()
@@ -131,7 +130,7 @@ pub(crate) async fn backfill_statistics(
         source,
         scan_options,
         cancel,
-        invalid: gather.postgres_invalid_values,
+        invalid,
         // There is no cache file to name in a `CachedBlockChanged` refusal
         // unless one is enabled. A block can lack what was asked under any
         // mode — a stated maximum no single read delivers leaves a freshly

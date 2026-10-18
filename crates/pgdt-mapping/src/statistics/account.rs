@@ -41,7 +41,7 @@ pub(crate) const STATISTICS_ACCOUNT_CHARGE_STEP: u64 = 64 << 10;
 pub struct StatisticsAccount {
     state: Mutex<AccountState>,
     /// The bytes every statistic alive may hold between them
-    /// ([`crate::statistics::GatherOptions::statistics_allowance_bytes`]); `None` bounds
+    /// ([`pgdt_io::Arrangement::statistics_allowance`]); `None` bounds
     /// nothing and declines nothing.
     allowance: Option<u64>,
 }

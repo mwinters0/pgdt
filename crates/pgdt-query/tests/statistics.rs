@@ -18,14 +18,11 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use bytes::Bytes;
+use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
-use pgdt_dump::{ReadOptions, ScanOptions};
-use pgdt_io::{
-    Allowance, Arrangement, ArrangementRequest, ByteRangeSource, DEFAULT_MEMORY_BUDGET,
-    LocalFileSource, Parallelism,
-};
+use pgdt_io::{Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Jobs, LocalFileSource};
 use pgdt_mapping::statistics::{
-    BLOCK_MAX_ROW_GROUPS, GatherOptions, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
+    BLOCK_MAX_ROW_GROUPS, ROW_GROUP_DEFAULT_MIN_ROWS, ROW_GROUP_DEFAULT_SIZE_BYTES,
     StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsSizing, StatisticsTarget,
 };
 use pgdt_mapping::{MapRun, backfill_block, map_file};
@@ -38,6 +35,7 @@ use pgdt_model::{
 
 mod common;
 use common::{VERSIONS, sandboxed, statistics_fixture, types_fixture};
+use pgdt_fixtures::arranged;
 use tokio_util::sync::CancellationToken;
 
 /// A group size several `ordered` rows long and well under its block, so
@@ -63,20 +61,29 @@ fn request(selection: StatisticsSelection, group_size: u64) -> StatisticsRequest
 }
 
 async fn gathered(dump: &Path, statistics: &StatisticsRequest) -> DumpIndex {
-    gathered_with(dump, &ScanOptions::default(), &GatherOptions::default(), statistics).await
+    gathered_with(
+        dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        statistics,
+    )
+    .await
 }
 
 async fn gathered_with(
     dump: &Path,
-    options: &ScanOptions,
-    gather: &GatherOptions,
+    read: ReadOptions,
+    arrangement: &Arrangement,
+    invalid: PostgresInvalidValues,
     statistics: &StatisticsRequest,
 ) -> DumpIndex {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let run = map_file(
         CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-        options,
-        gather,
+        read,
+        arrangement,
+        invalid,
         statistics,
         &CancellationToken::new(),
     )
@@ -97,7 +104,30 @@ fn statistics(block: &CopyBlock) -> &BlockStatistics {
 /// One worker under no allowance: what [`backfill_block`] reads a block
 /// under here.
 fn serial() -> Arrangement {
-    Arrangement::resolve(&Allowance::NoneFound, ArrangementRequest::recommended(1, None))
+    arranged(1)
+}
+
+/// `jobs` workers at [`arranged`]'s budget, under an allowance leaving their
+/// statistics exactly `statistics` bytes: a stated gibibyte, with what its
+/// statistics share exceeds that by drawn by other scans
+/// ([`ArrangementRequest::drawn`]), which comes off the share alone while the
+/// cap stays above the budget (`docs/design/decisions.md`, "D85").
+fn holding(jobs: usize, statistics: u64) -> Arrangement {
+    let allowance = Allowance::Stated(1 << 30);
+    let stated = ArrangementRequest {
+        jobs: Jobs::Stated(jobs),
+        ..ArrangementRequest::recommended(jobs, None)
+    };
+    let share = Arrangement::resolve(&allowance, stated).statistics_allowance().unwrap();
+    let drawn = share.checked_sub(statistics).expect("a gibibyte's share holds it");
+    let held = Arrangement::resolve(&allowance, ArrangementRequest { drawn, ..stated });
+    let (parallelism, unbounded) = (held.parallelism(), arranged(jobs).parallelism());
+    assert_eq!(
+        (parallelism.jobs(), parallelism.budget_bytes()),
+        (unbounded.jobs(), unbounded.budget_bytes())
+    );
+    assert_eq!(held.statistics_allowance(), Some(statistics));
+    held
 }
 
 /// `block` of a map whose metadata is `metadata` back-filled under `request`
@@ -533,8 +563,9 @@ async fn statistics_round_trip_through_the_cache() {
     let wanted = request(StatisticsSelection::DATA, SMALL_GROUP);
     let index = map_file(
         mode.open_source(source.clone()).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &wanted,
         &CancellationToken::new(),
     )
@@ -576,17 +607,13 @@ async fn a_gathering_scan_is_the_serial_scan_whatever_the_worker_count() {
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
-    let serial_index = gathered_with(&dump, &serial, &GatherOptions::default(), &wanted).await;
+    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let serial_index =
+        gathered_with(&dump, serial, &arranged(1), PostgresInvalidValues::Default, &wanted).await;
     for jobs in [2, 4, 8] {
-        let parallel = ScanOptions {
-            parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            ..serial
-        };
-        let index = gathered_with(&dump, &parallel, &GatherOptions::default(), &wanted).await;
+        let index =
+            gathered_with(&dump, serial, &arranged(jobs), PostgresInvalidValues::Default, &wanted)
+                .await;
         let t = block(&index, "public.t");
         assert_eq!(statistics(t).groups.iter().map(|g| g.rows).sum::<u64>(), 2000);
         assert_eq!(sortedness(t, "a"), Some(Sortedness::Ascending), "{jobs} jobs");
@@ -716,16 +743,18 @@ async fn a_character_dictionary_entry_drops_its_padding() {
 /// `map_file` over a cache at `dump`'s colocated path, and the run.
 async fn mapped_into_cache(
     dump: &Path,
-    options: &ScanOptions,
-    gather: &GatherOptions,
+    read: ReadOptions,
+    arrangement: &Arrangement,
+    invalid: PostgresInvalidValues,
     statistics: &StatisticsRequest,
 ) -> MapRun {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(dump));
     let run = map_file(
         mode.open_source(source.clone()).await.unwrap(),
-        options,
-        gather,
+        read,
+        arrangement,
+        invalid,
         statistics,
         &CancellationToken::new(),
     )
@@ -786,8 +815,9 @@ async fn mapped_recording(
     let mode = CacheMode::enabled(cache::colocated_path(dump));
     let run = map_file(
         mode.open_source(source.clone()).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         statistics,
         &CancellationToken::new(),
     )
@@ -823,11 +853,24 @@ async fn a_block_lacking_the_requested_statistics_is_reread_into_what_one_pass_g
         for (first, lacking) in &earlier {
             let label = format!("{first:?} then all at {SMALL_GROUP} on {version}");
             let (_dir, dump) = sandboxed(&statistics_fixture(version, "default"), "s.sql");
-            let options = ScanOptions::default();
-            let mapped = mapped_into_cache(&dump, &options, &GatherOptions::default(), first).await;
+            let mapped = mapped_into_cache(
+                &dump,
+                ReadOptions::default(),
+                &arranged(1),
+                PostgresInvalidValues::Default,
+                first,
+            )
+            .await;
             assert_eq!((mapped.lacking_statistics, mapped.backfilled), (0, 0), "{label}");
 
-            let run = mapped_into_cache(&dump, &options, &GatherOptions::default(), &wanted).await;
+            let run = mapped_into_cache(
+                &dump,
+                ReadOptions::default(),
+                &arranged(1),
+                PostgresInvalidValues::Default,
+                &wanted,
+            )
+            .await;
             assert_eq!((run.lacking_statistics, run.backfilled), (*lacking, *lacking), "{label}");
             assert_eq!(run.index.spans, reference.spans, "{label}");
             let source = LocalFileSource::open(&dump).unwrap();
@@ -839,8 +882,14 @@ async fn a_block_lacking_the_requested_statistics_is_reread_into_what_one_pass_g
             assert!(loaded.is_complete(total_size));
             assert_eq!(loaded.spans, reference.spans, "{label}: the cache holds the back-fill");
 
-            let again =
-                mapped_into_cache(&dump, &options, &GatherOptions::default(), &wanted).await;
+            let again = mapped_into_cache(
+                &dump,
+                ReadOptions::default(),
+                &arranged(1),
+                PostgresInvalidValues::Default,
+                &wanted,
+            )
+            .await;
             assert_eq!((again.lacking_statistics, again.backfilled), (0, 0), "{label}");
         }
     }
@@ -861,11 +910,19 @@ async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
         SMALL_GROUP,
     );
     let (_dir, dump) = sandboxed(&fixture, "s.sql");
-    mapped_into_cache(&dump, &ScanOptions::default(), &GatherOptions::default(), &one_column).await;
+    mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &one_column,
+    )
+    .await;
     let run = mapped_into_cache(
         &dump,
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
     )
     .await;
@@ -884,15 +941,17 @@ async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
     let (_dir, dump) = sandboxed(&fixture, "s.sql");
     mapped_into_cache(
         &dump,
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &request(StatisticsSelection::DATA, 64),
     )
     .await;
     let run = mapped_into_cache(
         &dump,
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
     )
     .await;
@@ -906,11 +965,11 @@ async fn an_unstated_size_keeps_the_size_a_block_was_gathered_at() {
 async fn a_backfill_never_drops_a_column_the_block_held() {
     let fixture = statistics_fixture(16, "default");
     let (_dir, dump) = sandboxed(&fixture, "s.sql");
-    let options = ScanOptions::default();
     mapped_into_cache(
         &dump,
-        &options,
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &request(StatisticsSelection::DATA, SMALL_GROUP),
     )
     .await;
@@ -921,7 +980,14 @@ async fn a_backfill_never_drops_a_column_the_block_held() {
         }]),
         64,
     );
-    let run = mapped_into_cache(&dump, &options, &GatherOptions::default(), &one_column).await;
+    let run = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &one_column,
+    )
+    .await;
     assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
     let whole_at_64 = gathered(&fixture, &request(StatisticsSelection::DATA, 64)).await;
     let small = gathered(&fixture, &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
@@ -946,11 +1012,15 @@ async fn a_backfill_never_drops_a_column_the_block_held() {
 async fn a_text_column_held_without_bounds_is_reread_for_them() {
     use pgdt_model::{DataBlock, SpanBody};
     let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "unbounded.sql");
-    let options = ScanOptions::default();
-    let fresh =
-        mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::DATA)
-            .await
-            .index;
+    let fresh = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .index;
     let mut older = fresh.clone();
     for span in &mut older.spans {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body
@@ -974,14 +1044,24 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
     assert_eq!(&unbounded, block(&fresh, "public.ordered"));
     pgdt_dump::internal::save(&cache::colocated_path(&dump), &source, &older).await.unwrap();
 
-    let run =
-        mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::DATA)
-            .await;
+    let run = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+    )
+    .await;
     assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
     assert_eq!(run.index.spans, fresh.spans);
-    let again =
-        mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::DATA)
-            .await;
+    let again = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+    )
+    .await;
     assert_eq!((again.lacking_statistics, again.backfilled), (0, 0));
 }
 
@@ -995,11 +1075,15 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
 async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
     use pgdt_model::{DataBlock, SpanBody};
     let (_dir, dump) = sandboxed(&types_fixture(16, "data-only"), "undeclared.sql");
-    let options = ScanOptions::default();
-    let fresh =
-        mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::DATA)
-            .await
-            .index;
+    let fresh = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+    )
+    .await
+    .index;
     let mut older = fresh.clone();
     let mut blocks = 0;
     for span in &mut older.spans {
@@ -1021,9 +1105,14 @@ async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
     let source = LocalFileSource::open(&dump).unwrap();
     pgdt_dump::internal::save(&cache::colocated_path(&dump), &source, &older).await.unwrap();
 
-    let run =
-        mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::DATA)
-            .await;
+    let run = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+    )
+    .await;
     assert_eq!((run.lacking_statistics, run.backfilled), (blocks, blocks));
     assert_eq!(run.index.spans, fresh.spans);
 }
@@ -1033,21 +1122,38 @@ async fn an_undeclared_column_held_without_bounds_is_reread_for_them() {
 #[tokio::test]
 async fn a_backfill_rereads_only_the_blocks_its_request_tracks() {
     let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "s.sql");
-    let options = ScanOptions::default();
-    mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::METADATA)
-        .await;
+    mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::METADATA,
+    )
+    .await;
     let specials = StatisticsRequest {
         selection: only(vec![StatisticsTarget::Table("specials".to_string())]),
         ..StatisticsRequest::DATA
     };
-    let run = mapped_into_cache(&dump, &options, &GatherOptions::default(), &specials).await;
+    let run = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &specials,
+    )
+    .await;
     assert_eq!((run.lacking_statistics, run.backfilled), (1, 1));
     assert!(block(&run.index, "public.specials").statistics.is_some());
     assert!(block(&run.index, "public.ordered").statistics.is_none());
 
-    let none =
-        mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::METADATA)
-            .await;
+    let none = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::METADATA,
+    )
+    .await;
     assert_eq!((none.lacking_statistics, none.backfilled), (0, 0));
     assert_eq!(none.index.spans, run.index.spans);
 }
@@ -1085,7 +1191,6 @@ async fn one_block_is_gathered_on_its_own() {
 #[tokio::test]
 async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     let (_dir, dump) = sandboxed(&statistics_fixture(16, "default"), "sized.sql");
-    let options = ScanOptions::default();
     let with_min = |min_rows| StatisticsRequest {
         sizing: StatisticsSizing::Density { min_rows: Some(min_rows), max_rows: None },
         ..StatisticsRequest::DATA
@@ -1104,18 +1209,31 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
         ..with_min(0)
     };
 
-    let run = mapped_into_cache(&dump, &options, &GatherOptions::default(), &only_id).await;
+    let run = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &only_id,
+    )
+    .await;
     assert_eq!(statistics(block(&run.index, "public.ordered")).sizing, density(0));
-    let run =
-        mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::DATA)
-            .await;
+    let run = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+    )
+    .await;
     assert_eq!(run.backfilled, BLOCKS, "ordered lacks columns, the others everything");
     assert_eq!(records(&run), [density(0), default, default], "ordered kept its record");
 
     let run = mapped_into_cache(
         &dump,
-        &options,
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &with_min(ROW_GROUP_DEFAULT_MIN_ROWS),
     )
     .await;
@@ -1124,35 +1242,63 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
     let long_value = |run: &MapRun| statistics(block(&run.index, "public.long_value")).clone();
     let coarse = long_value(&run);
 
-    let run = mapped_into_cache(&dump, &options, &GatherOptions::default(), &with_min(0)).await;
+    let run = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &with_min(0),
+    )
+    .await;
     assert_eq!(run.backfilled, BLOCKS);
     assert_eq!(records(&run), [density(0); 3]);
     assert!(long_value(&run).groups.len() > coarse.groups.len());
     for request in [StatisticsRequest::DATA, with_min(0)] {
-        let run = mapped_into_cache(&dump, &options, &GatherOptions::default(), &request).await;
+        let run = mapped_into_cache(
+            &dump,
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
+            &request,
+        )
+        .await;
         assert_eq!(run.backfilled, 0, "{request:?}");
     }
 
     let at_default_size = request(StatisticsSelection::DATA, ROW_GROUP_DEFAULT_SIZE_BYTES);
-    let run = mapped_into_cache(&dump, &options, &GatherOptions::default(), &at_default_size).await;
+    let run = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &at_default_size,
+    )
+    .await;
     assert_eq!(run.backfilled, 0, "every block is at the size stated, whatever sized it");
     let run = mapped_into_cache(
         &dump,
-        &options,
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &request(StatisticsSelection::DATA, 4096),
     )
     .await;
     assert_eq!(run.backfilled, BLOCKS);
     assert_eq!(records(&run), [GroupSizing::Stated; 3]);
-    let run =
-        mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::DATA)
-            .await;
+    let run = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+    )
+    .await;
     assert_eq!(run.backfilled, 0, "an unstated minimum keeps a stated size");
     let run = mapped_into_cache(
         &dump,
-        &options,
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &with_min(ROW_GROUP_DEFAULT_MIN_ROWS),
     )
     .await;
@@ -1208,7 +1354,6 @@ async fn a_block_breaking_a_stated_maximum_is_reread_at_the_size_it_predicts() {
     const MAX_ROWS: u64 = 3_000;
     let dir = tempfile::tempdir().unwrap();
     let dump = dense_and_clustered(dir.path());
-    let options = ScanOptions::default();
     let bounded = StatisticsRequest {
         sizing: StatisticsSizing::Density { min_rows: None, max_rows: Some(MAX_ROWS) },
         ..StatisticsRequest::DATA
@@ -1219,9 +1364,14 @@ async fn a_block_breaking_a_stated_maximum_is_reread_at_the_size_it_predicts() {
 
     // Flagless first: both blocks are at the default size, and both break the
     // maximum nobody has stated yet.
-    let run =
-        mapped_into_cache(&dump, &options, &GatherOptions::default(), &StatisticsRequest::DATA)
-            .await;
+    let run = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+    )
+    .await;
     for table in tables {
         let held = statistics(block(&run.index, table));
         assert_eq!(held.group_size, ROW_GROUP_DEFAULT_SIZE_BYTES, "{table}");
@@ -1271,11 +1421,10 @@ async fn a_block_breaking_a_stated_maximum_is_reread_at_the_size_it_predicts() {
         let exact = statistics(block(&exact, table));
         assert_eq!((&exact.groups, &exact.columns), (&held.groups, &held.columns), "{table}");
     }
-    let parallel = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 1 << 16, ..ReadOptions::default() },
-        parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
-    };
-    let split = gathered_with(&dump, &parallel, &GatherOptions::default(), &bounded).await;
+    let parallel = ReadOptions { chunk_size_bytes: 1 << 16, ..ReadOptions::default() };
+    let split =
+        gathered_with(&dump, parallel, &arranged(4), PostgresInvalidValues::Default, &bounded)
+            .await;
     for (table, held) in tables.iter().zip([&dense, &clustered]) {
         assert_eq!(statistics(block(&split, table)), held, "{table}: split");
     }
@@ -1291,7 +1440,6 @@ async fn a_stated_maximum_outranks_the_cap_and_the_minimum() {
     const MAX_ROWS: u64 = 750;
     let dir = tempfile::tempdir().unwrap();
     let dump = dense_and_clustered(dir.path());
-    let options = ScanOptions::default();
     assert_eq!(StatisticsRequest::DATA.group_cap(), Some(BLOCK_MAX_ROW_GROUPS));
     let bounded = StatisticsRequest {
         sizing: StatisticsSizing::Density { min_rows: None, max_rows: Some(MAX_ROWS) },
@@ -1299,7 +1447,14 @@ async fn a_stated_maximum_outranks_the_cap_and_the_minimum() {
     };
     assert_eq!(bounded.group_cap(), None, "a stated maximum is a size a caller asked for");
 
-    let run = mapped_into_cache(&dump, &options, &GatherOptions::default(), &bounded).await;
+    let run = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &bounded,
+    )
+    .await;
     let held = statistics(block(&run.index, "public.dense"));
     assert!(densest_group(held) <= MAX_ROWS, "{}", densest_group(held));
     let mut rows: Vec<u64> = held.groups.iter().map(|group| group.rows).collect();
@@ -1333,20 +1488,27 @@ async fn a_backfill_the_leader_splits_is_the_serial_scan() {
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
-    let reference = gathered_with(&dump, &serial, &GatherOptions::default(), &wanted).await;
+    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let reference =
+        gathered_with(&dump, serial, &arranged(1), PostgresInvalidValues::Default, &wanted).await;
     for jobs in [2, 4, 8] {
         let _ = std::fs::remove_file(cache::colocated_path(&dump));
-        mapped_into_cache(&dump, &serial, &GatherOptions::default(), &StatisticsRequest::METADATA)
-            .await;
-        let parallel = ScanOptions {
-            parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            ..serial
-        };
-        let run = mapped_into_cache(&dump, &parallel, &GatherOptions::default(), &wanted).await;
+        mapped_into_cache(
+            &dump,
+            serial,
+            &arranged(1),
+            PostgresInvalidValues::Default,
+            &StatisticsRequest::METADATA,
+        )
+        .await;
+        let run = mapped_into_cache(
+            &dump,
+            serial,
+            &arranged(jobs),
+            PostgresInvalidValues::Default,
+            &wanted,
+        )
+        .await;
         assert_eq!(run.backfilled, 1, "{jobs} jobs");
         assert_eq!(run.index.spans, reference.spans, "{jobs} jobs");
     }
@@ -1405,16 +1567,14 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
         other => panic!("{at}: expected the parse to refuse `70000`, got {other:?}"),
     };
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     refused(
         map_file(
             CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-            &serial,
-            &GatherOptions::default(),
+            serial,
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &wanted,
             &CancellationToken::new(),
         )
@@ -1422,16 +1582,13 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
         "serial",
     );
     for jobs in [2, 4, 8] {
-        let parallel = ScanOptions {
-            parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            ..serial
-        };
         let at = format!("{jobs} jobs");
         refused(
             map_file(
                 CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-                &parallel,
-                &GatherOptions::default(),
+                serial,
+                &arranged(jobs),
+                PostgresInvalidValues::Default,
                 &wanted,
                 &CancellationToken::new(),
             )
@@ -1439,14 +1596,21 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
             &at,
         );
         let _ = std::fs::remove_file(cache::colocated_path(&dump));
-        mapped_into_cache(&dump, &serial, &GatherOptions::default(), &StatisticsRequest::METADATA)
-            .await;
+        mapped_into_cache(
+            &dump,
+            serial,
+            &arranged(1),
+            PostgresInvalidValues::Default,
+            &StatisticsRequest::METADATA,
+        )
+        .await;
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
         refused(
             map_file(
                 mode.open_source(source.clone()).await.unwrap(),
-                &parallel,
-                &GatherOptions::default(),
+                serial,
+                &arranged(jobs),
+                PostgresInvalidValues::Default,
                 &wanted,
                 &CancellationToken::new(),
             )
@@ -1461,8 +1625,9 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     match map_file(
         CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-        &serial,
-        &GatherOptions::default(),
+        serial,
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &wanted,
         &CancellationToken::new(),
     )
@@ -1476,7 +1641,8 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
 
     // And with neither, the shortfalls fail nothing.
     std::fs::write(&dump, fixed.replacen("\t2020-02-30\t", "\t2020-02-28\t", 1)).unwrap();
-    let index = gathered_with(&dump, &serial, &GatherOptions::default(), &wanted).await;
+    let index =
+        gathered_with(&dump, serial, &arranged(1), PostgresInvalidValues::Default, &wanted).await;
     let t = statistics(block(&index, "public.t"));
     for at in [0, 2] {
         let column = stored(t.columns[at].as_ref().unwrap());
@@ -1516,14 +1682,8 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
-    let ignoring = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Ignore,
-        ..GatherOptions::default()
-    };
+    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let ignoring = PostgresInvalidValues::Ignore;
     let check = |index: &DumpIndex, at: &str| {
         let t = statistics(block(index, "public.t"));
         for (column, refused) in [(0, refused_groups[0]), (1, refused_groups[1])] {
@@ -1557,22 +1717,20 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
         let recorded = block(index, "public.t").ignored_refusals.clone();
         assert_eq!(recorded.as_deref(), Some(&IgnoredRefusals { columns }), "{at}");
     };
-    check(&gathered_with(&dump, &serial, &ignoring, &wanted).await, "serial");
+    check(&gathered_with(&dump, serial, &arranged(1), ignoring, &wanted).await, "serial");
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     for jobs in [2, 4, 8] {
-        let parallel = ScanOptions {
-            parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            ..serial
-        };
         let at = format!("{jobs} jobs");
-        check(&gathered_with(&dump, &parallel, &ignoring, &wanted).await, &at);
+        check(&gathered_with(&dump, serial, &arranged(jobs), ignoring, &wanted).await, &at);
         let _ = std::fs::remove_file(cache::colocated_path(&dump));
-        mapped_into_cache(&dump, &serial, &ignoring, &StatisticsRequest::METADATA).await;
+        mapped_into_cache(&dump, serial, &arranged(1), ignoring, &StatisticsRequest::METADATA)
+            .await;
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
         let run = map_file(
             mode.open_source(source.clone()).await.unwrap(),
-            &parallel,
-            &ignoring,
+            serial,
+            &arranged(jobs),
+            ignoring,
             &wanted,
             &CancellationToken::new(),
         )
@@ -1605,13 +1763,15 @@ async fn a_parse_refusing_fields_fails_with_what_an_ignoring_parse_recorded() {
     }
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
-    let ignoring = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Ignore,
-        ..GatherOptions::default()
-    };
-    let mapped =
-        mapped_into_cache(&dump, &ScanOptions::default(), &ignoring, &StatisticsRequest::DATA)
-            .await;
+    let ignoring = PostgresInvalidValues::Ignore;
+    let mapped = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        ignoring,
+        &StatisticsRequest::DATA,
+    )
+    .await;
     let recorded = block(&mapped.index, "public.t").clone();
     assert_eq!(recorded.ignored_refusals.as_ref().map(|r| r.columns[0].count), Some(1));
     let path = cache::colocated_path(&dump);
@@ -1621,8 +1781,9 @@ async fn a_parse_refusing_fields_fails_with_what_an_ignoring_parse_recorded() {
     let mode = CacheMode::enabled(path.clone());
     let run = map_file(
         mode.open_source(source.clone()).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -1652,13 +1813,23 @@ async fn a_parse_refusing_fields_fails_with_what_an_ignoring_parse_recorded() {
     assert_eq!(std::fs::read(&path).unwrap(), saved, "nothing was written");
 
     let metadata = StatisticsRequest::METADATA;
-    let refusing =
-        mapped_into_cache(&dump, &ScanOptions::default(), &GatherOptions::default(), &metadata)
-            .await;
+    let refusing = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &metadata,
+    )
+    .await;
     assert_eq!(block(&refusing.index, "public.t"), &recorded);
-    let again =
-        mapped_into_cache(&dump, &ScanOptions::default(), &ignoring, &StatisticsRequest::DATA)
-            .await;
+    let again = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        ignoring,
+        &StatisticsRequest::DATA,
+    )
+    .await;
     assert_eq!(block(&again.index, "public.t"), &recorded);
 }
 
@@ -1689,13 +1860,15 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
     }
     text.push_str("\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &text).unwrap();
-    let ignoring = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Ignore,
-        ..GatherOptions::default()
-    };
-    let mapped =
-        mapped_into_cache(&dump, &ScanOptions::default(), &ignoring, &StatisticsRequest::DATA)
-            .await;
+    let ignoring = PostgresInvalidValues::Ignore;
+    let mapped = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        ignoring,
+        &StatisticsRequest::DATA,
+    )
+    .await;
     let recorded = block(&mapped.index, "public.t").clone();
     let counts: Vec<(usize, u64)> = recorded
         .ignored_refusals
@@ -1732,8 +1905,9 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
     for (columns, expected) in cases {
         let run = map_file(
             mode.open_source(source.clone()).await.unwrap(),
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &tracking(columns),
             &CancellationToken::new(),
         )
@@ -1769,8 +1943,9 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
     };
     let run = map_file(
         mode.open_source(recording.clone()).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &resized,
         &CancellationToken::new(),
     )
@@ -1783,8 +1958,9 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
     assert_eq!(reread.ignored_refusals, recorded.ignored_refusals, "the record is renewed alike");
     let refusing = map_file(
         mode.open_source(source.clone()).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &tracking(&["c"]),
         &CancellationToken::new(),
     )
@@ -1792,22 +1968,10 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
     assert!(matches!(refusing, Err(pgdt_core::Error::FieldRefusedRecorded { .. })), "{refusing:?}");
 }
 
-/// `ScanOptions` reading serially in 64-byte chunks or at `jobs` workers.
-fn reading(jobs: usize) -> ScanOptions {
-    let parallelism = if jobs > 1 {
-        Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET)
-    } else {
-        ScanOptions::default().parallelism
-    };
-    ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        parallelism,
-    }
-}
-
-/// `GatherOptions` reading a refused field under `invalid`.
-fn under(invalid: PostgresInvalidValues) -> GatherOptions {
-    GatherOptions { postgres_invalid_values: invalid, ..GatherOptions::default() }
+/// Reading in 64-byte chunks, at whatever worker count the arrangement beside
+/// it states.
+fn reading() -> ReadOptions {
+    ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() }
 }
 
 /// One table `public.t (a smallint, v smallint[], n numeric(10,2), r
@@ -1887,15 +2051,16 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         for jobs in [1, 4] {
             let at = format!("{what}, {jobs} job(s)");
-            let scan = reading(jobs);
-            let default = GatherOptions {
-                statistics_allowance_bytes: allowance,
-                ..under(PostgresInvalidValues::Default)
+            let scan = reading();
+            let arrangement = match allowance {
+                Some(bytes) => holding(jobs, bytes),
+                None => arranged(jobs),
             };
             let passed = map_file(
                 CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-                &scan,
-                &default,
+                scan,
+                &arrangement,
+                PostgresInvalidValues::Default,
                 wanted,
                 &CancellationToken::new(),
             )
@@ -1904,12 +2069,11 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
             let held = block(&passed.index, "public.t");
             assert!(!held.checked_in_full, "{at}");
             assert_eq!(held.statistics_declined.is_some(), allowance.is_some(), "{at}");
-            let strict =
-                GatherOptions { postgres_invalid_values: PostgresInvalidValues::Strict, ..default };
             match map_file(
                 CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-                &scan,
-                &strict,
+                scan,
+                &arrangement,
+                PostgresInvalidValues::Strict,
                 wanted,
                 &CancellationToken::new(),
             )
@@ -1927,14 +2091,15 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     for jobs in [1, 4] {
         let at = format!("{jobs} job(s)");
-        let scan = reading(jobs);
-        let default = under(PostgresInvalidValues::Default);
-        let strict = under(PostgresInvalidValues::Strict);
+        let (scan, arrangement) = (reading(), arranged(jobs));
+        let default = PostgresInvalidValues::Default;
+        let strict = PostgresInvalidValues::Strict;
         for wanted in [StatisticsRequest::DATA, StatisticsRequest::METADATA] {
             let read = map_file(
                 CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-                &scan,
-                &default,
+                scan,
+                &arrangement,
+                default,
                 &wanted,
                 &CancellationToken::new(),
             )
@@ -1942,8 +2107,9 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
             .unwrap();
             let checked = map_file(
                 CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-                &scan,
-                &strict,
+                scan,
+                &arrangement,
+                strict,
                 &wanted,
                 &CancellationToken::new(),
             )
@@ -1969,20 +2135,27 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
 async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
     let dir = tempfile::tempdir().unwrap();
     let dump = strict_dump(dir.path(), 400, None);
-    let (scan, strict) = (reading(1), under(PostgresInvalidValues::Strict));
+    let (scan, arrangement) = (reading(), arranged(1));
+    let strict = PostgresInvalidValues::Strict;
     let data = StatisticsRequest::DATA;
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
     for (earlier, gathers) in [(&data, false), (&StatisticsRequest::METADATA, true)] {
         let _ = std::fs::remove_file(cache::colocated_path(&dump));
-        let held =
-            mapped_into_cache(&dump, &ScanOptions::default(), &GatherOptions::default(), earlier)
-                .await;
+        let held = mapped_into_cache(
+            &dump,
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
+            earlier,
+        )
+        .await;
         assert!(!block(&held.index, "public.t").checked_in_full);
         let source = Arc::new(RecordingSource::open(&dump));
         let run = map_file(
             mode.open_source(source.clone()).await.unwrap(),
-            &scan,
-            &strict,
+            scan,
+            &arrangement,
+            strict,
             &data,
             &CancellationToken::new(),
         )
@@ -1999,17 +2172,23 @@ async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
         let source = Arc::new(RecordingSource::open(&dump));
         let again = map_file(
             mode.open_source(source.clone()).await.unwrap(),
-            &scan,
-            &strict,
+            scan,
+            &arrangement,
+            strict,
             &data,
             &CancellationToken::new(),
         )
         .await
         .unwrap();
         assert_eq!((again.checked, source.reads_of(checked)), (0, 0), "{gathers}");
-        let default =
-            mapped_into_cache(&dump, &ScanOptions::default(), &GatherOptions::default(), &data)
-                .await;
+        let default = mapped_into_cache(
+            &dump,
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
+            &data,
+        )
+        .await;
         assert!(block(&default.index, "public.t").checked_in_full, "{gathers}: kept");
     }
 
@@ -2020,7 +2199,7 @@ async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
     text = text.replacen("\n30\t{30,1}", "\n70000\t{30,1}", 1);
     std::fs::write(&dump, &text).unwrap();
     let _ = std::fs::remove_file(cache::colocated_path(&dump));
-    let ignoring = under(PostgresInvalidValues::Ignore);
+    let ignoring = PostgresInvalidValues::Ignore;
     let only_v = StatisticsRequest {
         selection: only(vec![StatisticsTarget::Column {
             table: "public.t".to_string(),
@@ -2028,12 +2207,13 @@ async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
         }]),
         ..data
     };
-    mapped_into_cache(&dump, &scan, &ignoring, &only_v).await;
+    mapped_into_cache(&dump, scan, &arrangement, ignoring, &only_v).await;
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     match map_file(
         mode.open_source(source.clone()).await.unwrap(),
-        &scan,
-        &strict,
+        scan,
+        &arrangement,
+        strict,
         &data,
         &CancellationToken::new(),
     )
@@ -2109,12 +2289,13 @@ async fn a_strict_parse_resuming_checks_what_the_cache_holds_first() {
             cancel: cancel.clone(),
         };
         let tripping = Arc::new(tripping);
-        let interrupted = reading(1);
+        let interrupted = reading();
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
         let run = map_file(
             mode.open_source(tripping.clone()).await.unwrap(),
-            &interrupted,
-            &GatherOptions::default(),
+            interrupted,
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::METADATA,
             &cancel,
         )
@@ -2124,11 +2305,13 @@ async fn a_strict_parse_resuming_checks_what_the_cache_holds_first() {
         assert_eq!(run.index.blocks().count(), 1, "{first_bad}: the cache holds t1 alone");
 
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
-        let (scan, strict) = (reading(1), under(PostgresInvalidValues::Strict));
+        let (scan, arrangement) = (reading(), arranged(1));
+        let strict = PostgresInvalidValues::Strict;
         let resumed = map_file(
             mode.open_source(source.clone()).await.unwrap(),
-            &scan,
-            &strict,
+            scan,
+            &arrangement,
+            strict,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -2198,17 +2381,15 @@ async fn a_parse_fails_where_an_input_function_refuses_and_not_where_it_reads() 
         std::fs::write(&dump, text).unwrap();
     };
     let wanted = request(StatisticsSelection::DATA, 256);
-    let serial = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
     for (at, [column, declared_type, _, _, refused]) in columns.iter().enumerate() {
         dump_with(Some(at));
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         match map_file(
             CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-            &serial,
-            &GatherOptions::default(),
+            serial,
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &wanted,
             &CancellationToken::new(),
         )
@@ -2231,7 +2412,8 @@ async fn a_parse_fails_where_an_input_function_refuses_and_not_where_it_reads() 
         }
     }
     dump_with(None);
-    let index = gathered_with(&dump, &serial, &GatherOptions::default(), &wanted).await;
+    let index =
+        gathered_with(&dump, serial, &arranged(1), PostgresInvalidValues::Default, &wanted).await;
     let t = statistics(block(&index, "public.t"));
     for (at, [column, ..]) in columns.iter().enumerate() {
         let bounds = stored(t.columns[at].as_ref().unwrap()).bounds.unwrap();
@@ -2262,10 +2444,7 @@ async fn a_parse_fails_at_an_undeclared_label_only_where_the_labels_are_exact() 
         std::fs::write(&dump, text).unwrap();
     };
     let wanted = request(StatisticsSelection::DATA, 64);
-    let serial = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let serial = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
     let exact: [&[&str]; 2] = [
         &[declared],
         &[
@@ -2279,8 +2458,9 @@ async fn a_parse_fails_at_an_undeclared_label_only_where_the_labels_are_exact() 
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         match map_file(
             CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-            &serial,
-            &GatherOptions::default(),
+            serial,
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &wanted,
             &CancellationToken::new(),
         )
@@ -2303,7 +2483,9 @@ async fn a_parse_fails_at_an_undeclared_label_only_where_the_labels_are_exact() 
     ];
     for preamble in inexact {
         dump_with(preamble);
-        let index = gathered_with(&dump, &serial, &GatherOptions::default(), &wanted).await;
+        let index =
+            gathered_with(&dump, serial, &arranged(1), PostgresInvalidValues::Default, &wanted)
+                .await;
         let t = statistics(block(&index, "public.t"));
         let bounds = stored(t.columns[0].as_ref().unwrap()).bounds.unwrap();
         assert!(bounds.groups.iter().any(Option::is_none), "{preamble:?}");
@@ -2331,8 +2513,9 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mapped = map_file(
         mode.open_source(source.clone()).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -2345,8 +2528,9 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let err = map_file(
         mode.open_source(source.clone()).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -2432,8 +2616,9 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
     // account reached gathering the whole block.
     let free = map_file(
         CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &wanted,
         &CancellationToken::new(),
     )
@@ -2448,21 +2633,16 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         let (_cache_dir, dump) = sandboxed(&dump, "long_block.sql");
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
-        let scan = ScanOptions {
-            read: ReadOptions { chunk_size_bytes: 4096, ..ReadOptions::default() },
-            parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-        };
-        let tight = GatherOptions {
-            statistics_allowance_bytes: Some(allowance),
-            ..GatherOptions::default()
-        };
+        let scan = ReadOptions { chunk_size_bytes: 4096, ..ReadOptions::default() };
+        let (tight, invalid) = (holding(jobs, allowance), PostgresInvalidValues::Default);
         let at = format!("{jobs} job(s)");
 
         // The scan runs to EOF and the block declines, holding nothing.
         let run = map_file(
             mode.open_source(source.clone()).await.unwrap(),
-            &scan,
+            scan,
             &tight,
+            invalid,
             &wanted,
             &CancellationToken::new(),
         )
@@ -2478,8 +2658,9 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         // The same allowance re-reads nothing, and still says what it holds.
         let again = map_file(
             mode.open_source(source.clone()).await.unwrap(),
-            &scan,
+            scan,
             &tight,
+            invalid,
             &wanted,
             &CancellationToken::new(),
         )
@@ -2490,11 +2671,11 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         assert_eq!(block(&again.index, "public.t").statistics_declined, Some(allowance), "{at}");
 
         // No allowance re-reads it, into what the unbounded pass gave.
-        let roomy = GatherOptions { statistics_allowance_bytes: None, ..tight };
         let wider = map_file(
             mode.open_source(source.clone()).await.unwrap(),
-            &scan,
-            &roomy,
+            scan,
+            &arranged(jobs),
+            invalid,
             &wanted,
             &CancellationToken::new(),
         )
@@ -2523,8 +2704,9 @@ async fn one_block_backfilled_past_its_allowance_declines_until_a_larger_one() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let free = map_file(
         CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &wanted,
         &CancellationToken::new(),
     )

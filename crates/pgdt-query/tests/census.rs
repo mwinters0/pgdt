@@ -20,7 +20,7 @@ use pgdt_core::Error;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};
 use pgdt_io::{ByteRangeSource, LocalFileSource};
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::ArrayShape;
 use pgdt_model::union_census;
@@ -28,6 +28,9 @@ use pgdt_query::{QueryOptions, ScanExtent, TablePartitions, table_schema, table_
 
 mod common;
 use common::{VERSIONS, types_fixture};
+use pgdt_dump::ReadOptions;
+use pgdt_fixtures::arranged;
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 /// The census recorded for `table`'s block, by column name.
@@ -245,8 +248,9 @@ async fn a_metadata_level_table_is_censused_by_its_query_and_refused_by_a_held_p
     let metadata = StatisticsRequest::METADATA;
     let run = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &metadata,
         &CancellationToken::new(),
     )

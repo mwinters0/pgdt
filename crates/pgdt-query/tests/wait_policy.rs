@@ -28,13 +28,15 @@ use bytes::Bytes;
 use futures::StreamExt;
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ReadOptions, ScanOptions};
-use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism, WaitPolicy};
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism, WaitPolicy};
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 use pgdt_query::{QueryOptions, table_stream};
 
 mod common;
 use common::edge_cases;
+use pgdt_fixtures::arranged;
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 /// A `ByteRangeSource` wrapper that records every wait policy stated to it, in
@@ -140,14 +142,12 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
     let dump = dir.path().join("dump.sql");
     std::fs::copy(edge_cases(), &dump).unwrap();
     let source = Arc::new(RecordingSource::wrap(LocalFileSource::open(&dump).unwrap()));
-    let options = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
-    };
+    let options = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
     map_file(
         CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        options,
+        &arranged(8),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -164,14 +164,12 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
     // The same scan at the shipped chunk size declines every one of this
     // fixture's blocks, so the leader is reached and grants nothing.
     let source = Arc::new(RecordingSource::wrap(LocalFileSource::open(&dump).unwrap()));
-    let options = ScanOptions {
-        parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
-        ..ScanOptions::default()
-    };
+
     map_file(
         CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(8),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )

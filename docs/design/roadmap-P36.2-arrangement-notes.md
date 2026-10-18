@@ -47,10 +47,9 @@ embedder may name them, and that includes its tests (`layering.py`). So:
 
 ## What the next slices inherit
 
-- **`GatherOptions::statistics_allowance_bytes` and
-  `StatisticsRequest::backfill` still take the number by hand**, now from
-  `Arrangement::statistics_allowance`. 36.7's back-fill takes the arrangement
-  itself.
+- **The gathering passes take the arrangement itself**: 36.7's back-fill,
+  and 36.7.1's `map_file`, which retired `GatherOptions` and the number it
+  carried by hand.
 - **The statistics allowance subtracts what others drew.** The only caller
   that draws is the provider, and it never maps (D90), so no behaviour
   changed.

@@ -421,10 +421,12 @@ impl Default for ReadOptions {
     }
 }
 
-/// What a pass reads with: its [`ReadOptions`] and the concurrency it may
-/// use. Configuration only, reused across runs: the caller's ask that a pass
-/// stop is `pgdt_mapping::map_file`'s own argument, never a field here
-/// (`docs/design/decisions.md`, "D26").
+/// What a pass that gathers nothing reads with: its [`ReadOptions`] and the
+/// concurrency it may use. Configuration only, reused across runs: the
+/// caller's ask that a pass stop is `pgdt_mapping::map_file`'s own argument,
+/// never a field here (`docs/design/decisions.md`, "D26"), and a gathering
+/// pass takes an arrangement in its place, whose parallelism and statistics
+/// allowance are one carve (`docs/design/decisions.md`, "D83").
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScanOptions {
     /// The chunk and the line limit every read loop of the pass reads with.

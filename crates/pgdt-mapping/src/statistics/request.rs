@@ -1,12 +1,11 @@
 //! What a mapping pass is asked to record (`docs/design/decisions.md`,
 //! "D77"): each table's and column's level, the group size and the density
-//! bounds a block's groups are held between; and what it gathers under, which
-//! no cache is compared against ([`GatherOptions`]).
+//! bounds a block's groups are held between.
 
 use std::num::NonZeroU64;
 
 use pgdt_core::CopyHeader;
-use pgdt_model::{BoundsSet, CopyBlock, DumpMetadata, GroupSizing, PostgresInvalidValues};
+use pgdt_model::{BoundsSet, CopyBlock, DumpMetadata, GroupSizing};
 
 use super::density::BlockStatisticsExt;
 use super::stored::bounded_columns;
@@ -33,36 +32,6 @@ pub const BLOCK_MAX_ROW_GROUPS: usize = 4096;
 /// `ROW_GROUP_DEFAULT_SIZE_BYTES` over a row a kibibyte wide; a judgement,
 /// not a reading.
 pub const ROW_GROUP_DEFAULT_MIN_ROWS: u64 = 1 << 10;
-
-/// What a mapping pass does beside its scan: how much heap its statistics may
-/// hold, and what it does with a field its type's `*_in` refuses. Read by
-/// [`crate::map_file`] alone: [`crate::backfill_block`] takes the allowance
-/// from the arrangement it is handed and the mode beside it, and a query
-/// gathers nothing, reading a refused field as
-/// `pgdt_query::QueryOptions::postgres_invalid_values` says.
-///
-/// **Neither is part of a [`StatisticsRequest`]**, which a cache's statistics
-/// are compared against: a run's allowance and its mode are the run's, not
-/// what the cache holds (`docs/design/decisions.md`, "D19", "D103").
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct GatherOptions {
-    /// **The bytes of heap the pass's statistics may hold alive**, and
-    /// `None` — the default — declines nothing, an embedder that stated no
-    /// allowance having chosen no bound
-    /// (`docs/design/decisions.md`, "D1", "D85").
-    ///
-    /// It is what [`pgdt_io::Arrangement::statistics_allowance`] leaves under the margin once
-    /// the scan's parallelism budget is spent, and it bounds the whole account
-    /// (`StatisticsAccount`): a `COPY` block whose gathering would pass it
-    /// declines, drops what it gathered, and is recorded in the map as having
-    /// declined under this number
-    /// ([`pgdt_model::CopyBlock::statistics_declined`]).
-    pub statistics_allowance_bytes: Option<u64>,
-    /// What gathering does with a field its type's `*_in` refuses: fails the
-    /// pass at the first, by default, or goes on past it, or checks every
-    /// field ([`PostgresInvalidValues`]).
-    pub postgres_invalid_values: PostgresInvalidValues,
-}
 
 /// What a mapping pass is asked to record: each table's and column's level,
 /// at what group size and between what density bounds

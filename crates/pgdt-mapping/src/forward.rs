@@ -154,7 +154,7 @@ pub enum Pass<'a> {
     /// [`map_file`](crate::map_file)'s: each block at the level `.0` gives its table, censused
     /// where that is the data level, and its data-level columns gathered,
     /// every observer charging `.1` and treating a field its type's `*_in`
-    /// refuses as `.2` says ([`crate::statistics::GatherOptions::postgres_invalid_values`]).
+    /// refuses as `.2` says ([`PostgresInvalidValues`]).
     Parse(&'a StatisticsRequest, &'a Arc<StatisticsAccount>, PostgresInvalidValues),
     /// A query's: every block censused, nothing gathered, whatever level a
     /// parse would have given it (`docs/design/decisions.md`, "D35").

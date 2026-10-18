@@ -21,13 +21,14 @@ use datafusion_pgdump::{
 };
 use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
 use pgdt_codec::{ColumnNote, SchemaMode};
-use pgdt_dump::ScanOptions;
+use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::{self, CacheMode, StrictIdentity};
+use pgdt_fixtures::arranged;
 use pgdt_fixtures::{parsed_copy, ungathered};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{
-    GatherOptions, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
 use pgdt_model::{Diagnostic, DiagnosticSink, Finding, PostgresInvalidValues, Severity};
 use pgdt_query::{ComparisonNote, column_divergences};
@@ -170,8 +171,9 @@ async fn a_table_whose_plan_refuses_is_reported_and_not_listed() {
     let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
     map_file(
         cache.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -229,8 +231,9 @@ async fn a_metadata_level_table_is_refused_naming_its_parse() {
     };
     map_file(
         cache.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &levels,
         &CancellationToken::new(),
     )
@@ -456,14 +459,12 @@ async fn every_refusal_is_the_provider_s_error_over_the_library_s() {
     .unwrap();
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump_path).unwrap());
     let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
-    let ignoring = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Ignore,
-        ..GatherOptions::default()
-    };
+    let ignoring = PostgresInvalidValues::Ignore;
     map_file(
         cache.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &ignoring,
+        ReadOptions::default(),
+        &arranged(1),
+        ignoring,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -511,8 +512,9 @@ async fn a_table_asked_for_at_the_metadata_level_is_refused_as_such() {
     let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
     map_file(
         cache.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )

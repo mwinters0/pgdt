@@ -310,6 +310,13 @@ impl Resolved {
         self.0.parallelism()
     }
 
+    /// The library's arrangement itself, which a gathering pass takes whole
+    /// so its parallelism and its statistics allowance stay one carve
+    /// (`pgdt_mapping::map_file`).
+    pub(crate) fn arrangement(&self) -> &Arrangement {
+        &self.0
+    }
+
     /// Whether the allowance was typed rather than discovered.
     fn stated(&self) -> bool {
         matches!(self.0.allowance(), Allowance::Stated(_) | Allowance::Setting(_))

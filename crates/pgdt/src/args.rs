@@ -180,9 +180,11 @@ impl ReadFlags {
     }
 }
 
-/// The [`ScanOptions`] one mapping pass runs under: the read flags'
-/// [`ReadOptions`] and the already-resolved arrangement
-/// ([`crate::parallel::Discovered::resolve`]).
+/// The [`ScanOptions`] one pass gathering nothing runs under — `parse
+/// --preamble-only`'s, or a `query`'s mapping pass: the read flags'
+/// [`ReadOptions`] and the already-resolved arrangement's parallelism
+/// ([`crate::parallel::Discovered::resolve`]). `parse`'s mapping pass gathers,
+/// and takes the arrangement itself ([`Resolved::arrangement`]).
 ///
 /// **Resolved once per command and passed in, not re-resolved here.** `query`
 /// passes its mapping pass's, its replay's going into [`pgdt_query::QueryOptions`]

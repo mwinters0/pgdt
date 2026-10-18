@@ -14,7 +14,7 @@ use pgdt_codec::ResolvedSchema;
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ReadOptions, ScanOptions, cache};
 use pgdt_io::LocalFileSource;
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::{CollationDef, ColumnDef, NotNull, TypeDef, TypeKind};
 use pgdt_model::{DatabaseMetadata, DumpMetadata, PostgresInvalidValues};
@@ -22,6 +22,7 @@ use pgdt_query::{QueryOptions, table_stream};
 
 mod common;
 use common::{VERSIONS, edge_cases_fixture, fixture, multidb_fixture, sandboxed, types_fixture};
+use pgdt_fixtures::arranged;
 use tokio_util::sync::CancellationToken;
 
 /// `column`, declared `NOT NULL` with a constraint its children take.
@@ -807,8 +808,9 @@ async fn every_dumpall_database_keeps_its_own_version_headers() {
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
         let mapped = map_file(
             mode.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -910,10 +912,7 @@ async fn a_composite_s_dropped_attribute_is_dropped_under_binary_upgrade() {
 /// (I22).
 #[tokio::test]
 async fn a_base_type_s_delimiter_splits_its_array_in_a_strict_parse() {
-    let strict = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..GatherOptions::default()
-    };
+    let strict = PostgresInvalidValues::Strict;
     for version in VERSIONS {
         for flag_set in ["default", "binary-upgrade"] {
             let path = fixture(version, "emitters", flag_set);
@@ -928,8 +927,9 @@ async fn a_base_type_s_delimiter_splits_its_array_in_a_strict_parse() {
             let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
             map_file(
                 CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-                &ScanOptions::default(),
-                &strict,
+                ReadOptions::default(),
+                &arranged(1),
+                strict,
                 &StatisticsRequest::DATA,
                 &CancellationToken::new(),
             )
@@ -1294,14 +1294,8 @@ async fn a_raw_cr_inside_a_literal_is_the_value_s_own_byte() {
              COPY public.p1 (m) FROM stdin;\n{row}\n\\.\n\n"
         )
     };
-    let chunked = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 7, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
-    let strict = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..GatherOptions::default()
-    };
+    let chunked = ReadOptions { chunk_size_bytes: 7, ..ReadOptions::default() };
+    let strict = PostgresInvalidValues::Strict;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("cr.sql");
     for crlf in [false, true] {
@@ -1329,8 +1323,9 @@ async fn a_raw_cr_inside_a_literal_is_the_value_s_own_byte() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
         map_file(
             CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-            &chunked,
-            &strict,
+            chunked,
+            &arranged(1),
+            strict,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -1341,8 +1336,9 @@ async fn a_raw_cr_inside_a_literal_is_the_value_s_own_byte() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
         match map_file(
             CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-            &chunked,
-            &strict,
+            chunked,
+            &arranged(1),
+            strict,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )

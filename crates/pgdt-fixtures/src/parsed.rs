@@ -1,17 +1,32 @@
 //! A fixture copied out of the tree and mapped into a colocated cache, as a
 //! parse leaves one, behind `mapping`: what every test reading a map starts
-//! from, each stating the request it maps at.
+//! from, each stating the request it maps at; and the arrangement a test's
+//! mapping pass reads under.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use pgdt_dump::ScanOptions;
+use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};
-use pgdt_io::{ByteRangeSource, LocalFileSource};
+use pgdt_io::{Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Jobs, LocalFileSource};
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
-use pgdt_model::{DataBlock, SpanBody};
+use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_model::{DataBlock, PostgresInvalidValues, SpanBody};
 use tokio_util::sync::CancellationToken;
+
+/// `jobs` workers stated under no allowance: what a test's mapping pass
+/// (`pgdt_mapping::map_file`) reads under where it states no allowance of
+/// its own — the serial path stating no budget at one, the library's default
+/// budget above it, and a statistics allowance declining nothing
+/// (`docs/design/decisions.md`, "D1"). The arrangement's only constructor is
+/// its resolution, so this is one, of `Allowance::NoneFound`.
+pub fn arranged(jobs: usize) -> Arrangement {
+    let request = ArrangementRequest {
+        jobs: Jobs::Stated(jobs),
+        ..ArrangementRequest::recommended(jobs, None)
+    };
+    Arrangement::resolve(&Allowance::NoneFound, request)
+}
 
 /// `fixture` copied into a directory of its own under `dir`, beside the
 /// complete cache a parse gathering `request` leaves, so the committed tree is
@@ -25,8 +40,9 @@ pub async fn parsed_copy(fixture: &Path, dir: &Path, request: &StatisticsRequest
     let cache = CacheMode::enabled(cache::colocated_path(&copy));
     let run = map_file(
         cache.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         request,
         &CancellationToken::new(),
     )

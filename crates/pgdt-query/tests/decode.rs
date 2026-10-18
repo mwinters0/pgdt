@@ -30,7 +30,7 @@ use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{
-    GatherOptions, StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
+    StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
 use pgdt_model::PostgresInvalidValues;
 use pgdt_query::{
@@ -39,6 +39,8 @@ use pgdt_query::{
 
 mod common;
 use common::types_fixture;
+use pgdt_dump::ReadOptions;
+use pgdt_fixtures::arranged;
 use tokio_util::sync::CancellationToken;
 
 /// Every row of `table`, rendered back to PostgreSQL text.
@@ -586,8 +588,9 @@ async fn a_scale_past_the_precision_or_arrows_reach_reads_every_value() {
     let mode = CacheMode::enabled(cache::colocated_path(&path));
     let index = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -675,8 +678,9 @@ async fn a_negative_scale_zero_reads_as_zero_in_every_mode() {
     let mode = CacheMode::enabled(cache::colocated_path(&path));
     let index = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -780,8 +784,9 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
     let disabled = CacheMode::DISABLED;
     match map_file(
         disabled.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -813,8 +818,9 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
     let mode = CacheMode::enabled(cache::colocated_path(&path));
     let index = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &past_at_metadata,
         &CancellationToken::new(),
     )
@@ -896,12 +902,11 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
         let path = char_typmod_dump(dir.path(), declared, field);
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
         for invalid in [PostgresInvalidValues::Default, PostgresInvalidValues::Strict] {
-            let scan =
-                GatherOptions { postgres_invalid_values: invalid, ..GatherOptions::default() };
             map_file(
                 disabled.open_source(Arc::clone(&source)).await.unwrap(),
-                &ScanOptions::default(),
-                &scan,
+                ReadOptions::default(),
+                &arranged(1),
+                invalid,
                 &StatisticsRequest::DATA,
                 &CancellationToken::new(),
             )
@@ -929,8 +934,9 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
         match map_file(
             disabled.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -993,21 +999,20 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
         map_file(
             disabled.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
         .await
         .unwrap_or_else(|e| panic!("{declared} `{field}`: a default parse refused: {e}"));
-        let strict = GatherOptions {
-            postgres_invalid_values: PostgresInvalidValues::Strict,
-            ..GatherOptions::default()
-        };
+        let strict = PostgresInvalidValues::Strict;
         match map_file(
             disabled.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &strict,
+            ReadOptions::default(),
+            &arranged(1),
+            strict,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -1052,10 +1057,7 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
 async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
     let dir = tempfile::tempdir().unwrap();
     let disabled = CacheMode::DISABLED;
-    let strict = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..GatherOptions::default()
-    };
+    let strict = PostgresInvalidValues::Strict;
     for (declared, field) in [
         ("interval", "3000000000"),
         ("interval second", "3000000000"),
@@ -1066,11 +1068,12 @@ async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
     ] {
         let path = char_typmod_dump(dir.path(), declared, field);
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
-        for gather in [GatherOptions::default(), strict] {
+        for invalid in [PostgresInvalidValues::Default, strict] {
             map_file(
                 disabled.open_source(Arc::clone(&source)).await.unwrap(),
-                &ScanOptions::default(),
-                &gather,
+                ReadOptions::default(),
+                &arranged(1),
+                invalid,
                 &StatisticsRequest::DATA,
                 &CancellationToken::new(),
             )
@@ -1091,8 +1094,9 @@ async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
         let default = map_file(
             disabled.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -1106,8 +1110,9 @@ async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
         }
         match map_file(
             disabled.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &strict,
+            ReadOptions::default(),
+            &arranged(1),
+            strict,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -1164,14 +1169,8 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
     let with_null = rows(&[Some("5"), None, Some("7")]);
     let line_offset =
         |path: &Path| std::fs::read_to_string(path).unwrap().find("\n2\t").unwrap() as u64 + 1;
-    let strict = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..GatherOptions::default()
-    };
-    let ignoring = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Ignore,
-        ..GatherOptions::default()
-    };
+    let strict = PostgresInvalidValues::Strict;
+    let ignoring = PostgresInvalidValues::Ignore;
 
     for ddl in [
         "CREATE TABLE public.t (\n    id integer,\n    v integer NOT NULL\n);",
@@ -1191,15 +1190,16 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
     ] {
         let path = not_null_dump(dir.path(), ddl);
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
-        for (gather, request) in [
-            (GatherOptions::default(), StatisticsRequest::DATA),
+        for (invalid, request) in [
+            (PostgresInvalidValues::Default, StatisticsRequest::DATA),
             (strict, StatisticsRequest::DATA),
             (strict, StatisticsRequest::METADATA),
         ] {
             match map_file(
                 disabled.open_source(Arc::clone(&source)).await.unwrap(),
-                &ScanOptions::default(),
-                &gather,
+                ReadOptions::default(),
+                &arranged(1),
+                invalid,
                 &request,
                 &CancellationToken::new(),
             )
@@ -1217,8 +1217,9 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
         }
         map_file(
             disabled.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::METADATA,
             &CancellationToken::new(),
         )
@@ -1263,8 +1264,9 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
         let _ = std::fs::remove_file(cache::colocated_path(&path));
         let mapped = map_file(
             mode.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &ignoring,
+            ReadOptions::default(),
+            &arranged(1),
+            ignoring,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -1278,8 +1280,9 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
         );
         match map_file(
             mode.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -1301,11 +1304,12 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
     ] {
         let path = not_null_dump(dir.path(), ddl);
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
-        for gather in [GatherOptions::default(), strict] {
+        for invalid in [PostgresInvalidValues::Default, strict] {
             map_file(
                 disabled.open_source(Arc::clone(&source)).await.unwrap(),
-                &ScanOptions::default(),
-                &gather,
+                ReadOptions::default(),
+                &arranged(1),
+                invalid,
                 &StatisticsRequest::DATA,
                 &CancellationToken::new(),
             )
@@ -1367,10 +1371,7 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
         (1..=3).zip(v).map(|(id, v)| vec![Some(id.to_string()), Some(v.to_string())]).collect()
     };
     let both = || Some(vec!["id".to_string(), "v".to_string()]);
-    let strict = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..GatherOptions::default()
-    };
+    let strict = PostgresInvalidValues::Strict;
     let term = |op, value: &str| QueryOptions {
         filter: Expr::Term(Predicate { column: "v".into(), op, value: Some(value.into()) }),
         projection: Some(vec!["id".into()]),
@@ -1391,8 +1392,9 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
         for request in [StatisticsRequest::DATA, StatisticsRequest::METADATA] {
             match map_file(
                 disabled.open_source(Arc::clone(&source)).await.unwrap(),
-                &ScanOptions::default(),
-                &strict,
+                ReadOptions::default(),
+                &arranged(1),
+                strict,
                 &request,
                 &CancellationToken::new(),
             )
@@ -1410,8 +1412,9 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
         }
         map_file(
             disabled.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -1457,8 +1460,9 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
         let run = map_file(
             disabled.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &strict,
+            ReadOptions::default(),
+            &arranged(1),
+            strict,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -1497,11 +1501,12 @@ async fn every_refused_field_fails_a_data_level_parse_reading_it() {
         let Some(refused) = common::refused_field(&path) else { continue };
         copies += 1;
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
-        let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
+        let mode = CacheMode::DISABLED;
         match map_file(
             mode.open_source(Arc::clone(&source)).await.unwrap(),
-            &options,
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -1520,8 +1525,9 @@ async fn every_refused_field_fails_a_data_level_parse_reading_it() {
         }
         let run = map_file(
             mode.open_source(Arc::clone(&source)).await.unwrap(),
-            &options,
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &common::sweep_request(&path),
             &CancellationToken::new(),
         )
@@ -1539,17 +1545,15 @@ async fn every_refused_field_fails_a_data_level_parse_reading_it() {
 /// in full.
 #[tokio::test]
 async fn a_strict_parse_refuses_no_fixture_field_but_the_listed_ones() {
-    let strict = GatherOptions {
-        postgres_invalid_values: PostgresInvalidValues::Strict,
-        ..GatherOptions::default()
-    };
+    let strict = PostgresInvalidValues::Strict;
     for path in common::all_fixtures() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
         for request in [StatisticsRequest::DATA, StatisticsRequest::METADATA] {
             let run = map_file(
                 CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-                &ScanOptions::default(),
-                &strict,
+                ReadOptions::default(),
+                &arranged(1),
+                strict,
                 &request,
                 &CancellationToken::new(),
             )
@@ -1611,12 +1615,12 @@ async fn a_float_past_its_range_is_read_as_the_largest_only_when_told_to_ignore_
         let path = dir.path().join("dump.sql");
         std::fs::copy(&fixture, &path).unwrap();
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
-        let scan = GatherOptions { postgres_invalid_values: ignore, ..GatherOptions::default() };
         let cached = CacheMode::enabled(cache::colocated_path(&path));
         map_file(
             cached.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &scan,
+            ReadOptions::default(),
+            &arranged(1),
+            ignore,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )

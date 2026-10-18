@@ -17,16 +17,28 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::internal::{ColumnStatisticsExt, UnrepresentableExt};
 use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, StatisticsView, Unrepresentable};
 
+use pgdt_dump::ReadOptions;
 use pgdt_fixtures::{VERSIONS, types_fixture};
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
+
+/// `jobs` workers stated under no allowance, which `map_file` reads under
+/// here: `pgdt_fixtures::arranged`, written again because this crate's tests
+/// take `pgdt-fixtures` without the `mapping` feature carrying it.
+fn arranged(jobs: usize) -> pgdt_io::Arrangement {
+    let request = pgdt_io::ArrangementRequest {
+        jobs: pgdt_io::Jobs::Stated(jobs),
+        ..pgdt_io::ArrangementRequest::recommended(jobs, None)
+    };
+    pgdt_io::Arrangement::resolve(&pgdt_io::Allowance::NoneFound, request)
+}
 
 /// `index`'s count for every column holding one, as `table.column`.
 fn counts(index: &DumpIndex) -> BTreeMap<String, Unrepresentable> {
@@ -56,8 +68,9 @@ async fn parsed(fixture: &Path, dir: &Path, request: &StatisticsRequest) -> Dump
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
     map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         request,
         &CancellationToken::new(),
     )

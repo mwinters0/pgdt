@@ -11,8 +11,8 @@ use pgdt_dump::cache::Held;
 use pgdt_dump::preamble_only;
 use pgdt_io::Origin;
 use pgdt_mapping::statistics::{
-    GatherOptions, ROW_GROUP_DEFAULT_MIN_ROWS, StatisticsLevel, StatisticsRequest,
-    StatisticsSelection, StatisticsSizing, StatisticsTarget,
+    ROW_GROUP_DEFAULT_MIN_ROWS, StatisticsLevel, StatisticsRequest, StatisticsSelection,
+    StatisticsSizing, StatisticsTarget,
 };
 use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
@@ -249,14 +249,16 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
     let size = source.size().await?;
     let cancel = CancellationToken::new();
     let guard = install_interrupt_guard(cancel.clone(), init)?;
-    let scan_options = scan_options(read, &parallel);
-    let gather = GatherOptions {
-        statistics_allowance_bytes: parallel.statistics_allowance(),
+    let run = pgdt_mapping::map_file(
+        opened,
+        read.options(),
+        parallel.arrangement(),
         postgres_invalid_values,
-    };
-    let run = pgdt_mapping::map_file(opened, &scan_options, &gather, &statistics, &cancel)
-        .await
-        .map_err(|e| naming_the_source(e, &origin))?;
+        &statistics,
+        &cancel,
+    )
+    .await
+    .map_err(|e| naming_the_source(e, &origin))?;
     introspect::statistics_returned(&run.statistics);
     if run.interrupted {
         // No listing: `pgdt info` is the command that reports. Both

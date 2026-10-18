@@ -1,7 +1,6 @@
 use pgdt_codec::SchemaMode;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_core::Error;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::ByteRangeSource;
 use pgdt_model::{ArrayShape, DumpMetadata};
@@ -10,6 +9,9 @@ use std::sync::Arc;
 use super::resolve_block;
 use crate::predicate::{Expr, PredicateOp, resolve_expr};
 use crate::prune::prune_block;
+use pgdt_dump::ReadOptions;
+use pgdt_fixtures::arranged;
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 /// **The guard no caller can trip, pinned so it stays that way.**
@@ -93,7 +95,7 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
     use crate::predicate::Predicate;
     use pgdt_io::LocalFileSource;
     use pgdt_mapping::map_file;
-    use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSizing};
+    use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSizing};
     use pgdt_model::StatisticsView;
 
     let dir = tempfile::tempdir().unwrap();
@@ -116,8 +118,9 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
     };
     let run = map_file(
         CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &request,
         &CancellationToken::new(),
     )

@@ -11,12 +11,24 @@ use pgdt_core::RowEndingRefusal;
 use pgdt_core::{escape_field, split_fields, unescape_field};
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{Event, ReadOptions, ScanOptions, scan};
-use pgdt_io::{DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+use pgdt_io::LocalFileSource;
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 
 use pgdt_fixtures::{edge_cases, edge_cases_fixture, objects_fixture, types_fixture};
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
+
+/// `jobs` workers stated under no allowance, which `map_file` reads under
+/// here: `pgdt_fixtures::arranged`, written again because this crate's tests
+/// take `pgdt-fixtures` without the `mapping` feature carrying it.
+fn arranged(jobs: usize) -> pgdt_io::Arrangement {
+    let request = pgdt_io::ArrangementRequest {
+        jobs: pgdt_io::Jobs::Stated(jobs),
+        ..pgdt_io::ArrangementRequest::recommended(jobs, None)
+    };
+    pgdt_io::Arrangement::resolve(&pgdt_io::Allowance::NoneFound, request)
+}
 
 /// Render the whole event stream, decoded, as stable text.
 async fn render(path: &Path, chunk_size: usize) -> String {
@@ -331,13 +343,10 @@ async fn decoded_blocks(path: &Path) -> Vec<(String, Vec<Vec<Option<String>>>)> 
 
 /// A mapping pass read serially, and one split four ways at a size that cuts
 /// a fixture's blocks into pieces.
-fn serial_and_split() -> [ScanOptions; 2] {
+fn serial_and_split() -> [(ReadOptions, usize); 2] {
     [
-        ScanOptions::default(),
-        ScanOptions {
-            read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-            parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
-        },
+        (ReadOptions::default(), 1),
+        (ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() }, 4),
     ]
 }
 
@@ -369,18 +378,19 @@ async fn a_crlf_conversion_reads_alike_and_a_stray_ending_is_refused() {
     };
     let expected_counts: Vec<(String, u64)> =
         expected.iter().map(|(table, rows)| (table.clone(), rows.len() as u64)).collect();
-    for options in serial_and_split() {
+    for (read, jobs) in serial_and_split() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&crlf_path).unwrap());
         let run = map_file(
             CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-            &options,
-            &GatherOptions::default(),
+            read,
+            &arranged(jobs),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
         .await
         .unwrap();
-        assert_eq!(counts(&run.index), expected_counts, "{:?}", options.parallelism);
+        assert_eq!(counts(&run.index), expected_counts, "{jobs} job(s)");
     }
 
     // The second row of the first block holding two, its ending flipped.
@@ -401,12 +411,13 @@ async fn a_crlf_conversion_reads_alike_and_a_stray_ending_is_refused() {
         }
         let path = dir.path().join("stray.sql");
         std::fs::write(&path, &stray).unwrap();
-        for options in serial_and_split() {
+        for (read, jobs) in serial_and_split() {
             let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
             match map_file(
                 CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-                &options,
-                &GatherOptions::default(),
+                read,
+                &arranged(jobs),
+                PostgresInvalidValues::Default,
                 &StatisticsRequest::DATA,
                 &CancellationToken::new(),
             )
@@ -421,11 +432,10 @@ async fn a_crlf_conversion_reads_alike_and_a_stray_ending_is_refused() {
                     assert_eq!(
                         (t.as_str(), line, line_offset, refusal),
                         (table.as_str(), 2, second_row as u64, why),
-                        "{:?}",
-                        options.parallelism
+                        "{jobs} job(s)"
                     );
                 }
-                other => panic!("{why:?} under {:?}: {:?}", options.parallelism, other.map(|_| ())),
+                other => panic!("{why:?} at {jobs} job(s): {:?}", other.map(|_| ())),
             }
         }
     }

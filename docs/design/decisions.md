@@ -31,8 +31,8 @@ A read-buffer budget is a number an operator cannot size a container from, so th
 resident and `Arrangement::resolve` carves it — reserve off the top, `margin_allowance` on the count
 — a discovered limit reaching the same carve (`within_shared`), so provenance rides the `Arrangement`, never `Parallelism`
 (D64). Consequences: a source recommending nothing is left on `DEFAULT_MEMORY_BUDGET` capped by the
-allowance less `MEMORY_RESERVE` whatever is stated, and the margin now binds a typed number. Rejected: a second flag; keeping the budget and
-giving statistics what it leaves. Code: `arrangement.rs`, `parallelism.rs`, `memory.rs`. Evidence: `reserve`.
+allowance less `MEMORY_RESERVE` whatever is stated, and the margin now binds a typed number. Rejected: a second flag; keeping the budget and giving statistics what it leaves;
+a gathering pass handed its parallelism and its statistics allowance apart (`GatherOptions`), which two carves can pair, so `map_file` and `backfill_block` take the `Arrangement` and `resolve` is its only constructor. Code: `arrangement.rs`, `parallelism.rs`, `memory.rs`. Evidence: `reserve`.
 
 ### D4 A budget is solved against a source's cost, never divided by it
 `WorkerMemory` carries a per-worker term and a shared pool term (`affords`, `at`): the block pool's
@@ -408,7 +408,7 @@ Code: `resolve::read_as_text`, `stream::replay::plan::TableColumns`. Evidence: t
 ### D103 The value modes are one option each for every column, fixed where a dump is opened, apart from the schema mode
 `QueryOptions::unrepresentable` and `::postgres_invalid_values` are each stated by a `pgdt query` flag, `PgDumpOptions`, a `pgdump.*` table option and
 a shell suffix; the text mode changes a table's schema, fixed at `PgDumpTable::build`, so no `SET` reaches it; a library refusal names a mode in its own
-words, never a flag. The invalid-values mode is a parse's too (`GatherOptions`): an ignoring parse keeps no statistic of a refused field's group a read could contradict and its
+words, never a flag. The invalid-values mode is a parse's too (`map_file`'s argument): an ignoring parse keeps no statistic of a refused field's group a read could contradict and its
 block records per column the fields it went past, so a `Default` parse tracking such a column fails over the cache unread; `Strict`, a parse's alone,
 checks every field, marks each block it checks whole and re-reads each held block unmarked — first, when resuming — never the record, which holds only
 what an ignoring parse keyed: a verdict is the dump's, not the gathering run's. Rejected: a per-block record; a `pgdump.*` setting; a third `SchemaMode`;

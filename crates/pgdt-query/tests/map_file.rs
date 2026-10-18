@@ -25,9 +25,11 @@ use futures::StreamExt;
 use pgdt_codec::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdt_dump::cache::{CacheLoad, CacheMode, CacheStatus, LoadedCache};
 use pgdt_dump::{ReadOptions, ScanOptions, cache, preamble_only};
-use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+use pgdt_fixtures::arranged;
+use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
+use pgdt_model::PostgresInvalidValues;
 use pgdt_model::{DataBlock, DumpIndex, SpanBody};
 use pgdt_query::{QueryOptions, table_stream};
 
@@ -93,8 +95,9 @@ async fn a_cold_map_file_matches_build_index() {
 
             let run = map_file(
                 mode.open_source(Arc::clone(&source)).await.unwrap(),
-                &ScanOptions::default(),
-                &GatherOptions::default(),
+                ReadOptions::default(),
+                &arranged(1),
+                PostgresInvalidValues::Default,
                 &StatisticsRequest::DATA,
                 &CancellationToken::new(),
             )
@@ -143,17 +146,13 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
                         format!("{schema_dir}/{flag_set}, {jobs} jobs, {chunk_size}B chunk");
                     let mode =
                         CacheMode::enabled(dir.path().join(format!("{chunk_size}-{jobs}.dtcache")));
-                    let options = ScanOptions {
-                        read: ReadOptions {
-                            chunk_size_bytes: chunk_size,
-                            ..ReadOptions::default()
-                        },
-                        parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-                    };
+                    let options =
+                        ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() };
                     let run = map_file(
                         mode.open_source(Arc::clone(&source)).await.unwrap(),
-                        &options,
-                        &GatherOptions::default(),
+                        options,
+                        &arranged(jobs),
+                        PostgresInvalidValues::Default,
                         &StatisticsRequest::DATA,
                         &CancellationToken::new(),
                     )
@@ -195,8 +194,9 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
 
     let run = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -288,8 +288,9 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
 
     let run = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -319,8 +320,9 @@ async fn a_preamble_only_cache_is_finished_into_the_same_index() {
 
     let run = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -345,8 +347,9 @@ async fn a_complete_cache_is_reported_without_rescanning() {
 
     let first = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -355,8 +358,9 @@ async fn a_complete_cache_is_reported_without_rescanning() {
     .index;
     let second = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -438,14 +442,12 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     assert!(first_block_end < size, "sanity: there is a file left after the first block");
 
     let dying = FailsPast { inner: Arc::clone(&source), fail_at: first_block_end };
-    let slow = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let slow = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
     let err = map_file(
         mode.open_source(Arc::new(dying)).await.unwrap(),
-        &slow,
-        &GatherOptions::default(),
+        slow,
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -466,8 +468,9 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     // partial cache.
     let run = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -496,8 +499,9 @@ async fn a_full_scan_recovers_every_databases_ddl() {
 
         let index = map_file(
             mode.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -663,15 +667,13 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
     let cancel = CancellationToken::new();
     let tripping =
         CancelsPast { inner: Arc::clone(&source), trip: data_offset, cancel: cancel.clone() };
-    let options = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
-    };
+    let options = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
 
     let run = map_file(
         mode.open_source(Arc::new(tripping)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        options,
+        &arranged(4),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &cancel,
     )
@@ -685,8 +687,9 @@ async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
     let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     let resumed = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -794,15 +797,13 @@ async fn the_lowest_offset_error_is_the_one_a_split_region_raises() {
     let mode = CacheMode::DISABLED;
 
     let failing = FailsOutOfOrder { inner: Arc::clone(&source), fail_at: data_offset };
-    let options = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
-    };
+    let options = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
 
     let err = map_file(
         mode.open_source(Arc::new(failing)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        options,
+        &arranged(4),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -843,15 +844,13 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     let cancel = CancellationToken::new();
     let tripping =
         CancelsPast { inner: Arc::clone(&source), trip: first_block_end, cancel: cancel.clone() };
-    let options = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
 
     let run = map_file(
         mode.open_source(Arc::new(tripping)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        options,
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &cancel,
     )
@@ -872,8 +871,9 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     // And it is a resume point like any other.
     let resumed = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -906,15 +906,13 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
     let cancel = CancellationToken::new();
     let dropping =
         DropsPast { inner: Arc::clone(&source), trip: first_block_end, cancel: cancel.clone() };
-    let options = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
 
     let run = map_file(
         mode.open_source(Arc::new(dropping)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        options,
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &cancel,
     )
@@ -933,8 +931,9 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
 
     let resumed = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -966,12 +965,12 @@ async fn a_dropped_read_inside_the_prepass_banks_and_writes_nothing() {
     // Every read drops, so the first one the prepass makes is the interrupt.
     let cancel = CancellationToken::new();
     let dropping = DropsPast { inner: Arc::clone(&source), trip: 0, cancel: cancel.clone() };
-    let options = ScanOptions::default();
 
     let run = map_file(
         mode.open_source(Arc::new(dropping)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &cancel,
     )
@@ -985,8 +984,9 @@ async fn a_dropped_read_inside_the_prepass_banks_and_writes_nothing() {
     // And the next run is a cold scan, not a resume onto an empty prefix.
     let resumed = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -1009,8 +1009,9 @@ async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
     let mode = CacheMode::enabled(cache_path.clone());
     let bare = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -1021,14 +1022,12 @@ async fn a_dropped_read_inside_the_backfill_reports_the_backfills_counts() {
 
     let cancel = CancellationToken::new();
     let dropping = DropsPast { inner: Arc::clone(&source), trip: second, cancel: cancel.clone() };
-    let options = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
     let run = map_file(
         mode.open_source(Arc::new(dropping)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        options,
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &cancel,
     )
@@ -1053,8 +1052,9 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     let mode = CacheMode::enabled(cache_path.clone());
     let bare = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -1066,14 +1066,12 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
 
     let cancel = CancellationToken::new();
     let tripping = CancelsPast { inner: Arc::clone(&source), trip: second, cancel: cancel.clone() };
-    let options = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
     let run = map_file(
         mode.open_source(Arc::new(tripping)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        options,
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &cancel,
     )
@@ -1093,8 +1091,9 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
 
     let resumed = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -1104,8 +1103,9 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     assert_eq!((resumed.lacking_statistics, resumed.backfilled), (blocks - 1, blocks - 1));
     let straight = map_file(
         CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -1134,11 +1134,11 @@ async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
-    let options = ScanOptions::default();
     let run = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &already_cancelled(),
     )
@@ -1217,14 +1217,12 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
 
     let cancel = CancellationToken::new();
     let tripping = CancelsPast { inner: Arc::clone(&source), trip, cancel: cancel.clone() };
-    let options = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
     let run = map_file(
         mode.open_source(Arc::new(tripping)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        options,
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &cancel,
     )
@@ -1277,14 +1275,12 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
     let cancel = CancellationToken::new();
     let tripping =
         CancelsPast { inner: Arc::clone(&source), trip: end - 1, cancel: cancel.clone() };
-    let options = ScanOptions {
-        read: ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() },
-        ..ScanOptions::default()
-    };
+    let options = ReadOptions { chunk_size_bytes: 1, ..ReadOptions::default() };
     let run = map_file(
         mode.open_source(Arc::new(tripping)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        options,
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &cancel,
     )
@@ -1325,8 +1321,9 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
     // And finishing it is still span for span what one eager pass gives.
     let resumed = map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::DATA,
         &CancellationToken::new(),
     )
@@ -1368,8 +1365,9 @@ async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() 
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let index = map_file(
             CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )

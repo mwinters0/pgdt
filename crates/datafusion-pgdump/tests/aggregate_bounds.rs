@@ -17,14 +17,16 @@ use datafusion::catalog::TableProvider;
 use datafusion::execution::session_state::SessionStateBuilder;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{PgDump, PgDumpOptions};
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSizing};
+use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSizing};
 
 mod in_order;
 use in_order::{Order, RunScansInOrder};
+use pgdt_dump::ReadOptions;
+use pgdt_fixtures::arranged;
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 const ROWS: i64 = 1024;
@@ -83,8 +85,9 @@ async fn parsed(dir: &Path) -> PathBuf {
     };
     map_file(
         cache.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &request,
         &CancellationToken::new(),
     )

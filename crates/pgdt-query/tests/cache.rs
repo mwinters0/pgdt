@@ -17,7 +17,7 @@ use pgdt_io::{
     ByteRangeSource, KnownCompression, LocalFileSource, Origin, Parallelism, Recognized, XzSource,
     open,
 };
-use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::CACHE_FORMAT_VERSION;
 use pgdt_model::DiagnosticKind;
@@ -26,6 +26,9 @@ use pgdt_query::{QueryOptions, table_stream};
 
 mod common;
 use common::{edge_cases, sandboxed_edge_cases as sandboxed};
+use pgdt_dump::ReadOptions;
+use pgdt_fixtures::arranged;
+use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
 
 /// A watch opened on `source` as it stands, for a test whose subject is the
@@ -319,8 +322,9 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
     let mode = CacheMode::enabled(path.clone());
     map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::default(),
         &CancellationToken::new(),
     )
@@ -888,8 +892,9 @@ async fn a_claim_sizes_the_statistics_a_load_hands_back() {
     let mode = CacheMode::enabled(path.clone());
     map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::default(),
         &CancellationToken::new(),
     )
@@ -1025,12 +1030,13 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
     let (dir, dump) = sandboxed();
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let path = cache::colocated_path(&dump);
-    let options = ScanOptions::default();
+
     let statistics = StatisticsRequest::default();
     map_file(
         CacheMode::enabled(path.clone()).open_source(Arc::clone(&source)).await.unwrap(),
-        &options,
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &statistics,
         &CancellationToken::new(),
     )
@@ -1078,8 +1084,9 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
             Ok(opened) => {
                 map_file(
                     opened,
-                    &options,
-                    &GatherOptions::default(),
+                    ReadOptions::default(),
+                    &arranged(1),
+                    PostgresInvalidValues::Default,
                     &statistics,
                     &CancellationToken::new(),
                 )
@@ -1130,8 +1137,9 @@ async fn an_open_hands_back_what_the_cache_holds() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
         mode.open_source(Arc::clone(&source)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::METADATA,
         &CancellationToken::new(),
     )
@@ -1283,8 +1291,9 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
     let table = intact.seek_table().unwrap();
     map_file(
         mode.open_source(Arc::new(intact)).await.unwrap(),
-        &ScanOptions::default(),
-        &GatherOptions::default(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
         &StatisticsRequest::default(),
         &CancellationToken::new(),
     )
@@ -1372,8 +1381,9 @@ async fn persisted_index_is_pinned_to_the_format_version() {
         let request = common::sweep_request(path);
         let run = map_file(
             CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-            &ScanOptions::default(),
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &request,
             &CancellationToken::new(),
         )
@@ -1404,16 +1414,18 @@ mod encoding {
     use std::sync::Arc;
 
     use pgdt_core::Error;
-    use pgdt_dump::ScanOptions;
+    use pgdt_dump::ReadOptions;
     use pgdt_dump::cache::{CacheMode, CacheStatus, Unusable};
     use pgdt_dump::internal::{
         CACHE_MAGIC, CacheFile, CacheFileRef, CompressionIndex, ContainerKind, SourceIdentity,
         read_cache_file, write_cache_file,
     };
     use pgdt_dump::internal::{load, save};
+    use pgdt_fixtures::arranged;
     use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
     use pgdt_mapping::map_file;
-    use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
+    use pgdt_mapping::statistics::StatisticsRequest;
+    use pgdt_model::PostgresInvalidValues;
     use pgdt_model::{BoundsSet, CACHE_FORMAT_VERSION, DataBlock, SpanBody, calendar_end};
     use tokio_util::sync::CancellationToken;
 
@@ -1448,8 +1460,9 @@ mod encoding {
         for (name, source) in sources {
             let run = map_file(
                 CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-                &ScanOptions::default(),
-                &GatherOptions::default(),
+                ReadOptions::default(),
+                &arranged(1),
+                PostgresInvalidValues::Default,
                 &StatisticsRequest::default(),
                 &CancellationToken::new(),
             )
@@ -1537,11 +1550,12 @@ mod encoding {
         std::fs::copy(statistics_fixture(), &dump).unwrap();
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
         let mode = CacheMode::enabled(dir.path().join("scratch.dtcache"));
-        let options = ScanOptions::default();
+
         let data = map_file(
             mode.open_source(Arc::clone(&source)).await.unwrap(),
-            &options,
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::DATA,
             &CancellationToken::new(),
         )
@@ -1549,8 +1563,9 @@ mod encoding {
         .unwrap();
         let metadata = map_file(
             CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
-            &options,
-            &GatherOptions::default(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
             &StatisticsRequest::METADATA,
             &CancellationToken::new(),
         )

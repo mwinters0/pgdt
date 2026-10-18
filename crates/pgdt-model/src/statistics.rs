@@ -31,7 +31,7 @@ use pgdt_core::Error;
 use pgdt_core::internal as instrument;
 
 /// What a read does with a field its type's `*_in` refuses
-/// ([`pgdt_codec::decode::Unread::Refused`]), stated for a parse on [`pgdt_mapping::statistics::GatherOptions`]
+/// ([`pgdt_codec::decode::Unread::Refused`]), stated for a parse as `pgdt_mapping::map_file`'s argument
 /// and for a query on [`pgdt_query::QueryOptions`] (`docs/design/decisions.md`,
 /// "D103").
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -128,8 +128,8 @@ pub enum BlockGathered {
     /// memory is what fits a wide table. Granularity never depends on memory;
     /// whether a block gathers does (`docs/design/decisions.md`, "D85").
     Declined {
-        /// The [`pgdt_mapping::statistics::GatherOptions::statistics_allowance_bytes`] it declined
-        /// under, which the map records
+        /// The statistics allowance it declined under
+        /// (`pgdt_io::Arrangement::statistics_allowance`), which the map records
         /// ([`crate::CopyBlock::statistics_declined`]) so that a
         /// back-fill retries it only under a larger one.
         allowance: u64,
