@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 use namespace_init::{InitShutdown, namespace_init};
-use pgdt_io::Cancellation;
+use tokio_util::sync::CancellationToken;
 
 use crate::introspect;
 
@@ -36,7 +36,7 @@ use crate::introspect;
 /// `_exit`s with `128 + n` instead, the status [`die_by`] exits with there,
 /// and `init`'s own handlers on both signals are released to these.
 pub(crate) fn install_interrupt_guard(
-    cancel: Arc<Cancellation>,
+    cancel: CancellationToken,
     init: &mut InitShutdown,
 ) -> Result<InterruptGuard> {
     use tokio::signal::unix::{SignalKind, signal};
@@ -60,7 +60,7 @@ pub(crate) fn install_interrupt_guard(
         .with_context(installing)?;
         signal_hook::flag::register(number, Arc::clone(&guard.armed)).with_context(installing)?;
         let mut stream = signal(kind).with_context(installing)?;
-        let cancel = Arc::clone(&cancel);
+        let cancel = cancel.clone();
         tokio::spawn(async move {
             while stream.recv().await.is_some() {
                 cancel.cancel();

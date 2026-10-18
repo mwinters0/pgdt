@@ -9,9 +9,10 @@ use pgdt_core::{Error, Result};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::attach_text;
 use pgdt_dump::cache::{CacheLoad, CacheMode, SourceWatch};
-use pgdt_dump::internal::{announce_cancellation, announce_read_loop, scan_preamble};
+use pgdt_dump::internal::{announce_read_loop, scan_preamble};
 use pgdt_io::ByteRangeSource;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata};
+use tokio_util::sync::CancellationToken;
 
 use super::resume::ResumeToken;
 use crate::options::{QueryOptions, ScanExtent};
@@ -52,6 +53,10 @@ pub(super) fn validate_request(
 /// ([`TableColumns`](super::replay::plan::TableColumns)). Yields
 /// no rows — see the module docs. **Both entry points run exactly this**, so a
 /// partitioned replay maps the file once rather than once per sub-stream.
+///
+/// **It takes no cancellation**: a caller stops it by dropping the stream
+/// awaiting it (`docs/design/decisions.md`, "D26"). Its passes poll a token
+/// nothing holds, so neither stops short.
 pub(super) async fn map_for_query(
     source: &dyn ByteRangeSource,
     table: &str,
@@ -62,6 +67,7 @@ pub(super) async fn map_for_query(
 ) -> Result<MappedTable> {
     watch.require_checkable(source)?;
     let size = source.size().await?;
+    let unfired = CancellationToken::new();
 
     let mut index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
@@ -92,12 +98,9 @@ pub(super) async fn map_for_query(
     if !first_db_preamble_known {
         // The prepass's spans are kept, not discarded: they tile
         // `[0, preamble_end)`, which is the prefix `map_forward` splices its
-        // own output onto. It takes no cancellation, so the source is told of
-        // one first and drops a read in flight (`docs/design/decisions.md`,
-        // "D26").
-        announce_cancellation(source, scan_options);
+        // own output onto.
         let (metadata, spans, preamble_end, roles, tablespaces) =
-            scan_preamble(source, scan_options.read, scan_options.parallelism).await?;
+            scan_preamble(source, scan_options).await?;
         index.metadata = Some(metadata);
         index.spans = splice(&[], spans, 0, preamble_end, size);
         index.roles.extend(roles);
@@ -113,15 +116,23 @@ pub(super) async fn map_for_query(
         ScanExtent::UntilTargetSettled => Some((table, selector)),
         ScanExtent::Full => None,
     };
-    // A cancelled mapping pass is an error here rather than a short stream
-    // (`docs/design/decisions.md`, "D48"). `pgdt query` never sets the flag;
-    // an embedder that does gets told.
-    if map_forward(source, scan_options, cache, watch, &mut index, target, Pass::Query, size)
-        .await?
-        == MapStop::Interrupted
-    {
-        return Err(Error::ScanCancelled { scanned_through: index.scanned_through });
-    }
+    let stop = map_forward(
+        source,
+        scan_options,
+        &unfired,
+        cache,
+        watch,
+        &mut index,
+        target,
+        Pass::Query,
+        size,
+    )
+    .await?;
+    assert_eq!(
+        stop,
+        MapStop::Reached,
+        "only a token firing interrupts a pass, and none holds this one"
+    );
 
     // Read *after* the mapping pass, not before it: `map_forward` states the
     // metadata at each `\connect`ed database's first `COPY` block, so the
@@ -161,12 +172,12 @@ pub(super) async fn map_for_query(
     census_metadata_level(
         source,
         scan_options,
+        &unfired,
         query_options,
         cache,
         metadata.as_ref(),
         database.as_deref(),
         &mut matches,
-        index.scanned_through,
         size,
     )
     .await?;
@@ -185,19 +196,18 @@ pub(super) async fn map_for_query(
 /// censused it, and holds it for this query alone — the map and the cache
 /// keep the level `parse` gave them, so the price is a second read of the
 /// table on every such query. Under [`SchemaMode::Strings`], which reads no
-/// census, nothing is read. A cancelled read is
-/// [`Error::ScanCancelled`] at `scanned_through`, as a cancelled mapping pass
-/// is.
+/// census, nothing is read. `unfired` is the mapping pass's token, which
+/// nothing holds.
 #[allow(clippy::too_many_arguments)]
 async fn census_metadata_level(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    unfired: &CancellationToken,
     query_options: &QueryOptions,
     cache: &CacheMode,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     matches: &mut [CopyBlock],
-    scanned_through: u64,
     size: u64,
 ) -> Result<()> {
     if query_options.schema_mode != SchemaMode::Typed {
@@ -210,13 +220,14 @@ async fn census_metadata_level(
         blocks = lacking.len(),
         "table mapped at the metadata level: reading its rows again for this query's census",
     );
-    announce_read_loop(source, scan_options, scan_options.parallelism);
+    announce_read_loop(source, scan_options.read, scan_options.parallelism);
     let cache_path = cache.path();
     let mut shortfall_reported = false;
     for at in lacking {
         let read = reread_rows(
             source,
             scan_options,
+            unfired,
             cache_path,
             metadata,
             database,
@@ -226,9 +237,7 @@ async fn census_metadata_level(
             &mut shortfall_reported,
         )
         .await?;
-        let Some(census) = read else {
-            return Err(Error::ScanCancelled { scanned_through });
-        };
+        let census = read.expect("a re-read stops short only where its token fires");
         matches[at].census = Some(census);
     }
     Ok(())

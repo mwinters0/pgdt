@@ -183,8 +183,7 @@ pub async fn read_table<F>(
 where
     F: FnMut(RecordBatch) -> ControlFlow<()>,
 {
-    let mut stream =
-        table_stream(source, table, scan_options.clone(), query_options.clone(), None, cache);
+    let mut stream = table_stream(source, table, *scan_options, query_options.clone(), None, cache);
     while let Some(batch) = stream.next().await.transpose()? {
         if on_batch(batch).is_break() {
             return Ok((stream.resolved_schema(), Some(stream.resume_token())));

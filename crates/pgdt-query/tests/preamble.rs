@@ -4,7 +4,7 @@
 //! statement text), this pins the parser against what `pg_dump` actually
 //! emits.
 
-use pgdt_io::{ByteRangeSource, Parallelism};
+use pgdt_io::ByteRangeSource;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -22,6 +22,7 @@ use pgdt_query::{QueryOptions, table_stream};
 
 mod common;
 use common::{VERSIONS, edge_cases_fixture, fixture, multidb_fixture, sandboxed, types_fixture};
+use tokio_util::sync::CancellationToken;
 
 /// `column`, declared `NOT NULL` with a constraint its children take.
 fn not_null(column: ColumnDef) -> ColumnDef {
@@ -30,7 +31,7 @@ fn not_null(column: ColumnDef) -> ColumnDef {
 
 async fn single_database(path: &Path) -> DatabaseMetadata {
     let source = LocalFileSource::open(path).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let mut metadata = index.metadata.expect("build_index always populates metadata");
     assert_eq!(metadata.databases.len(), 1, "no fixture here is a multi-database dump");
     metadata.databases.pop().unwrap()
@@ -712,8 +713,7 @@ async fn concatenated_create_dumps_yield_two_named_databases_each_fully_parsed()
     for version in [13, 16, 18] {
         let (_dir, path) = multidb_fixture(version);
         let source = LocalFileSource::open(&path).unwrap();
-        let index =
-            build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
         // I2: one qualified table name owns more than one `COPY` block here,
         // one per database, both present in the flat block list.
@@ -799,8 +799,7 @@ async fn every_dumpall_database_keeps_its_own_version_headers() {
         assert_eq!(want[0].0, "template1", "pg_dump {version}");
 
         let source = LocalFileSource::open(&fixture).unwrap();
-        let index =
-            build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
         assert_eq!(versions(index.metadata.as_ref().unwrap()), want, "pg_dump {version}: eager");
 
         let (_dir, dump) = sandboxed(&fixture, "dumpall.sql");
@@ -811,6 +810,7 @@ async fn every_dumpall_database_keeps_its_own_version_headers() {
             &ScanOptions::default(),
             &GatherOptions::default(),
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         .unwrap()
@@ -931,6 +931,7 @@ async fn a_base_type_s_delimiter_splits_its_array_in_a_strict_parse() {
                 &ScanOptions::default(),
                 &strict,
                 &StatisticsRequest::DATA,
+                &CancellationToken::new(),
             )
             .await
             .unwrap_or_else(|e| panic!("{label}: a strict parse refused: {e}"));
@@ -946,8 +947,7 @@ async fn a_base_type_s_delimiter_splits_its_array_in_a_strict_parse() {
 async fn a_connection_string_connect_opens_its_own_database() {
     for version in VERSIONS {
         let source = LocalFileSource::open(fixture(version, "emitters", "dumpall")).unwrap();
-        let index =
-            build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
         let metadata = index.metadata.as_ref().unwrap();
         let names: Vec<Option<&str>> =
             metadata.databases.iter().map(|db| db.name.as_deref()).collect();
@@ -989,8 +989,7 @@ async fn a_reconnect_after_database_properties_continues_its_database() {
         for flags in ["dumpall-binary-upgrade", "dumpall-clean"] {
             let path = fixture(version, "emitters", flags);
             let source = LocalFileSource::open(&path).unwrap();
-            let index =
-                build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
             let names: Vec<Option<&str>> = index
                 .metadata
                 .as_ref()
@@ -1031,8 +1030,7 @@ async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() 
         for flag_set in ["default", "binary-upgrade", "data-only"] {
             let path = fixture(version, "emitters", flag_set);
             let source = LocalFileSource::open(&path).unwrap();
-            let index =
-                build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
             let label = format!("pg_dump {version} {flag_set}");
             assert!(index.blocks().next().is_some(), "{label}");
             for (database, block) in index.blocks_with_database() {
@@ -1139,8 +1137,7 @@ async fn a_partition_s_bound_and_its_root_s_routing_are_named_per_block() {
         for flag_set in ["default", "load-via-partition-root"] {
             let path = fixture(version, "partitions", flag_set);
             let source = LocalFileSource::open(&path).unwrap();
-            let index =
-                build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
             let label = format!("pg_dump {version} {flag_set}");
             let via_root = flag_set == "load-via-partition-root";
             let mut named = Vec::new();
@@ -1214,8 +1211,7 @@ async fn a_hand_written_partition_hierarchy_is_named_per_block() {
         std::fs::write(&path, text).unwrap();
         async move {
             let source = LocalFileSource::open(&path).unwrap();
-            let index =
-                build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
             index
                 .blocks_with_database()
                 .map(|(database, block)| {
@@ -1336,6 +1332,7 @@ async fn a_raw_cr_inside_a_literal_is_the_value_s_own_byte() {
             &chunked,
             &strict,
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         .unwrap_or_else(|e| panic!("crlf {crlf}: a strict parse refused: {e}"));
@@ -1347,6 +1344,7 @@ async fn a_raw_cr_inside_a_literal_is_the_value_s_own_byte() {
             &chunked,
             &strict,
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         {

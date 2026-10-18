@@ -8,11 +8,11 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use bytes::Bytes;
+use tokio_util::sync::CancellationToken;
 
 use pgdt_core::internal::DecodeCounter;
 use pgdt_core::{Error, Result};
 
-use crate::cancel::Cancellation;
 use crate::parallelism::{Parallelism, WorkerMemory};
 use crate::partition::Partitioning;
 use crate::source::pool::PooledBuffer;
@@ -490,7 +490,7 @@ impl ByteRangeSource for FetchedXzSource {
     /// Announced to the transport rather than kept here: what a cancellation
     /// interrupts is the fetch, and a decode between two fetches is bounded by
     /// one block.
-    fn hint_cancellation(&self, cancel: Arc<Cancellation>) {
+    fn hint_cancellation(&self, cancel: CancellationToken) {
         self.source.hint_cancellation(cancel);
     }
 

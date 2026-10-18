@@ -103,7 +103,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.6.1** The mapping pass takes the open: `map_file` and `preamble_only` read the cache it decoded, and `pgdt parse` opens through it — both take an `Opened` whole, carrying its mode; `CacheMode::open_source` opens a source already in hand ([notes](../design/roadmap-P36.6.1-mapping-open-notes.md))
 - [x] **36.6.2** `scan` and `preamble_only` take only the fields they read: a `ReadOptions` (the chunk and the line limit) and a `Parallelism`, `build_index` and `build_map` too, `ChunkedScanner::new` the `ReadOptions` alone; `ScanOptions` is a `ReadOptions` beside the parallelism and the cancellation, which the passes opening with the prepass announce before it ([notes](../design/roadmap-P36.6.2-read-options-notes.md))
 - [x] **36.6.3** pgdt-dump: an uncheckable source refused where a read begins, not by `SourceWatch::open` — the mapping pass and `preamble_only` refusing at their start, `PgDump::open` asking for it at construction, `pgdt info` under the selection as given; `StrictIdentity::between_runs` gone, so `NONE`'s rustdoc and D21's "refused unless `NONE`" hold again ([notes](../design/roadmap-P36.6.3-read-refusal-notes.md))
-- [ ] **36.6.4** The cancellation is `map_file`'s required argument, a `tokio_util::sync::CancellationToken` in place of pgdt-io's `Cancellation`; `ScanOptions` a `ReadOptions` and a `Parallelism`, which `scan`, `preamble_only`, `build_index`, `build_map` and `map_file` take; the query entry points take no cancellation, a drop being theirs; D26, D48, D77 and D90 rewritten; not counted ([history, 2026-10-18](history/2026-10-18.md), "The cancellation is the mapping pass's argument")
+- [x] **36.6.4** The cancellation is `map_file`'s required argument, a `tokio_util::sync::CancellationToken` in place of pgdt-io's `Cancellation`; `ScanOptions` a `ReadOptions` and a `Parallelism`, which `scan`, `preamble_only`, `build_index`, `build_map` and `map_file` take; the query entry points take no cancellation, a drop being theirs; D26, D48, D77 and D90 rewritten; not counted ([notes](../design/roadmap-P36.6.4-cancellation-token-notes.md))
 - [ ] **36.7** pgdt-mapping: back-fill one call; the mapping pass hands back a `Dump`'s parts; closes `KD115`
 - [ ] **36.8** pgdt-query: `Dump`, the selector, `Table::plan` with partitions, a file-ordered stream and serial resume; `read_table` gone; `max_rows` on the stream; filter operators carrying values; `pgdt info` and `pgdt query` on it, `pgdt query` and the stream entry points opening through `CacheMode::open`; `claim`, `CacheMode::load`, `CacheLoad` and `pgdt`'s `open_for_scan` gone
 - [ ] **36.9** pgdt-query: one record per column in `ResolvedSchema`, rendering and `ValueKey` through it; closes `KD121`; counted by `measure.py --count-pair HEAD~1`
@@ -140,3 +140,18 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **36.6.4: a query's passes poll a token nothing holds, and assert they
+  were not stopped.** `map_for_query` (`crates/pgdt-query/src/stream/mapping.rs`)
+  hands `map_forward` and the census's `reread_rows` a fresh
+  `CancellationToken`, and treats `MapStop::Interrupted` and a `None` census
+  as impossible, by `assert_eq!` and `expect`. `gather_block_statistics` does
+  the same and answers `Result<BlockReread>`. The call: a caller that never
+  stops a pass hands it a token it never fires ([history,
+  2026-10-18](history/2026-10-18.md), "The cancellation is the mapping
+  pass's argument"), and this keeps pgdt-mapping's internals on one
+  signature. The alternative is
+  `Option<&CancellationToken>` through those internals, which makes the two
+  arms unrepresentable instead of asserted, with a `None` read at every poll.
+  Reconsidering changes internal signatures only. 36.8, which hands the
+  early-stopped pass the token, revisits both arms either way.

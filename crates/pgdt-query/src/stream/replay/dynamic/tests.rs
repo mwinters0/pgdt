@@ -10,6 +10,7 @@ use pgdt_model::{ArrayShape, BoundsSet, StatisticsView};
 use crate::predicate::{Expr, PredicateOp, resolve_expr};
 use crate::prune::DynamicPruning;
 use crate::stream::replay::plan::resolve_block;
+use tokio_util::sync::CancellationToken;
 
 /// **A dynamic filter's stop is armed only in a group a row of which can
 /// pass it**: under `id < 150` over ascending ids, of the groups the
@@ -45,6 +46,7 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &request,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();

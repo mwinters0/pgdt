@@ -10,6 +10,7 @@ use std::sync::Arc;
 use super::resolve_block;
 use crate::predicate::{Expr, PredicateOp, resolve_expr};
 use crate::prune::prune_block;
+use tokio_util::sync::CancellationToken;
 
 /// **The guard no caller can trip, pinned so it stays that way.**
 /// [`resolve_block`] refuses `Typed` resolution against metadata with no
@@ -118,6 +119,7 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &request,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();

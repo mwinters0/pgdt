@@ -5,14 +5,13 @@
 //! forward pass and statistics back-fill, and `pgdt_query`'s replay.
 
 use std::ops::ControlFlow;
-use std::sync::Arc;
 
 use bytes::Bytes;
 
 use super::{CopyScanner, Event};
 use pgdt_core::{Error, Result};
 use pgdt_io::{
-    ByteRangeSource, Cancellation, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
+    ByteRangeSource, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
     internal::memory_budget_display,
 };
 
@@ -392,10 +391,7 @@ pub const SCAN_LINE_DEFAULT_MAX_BYTES: usize = 64 << 20;
 
 /// **How a chunked read loop reads**: the chunk it asks of the source and the
 /// longest line it carries across a chunk boundary — all [`ChunkedScanner`]
-/// reads, and with a [`Parallelism`] all [`scan`] does. It carries no
-/// cancellation, so a read that polls none is never handed one it ignores
-/// (`docs/design/decisions.md`, "D26", "D77"); the mapping passes that poll
-/// one take a [`ScanOptions`].
+/// reads, and with a [`Parallelism`] a [`ScanOptions`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReadOptions {
     /// Bytes requested per read from the source. Defaults to
@@ -425,31 +421,14 @@ impl Default for ReadOptions {
     }
 }
 
-/// What a pass a caller may cancel reads with: its [`ReadOptions`], the
-/// concurrency it may use, and the cancellation.
-#[derive(Debug, Clone, Default)]
+/// What a pass reads with: its [`ReadOptions`] and the concurrency it may
+/// use. Configuration only, reused across runs: the caller's ask that a pass
+/// stop is `pgdt_mapping::map_file`'s own argument, never a field here
+/// (`docs/design/decisions.md`, "D26").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ScanOptions {
     /// The chunk and the line limit every read loop of the pass reads with.
     pub read: ReadOptions,
-    /// Cooperative cancellation: call [`Cancellation::cancel`] from another
-    /// task and the mapping loop stops at the next chunk boundary, persists
-    /// what it holds and reports that it was interrupted
-    /// (`docs/design/decisions.md`, "D63"). `None` — the default — is a scan nobody can stop.
-    ///
-    /// Chunk granularity — a window of pieces while the leader holds a region
-    /// — not `CopyEnd` granularity, and read by
-    /// `pgdt_mapping::map_file`'s two passes alone — the mapping loop and
-    /// the statistics back-fill, the drivers with somewhere to put a partial
-    /// result and a way to report the stop. [`scan`] and the eager producers
-    /// built on it take none (`docs/design/decisions.md`, "D26"); a pass
-    /// opening with the preamble prepass announces this to the source first
-    /// (`internal::announce_cancellation`), so a read the prepass has in
-    /// flight can still be dropped and arrive as `ScanCancelled`.
-    ///
-    /// A source may also hold a clone of this and await
-    /// [`Cancellation::cancelled`], which is what bounds a stop by the request
-    /// in flight rather than by the loop's next poll.
-    pub cancel: Option<Arc<Cancellation>>,
     /// How much concurrency this scan may use, and what it may hold while it
     /// does — [`Parallelism::Serial`] by default, which is the serial code
     /// path this build has rather than a pool of one
@@ -465,26 +444,6 @@ pub struct ScanOptions {
     pub parallelism: Parallelism,
 }
 
-impl ScanOptions {
-    /// Whether a caller has asked this scan to stop — the polled half of
-    /// [`ScanOptions::cancel`], read once per chunk or leader window.
-    pub fn cancelled(&self) -> bool {
-        self.cancel.as_ref().is_some_and(|cancel| cancel.is_cancelled())
-    }
-}
-
-/// Hand a source the caller's cancellation where there is one, so a source
-/// whose wait is not a `pread` can drop the read in flight rather than be
-/// polled at the far side of it ([`ByteRangeSource::hint_cancellation`]).
-/// [`announce_read_loop`] makes it for a pass's own loops; a pass makes it
-/// itself before a read that takes no cancellation, [`scan`]'s, whose read
-/// in flight it would drop (`docs/design/decisions.md`, "D26").
-pub fn announce_cancellation(source: &dyn ByteRangeSource, options: &ScanOptions) {
-    if let Some(cancel) = &options.cancel {
-        source.hint_cancellation(Arc::clone(cancel));
-    }
-}
-
 /// **The hints every top-level read loop announces before its first read**:
 /// the chunk length it repeats until it stops, so a buffer-recycling source
 /// can keep one of that size whatever it is
@@ -493,41 +452,34 @@ pub fn announce_cancellation(source: &dyn ByteRangeSource, options: &ScanOptions
 /// ([`ByteRangeSource::hint_parallelism`]); and that the loop grants no wait
 /// ([`ByteRangeSource::hint_wait_policy`]): the leader's fused worker is the
 /// holder that needs the bound and is where one is granted (`pgdt_mapping`'s
-/// `scan_region`, and `docs/design/decisions.md`, "D5").
-fn announce_read_hints(source: &dyn ByteRangeSource, read: ReadOptions, parallelism: Parallelism) {
+/// `scan_region`, and `docs/design/decisions.md`, "D5"). `parallelism` is the
+/// pass's own, or one a query states for its replay apart from its mapping
+/// pass.
+pub fn announce_read_loop(
+    source: &dyn ByteRangeSource,
+    read: ReadOptions,
+    parallelism: Parallelism,
+) {
     source.hint_read_size(read.chunk_size_bytes);
     source.hint_parallelism(parallelism);
     source.hint_wait_policy(WaitPolicy::NeverWait);
 }
 
-/// [`announce_read_hints`] for a pass's loop, with the pass's cancellation
-/// where there is one ([`announce_cancellation`]); `parallelism` is the
-/// pass's own, or one a query states for its replay apart from its mapping
-/// pass.
-pub fn announce_read_loop(
-    source: &dyn ByteRangeSource,
-    options: &ScanOptions,
-    parallelism: Parallelism,
-) {
-    announce_read_hints(source, options.read, parallelism);
-    announce_cancellation(source, options);
-}
-
 /// Scan `source` from the beginning, invoking `on_event` for every event, in
-/// `read`'s chunks, announcing `parallelism` to the source.
+/// `options`' chunks, announcing their parallelism to the source.
 ///
 /// The callback may return [`ControlFlow::Break`] to stop early. Nothing
-/// stops it from outside: it polls no cancellation and announces none
-/// ([`ReadOptions`]).
+/// stops it from outside: it polls no cancellation
+/// (`docs/design/decisions.md`, "D26").
 pub async fn scan<F>(
     source: &dyn ByteRangeSource,
-    read: ReadOptions,
-    parallelism: Parallelism,
+    options: &ScanOptions,
     mut on_event: F,
 ) -> Result<()>
 where
     F: FnMut(Event<'_>) -> ControlFlow<()>,
 {
+    let ScanOptions { read, parallelism } = *options;
     let size = source.size().await?;
     // Named "preamble scan", not "scan": the caller a `parse` runs is
     // `preamble::scan_preamble`, and `pgdt_mapping`'s `map_forward` announces
@@ -541,7 +493,7 @@ where
         memory_bytes = %memory_budget_display(parallelism),
         "preamble scan started",
     );
-    announce_read_hints(source, read, parallelism);
+    announce_read_loop(source, read, parallelism);
     let mut chunked = ChunkedScanner::new(CopyScanner::new(), size, read);
 
     loop {

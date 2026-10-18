@@ -14,15 +14,15 @@ use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch};
 use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::{
-    announce_cancellation, non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics,
-    toc_coverage_diagnostic,
+    non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
 };
-use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
-use pgdt_io::{ByteRangeSource, Parallelism};
+use pgdt_dump::{Event, ScanOptions, scan as scan_events};
+use pgdt_io::ByteRangeSource;
 use pgdt_model::internal::IgnoredRefusalsExt;
 use pgdt_model::{
     Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, PostgresInvalidValues, Span,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::backfill::{
     Backfill, backfill_statistics, report_density_shortfall, report_statistics_declines,
@@ -37,19 +37,15 @@ use crate::statistics::request::{GatherOptions, StatisticsRequest};
 /// [`pgdt_dump::internal::Builder`] is fed the whole [`Event`] stream, and
 /// `DumpIndex::metadata` is [`dump_metadata_from_spans`] over the result and
 /// [`DumpIndex::blocks`] a filter over it (`docs/design/decisions.md`,
-/// "D34"). It reads in `read`'s chunks, announcing `parallelism` to the
-/// source, and nothing stops it from outside ([`pgdt_dump::scan`]).
+/// "D34"). It reads with `options`, and nothing stops it from outside
+/// ([`pgdt_dump::scan`]).
 ///
 /// **Here rather than beside the index**, which is dump's: counting a block's
 /// values resolves its columns' declared types, so the pass states each
 /// database's DDL at its first `COPY` block as [`map_forward`] does
 /// (`docs/design/decisions.md`, "D96").
-pub async fn build_index(
-    source: &dyn ByteRangeSource,
-    read: ReadOptions,
-    parallelism: Parallelism,
-) -> Result<DumpIndex> {
-    let builder = eager_pass(source, read, parallelism).await?;
+pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<DumpIndex> {
+    let builder = eager_pass(source, options).await?;
     let size = source.size().await?;
     let roles = builder.roles().clone();
     let tablespaces = builder.tablespaces().clone();
@@ -65,12 +61,8 @@ pub async fn build_index(
 /// Scan `source` end to end and build its full file map as a span list —
 /// [`build_index`]'s spans, alone. Always scans to EOF, so
 /// [`SpanBody::Unscanned`] never appears in the result.
-pub async fn build_map(
-    source: &dyn ByteRangeSource,
-    read: ReadOptions,
-    parallelism: Parallelism,
-) -> Result<Vec<Span>> {
-    let builder = eager_pass(source, read, parallelism).await?;
+pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Vec<Span>> {
+    let builder = eager_pass(source, options).await?;
     let mut spans = builder.finish(source.size().await?);
     attach_text(source, &mut spans).await?;
     Ok(spans)
@@ -78,18 +70,14 @@ pub async fn build_map(
 
 /// [`build_index`] and [`build_map`]'s one scan: every event to one builder,
 /// each block counted against the DDL above it, restated once per database.
-async fn eager_pass(
-    source: &dyn ByteRangeSource,
-    read: ReadOptions,
-    parallelism: Parallelism,
-) -> Result<Builder> {
+async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Builder> {
     let mut builder = Builder::new();
     // What stopped the scan, a block's close failing it. None can: this pass
     // gathers no statistics, so no block meets a refused field.
     let mut failed: Option<Error> = None;
     // The database the metadata in hand was stated for, and that metadata.
     let mut stated: Option<(Option<String>, DumpMetadata)> = None;
-    scan_events(source, read, parallelism, |event| {
+    scan_events(source, options, |event| {
         match event {
             Event::CopyStart(start) => {
                 let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
@@ -136,7 +124,7 @@ pub struct MapRun {
     pub index: DumpIndex,
     /// The frontier this run started from.
     pub resumed_from: u64,
-    /// Whether [`ScanOptions::cancel`] stopped the run short of EOF, or short
+    /// Whether the run's cancellation stopped it short of EOF, or short
     /// of re-reading every block that lacked the requested statistics. The
     /// index and the cache agree either way, but after an interrupt inside the
     /// preamble prepass, which writes nothing; what differs is whether the
@@ -223,27 +211,48 @@ pub struct MapRun {
 /// **A run interrupted before EOF states none of the three**, and returns
 /// [`MapRun::interrupted`]: a span list cut at a `CopyEnd` watermark is not a
 /// boundary `dump_metadata_from_spans` may be called at.
+///
+/// **`cancel` is the caller's ask that the run stop**
+/// (`docs/design/decisions.md`, "D26"): polled once per chunk, leader window
+/// and closed block, and handed to the source first so one whose wait is a
+/// request drops it ([`ByteRangeSource::hint_cancellation`]); a run it stops
+/// saves what it holds and returns [`MapRun::interrupted`]. A caller that
+/// never stops a run passes a token it never fires.
 pub async fn map_file(
     opened: Opened,
     scan_options: &ScanOptions,
     gather: &GatherOptions,
     statistics: &StatisticsRequest,
+    cancel: &CancellationToken,
 ) -> Result<MapRun> {
     // The open's watch, taken before anything was read, so every later
     // observation compares against what this run started from
     // (`pgdt_dump::cache::SourceWatch`).
     let Opened { source, watch, cache, mode, .. } = opened;
     watch.require_checkable(source.as_ref())?;
-    let run =
-        map_file_watched(source.as_ref(), scan_options, gather, &mode, cache, statistics, &watch)
-            .await;
+    // Before the first read, the prepass's included: it polls nothing, so a
+    // source told of the token is what stops a read it has in flight.
+    source.hint_cancellation(cancel.clone());
+    let run = map_file_watched(
+        source.as_ref(),
+        scan_options,
+        cancel,
+        gather,
+        &mode,
+        cache,
+        statistics,
+        &watch,
+    )
+    .await;
     watch.attribute(source.as_ref(), run).await
 }
 
 /// [`map_file`] once its watch is open, which then attributes any failure.
+#[allow(clippy::too_many_arguments)]
 async fn map_file_watched(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    cancel: &CancellationToken,
     gather: &GatherOptions,
     cache: &CacheMode,
     held: Held,
@@ -303,15 +312,14 @@ async fn map_file_watched(
     if resumed_from == 0 && !first_db_preamble_known {
         // Persisted before `map_forward` runs, so an interrupt in the very
         // first chunk still finds banked metadata. `scan_preamble` itself
-        // takes no cancel flag (`docs/design/decisions.md`, "D26") — but a
+        // polls no cancellation (`docs/design/decisions.md`, "D26") — but a
         // source told of it drops a read in flight anyway, and none of a
         // half-read preamble may be banked, which is that entry's reason.
         // Everything the prepass reads is therefore held aside until it is
         // whole.
-        announce_cancellation(source, scan_options);
         let prepass = async {
             let (metadata, spans, preamble_end, roles, tablespaces) =
-                scan_preamble(source, scan_options.read, scan_options.parallelism).await?;
+                scan_preamble(source, scan_options).await?;
             let mut spans = splice(&[], spans, 0, preamble_end, size);
             attach_text(source, &mut spans).await?;
             Ok::<_, Error>((metadata, spans, preamble_end, roles, tablespaces))
@@ -334,7 +342,7 @@ async fn map_file_watched(
             // can then refuse the resume it invited through
             // `Error::CacheUnusable`. The source is asked directly,
             // there being no save left to ride ([`pgdt_dump::cache::SourceWatch`]).
-            Err(e) if cancelled_read(&e, scan_options) => {
+            Err(e) if cancelled_read(&e, cancel) => {
                 watch.check(source).await?;
                 return Ok(interrupted_run(index, resumed_from, &account));
             }
@@ -351,6 +359,7 @@ async fn map_file_watched(
         let checked = backfill_statistics(
             source,
             scan_options,
+            cancel,
             gather,
             cache,
             watch,
@@ -376,6 +385,7 @@ async fn map_file_watched(
     let stopped = match map_forward(
         source,
         scan_options,
+        cancel,
         cache,
         watch,
         &mut index,
@@ -395,7 +405,7 @@ async fn map_file_watched(
         // `--dtcache none` run reached the interrupt below unverified. Only a
         // read the leader dispatched unwinds this far; every other one the
         // pass makes is caught at a check point of its own.
-        Err(e) if cancelled_read(&e, scan_options) => {
+        Err(e) if cancelled_read(&e, cancel) => {
             watch.check(source).await?;
             cache.save(watch, source, &index).await?;
             return Ok(interrupted_run(index, resumed_from, &account));
@@ -417,6 +427,7 @@ async fn map_file_watched(
     let backfill = backfill_statistics(
         source,
         scan_options,
+        cancel,
         gather,
         cache,
         watch,

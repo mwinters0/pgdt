@@ -9,19 +9,18 @@ into the spec or discard it as stale, and delete this file. See
 
 ## A Python caller expects `KeyboardInterrupt` to reach a scan, and the library's cancellation is a flag
 
-**Fact.** `ScanOptions::cancel: Option<Arc<Cancellation>>` stops a mapping scan
-cooperatively, read once per chunk and at every completed `COPY` block, and
-carries an awaitable signal a source races an in-flight read against
+**Fact.** `map_file`'s required `tokio_util` `CancellationToken` stops a
+mapping scan cooperatively, polled once per chunk and at every completed `COPY`
+block, and handed to a source that races an in-flight read against it
 ([`decisions.md`](decisions.md), "D26", "D63"). `scan::scan`, and so the
-preamble prepass, ignores the polled flag on purpose. `stream::table_stream`
-answers a cancelled mapping pass with `Error::ScanCancelled`. The DataFusion
-provider sets no flag at all — it reads a complete cache and is cancelled by
-dropping its stream ([`decisions.md`](decisions.md), "D90").
+preamble prepass, polls none on purpose. A query takes no token: dropping its
+stream is its cancellation, as it is the DataFusion provider's, which reads a
+complete cache ([`decisions.md`](decisions.md), "D90").
 
 **Why P24 cares.** A Python caller expects Ctrl-C to raise `KeyboardInterrupt`
 promptly, which needs the binding to release the GIL during a scan and to wire
 Python's signal check to something the scan reads. Whether that is
-`ScanOptions::cancel`, a dropped stream as in the DataFusion provider, or both — and what a binding
+`map_file`'s token, a dropped stream as a query takes, or both — and what a binding
 that maps (rather than requiring a cache) does with the uncancellable preamble
 prepass — is this phase's to decide.
 

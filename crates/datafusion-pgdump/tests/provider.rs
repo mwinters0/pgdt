@@ -17,14 +17,15 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{Error, PgDump, PgDumpOptions, ScanBudget, register_dump};
 use futures::StreamExt;
 use pgdt_codec::{SchemaMode, compare::ComparisonSemantics};
+use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
-use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy, sweep_request, ungathered};
-use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
+use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_model::{DiagnosticKind, Finding, TableName};
 use pgdt_query::{QueryOptions, table_stream};
+use tokio_util::sync::CancellationToken;
 
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
@@ -219,8 +220,7 @@ async fn only_a_complete_cache_opens() {
     let cache = CacheMode::enabled(pgdt_dump::cache::colocated_path(&copy));
     pgdt_dump::preamble_only(
         cache.open_source(Arc::clone(&source)).await.unwrap(),
-        ReadOptions::default(),
-        Parallelism::default(),
+        &ScanOptions::default(),
     )
     .await
     .unwrap();
@@ -377,6 +377,7 @@ async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -489,6 +490,7 @@ async fn a_dump_opened_ignoring_refused_values_reads_a_float_past_its_range() {
         &ScanOptions::default(),
         &scan,
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();

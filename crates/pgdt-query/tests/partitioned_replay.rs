@@ -32,6 +32,7 @@ use pgdt_query::{
 
 mod common;
 use common::{edge_cases, partitions_fixture, rows_of, types_fixture};
+use tokio_util::sync::CancellationToken;
 
 type Rows = Vec<Vec<Option<String>>>;
 
@@ -204,7 +205,7 @@ async fn a_budget_bound_worker_count_announces_why() {
     let streams = table_stream_partitions(
         &source,
         "public.widgets",
-        scan.clone(),
+        scan,
         options.clone(),
         CacheMode::DISABLED,
     )
@@ -1102,6 +1103,7 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -1147,8 +1149,7 @@ async fn a_plan_over_a_held_map_replays_as_the_mapping_pass_would() {
     assert!(compared > 1);
 
     // A map claiming less than the whole file: nothing is scanned to finish it.
-    let mut partial =
-        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let mut partial = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     partial.scanned_through = 1;
     let table = TableName { database: None, schema: Some("public".into()), table: "spread".into() };
     let refused = TablePartitions::plan(

@@ -182,14 +182,13 @@ impl ReadFlags {
 
 /// The [`ScanOptions`] one mapping pass runs under: the read flags'
 /// [`ReadOptions`] and the already-resolved arrangement
-/// ([`crate::parallel::Discovered::resolve`]), with no cancellation, which
-/// `parse` adds.
+/// ([`crate::parallel::Discovered::resolve`]).
 ///
 /// **Resolved once per command and passed in, not re-resolved here.** `query`
 /// passes its mapping pass's, its replay's going into [`pgdt_query::QueryOptions`]
 /// ([`crate::parallel::Discovered::resolve_query`]).
 pub(crate) fn scan_options(read: ReadFlags, parallel: &Resolved) -> ScanOptions {
-    ScanOptions { read: read.options(), parallelism: parallel.parallelism(), cancel: None }
+    ScanOptions { read: read.options(), parallelism: parallel.parallelism() }
 }
 
 #[cfg(test)]

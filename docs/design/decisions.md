@@ -157,7 +157,7 @@ default sitting beside the dump. Rejected: a canonical path as a local origin, a
 builds anything short; `pgdt sql` never parses either, a parse wanting `pgdt`'s discovery, interrupt
 guard, status lines and cache rules. So every block a table owns is seen (`KD6` is the cold query's), a schema is
 stated from every block's census, no database's DDL is unread, and the partitioned replay is always available. With
-no partial map to keep, a dropped stream is its whole cancellation, no `ScanOptions::cancel` set (D26). Rejected:
+no partial map to keep, a dropped stream is its whole cancellation, as every query's is (D26). Rejected:
 falling back to a cold query's early-stopping map, which brings each of those back. Code: `crates/datafusion-pgdump/src/dump.rs`.
 
 ### D22 `CacheLoad` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
@@ -182,14 +182,14 @@ Decode is always split, extraction on any source, discovery only behind a decode
 fused. One core's rate against the device's offer decides each; readings that disagree reopen it.
 Evidence: `xz-decode-scaling`, `parallel-scan-throughput`, `scan-throughput-*`.
 
-### D26 Cancellation is per chunk or leader window, polled by the mapping passes alone
-A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan and back-fill keep a
-partial result. The preamble scan takes no flag (`ReadOptions`), a stop there reading as the first `COPY` header and caching as
-complete, and a read the signal its caller announces drops fails it unbanked. `Cancellation` carries a signal beside the polled bit, so a waiting reader drops its request. **The shape follows
-the command**: `query` errors; `parse` interrupts, at byte 0 too, then dies by the signal, and a second one, mid-save too, or
-one in the listing, ends it in the handler. As init (RT19) `pgdt` exits 128+n on every signal ending them elsewhere
-but a fault's, left to the kernel, and what `parse`'s guard or the REPL's `ctrl_c` catches. Rejected: polling alone; keying
-on what was banked (a race); `exit(128+n)` elsewhere (RT20); needing an init; as init, INT and TERM alone; fault handlers.
+### D26 Cancellation is `map_file`'s argument, polled per chunk or leader window by the mapping passes alone
+A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan and back-fill keep a partial result. It
+takes a `tokio_util` `CancellationToken`, required: options are reused across runs, and a fired token in one stops every later run at byte 0.
+A query takes none, a dropped stream being its cancellation (D90). The preamble scan polls none, a stop there reading as the first `COPY`
+header and caching as complete; the token handed to the source drops a read in flight, failing it unbanked. **The shape follows the
+command**: `parse` interrupts, at byte 0 too, then dies by the signal, and a second one, mid-save too, or one in the listing, ends it in the
+handler. As init (RT19) `pgdt` exits 128+n on every signal ending them elsewhere but a fault's, left to the kernel, and what `parse`'s guard
+or the REPL's `ctrl_c` catches. Rejected: polling alone; a `ScanOptions` field; a token of our own; keying on what was banked (a race); `exit(128+n)` elsewhere (RT20); needing an init; as init, INT and TERM alone; fault handlers.
 
 ### D27 UTF-8 is validated once per chunk, and the library's one `unsafe` is the view append
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with
@@ -336,7 +336,7 @@ readers the announced one seats. Reopens: a floored span measurably slower than 
 ### D48 Mapping and replay are separate passes, and `splice` owns the seam
 The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is
 spliced by extending the *preceding* span; a start floor on `Builder` made assembly visible in the
-map. A cancelled mapping pass fails a query rather than shortening it (I1). Cached replay and the
+map. A query's mapping pass is stopped only by dropping its stream, never shortened (I1). Cached replay and the
 cold interior split share `worker_count` and `cut`, and differ in what they cut and in the replay
 charging each sub-stream its batch span (D84).
 
@@ -506,7 +506,7 @@ last character by the next scalar value (`text_upper`), `bytea`'s increments its
 which can end mid-character. Evidence: `bounds/tests.rs`'s `a_long_texts_stored_bounds_are_on_the_right_side_of_it`.
 
 ### D77 The statistics request is the mapping pass's argument, and the metadata level is a selection
-`map_file` takes a `&StatisticsRequest` and no query entry point does, so no option a query is handed
+`map_file` takes a `&StatisticsRequest` and no query entry point does, as with the cancellation (D26), so no option a query is handed
 reads as a request it ignores; a query's pass censuses and gathers nothing, which no selection spells.
 A selection is a default level and overrides, the most specific winning, so the type's `Default` is
 the data level everywhere. Rejected: a `ScanOptions` field; `Option<&StatisticsRequest>`, whose `None`

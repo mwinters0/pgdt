@@ -291,9 +291,9 @@ mod oracle {
     use pgdt_codec::pgtype::{NestedPlan, TypeOutcome, resolve_declared_type};
     use pgdt_core::{split_fields, unescape_field};
     use pgdt_dump::cache::CacheMode;
-    use pgdt_dump::{ReadOptions, preamble_only};
+    use pgdt_dump::{ScanOptions, preamble_only};
     use pgdt_fixtures::{VERSIONS as MAJORS, fixtures_root};
-    use pgdt_io::{LocalFileSource, Parallelism};
+    use pgdt_io::LocalFileSource;
     use pgdt_model::TypeDef;
 
     /// The oracle's declared types that resolve to a nested plan, asserted as
@@ -398,8 +398,7 @@ mod oracle {
             LocalFileSource::open(fixture(major, "types/default.sql")).unwrap(),
         );
         let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
-        let (metadata, _) =
-            preamble_only(opened, ReadOptions::default(), Parallelism::default()).await.unwrap();
+        let (metadata, _) = preamble_only(opened, &ScanOptions::default()).await.unwrap();
         metadata.databases.into_iter().next().expect("a dump names a database").types
     }
 

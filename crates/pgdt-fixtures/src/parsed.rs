@@ -11,6 +11,7 @@ use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_model::{DataBlock, SpanBody};
+use tokio_util::sync::CancellationToken;
 
 /// `fixture` copied into a directory of its own under `dir`, beside the
 /// complete cache a parse gathering `request` leaves, so the committed tree is
@@ -27,6 +28,7 @@ pub async fn parsed_copy(fixture: &Path, dir: &Path, request: &StatisticsRequest
         &ScanOptions::default(),
         &GatherOptions::default(),
         request,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();

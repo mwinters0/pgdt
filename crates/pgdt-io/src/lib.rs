@@ -1,15 +1,14 @@
-//! The byte sources — local, `.xz`, fetched, remote — memory and
-//! parallelism, and stopping (`docs/design/decisions.md`, "D68"). The `http`
-//! feature is this crate's.
+//! The byte sources — local, `.xz`, fetched, remote — and memory and
+//! parallelism (`docs/design/decisions.md`, "D68"). The `http` feature is
+//! this crate's.
 //!
-//! Three concepts, one tree each: the byte sources, `source` and the arms
-//! nested under its read contract; memory and parallelism — the allowance
+//! Two concepts, one tree each: the byte sources, `source` and the arms
+//! nested under its read contract; and memory and parallelism — the allowance
 //! and its discovery (`memory`), its resolution into what a pass runs under
 //! (`arrangement`), the arrangement and what a worker holds (`parallelism`),
-//! and where a range is cut (`partition`); and stopping, `cancel`.
+//! and where a range is cut (`partition`).
 
 mod arrangement;
-mod cancel;
 mod memory;
 mod parallelism;
 mod partition;
@@ -18,7 +17,6 @@ mod source;
 mod test_support;
 
 pub use arrangement::{Allowance, Arrangement, ArrangementRequest, Jobs};
-pub use cancel::Cancellation;
 pub use memory::{DEFAULT_MEMORY_BUDGET, MemoryLimit, available_memory, discover_memory_limit};
 pub use parallelism::{Parallelism, WorkerMemory};
 pub use partition::{PartitionBoundaries, PartitionRead, Partitioning, RetainedUnit};

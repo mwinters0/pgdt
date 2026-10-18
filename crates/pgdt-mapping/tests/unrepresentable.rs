@@ -26,6 +26,7 @@ use pgdt_model::internal::{ColumnStatisticsExt, UnrepresentableExt};
 use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, StatisticsView, Unrepresentable};
 
 use pgdt_fixtures::{VERSIONS, types_fixture};
+use tokio_util::sync::CancellationToken;
 
 /// `index`'s count for every column holding one, as `table.column`.
 fn counts(index: &DumpIndex) -> BTreeMap<String, Unrepresentable> {
@@ -58,6 +59,7 @@ async fn parsed(fixture: &Path, dir: &Path, request: &StatisticsRequest) -> Dump
         &ScanOptions::default(),
         &GatherOptions::default(),
         request,
+        &CancellationToken::new(),
     )
     .await
     .unwrap()

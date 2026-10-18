@@ -24,10 +24,7 @@ use pgdt_dump::cache::{
     CacheMode, CacheStatus, LoadedCache, OriginMatch, SourceWatch, StrictIdentity, WeakIdentity,
 };
 use pgdt_dump::{ReadOptions, ScanOptions, cache, preamble_only};
-use pgdt_io::{
-    ByteRangeSource, Cancellation, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism,
-    Partitioning,
-};
+use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism, Partitioning};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_model::DiagnosticKind;
@@ -35,6 +32,7 @@ use pgdt_query::{QueryOptions, table_stream, table_stream_partitions};
 
 mod common;
 use common::{edge_cases, sandboxed_edge_cases as sandboxed};
+use tokio_util::sync::CancellationToken;
 
 /// A source whose identity moves under the run reading it: the first
 /// `observations` answers about `modified` are the file's, and every one
@@ -53,7 +51,7 @@ struct Shifting {
     /// a source whose wait is a request answers a cancellation
     /// (`docs/design/decisions.md`, "D26"). `None` for a source that always
     /// delivers, which is every other test here.
-    dropping: Option<(u64, Arc<Cancellation>)>,
+    dropping: Option<(u64, CancellationToken)>,
     /// Where the file is cut short: a read reaching past it fails as
     /// `LocalFileSource` fails a read past a truncation, with the short read's
     /// own error. `None` for a file of its whole length.
@@ -79,7 +77,7 @@ impl Shifting {
     /// The same moving identity, over a source that answers a cancellation by
     /// abandoning every read at or past `trip` — so the run ends through
     /// `stream::cancelled_read` rather than through a polled check point.
-    fn dropping(path: PathBuf, observations: usize, trip: u64, cancel: Arc<Cancellation>) -> Self {
+    fn dropping(path: PathBuf, observations: usize, trip: u64, cancel: CancellationToken) -> Self {
         Self { dropping: Some((trip, cancel)), ..Self::new(path, observations) }
     }
 
@@ -199,6 +197,7 @@ async fn an_aborted_run_leaves_the_cache_on_disk_exactly_as_it_was() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -213,6 +212,7 @@ async fn an_aborted_run_leaves_the_cache_on_disk_exactly_as_it_was() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .expect_err("a run whose source moved underneath it does not finish");
@@ -240,6 +240,7 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .expect_err("a disabled-cache run still says the file moved");
@@ -255,6 +256,7 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -285,7 +287,7 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
     // `preamble_only` over that same complete cache saves nothing either.
     let shifting = Shifting::new(dump.clone(), 1);
     let opened = CacheMode::enabled(&path).open_source(Arc::new(shifting)).await.unwrap();
-    let err = preamble_only(opened, ReadOptions::default(), Parallelism::default())
+    let err = preamble_only(opened, &ScanOptions::default())
         .await
         .expect_err("a preamble-only run over a complete cache is checked too");
     assert!(matches!(err, Error::SourceChangedWhileRead { .. }), "got {err:?}");
@@ -310,14 +312,15 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
     let (_dir, dump) = sandboxed();
 
     // Every read drops, so the interrupt lands on the prepass's first one.
-    let cancel = Arc::new(Cancellation::new());
-    let shifting = Shifting::dropping(dump, 1, 0, Arc::clone(&cancel));
-    let options = ScanOptions { cancel: Some(cancel), ..ScanOptions::default() };
+    let cancel = CancellationToken::new();
+    let shifting = Shifting::dropping(dump, 1, 0, cancel.clone());
+    let options = ScanOptions::default();
     let err = map_file(
         CacheMode::DISABLED.open_source(Arc::new(shifting)).await.unwrap(),
         &options,
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &cancel,
     )
     .await
     .expect_err("a dropped prepass read still says the file moved");
@@ -335,11 +338,10 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
     }
     file.extend_from_slice(b"\\.\n\nSELECT 1;\n");
     std::fs::write(&dump, &file).unwrap();
-    let cancel = Arc::new(Cancellation::new());
-    let shifting = Shifting::dropping(dump, 1, data_offset, Arc::clone(&cancel));
+    let cancel = CancellationToken::new();
+    let shifting = Shifting::dropping(dump, 1, data_offset, cancel.clone());
     let options = ScanOptions {
         read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
-        cancel: Some(cancel),
         parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
     };
     let err = map_file(
@@ -347,6 +349,7 @@ async fn a_run_ended_by_a_dropped_read_is_checked_too() {
         &options,
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &cancel,
     )
     .await
     .expect_err("a dropped region read still says the file moved");
@@ -382,17 +385,15 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
 
     // `--dtcache none` observes nothing but the baseline before the read that
     // fails, so the re-check is the first to see the move.
-    let map = |source: Shifting, cache: CacheMode| {
-        let options = options.clone();
-        async move {
-            map_file(
-                cache.open_source(Arc::new(source)).await.unwrap(),
-                &options,
-                &GatherOptions::default(),
-                &StatisticsRequest::METADATA,
-            )
-            .await
-        }
+    let map = |source: Shifting, cache: CacheMode| async move {
+        map_file(
+            cache.open_source(Arc::new(source)).await.unwrap(),
+            &options,
+            &GatherOptions::default(),
+            &StatisticsRequest::METADATA,
+            &CancellationToken::new(),
+        )
+        .await
     };
     let err = map(Shifting::cut(dump.clone(), 1, cut), CacheMode::DISABLED).await.unwrap_err();
     assert!(changed(&err), "the mapping pass names the change: {err:?}");
@@ -405,7 +406,7 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
 
     let cut_short = Arc::new(Shifting::cut(dump.clone(), 1, 10));
     let opened = CacheMode::DISABLED.open_source(cut_short).await.unwrap();
-    let err = preamble_only(opened, options.read, options.parallelism).await.unwrap_err();
+    let err = preamble_only(opened, &options).await.unwrap_err();
     assert!(changed(&err), "the preamble names the change: {err:?}");
 
     // A warm query: the map is complete, so every read is the replay's. The
@@ -417,6 +418,7 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
         &options,
         &GatherOptions::default(),
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -433,7 +435,7 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
     let stream = table_stream(
         shifting,
         "public.t",
-        options.clone(),
+        options,
         QueryOptions::default(),
         None,
         CacheMode::enabled(&path),
@@ -445,7 +447,7 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
     let streams = table_stream_partitions(
         shifting,
         "public.t",
-        options.clone(),
+        options,
         QueryOptions::default(),
         CacheMode::enabled(&path),
     )
@@ -484,6 +486,7 @@ async fn a_dump_replaced_by_rename_under_an_open_source_is_not_a_change() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .expect("the descriptor still reads the file this run opened");
@@ -515,6 +518,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -549,6 +553,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .expect("an mtime is too weak to invalidate a cache by default");
@@ -563,6 +568,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -593,6 +599,7 @@ async fn strict_time_refuses_a_moved_mtime_and_a_missing_one() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -625,6 +632,7 @@ async fn location_binds_nothing_on_a_local_source() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -641,6 +649,7 @@ async fn location_binds_nothing_on_a_local_source() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .expect("`location` alone binds nothing a local source has");
@@ -711,6 +720,7 @@ async fn mapped(
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .map(drop)
@@ -749,6 +759,7 @@ async fn a_cache_written_for_another_origin_loads_with_a_warning() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .expect("advisory by default");
@@ -1036,15 +1047,14 @@ async fn a_source_nothing_can_check_is_refused_where_a_read_begins_unless_nothin
             &ScanOptions::default(),
             &GatherOptions::default(),
             &StatisticsRequest::METADATA,
+            &CancellationToken::new(),
         )
         .await
         .unwrap_err();
         uncheckable(&refused, strict);
 
         let opened = mode.open_source(source.clone()).await.unwrap();
-        let refused = preamble_only(opened, ReadOptions::default(), Parallelism::default())
-            .await
-            .unwrap_err();
+        let refused = preamble_only(opened, &ScanOptions::default()).await.unwrap_err();
         uncheckable(&refused, strict);
 
         let mut stream = table_stream(

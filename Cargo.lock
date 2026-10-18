@@ -2068,6 +2068,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -3654,6 +3655,7 @@ dependencies = [
  "tempfile",
  "tikv-jemallocator",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3713,6 +3715,7 @@ dependencies = [
  "pgdt-mapping",
  "pgdt-model",
  "tempfile",
+ "tokio-util",
 ]
 
 [[package]]
@@ -3726,6 +3729,7 @@ dependencies = [
  "serde",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "url",
  "xz-seek",
@@ -3749,6 +3753,7 @@ dependencies = [
  "serde",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
 ]
 
@@ -3785,6 +3790,7 @@ dependencies = [
  "serde",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "xz-seek",
 ]

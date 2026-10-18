@@ -6498,7 +6498,6 @@ READ = tuple(
     f"crates/pgdt-io/src/{name}.rs"
     for name in (
         "arrangement",
-        "cancel",
         "lib",
         "memory",
         "parallelism",

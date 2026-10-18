@@ -31,6 +31,7 @@ use pgdt_query::{
 
 mod common;
 use common::{VERSIONS, all_fixtures, parsed_copy, statistics_fixture, types_fixture};
+use tokio_util::sync::CancellationToken;
 
 /// Each group's bounds in `column`'s stored set `set`, over the values its
 /// type holds: what gathering stored, read through the view that reads it as
@@ -489,6 +490,7 @@ async fn check_fixture(
         &ScanOptions::default(),
         &GatherOptions::default(),
         &request,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -1106,10 +1108,9 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
         parallelism: Parallelism::workers(SPLIT_JOBS, 1 << 30),
         ..QueryOptions::default()
     };
-    let streams =
-        table_stream_partitions(&source, "public.ordered", scan.clone(), split, cache.clone())
-            .await
-            .unwrap();
+    let streams = table_stream_partitions(&source, "public.ordered", scan, split, cache.clone())
+        .await
+        .unwrap();
     for mut stream in streams {
         while let Some(batch) = stream.next().await {
             batch.unwrap();
@@ -1147,7 +1148,7 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
             let mut stream = table_stream(
                 &source,
                 "public.ordered",
-                scan.clone(),
+                scan,
                 options.clone(),
                 token.take(),
                 cache.clone(),
@@ -1256,15 +1257,10 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
         for (use_statistics, jobs) in [(true, 1), (true, SPLIT_JOBS), (false, 1)] {
             let what = format!("{filter:?} at {jobs} job(s), statistics {use_statistics}");
             let options = with(filter.clone(), use_statistics, jobs);
-            let streams = table_stream_partitions(
-                &source,
-                "public.ordered",
-                scan.clone(),
-                options,
-                cache.clone(),
-            )
-            .await
-            .unwrap();
+            let streams =
+                table_stream_partitions(&source, "public.ordered", scan, options, cache.clone())
+                    .await
+                    .unwrap();
             let pieces = streams.len();
             let mut rows = 0;
             let mut stops = Vec::new();

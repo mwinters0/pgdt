@@ -25,6 +25,7 @@ use pgdt_io::{
 };
 use pgdt_model::internal::BlockCensusExt;
 use pgdt_model::internal::BlockObserver;
+use tokio_util::sync::CancellationToken;
 
 mod piece;
 
@@ -43,7 +44,7 @@ pub(crate) enum RegionScan {
     /// the caller allows one worker, the source declines to be split here, or
     /// what is left of the file is smaller than one partition.
     Declined,
-    /// [`ScanOptions::cancel`] was set between two windows: nothing about the
+    /// The pass's cancellation fired between two windows: nothing about the
     /// region is known, and the caller banks what it had before it.
     Cancelled,
 }
@@ -206,6 +207,7 @@ pub(crate) fn report_shortfall(flag: &mut bool, shortfall: Option<Shortfall>) {
 pub(crate) async fn scan_region(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
+    cancel: &CancellationToken,
     table: &str,
     header_offset: u64,
     data_offset: u64,
@@ -233,14 +235,24 @@ pub(crate) async fn scan_region(
     // inside a top-level one and must leave the source as it found it.
     source.hint_parallelism(options.parallelism);
     source.hint_wait_policy(WaitPolicy::MayWait);
-    let scanned =
-        run_region(source, options, table, &advice, workers, data_offset, census, size, observer)
-            .await;
+    let scanned = run_region(
+        source,
+        options,
+        cancel,
+        table,
+        &advice,
+        workers,
+        data_offset,
+        census,
+        size,
+        observer,
+    )
+    .await;
     source.hint_wait_policy(WaitPolicy::NeverWait);
 
     let scan = match scanned? {
         Some(interior) => RegionScan::Closed(interior),
-        None if options.cancelled() => RegionScan::Cancelled,
+        None if cancel.is_cancelled() => RegionScan::Cancelled,
         // Every window ran to the end of the file and none held the
         // terminator: `UnterminatedCopyBlock`, reached the parallel way.
         None => return Err(Error::UnterminatedCopyBlock { header_offset }),
@@ -306,6 +318,7 @@ fn shortfall(
 async fn run_region(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
+    cancel: &CancellationToken,
     table: &str,
     advice: &Partitioning,
     workers: usize,
@@ -324,7 +337,7 @@ async fn run_region(
         // Once per window, on the same argument the mapping loop checks once
         // per chunk (`docs/design/decisions.md`, "D26"): the window is the
         // shortest boundary inside a block a stop can be answered at.
-        if options.cancelled() {
+        if cancel.is_cancelled() {
             return Ok(None);
         }
         let ranges = cut(frontier..advice.window_end(frontier, workers, size), advice, workers);

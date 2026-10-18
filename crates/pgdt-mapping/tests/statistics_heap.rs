@@ -31,6 +31,7 @@ use pgdt_model::DumpIndex;
 use pgdt_model::{DataBlock, SpanBody};
 
 use pgdt_fixtures::{VERSIONS, sandboxed, statistics_fixture, types_fixture};
+use tokio_util::sync::CancellationToken;
 
 struct Counting;
 
@@ -75,6 +76,7 @@ async fn parse(dump: &Path, options: &ScanOptions, statistics: &StatisticsReques
         options,
         &GatherOptions::default(),
         statistics,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -181,7 +183,6 @@ async fn a_split_blocks_pieces_are_charged_and_released() {
         let options = ScanOptions {
             read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
             parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            ..ScanOptions::default()
         };
         let run = parse(&dump, &options, &request(256)).await;
         let label = format!("{jobs} jobs");

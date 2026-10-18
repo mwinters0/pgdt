@@ -6,7 +6,7 @@
 //! path end to end, the same evidence `tests/preamble.rs` pins the DDL
 //! grammar against.
 
-use pgdt_io::{ByteRangeSource, Parallelism};
+use pgdt_io::ByteRangeSource;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use arrow::datatypes::{DataType, Field, Fields};
 use pgdt_codec::UnrepresentableMode;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnResolution, SchemaMode, resolve_columns};
-use pgdt_dump::{ReadOptions, ScanOptions};
+use pgdt_dump::ScanOptions;
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::build_index;
 use pgdt_model::{DumpMetadata, TableName};
@@ -22,10 +22,11 @@ use pgdt_query::{QueryOptions, table_schema};
 
 mod common;
 use common::{all_fixtures, multidb_fixture, types_fixture};
+use tokio_util::sync::CancellationToken;
 
 async fn metadata(path: &Path) -> DumpMetadata {
     let source = LocalFileSource::open(path).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     index.metadata.expect("build_index always populates metadata")
 }
 
@@ -493,6 +494,7 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
                 &ScanOptions::default(),
                 &strict,
                 &StatisticsRequest::DATA,
+                &CancellationToken::new(),
             )
             .await
             .unwrap_or_else(|e| panic!("{label}: a strict parse refused: {e}"));
@@ -544,6 +546,7 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
                 &ScanOptions::default(),
                 &strict,
                 &StatisticsRequest::DATA,
+                &CancellationToken::new(),
             )
             .await
             {
@@ -731,8 +734,7 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
     let mut witnesses: BTreeMap<&'static str, String> = BTreeMap::new();
     for path in all_fixtures() {
         let source = LocalFileSource::open(&path).unwrap();
-        let index =
-            build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
         for (database, block) in index.blocks_with_database() {
             if block.header.columns.is_empty() {
                 continue;

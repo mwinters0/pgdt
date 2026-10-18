@@ -8,13 +8,14 @@ use anyhow::{Context, Result};
 use clap::Args;
 use namespace_init::InitShutdown;
 use pgdt_dump::cache::Held;
-use pgdt_dump::{ScanOptions, preamble_only};
-use pgdt_io::{Cancellation, Origin};
+use pgdt_dump::preamble_only;
+use pgdt_io::Origin;
 use pgdt_mapping::statistics::{
     GatherOptions, ROW_GROUP_DEFAULT_MIN_ROWS, StatisticsLevel, StatisticsRequest,
     StatisticsSelection, StatisticsSizing, StatisticsTarget,
 };
 use pgdt_model::PostgresInvalidValues;
+use tokio_util::sync::CancellationToken;
 
 use crate::args::{
     IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, cache_mode, parse_chunk_size,
@@ -236,7 +237,7 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
     let parallel = stated.resolve(source.as_ref(), cached_statistics);
     parallel.announce();
     if preamble_only_flag {
-        let (metadata, diagnostics) = preamble_only(opened, read.options(), parallel.parallelism())
+        let (metadata, diagnostics) = preamble_only(opened, &scan_options(read, &parallel))
             .await
             .map_err(|e| naming_the_source(e, &origin))?;
         print_metadata(&metadata, false);
@@ -246,14 +247,14 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
         return Ok(());
     }
     let size = source.size().await?;
-    let cancel = Arc::new(Cancellation::new());
-    let guard = install_interrupt_guard(Arc::clone(&cancel), init)?;
-    let scan_options = ScanOptions { cancel: Some(cancel), ..scan_options(read, &parallel) };
+    let cancel = CancellationToken::new();
+    let guard = install_interrupt_guard(cancel.clone(), init)?;
+    let scan_options = scan_options(read, &parallel);
     let gather = GatherOptions {
         statistics_allowance_bytes: parallel.statistics_allowance(),
         postgres_invalid_values,
     };
-    let run = pgdt_mapping::map_file(opened, &scan_options, &gather, &statistics)
+    let run = pgdt_mapping::map_file(opened, &scan_options, &gather, &statistics, &cancel)
         .await
         .map_err(|e| naming_the_source(e, &origin))?;
     introspect::statistics_returned(&run.statistics);

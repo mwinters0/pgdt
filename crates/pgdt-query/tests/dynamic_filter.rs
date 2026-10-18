@@ -38,6 +38,7 @@ use pgdt_query::{
 
 mod common;
 use common::{VERSIONS, sandboxed, statistics_fixture};
+use tokio_util::sync::CancellationToken;
 
 /// A group size several `ordered` rows long, so its thousand ascending ids
 /// span many groups.
@@ -110,6 +111,7 @@ async fn mapped(dump: &Path, group_size: u64) -> DumpIndex {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &request,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -377,8 +379,7 @@ async fn a_state_moving_inside_a_group_is_read_at_the_next_chunk() {
     for use_statistics in [true, false] {
         let moving = Moving::new(Expr::default(), past(), 4);
         let got =
-            run_scanned(&dump, &index, "public.t", 1, use_statistics, scan.clone(), Some(moving))
-                .await;
+            run_scanned(&dump, &index, "public.t", 1, use_statistics, scan, Some(moving)).await;
         let (head, tail) = at_the_move(&got);
         let read = head.len() as i32;
         assert!(read > 0 && read < 1500, "statistics {use_statistics}: {read} row(s) before");
@@ -388,16 +389,9 @@ async fn a_state_moving_inside_a_group_is_read_at_the_next_chunk() {
         assert_eq!(counts, (0, (1500 - read) as u64), "statistics {use_statistics}");
 
         let moving = Moving::new(Expr::default(), past(), 4);
-        let split = run_scanned(
-            &dump,
-            &index,
-            "public.t",
-            SPLIT_JOBS,
-            use_statistics,
-            scan.clone(),
-            Some(moving),
-        )
-        .await;
+        let split =
+            run_scanned(&dump, &index, "public.t", SPLIT_JOBS, use_statistics, scan, Some(moving))
+                .await;
         assert!(split.partitions.len() > 1, "statistics {use_statistics}: {split:?}");
         let kept: Vec<i32> = split.ids.iter().copied().filter(|&id| id > 1500).collect();
         assert!(kept.iter().copied().eq(1501..=LONG_ROWS), "statistics {use_statistics}");
@@ -424,7 +418,7 @@ async fn a_state_read_inside_a_group_it_rules_out_skips_the_rest() {
     let beyond = || term("id", PredicateOp::Gt, "5000");
 
     let moving = Moving::new(Expr::default(), beyond(), 4);
-    let got = run_scanned(&dump, &index, "public.t", 1, true, scan.clone(), Some(moving)).await;
+    let got = run_scanned(&dump, &index, "public.t", 1, true, scan, Some(moving)).await;
     let read = got.ids.len() as i32;
     assert!(read > 0 && read < LONG_ROWS, "{read} row(s) before");
     assert!(got.ids.iter().copied().eq(1..=read));

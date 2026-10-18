@@ -25,6 +25,7 @@ use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest, StatisticsSizin
 
 mod in_order;
 use in_order::{Order, RunScansInOrder};
+use tokio_util::sync::CancellationToken;
 
 const ROWS: i64 = 1024;
 const GROUP_ROWS: u64 = 64;
@@ -85,6 +86,7 @@ async fn parsed(dir: &Path) -> PathBuf {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &request,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();

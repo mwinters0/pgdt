@@ -47,10 +47,10 @@ partition advice a source gives and the cut ([`decisions.md`](decisions.md),
 ## Stopping
 
 A caller's ask that a scan stop, and a signal that ends the process
-([`decisions.md`](decisions.md), "D26").
+([`decisions.md`](decisions.md), "D26"). The ask is `tokio_util`'s
+`CancellationToken`, which no module of ours holds: the mapping pass takes
+and polls it, and hands it to a source whose wait is a request.
 
-- **pgdt-io** — `cancel.rs`: the token a scan polls, below everything that
-  scans.
 - **namespace-init** — `lib.rs`, `unshare.rs`: ending as a PID namespace's
   init on a signal, shared by `pgdt` and the DataFusion CLI it composes.
 - **pgdt** — `interrupt.rs`: what a signal does to a `parse`, the binary's

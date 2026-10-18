@@ -14,7 +14,13 @@ publish.workspace = true
 # pgdt-mapping's own unit tests too, linking a second copy of their crate whose
 # types are not the test's; nothing passes one across today.
 [features]
-mapping = ["dep:pgdt-mapping", "dep:pgdt-dump", "dep:pgdt-io", "dep:pgdt-model"]
+mapping = [
+    "dep:pgdt-mapping",
+    "dep:pgdt-dump",
+    "dep:pgdt-io",
+    "dep:pgdt-model",
+    "dep:tokio-util",
+]
 
 [dependencies]
 pgdt-dump = { path = "../pgdt-dump", optional = true }
@@ -22,3 +28,4 @@ pgdt-io = { path = "../pgdt-io", optional = true }
 pgdt-mapping = { path = "../pgdt-mapping", optional = true }
 pgdt-model = { path = "../pgdt-model", optional = true }
 tempfile = { workspace = true }
+tokio-util = { workspace = true, optional = true }

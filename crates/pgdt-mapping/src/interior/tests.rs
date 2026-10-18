@@ -4,18 +4,18 @@ use pgdt_dump::internal::Builder;
 use pgdt_dump::{CopyScanner, Event};
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_fixtures::{edge_cases, fixture};
-use pgdt_io::Cancellation;
 use pgdt_io::{ByteRangeSource, PartitionRead};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_model::internal::FieldCount;
 use pgdt_model::{BlockCensus, UnrepresentableTier};
 use pgdt_model::{DataBlock, SpanBody};
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 /// A cancellation already asked for, so the scan under it stops at its
 /// first poll rather than at a moment a test would have to arrange.
-fn cancelled() -> Arc<Cancellation> {
-    let cancel = Arc::new(Cancellation::new());
+fn cancelled() -> CancellationToken {
+    let cancel = CancellationToken::new();
     cancel.cancel();
     cancel
 }
@@ -337,7 +337,6 @@ fn scheduled(source: &LocalFileSource, jobs: usize) -> ScanOptions {
     ScanOptions {
         read: ReadOptions { chunk_size_bytes: 8, ..ReadOptions::default() },
         parallelism: Parallelism::workers(jobs, pgdt_io::DEFAULT_MEMORY_BUDGET),
-        ..ScanOptions::default()
     }
 }
 
@@ -368,6 +367,7 @@ async fn a_scheduled_region_answers_what_the_serial_scanner_answers() {
                 let got = scan_region(
                     &source,
                     &options,
+                    &CancellationToken::new(),
                     "public.t",
                     block.header_offset,
                     block.data_offset,
@@ -468,6 +468,7 @@ async fn no_read_a_worker_makes_exceeds_the_chunk_size() {
             let got = scan_region(
                 &source,
                 &options,
+                &CancellationToken::new(),
                 "public.t",
                 block.header_offset,
                 block.data_offset,
@@ -543,6 +544,7 @@ async fn no_read_a_worker_makes_exceeds_the_stated_unit() {
             let got = scan_region(
                 &source,
                 &options,
+                &CancellationToken::new(),
                 "public.t",
                 block.header_offset,
                 block.data_offset,
@@ -604,6 +606,7 @@ async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
     let got = scan_region(
         &source,
         &serial,
+        &CancellationToken::new(),
         "public.t",
         block.header_offset,
         block.data_offset,
@@ -623,6 +626,7 @@ async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
     let got = scan_region(
         &source,
         &shipped,
+        &CancellationToken::new(),
         "public.t",
         block.header_offset,
         block.data_offset,
@@ -644,10 +648,11 @@ async fn a_cancelled_region_closes_nothing_and_raises_nothing() {
     let size = file.len() as u64;
     let block = &reference(&file)[0];
     let source = LocalFileSource::open(&path).unwrap();
-    let options = ScanOptions { cancel: Some(cancelled()), ..scheduled(&source, 4) };
+    let options = scheduled(&source, 4);
     let got = scan_region(
         &source,
         &options,
+        &cancelled(),
         "public.t",
         block.header_offset,
         block.data_offset,
@@ -682,6 +687,7 @@ async fn a_budget_affording_fewer_readers_than_asked_for_answers_a_shortfall() {
     let got = scan_region(
         &source,
         &options,
+        &CancellationToken::new(),
         "public.t",
         block.header_offset,
         block.data_offset,
@@ -721,6 +727,7 @@ async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
     let got = scan_region(
         &source,
         &serial,
+        &CancellationToken::new(),
         "public.t",
         block.header_offset,
         block.data_offset,
@@ -744,6 +751,7 @@ async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
     let got = scan_region(
         &source,
         &shipped,
+        &CancellationToken::new(),
         "public.t",
         block.header_offset,
         block.data_offset,
@@ -776,6 +784,7 @@ async fn a_block_the_file_ends_inside_is_unterminated() {
     let err = scan_region(
         &source,
         &options,
+        &CancellationToken::new(),
         "public.t",
         0,
         data_offset,
@@ -810,6 +819,7 @@ async fn a_row_longer_than_a_tail_read_is_still_one_row() {
         let got = scan_region(
             &source,
             &options,
+            &CancellationToken::new(),
             "public.t",
             block.header_offset,
             block.data_offset,
@@ -856,6 +866,7 @@ async fn a_split_block_refuses_the_row_a_serial_scan_refuses() {
                 let got = scan_region(
                     &source,
                     &options,
+                    &CancellationToken::new(),
                     "public.t",
                     0,
                     header.len() as u64,

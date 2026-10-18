@@ -8,14 +8,13 @@
 use std::future::Future;
 use std::ops::Range;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::time::SystemTime;
 
 use bytes::Bytes;
+use tokio_util::sync::CancellationToken;
 
 use pgdt_core::Result;
 
-use crate::cancel::Cancellation;
 use crate::parallelism::{Parallelism, WorkerMemory};
 use crate::partition::Partitioning;
 
@@ -212,12 +211,12 @@ pub trait ByteRangeSource: Send + Sync {
     /// for a source whose own wait needs it.
     ///
     /// **Advisory, and it defaults to doing nothing**, which is right for
-    /// every source whose wait is a `pread`: the read loop's own poll of
-    /// `pgdt_dump::ScanOptions::cancelled` bounds a stop by tens of milliseconds
-    /// and nothing in the source has to know. A source whose wait is a network
-    /// request has no such bound and takes the signal so it can drop the
-    /// request in flight (`docs/design/decisions.md`, "D26").
-    fn hint_cancellation(&self, _cancel: Arc<Cancellation>) {}
+    /// every source whose wait is a `pread`: the mapping pass's own poll of
+    /// the token bounds a stop by tens of milliseconds and nothing in the
+    /// source has to know. A source whose wait is a network request has no
+    /// such bound and keeps the token so it can drop the request in flight
+    /// (`docs/design/decisions.md`, "D26").
+    fn hint_cancellation(&self, _cancel: CancellationToken) {}
     /// Where this source was fetched from and which version of the object it
     /// is reading — the half of a cache's identity a source reached over a
     /// network has and a file does not

@@ -20,10 +20,9 @@ use common::oracle::Oracle;
 use common::{fixture, run, run_in, run_ok, run_ok_in, stderr_of, strip_cache_line};
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
-use pgdt_io::{
-    ByteRangeSource, Cancellation, KnownCompression, Origin, Parallelism, Recognized, open,
-};
+use pgdt_io::{ByteRangeSource, KnownCompression, Origin, Parallelism, Recognized, open};
 use pgdt_mapping::statistics::StatisticsRequest;
+use tokio_util::sync::CancellationToken;
 
 /// The dump every test here serves: real `pg_dump` output, so a scan over it
 /// finds the same tables a local read finds.
@@ -305,8 +304,8 @@ async fn a_stalled_request_is_abandoned_and_retried_rather_than_waited_out() {
 async fn a_cancellation_drops_the_request_in_flight() {
     let oracle = Oracle::serving(dump_bytes()).stalling_request(FIRST_READ, STALL).start();
     let source = source_of(&oracle.url()).await;
-    let cancel = Arc::new(Cancellation::new());
-    source.hint_cancellation(Arc::clone(&cancel));
+    let cancel = CancellationToken::new();
+    source.hint_cancellation(cancel.clone());
 
     let asker = tokio::spawn(async move {
         tokio::time::sleep(ms(100)).await;
@@ -328,7 +327,7 @@ async fn a_cancellation_drops_the_request_in_flight() {
 async fn a_source_nobody_has_cancelled_reads_as_before() {
     let oracle = serving_dump();
     let source = source_of(&oracle.url()).await;
-    let cancel = Arc::new(Cancellation::new());
+    let cancel = CancellationToken::new();
     source.hint_cancellation(cancel);
     assert_eq!(source.read_range(0, 4).await.unwrap().len(), 4);
 }
@@ -710,15 +709,16 @@ async fn a_cancelled_remote_read_is_an_interrupted_run_rather_than_an_error() {
     let source = source_of(&oracle.url()).await;
     let dir = tempfile::tempdir().unwrap();
     let mode = CacheMode::enabled(dir.path().join("remote.dtcache"));
-    let cancel = Arc::new(Cancellation::new());
-    let options = ScanOptions { cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+    let cancel = CancellationToken::new();
+    let options = ScanOptions::default();
 
     // Cancel while the stalled read is in flight, so the flag lands inside a
     // wait rather than at a check point: the stall outlasts this sleep by two
     // orders of magnitude.
+    let asking = cancel.clone();
     let asker = tokio::spawn(async move {
         tokio::time::sleep(ms(300)).await;
-        cancel.cancel();
+        asking.cancel();
     });
 
     let started = Instant::now();
@@ -727,6 +727,7 @@ async fn a_cancelled_remote_read_is_an_interrupted_run_rather_than_an_error() {
         &options,
         &pgdt_mapping::statistics::GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &cancel,
     )
     .await
     .expect("a cancelled read is not an error");

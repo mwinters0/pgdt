@@ -35,6 +35,7 @@ use pgdt_query::{QueryOptions, table_stream};
 
 mod common;
 use common::edge_cases;
+use tokio_util::sync::CancellationToken;
 
 /// A `ByteRangeSource` wrapper that records every wait policy stated to it, in
 /// order, and otherwise is the local file underneath.
@@ -111,7 +112,7 @@ impl ByteRangeSource for RecordingSource {
 #[tokio::test]
 async fn a_structural_scan_grants_no_wait() {
     let source = RecordingSource::wrap(LocalFileSource::open(edge_cases()).unwrap());
-    build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    build_index(&source, &ScanOptions::default()).await.unwrap();
     assert_eq!(source.policies(), vec![WaitPolicy::NeverWait]);
 }
 
@@ -142,13 +143,13 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
     let options = ScanOptions {
         read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
-        ..ScanOptions::default()
     };
     map_file(
         CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
         &options,
         &GatherOptions::default(),
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -172,6 +173,7 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
         &options,
         &GatherOptions::default(),
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();

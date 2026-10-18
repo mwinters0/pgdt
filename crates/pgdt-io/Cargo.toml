@@ -35,6 +35,9 @@ object_store = { version = "0.14.2", optional = true, default-features = false, 
 pgdt-core = { path = "../pgdt-core" }
 serde = { workspace = true, optional = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt", "sync"] }
+# The token a source races a request in flight against
+# (`ByteRangeSource::hint_cancellation`).
+tokio-util = { workspace = true }
 # The facade only — no subscriber, no output policy. The library names the
 # phases worth watching (the seek-table walk, the scan's start and
 # completion); the CLI decides whether and how to render them

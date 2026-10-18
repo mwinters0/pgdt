@@ -10,13 +10,14 @@ use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{Error, Result};
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::internal::announce_read_loop;
-use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ScanOptions};
+use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ReadOptions, ScanOptions};
 use pgdt_io::ByteRangeSource;
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
     BlockCensus, BlockGathered, BlockStatistics, CopyBlock, DataBlock, DumpIndex, DumpMetadata,
     IgnoredRefusals, PostgresInvalidValues, SpanBody, internal::BlockObserver,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::forward::{SaveThrottle, cancelled_read};
 use crate::interior::{CensusPlan, RegionScan, report_shortfall, scan_region};
@@ -57,7 +58,7 @@ pub(crate) enum Backfill {
 /// interrupt saves and stops. Announces how many blocks lacked them and, once
 /// every one is re-read, how many were — and nothing at all when none did.
 ///
-/// Deficiency register: `deficiency: KD37` — that is true of the flag and of a
+/// Deficiency register: `deficiency: KD37` — that is true of the token and of a
 /// dropped read this pass makes itself ([`observe_rows`]), and not of one the
 /// leader dispatched: [`reread_block`]'s [`scan_region`] propagates, so a
 /// source that answers a cancellation by failing its read ends a `parse` as
@@ -85,6 +86,7 @@ pub(crate) enum Backfill {
 pub(crate) async fn backfill_statistics(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    cancel: &CancellationToken,
     gather: &GatherOptions,
     cache: &CacheMode,
     watch: &SourceWatch,
@@ -130,7 +132,7 @@ pub(crate) async fn backfill_statistics(
     if unchecked > 0 {
         tracing::info!(blocks = unchecked, "check of blocks no strict parse checked started");
     }
-    announce_read_loop(source, scan_options, scan_options.parallelism);
+    announce_read_loop(source, scan_options.read, scan_options.parallelism);
     // There is no cache file to name in a `CachedBlockChanged` refusal
     // unless one is enabled. A block can lack what was asked under any mode —
     // a stated maximum no single read delivers leaves a freshly mapped block
@@ -156,6 +158,7 @@ pub(crate) async fn backfill_statistics(
             let gathered = reread_block(
                 source,
                 scan_options,
+                cancel,
                 gather.postgres_invalid_values,
                 cache_path,
                 index.metadata.as_ref(),
@@ -236,7 +239,7 @@ pub(crate) async fn backfill_statistics(
         run.checked += usize::from(unchecked);
         // Both of `map_forward`'s check points, a block's close being the
         // second (`docs/design/decisions.md`, "D63").
-        if scan_options.cancelled() && done + 1 < blocks {
+        if cancel.is_cancelled() && done + 1 < blocks {
             cache.save(watch, source, index).await?;
             run.interrupted = true;
             return Ok(run);
@@ -349,8 +352,9 @@ pub struct BlockReread {
 ///
 /// **The block is scanned as a mapping pass scans it**: offered to the leader
 /// under `scan_options`' parallelism, and read serially where it declines, so
-/// what is gathered is what a straight-through pass would have gathered.
-/// `Ok(None)` is [`ScanOptions::cancel`] stopping it before the block closed.
+/// what is gathered is what a straight-through pass would have gathered. It
+/// takes no cancellation, being no mapping pass: a caller stops it by
+/// dropping it (`docs/design/decisions.md`, "D26").
 ///
 /// **A block that no longer ends where the map says is refused**,
 /// [`Error::CachedBlockChanged`], rather than given statistics describing other
@@ -371,13 +375,14 @@ pub async fn gather_block_statistics(
     database: Option<&str>,
     block: &CopyBlock,
     backfill: &StatisticsBackfill,
-) -> Result<Option<BlockReread>> {
+) -> Result<BlockReread> {
     let size = source.size().await?;
-    announce_read_loop(source, scan_options, scan_options.parallelism);
+    announce_read_loop(source, scan_options.read, scan_options.parallelism);
     let mut shortfall_reported = false;
-    reread_block(
+    let reread = reread_block(
         source,
         scan_options,
+        &CancellationToken::new(),
         gather.postgres_invalid_values,
         None,
         metadata,
@@ -388,7 +393,9 @@ pub async fn gather_block_statistics(
         size,
         &mut shortfall_reported,
     )
-    .await
+    .await?;
+    Ok(reread
+        .expect("a re-read stops short only where its token fires, and nothing holds this one"))
 }
 
 /// [`gather_block_statistics`] once the source is announced, `size` known, and
@@ -401,6 +408,7 @@ pub async fn gather_block_statistics(
 async fn reread_block(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    cancel: &CancellationToken,
     invalid: PostgresInvalidValues,
     cache_path: Option<&Path>,
     metadata: Option<&DumpMetadata>,
@@ -420,6 +428,7 @@ async fn reread_block(
     let read = reread_rows(
         source,
         scan_options,
+        cancel,
         cache_path,
         metadata,
         database,
@@ -450,12 +459,13 @@ async fn reread_block(
 /// `observer` where there is one, and answer the census and count:
 /// what a back-fill ([`reread_block`]) and a query's census of a block mapped
 /// at the metadata level (`census_metadata_level`) both read. `None` is
-/// [`ScanOptions::cancel`] stopping it first; a block no longer ending where
+/// `cancel` stopping it first; a block no longer ending where
 /// the map says is [`Error::CachedBlockChanged`], naming `cache_path`.
 #[allow(clippy::too_many_arguments)]
 pub async fn reread_rows(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    cancel: &CancellationToken,
     cache_path: Option<&Path>,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
@@ -480,6 +490,7 @@ pub async fn reread_rows(
     let outcome = scan_region(
         source,
         scan_options,
+        cancel,
         &block.header.qualified_name(),
         block.header_offset,
         block.data_offset,
@@ -493,7 +504,9 @@ pub async fn reread_rows(
         RegionScan::Closed(interior) => (interior.end, interior.census),
         RegionScan::Cancelled => return Ok(None),
         RegionScan::Declined => {
-            match observe_rows(source, scan_options, block, &plan, size, observer).await? {
+            match observe_rows(source, scan_options.read, cancel, block, &plan, size, observer)
+                .await?
+            {
                 Some(read) => read,
                 None => return Ok(None),
             }
@@ -510,30 +523,31 @@ pub async fn reread_rows(
 /// its first data byte to its terminator, handing each to `observer` where
 /// there is one, and answer the `CopyEnd` the scanner met with the census —
 /// `None` where
-/// [`ScanOptions::cancel`] was set first, read once per chunk as
+/// `cancel` fired first, read once per chunk as
 /// [`map_forward`](crate::forward::map_forward) reads it.
 async fn observe_rows(
     source: &dyn ByteRangeSource,
-    scan_options: &ScanOptions,
+    read: ReadOptions,
+    cancel: &CancellationToken,
     block: &CopyBlock,
     plan: &CensusPlan,
     size: u64,
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<Option<(CopyEnd, BlockCensus)>> {
     let scanner = CopyScanner::resume(block.data_offset, Some((block.header_offset, 0)));
-    let mut chunked = ChunkedScanner::new(scanner, size, scan_options.read);
+    let mut chunked = ChunkedScanner::new(scanner, size, read);
     let mut census = BlockCensus::new(plan.width);
     loop {
-        if scan_options.cancelled() {
+        if cancel.is_cancelled() {
             return Ok(None);
         }
         let mut chunk = match chunked.next_chunk(source).await {
             Ok(chunk) => chunk,
             // The check above, reached through the read rather than
-            // through the flag ([`cancelled_read`]). This block's re-read
+            // through the token ([`cancelled_read`]). This block's re-read
             // is abandoned either way, so the caller hears the same
             // `None`.
-            Err(e) if cancelled_read(&e, scan_options) => return Ok(None),
+            Err(e) if cancelled_read(&e, cancel) => return Ok(None),
             Err(e) => return Err(e),
         };
         while let Some(event) = chunk.next_event()? {

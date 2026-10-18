@@ -16,6 +16,7 @@ use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
 use pgdt_mapping::{build_index, map_file};
 
 use pgdt_fixtures::{edge_cases, edge_cases_fixture, objects_fixture, types_fixture};
+use tokio_util::sync::CancellationToken;
 
 /// Render the whole event stream, decoded, as stable text.
 async fn render(path: &Path, chunk_size: usize) -> String {
@@ -23,7 +24,7 @@ async fn render(path: &Path, chunk_size: usize) -> String {
     let read = ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() };
     let mut out = String::new();
 
-    scan(&source, read, Parallelism::default(), |event| {
+    scan(&source, &ScanOptions { read, ..ScanOptions::default() }, |event| {
         match event {
             Event::CopyStart(start) => {
                 let cols = if start.header.columns.is_empty() {
@@ -95,8 +96,7 @@ async fn event_stream_is_independent_of_chunk_size() {
 async fn generated_fixtures_have_the_expected_structure() {
     for version in [13, 16, 18] {
         let source = LocalFileSource::open(edge_cases_fixture(version, "default")).unwrap();
-        let index =
-            build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
         let summary: Vec<(String, String, u64)> = index
             .blocks()
@@ -131,8 +131,7 @@ async fn recorded_offsets_address_the_right_bytes() {
         let path = edge_cases_fixture(version, "default");
         let bytes = std::fs::read(&path).unwrap();
         let source = LocalFileSource::open(&path).unwrap();
-        let index =
-            build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
         for block in index.blocks() {
             let header = &bytes[block.header_offset as usize..block.data_offset as usize];
@@ -156,8 +155,7 @@ async fn dumps_without_copy_blocks_yield_no_blocks() {
     for version in [13, 16, 18] {
         for variant in ["schema-only", "inserts", "column-inserts"] {
             let source = LocalFileSource::open(edge_cases_fixture(version, variant)).unwrap();
-            let index =
-                build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+            let index = build_index(&source, &ScanOptions::default()).await.unwrap();
             assert!(index.blocks().next().is_none(), "pg_dump {version} {variant}");
         }
     }
@@ -167,8 +165,7 @@ async fn dumps_without_copy_blocks_yield_no_blocks() {
 async fn data_only_dumps_carry_every_block() {
     for version in [13, 16, 18] {
         let source = LocalFileSource::open(edge_cases_fixture(version, "data-only")).unwrap();
-        let index =
-            build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
         assert_eq!(index.blocks().count(), 6, "pg_dump {version} data-only");
         assert_eq!(index.total_rows(), 144);
     }
@@ -192,7 +189,7 @@ async fn copy_text_escaping_round_trips_through_postgres() {
         let mut in_escapes = false;
         let mut checked = 0usize;
 
-        scan(&source, ReadOptions::default(), Parallelism::default(), |event| {
+        scan(&source, &ScanOptions::default(), |event| {
             match event {
                 Event::CopyStart(start) => in_escapes = start.header.matches("public.escapes"),
                 Event::CopyEnd(_) => in_escapes = false,
@@ -238,7 +235,7 @@ async fn copy_text_escaping_round_trips_through_postgres() {
 async fn scanning_can_stop_early() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let mut starts = 0;
-    scan(&source, ReadOptions::default(), Parallelism::default(), |event| {
+    scan(&source, &ScanOptions::default(), |event| {
         if let Event::CopyStart(_) = event {
             starts += 1;
             if starts == 2 {
@@ -258,7 +255,7 @@ async fn empty_file_scans_clean() {
     let path = dir.path().join("empty.sql");
     std::fs::write(&path, b"").unwrap();
     let source = LocalFileSource::open(&path).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     assert!(index.blocks().next().is_none());
     assert_eq!(index.scanned_through, 0);
 }
@@ -269,8 +266,7 @@ async fn unterminated_copy_block_is_an_error() {
     let path = dir.path().join("truncated.sql");
     std::fs::write(&path, b"COPY public.t (a) FROM stdin;\n1\n2\n").unwrap();
     let source = LocalFileSource::open(&path).unwrap();
-    let err =
-        build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap_err();
+    let err = build_index(&source, &ScanOptions::default()).await.unwrap_err();
     assert!(
         matches!(err, pgdt_core::Error::UnterminatedCopyBlock { .. }),
         "unexpected error: {err}"
@@ -284,7 +280,7 @@ async fn missing_trailing_newline_is_tolerated() {
     let path = dir.path().join("no-final-newline.sql");
     std::fs::write(&path, b"COPY public.t (a) FROM stdin;\n1\n\\.").unwrap();
     let source = LocalFileSource::open(&path).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let blocks: Vec<_> = index.blocks().collect();
     assert_eq!(blocks.len(), 1);
     assert_eq!(blocks[0].row_count, 1);
@@ -297,7 +293,7 @@ async fn crlf_line_endings_are_tolerated() {
     std::fs::write(&path, b"COPY public.t (a, b) FROM stdin;\r\n1\tone\r\n\\.\r\n").unwrap();
     let source = LocalFileSource::open(&path).unwrap();
     let mut rows: Vec<Vec<Option<String>>> = Vec::new();
-    scan(&source, ReadOptions::default(), Parallelism::default(), |event| {
+    scan(&source, &ScanOptions::default(), |event| {
         if let Event::Row(row) = event {
             rows.push(
                 split_fields(row.raw)
@@ -316,7 +312,7 @@ async fn crlf_line_endings_are_tolerated() {
 async fn decoded_blocks(path: &Path) -> Vec<(String, Vec<Vec<Option<String>>>)> {
     let source = LocalFileSource::open(path).unwrap();
     let mut blocks: Vec<(String, Vec<Vec<Option<String>>>)> = Vec::new();
-    scan(&source, ReadOptions::default(), Parallelism::default(), |event| {
+    scan(&source, &ScanOptions::default(), |event| {
         match event {
             Event::CopyStart(start) => blocks.push((start.header.qualified_name(), Vec::new())),
             Event::Row(row) => blocks.last_mut().unwrap().1.push(
@@ -341,7 +337,6 @@ fn serial_and_split() -> [ScanOptions; 2] {
         ScanOptions {
             read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
             parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
-            ..ScanOptions::default()
         },
     ]
 }
@@ -381,6 +376,7 @@ async fn a_crlf_conversion_reads_alike_and_a_stray_ending_is_refused() {
             &options,
             &GatherOptions::default(),
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -412,6 +408,7 @@ async fn a_crlf_conversion_reads_alike_and_a_stray_ending_is_refused() {
                 &options,
                 &GatherOptions::default(),
                 &StatisticsRequest::DATA,
+                &CancellationToken::new(),
             )
             .await
             {
@@ -449,7 +446,8 @@ async fn line_length_limit_is_enforced() {
 
     let source = LocalFileSource::open(&path).unwrap();
     let read = ReadOptions { chunk_size_bytes: 64, max_line_bytes: 512 };
-    let err = build_index(&source, read, Parallelism::default()).await.unwrap_err();
+    let err =
+        build_index(&source, &ScanOptions { read, ..ScanOptions::default() }).await.unwrap_err();
     assert!(matches!(err, pgdt_core::Error::LineTooLong { .. }), "unexpected error: {err}");
 }
 
@@ -477,7 +475,7 @@ async fn large_object_region_is_skipped_without_surfacing_lines() {
     let mut lines = Vec::new();
     let mut starts = Vec::new();
     let mut ends = Vec::new();
-    scan(&source, ReadOptions::default(), Parallelism::default(), |event| {
+    scan(&source, &ScanOptions::default(), |event| {
         match event {
             Event::Line(line) => lines.push(String::from_utf8_lossy(line.raw).into_owned()),
             Event::LargeObjectStart(start) => starts.push(start.start_offset),
@@ -507,8 +505,7 @@ async fn unterminated_large_object_region_is_an_error() {
     let path = dir.path().join("truncated_lo.sql");
     std::fs::write(&path, b"BEGIN;\nSELECT pg_catalog.lo_open('1', 131072);\n").unwrap();
     let source = LocalFileSource::open(&path).unwrap();
-    let err =
-        build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap_err();
+    let err = build_index(&source, &ScanOptions::default()).await.unwrap_err();
     assert!(
         matches!(err, pgdt_core::Error::UnterminatedLargeObjectRegion { .. }),
         "unexpected error: {err}"
@@ -524,7 +521,7 @@ async fn v17_plus_reports_one_large_object_region_per_blobs_entry() {
     let source = LocalFileSource::open(fixture18_objects("default")).unwrap();
     let mut starts = 0;
     let mut ends = 0;
-    scan(&source, ReadOptions::default(), Parallelism::default(), |event| {
+    scan(&source, &ScanOptions::default(), |event| {
         match event {
             Event::LargeObjectStart(_) => starts += 1,
             Event::LargeObjectEnd(_) => ends += 1,
@@ -556,7 +553,7 @@ async fn dollar_quote_end_reports_a_position_and_surfaces_no_lines() {
 
     let mut lines = Vec::new();
     let mut ends = Vec::new();
-    scan(&source, ReadOptions::default(), Parallelism::default(), |event| {
+    scan(&source, &ScanOptions::default(), |event| {
         match event {
             Event::Line(line) => lines.push(String::from_utf8_lossy(line.raw).into_owned()),
             Event::DollarQuoteEnd(end) => ends.push(end.offset),
@@ -590,7 +587,7 @@ async fn a_single_line_dollar_quoted_region_reports_its_end() {
     let source = LocalFileSource::open(&path).unwrap();
 
     let mut ends = Vec::new();
-    scan(&source, ReadOptions::default(), Parallelism::default(), |event| {
+    scan(&source, &ScanOptions::default(), |event| {
         if let Event::DollarQuoteEnd(end) = event {
             ends.push(end.offset);
         }
@@ -608,7 +605,7 @@ async fn headers_of(text: &str) -> Vec<String> {
     std::fs::write(&path, text).unwrap();
     let source = LocalFileSource::open(&path).unwrap();
     let mut headers = Vec::new();
-    scan(&source, ReadOptions::default(), Parallelism::default(), |event| {
+    scan(&source, &ScanOptions::default(), |event| {
         if let Event::CopyStart(start) = event {
             headers.push(start.header.qualified_name());
         }

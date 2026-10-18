@@ -15,6 +15,7 @@ use pgdt_dump::internal::{tiling_diagnostics, toc_coverage_diagnostic};
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ScanOptions};
 use pgdt_io::{ByteRangeSource, internal::memory_budget_display};
 use pgdt_model::{DumpIndex, PostgresInvalidValues, Span, SpanBody};
+use tokio_util::sync::CancellationToken;
 
 use crate::interior::{CensusPlan, RegionScan, report_shortfall, scan_region};
 use crate::statistics::account::StatisticsAccount;
@@ -128,7 +129,7 @@ fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> boo
 pub enum MapStop {
     /// EOF, or the queried table settled.
     Reached,
-    /// [`ScanOptions::cancel`] was set. The index is consistent at the last
+    /// The pass's cancellation fired. The index is consistent at the last
     /// spliced watermark and has been persisted; everything past it is
     /// unscanned.
     Interrupted,
@@ -139,11 +140,11 @@ pub enum MapStop {
 /// A source whose wait is a request rather than a `pread` answers a
 /// cancellation by dropping the read in flight, so what a polled check point
 /// would have seen as a set flag reaches its caller as a failed read instead
-/// (`docs/design/decisions.md`, "D26"). The flag is what tells the two apart:
-/// a `ScanCancelled` nobody asked for is a source misreporting itself and
-/// stays an error.
-pub(crate) fn cancelled_read(error: &Error, scan_options: &ScanOptions) -> bool {
-    matches!(error, Error::ScanCancelled { .. }) && scan_options.cancelled()
+/// (`docs/design/decisions.md`, "D26"). The token is what tells the two
+/// apart: a `ScanCancelled` nobody asked for is a source misreporting itself
+/// and stays an error.
+pub(crate) fn cancelled_read(error: &Error, cancel: &CancellationToken) -> bool {
+    matches!(error, Error::ScanCancelled { .. }) && cancel.is_cancelled()
 }
 
 /// What a mapping pass records of each block it maps
@@ -161,8 +162,8 @@ pub enum Pass<'a> {
 }
 
 /// Extend `index`'s map forward from its own `scanned_through`, persisting as
-/// it goes, until the queried table is settled, EOF is reached, or the scan is
-/// cancelled. Emits no rows. `target` is the
+/// it goes, until the queried table is settled, EOF is reached, or `cancel`
+/// fires. Emits no rows. `target` is the
 /// `(table, database selector)` a query may stop early for once
 /// [`target_settled`] says so; **`None` means "run to EOF"**, what
 /// `pgdt_query::ScanExtent::Full` asks for and what [`map_file`](crate::map_file) always wants. Rejected:
@@ -190,6 +191,7 @@ pub enum Pass<'a> {
 pub async fn map_forward(
     source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
+    cancel: &CancellationToken,
     cache: &CacheMode,
     watch: &SourceWatch,
     index: &mut DumpIndex,
@@ -238,7 +240,7 @@ pub async fn map_forward(
     // **This loop grants no wait** (`docs/design/decisions.md`, "D5"): the
     // leader's fused worker grants it for itself and restores this policy on
     // the way out ([`scan_region`]).
-    announce_read_loop(source, scan_options, scan_options.parallelism);
+    announce_read_loop(source, scan_options.read, scan_options.parallelism);
     let mut chunked =
         ChunkedScanner::new(CopyScanner::resume(seg_start, None), size, scan_options.read);
     let mut throttle = SaveThrottle::new();
@@ -254,16 +256,16 @@ pub async fn map_forward(
         // (`docs/design/decisions.md`, "D63").
         // `index` is consistent at the last *spliced* watermark whatever the
         // buffer holds, so the save needs no snapshot logic of its own.
-        if scan_options.cancelled() {
+        if cancel.is_cancelled() {
             cache.save(watch, source, index).await?;
             return Ok(MapStop::Interrupted);
         }
         let mut chunk = match chunked.next_chunk(source).await {
             Ok(chunk) => chunk,
             // The check point above, reached through the read rather than
-            // through the flag ([`cancelled_read`]): the same chunk and the
+            // through the token ([`cancelled_read`]): the same chunk and the
             // same watermark, so this banks what that would have banked.
-            Err(e) if cancelled_read(&e, scan_options) => {
+            Err(e) if cancelled_read(&e, cancel) => {
                 cache.save(watch, source, index).await?;
                 return Ok(MapStop::Interrupted);
             }
@@ -351,6 +353,7 @@ pub async fn map_forward(
                     let outcome = scan_region(
                         source,
                         scan_options,
+                        cancel,
                         &header.qualified_name(),
                         header_offset,
                         data_offset,
@@ -370,7 +373,7 @@ pub async fn map_forward(
                             let targets = std::mem::take(&mut open_block_targets);
                             match close_copy_block(
                                 source,
-                                scan_options,
+                                cancel,
                                 cache,
                                 watch,
                                 index,
@@ -430,7 +433,7 @@ pub async fn map_forward(
                     let end_offset = end.end_offset;
                     match close_copy_block(
                         source,
-                        scan_options,
+                        cancel,
                         cache,
                         watch,
                         index,
@@ -469,10 +472,9 @@ pub async fn map_forward(
         // carry held.
         if let Some(at) = resume_at {
             chunked.skip_to(at);
-            // The four hints this loop announced still stand: `scan_region`
+            // The three hints this loop announced still stand: `scan_region`
             // restores `WaitPolicy::NeverWait` on its way out, announces the
-            // same `Parallelism`, and never touches the read size or the
-            // cancellation token.
+            // same `Parallelism`, and never touches the read size.
             continue;
         }
 
@@ -491,7 +493,7 @@ pub async fn map_forward(
     let mut spans = splice(&prefix, builder.finish(size), seg_start, size, size);
     match attach_text(source, &mut spans).await {
         Ok(()) => {}
-        Err(e) if cancelled_read(&e, scan_options) => {
+        Err(e) if cancelled_read(&e, cancel) => {
             cache.save(watch, source, index).await?;
             return Ok(MapStop::Interrupted);
         }
@@ -518,7 +520,7 @@ enum BlockClose {
     /// The queried table is settled, and the map has been persisted at this
     /// block's watermark.
     Settled,
-    /// [`ScanOptions::cancel`] was set, and the map has been persisted at this
+    /// The pass's cancellation fired, and the map has been persisted at this
     /// block's watermark.
     Interrupted,
 }
@@ -534,7 +536,7 @@ enum BlockClose {
 #[allow(clippy::too_many_arguments)]
 async fn close_copy_block(
     source: &dyn ByteRangeSource,
-    scan_options: &ScanOptions,
+    cancel: &CancellationToken,
     cache: &CacheMode,
     watch: &SourceWatch,
     index: &mut DumpIndex,
@@ -557,7 +559,7 @@ async fn close_copy_block(
     // The second of the guard's two check points (`docs/design/decisions.md`,
     // "D63"): the two together bound the response by the shorter of a chunk
     // and a block.
-    let cancelled = scan_options.cancelled();
+    let cancelled = cancel.is_cancelled();
     let due = throttle.due();
     // **The splice rides the throttle's gate** (`docs/design/decisions.md`,
     // "D62"). Nothing between gate openings needs `index.spans` current: an

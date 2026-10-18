@@ -36,6 +36,7 @@ use pgdt_model::{
 
 mod common;
 use common::{VERSIONS, sandboxed, statistics_fixture, types_fixture};
+use tokio_util::sync::CancellationToken;
 
 /// A group size several `ordered` rows long and well under its block, so
 /// `ordered` has several groups, some holding more distinct `high_card` texts
@@ -75,6 +76,7 @@ async fn gathered_with(
         options,
         gather,
         statistics,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -512,6 +514,7 @@ async fn statistics_round_trip_through_the_cache() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &wanted,
+        &CancellationToken::new(),
     )
     .await
     .unwrap()
@@ -559,7 +562,7 @@ async fn a_gathering_scan_is_the_serial_scan_whatever_the_worker_count() {
     for jobs in [2, 4, 8] {
         let parallel = ScanOptions {
             parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            ..serial.clone()
+            ..serial
         };
         let index = gathered_with(&dump, &parallel, &GatherOptions::default(), &wanted).await;
         let t = block(&index, "public.t");
@@ -697,10 +700,15 @@ async fn mapped_into_cache(
 ) -> MapRun {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(dump));
-    let run =
-        map_file(mode.open_source(source.clone()).await.unwrap(), options, gather, statistics)
-            .await
-            .unwrap();
+    let run = map_file(
+        mode.open_source(source.clone()).await.unwrap(),
+        options,
+        gather,
+        statistics,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     assert!(!run.interrupted);
     run
 }
@@ -759,6 +767,7 @@ async fn mapped_recording(
         &ScanOptions::default(),
         &GatherOptions::default(),
         statistics,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -1056,7 +1065,6 @@ async fn one_block_is_gathered_on_its_own() {
     )
     .await
     .unwrap()
-    .expect("nothing cancelled it")
     .gathered
     .gathered()
     .expect("an unbounded allowance declines nothing");
@@ -1273,7 +1281,6 @@ async fn a_block_breaking_a_stated_maximum_is_reread_at_the_size_it_predicts() {
     let parallel = ScanOptions {
         read: ReadOptions { chunk_size_bytes: 1 << 16, ..ReadOptions::default() },
         parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
-        ..ScanOptions::default()
     };
     let split = gathered_with(&dump, &parallel, &GatherOptions::default(), &bounded).await;
     for (table, held) in tables.iter().zip([&dense, &clustered]) {
@@ -1344,7 +1351,7 @@ async fn a_backfill_the_leader_splits_is_the_serial_scan() {
             .await;
         let parallel = ScanOptions {
             parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            ..serial.clone()
+            ..serial
         };
         let run = mapped_into_cache(&dump, &parallel, &GatherOptions::default(), &wanted).await;
         assert_eq!(run.backfilled, 1, "{jobs} jobs");
@@ -1416,6 +1423,7 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
             &serial,
             &GatherOptions::default(),
             &wanted,
+            &CancellationToken::new(),
         )
         .await,
         "serial",
@@ -1423,7 +1431,7 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
     for jobs in [2, 4, 8] {
         let parallel = ScanOptions {
             parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            ..serial.clone()
+            ..serial
         };
         let at = format!("{jobs} jobs");
         refused(
@@ -1432,6 +1440,7 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
                 &parallel,
                 &GatherOptions::default(),
                 &wanted,
+                &CancellationToken::new(),
             )
             .await,
             &at,
@@ -1446,6 +1455,7 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
                 &parallel,
                 &GatherOptions::default(),
                 &wanted,
+                &CancellationToken::new(),
             )
             .await,
             &format!("{at}, back-fill"),
@@ -1461,6 +1471,7 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
         &serial,
         &GatherOptions::default(),
         &wanted,
+        &CancellationToken::new(),
     )
     .await
     {
@@ -1558,7 +1569,7 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
     for jobs in [2, 4, 8] {
         let parallel = ScanOptions {
             parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            ..serial.clone()
+            ..serial
         };
         let at = format!("{jobs} jobs");
         check(&gathered_with(&dump, &parallel, &ignoring, &wanted).await, &at);
@@ -1570,6 +1581,7 @@ async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
             &parallel,
             &ignoring,
             &wanted,
+            &CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -1619,6 +1631,7 @@ async fn a_parse_refusing_fields_fails_with_what_an_ignoring_parse_recorded() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await;
     let Err(pgdt_core::Error::FieldRefusedRecorded { refused, cache }) = run else {
@@ -1729,6 +1742,7 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
             &ScanOptions::default(),
             &GatherOptions::default(),
             &tracking(columns),
+            &CancellationToken::new(),
         )
         .await;
         let Some((column, line, value)) = expected else {
@@ -1765,6 +1779,7 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &resized,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -1778,6 +1793,7 @@ async fn a_recorded_refusal_fails_exactly_the_parses_tracking_its_column() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &tracking(&["c"]),
+        &CancellationToken::new(),
     )
     .await;
     assert!(matches!(refusing, Err(pgdt_core::Error::FieldRefusedRecorded { .. })), "{refusing:?}");
@@ -1793,7 +1809,6 @@ fn reading(jobs: usize) -> ScanOptions {
     ScanOptions {
         read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
         parallelism,
-        ..ScanOptions::default()
     }
 }
 
@@ -1889,6 +1904,7 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
                 &scan,
                 &default,
                 wanted,
+                &CancellationToken::new(),
             )
             .await;
             let passed = passed.unwrap_or_else(|e| panic!("{at}: a default parse passes: {e}"));
@@ -1902,6 +1918,7 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
                 &scan,
                 &strict,
                 wanted,
+                &CancellationToken::new(),
             )
             .await
             {
@@ -1926,6 +1943,7 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
                 &scan,
                 &default,
                 &wanted,
+                &CancellationToken::new(),
             )
             .await
             .unwrap();
@@ -1934,6 +1952,7 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
                 &scan,
                 &strict,
                 &wanted,
+                &CancellationToken::new(),
             )
             .await
             .unwrap();
@@ -1967,9 +1986,15 @@ async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
                 .await;
         assert!(!block(&held.index, "public.t").checked_in_full);
         let source = Arc::new(RecordingSource::open(&dump));
-        let run = map_file(mode.open_source(source.clone()).await.unwrap(), &scan, &strict, &data)
-            .await
-            .unwrap();
+        let run = map_file(
+            mode.open_source(source.clone()).await.unwrap(),
+            &scan,
+            &strict,
+            &data,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         let checked = block(&run.index, "public.t");
         assert!(checked.checked_in_full, "{gathers}");
         assert_eq!(run.checked, 1, "{gathers}");
@@ -1979,10 +2004,15 @@ async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
         assert_eq!(checked.statistics, block(&fresh, "public.t").statistics, "{gathers}");
 
         let source = Arc::new(RecordingSource::open(&dump));
-        let again =
-            map_file(mode.open_source(source.clone()).await.unwrap(), &scan, &strict, &data)
-                .await
-                .unwrap();
+        let again = map_file(
+            mode.open_source(source.clone()).await.unwrap(),
+            &scan,
+            &strict,
+            &data,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!((again.checked, source.reads_of(checked)), (0, 0), "{gathers}");
         let default =
             mapped_into_cache(&dump, &ScanOptions::default(), &GatherOptions::default(), &data)
@@ -2007,7 +2037,15 @@ async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
     };
     mapped_into_cache(&dump, &scan, &ignoring, &only_v).await;
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
-    match map_file(mode.open_source(source.clone()).await.unwrap(), &scan, &strict, &data).await {
+    match map_file(
+        mode.open_source(source.clone()).await.unwrap(),
+        &scan,
+        &strict,
+        &data,
+        &CancellationToken::new(),
+    )
+    .await
+    {
         Err(pgdt_core::Error::FieldRefused { column, line, value, .. }) => {
             assert_eq!((column.as_str(), line, value.as_str()), ("a", 31, "70000"));
         }
@@ -2020,7 +2058,7 @@ async fn a_strict_parse_checks_each_held_block_no_strict_parse_checked() {
 struct CancelsPast {
     inner: LocalFileSource,
     trip: u64,
-    cancel: Arc<pgdt_io::Cancellation>,
+    cancel: CancellationToken,
 }
 
 impl ByteRangeSource for CancelsPast {
@@ -2070,7 +2108,7 @@ async fn a_strict_parse_resuming_checks_what_the_cache_holds_first() {
         let text = format!("{ddl}{}{}SELECT 1;\n", table("t1", first_bad), table("t2", true));
         std::fs::write(&dump, &text).unwrap();
         let _ = std::fs::remove_file(cache::colocated_path(&dump));
-        let cancel = Arc::new(pgdt_io::Cancellation::new());
+        let cancel = CancellationToken::new();
         let trip = text.find("COPY public.t2").unwrap() as u64;
         let tripping = CancelsPast {
             inner: LocalFileSource::open(&dump).unwrap(),
@@ -2078,13 +2116,14 @@ async fn a_strict_parse_resuming_checks_what_the_cache_holds_first() {
             cancel: cancel.clone(),
         };
         let tripping = Arc::new(tripping);
-        let interrupted = ScanOptions { cancel: Some(cancel), ..reading(1) };
+        let interrupted = reading(1);
         let mode = CacheMode::enabled(cache::colocated_path(&dump));
         let run = map_file(
             mode.open_source(tripping.clone()).await.unwrap(),
             &interrupted,
             &GatherOptions::default(),
             &StatisticsRequest::METADATA,
+            &cancel,
         )
         .await
         .unwrap();
@@ -2098,6 +2137,7 @@ async fn a_strict_parse_resuming_checks_what_the_cache_holds_first() {
             &scan,
             &strict,
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await;
         match resumed {
@@ -2177,6 +2217,7 @@ async fn a_parse_fails_where_an_input_function_refuses_and_not_where_it_reads() 
             &serial,
             &GatherOptions::default(),
             &wanted,
+            &CancellationToken::new(),
         )
         .await
         {
@@ -2248,6 +2289,7 @@ async fn a_parse_fails_at_an_undeclared_label_only_where_the_labels_are_exact() 
             &serial,
             &GatherOptions::default(),
             &wanted,
+            &CancellationToken::new(),
         )
         .await
         {
@@ -2299,8 +2341,14 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
         let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
         let metadata = StatisticsRequest::METADATA;
         let gather = GatherOptions::default();
-        let run =
-            map_file(mode.open_source(source.clone()).await.unwrap(), &options, &gather, &metadata);
+        let cancel = CancellationToken::new();
+        let run = map_file(
+            mode.open_source(source.clone()).await.unwrap(),
+            &options,
+            &gather,
+            &metadata,
+            &cancel,
+        );
         let index = run.await.unwrap().index;
         let refused = common::refused_field(&fixture).map(|r| r.table);
         // A block holding a field PostgreSQL refuses is refused by every
@@ -2345,13 +2393,12 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
                     )
                     .await
                     .unwrap()
-                    .expect("nothing cancels the re-read")
                     .gathered
                     .gathered()
                     .expect("an unbounded allowance declines nothing")
                 }
             };
-            let reference = gather(serial.clone(), capped.clone()).await;
+            let reference = gather(serial, capped.clone()).await;
             let label = format!("{}: {}", fixture.display(), block.header.table);
             assert!(reference.groups.len() <= CAP, "{label}");
             let exact = StatisticsBackfill {
@@ -2359,10 +2406,10 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
                 group_cap: None,
                 ..capped.clone()
             };
-            assert_eq!(gather(serial.clone(), exact).await, reference, "{label}");
+            assert_eq!(gather(serial, exact).await, reference, "{label}");
             for jobs in [3, 8] {
                 let parallelism = Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET);
-                let parallel = ScanOptions { parallelism, ..serial.clone() };
+                let parallel = ScanOptions { parallelism, ..serial };
                 let split = gather(parallel, capped.clone()).await;
                 assert_eq!(split, reference, "{label}: {jobs} jobs");
             }
@@ -2413,8 +2460,14 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
         let (options, mode) = (ScanOptions::default(), CacheMode::DISABLED);
         let metadata = StatisticsRequest::METADATA;
         let gather = GatherOptions::default();
-        let run =
-            map_file(mode.open_source(source.clone()).await.unwrap(), &options, &gather, &metadata);
+        let cancel = CancellationToken::new();
+        let run = map_file(
+            mode.open_source(source.clone()).await.unwrap(),
+            &options,
+            &gather,
+            &metadata,
+            &cancel,
+        );
         let index = run.await.unwrap().index;
         let refused = common::refused_field(&fixture).map(|r| r.table);
         // A block holding a field PostgreSQL refuses is refused by every
@@ -2455,29 +2508,24 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
                     )
                     .await
                     .unwrap()
-                    .expect("nothing cancels the re-read")
                     .gathered
                     .gathered()
                     .expect("an unbounded allowance declines nothing")
                 }
             };
             let label = format!("{}: {}", fixture.display(), block.header.table);
-            let reference = gather(serial.clone(), sized.clone()).await;
+            let reference = gather(serial, sized.clone()).await;
             assert_eq!(reference.sizing, default_sizing, "{label}: the record is the plan's");
             let exact =
                 |group_size| StatisticsBackfill { group_size, min_rows: None, ..sized.clone() };
-            let base = gather(serial.clone(), exact(BASE)).await;
+            let base = gather(serial, exact(BASE)).await;
             let rows: Vec<u64> = base.groups.iter().map(|g| g.rows).collect();
             let merges = chosen_merges(&rows, MIN_ROWS);
             assert_eq!(reference.group_size, BASE << merges, "{label}: {rows:?}");
-            assert_eq!(
-                gather(serial.clone(), exact(reference.group_size)).await,
-                reference,
-                "{label}"
-            );
+            assert_eq!(gather(serial, exact(reference.group_size)).await, reference, "{label}");
             for jobs in [3, 8] {
                 let parallelism = Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET);
-                let parallel = ScanOptions { parallelism, ..serial.clone() };
+                let parallel = ScanOptions { parallelism, ..serial };
                 let split = gather(parallel, sized.clone()).await;
                 assert_eq!(split, reference, "{label}: {jobs} jobs");
             }
@@ -2511,6 +2559,7 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap()
@@ -2524,6 +2573,7 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     .expect_err("the block moved");
@@ -2633,6 +2683,7 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         &ScanOptions::default(),
         &GatherOptions::default(),
         &wanted,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -2648,7 +2699,6 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         let scan = ScanOptions {
             read: ReadOptions { chunk_size_bytes: 4096, ..ReadOptions::default() },
             parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
-            ..ScanOptions::default()
         };
         let tight = GatherOptions {
             statistics_allowance_bytes: Some(allowance),
@@ -2657,9 +2707,15 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         let at = format!("{jobs} job(s)");
 
         // The scan runs to EOF and the block declines, holding nothing.
-        let run = map_file(mode.open_source(source.clone()).await.unwrap(), &scan, &tight, &wanted)
-            .await
-            .unwrap();
+        let run = map_file(
+            mode.open_source(source.clone()).await.unwrap(),
+            &scan,
+            &tight,
+            &wanted,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         assert!(!run.interrupted, "{at}");
         assert_eq!(run.declined_statistics, 1, "{at}");
         let declined = block(&run.index, "public.t");
@@ -2668,20 +2724,30 @@ async fn a_block_past_the_allowance_declines_and_is_re_read_only_under_a_larger_
         assert_eq!(run.statistics.now.total(), 0, "{at}: a declined pass holds nothing");
 
         // The same allowance re-reads nothing, and still says what it holds.
-        let again =
-            map_file(mode.open_source(source.clone()).await.unwrap(), &scan, &tight, &wanted)
-                .await
-                .unwrap();
+        let again = map_file(
+            mode.open_source(source.clone()).await.unwrap(),
+            &scan,
+            &tight,
+            &wanted,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!((again.lacking_statistics, again.backfilled), (0, 0), "{at}");
         assert_eq!(again.declined_statistics, 1, "{at}");
         assert_eq!(block(&again.index, "public.t").statistics_declined, Some(allowance), "{at}");
 
         // No allowance re-reads it, into what the unbounded pass gave.
         let roomy = GatherOptions { statistics_allowance_bytes: None, ..tight };
-        let wider =
-            map_file(mode.open_source(source.clone()).await.unwrap(), &scan, &roomy, &wanted)
-                .await
-                .unwrap();
+        let wider = map_file(
+            mode.open_source(source.clone()).await.unwrap(),
+            &scan,
+            &roomy,
+            &wanted,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
         assert_eq!((wider.lacking_statistics, wider.backfilled), (1, 1), "{at}");
         assert_eq!(wider.declined_statistics, 0, "{at}");
         let filled = block(&wider.index, "public.t");

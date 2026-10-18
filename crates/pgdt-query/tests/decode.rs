@@ -39,6 +39,7 @@ use pgdt_query::{
 
 mod common;
 use common::types_fixture;
+use tokio_util::sync::CancellationToken;
 
 /// Every row of `table`, rendered back to PostgreSQL text.
 ///
@@ -588,6 +589,7 @@ async fn a_scale_past_the_precision_or_arrows_reach_reads_every_value() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap()
@@ -676,6 +678,7 @@ async fn a_negative_scale_zero_reads_as_zero_in_every_mode() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap()
@@ -780,6 +783,7 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     {
@@ -812,6 +816,7 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
         &ScanOptions::default(),
         &GatherOptions::default(),
         &past_at_metadata,
+        &CancellationToken::new(),
     )
     .await
     .unwrap()
@@ -898,6 +903,7 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
                 &ScanOptions::default(),
                 &scan,
                 &StatisticsRequest::DATA,
+                &CancellationToken::new(),
             )
             .await
             .unwrap_or_else(|e| panic!("{declared} `{field}`: {invalid:?} refused: {e}"));
@@ -926,6 +932,7 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
             &ScanOptions::default(),
             &GatherOptions::default(),
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         {
@@ -989,6 +996,7 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
             &ScanOptions::default(),
             &GatherOptions::default(),
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         .unwrap_or_else(|e| panic!("{declared} `{field}`: a default parse refused: {e}"));
@@ -1001,6 +1009,7 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
             &ScanOptions::default(),
             &strict,
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         {
@@ -1063,6 +1072,7 @@ async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
                 &ScanOptions::default(),
                 &gather,
                 &StatisticsRequest::DATA,
+                &CancellationToken::new(),
             )
             .await
             .unwrap_or_else(|e| panic!("{declared} `{field}`: refused: {e}"));
@@ -1084,6 +1094,7 @@ async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
             &ScanOptions::default(),
             &GatherOptions::default(),
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await;
         match (default, strict_alone) {
@@ -1098,6 +1109,7 @@ async fn an_interval_field_is_refused_under_its_column_s_field_qualifier() {
             &ScanOptions::default(),
             &strict,
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         {
@@ -1189,6 +1201,7 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
                 &ScanOptions::default(),
                 &gather,
                 &request,
+                &CancellationToken::new(),
             )
             .await
             {
@@ -1207,6 +1220,7 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
             &ScanOptions::default(),
             &GatherOptions::default(),
             &StatisticsRequest::METADATA,
+            &CancellationToken::new(),
         )
         .await
         .unwrap_or_else(|e| panic!("{ddl}: a metadata-level parse refused: {e}"));
@@ -1252,6 +1266,7 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
             &ScanOptions::default(),
             &ignoring,
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -1266,6 +1281,7 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
             &ScanOptions::default(),
             &GatherOptions::default(),
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         {
@@ -1291,6 +1307,7 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
                 &ScanOptions::default(),
                 &gather,
                 &StatisticsRequest::DATA,
+                &CancellationToken::new(),
             )
             .await
             .unwrap_or_else(|e| panic!("{ddl}: refused: {e}"));
@@ -1377,6 +1394,7 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
                 &ScanOptions::default(),
                 &strict,
                 &request,
+                &CancellationToken::new(),
             )
             .await
             {
@@ -1395,6 +1413,7 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
             &ScanOptions::default(),
             &GatherOptions::default(),
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         .unwrap_or_else(|e| panic!("{declared}: a default parse refused: {e}"));
@@ -1441,6 +1460,7 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
             &ScanOptions::default(),
             &strict,
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await;
         match (declared, run) {
@@ -1483,6 +1503,7 @@ async fn every_refused_field_fails_a_data_level_parse_reading_it() {
             &options,
             &GatherOptions::default(),
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         {
@@ -1502,6 +1523,7 @@ async fn every_refused_field_fails_a_data_level_parse_reading_it() {
             &options,
             &GatherOptions::default(),
             &common::sweep_request(&path),
+            &CancellationToken::new(),
         )
         .await;
         run.unwrap_or_else(|e| panic!("{}: {e}", path.display()));
@@ -1529,6 +1551,7 @@ async fn a_strict_parse_refuses_no_fixture_field_but_the_listed_ones() {
                 &ScanOptions::default(),
                 &strict,
                 &request,
+                &CancellationToken::new(),
             )
             .await;
             match (common::refused_field(&path), run) {
@@ -1595,6 +1618,7 @@ async fn a_float_past_its_range_is_read_as_the_largest_only_when_told_to_ignore_
             &ScanOptions::default(),
             &scan,
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         .unwrap_or_else(|e| panic!("{version}: an ignoring parse refused: {e}"));

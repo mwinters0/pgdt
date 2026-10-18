@@ -28,6 +28,7 @@ use pgdt_query::{
 
 mod common;
 use common::{VERSIONS, sandboxed, statistics_fixture};
+use tokio_util::sync::CancellationToken;
 
 /// `ordered`'s rows: `id` ascends from 1 to this.
 const ROWS: u64 = 1000;
@@ -92,6 +93,7 @@ async fn read(
         &ScanOptions::default(),
         &GatherOptions::default(),
         &request,
+        &CancellationToken::new(),
     )
     .await
     .unwrap()

@@ -31,6 +31,7 @@ use pgdt_mapping::statistics::{
 };
 use pgdt_model::{Diagnostic, DiagnosticSink, Finding, PostgresInvalidValues, Severity};
 use pgdt_query::{ComparisonNote, column_divergences};
+use tokio_util::sync::CancellationToken;
 
 fn fixture(schema: &str, flag_set: &str) -> PathBuf {
     pgdt_fixtures::fixture(16, schema, flag_set)
@@ -172,6 +173,7 @@ async fn a_table_whose_plan_refuses_is_reported_and_not_listed() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -230,6 +232,7 @@ async fn a_metadata_level_table_is_refused_naming_its_parse() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &levels,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -462,6 +465,7 @@ async fn every_refusal_is_the_provider_s_error_over_the_library_s() {
         &ScanOptions::default(),
         &ignoring,
         &StatisticsRequest::DATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -510,6 +514,7 @@ async fn a_table_asked_for_at_the_metadata_level_is_refused_as_such() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();

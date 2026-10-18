@@ -4003,7 +4003,7 @@ does not read the byte total back at all; that is `pgdt info --dtcache <cache>
 
 `pgdt parse` and every cold query open with `preamble::scan_preamble`, which reads
 from byte 0 to the first `COPY` header. It is the one region that never polls
-`ScanOptions::cancel` (see `decisions.md`, "D26"), so "bounded by its own length" is the claim that has to hold.
+`map_file`'s cancellation (see `decisions.md`, "D26"), so "bounded by its own length" is the claim that has to hold.
 
 **koji: 63,333 bytes of 784,019,857,152** — 0.00000008 of the file. The whole
 region the flag is not polled over is one read.

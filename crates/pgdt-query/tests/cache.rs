@@ -12,7 +12,7 @@ use pgdt_dump::cache::{
     CacheClaim, CacheLoad, CacheMode, CacheStatus, Held, LoadedCache, OfflineCache, SourceWatch,
     StrictIdentity, Unusable, WeakIdentity,
 };
-use pgdt_dump::{ReadOptions, ScanOptions, cache, check_tiling, preamble_only};
+use pgdt_dump::{ScanOptions, cache, check_tiling, preamble_only};
 use pgdt_io::{
     ByteRangeSource, KnownCompression, LocalFileSource, Origin, Parallelism, Recognized, XzSource,
     open,
@@ -26,6 +26,7 @@ use pgdt_query::{QueryOptions, table_stream};
 
 mod common;
 use common::{edge_cases, sandboxed_edge_cases as sandboxed};
+use tokio_util::sync::CancellationToken;
 
 /// A watch opened on `source` as it stands, for a test whose subject is the
 /// save rather than the in-flight identity check.
@@ -62,7 +63,7 @@ async fn an_unusable_cache_says_which_kind_of_unusable_it_is() {
     );
     assert!(!Unusable::NotACache.overwritable());
 
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let damaged = dir.path().join("damaged.dtcache");
     pgdt_dump::internal::save(&damaged, &source, &index).await.unwrap();
     let mut bytes = std::fs::read(&damaged).unwrap();
@@ -93,7 +94,7 @@ fn restamp(path: &Path, version: u32) {
 async fn a_cache_from_another_build_is_told_apart_from_foreign_bytes() {
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
     pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
 
@@ -115,7 +116,7 @@ async fn a_cache_from_another_build_is_told_apart_from_foreign_bytes() {
 #[tokio::test]
 async fn saved_index_round_trips_exactly() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     assert!(index.blocks().next().is_some());
     assert!(index.metadata.is_some());
 
@@ -158,13 +159,9 @@ async fn preamble_only_persists_a_real_unscanned_tail() {
     let path = dir.path().join("edge_cases.sql.dtcache");
     let mode = CacheMode::enabled(path.clone());
 
-    preamble_only(
-        mode.open_source(Arc::clone(&source)).await.unwrap(),
-        ReadOptions::default(),
-        Parallelism::default(),
-    )
-    .await
-    .unwrap();
+    preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
+        .await
+        .unwrap();
 
     // A preamble-only scan never reaches EOF (that's the point of it), so
     // the cache it persists is incomplete by the same completeness check
@@ -191,7 +188,7 @@ async fn preamble_only_persists_a_real_unscanned_tail() {
 #[tokio::test]
 async fn save_overwrites_an_existing_cache() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
@@ -213,7 +210,7 @@ async fn save_overwrites_an_existing_cache() {
 #[tokio::test]
 async fn save_propagates_write_failures() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("no-such-subdir").join("edge_cases.sql.dtcache");
@@ -227,7 +224,7 @@ async fn save_propagates_write_failures() {
 #[tokio::test]
 async fn size_mismatch_invalidates_the_cache() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
@@ -261,7 +258,7 @@ async fn size_mismatch_invalidates_the_cache() {
 async fn cache_mode_load_names_each_unusable_status() {
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let missing = dir.path().join("nonexistent.dtcache");
     assert_eq!(CacheMode::enabled(missing).load(&source).await.unwrap(), CacheLoad::Missing);
@@ -325,6 +322,7 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::default(),
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -378,7 +376,7 @@ async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
     let dump = dir.path().join("edge_cases.sql");
     std::fs::copy(edge_cases(), &dump).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let path = cache::colocated_path(&dump);
     pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
@@ -428,7 +426,7 @@ fn cache_mode_resolves_the_default_and_an_explicit_path() {
 #[tokio::test]
 async fn disabled_cache_ignores_an_existing_file_and_persists_nothing() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("edge_cases.sql");
@@ -472,7 +470,7 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
     let cache_path = pgdt_dump::cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
 
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     pgdt_dump::internal::save(&cache_path, &source, &index).await.unwrap();
 
     // Same bytes, new mtime — exactly the ambiguous case the design refuses
@@ -508,8 +506,7 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
     let cache_path = pgdt_dump::cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
 
-    let mut index =
-        build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let mut index = build_index(&source, &ScanOptions::default()).await.unwrap();
     // `build_index` always reports a `TocCoverage` figure — cleared here so
     // this test's own pushed diagnostic is the only one in play.
     index.diagnostics.clear();
@@ -550,13 +547,9 @@ async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
     let path = dir.path().join("edge_cases.sql.dtcache");
     let mode = CacheMode::enabled(path.clone());
 
-    preamble_only(
-        mode.open_source(Arc::clone(&source)).await.unwrap(),
-        ReadOptions::default(),
-        Parallelism::default(),
-    )
-    .await
-    .unwrap();
+    preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
+        .await
+        .unwrap();
 
     let CacheLoad::Index(index) = mode.load(source.as_ref()).await.unwrap() else {
         panic!("Incomplete still yields an index")
@@ -576,13 +569,9 @@ async fn an_offline_load_reports_a_partial_scan_incomplete() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
     let mode = CacheMode::enabled(path.clone());
-    preamble_only(
-        mode.open_source(Arc::clone(&source)).await.unwrap(),
-        ReadOptions::default(),
-        Parallelism::default(),
-    )
-    .await
-    .unwrap();
+    preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
+        .await
+        .unwrap();
 
     let size = source.size().await.unwrap();
     match OfflineCache::new(path).load().await.unwrap() {
@@ -605,8 +594,7 @@ async fn an_offline_load_always_pushes_the_cache_offline_diagnostic() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(edge_cases()).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let full_path = dir.path().join("full.dtcache");
-    let index =
-        build_index(source.as_ref(), ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     pgdt_dump::internal::save(&full_path, source.as_ref(), &index).await.unwrap();
 
     let status = OfflineCache::new(full_path).load().await.unwrap();
@@ -622,13 +610,9 @@ async fn an_offline_load_always_pushes_the_cache_offline_diagnostic() {
 
     let partial_path = dir.path().join("partial.dtcache");
     let mode = CacheMode::enabled(partial_path.clone());
-    preamble_only(
-        mode.open_source(Arc::clone(&source)).await.unwrap(),
-        ReadOptions::default(),
-        Parallelism::default(),
-    )
-    .await
-    .unwrap();
+    preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
+        .await
+        .unwrap();
     let status = OfflineCache::new(partial_path).load().await.unwrap();
     let CacheStatus::Loaded(LoadedCache { index: loaded, total_size, .. }) = status else {
         panic!("expected a preamble-only cache");
@@ -683,8 +667,7 @@ fn xz_compress(path: &Path) -> tempfile::NamedTempFile {
 #[tokio::test]
 async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();
-    let plain_index =
-        build_index(&plain, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let plain_index = build_index(&plain, &ScanOptions::default()).await.unwrap();
 
     let compressed = xz_compress(&edge_cases());
     let xz = XzSource::open(compressed.path()).unwrap();
@@ -700,7 +683,7 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
         "the compressed file's on-disk size must not be reported as the plain one's"
     );
 
-    let xz_index = build_index(&xz, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let xz_index = build_index(&xz, &ScanOptions::default()).await.unwrap();
     assert_eq!(xz_index, plain_index);
 
     let dir = tempfile::tempdir().unwrap();
@@ -765,14 +748,13 @@ async fn build_index_warns_about_a_non_seekable_xz_source() {
         !xz.seek_table().unwrap().is_seekable(),
         "fixture must actually be single-block for this test to mean anything"
     );
-    let index = build_index(&xz, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
     assert!(has_non_seekable_warning(&index.diagnostics), "diagnostics: {:?}", index.diagnostics);
 
     let seekable = xz_compress(&edge_cases());
     let xz_seekable = XzSource::open(seekable.path()).unwrap();
     assert!(xz_seekable.seek_table().unwrap().is_seekable(), "fixture must actually be seekable");
-    let seekable_index =
-        build_index(&xz_seekable, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let seekable_index = build_index(&xz_seekable, &ScanOptions::default()).await.unwrap();
     assert!(!has_non_seekable_warning(&seekable_index.diagnostics));
 }
 
@@ -784,7 +766,7 @@ async fn build_index_warns_about_a_non_seekable_xz_source() {
 async fn a_non_seekable_warning_survives_the_cache_round_trip() {
     let non_seekable = xz_compress_single_block(&edge_cases());
     let xz = XzSource::open(non_seekable.path()).unwrap();
-    let index = build_index(&xz, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("single_block.xz.dtcache");
@@ -813,13 +795,10 @@ async fn preamble_only_warns_without_duplicating_across_calls() {
     let dir = tempfile::tempdir().unwrap();
     let mode = CacheMode::enabled(dir.path().join("preamble.xz.dtcache"));
 
-    let (_metadata, diagnostics) = preamble_only(
-        mode.open_source(Arc::clone(&xz)).await.unwrap(),
-        ReadOptions::default(),
-        Parallelism::default(),
-    )
-    .await
-    .unwrap();
+    let (_metadata, diagnostics) =
+        preamble_only(mode.open_source(Arc::clone(&xz)).await.unwrap(), &ScanOptions::default())
+            .await
+            .unwrap();
     assert_eq!(
         diagnostics
             .iter()
@@ -832,13 +811,10 @@ async fn preamble_only_warns_without_duplicating_across_calls() {
     // The preamble is now complete in the cache this just wrote, so this
     // second call takes the `known` branch — the warning it inherits from
     // the cache load must not be pushed a second time.
-    let (_metadata, diagnostics) = preamble_only(
-        mode.open_source(Arc::clone(&xz)).await.unwrap(),
-        ReadOptions::default(),
-        Parallelism::default(),
-    )
-    .await
-    .unwrap();
+    let (_metadata, diagnostics) =
+        preamble_only(mode.open_source(Arc::clone(&xz)).await.unwrap(), &ScanOptions::default())
+            .await
+            .unwrap();
     assert_eq!(
         diagnostics
             .iter()
@@ -860,7 +836,7 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
     let compressed = xz_compress(&edge_cases());
     let xz = XzSource::open(compressed.path()).unwrap();
     assert!(xz.seek_table().unwrap().is_seekable(), "fixture must actually be seekable");
-    let index = build_index(&xz, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.xz.dtcache");
@@ -887,7 +863,7 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
 #[tokio::test]
 async fn a_cache_saved_from_a_plain_source_claims_plain() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&plain, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
     pgdt_dump::internal::save(&path, &plain, &index).await.unwrap();
@@ -915,6 +891,7 @@ async fn a_claim_sizes_the_statistics_a_load_hands_back() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::default(),
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -952,7 +929,7 @@ async fn a_claim_is_unknown_wherever_nothing_is_cached_to_compare() {
     );
 
     let plain = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&plain, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
     pgdt_dump::internal::save(&path, &plain, &index).await.unwrap();
     // A real cache, and a dump path with nothing at it at all: there is no
@@ -979,7 +956,7 @@ async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exis
     let dir = tempfile::tempdir().unwrap();
     let compressed = xz_compress(&edge_cases());
     let xz = XzSource::open(compressed.path()).unwrap();
-    let index = build_index(&xz, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
     let path = dir.path().join("edge_cases.sql.xz.dtcache");
     pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
 
@@ -1055,6 +1032,7 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
         &options,
         &GatherOptions::default(),
         &statistics,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -1097,7 +1075,16 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
 
         let replacing = CacheMode::enabled(path.clone()).with_overwrite_unusable(true);
         let run = match replacing.open_source(Arc::clone(&source)).await {
-            Ok(opened) => map_file(opened, &options, &GatherOptions::default(), &statistics).await,
+            Ok(opened) => {
+                map_file(
+                    opened,
+                    &options,
+                    &GatherOptions::default(),
+                    &statistics,
+                    &CancellationToken::new(),
+                )
+                .await
+            }
             Err(refused) => Err(refused),
         };
         if why.overwritable() {
@@ -1134,7 +1121,7 @@ async fn an_open_hands_back_what_the_cache_holds() {
     assert_eq!(opened.cache, Held::Missing);
     assert_eq!(opened.source.size().await.unwrap(), std::fs::metadata(&dump).unwrap().len());
 
-    preamble_only(opened, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    preamble_only(opened, &ScanOptions::default()).await.unwrap();
     let Held::Loaded(partial) = mode.open(&origin).await.unwrap().cache else {
         panic!("a preamble-only scan leaves a cache")
     };
@@ -1146,6 +1133,7 @@ async fn an_open_hands_back_what_the_cache_holds() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -1173,7 +1161,7 @@ async fn an_open_refuses_an_unusable_cache_unless_it_may_be_replaced() {
     let origin = Origin::local(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
     let path = cache::colocated_path(&dump);
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
     let good = std::fs::read(&path).unwrap();
 
@@ -1258,7 +1246,7 @@ async fn an_open_judges_a_moved_modification_time_as_a_load_does() {
     let origin = Origin::local(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
     let path = cache::colocated_path(&dump);
-    let index = build_index(&source, ReadOptions::default(), Parallelism::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
     let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
     std::fs::File::options().write(true).open(&dump).unwrap().set_modified(future).unwrap();
@@ -1298,6 +1286,7 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::default(),
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
@@ -1386,6 +1375,7 @@ async fn persisted_index_is_pinned_to_the_format_version() {
             &ScanOptions::default(),
             &GatherOptions::default(),
             &request,
+            &CancellationToken::new(),
         )
         .await
         .unwrap_or_else(|e| panic!("{name}: {e}"));
@@ -1425,6 +1415,7 @@ mod encoding {
     use pgdt_mapping::map_file;
     use pgdt_mapping::statistics::{GatherOptions, StatisticsRequest};
     use pgdt_model::{BoundsSet, CACHE_FORMAT_VERSION, DataBlock, SpanBody, calendar_end};
+    use tokio_util::sync::CancellationToken;
 
     /// Real `pg_dump` output whose columns gather bounds and dictionaries.
     fn statistics_fixture() -> PathBuf {
@@ -1460,6 +1451,7 @@ mod encoding {
                 &ScanOptions::default(),
                 &GatherOptions::default(),
                 &StatisticsRequest::default(),
+                &CancellationToken::new(),
             )
             .await
             .unwrap();
@@ -1551,6 +1543,7 @@ mod encoding {
             &options,
             &GatherOptions::default(),
             &StatisticsRequest::DATA,
+            &CancellationToken::new(),
         )
         .await
         .unwrap();
@@ -1559,6 +1552,7 @@ mod encoding {
             &options,
             &GatherOptions::default(),
             &StatisticsRequest::METADATA,
+            &CancellationToken::new(),
         )
         .await
         .unwrap();

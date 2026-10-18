@@ -12,10 +12,9 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use bytes::Bytes;
 use object_store::ObjectStore as _;
+use tokio_util::sync::CancellationToken;
 
 use pgdt_core::{Error, Result};
-
-use crate::cancel::Cancellation;
 
 use super::origin::{
     KnownCompression, Location, ORIGIN_LEADING_BYTES, Origin, OriginProbe, Recognized, Verdict,
@@ -246,7 +245,7 @@ pub struct RemoteSource {
     /// The caller's ask that reading stop, where one has been announced
     /// ([`ByteRangeSource::hint_cancellation`]). Behind a lock because a hint
     /// arrives through `&self`, as every other hint does.
-    cancel: Mutex<Option<Arc<Cancellation>>>,
+    cancel: Mutex<Option<CancellationToken>>,
     /// Whether every ranged GET pins the object to the version the probe saw
     /// ([`ByteRangeSource::hint_in_flight_identity`]). **It starts bound**:
     /// the hint arrives once a run has opened its watch, and a read taken
@@ -347,7 +346,7 @@ impl ByteRangeSource for RemoteSource {
             }
             let cancel = self.cancel.lock().unwrap().clone();
             match cancel {
-                Some(cancel) => match cancel.until_cancelled(self.get(offset, len)).await {
+                Some(cancel) => match cancel.run_until_cancelled(self.get(offset, len)).await {
                     Some(read) => read,
                     None => Err(Error::ScanCancelled { scanned_through: offset }),
                 },
@@ -366,7 +365,7 @@ impl ByteRangeSource for RemoteSource {
         Box::pin(async move { Ok(self.modified) })
     }
 
-    fn hint_cancellation(&self, cancel: Arc<Cancellation>) {
+    fn hint_cancellation(&self, cancel: CancellationToken) {
         *self.cancel.lock().unwrap() = Some(cancel);
     }
 

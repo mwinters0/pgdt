@@ -94,7 +94,6 @@ impl PgDumpSettings {
                 max_line_bytes: self.max_line_bytes,
             },
             parallelism,
-            ..ScanOptions::default()
         }
     }
 

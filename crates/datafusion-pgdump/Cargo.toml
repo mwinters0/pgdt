@@ -46,3 +46,4 @@ pgdt-fixtures = { path = "../pgdt-fixtures", features = ["mapping"] }
 pgdt-mapping = { path = "../pgdt-mapping" }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync"] }
+tokio-util = { workspace = true }

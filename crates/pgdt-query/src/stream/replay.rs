@@ -72,7 +72,7 @@ pub(super) fn replay<'a>(
         // until it flushes, so this loop can never be the task that frees one
         // it waits on. Stated rather than left to the default, so whatever the
         // mapping pass granted is un-stated on the same source.
-        announce_read_loop(source, scan_options, query_options.parallelism);
+        announce_read_loop(source, scan_options.read, query_options.parallelism);
 
         let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
         // Where a token paused inside a block, and which block: its scanner

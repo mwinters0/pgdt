@@ -42,6 +42,7 @@ use pgdt_query::{
 
 mod common;
 use common::{VERSIONS, fixture, fixtures_root, parsed_copy};
+use tokio_util::sync::CancellationToken;
 
 /// The group size statistics are gathered at: tens of bytes, so a fixture's
 /// block spans many groups and a membership has groups to skip.
@@ -313,6 +314,7 @@ async fn check_fixture(
         &ScanOptions::default(),
         &GatherOptions::default(),
         &StatisticsRequest::METADATA,
+        &CancellationToken::new(),
     )
     .await
     .unwrap();
