@@ -29,6 +29,8 @@ permissions: {}
 env:
   INPUT_REF: ${{ inputs.ref }}
   PGDT_RELEASE_CONTAINER: docker
+  # A runner is the build's alone, so a run leaves no core free (`release.py`).
+  PGDT_RELEASE_RESERVE_CORES: "0"
 
 jobs:
   # Refuse before building: a ref that is not the commit, or a version a Release

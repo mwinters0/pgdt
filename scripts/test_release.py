@@ -228,6 +228,52 @@ class Image(unittest.TestCase):
         self.assertNotIn(f"-v {release.REPO}:/work", joined)
         self.assertEqual(argv[-5:], ["t", "python3", "scripts/release.py", "build", "--inside"])
 
+    def test_cpu_lists_round_trip(self):
+        self.assertEqual(release.parse_cpu_list("0-2,12-14"), frozenset({0, 1, 2, 12, 13, 14}))
+        self.assertEqual(release.parse_cpu_list("5"), frozenset({5}))
+        self.assertEqual(release.cpu_list({3, 4, 5, 15, 16, 17}), "3-5,15-17")
+        self.assertEqual(release.cpu_list({1, 3}), "1,3")
+
+    @staticmethod
+    def smt_sysfs(root: Path, cores: int) -> frozenset[int]:
+        """A sysfs of `cores` two-thread cores, siblings `n` and `n + cores`,
+        as this machine's are."""
+        for core in range(cores):
+            for cpu in (core, core + cores):
+                topology = root / f"cpu{cpu}" / "topology"
+                topology.mkdir(parents=True)
+                (topology / "thread_siblings_list").write_text(f"{core},{core + cores}\n")
+        return frozenset(range(2 * cores))
+
+    def test_a_run_leaves_the_last_physical_core_whole(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cpus = self.smt_sysfs(root, 12)
+            self.assertEqual(release.physical_cores(cpus, root)[-1], frozenset({11, 23}))
+            given = release.run_cpus(1, cpus, root)
+        self.assertEqual(release.cpu_list(given), "0-10,12-22")
+        self.assertEqual(release.run_cpus(0, cpus, root), None, "a timed run is given every CPU")
+
+    def test_a_reserve_leaving_no_core_gives_every_cpu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cpus = self.smt_sysfs(root, 1)
+            self.assertEqual(release.run_cpus(1, cpus, root), None)
+            self.assertEqual(release.run_cpus(1, frozenset({0, 1}), root / "absent"), frozenset({0}))
+
+    def test_a_reserve_is_a_cpuset_and_none_is_no_cpuset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            reserved = release.run_in_image(["docker"], "t", ["suite"], state=Path(tmp), reserve=1)
+            timed = release.run_in_image(["docker"], "t", ["suite"], state=Path(tmp), reserve=0)
+        self.assertNotIn("--cpuset-cpus", timed)
+        given = release.run_cpus(1)
+        if given is None:
+            self.assertNotIn("--cpuset-cpus", reserved)
+        else:
+            at = reserved.index("--cpuset-cpus")
+            self.assertEqual(reserved[at + 1], release.cpu_list(given))
+        self.assertEqual(reserved[-5:], timed[-5:], "the step is the same, and still last")
+
     def test_a_target_dir_of_its_own_replaces_the_state_s_alone(self):
         with tempfile.TemporaryDirectory() as tmp:
             own = Path(tmp) / "legs" / "system"

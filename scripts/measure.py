@@ -676,38 +676,11 @@ PIN_HARNESS_GROUPS: tuple[int, ...] = (2, 3)
 #: How many L3 groups the placement above is written for.
 PIN_GROUP_COUNT = 4
 
-CPU_SYSFS = Path("/sys/devices/system/cpu")
 
-
-def parse_cpu_list(text: str) -> frozenset[int]:
-    """A kernel CPU list (`0-2,12-14`) as the CPUs it names."""
-    cpus: set[int] = set()
-    for part in text.strip().split(","):
-        if not part:
-            continue
-        lo, _, hi = part.partition("-")
-        cpus.update(range(int(lo), int(hi or lo) + 1))
-    return frozenset(cpus)
-
-
-def cpu_list(cpus: Iterable[int]) -> str:
-    """CPUs as a kernel CPU list, runs collapsed, which `--cpuset-cpus` takes."""
-    out: list[str] = []
-    ordered = sorted(cpus)
-    i = 0
-    while i < len(ordered):
-        j = i
-        while j + 1 < len(ordered) and ordered[j + 1] == ordered[j] + 1:
-            j += 1
-        out.append(str(ordered[i]) if i == j else f"{ordered[i]}-{ordered[j]}")
-        i = j + 1
-    return ",".join(out)
-
-
-def l3_groups(root: Path = CPU_SYSFS) -> list[frozenset[int]]:
+def l3_groups(root: Path = release.CPU_SYSFS) -> list[frozenset[int]]:
     """The machine's L3 groups, each the CPUs sharing one, by lowest CPU."""
     groups = {
-        parse_cpu_list(path.read_text())
+        release.parse_cpu_list(path.read_text())
         for path in root.glob("cpu[0-9]*/cache/index3/shared_cpu_list")
     }
     return sorted(groups, key=min)
@@ -721,7 +694,7 @@ def pin_topology_problem(groups: Sequence[frozenset[int]]) -> str | None:
     if len(groups) != PIN_GROUP_COUNT or len({len(g) for g in groups}) != 1:
         return (
             f"--pin-cpus is written for {PIN_GROUP_COUNT} equal L3 groups and this machine "
-            f"has {len(groups)} ({'; '.join(cpu_list(g) for g in groups) or 'none readable'})"
+            f"has {len(groups)} ({'; '.join(release.cpu_list(g) for g in groups) or 'none readable'})"
         )
     return None
 
@@ -4847,7 +4820,7 @@ class Session:
             memory,
         ]
         if cpus is not None:
-            argv += ["--cpuset-cpus", cpu_list(cpus)]
+            argv += ["--cpuset-cpus", release.cpu_list(cpus)]
         if counted:
             argv += [a for cap in COUNT_INSTRUCTIONS_CAPS for a in ("--cap-add", cap)]
         for m in mounts:
@@ -5121,7 +5094,7 @@ class Session:
         return {
             "arm": self.arm.name,
             "secondary_arm": self.arm != self.arms[0],
-            "cpuset": cpu_list(cpus) if cpus is not None else None,
+            "cpuset": release.cpu_list(cpus) if cpus is not None else None,
         }
 
     # -- sweeps -----------------------------------------------------------
@@ -7564,7 +7537,7 @@ def bench_in_image(session: Session, figure: str, bench: release.Bench) -> Path:
     session.ran_in(figure, tag)
     if not cfg.dry_run:
         release.prepare_state()
-        run(release.run_in_image(container, tag, bench.step()), cwd=REPO)
+        run(release.run_in_image(container, tag, bench.step(), reserve=0), cwd=REPO)
     return bench.criterion_root(release.STATE / "target")
 
 

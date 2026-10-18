@@ -87,7 +87,7 @@ import textwrap
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 import check
 
@@ -121,6 +121,12 @@ CONTAINER = os.environ.get("PGDT_RELEASE_CONTAINER", "sudo nerdctl")
 #: and a runner that cannot hold the build wants a job cap or a lighter test
 #: profile, measured first.
 MEMORY = os.environ.get("PGDT_RELEASE_MEMORY", "20g")
+#: Physical cores a container run leaves the host, each with all its SMT
+#: siblings: a whole-workspace build or suite otherwise takes every CPU, and
+#: the machine stops answering until it ends. A timed run is the exception and
+#: takes them all (`Bench`). A CI runner is the build's alone and sets 0.
+RESERVE_CORES = int(os.environ.get("PGDT_RELEASE_RESERVE_CORES", "1"))
+CPU_SYSFS = Path("/sys/devices/system/cpu")
 #: The build's state on the host. Under the repository's `target/`, so it is
 #: ignored and lives wherever that directory does.
 STATE = Path(os.environ.get("PGDT_RELEASE_STATE", str(REPO / "target" / "release-image")))
@@ -243,6 +249,57 @@ def prepare_state(state: Path = STATE, target: Path | None = None) -> None:
         path.mkdir(parents=True, exist_ok=True)
 
 
+def parse_cpu_list(text: str) -> frozenset[int]:
+    """A kernel CPU list (`0-2,12-14`) as the CPUs it names."""
+    cpus: set[int] = set()
+    for part in text.strip().split(","):
+        if not part:
+            continue
+        lo, _, hi = part.partition("-")
+        cpus.update(range(int(lo), int(hi or lo) + 1))
+    return frozenset(cpus)
+
+
+def cpu_list(cpus: Iterable[int]) -> str:
+    """CPUs as a kernel CPU list, runs collapsed, which `--cpuset-cpus` takes."""
+    out: list[str] = []
+    ordered = sorted(cpus)
+    i = 0
+    while i < len(ordered):
+        j = i
+        while j + 1 < len(ordered) and ordered[j + 1] == ordered[j] + 1:
+            j += 1
+        out.append(str(ordered[i]) if i == j else f"{ordered[i]}-{ordered[j]}")
+        i = j + 1
+    return ",".join(out)
+
+
+def physical_cores(cpus: frozenset[int], root: Path = CPU_SYSFS) -> list[frozenset[int]]:
+    """The physical cores among `cpus`, each as its SMT siblings in `cpus`, by
+    lowest CPU. A CPU whose siblings sysfs does not say is a core of its own."""
+    cores: dict[int, frozenset[int]] = {}
+    for cpu in cpus:
+        path = root / f"cpu{cpu}" / "topology" / "thread_siblings_list"
+        siblings = parse_cpu_list(path.read_text()) & cpus if path.is_file() else frozenset({cpu})
+        cores[min(siblings)] = siblings
+    return [cores[k] for k in sorted(cores)]
+
+
+def run_cpus(
+    reserve: int, cpus: frozenset[int] | None = None, root: Path = CPU_SYSFS
+) -> frozenset[int] | None:
+    """The CPUs a container run is given: `cpus`, the host's affinity unless
+    named, less its last `reserve` physical cores whole. `None` is every CPU,
+    stated by no cpuset: nothing reserved, or no core left to run on once it
+    is."""
+    if reserve <= 0 or (cpus is None and not hasattr(os, "sched_getaffinity")):
+        return None
+    cores = physical_cores(frozenset(os.sched_getaffinity(0)) if cpus is None else cpus, root)
+    if len(cores) <= reserve:
+        return None
+    return frozenset().union(*cores[:-reserve])
+
+
 def run_in_image(
     container: Sequence[str],
     tag: str,
@@ -251,6 +308,7 @@ def run_in_image(
     state: Path = STATE,
     target: Path | None = None,
     memory: str = MEMORY,
+    reserve: int = RESERVE_CORES,
     uid: int | None = None,
     gid: int | None = None,
     git: Path | None = None,
@@ -271,6 +329,9 @@ def run_in_image(
     whose binary must survive beside the release's gets a directory of its
     own.
 
+    `reserve` is how many physical cores the run leaves the host
+    (`RESERVE_CORES`, `run_cpus`); a timed run passes 0.
+
     **Seccomp is unconfined**: the suite runs `pgdt` as a user namespace's
     init (`crates/pgdt/tests/namespace_init.rs`), which the runtime's default
     profile refuses to create."""
@@ -285,6 +346,9 @@ def run_in_image(
         "-v", f"{tree}:{WORKDIR}",
         "-w", WORKDIR,
     ]  # fmt: skip
+    cpus = run_cpus(reserve)
+    if cpus is not None:
+        argv += ["--cpuset-cpus", cpu_list(cpus)]
     if git is not None:
         argv += ["-v", f"{git.resolve()}:{WORKDIR}/.git"]
     for key, value in env.items():
@@ -1036,7 +1100,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             step, git = build_step(builds), None
             if args.release:
                 env[RELEASE_VARIABLE] = workspace_version()
-        return subprocess.run(run_in_image(container, tag, step, target=target, git=git, env=env)).returncode
+        # A bench is timed, so it takes every core.
+        reserve = 0 if bench is not None else RESERVE_CORES
+        argv = run_in_image(container, tag, step, target=target, git=git, env=env, reserve=reserve)
+        return subprocess.run(argv).returncode
     except ReleaseError as e:
         print(f"release.py: {e}", file=sys.stderr)
         return 2

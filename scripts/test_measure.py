@@ -33,6 +33,7 @@ from pathlib import Path
 
 import generate_xz_input
 import measure
+import release
 
 
 def read_path_source() -> str:
@@ -2156,10 +2157,12 @@ class Glibc(unittest.TestCase):
         # The image is asked its glibc before the bench runs, and is where it ran.
         self.assertEqual(order, ["asked pgdt-release:t", "ran"])
         self.assertEqual(session.places["nested-decode-micro"], {"pgdt-release:t"})
+        # Timed, so it is given every core: no cpuset.
         self.assertEqual(
             ran, [measure.release.run_in_image(cfg.container_argv(), "pgdt-release:t",
-                                       measure.NESTED_BENCH.step())],
+                                       measure.NESTED_BENCH.step(), reserve=0)],
         )  # fmt: skip
+        self.assertNotIn("--cpuset-cpus", ran[0])
         self.assertEqual(
             ran[0][-5:],
             ["bench", "--package=pgdt-codec", "--bench=decoders", "--filter=nested", "--inside"],
@@ -9782,17 +9785,11 @@ class Arms(unittest.TestCase):
 
     # This machine's topology, as sysfs spells it: four L3 groups of six.
     GROUPS = [
-        measure.parse_cpu_list(t)
+        release.parse_cpu_list(t)
         for t in ("0-2,12-14", "3-5,15-17", "6-8,18-20", "9-11,21-23")
     ]
     TIMED = "\nreal\t0m0.012345s\nuser\t0m0.008000s\nsys\t0m0.004000s\n"
     EVENTS = "oom_kill 0\n"
-
-    def test_cpu_lists_round_trip(self):
-        self.assertEqual(measure.parse_cpu_list("0-2,12-14"), frozenset({0, 1, 2, 12, 13, 14}))
-        self.assertEqual(measure.parse_cpu_list("5"), frozenset({5}))
-        self.assertEqual(measure.cpu_list({3, 4, 5, 15, 16, 17}), "3-5,15-17")
-        self.assertEqual(measure.cpu_list({1, 3}), "1,3")
 
     def test_l3_groups_are_read_off_sysfs_by_lowest_cpu(self):
         with tempfile.TemporaryDirectory() as tmp:

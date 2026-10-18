@@ -46,7 +46,8 @@ fails.
 warnings, and a warning left for the next round is one nobody fixes.
 
 **The cargo checks run in the release image** (`release.py run`), as the
-invoking user under its memory limit: fmt, clippy, the suite, the doctests and
+invoking user under its memory limit and on every CPU but one physical core's
+(`release.py`, `RESERVE_CORES`): fmt, clippy, the suite, the doctests and
 the module graph, whose rust-analyzer builds and runs the workspace's build
 scripts. A whole-workspace test build compiles and links dozens of binaries at
 once, and on a host without swap one outgrowing memory stalls the whole machine
@@ -56,7 +57,8 @@ suite runs too (`docs/design/decisions.md`, "D104"), so the round builds what
 CI builds, in the release state's target directory (`target/release-image/`),
 never the host's `target/`, which a session's own `cargo` keeps. The scripts'
 checks stay on the host, building nothing. `PGDT_RELEASE_CONTAINER` and
-`PGDT_RELEASE_MEMORY` name the runtime and the limit (`release.py`).
+`PGDT_RELEASE_MEMORY` name the runtime and the limit, and
+`PGDT_RELEASE_RESERVE_CORES` how many cores it leaves (`release.py`).
 
 **The doctests run only for a library holding one** (`has_doctest`, by
 rustdoc's own reading of a code block), because `cargo test --doc` compiles
