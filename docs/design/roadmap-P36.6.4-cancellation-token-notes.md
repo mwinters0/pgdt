@@ -24,8 +24,7 @@ takes one. D26, D48, D77 and D90 say so.
 - **A query's passes poll a token nothing holds.** `map_for_query` makes one
   and hands it to `map_forward` and the metadata-level census's
   `reread_rows`. Neither can stop short, so the `Interrupted` arm is an
-  `assert_eq!` and the census's `None` an `expect`. Under "Decisions worth
-  another look".
+  `assert_eq!` and the census's `None` an `expect` (D26).
 - **`gather_block_statistics` answers `Result<BlockReread>`**, not
   `Result<Option<_>>`. It takes no token, being no mapping pass, and its
   `None` meant only a cancellation.

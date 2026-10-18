@@ -140,18 +140,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **36.6.4: a query's passes poll a token nothing holds, and assert they
-  were not stopped.** `map_for_query` (`crates/pgdt-query/src/stream/mapping.rs`)
-  hands `map_forward` and the census's `reread_rows` a fresh
-  `CancellationToken`, and treats `MapStop::Interrupted` and a `None` census
-  as impossible, by `assert_eq!` and `expect`. `gather_block_statistics` does
-  the same and answers `Result<BlockReread>`. The call: a caller that never
-  stops a pass hands it a token it never fires ([history,
-  2026-10-18](history/2026-10-18.md), "The cancellation is the mapping
-  pass's argument"), and this keeps pgdt-mapping's internals on one
-  signature. The alternative is
-  `Option<&CancellationToken>` through those internals, which makes the two
-  arms unrepresentable instead of asserted, with a `None` read at every poll.
-  Reconsidering changes internal signatures only. 36.8, which hands the
-  early-stopped pass the token, revisits both arms either way.

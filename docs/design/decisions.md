@@ -185,11 +185,11 @@ Evidence: `xz-decode-scaling`, `parallel-scan-throughput`, `scan-throughput-*`.
 ### D26 Cancellation is `map_file`'s argument, polled per chunk or leader window by the mapping passes alone
 A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan and back-fill keep a partial result. It
 takes a `tokio_util` `CancellationToken`, required: options are reused across runs, and a fired token in one stops every later run at byte 0.
-A query takes none, a dropped stream being its cancellation (D90). The preamble scan polls none, a stop there reading as the first `COPY`
+A query takes none, a dropped stream being its cancellation (D90); a pass run where nothing can stop it polls an unfired token and asserts it was not stopped. The preamble scan polls none, a stop there reading as the first `COPY`
 header and caching as complete; the token handed to the source drops a read in flight, failing it unbanked. **The shape follows the
 command**: `parse` interrupts, at byte 0 too, then dies by the signal, and a second one, mid-save too, or one in the listing, ends it in the
 handler. As init (RT19) `pgdt` exits 128+n on every signal ending them elsewhere but a fault's, left to the kernel, and what `parse`'s guard
-or the REPL's `ctrl_c` catches. Rejected: polling alone; a `ScanOptions` field; a token of our own; keying on what was banked (a race); `exit(128+n)` elsewhere (RT20); needing an init; as init, INT and TERM alone; fault handlers.
+or the REPL's `ctrl_c` catches. Rejected: polling alone; a `ScanOptions` field; a token of our own; keying on what was banked (a race); `exit(128+n)` elsewhere (RT20); needing an init; as init, INT and TERM alone; fault handlers; an `Option<&CancellationToken>` inside, which still asserts and adds a branch per poll; a `Stop` trait whose `Interrupted` is uninhabited where nothing stops the pass, a type parameter through every pass to prove one gate.
 
 ### D27 UTF-8 is validated once per chunk, and the library's one `unsafe` is the view append
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with

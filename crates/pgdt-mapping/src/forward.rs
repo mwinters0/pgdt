@@ -129,9 +129,9 @@ fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> boo
 pub enum MapStop {
     /// EOF, or the queried table settled.
     Reached,
-    /// The pass's cancellation fired. The index is consistent at the last
-    /// spliced watermark and has been persisted; everything past it is
-    /// unscanned.
+    /// The pass's cancellation fired, which is the only thing that answers
+    /// this. The index is consistent at the last spliced watermark and has
+    /// been persisted; everything past it is unscanned.
     Interrupted,
 }
 
