@@ -224,6 +224,14 @@ impl Args {
 // pgdump: since `#[tokio::main]` refuses arguments on a function named `main`.
 pub async fn run(args: Args) -> ExitCode {
     if let Err(e) = main_inner(args).await {
+        // deficiency: KD122 — an error that ends the run (a `--dump` refused at
+        // registration, a `-c` statement's) prints to stdout, as upstream's
+        // `main` prints it, where every other `pgdt` command and this shell's
+        // own findings (`pgdump::StderrSink`) write to stderr; a statement's
+        // error from `-f` or the REPL is upstream's `exec`, on stderr. So
+        // `pgdt sql -c … > out` writes the refusal into `out` and stderr is
+        // empty. The fix is `eprintln!`, a departure from upstream's `main`
+        // nobody has decided on.
         println!("Error: {e}");
         return ExitCode::FAILURE;
     }

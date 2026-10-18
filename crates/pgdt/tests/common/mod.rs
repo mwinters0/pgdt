@@ -51,9 +51,9 @@ pub fn run_ok_in(dir: impl AsRef<Path>, args: &[&str]) -> String {
 }
 
 /// `out`'s stdout, once its status says `pgdt` succeeded. **A failure shows
-/// both streams**: `pgdt sql` prints its errors to stdout, as upstream's
-/// `datafusion-cli` does, and every other command to stderr, so a message
-/// showing only one of them is empty for part of the binary.
+/// both streams**: `pgdt sql` prints the error ending its run to stdout
+/// (`KD122`) and every other command to stderr, so a message showing only one
+/// of them is empty for part of the binary.
 fn succeeded(args: &[&str], out: Output) -> String {
     assert!(
         out.status.success(),

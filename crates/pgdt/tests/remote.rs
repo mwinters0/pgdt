@@ -617,7 +617,7 @@ fn a_remote_run_nothing_can_check_is_refused_unless_none_is_stated() {
     // The fixture names no database, so its catalog is named here.
     let dump = format!("edge={url}");
     let sql = ["sql", "-q", "--dump", &dump, "-c", "SELECT 1"];
-    // The shell prints its error to stdout, as upstream's `datafusion-cli` does.
+    // The shell prints the refusal to stdout (`KD122`).
     let refused = run_in(&dir, &sql);
     let said = String::from_utf8_lossy(&refused.stdout);
     assert!(!refused.status.success(), "{said}");
