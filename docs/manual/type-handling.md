@@ -24,7 +24,7 @@ that is simply what it is (`text`, `json`, `inet`) gets no line, since
 carries the same per-column outcomes in machine-readable form (see
 [dump inspection](dump-inspection.md), "Scripting against the output"), and the
 library exposes them on the resolved schema
-(`TableStream::resolved_schema`, or `read_table`'s returned `ResolvedSchema`).
+(`TableStream::resolved_schema`, or a plan's `TablePartitions::resolved_schema`).
 
 ```
 public.t_composite (3 rows)

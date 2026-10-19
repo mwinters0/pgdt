@@ -20,7 +20,7 @@ pub use predicate::{ComparisonNote, Expr, Membership, Predicate, PredicateOp, Tr
 pub use render::{decode_field, render_field, render_field_into};
 pub use stream::{
     BlockingTableIter, DynamicFilter, DynamicPartitions, EarlyStop, PlanLever, PlanNote,
-    PlanNoteKind, ResumeToken, RowEvaluation, TablePartitions, TableStream, read_table,
-    table_stream, table_stream_partitions,
+    PlanNoteKind, ResumeToken, RowEvaluation, TablePartitions, TableStream, table_stream,
+    table_stream_partitions,
 };
 pub use summary::{Bound, ColumnSummary, TableSummary};

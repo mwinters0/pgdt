@@ -1,4 +1,4 @@
-//! `table_stream`/`read_table`'s cache-consulting behavior
+//! `table_stream`'s cache-consulting behavior
 //! (`docs/design/decisions.md`, "The compressed source and the cache"): replaying
 //! already- cached blocks, skipping non-matching ones at zero I/O cost, and
 //! persisting newly-discovered blocks as a live scan finds them. See

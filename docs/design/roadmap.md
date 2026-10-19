@@ -1329,10 +1329,9 @@ which is what makes the difference worth minding at the moment one is found.
 
 - **A public-surface sweep at feature-completeness.** The library's public
   surface is tightened once, when the feature set is complete, rather than piecemeal as each
-  phase finds something it does not use. Known candidates: `stream::read_table`
-  (push mode, whose only callers are tests and a bench, and which the DataFusion
-  provider does not use); `TableStream::batch_source_offset`, which exists for
-  `pgdt query`'s merge; and whether `pgdt-io` re-exports `bytes::Bytes`,
+  phase finds something it does not use. Known candidates:
+  `TableStream::batch_source_offset`, which exists for a merge into file
+  order; and whether `pgdt-io` re-exports `bytes::Bytes`,
   which `ByteRangeSource::read_range` names in its signature so that an
   embedder implementing a source must depend on `bytes` in step with us.
 

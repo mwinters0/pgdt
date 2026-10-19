@@ -10,7 +10,7 @@
 //! `rangetypes.c` shows up here as an inequality, on values PostgreSQL itself
 //! wrote.
 
-use std::ops::ControlFlow;
+use futures::StreamExt;
 use std::path::Path;
 
 use pgdt_codec::SchemaMode;
@@ -22,7 +22,7 @@ use pgdt_codec::pgtype::NestedPlan;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
-use pgdt_query::{QueryOptions, read_table, render_field};
+use pgdt_query::{QueryOptions, render_field, table_stream};
 
 /// Which codec a column's literals belong to, named here per column rather
 /// than read off `NestedPlan`: this file tests the codec resolution feeds,
@@ -77,7 +77,10 @@ async fn column_values(path: &Path, table: &str, column: &str) -> Vec<String> {
     let source = LocalFileSource::open(path).unwrap();
     let options = QueryOptions { schema_mode: SchemaMode::Strings, ..Default::default() };
     let mut out = Vec::new();
-    read_table(&source, table, &ScanOptions::default(), &options, CacheMode::DISABLED, |batch| {
+    let mut stream =
+        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
+    while let Some(batch) = stream.next().await {
+        let batch = batch.unwrap();
         let index = batch.schema().index_of(column).expect("column is in the COPY header");
         for row in 0..batch.num_rows() {
             // `Strings` mode resolves every column `Utf8View`/`Scalar`,
@@ -89,10 +92,7 @@ async fn column_values(path: &Path, table: &str, column: &str) -> Vec<String> {
                 out.push(value);
             }
         }
-        ControlFlow::Continue(())
-    })
-    .await
-    .unwrap();
+    }
     out
 }
 

@@ -11,13 +11,14 @@ use futures::StreamExt;
 use tokio::sync::OnceCell;
 
 use pgdt_codec::ResolvedSchema;
-use pgdt_core::Result;
+use pgdt_core::{Error, Result};
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, Partitioning};
 use pgdt_model::{BlockStatistics, CopyBlock, DumpMetadata, Sortedness, TableName};
 
 use super::mapping::{MappedTable, map_for_query, validate_request};
+use super::merge;
 use super::note::PlanNote;
 use super::replay::dynamic::{Cut, DynamicBlock, DynamicFilter, DynamicRead, RowEvaluation};
 use super::replay::partition::cut_blocks;
@@ -282,6 +283,102 @@ impl TablePartitions {
         self.sub_stream(partition, max_rows, None)
     }
 
+    /// **The whole table in file order, as one stream**: every partition run
+    /// at once, cutting batches at `max_rows` rows, and merged on each
+    /// batch's source offset, so it yields exactly the rows and the order a
+    /// serial replay does, holding at most one batch per partition
+    /// ([`TableStream::batch_source_offset`]). A failure is the lowest-indexed
+    /// failing partition's, raised after every row before it
+    /// (`docs/design/decisions.md`, "D52").
+    ///
+    /// Its schema and comparison notes are the plan's, held before the first
+    /// poll; its early stops and dynamic-filter counts are its partitions'
+    /// together, a block read by two counted once. **Its resume token is the
+    /// whole table's**, which [`Self::resume`] takes, where a partition's
+    /// resumes nothing (`docs/design/decisions.md`, "D51").
+    pub fn in_file_order(&self, max_rows: usize) -> TableStream<'static> {
+        let streams = (0..self.len()).map(|partition| self.stream(partition, max_rows)).collect();
+        let fingerprint = self.whole_fingerprint();
+        let shared = StreamShared::new(ResumeToken::start(fingerprint))
+            .with_plan_notes(self.plan_notes.clone());
+        self.publish_plan(&shared);
+        merge::in_file_order(streams, shared, fingerprint)
+    }
+
+    /// The table in file order from just past where `token`'s stream stopped,
+    /// **serially**, cutting batches at `max_rows` rows: one stream over the
+    /// rest of the plan's segments, whatever cut it was planned under, its
+    /// own tokens resuming as [`Self::in_file_order`]'s do. Nothing is mapped,
+    /// loaded or saved (`docs/design/decisions.md`, "D49").
+    ///
+    /// Refused, [`Error::ResumeQueryMismatch`](pgdt_core::Error::ResumeQueryMismatch),
+    /// for a token another query produced — another table, filter,
+    /// projection, schema mode, semantics or unrepresentable mode — or one
+    /// partition's ([`Self::stream`]), which knows nothing of the range it
+    /// was confined to.
+    pub fn resume(&self, token: ResumeToken, max_rows: usize) -> Result<TableStream<'static>> {
+        let fingerprint = self.whole_fingerprint();
+        if token.query_fingerprint != fingerprint {
+            return Err(Error::ResumeQueryMismatch);
+        }
+        let plan = self.plan_at(max_rows);
+        let segments: Vec<Segment> = self
+            .matches
+            .iter()
+            .filter(|block| block.end_offset > token.offset)
+            .flat_map(|block| plan.segments(block))
+            .filter_map(|segment| segment.resumed_at(token.offset))
+            .collect();
+        // The plan's own notes, not the cut's: one stream reads them.
+        let shared = StreamShared::new(token.clone()).with_plan_notes(plan.notes().collect());
+        let shared_for_stream = shared.clone();
+        let (source, watch) = (Arc::clone(&self.source), Arc::clone(&self.watch));
+        let inner = try_stream! {
+            let mut rows = Box::pin(replay(
+                source.as_ref(),
+                plan,
+                segments,
+                shared_for_stream,
+                Some(token),
+                fingerprint,
+                None,
+            ));
+            while let Some(batch) = rows.next().await {
+                yield watch.attribute(source.as_ref(), batch).await?;
+            }
+            drop(rows);
+            watch.finish(source.as_ref()).await?;
+        };
+        Ok(shared.into_stream(Box::pin(inner)))
+    }
+
+    /// The stamp of a stream over the whole table under this plan's query,
+    /// as no partition's is ([`query_fingerprint`]).
+    fn whole_fingerprint(&self) -> u64 {
+        query_fingerprint(&self.table, &self.plan.query_options, None)
+    }
+
+    /// Publish the plan's schema and comparison notes to `shared` up front,
+    /// as a stream over the whole table holds them before its first poll —
+    /// every block of a table resolving the same ([`ReplayPlan::new`]).
+    fn publish_plan(&self, shared: &StreamShared) {
+        if let Some(planned) = self.plan.blocks.values().next() {
+            *shared.resolved_schema.lock().unwrap() = planned.resolved.clone();
+            *shared.comparison_notes.lock().unwrap() = planned.notes.clone();
+        }
+    }
+
+    /// The plan, batching at `max_rows` rows: shared where it already does,
+    /// copied otherwise.
+    fn plan_at(&self, max_rows: usize) -> Arc<ReplayPlan> {
+        if self.plan.query_options.max_rows == max_rows {
+            return Arc::clone(&self.plan);
+        }
+        let mut plan = ReplayPlan::clone(&self.plan);
+        plan.query_options.max_rows = max_rows;
+        Arc::new(plan)
+    }
+
     /// These partitions under `filter`, which each of their sub-streams reads
     /// as it runs, against the statistics the plan holds, evaluating each row
     /// against it as `evaluation` says, and whose state when the first of
@@ -380,13 +477,7 @@ impl TablePartitions {
         max_rows: usize,
         dynamic: Option<DynamicPartitions>,
     ) -> TableStream<'static> {
-        let plan = if self.plan.query_options.max_rows == max_rows {
-            Arc::clone(&self.plan)
-        } else {
-            let mut plan = ReplayPlan::clone(&self.plan);
-            plan.query_options.max_rows = max_rows;
-            Arc::new(plan)
-        };
+        let plan = self.plan_at(max_rows);
         let fingerprint = query_fingerprint(
             &self.table,
             &plan.query_options,

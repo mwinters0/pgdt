@@ -305,11 +305,16 @@ embedder pulls, with its resume token ([`decisions.md`](decisions.md),
 "Batches, streams and the leader").
 
 - **pgdt-query** — `stream.rs`, `stream/table.rs`, `stream/partitions.rs`,
-  `stream/resume.rs`, `stream/replay.rs`, `stream/replay/plan.rs`,
-  `stream/replay/segment.rs`, `stream/replay/partition.rs`: the top of the
-  stream, pass 1 then pass 2, which no child reads; the handle an embedder
-  pulls; the partitioned replay; the resume token; and beneath the replay
-  loop, what it plans, the pieces it reads and how they are cut.
+  `stream/merge.rs`, `stream/resume.rs`, `stream/replay.rs`,
+  `stream/replay/plan.rs`, `stream/replay/segment.rs`,
+  `stream/replay/partition.rs`: the top of the stream, pass 1 then pass 2,
+  which no child reads; the handle an embedder pulls; the partitioned replay;
+  its partitions merged back into file order; the resume token; and beneath
+  the replay loop, what it plans, the pieces it reads and how they are cut.
+
+**Not in one place.** The merge into file order is written twice: by
+`stream/merge.rs` over a plan's partitions, and by the `pgdt` binary's `query`
+over the sub-streams its cold path hands back.
 
 ## What a query tells its caller
 

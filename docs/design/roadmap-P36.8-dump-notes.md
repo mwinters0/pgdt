@@ -8,9 +8,9 @@ refuses anything short with `Error::MapIncomplete`. It answers `tables()`,
 summary, the divergences and the plan (`TablePartitions`) under a
 `QueryOptions`. The free `table_schema`, `table_summary`, `column_divergences`
 and `TablePartitions::plan` are gone from the API. `PgDump` holds a `Dump`.
-The slice split: the cold path and the streams are 36.8.1, the filter
-operators 36.8.2 ([history, 2026-10-18](../status/history/2026-10-18.md),
-"36.8 splits").
+The slice split: the plan's streams are 36.8.1, the cold path 36.8.4, the
+filter operators 36.8.2 ([history, 2026-10-18](../status/history/2026-10-18.md),
+"36.8 splits"; [2026-10-19](../status/history/2026-10-19.md), "36.8.1 splits").
 
 ## The shape
 
@@ -66,8 +66,8 @@ operators 36.8.2 ([history, 2026-10-18](../status/history/2026-10-18.md),
 
 ## What the next round inherits
 
-- **36.8.1 moves the cold path onto the `Dump`.** `table_stream`,
-  `table_stream_partitions` and `read_table` remain, over `map_for_query`'s
+- **36.8.4 moves the cold path onto the `Dump`.** `table_stream` and
+  `table_stream_partitions` remain, over `map_for_query`'s
   own load and watch; the merge in `pgdt/src/query.rs` remains; the
   `&str` pattern, `QueryOptions.database` and `DumpIndex::blocks_for` remain.
   An early-stopped pass settles one table from a map short of the file's

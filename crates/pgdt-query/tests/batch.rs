@@ -2,19 +2,19 @@
 //! edge-case dump (see `pgdt-mapping`'s `tests/scan.rs` for the same fixture used at the
 //! event-stream level).
 
-use std::ops::ControlFlow;
 use std::path::Path;
 
+use futures::StreamExt;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::LocalFileSource;
-use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions, read_table, render_field};
+use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions, render_field, table_stream};
 
 mod common;
 use common::{edge_cases, edge_cases_fixture, rows_of, types_fixture, widgets_expected};
 
-/// Collect every batch `read_table` produces for `table`, as decoded rows,
+/// Collect every batch `table_stream` yields for `table`, as decoded rows,
 /// along with each batch's row count (so batch-size-limit tests can see the
 /// split points, not just the flattened data).
 async fn collect(
@@ -27,13 +27,19 @@ async fn collect(
     let mut batch_sizes = Vec::new();
     let mut rows = Vec::new();
 
-    read_table(&source, table, scan_options, batch_options, CacheMode::DISABLED, |batch| {
+    let mut stream = table_stream(
+        &source,
+        table,
+        *scan_options,
+        batch_options.clone(),
+        None,
+        CacheMode::DISABLED,
+    );
+    while let Some(batch) = stream.next().await {
+        let batch = batch.unwrap();
         batch_sizes.push(batch.num_rows());
         rows.extend(rows_of(&batch));
-        ControlFlow::Continue(())
-    })
-    .await
-    .unwrap();
+    }
 
     (batch_sizes, rows)
 }
@@ -64,18 +70,17 @@ async fn collect_with_expr(
 ) -> pgdt_core::Result<Vec<Vec<Option<String>>>> {
     let source = LocalFileSource::open(path).unwrap();
     let mut rows = Vec::new();
-    read_table(
+    let mut stream = table_stream(
         &source,
         table,
-        &ScanOptions::default(),
-        &QueryOptions { filter, ..Default::default() },
+        ScanOptions::default(),
+        QueryOptions { filter, ..Default::default() },
+        None,
         CacheMode::DISABLED,
-        |batch| {
-            rows.extend(rows_of(&batch));
-            ControlFlow::Continue(())
-        },
-    )
-    .await?;
+    );
+    while let Some(batch) = stream.next().await {
+        rows.extend(rows_of(&batch?));
+    }
     Ok(rows)
 }
 
@@ -476,16 +481,15 @@ async fn unmatched_table_produces_no_batches() {
 #[tokio::test]
 async fn header_without_column_list_refuses_a_non_empty_row() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let err = read_table(
+    let mut stream = table_stream(
         &source,
         "public.no_column_list",
-        &ScanOptions::default(),
-        &QueryOptions::default(),
+        ScanOptions::default(),
+        QueryOptions::default(),
+        None,
         CacheMode::DISABLED,
-        |_| ControlFlow::Continue(()),
-    )
-    .await
-    .unwrap_err();
+    );
+    let err = stream.next().await.expect("the refusal is yielded").unwrap_err();
     assert!(
         matches!(err, pgdt_core::Error::ColumnCountMismatch { expected: 0, found: 1, .. }),
         "{err:?}"
@@ -615,52 +619,22 @@ async fn batch_contents_are_independent_of_chunk_size() {
     }
 }
 
+/// The token a stream hands back after its first batch picks up exactly
+/// there: resumed, it continues without re-delivering the row already seen.
 #[tokio::test]
-async fn stops_early_on_break() {
+async fn a_resume_token_after_one_batch_continues_correctly() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
-    let mut batches = 0;
-    let (_, token) = read_table(
+    let mut stream = table_stream(
         &source,
         "public.widgets",
-        &ScanOptions::default(),
-        &options,
+        ScanOptions::default(),
+        options.clone(),
+        None,
         CacheMode::DISABLED,
-        |_| {
-            batches += 1;
-            ControlFlow::Break(())
-        },
-    )
-    .await
-    .unwrap();
-    assert_eq!(batches, 1);
-    assert!(token.is_some(), "a Break should hand back a resume token");
-}
-
-/// The resume token `read_table` returns on an early `Break` picks up
-/// exactly where the callback stopped: feeding it back in continues without
-/// re-delivering the row(s) already seen.
-#[tokio::test]
-async fn resume_token_from_break_continues_correctly() {
-    use pgdt_query::table_stream;
-
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
-    let mut rows = Vec::new();
-    let (_, token) = read_table(
-        &source,
-        "public.widgets",
-        &ScanOptions::default(),
-        &options,
-        CacheMode::DISABLED,
-        |batch| {
-            rows.extend(rows_of(&batch));
-            ControlFlow::Break(())
-        },
-    )
-    .await
-    .unwrap();
-    let token = token.expect("Break yields a resume token");
+    );
+    let mut rows = rows_of(&stream.next().await.expect("a first batch").unwrap());
+    let token = stream.resume_token();
 
     let mut resumed = table_stream(
         &source,
@@ -670,7 +644,6 @@ async fn resume_token_from_break_continues_correctly() {
         Some(token),
         CacheMode::DISABLED,
     );
-    use futures::StreamExt;
     while let Some(batch) = resumed.next().await {
         rows.extend(rows_of(&batch.unwrap()));
     }

@@ -1,5 +1,5 @@
 //! Pull-mode stream, resume, and blocking-iterator tests. See `tests/batch.rs`
-//! for the push-mode (`read_table`) equivalent over the same fixtures.
+//! for the row layer over the same fixtures.
 
 use arrow::datatypes::DataType;
 use futures::StreamExt;
@@ -16,11 +16,10 @@ use common::{
     widgets_expected,
 };
 
-/// The pull-mode primitive, run to completion with no resume, matches the
-/// push-mode fixture data exactly — a regression guard on top of the fact
-/// that `read_table` is now implemented by draining this same stream.
+/// The pull-mode primitive, run to completion with no resume, yields the
+/// fixture's rows exactly.
 #[tokio::test]
-async fn stream_matches_push_mode_output() {
+async fn stream_yields_the_fixture_rows() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let mut stream = table_stream(
         &source,

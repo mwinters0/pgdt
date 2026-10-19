@@ -20,7 +20,8 @@ use crate::options::QueryOptions;
 use crate::predicate::ComparisonNote;
 
 /// A pull-mode stream of `RecordBatch`es for one table query.
-/// Construct with [`table_stream`](crate::stream::table_stream).
+/// Construct with [`table_stream`](crate::stream::table_stream), or from a
+/// [`TablePartitions`](crate::stream::TablePartitions) plan.
 pub struct TableStream<'a> {
     inner: Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send + 'a>>,
     position: Arc<Mutex<ResumeToken>>,
@@ -57,7 +58,9 @@ impl<'a> TableStream<'a> {
     /// ([`TableColumns`](super::replay::plan::TableColumns)). The empty
     /// schema (`ResolvedSchema::default`) until the query's matching `COPY`
     /// block has been found, which for a table that never appears in the dump
-    /// is forever.
+    /// is forever — but on a stream over a plan's whole table
+    /// ([`TablePartitions::in_file_order`](crate::stream::TablePartitions::in_file_order)),
+    /// which holds the plan's from the start.
     pub fn resolved_schema(&self) -> ResolvedSchema {
         self.resolved_schema.lock().unwrap().clone()
     }

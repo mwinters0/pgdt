@@ -22,15 +22,15 @@
 //! the ones that would compare the new number against an old one.
 
 use std::hint::black_box;
-use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use futures::StreamExt;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
-use pgdt_query::{QueryOptions, read_table};
+use pgdt_query::{QueryOptions, table_stream};
 
 /// `pgdt`'s allocator, as `pgdt` declares it (`crates/pgdt/src/alloc.rs`): a bench
 /// target is a binary of its own, outside the library's refusal of a global
@@ -86,19 +86,17 @@ fn perf_data_path() -> PathBuf {
 async fn scan_once(path: &Path) -> u64 {
     let source = LocalFileSource::open(path).unwrap();
     let mut rows = 0u64;
-    read_table(
+    let mut stream = table_stream(
         &source,
         "public.perf",
-        &ScanOptions::default(),
-        &QueryOptions::default(),
+        ScanOptions::default(),
+        QueryOptions::default(),
+        None,
         CacheMode::DISABLED,
-        |batch| {
-            rows += batch.num_rows() as u64;
-            ControlFlow::Continue(())
-        },
-    )
-    .await
-    .unwrap();
+    );
+    while let Some(batch) = stream.next().await {
+        rows += batch.unwrap().num_rows() as u64;
+    }
     rows
 }
 

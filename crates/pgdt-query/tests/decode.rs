@@ -15,7 +15,6 @@
 //! real boundary rows rather than hand-built ones.
 
 use pgdt_io::ByteRangeSource;
-use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -34,7 +33,7 @@ use pgdt_mapping::statistics::{
 };
 use pgdt_model::PostgresInvalidValues;
 use pgdt_query::{
-    Expr, Membership, Predicate, PredicateOp, QueryOptions, read_table, render_field, table_stream,
+    Expr, Membership, Predicate, PredicateOp, QueryOptions, render_field, table_stream,
 };
 
 mod common;
@@ -45,10 +44,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Every row of `table`, rendered back to PostgreSQL text.
 ///
-/// Pull mode, not `read_table`: rendering a nested column needs the stream's
-/// own `NestedPlan`s, which push mode only hands back once the whole stream
-/// has been drained. The scan underneath is the same one — `read_table`
-/// drains this stream internally.
+/// Rendering a nested column needs the stream's own `NestedPlan`s.
 async fn rows(path: &Path, table: &str, mode: SchemaMode) -> Vec<Vec<Option<String>>> {
     try_rows(path, table, mode).await.unwrap()
 }
@@ -458,16 +454,9 @@ async fn read_as_null_or_refused(table: &str, column: &str, declared: &str, valu
         let source = LocalFileSource::open(&path).unwrap();
         let refuse =
             QueryOptions { unrepresentable: UnrepresentableMode::Refuse, ..Default::default() };
-        let err = read_table(
-            &source,
-            table,
-            &ScanOptions::default(),
-            &refuse,
-            CacheMode::DISABLED,
-            |_| ControlFlow::Continue(()),
-        )
-        .await
-        .unwrap_err();
+        let mut stream =
+            table_stream(&source, table, ScanOptions::default(), refuse, None, CacheMode::DISABLED);
+        let err = stream.next().await.expect("the refusal is yielded").unwrap_err();
         match err {
             Error::Unrepresentable { table: named, column: at, declared_type, values } => {
                 assert_eq!(named, table, "pg_dump {version}");

@@ -2,8 +2,9 @@
 //! the leader").
 //!
 //! [`table_stream`] is the primitive: an async `Stream<Item =
-//! Result<RecordBatch>>` built directly on [`CopyScanner`](pgdt_dump::CopyScanner)/[`RowBatcher`](crate::batch::RowBatcher), the
-//! same machinery [`read_table`] (push mode) drives internally.
+//! Result<RecordBatch>>` built directly on [`CopyScanner`](pgdt_dump::CopyScanner)/[`RowBatcher`](crate::batch::RowBatcher).
+//! A [`TablePartitions`] plan yields its partitions, the whole table in file
+//! order, and a serial resume.
 //! [`ResumeToken`] resumes a consumption within the same process; it holds no
 //! public fields (`docs/design/decisions.md`, "D49").
 //!
@@ -41,6 +42,7 @@
 //! ([`TableColumns`](self::replay::plan::TableColumns)).
 
 mod mapping;
+mod merge;
 mod note;
 mod partitions;
 mod replay;
@@ -54,15 +56,11 @@ pub use self::resume::ResumeToken;
 pub(crate) use self::table::table_schema;
 pub use self::table::{BlockingTableIter, TableStream};
 
-use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use arrow::array::RecordBatch;
 use async_stream::try_stream;
 use futures::StreamExt;
 
-use pgdt_codec::ResolvedSchema;
-use pgdt_core::Result;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_io::ByteRangeSource;
@@ -160,37 +158,6 @@ pub fn table_stream<'a>(
     };
 
     shared.into_stream(Box::pin(inner))
-}
-
-/// Scan `source` as far as `query_options.scan_extent` says, assembling typed
-/// `RecordBatch`es for every row
-/// of every `COPY` block whose table matches `table` (qualified or bare — see
-/// [`CopyHeader::matches`](pgdt_core::CopyHeader::matches)). A table with zero rows produces no batches.
-///
-/// Push-mode entry point (`docs/design/decisions.md`, "D68"): internally
-/// drains the pull-mode [`crate::stream::table_stream`], so the two share one
-/// scan loop. The callback may return [`ControlFlow::Break`] to stop early,
-/// in which case the returned token resumes from just past the last batch
-/// delivered to it — see [`crate::stream::TableStream::resume_token`].
-/// `query_options` and `cache` mean what they do on `table_stream`.
-pub async fn read_table<F>(
-    source: &dyn ByteRangeSource,
-    table: &str,
-    scan_options: &ScanOptions,
-    query_options: &QueryOptions,
-    cache: CacheMode,
-    mut on_batch: F,
-) -> Result<(ResolvedSchema, Option<ResumeToken>)>
-where
-    F: FnMut(RecordBatch) -> ControlFlow<()>,
-{
-    let mut stream = table_stream(source, table, *scan_options, query_options.clone(), None, cache);
-    while let Some(batch) = stream.next().await.transpose()? {
-        if on_batch(batch).is_break() {
-            return Ok((stream.resolved_schema(), Some(stream.resume_token())));
-        }
-    }
-    Ok((stream.resolved_schema(), None))
 }
 
 #[cfg(test)]

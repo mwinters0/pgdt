@@ -46,7 +46,7 @@ owns its blocks; `info` reads the cache".
 
 ## What the next round inherits
 
-- **36.8.1 builds an owning `Table` from an early-stopped pass.** Only
+- **36.8.4 builds an owning `Table` from an early-stopped pass.** Only
   `Dump::table` builds one today, and its fields are private, so it needs a
   crate-private constructor from the parts. `MappedTable`'s DDL is already an
   `Arc`.
