@@ -32,15 +32,14 @@ use futures::StreamExt;
 use pgdt_codec::SchemaMode;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::build_map;
 use pgdt_model::DataBlock;
 use pgdt_model::SpanBody;
-use pgdt_query::{QueryOptions, table_stream};
+use pgdt_query::QueryOptions;
 
 mod common;
-use common::{VERSIONS, fixtures_root, types_fixture};
+use common::{Cold, VERSIONS, fixtures_root, types_fixture};
 
 /// Every `types` flag set a typed read can be asked of, `default` first: all
 /// but the one carrying no DDL.
@@ -140,15 +139,15 @@ async fn tables(path: &Path) -> BTreeMap<String, Vec<String>> {
 /// One column of `table`, read typed alone: `Ok(None)` where it resolves to
 /// text, `Err` where the read refuses.
 async fn read_column(path: &Path, table: &str, column: &str) -> Result<Option<Read>, String> {
-    let source = LocalFileSource::open(path).unwrap();
+    let source = std::sync::Arc::new(LocalFileSource::open(path).unwrap());
     let options = QueryOptions {
         schema_mode: SchemaMode::Typed,
         projection: Some(vec![column.to_string()]),
         ..Default::default()
     };
-    let mut stream =
-        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
+    let stream = Cold::default().stream(source, table, options).await;
     let mut read = Read::default();
+    let Some(mut stream) = stream.map_err(|e| e.to_string())? else { return Ok(Some(read)) };
     let mut row = 0;
     while let Some(batch) = stream.next().await {
         let batch = batch.map_err(|e| e.to_string())?;

@@ -48,9 +48,8 @@ impl Segment {
     /// needs them once [`ReplayPlan::new`](super::plan::ReplayPlan::new) has pruned — a replay under a
     /// [`DynamicFilter`](crate::stream::replay::dynamic::DynamicFilter) reads them from the [`TablePartitions`](crate::stream::partitions::TablePartitions) holding them
     /// — and a copy keeping the `Arc` would hold every matched block's
-    /// resident for as long as the replay runs, after the map that loaded
-    /// them is gone, which is what lets a caller of [`table_stream`](crate::stream::table_stream) or
-    /// [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) carve a replay with nothing held for them.
+    /// resident in each of a plan's cuts, whose segments a dynamic filter's
+    /// cut copies again.
     pub(in crate::stream) fn new(
         block: &CopyBlock,
         start: u64,

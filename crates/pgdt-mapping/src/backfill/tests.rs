@@ -231,7 +231,7 @@ async fn a_held_column_lacks_bounds_only_where_gathering_keeps_them() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let index = mapped(source, &StatisticsRequest::DATA).await;
     let metadata = index.metadata.as_deref();
-    let ordered = index.blocks_for("public.ordered").next().unwrap();
+    let ordered = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
     let bounded = bounded_columns(ordered, metadata, None);
     assert!(bounded.iter().all(|&b| b), "every column of `ordered` is bounded: {bounded:?}");
     assert_eq!(bounded_columns(ordered, None, None), bounded, "no DDL, bounded as its text");

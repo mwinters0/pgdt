@@ -19,9 +19,9 @@ use super::resume::ResumeToken;
 use crate::options::QueryOptions;
 use crate::predicate::ComparisonNote;
 
-/// A pull-mode stream of `RecordBatch`es for one table query.
-/// Construct with [`table_stream`](crate::stream::table_stream), or from a
-/// [`TablePartitions`](crate::stream::TablePartitions) plan.
+/// A pull-mode stream of `RecordBatch`es for one table query, from a
+/// [`TablePartitions`](crate::stream::TablePartitions) plan: one partition,
+/// the whole table in file order, or a resume.
 pub struct TableStream<'a> {
     inner: Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send + 'a>>,
     position: Arc<Mutex<ResumeToken>>,
@@ -91,11 +91,10 @@ impl<'a> TableStream<'a> {
     /// (the codec) and [`Self::comparison_notes`] (query).
     ///
     /// **Settled before any block is read**, from the map and the source's own
-    /// advice. A
-    /// [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) sub-stream holds them when it is handed
-    /// back; [`table_stream`](crate::stream::table_stream)'s serial replay, which plans no partitions and
-    /// so never notes a budget, holds its pruning and read-as-NULL notes once
-    /// its first item is polled, and nothing before.
+    /// advice, and held from the start: a partition's and the whole table's
+    /// are the plan's ([`TablePartitions::plan_notes`](crate::stream::TablePartitions::plan_notes)),
+    /// and a resume's the plan's pruning and read-as-NULL notes alone, a
+    /// serial stream noting no budget.
     pub fn plan_notes(&self) -> Vec<PlanNote> {
         self.plan_notes.lock().unwrap().clone()
     }

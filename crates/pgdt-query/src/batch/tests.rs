@@ -10,7 +10,8 @@ use pgdt_codec::pgtype::NestedPlan;
 
 /// A [`RowBatcher`] over one nullable `data_type` column, fed by the field
 /// `field_targets` says — for driving `push_row` at chosen file offsets,
-/// the flush triggers being arithmetic over offsets and row lengths.
+/// the flush triggers being arithmetic over offsets and row lengths. Its
+/// row count never flushes a batch, so `options` alone bounds one.
 fn one_column_batcher_fed_by(
     options: QueryOptions,
     field_targets: Vec<Option<usize>>,
@@ -34,7 +35,7 @@ fn one_column_batcher_fed_by(
         comparisons: vec![comparison_for(declared, None, &[], &[])],
         not_null: vec![false],
     };
-    RowBatcher::new(&resolved, "public.t".into(), options, field_targets, Vec::new())
+    RowBatcher::new(&resolved, "public.t".into(), options, usize::MAX, field_targets, Vec::new())
 }
 
 /// The unprojected case: one `Utf8View` column, fed by the row's only
@@ -152,6 +153,7 @@ fn a_zero_column_batch_carries_only_its_row_count() {
         &resolved,
         "public.t".into(),
         QueryOptions::default(),
+        usize::MAX,
         vec![None, None],
         Vec::new(),
     );
@@ -179,15 +181,11 @@ fn rendered(batch: &RecordBatch) -> Vec<Option<String>> {
 /// The span trigger measures from the first selected row's offset to one
 /// past the latest selected row's last byte and fires the moment that
 /// reaches the cap, so it is overshot by at most one row. The rows here
-/// are four bytes apart, with `max_rows` unbounded and `max_bytes` off.
+/// are four bytes apart, and `max_bytes` is off.
 #[test]
 fn the_source_span_trigger_fires_on_the_distance_between_selected_rows() {
-    let options = QueryOptions {
-        max_rows: usize::MAX,
-        max_bytes: None,
-        max_source_span: Some(100),
-        ..Default::default()
-    };
+    let options =
+        QueryOptions { max_bytes: None, max_source_span: Some(100), ..Default::default() };
     let mut batcher = one_column_batcher(options);
     let mut chunks = RetainedChunks::new();
     assert!(!batcher.should_flush(), "an empty batch never flushes");
@@ -220,12 +218,8 @@ fn the_source_span_trigger_fires_on_the_distance_between_selected_rows() {
 /// span, a rejected row never reaching `push_row`.
 #[test]
 fn rows_that_were_never_pushed_do_not_widen_the_span() {
-    let options = QueryOptions {
-        max_rows: usize::MAX,
-        max_bytes: None,
-        max_source_span: Some(100),
-        ..Default::default()
-    };
+    let options =
+        QueryOptions { max_bytes: None, max_source_span: Some(100), ..Default::default() };
     let mut batcher = one_column_batcher(options);
     let mut chunks = RetainedChunks::new();
     batcher
@@ -242,12 +236,7 @@ fn rows_that_were_never_pushed_do_not_widen_the_span() {
 /// flushes on its own.
 #[test]
 fn a_none_source_span_leaves_a_batch_unbounded() {
-    let options = QueryOptions {
-        max_rows: usize::MAX,
-        max_bytes: None,
-        max_source_span: None,
-        ..Default::default()
-    };
+    let options = QueryOptions { max_bytes: None, max_source_span: None, ..Default::default() };
     let mut batcher = one_column_batcher(options);
     let mut chunks = RetainedChunks::new();
     batcher

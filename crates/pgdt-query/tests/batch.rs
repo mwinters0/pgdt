@@ -3,38 +3,37 @@
 //! event-stream level).
 
 use std::path::Path;
+use std::sync::Arc;
 
 use futures::StreamExt;
 use pgdt_codec::pgtype::NestedPlan;
-use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ReadOptions, ScanOptions};
-use pgdt_io::LocalFileSource;
-use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions, render_field, table_stream};
+use pgdt_io::{ByteRangeSource, LocalFileSource};
+use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions, TablePartitions, render_field};
 
 mod common;
-use common::{edge_cases, edge_cases_fixture, rows_of, types_fixture, widgets_expected};
+use common::{Cold, edge_cases, edge_cases_fixture, rows_of, types_fixture, widgets_expected};
 
-/// Collect every batch `table_stream` yields for `table`, as decoded rows,
+/// `path` opened as a source a cold query reads.
+fn open(path: impl AsRef<Path>) -> Arc<dyn ByteRangeSource> {
+    Arc::new(LocalFileSource::open(path).unwrap())
+}
+
+/// Collect every batch a cold query of `table` yields, as decoded rows,
 /// along with each batch's row count (so batch-size-limit tests can see the
-/// split points, not just the flattened data).
+/// split points, not just the flattened data); none for a table the dump
+/// does not hold.
 async fn collect(
     path: &Path,
     table: &str,
-    scan_options: &ScanOptions,
+    cold: &Cold,
     batch_options: &QueryOptions,
 ) -> (Vec<usize>, Vec<Vec<Option<String>>>) {
-    let source = LocalFileSource::open(path).unwrap();
     let mut batch_sizes = Vec::new();
     let mut rows = Vec::new();
 
-    let mut stream = table_stream(
-        &source,
-        table,
-        *scan_options,
-        batch_options.clone(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let stream = cold.stream(open(path), table, batch_options.clone()).await.unwrap();
+    let Some(mut stream) = stream else { return (batch_sizes, rows) };
     while let Some(batch) = stream.next().await {
         let batch = batch.unwrap();
         batch_sizes.push(batch.num_rows());
@@ -68,16 +67,11 @@ async fn collect_with_expr(
     table: &str,
     filter: Expr,
 ) -> pgdt_core::Result<Vec<Vec<Option<String>>>> {
-    let source = LocalFileSource::open(path).unwrap();
     let mut rows = Vec::new();
-    let mut stream = table_stream(
-        &source,
-        table,
-        ScanOptions::default(),
-        QueryOptions { filter, ..Default::default() },
-        None,
-        CacheMode::DISABLED,
-    );
+    let options = QueryOptions { filter, ..Default::default() };
+    let Some(mut stream) = Cold::default().stream(open(path), table, options).await? else {
+        return Ok(rows);
+    };
     while let Some(batch) = stream.next().await {
         rows.extend(rows_of(&batch?));
     }
@@ -87,8 +81,7 @@ async fn collect_with_expr(
 #[tokio::test]
 async fn widgets_table_decodes_correctly() {
     let (_, rows) =
-        collect(&edge_cases(), "public.widgets", &ScanOptions::default(), &QueryOptions::default())
-            .await;
+        collect(&edge_cases(), "public.widgets", &Cold::default(), &QueryOptions::default()).await;
     assert_eq!(rows, widgets_expected());
 }
 
@@ -282,74 +275,44 @@ async fn an_unknown_column_in_a_later_term_is_refused() {
 #[tokio::test]
 async fn a_resume_token_covers_the_whole_conjunction() {
     use futures::StreamExt;
-    use pgdt_query::table_stream;
 
-    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let source = open(edge_cases());
+    let plan = async |options: QueryOptions| -> TablePartitions {
+        let plan = Cold::default().plan(Arc::clone(&source), "public.widgets", options).await;
+        plan.unwrap().unwrap()
+    };
     let one = Predicate { column: "id".into(), op: PredicateOp::IsNotNull, value: None };
     let two = Predicate { column: "name".into(), op: PredicateOp::IsNotNull, value: None };
-    let options =
-        QueryOptions { max_rows: 1, filter: Expr::all([one.clone()]), ..QueryOptions::default() };
-    let mut stream = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        options.clone(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let options = QueryOptions { filter: Expr::all([one.clone()]), ..QueryOptions::default() };
+    let mut stream = plan(options.clone()).await.in_file_order(1);
     stream.next().await.unwrap().unwrap();
     let token = stream.resume_token();
     drop(stream);
 
-    let mut wrong = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        QueryOptions { filter: Expr::all([one.clone(), two]), ..options.clone() },
-        Some(token.clone()),
-        CacheMode::DISABLED,
-    );
-    assert!(matches!(wrong.next().await, Some(Err(pgdt_core::Error::ResumeQueryMismatch))));
+    let wider = QueryOptions { filter: Expr::all([one.clone(), two]), ..options.clone() };
+    let wrong = plan(wider).await.resume(token.clone(), 1);
+    assert!(matches!(wrong, Err(pgdt_core::Error::ResumeQueryMismatch)));
 
     // The stamp covers the tree's *shape*, not just its terms: one term
     // under `Or` is a different query from the same term under `And`, even
     // though the two select the same rows.
-    let mut reshaped = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        QueryOptions {
-            filter: pgdt_query::Expr::Or(vec![pgdt_query::Expr::Term(one)]),
-            ..options.clone()
-        },
-        Some(token.clone()),
-        CacheMode::DISABLED,
-    );
-    assert!(matches!(reshaped.next().await, Some(Err(pgdt_core::Error::ResumeQueryMismatch))));
+    let reshaped = QueryOptions {
+        filter: pgdt_query::Expr::Or(vec![pgdt_query::Expr::Term(one)]),
+        ..options.clone()
+    };
+    let reshaped = plan(reshaped).await.resume(token.clone(), 1);
+    assert!(matches!(reshaped, Err(pgdt_core::Error::ResumeQueryMismatch)));
 
     // And the semantics its terms compare in, which can change the rows the
     // same terms select.
-    let mut arrow = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        QueryOptions {
-            semantics: pgdt_codec::compare::ComparisonSemantics::DataFusion,
-            ..options.clone()
-        },
-        Some(token.clone()),
-        CacheMode::DISABLED,
-    );
-    assert!(matches!(arrow.next().await, Some(Err(pgdt_core::Error::ResumeQueryMismatch))));
+    let arrow = QueryOptions {
+        semantics: pgdt_codec::compare::ComparisonSemantics::DataFusion,
+        ..options.clone()
+    };
+    let arrow = plan(arrow).await.resume(token.clone(), 1);
+    assert!(matches!(arrow, Err(pgdt_core::Error::ResumeQueryMismatch)));
 
-    let mut resumed = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        options,
-        Some(token),
-        CacheMode::DISABLED,
-    );
+    let mut resumed = plan(options).await.resume(token, 1).unwrap();
     assert!(resumed.next().await.unwrap().is_ok(), "the same conjunction resumes");
 }
 
@@ -365,10 +328,8 @@ async fn a_resume_token_covers_the_whole_conjunction() {
 #[tokio::test]
 async fn a_nested_predicate_compares_structurally_when_the_column_is_typed() {
     use futures::StreamExt;
-    use pgdt_query::table_stream;
 
     async fn ids(path: &Path, mode: pgdt_codec::SchemaMode, value: &str) -> Vec<Option<String>> {
-        let source = LocalFileSource::open(path).unwrap();
         let predicate = Predicate {
             column: "v_text_special".into(),
             op: PredicateOp::Eq,
@@ -379,14 +340,8 @@ async fn a_nested_predicate_compares_structurally_when_the_column_is_typed() {
             filter: Expr::all([predicate]),
             ..Default::default()
         };
-        let mut stream = table_stream(
-            &source,
-            "public.t_array",
-            ScanOptions::default(),
-            options,
-            None,
-            CacheMode::DISABLED,
-        );
+        let stream = Cold::default().stream(open(path), "public.t_array", options).await;
+        let mut stream = stream.unwrap().unwrap();
         let mut ids = Vec::new();
         while let Some(batch) = stream.next().await {
             let batch = batch.unwrap();
@@ -446,20 +401,16 @@ async fn predicate_on_unknown_column_errors() {
 async fn table_matching_is_bare_or_qualified() {
     for name in ["widgets", "public.widgets"] {
         let (_, rows) =
-            collect(&edge_cases(), name, &ScanOptions::default(), &QueryOptions::default()).await;
+            collect(&edge_cases(), name, &Cold::default(), &QueryOptions::default()).await;
         assert_eq!(rows, widgets_expected(), "matching on {name}");
     }
 }
 
 #[tokio::test]
 async fn empty_table_produces_no_batches() {
-    let (sizes, rows) = collect(
-        &edge_cases(),
-        "public.empty_table",
-        &ScanOptions::default(),
-        &QueryOptions::default(),
-    )
-    .await;
+    let (sizes, rows) =
+        collect(&edge_cases(), "public.empty_table", &Cold::default(), &QueryOptions::default())
+            .await;
     assert!(sizes.is_empty());
     assert!(rows.is_empty());
 }
@@ -467,8 +418,7 @@ async fn empty_table_produces_no_batches() {
 #[tokio::test]
 async fn unmatched_table_produces_no_batches() {
     let (sizes, rows) =
-        collect(&edge_cases(), "no.such.table", &ScanOptions::default(), &QueryOptions::default())
-            .await;
+        collect(&edge_cases(), "no.such.table", &Cold::default(), &QueryOptions::default()).await;
     assert!(sizes.is_empty());
     assert!(rows.is_empty());
 }
@@ -480,15 +430,9 @@ async fn unmatched_table_produces_no_batches() {
 /// keeps it for the scanner.
 #[tokio::test]
 async fn header_without_column_list_refuses_a_non_empty_row() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let mut stream = table_stream(
-        &source,
-        "public.no_column_list",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let cold = Cold::default();
+    let stream = cold.stream(open(edge_cases()), "public.no_column_list", Default::default());
+    let mut stream = stream.await.unwrap().unwrap();
     let err = stream.next().await.expect("the refusal is yielded").unwrap_err();
     assert!(
         matches!(err, pgdt_core::Error::ColumnCountMismatch { expected: 0, found: 1, .. }),
@@ -498,13 +442,9 @@ async fn header_without_column_list_refuses_a_non_empty_row() {
 
 #[tokio::test]
 async fn quoted_identifiers_are_matched_and_decoded() {
-    let (_, rows) = collect(
-        &edge_cases(),
-        "My Schema.Odd Table",
-        &ScanOptions::default(),
-        &QueryOptions::default(),
-    )
-    .await;
+    let (_, rows) =
+        collect(&edge_cases(), "My Schema.Odd Table", &Cold::default(), &QueryOptions::default())
+            .await;
     assert_eq!(rows, vec![vec![Some("1".to_string()), Some("quoted identifiers".to_string())]]);
 }
 
@@ -514,9 +454,9 @@ async fn quoted_identifiers_are_matched_and_decoded() {
 #[tokio::test]
 async fn max_rows_splits_batches() {
     for max_rows in [1, 2, 4, 100] {
-        let options = QueryOptions { max_rows, max_bytes: None, ..Default::default() };
-        let (sizes, rows) =
-            collect(&edge_cases(), "public.widgets", &ScanOptions::default(), &options).await;
+        let options = QueryOptions { max_bytes: None, ..Default::default() };
+        let cold = Cold { max_rows, ..Cold::default() };
+        let (sizes, rows) = collect(&edge_cases(), "public.widgets", &cold, &options).await;
         assert_eq!(rows, widgets_expected(), "max_rows {max_rows}");
         assert_eq!(sizes.iter().sum::<usize>(), 6, "max_rows {max_rows}");
         assert!(sizes.iter().all(|&n| n <= max_rows), "max_rows {max_rows}: sizes {sizes:?}");
@@ -536,7 +476,7 @@ async fn max_source_span_splits_batches() {
     let reference = collect(
         &edge_cases_fixture(16, "default"),
         "public.escapes",
-        &ScanOptions::default(),
+        &Cold::default(),
         &QueryOptions::default(),
     )
     .await
@@ -547,7 +487,6 @@ async fn max_source_span_splits_batches() {
     for max_source_span in [1 << 20, 512, 64, 16, 1] {
         for chunk_size in [7, 4096, 1 << 20] {
             let options = QueryOptions {
-                max_rows: usize::MAX,
                 max_bytes: None,
                 max_source_span: Some(max_source_span),
                 ..Default::default()
@@ -556,8 +495,9 @@ async fn max_source_span_splits_batches() {
                 read: ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() },
                 ..Default::default()
             };
+            let cold = Cold { scan, max_rows: usize::MAX, ..Cold::default() };
             let (sizes, rows) =
-                collect(&edge_cases_fixture(16, "default"), "public.escapes", &scan, &options)
+                collect(&edge_cases_fixture(16, "default"), "public.escapes", &cold, &options)
                     .await;
             assert_eq!(rows, reference, "span {max_source_span} chunk {chunk_size}");
             assert_eq!(sizes.iter().sum::<usize>(), 132);
@@ -580,16 +520,11 @@ async fn max_source_span_splits_batches() {
 /// block is one batch however far apart its rows are.
 #[tokio::test]
 async fn a_none_source_span_leaves_the_block_as_one_batch() {
-    let options = QueryOptions {
-        max_rows: usize::MAX,
-        max_bytes: None,
-        max_source_span: None,
-        ..Default::default()
-    };
+    let options = QueryOptions { max_bytes: None, max_source_span: None, ..Default::default() };
     let (sizes, rows) = collect(
         &edge_cases_fixture(16, "default"),
         "public.escapes",
-        &ScanOptions::default(),
+        &Cold { max_rows: usize::MAX, ..Cold::default() },
         &options,
     )
     .await;
@@ -605,16 +540,17 @@ async fn a_none_source_span_leaves_the_block_as_one_batch() {
 #[tokio::test]
 async fn batch_contents_are_independent_of_chunk_size() {
     let reference =
-        collect(&edge_cases(), "public.widgets", &ScanOptions::default(), &QueryOptions::default())
+        collect(&edge_cases(), "public.widgets", &Cold::default(), &QueryOptions::default())
             .await
             .1;
     for chunk_size in [1, 2, 3, 7, 13, 64, 511, 4096] {
-        let options = ScanOptions {
+        let scan = ScanOptions {
             read: ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() },
             ..Default::default()
         };
+        let cold = Cold { scan, ..Cold::default() };
         let (_, rows) =
-            collect(&edge_cases(), "public.widgets", &options, &QueryOptions::default()).await;
+            collect(&edge_cases(), "public.widgets", &cold, &QueryOptions::default()).await;
         assert_eq!(rows, reference, "chunk_size {chunk_size}");
     }
 }
@@ -623,27 +559,14 @@ async fn batch_contents_are_independent_of_chunk_size() {
 /// there: resumed, it continues without re-delivering the row already seen.
 #[tokio::test]
 async fn a_resume_token_after_one_batch_continues_correctly() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
-    let mut stream = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        options.clone(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let options = QueryOptions { max_bytes: None, ..Default::default() };
+    let plan = Cold::default().plan(open(edge_cases()), "public.widgets", options).await;
+    let plan = plan.unwrap().unwrap();
+    let mut stream = plan.in_file_order(1);
     let mut rows = rows_of(&stream.next().await.expect("a first batch").unwrap());
     let token = stream.resume_token();
 
-    let mut resumed = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        options,
-        Some(token),
-        CacheMode::DISABLED,
-    );
+    let mut resumed = plan.resume(token, 1).unwrap();
     while let Some(batch) = resumed.next().await {
         rows.extend(rows_of(&batch.unwrap()));
     }
@@ -667,12 +590,11 @@ async fn escapes_table_round_trips_through_postgres_batched() {
     use pgdt_codec::SchemaMode;
     for version in [13, 16, 18] {
         for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
-            let options =
-                QueryOptions { max_rows: 17, max_bytes: None, schema_mode, ..Default::default() };
+            let options = QueryOptions { max_bytes: None, schema_mode, ..Default::default() };
             let (_, rows) = collect(
                 &edge_cases_fixture(version, "default"),
                 "public.escapes",
-                &ScanOptions::default(),
+                &Cold { max_rows: 17, ..Cold::default() },
                 &options,
             )
             .await;

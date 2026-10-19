@@ -1,7 +1,7 @@
 //! A plan's whole table as one stream in file order, and its serial resume
 //! (`docs/design/decisions.md`, "D49", "D51" and "D52").
 //!
-//! The oracle is the serial [`table_stream`], as for the partitioned replay:
+//! The oracle is a cold serial query, as for the partitioned replay:
 //! a stream in file order has no rows of its own to assert, its contract
 //! being that it returns exactly the serial rows in exactly their order,
 //! however many partitions the plan was cut into and wherever a consumption
@@ -14,27 +14,20 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use pgdt_core::Error;
-use pgdt_dump::cache::CacheMode;
-use pgdt_dump::{ReadOptions, ScanOptions};
+use pgdt_dump::ReadOptions;
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_query::{Dump, QueryOptions, Table, TablePartitions, TableStream, table_stream};
+use pgdt_query::{Dump, QueryOptions, Table, TablePartitions, TableStream};
 
 mod common;
-use common::{dump_over, edge_cases, mapped, rows_of, types_fixture};
+use common::{Cold, dump_over, edge_cases, mapped, rows_of, types_fixture};
 
 type Rows = Vec<Vec<Option<String>>>;
 
-/// Every row a serial `table_stream` yields, in file order — the oracle.
-async fn serial_rows(source: &dyn ByteRangeSource, table: &str) -> Rows {
-    let mut stream = table_stream(
-        source,
-        table,
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
+/// Every row a serial cold query yields, in file order — the oracle.
+async fn serial_rows(source: Arc<dyn ByteRangeSource>, table: &str) -> Rows {
+    let stream = Cold::default().stream(source, table, QueryOptions::default()).await;
+    let mut stream = stream.unwrap().unwrap();
     let mut rows = Rows::new();
     while let Some(batch) = stream.next().await {
         rows.extend(rows_of(&batch.unwrap()));
@@ -77,7 +70,7 @@ async fn the_whole_table_in_file_order_is_the_serial_replay() {
         [(edge_cases(), "public.widgets"), (types_fixture(16, "default"), "public.t_int")]
     {
         let (source, _dump, table) = table_of(&path, name).await;
-        let expected = serial_rows(source.as_ref(), name).await;
+        let expected = serial_rows(Arc::clone(&source), name).await;
         assert!(!expected.is_empty(), "{name}: the oracle must have rows");
         let mut split = false;
         for jobs in [1usize, 2, 3, 4, 7, 64] {
@@ -106,7 +99,7 @@ async fn the_whole_table_in_file_order_is_the_serial_replay() {
 async fn a_file_ordered_stream_resumes_at_its_token() {
     let name = "public.t_int";
     let (source, _dump, table) = table_of(&types_fixture(16, "default"), name).await;
-    let expected = serial_rows(source.as_ref(), name).await;
+    let expected = serial_rows(Arc::clone(&source), name).await;
     let (cut, serial) = (plan(&table, 4), plan(&table, 1));
     assert!(cut.len() > 1, "the plan must split for the token to cross a partition");
     for paused_after in 0..=expected.len() {

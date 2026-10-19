@@ -142,7 +142,10 @@ async fn a_data_level_parse_over_the_metadata_level_counts_what_a_cold_one_does(
 
 /// `table`'s one block in `index`.
 fn table_block<'a>(index: &'a DumpIndex, table: &str) -> &'a CopyBlock {
-    index.blocks_for(table).next().unwrap_or_else(|| panic!("no block for {table}"))
+    index
+        .blocks()
+        .find(|b| b.header.matches(table))
+        .unwrap_or_else(|| panic!("no block for {table}"))
 }
 
 /// **A block's groups count what the block does, and its bounds keep a view

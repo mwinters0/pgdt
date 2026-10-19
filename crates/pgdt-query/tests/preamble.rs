@@ -18,10 +18,12 @@ use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::{CollationDef, ColumnDef, NotNull, TypeDef, TypeKind};
 use pgdt_model::{DatabaseMetadata, DumpMetadata, PostgresInvalidValues};
-use pgdt_query::{QueryOptions, table_stream};
+use pgdt_query::QueryOptions;
 
 mod common;
-use common::{VERSIONS, edge_cases_fixture, fixture, multidb_fixture, sandboxed, types_fixture};
+use common::{
+    Cold, VERSIONS, edge_cases_fixture, fixture, multidb_fixture, sandboxed, types_fixture,
+};
 use pgdt_fixtures::arranged;
 use tokio_util::sync::CancellationToken;
 
@@ -679,15 +681,9 @@ async fn inherited_and_typed_columns_are_declared_through_their_references() {
 
 /// The schema a typed read of `table` commits to, every row read.
 async fn typed_schema(path: &Path, table: &str) -> ResolvedSchema {
-    let source = LocalFileSource::open(path).unwrap();
-    let mut stream = table_stream(
-        &source,
-        table,
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let source = Arc::new(LocalFileSource::open(path).unwrap());
+    let stream = Cold::default().stream(source, table, QueryOptions::default()).await.unwrap();
+    let Some(mut stream) = stream else { return ResolvedSchema::default() };
     while let Some(batch) = stream.next().await {
         batch.unwrap();
     }
@@ -720,7 +716,8 @@ async fn concatenated_create_dumps_yield_two_named_databases_each_fully_parsed()
 
         // I2: one qualified table name owns more than one `COPY` block here,
         // one per database, both present in the flat block list.
-        let widget_blocks: Vec<_> = index.blocks_for("public.widgets").collect();
+        let widget_blocks: Vec<_> =
+            index.blocks().filter(|b| b.header.matches("public.widgets")).collect();
         assert_eq!(widget_blocks.len(), 2, "pg_dump {version}");
         assert_eq!(index.total_rows(), 2 * 144, "pg_dump {version}: doubled row count");
 

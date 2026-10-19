@@ -740,8 +740,8 @@ pub(in crate::stream) struct PlannedReplay {
     pub(in crate::stream) advice: Vec<Partitioning>,
 }
 
-/// The plan and the sub-streams' segments for replaying `matches`, shared by
-/// [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) and [`Table::plan`](crate::Table::plan).
+/// The plan and the sub-streams' segments for replaying `matches`: what
+/// [`Table::plan`](crate::Table::plan) plans.
 pub(in crate::stream) fn plan_replay(
     source: &dyn ByteRangeSource,
     database: Option<String>,

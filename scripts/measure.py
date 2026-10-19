@@ -6447,20 +6447,22 @@ def subtraction_sweep(source: str, a: str, b: str) -> int:
 #: that a change *outside* these paths that moves a figure goes unannounced —
 #: which is why the doc carries a session stamp as well, so "are these figures
 #: from before or after my change" has a second answer.
-#: The streams: the mapping pass, `pgdt-mapping`'s, and the replay, a module
-#: of one file a concern, each named, since a declared path is matched by
-#: prefix and `stream.rs` is not a prefix of `stream/`; their tests are not
-#: declared.
+#: The streams: the mapping pass, `pgdt-mapping`'s, a cold query's table
+#: settled over it and planned, and the replay, a module of one file a
+#: concern, each named, since a declared path is matched by prefix and
+#: `stream.rs` is not a prefix of `stream/`; their tests are not declared.
 STREAM = (
     *(
         f"crates/pgdt-mapping/src/{name}.rs"
         for name in ("backfill", "forward", "forward/save", "whole_file")
     ),
+    "crates/pgdt-query/src/dump.rs",
+    "crates/pgdt-query/src/dump/settle.rs",
     "crates/pgdt-query/src/stream.rs",
     *(
         f"crates/pgdt-query/src/stream/{name}.rs"
         for name in (
-            "mapping",
+            "merge",
             "note",
             "partitions",
             "replay",

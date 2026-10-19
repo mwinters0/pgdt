@@ -28,10 +28,10 @@ use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism, Partitioning};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::DiagnosticKind;
-use pgdt_query::{QueryOptions, table_stream, table_stream_partitions};
+use pgdt_query::QueryOptions;
 
 mod common;
-use common::{edge_cases, sandboxed_edge_cases as sandboxed};
+use common::{Cold, edge_cases, sandboxed_edge_cases as sandboxed};
 use pgdt_fixtures::arranged;
 use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
@@ -267,15 +267,10 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
     .await
     .unwrap();
 
-    let shifting = Shifting::new(dump.clone(), 1);
-    let mut stream = table_stream(
-        &shifting,
-        "public.widgets",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::enabled(&path),
-    );
+    let shifting = Arc::new(Shifting::new(dump.clone(), 1));
+    let cold = Cold { cache: CacheMode::enabled(&path), ..Cold::default() };
+    let stream = cold.stream(shifting, "public.widgets", QueryOptions::default()).await;
+    let mut stream = stream.unwrap().expect("the dump holds the table");
     let mut rows = 0;
     let mut failure = None;
     while let Some(batch) = stream.next().await {
@@ -438,31 +433,17 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
         }
         failure
     };
-    let shifting: &'static Shifting = Box::leak(Box::new(Shifting::cut(dump.clone(), 2, cut)));
-    let stream = table_stream(
-        shifting,
-        "public.t",
-        options,
-        QueryOptions::default(),
-        None,
-        CacheMode::enabled(&path),
-    );
-    let failure = last(stream).await.expect("the replay fails");
+    let cold = Cold { scan: options, cache: CacheMode::enabled(&path), ..Cold::default() };
+    let shifting = Arc::new(Shifting::cut(dump.clone(), 2, cut));
+    let stream = cold.stream(shifting, "public.t", QueryOptions::default()).await.unwrap();
+    let failure = last(stream.expect("the dump holds the table")).await.expect("the replay fails");
     assert!(changed(&failure), "the replay names the change: {failure:?}");
 
-    let shifting: &'static Shifting = Box::leak(Box::new(Shifting::cut(dump.clone(), 2, cut)));
-    let streams = table_stream_partitions(
-        shifting,
-        "public.t",
-        options,
-        QueryOptions::default(),
-        CacheMode::enabled(&path),
-    )
-    .await
-    .unwrap();
+    let shifting = Arc::new(Shifting::cut(dump.clone(), 2, cut));
+    let plan = cold.plan(shifting, "public.t", QueryOptions::default()).await.unwrap().unwrap();
     let mut failures = Vec::new();
-    for stream in streams {
-        failures.extend(last(stream).await);
+    for partition in 0..plan.len() {
+        failures.extend(last(plan.stream(partition, cold.max_rows)).await);
     }
     assert!(
         !failures.is_empty() && failures.iter().all(changed),
@@ -1074,16 +1055,9 @@ async fn a_source_nothing_can_check_is_refused_where_a_read_begins_unless_nothin
         let refused = preamble_only(opened, &ScanOptions::default()).await.unwrap_err();
         uncheckable(&refused, strict);
 
-        let mut stream = table_stream(
-            source.as_ref(),
-            "public.widgets",
-            ScanOptions::default(),
-            QueryOptions::default(),
-            None,
-            mode.clone(),
-        );
-        let refused = stream.next().await.expect("the query answers").unwrap_err();
-        uncheckable(&refused, strict);
+        let cold = Cold { cache: mode.clone(), ..Cold::default() };
+        let refused = cold.table(source.clone(), "public.widgets", Default::default()).await;
+        uncheckable(&refused.expect_err("the query refuses"), strict);
     }
     assert_eq!(source.reads.load(Ordering::Relaxed), 0, "refused before a byte was read");
 

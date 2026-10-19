@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD122 -->
-**`KD1`–`KD122` are allocated, and nothing at or below `KD122` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD123 -->
+**`KD1`–`KD123` are allocated, and nothing at or below `KD123` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -122,14 +122,14 @@ than reading as a phase nobody has sliced.
   locale or asking for one, which the bar refuses for every other type. Detail:
   `crates/pgdt-codec/src/pgtype.rs`.
 
-- **KD57** — `pgdt query` prints in file order holding one batch a
-  sub-stream, so past its first round only the earliest live sub-stream reads
-  and `--jobs` buys it no throughput, the later sub-streams' first-round work
-  spent as CPU with no return. **(c) unowned**; promoted by a phase taking up
-  `pgdt query`'s throughput, which weighs `parallel-scan-throughput`'s cold-NVMe
-  column; the fix a choice between interleaving each sub-stream's runs, a
-  reorder buffer under the budget, and unordered output.
-  Detail: `crates/pgdt/src/query.rs`.
+- **KD57** — a plan's stream in file order holds one batch a partition, so
+  past its first round only the earliest live partition reads and `pgdt
+  query`'s `--jobs` buys it no throughput, the later partitions' first-round
+  work spent as CPU with no return. **(c) unowned**; promoted by a phase taking
+  up `pgdt query`'s throughput, which weighs `parallel-scan-throughput`'s
+  cold-NVMe column; the fix a choice between interleaving each partition's
+  runs, a reorder buffer under the budget, and unordered output.
+  Detail: `crates/pgdt-query/src/stream/merge.rs`.
 
 - **KD20** — a block-decoding worker decodes its **successor's block as well as
   its own**, nothing sharing the two, so a parallel compressed scan does about
@@ -521,3 +521,12 @@ than reading as a phase nobody has sliced.
   redirected run writes the refusal into its output. **(c) unowned**; promoted
   by the maintainer deciding whether the shell departs from upstream's `main`
   there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
+
+- **KD123** — a cold `pgdt query`'s replay holds the queried table's
+  statistics, which its plan keeps for a dynamic filter the command never
+  states, while its readers are carved around none, so they may take what the
+  statistics hold past the margin. **(c) unowned**; promoted by a reading of a
+  cold query's resident set over a table whose statistics are a sizeable part
+  of the margin, the fix a choice between carving the replay after the pass
+  and a plan keeping no statistics it is not asked to filter under. Detail:
+  `crates/pgdt/src/parallel.rs`.

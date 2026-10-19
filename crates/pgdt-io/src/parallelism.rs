@@ -171,7 +171,7 @@ impl WorkerMemory {
 /// afford to decode a whole block (`docs/design/decisions.md`, "D15"); `jobs`
 /// is the block pool's depth and — capped by what the bytes afford — how many
 /// sub-streams a partitioned replay is cut into
-/// (`pgdt_query::table_stream_partitions`), a ceiling rather than a request. The
+/// (`pgdt_query::Table::plan`), a ceiling rather than a request. The
 /// third is `pgdt_mapping::interior::scan_region`
 /// (`docs/design/decisions.md`, "D48").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

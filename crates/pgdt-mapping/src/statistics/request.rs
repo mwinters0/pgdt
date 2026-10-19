@@ -364,9 +364,10 @@ pub(crate) struct StatisticsBackfill {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StatisticsLevel {
     /// A block's location and row count, and nothing drawn from its rows: no
-    /// census, no statistics, and no field split but a strict parse's. A query
-    /// of such a table maps its blocks again for itself (`pgdt_query::table_stream`), and a
-    /// typed plan over a `pgdt_query::Dump` refuses one.
+    /// census, no statistics, and no field split but a strict parse's. A cold
+    /// query of such a table reads its blocks again for itself
+    /// (`pgdt_query::Table::settle`), and a typed plan over a `pgdt_query::Dump`
+    /// refuses one.
     Metadata,
     /// The census, for a table any of whose columns is at this level, and
     /// statistics, for each column that is — the default.

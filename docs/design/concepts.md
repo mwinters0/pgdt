@@ -138,8 +138,8 @@ pieces and folded back, each block closed, the cache saved on a throttle
   back-fill re-reading what a mapped block lacks, and a block's interior split
   into pieces and folded. Above the codec, since a block it maps is gathered
   as it is read, and below the query layer, since it builds no array (D68).
-- **pgdt-query** — `stream/mapping.rs`: pass 1 of a query, which reads the
-  replay's resume token.
+- **pgdt-query** — `dump/settle.rs`: a cold query's pass, yielding the
+  table it settled as a complete map's `Table`, which query holds.
 
 ## The declared schema
 
@@ -166,7 +166,7 @@ format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
 - **pgdt-query** — `dump.rs`: the complete dump an embedder reads tables
   through, a table named by a selector, and its schema, summary and plan;
   schema resolution, summaries and the replay are query's, so the handle
-  offering them is too.
+  offering them is too. A cold query's table is settled beside it.
 - **datafusion-pgdump** — `dump.rs`: a dump opened through its complete
   cache, with the modes and the budget holds every scan of it reads under
   (D90).
@@ -307,14 +307,10 @@ embedder pulls, with its resume token ([`decisions.md`](decisions.md),
 - **pgdt-query** — `stream.rs`, `stream/table.rs`, `stream/partitions.rs`,
   `stream/merge.rs`, `stream/resume.rs`, `stream/replay.rs`,
   `stream/replay/plan.rs`, `stream/replay/segment.rs`,
-  `stream/replay/partition.rs`: the top of the stream, pass 1 then pass 2,
-  which no child reads; the handle an embedder pulls; the partitioned replay;
-  its partitions merged back into file order; the resume token; and beneath
-  the replay loop, what it plans, the pieces it reads and how they are cut.
-
-**Not in one place.** The merge into file order is written twice: by
-`stream/merge.rs` over a plan's partitions, and by the `pgdt` binary's `query`
-over the sub-streams its cold path hands back.
+  `stream/replay/partition.rs`: the namespace, declaring and defining
+  nothing; the handle an embedder pulls; the partitioned replay; its
+  partitions merged back into file order; the resume token; and beneath the
+  replay loop, what it plans, the pieces it reads and how they are cut.
 
 ## What a query tells its caller
 

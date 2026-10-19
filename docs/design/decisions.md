@@ -114,7 +114,7 @@ unit. Eviction runs before acquisition and the reservation drops before the evic
 released buffer meets a reservation and is discarded. A reuse rule, not progress: see D5.
 
 ### D18 The seek table is persisted and identity is three-state
-A many-stream file costs a footer read per stream, so `cache::save` records the table, `claim` reads
+A many-stream file costs a footer read per stream, so `cache::save` records the table, `CacheMode::open` reads
 it before a source exists and `XzSource::with_table` walks nothing. `KnownCompression` is
 `Unknown`/`Plain`/`Xz`, checked against the file's magic; a contradiction is `Recognized::Mismatch`
 and condemns the span index too, both having come from one save of one file.
@@ -131,7 +131,7 @@ which naming the columns lacking a statistic would answer.
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
 contradicts) is almost always a wrong path or a changed file, so `CacheMode::refusal` refuses it before the dump
-is read past its magic, at every scan entry point, at `CacheMode::open` and after `cache::claim`. `--overwrite-unusable-cache` (`with_overwrite_unusable`)
+is read past its magic, at every scan entry point, each opening through `CacheMode::open`. `--overwrite-unusable-cache` (`with_overwrite_unusable`)
 starts cold over one recognisably ours, by a header read first, for a file replaced under a stable name; foreign
 bytes never. Rejected: a cold start (a silent re-scan after a typo or an upgrade); the guard in `cache::save` (policy
 an embedder cannot override); refusing a damaged one of ours (nothing readable lost, an unbumped version its likely
@@ -160,9 +160,9 @@ stated from every block's census, no database's DDL is unread, and the partition
 no partial map to keep, a dropped stream is its whole cancellation, as every query's is (D26). Rejected:
 falling back to a cold query's early-stopping map, which brings each of those back. Code: `crates/pgdt-query/src/dump.rs`, `crates/datafusion-pgdump/src/dump.rs`.
 
-### D22 `CacheLoad` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
+### D22 `Held` is its own type and `CACHE_FORMAT_VERSION` is bumped freely
 An incomplete cache is usable (or `map_forward` restarts from zero), `Disabled` is about the caller and
-`Unusable` carries its reason to every caller. Bump on any persisted reshape, a parse fix changing what a span or
+`Replacing` carries its reason to every caller. Bump on any persisted reshape, a parse fix changing what a span or
 the metadata holds included; record it nowhere: an older cache is then refused until replaced by the flag or deleted
 (D20), which is what a user hears of first. Rejected: an unbumped parse fix, its cache answering as the old parse did.
 Code: `pgdt_model::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_to_the_format_version`.
@@ -185,7 +185,7 @@ Evidence: `xz-decode-scaling`, `parallel-scan-throughput`, `scan-throughput-*`.
 ### D26 Cancellation is `map_file`'s argument, polled per chunk or leader window by the mapping passes alone
 A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan and back-fill keep a partial result. It
 takes a `tokio_util` `CancellationToken`, required: options are reused across runs, and a fired token in one stops every later run at byte 0.
-A query takes none, a dropped stream being its cancellation (D90); a pass run where nothing can stop it polls an unfired token and asserts it was not stopped. The preamble scan polls none, a stop there reading as the first `COPY`
+A query's plan and streams take none, a dropped stream being their cancellation (D90); a cold query's pass (`Table::settle`) takes one, answering `ScanCancelled` where it fires. The preamble scan polls none, a stop there reading as the first `COPY`
 header and caching as complete; the token handed to the source drops a read in flight, failing it unbanked. **The shape follows the
 command**: `parse` interrupts, at byte 0 too, then dies by the signal, and a second one, mid-save too, or one in the listing, ends it in the
 handler. As init (RT19) `pgdt` exits 128+n on every signal ending them elsewhere but a fault's, left to the kernel, and what `parse`'s guard
@@ -336,15 +336,15 @@ readers the announced one seats. Reopens: a floored span measurably slower than 
 ### D48 Mapping and replay are separate passes, and `splice` owns the seam
 The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is
 spliced by extending the *preceding* span; a start floor on `Builder` made assembly visible in the
-map. A query's mapping pass is stopped only by dropping its stream, never shortened (I1). Cached replay and the
+map. A cold query's pass (`Table::settle`) yields its table and no row, stopped by its token or a drop (I1). Cached replay and the
 cold interior split share `worker_count` and `cut`, and differ in what they cut and in the replay
 charging each sub-stream its batch span (D84).
 
 ### D49 One target per query, the early stop conservative, and `ResumeToken` opaque, fingerprinting the query
-Name matches narrow to one `(database, table)` before replay or `AmbiguousTable`; `target_settled`
+A `TableSelector` narrows to one `TableName` before replay or `AmbiguousTable`; `target_settled`
 vetoes a stop on a partition root (I2) or any `\connect`. A conflict past the stop is unseen (`KD6`).
-The token's filter is hashed by explicit match, as a derived `Hash` silently misses a new operator; `database`,
-`scan_extent`, the batching knobs, `postgres_invalid_values` and `use_statistics` stay out, no skipped group holding a resumed row.
+The token's filter is hashed by explicit match, as a derived `Hash` silently misses a new operator; the
+batching knobs, `postgres_invalid_values` and `use_statistics` stay out, no skipped group holding a resumed row.
 
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 The first row is past the first LF at or after `start`; the piece runs to the first LF at or after
@@ -589,7 +589,7 @@ lacks (D48), and `--preamble-only` hangs off `parse`. It reports the cache throu
 ### D62 The save throttle is a ratio, and its gate opens splice too
 A save is skipped unless `K` times the last save's duration has elapsed, which bounds overhead in
 every regime with no constant to tune. The map is rebuilt at the gate's openings, not every
-`CopyEnd`; splice's third opener matches the queried header, a superset of save's, `target_settled`. Rejected:
+`CopyEnd`; splice's third opener matches the queried table, a superset of save's, `target_settled`. Rejected:
 every N seconds or bytes; a disabled-cache floor. `KD5` remains. Evidence: `per-block-quadratic`.
 
 ### D63 The interrupt flag is read at both extremes; resume is the default

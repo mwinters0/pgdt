@@ -1,11 +1,8 @@
-use super::mapping::map_for_query;
 use super::replay::plan::{PlannedReplay, plan_replay};
 use super::replay::segment::{Segment, SegmentEntry};
 use super::resume::query_fingerprint;
 use super::*;
-use crate::options::{QueryOptions, ScanExtent};
-use pgdt_dump::cache::StrictIdentity;
-use pgdt_dump::cache::{CacheMode, SourceWatch};
+use crate::options::QueryOptions;
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::Parallelism;
 use pgdt_model::{CopyBlock, Finding, Severity};
@@ -179,11 +176,10 @@ pub(super) fn two_blocks(dir: &std::path::Path) -> std::path::PathBuf {
     path
 }
 
-/// **A replay planned for `table_stream` or `table_stream_partitions`
-/// keeps no block's statistics**: once its plan and segments
+/// **A replay keeps no block's statistics**: once its plan and segments
 /// exist, the matched blocks the map handed over are the only holders of
 /// each block's `Arc`, so dropping them frees the statistics before a row
-/// is read, on the partitioned path and the serial one alike.
+/// is read, on the partitioned path and the serial resume alike.
 #[tokio::test]
 async fn a_replay_holds_no_block_s_statistics() {
     use pgdt_io::LocalFileSource;
@@ -192,21 +188,11 @@ async fn a_replay_holds_no_block_s_statistics() {
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(two_blocks(dir.path())).unwrap();
     let query_options = QueryOptions {
-        scan_extent: ScanExtent::Full,
         parallelism: Parallelism::workers(4, pgdt_io::DEFAULT_MEMORY_BUDGET),
         ..QueryOptions::default()
     };
-    let mapped = map_for_query(
-        &source,
-        "public.t",
-        &ScanOptions::default(),
-        &query_options,
-        &CacheMode::DISABLED,
-        &SourceWatch::open(&source, StrictIdentity::ADVISORY).await.unwrap(),
-    )
-    .await
-    .unwrap();
-    let mut matches = mapped.matches;
+    let index = pgdt_mapping::build_index(&source, &ScanOptions::default()).await.unwrap();
+    let mut matches: Vec<CopyBlock> = index.blocks().cloned().collect();
     assert_eq!(matches.len(), 2);
     for block in &mut matches {
         block.statistics = Some(Arc::new(BlockStatistics {
@@ -221,9 +207,9 @@ async fn a_replay_holds_no_block_s_statistics() {
 
     let PlannedReplay { plan, groups, .. } = plan_replay(
         &source,
-        mapped.database,
+        None,
         &matches,
-        mapped.metadata,
+        index.metadata.clone(),
         ReadOptions::default(),
         query_options,
     )

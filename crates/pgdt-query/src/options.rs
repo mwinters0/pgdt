@@ -1,15 +1,18 @@
 //! What one table query asks for — its projection and its filter beside the
-//! batching knobs — and how far its mapping scan walks
+//! batching knobs — and how far a cold query's mapping pass walks
 //! (`docs/design/decisions.md`, "Batches, streams and the leader").
 
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
+use pgdt_core::{Error, Result};
 use pgdt_io::Parallelism;
 use pgdt_model::{PostgresInvalidValues, StatisticsView, UnrepresentableTier};
 
 use crate::predicate::Expr;
 
-/// What one table query asks for, and how its batches are cut.
+/// What one table query asks for, and how its batches are cut — but for the
+/// rows a batch holds, which each of a plan's streams is asked for
+/// ([`TablePartitions::stream`](crate::TablePartitions::stream)).
 ///
 /// Both halves of a query live here — the projection and the filter terms
 /// beside the batching knobs — rather than the query half arriving as
@@ -41,12 +44,10 @@ pub struct QueryOptions {
     /// ([`ComparisonSemantics`]). Statistics prune a query in either, read
     /// only where they were gathered in its order.
     pub semantics: ComparisonSemantics,
-    /// Rows per batch. A batch is flushed once it reaches this many rows.
-    pub max_rows: usize,
     /// Optional cap on a batch's total field-byte count — counting only the
     /// fields a projection actually builds, since those are the bytes the
-    /// batch holds. Whichever of this or `max_rows` is hit first flushes the
-    /// batch.
+    /// batch holds. Whichever of this or the stream's row count is hit first
+    /// flushes the batch.
     pub max_bytes: Option<usize>,
     /// Cap on the source byte span an in-flight batch covers — the distance
     /// from the start of its first selected row to the end of its latest, and
@@ -59,7 +60,7 @@ pub struct QueryOptions {
     /// cap, this is a batch-size knob and not the bound.
     ///
     /// **It is a ceiling, not the span a partitioned replay uses.**
-    /// [`crate::table_stream_partitions`] derives the span it charges from the
+    /// [`Table::plan`](crate::Table::plan) derives the span it charges from the
     /// read-buffer budget and the requested worker count, so `jobs` readers
     /// are bought at the cost of batch size rather than declined
     /// (`docs/design/decisions.md`, "D84"). The derivation only moves down,
@@ -67,7 +68,8 @@ pub struct QueryOptions {
     /// ([`pgdt_dump::ReadOptions::chunk_size_bytes`], which is what a
     /// chunk-shaped source retains) — a span stated below that floor is left
     /// where it was, the floor bounding the derivation rather than the
-    /// result; a serial [`crate::table_stream`] does not derive at all.
+    /// result; a serial resume ([`TablePartitions::resume`](crate::TablePartitions::resume))
+    /// reads under the span the plan derived.
     pub max_source_span: Option<usize>,
     /// Whether to resolve column types against the dump's DDL
     /// (`docs/design/decisions.md`, "D46"). Every `RecordBatch` this build
@@ -92,23 +94,16 @@ pub struct QueryOptions {
     /// typed read and every filter reading the field take it alike; a
     /// filter's literal is read as before.
     pub postgres_invalid_values: PostgresInvalidValues,
-    /// Selects which database's table to query when the name alone is
-    /// ambiguous — matched against `DatabaseMetadata::name`
-    /// (`docs/design/decisions.md`, "D49"). `None` is the common case: a
-    /// single-database dump, or an ambiguity a qualified name resolves.
-    pub database: Option<String>,
-    /// How far a query's mapping scan walks before it starts returning rows
-    /// — see [`ScanExtent`].
-    pub scan_extent: ScanExtent,
-    /// How much concurrency this query may use, and what it may hold while
-    /// it does — [`Parallelism::Serial`] by default, and stated here as well
-    /// as on [`ScanOptions`](pgdt_dump::ScanOptions) because a query runs two passes with different
-    /// shapes: a mapping scan, and a replay split into partitions
-    /// (`docs/design/decisions.md`, "D1"). The replay loop announces it to
-    /// the source ([`pgdt_io::ByteRangeSource::hint_parallelism`]), so the two
-    /// passes are bounded separately, and `jobs`, capped by what the bytes
-    /// afford, is how many sub-streams [`crate::table_stream_partitions`]
-    /// hands back. Nothing here spawns — the caller runs them.
+    /// How much concurrency the replay may use, and what it may hold while
+    /// it does — [`Parallelism::Serial`] by default. A cold query's mapping
+    /// pass reads under its own [`ScanOptions`](pgdt_dump::ScanOptions)
+    /// ([`Table::settle`](crate::Table::settle)), the two passes splitting
+    /// differently (`docs/design/decisions.md`, "D1"). The replay loop
+    /// announces it to the source
+    /// ([`pgdt_io::ByteRangeSource::hint_parallelism`]), and `jobs`, capped by
+    /// what the bytes afford, is how many partitions
+    /// [`Table::plan`](crate::Table::plan) cuts. Nothing here spawns — the
+    /// caller runs them.
     pub parallelism: Parallelism,
     /// Whether the replay skips the row groups whose statistics — gathered by
     /// a mapping pass ([`pgdt_mapping::map_file`]) — prove no row satisfies
@@ -129,14 +124,11 @@ impl Default for QueryOptions {
             projection: None,
             filter: Expr::default(),
             semantics: ComparisonSemantics::default(),
-            max_rows: 8192,
             max_bytes: None,
             max_source_span: Some(64 << 20),
             schema_mode: SchemaMode::default(),
             unrepresentable: UnrepresentableMode::default(),
             postgres_invalid_values: PostgresInvalidValues::default(),
-            database: None,
-            scan_extent: ScanExtent::default(),
             parallelism: Parallelism::default(),
             use_statistics: true,
         }
@@ -144,6 +136,22 @@ impl Default for QueryOptions {
 }
 
 impl QueryOptions {
+    /// What is refused of the request itself rather than of any file, so a
+    /// caller may ask it before a byte is read and whether or not the table
+    /// turns up: a projection naming a column twice
+    /// ([`Error::DuplicateProjectionColumn`]). Planning asks it too
+    /// ([`Table::plan`](crate::Table::plan)).
+    pub fn validate(&self) -> Result<()> {
+        if let Some(columns) = self.projection.as_deref() {
+            for (i, name) in columns.iter().enumerate() {
+                if columns[..i].contains(name) {
+                    return Err(Error::DuplicateProjectionColumn { column: name.clone() });
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// **How this query's statistics are read where a column holds a value
     /// its type cannot**, as its reads and its filter take one: as NULL under
     /// [`UnrepresentableMode::Null`], in the tiers its semantics cannot hold
@@ -178,8 +186,8 @@ impl QueryOptions {
     }
 }
 
-/// How far [`crate::stream::table_stream`]'s mapping scan walks
-/// (`docs/design/decisions.md`, "D48"). Rows are always replayed from blocks the map
+/// How far a cold query's mapping pass walks ([`Table::settle`](crate::Table::settle);
+/// `docs/design/decisions.md`, "D48"). Rows are always replayed from blocks the map
 /// already holds, so this controls how much of the file a query pays to map
 /// before any row comes back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

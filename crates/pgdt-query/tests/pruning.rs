@@ -20,17 +20,16 @@ use pgdt_codec::UnrepresentableMode;
 use pgdt_codec::compare::ComparisonSemantics;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
 use pgdt_dump::{ReadOptions, ScanOptions};
-use pgdt_io::{LocalFileSource, Parallelism};
+use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSizing};
 use pgdt_model::{Bounds, BoundsSet, ColumnStatistics, CopyBlock, DumpIndex, StatisticsView};
 use pgdt_query::{
-    EarlyStop, Expr, PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions, table_stream,
-    table_stream_partitions,
+    EarlyStop, Expr, PlanNote, PlanNoteKind, Predicate, PredicateOp, QueryOptions, TablePartitions,
 };
 
 mod common;
-use common::{VERSIONS, all_fixtures, parsed_copy, statistics_fixture, types_fixture};
+use common::{Cold, VERSIONS, all_fixtures, parsed_copy, statistics_fixture, types_fixture};
 use pgdt_fixtures::arranged;
 use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
@@ -117,25 +116,51 @@ struct Attempt {
     stops: Vec<EarlyStop>,
 }
 
-/// `options` against `table`, its sub-streams drained in the order the split
-/// handed them back, which is file order (`docs/design/decisions.md`, "D51"),
-/// up to the first error.
-async fn attempt(dump: &Path, cache: &Path, table: &str, options: QueryOptions) -> Attempt {
-    let source = LocalFileSource::open(dump).unwrap();
+/// The plan of a cold query of `table` — in `database`, where one is named —
+/// in `source`, opened through the cache at `cache` and read with `scan`,
+/// under `options`; `None` where the dump holds no such table.
+async fn planned(
+    source: Arc<dyn ByteRangeSource>,
+    cache: &Path,
+    database: Option<&str>,
+    table: &str,
+    scan: ScanOptions,
+    options: QueryOptions,
+) -> pgdt_core::Result<Option<TablePartitions>> {
     let cache = CacheMode::enabled(cache.to_path_buf());
-    let mut streams =
-        match table_stream_partitions(&source, table, ScanOptions::default(), options, cache).await
-        {
-            Ok(streams) => streams,
-            Err(e) => {
-                return Attempt {
-                    outcome: Err(e.to_string()),
-                    notes: Vec::new(),
-                    stops: Vec::new(),
-                };
-            }
-        };
-    let notes = streams[0].plan_notes();
+    let cold = Cold { scan, cache, database: database.map(str::to_owned), ..Cold::default() };
+    cold.plan(source, table, options).await
+}
+
+/// `options` against `table`, its partitions drained in the order the plan
+/// cut them, which is file order (`docs/design/decisions.md`, "D51"), up to
+/// the first error.
+async fn attempt(dump: &Path, cache: &Path, table: &str, options: QueryOptions) -> Attempt {
+    attempt_in(dump, cache, None, table, options).await
+}
+
+/// [`attempt`], of `table` in `database` where one is named.
+async fn attempt_in(
+    dump: &Path,
+    cache: &Path,
+    database: Option<&str>,
+    table: &str,
+    options: QueryOptions,
+) -> Attempt {
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
+    let plan = planned(source, cache, database, table, ScanOptions::default(), options).await;
+    let plan = match plan {
+        Ok(Some(plan)) => plan,
+        Ok(None) => {
+            let outcome = Ok((None, Default::default()));
+            return Attempt { outcome, notes: Vec::new(), stops: Vec::new() };
+        }
+        Err(e) => {
+            return Attempt { outcome: Err(e.to_string()), notes: Vec::new(), stops: Vec::new() };
+        }
+    };
+    let mut streams: Vec<_> = (0..plan.len()).map(|i| plan.stream(i, 8192)).collect();
+    let notes = plan.plan_notes().to_vec();
     let (mut batches, mut failure) = (Vec::new(), None);
     'drain: for stream in &mut *streams {
         while let Some(batch) = stream.next().await {
@@ -162,7 +187,18 @@ async fn attempt(dump: &Path, cache: &Path, table: &str, options: QueryOptions) 
 
 /// [`attempt`], its notes and stops kept only where it answers.
 async fn answer(dump: &Path, cache: &Path, table: &str, options: QueryOptions) -> Answer {
-    let Attempt { outcome, notes, stops } = attempt(dump, cache, table, options).await;
+    answer_in(dump, cache, None, table, options).await
+}
+
+/// [`answer`], of `table` in `database` where one is named.
+async fn answer_in(
+    dump: &Path,
+    cache: &Path,
+    database: Option<&str>,
+    table: &str,
+    options: QueryOptions,
+) -> Answer {
+    let Attempt { outcome, notes, stops } = attempt_in(dump, cache, database, table, options).await;
     outcome.map(|(rows, resolved)| (rows, notes, resolved, stops))
 }
 
@@ -317,7 +353,7 @@ struct Tally {
 async fn check(
     dump: &Path,
     (plain, gathered): (&Path, &Path),
-    table: &str,
+    (database, table): (Option<&str>, &str),
     base: &QueryOptions,
     filter: Expr,
     tally: &mut Tally,
@@ -329,8 +365,8 @@ async fn check(
             parallelism: Parallelism::workers(jobs, 1 << 30),
             ..base.clone()
         };
-        let reference = attempt(dump, plain, table, options(false)).await;
-        let got = attempt(dump, gathered, table, options(true)).await;
+        let reference = attempt_in(dump, plain, database, table, options(false)).await;
+        let got = attempt_in(dump, gathered, database, table, options(true)).await;
         let (notes, stops) = (&reference.notes, &reference.stops);
         let (pruned_notes, pruned_stops) = (&got.notes, &got.stops);
         match (&reference.outcome, &got.outcome) {
@@ -507,6 +543,7 @@ async fn check_fixture(
             .push(block);
     }
     for ((database, table), blocks) in tables {
+        let db = database.as_deref();
         let header = &blocks[0].header;
         // A table copying no columns (I5) has nothing a filter can name.
         if header.columns.is_empty() {
@@ -520,9 +557,8 @@ async fn check_fixture(
         // projects every column, and is where the second raises.
         let mut bases = Vec::new();
         for unrepresentable in [UnrepresentableMode::Null, UnrepresentableMode::Refuse] {
-            let everything =
-                QueryOptions { database: database.clone(), unrepresentable, ..Default::default() };
-            let projection = match answer(&dump, &plain, &table, everything.clone()).await {
+            let everything = QueryOptions { unrepresentable, ..Default::default() };
+            let projection = match answer_in(&dump, &plain, db, &table, everything.clone()).await {
                 Ok(_) => None,
                 Err(_) => {
                     let mut decodes = Vec::new();
@@ -531,7 +567,7 @@ async fn check_fixture(
                             projection: Some(vec![name.clone()]),
                             ..everything.clone()
                         };
-                        if answer(&dump, &plain, &table, one).await.is_ok() {
+                        if answer_in(&dump, &plain, db, &table, one).await.is_ok() {
                             decodes.push(name.clone());
                         }
                     }
@@ -544,11 +580,8 @@ async fn check_fixture(
         let base = bases.pop().expect("the typed mode's base");
         // The untyped mode reads every column, one holding such a value as
         // its text.
-        let untyped = QueryOptions {
-            database: database.clone(),
-            unrepresentable: UnrepresentableMode::Text,
-            ..Default::default()
-        };
+        let untyped =
+            QueryOptions { unrepresentable: UnrepresentableMode::Text, ..Default::default() };
         // Each check draws its mode, so every one is swept at one sweep's
         // cost: in DataFusion's semantics the untyped mode's text column
         // compares bytewise and prunes on no bound gathered in its type's order.
@@ -582,14 +615,14 @@ async fn check_fixture(
                     let candidate = term(name, op, Some(&values[rng.below(values.len())]));
                     // Kept only where it resolves: a refusal refuses both
                     // queries alike, and a tree holding one compares nothing.
-                    if resolves(&dump, &plain, &table, &arrow, &candidate).await {
+                    if resolves(&dump, &plain, (db, &table), &arrow, &candidate).await {
                         arrow_terms.push(candidate.clone());
                     }
                     // Resolving reads no mode in PostgreSQL's semantics, a
                     // column read as text comparing in its declared type's
                     // order, so the typed mode's answers for all three; in
                     // DataFusion's a text column resolves every literal.
-                    if resolves(&dump, &plain, &table, &base, &candidate).await {
+                    if resolves(&dump, &plain, (db, &table), &base, &candidate).await {
                         terms.push(candidate);
                     }
                 }
@@ -599,18 +632,19 @@ async fn check_fixture(
             if rng.below(8) == 0 {
                 let filter = Expr::Term(candidate.clone());
                 let base = draw(rng);
-                check(&dump, (&plain, &gathered_cache), &table, base, filter, tally).await;
+                check(&dump, (&plain, &gathered_cache), (db, &table), base, filter, tally).await;
             }
         }
         for _ in 0..TREES_PER_TABLE {
             let tree = random_tree(rng, &terms, 3);
             let base = draw(rng);
-            check(&dump, (&plain, &gathered_cache), &table, base, tree, tally).await;
+            check(&dump, (&plain, &gathered_cache), (db, &table), base, tree, tally).await;
         }
         for _ in 0..ARROW_TREES_PER_TABLE {
             let tree = random_tree(rng, &arrow_terms, 3);
             let arrow = draw_arrow(rng);
-            check(&dump, (&plain, &gathered_cache), &table, arrow, tree, arrow_tally).await;
+            let named = (db, table.as_str());
+            check(&dump, (&plain, &gathered_cache), named, arrow, tree, arrow_tally).await;
         }
     }
 }
@@ -620,14 +654,13 @@ async fn check_fixture(
 async fn resolves(
     dump: &Path,
     cache: &Path,
-    table: &str,
+    (database, table): (Option<&str>, &str),
     base: &QueryOptions,
     candidate: &Predicate,
 ) -> bool {
-    let source = LocalFileSource::open(dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let options = QueryOptions { filter: Expr::Term(candidate.clone()), ..base.clone() };
-    let cache = CacheMode::enabled(cache.to_path_buf());
-    table_stream_partitions(&source, table, ScanOptions::default(), options, cache).await.is_ok()
+    planned(source, cache, database, table, ScanOptions::default(), options).await.is_ok()
 }
 
 /// A group size several `ordered` rows long, so its thousand ascending ids
@@ -643,7 +676,7 @@ async fn a_sorted_column_under_a_range_filter_skips_every_group_before_the_bound
     for version in VERSIONS {
         let (_dir, dump, index) =
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
-        let block = index.blocks_for("public.ordered").next().unwrap();
+        let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
         let statistics = block.statistics.as_deref().unwrap();
         let id = stored_bounds(statistics.columns[0].as_ref().unwrap(), BoundsSet::Primary);
         let below: u64 =
@@ -694,7 +727,7 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
     for version in VERSIONS {
         let (_dir, dump, index) =
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
-        let block = index.blocks_for("public.ordered").next().unwrap();
+        let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
         let statistics = block.statistics.as_deref().unwrap();
         let id = stored_bounds(statistics.columns[0].as_ref().unwrap(), BoundsSet::Primary);
         let skipped: Vec<bool> = id
@@ -754,7 +787,7 @@ async fn collated_text_prunes_by_its_bytewise_bounds_in_datafusion_semantics_alo
     for version in VERSIONS {
         let (_dir, dump, index) =
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
-        let block = index.blocks_for("public.ordered").next().unwrap();
+        let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
         let statistics = block.statistics.as_deref().unwrap();
         let bounds = stored_bounds(statistics.columns[11].as_ref().unwrap(), BoundsSet::Primary);
         let below = bounds.iter().flatten().filter(|b| b.max.as_str() < "a").count() as u64;
@@ -798,7 +831,7 @@ async fn an_enum_is_pruned_by_the_set_of_bounds_in_the_order_asked_for() {
     use ComparisonSemantics::{DataFusion, Postgres};
     for version in VERSIONS {
         let (_dir, dump, index) = gathered(&types_fixture(version, "default"), SMALL_GROUP).await;
-        let block = index.blocks_for("public.t_enum_domain").next().unwrap();
+        let block = index.blocks().find(|b| b.header.matches("public.t_enum_domain")).unwrap();
         let statistics = block.statistics.as_deref().unwrap();
         assert_eq!(statistics.groups.len(), 1, "pg_dump {version}");
         let column = statistics.columns[1].as_ref().unwrap();
@@ -859,7 +892,7 @@ async fn a_term_reads_the_set_gathering_stored_under_the_kind_it_compares_by() {
         ] {
             let (_dir, dump, index) =
                 gathered(&types_fixture(version, flag_set), SMALL_GROUP).await;
-            let block = index.blocks_for("public.t_enum_domain").next().unwrap();
+            let block = index.blocks().find(|b| b.header.matches("public.t_enum_domain")).unwrap();
             let statistics = block.statistics.as_deref().unwrap();
             assert_eq!(statistics.groups.len(), 1, "pg_dump {version} {flag_set}");
             let filter = Expr::all([term(column, op, Some(literal))]);
@@ -894,7 +927,7 @@ async fn a_dictionary_under_an_absent_literal_skips_every_group() {
     for version in VERSIONS {
         let (_dir, dump, index) =
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
-        let block = index.blocks_for("public.ordered").next().unwrap();
+        let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
         let groups = block.statistics.as_ref().unwrap().groups.len() as u64;
 
         let absent = Expr::all([term("low_card", PredicateOp::Eq, Some("bravo"))]);
@@ -964,8 +997,8 @@ async fn a_pruned_stream_resumes_across_its_gaps() {
         Expr::Term(term("id", PredicateOp::Ge, Some("500"))),
         Expr::Term(term("id", PredicateOp::Eq, Some("300"))),
     ]);
-    let source = LocalFileSource::open(&dump).unwrap();
-    let cache = CacheMode::enabled(cache::colocated_path(&dump));
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+    let cache = cache::colocated_path(&dump);
     let ids = |batch: &RecordBatch| {
         let column = arrow::array::AsArray::as_primitive::<arrow::datatypes::Int32Type>(
             batch.column(0).as_ref(),
@@ -978,21 +1011,19 @@ async fn a_pruned_stream_resumes_across_its_gaps() {
         let options = QueryOptions {
             filter: filter.clone(),
             projection: Some(vec!["id".into()]),
-            max_rows,
             ..QueryOptions::default()
         };
+        let scan = ScanOptions::default();
+        let plan = planned(Arc::clone(&source), &cache, None, "public.ordered", scan, options);
+        let plan = plan.await.unwrap().unwrap();
         let mut delivered = Vec::new();
         let mut token = None;
         let mut resumes = 0;
         loop {
-            let mut stream = table_stream(
-                &source,
-                "public.ordered",
-                ScanOptions::default(),
-                options.clone(),
-                token.take(),
-                cache.clone(),
-            );
+            let mut stream = match token.take() {
+                None => plan.in_file_order(max_rows),
+                Some(token) => plan.resume(token, max_rows).unwrap(),
+            };
             let Some(batch) = stream.next().await else { break };
             let batch = batch.unwrap();
             if resumes == 0 {
@@ -1059,7 +1090,7 @@ impl pgdt_io::ByteRangeSource for Recording {
 #[tokio::test]
 async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
     let (_dir, dump, index) = gathered(&statistics_fixture(16, "default"), SMALL_GROUP).await;
-    let block = index.blocks_for("public.ordered").next().unwrap();
+    let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
     let statistics = block.statistics.as_deref().unwrap();
     let id = stored_bounds(statistics.columns[0].as_ref().unwrap(), BoundsSet::Primary);
     let skipped: Vec<bool> = id
@@ -1080,14 +1111,18 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
         Expr::Term(term("id", PredicateOp::Lt, Some("40"))),
         Expr::Term(term("id", PredicateOp::Ge, Some("500"))),
     ]);
-    let source = Recording {
+    let source = Arc::new(Recording {
         inner: LocalFileSource::open(&dump).unwrap(),
         starts: std::sync::Mutex::new(Vec::new()),
-    };
-    let cache = CacheMode::enabled(cache::colocated_path(&dump));
+    });
+    let cache = cache::colocated_path(&dump);
     let scan = ScanOptions {
         read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
         ..ScanOptions::default()
+    };
+    let plan = async |options: QueryOptions| {
+        let source: Arc<dyn ByteRangeSource> = Arc::clone(&source) as _;
+        planned(source, &cache, None, "public.ordered", scan, options).await.unwrap().unwrap()
     };
     let assert_undeep = |what: &str| {
         let starts = std::mem::take(&mut *source.starts.lock().unwrap());
@@ -1101,10 +1136,8 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
         parallelism: Parallelism::workers(SPLIT_JOBS, 1 << 30),
         ..QueryOptions::default()
     };
-    let streams = table_stream_partitions(&source, "public.ordered", scan, split, cache.clone())
-        .await
-        .unwrap();
-    for mut stream in streams {
+    let split = plan(split).await;
+    for mut stream in (0..split.len()).map(|i| split.stream(i, 8192)) {
         while let Some(batch) = stream.next().await {
             batch.unwrap();
         }
@@ -1129,23 +1162,16 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
         Expr::Term(term("id", PredicateOp::Ge, Some("900"))),
     ]);
     for (filter, max_rows, expected) in [(filter, 13, 39 + 501), (straddling, 1, 1 + 101)] {
-        let options = QueryOptions {
-            filter,
-            projection: Some(vec!["id".into()]),
-            max_rows,
-            ..QueryOptions::default()
-        };
+        let options =
+            QueryOptions { filter, projection: Some(vec!["id".into()]), ..QueryOptions::default() };
+        let planned = plan(options.clone()).await;
         let mut token = None;
         let mut rows = 0;
         loop {
-            let mut stream = table_stream(
-                &source,
-                "public.ordered",
-                scan,
-                options.clone(),
-                token.take(),
-                cache.clone(),
-            );
+            let mut stream = match token.take() {
+                None => planned.in_file_order(max_rows),
+                Some(token) => planned.resume(token, max_rows).unwrap(),
+            };
             let Some(batch) = stream.next().await else { break };
             rows += batch.unwrap().num_rows();
             token = Some(stream.resume_token());
@@ -1204,13 +1230,13 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
         pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES,
     )
     .await;
-    let block = index.blocks_for("public.ordered").next().unwrap();
+    let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
     assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
-    let source = Recording {
+    let source = Arc::new(Recording {
         inner: LocalFileSource::open(&dump).unwrap(),
         starts: std::sync::Mutex::new(Vec::new()),
-    };
-    let cache = CacheMode::enabled(cache::colocated_path(&dump));
+    });
+    let cache = cache::colocated_path(&dump);
     let scan = ScanOptions {
         read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
         ..ScanOptions::default()
@@ -1250,10 +1276,10 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
         for (use_statistics, jobs) in [(true, 1), (true, SPLIT_JOBS), (false, 1)] {
             let what = format!("{filter:?} at {jobs} job(s), statistics {use_statistics}");
             let options = with(filter.clone(), use_statistics, jobs);
-            let streams =
-                table_stream_partitions(&source, "public.ordered", scan, options, cache.clone())
-                    .await
-                    .unwrap();
+            let recording: Arc<dyn ByteRangeSource> = Arc::clone(&source) as _;
+            let plan = planned(recording, &cache, None, "public.ordered", scan, options);
+            let plan = plan.await.unwrap().unwrap();
+            let streams: Vec<_> = (0..plan.len()).map(|i| plan.stream(i, 8192)).collect();
             let pieces = streams.len();
             let mut rows = 0;
             let mut stops = Vec::new();
@@ -1316,7 +1342,7 @@ async fn a_pruned_stop_reports_the_rest_of_its_run_beside_the_skipped_groups() {
     for version in VERSIONS {
         let (_dir, dump, index) =
             gathered(&statistics_fixture(version, "default"), SMALL_GROUP).await;
-        let block = index.blocks_for("public.ordered").next().unwrap();
+        let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
         let n = block.statistics.as_deref().unwrap().group_size;
         let cache = cache::colocated_path(&dump);
         let filter = Expr::all([term("id", PredicateOp::Lt, Some("500"))]);
@@ -1430,7 +1456,15 @@ async fn a_value_no_decoder_reads_raises_only_where_evaluation_reaches_it() {
     let (_dir, dump, index) =
         gathered(&dump, pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES).await;
     assert_eq!(
-        index.blocks_for("public.t").next().unwrap().statistics.as_deref().unwrap().groups.len(),
+        index
+            .blocks()
+            .find(|b| b.header.matches("public.t"))
+            .unwrap()
+            .statistics
+            .as_deref()
+            .unwrap()
+            .groups
+            .len(),
         1
     );
     let cache = cache::colocated_path(&dump);
@@ -1458,27 +1492,25 @@ async fn a_stopped_stream_resumes_to_the_same_rows() {
         pgdt_mapping::statistics::ROW_GROUP_DEFAULT_SIZE_BYTES,
     )
     .await;
-    let source = LocalFileSource::open(&dump).unwrap();
-    let cache = CacheMode::enabled(cache::colocated_path(&dump));
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+    let cache = cache::colocated_path(&dump);
     let filter = Expr::Term(term("id", PredicateOp::Le, Some("19")));
     for max_rows in [1, 7, 19, 20] {
         let options = QueryOptions {
             filter: filter.clone(),
             projection: Some(vec!["id".into()]),
-            max_rows,
             ..QueryOptions::default()
         };
+        let scan = ScanOptions::default();
+        let plan = planned(Arc::clone(&source), &cache, None, "public.ordered", scan, options);
+        let plan = plan.await.unwrap().unwrap();
         let mut delivered = Vec::new();
         let mut token = None;
         loop {
-            let mut stream = table_stream(
-                &source,
-                "public.ordered",
-                ScanOptions::default(),
-                options.clone(),
-                token.take(),
-                cache.clone(),
-            );
+            let mut stream = match token.take() {
+                None => plan.in_file_order(max_rows),
+                Some(token) => plan.resume(token, max_rows).unwrap(),
+            };
             let Some(batch) = stream.next().await else { break };
             let batch = batch.unwrap();
             let column = arrow::array::AsArray::as_primitive::<arrow::datatypes::Int32Type>(

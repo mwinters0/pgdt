@@ -226,14 +226,14 @@ async fn run_evaluating(
 /// every group before the one holding it — and the groups its block lists.
 fn groups_below(index: &DumpIndex, bound: i64) -> (u64, usize) {
     let (below, _) = below(index, bound);
-    let block = index.blocks_for("public.ordered").next().unwrap();
+    let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
     (below, block.statistics.as_deref().unwrap().groups.len())
 }
 
 /// The number of `ordered`'s groups whose `id` is below `bound` throughout,
 /// and the rows they hold.
 fn below(index: &DumpIndex, bound: i64) -> (u64, u64) {
-    let block = index.blocks_for("public.ordered").next().unwrap();
+    let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
     let statistics = block.statistics.as_deref().unwrap();
     let id = statistics.columns[0].as_ref().unwrap();
     let max = |g| id.group_bounds(BoundsSet::Primary, StatisticsView::Representable, g).unwrap();
@@ -247,7 +247,7 @@ fn below(index: &DumpIndex, bound: i64) -> (u64, u64) {
 /// How many of `ordered`'s groups hold an `id` in `ids`, which its ids being
 /// consecutive is every group whose bounds meet the range.
 fn groups_meeting(index: &DumpIndex, ids: std::ops::RangeInclusive<i64>) -> u64 {
-    let block = index.blocks_for("public.ordered").next().unwrap();
+    let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
     let statistics = block.statistics.as_deref().unwrap();
     let id = statistics.columns[0].as_ref().unwrap();
     let bound = |text: &str| text.parse::<i64>().unwrap();
@@ -374,7 +374,7 @@ async fn a_state_moving_inside_a_group_is_read_at_the_next_chunk() {
     let dir = tempfile::tempdir().unwrap();
     let dump = long_block(dir.path());
     let index = mapped(&dump, 1 << 20).await;
-    let block = index.blocks_for("public.t").next().unwrap();
+    let block = index.blocks().find(|b| b.header.matches("public.t")).unwrap();
     assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
     let scan = ScanOptions {
         read: ReadOptions { chunk_size_bytes: SMALL_CHUNK, ..ReadOptions::default() },
@@ -806,7 +806,7 @@ async fn a_row_the_state_rejects_is_dropped_before_it_decodes() {
     let dir = tempfile::tempdir().unwrap();
     let dump = undecodable_head(dir.path());
     let index = mapped(&dump, 1 << 20).await;
-    let block = index.blocks_for("public.t").next().unwrap();
+    let block = index.blocks().find(|b| b.header.matches("public.t")).unwrap();
     assert_eq!(block.statistics.as_deref().unwrap().groups.len(), 1);
 
     let unfiltered = read_both(&dump, &index, None).await;

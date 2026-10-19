@@ -23,8 +23,26 @@ use super::table::{StreamShared, TableStream};
 /// **One batch per sub-stream is the whole bound**: each yields in file order
 /// and they are themselves in file order, so emitting the held batch that
 /// begins earliest re-assembles the serial order while never holding more
-/// than one batch each. The same two facts make it serial past the first
-/// round, `pgdt query`'s merge reading the same way (`KD57`).
+/// than one batch each.
+///
+/// Deficiency register: `deficiency: KD57` — the same two facts make it
+/// serial: only the slot just emitted from is refilled, and the earliest live
+/// sub-stream always holds the lowest offset, so the merge drains sub-stream 0
+/// before polling 1 again. Past the first round one sub-stream reads and the
+/// rest each hold a batch, so the plan's partitions buy the first round's
+/// batches and nothing after, and the work the later sub-streams did for that
+/// round is CPU with no wall-clock return; `pgdt query` reads through it. The
+/// partitions run concurrently where every one is polled, as a DataFusion
+/// scan polls them; holding file order at N batches is what forgoes it.
+/// Keeping both takes a reorder buffer growing toward every sub-stream's
+/// output but the first, runs interleaved across sub-streams so an in-order
+/// drain keeps each near the front (an arrangement "D51" does not weigh), or
+/// output that gives up file order. **(c) unowned**; promoted by a phase
+/// taking up `pgdt query`'s throughput, the return it weighs being a typed
+/// plain scan split on a real device (`docs/design/measurements.md`, "What a
+/// second scan worker buys, and where the plain path stops", its cold-NVMe
+/// column). Planning one sub-stream until then is refused: interleaved runs
+/// keep the N-way plan, and the first round is a small gain on a plain file.
 ///
 /// **The error is the lowest-indexed failed sub-stream's**, raised once every
 /// sub-stream before it has drained and every batch it or a later one holds

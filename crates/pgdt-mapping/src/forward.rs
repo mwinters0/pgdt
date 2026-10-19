@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use pgdt_codec::internal::counter_for;
-use pgdt_core::{Error, Result};
+use pgdt_core::{CopyHeader, Error, Result};
 use pgdt_dump::attach_text;
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::dump_metadata_from_spans;
@@ -87,6 +87,11 @@ pub fn splice(
     spans
 }
 
+/// The table a query's pass may stop early for, as the query states it: whether
+/// a block, in the database its span records, holds rows for it. A test of
+/// the caller's, so the pass names no selector of its own.
+pub type Target<'a> = &'a (dyn Fn(Option<&str>, &CopyHeader) -> bool + Sync);
+
 /// Whether `index`'s map now answers the query for good, so the mapping scan
 /// can stop short of EOF (`docs/design/decisions.md`, "D49"). Two things can
 /// make a further block share the queried name, and both are ruled out:
@@ -96,19 +101,19 @@ pub fn splice(
 ///   not adjacent to it (I2), so only reaching EOF enumerates them.
 /// - **Any `\connect` at all**, the file then being a `pg_dumpall`, a
 ///   concatenation or a `--create` dump, where a qualified name can be defined
-///   again in a later database (I2). A `query_options.database` selector does
-///   not lift this: two `\connect` segments can name the *same* database.
+///   again in a later database (I2). A target naming its database does not
+///   lift this: two `\connect` segments can name the *same* database.
 ///
 /// What neither catches is a file whose *first* segment has no `\connect` —
 /// deficiency `KD6`, detailed at its marker
 /// (`pgdt_query::ScanExtent::UntilTargetSettled`).
-fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> bool {
+fn target_settled(index: &DumpIndex, target: Target<'_>) -> bool {
     if index.spans.iter().any(|s| matches!(s.body, SpanBody::Connect { .. })) {
         return false;
     }
     let mut matched = false;
     for (database, block) in index.blocks_with_database() {
-        if !block.header.matches(table) || (selector.is_some() && database != selector) {
+        if !target(database, &block.header) {
             continue;
         }
         if block.partition_root.is_some() {
@@ -164,7 +169,7 @@ pub enum Pass<'a> {
 /// Extend `index`'s map forward from its own `scanned_through`, persisting as
 /// it goes, until the queried table is settled, EOF is reached, or `cancel`
 /// fires. Emits no rows. `target` is the
-/// `(table, database selector)` a query may stop early for once
+/// table a query may stop early for once
 /// [`target_settled`] says so; **`None` means "run to EOF"**, what
 /// `pgdt_query::ScanExtent::Full` asks for and what [`map_file`](crate::map_file) always wants. Rejected:
 /// a `ScanExtent` beside a sentinel table name, which is dead data any later
@@ -195,14 +200,14 @@ pub async fn map_forward(
     cache: &CacheMode,
     watch: &SourceWatch,
     index: &mut DumpIndex,
-    target: Option<(&str, Option<&str>)>,
+    target: Option<Target<'_>>,
     mapping: Pass<'_>,
     size: u64,
 ) -> Result<MapStop> {
     if index.scanned_through >= size {
         return Ok(MapStop::Reached);
     }
-    if target.is_some_and(|(table, selector)| target_settled(index, table, selector)) {
+    if target.is_some_and(|target| target_settled(index, target)) {
         return Ok(MapStop::Reached);
     }
 
@@ -286,14 +291,6 @@ pub async fn map_forward(
                     // `pgdt_dump::internal::scan_preamble` does, so the span list
                     // ends where the `Data` span is about to begin.
                     let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
-                    // Whether this block can be the one that settles
-                    // `target` — the `CopyEnd` arm's reason to splice for
-                    // a block the throttle would have skipped.
-                    // **Deliberately the header alone**, a superset:
-                    // repeating `target_settled`'s selector test here
-                    // would tie the gate's width to that function's body.
-                    open_block_targets =
-                        target.is_some_and(|(table, _)| start.header.matches(table));
                     // Read off the header, for the offer below.
                     let header_offset = start.header_offset;
                     let data_offset = start.data_offset;
@@ -312,6 +309,14 @@ pub async fn map_forward(
                     // recomputing at every `CopyStart` would put a third
                     // whole-index-sized cost in this loop.
                     let db = builder.database().map(str::to_owned);
+                    // Whether this block can be the one that settles
+                    // `target` — the `CopyEnd` arm's reason to splice for
+                    // a block the throttle would have skipped. **The
+                    // target's own test alone**, a superset of
+                    // `target_settled`'s, whose partition-root and
+                    // `\connect` vetoes need the map.
+                    open_block_targets =
+                        target.is_some_and(|target| target(db.as_deref(), &header));
                     if metadata_covers.as_ref() != Some(&db) {
                         let spans =
                             splice(&prefix, builder.snapshot(boundary), seg_start, boundary, size);
@@ -546,7 +551,7 @@ async fn close_copy_block(
     prefix: &[Span],
     seg_start: u64,
     size: u64,
-    target: Option<(&str, Option<&str>)>,
+    target: Option<Target<'_>>,
     targets: bool,
     end: CopyEnd,
 ) -> Result<BlockClose> {
@@ -578,8 +583,7 @@ async fn close_copy_block(
     // Only a block `target_settled` counts can turn it from false to true, and
     // `index` has just been spliced for exactly those — so this always reads a
     // map current through `watermark`.
-    let settled =
-        targets && target.is_some_and(|(table, selector)| target_settled(index, table, selector));
+    let settled = targets && target.is_some_and(|target| target_settled(index, target));
     // The save at the *last* watermark before an early stop is what persists
     // the map for the next query, so a settled target and an interrupt save
     // whether or not the throttle would have.

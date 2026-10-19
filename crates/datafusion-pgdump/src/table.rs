@@ -329,7 +329,6 @@ impl TableProvider for PgDumpTable {
                 .map(|columns| columns.iter().map(|&i| schema[i].name().clone()).collect()),
             filter: pgdt_query::Expr::And(translated),
             parallelism,
-            max_rows: state.config().batch_size(),
             ..query_options(&self.dump)
         };
         let partitions =

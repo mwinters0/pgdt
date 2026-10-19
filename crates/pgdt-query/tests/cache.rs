@@ -9,27 +9,31 @@ use std::sync::Arc;
 use futures::StreamExt;
 use pgdt_core::Error;
 use pgdt_dump::cache::{
-    CacheClaim, CacheLoad, CacheMode, CacheStatus, Held, LoadedCache, OfflineCache, SourceWatch,
-    StrictIdentity, Unusable, WeakIdentity,
+    CacheMode, CacheStatus, Held, LoadedCache, OfflineCache, SourceWatch, StrictIdentity, Unusable,
+    WeakIdentity,
 };
 use pgdt_dump::{ScanOptions, cache, check_tiling, preamble_only};
-use pgdt_io::{
-    ByteRangeSource, KnownCompression, LocalFileSource, Origin, Parallelism, Recognized, XzSource,
-    open,
-};
+use pgdt_io::{ByteRangeSource, LocalFileSource, Origin, Parallelism, XzSource};
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::CACHE_FORMAT_VERSION;
 use pgdt_model::DiagnosticKind;
 use pgdt_model::SpanBody;
-use pgdt_query::{QueryOptions, table_stream};
+use pgdt_query::QueryOptions;
 
 mod common;
-use common::{edge_cases, sandboxed_edge_cases as sandboxed};
+use common::{Cold, edge_cases, sandboxed_edge_cases as sandboxed};
 use pgdt_dump::ReadOptions;
 use pgdt_fixtures::arranged;
 use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
+
+/// What an open of `dump` through `mode` holds, judged against a fresh
+/// source over the file — what a scan builds forward from.
+async fn held(mode: &CacheMode, dump: &Path) -> pgdt_core::Result<Held> {
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
+    Ok(mode.open_source(source).await?.cache)
+}
 
 /// A watch opened on `source` as it stands, for a test whose subject is the
 /// save rather than the in-flight identity check.
@@ -250,36 +254,41 @@ async fn size_mismatch_invalidates_the_cache() {
     );
 }
 
-/// `CacheMode::load` carries each unusable status across with its reason
-/// rather than answering "no index" for each
-/// (`docs/design/decisions.md`, "D22"). It is the same ones
+/// An open carries each unusable status across with its reason rather than
+/// answering "no index" for each (`docs/design/decisions.md`, "D22"): the
+/// refusal names it, and a mode that may replace the cache holds it as
+/// `Held::Replacing`. It is the same ones
 /// `an_unusable_cache_says_which_kind_of_unusable_it_is` and
 /// `size_mismatch_invalidates_the_cache` put to a bare load; what this pins
 /// is that the reason survives the trip to a caller that holds a live source
 /// and could scan.
 #[tokio::test]
-async fn cache_mode_load_names_each_unusable_status() {
+async fn an_open_names_each_unusable_status() {
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let reason = |held: pgdt_core::Result<Held>| match held {
+        Err(Error::CacheUnusable { unusable, .. }) => unusable,
+        other => panic!("expected the cache refused, got {other:?}"),
+    };
 
     let missing = dir.path().join("nonexistent.dtcache");
-    assert_eq!(CacheMode::enabled(missing).load(&source).await.unwrap(), CacheLoad::Missing);
+    assert_eq!(held(&CacheMode::enabled(missing), &edge_cases()).await.unwrap(), Held::Missing);
 
     let foreign = dir.path().join("garbage.dtcache");
     std::fs::write(&foreign, b"not a cache file").unwrap();
     assert_eq!(
-        CacheMode::enabled(foreign).load(&source).await.unwrap(),
-        CacheLoad::Unusable(Unusable::NotACache)
+        reason(held(&CacheMode::enabled(foreign), &edge_cases()).await),
+        Unusable::NotACache
     );
 
     let stale = dir.path().join("stale.dtcache");
     pgdt_dump::internal::save(&stale, &source, &index).await.unwrap();
     restamp(&stale, CACHE_FORMAT_VERSION + 1);
-    assert_eq!(
-        CacheMode::enabled(stale).load(&source).await.unwrap(),
-        CacheLoad::Unusable(Unusable::UnsupportedVersion { found: CACHE_FORMAT_VERSION + 1 })
-    );
+    let found = Unusable::UnsupportedVersion { found: CACHE_FORMAT_VERSION + 1 };
+    assert_eq!(reason(held(&CacheMode::enabled(&stale), &edge_cases()).await), found);
+    let replacing = CacheMode::enabled(&stale).with_overwrite_unusable(true);
+    assert_eq!(held(&replacing, &edge_cases()).await.unwrap(), Held::Replacing(found));
 
     let path = dir.path().join("edge_cases.sql.dtcache");
     pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
@@ -289,26 +298,25 @@ async fn cache_mode_load_names_each_unusable_status() {
     std::fs::write(&grown, &grown_bytes).unwrap();
     let grown_source = LocalFileSource::open(&grown).unwrap();
     assert_eq!(
-        CacheMode::enabled(path).load(&grown_source).await.unwrap(),
-        CacheLoad::Unusable(Unusable::SourceChanged {
+        reason(held(&CacheMode::enabled(path), &grown).await),
+        Unusable::SourceChanged {
             cached_stored_size: source.stored_size().await.unwrap(),
             live_stored_size: grown_source.stored_size().await.unwrap(),
-        }),
+        },
         "the two sizes are the evidence a caller states the mismatch with"
     );
 }
 
 /// **The library never replaces cache data automatically.** The open the
-/// mapping pass and `preamble_only` take, and both query entry points, refuse
+/// mapping pass and `preamble_only` take, and a cold query, refuse
 /// a cache that records another file's stored size — naming the path, what
 /// the cache expected and what the source is — rather than starting cold and
 /// overwriting it at their first save (`docs/design/decisions.md`, "D20");
 /// every other unusable status is refused the same way
 /// (`an_unusable_cache_is_refused_unless_it_may_be_replaced`).
 ///
-/// **The open and `table_stream` are exercised here.**
-/// `table_stream_partitions` reaches the same refusal through the same
-/// `map_for_query`, and nothing below pins it.
+/// **The open and a cold query are exercised here**: every query opens
+/// through the same open, so its refusal is the open's.
 ///
 /// The cache is read back byte for byte afterwards, which is the half that
 /// would fail silently: a refusal that still wrote is indistinguishable from
@@ -357,16 +365,9 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
     // `map_file` and `preamble_only` take what the open hands back, so
     // their refusal is the open's.
     expected("the open", mode.open_source(Arc::clone(&source)).await.unwrap_err());
-    let mut stream = table_stream(
-        source.as_ref(),
-        "public.widgets",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        mode.clone(),
-    );
-    let first = stream.next().await.expect("the stream yields the refusal, not nothing");
-    expected("table_stream", first.unwrap_err());
+    let cold = Cold { cache: mode.clone(), ..Cold::default() };
+    let refused = cold.table(Arc::clone(&source), "public.widgets", Default::default()).await;
+    expected("a cold query", refused.unwrap_err());
 
     assert_eq!(std::fs::read(&path).unwrap(), before, "the refused cache is untouched");
 }
@@ -443,7 +444,7 @@ async fn disabled_cache_ignores_an_existing_file_and_persists_nothing() {
     // The existing valid cache at the colocated path is ignored, not read —
     // and the reason says so: `Disabled` is about the caller, not about
     // anything found at a path (`docs/design/decisions.md`, "D22").
-    assert_eq!(mode.load(&source).await.unwrap(), CacheLoad::Disabled);
+    assert_eq!(held(&mode, &edge_cases()).await.unwrap(), Held::Disabled);
 
     // Saving under a disabled mode is a no-op: it must not touch whatever is
     // (or isn't) at the would-be colocated path.
@@ -483,7 +484,8 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     std::fs::write(&dump, &bytes).unwrap();
 
-    let CacheLoad::Index(loaded) = CacheMode::enabled(cache_path).load(&source).await.unwrap()
+    let Held::Loaded(LoadedCache { index: loaded, .. }) =
+        held(&CacheMode::enabled(cache_path), &dump).await.unwrap()
     else {
         panic!("an mtime change does not invalidate")
     };
@@ -517,7 +519,8 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
     index.diagnostics.push(Diagnostic::cache_mtime_changed());
     pgdt_dump::internal::save(&cache_path, &source, &index).await.unwrap();
 
-    let CacheLoad::Index(loaded) = CacheMode::enabled(cache_path).load(&source).await.unwrap()
+    let Held::Loaded(LoadedCache { index: loaded, .. }) =
+        held(&CacheMode::enabled(cache_path), &dump).await.unwrap()
     else {
         panic!("the cache this test just saved is usable")
     };
@@ -539,13 +542,13 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
 
 /// A cache whose `scanned_through` falls short of its recorded size loads as
 /// incomplete — the case `preamble_only_persists_a_real_unscanned_tail`
-/// already exercises through `preamble_only` — but `CacheMode::load` still
-/// hands it back as `CacheLoad::Index`, the same as a complete cache, since its
-/// callers (`table_stream`, `preamble_only`) want a partial map to build
+/// already exercises through `preamble_only` — but an open still hands it
+/// back as `Held::Loaded`, the same as a complete cache, since its callers (a
+/// cold query, the mapping pass, `preamble_only`) want a partial map to build
 /// forward from rather than a signal to start over
 /// (`docs/design/decisions.md`, "D22").
 #[tokio::test]
-async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
+async fn an_incomplete_cache_still_opens_as_a_loaded_index() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(edge_cases()).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
@@ -555,7 +558,9 @@ async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
         .await
         .unwrap();
 
-    let CacheLoad::Index(index) = mode.load(source.as_ref()).await.unwrap() else {
+    let Held::Loaded(LoadedCache { index, .. }) =
+        mode.open_source(Arc::clone(&source)).await.unwrap().cache
+    else {
         panic!("Incomplete still yields an index")
     };
     let size = source.size().await.unwrap();
@@ -846,16 +851,9 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
     let path = dir.path().join("edge_cases.sql.xz.dtcache");
     pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
 
-    let known = match cache::claim(&path, &Origin::local(compressed.path())).await.unwrap() {
-        CacheClaim::Settles { compression, .. } => compression,
-        other => panic!("the file's own cache describes it: {other:?}"),
-    };
-    assert_eq!(known, KnownCompression::Xz(xz.seek_table().unwrap()));
-
-    let source = match open(&Origin::local(compressed.path()), known).await.unwrap() {
-        Recognized::Source(source) => source,
-        Recognized::Mismatch => panic!("the file's own cache must describe it"),
-    };
+    let opened = CacheMode::enabled(&path).open(&Origin::local(compressed.path())).await.unwrap();
+    assert!(matches!(opened.cache, Held::Loaded(_)), "the file's own cache describes it");
+    let source = opened.source;
     assert_eq!(source.seek_table(), xz.seek_table());
     assert_eq!(source.size().await.unwrap(), xz.size().await.unwrap());
     let whole = source.size().await.unwrap() as usize;
@@ -863,29 +861,29 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
 }
 
 /// A cache saved from a source with no compression layer says so, which is a
-/// claim recognition can check rather than an absence it has to guess at.
+/// claim recognition can check rather than an absence it has to guess at: an
+/// open believes it and builds a plain source, the statistics the cache holds
+/// loaded beside it.
 #[tokio::test]
-async fn a_cache_saved_from_a_plain_source_claims_plain() {
+async fn a_cache_saved_from_a_plain_source_opens_plain() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
     pgdt_dump::internal::save(&path, &plain, &index).await.unwrap();
 
-    assert_eq!(
-        cache::claim(&path, &Origin::local(edge_cases())).await.unwrap(),
-        CacheClaim::Settles {
-            compression: KnownCompression::Plain,
-            statistics_heap_bytes: index.statistics_heap_bytes(),
-        }
-    );
+    let opened = CacheMode::enabled(&path).open(&Origin::local(edge_cases())).await.unwrap();
+    assert_eq!(opened.source.seek_table(), None);
+    let Held::Loaded(loaded) = opened.cache else { panic!("the file's own cache describes it") };
+    assert_eq!(loaded.index.statistics_heap_bytes(), index.statistics_heap_bytes());
 }
 
-/// A claim sizes the statistics the scan will load, before any source exists:
-/// the number a caller carving its workers first bills as held
-/// (`docs/design/decisions.md`, "D85"), and exactly what `load` hands back.
+/// An open sizes the statistics the scan will hold before any worker is
+/// carved: the number a caller carving its workers first bills as held
+/// (`docs/design/decisions.md`, "D85"), and exactly what a load of the same
+/// cache hands back.
 #[tokio::test]
-async fn a_claim_sizes_the_statistics_a_load_hands_back() {
+async fn an_open_sizes_the_statistics_the_parse_left() {
     let (_dir, dump) = sandboxed();
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let path = cache::colocated_path(&dump);
@@ -901,51 +899,39 @@ async fn a_claim_sizes_the_statistics_a_load_hands_back() {
     .await
     .unwrap();
 
-    let claimed = match cache::claim(&path, &Origin::local(&dump)).await.unwrap() {
-        CacheClaim::Settles { statistics_heap_bytes, .. } => statistics_heap_bytes,
-        other => panic!("the file's own cache describes it: {other:?}"),
+    let Held::Loaded(loaded) = mode.open(&Origin::local(&dump)).await.unwrap().cache else {
+        panic!("the file's own cache describes it")
     };
-    let loaded = match mode.load(source.as_ref()).await.unwrap() {
-        CacheLoad::Index(index) => index.statistics_heap_bytes(),
-        other => panic!("the file's own cache loads: {other:?}"),
+    let held = loaded.index.statistics_heap_bytes();
+    assert!(held > 0, "a default parse gathers statistics");
+    let CacheStatus::Loaded(load) =
+        pgdt_dump::internal::load(&path, source.as_ref()).await.unwrap()
+    else {
+        panic!("the file's own cache loads")
     };
-    assert!(claimed > 0, "a default parse gathers statistics");
-    assert_eq!(claimed, loaded);
+    assert_eq!(held, load.index.statistics_heap_bytes());
 }
 
-/// A claim settles "nothing is known" where there is no cache, or no file to
-/// compare it against; an unusable cache is answered with its reason instead,
-/// the one `load` would report a moment later — here foreign bytes, and in
-/// the test below a cache recorded against a file of another stored size.
+/// An open with nothing cached opens the source claiming nothing, and one
+/// with a real cache but no file to compare it against settles nothing
+/// either: the source's own open is where that has a sentence to say, not a
+/// cache refusal.
 #[tokio::test]
-async fn a_claim_is_unknown_wherever_nothing_is_cached_to_compare() {
+async fn an_open_settles_nothing_wherever_nothing_is_cached_to_compare() {
     let dir = tempfile::tempdir().unwrap();
-    let missing = dir.path().join("nothing.dtcache");
-    assert_eq!(
-        cache::claim(&missing, &Origin::local(edge_cases())).await.unwrap(),
-        CacheClaim::Settles { compression: KnownCompression::Unknown, statistics_heap_bytes: 0 }
-    );
-
-    let foreign = dir.path().join("foreign.dtcache");
-    std::fs::write(&foreign, b"not a cache at all").unwrap();
-    assert_eq!(
-        cache::claim(&foreign, &Origin::local(edge_cases())).await.unwrap(),
-        CacheClaim::Unusable(Unusable::NotACache)
-    );
+    let missing = CacheMode::enabled(dir.path().join("nothing.dtcache"));
+    let opened = missing.open(&Origin::local(edge_cases())).await.unwrap();
+    assert_eq!(opened.cache, Held::Missing);
+    assert_eq!(opened.source.seek_table(), None);
 
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
     let path = dir.path().join("edge_cases.sql.dtcache");
     pgdt_dump::internal::save(&path, &plain, &index).await.unwrap();
-    // A real cache, and a dump path with nothing at it at all: there is no
-    // size to compare against, and the open that follows is where that has a
-    // sentence to say.
-    assert_eq!(
-        cache::claim(&path, &Origin::local(dir.path().join("gone.sql"))).await.unwrap(),
-        CacheClaim::Settles {
-            compression: KnownCompression::Unknown,
-            statistics_heap_bytes: index.statistics_heap_bytes(),
-        }
+    let gone = CacheMode::enabled(&path).open(&Origin::local(dir.path().join("gone.sql"))).await;
+    assert!(
+        !matches!(gone, Err(Error::CacheUnusable { .. }) | Ok(_)),
+        "the missing dump is the open's failure, not the cache's: {gone:?}"
     );
 }
 
@@ -967,14 +953,18 @@ async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exis
 
     // The compressed file's own cache, put to the plain file it decompresses
     // to: same content, different stored size.
-    assert_eq!(
-        cache::claim(&path, &Origin::local(edge_cases())).await.unwrap(),
-        CacheClaim::Unusable(Unusable::SourceChanged {
-            cached_stored_size: std::fs::metadata(compressed.path()).unwrap().len(),
-            live_stored_size: std::fs::metadata(edge_cases()).unwrap().len(),
-        }),
-        "a cache of the compressed file must not be believed about the plain one"
-    );
+    let refused = CacheMode::enabled(&path).open(&Origin::local(edge_cases())).await;
+    match refused {
+        Err(Error::CacheUnusable { unusable, .. }) => assert_eq!(
+            unusable,
+            Unusable::SourceChanged {
+                cached_stored_size: std::fs::metadata(compressed.path()).unwrap().len(),
+                live_stored_size: std::fs::metadata(edge_cases()).unwrap().len(),
+            },
+            "a cache of the compressed file must not be believed about the plain one"
+        ),
+        other => panic!("expected the cache refused, got {other:?}"),
+    }
 
     // The same verdict `load` reaches once a source exists, which is what
     // makes the early refusal a pre-emption rather than a second rule.
@@ -1149,10 +1139,10 @@ async fn an_open_hands_back_what_the_cache_holds() {
         panic!("a parse leaves a cache")
     };
     assert!(whole.is_complete());
-    let CacheLoad::Index(loaded) = mode.load(source.as_ref()).await.unwrap() else {
+    let Held::Loaded(loaded) = mode.open_source(Arc::clone(&source)).await.unwrap().cache else {
         panic!("the same cache loads")
     };
-    assert_eq!(whole.index, loaded, "an open judges the cache as a load does");
+    assert_eq!(whole.index, loaded.index, "an open judges the cache as an open of a source does");
     assert_eq!(whole.weak, WeakIdentity::Agrees);
 
     let disabled = CacheMode::DISABLED.open(&origin).await.unwrap();
@@ -1315,10 +1305,9 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
         parallelism: Parallelism::Serial { memory_bytes: Some(table.max_block_uncompressed() - 1) },
         ..Default::default()
     };
-    let items: Vec<_> =
-        table_stream(&xz, "public.widgets", ScanOptions::default(), options, None, mode)
-            .collect()
-            .await;
+    let cold = Cold { cache: mode, ..Cold::default() };
+    let stream = cold.stream(Arc::new(xz), "public.widgets", options).await.unwrap();
+    let items: Vec<_> = stream.expect("the dump holds the table").collect().await;
     let (last, rows) = items.split_last().expect("the stream yields");
     assert!(rows.iter().all(Result::is_ok) && !rows.is_empty(), "{items:?}");
     assert!(

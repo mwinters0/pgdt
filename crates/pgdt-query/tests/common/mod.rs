@@ -2,10 +2,11 @@
 //! what reading a batch back adds to it.
 //!
 //! Everything here is a *path* or an *expectation*, but `pgdt-fixtures`'
-//! fixture mapped beside its cache, and the [`Dump`] a test plans a table's
-//! reads over ([`mapped`], [`dump_over`]). Anything else that drives the
-//! library — a `collect`, a `drain`, a `census_of` — stays in the file whose
-//! subject it is.
+//! fixture mapped beside its cache, the [`Dump`] a test plans a table's
+//! reads over ([`mapped`], [`dump_over`]), and a cold query's table and its
+//! stream ([`Cold`]), as `pgdt query` reaches them. Anything else that drives
+//! the library — a `collect`, a `drain`, a `census_of` — stays in the file
+//! whose subject it is.
 
 // Each test binary compiles the whole module and uses a subset of it, so
 // per-binary dead-code warnings are structural rather than informative.
@@ -15,14 +16,18 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow::array::RecordBatch;
+use pgdt_codec::SchemaMode;
 use pgdt_codec::pgtype::NestedPlan;
-use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::{CacheMode, SourceWatch, StrictIdentity};
+use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::ByteRangeSource;
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DumpIndex, PostgresInvalidValues};
-use pgdt_query::{Dump, render_field};
+use pgdt_query::{
+    Dump, QueryOptions, ScanExtent, Table, TablePartitions, TableSelector, TableStream,
+    render_field,
+};
 use tokio_util::sync::CancellationToken;
 
 #[allow(unused_imports)]
@@ -51,6 +56,87 @@ pub async fn dump_over(
     let watch = SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await?;
     mode.save(&watch, source.as_ref(), index).await?;
     Dump::opened(mode.open_source(source).await?).await
+}
+
+/// `table` as a person types it, qualified (`schema.table`) or bare (any
+/// schema), split at its first `.` — as `pgdt query --table` reads it.
+pub fn selector(table: &str) -> TableSelector {
+    match table.split_once('.') {
+        Some((schema, table)) => TableSelector::named(table).in_schema(schema),
+        None => TableSelector::named(table),
+    }
+}
+
+/// A cold query's passes, as `pgdt query` runs them: the mapping pass's
+/// arrangement and extent, the cache it opens through, the database its
+/// selector names beside the table (`--database`), and the rows a batch of
+/// the replay holds. [`Cold::default`] is the serial pass stopping once its
+/// table is settled, writing no cache, in any database, at the batch `pgdt
+/// query` reads.
+#[derive(Debug, Clone)]
+pub struct Cold {
+    pub scan: ScanOptions,
+    pub extent: ScanExtent,
+    pub cache: CacheMode,
+    pub database: Option<String>,
+    pub max_rows: usize,
+}
+
+impl Default for Cold {
+    fn default() -> Self {
+        Self {
+            scan: ScanOptions::default(),
+            extent: ScanExtent::UntilTargetSettled,
+            cache: CacheMode::DISABLED,
+            database: None,
+            max_rows: 8192,
+        }
+    }
+}
+
+impl Cold {
+    /// The table `table` selects ([`selector`]), in this database where one
+    /// is named, in `source` opened through this cache and mapped until it
+    /// is settled, holding the census a typed query of `schema_mode` reads —
+    /// `None` where the dump holds none.
+    pub async fn table(
+        &self,
+        source: Arc<dyn ByteRangeSource>,
+        table: &str,
+        schema_mode: SchemaMode,
+    ) -> pgdt_core::Result<Option<Table>> {
+        let selected = match &self.database {
+            Some(database) => selector(table).in_database(database.clone()),
+            None => selector(table),
+        };
+        let opened = self.cache.open_source(source).await?;
+        let token = CancellationToken::new();
+        Table::settle(opened, &selected, self.scan, self.extent, schema_mode, &token).await
+    }
+
+    /// That table's plan under `options`, read with this pass's chunk.
+    pub async fn plan(
+        &self,
+        source: Arc<dyn ByteRangeSource>,
+        table: &str,
+        options: QueryOptions,
+    ) -> pgdt_core::Result<Option<TablePartitions>> {
+        let Some(found) = self.table(source, table, options.schema_mode).await? else {
+            return Ok(None);
+        };
+        found.plan(self.scan.read, options).map(Some)
+    }
+
+    /// That plan's whole table in file order, at [`Cold::max_rows`] a batch.
+    pub async fn stream(
+        &self,
+        source: Arc<dyn ByteRangeSource>,
+        table: &str,
+        options: QueryOptions,
+    ) -> pgdt_core::Result<Option<TableStream<'static>>> {
+        let plan = self.plan(source, table, options).await?;
+        Ok(plan.map(|plan| plan.in_file_order(self.max_rows)))
+    }
 }
 
 /// Every column of `batch` rendered back to PostgreSQL text via

@@ -27,7 +27,6 @@ use arrow::compute::concat_batches;
 use futures::StreamExt;
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::compare::ComparisonSemantics;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode, CacheStatus, LoadedCache};
 use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
@@ -35,11 +34,10 @@ use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, Statistic
 use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, StatisticsView};
 use pgdt_query::{
     ComparisonNote, EarlyStop, Expr, Membership, PlanNote, Predicate, PredicateOp, QueryOptions,
-    table_stream_partitions,
 };
 
 mod common;
-use common::{VERSIONS, fixture, fixtures_root, parsed_copy};
+use common::{Cold, VERSIONS, fixture, fixtures_root, parsed_copy};
 use pgdt_dump::ReadOptions;
 use pgdt_fixtures::arranged;
 use pgdt_model::PostgresInvalidValues;
@@ -86,23 +84,41 @@ struct Seen {
     resolved: Option<(ResolvedSchema, Vec<ComparisonNote>)>,
 }
 
-/// `options` against `table`, drained in file order to the first error.
-async fn seen(dump: &Path, cache: &Path, table: &str, options: QueryOptions) -> Seen {
-    let source = LocalFileSource::open(dump).unwrap();
-    let cache = CacheMode::enabled(cache.to_path_buf());
-    let mut streams =
-        match table_stream_partitions(&source, table, ScanOptions::default(), options, cache).await
-        {
-            Ok(streams) => streams,
-            Err(e) => {
-                return Seen {
-                    outcome: Err(named_as_equality(&e.to_string())),
-                    plan: Vec::new(),
-                    stops: Vec::new(),
-                    resolved: None,
-                };
-            }
-        };
+/// `options` against `table` in `database`, its partitions drained in file
+/// order to the first error.
+async fn seen(
+    dump: &Path,
+    cache: &Path,
+    (database, table): (&Option<String>, &str),
+    options: QueryOptions,
+) -> Seen {
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
+    let cold = Cold {
+        cache: CacheMode::enabled(cache.to_path_buf()),
+        database: database.clone(),
+        ..Cold::default()
+    };
+    let partitions = match cold.plan(source, table, options).await {
+        Ok(Some(partitions)) => partitions,
+        Ok(None) => {
+            return Seen {
+                outcome: Ok(None),
+                plan: Vec::new(),
+                stops: Vec::new(),
+                resolved: Some((ResolvedSchema::default(), Vec::new())),
+            };
+        }
+        Err(e) => {
+            return Seen {
+                outcome: Err(named_as_equality(&e.to_string())),
+                plan: Vec::new(),
+                stops: Vec::new(),
+                resolved: None,
+            };
+        }
+    };
+    let mut streams: Vec<_> =
+        (0..partitions.len()).map(|i| partitions.stream(i, cold.max_rows)).collect();
     let plan = streams[0].plan_notes();
     let (mut batches, mut failure) = (Vec::new(), None);
     'drain: for stream in &mut *streams {
@@ -267,7 +283,7 @@ struct Tally {
 /// `membership` against `disjunction`, statistics off and on.
 async fn check(
     (dump, plain, gathered): (&Path, &Path, &Path),
-    table: &str,
+    (database, table): (&Option<String>, &str),
     base: &QueryOptions,
     (membership, disjunction): (Expr, Expr),
     tally: &mut Tally,
@@ -279,8 +295,8 @@ async fn check(
             parallelism: Parallelism::workers(jobs, 1 << 30),
             ..base.clone()
         };
-        let got = seen(dump, cache, table, options(&membership)).await;
-        let want = seen(dump, cache, table, options(&disjunction)).await;
+        let got = seen(dump, cache, (database, table), options(&membership)).await;
+        let want = seen(dump, cache, (database, table), options(&disjunction)).await;
         assert_eq!(
             got,
             want,
@@ -337,10 +353,11 @@ async fn check_fixture(
         }
         // Only the columns every row decodes are built, so a value the build
         // cannot hold (D96) ends no comparison.
-        let everything = QueryOptions { database: database.clone(), ..Default::default() };
+        let everything = QueryOptions::default();
+        let named = (&database, table.as_str());
         let decodes = |options: QueryOptions| {
-            let (dump, plain, table) = (&dump, &plain, &table);
-            async move { seen(dump, plain, table, options).await.outcome.is_ok() }
+            let (dump, plain) = (&dump, &plain);
+            async move { seen(dump, plain, named, options).await.outcome.is_ok() }
         };
         let projection = if decodes(everything.clone()).await {
             None
@@ -371,9 +388,9 @@ async fn check_fixture(
                     Expr::Not(Box::new(disjunction.clone())),
                 );
                 let semantics = if rng.below(3) == 0 { &arrow } else { &base };
-                check(caches, &table, semantics, (membership.clone(), disjunction.clone()), tally)
+                check(caches, named, semantics, (membership.clone(), disjunction.clone()), tally)
                     .await;
-                check(caches, &table, semantics, negated, tally).await;
+                check(caches, named, semantics, negated, tally).await;
                 leaves.push((membership, disjunction));
             }
         }
@@ -381,7 +398,7 @@ async fn check_fixture(
             continue;
         }
         for _ in 0..TREES_PER_TABLE {
-            check(caches, &table, &base, tree(rng, &leaves, 3), tally).await;
+            check(caches, named, &base, tree(rng, &leaves, 3), tally).await;
         }
     }
 }

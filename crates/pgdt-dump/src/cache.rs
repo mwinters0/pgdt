@@ -5,7 +5,7 @@
 //! **A cache that cannot be used is refused, not scanned over**
 //! (`docs/design/decisions.md`, "D20"): one that is another file's, another
 //! build's, or damaged is almost always a user's accident — the wrong path, or
-//! a file that changed — so an open and the two query entry points answer
+//! a file that changed — so an open ([`CacheMode::open`]) answers
 //! [`Error::CacheUnusable`](pgdt_core::Error::CacheUnusable) before the dump
 //! is read past its magic, naming which of those it is ([`Unusable`]). [`CacheMode::with_overwrite_unusable`] opts into
 //! starting cold and replacing it instead, for a source whose file is replaced
@@ -56,8 +56,8 @@ pub(crate) mod store;
 
 pub use self::file::{CacheEnvelope, CacheStatus, CompressionShape, LoadedCache};
 pub use self::identity::{OriginMatch, SourceWatch, StrictIdentity, WeakIdentity};
-pub use self::mode::{CacheLoad, CacheMode, OfflineCache};
+pub use self::mode::{CacheMode, OfflineCache};
 pub use self::open::{Held, Opened};
-pub use self::store::{CacheClaim, claim, colocated_path};
+pub use self::store::colocated_path;
 pub use pgdt_core::Unusable;
 pub use pgdt_core::internal::OVERWRITE_WAYS_OUT;

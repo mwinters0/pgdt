@@ -27,7 +27,7 @@ pgdt-mapping = { path = "../pgdt-mapping" }
 pgdt-model = { path = "../pgdt-model" }
 serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt", "sync"] }
-# The token a query's mapping pass polls, which nothing fires.
+# The token a cold query's mapping pass polls (`Table::settle`).
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 

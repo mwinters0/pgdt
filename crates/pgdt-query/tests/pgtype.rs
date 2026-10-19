@@ -498,7 +498,7 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
             )
             .await
             .unwrap_or_else(|e| panic!("{label}: a strict parse refused: {e}"));
-            let block = run.index.blocks_for("public.t_bit").next();
+            let block = run.index.blocks().find(|b| b.header.matches("public.t_bit"));
             let block = block.unwrap_or_else(|| panic!("{label}: no `t_bit` block"));
             let Some(meta) = run.index.metadata.as_deref() else { panic!("{label}") };
             let db = meta.databases.first().unwrap();

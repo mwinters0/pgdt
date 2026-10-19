@@ -32,10 +32,11 @@ use super::table::StreamShared;
 use crate::batch::{RetainedChunks, RowBatcher};
 use crate::predicate::{ComparisonNote, ResolvedExpr};
 
-/// Pass 2, for one sub-stream: replay `segments` in file order, in whatever
-/// batches `plan.query_options` asks for. This is the whole of the row path: a
-/// serial [`table_stream`](crate::stream::table_stream) is this function over one segment per kept run of
-/// each matching block, a partitioned replay it over each group
+/// Pass 2, for one sub-stream: replay `segments` in file order, in batches of
+/// at most `max_rows` rows and whatever else `plan.query_options` bounds them
+/// by. This is the whole of the row path: a serial resume is this function
+/// over one segment per kept run of each matching block from the token on, a
+/// partitioned replay it over each group
 /// [`plan_partitions`](self::partition::plan_partitions) handed out.
 ///
 /// **Under a [`DynamicFilter`](crate::stream::replay::dynamic::DynamicFilter)** (`dynamic`), each row group the replay
@@ -49,9 +50,11 @@ use crate::predicate::{ComparisonNote, ResolvedExpr};
 /// dropped where it rejects it ([`DynamicRead::rejects`]). A block sorted on a
 /// bound the state requires stops at its first row past it, as under a static
 /// filter's.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn replay<'a>(
     source: &'a dyn ByteRangeSource,
     plan: Arc<ReplayPlan>,
+    max_rows: usize,
     segments: Vec<Segment>,
     shared: StreamShared,
     resume: Option<ResumeToken>,
@@ -86,7 +89,7 @@ pub(super) fn replay<'a>(
         // are prebuilt here.
         let (mut active, mut first_scanner) = match &resume {
             Some(token) if token.in_copy.is_some() => {
-                let (scanner, opened) = resume_state(token, &plan)?;
+                let (scanner, opened) = resume_state(token, &plan, max_rows)?;
                 let active = opened.map(|(active, resolved, notes)| {
                     *shared.resolved_schema.lock().unwrap() = resolved;
                     *shared.comparison_notes.lock().unwrap() = notes;
@@ -161,6 +164,7 @@ pub(super) fn replay<'a>(
                             block.header_offset,
                             block_database.clone(),
                             &plan,
+                            max_rows,
                         )?;
                         // Published even for a piece holding no row, so a
                         // sub-stream handed only such pieces — cuts inside
@@ -243,6 +247,7 @@ pub(super) fn replay<'a>(
                                 start.header_offset,
                                 block_database.clone(),
                                 &plan,
+                                max_rows,
                             )?;
                             *shared.comparison_notes.lock().unwrap() = notes;
                             *shared.resolved_schema.lock().unwrap() = resolved;
@@ -476,6 +481,7 @@ fn activate(
     header_offset: u64,
     database: Option<String>,
     plan: &ReplayPlan,
+    max_rows: usize,
 ) -> Result<Opened> {
     let resolved_here;
     let block = match plan
@@ -501,6 +507,7 @@ fn activate(
         &block.resolved,
         header.qualified_name(),
         plan.query_options.clone(),
+        max_rows,
         block.field_targets.clone(),
         block.unrepresentable.clone(),
     );
@@ -511,7 +518,11 @@ fn activate(
 /// Reconstruct the in-progress block state a [`ResumeToken`] captured, if any:
 /// the scanner's row counter (so a later `CopyEnd` reports the block's true
 /// total) and a fresh [`RowBatcher`](crate::batch::RowBatcher) on the original block's schema.
-fn resume_state(token: &ResumeToken, plan: &ReplayPlan) -> Result<(CopyScanner, Option<Opened>)> {
+fn resume_state(
+    token: &ResumeToken,
+    plan: &ReplayPlan,
+    max_rows: usize,
+) -> Result<(CopyScanner, Option<Opened>)> {
     let scanner = CopyScanner::resume(
         token.offset,
         token.in_copy.as_ref().map(|ic| (ic.header_offset, ic.rows_in_block)),
@@ -519,7 +530,9 @@ fn resume_state(token: &ResumeToken, plan: &ReplayPlan) -> Result<(CopyScanner, 
     let active = token
         .in_copy
         .as_ref()
-        .map(|ic| activate(ic.header.clone(), ic.header_offset, ic.database.clone(), plan))
+        .map(|ic| {
+            activate(ic.header.clone(), ic.header_offset, ic.database.clone(), plan, max_rows)
+        })
         .transpose()?;
     Ok((scanner, active))
 }

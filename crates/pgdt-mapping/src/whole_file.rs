@@ -242,7 +242,7 @@ impl Mapped {
 /// eager, cache-blind producer. Rejected: teaching *it* to resume, which
 /// duplicates the splice-onto-a-prefix logic here.
 ///
-/// **It opens with the bounded preamble prepass** `pgdt_query::table_stream` runs, under
+/// **It opens with the bounded preamble prepass** `pgdt_query::Table::settle` runs, under
 /// the same "unless the first database's preamble is already complete" guard
 /// (`docs/design/decisions.md`, "D30"), and only for a scan starting at byte 0
 /// — its spans *are* the prefix, so running it over a resumed map would

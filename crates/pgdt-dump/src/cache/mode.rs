@@ -1,12 +1,12 @@
 //! How a caller wants the cache handled for one operation ([`CacheMode`]),
-//! the identity signals it binds among them, and what a load answers a
-//! caller holding a live source ([`CacheLoad`]); and a cache read with no
-//! source at all ([`OfflineCache`]).
+//! the identity signals it binds among them, and the judgement and refusal
+//! every open makes under it; and a cache read with no source at all
+//! ([`OfflineCache`]).
 
 use std::path::{Path, PathBuf};
 
 use super::identity::{SourceWatch, StrictIdentity, advisory_identity_diagnostics};
-use super::store::{load, load_offline, save};
+use super::store::{load_offline, save};
 use super::{CacheStatus, LoadedCache, colocated_path};
 use pgdt_core::{Error, Result, Unusable};
 use pgdt_io::{ByteRangeSource, Origin};
@@ -120,42 +120,6 @@ impl CacheMode {
         }
     }
 
-    /// Load the cache this mode points at, turning a loaded cache's identity
-    /// answers into advisory diagnostics on the index — a moved time, a
-    /// changed entity tag, or a different origin (see the module docs). A
-    /// disabled cache always yields [`CacheLoad::Disabled`], even if a file
-    /// sits at what would otherwise be its resolved location.
-    ///
-    /// **Under a binding [`StrictIdentity`] the same answers are a refusal**:
-    /// the caller asked for a guarantee, so a cache whose modification signal
-    /// has moved, whose origin differs, or a source that can offer neither,
-    /// stops the run instead of carrying a diagnostic nobody has to read.
-    /// `time` and `location` each bind their own half. It is not this
-    /// method's only `Err`: the load's own I/O failures propagate.
-    ///
-    /// A complete cache and an incomplete one are both [`CacheLoad::Index`],
-    /// because the caller of this method (`pgdt_query`'s `map_for_query`,
-    /// which serves both `pgdt_query::table_stream` and
-    /// `pgdt_query::table_stream_partitions`) builds forward from whatever
-    /// partial map exists (`docs/design/decisions.md`, "D22"). The mapping
-    /// pass and `crate::preamble::preamble_only` build forward from the cache
-    /// an open decoded instead ([`CacheMode::open`]), which is also how a
-    /// caller that *reports* what a cache holds reads it, as `pgdt info`
-    /// does; a caller with no source reads it alone ([`OfflineCache`]). Neither an unusable cache's reason nor the caller's
-    /// own opt-out is collapsed. An unusable cache is answered, not refused,
-    /// here: whether to refuse is [`CacheMode::refusal`]'s, asked by the
-    /// caller that would scan.
-    pub async fn load(&self, source: &dyn ByteRangeSource) -> Result<CacheLoad> {
-        match self {
-            CacheMode::Enabled { path, .. } => Ok(match load(path, source).await? {
-                CacheStatus::Missing => CacheLoad::Missing,
-                CacheStatus::Unusable(why) => CacheLoad::Unusable(why),
-                CacheStatus::Loaded(loaded) => CacheLoad::Index(self.judged(loaded)?.index),
-            }),
-            CacheMode::Disabled { .. } => Ok(CacheLoad::Disabled),
-        }
-    }
-
     /// A loaded cache judged on its weak identity: refused where this mode
     /// binds a signal it fails, and otherwise carrying
     /// [`advisory_identity_diagnostics`] on its index — reported rather than
@@ -191,13 +155,11 @@ impl CacheMode {
 
     /// What a scan entry point does about a cache it cannot use: the refusal,
     /// or `None` where this mode may start cold and replace it at its first
-    /// save (`docs/design/decisions.md`, "D20"). One decision for every caller
-    /// — an open ([`CacheMode::open`], [`CacheMode::open_source`]), which the
-    /// mapping pass and `crate::preamble_only` take, the two query entry
-    /// points on [`CacheLoad::Unusable`], and one pre-empting them on
-    /// [`CacheClaim::Unusable`](super::CacheClaim::Unusable) or on recognition
-    /// refusing the cache's claim — so a refusal is word for word the one it
-    /// pre-empts. The path lives here rather than on [`Unusable`] because
+    /// save (`docs/design/decisions.md`, "D20"). The one decision every open
+    /// makes ([`CacheMode::open`], [`CacheMode::open_source`]), whichever
+    /// step finds the cache unusable — the claim, recognition refusing it, or
+    /// the live source — so a refusal is word for word the same wherever it
+    /// is made. The path lives here rather than on [`Unusable`] because
     /// [`CacheMode::Disabled`] has none.
     ///
     /// Only [`CacheMode::Enabled`] finds a cache to refuse; a disabled mode
@@ -287,37 +249,4 @@ impl OfflineCache {
         }
         Ok(status)
     }
-}
-
-/// What [`CacheMode::load`] answered a caller that holds a live source: an
-/// index to build forward from, or the reason there is none
-/// (`docs/design/decisions.md`, "D22").
-///
-/// `Disabled` is a statement about the *caller*, with no [`CacheStatus`] to
-/// correspond to; the other three carry that status across, `Missing` and
-/// `Unusable` unchanged and a loaded cache as its `Index`, complete or not,
-/// because a caller holding a live source builds forward from either — see
-/// [`CacheMode::load`].
-///
-/// *Rejected:* an accessor collapsing the reasons back to `Option` for the
-/// callers that do not care. It rebuilds the collapse under a shorter name at
-/// exactly the sites that must not have it, and the callers that genuinely do
-/// not care are tests, which can say so in a `let … else`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CacheLoad {
-    /// A usable index — a [`CacheStatus::Loaded`] cache, complete or not,
-    /// carrying whatever diagnostics the load computed about the cache
-    /// *file*.
-    Index(DumpIndex),
-    /// [`CacheMode::Disabled`]: no path was consulted, and whatever sits at
-    /// the location this mode would otherwise have resolved is untouched.
-    Disabled,
-    /// [`CacheStatus::Missing`] — nothing at the cache path, the one outcome
-    /// every scan entry point starts cold on unasked.
-    Missing,
-    /// [`CacheStatus::Unusable`]. **The two query entry points refuse on it**
-    /// before the dump is read past its magic, unless the mode may overwrite it —
-    /// [`CacheMode::refusal`] is that decision, in one place
-    /// (`docs/design/decisions.md`, "D20").
-    Unusable(Unusable),
 }

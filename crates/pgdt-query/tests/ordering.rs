@@ -2,24 +2,42 @@
 //! `types` fixture (`docs/design/decisions.md`, "Predicates", the
 //! ordering register).
 //!
-//! The library-level tests only — everything here drives `table_stream`
+//! The library-level tests only — everything here drives a cold query
 //! directly against real `pg_dump` output, so each column is compared
 //! through the decoder its own DDL resolved to. The unit tests in
 //! `src/predicate/tests.rs` cover the comparison itself against hand-built
 //! schemas; the flags are pinned in `crates/pgdt/tests/query_ordering.rs`.
 
+use std::path::Path;
+use std::sync::Arc;
+
 use futures::StreamExt;
 use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_core::Error;
-use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::CacheMode;
-use pgdt_io::LocalFileSource;
+use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_model::Finding;
-use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions, table_stream};
+use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions, TableStream};
 
 mod common;
-use common::{rows_of, types_fixture};
+use common::{Cold, rows_of, types_fixture};
+
+/// A cold query of `table` in the dump at `path` under `options`, its whole
+/// table in file order; a refusal its pass or its plan raises is the `Err`.
+async fn query_in(
+    path: &Path,
+    table: &str,
+    options: QueryOptions,
+) -> pgdt_core::Result<TableStream<'static>> {
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(path).unwrap());
+    let stream = Cold::default().stream(source, table, options).await?;
+    Ok(stream.expect("the dump holds the table"))
+}
+
+/// [`query_in`] the 16 `types` fixture.
+async fn query(table: &str, options: QueryOptions) -> pgdt_core::Result<TableStream<'static>> {
+    query_in(&types_fixture(16, "default"), table, options).await
+}
 
 fn term(column: &str, op: PredicateOp, value: &str) -> Predicate {
     Predicate { column: column.into(), op, value: Some(value.into()) }
@@ -28,9 +46,7 @@ fn term(column: &str, op: PredicateOp, value: &str) -> Predicate {
 /// Drain `table` from the 16 `types` fixture under `options`, returning the
 /// decoded rows.
 async fn drain(table: &str, options: QueryOptions) -> pgdt_core::Result<Vec<Vec<Option<String>>>> {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let mut stream =
-        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
+    let mut stream = query(table, options).await?;
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await.transpose()? {
         rows.extend(rows_of(&batch));
@@ -154,19 +170,16 @@ async fn a_decimal_literal_is_decoded_at_the_columns_scale() {
 /// The notes a query over `table` raises for `column` under one `>=` term —
 /// empty for a column whose comparison is PostgreSQL's own.
 async fn notes_for(table: &str, column: &str, literal: &str) -> Vec<String> {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let mut stream = table_stream(
-        &source,
+    let mut stream = query(
         table,
-        ScanOptions::default(),
         QueryOptions {
             filter: Expr::all([term(column, PredicateOp::Ge, literal)]),
             projection: Some(vec![column.to_string()]),
             ..Default::default()
         },
-        None,
-        CacheMode::DISABLED,
-    );
+    )
+    .await
+    .unwrap();
     while stream.next().await.transpose().unwrap().is_some() {}
     stream.comparison_notes().iter().map(|n| n.message()).collect()
 }
@@ -635,19 +648,16 @@ async fn a_nested_equality_reads_the_input_grammar() {
 /// note naming only the column would have said half of it.
 #[tokio::test]
 async fn a_nested_column_announces_each_diverging_position() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let mut stream = table_stream(
-        &source,
+    let mut stream = query(
         "public.t_composite",
-        ScanOptions::default(),
         QueryOptions {
             filter: Expr::all([term("v_tagged", PredicateOp::Ge, "(a,{})")]),
             projection: Some(vec!["id".to_string()]),
             ..Default::default()
         },
-        None,
-        CacheMode::DISABLED,
-    );
+    )
+    .await
+    .unwrap();
     while stream.next().await.transpose().unwrap().is_some() {}
     let notes = stream.comparison_notes();
     assert_eq!(
@@ -724,21 +734,13 @@ async fn a_range_declaring_a_canonical_function_refuses_every_operator() {
         .join("\n"),
     )
     .unwrap();
-    let source = LocalFileSource::open(&path).unwrap();
-    let refusal = |op, value: &str| {
+    let refusal = async |op, value: &str| {
         let options =
             QueryOptions { filter: Expr::all([term("v_span", op, value)]), ..Default::default() };
-        table_stream(
-            &source,
-            "public.t_canon",
-            ScanOptions::default(),
-            options,
-            None,
-            CacheMode::DISABLED,
-        )
+        query_in(&path, "public.t_canon", options).await.map(drop).unwrap_err()
     };
     for op in [PredicateOp::Lt, PredicateOp::Ge, PredicateOp::Eq, PredicateOp::Ne] {
-        let err = refusal(op, "[1,10]").next().await.unwrap().unwrap_err();
+        let err = refusal(op, "[1,10]").await;
         let Error::UncomparablePredicateColumn { reason, .. } = &err else {
             panic!("{op:?}: {err:?}")
         };
@@ -772,14 +774,7 @@ async fn a_range_declaring_a_canonical_function_refuses_every_operator() {
         projection: Some(vec!["id".to_string()]),
         ..Default::default()
     };
-    let mut stream = table_stream(
-        &source,
-        "public.t_canon",
-        ScanOptions::default(),
-        options,
-        None,
-        CacheMode::DISABLED,
-    );
+    let mut stream = query_in(&path, "public.t_canon", options).await.unwrap();
     let batch = stream.next().await.unwrap().unwrap();
     assert_eq!(rows_of(&batch), [[Some("1".to_string())]]);
 }
@@ -1015,19 +1010,16 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
             "structurally",
         ),
     ] {
-        let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-        let mut stream = table_stream(
-            &source,
+        let mut stream = query(
             table,
-            ScanOptions::default(),
             QueryOptions {
                 filter: Expr::all([term(column, PredicateOp::Ge, literal)]),
                 projection: Some(vec![column.to_string()]),
                 ..Default::default()
             },
-            None,
-            CacheMode::DISABLED,
-        );
+        )
+        .await
+        .unwrap();
         while stream.next().await.transpose().unwrap().is_some() {}
         let notes = stream.comparison_notes();
         assert_eq!(notes.len(), 1, "{table}.{column}: {notes:?}");
@@ -1084,19 +1076,16 @@ async fn a_collated_column_is_judged_by_its_clause() {
         ("v_user", Some(ComparisonDivergence::NonBytewiseCollation), "other than C/POSIX"),
         ("v_nd", Some(ComparisonDivergence::NonDeterministicCollation), "non-deterministic"),
     ] {
-        let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-        let mut stream = table_stream(
-            &source,
+        let mut stream = query(
             "public.t_collate",
-            ScanOptions::default(),
             QueryOptions {
                 filter: Expr::all([term(column, PredicateOp::Ge, "a")]),
                 projection: Some(vec![column.to_string()]),
                 ..Default::default()
             },
-            None,
-            CacheMode::DISABLED,
-        );
+        )
+        .await
+        .unwrap();
         while stream.next().await.transpose().unwrap().is_some() {}
         let notes = stream.comparison_notes();
         match divergence {
@@ -1146,18 +1135,15 @@ async fn every_collation_answers_the_same_bytewise_row_set() {
 /// report, not a record of which operators were used.
 #[tokio::test]
 async fn an_agreeing_comparison_reports_nothing() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let mut stream = table_stream(
-        &source,
+    let mut stream = query(
         "public.t_int",
-        ScanOptions::default(),
         QueryOptions {
             filter: Expr::all([term("v_integer", PredicateOp::Gt, "0")]),
             ..Default::default()
         },
-        None,
-        CacheMode::DISABLED,
-    );
+    )
+    .await
+    .unwrap();
     while stream.next().await.transpose().unwrap().is_some() {}
     assert!(stream.comparison_notes().is_empty());
 }
@@ -1167,32 +1153,18 @@ async fn an_agreeing_comparison_reports_nothing() {
 /// hashed like any other, not silently equal to each other or to `=`/`!=`.
 #[tokio::test]
 async fn a_resume_token_does_not_cross_two_ordering_operators() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let options = |op| QueryOptions {
-        filter: Expr::all([term("v_integer", op, "0")]),
-        max_rows: 1,
-        ..Default::default()
+    let source: Arc<dyn ByteRangeSource> =
+        Arc::new(LocalFileSource::open(types_fixture(16, "default")).unwrap());
+    let plan = async |op| {
+        let options =
+            QueryOptions { filter: Expr::all([term("v_integer", op, "0")]), ..Default::default() };
+        Cold::default().plan(Arc::clone(&source), "public.t_int", options).await.unwrap().unwrap()
     };
-    let mut stream = table_stream(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        options(PredicateOp::Gt),
-        None,
-        CacheMode::DISABLED,
-    );
+    let mut stream = plan(PredicateOp::Gt).await.in_file_order(1);
     stream.next().await.transpose().unwrap();
     let token = stream.resume_token();
 
-    let mut resumed = table_stream(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        options(PredicateOp::Ge),
-        Some(token),
-        CacheMode::DISABLED,
-    );
-    let err = resumed.next().await.unwrap().unwrap_err();
+    let err = plan(PredicateOp::Ge).await.resume(token, 1).map(drop).unwrap_err();
     assert!(matches!(err, Error::ResumeQueryMismatch), "{err:?}");
 }
 
@@ -1276,19 +1248,16 @@ async fn an_equality_literal_of_the_wrong_type_is_refused() {
 #[tokio::test]
 async fn a_collation_note_is_raised_for_ordering_and_not_for_equality() {
     let equality_notes = |column: &'static str| async move {
-        let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-        let mut stream = table_stream(
-            &source,
+        let mut stream = query(
             "public.t_collate",
-            ScanOptions::default(),
             QueryOptions {
                 filter: Expr::all([term(column, PredicateOp::Eq, "a")]),
                 projection: Some(vec![column.to_string()]),
                 ..Default::default()
             },
-            None,
-            CacheMode::DISABLED,
-        );
+        )
+        .await
+        .unwrap();
         while stream.next().await.transpose().unwrap().is_some() {}
         stream.comparison_notes()
     };
@@ -1309,19 +1278,16 @@ async fn a_collation_note_is_raised_for_ordering_and_not_for_equality() {
 /// — because `box_eq` compares areas and a byte comparison does not (`KD10`).
 #[tokio::test]
 async fn a_column_with_no_registered_comparison_announces_its_equality() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let mut stream = table_stream(
-        &source,
+    let mut stream = query(
         "public.t_delimiter",
-        ScanOptions::default(),
         QueryOptions {
             filter: Expr::all([term("v_box_domain", PredicateOp::Eq, "(1,1),(0,0)")]),
             projection: Some(vec!["v_box_domain".to_string()]),
             ..Default::default()
         },
-        None,
-        CacheMode::DISABLED,
-    );
+    )
+    .await
+    .unwrap();
     while stream.next().await.transpose().unwrap().is_some() {}
     let notes = stream.comparison_notes();
     assert_eq!(notes.len(), 1);

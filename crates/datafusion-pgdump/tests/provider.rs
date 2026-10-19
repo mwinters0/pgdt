@@ -2,7 +2,8 @@
 //!
 //! **The library's own serial stream is the oracle.** A scan through
 //! DataFusion is the library's partitioned replay under DataFusion's
-//! scheduler, so what it must return is exactly what `table_stream` returns:
+//! scheduler, so what it must return is exactly what a cold query of the table
+//! returns in file order:
 //! the same rows, in the same order once its partitions are read in order, of
 //! the same Arrow type — or the same refusal.
 
@@ -27,7 +28,7 @@ use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::PostgresInvalidValues;
 use pgdt_model::{DiagnosticKind, Finding, TableName};
-use pgdt_query::{QueryOptions, table_stream};
+use pgdt_query::{QueryOptions, ScanExtent, Table, TableSelector};
 use tokio_util::sync::CancellationToken;
 
 /// A sink for a registration whose findings this target is not about.
@@ -88,21 +89,22 @@ async fn library_answer(
     table: &TableName,
     schema_mode: SchemaMode,
 ) -> Result<(SchemaRef, Vec<RecordBatch>), String> {
-    let source = LocalFileSource::open(dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let options = QueryOptions {
-        database: table.database.clone(),
         schema_mode,
         semantics: ComparisonSemantics::DataFusion,
         ..QueryOptions::default()
     };
-    let mut stream = table_stream(
-        &source,
-        &table.qualified_name(),
-        ScanOptions::default(),
-        options,
-        None,
-        CacheMode::DISABLED,
-    );
+    let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
+    let (scan, extent) = (ScanOptions::default(), ScanExtent::UntilTargetSettled);
+    let token = CancellationToken::new();
+    let selector = TableSelector::from(table);
+    let settled = Table::settle(opened, &selector, scan, extent, schema_mode, &token)
+        .await
+        .map_err(|e| e.to_string())?
+        .expect("the dump's own table");
+    let plan = settled.plan(scan.read, options).map_err(|e| e.to_string())?;
+    let mut stream = plan.in_file_order(8192);
     let mut batches = Vec::new();
     while let Some(batch) = stream.next().await {
         batches.push(batch.map_err(|e| e.to_string())?);

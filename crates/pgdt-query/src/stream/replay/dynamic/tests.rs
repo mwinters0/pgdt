@@ -51,7 +51,7 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
     )
     .await
     .unwrap();
-    let block = run.index.blocks_for("public.t").next().unwrap();
+    let block = run.index.blocks().find(|b| b.header.matches("public.t")).unwrap();
     let statistics = Arc::clone(block.statistics.as_ref().unwrap());
     let metadata = run.index.metadata.as_deref();
     let census = vec![ArrayShape::default(); block.header.columns.len()];

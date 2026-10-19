@@ -23,7 +23,7 @@ use std::sync::Arc;
 use arrow::datatypes::{DataType, TimeUnit};
 use futures::StreamExt;
 use pgdt_codec::{ColumnResolution, SchemaMode, resolve_columns};
-use pgdt_dump::cache::{CacheLoad, CacheMode, CacheStatus, LoadedCache};
+use pgdt_dump::cache::{CacheMode, CacheStatus, LoadedCache};
 use pgdt_dump::{ReadOptions, ScanOptions, cache, preamble_only};
 use pgdt_fixtures::arranged;
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
@@ -31,7 +31,7 @@ use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::PostgresInvalidValues;
 use pgdt_model::{DataBlock, DumpIndex, SpanBody};
-use pgdt_query::{QueryOptions, table_stream};
+use pgdt_query::QueryOptions;
 
 /// A cancellation already asked for, so the scan under it stops at its first
 /// poll rather than at a moment a test would have to arrange.
@@ -46,8 +46,19 @@ fn already_cancelled() -> CancellationToken {
 /// same convention as `tests/query_cache.rs`, which is what makes the "a query
 /// stops at its target" setup below behave identically here.
 mod common;
+use common::Cold;
 use common::sandboxed_edge_cases as sandboxed;
 use tokio_util::sync::CancellationToken;
+
+/// What `mode`'s cache holds for `source`, as a run saved it — `None` where
+/// nothing readable is there.
+async fn saved(mode: &CacheMode, source: &dyn ByteRangeSource) -> Option<DumpIndex> {
+    let path = mode.path().expect("an enabled cache");
+    match pgdt_dump::internal::load(path, source).await.unwrap() {
+        CacheStatus::Loaded(loaded) => Some(loaded.index),
+        _ => None,
+    }
+}
 
 /// `index` with every block's statistics dropped, as the eager pass leaves it.
 fn without_statistics(index: &DumpIndex) -> DumpIndex {
@@ -178,16 +189,11 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
     let mode = CacheMode::enabled(cache_path.clone());
 
     // A cold query stops once `widgets` is settled, well short of EOF.
-    let mut stream = table_stream(
-        source.as_ref(),
-        "public.widgets",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        mode.clone(),
-    );
+    let cold = Cold { cache: mode.clone(), ..Cold::default() };
+    let stream = cold.stream(Arc::clone(&source), "public.widgets", QueryOptions::default()).await;
+    let mut stream = stream.unwrap().unwrap();
     while stream.next().await.is_some() {}
-    let CacheLoad::Index(partial) = mode.load(source.as_ref()).await.unwrap() else {
+    let Some(partial) = saved(&mode, source.as_ref()).await else {
         panic!("the query wrote a cache")
     };
     assert!(partial.scanned_through < size, "sanity: the query really did stop short");
@@ -211,7 +217,7 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
     assert_matches_eager(&run.index, &eager, "resumed from a query's partial cache");
 
     // And what landed on disk is the finished index, not the partial one.
-    let CacheLoad::Index(reloaded) = mode.load(source.as_ref()).await.unwrap() else {
+    let Some(reloaded) = saved(&mode, source.as_ref()).await else {
         panic!("the map wrote a cache")
     };
     assert_eq!(reloaded.scanned_through, size);
@@ -262,14 +268,9 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
     let size = source.size().await.unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
-    let mut stream = table_stream(
-        source.as_ref(),
-        "public.t39",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        mode.clone(),
-    );
+    let cold = Cold { cache: mode.clone(), ..Cold::default() };
+    let stream = cold.stream(Arc::clone(&source), "public.t39", QueryOptions::default()).await;
+    let mut stream = stream.unwrap().unwrap();
     let mut rows = 0;
     while let Some(batch) = stream.next().await {
         rows += batch.unwrap().num_rows();
@@ -280,7 +281,7 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
     let last_end = eager.blocks().last().expect("40 blocks").end_offset;
     assert!(last_end < size, "sanity: the file does not end at the last block");
 
-    let CacheLoad::Index(banked) = mode.load(source.as_ref()).await.unwrap() else {
+    let Some(banked) = saved(&mode, source.as_ref()).await else {
         panic!("the query wrote a cache")
     };
     assert_eq!(banked.scanned_through, last_end, "stopped on the settling block, not at EOF");
@@ -312,7 +313,7 @@ async fn a_preamble_only_cache_is_finished_into_the_same_index() {
     preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
         .await
         .unwrap();
-    let CacheLoad::Index(preamble_cache) = mode.load(source.as_ref()).await.unwrap() else {
+    let Some(preamble_cache) = saved(&mode, source.as_ref()).await else {
         panic!("preamble_only wrote a cache")
     };
     assert!(preamble_cache.scanned_through > 0);
@@ -1153,7 +1154,7 @@ async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
     assert!(metadata.databases.first().unwrap().preamble_complete);
 
     // On disk, and resumable from where the prepass stopped.
-    let CacheLoad::Index(reloaded) = mode.load(source.as_ref()).await.unwrap() else {
+    let Some(reloaded) = saved(&mode, source.as_ref()).await else {
         panic!("the prepass wrote a cache")
     };
     assert_eq!(reloaded.scanned_through, run.index.scanned_through);

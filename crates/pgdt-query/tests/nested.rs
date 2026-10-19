@@ -19,10 +19,8 @@ use pgdt_codec::nested::{
     render_int2vector, render_multirange, render_range, render_record,
 };
 use pgdt_codec::pgtype::NestedPlan;
-use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::CacheMode;
 use pgdt_io::LocalFileSource;
-use pgdt_query::{QueryOptions, render_field, table_stream};
+use pgdt_query::{QueryOptions, render_field};
 
 /// Which codec a column's literals belong to, named here per column rather
 /// than read off `NestedPlan`: this file tests the codec resolution feeds,
@@ -68,17 +66,18 @@ const NESTED_COLUMNS: &[(&str, &str, Kind, u32)] = &[
 ];
 
 mod common;
-use common::types_fixture;
+use common::{Cold, types_fixture};
 
 /// One column's non-NULL values, as decoded COPY text. `SchemaMode::Strings`
 /// is deliberate: it never consults the DDL, so what comes back is exactly
 /// what `copy::unescape_field` produced, which is this codec's input.
 async fn column_values(path: &Path, table: &str, column: &str) -> Vec<String> {
-    let source = LocalFileSource::open(path).unwrap();
+    let source = std::sync::Arc::new(LocalFileSource::open(path).unwrap());
     let options = QueryOptions { schema_mode: SchemaMode::Strings, ..Default::default() };
     let mut out = Vec::new();
-    let mut stream =
-        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
+    let Some(mut stream) = Cold::default().stream(source, table, options).await.unwrap() else {
+        return out;
+    };
     while let Some(batch) = stream.next().await {
         let batch = batch.unwrap();
         let index = batch.schema().index_of(column).expect("column is in the COPY header");

@@ -24,13 +24,16 @@
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use futures::StreamExt;
+use pgdt_codec::SchemaMode;
 use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::CacheMode;
-use pgdt_io::LocalFileSource;
-use pgdt_query::{QueryOptions, table_stream};
+use pgdt_io::{ByteRangeSource, LocalFileSource};
+use pgdt_query::{QueryOptions, ScanExtent, Table, TableSelector};
+use tokio_util::sync::CancellationToken;
 
 /// `pgdt`'s allocator, as `pgdt` declares it (`crates/pgdt/src/alloc.rs`): a bench
 /// target is a binary of its own, outside the library's refusal of a global
@@ -83,17 +86,20 @@ fn perf_data_path() -> PathBuf {
     path
 }
 
+/// One cold query of `public.perf`, as `pgdt query` runs one: opened with
+/// no cache, mapped until the table is settled, and read in file order.
 async fn scan_once(path: &Path) -> u64 {
-    let source = LocalFileSource::open(path).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(path).unwrap());
+    let opened = CacheMode::DISABLED.open_source(source).await.unwrap();
+    let selector = TableSelector::named("perf").in_schema("public");
+    let scan = ScanOptions::default();
+    let extent = ScanExtent::UntilTargetSettled;
+    let token = CancellationToken::new();
+    let table = Table::settle(opened, &selector, scan, extent, SchemaMode::Typed, &token).await;
+    let table = table.unwrap().expect("the dataset holds `public.perf`");
+    let plan = table.plan(scan.read, QueryOptions::default()).unwrap();
     let mut rows = 0u64;
-    let mut stream = table_stream(
-        &source,
-        "public.perf",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let mut stream = plan.in_file_order(8192);
     while let Some(batch) = stream.next().await {
         rows += batch.unwrap().num_rows() as u64;
     }

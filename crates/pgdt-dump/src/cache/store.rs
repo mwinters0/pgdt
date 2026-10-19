@@ -1,12 +1,13 @@
 //! A cache read against its source and written beside it: where one sits by
-//! default ([`colocated_path`]), what the cache at a path settles before any
-//! source exists ([`claim`], [`settled_by`]), a decoded cache checked against a
+//! default ([`colocated_path`]), what a decoded cache settles before any
+//! source exists ([`settled_by`]), a decoded cache checked against a
 //! live source ([`against_source`]), a load with no source ([`load_offline`]),
 //! and the writer ([`save`]) — see the parent module's docs for what each
-//! refuses and why. [`load`] and [`save`] are no entry point of their own: a
-//! caller loads through [`CacheMode`](super::CacheMode) and saves through its
-//! watched [`save`](super::CacheMode::save), and tests that write a cache by
-//! hand reach them through `internal`.
+//! refuses and why. `load` and [`save`] are no entry point of their own: a
+//! caller opens through [`CacheMode::open`](super::CacheMode::open) and saves
+//! through its watched [`save`](super::CacheMode::save), and tests that write
+//! a cache by hand or read back what a run saved reach them through
+//! `internal`.
 
 use std::path::{Path, PathBuf};
 
@@ -34,7 +35,9 @@ pub fn colocated_path(dump_path: &Path) -> PathBuf {
 /// Load a cache from `path` and validate it against `source`'s current
 /// identity. See [`CacheStatus`] and the module docs for what "validate"
 /// means. A hard I/O error reading `path` (anything but "not found") still
-/// propagates; what the file *holds* is answered as a status.
+/// propagates; what the file *holds* is answered as a status. A test's
+/// alone: a caller opens through [`CacheMode::open`](super::CacheMode::open).
+#[cfg(any(test, feature = "test-support"))]
 pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStatus> {
     match read_cache_file(path)? {
         Ok(file) => against_source(file, source).await,
@@ -69,75 +72,6 @@ pub(super) async fn against_source(
     let weak = file.identity.weak_against(&live);
     let origin = file.identity.origin_against(&live);
     Ok(status_from_file(file, weak, origin))
-}
-
-/// What the cache at a path settles about a dump file **before any source
-/// exists** — [`claim`]'s answer (`docs/design/decisions.md`, "D18").
-///
-/// Two outcomes. What a caller does with a cache this early is decide which
-/// source to build, except where the cache is unusable, which every scan
-/// entry point refuses unless told it may overwrite it
-/// ([`CacheMode::refusal`](super::CacheMode::refusal)): opening the source first buys nothing and, for a
-/// many-streams `.xz`, costs a stream-footer walk. A missing cache settles
-/// [`KnownCompression::Unknown`] and no statistics.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CacheClaim {
-    /// What the cache settles short of a refusal.
-    Settles {
-        /// The file's compression layer: the table a previous walk produced,
-        /// "no compression layer", or nothing known.
-        compression: KnownCompression,
-        /// The heap the cache's statistics hold once loaded
-        /// ([`DumpIndex::statistics_heap_bytes`]), zero where nothing decoded:
-        /// what a caller carving workers before its scan loads the cache bills
-        /// as held (`docs/design/decisions.md`, "D85").
-        statistics_heap_bytes: u64,
-    },
-    /// The cache cannot be used, for the reason [`load`] would answer a
-    /// moment later — a stored size compared against the origin's probe rather
-    /// than a source, and never [`Unusable::CompressionContradicted`], which
-    /// needs the file's own bytes.
-    Unusable(Unusable),
-}
-
-/// What the cache at `cache_path` settles about `origin`, answered **before
-/// any source exists** (`docs/design/decisions.md`, "D18").
-///
-/// This is the half of the cache a caller needs *early*: recognition decides
-/// which source to build, and for an `.xz` file it either walks the stream
-/// footers or is handed the table a previous walk already produced. With no
-/// source yet to give [`load`], identity is checked against
-/// [`pgdt_io::Origin::probe`] — the same stored-size rule, with a differing
-/// mtime again too weak to invalidate anything. That comparison lives here
-/// rather than at the caller, which keeps the early refusal the same verdict
-/// as the late one, and it reads the origin's probe rather than a `stat` so
-/// that the verdict is not a statement about local files.
-///
-/// *Not taken:* stopping the decode short of the index, which comes after
-/// `compression` and `identity` in [`CacheFile`]. *Rejected:* a sibling
-/// reporting the stored size, which would decode a
-/// many-thousand-entry seek table twice on the usable path to spare a walk on
-/// the path that is about to fail.
-pub async fn claim(cache_path: &Path, origin: &Origin) -> Result<CacheClaim> {
-    let file = match read_cache_file(cache_path)? {
-        Ok(file) => file,
-        Err(CacheStatus::Unusable(why)) => return Ok(CacheClaim::Unusable(why)),
-        Err(_) => {
-            return Ok(CacheClaim::Settles {
-                compression: KnownCompression::Unknown,
-                statistics_heap_bytes: 0,
-            });
-        }
-    };
-    let settled = settled_by(&file, origin).await;
-    // The index is decoded only to be sized and dropped, its statistics freed
-    // as they were decoded: inside a statistics scope (`pgdt_core::instrument`).
-    let statistics_heap_bytes = file.index.statistics_heap_bytes();
-    drop_attributed(file.index);
-    Ok(match settled {
-        Ok(compression) => CacheClaim::Settles { compression, statistics_heap_bytes },
-        Err(why) => CacheClaim::Unusable(why),
-    })
 }
 
 /// What a decoded cache file settles about `origin` before any source exists:
@@ -181,7 +115,7 @@ pub(super) fn drop_attributed(mut index: DumpIndex) {
 }
 
 /// Load a cache from `path` with no live source to check it against — the
-/// cache-only counterpart to [`load`] (`docs/design/decisions.md`,
+/// cache-only counterpart to `load` (`docs/design/decisions.md`,
 /// "The compressed source and the cache"). With no live source to compare
 /// against, `weak` and `origin` are always the agreeing answer here;
 /// "unverified, historical" is a
@@ -227,8 +161,8 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
 
 /// Write `index` to `path` (colocated or explicit — whichever the caller
 /// resolved), replacing any existing cache there, and record `source`'s
-/// current stored size/mtime plus its addressable length for [`load`] to
-/// check next time. Propagates I/O failures as `Error::Io` rather than
+/// current stored size/mtime plus its addressable length for the next open
+/// to check. Propagates I/O failures as `Error::Io` rather than
 /// swallowing them — see the module docs.
 ///
 /// **This is the writer, not the run's save**: the in-flight identity check a

@@ -206,7 +206,7 @@ impl Discovered<'_> {
     ///
     /// **`held` is what the pass keeps resident besides its workers while
     /// they are carved**: the heap a cache's statistics hold once a pass loads
-    /// them — the opened cache's index, or `CacheClaim::Settles` — billed
+    /// them — the opened cache's index — billed
     /// against the margin's ceiling as the provider bills a resident map, so
     /// it lowers the count first and, where the count cannot fall, the budget (`pgdt_io::ArrangementRequest::held`;
     /// `docs/design/decisions.md`, "D85"). A pass holding none passes `0`
@@ -224,13 +224,22 @@ impl Discovered<'_> {
     }
 
     /// **`query`'s two passes, carved apart**: each from the one allowance
-    /// with nothing drawn, since they never run at once, and each billed what
-    /// it holds. The mapping pass holds the loaded map while its readers
-    /// extend it, so it is carved around `cached_statistics`; the replay holds
-    /// none of them — the library's segments drop a block's statistics, and
-    /// the map is gone before a row is read — so it is carved around nothing.
-    /// Billing the replay the blocks it matched instead would need them known
-    /// before the mapping pass has found them.
+    /// with nothing drawn, since they never run at once. The mapping pass
+    /// holds the loaded map while its readers extend it, so it is carved
+    /// around `cached_statistics`; the map is gone before a row is read, and
+    /// the replay is carved around nothing.
+    ///
+    /// Deficiency register: `deficiency: KD123` — the replay still holds the
+    /// queried table's statistics: the table the pass settles holds its
+    /// blocks, and its plan keeps their statistics for a dynamic filter this
+    /// command never states (`pgdt_query::TablePartitions::under`), so its
+    /// readers are carved as if those bytes were free. Billing them would
+    /// need them known before the mapping pass has found them, which carving
+    /// the replay after the pass would answer, its status line moving after
+    /// the pass's. **(c) unowned**; promoted by a reading of a cold `query`'s
+    /// resident set over a table whose statistics are a sizeable part of the
+    /// margin, the fix a choice between that carve and a plan keeping no
+    /// statistics it is not asked to filter under.
     pub(crate) fn resolve_query(
         &self,
         source: &dyn ByteRangeSource,

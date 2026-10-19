@@ -857,8 +857,11 @@ async fn a_dollar_outside_a_body_hides_no_block_on_any_routine_version() {
             let source = LocalFileSource::open(&path).unwrap();
             let index = build_index(&source, &ScanOptions::default()).await.unwrap();
             assert_eq!(index.blocks().count(), headers, "pg_dump {version} {flavor}");
-            let rows: Vec<u64> =
-                index.blocks_for("objects.price$$list").map(|b| b.row_count).collect();
+            let rows: Vec<u64> = index
+                .blocks()
+                .filter(|b| b.header.matches("objects.price$$list"))
+                .map(|b| b.row_count)
+                .collect();
             assert_eq!(rows, [2], "pg_dump {version} {flavor}");
         }
     }

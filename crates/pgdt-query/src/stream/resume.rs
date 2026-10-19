@@ -8,8 +8,9 @@ use pgdt_core::CopyHeader;
 use crate::options::QueryOptions;
 use crate::predicate::{Expr, PredicateOp};
 
-/// Opaque cursor into a [`table_stream`](crate::stream::table_stream) or
+/// Opaque cursor into a
 /// [`TablePartitions::in_file_order`](crate::stream::TablePartitions::in_file_order)
+/// or [`TablePartitions::resume`](crate::stream::TablePartitions::resume)
 /// consumption, sufficient to resume from just past the last batch a caller
 /// accepted. Valid only within the process that produced it; persisting one
 /// across a restart is out of scope (`docs/design/roadmap.md`).

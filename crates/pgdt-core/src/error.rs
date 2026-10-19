@@ -77,14 +77,12 @@ pub enum Error {
     /// A scan was asked to build forward from a cache it cannot use — one
     /// that is not a pgdt cache, is damaged, is another build's, or describes
     /// another file — so it refuses rather than starting cold and overwriting
-    /// it (`docs/design/decisions.md`, "D20"). Raised by the four scan entry
-    /// points — `pgdt_mapping::map_file`, `pgdt_query::table_stream`,
-    /// `pgdt_query::table_stream_partitions` and `pgdt_dump::preamble_only` —
-    /// before any byte of the dump is read, through
-    /// `pgdt_dump::cache::CacheMode::refusal`, which answers none where the mode
-    /// may overwrite the cache instead; by an open through the cache
-    /// (`pgdt_dump::cache::CacheMode::open`), through the same; and by a
-    /// caller pre-empting them from the cache's claim, as `pgdt` does.
+    /// it (`docs/design/decisions.md`, "D20"). Raised by an open through the
+    /// cache (`pgdt_dump::cache::CacheMode::open`), which every scan entry
+    /// point — `pgdt_mapping::map_file`, `pgdt_query::Table::settle` and
+    /// `pgdt_dump::preamble_only` — reads, before any byte of the dump is
+    /// read past its magic, through `pgdt_dump::cache::CacheMode::refusal`,
+    /// which answers none where the mode may overwrite the cache instead.
     #[error("{}", cache_unusable(path, unusable))]
     CacheUnusable { path: PathBuf, unusable: Unusable },
     /// The source changed while this run was reading it, so every byte the
@@ -411,7 +409,7 @@ impl Error {
 }
 
 /// Why a cache at a path cannot be used — carried whole by `pgdt_dump::cache::CacheStatus`,
-/// `CacheLoad`, `CacheClaim` and [`Error::CacheUnusable`], so a caller
+/// `pgdt_dump::cache::Held` and [`Error::CacheUnusable`], so a caller
 /// that reports it and one that refuses on it name the same reason
 /// (`docs/design/decisions.md`, "D22").
 ///

@@ -2,7 +2,8 @@
 //! one open, held together so they cannot come from different ones, the
 //! tables the map holds, and one of them resolved by a selector into the
 //! [`Table`] an embedder plans its reads over
-//! (`docs/design/decisions.md`, "D90").
+//! (`docs/design/decisions.md`, "D90") — or a cold query's one table, mapped
+//! only until it is settled ([`Table::settle`]).
 
 use std::fmt;
 use std::sync::Arc;
@@ -19,6 +20,8 @@ use crate::options::QueryOptions;
 use crate::predicate::{ComparisonNote, column_divergences};
 use crate::stream::{TablePartitions, table_schema};
 use crate::summary::{TableSummary, table_summary};
+
+mod settle;
 
 /// A dump and **a map of the whole of it**, complete by construction: built
 /// from an open whose cache reaches the file's end ([`Dump::opened`]), or
@@ -134,15 +137,7 @@ impl Dump {
     /// selects more than one, naming each (`docs/design/decisions.md`,
     /// "D49").
     pub fn table(&self, selector: &TableSelector) -> Result<Option<Table>> {
-        let mut selected = self.tables.iter().filter(|name| selector.selects(name));
-        let Some(name) = selected.next() else { return Ok(None) };
-        let rest: Vec<&TableName> = selected.collect();
-        if !rest.is_empty() {
-            return Err(Error::AmbiguousTable {
-                name: selector.to_string(),
-                candidates: std::iter::once(name).chain(rest).map(render_candidate).collect(),
-            });
-        }
+        let Some(name) = select(&self.tables, selector)? else { return Ok(None) };
         Ok(Some(Table {
             source: Arc::clone(&self.source),
             watch: Arc::clone(&self.watch),
@@ -151,6 +146,22 @@ impl Dump {
             blocks: self.index.blocks_of(name).cloned().collect(),
         }))
     }
+}
+
+/// The one of `tables` `selector` selects, `None` where it selects none, and
+/// [`Error::AmbiguousTable`] naming each where it selects more than one —
+/// over a complete map's tables, or the tables a cold query's pass reached.
+fn select<'a>(tables: &'a [TableName], selector: &TableSelector) -> Result<Option<&'a TableName>> {
+    let mut selected = tables.iter().filter(|name| selector.selects(name));
+    let Some(name) = selected.next() else { return Ok(None) };
+    let rest: Vec<&TableName> = selected.collect();
+    if !rest.is_empty() {
+        return Err(Error::AmbiguousTable {
+            name: selector.to_string(),
+            candidates: std::iter::once(name).chain(rest).map(render_candidate).collect(),
+        });
+    }
+    Ok(Some(name))
 }
 
 /// A table as [`Error::AmbiguousTable`] names a candidate: `database.schema.table`,
@@ -195,9 +206,16 @@ impl TableSelector {
     /// Whether `name` is a table this selector selects: its table name, and
     /// every part the selector states.
     pub fn selects(&self, name: &TableName) -> bool {
-        name.table == self.table
-            && self.schema.as_ref().is_none_or(|schema| *schema == name.schema)
-            && self.database.as_ref().is_none_or(|database| *database == name.database)
+        self.selects_block(name.database.as_deref(), name.schema.as_deref(), &name.table)
+    }
+
+    /// Whether a block naming `schema.table`, in `database`, holds rows for a
+    /// table this selector selects — what a cold query's pass stops for,
+    /// asked of each block as it is mapped.
+    fn selects_block(&self, database: Option<&str>, schema: Option<&str>, table: &str) -> bool {
+        table == self.table
+            && self.schema.as_ref().is_none_or(|stated| stated.as_deref() == schema)
+            && self.database.as_ref().is_none_or(|stated| stated.as_deref() == database)
     }
 }
 

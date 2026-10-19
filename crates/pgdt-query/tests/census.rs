@@ -18,16 +18,18 @@ use futures::StreamExt;
 use pgdt_codec::{ColumnResolution, SchemaMode};
 use pgdt_core::Error;
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::{self, CacheLoad, CacheMode};
+use pgdt_dump::cache::CacheStatus;
+use pgdt_dump::cache::{self, CacheMode};
+use pgdt_dump::internal::load;
 use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::ArrayShape;
 use pgdt_model::union_census;
-use pgdt_query::{Dump, QueryOptions, ScanExtent, TableSelector, table_stream};
+use pgdt_query::{Dump, QueryOptions, ScanExtent, TableSelector};
 
 mod common;
-use common::{VERSIONS, types_fixture};
+use common::{Cold, VERSIONS, types_fixture};
 use pgdt_dump::ReadOptions;
 use pgdt_fixtures::arranged;
 use pgdt_model::PostgresInvalidValues;
@@ -37,7 +39,10 @@ use tokio_util::sync::CancellationToken;
 async fn census_of(path: &Path, table: &str) -> Vec<(String, ArrayShape)> {
     let source = LocalFileSource::open(path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    let block = index.blocks_for(table).next().unwrap_or_else(|| panic!("no block for {table}"));
+    let block = index
+        .blocks()
+        .find(|b| b.header.matches(table))
+        .unwrap_or_else(|| panic!("no block for {table}"));
     block
         .header
         .columns
@@ -129,30 +134,25 @@ async fn a_composite_column_contributes_no_dimensionality() {
 #[tokio::test]
 async fn every_mapping_pass_censuses_whatever_its_extent() {
     let path = types_fixture(16, "default");
-    let source = LocalFileSource::open(&path).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
 
     for extent in [ScanExtent::UntilTargetSettled, ScanExtent::Full] {
         // A fresh cache per pass: the index a query leaves is only readable
         // through the cache it persisted, and a shared one would let the
         // first pass answer for the second.
         let dir = tempfile::tempdir().unwrap();
-        let cache = CacheMode::enabled(dir.path().join("dump.dtcache"));
-        let options = QueryOptions { scan_extent: extent, ..Default::default() };
-        let mut stream = table_stream(
-            &source,
-            "public.t_array",
-            ScanOptions::default(),
-            options,
-            None,
-            cache.clone(),
-        );
+        let path = dir.path().join("dump.dtcache");
+        let cold = Cold { cache: CacheMode::enabled(&path), extent, ..Cold::default() };
+        let stream = cold.stream(Arc::clone(&source), "public.t_array", QueryOptions::default());
+        let mut stream = stream.await.unwrap().unwrap();
         while let Some(batch) = stream.next().await {
             batch.unwrap();
         }
-        let CacheLoad::Index(index) = cache.load(&source).await.unwrap() else {
+        let CacheStatus::Loaded(loaded) = load(&path, source.as_ref()).await.unwrap() else {
             panic!("the query wrote a cache: {extent:?}")
         };
-        let block = index.blocks_for("public.t_array").next().unwrap();
+        let index = loaded.index;
+        let block = index.blocks().find(|b| b.header.matches("public.t_array")).unwrap();
         assert_eq!(
             block.array_shapes().map(<[_]>::len),
             Some(block.header.columns.len()),
@@ -171,7 +171,7 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
     }
 }
 
-/// **A streamed schema needs no completeness test.** `table_stream` fixes its
+/// **A streamed schema needs no completeness test.** A cold query fixes its
 /// schema after mapping and before emitting, over exactly the blocks it will
 /// replay — so a cold query that stopped at its target retypes as confidently
 /// as a full scan, and the `FieldDecode` refusal a multi-dimensional value
@@ -180,20 +180,14 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
 #[tokio::test]
 async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
     let path = types_fixture(16, "default");
-    let source = LocalFileSource::open(&path).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
 
     for extent in [ScanExtent::UntilTargetSettled, ScanExtent::Full] {
         let dir = tempfile::tempdir().unwrap();
         let cache = CacheMode::enabled(dir.path().join("dump.dtcache"));
-        let options = QueryOptions { scan_extent: extent, ..Default::default() };
-        let mut stream = table_stream(
-            &source,
-            "public.t_array_shape",
-            ScanOptions::default(),
-            options,
-            None,
-            cache,
-        );
+        let cold = Cold { cache, extent, ..Cold::default() };
+        let stream = cold.stream(Arc::clone(&source), "public.t_array_shape", Default::default());
+        let mut stream = stream.await.unwrap().unwrap();
         while let Some(batch) = stream.next().await {
             batch.unwrap_or_else(|e| panic!("{extent:?}: {e}"));
         }
@@ -211,15 +205,15 @@ async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
 }
 
 /// The union a table spanning several blocks (I2) resolves against, read off
-/// a real partitioned dump: `blocks_for` enumerates them and every one
-/// carries a census, so the combined answer covers every row the table has.
+/// a real partitioned dump: every block under the one name carries a census,
+/// so the combined answer covers every row the table has.
 #[tokio::test]
 async fn a_partitioned_table_unions_the_censuses_of_all_its_blocks() {
     let path = common::partitions_fixture(16, "default");
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
     let index = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
 
-    let blocks: Vec<_> = index.blocks_for("public.spread").collect();
+    let blocks: Vec<_> = index.blocks().filter(|b| b.header.matches("public.spread")).collect();
     assert!(blocks.len() > 1, "`spread` is written as two blocks under one name (I2)");
     let union = union_census(&blocks[0].header.columns, blocks.iter().copied());
     assert_eq!(union.len(), blocks[0].header.columns.len());
@@ -259,14 +253,9 @@ async fn a_metadata_level_table_is_censused_by_its_query_and_refused_by_a_held_p
     assert!(run.index.blocks().all(|block| block.census.is_none()));
     let written = std::fs::read(&path).unwrap();
 
-    let mut stream = table_stream(
-        source.as_ref(),
-        "public.t_array_shape",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        mode.clone(),
-    );
+    let cold = Cold { cache: mode.clone(), ..Cold::default() };
+    let stream = cold.stream(Arc::clone(&source), "public.t_array_shape", Default::default());
+    let mut stream = stream.await.unwrap().unwrap();
     while let Some(batch) = stream.next().await {
         batch.unwrap();
     }

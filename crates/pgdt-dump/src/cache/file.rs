@@ -148,9 +148,9 @@ pub struct CacheEnvelope {
 /// source's identity where there is one — see the parent module's docs.
 ///
 /// Each unusable outcome is named and stays named all the way to the caller:
-/// [`CacheMode::load`](super::CacheMode::load) carries it across as
-/// [`CacheLoad::Unusable`](super::CacheLoad::Unusable) rather
-/// than answering `None` (`docs/design/decisions.md`, "D22").
+/// an open refuses with it, or carries it across as
+/// [`Held::Replacing`](super::Held::Replacing), rather than answering `None`
+/// (`docs/design/decisions.md`, "D22").
 // One value a run, moved once or twice and never stored in bulk, so boxing
 // the loaded cache would buy an allocation and save nothing.
 #[allow(clippy::large_enum_variant)]

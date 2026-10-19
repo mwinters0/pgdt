@@ -1,34 +1,49 @@
 //! Pull-mode stream, resume, and blocking-iterator tests. See `tests/batch.rs`
 //! for the row layer over the same fixtures.
 
+use std::path::Path;
+use std::sync::Arc;
+
 use arrow::datatypes::DataType;
 use futures::StreamExt;
 use pgdt_codec::{ColumnResolution, SchemaMode};
-use pgdt_dump::cache::{CacheLoad, CacheMode};
+use pgdt_dump::cache::{CacheMode, CacheStatus};
 use pgdt_dump::{ReadOptions, ScanOptions};
-use pgdt_io::{LocalFileSource, Parallelism};
+use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_query::PredicateOp;
-use pgdt_query::{BlockingTableIter, QueryOptions, table_stream};
+use pgdt_query::{BlockingTableIter, QueryOptions, TablePartitions, TableStream};
 
 mod common;
 use common::{
-    edge_cases, edge_cases_fixture, multidb_fixture, partitions_fixture, rows_of, types_fixture,
-    widgets_expected,
+    Cold, edge_cases, edge_cases_fixture, multidb_fixture, partitions_fixture, rows_of,
+    types_fixture, widgets_expected,
 };
+
+/// `path` opened as a source a cold query reads.
+fn open(path: impl AsRef<Path>) -> Arc<dyn ByteRangeSource> {
+    Arc::new(LocalFileSource::open(path).unwrap())
+}
+
+/// `table` of `path` planned cold under `options`, the table found.
+async fn plan(path: impl AsRef<Path>, table: &str, options: QueryOptions) -> TablePartitions {
+    Cold::default().plan(open(path), table, options).await.unwrap().expect("the table is found")
+}
+
+/// `table` of `path` read cold in file order under `options`, the table
+/// found.
+async fn stream(
+    path: impl AsRef<Path>,
+    table: &str,
+    options: QueryOptions,
+) -> TableStream<'static> {
+    plan(path, table, options).await.in_file_order(Cold::default().max_rows)
+}
 
 /// The pull-mode primitive, run to completion with no resume, yields the
 /// fixture's rows exactly.
 #[tokio::test]
 async fn stream_yields_the_fixture_rows() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let mut stream = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let mut stream = stream(edge_cases(), "public.widgets", QueryOptions::default()).await;
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
         rows.extend(rows_of(&batch.unwrap()));
@@ -42,17 +57,10 @@ async fn stream_yields_the_fixture_rows() {
 /// resume points at different row counts.
 #[tokio::test]
 async fn resume_continues_without_gap_or_repeat() {
-    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
+    let options = QueryOptions { max_bytes: None, ..Default::default() };
     for stop_after in [1, 2, 5] {
-        let source = LocalFileSource::open(edge_cases()).unwrap();
-        let mut stream = table_stream(
-            &source,
-            "public.widgets",
-            ScanOptions::default(),
-            options.clone(),
-            None,
-            CacheMode::DISABLED,
-        );
+        let plan = plan(edge_cases(), "public.widgets", options.clone()).await;
+        let mut stream = plan.in_file_order(1);
 
         let mut rows = Vec::new();
         for _ in 0..stop_after {
@@ -62,14 +70,7 @@ async fn resume_continues_without_gap_or_repeat() {
         let token = stream.resume_token();
         drop(stream);
 
-        let mut resumed = table_stream(
-            &source,
-            "public.widgets",
-            ScanOptions::default(),
-            options.clone(),
-            Some(token),
-            CacheMode::DISABLED,
-        );
+        let mut resumed = plan.resume(token, 1).unwrap();
         while let Some(batch) = resumed.next().await {
             rows.extend(rows_of(&batch.unwrap()));
         }
@@ -85,29 +86,15 @@ async fn resume_inside_a_block_naming_no_columns() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("listless.sql");
     std::fs::write(&path, "COPY public.t  FROM stdin;\n\n\n\n\\.\n").unwrap();
-    let source = LocalFileSource::open(&path).unwrap();
-    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
-    let mut stream = table_stream(
-        &source,
-        "public.t",
-        ScanOptions::default(),
-        options.clone(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let options = QueryOptions { max_bytes: None, ..Default::default() };
+    let plan = plan(&path, "public.t", options).await;
+    let mut stream = plan.in_file_order(1);
     let first = stream.next().await.unwrap().unwrap();
     assert_eq!((first.num_columns(), first.num_rows()), (0, 1));
     let token = stream.resume_token();
     drop(stream);
 
-    let mut resumed = table_stream(
-        &source,
-        "public.t",
-        ScanOptions::default(),
-        options,
-        Some(token),
-        CacheMode::DISABLED,
-    );
+    let mut resumed = plan.resume(token, 1).unwrap();
     let mut rows = 0;
     while let Some(batch) = resumed.next().await {
         let batch = batch.unwrap();
@@ -123,16 +110,9 @@ async fn resume_inside_a_block_naming_no_columns() {
 async fn resume_at_a_block_boundary() {
     for version in [13, 16, 18] {
         let path = edge_cases_fixture(version, "default");
-        let source = LocalFileSource::open(&path).unwrap();
-        let options = QueryOptions { max_rows: 132, max_bytes: None, ..Default::default() };
-        let mut stream = table_stream(
-            &source,
-            "public.escapes",
-            ScanOptions::default(),
-            options.clone(),
-            None,
-            CacheMode::DISABLED,
-        );
+        let options = QueryOptions { max_bytes: None, ..Default::default() };
+        let plan = plan(&path, "public.escapes", options).await;
+        let mut stream = plan.in_file_order(132);
 
         let only_batch = stream.next().await.unwrap().unwrap();
         assert_eq!(only_batch.num_rows(), 132, "pg_dump {version}");
@@ -140,14 +120,7 @@ async fn resume_at_a_block_boundary() {
         assert!(stream.next().await.is_none());
         drop(stream);
 
-        let mut resumed = table_stream(
-            &source,
-            "public.escapes",
-            ScanOptions::default(),
-            options,
-            Some(token),
-            CacheMode::DISABLED,
-        );
+        let mut resumed = plan.resume(token, 132).unwrap();
         assert!(resumed.next().await.is_none(), "pg_dump {version}: nothing left after boundary");
     }
 }
@@ -157,16 +130,8 @@ async fn resume_at_a_block_boundary() {
 /// before/during consumption, not a second, independent schema.
 #[tokio::test]
 async fn resolved_schema_matches_the_batches_it_describes() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let batch_options = QueryOptions { schema_mode: SchemaMode::Typed, ..Default::default() };
-    let mut stream = table_stream(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        batch_options,
-        None,
-        CacheMode::DISABLED,
-    );
+    let mut stream = stream(types_fixture(16, "default"), "public.t_int", batch_options).await;
     let mut batches = Vec::new();
     while let Some(batch) = stream.next().await.transpose().unwrap() {
         batches.push(batch);
@@ -191,16 +156,8 @@ async fn resolved_schema_matches_the_batches_it_describes() {
 /// column comes back `NotDeclared`, matching the untyped path exactly.
 #[tokio::test]
 async fn strings_mode_never_resolves_types() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let batch_options = QueryOptions { schema_mode: SchemaMode::Strings, ..Default::default() };
-    let mut stream = table_stream(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        batch_options,
-        None,
-        CacheMode::DISABLED,
-    );
+    let mut stream = stream(types_fixture(16, "default"), "public.t_int", batch_options).await;
     while stream.next().await.transpose().unwrap().is_some() {}
     let resolved = stream.resolved_schema();
     assert!(resolved.columns.iter().all(|c| *c == ColumnResolution::NotDeclared));
@@ -211,16 +168,8 @@ async fn strings_mode_never_resolves_types() {
 /// to `CacheMode::Enabled`, just without leaving a cache file behind.
 #[tokio::test]
 async fn disabled_cache_still_resolves_types() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let batch_options = QueryOptions { schema_mode: SchemaMode::Typed, ..Default::default() };
-    let mut stream = table_stream(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        batch_options,
-        None,
-        CacheMode::DISABLED,
-    );
+    let mut stream = stream(types_fixture(16, "default"), "public.t_int", batch_options).await;
     while stream.next().await.transpose().unwrap().is_some() {}
     let resolved = stream.resolved_schema();
     assert_eq!(resolved.schema.field(0).data_type(), &DataType::Int32, "id");
@@ -232,15 +181,11 @@ async fn disabled_cache_still_resolves_types() {
 /// own.
 #[test]
 fn blocking_iterator_matches_async_stream() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let stream = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
+    // The stream is planned on a runtime of its own, gone before the
+    // iterator drives it on its own one.
+    let planning = tokio::runtime::Builder::new_current_thread().build().unwrap();
+    let stream = planning.block_on(stream(edge_cases(), "public.widgets", QueryOptions::default()));
+    drop(planning);
     let iter = BlockingTableIter::new(stream).unwrap();
 
     let mut rows = Vec::new();
@@ -253,15 +198,8 @@ fn blocking_iterator_matches_async_stream() {
 /// Every row `table` yields, drained from a pull-mode stream with no
 /// predicate and no resume — the whole-table read the multi-database tests
 /// compare against each other.
-async fn all_rows(source: &LocalFileSource, table: &str) -> Vec<Vec<Option<String>>> {
-    let mut stream = table_stream(
-        source,
-        table,
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
+async fn all_rows(path: impl AsRef<Path>, table: &str) -> Vec<Vec<Option<String>>> {
+    let mut stream = stream(path, table, QueryOptions::default()).await;
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
         rows.extend(rows_of(&batch.unwrap()));
@@ -277,22 +215,10 @@ async fn all_rows(source: &LocalFileSource, table: &str) -> Vec<Vec<Option<Strin
 async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database_selector() {
     for version in [13, 16, 18] {
         let (_dir, path) = multidb_fixture(version);
-        let source = LocalFileSource::open(&path).unwrap();
-        let mut stream = table_stream(
-            &source,
-            "public.widgets",
-            ScanOptions::default(),
-            QueryOptions::default(),
-            None,
-            CacheMode::DISABLED,
-        );
-        let err = loop {
-            match stream.next().await {
-                Some(Err(e)) => break e,
-                Some(Ok(_)) => continue,
-                None => panic!("pg_dump {version}: stream ended without erroring"),
-            }
-        };
+        let err = Cold::default()
+            .table(open(&path), "public.widgets", SchemaMode::Typed)
+            .await
+            .expect_err("the table is ambiguous");
         match &err {
             pgdt_core::Error::AmbiguousTable { name, candidates } => {
                 assert_eq!(name, "public.widgets", "pg_dump {version}");
@@ -310,7 +236,7 @@ async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database
     }
 }
 
-/// `QueryOptions::database` (`--database` at the CLI) is the way out of that
+/// A selector naming the database (`--database` at the CLI) is the way out of that
 /// ambiguity: naming the *first* database returns exactly that database's
 /// rows, matching what querying the un-concatenated single-database fixture
 /// returns. The first database is the one an incremental scan's preamble
@@ -319,22 +245,13 @@ async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database
 #[tokio::test]
 async fn database_selector_resolves_the_ambiguity_to_the_first_databases_rows() {
     for version in [13, 16, 18] {
-        let single_source = LocalFileSource::open(edge_cases_fixture(version, "create")).unwrap();
-        let single_rows = all_rows(&single_source, "public.widgets").await;
+        let single_rows = all_rows(edge_cases_fixture(version, "create"), "public.widgets").await;
         assert!(!single_rows.is_empty(), "pg_dump {version}");
 
         let (_dir, path) = multidb_fixture(version);
-        let combined_source = LocalFileSource::open(&path).unwrap();
-        let batch_options =
-            QueryOptions { database: Some("pgdt_fixture".to_string()), ..Default::default() };
-        let mut stream = table_stream(
-            &combined_source,
-            "public.widgets",
-            ScanOptions::default(),
-            batch_options,
-            None,
-            CacheMode::DISABLED,
-        );
+        let cold = Cold { database: Some("pgdt_fixture".to_string()), ..Cold::default() };
+        let stream = cold.stream(open(&path), "public.widgets", QueryOptions::default()).await;
+        let mut stream = stream.unwrap().unwrap();
         let mut rows = Vec::new();
         while let Some(batch) = stream.next().await {
             rows.extend(rows_of(&batch.unwrap()));
@@ -361,18 +278,11 @@ async fn database_selector_resolves_the_ambiguity_to_the_first_databases_rows() 
 async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
     for version in [13, 16, 18] {
         let (_dir, path) = multidb_fixture(version);
-        let source = LocalFileSource::open(&path).unwrap();
+        let cold = Cold { database: Some("pgdt_fixture_2".to_string()), ..Cold::default() };
 
-        let typed =
-            QueryOptions { database: Some("pgdt_fixture_2".to_string()), ..Default::default() };
-        let mut stream = table_stream(
-            &source,
-            "public.widgets",
-            ScanOptions::default(),
-            typed,
-            None,
-            CacheMode::DISABLED,
-        );
+        let typed = QueryOptions::default();
+        let stream = cold.stream(open(&path), "public.widgets", typed).await;
+        let mut stream = stream.expect("the second database's DDL was read").unwrap();
         let mut typed_rows = Vec::new();
         let mut schema = None;
         while let Some(batch) = stream.next().await {
@@ -386,19 +296,9 @@ async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
             "pg_dump {version}: really typed, not degraded to strings: {schema:?}"
         );
 
-        let strings = QueryOptions {
-            database: Some("pgdt_fixture_2".to_string()),
-            schema_mode: SchemaMode::Strings,
-            ..Default::default()
-        };
-        let mut stream = table_stream(
-            &source,
-            "public.widgets",
-            ScanOptions::default(),
-            strings,
-            None,
-            CacheMode::DISABLED,
-        );
+        let strings = QueryOptions { schema_mode: SchemaMode::Strings, ..Default::default() };
+        let mut stream =
+            cold.stream(open(&path), "public.widgets", strings).await.unwrap().unwrap();
         let mut rows = Vec::new();
         while let Some(batch) = stream.next().await {
             rows.extend(rows_of(&batch.unwrap()));
@@ -421,15 +321,7 @@ async fn a_partition_root_name_yields_every_partitions_rows() {
     for version in [13, 16, 18] {
         for flag_set in ["default", "load-via-partition-root"] {
             let path = partitions_fixture(version, flag_set);
-            let source = LocalFileSource::open(&path).unwrap();
-            let mut stream = table_stream(
-                &source,
-                "public.feel",
-                ScanOptions::default(),
-                QueryOptions::default(),
-                None,
-                CacheMode::DISABLED,
-            );
+            let mut stream = stream(&path, "public.feel", QueryOptions::default()).await;
             let mut rows = Vec::new();
             while let Some(batch) = stream.next().await {
                 rows.extend(rows_of(&batch.unwrap()));
@@ -495,26 +387,22 @@ async fn an_unmarked_target_still_stops_early_in_a_file_containing_marked_blocks
     let cache_path = pgdt_dump::cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
 
-    let mut stream = table_stream(
-        &source,
-        "public.evt_m",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::enabled(cache_path.clone()),
-    );
+    let cold = Cold { cache: CacheMode::enabled(cache_path.clone()), ..Cold::default() };
+    let stream = cold.stream(open(&dump), "public.evt_m", QueryOptions::default()).await;
+    let mut stream = stream.unwrap().unwrap();
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
         rows.extend(rows_of(&batch.unwrap()));
     }
     assert_eq!(rows, vec![vec![Some("unrelated".to_string())]]);
 
-    use pgdt_io::ByteRangeSource;
-    let CacheLoad::Index(index) = CacheMode::enabled(cache_path).load(&source).await.unwrap()
+    let CacheStatus::Loaded(loaded) =
+        pgdt_dump::internal::load(&cache_path, &source).await.unwrap()
     else {
         panic!("the query wrote a cache")
     };
-    let evt_m = index.blocks_for("public.evt_m").next().unwrap();
+    let index = loaded.index;
+    let evt_m = index.blocks().find(|b| b.header.matches("public.evt_m")).unwrap();
     assert_eq!(index.scanned_through, evt_m.end_offset);
     assert!(index.scanned_through < source.size().await.unwrap());
 }
@@ -551,18 +439,12 @@ async fn notes_rows(
     chunk_size: usize,
     options: QueryOptions,
 ) -> pgdt_core::Result<Vec<Vec<Option<String>>>> {
-    let source = LocalFileSource::open(path).unwrap();
-    let mut stream = table_stream(
-        &source,
-        "public.notes",
-        ScanOptions {
-            read: ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() },
-            ..ScanOptions::default()
-        },
-        options,
-        None,
-        CacheMode::DISABLED,
-    );
+    let scan = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
+    let cold = Cold { scan, ..Cold::default() };
+    let mut stream = cold.stream(open(path), "public.notes", options).await?.unwrap();
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
         rows.extend(rows_of(&batch?));
@@ -637,38 +519,22 @@ async fn one_table(
     table: &str,
     options: QueryOptions,
 ) -> pgdt_core::Result<Vec<NamedRows>> {
-    use pgdt_query::table_stream_partitions;
-
     // Past the first block, which would otherwise settle an unmarked table.
-    let options = QueryOptions { scan_extent: pgdt_query::ScanExtent::Full, ..options };
-    let source = LocalFileSource::open(path).unwrap();
+    let cold = Cold { extent: pgdt_query::ScanExtent::Full, ..Cold::default() };
     let names = |batch: &arrow::array::RecordBatch| {
         batch.schema().fields().iter().map(|f| f.name().clone()).collect::<Vec<_>>()
     };
     let mut serial = Vec::new();
-    let mut stream = table_stream(
-        &source,
-        table,
-        ScanOptions::default(),
-        options.clone(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let mut stream = cold.stream(open(path), table, options.clone()).await?.unwrap();
     while let Some(batch) = stream.next().await {
         let batch = batch?;
         serial.push((names(&batch), rows_of(&batch)));
     }
     let partitioned = QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..options };
     let mut merged = Vec::new();
-    for mut stream in table_stream_partitions(
-        &source,
-        table,
-        ScanOptions::default(),
-        partitioned,
-        CacheMode::DISABLED,
-    )
-    .await?
-    {
+    let partitions = cold.plan(open(path), table, partitioned).await?.unwrap();
+    for partition in 0..partitions.len() {
+        let mut stream = partitions.stream(partition, cold.max_rows);
         while let Some(batch) = stream.next().await {
             let batch = batch?;
             merged.push((names(&batch), rows_of(&batch)));

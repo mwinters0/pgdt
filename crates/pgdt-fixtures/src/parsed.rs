@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use pgdt_dump::ReadOptions;
-use pgdt_dump::cache::{self, CacheLoad, CacheMode, SourceWatch, StrictIdentity};
+use pgdt_dump::cache::{self, CacheMode, Held};
 use pgdt_io::{Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Jobs, LocalFileSource};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
@@ -56,17 +56,16 @@ pub async fn parsed_copy(fixture: &Path, dir: &Path, request: &StatisticsRequest
 /// plan needs and nothing gathered, as a query's own mapping pass leaves a
 /// cache (`docs/design/decisions.md`, "D35").
 pub async fn ungathered(dump: &Path) {
-    let source = LocalFileSource::open(dump).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(dump).unwrap());
     let mode = CacheMode::enabled(cache::colocated_path(dump));
-    let CacheLoad::Index(mut index) = mode.load(&source).await.unwrap() else {
-        panic!("the parse left a cache")
-    };
-    assert!(index.is_complete(source.size().await.unwrap()), "the parse left a complete cache");
+    let opened = mode.open_source(Arc::clone(&source)).await.unwrap();
+    let Held::Loaded(loaded) = opened.cache else { panic!("the parse left a cache") };
+    assert!(loaded.is_complete(), "the parse left a complete cache");
+    let mut index = loaded.index;
     for span in &mut index.spans {
         if let SpanBody::Data(DataBlock::Copy(block)) = &mut span.body {
             block.statistics = None;
         }
     }
-    let watch = SourceWatch::open(&source, StrictIdentity::ADVISORY).await.unwrap();
-    mode.save(&watch, &source, &index).await.unwrap();
+    mode.save(&opened.watch, source.as_ref(), &index).await.unwrap();
 }

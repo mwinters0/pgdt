@@ -1,21 +1,39 @@
 //! Column projection: what a query materializes, and what it therefore
 //! never decodes (`docs/design/decisions.md`, "D28").
 //!
-//! The library-level tests only: everything here drives `table_stream`
+//! The library-level tests only: everything here drives a cold query
 //! directly. The flags are pinned separately, in
 //! `crates/pgdt/tests/query_projection.rs`.
+
+use std::path::Path;
+use std::sync::Arc;
 
 use futures::StreamExt;
 use pgdt_codec::ColumnResolution;
 use pgdt_codec::UnrepresentableMode;
 use pgdt_core::Error;
-use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::CacheMode;
-use pgdt_io::LocalFileSource;
-use pgdt_query::{QueryOptions, table_stream};
+use pgdt_io::{ByteRangeSource, LocalFileSource};
+use pgdt_query::{QueryOptions, TablePartitions};
 
 mod common;
-use common::{edge_cases, rows_of, types_fixture, widgets_expected};
+use common::{Cold, edge_cases, rows_of, types_fixture, widgets_expected};
+
+/// `path` opened as a source a cold query reads.
+fn open(path: impl AsRef<Path>) -> Arc<dyn ByteRangeSource> {
+    Arc::new(LocalFileSource::open(path).unwrap())
+}
+
+/// The plan of a cold query of `table` in the dump at `path` under
+/// `options`, which the dump holds; a refusal its pass or its plan raises is
+/// the `Err`.
+async fn plan(
+    path: &Path,
+    table: &str,
+    options: QueryOptions,
+) -> pgdt_core::Result<TablePartitions> {
+    let plan = Cold::default().plan(open(path), table, options).await?;
+    Ok(plan.expect("the dump holds the table"))
+}
 
 fn projecting(columns: &[&str]) -> QueryOptions {
     QueryOptions {
@@ -30,11 +48,13 @@ async fn drain(
     table: &str,
     options: QueryOptions,
 ) -> pgdt_core::Result<(Vec<String>, Vec<Vec<Option<String>>>)> {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let mut stream =
-        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
+    // Asked first, as `pgdt query` asks it: a request refused whatever the
+    // dump holds.
+    options.validate()?;
     let mut names = Vec::new();
     let mut rows = Vec::new();
+    let stream = Cold::default().stream(open(edge_cases()), table, options).await?;
+    let Some(mut stream) = stream else { return Ok((names, rows)) };
     while let Some(batch) = stream.next().await.transpose()? {
         names = batch.schema().fields().iter().map(|f| f.name().clone()).collect();
         rows.extend(rows_of(&batch));
@@ -48,15 +68,8 @@ async fn drain(
 /// the test that says the four parallel vectors travel together.
 #[tokio::test]
 async fn a_projection_cuts_the_batches_and_the_reported_schema_together() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let mut stream = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        projecting(&["created_at", "id"]),
-        None,
-        CacheMode::DISABLED,
-    );
+    let planned = plan(&edge_cases(), "public.widgets", projecting(&["created_at", "id"])).await;
+    let mut stream = planned.unwrap().in_file_order(8192);
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
         let batch = batch.unwrap();
@@ -142,17 +155,9 @@ async fn a_repeated_name_is_refused_without_reading_the_file() {
 async fn projecting_a_column_away_escapes_its_decode_failure() {
     for version in [13, 16, 18] {
         let path = types_fixture(version, "default");
-        let source = LocalFileSource::open(&path).unwrap();
 
         let run = async |options: QueryOptions| {
-            let mut stream = table_stream(
-                &source,
-                "public.t_numeric",
-                ScanOptions::default(),
-                options,
-                None,
-                CacheMode::DISABLED,
-            );
+            let mut stream = plan(&path, "public.t_numeric", options).await?.in_file_order(8192);
             let mut rows = Vec::new();
             while let Some(batch) = stream.next().await.transpose()? {
                 rows.extend(rows_of(&batch));
@@ -197,41 +202,21 @@ async fn projecting_a_column_away_escapes_its_decode_failure() {
 /// batches of a different shape into the same consumption.
 #[tokio::test]
 async fn a_resume_token_belongs_to_the_query_that_made_it() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let options = QueryOptions { max_rows: 1, max_bytes: None, ..projecting(&["id", "name"]) };
-    let mut stream = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        options.clone(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let options = QueryOptions { max_bytes: None, ..projecting(&["id", "name"]) };
+    let planned = plan(&edge_cases(), "public.widgets", options).await.unwrap();
+    let mut stream = planned.in_file_order(1);
     let mut rows = rows_of(&stream.next().await.unwrap().unwrap());
     let token = stream.resume_token();
     drop(stream);
 
-    let mut wrong = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        QueryOptions { max_rows: 1, max_bytes: None, ..projecting(&["name", "id"]) },
-        Some(token.clone()),
-        CacheMode::DISABLED,
-    );
+    let reordered = QueryOptions { max_bytes: None, ..projecting(&["name", "id"]) };
+    let wrong = plan(&edge_cases(), "public.widgets", reordered).await.unwrap();
     assert!(
-        matches!(wrong.next().await, Some(Err(Error::ResumeQueryMismatch))),
+        matches!(wrong.resume(token.clone(), 1), Err(Error::ResumeQueryMismatch)),
         "a reordered projection is a different query"
     );
 
-    let mut resumed = table_stream(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        options,
-        Some(token),
-        CacheMode::DISABLED,
-    );
+    let mut resumed = planned.resume(token, 1).unwrap();
     while let Some(batch) = resumed.next().await {
         rows.extend(rows_of(&batch.unwrap()));
     }

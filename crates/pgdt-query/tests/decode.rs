@@ -24,7 +24,6 @@ use pgdt_codec::UnrepresentableMode;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnResolution, SchemaMode};
 use pgdt_core::Error;
-use pgdt_dump::ScanOptions;
 use pgdt_dump::cache::{self, CacheMode};
 use pgdt_io::LocalFileSource;
 use pgdt_mapping::map_file;
@@ -33,11 +32,11 @@ use pgdt_mapping::statistics::{
 };
 use pgdt_model::PostgresInvalidValues;
 use pgdt_query::{
-    Expr, Membership, Predicate, PredicateOp, QueryOptions, render_field, table_stream,
+    Expr, Membership, Predicate, PredicateOp, QueryOptions, TableStream, render_field,
 };
 
 mod common;
-use common::types_fixture;
+use common::{Cold, types_fixture};
 use pgdt_dump::ReadOptions;
 use pgdt_fixtures::arranged;
 use tokio_util::sync::CancellationToken;
@@ -49,22 +48,26 @@ async fn rows(path: &Path, table: &str, mode: SchemaMode) -> Vec<Vec<Option<Stri
     try_rows(path, table, mode).await.unwrap()
 }
 
+/// A cold query of `table` in the dump at `path`, opened through `cache`,
+/// under `options`: its whole table in file order, the dump holding it; a
+/// refusal its pass or its plan raises is the `Err`.
+async fn stream_in(
+    path: &Path,
+    table: &str,
+    options: QueryOptions,
+    cache: CacheMode,
+) -> pgdt_core::Result<TableStream<'static>> {
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(path).unwrap());
+    let stream = Cold { cache, ..Cold::default() }.stream(source, table, options).await?;
+    Ok(stream.expect("the dump holds the table"))
+}
+
 /// The schema one query commits to — the census-retyped one, since
-/// `table_stream` fixes it after mapping and before its first batch.
+/// the plan fixes it after mapping and before its first batch.
 async fn resolved_schema(path: &Path, table: &str) -> pgdt_codec::ResolvedSchema {
-    let source = LocalFileSource::open(path).unwrap();
-    let mut stream = table_stream(
-        &source,
-        table,
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
-    while let Some(batch) = stream.next().await {
-        batch.unwrap();
-    }
-    stream.resolved_schema()
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(path).unwrap());
+    let plan = Cold::default().plan(source, table, QueryOptions::default()).await;
+    plan.unwrap().expect("the dump holds the table").resolved_schema()
 }
 
 async fn try_rows(
@@ -82,9 +85,7 @@ async fn try_rows_in(
     table: &str,
     options: QueryOptions,
 ) -> pgdt_core::Result<(Vec<Vec<Option<String>>>, pgdt_codec::ResolvedSchema)> {
-    let source = LocalFileSource::open(path).unwrap();
-    let mut stream =
-        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
+    let mut stream = stream_in(path, table, options, CacheMode::DISABLED).await?;
     let mut out = Vec::new();
     while let Some(batch) = stream.next().await.transpose()? {
         let plans = stream.resolved_schema().plans;
@@ -451,12 +452,10 @@ async fn read_as_null_or_refused(table: &str, column: &str, declared: &str, valu
             );
         }
 
-        let source = LocalFileSource::open(&path).unwrap();
         let refuse =
             QueryOptions { unrepresentable: UnrepresentableMode::Refuse, ..Default::default() };
-        let mut stream =
-            table_stream(&source, table, ScanOptions::default(), refuse, None, CacheMode::DISABLED);
-        let err = stream.next().await.expect("the refusal is yielded").unwrap_err();
+        let refused = stream_in(&path, table, refuse, CacheMode::DISABLED).await;
+        let err = refused.map(drop).expect_err("the refusal is the plan's");
         match err {
             Error::Unrepresentable { table: named, column: at, declared_type, values } => {
                 assert_eq!(named, table, "pg_dump {version}");
@@ -1631,14 +1630,9 @@ async fn a_float_past_its_range_is_read_as_the_largest_only_when_told_to_ignore_
         assert!(read.contains(&largest) && read.contains(&lowest), "{version}: {read:?}");
         for (filter, want) in &filters {
             for mode in [CacheMode::DISABLED, cached.clone()] {
-                let mut stream = table_stream(
-                    source.as_ref(),
-                    "public.t_extremes",
-                    ScanOptions::default(),
-                    options(filter.clone(), ignore),
-                    None,
-                    mode,
-                );
+                let options = options(filter.clone(), ignore);
+                let mut stream =
+                    stream_in(&path, "public.t_extremes", options, mode).await.unwrap();
                 let mut kept = Vec::new();
                 while let Some(batch) = stream.next().await.transpose().unwrap() {
                     for r in 0..batch.num_rows() {

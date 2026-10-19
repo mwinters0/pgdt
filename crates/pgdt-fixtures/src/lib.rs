@@ -160,7 +160,7 @@ pub fn sandboxed_edge_cases() -> (tempfile::TempDir, PathBuf) {
 /// The rest of the schema — every table, type, and row — is identical between
 /// the two, which is deliberate: it means a table name like `public.widgets`
 /// genuinely collides across databases, exercising database-scoped resolution
-/// and `table_stream`'s ambiguity reporting against a real dump instead of
+/// and a cold query's ambiguity reporting against a real dump instead of
 /// only hand-written unit input.
 pub fn multidb_fixture(version: u32) -> (tempfile::TempDir, PathBuf) {
     let content = std::fs::read_to_string(edge_cases_fixture(version, "create")).unwrap();

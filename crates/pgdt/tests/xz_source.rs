@@ -272,7 +272,7 @@ fn query_widgets(source: &Path, extra: &[&str]) -> std::process::Output {
 /// end rather than through the library.
 ///
 /// It also exercises the mapping pass's own backward read for the
-/// non-seekable fixture: `table_stream`'s replay re-reads the target block
+/// non-seekable fixture: a cold query's replay re-reads the target block
 /// after the mapping pass has already walked past it
 /// (`docs/design/decisions.md`, "The compressed source and the cache" — one of the
 /// library's two backward-reading call sites), which for a single-block `.xz`

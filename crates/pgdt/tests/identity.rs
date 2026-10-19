@@ -2,8 +2,8 @@
 //! (`docs/design/decisions.md`, "D21").
 //!
 //! `info` is the command that *reports* — it reads the whole `CacheStatus`
-//! rather than going through `CacheMode::load`, where the refusal for the two
-//! commands that scan lives — so the two cases below are the ones nothing else
+//! an open hands back, where the commands that scan build forward from it —
+//! so the two cases below are the ones nothing else
 //! in the tree can observe: that a bound-but-moved signal stops the report, and
 //! that the flag is a usage error where there is no source to bind it to.
 //! `crates/pgdt-query/tests/identity.rs` pins what the refusal itself compares; this

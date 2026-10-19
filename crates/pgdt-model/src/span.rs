@@ -357,11 +357,10 @@ pub fn union_census<'a>(
 /// governs the block, the schema qualifier and the table, each exactly as the
 /// header spelled it once unquoted.
 ///
-/// **An exact key, never a pattern.** [`DumpIndex::blocks_for`] matches a name
-/// a person typed, bare or qualified, and splits it at its first `.`; this is
-/// what a caller that read the table off the map already holds, so nothing is
-/// split and no two tables can answer to it (`docs/design/decisions.md`,
-/// "D49").
+/// **An exact key, never a pattern**: what a caller that read the table off
+/// the map holds, so nothing is split and no two tables can answer to it
+/// (`docs/design/decisions.md`, "D49"). A name a person typed, bare or
+/// qualified, is a front end's to read into what it selects.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TableName {
     pub database: Option<String>,
@@ -454,12 +453,6 @@ impl DumpIndex {
             SpanBody::Data(DataBlock::Copy(block)) => Some((s.database.as_deref(), block)),
             _ => None,
         })
-    }
-
-    /// Blocks whose table matches `name`, given qualified (`schema.table`) or
-    /// bare (`table`, any schema).
-    pub fn blocks_for(&self, name: &str) -> impl Iterator<Item = &CopyBlock> {
-        self.blocks().filter(move |b| b.header.matches(name))
     }
 
     /// Every table this map holds a `COPY` block for, each once, in the order

@@ -94,7 +94,10 @@ async fn gathered_with(
 }
 
 fn block<'a>(index: &'a DumpIndex, table: &str) -> &'a CopyBlock {
-    index.blocks_for(table).next().unwrap_or_else(|| panic!("no block for {table}"))
+    index
+        .blocks()
+        .find(|b| b.header.matches(table))
+        .unwrap_or_else(|| panic!("no block for {table}"))
 }
 
 fn statistics(block: &CopyBlock) -> &BlockStatistics {
@@ -2332,10 +2335,12 @@ async fn a_strict_parse_resuming_checks_what_the_cache_holds_first() {
         }
         // The held block's check was banked before the tail was mapped.
         if !first_bad {
-            let Ok(cache::CacheLoad::Index(held)) = mode.load(source.as_ref()).await else {
+            let Ok(cache::Held::Loaded(held)) =
+                mode.open_source(Arc::clone(&source)).await.map(|opened| opened.cache)
+            else {
                 panic!("the cache loads");
             };
-            assert!(block(&held, "public.t1").checked_in_full);
+            assert!(block(&held.index, "public.t1").checked_in_full);
         }
     }
 }

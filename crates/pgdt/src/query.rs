@@ -8,9 +8,11 @@ use clap::Args;
 use futures::StreamExt;
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
+use pgdt_dump::cache::Held;
 use pgdt_io::Origin;
 use pgdt_model::{Finding, PostgresInvalidValues, Severity};
-use pgdt_query::{QueryOptions, render_field_into};
+use pgdt_query::{QueryOptions, ScanExtent, Table, TableSelector, render_field_into};
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 use crate::args::{
@@ -18,7 +20,7 @@ use crate::args::{
     parse_max_line_bytes, scan_options,
 };
 use crate::parallel::{ParallelArgs, QueryPasses, Resolved};
-use crate::source::{about_the_source, naming_the_source, open_for_scan};
+use crate::source::{about_the_source, naming_the_source};
 use filter::{parse_filter_flag, parse_where};
 
 mod filter;
@@ -239,14 +241,20 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
             pgdt_query::Expr::And(std::iter::once(parse_where(&spec)?).chain(terms).collect())
         }
     };
-    // As `info`: a cache that does not describe this file is
-    // reported having read no more than the file's leading bytes.
-    // Announced in two lines, the first
-    // ahead of the open, as `parse` does.
+    // As `info` and `parse`: the dump is opened through its cache once,
+    // the cache decoded once and handed to the pass, and one that does
+    // not describe this file is refused having read no more than the
+    // file's leading bytes (`docs/design/decisions.md`, "D20").
+    // Announced in two lines, the first ahead of the open, as `parse`
+    // does.
     let stated = parallel.discover();
     stated.announce();
-    let (source, cached_statistics) = open_for_scan(&origin, &mode).await?;
-    let passes = stated.resolve_query(source.as_ref(), cached_statistics);
+    let opened = mode.open(&origin).await.map_err(|e| naming_the_source(e, &origin))?;
+    let cached_statistics = match &opened.cache {
+        Held::Loaded(loaded) => loaded.index.statistics_heap_bytes(),
+        Held::Missing | Held::Disabled | Held::Replacing(_) => 0,
+    };
+    let passes = stated.resolve_query(opened.source.as_ref(), cached_statistics);
     passes.replay.announce();
     let mapping_span = passes.mapping_span();
     let QueryPasses { mapping, replay, .. } = passes;
@@ -262,11 +270,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
             name_taken_verbatim(err)
         }
     };
-    let mut header_printed = false;
-    let mut any_batch = false;
-    let mut rows = 0u64;
     let query_options = QueryOptions {
-        database,
         schema_mode,
         unrepresentable,
         postgres_invalid_values,
@@ -276,123 +280,49 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
         use_statistics: statistics == QueryStatistics::All,
         ..QueryOptions::default()
     };
-    // Pull mode, not `read_table`: rendering a nested column back to
-    // its literal needs the stream's `NestedPlan`s, and push mode
-    // hands the resolved schema back only once the whole stream has
-    // drained.
-    //
-    // Partitioned, not serial: `Parallelism::Serial` — `--jobs 1` —
-    // is one sub-stream, so the serial path is reached through the
-    // same call rather than branched to (D51). What `table_stream`
-    // reports as its stream's first item, this reports from the
-    // `await`. The mapping pass runs inside that `await` and the
-    // replay after it, so only the pass's lines are said in
-    // `mapping_span`.
-    let mut streams = pgdt_query::table_stream_partitions(
-        source.as_ref(),
-        &table,
+    // What the request alone refuses, before the mapping pass reads a
+    // byte past the open.
+    query_options.validate().map_err(&report)?;
+    let selector = table_selector(&table, database);
+    // The mapping pass, stopping once the table is settled: only its
+    // lines are said in `mapping_span`. Nothing stops it but the
+    // process ending, so its token never fires.
+    let settled = Table::settle(
+        opened,
+        &selector,
         scan_options(read, &mapping),
-        query_options,
-        mode,
+        ScanExtent::UntilTargetSettled,
+        schema_mode,
+        &CancellationToken::new(),
     )
     .instrument(mapping_span)
     .await
     .map_err(&report)?;
+    let Some(settled) = settled else {
+        return no_rows(&table, &origin);
+    };
+    // Partitioned, not serial: `Parallelism::Serial` — `--jobs 1` — is
+    // one partition, so the serial path is reached through the same
+    // plan rather than branched to (D51).
+    let plan = settled.plan(read.options(), query_options).map_err(&report)?;
     // Known from the plan alone, before any block is read — unlike
-    // `announce_comparisons` below, which waits on the first
-    // resolved schema.
-    if let Some(first) = streams.first() {
-        announce_plan_notes(first, &replay);
-    }
+    // `announce_comparisons` below, which waits on the first batch.
+    announce_plan_notes(plan.plan_notes(), &replay);
+    // The plan's one schema says how each nested column is written back
+    // as a literal: a `List<Struct{…}>` as an array of ranges or a
+    // multirange.
+    let plans = plan.resolved_schema().plans;
+    // The whole table in file order, the earliest failing piece's error
+    // after the rows before it (`docs/design/decisions.md`, "D52").
+    let mut stream = plan.in_file_order(BATCH_ROWS);
+    let mut header_printed = false;
     let mut announced = false;
-    let mut slots: Vec<Slot> = streams.iter().map(|_| Slot::Empty).collect();
-    // The lowest-indexed sub-stream that has failed, and its error.
-    // **Recorded rather than raised**: sub-stream `k` reads a
-    // contiguous run of blocks after `k-1`'s, so raising whichever
-    // failed first in time would name a different row on each run
-    // over an unchanged file (`docs/design/decisions.md`, "D52").
-    let mut failed: Option<(usize, pgdt_core::Error)> = None;
-    loop {
-        // Everything at or after a failing sub-stream is dead, and
-        // **discarding what those slots hold is the load-bearing
-        // half**: a batch left in a slot past the failure would print
-        // the moment the ones before it drained — rows past the error
-        // a serial replay never reached.
-        let live = failed.as_ref().map_or(slots.len(), |(index, _)| *index);
-        for slot in slots.iter_mut().skip(live) {
-            *slot = Slot::Done;
-        }
-        // Refill every empty slot at once: every sub-stream in the
-        // first round, and after it only the one just drained — which
-        // is what makes the merge's bound N x batch rather than a
-        // reorder buffer.
-        let round = {
-            let fills = streams
-                .iter_mut()
-                .zip(slots.iter_mut())
-                .enumerate()
-                .filter(|(index, (_, slot))| *index < live && matches!(slot, Slot::Empty))
-                .map(|(index, (stream, slot))| async move {
-                    match stream.next().await {
-                        Some(Ok(batch)) => {
-                            *slot = Slot::Held {
-                                offset: stream.batch_source_offset(),
-                                // Taken now: by the time this batch
-                                // is printed its sub-stream may have
-                                // moved to a block whose header
-                                // named other columns.
-                                plans: stream.resolved_schema().plans,
-                                batch,
-                            };
-                            None
-                        }
-                        Some(Err(err)) => {
-                            *slot = Slot::Done;
-                            Some((index, err))
-                        }
-                        None => {
-                            *slot = Slot::Done;
-                            None
-                        }
-                    }
-                })
-                .collect::<Vec<_>>();
-            // `join_all` answers in argument order, which is
-            // partition order, which is file order — so the first
-            // failure in it is the lowest-indexed of this round's.
-            futures::future::join_all(fills).await.into_iter().flatten().next()
-        };
-        // Round again rather than printing: the loop head marks the
-        // sub-streams this failure killed dead before the merge next
-        // picks. It terminates because a recorded failure strictly
-        // lowers `live`.
-        if let Some(first) = round {
-            failed = Some(first);
-            continue;
-        }
-        // The k-way merge itself: the held batch that begins earliest
-        // in the file is the next one to print.
-        let Some(next) = slots
-            .iter()
-            .enumerate()
-            .filter_map(|(index, slot)| match slot {
-                Slot::Held { offset, .. } => Some((*offset, index)),
-                _ => None,
-            })
-            .min()
-            .map(|(_, index)| index)
-        else {
-            break;
-        };
-        let Slot::Held { batch, plans, .. } = std::mem::replace(&mut slots[next], Slot::Empty)
-        else {
-            unreachable!("the slot the merge picked is the one it just read")
-        };
+    let mut any_batch = false;
+    let mut rows = 0u64;
+    while let Some(batch) = stream.next().await {
+        let batch = batch.map_err(&report)?;
         if !announced {
-            // Off the first sub-stream, not the one this batch came
-            // from: its first segment starts at a `COPY` header, so a
-            // schema is resolved whether or not it had rows.
-            announce_comparisons(&streams[0]);
+            announce_comparisons(&stream);
             announced = true;
         }
         any_batch = true;
@@ -408,25 +338,43 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
         print_batch(&batch, &plans)?;
         rows += batch.num_rows() as u64;
     }
-    // Every sub-stream before the failing one is drained, so what is
-    // held now is the earliest error in the file. Raised after the
-    // rows before it have printed.
-    if let Some((_, err)) = failed {
-        return Err(report(err));
-    }
     // A query that matched a block but selected no rows still
     // resolved a schema, so the announcement is owed either way.
     if !announced {
-        announce_comparisons(&streams[0]);
+        announce_comparisons(&stream);
     }
-    announce_early_stops(&streams);
-    if any_batch {
-        eprintln!("{rows} row(s)");
-    } else {
-        eprintln!("no rows found for {table} in {origin}");
-        if let Some(note) = quoted_name_note("--table", &table) {
-            eprintln!("note: {note}");
-        }
+    announce_early_stops(&stream);
+    if !any_batch {
+        return no_rows(&table, &origin);
+    }
+    eprintln!("{rows} row(s)");
+    Ok(())
+}
+
+/// The rows a batch of `pgdt query`'s stream holds: what it prints a batch
+/// at a time, and nothing a user states.
+const BATCH_ROWS: usize = 8192;
+
+/// What `--table` and `--database` select: a name qualified
+/// (`schema.table`) or bare (any schema), split at its first `.`, in the
+/// database `--database` names, or any (`docs/design/decisions.md`, "D49").
+fn table_selector(table: &str, database: Option<String>) -> TableSelector {
+    let selector = match table.split_once('.') {
+        Some((schema, table)) => TableSelector::named(table).in_schema(schema),
+        None => TableSelector::named(table),
+    };
+    match database {
+        Some(database) => selector.in_database(database),
+        None => selector,
+    }
+}
+
+/// Say that `table` yielded nothing in `origin` — no such table, or one
+/// holding no row the filter keeps — with the note a quoted name earns.
+fn no_rows(table: &str, origin: &Origin) -> Result<()> {
+    eprintln!("no rows found for {table} in {origin}");
+    if let Some(note) = quoted_name_note("--table", table) {
+        eprintln!("note: {note}");
     }
     Ok(())
 }
@@ -492,45 +440,6 @@ fn projection(columns: Vec<String>, no_columns: bool) -> Option<Vec<String>> {
     }
 }
 
-/// One sub-stream's place in `pgdt query`'s k-way merge: at most one batch,
-/// held with the two things a `RecordBatch` does not carry and the printer
-/// needs (`docs/design/decisions.md`, "D51").
-///
-/// **One batch per partition is the whole bound**: each sub-stream yields in
-/// file order and the sub-streams themselves are in file order, so emitting
-/// the held batch with the lowest source offset re-assembles the serial order
-/// while never holding more than N batches.
-///
-/// Deficiency register: `deficiency: KD57` — the same two facts make it
-/// serial: only the slot just printed from is refilled, and the earliest live
-/// sub-stream always holds the lowest offset, so the merge prints sub-stream 0
-/// dry before polling 1 again. Past the first round one sub-stream reads and
-/// the rest each hold a batch, so `--jobs` buys the first round's batches and
-/// nothing after, and the work the later sub-streams did for that round is CPU
-/// with no wall-clock return. The library's sub-streams run concurrently where
-/// every one is polled; holding file order at N batches is what forgoes it.
-/// Keeping both takes a reorder buffer growing toward every sub-stream's output
-/// but the first, runs interleaved across sub-streams so an in-order drain
-/// keeps each near the front (an arrangement "D51" does not weigh), or output
-/// that gives up file order. **(c) unowned**; promoted by a phase taking up
-/// `pgdt query`'s throughput, the return it weighs being a typed plain scan
-/// split on a real device (`docs/design/measurements.md`, "What a second scan
-/// worker buys, and where the plain path stops", its cold-NVMe column). Planning one sub-stream until then is refused:
-/// interleaved runs keep the N-way plan, and the first round is a small gain
-/// on a plain file.
-enum Slot {
-    /// Nothing held: this sub-stream is polled in the next fill round.
-    Empty,
-    /// A batch waiting its turn, with the source offset it begins at — the
-    /// merge key — and the nested plans of the block it came from, read when
-    /// it was taken because its sub-stream may since have moved to a block
-    /// with a different schema.
-    Held { offset: u64, batch: RecordBatch, plans: Vec<NestedPlan> },
-    /// Drained, stopped at an error, or sitting at or after one. Never polled
-    /// again, and a batch it was holding is discarded.
-    Done,
-}
-
 /// Say, once per query and on stderr, which of this query's comparisons do
 /// not answer what PostgreSQL's own operator would
 /// (`docs/design/decisions.md`, "D59"). Per *term*, not per column: a `text`
@@ -551,11 +460,10 @@ fn announce_comparisons(stream: &pgdt_query::TableStream<'_>) {
 }
 
 /// Say, once per query and on stderr, when the memory budget in force cut the
-/// plan short, and what statistics let it skip. Every sub-stream of a
-/// partitioned replay carries the same
-/// [`pgdt_query::TableStream::plan_notes`], settled before any of them runs,
-/// so reading it off the first is reading the whole query's answer — unlike
-/// [`announce_comparisons`], this needs no block to have resolved first.
+/// plan short, and what statistics let it skip: the plan's notes
+/// ([`pgdt_query::TablePartitions::plan_notes`]), settled before any
+/// partition runs — unlike [`announce_comparisons`], this needs no batch
+/// first.
 ///
 /// **Severity and the origin clause are two questions, and the note answers
 /// the second.** A note quoting a budget is followed by where that budget came
@@ -564,9 +472,9 @@ fn announce_comparisons(stream: &pgdt_query::TableStream<'_>) {
 /// off the arms below: a `note:` may quote a budget, and on a plain source the
 /// clause is the only thing saying the carved number is not the allowance that
 /// was typed (`docs/design/decisions.md`, "D83", and `KD32`).
-fn announce_plan_notes(stream: &pgdt_query::TableStream<'_>, parallel: &Resolved) {
+fn announce_plan_notes(notes: &[pgdt_query::PlanNote], parallel: &Resolved) {
     let origin = parallel.plan_note_origin();
-    for note in stream.plan_notes() {
+    for note in notes {
         // The library's severity, as the DataFusion provider's sink hears it;
         // an `Info` here is a `note:`, the word the other query-time facts use.
         let severity = match note.severity() {
@@ -581,23 +489,19 @@ fn announce_plan_notes(stream: &pgdt_query::TableStream<'_>, parallel: &Resolved
 
 /// Say, once the query has drained and only where one fired, what the early
 /// stop on sorted data left unread. **Found while rows are read**, so unlike
-/// [`announce_plan_notes`] it is summed over every sub-stream after the fact
-/// ([`pgdt_query::TableStream::early_stops`]), a block split across
-/// sub-streams counted once. A stop planned and never reached prints nothing:
-/// the pruning note already says statistics were consulted.
-fn announce_early_stops(streams: &[pgdt_query::TableStream<'_>]) {
-    let mut unread = std::collections::BTreeMap::<u64, u64>::new();
-    for stop in streams.iter().flat_map(|stream| stream.early_stops()) {
-        if let Some(bytes) = stop.unread_bytes {
-            *unread.entry(stop.header_offset).or_default() += bytes;
-        }
-    }
+/// [`announce_plan_notes`] it is said after the fact, the stream in file
+/// order summing every partition's ([`pgdt_query::TableStream::early_stops`]),
+/// a block split across them counted once. A stop planned and never reached
+/// prints nothing: the pruning note already says statistics were consulted.
+fn announce_early_stops(stream: &pgdt_query::TableStream<'_>) {
+    let unread: Vec<u64> =
+        stream.early_stops().iter().filter_map(|stop| stop.unread_bytes).collect();
     if !unread.is_empty() {
         eprintln!(
             "note: reading stopped early in {} block(s) sorted past the filter's bound, so a \
              further {} byte(s) of rows are not read",
             unread.len(),
-            unread.values().sum::<u64>()
+            unread.iter().sum::<u64>()
         );
     }
 }
@@ -612,7 +516,7 @@ fn announce_early_stops(streams: &[pgdt_query::TableStream<'_>]) {
 /// that is cleared per row and keeps its capacity across the batch, so a
 /// scalar field is written where it will be printed from.
 ///
-/// `plans` is the stream's own [`pgdt_codec::ResolvedSchema::plans`], which
+/// `plans` is the plan's own [`pgdt_codec::ResolvedSchema::plans`], which
 /// is what says whether a `List<Struct{…}>` column is written as an array of
 /// ranges or as a multirange. A column with no entry falls back to
 /// `NestedPlan::Scalar`, which is right for every non-nested type.

@@ -20,8 +20,8 @@ use pgdt_model::{DatabaseMetadata, DumpMetadata, Extension, Span, SpanBody, Type
 /// end of file, or (per I1) the start of the current database's first `COPY`
 /// block — `pgdt_mapping::build_map` and `crate::preamble::scan_preamble`'s own
 /// span builder both only ever produce spans this way. A span list with an
-/// `Unscanned` tail cut off anywhere else (e.g. `pgdt_query::table_stream`'s
-/// live segment) would make the trailing database's `preamble_complete` a lie.
+/// `Unscanned` tail cut off anywhere else (e.g. a cold query's pass,
+/// `pgdt_query::Table::settle`, at its stop) would make the trailing database's `preamble_complete` a lie.
 pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
     let mut seen_connect = false;
     let mut current = DatabaseMetadata::empty(None);

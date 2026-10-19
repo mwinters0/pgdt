@@ -70,6 +70,8 @@ pub(crate) struct RowBatcher {
     /// NULL`, so a NULL in it is refused ([`Error::NullRefused`]).
     not_null: Vec<bool>,
     options: QueryOptions,
+    /// Rows a batch is flushed at: the stream's, not the query's.
+    max_rows: usize,
 }
 
 impl RowBatcher {
@@ -77,11 +79,13 @@ impl RowBatcher {
     /// `RecordBatch`es carry — and `field_targets` maps the block's own
     /// fields onto it. Both come from `crate::stream::replay::plan::project`;
     /// `unrepresentable` is parallel to `field_targets`, `None` for each
-    /// field that is not tested.
+    /// field that is not tested. A batch is flushed at `max_rows` rows, or
+    /// where `options` bounds its bytes or its span first.
     pub(crate) fn new(
         resolved: &ResolvedSchema,
         table: String,
         options: QueryOptions,
+        max_rows: usize,
         field_targets: Vec<Option<usize>>,
         unrepresentable: Vec<Option<UnrepresentableRead>>,
     ) -> Self {
@@ -115,6 +119,7 @@ impl RowBatcher {
             unrepresentable: projected,
             not_null: resolved.not_null.clone(),
             options,
+            max_rows,
         }
     }
 
@@ -149,7 +154,7 @@ impl RowBatcher {
     /// most one row. The span trigger cannot fire on an empty batch whatever
     /// its cap, `span` staying `None` until a row lands.
     pub(crate) fn should_flush(&self) -> bool {
-        self.rows_in_batch >= self.options.max_rows
+        self.rows_in_batch >= self.max_rows
             || self.options.max_bytes.is_some_and(|max| self.bytes_in_batch >= max)
             || self.source_span_reached()
     }

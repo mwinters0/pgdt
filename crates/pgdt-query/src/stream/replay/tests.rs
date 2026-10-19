@@ -1,15 +1,13 @@
 use std::sync::Arc;
 
 use pgdt_core::{CopyHeader, Error};
-use pgdt_dump::cache::{CacheMode, SourceWatch, StrictIdentity};
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_model::CopyBlock;
 
 use super::activate;
 use super::plan::{ReplayPlan, resolve_for_query};
-use crate::options::{QueryOptions, ScanExtent};
+use crate::options::QueryOptions;
 use crate::predicate::{Expr, PredicateOp};
-use crate::stream::mapping::map_for_query;
 use crate::stream::tests::two_blocks;
 
 /// **The plan resolves every block before any is read, and activation
@@ -28,28 +26,21 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
     let query_options = QueryOptions {
         filter: not_null("a"),
         projection: Some(vec!["a".into()]),
-        // Past the first block, which would otherwise settle the table.
-        scan_extent: ScanExtent::Full,
         ..QueryOptions::default()
     };
-    let mapped = map_for_query(
-        &source,
-        "public.t",
-        &ScanOptions::default(),
-        &query_options,
-        &CacheMode::DISABLED,
-        &SourceWatch::open(&source, StrictIdentity::ADVISORY).await.unwrap(),
-    )
-    .await
-    .unwrap();
-    let [first, second] = &mapped.matches[..] else { panic!("two blocks: {:?}", mapped.matches) };
+    // The whole file, past the first block, which would otherwise settle the
+    // table; a file with no `\connect`, so no block names a database.
+    let index = pgdt_mapping::build_index(&source, &ScanOptions::default()).await.unwrap();
+    let matches: Vec<CopyBlock> = index.blocks().cloned().collect();
+    let database: Option<String> = None;
+    let [first, second] = &matches[..] else { panic!("two blocks: {matches:?}") };
     let plan_for = |query_options: &QueryOptions| {
         ReplayPlan::new(
             ReadOptions::default(),
             query_options.clone(),
-            mapped.database.clone(),
-            &mapped.matches,
-            mapped.metadata.clone(),
+            database.clone(),
+            &matches,
+            index.metadata.clone(),
         )
     };
 
@@ -81,9 +72,9 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
         resolve_for_query(
             &block.header,
             block.header_offset,
-            mapped.database.as_deref(),
+            database.as_deref(),
             &query_options,
-            mapped.metadata.as_deref(),
+            index.metadata.as_deref(),
             &plan.table,
             block.unrepresentable(),
         )
@@ -97,7 +88,7 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
 
     // Activating the planned block hands out the plan's own tree.
     let open = |header: &CopyHeader, block: &CopyBlock| {
-        activate(header.clone(), block.header_offset, mapped.database.clone(), &plan)
+        activate(header.clone(), block.header_offset, database.clone(), &plan, 8192)
     };
     let ((_, _, _, filter, _), resolved, notes) = open(&first.header, first).unwrap();
     assert!(Arc::ptr_eq(&filter, &planned.filter));

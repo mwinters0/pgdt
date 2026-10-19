@@ -8,18 +8,25 @@ use futures::StreamExt;
 use pgdt_codec::ColumnNote;
 use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
 use pgdt_dump::ScanOptions;
-use pgdt_dump::cache::CacheMode;
-use pgdt_io::LocalFileSource;
+use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::build_index;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::drain;
 use pgdt_model::{Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity};
 use pgdt_query::{
-    ComparisonNote, Expr, Predicate, PredicateOp, QueryOptions, TableSelector, table_stream,
+    ComparisonNote, Expr, Predicate, PredicateOp, QueryOptions, TableSelector, TableStream,
 };
 
 mod common;
-use common::{mapped, types_fixture};
+use common::{Cold, mapped, types_fixture};
+
+/// A cold query of `table` in the 16 `types` fixture under `options`, its
+/// whole table in file order.
+async fn query(table: &str, options: QueryOptions) -> TableStream<'static> {
+    let source: Arc<dyn ByteRangeSource> =
+        Arc::new(LocalFileSource::open(types_fixture(16, "default")).unwrap());
+    Cold::default().stream(source, table, options).await.unwrap().expect("the fixture holds it")
+}
 
 /// What a sink saw of one finding: which channel's type it was, recovered by
 /// downcasting, its severity and its sentence.
@@ -52,10 +59,8 @@ async fn one_sink_drains_all_three_channels() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
-    let mut stream = table_stream(
-        &source,
+    let mut stream = query(
         "public.t_delimiter",
-        ScanOptions::default(),
         QueryOptions {
             filter: Expr::all([Predicate {
                 column: "v_box_domain".into(),
@@ -65,9 +70,8 @@ async fn one_sink_drains_all_three_channels() {
             projection: Some(vec!["v_box_domain".to_string()]),
             ..Default::default()
         },
-        None,
-        CacheMode::DISABLED,
-    );
+    )
+    .await;
     while stream.next().await.transpose().unwrap().is_some() {}
 
     let seen = Mutex::new(Vec::<Seen>::new());
@@ -110,15 +114,7 @@ async fn one_sink_drains_all_three_channels() {
 /// whose values come back unparsed.
 #[tokio::test]
 async fn a_column_note_reads_as_a_finding() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let mut stream = table_stream(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let mut stream = query("public.t_int", QueryOptions::default()).await;
     while stream.next().await.transpose().unwrap().is_some() {}
     let notes = stream.resolved_schema().notes;
     let bigint = notes.iter().find(|n| n.column == "v_bigint").unwrap();

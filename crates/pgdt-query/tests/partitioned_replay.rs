@@ -3,8 +3,8 @@
 //!
 //! **The whole file is one differential test in several shapes.** A
 //! partitioned replay has no output of its own to assert against — its
-//! contract is that it returns exactly what the serial [`table_stream`]
-//! returns, in exactly that order, however the file was cut. So the tests
+//! contract is that it returns exactly what a cold serial query returns, in
+//! exactly that order, however the file was cut. So the tests
 //! here that read rows take the serial rows as the oracle, each varying one
 //! thing: the worker count, the source's own partitioning advice (a plain
 //! file says anywhere, a seekable `.xz` says block boundaries, a single-block
@@ -19,29 +19,70 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 
 use futures::StreamExt;
-use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism, XzSource};
 use pgdt_model::Finding;
 use pgdt_query::{
-    Expr, PlanLever, PlanNoteKind, Predicate, PredicateOp, QueryOptions, table_stream,
-    table_stream_partitions,
+    Expr, PlanLever, PlanNoteKind, Predicate, PredicateOp, QueryOptions, TablePartitions,
 };
 
 mod common;
-use common::{dump_over, edge_cases, mapped, partitions_fixture, rows_of, types_fixture};
+use common::{Cold, dump_over, edge_cases, mapped, partitions_fixture, rows_of, types_fixture};
 
 type Rows = Vec<Vec<Option<String>>>;
 
-/// Every row a serial `table_stream` yields, in file order — the oracle.
-async fn serial_rows(source: &dyn ByteRangeSource, table: &str, options: QueryOptions) -> Rows {
-    let mut stream =
-        table_stream(source, table, ScanOptions::default(), options, None, CacheMode::DISABLED);
+/// `path` opened as a local source a cold query reads, kept concrete so a
+/// test can ask it what it charges.
+fn local(path: impl AsRef<Path>) -> Arc<LocalFileSource> {
+    Arc::new(LocalFileSource::open(path).unwrap())
+}
+
+/// Every row a cold serial query under `cold` yields, in file order — the
+/// oracle.
+async fn serial_rows_in(
+    cold: &Cold,
+    source: Arc<dyn ByteRangeSource>,
+    table: &str,
+    options: QueryOptions,
+) -> Rows {
     let mut rows = Rows::new();
+    let Some(mut stream) = cold.stream(source, table, options).await.unwrap() else {
+        return rows;
+    };
     while let Some(batch) = stream.next().await {
         rows.extend(rows_of(&batch.unwrap()));
+    }
+    rows
+}
+
+/// [`serial_rows_in`] under the default cold query.
+async fn serial_rows(source: Arc<dyn ByteRangeSource>, table: &str, options: QueryOptions) -> Rows {
+    serial_rows_in(&Cold::default(), source, table, options).await
+}
+
+/// `table`'s cold plan under `scan` and `options`, which must find it.
+async fn plan_of(
+    source: Arc<dyn ByteRangeSource>,
+    table: &str,
+    scan: ScanOptions,
+    options: QueryOptions,
+) -> TablePartitions {
+    let cold = Cold { scan, ..Cold::default() };
+    cold.plan(source, table, options).await.unwrap().expect("the dump holds the table")
+}
+
+/// Every row of every partition of `plan`, drained one after another in
+/// partition order, at `max_rows` a batch.
+async fn drained(plan: &TablePartitions, max_rows: usize) -> Rows {
+    let mut rows = Rows::new();
+    for partition in 0..plan.len() {
+        let mut stream = plan.stream(partition, max_rows);
+        while let Some(batch) = stream.next().await {
+            rows.extend(rows_of(&batch.unwrap()));
+        }
     }
     rows
 }
@@ -71,30 +112,26 @@ fn partition_unit(source: &LocalFileSource, scan: &ScanOptions) -> u64 {
 /// says must be indistinguishable from the serial path
 /// (`docs/design/decisions.md`, "D51"), and running them concurrently would test
 /// the executor rather than the split.
-async fn partitioned_rows(
-    source: &dyn ByteRangeSource,
+async fn partitioned_rows_in(
+    cold: &Cold,
+    source: Arc<dyn ByteRangeSource>,
     table: &str,
     options: QueryOptions,
     jobs: usize,
 ) -> (Rows, usize) {
     let options = QueryOptions { parallelism: Parallelism::workers(jobs, 1 << 30), ..options };
-    let streams = table_stream_partitions(
-        source,
-        table,
-        ScanOptions::default(),
-        options,
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    let count = streams.len();
-    let mut rows = Rows::new();
-    for mut stream in streams {
-        while let Some(batch) = stream.next().await {
-            rows.extend(rows_of(&batch.unwrap()));
-        }
-    }
-    (rows, count)
+    let plan = cold.plan(source, table, options).await.unwrap().expect("the dump holds the table");
+    (drained(&plan, cold.max_rows).await, plan.len())
+}
+
+/// [`partitioned_rows_in`] under the default cold query.
+async fn partitioned_rows(
+    source: Arc<dyn ByteRangeSource>,
+    table: &str,
+    options: QueryOptions,
+    jobs: usize,
+) -> (Rows, usize) {
+    partitioned_rows_in(&Cold::default(), source, table, options, jobs).await
 }
 
 /// The central property, on a plain source, which advises `Anywhere` — so the
@@ -103,13 +140,13 @@ async fn partitioned_rows(
 /// file's.
 #[tokio::test]
 async fn a_plain_source_splits_into_the_same_rows_in_the_same_order() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let expected = serial_rows(&source, "public.widgets", QueryOptions::default()).await;
+    let source = local(edge_cases());
+    let expected = serial_rows(source.clone(), "public.widgets", QueryOptions::default()).await;
     assert!(!expected.is_empty(), "the oracle must have rows for this to mean anything");
 
     for jobs in [1usize, 2, 3, 4, 7, 8, 64] {
         let (rows, count) =
-            partitioned_rows(&source, "public.widgets", QueryOptions::default(), jobs).await;
+            partitioned_rows(source.clone(), "public.widgets", QueryOptions::default(), jobs).await;
         assert_eq!(rows, expected, "jobs {jobs}");
         assert!(count <= jobs, "jobs {jobs} gave {count} sub-streams");
         if jobs > 1 {
@@ -123,31 +160,23 @@ async fn a_plain_source_splits_into_the_same_rows_in_the_same_order() {
 /// the rows are still each partition's own, so nothing about a sub-stream's
 /// state travels through the shared source.
 ///
-/// It is `join_all` rather than spawned threads because a `TableStream`
-/// borrows the source: what this exercises is concurrent *reads* against one
-/// source, which is where the compressed source's own concurrency lives.
+/// It is `join_all` on one task rather than spawned threads: what this
+/// exercises is concurrent *reads* against one source, which is where the
+/// compressed source's own concurrency lives.
 #[tokio::test]
 async fn sub_streams_polled_interleaved_keep_their_own_rows() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let serial = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
+    let source = local(types_fixture(16, "default"));
+    let serial = serial_rows(source.clone(), "public.t_int", QueryOptions::default()).await;
 
     let options = QueryOptions {
-        max_rows: 1,
         max_bytes: None,
         parallelism: Parallelism::workers(4, 1 << 30),
         ..Default::default()
     };
-    let streams = table_stream_partitions(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        options,
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
+    let plan = plan_of(source, "public.t_int", ScanOptions::default(), options).await;
+    let streams = (0..plan.len()).map(|partition| plan.stream(partition, 1));
 
-    let drained = futures::future::join_all(streams.into_iter().map(|mut stream| async move {
+    let drained = futures::future::join_all(streams.map(|mut stream| async move {
         let mut rows = Rows::new();
         while let Some(batch) = stream.next().await {
             rows.extend(rows_of(&batch.unwrap()));
@@ -163,20 +192,14 @@ async fn sub_streams_polled_interleaved_keep_their_own_rows() {
 /// (`docs/design/decisions.md`, "I/O, memory and parallelism").
 #[tokio::test]
 async fn serial_parallelism_is_exactly_one_sub_stream() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let streams = table_stream_partitions(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    assert_eq!(streams.len(), 1);
+    let source = local(edge_cases());
+    let plan =
+        plan_of(source.clone(), "public.widgets", ScanOptions::default(), QueryOptions::default())
+            .await;
+    assert_eq!(plan.len(), 1);
 
     // `--jobs 1` is the same value, so it is the same one sub-stream.
-    let (_, count) = partitioned_rows(&source, "public.widgets", QueryOptions::default(), 1).await;
+    let (_, count) = partitioned_rows(source, "public.widgets", QueryOptions::default(), 1).await;
     assert_eq!(count, 1);
 }
 
@@ -194,27 +217,19 @@ async fn serial_parallelism_is_exactly_one_sub_stream() {
 /// `DEFAULT_MEMORY_BUDGET` affords seven of.
 #[tokio::test]
 async fn a_budget_bound_worker_count_announces_why() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let source = local(edge_cases());
     let scan = ScanOptions::default();
     let floor = scan.read.chunk_size_bytes as u64;
     let options = QueryOptions {
         parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
         ..Default::default()
     };
-    let streams = table_stream_partitions(
-        &source,
-        "public.widgets",
-        scan,
-        options.clone(),
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
+    let plan = plan_of(source.clone(), "public.widgets", scan, options.clone()).await;
     let footprint = partition_unit(&source, &scan);
     let planned = (DEFAULT_MEMORY_BUDGET / (footprint + floor)) as usize;
     assert_eq!(planned, 7, "the floored span leaves room for seven of the eight");
-    assert_eq!(streams.len(), planned, "the budget affords exactly this many sub-streams");
-    let diagnostics = streams[0].plan_notes();
+    assert_eq!(plan.len(), planned, "the budget affords exactly this many sub-streams");
+    let diagnostics = plan.plan_notes().to_vec();
     assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
     let PlanNoteKind::BatchSpanNarrowed { stated_bytes, planned_bytes, workers, memory_bytes } =
         &diagnostics[0].kind
@@ -246,8 +261,8 @@ async fn a_budget_bound_worker_count_announces_why() {
     assert_eq!(*memory_bytes, DEFAULT_MEMORY_BUDGET);
     // Every sub-stream carries the same facts: the property being tested is
     // that the caller need not pick which sub-stream to ask.
-    for stream in &streams {
-        assert_eq!(stream.plan_notes(), diagnostics);
+    for partition in 0..plan.len() {
+        assert_eq!(plan.stream(partition, 8192).plan_notes(), diagnostics);
     }
 }
 
@@ -264,20 +279,12 @@ async fn a_budget_bound_worker_count_announces_why() {
 /// unit the source charges, and the answer is still the serial oracle's.
 #[tokio::test]
 async fn a_budget_below_one_readers_worth_says_the_allocation_bound_it() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let source = local(edge_cases());
     let unit = partition_unit(&source, &ScanOptions::default());
     let options = QueryOptions { parallelism: Parallelism::workers(1, 0), ..Default::default() };
-    let mut streams = table_stream_partitions(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        options,
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    assert_eq!(streams.len(), 1, "a budget of zero is one reader, not none");
-    let notes = streams[0].plan_notes();
+    let plan = plan_of(source.clone(), "public.widgets", ScanOptions::default(), options).await;
+    assert_eq!(plan.len(), 1, "a budget of zero is one reader, not none");
+    let notes = plan.plan_notes();
     assert_eq!(notes.len(), 1, "the count note cannot fire at a serial request: {notes:?}");
     let PlanNoteKind::AllocationBelowFloor { unit_bytes, memory_bytes } = &notes[0].kind else {
         panic!("{notes:?}")
@@ -299,30 +306,19 @@ async fn a_budget_below_one_readers_worth_says_the_allocation_bound_it() {
         notes[0].message()
     );
 
-    let mut rows = Rows::new();
-    while let Some(batch) = streams[0].next().await {
-        rows.extend(rows_of(&batch.unwrap()));
-    }
-    assert_eq!(rows, serial_rows(&source, "public.widgets", QueryOptions::default()).await);
+    let rows = drained(&plan, 8192).await;
+    assert_eq!(rows, serial_rows(source, "public.widgets", QueryOptions::default()).await);
 }
 
 /// A budget that affords a whole reader is silent about the floor: the note is
 /// for the starved allocation, not for every plan that could have had more.
 #[tokio::test]
 async fn a_budget_that_affords_one_reader_says_nothing_about_a_floor() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let source = local(edge_cases());
     let unit = partition_unit(&source, &ScanOptions::default());
     let options = QueryOptions { parallelism: Parallelism::workers(1, unit), ..Default::default() };
-    let streams = table_stream_partitions(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        options,
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    assert!(streams[0].plan_notes().is_empty(), "{:?}", streams[0].plan_notes());
+    let plan = plan_of(source, "public.widgets", ScanOptions::default(), options).await;
+    assert!(plan.plan_notes().is_empty(), "{:?}", plan.plan_notes());
 }
 
 /// A budget that affords every requested worker says nothing: the diagnostic
@@ -330,19 +326,11 @@ async fn a_budget_that_affords_one_reader_says_nothing_about_a_floor() {
 /// commentary on every plan.
 #[tokio::test]
 async fn a_budget_that_affords_every_worker_is_silent() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let source = local(types_fixture(16, "default"));
     let options =
         QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..Default::default() };
-    let streams = table_stream_partitions(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        options,
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    assert!(streams.iter().all(|s| s.plan_notes().is_empty()));
+    let plan = plan_of(source, "public.t_int", ScanOptions::default(), options).await;
+    assert!((0..plan.len()).all(|partition| plan.stream(partition, 8192).plan_notes().is_empty()));
 }
 
 /// A worker count above one really does hand out more than one sub-stream on
@@ -350,9 +338,9 @@ async fn a_budget_that_affords_every_worker_is_silent() {
 /// comparing the serial path to itself.
 #[tokio::test]
 async fn a_split_actually_happens() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
-    let (rows, count) = partitioned_rows(&source, "public.t_int", QueryOptions::default(), 4).await;
+    let source = local(types_fixture(16, "default"));
+    let expected = serial_rows(source.clone(), "public.t_int", QueryOptions::default()).await;
+    let (rows, count) = partitioned_rows(source, "public.t_int", QueryOptions::default(), 4).await;
     assert!(count > 1, "four workers over a splittable block must yield more than one sub-stream");
     assert_eq!(rows, expected);
 }
@@ -362,14 +350,15 @@ async fn a_split_actually_happens() {
 #[tokio::test]
 async fn a_multi_block_table_splits_across_and_inside_its_blocks() {
     for version in [13, 16, 18] {
-        let source = LocalFileSource::open(partitions_fixture(version, "default")).unwrap();
-        let options =
-            QueryOptions { scan_extent: pgdt_query::ScanExtent::Full, ..Default::default() };
-        let expected = serial_rows(&source, "public.feel", options.clone()).await;
+        let source = local(partitions_fixture(version, "default"));
+        let cold = Cold { extent: pgdt_query::ScanExtent::Full, ..Cold::default() };
+        let options = QueryOptions::default();
+        let expected = serial_rows_in(&cold, source.clone(), "public.feel", options.clone()).await;
         assert!(!expected.is_empty(), "v{version}: the oracle must have rows");
         for jobs in [2usize, 3, 8] {
             let (rows, count) =
-                partitioned_rows(&source, "public.feel", options.clone(), jobs).await;
+                partitioned_rows_in(&cold, source.clone(), "public.feel", options.clone(), jobs)
+                    .await;
             assert_eq!(rows, expected, "v{version}, jobs {jobs}");
             assert!(count > 1, "v{version}, jobs {jobs}: two blocks must reach two sub-streams");
         }
@@ -382,7 +371,7 @@ async fn a_multi_block_table_splits_across_and_inside_its_blocks() {
 /// serial answer.
 #[tokio::test]
 async fn a_filtered_and_projected_query_splits_to_the_same_rows() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let source = local(types_fixture(16, "default"));
     let options = QueryOptions {
         projection: Some(vec!["v_integer".to_string()]),
         filter: Expr::Term(Predicate {
@@ -392,9 +381,10 @@ async fn a_filtered_and_projected_query_splits_to_the_same_rows() {
         }),
         ..Default::default()
     };
-    let expected = serial_rows(&source, "public.t_int", options.clone()).await;
+    let expected = serial_rows(source.clone(), "public.t_int", options.clone()).await;
     for jobs in [2usize, 5, 16] {
-        let (rows, _) = partitioned_rows(&source, "public.t_int", options.clone(), jobs).await;
+        let (rows, _) =
+            partitioned_rows(source.clone(), "public.t_int", options.clone(), jobs).await;
         assert_eq!(rows, expected, "jobs {jobs}");
     }
 }
@@ -404,19 +394,21 @@ async fn a_filtered_and_projected_query_splits_to_the_same_rows() {
 /// than at a `CopyEnd` it never reaches.
 #[tokio::test]
 async fn a_small_batch_size_flushes_at_a_piece_boundary_without_losing_a_row() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
-    let expected = serial_rows(&source, "public.t_int", options.clone()).await;
+    let source = local(types_fixture(16, "default"));
+    let options = QueryOptions { max_bytes: None, ..Default::default() };
+    let cold = Cold { max_rows: 1, ..Cold::default() };
+    let expected = serial_rows_in(&cold, source.clone(), "public.t_int", options.clone()).await;
     for jobs in [2usize, 3, 9] {
-        let (rows, _) = partitioned_rows(&source, "public.t_int", options.clone(), jobs).await;
+        let (rows, _) =
+            partitioned_rows_in(&cold, source.clone(), "public.t_int", options.clone(), jobs).await;
         assert_eq!(rows, expected, "jobs {jobs}");
     }
 }
 
 /// **The key a caller merges the sub-streams back on.** A `RecordBatch`
-/// carries no position, so `TableStream::batch_source_offset` is what
-/// `pgdt query` sorts one-batch-per-partition on
-/// (`docs/design/decisions.md`, "D51").
+/// carries no position, so `TableStream::batch_source_offset` is what the
+/// merge into file order (`TablePartitions::in_file_order`) sorts
+/// one-batch-per-partition on (`docs/design/decisions.md`, "D51").
 ///
 /// The sub-streams are drained **round-robin**, which is the arrival order a
 /// caller polling them concurrently sees — and it is asserted here to be
@@ -427,21 +419,15 @@ async fn a_small_batch_size_flushes_at_a_piece_boundary_without_losing_a_row() {
 /// file order and the assertion would hold for the wrong reason.
 #[tokio::test]
 async fn batches_sorted_on_their_source_offset_are_the_serial_order() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
-    let expected = serial_rows(&source, "public.widgets", options.clone()).await;
+    let source = local(edge_cases());
+    let options = QueryOptions { max_bytes: None, ..Default::default() };
+    let cold = Cold { max_rows: 1, ..Cold::default() };
+    let expected = serial_rows_in(&cold, source.clone(), "public.widgets", options.clone()).await;
     assert!(expected.len() > 3, "the oracle needs several rows per partition");
 
     let options = QueryOptions { parallelism: Parallelism::workers(2, 1 << 30), ..options };
-    let mut streams = table_stream_partitions(
-        &source,
-        "public.widgets",
-        ScanOptions::default(),
-        options,
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
+    let plan = plan_of(source, "public.widgets", ScanOptions::default(), options).await;
+    let mut streams: Vec<_> = (0..plan.len()).map(|partition| plan.stream(partition, 1)).collect();
     assert!(streams.len() > 1, "one sub-stream would make this the serial path");
 
     // One batch per live sub-stream per pass, which is the merge's own fill
@@ -484,16 +470,10 @@ async fn batches_sorted_on_their_source_offset_are_the_serial_order() {
 async fn a_reported_offset_is_the_start_of_a_row() {
     let path = types_fixture(16, "default");
     let bytes = std::fs::read(&path).unwrap();
-    let source = LocalFileSource::open(&path).unwrap();
-    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
-    let mut stream = table_stream(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        options,
-        None,
-        CacheMode::DISABLED,
-    );
+    let options = QueryOptions { max_bytes: None, ..Default::default() };
+    let cold = Cold { max_rows: 1, ..Cold::default() };
+    let stream = cold.stream(local(&path), "public.t_int", options).await;
+    let mut stream = stream.unwrap().unwrap();
 
     let mut seen = 0usize;
     let mut previous: Option<u64> = None;
@@ -511,53 +491,36 @@ async fn a_reported_offset_is_the_start_of_a_row() {
     assert!(seen > 1, "one batch would say nothing about the ordering");
 }
 
-/// A table the dump does not carry is one sub-stream that yields nothing, so
-/// a caller never has to tell "no partitions" from "no rows".
+/// A table the dump does not carry settles no table, and so has no plan to
+/// partition: the cold pass says "no such table" as `None`, where a table
+/// with no rows is a plan whose partitions yield nothing.
 #[tokio::test]
-async fn a_table_that_is_not_in_the_dump_is_one_empty_sub_stream() {
-    let source = LocalFileSource::open(edge_cases()).unwrap();
-    let (rows, count) =
-        partitioned_rows(&source, "public.not_a_table", QueryOptions::default(), 8).await;
-    assert_eq!(count, 1);
-    assert!(rows.is_empty());
+async fn a_table_that_is_not_in_the_dump_settles_no_plan() {
+    let options =
+        QueryOptions { parallelism: Parallelism::workers(8, 1 << 30), ..Default::default() };
+    let plan = Cold::default().plan(local(edge_cases()), "public.not_a_table", options).await;
+    assert!(plan.unwrap().is_none());
 }
 
-/// A sub-stream's resume token is refused by [`table_stream`] rather than
-/// silently resuming as a whole stream would — which would hand back every
-/// row from that offset on, not the ones that partition had left
-/// (`docs/design/decisions.md`, "D51").
+/// A sub-stream's resume token is refused by
+/// [`TablePartitions::resume`] rather than silently resuming as a whole
+/// stream would — which would hand back every row from that offset on, not
+/// the ones that partition had left (`docs/design/decisions.md`, "D51").
 #[tokio::test]
 async fn a_sub_streams_resume_token_is_refused_by_the_whole_stream() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let source = local(types_fixture(16, "default"));
     let options = QueryOptions {
-        max_rows: 1,
         max_bytes: None,
         parallelism: Parallelism::workers(4, 1 << 30),
         ..Default::default()
     };
-    let mut streams = table_stream_partitions(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        options.clone(),
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    let first = &mut streams[0];
+    let plan = plan_of(source, "public.t_int", ScanOptions::default(), options).await;
+    let mut first = plan.stream(0, 1);
     first.next().await.expect("the first sub-stream has rows").unwrap();
     let token = first.resume_token();
 
-    let mut resumed = table_stream(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        options,
-        Some(token),
-        CacheMode::DISABLED,
-    );
     assert!(
-        matches!(resumed.next().await, Some(Err(pgdt_core::Error::ResumeQueryMismatch))),
+        matches!(plan.resume(token, 1), Err(pgdt_core::Error::ResumeQueryMismatch)),
         "a partition's token must not resume as a whole stream"
     );
 }
@@ -593,11 +556,11 @@ fn xz_compress(path: &Path, args: &[&str]) -> tempfile::NamedTempFile {
 /// test the serial path compared to itself.
 #[tokio::test]
 async fn a_seekable_xz_splits_at_its_own_block_boundaries() {
-    let plain = LocalFileSource::open(edge_cases()).unwrap();
-    let expected = serial_rows(&plain, "public.widgets", QueryOptions::default()).await;
+    let expected =
+        serial_rows(local(edge_cases()), "public.widgets", QueryOptions::default()).await;
 
     let compressed = xz_compress(&edge_cases(), &["--block-size=64"]);
-    let xz = XzSource::open(compressed.path()).unwrap();
+    let xz = Arc::new(XzSource::open(compressed.path()).unwrap());
     assert!(
         xz.seek_table().unwrap().is_seekable(),
         "a single-block fixture would advise one partition and pass for the wrong reason"
@@ -606,7 +569,7 @@ async fn a_seekable_xz_splits_at_its_own_block_boundaries() {
     let mut split_at_least_once = false;
     for jobs in [2usize, 3, 8] {
         let (rows, count) =
-            partitioned_rows(&xz, "public.widgets", QueryOptions::default(), jobs).await;
+            partitioned_rows(xz.clone(), "public.widgets", QueryOptions::default(), jobs).await;
         assert_eq!(rows, expected, "jobs {jobs}");
         split_at_least_once |= count > 1;
     }
@@ -643,11 +606,11 @@ async fn a_seekable_xz_splits_at_its_own_block_boundaries() {
 /// statement about the *accounting* rather than about what gets read.
 #[tokio::test]
 async fn a_block_shaped_source_is_not_charged_the_batch_span() {
-    let plain = LocalFileSource::open(edge_cases()).unwrap();
-    let expected = serial_rows(&plain, "public.widgets", QueryOptions::default()).await;
+    let plain = local(edge_cases());
+    let expected = serial_rows(plain.clone(), "public.widgets", QueryOptions::default()).await;
 
     let compressed = xz_compress(&edge_cases(), &["--block-size=64"]);
-    let xz = XzSource::open(compressed.path()).unwrap();
+    let xz = Arc::new(XzSource::open(compressed.path()).unwrap());
     assert!(
         xz.seek_table().unwrap().is_seekable(),
         "a single-block fixture would advise one partition and pass for the wrong reason"
@@ -662,16 +625,8 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
     let options =
         QueryOptions { parallelism: Parallelism::workers(4, budget), ..Default::default() };
 
-    let streams = table_stream_partitions(
-        &plain,
-        "public.widgets",
-        ScanOptions::default(),
-        options.clone(),
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    match streams[0].plan_notes().as_slice() {
+    let plan = plan_of(plain, "public.widgets", ScanOptions::default(), options.clone()).await;
+    match plan.plan_notes() {
         [note] => {
             let PlanNoteKind::BatchSpanNarrowed {
                 stated_bytes, planned_bytes, memory_bytes, ..
@@ -693,29 +648,15 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
         other => panic!("expected exactly one plan note, got {other:?}"),
     }
 
-    let streams = table_stream_partitions(
-        &xz,
-        "public.widgets",
-        ScanOptions::default(),
-        options,
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
+    let plan = plan_of(xz, "public.widgets", ScanOptions::default(), options).await;
     assert!(
-        streams.iter().all(|s| s.plan_notes().is_empty()),
+        (0..plan.len()).all(|partition| plan.stream(partition, 8192).plan_notes().is_empty()),
         "the span is not charged here, so the budget affords every worker: {:?}",
-        streams[0].plan_notes()
+        plan.plan_notes()
     );
-    assert!(streams.len() > 1, "and the plan really did hand out more than one sub-stream");
+    assert!(plan.len() > 1, "and the plan really did hand out more than one sub-stream");
 
-    let mut rows = Rows::new();
-    for mut stream in streams {
-        while let Some(batch) = stream.next().await {
-            rows.extend(rows_of(&batch.unwrap()));
-        }
-    }
-    assert_eq!(rows, expected);
+    assert_eq!(drained(&plan, 8192).await, expected);
 }
 
 /// A source that declines to be split is not split, whatever `--jobs` says —
@@ -724,17 +665,17 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
 /// sub-stream, and the same rows.
 #[tokio::test]
 async fn a_single_block_xz_declines_to_be_split() {
-    let plain = LocalFileSource::open(edge_cases()).unwrap();
-    let expected = serial_rows(&plain, "public.widgets", QueryOptions::default()).await;
+    let expected =
+        serial_rows(local(edge_cases()), "public.widgets", QueryOptions::default()).await;
 
     let compressed = xz_compress(&edge_cases(), &[]);
-    let xz = XzSource::open(compressed.path()).unwrap();
+    let xz = Arc::new(XzSource::open(compressed.path()).unwrap());
     assert!(
         !xz.seek_table().unwrap().is_seekable(),
         "fixture must actually be single-block for this test to mean anything"
     );
 
-    let (rows, count) = partitioned_rows(&xz, "public.widgets", QueryOptions::default(), 8).await;
+    let (rows, count) = partitioned_rows(xz, "public.widgets", QueryOptions::default(), 8).await;
     assert_eq!(count, 1, "a declining source yields one sub-stream");
     assert_eq!(rows, expected);
 }
@@ -751,7 +692,7 @@ async fn a_single_block_xz_declines_to_be_split() {
 #[tokio::test]
 async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
     let compressed = xz_compress(&edge_cases(), &["--block-size=512"]);
-    let xz = XzSource::open(compressed.path()).unwrap();
+    let xz = Arc::new(XzSource::open(compressed.path()).unwrap());
     let table = xz.seek_table().unwrap();
     assert!(table.is_seekable(), "the decline is only interesting on a file with blocks to lose");
 
@@ -759,16 +700,8 @@ async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
     let budget = table.max_block_uncompressed() - 1;
     let options =
         QueryOptions { parallelism: Parallelism::workers(4, budget), ..Default::default() };
-    let streams = table_stream_partitions(
-        &xz,
-        "public.widgets",
-        ScanOptions::default(),
-        options,
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    let notes = streams[0].plan_notes();
+    let plan = plan_of(xz.clone(), "public.widgets", ScanOptions::default(), options).await;
+    let notes = plan.plan_notes();
     let declined = notes
         .iter()
         .find_map(|n| match &n.kind {
@@ -801,15 +734,9 @@ async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
 
     // The rows are unaffected — the fallback is slower on a backward read,
     // never a different answer.
-    let plain = LocalFileSource::open(edge_cases()).unwrap();
-    let expected = serial_rows(&plain, "public.widgets", QueryOptions::default()).await;
-    let mut rows = Rows::new();
-    for mut stream in streams {
-        while let Some(batch) = stream.next().await {
-            rows.extend(rows_of(&batch.unwrap()));
-        }
-    }
-    assert_eq!(rows, expected);
+    let expected =
+        serial_rows(local(edge_cases()), "public.widgets", QueryOptions::default()).await;
+    assert_eq!(drained(&plan, 8192).await, expected);
 }
 
 /// The three shapes that say nothing: a budget that affords a whole block, a
@@ -823,48 +750,24 @@ async fn a_block_path_that_was_taken_is_silent() {
     };
 
     let compressed = xz_compress(&edge_cases(), &["--block-size=512"]);
-    let xz = XzSource::open(compressed.path()).unwrap();
+    let xz = Arc::new(XzSource::open(compressed.path()).unwrap());
     let affordable =
         QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..Default::default() };
-    let streams = table_stream_partitions(
-        &xz,
-        "public.widgets",
-        ScanOptions::default(),
-        affordable.clone(),
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    assert!(!declines(&streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
+    let plan = plan_of(xz, "public.widgets", ScanOptions::default(), affordable.clone()).await;
+    assert!(!declines(plan.plan_notes()), "{:?}", plan.plan_notes());
 
-    let plain = LocalFileSource::open(edge_cases()).unwrap();
-    let streams = table_stream_partitions(
-        &plain,
-        "public.widgets",
-        ScanOptions::default(),
-        affordable.clone(),
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    assert!(!declines(&streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
+    let plain = local(edge_cases());
+    let plan = plan_of(plain, "public.widgets", ScanOptions::default(), affordable.clone()).await;
+    assert!(!declines(plan.plan_notes()), "{:?}", plan.plan_notes());
 
     // A single-block file, under a budget far too small to hold its one
     // block: still silent here, because it has nothing to seek by whatever
     // the budget says.
     let single = xz_compress(&edge_cases(), &[]);
-    let xz = XzSource::open(single.path()).unwrap();
+    let xz = Arc::new(XzSource::open(single.path()).unwrap());
     let options = QueryOptions { parallelism: Parallelism::workers(4, 64), ..Default::default() };
-    let streams = table_stream_partitions(
-        &xz,
-        "public.widgets",
-        ScanOptions::default(),
-        options,
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    assert!(!declines(&streams[0].plan_notes()), "{:?}", streams[0].plan_notes());
+    let plan = plan_of(xz, "public.widgets", ScanOptions::default(), options).await;
+    assert!(!declines(plan.plan_notes()), "{:?}", plan.plan_notes());
 }
 
 /// A stated byte budget caps the sub-stream count below the stated `--jobs`,
@@ -891,8 +794,8 @@ async fn a_block_path_that_was_taken_is_silent() {
 /// sub-stream count.
 #[tokio::test]
 async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
+    let source = local(types_fixture(16, "default"));
+    let expected = serial_rows(source.clone(), "public.t_int", QueryOptions::default()).await;
 
     // One partition-unit read plus a floored span pinned makes a budget of
     // four such units afford three workers however many jobs are asked for.
@@ -906,12 +809,9 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
         max_source_span: Some(chunk as usize),
         ..Default::default()
     };
-    let streams =
-        table_stream_partitions(&source, "public.t_int", scan, options, CacheMode::DISABLED)
-            .await
-            .unwrap();
-    assert_eq!(streams.len(), planned, "the budget binds before the job count does");
-    match streams[0].plan_notes().as_slice() {
+    let plan = plan_of(source, "public.t_int", scan, options).await;
+    assert_eq!(plan.len(), planned, "the budget binds before the job count does");
+    match plan.plan_notes() {
         [narrowed, d] => {
             let PlanNoteKind::BatchSpanNarrowed { stated_bytes, planned_bytes, .. } =
                 &narrowed.kind
@@ -939,13 +839,7 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
         other => panic!("expected the narrowing note and the count note, got {other:?}"),
     }
 
-    let mut rows = Rows::new();
-    for mut stream in streams {
-        while let Some(batch) = stream.next().await {
-            rows.extend(rows_of(&batch.unwrap()));
-        }
-    }
-    assert_eq!(rows, expected);
+    assert_eq!(drained(&plan, 8192).await, expected);
 }
 
 /// **The span's floor is the chunk this query announced, not the shipped
@@ -963,8 +857,8 @@ async fn a_tight_budget_hands_out_fewer_sub_streams_than_jobs() {
 /// this pins.
 #[tokio::test]
 async fn the_span_floors_at_the_announced_chunk_not_the_shipped_one() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
+    let source = local(types_fixture(16, "default"));
+    let expected = serial_rows(source.clone(), "public.t_int", QueryOptions::default()).await;
 
     let scan = ScanOptions {
         read: ReadOptions { chunk_size_bytes: 64 << 10, ..ReadOptions::default() },
@@ -986,12 +880,9 @@ async fn the_span_floors_at_the_announced_chunk_not_the_shipped_one() {
     // span at all, so what the span narrows to is the floor and nothing else.
     let options =
         QueryOptions { parallelism: Parallelism::workers(8, 8 * unit), ..Default::default() };
-    let streams =
-        table_stream_partitions(&source, "public.t_int", scan, options, CacheMode::DISABLED)
-            .await
-            .unwrap();
-    assert_eq!(streams.len(), planned);
-    match streams[0].plan_notes().as_slice() {
+    let plan = plan_of(source, "public.t_int", scan, options).await;
+    assert_eq!(plan.len(), planned);
+    match plan.plan_notes() {
         [narrowed, limited] => {
             let PlanNoteKind::BatchSpanNarrowed { planned_bytes, workers, .. } = &narrowed.kind
             else {
@@ -1010,12 +901,7 @@ async fn the_span_floors_at_the_announced_chunk_not_the_shipped_one() {
         other => panic!("expected the narrowing note and the count note, got {other:?}"),
     }
 
-    let mut rows = Rows::new();
-    for mut stream in streams {
-        while let Some(batch) = stream.next().await {
-            rows.extend(rows_of(&batch.unwrap()));
-        }
-    }
+    let rows = drained(&plan, 8192).await;
     assert_eq!(rows, expected, "the rows are the serial oracle's whatever the chunk");
 }
 
@@ -1030,8 +916,8 @@ async fn the_span_floors_at_the_announced_chunk_not_the_shipped_one() {
 /// number that was never charged.
 #[tokio::test]
 async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
-    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let expected = serial_rows(&source, "public.t_int", QueryOptions::default()).await;
+    let source = local(types_fixture(16, "default"));
+    let expected = serial_rows(source.clone(), "public.t_int", QueryOptions::default()).await;
 
     let chunk = partition_unit(&source, &ScanOptions::default());
     let options = QueryOptions {
@@ -1039,17 +925,9 @@ async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
         max_source_span: None,
         ..Default::default()
     };
-    let streams = table_stream_partitions(
-        &source,
-        "public.t_int",
-        ScanOptions::default(),
-        options,
-        CacheMode::DISABLED,
-    )
-    .await
-    .unwrap();
-    assert_eq!(streams.len(), 2, "an unbounded span divides by the decode footprint alone");
-    match streams[0].plan_notes().as_slice() {
+    let plan = plan_of(source, "public.t_int", ScanOptions::default(), options).await;
+    assert_eq!(plan.len(), 2, "an unbounded span divides by the decode footprint alone");
+    match plan.plan_notes() {
         [d] => {
             let PlanNoteKind::ParallelismBudgetLimited {
                 requested,
@@ -1070,24 +948,16 @@ async fn an_unbounded_span_falls_back_to_the_decode_footprint_alone() {
         other => panic!("expected exactly one plan note, got {other:?}"),
     }
 
-    let mut rows = Rows::new();
-    for mut stream in streams {
-        while let Some(batch) = stream.next().await {
-            rows.extend(rows_of(&batch.unwrap()));
-        }
-    }
-    assert_eq!(rows, expected);
+    assert_eq!(drained(&plan, 8192).await, expected);
 }
 
-/// **A `Dump`'s plan replays what the query's own mapping pass would**: the
+/// **A `Dump`'s plan replays what a cold query's own mapping pass would**: the
 /// same partitions, the same rows, a schema known before any is read — and
 /// each partition started afresh as often as it is asked for, at whatever
 /// batch size. A map short of the file's end builds no `Dump`, and so is
 /// refused before a byte is read.
 #[tokio::test]
 async fn a_dump_s_plan_replays_as_the_mapping_pass_would() {
-    use std::sync::Arc;
-
     use pgdt_core::Error;
     use pgdt_mapping::build_index;
     use pgdt_mapping::statistics::StatisticsRequest;
@@ -1100,9 +970,13 @@ async fn a_dump_s_plan_replays_as_the_mapping_pass_would() {
 
     let mut compared = 0;
     for name in dump.tables() {
-        let (expected, count) =
-            partitioned_rows(source.as_ref(), &name.qualified_name(), QueryOptions::default(), 4)
-                .await;
+        let (expected, count) = partitioned_rows(
+            Arc::clone(&source),
+            &name.qualified_name(),
+            QueryOptions::default(),
+            4,
+        )
+        .await;
         let table = dump.table(&name.into()).unwrap().unwrap();
         let plan = table.plan(ReadOptions::default(), options.clone()).unwrap();
         assert_eq!(plan.len(), count, "{}", name.qualified_name());

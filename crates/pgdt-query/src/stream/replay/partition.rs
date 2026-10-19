@@ -60,7 +60,7 @@ fn compressed_block_path_declined(
 /// the serial replay (`docs/design/decisions.md`, "D51").
 ///
 /// Never empty: a table with no blocks at all is one sub-stream that yields
-/// nothing, which is what [`table_stream`](crate::stream::table_stream) does with the same map.
+/// nothing, as a serial replay of it does.
 ///
 /// **`max_source_span` is the second term the stated budget is solved against,
 /// not a separate cap of its own** (`docs/design/decisions.md`, "D4"). What one

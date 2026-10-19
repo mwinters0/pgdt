@@ -3,7 +3,7 @@
 //!
 //! **The claim these tests exist for**: none of the three top-level read loops
 //! grants [`WaitPolicy::MayWait`], so nothing a `build_index` or a
-//! `table_stream` does can block on a slot. The one loop that grants it is the
+//! cold query does can block on a slot. The one loop that grants it is the
 //! leader's fused worker, which runs *inside* the mapping pass and restores
 //! `NeverWait` on its way out — so the only invocation that reaches it is a
 //! [`Parallelism::Workers`] scan over a region the source is willing to cut, and
@@ -31,10 +31,9 @@ use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism, WaitPolicy};
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
-use pgdt_query::{QueryOptions, table_stream};
 
 mod common;
-use common::edge_cases;
+use common::{Cold, edge_cases};
 use pgdt_fixtures::arranged;
 use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
@@ -185,15 +184,10 @@ async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_ba
 /// makes the sequence interesting, and that is the test above.
 #[tokio::test]
 async fn a_query_grants_no_wait_in_either_loop() {
-    let source = RecordingSource::wrap(LocalFileSource::open(edge_cases()).unwrap());
-    let mut stream = table_stream(
-        &source,
-        "My Schema.Odd Table",
-        ScanOptions::default(),
-        QueryOptions::default(),
-        None,
-        CacheMode::DISABLED,
-    );
+    let source = Arc::new(RecordingSource::wrap(LocalFileSource::open(edge_cases()).unwrap()));
+    let cold = Cold::default();
+    let stream = cold.stream(source.clone(), "My Schema.Odd Table", Default::default()).await;
+    let mut stream = stream.unwrap().unwrap();
     let mut rows = 0usize;
     while let Some(batch) = stream.next().await {
         rows += batch.unwrap().num_rows();
