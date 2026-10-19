@@ -254,7 +254,7 @@ For humans:
 
 Mostly for LLMs:
 - [`docs/status/STATUS.md`](docs/status/STATUS.md) — current implementation status (what's built vs. not); [`docs/status/deficiencies.md`](docs/status/deficiencies.md) beside it indexes the known deficiencies. [`docs/status/history/`](docs/status/history/) holds dated notes for future-session pickup and plan-changing discoveries.
-- [`docs/design/decisions.md`](docs/design/decisions.md) — the decisions the code cannot explain, one numbered entry each, capped at 700 lines; how the system works is the code and its rustdoc.
+- [`docs/design/decisions.md`](docs/design/decisions.md) — the decisions the code cannot explain, one numbered entry each, capped at 750 lines; how the system works is the code and its rustdoc.
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) — project goals, the standing rules that cut across all work, and the phases still ahead. Each specified phase gets its own `roadmap-P<N>-<slug>.md` doc.
 - [`docs/design/out-of-band.md`](docs/design/out-of-band.md) — the ledger of one-session work belonging to no phase: the admission rule, the watermark of spent `M<k>` numbers, and the rows still outstanding.
 - [`docs/design/postgres-invariants.md`](docs/design/postgres-invariants.md) — `pg_dump` behaviours the design relies on, with source evidence and re-verification steps.
