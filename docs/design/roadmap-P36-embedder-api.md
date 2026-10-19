@@ -306,12 +306,25 @@ pass at the data level" or `SchemaMode::Strings`, never `pgdt`'s flags or
 commands. `Unrepresentable` already does this. Each embedder adds its own
 spelling when it reports the error. `pgdt` does so in its reporting layer,
 under a test pinning that each refusal still names its flag. The adapter
-does so in its own `Error`, which then needs no hand-written
-`MetadataLevel` duplicate.
+names no front end's command either: its own `Error` states the mapping pass
+in the library's terms and carries the mode it was opened under as data, and
+the front end that built it spells the parse (36.11).
 
 Refused: a structured `Remedy` value carried by the error. It would be a
 second taxonomy beside the variants, which already tell an embedder every
 case it needs to match on.
+
+**What a front end must spell, the variant says** (36.10.1): no remedy rides
+in a variant's `String`, where a spelling layer matching variants cannot see
+it. A refusal a mode causes names the mode that answers it, raised where the
+mode is known — an ordering operator under the strings schema mode is
+answered by the typed one — and an accepted form cut short says how much it
+left unlisted, the front end spelling where the rest is listed. **Each front
+end spells in its own grammar**: `pgdt sql`'s shell hands its spelling to the
+adapter at construction, so a refusal carries it in its message wherever
+upstream's `exec` prints it, the REPL included. Reasoning:
+[2026-10-19](../status/history/2026-10-19.md), "A refusal a front end cannot
+spell is reshaped until it can".
 
 [`concepts.md`](concepts.md)'s "The cache" carries a **Not in one place**
 line: why a cache cannot be used is worded twice, once by the core's `Error`
@@ -676,7 +689,8 @@ the concept map; the slice is not bent around the boundary.
     the cache's wording is struck. Closes `KD92`: the provider's spelling of
     "map it first" carries the mode it was opened under.
 11. **datafusion-pgdump.** `PgDump` built over a `Dump`; one function readies
-    a session; `Located` public; the sink taken at construction;
+    a session; `Located` public; the sink and the front end's spelling taken
+    at construction, `pgdt sql`'s shell spelling in its own grammar;
     `PgDumpTableOptions` folded into `PgDumpOptions`.
 12. **The embedder test**, with `layering.py` holding it to the embedder
     rule.
