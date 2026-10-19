@@ -73,6 +73,10 @@ use datafusion::execution::disk_manager::{DiskManagerBuilder, DiskManagerMode};
 // pgdump: upstream's `#[global_allocator]` is the calling binary's
 // (`docs/design/decisions.md`, "D13").
 
+// pgdump: the environment variable stating the ungrouped aggregate's dynamic
+// filter, which a readied session turns off.
+const AGGREGATE_FILTER_VAR: &str = "DATAFUSION_OPTIMIZER_ENABLE_AGGREGATE_DYNAMIC_FILTER_PUSHDOWN";
+
 #[derive(Debug, Parser, PartialEq)]
 #[clap(author, version, about, long_about= None)]
 // pgdump: exported, for a caller to parse and hand to `run`.
@@ -297,14 +301,23 @@ async fn main_inner(args: Args) -> Result<()> {
     let runtime_env = rt_builder.build_arc()?;
 
     // enable dynamic file query
-    // pgdump: the session `new_with_config_rt` builds, built with the guard
-    // refusing `pgdump_unrepresentable` at planning where DataFusion would
-    // evaluate it.
+    // pgdump: the session `new_with_config_rt` builds, readied for pgdump
+    // tables, an ungrouped aggregate's dynamic filter left on only where the
+    // environment states it on, its bounds losing a side in DataFusion 55.1.
+    // upstream: UF1
+    let aggregate_filter = env::var_os(AGGREGATE_FILTER_VAR)
+        .is_some()
+        .then_some(session_config.options().optimizer.enable_aggregate_dynamic_filter_pushdown);
     let state = SessionStateBuilder::new()
         .with_config(session_config)
         .with_runtime_env(runtime_env)
         .with_default_features();
-    let state = datafusion_pgdump::with_unrepresentable_guard(state).build();
+    let mut state = datafusion_pgdump::ready_session(state);
+    if let Some(stated) = aggregate_filter {
+        let config = state.config().as_mut().expect("a readied session carries its config");
+        config.options_mut().optimizer.enable_aggregate_dynamic_filter_pushdown = stated;
+    }
+    let state = state.build();
     let ctx = SessionContext::new_with_state(state).enable_url_table();
     ctx.refresh_catalogs().await?;
     // install dynamic catalog provider that can register required object stores
@@ -406,13 +419,6 @@ fn get_session_config(args: &Args) -> Result<SessionConfig> {
     // in the CLI, we want to show NULL values rather the empty strings
     if env::var_os("DATAFUSION_FORMAT_NULL").is_none() {
         config_options.format.null = String::from("NULL");
-    }
-
-    // pgdump: an ungrouped aggregate's dynamic filter off unless the
-    // environment states it, its bounds losing a side in DataFusion 55.1.
-    // upstream: UF1
-    if env::var_os("DATAFUSION_OPTIMIZER_ENABLE_AGGREGATE_DYNAMIC_FILTER_PUSHDOWN").is_none() {
-        config_options.optimizer.enable_aggregate_dynamic_filter_pushdown = false;
     }
 
     let mut session_config = SessionConfig::from(config_options).with_information_schema(true);

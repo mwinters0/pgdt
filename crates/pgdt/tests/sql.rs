@@ -250,7 +250,8 @@ fn the_aggregate_dynamic_filter_is_off_unless_stated() {
     assert_eq!(value(stated), format!("{KEY},true"));
 }
 
-/// **The shell is built with the guard**: `pgdump_unrepresentable` answers
+/// **The shell's session is readied, so built with the guard**:
+/// `pgdump_unrepresentable` answers
 /// where a scan answers it, and a query DataFusion would have to evaluate it
 /// in is refused at planning, by the guard, not when it is evaluated.
 #[tokio::test]
@@ -281,7 +282,7 @@ async fn the_unrepresentable_function_is_guarded_at_planning() {
     let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
     assert!(said.contains("pgdump_unrepresentable_guard"), "{said}");
     assert!(said.contains("DataFusion would have to evaluate it"), "{said}");
-    assert!(!said.contains("with_unrepresentable_guard"), "{said}");
+    assert!(!said.contains("ready_session"), "{said}");
 }
 
 /// **A dump with no complete cache ends the run before any SQL**, naming the

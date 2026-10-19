@@ -1,12 +1,14 @@
 //! What registration and planning report to the caller's sink.
 //!
-//! **What a dump or a table is, is reported when it is registered**: the
-//! file-level channel once per registration, and each table's per-column findings and
-//! its columns' divergence from PostgreSQL in the semantics every scan asks
-//! for — or, for a table the catalog does not list, its [`RefusedTable`] —
-//! save the columns compared bytewise for want of a recorded collation, which
-//! are one [`UncollatedColumns`] finding per registration, after the rest. **What a scan's plan settled is reported when it is planned**, from
-//! `scan()`, to the sink the table was registered with. A query raises nothing
+//! **What a dump or a table is, is reported when it is registered**, a table
+//! to the sink it is built with: the file-level channel once per
+//! registration, and each table's per-column findings and its columns'
+//! divergence from PostgreSQL in the semantics every scan asks for — or, for
+//! a table the catalog does not list, its [`RefusedTable`] — save the columns
+//! compared bytewise for want of a recorded collation, which are one
+//! [`UncollatedColumns`] finding per registration, after the rest. **What a
+//! scan's plan settled is reported when it is planned**, from `scan()`, to
+//! that sink. Each but the uncollated columns is [`Located`]. A query raises nothing
 //! on the comparison channel here — a pushed filter is one the library answers
 //! as DataFusion does, so that channel is empty
 //! (`pgdt_query::Table::divergences` said it already, per column) — and what
@@ -35,22 +37,33 @@ use crate::budget::BudgetAccount;
 use crate::dump::PgDump;
 use crate::error::Error;
 
-/// A finding with what it is about named in front of its sentence: the dump,
-/// or a table as SQL names it. The library's findings name a column at most
-/// (`pgdt_codec::ResolvedColumn`, `pgdt_query::ComparisonNote`), and one sink
-/// hears every table of every registered dump.
+/// **A finding with what it is about**: the dump, or a table as SQL names it,
+/// beside the library's own finding, which names a column at most
+/// (`pgdt_codec::ResolvedColumn`, `pgdt_query::ComparisonNote`) — one sink
+/// hearing every table of every registered dump. Its sentence is the
+/// finding's, the subject in front.
 ///
-/// [`Finding::as_any`] is the wrapped finding's, so a sink downcasting to the
-/// library's own record still reaches it — save a plan note quoting a budget,
-/// which is reached inside its [`BudgetedPlanNote`]; the subject is in the
-/// sentence.
+/// [`Finding::as_any`] is this, so a structured sink downcasts to it, reads
+/// [`Located::subject`], and downcasts [`Located::finding`] to the library's
+/// record — a plan note quoting a budget to its [`BudgetedPlanNote`]. Every
+/// finding the adapter reports is one, but a registration's
+/// [`UncollatedColumns`], which names its own subject.
 #[derive(Debug)]
-pub(crate) struct Located<'a> {
-    pub(crate) subject: &'a str,
-    pub(crate) finding: &'a dyn Finding,
+pub struct Located {
+    /// What the finding is about: the dump's origin, or the table as SQL
+    /// reaches it.
+    pub subject: String,
+    /// The finding itself.
+    pub finding: Box<dyn Finding>,
 }
 
-impl Finding for Located<'_> {
+impl Located {
+    fn new(subject: &str, finding: impl Finding + 'static) -> Self {
+        Self { subject: subject.to_string(), finding: Box::new(finding) }
+    }
+}
+
+impl Finding for Located {
     fn severity(&self) -> Severity {
         self.finding.severity()
     }
@@ -60,32 +73,48 @@ impl Finding for Located<'_> {
     }
 
     fn as_any(&self) -> &dyn Any {
-        self.finding.as_any()
+        self
     }
+}
+
+/// Hand `finding` to `sink`, about `subject`.
+pub(crate) fn report_located(
+    sink: &dyn DiagnosticSink,
+    subject: &str,
+    finding: impl Finding + 'static,
+) {
+    sink.report(&Located::new(subject, finding));
 }
 
 impl PgDump {
     /// Hand what the file-level channel says about this dump and its cache
-    /// to `sink`, each finding prefixed with the dump's origin.
+    /// to `sink`, each finding about the dump's origin.
     pub fn report(&self, sink: &dyn DiagnosticSink) {
         for finding in self.diagnostics() {
-            sink.report(&Located { subject: self.origin(), finding });
+            report_located(sink, self.origin(), finding.clone());
         }
     }
 }
 
-/// Where a registered table's scans report: the name SQL reaches it by, and
-/// the sink it was registered with.
+/// Where a table's findings and its scans' plan notes go: the name SQL
+/// reaches it by, and the sink it was built with.
 pub(crate) struct Reporting {
     pub(crate) subject: String,
     pub(crate) sink: Arc<dyn DiagnosticSink>,
+}
+
+impl Reporting {
+    /// Hand `finding` to the sink, about this table.
+    pub(crate) fn report(&self, finding: impl Finding + 'static) {
+        report_located(self.sink.as_ref(), &self.subject, finding);
+    }
 }
 
 /// A table of the dump its catalog does not list, because the library's plan
 /// of it refuses — its `COPY` blocks naming different columns, say — with
 /// that refusal. It is what [`crate::catalog::register_dump`] hands the sink in place
 /// of the table's findings, and the only place its refusal is said: a query
-/// naming the table finds no such table ([`crate::catalog::PgDumpCatalog`]).
+/// naming the table finds no such table (`crate::catalog::PgDumpCatalog`).
 #[derive(Debug)]
 pub struct RefusedTable {
     /// The table, as the dump names it.
@@ -109,19 +138,11 @@ impl Finding for RefusedTable {
     }
 }
 
-impl RefusedTable {
-    /// Hand this refusal to `sink`, prefixed with `subject`, the name SQL
-    /// would have reached the table by.
-    pub(crate) fn report(&self, subject: &str, sink: &dyn DiagnosticSink) {
-        sink.report(&Located { subject, finding: self });
-    }
-}
-
 /// **The columns one registration compares bytewise because the dump records
 /// no collation for them** ([`ComparisonDivergence::UnknownCollation`]), as
 /// one finding in place of a [`ComparisonNote`] a column: on a real dump that
 /// is every text column of every table. [`crate::register_dump`] reports one
-/// for the dump, every catalog's tables in it, and [`crate::PgDumpTable::report`]
+/// for the dump, every catalog's tables in it, and [`crate::PgDump::table`]
 /// one for its table — the factory's registration of a statement's table.
 /// None is reported where no column is uncollated.
 ///

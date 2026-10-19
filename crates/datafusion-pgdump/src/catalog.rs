@@ -11,10 +11,11 @@ use datafusion::catalog::{CatalogProvider, SchemaProvider, TableProvider};
 use datafusion::common::Result;
 use datafusion::prelude::SessionContext;
 use pgdt_model::{DiagnosticSink, TableName};
+use pgdt_query::TableSelector;
 
 use crate::dump::PgDump;
 use crate::error::Error;
-use crate::report::{RefusedTable, UncollatedColumns};
+use crate::report::{RefusedTable, Reporting, UncollatedColumns, report_located};
 use crate::session::install;
 use crate::table::PgDumpTable;
 
@@ -32,9 +33,10 @@ pub const UNQUALIFIED_SCHEMA: &str = "public";
 /// that database's name. *Rejected: one registration per database, chosen by
 /// a fragment of the location.*
 ///
-/// The session is [`install`](crate::install)ed — its settings, its
-/// [`ScanBudget`](crate::budget::ScanBudget) and `pgdump_unrepresentable` —
-/// and `dump`'s statistics are billed to that budget.
+/// The session is given the settings, the
+/// [`ScanBudget`](crate::budget::ScanBudget) and `pgdump_unrepresentable`
+/// [`ready_session`](crate::ready_session) gives a builder, each unless it
+/// carries one, and `dump`'s statistics are billed to that budget.
 /// `sink` hears the dump's findings and then every table's, each table named
 /// `catalog.schema.table`, and is kept to hear each scan's plan notes under
 /// that name; a table whose plan refuses is not listed, and is one
@@ -87,9 +89,9 @@ pub fn register_dump(
     let names = named
         .into_iter()
         .map(|(database, name)| {
-            let catalog = Arc::new(PgDumpCatalog::new(dump, database.as_deref()));
-            ctx.register_catalog(&name, Arc::clone(&catalog) as _);
-            catalog.report(&name, &sink, &mut uncollated);
+            let catalog =
+                PgDumpCatalog::new(dump, database.as_deref(), &name, &sink, &mut uncollated);
+            ctx.register_catalog(&name, Arc::new(catalog));
             name
         })
         .collect();
@@ -102,13 +104,12 @@ pub fn register_dump(
 /// **Every table's provider is built when the catalog is**, from the map
 /// alone, so `SHOW TABLES` and `information_schema`, which ask for every
 /// table, find each one built and none is built twice. **A table whose plan
-/// refuses is not listed**: its refusal is a finding [`PgDumpCatalog::report`]
-/// hands the sink instead, so a listing names what can be queried. *Rejected:
+/// refuses is not listed**: its refusal is a [`RefusedTable`] finding the
+/// sink hears instead, so a listing names what can be queried. *Rejected:
 /// listing it and raising its refusal where it is asked for*, which fails every
 /// listing of the session over one table; *building each table on its first
-/// lookup*, which two statements planned at once build twice, the sink kept
-/// by a provider then replaced.
-pub struct PgDumpCatalog {
+/// lookup*, which two statements planned at once build twice.
+pub(crate) struct PgDumpCatalog {
     schemas: BTreeMap<String, Arc<PgDumpSchema>>,
 }
 
@@ -120,8 +121,18 @@ impl fmt::Debug for PgDumpCatalog {
 
 impl PgDumpCatalog {
     /// The database `database` names in `dump` — `None` for the one no
-    /// `\connect` names — with every table's provider built.
-    pub fn new(dump: &Arc<PgDump>, database: Option<&str>) -> Self {
+    /// `\connect` names — with every table's provider built, each table's
+    /// findings handed to `sink` about the name SQL reaches it by under
+    /// `catalog` and its scans reporting there, the uncollated columns counted
+    /// into `uncollated`. A table left unlisted is one [`RefusedTable`]
+    /// finding, after the schema's listed tables'.
+    fn new(
+        dump: &Arc<PgDump>,
+        database: Option<&str>,
+        catalog: &str,
+        sink: &Arc<dyn DiagnosticSink>,
+        uncollated: &mut UncollatedColumns,
+    ) -> Self {
         let mut named: BTreeMap<String, BTreeMap<String, TableName>> = BTreeMap::new();
         for table in dump.tables().iter().filter(|t| t.database.as_deref() == database) {
             let schema = table.schema.as_deref().unwrap_or(UNQUALIFIED_SCHEMA);
@@ -133,44 +144,33 @@ impl PgDumpCatalog {
         }
         let schemas = named
             .into_iter()
-            .map(|(name, tables)| {
+            .map(|(schema_name, tables)| {
                 let mut schema = PgDumpSchema::default();
+                let mut refused = Vec::new();
                 for (table, qualified) in tables {
-                    match PgDumpTable::build(Arc::clone(dump), qualified.clone()) {
+                    let subject = format!("{catalog}.{schema_name}.{table}");
+                    let resolved = dump
+                        .dump()
+                        .table(&TableSelector::from(&qualified))
+                        .expect("a selector stating every part selects one table at most")
+                        .expect("a table the dump lists is one of its tables");
+                    let reporting = Reporting { subject: subject.clone(), sink: Arc::clone(sink) };
+                    match PgDumpTable::build(Arc::clone(dump), resolved, reporting, uncollated) {
                         Ok(provider) => {
                             schema.tables.insert(table, Arc::new(provider));
                         }
                         Err(error) => {
-                            schema.refused.insert(table, RefusedTable { table: qualified, error });
+                            refused.push((subject, RefusedTable { table: qualified, error }))
                         }
                     }
                 }
-                (name, Arc::new(schema))
+                for (subject, refused) in refused {
+                    report_located(sink.as_ref(), &subject, refused);
+                }
+                (schema_name, Arc::new(schema))
             })
             .collect();
         Self { schemas }
-    }
-
-    /// Hand every table's findings to `sink`, each named as SQL would reach
-    /// it under `catalog`, and make it the sink the listed tables' scans
-    /// report to ([`PgDumpTable::report`]), the uncollated columns counted
-    /// into `uncollated`. A table left unlisted is one [`RefusedTable`]
-    /// finding, its refusal.
-    pub(crate) fn report(
-        &self,
-        catalog: &str,
-        sink: &Arc<dyn DiagnosticSink>,
-        uncollated: &mut UncollatedColumns,
-    ) {
-        for (schema_name, schema) in &self.schemas {
-            for (table, provider) in &schema.tables {
-                let subject = format!("{catalog}.{schema_name}.{table}");
-                provider.report_counting(&subject, Arc::clone(sink), uncollated);
-            }
-            for (table, refused) in &schema.refused {
-                refused.report(&format!("{catalog}.{schema_name}.{table}"), sink.as_ref());
-            }
-        }
     }
 }
 
@@ -184,20 +184,15 @@ impl CatalogProvider for PgDumpCatalog {
     }
 }
 
-/// One PostgreSQL schema of one database: the tables it lists, and those its
-/// dump holds that it does not.
+/// One PostgreSQL schema of one database: the tables it lists.
 #[derive(Default)]
 struct PgDumpSchema {
     tables: BTreeMap<String, Arc<PgDumpTable>>,
-    refused: BTreeMap<String, RefusedTable>,
 }
 
 impl fmt::Debug for PgDumpSchema {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PgDumpSchema")
-            .field("tables", &self.tables.keys())
-            .field("refused", &self.refused.keys())
-            .finish()
+        f.debug_struct("PgDumpSchema").field("tables", &self.tables.keys()).finish()
     }
 }
 

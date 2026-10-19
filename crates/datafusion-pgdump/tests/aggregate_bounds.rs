@@ -8,6 +8,7 @@
 // upstream: UF1
 
 use pgdt_io::ByteRangeSource;
+use pgdt_query::TableSelector;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -119,7 +120,8 @@ async fn answers(aggregate_filter: bool, sql: &str) -> Vec<(Order, String)> {
     let mut out = Vec::new();
     for order in Order::ALL {
         let ctx = session(aggregate_filter, order);
-        let provider: Arc<dyn TableProvider> = dump.table(None, None, "t").unwrap();
+        let provider: Arc<dyn TableProvider> =
+            dump.table(&TableSelector::named("t"), "t", Arc::new(ignore)).unwrap();
         ctx.register_table("t", provider).unwrap();
         let batches = ctx.sql(sql).await.unwrap().collect().await.unwrap();
         let shown = pretty_format_batches(&batches).unwrap().to_string();
@@ -167,3 +169,6 @@ async fn without_the_aggregate_filter_both_answer() {
     every_order_answers(&answers(false, ONE_COLUMN).await, ONE_COLUMN_ANSWER);
     every_order_answers(&answers(false, TWO_COLUMNS).await, TWO_COLUMNS_ANSWER);
 }
+
+/// A sink hearing nothing, for a table whose findings nothing here reads.
+fn ignore(_: &dyn pgdt_model::Finding) {}

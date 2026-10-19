@@ -2,7 +2,7 @@
 //! library's partitioned replay.
 
 use std::fmt;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
 use arrow::datatypes::SchemaRef;
 use async_trait::async_trait;
@@ -13,14 +13,14 @@ use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use pgdt_codec::{ResolvedSchema, compare::ComparisonSemantics};
 use pgdt_model::{DiagnosticSink, TableName};
-use pgdt_query::{ComparisonNote, PlanNote, QueryOptions, Table, TableSelector};
+use pgdt_query::{PlanNote, QueryOptions, Table, TableSelector};
 
 use crate::budget::{BudgetAccount, ScanBudget, pool_limit};
 use crate::dump::PgDump;
 use crate::error::{Error, external};
 use crate::exec::{PgDumpExec, Replay, ScanMetrics, StaticFilter};
 use crate::filter::translate;
-use crate::report::{BudgetedPlanNote, Located, Reporting, UncollatedColumns};
+use crate::report::{BudgetedPlanNote, Reporting, UncollatedColumns};
 use crate::settings::PgDumpSettings;
 use crate::statistics::{output_orderings, scanned, table_statistics};
 
@@ -29,22 +29,22 @@ use crate::statistics::{output_orderings, scanned, table_statistics};
 /// table's blocks and the DDL alone ([`Table::schema`]), so asking for it
 /// reads nothing; a scan is the library's partitioned replay over those
 /// blocks ([`Table::plan`]).
+///
+/// **It takes its sink when it is built** ([`PgDump::table`]): its findings
+/// are reported then, and every scan's plan notes when the scan is planned,
+/// each about the name SQL reaches the table by.
 pub struct PgDumpTable {
     dump: Arc<PgDump>,
     table: Table,
     resolved: ResolvedSchema,
-    /// How each column's comparison in DataFusion's semantics diverges from
-    /// PostgreSQL's, settled with the schema and reported with it.
-    divergences: Vec<ComparisonNote>,
     /// What the map's statistics say about the whole table, in the schema's
     /// own column order. Read off the resident map, so it never changes; and
     /// taken on the first scan rather than here, because a catalog builds
     /// every table it lists when it is registered, and folding every block's
     /// groups is not what that should cost.
     statistics: OnceLock<Arc<Statistics>>,
-    /// Where this table's scans report their plans, once it has been
-    /// reported ([`PgDumpTable::report`]).
-    reporting: Mutex<Option<Arc<Reporting>>>,
+    /// Where this table's findings and its scans' plan notes go.
+    reporting: Reporting,
 }
 
 impl fmt::Debug for PgDumpTable {
@@ -57,23 +57,20 @@ impl fmt::Debug for PgDumpTable {
 }
 
 impl PgDumpTable {
-    /// `name`, which must be one of `dump`'s own [`PgDump::tables`], or the
-    /// refusal its plan would raise, an [`Error`] across DataFusion's
-    /// boundary as every refusal of ours is.
-    pub fn new(dump: Arc<PgDump>, name: TableName) -> Result<Self> {
-        Ok(Self::build(dump, name)?)
-    }
-
-    /// [`PgDumpTable::new`], its refusal the library's own, bar a table the
-    /// cache holds at the metadata level under a typed schema, which the
-    /// library refuses too and this names the parse for
-    /// ([`Error::MetadataLevel`]).
-    pub(crate) fn build(dump: Arc<PgDump>, name: TableName) -> Result<Self, Error> {
-        let table = dump
-            .dump()
-            .table(&TableSelector::from(name))
-            .expect("a selector stating every part selects one table at most")
-            .expect("a table registered over a dump is one of its tables");
+    /// `table`, resolved from `dump`, under the schema its plan resolves —
+    /// refused as the library refuses it, bar a table the cache holds at the
+    /// metadata level under a typed schema, which the library refuses too and
+    /// this names the parse for ([`Error::MetadataLevel`]). Built, its findings
+    /// go to `reporting`: how each column resolved, and how each column's
+    /// comparison in DataFusion's semantics diverges from PostgreSQL's, bar
+    /// the columns no collation is recorded for, which are counted into
+    /// `uncollated` for the registration to report once.
+    pub(crate) fn build(
+        dump: Arc<PgDump>,
+        table: Table,
+        reporting: Reporting,
+        uncollated: &mut UncollatedColumns,
+    ) -> Result<Self, Error> {
         let options = query_options(&dump);
         let resolved = table.schema(&options).map_err(|refused| match refused {
             refused @ pgdt_core::Error::TableAtMetadataLevel { .. } => Error::MetadataLevel {
@@ -83,14 +80,15 @@ impl PgDumpTable {
             other => Error::Library(other),
         })?;
         let divergences = table.divergences(&options)?;
-        Ok(Self {
-            dump,
-            table,
-            resolved,
-            divergences,
-            statistics: OnceLock::new(),
-            reporting: Mutex::default(),
-        })
+        for finding in resolved.columns() {
+            reporting.report(finding.clone());
+        }
+        for finding in divergences {
+            if !uncollated.count(&reporting.subject, &finding) {
+                reporting.report(finding);
+            }
+        }
+        Ok(Self { dump, table, resolved, statistics: OnceLock::new(), reporting })
     }
 
     /// The table this provider reads.
@@ -98,66 +96,20 @@ impl PgDumpTable {
         self.table.name()
     }
 
-    /// The schema and per-column resolution every scan of this table carries,
-    /// its `notes` included.
+    /// The schema and per-column resolution every scan of this table carries.
     pub fn resolved_schema(&self) -> &ResolvedSchema {
         &self.resolved
     }
 
-    /// Hand this table's findings to `sink`, each prefixed with `subject` —
-    /// the name SQL reaches the table by: how each column resolved, and how
-    /// each column's comparison in DataFusion's semantics diverges from
-    /// PostgreSQL's, the columns no collation is recorded for last, as one
-    /// [`UncollatedColumns`] finding.
-    ///
-    /// **`sink` is kept, and hears every scan's plan notes from then on**
-    /// (`pgdt_query::PlanNote`), under the same `subject`: what the memory
-    /// budget declined and what statistics let the scan skip, settled when
-    /// the scan is planned, one quoting a budget wrapped in a
-    /// [`BudgetedPlanNote`]. A table reported again reports its scans to the
-    /// latest sink; one never reported reports no scan.
-    pub fn report(&self, subject: &str, sink: Arc<dyn DiagnosticSink>) {
-        let mut uncollated = UncollatedColumns::of(subject);
-        self.report_counting(subject, Arc::clone(&sink), &mut uncollated);
-        uncollated.report(sink.as_ref());
-    }
-
-    /// [`Self::report`], the uncollated columns counted into `uncollated`
-    /// rather than reported, a registration of several tables reporting
-    /// them once.
-    pub(crate) fn report_counting(
-        &self,
-        subject: &str,
-        sink: Arc<dyn DiagnosticSink>,
-        uncollated: &mut UncollatedColumns,
-    ) {
-        let resolved = self.resolved_schema();
-        for finding in resolved.columns() {
-            sink.report(&Located { subject, finding });
-        }
-        for finding in &self.divergences {
-            if !uncollated.count(subject, finding) {
-                sink.report(&Located { subject, finding });
-            }
-        }
-        let reporting = Reporting { subject: subject.to_string(), sink };
-        *self.reporting.lock().unwrap() = Some(Arc::new(reporting));
-    }
-
-    /// Hand what one scan's plan settled to the sink this table was reported
-    /// to, if it was, each note quoting a budget wrapped with `account`, the
-    /// scan's own.
-    pub(crate) fn report_plan(&self, notes: &[PlanNote], account: &BudgetAccount) {
-        // Taken out of the lock, so a sink that reports this table again
-        // does not wait on itself.
-        let Some(reporting) = self.reporting.lock().unwrap().clone() else { return };
-        let subject = reporting.subject.as_str();
+    /// Hand what one scan's plan settled to this table's sink, each note
+    /// quoting a budget wrapped with `account`, the scan's own.
+    fn report_plan(&self, notes: &[PlanNote], account: &BudgetAccount) {
         for note in notes {
             if note.budget_bytes().is_some() {
-                let finding = &BudgetedPlanNote { note: note.clone(), account: account.clone() };
-                reporting.sink.report(&Located { subject, finding });
+                let note = note.clone();
+                self.reporting.report(BudgetedPlanNote { note, account: account.clone() });
             } else {
-                reporting.sink.report(&Located { subject, finding: note });
+                self.reporting.report(note.clone());
             }
         }
     }
@@ -175,45 +127,32 @@ impl PgDumpTable {
 }
 
 impl PgDump {
-    /// One table on its own, the provider its catalog would hand out.
+    /// **The one table `selector` selects, on its own** — the provider its
+    /// catalog would hand out — refused where it selects none, or more than
+    /// one ([`pgdt_core::Error::AmbiguousTable`]).
     ///
-    /// `schema` left out matches the table in any schema, and `database` left
-    /// out matches it in any database; a name that then matches more than one
-    /// table is refused, naming them.
+    /// **`sink` hears its findings now, and every scan's plan notes from
+    /// then on**, each about `subject`, the name SQL reaches the table by:
+    /// how each column resolved, how each column's comparison in DataFusion's
+    /// semantics diverges from PostgreSQL's, the columns no collation is
+    /// recorded for last, as one [`UncollatedColumns`] finding; then what the
+    /// memory budget declined and what statistics let a scan skip, settled
+    /// when the scan is planned, one quoting a budget wrapped in a
+    /// [`BudgetedPlanNote`].
     pub fn table(
         self: &Arc<Self>,
-        database: Option<&str>,
-        schema: Option<&str>,
-        table: &str,
+        selector: &TableSelector,
+        subject: &str,
+        sink: Arc<dyn DiagnosticSink>,
     ) -> Result<Arc<PgDumpTable>, Error> {
-        let mut selector = TableSelector::named(table);
-        if let Some(schema) = schema {
-            selector = selector.in_schema(schema);
-        }
-        if let Some(database) = database {
-            selector = selector.in_database(database);
-        }
-        let candidates: Vec<&TableName> =
-            self.tables().iter().filter(|t| selector.selects(t)).collect();
-        match candidates.as_slice() {
-            [one] => Ok(Arc::new(PgDumpTable::build(Arc::clone(self), (*one).clone())?)),
-            [] => Err(Error::Table(format!("{} holds no table `{table}`", self.origin()))),
-            many => Err(Error::Table(format!(
-                "`{table}` names {} tables in {}: {}; name the schema or the database",
-                many.len(),
-                self.origin(),
-                many.iter().map(|t| describe(t)).collect::<Vec<_>>().join(", ")
-            ))),
-        }
-    }
-}
-
-/// A table as a refusal names it: `schema.table`, and its database where it
-/// has one.
-fn describe(table: &TableName) -> String {
-    match &table.database {
-        Some(database) => format!("{} in database {database}", table.qualified_name()),
-        None => table.qualified_name(),
+        let Some(table) = self.dump().table(selector)? else {
+            return Err(Error::Table(format!("{} holds no table `{selector}`", self.origin())));
+        };
+        let mut uncollated = UncollatedColumns::of(subject);
+        let reporting = Reporting { subject: subject.to_string(), sink: Arc::clone(&sink) };
+        let built = PgDumpTable::build(Arc::clone(self), table, reporting, &mut uncollated)?;
+        uncollated.report(sink.as_ref());
+        Ok(Arc::new(built))
     }
 }
 
@@ -283,7 +222,7 @@ impl TableProvider for PgDumpTable {
     /// ([`output_orderings`]), so a sort it satisfies is not planned.
     ///
     /// **What the plan settled is reported here**, to the sink the table was
-    /// registered with ([`PgDumpTable::report`]), and what statistics pruned
+    /// built with ([`PgDump::table`]), and what statistics pruned
     /// is the plan node's metric ([`ScanMetrics`]).
     async fn scan(
         &self,

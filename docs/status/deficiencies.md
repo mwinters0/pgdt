@@ -303,7 +303,7 @@ than reading as a phase nobody has sliced.
   in DataFusion 55.1 while a batch of it holds no value, so a scan pruning
   under it answers a `MIN`, or another column's `MIN` and `MAX`, wrongly under
   default settings. **(c) unowned**; promoted by a DataFusion release carrying
-  the fix, the shell meanwhile defaulting the filter off
+  the fix, a readied session meanwhile defaulting the filter off
   ([`upstream.md`](upstream.md), "UF1"). Detail:
   `crates/datafusion-pgdump/src/filter/dynamic.rs`.
 

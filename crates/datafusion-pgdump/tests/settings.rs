@@ -7,11 +7,12 @@ use std::sync::{Arc, Mutex};
 
 use arrow::array::RecordBatch;
 use arrow::util::pretty::pretty_format_batches;
+use datafusion::execution::session_state::{SessionState, SessionStateBuilder};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
-    BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, PgDumpSettings, ScanBudget, install,
-    register_dump, register_table_factory,
+    BudgetAccount, BudgetedPlanNote, Located, PgDump, PgDumpOptions, PgDumpSettings, ScanBudget,
+    ready_session, register_dump, register_table_factory,
 };
 use pgdt_dump::cache::StrictIdentity;
 use pgdt_fixtures::{edge_cases_fixture, parsed_copy, ungathered};
@@ -19,6 +20,7 @@ use pgdt_io::Allowance;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DiagnosticSink, Finding};
 use pgdt_query::PlanNoteKind;
+use pgdt_query::TableSelector;
 
 const EVENTS: &str = "shop.logs.events";
 
@@ -33,7 +35,8 @@ struct Plans(Mutex<Vec<BudgetedPlanNote>>);
 
 impl DiagnosticSink for Plans {
     fn report(&self, finding: &dyn Finding) {
-        if let Some(note) = finding.as_any().downcast_ref::<BudgetedPlanNote>() {
+        let Some(located) = finding.as_any().downcast_ref::<Located>() else { return };
+        if let Some(note) = located.finding.as_any().downcast_ref::<BudgetedPlanNote>() {
             self.0.lock().unwrap().push(note.clone());
         }
     }
@@ -202,20 +205,23 @@ async fn the_settings_are_listed_and_checked() {
     }
 }
 
-/// **A table registered by hand reads the settings of a session `install`
-/// readied**: before it, `SET pgdump.memory` is refused and
+/// **A table registered by hand reads the settings of a session
+/// [`ready_session`] readied**: before it, `SET pgdump.memory` is refused and
 /// `pgdump_unrepresentable` unknown; after it, the setting binds the table's
-/// next scan, as under a registered dump, and the function is answered.
+/// next scan, as under a registered dump, and the function is answered. The
+/// readying keeps a budget its builder's config carries, gives one to a
+/// builder carrying none, and turns the ungrouped aggregate's dynamic filter
+/// off, which DataFusion's default leaves on (`KD56`).
 #[tokio::test(flavor = "multi_thread")]
-async fn a_table_registered_by_hand_reads_an_installed_session_s_settings() {
+async fn a_table_registered_by_hand_reads_a_readied_session_s_settings() {
     let dir = tempfile::tempdir().unwrap();
     let copy =
         parsed_copy(&edge_cases_fixture(16, "default"), dir.path(), &StatisticsRequest::DATA).await;
     ungathered(&copy).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
-    let events = dump.table(None, Some("logs"), "events").unwrap();
     let plans = Arc::new(Plans::default());
-    events.report("events", Arc::clone(&plans) as _);
+    let selector = TableSelector::named("events").in_schema("logs");
+    let events = dump.table(&selector, "events", Arc::clone(&plans) as _).unwrap();
     let unrepresentable = "SELECT event_id FROM events WHERE NOT pgdump_unrepresentable(event_id)";
 
     let bare = SessionContext::new();
@@ -223,10 +229,22 @@ async fn a_table_registered_by_hand_reads_an_installed_session_s_settings() {
     assert!(run(&bare, "SET pgdump.memory = 4096").await.is_err());
     assert!(run(&bare, unrepresentable).await.is_err());
 
+    let aggregate = |state: &SessionState| {
+        state.config().options().optimizer.enable_aggregate_dynamic_filter_pushdown
+    };
+    assert!(aggregate(&SessionStateBuilder::new().build()), "DataFusion's default");
+    let unconfigured = ready_session(SessionStateBuilder::new()).build();
+    assert!(unconfigured.config().get_extension::<ScanBudget>().is_some());
+    assert!(!aggregate(&unconfigured));
+
     let budget = Arc::new(ScanBudget::new(1 << 30));
-    let ctx =
-        SessionContext::new_with_config(SessionConfig::new().with_extension(Arc::clone(&budget)));
-    assert!(Arc::ptr_eq(&install(&ctx), &budget), "a session's own budget is kept");
+    let config = SessionConfig::new().with_extension(Arc::clone(&budget));
+    let readied =
+        ready_session(SessionStateBuilder::new_with_default_features().with_config(config)).build();
+    let kept = readied.config().get_extension::<ScanBudget>().unwrap();
+    assert!(Arc::ptr_eq(&kept, &budget), "a session's own budget is kept");
+    assert!(!aggregate(&readied));
+    let ctx = SessionContext::new_with_state(readied);
     ctx.register_table("events", events).unwrap();
     run(&ctx, &format!("SET pgdump.memory = {TAKEN_WHOLE}")).await.unwrap();
     drop(plan(&ctx, "SELECT * FROM events").await);

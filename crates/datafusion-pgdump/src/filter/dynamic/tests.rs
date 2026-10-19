@@ -46,11 +46,10 @@ use pgdt_fixtures::parsed_copy;
 use pgdt_io::Parallelism;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::TableName;
-use pgdt_query::{QueryOptions, RowEvaluation};
+use pgdt_query::{QueryOptions, RowEvaluation, TableSelector};
 
 use super::*;
 use crate::dump::{PgDump, PgDumpOptions};
-use crate::table::PgDumpTable;
 
 /// Generated filters per table.
 const TREES_PER_TABLE: usize = 24;
@@ -460,7 +459,8 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
             let mut projection = None;
             let mut whole = read(&dump, name, &projection, L::default()).await;
             if whole.is_err() {
-                let table = PgDumpTable::build(Arc::clone(&dump), name.clone()).unwrap();
+                let table =
+                    dump.table(&TableSelector::from(name), &name.table, Arc::new(ignore)).unwrap();
                 let mut decodes = Vec::new();
                 for field in table.resolved_schema().schema().fields() {
                     let one = Some(vec![field.name().clone()]);
@@ -682,3 +682,6 @@ fn an_in_list_reaches_the_library_as_one_membership() {
         "{excluded}"
     );
 }
+
+/// A sink hearing nothing, for a table whose findings nothing here reads.
+fn ignore(_: &dyn pgdt_model::Finding) {}

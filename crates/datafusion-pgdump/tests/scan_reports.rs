@@ -19,12 +19,13 @@ use datafusion::physical_plan::metrics::MetricValue;
 use datafusion::physical_plan::{ExecutionPlan, collect, displayable};
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
-    BudgetAccount, BudgetedPlanNote, PgDump, PgDumpOptions, ScanBudget, register_dump,
+    BudgetAccount, BudgetedPlanNote, Located, PgDump, PgDumpOptions, ScanBudget, register_dump,
 };
 use pgdt_fixtures::{parsed_copy, statistics_fixture};
 use pgdt_io::Allowance;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::{DiagnosticSink, Finding, Severity};
+use pgdt_query::TableSelector;
 use pgdt_query::{PlanNote, PlanNoteKind};
 
 /// A group size several `ordered` rows long.
@@ -54,7 +55,8 @@ struct Plans(Mutex<Vec<(Severity, String, PlanNote)>>, Mutex<Vec<BudgetAccount>>
 
 impl DiagnosticSink for Plans {
     fn report(&self, finding: &dyn Finding) {
-        let any = finding.as_any();
+        let Some(located) = finding.as_any().downcast_ref::<Located>() else { return };
+        let any = located.finding.as_any();
         let note = match any.downcast_ref::<BudgetedPlanNote>() {
             Some(budgeted) => {
                 self.1.lock().unwrap().push(budgeted.account.clone());
@@ -145,13 +147,12 @@ async fn a_scan_s_plan_notes_reach_its_table_s_sink_when_it_is_planned() {
         "{heard:#?}"
     );
 
-    // By hand: silent until reported, then under the name it was given.
-    let table = dump.table(None, Some("public"), "ordered").unwrap();
+    // By hand: to the sink it was built with, under the name it was given.
+    let selector = TableSelector::named("ordered").in_schema("public");
+    let table = dump.table(&selector, "o", Arc::clone(&plans) as _).unwrap();
+    assert!(plans.take().is_empty(), "building plans nothing");
     let ctx = session(1);
     ctx.register_table("o", Arc::clone(&table) as _).unwrap();
-    let _plan = plan(&ctx, "SELECT id FROM o WHERE id < 500").await;
-    assert!(plans.take().is_empty());
-    table.report("o", Arc::clone(&plans) as _);
     let _plan = plan(&ctx, "SELECT id FROM o WHERE id < 500").await;
     let heard = plans.take();
     assert!(

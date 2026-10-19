@@ -442,7 +442,12 @@ async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot
     let by_hand = Arc::new(ScanBudget::new(allowance));
     let ctx_by_hand =
         SessionContext::new_with_config(SessionConfig::new().with_extension(Arc::clone(&by_hand)));
-    ctx_by_hand.register_table("w", dump.table(None, None, "widgets").unwrap()).unwrap();
+    ctx_by_hand
+        .register_table(
+            "w",
+            dump.table(&TableSelector::named("widgets"), "widgets", Arc::new(ignore)).unwrap(),
+        )
+        .unwrap();
     assert_eq!(by_hand.resident(), 0);
     let plan =
         ctx_by_hand.sql("SELECT * FROM w").await.unwrap().create_physical_plan().await.unwrap();
@@ -460,16 +465,29 @@ async fn the_resident_statistics_are_billed_and_lower_a_budget_the_margin_cannot
 }
 
 /// **One table on its own is the provider its catalog hands out**, and a name
-/// matching tables in several databases is refused rather than picked.
+/// matching tables in several databases is refused rather than picked, by the
+/// library's own selector.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_single_table_registers_on_its_own() {
     let dir = tempfile::tempdir().unwrap();
     let (_, all) = fixture_dump("edge_cases", "dumpall", dir.path()).await;
-    let refused = all.table(None, Some("public"), "widgets").unwrap_err();
-    assert!(matches!(refused, Error::Table(_)), "{refused}");
+    let refused = all
+        .table(&TableSelector::named("widgets").in_schema("public"), "widgets", Arc::new(ignore))
+        .unwrap_err();
+    let ambiguous = matches!(
+        &refused,
+        Error::Library(pgdt_core::Error::AmbiguousTable { candidates, .. }) if candidates.len() > 1
+    );
+    assert!(ambiguous, "{refused}");
     assert!(refused.to_string().contains("pgdt_tenant"), "{refused}");
 
-    let widgets = all.table(Some("pgdt_tenant"), None, "widgets").unwrap();
+    let widgets = all
+        .table(
+            &TableSelector::named("widgets").in_database("pgdt_tenant"),
+            "widgets",
+            Arc::new(ignore),
+        )
+        .unwrap();
     // One partition, so `collect` answers in file order both times.
     let ctx = session(1, 8192);
     ctx.register_table("w", widgets).unwrap();

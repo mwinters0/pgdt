@@ -8,8 +8,8 @@
 //! a filter pushed `Exact` into a pgdump scan (`crate::filter::pushdown`). Wherever
 //! DataFusion would have to evaluate it instead — projected, under an
 //! expression no scan answers, over another source — evaluating it refuses,
-//! and a session its embedder built [`with_guard`] refuses the plan before it
-//! runs (`docs/design/decisions.md`, "D101").
+//! and a session its embedder readied ([`crate::ready_session`]) refuses the
+//! plan before it runs (`docs/design/decisions.md`, "D101").
 
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ pub const UNREPRESENTABLE_FUNCTION: &str = "pgdump_unrepresentable";
 /// answered in every mode but by a scan alone; refused under the strings
 /// schema mode, which reads no declared type.
 #[derive(Debug, PartialEq, Eq, Hash)]
-pub struct PgDumpUnrepresentable {
+pub(crate) struct PgDumpUnrepresentable {
     signature: Signature,
 }
 
@@ -70,15 +70,15 @@ impl ScalarUDFImpl for PgDumpUnrepresentable {
         false
     }
 
-    /// Reached only in a session built without [`with_guard`], where
+    /// Reached only in a session not readied ([`crate::ready_session`]), where
     /// DataFusion holds the value, not its text. Sound though it refuses at
     /// execution: DataFusion skips it only where the answer does not depend
     /// on it — an `AND`'s or an `OR`'s short circuit, an untaken `CASE`
     /// branch, no rows.
     fn invoke_with_args(&self, _: ScalarFunctionArgs) -> Result<ColumnarValue> {
         exec_err!(
-            "{}; a session built with `datafusion_pgdump::with_unrepresentable_guard` refuses \
-             such a query at planning, before a row is read",
+            "{}; a session readied by `datafusion_pgdump::ready_session` refuses such a query at \
+             planning, before a row is read",
             evaluated_by_datafusion(&format!("{UNREPRESENTABLE_FUNCTION}(…)"))
         )
     }
@@ -98,12 +98,9 @@ fn evaluated_by_datafusion(call: &str) -> String {
 /// appended after every other, refusing at planning a plan in which any node
 /// holds the function among the expressions DataFusion evaluates — a scan's
 /// pushed filters being the library's, no node but a scan answering it
-/// (`docs/design/runtime-invariants.md`, "RT22"). Offered on a builder alone,
-/// so nothing rebuilds a session its embedder owns: one holding a live
-/// [`SessionContext`](datafusion::prelude::SessionContext) rebuilds it through
-/// [`SessionStateBuilder::new_from_existing`], which keeps no prepared
-/// statement.
-pub fn with_guard(mut builder: SessionStateBuilder) -> SessionStateBuilder {
+/// (`docs/design/runtime-invariants.md`, "RT22"). [`crate::ready_session`]
+/// applies it.
+pub(crate) fn with_guard(mut builder: SessionStateBuilder) -> SessionStateBuilder {
     builder
         .scalar_functions()
         .get_or_insert_with(Vec::new)

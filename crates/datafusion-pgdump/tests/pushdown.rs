@@ -176,7 +176,9 @@ async fn a_pushed_filter_keeps_the_rows_datafusion_keeps() {
             let ctx = session();
             let state = ctx.state();
             for name in dump.tables() {
-                let Ok(table) = PgDumpTable::new(Arc::clone(&dump), name.clone()) else {
+                let Ok(table) =
+                    dump.table(&TableSelector::from(name), &name.table, Arc::new(ignore))
+                else {
                     continue;
                 };
                 let resolved = table.resolved_schema().clone();
@@ -362,7 +364,9 @@ async fn sql_pushes_down_what_the_library_answers_and_answers_alike() {
         "t_interval",
         "t_time",
     ] {
-        let provider = dump.table(None, Some("public"), table).unwrap();
+        let provider = dump
+            .table(&TableSelector::named(table).in_schema("public"), table, Arc::new(ignore))
+            .unwrap();
         on.register_table(table, Arc::clone(&provider) as Arc<dyn TableProvider>).unwrap();
         off.register_table(table, Arc::new(NoPushdown(provider))).unwrap();
     }
@@ -373,7 +377,13 @@ async fn sql_pushes_down_what_the_library_answers_and_answers_alike() {
     )
     .await;
     let objects = PgDump::open(objects.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
-    let events = objects.table(None, Some("objects"), "events_2024").unwrap();
+    let events = objects
+        .table(
+            &TableSelector::named("events_2024").in_schema("objects"),
+            "events_2024",
+            Arc::new(ignore),
+        )
+        .unwrap();
     on.register_table("events", Arc::clone(&events) as Arc<dyn TableProvider>).unwrap();
     off.register_table("events", Arc::new(NoPushdown(events))).unwrap();
     let edge = parsed_copy(
@@ -383,7 +393,9 @@ async fn sql_pushes_down_what_the_library_answers_and_answers_alike() {
     )
     .await;
     let edge = PgDump::open(edge.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
-    let widgets = edge.table(None, Some("public"), "widgets").unwrap();
+    let widgets = edge
+        .table(&TableSelector::named("widgets").in_schema("public"), "widgets", Arc::new(ignore))
+        .unwrap();
     on.register_table("widgets", Arc::clone(&widgets) as Arc<dyn TableProvider>).unwrap();
     off.register_table("widgets", Arc::new(NoPushdown(widgets))).unwrap();
     // (query, pushed): whether the scan answers the whole filter itself.
@@ -515,3 +527,6 @@ async fn a_nested_column_s_arrow_notes_are_datafusion_s_comparison() {
     assert!(compare_op_for_nested(Operator::Lt, &negative, &positive).unwrap().value(0));
     assert!(!compare_op_for_nested(Operator::Eq, &negative, &positive).unwrap().value(0));
 }
+
+/// A sink hearing nothing, for a table whose findings nothing here reads.
+fn ignore(_: &dyn pgdt_model::Finding) {}

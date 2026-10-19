@@ -49,6 +49,7 @@ use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy};
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::Finding;
 use pgdt_query::RowEvaluation;
+use pgdt_query::TableSelector;
 
 mod in_order;
 use in_order::{Order, RunScansInOrder};
@@ -383,7 +384,8 @@ fn register(ctx: &SessionContext, dump: &Arc<PgDump>) {
     // The catalog is what installs the session's budget and settings.
     register_dump(ctx, Some("dump"), dump, Arc::new(ignore)).unwrap();
     for name in dump.tables() {
-        let table: Arc<dyn TableProvider> = dump.table(None, None, &name.table).unwrap();
+        let table: Arc<dyn TableProvider> =
+            dump.table(&TableSelector::named(&name.table), &name.table, Arc::new(ignore)).unwrap();
         ctx.register_table(&name.table, table).unwrap();
     }
 }

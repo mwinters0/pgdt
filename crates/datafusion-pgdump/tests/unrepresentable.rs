@@ -47,17 +47,16 @@ use arrow::util::display::{ArrayFormatter, FormatOptions};
 use datafusion::catalog::TableProvider;
 use datafusion::common::DataFusionError;
 use datafusion::datasource::MemTable;
-use datafusion::execution::session_state::SessionStateBuilder;
+use datafusion::execution::session_state::{SessionState, SessionStateBuilder};
 use datafusion::physical_plan::{ExecutionPlan, collect};
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_pgdump::{
-    PgDump, PgDumpOptions, PgDumpSettings, register_dump, with_unrepresentable_guard,
-};
+use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, ready_session, register_dump};
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::cache::{self, CacheStatus, OfflineCache};
 use pgdt_fixtures::{parsed_copy, ungathered};
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSizing};
 use pgdt_model::{Finding, Unrepresentable};
+use pgdt_query::TableSelector;
 use pgdt_query::{RowEvaluation, decode_field};
 
 mod in_order;
@@ -192,6 +191,15 @@ fn session_state(config: Config) -> SessionStateBuilder {
     SessionStateBuilder::new_with_default_features()
         .with_config(options)
         .with_physical_optimizer_rule(Arc::new(RunScansInOrder(config.order)))
+}
+
+/// [`session_state`] readied ([`ready_session`]), so built with the guard,
+/// each dynamic filter as `config` states it, the aggregate's included.
+fn readied(config: Config) -> SessionState {
+    let mut builder = ready_session(session_state(config));
+    let options = builder.config().as_mut().expect("a readied session's config").options_mut();
+    options.optimizer.enable_aggregate_dynamic_filter_pushdown = config.dynamic != Dynamic::Off;
+    builder.build()
 }
 
 /// What the refuse mode does with a case.
@@ -528,7 +536,8 @@ fn register(ctx: &SessionContext, dump: &Arc<PgDump>) {
     // The catalog is what installs the session's budget and settings.
     register_dump(ctx, Some("dump"), dump, Arc::new(ignore)).unwrap();
     for table in TABLES {
-        let provider: Arc<dyn TableProvider> = dump.table(None, None, table).unwrap();
+        let provider: Arc<dyn TableProvider> =
+            dump.table(&TableSelector::named(table), table, Arc::new(ignore)).unwrap();
         ctx.register_table(table, provider).unwrap();
     }
 }
@@ -567,7 +576,11 @@ impl Oracle {
                 .collect()
                 .await
                 .unwrap();
-            let resolved = typed_dump.table(None, None, table).unwrap().resolved_schema().clone();
+            let resolved = typed_dump
+                .table(&TableSelector::named(table), table, Arc::new(ignore))
+                .unwrap()
+                .resolved_schema()
+                .clone();
             let (mut null_columns, mut text_columns, mut text_fields) =
                 (Vec::new(), Vec::new(), Vec::new());
             let mut unrepresentable = 0;
@@ -920,7 +933,8 @@ async fn extremes(major: u32) -> Extremes {
     let reader = SessionContext::new_with_config(SessionConfig::new().with_target_partitions(1));
     let (mut present, mut outside) = (BTreeSet::new(), BTreeMap::new());
     for table in EXTREMES {
-        let provider: Arc<dyn TableProvider> = text_dump.table(None, None, table).unwrap();
+        let provider: Arc<dyn TableProvider> =
+            text_dump.table(&TableSelector::named(table), table, Arc::new(ignore)).unwrap();
         reader.register_table(table, provider).unwrap();
         let batches = reader
             .sql(&format!("SELECT * FROM {table} ORDER BY id"))
@@ -929,7 +943,11 @@ async fn extremes(major: u32) -> Extremes {
             .collect()
             .await
             .unwrap();
-        let resolved = typed_dump.table(None, None, table).unwrap().resolved_schema().clone();
+        let resolved = typed_dump
+            .table(&TableSelector::named(table), table, Arc::new(ignore))
+            .unwrap()
+            .resolved_schema()
+            .clone();
         for batch in &batches {
             let ids = cast(batch.column(0), &DataType::Int32).unwrap();
             let ids = ids.as_any().downcast_ref::<arrow::array::Int32Array>().unwrap();
@@ -1100,9 +1118,7 @@ async fn the_unrepresentable_function_finds_what_the_null_mode_nulls() {
             for mode in MODES {
                 let dump = PgDump::open(copy.to_str().unwrap(), options(mode)).await.unwrap();
                 for config in every_config().into_iter().filter(|c| c.statistics == statistics) {
-                    let ctx = SessionContext::new_with_state(
-                        with_unrepresentable_guard(session_state(config)).build(),
-                    );
+                    let ctx = SessionContext::new_with_state(readied(config));
                     register(&ctx, &dump);
                     for test in TESTED {
                         let mut ids: Vec<String> = test.ids.iter().map(|s| s.to_string()).collect();
@@ -1140,10 +1156,10 @@ async fn refused_at_planning(ctx: &SessionContext, sql: &str) -> DataFusionError
     planned.err().unwrap_or_else(|| panic!("`{sql}` planned"))
 }
 
-/// A session built with the guard.
+/// A session readied, and so built with the guard.
 fn guarded() -> SessionContext {
     SessionContext::new_with_state(
-        with_unrepresentable_guard(SessionStateBuilder::new_with_default_features()).build(),
+        ready_session(SessionStateBuilder::new_with_default_features()).build(),
     )
 }
 
@@ -1208,7 +1224,7 @@ async fn the_unrepresentable_function_refuses_where_datafusion_would_evaluate_it
 /// **Registering a dump registers the function and leaves the session's
 /// planning as its embedder built it**: nothing is rebuilt, so a statement
 /// prepared before survives it. Without the guard a use DataFusion would
-/// evaluate refuses when it is evaluated, naming the guard, and a pushed use
+/// evaluate refuses when it is evaluated, naming the readying, and a pushed use
 /// answers as under it.
 #[tokio::test]
 async fn registering_a_dump_leaves_the_session_s_planning_alone() {
@@ -1227,7 +1243,7 @@ async fn registering_a_dump_leaves_the_session_s_planning_alone() {
         let err = collect(plan, ctx.task_ctx()).await.err();
         let err = err.unwrap_or_else(|| panic!("`{sql}` answered")).to_string();
         assert!(err.contains("DataFusion would have to evaluate it"), "`{sql}`: {err}");
-        assert!(err.contains("with_unrepresentable_guard"), "`{sql}`: {err}");
+        assert!(err.contains("ready_session"), "`{sql}`: {err}");
     }
 
     let sql = "SELECT id FROM t_date WHERE v_date IS NULL AND NOT pgdump_unrepresentable(v_date)";

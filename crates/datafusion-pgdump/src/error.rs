@@ -33,8 +33,9 @@ pub enum Error {
     /// for a file of several databases, where it could name none of them.
     #[error("{0}")]
     CatalogName(String),
-    /// The table asked for is not in the dump, or its name alone matches more
-    /// than one.
+    /// The table asked for is not in the dump. One its selector leaves
+    /// ambiguous is the library's refusal
+    /// ([`pgdt_core::Error::AmbiguousTable`]).
     #[error("{0}")]
     Table(String),
 }

@@ -4,7 +4,7 @@
 //! ([`PgDump::open`]) and registered as one catalog per database
 //! ([`register_dump`]), its PostgreSQL schemas DataFusion schemas and its
 //! tables tables; one table can also be had on its own ([`PgDump::table`]),
-//! registered by hand in a session [`install`] has readied.
+//! registered by hand in a session [`ready_session`] readied.
 //! A scan is the library's partitioned replay, one DataFusion partition per
 //! sub-stream, with the projection pushed into the library by name, a filter
 //! pushed `Exact` wherever the library answers it as DataFusion would, a
@@ -36,18 +36,13 @@
 //! DataFusion observes, as for any of its sources, not `pgdt query`'s earliest
 //! in file order ("D52"), and a partitioned read is not resumable.
 //!
-//! **An embedder should turn
-//! `datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown` off**, as
-//! `pgdt sql` does: DataFusion 55.1's ungrouped-aggregate filter
-//! can lose a column's bounds, and a scan pruning under what is left then
-//! answers a `MIN` or `MAX` wrongly (`KD56`).
-// upstream: UF1
-//!
-//! **An embedder should build its session [`with_unrepresentable_guard`]**, as
-//! `pgdt sql` does: registering a dump registers
-//! `pgdump_unrepresentable` and leaves planning alone, so without the guard a
-//! query DataFusion would have to evaluate the function in refuses when it
-//! does, rather than at planning (`docs/design/decisions.md`, "D101").
+//! **An embedder readies its session with [`ready_session`]**, as `pgdt sql`
+//! does: it refuses at planning a query DataFusion would have to evaluate
+//! `pgdump_unrepresentable` in, which a session not readied refuses only when
+//! it does (`docs/design/decisions.md`, "D101"), and turns off DataFusion
+//! 55.1's ungrouped-aggregate dynamic filter, which can lose a column's bounds
+//! so that a scan pruning under what is left answers a `MIN` or `MAX` wrongly
+//! (`KD56`).
 //!
 //! **Three figures time it, through `pgdt sql`**:
 //! `dynamic-filter-join`, `dynamic-filter-topk` and
@@ -73,17 +68,13 @@ mod table;
 mod unrepresentable;
 
 pub use budget::{BudgetAccount, ScanBudget};
-pub use catalog::{PgDumpCatalog, UNQUALIFIED_SCHEMA, register_dump};
+pub use catalog::{UNQUALIFIED_SCHEMA, register_dump};
 pub use dump::{PgDump, PgDumpOptions};
 pub use error::Error;
-pub use factory::{
-    PGDUMP_FILE_TYPE, PgDumpTableFactory, PgDumpTableOptions, register_table_factory,
-};
+pub use factory::{PGDUMP_FILE_TYPE, register_table_factory};
 pub use key::compare_value_keys;
-pub use report::{BudgetedPlanNote, RefusedTable, UncollatedColumns};
-pub use session::install;
+pub use report::{BudgetedPlanNote, Located, RefusedTable, UncollatedColumns};
+pub use session::ready_session;
 pub use settings::PgDumpSettings;
 pub use table::PgDumpTable;
-pub use unrepresentable::{
-    PgDumpUnrepresentable, UNREPRESENTABLE_FUNCTION, with_guard as with_unrepresentable_guard,
-};
+pub use unrepresentable::UNREPRESENTABLE_FUNCTION;

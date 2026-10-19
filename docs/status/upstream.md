@@ -30,19 +30,21 @@ back. **`UF1`–`UF3` are allocated, and none is reused.**
   typed NULL alone and is not enough. Not on `branch-55` on 2026-09-30.
 - **Fixed when.** The pinned `datafusion` release contains commit `0af68188`
   or a backport of it.
-- **Workaround.** `datafusion-cli-pgdump`, and so `pgdt sql`, sets
-  `datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown` false unless
-  the environment states it. The library cannot: a session is its caller's,
-  and a pushed filter does not say which operator made it, so an aggregate's
-  cannot be told from a TopK's and declined, so an embedder is told to turn
-  it off in the crate's docs (`crates/datafusion-pgdump/src/lib.rs`), and a shell
-  user what it costs to turn on in
+- **Workaround.** Readying a session (`datafusion-pgdump`'s
+  `ready_session`, `crates/datafusion-pgdump/src/session.rs`) sets
+  `datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown` false, a
+  caller wanting it on setting it after; `pgdt sql` readies its session and
+  restores the option where its environment states it. Only a readied session
+  is covered: a pushed filter does not say which operator made it, so an
+  aggregate's cannot be told from a TopK's and declined by the scan. A shell
+  user is told what it costs to turn on in
   [`../manual/pgdt-sql.md`](../manual/pgdt-sql.md),
   "Types". Rejected: patching DataFusion in this workspace, which fixes our
   builds and no consumer's.
 - **Watch.** `crates/datafusion-pgdump/tests/aggregate_bounds.rs` asserts the wrong
   answers with the filter on, and fails at the pin carrying the fix.
-- **When it lands.** Drop the shell's default and its test; turn
+- **When it lands.** Drop the readying's setting, the shell's restoring of
+  it and its test; turn
   `aggregate_bounds.rs`'s filter-on cases into ones asserting the answer;
   strike `KD56`, index and marker; drop the crate docs' and the manual's
   paragraphs; remove the harness's `KD56` exclusion

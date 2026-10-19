@@ -15,9 +15,9 @@ use datafusion::common::config::{ConfigEntry, ConfigExtension, ExtensionOptions}
 use datafusion::common::{Result, plan_err};
 use datafusion::logical_expr::CreateExternalTable;
 use datafusion::prelude::SessionContext;
-use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::cache::StrictIdentity;
 use pgdt_model::{DiagnosticSink, PostgresInvalidValues};
+use pgdt_query::TableSelector;
 
 use crate::budget::ScanBudget;
 use crate::dump::{PgDump, PgDumpOptions};
@@ -34,37 +34,32 @@ pub const PGDUMP_FILE_TYPE: &str = "PGDUMP";
 /// a session that does not validate them refuses an unknown one all the same.
 ///
 /// **The table's name is three options, not one dotted string**, so a
-/// PostgreSQL name holding a `.` needs no quoting rule of ours.
+/// PostgreSQL name holding a `.` needs no quoting rule of ours. **The rest are
+/// a [`PgDumpOptions`]'s**, the modes a dump is opened under, each read as
+/// the library reads its words.
 #[derive(Debug, Clone, Default)]
-pub struct PgDumpTableOptions {
+pub(crate) struct TableOptions {
     /// `pgdump.table`: the table, which is required.
-    pub table: Option<String>,
+    table: Option<String>,
     /// `pgdump.schema`: its PostgreSQL schema, where the name alone matches
     /// the table in more than one.
-    pub schema: Option<String>,
+    schema: Option<String>,
     /// `pgdump.database`: its database, where the file holds several.
-    pub database: Option<String>,
-    /// `pgdump.schema_mode`: `typed`, the default, or `strings`, every column
-    /// as the file's text — the escape hatch from a wrong type mapping.
-    pub schema_mode: SchemaMode,
-    /// `pgdump.unrepresentable`: `null`, the default, reading a value the
-    /// column's type cannot hold as NULL, `text`, reading a column holding
-    /// one as its text, or `refuse` ([`PgDumpOptions::unrepresentable`]).
-    pub unrepresentable: UnrepresentableMode,
-    /// `pgdump.postgres_invalid_values`: `default`, refusing a value
-    /// PostgreSQL refuses for its column's type, or `ignore`
-    /// ([`PgDumpOptions::postgres_invalid_values`]).
-    pub postgres_invalid_values: PostgresInvalidValues,
+    database: Option<String>,
+    /// `pgdump.schema_mode`, `pgdump.unrepresentable` and
+    /// `pgdump.postgres_invalid_values`: the dump's modes, each its default
+    /// unstated.
+    open: PgDumpOptions,
     /// `pgdump.strict_identity`: which identity signals bind for this dump,
     /// in `pgdt --strict-identity`'s grammar. Unstated, the factory's.
-    pub strict_identity: Option<StrictIdentity>,
+    strict_identity: Option<StrictIdentity>,
 }
 
-impl ConfigExtension for PgDumpTableOptions {
+impl ConfigExtension for TableOptions {
     const PREFIX: &'static str = "pgdump";
 }
 
-impl ExtensionOptions for PgDumpTableOptions {
+impl ExtensionOptions for TableOptions {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -86,16 +81,16 @@ impl ExtensionOptions for PgDumpTableOptions {
             "schema" => self.schema = Some(value.to_string()),
             "database" => self.database = Some(value.to_string()),
             "schema_mode" => match value.parse() {
-                Ok(mode) => self.schema_mode = mode,
+                Ok(mode) => self.open.schema_mode = mode,
                 Err(why) => return plan_err!("pgdump.schema_mode: {why}"),
             },
             "unrepresentable" => match value.parse() {
-                Ok(mode) => self.unrepresentable = mode,
+                Ok(mode) => self.open.unrepresentable = mode,
                 Err(why) => return plan_err!("pgdump.unrepresentable: {why}"),
             },
             "postgres_invalid_values" => {
                 match value.parse().and_then(PostgresInvalidValues::queryable) {
-                    Ok(mode) => self.postgres_invalid_values = mode,
+                    Ok(mode) => self.open.postgres_invalid_values = mode,
                     Err(why) => return plan_err!("pgdump.postgres_invalid_values: {why}"),
                 }
             }
@@ -121,7 +116,7 @@ impl ExtensionOptions for PgDumpTableOptions {
             value,
             description,
         };
-        let invalid = match self.postgres_invalid_values {
+        let invalid = match self.open.postgres_invalid_values {
             // `set` refuses `Strict`, a parse's mode, and a scan reads under
             // one stated on the field as under `Default`.
             PostgresInvalidValues::Strict => PostgresInvalidValues::Default,
@@ -133,12 +128,12 @@ impl ExtensionOptions for PgDumpTableOptions {
             entry("database", self.database.clone(), "The table's database."),
             entry(
                 "schema_mode",
-                Some(self.schema_mode.to_string()),
+                Some(self.open.schema_mode.to_string()),
                 "`typed`, or `strings` for every column as the file's text.",
             ),
             entry(
                 "unrepresentable",
-                Some(self.unrepresentable.to_string()),
+                Some(self.open.unrepresentable.to_string()),
                 "`null`, a value its column's type cannot hold read as NULL, `text`, a column holding one read as its text, or `refuse`.",
             ),
             entry(
@@ -172,7 +167,7 @@ impl ExtensionOptions for PgDumpTableOptions {
 /// would bind once, at `CREATE` — the source every scan of the dump shares is
 /// watched from its open — where every other `pgdump.` setting binds at each
 /// scan's plan.
-pub struct PgDumpTableFactory {
+pub(crate) struct PgDumpTableFactory {
     sink: Arc<dyn DiagnosticSink>,
     strict_identity: StrictIdentity,
 }
@@ -184,16 +179,10 @@ impl std::fmt::Debug for PgDumpTableFactory {
 }
 
 impl PgDumpTableFactory {
-    /// A factory opening a dump that states no strictness at
-    /// [`StrictIdentity::ADVISORY`].
-    pub fn new(sink: Arc<dyn DiagnosticSink>) -> Self {
-        Self { sink, strict_identity: StrictIdentity::ADVISORY }
-    }
-
-    /// Open a dump that states no strictness under `strict` instead
-    /// ([`PgDumpOptions::strict_identity`]).
-    pub fn with_strict_identity(self, strict: StrictIdentity) -> Self {
-        Self { strict_identity: strict, ..self }
+    /// A factory reporting to `sink`, opening a dump that states no
+    /// strictness under `strict_identity` ([`PgDumpOptions::strict_identity`]).
+    fn new(sink: Arc<dyn DiagnosticSink>, strict_identity: StrictIdentity) -> Self {
+        Self { sink, strict_identity }
     }
 }
 
@@ -213,51 +202,55 @@ impl TableProviderFactory for PgDumpTableFactory {
         if !cmd.table_partition_cols.is_empty() || !cmd.order_exprs.is_empty() {
             return plan_err!("a PGDUMP table takes no PARTITIONED BY and no WITH ORDER");
         }
-        let mut options = PgDumpTableOptions::default();
+        let mut options = TableOptions::default();
         for (key, value) in &cmd.options {
             options.set(key, value)?;
         }
-        let Some(table) = options.table.as_deref() else {
+        let Some(table) = options.table.take() else {
             return plan_err!("a PGDUMP table needs OPTIONS ('pgdump.table' '<name>')");
         };
+        let mut selector = TableSelector::named(table);
+        if let Some(schema) = options.schema.take() {
+            selector = selector.in_schema(schema);
+        }
+        if let Some(database) = options.database.take() {
+            selector = selector.in_database(database);
+        }
         let open = PgDumpOptions {
-            schema_mode: options.schema_mode,
-            unrepresentable: options.unrepresentable,
-            postgres_invalid_values: options.postgres_invalid_values,
             strict_identity: options.strict_identity.unwrap_or(self.strict_identity),
-            ..PgDumpOptions::default()
+            ..options.open
         };
         let dump = PgDump::open(location, open).await?;
         dump.bill(&ScanBudget::of(state));
         dump.report(self.sink.as_ref());
-        let provider = dump.table(options.database.as_deref(), options.schema.as_deref(), table)?;
-        provider.report(&cmd.name.to_string(), Arc::clone(&self.sink));
-        Ok(provider)
+        Ok(dump.table(&selector, &cmd.name.to_string(), Arc::clone(&self.sink))?)
     }
 }
 
 /// Let `ctx` run `CREATE EXTERNAL TABLE … STORED AS PGDUMP`, reporting what
 /// each registration finds to `sink` and opening a dump whose statement states
 /// no `pgdump.strict_identity` under `strict_identity`, the session's: the
-/// factory keyed [`PGDUMP_FILE_TYPE`] and the [`PgDumpTableOptions`]
-/// extension, the session [`install`](crate::install)ed as
-/// [`crate::catalog::register_dump`] installs it, so every table a statement
+/// factory keyed [`PGDUMP_FILE_TYPE`] and the table options extension naming
+/// its `pgdump.` options, the session given what
+/// [`crate::catalog::register_dump`] gives it, so every table a statement
 /// registers draws on the one budget and `SET pgdump.…` reaches every scan.
 pub fn register_table_factory(
     ctx: &SessionContext,
     sink: Arc<dyn DiagnosticSink>,
     strict_identity: StrictIdentity,
 ) {
-    ctx.register_table_options_extension(PgDumpTableOptions::default());
+    ctx.register_table_options_extension(TableOptions::default());
     install(ctx);
     ctx.state_ref().write().table_factories_mut().insert(
         PGDUMP_FILE_TYPE.to_string(),
-        Arc::new(PgDumpTableFactory::new(sink).with_strict_identity(strict_identity)),
+        Arc::new(PgDumpTableFactory::new(sink, strict_identity)),
     );
 }
 
 #[cfg(test)]
 mod tests {
+    use pgdt_codec::{SchemaMode, UnrepresentableMode};
+
     use super::*;
 
     /// **`pgdump.unrepresentable`'s and `pgdump.postgres_invalid_values`'
@@ -271,14 +264,14 @@ mod tests {
             ("pgdump.postgres_invalid_values", &["default", "ignore"][..]),
         ] {
             for mode in modes {
-                let mut options = PgDumpTableOptions::default();
+                let mut options = TableOptions::default();
                 options.set(key, mode).unwrap();
                 let entries = options.entries();
                 let entry = entries.iter().find(|e| e.key == key).unwrap();
                 assert_eq!(entry.value.as_deref(), Some(*mode));
                 assert!(entry.description.contains(&format!("`{mode}`")), "{}", entry.description);
             }
-            assert!(PgDumpTableOptions::default().set(key, "strict").is_err(), "{key}");
+            assert!(TableOptions::default().set(key, "strict").is_err(), "{key}");
         }
     }
 
@@ -287,12 +280,16 @@ mod tests {
     /// case, with the library's one sentence for it.
     #[test]
     fn a_mode_option_reads_its_words_in_any_case() {
-        let mut options = PgDumpTableOptions::default();
+        let mut options = TableOptions::default();
         options.set("pgdump.schema_mode", "Strings").unwrap();
         options.set("pgdump.unrepresentable", "REFUSE").unwrap();
         options.set("pgdump.postgres_invalid_values", "Ignore").unwrap();
         assert_eq!(
-            (options.schema_mode, options.unrepresentable, options.postgres_invalid_values),
+            (
+                options.open.schema_mode,
+                options.open.unrepresentable,
+                options.open.postgres_invalid_values
+            ),
             (SchemaMode::Strings, UnrepresentableMode::Refuse, PostgresInvalidValues::Ignore)
         );
         let why = PostgresInvalidValues::Strict.queryable().unwrap_err();

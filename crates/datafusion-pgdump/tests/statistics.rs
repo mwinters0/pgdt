@@ -53,6 +53,7 @@ use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy, past_refused, sweep_request};
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::{Finding, TableName};
+use pgdt_query::TableSelector;
 
 /// A sink for a registration whose findings this target is not about.
 fn ignore(_: &dyn Finding) {}
@@ -372,7 +373,8 @@ async fn every_aggregate(
         let from = from(&catalog, table);
         seen.count |=
             agrees(reading, blind, &format!("SELECT COUNT(*) FROM {from}")).await.answered();
-        let provider = dump.table(table.database.as_deref(), None, &table.table).unwrap();
+        let provider =
+            dump.table(&TableSelector::from(table), &table.table, Arc::new(ignore)).unwrap();
         for field in provider.resolved_schema().schema().fields() {
             let column = quoted(field.name());
             // `COUNT(c)` is the table's rows less the column's NULLs, so it
@@ -540,7 +542,9 @@ async fn an_enum_s_extremes_answer_in_label_text_order() {
     let both = "SELECT MIN(m), MAX(m) FROM \"dump\".public.moods";
     assert_eq!(agrees(&reading, &blind, both).await, Answer::FromStatistics, "{both}");
 
-    let table = dump.table(None, Some("public"), "moods").unwrap();
+    let table = dump
+        .table(&TableSelector::named("moods").in_schema("public"), "moods", Arc::new(ignore))
+        .unwrap();
     let m = table.schema().index_of("m").unwrap();
     let enum_type = table.schema().field(m).data_type().clone();
     let state = reading.state();
@@ -636,7 +640,7 @@ async fn a_fetched_or_filtered_plan_states_no_exact_statistic() {
     let copy = parsed_copy(&fixture, scratch.path(), &sweep_request(&fixture)).await;
     let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let (reading, _blind) = sessions();
-    let table = dump.table(None, None, "t_int").unwrap();
+    let table = dump.table(&TableSelector::named("t_int"), "t_int", Arc::new(ignore)).unwrap();
     let state = reading.state();
     let statistics = async |limit, filters: Vec<datafusion::prelude::Expr>| {
         let plan = table.scan(&state, None, &filters, limit).await.unwrap();
@@ -697,7 +701,9 @@ async fn a_distinct_count_is_exact_only_where_every_group_kept_a_dictionary_of_e
     let absent = ["wide", "mixed", "id", "padded", "bare"];
     for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
         let (dump, reading, blind, _) = opened(&spans, schema_mode).await;
-        let table = dump.table(None, Some("public"), "spans").unwrap();
+        let table = dump
+            .table(&TableSelector::named("spans").in_schema("public"), "spans", Arc::new(ignore))
+            .unwrap();
         let state = reading.state();
         let plan = table.scan(&state, None, &[], None).await.unwrap();
         let statistics =
@@ -757,7 +763,13 @@ async fn a_sum_answers_where_every_group_kept_one() {
     let checks = checks.chain(unsummed.into_iter().map(|(dump, t, c)| (dump, t, c, false)));
     for (copy, table_name, column, answers) in checks {
         let (dump, reading, blind, _) = opened(copy, SchemaMode::Typed).await;
-        let table = dump.table(None, Some("public"), table_name).unwrap();
+        let table = dump
+            .table(
+                &TableSelector::named(table_name).in_schema("public"),
+                table_name,
+                Arc::new(ignore),
+            )
+            .unwrap();
         let plan = table.scan(&reading.state(), None, &[], None).await.unwrap();
         let statistics =
             StatisticsContext::new().compute(plan.as_ref(), &StatisticsArgs::new()).unwrap();
@@ -1067,7 +1079,11 @@ async fn estimates_over(fixtures: Vec<PathBuf>) -> Estimates {
             let (ctx, _blind) = sessions_at(3);
             let state = ctx.state();
             for name in dump.tables() {
-                let Ok(table) = PgDumpTable::new(Arc::clone(&dump), name.clone()) else { continue };
+                let Ok(table) =
+                    dump.table(&TableSelector::from(name), &name.table, Arc::new(ignore))
+                else {
+                    continue;
+                };
                 let what =
                     format!("{} in {} ({schema_mode:?})", name.qualified_name(), fixture.display());
                 let projection = readable_columns(&ctx, &table).await;
@@ -1254,7 +1270,11 @@ async fn orderings_over(fixtures: Vec<PathBuf>) -> BTreeMap<usize, bool> {
             let catalogs = register_in((&ctx, &blind), &dump);
             let state = ctx.state();
             for name in dump.tables() {
-                let Ok(table) = PgDumpTable::new(Arc::clone(&dump), name.clone()) else { continue };
+                let Ok(table) =
+                    dump.table(&TableSelector::from(name), &name.table, Arc::new(ignore))
+                else {
+                    continue;
+                };
                 let what =
                     format!("{} in {} at {partitions}", name.qualified_name(), fixture.display());
                 let projection = readable_columns(&ctx, &table).await;
@@ -1488,7 +1508,13 @@ async fn a_join_builds_the_side_its_statistics_call_smaller() {
     );
     let threshold =
         reading.state().config().options().optimizer.hash_join_single_partition_threshold;
-    let long_value = dump.table(None, Some("public"), "long_value").unwrap();
+    let long_value = dump
+        .table(
+            &TableSelector::named("long_value").in_schema("public"),
+            "long_value",
+            Arc::new(ignore),
+        )
+        .unwrap();
     let scan = long_value.scan(&reading.state(), None, &[], None).await.unwrap();
     let statistics =
         StatisticsContext::new().compute(scan.as_ref(), &StatisticsArgs::new()).unwrap();

@@ -16,7 +16,7 @@ use arrow::array::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
-    PgDump, PgDumpOptions, PgDumpTable, RefusedTable, UncollatedColumns, register_dump,
+    Located, PgDump, PgDumpOptions, RefusedTable, UncollatedColumns, register_dump,
     register_table_factory,
 };
 use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
@@ -44,8 +44,15 @@ fn fixture(schema: &str, flag_set: &str) -> PathBuf {
 struct Heard(Mutex<Vec<(Severity, String, &'static str)>>, Mutex<Vec<UncollatedColumns>>);
 
 impl DiagnosticSink for Heard {
+    /// A finding about a dump or a table arrives [`Located`], its sentence
+    /// the subject's and then the library's own.
     fn report(&self, finding: &dyn Finding) {
-        let any = finding.as_any();
+        let located = finding.as_any().downcast_ref::<Located>();
+        if let Some(located) = located {
+            let message = format!("{}: {}", located.subject, located.finding.message());
+            assert_eq!(finding.message(), message);
+        }
+        let any = located.map_or(finding.as_any(), |located| located.finding.as_any());
         if let Some(uncollated) = any.downcast_ref::<UncollatedColumns>() {
             self.1.lock().unwrap().push(uncollated.clone());
         }
@@ -472,14 +479,14 @@ async fn every_refusal_is_the_provider_s_error_over_the_library_s() {
     .unwrap();
     let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
 
-    let err = dump.table(None, None, "u").unwrap_err();
+    let err = dump.table(&TableSelector::named("u"), "u", Arc::new(ignore)).unwrap_err();
     assert!(matches!(err, datafusion_pgdump::Error::Library(_)), "{err:?}");
     core_beneath(&err);
-    let name = dump.tables().iter().find(|name| name.table == "u").unwrap().clone();
-    library_error(&PgDumpTable::new(Arc::clone(&dump), name).unwrap_err());
+    library_error(&DataFusionError::from(err));
 
     let ctx = SessionContext::new();
-    ctx.register_table("t", dump.table(None, None, "t").unwrap()).unwrap();
+    ctx.register_table("t", dump.table(&TableSelector::named("t"), "t", Arc::new(ignore)).unwrap())
+        .unwrap();
     let err = ctx.sql("SELECT * FROM t").await.unwrap().collect().await.unwrap_err();
     assert!(
         matches!(
@@ -521,7 +528,7 @@ async fn a_table_asked_for_at_the_metadata_level_is_refused_as_such() {
     .await
     .unwrap();
     let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
-    let err = dump.table(None, None, "meta").unwrap_err();
+    let err = dump.table(&TableSelector::named("meta"), "meta", Arc::new(ignore)).unwrap_err();
     assert!(matches!(err, datafusion_pgdump::Error::MetadataLevel { .. }), "{err:?}");
 }
 
@@ -604,3 +611,6 @@ async fn a_registration_s_uncollated_columns_are_one_finding() {
     assert!(!statement.columns.is_empty());
     assert!(statement.columns.iter().all(|(table, _)| table == "named"), "{statement:?}");
 }
+
+/// A sink hearing nothing, for a table whose findings nothing here reads.
+fn ignore(_: &dyn pgdt_model::Finding) {}
