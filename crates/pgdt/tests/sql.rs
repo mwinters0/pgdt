@@ -226,22 +226,38 @@ async fn a_scan_setting_is_set_by_sql() {
 }
 
 /// **An ungrouped aggregate's dynamic filter is off unless the environment
-/// states it**, and `SET` turns it on like any other setting.
+/// states it**, and moves under `SET` and `RESET` as the manual says
+/// DataFusion 55.1 moves it: `SET` of it or of
+/// `enable_dynamic_filter_pushdown` turns it on, `RESET` of it restores
+/// DataFusion's default, on, and `RESET` of `enable_dynamic_filter_pushdown`
+/// leaves it as it is.
 // upstream: UF1
 #[test]
 fn the_aggregate_dynamic_filter_is_off_unless_stated() {
     const KEY: &str = "datafusion.optimizer.enable_aggregate_dynamic_filter_pushdown";
+    const UMBRELLA: &str = "datafusion.optimizer.enable_dynamic_filter_pushdown";
     let show = format!("SHOW {KEY}");
     let value = |out: Output| {
         assert!(out.status.success(), "{}", text(&out.stderr));
         text(&out.stdout).lines().last().unwrap().to_owned()
     };
+    // The option's value once `statements` have run in one shell.
+    let after = |statements: &[&str]| {
+        let mut args = vec!["-q"];
+        for statement in statements {
+            args.extend(["-c", statement]);
+        }
+        args.extend(["-c", &show]);
+        value(run(&args))
+    };
+    let (off, on) = (format!("{KEY},false"), format!("{KEY},true"));
 
-    assert_eq!(value(run(&["-q", "-c", &show])), format!("{KEY},false"));
-    assert_eq!(
-        value(run(&["-q", "-c", &format!("SET {KEY} = true"), "-c", &show])),
-        format!("{KEY},true")
-    );
+    assert_eq!(value(run(&["-q", "-c", &show])), off);
+    assert_eq!(after(&[&format!("SET {KEY} = true")]), on);
+    assert_eq!(after(&[&format!("SET {UMBRELLA} = true")]), on);
+    assert_eq!(after(&[&format!("RESET {KEY}")]), on);
+    assert_eq!(after(&[&format!("RESET {UMBRELLA}")]), off);
+    assert_eq!(after(&[&format!("SET {KEY} = true"), &format!("RESET {UMBRELLA}")]), on);
     let stated = common::pgdt()
         .env("DATAFUSION_OPTIMIZER_ENABLE_AGGREGATE_DYNAMIC_FILTER_PUSHDOWN", "true")
         .args(["sql", "--format", "csv", "-q", "-c", &show])
