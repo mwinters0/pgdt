@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 use arrow::datatypes::{DataType, IntervalUnit, TimeUnit};
 
 use super::notes::{NESTED, NESTED_IN_DATAFUSION, NO_ORDER, NOT_MAPPED};
-use super::resolve::{ResolvedExpr, ResolvedTerm, resolve_membership};
+use super::resolve::{ResolvedExpr, ResolvedTerm};
 use super::test_support::*;
 use super::truths::TruthSet;
 use super::*;
@@ -290,17 +290,16 @@ fn an_integer_literal_past_its_width_is_refused_and_one_inside_it_read() {
     let verdict = nested_verdict("smallint[]", &types, PredicateOp::Eq, "{32767}", "{32767}");
     assert_eq!(verdict.unwrap(), Truth::True);
 
-    let membership =
-        Membership { column: "v".into(), values: vec![Some("1".into()), Some("70000".into())] };
-    let err = resolve_membership(
-        &membership,
-        0,
-        &one_column("smallint", DataType::Int16),
-        0,
-        ComparisonSemantics::Postgres,
-    )
-    .unwrap_err();
-    assert!(matches!(&err, Error::PredicateValueDecode { op: "IN", .. }), "{err:?}");
+    let values = vec![Some("1".to_string()), Some("70000".to_string())];
+    for (op, symbol) in
+        [(PredicateOp::In(values.clone()), "IN"), (PredicateOp::NotIn(values), "NOT IN")]
+    {
+        let membership = Expr::Term(Predicate { column: "v".into(), op });
+        let resolved = one_column("smallint", DataType::Int16);
+        let err =
+            resolve_expr(&membership, &resolved, 0, ComparisonSemantics::Postgres).unwrap_err();
+        assert!(matches!(&err, Error::PredicateValueDecode { op, .. } if *op == symbol), "{err:?}");
+    }
 }
 
 /// **In DataFusion's semantics an integer literal is not read at the
@@ -3795,9 +3794,9 @@ mod oracle {
                 let mut terms = Vec::new();
                 for _ in 0..40 {
                     let op = *rng.pick(&OPERATORS);
-                    let literal = match op(String::new()).value() {
-                        None => String::new(),
-                        Some(_) => rng.pick(&literals).to_string(),
+                    let literal = match op(String::new()).operand() {
+                        Operand::Literal(_) => rng.pick(&literals).to_string(),
+                        Operand::None | Operand::Set(_) => String::new(),
                     };
                     let p = Predicate { column: "v".into(), op: op(literal) };
                     if let Ok(term) = resolve_term(&p, 0, &resolved, 0) {

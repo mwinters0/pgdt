@@ -1,5 +1,6 @@
-//! `Expr::In` against the `Or` of `=` it replaces (`docs/design/decisions.md`,
-//! "D53"): **the same rows, the same row groups skipped and the same error**,
+//! `PredicateOp::In` against the `Or` of `=` it replaces, and `NotIn` against
+//! the `Not` over that `Or` (`docs/design/decisions.md`, "D53"): **the same
+//! rows, the same row groups skipped and the same error**,
 //! over every column of the `types`, `statistics`, `edge_cases` and
 //! `partitions` fixtures at every major, with generated lists and trees.
 //!
@@ -9,7 +10,7 @@
 //! that nothing else moved. Per row is the query's rows with statistics off;
 //! per group is the pruning note and the early stops with them on, beside the
 //! rows again; the error is whatever either raises, the membership naming its
-//! operator `IN` where the `Or`'s term names `=`.
+//! operator `IN` or `NOT IN` where the `Or`'s term names `=`.
 //!
 //! **A NULL in a list is referred to a membership of that NULL alone**, the
 //! `Or` of `=` having no NULL literal: `c IN (a, NULL)` against
@@ -32,9 +33,7 @@ use pgdt_io::{LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::{BoundsSet, CopyBlock, DumpIndex, StatisticsView};
-use pgdt_query::{
-    ComparisonNote, EarlyStop, Expr, Membership, PlanNote, Predicate, PredicateOp, QueryOptions,
-};
+use pgdt_query::{ComparisonNote, EarlyStop, Expr, PlanNote, Predicate, PredicateOp, QueryOptions};
 
 mod common;
 use common::{Cold, VERSIONS, fixture, fixtures_root, parsed_copy};
@@ -149,7 +148,11 @@ async fn seen(
 /// An error's text with the membership's operator written as its terms'
 /// would be — the one place the two are worded apart.
 fn named_as_equality(error: &str) -> String {
-    error.replace(" IN ...`", " = ...`").replace("`IN` on column", "`=` on column")
+    error
+        .replace(" NOT IN ...`", " = ...`")
+        .replace(" IN ...`", " = ...`")
+        .replace("`NOT IN` on column", "`=` on column")
+        .replace("`IN` on column", "`=` on column")
 }
 
 /// `dump` mapped into a cache beside a private copy of it, every statistic
@@ -228,10 +231,15 @@ fn pair(column: &str, values: Vec<Option<String>>) -> (Expr, Expr) {
             Some(v) => {
                 Expr::Term(Predicate { column: column.to_string(), op: PredicateOp::Eq(v.clone()) })
             }
-            None => Expr::In(Membership { column: column.to_string(), values: vec![None] }),
+            None => membership(column, PredicateOp::In(vec![None])),
         })
         .collect();
-    (Expr::In(Membership { column: column.to_string(), values }), Expr::Or(disjunction))
+    (membership(column, PredicateOp::In(values)), Expr::Or(disjunction))
+}
+
+/// `column` under the membership `op`.
+fn membership(column: &str, op: PredicateOp) -> Expr {
+    Expr::Term(Predicate { column: column.to_string(), op })
 }
 
 /// A list of one to six values from `pool`, a NULL among them one time in
@@ -380,9 +388,10 @@ async fn check_fixture(
                 continue;
             }
             for _ in 0..LISTS_PER_COLUMN {
-                let (membership, disjunction) = pair(name, list(rng, &pool));
+                let values = list(rng, &pool);
+                let (membership, disjunction) = pair(name, values.clone());
                 let negated = (
-                    Expr::Not(Box::new(membership.clone())),
+                    self::membership(name, PredicateOp::NotIn(values)),
                     Expr::Not(Box::new(disjunction.clone())),
                 );
                 let semantics = if rng.below(3) == 0 { &arrow } else { &base };

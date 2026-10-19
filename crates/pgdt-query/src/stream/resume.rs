@@ -120,14 +120,11 @@ fn hash_expr<H: std::hash::Hasher>(expr: &Expr, hasher: &mut H) {
                 PredicateOp::IsNotDistinctFrom(_) => 9u8,
                 PredicateOp::IsUnrepresentable => 10u8,
                 PredicateOp::IsNotUnrepresentable => 11u8,
+                PredicateOp::In(_) => 12u8,
+                PredicateOp::NotIn(_) => 13u8,
             }
             .hash(hasher);
-            term.op.value().hash(hasher);
-        }
-        Expr::In(membership) => {
-            4u8.hash(hasher);
-            membership.column.hash(hasher);
-            membership.values.hash(hasher);
+            term.op.operand().hash(hasher);
         }
         Expr::And(children) => {
             1u8.hash(hasher);

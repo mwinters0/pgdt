@@ -2904,7 +2904,7 @@ So **the two wins are group pruning**, the clustered join's bounds and the
 TopK's tightening threshold each ruling out all but a handful of groups, and
 the rows evaluated in what is left are too few to price. **Row evaluation acts
 alone on the other two rows.** Each join's filter is
-`k >= lo AND k <= hi AND k IN (v₁, …, vₙ)`, the `IN` one `Expr::In`
+`k >= lo AND k <= hi AND k IN (v₁, …, vₙ)`, the `IN` one `PredicateOp::In` term
 (`decisions.md`, "D53"), and it reaches a row as the membership alone: the
 bounds it implies still prune groups and are dropped from row evaluation
 ("D93"), so a row unescapes the field once and answers by one lookup

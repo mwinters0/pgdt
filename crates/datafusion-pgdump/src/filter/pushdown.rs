@@ -12,7 +12,7 @@
 use datafusion::logical_expr::expr::InList;
 use datafusion::logical_expr::{Between, BinaryExpr, Expr, Operator};
 use pgdt_codec::ResolvedSchema;
-use pgdt_query::{Membership, Predicate, PredicateOp};
+use pgdt_query::{Predicate, PredicateOp};
 
 use super::{boolean_term, boolean_text, column_index, compared, is_float, member, null_term};
 use crate::unrepresentable::UNREPRESENTABLE_FUNCTION;
@@ -22,9 +22,9 @@ use crate::unrepresentable::UNREPRESENTABLE_FUNCTION;
 ///
 /// What translates: `AND`, `OR`, `NOT`; a column compared with a literal by
 /// any of the eight comparing operators, either side first; `IS [NOT] NULL`;
-/// `BETWEEN`, which DataFusion evaluates as the two comparisons; `IN` over a
-/// non-empty list of literals, a `NULL` among them, as one membership, but
-/// for a float column;
+/// `BETWEEN`, which DataFusion evaluates as the two comparisons; `[NOT] IN`
+/// over a non-empty list of literals, a `NULL` among them, as one
+/// [`PredicateOp::In`] or [`PredicateOp::NotIn`] term, but for a float column;
 /// a boolean column standing alone or under `IS [NOT] TRUE|FALSE|UNKNOWN`;
 /// and `pgdump_unrepresentable` over a bare column, any type, nested included,
 /// which only this translation answers ([`crate::unrepresentable`]). A column
@@ -87,9 +87,9 @@ pub(crate) fn translate(filter: &Expr, table: &ResolvedSchema) -> Option<pgdt_qu
                     _ => None,
                 })
                 .collect::<Option<_>>()?;
-            let any =
-                L::In(Membership { column: table.schema.field(index).name().clone(), values });
-            if *negated { L::Not(Box::new(any)) } else { any }
+            let column = table.schema.field(index).name().clone();
+            let op = if *negated { PredicateOp::NotIn(values) } else { PredicateOp::In(values) };
+            L::Term(Predicate { column, op })
         }
         _ => return None,
     })

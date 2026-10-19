@@ -36,7 +36,7 @@ use datafusion::physical_expr::expressions::{
 use datafusion::physical_expr_common::physical_expr::{fmt_sql, snapshot_generation};
 use datafusion::physical_plan::apply_expression_roots;
 use pgdt_codec::ResolvedSchema;
-use pgdt_query::{DynamicFilter, Expr as L, Membership, PredicateOp};
+use pgdt_query::{DynamicFilter, Expr as L, Predicate, PredicateOp};
 
 use super::{boolean_term, boolean_text, compared, is_float, member, null_term};
 
@@ -347,14 +347,16 @@ fn null_test(
         .map_or_else(|| parity.anything(), |index| L::Term(null_term(index, op, table)))
 }
 
-/// A column of `table` in an `IN` list of literals, as one membership
-/// (`docs/design/decisions.md`, "D53"), and `NOT IN` as its negation.
+/// A column of `table` in an `IN` list of literals, as one
+/// [`PredicateOp::In`] term (`docs/design/decisions.md`, "D53"), and `NOT IN`
+/// as one [`PredicateOp::NotIn`], its truth negated, so its list is read
+/// where a row needs it false.
 fn in_list(list: &InListExpr, parity: Parity, table: &ResolvedSchema) -> L {
-    if list.negated() {
-        L::Not(Box::new(membership(list, parity.flip(), table)))
-    } else {
-        membership(list, parity, table)
-    }
+    let negated = list.negated();
+    let read = if negated { parity.flip() } else { parity };
+    let Some((column, values)) = membership(list, read, table) else { return parity.anything() };
+    let op = if negated { PredicateOp::NotIn(values) } else { PredicateOp::In(values) };
+    L::Term(Predicate { column, op })
 }
 
 /// Whether a row's value is among `list`'s, a `NULL` in it answering as SQL's
@@ -364,18 +366,24 @@ fn in_list(list: &InListExpr, parity: Parity, table: &ResolvedSchema) -> L {
 /// equates them ([`is_float`]). That is asked before the list is read, so a
 /// float's `NOT IN` holding a `NULL`, which keeps no row, keeps every row
 /// here; no producer publishes one.
-fn membership(list: &InListExpr, parity: Parity, table: &ResolvedSchema) -> L {
-    let Some(index) = column_at(list.expr(), table) else { return parity.anything() };
+///
+/// `None` where the list has no term, which stands as whatever keeps every
+/// row where it sits.
+fn membership(
+    list: &InListExpr,
+    parity: Parity,
+    table: &ResolvedSchema,
+) -> Option<(String, Vec<Option<String>>)> {
+    let index = column_at(list.expr(), table)?;
     if parity == Parity::Odd && is_float(index, table) {
-        return parity.anything();
+        return None;
     }
-    let values: Option<Vec<Option<String>>> = list
+    let values = list
         .list()
         .iter()
         .map(|item| member(index, item.downcast_ref::<Literal>()?.value(), table))
-        .collect();
-    let Some(values) = values else { return parity.anything() };
-    L::In(Membership { column: table.schema.field(index).name().clone(), values })
+        .collect::<Option<Vec<_>>>()?;
+    Some((table.schema.field(index).name().clone(), values))
 }
 
 /// A `CASE` as its branches alone: the branch answering a row is one of its

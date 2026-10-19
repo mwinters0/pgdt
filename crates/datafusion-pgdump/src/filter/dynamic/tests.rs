@@ -626,9 +626,9 @@ fn a_float_compared_with_a_zero_has_no_term() {
     assert!(matches!(loosened(&compared, &table), L::Term(_)), "{compared}");
 }
 
-/// **Both translators hand an `IN` list over as one membership**, a `NULL`
-/// in it included and `NOT IN` as its negation (`docs/design/decisions.md`,
-/// "D53"); what each answers is the generated checks' — this one's and
+/// **Both translators hand an `IN` list over as one membership term**, a
+/// `NULL` in it included, `IN` as `PredicateOp::In` and `NOT IN` as
+/// `PredicateOp::NotIn` (`docs/design/decisions.md`, "D53"); what each answers is the generated checks' — this one's and
 /// `tests/pushdown.rs`'s.
 #[test]
 fn an_in_list_reaches_the_library_as_one_membership() {
@@ -641,15 +641,17 @@ fn an_in_list_reaches_the_library_as_one_membership() {
     let (k, f): (Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>) =
         (Arc::new(Column::new("k", 0)), Arc::new(Column::new("f", 1)));
     let values = || vec![lit(1i32), lit(ScalarValue::Int32(None)), lit(3i32)];
-    let membership = r#"In(Membership { column: "k", values: [Some("1"), None, Some("3")] })"#;
+    let membership = |op: &str| {
+        format!(r#"Term(Predicate {{ column: "k", op: {op}([Some("1"), None, Some("3")]) }})"#)
+    };
     let listed = in_list(Arc::clone(&k), values(), &false, &schema).unwrap();
-    assert_eq!(format!("{:?}", loosened(&listed, &table)), membership);
+    assert_eq!(format!("{:?}", loosened(&listed, &table)), membership("In"));
     let excluded = in_list(Arc::clone(&k), values(), &true, &schema).unwrap();
-    assert_eq!(format!("{:?}", loosened(&excluded, &table)), format!("Not({membership})"));
+    assert_eq!(format!("{:?}", loosened(&excluded, &table)), membership("NotIn"));
     // A float's `NOT IN` has no term, DataFusion's set keeping `-0` from `0`.
     let floats = vec![lit(1.0f64), lit(2.0f64)];
     let excluded = in_list(Arc::clone(&f), floats, &true, &schema).unwrap();
-    assert_eq!(format!("{:?}", loosened(&excluded, &table)), "Not(Or([]))");
+    assert_eq!(format!("{:?}", loosened(&excluded, &table)), "And([])");
 
     let listed = col("k").in_list(
         vec![logical(1i32), logical(ScalarValue::Int32(None)), logical(3i32), logical(4i32)],
@@ -658,9 +660,12 @@ fn an_in_list_reaches_the_library_as_one_membership() {
     let translated = crate::filter::translate(&listed, &table).unwrap();
     assert_eq!(
         format!("{translated:?}"),
-        r#"In(Membership { column: "k", values: [Some("1"), None, Some("3"), Some("4")] })"#
+        r#"Term(Predicate { column: "k", op: In([Some("1"), None, Some("3"), Some("4")]) })"#
     );
     let excluded = col("k").in_list(vec![logical(1i32), logical(2i32)], true);
     let translated = crate::filter::translate(&excluded, &table).unwrap();
-    assert!(matches!(translated, L::Not(inner) if matches!(*inner, L::In(_))), "{excluded}");
+    assert!(
+        matches!(translated, L::Term(Predicate { op: PredicateOp::NotIn(_), .. })),
+        "{excluded}"
+    );
 }

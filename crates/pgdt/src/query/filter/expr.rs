@@ -394,7 +394,7 @@ fn nary(node: fn(Vec<Expr>) -> Expr, mut children: Vec<Expr>) -> Expr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pgdt_query::PredicateOp;
+    use pgdt_query::{Operand, PredicateOp};
 
     /// A tree rendered as a parenthesised string, so a test can assert shape
     /// and leaves in one comparison.
@@ -405,21 +405,22 @@ mod tests {
                 // one does not, so the rendering reads the way the term was
                 // written.
                 let symbol = term.op.symbol();
-                match term.op.value() {
-                    Some(value) if symbol.starts_with(|c: char| c.is_ascii_alphabetic()) => {
+                match term.op.operand() {
+                    Operand::Literal(value)
+                        if symbol.starts_with(|c: char| c.is_ascii_alphabetic()) =>
+                    {
                         format!("{} {symbol} {value}", term.column)
                     }
-                    Some(value) => format!("{}{symbol}{value}", term.column),
-                    None => format!("{} {symbol}", term.column),
+                    Operand::Literal(value) => format!("{}{symbol}{value}", term.column),
+                    Operand::Set(values) => {
+                        let values: Vec<String> = values
+                            .iter()
+                            .map(|value| value.clone().unwrap_or_else(|| "NULL".into()))
+                            .collect();
+                        format!("{} in [{}]", term.column, values.join("|"))
+                    }
+                    Operand::None => format!("{} {symbol}", term.column),
                 }
-            }
-            Expr::In(membership) => {
-                let values: Vec<String> = membership
-                    .values
-                    .iter()
-                    .map(|value| value.clone().unwrap_or_else(|| "NULL".into()))
-                    .collect();
-                format!("{} in [{}]", membership.column, values.join("|"))
             }
             Expr::And(children) => joined("and", children),
             Expr::Or(children) => joined("or", children),

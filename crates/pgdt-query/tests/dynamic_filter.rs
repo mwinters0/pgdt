@@ -29,9 +29,7 @@ use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::{BoundsSet, DumpIndex, Sortedness, StatisticsView};
-use pgdt_query::{
-    Dump, DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
-};
+use pgdt_query::{Dump, DynamicFilter, Expr, Predicate, PredicateOp, QueryOptions, RowEvaluation};
 
 mod common;
 use common::{VERSIONS, sandboxed, statistics_fixture};
@@ -536,9 +534,9 @@ async fn a_term_no_block_resolves_keeps_every_row_where_it_sits() {
 
 /// `column IN (values)`, no NULL among them.
 fn among(column: &str, values: &[&str]) -> Expr {
-    Expr::In(Membership {
+    Expr::Term(Predicate {
         column: column.into(),
-        values: values.iter().map(|v| Some(v.to_string())).collect(),
+        op: PredicateOp::In(values.iter().map(|v| Some(v.to_string())).collect()),
     })
 }
 

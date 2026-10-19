@@ -1,4 +1,5 @@
 use super::*;
+use pgdt_query::Operand;
 
 /// One parsed comparison term, or the message it was refused with.
 fn filter(spec: &str) -> Result<(String, PredicateOp), String> {
@@ -12,7 +13,9 @@ fn filter(spec: &str) -> Result<(String, PredicateOp), String> {
 /// The column and values of a membership term that must parse.
 fn membership(spec: &str) -> (String, Vec<String>) {
     match parse_filter(spec) {
-        Ok(Expr::In(m)) => (m.column, m.values.into_iter().map(Option::unwrap).collect()),
+        Ok(Expr::Term(Predicate { column, op: PredicateOp::In(values) })) => {
+            (column, values.into_iter().map(Option::unwrap).collect())
+        }
         other => panic!("`{spec}` should be a membership, got {other:?}"),
     }
 }
@@ -129,7 +132,7 @@ fn a_quoted_value_is_taken_as_written() {
 fn both_quote_characters_open_a_value() {
     let (_, double) = ok(r#"name="the answer""#);
     let (_, single) = ok("name='the answer'");
-    assert_eq!(double.value(), Some("the answer"));
+    assert_eq!(double.operand(), Operand::Literal("the answer"));
     assert_eq!(single, double);
 }
 
@@ -138,17 +141,17 @@ fn both_quote_characters_open_a_value() {
 /// be written in the other, with no doubling at all.
 #[test]
 fn an_interior_quote_is_doubled_or_written_in_the_other_quote() {
-    assert_eq!(ok("note='it''s'").1.value(), Some("it's"));
-    assert_eq!(ok(r#"note="say ""hi""""#).1.value(), Some(r#"say "hi""#));
-    assert_eq!(ok(r#"note="it's""#).1.value(), Some("it's"));
+    assert_eq!(ok("note='it''s'").1.operand(), Operand::Literal("it's"));
+    assert_eq!(ok(r#"note="say ""hi""""#).1.operand(), Operand::Literal(r#"say "hi""#));
+    assert_eq!(ok(r#"note="it's""#).1.operand(), Operand::Literal("it's"));
 }
 
 /// A quote that does not open the value is ordinary data, to this parser
 /// and to `--where`'s tokenizer alike.
 #[test]
 fn a_quote_inside_an_unquoted_value_is_data() {
-    assert_eq!(ok("note=don't").1.value(), Some("don't"));
-    assert_eq!(ok(r#"note=a"b"#).1.value(), Some(r#"a"b"#));
+    assert_eq!(ok("note=don't").1.operand(), Operand::Literal("don't"));
+    assert_eq!(ok(r#"note=a"b"#).1.operand(), Operand::Literal(r#"a"b"#));
 }
 
 /// Quotes work on the column side too, and the operator split skips them,
@@ -157,7 +160,7 @@ fn a_quote_inside_an_unquoted_value_is_data() {
 fn a_quoted_column_name_survives_the_split() {
     assert_eq!(ok(r#""my column"=x"#).0, "my column");
     assert_eq!(ok(r#""a=b"=x"#), ("a=b".into(), PredicateOp::Eq("x".into())));
-    assert_eq!(ok(r#" "a=b" = "y=z" "#).1.value(), Some("y=z"));
+    assert_eq!(ok(r#" "a=b" = "y=z" "#).1.operand(), Operand::Literal("y=z"));
 }
 
 /// The split rule is otherwise unchanged: earliest position, longest

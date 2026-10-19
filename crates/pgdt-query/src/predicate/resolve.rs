@@ -19,7 +19,7 @@ use super::notes::{
     ComparisonNote, DivergingPosition, NESTED, NESTED_IN_DATAFUSION, NO_ORDER, NOT_MAPPED,
     announced, compares_as_declared, nested_refusal, unanswerable_reason,
 };
-use super::{Expr, Membership, Predicate, PredicateOp};
+use super::{Expr, Operand, Predicate, PredicateOp};
 
 /// How `=`/`!=` compare two values of a column of `kind`, given the filter's
 /// own literal — settled once, when the block's schema resolves.
@@ -364,16 +364,20 @@ pub(super) fn resolve_term(
     header_offset: u64,
     semantics: ComparisonSemantics,
 ) -> Result<ResolvedTerm> {
-    let Some(text) = predicate.op.value() else {
-        return Ok(ResolvedTerm {
-            op: predicate.op.clone(),
-            index,
-            compared: None,
-            unrepresentable: None,
-            tested: None,
-            invalid: PostgresInvalidValues::Default,
-            not_null: not_null_column(resolved, index, &predicate.column),
-        });
+    let text = match predicate.op.operand() {
+        Operand::Literal(text) => text,
+        Operand::Set(_) => unreachable!("a membership resolves through `resolve_leaf`"),
+        Operand::None => {
+            return Ok(ResolvedTerm {
+                op: predicate.op.clone(),
+                index,
+                compared: None,
+                unrepresentable: None,
+                tested: None,
+                invalid: PostgresInvalidValues::Default,
+                not_null: not_null_column(resolved, index, &predicate.column),
+            });
+        }
     };
     let ordering = predicate.op.is_ordering();
     let refuse = |reason: &str| Error::UnorderedPredicateColumn {
@@ -559,7 +563,9 @@ fn believed_bounds(
     literal_key(kind, text, semantics).map(|key| Box::new((kind.clone(), key)))
 }
 
-/// An [`Expr::In`] resolved against one `COPY` block: the `=` term each
+/// A [`PredicateOp::In`] term resolved against one `COPY` block — and a
+/// [`PredicateOp::NotIn`]'s, beneath the [`ResolvedExpr::Not`] it resolves
+/// to ([`resolve_leaf`]): the `=` term each
 /// non-NULL value resolves to, and the lookup the row path answers from.
 ///
 /// The terms are kept, in list order, because they are what the membership
@@ -670,51 +676,80 @@ impl Lookup {
     }
 }
 
-/// Resolve `membership` against the block's unprojected `resolved` schema,
-/// its column already found at `index`: each non-NULL value as the `=` term
-/// [`resolve_term`] makes of it, in list order, so the first value that
-/// refuses is the one refused — its error naming the operator `IN`.
+/// Resolve the membership of `column` in `values` against the block's
+/// unprojected `resolved` schema, its column already found at `index`: each
+/// non-NULL value as the `=` term [`resolve_term`] makes of it, in list
+/// order, so the first value that refuses is the one refused — its error
+/// naming the membership's operator, `op`.
 pub(super) fn resolve_membership(
-    membership: &Membership,
+    column: &str,
+    values: &[Option<String>],
+    op: &'static str,
     index: usize,
     resolved: &ResolvedSchema,
     header_offset: u64,
     semantics: ComparisonSemantics,
 ) -> Result<ResolvedMembership> {
-    let terms = membership
-        .values
+    let terms = values
         .iter()
         .flatten()
         .map(|value| {
             let equal =
-                Predicate { column: membership.column.clone(), op: PredicateOp::Eq(value.clone()) };
-            resolve_term(&equal, index, resolved, header_offset, semantics).map_err(named_in)
+                Predicate { column: column.to_string(), op: PredicateOp::Eq(value.clone()) };
+            resolve_term(&equal, index, resolved, header_offset, semantics)
+                .map_err(|error| named(error, op))
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(ResolvedMembership {
         index,
-        null: membership.values.iter().any(Option::is_none),
+        null: values.iter().any(Option::is_none),
         lookup: Lookup::of(&terms),
         terms,
         unrepresentable: None,
         invalid: PostgresInvalidValues::Default,
-        not_null: not_null_column(resolved, index, &membership.column),
+        not_null: not_null_column(resolved, index, column),
     })
 }
 
 /// A refusal [`resolve_term`] raised for one value's `=`, re-worded as the
-/// membership's.
-fn named_in(error: Error) -> Error {
-    const IN: &str = "IN";
+/// membership's operator `op`.
+fn named(error: Error, op: &'static str) -> Error {
     match error {
         Error::PredicateValueDecode { column, value, declared_type, accepted, .. } => {
-            Error::PredicateValueDecode { column, op: IN, value, declared_type, accepted }
+            Error::PredicateValueDecode { column, op, value, declared_type, accepted }
         }
         Error::UncomparablePredicateColumn { header_offset, column, reason, .. } => {
-            Error::UncomparablePredicateColumn { header_offset, column, op: IN, reason }
+            Error::UncomparablePredicateColumn { header_offset, column, op, reason }
         }
         other => other,
     }
+}
+
+/// One filter term resolved against the block's unprojected `resolved`
+/// schema, its column already found at `index`: a comparison or a test as
+/// [`resolve_term`] resolves it, `IN` as one [`ResolvedMembership`], and
+/// `NOT IN` as the [`ResolvedExpr::Not`] over its membership, which answers
+/// as `In`'s truth negated and which a dynamic filter's row evaluation reads
+/// no bounds through ([`ResolvedExpr::for_rows`]).
+pub(super) fn resolve_leaf(
+    predicate: &Predicate,
+    index: usize,
+    resolved: &ResolvedSchema,
+    header_offset: u64,
+    semantics: ComparisonSemantics,
+) -> Result<ResolvedExpr> {
+    let membership = |values: &[Option<String>]| {
+        let (column, op) = (&predicate.column, predicate.op.symbol());
+        resolve_membership(column, values, op, index, resolved, header_offset, semantics)
+            .map(ResolvedExpr::In)
+    };
+    Ok(match &predicate.op {
+        PredicateOp::In(values) => membership(values)?,
+        PredicateOp::NotIn(values) => ResolvedExpr::Not(Box::new(membership(values)?)),
+        _ => {
+            ResolvedExpr::Term(resolve_term(predicate, index, resolved, header_offset, semantics)?)
+        }
+    })
 }
 
 impl ResolvedMembership {
@@ -887,20 +922,9 @@ pub(crate) fn resolve_expr(
         })
     };
     Ok(match filter {
-        Expr::Term(predicate) => ResolvedExpr::Term(resolve_term(
-            predicate,
-            column(&predicate.column)?,
-            resolved,
-            header_offset,
-            semantics,
-        )?),
-        Expr::In(membership) => ResolvedExpr::In(resolve_membership(
-            membership,
-            column(&membership.column)?,
-            resolved,
-            header_offset,
-            semantics,
-        )?),
+        Expr::Term(predicate) => {
+            resolve_leaf(predicate, column(&predicate.column)?, resolved, header_offset, semantics)?
+        }
         Expr::And(children) => ResolvedExpr::And(branch(children)?),
         Expr::Or(children) => ResolvedExpr::Or(branch(children)?),
         Expr::Not(inner) => {
@@ -939,19 +963,12 @@ pub(crate) fn resolve_loosened(
         // whatever keeps every row.
         Expr::Term(predicate) if predicate.op.tests_unrepresentable() => None,
         Expr::Term(predicate) => column_position(resolved, &predicate.column).and_then(|index| {
-            resolve_term(predicate, index, resolved, header_offset, semantics)
-                .ok()
-                .map(ResolvedExpr::Term)
-        }),
-        Expr::In(membership) => column_position(resolved, &membership.column).and_then(|index| {
-            resolve_membership(membership, index, resolved, header_offset, semantics)
-                .ok()
-                .map(ResolvedExpr::In)
+            resolve_leaf(predicate, index, resolved, header_offset, semantics).ok()
         }),
         _ => None,
     };
     match filter {
-        Expr::Term(_) | Expr::In(_) => match (leaf, negated) {
+        Expr::Term(_) => match (leaf, negated) {
             (Some(leaf), _) => leaf,
             (None, false) => ResolvedExpr::And(Vec::new()),
             (None, true) => ResolvedExpr::Or(Vec::new()),

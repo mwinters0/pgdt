@@ -468,6 +468,16 @@ fn row_evaluation_drops_only_the_bounds_a_membership_implies() {
     );
     let negated = ResolvedExpr::Not(Box::new(and(vec![term(0, Ge, "1"), list()])));
     assert_eq!(rows(negated), "not(and(0>=, 0in))");
+    let values = vec![Some("1".to_string()), Some("3".to_string())];
+    let excluded = Expr::Term(Predicate { column: "a".into(), op: PredicateOp::NotIn(values) });
+    let excluded = crate::predicate::resolve_expr(
+        &excluded,
+        &schema,
+        0,
+        pgdt_codec::compare::ComparisonSemantics::Postgres,
+    )
+    .unwrap();
+    assert_eq!(rows(and(vec![term(0, Ge, "1"), excluded])), "and(0>=, not(0in))", "`NOT IN`");
     assert_eq!(rows(and(vec![term(1, Ge, "1"), list()])), "and(1>=, 0in)");
 
     // A decoded kind's `=` keys its field, so a bound is implied by key.

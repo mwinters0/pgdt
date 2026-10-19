@@ -1,7 +1,7 @@
 //! One filter term, `--filter`'s whole grammar and `--where`'s leaves.
 
 use anyhow::Result;
-use pgdt_query::{Expr, Membership, Predicate, PredicateOp};
+use pgdt_query::{Expr, Predicate, PredicateOp};
 
 /// A comparing operator before its value is read: the [`PredicateOp`]
 /// variant it spells, as the constructor that takes the value.
@@ -332,7 +332,7 @@ fn unbalanced_quote(what: &str, quote: char, spec: &str) -> anyhow::Error {
 ///
 /// **`IN` has no NULL**: its values are read as `=`'s are, so `null` in the
 /// list is the text `null`, and `c in (a, b)` means `c=a or c=b` exactly —
-/// answered as one [`pgdt_query::Membership`] (`docs/design/decisions.md`,
+/// answered as one [`PredicateOp::In`] term (`docs/design/decisions.md`,
 /// "D53").
 ///
 /// **The `IS` forms are the fallback, not the first test**: an operator
@@ -345,9 +345,9 @@ pub(super) fn parse_filter(spec: &str) -> Result<Expr> {
             column: filter_part(column, "column name", spec)?,
             op: op(filter_part(value, "value", spec)?),
         })),
-        FilterSplit::Op(column, TermOp::In, list) => Ok(Expr::In(Membership {
+        FilterSplit::Op(column, TermOp::In, list) => Ok(Expr::Term(Predicate {
             column: filter_part(column, "column name", spec)?,
-            values: parse_in_list(list, spec)?.into_iter().map(Some).collect(),
+            op: PredicateOp::In(parse_in_list(list, spec)?.into_iter().map(Some).collect()),
         })),
         FilterSplit::UnbalancedQuote(quote) => Err(unbalanced_quote("column name", quote, spec)),
         FilterSplit::NoOperator => {

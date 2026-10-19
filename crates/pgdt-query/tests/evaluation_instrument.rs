@@ -19,8 +19,7 @@ use pgdt_io::{ByteRangeSource, LocalFileSource, Parallelism};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_query::{
-    Dump, DynamicFilter, Expr, Membership, Predicate, PredicateOp, QueryOptions, RowEvaluation,
-    TableSelector,
+    Dump, DynamicFilter, Expr, Predicate, PredicateOp, QueryOptions, RowEvaluation, TableSelector,
 };
 
 mod common;
@@ -58,9 +57,9 @@ fn join_filter() -> Expr {
     Expr::And(vec![
         term(PredicateOp::Ge, "1"),
         term(PredicateOp::Le, &ROWS.to_string()),
-        Expr::In(Membership {
+        Expr::Term(Predicate {
             column: "id".into(),
-            values: (1..=IN_VALUES).map(|v| Some(v.to_string())).collect(),
+            op: PredicateOp::In((1..=IN_VALUES).map(|v| Some(v.to_string())).collect()),
         }),
     ])
 }

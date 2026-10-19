@@ -31,9 +31,7 @@ use pgdt_mapping::statistics::{
     StatisticsLevel, StatisticsRequest, StatisticsSelection, StatisticsTarget,
 };
 use pgdt_model::PostgresInvalidValues;
-use pgdt_query::{
-    Expr, Membership, Predicate, PredicateOp, QueryOptions, TableStream, render_field,
-};
+use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions, TableStream, render_field};
 
 mod common;
 use common::{Cold, types_fixture};
@@ -1582,9 +1580,12 @@ async fn a_float_past_its_range_is_read_as_the_largest_only_when_told_to_ignore_
         (term(PredicateOp::Eq, "1.7976931348623157e+308"), vec![largest.clone()]),
         (term(PredicateOp::Lt, "-1e308"), vec![lowest.clone(), row("3", "-Infinity")]),
         (
-            Expr::In(Membership {
+            Expr::Term(Predicate {
                 column: "v_double".into(),
-                values: vec![Some("-1.7976931348623157e+308".into()), Some("0".into())],
+                op: PredicateOp::In(vec![
+                    Some("-1.7976931348623157e+308".into()),
+                    Some("0".into()),
+                ]),
             }),
             vec![lowest.clone()],
         ),
@@ -1683,9 +1684,9 @@ async fn an_escape_output_dump_reads_and_filters_as_its_hex_twin() {
                     .map(|op| term(op, literal))
             })
             .collect();
-        filters.push(Expr::In(Membership {
+        filters.push(Expr::Term(Predicate {
             column: "v_bytea".into(),
-            values: literals.iter().cloned().map(Some).collect(),
+            op: PredicateOp::In(literals.iter().cloned().map(Some).collect()),
         }));
         for filter in &filters {
             let want = kept(&hex, filter).await;

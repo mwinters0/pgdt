@@ -1,4 +1,5 @@
 use super::*;
+use pgdt_query::PredicateOp;
 
 /// **The structural refusal runs before the term grammar**, so a term
 /// both structural and unparseable is told which of the two it is:
@@ -23,12 +24,14 @@ fn the_flag_refuses_structure_before_it_parses_a_term() {
     let Expr::Term(term) = parse_filter_flag("name=alpha").expect("a plain term") else {
         panic!("a comparison")
     };
-    assert_eq!(term.op.value(), Some("alpha"));
+    assert_eq!(term.op, PredicateOp::Eq("alpha".into()));
     // A membership is one term under either flag, its paren no structure.
-    let Expr::In(membership) = parse_filter_flag("name in (alpha, 'and')").expect("a list") else {
+    let Expr::Term(membership) = parse_filter_flag("name in (alpha, 'and')").expect("a list")
+    else {
         panic!("a membership")
     };
-    assert_eq!(membership.values, [Some("alpha".to_string()), Some("and".to_string())]);
+    let values = vec![Some("alpha".to_string()), Some("and".to_string())];
+    assert_eq!(membership.op, PredicateOp::In(values));
 }
 
 /// The column a comparison term names.

@@ -42,7 +42,11 @@ pub(super) fn resolve_term(
 /// every `Eq`/`Ne` on an unresolved column falls back to, and what the
 /// two NULL tests always are.
 pub(super) fn text_term(p: &Predicate, index: usize) -> ResolvedTerm {
-    let compared = p.op.value().map(|value| ComparedTerm {
+    let value = match p.op.operand() {
+        Operand::Literal(value) => Some(value),
+        Operand::None | Operand::Set(_) => None,
+    };
+    let compared = value.map(|value| ComparedTerm {
         column: p.column.clone(),
         comparison: Comparison::Canonical(Spellings::one(value.to_string())),
         declared_type: String::new(),
@@ -257,11 +261,9 @@ pub(super) fn membership(
     index: usize,
     values: &[Option<&str>],
 ) -> Result<ResolvedMembership> {
-    let membership = Membership {
-        column: schema.schema.field(index).name().clone(),
-        values: values.iter().map(|v| v.map(str::to_string)).collect(),
-    };
-    resolve_membership(&membership, index, schema, 0, ComparisonSemantics::Postgres)
+    let column = schema.schema.field(index).name().clone();
+    let values: Vec<Option<String>> = values.iter().map(|v| v.map(str::to_string)).collect();
+    resolve_membership(&column, &values, "IN", index, schema, 0, ComparisonSemantics::Postgres)
 }
 
 /// A tree's exact value over `row`, as a `Not` above it asks for it.

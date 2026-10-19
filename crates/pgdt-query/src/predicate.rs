@@ -14,12 +14,14 @@ pub(crate) use notes::column_divergences;
 pub(crate) use resolve::{ResolvedExpr, ResolvedTerm, resolve_expr, resolve_loosened};
 pub(crate) use truths::GroupStatistics;
 
-/// A filter term's operator, carrying the value it compares against.
+/// A filter term's operator, carrying the operand it compares against
+/// ([`Self::operand`]).
 ///
 /// The eight comparing operators each hold their literal, the text a
-/// `pgdt query --filter` value or a DataFusion literal spells; the NULL and
-/// unrepresentable tests hold none. So a test cannot be given a value and a
-/// comparison cannot be built without one.
+/// `pgdt query --filter` value or a DataFusion literal spells; the two
+/// memberships hold their list; the NULL and unrepresentable tests hold
+/// none. So a test cannot be given a value and a comparison cannot be built
+/// without one.
 ///
 /// Every operator but the NULL and unrepresentable tests compares typed,
 /// through the column's own [`ComparisonPlan`](pgdt_codec::compare::ComparisonPlan): the four ordering operators decode both sides and
@@ -78,6 +80,38 @@ pub enum PredicateOp {
     /// `col IS NOT DISTINCT FROM <value>` — [`Self::Eq`] with the same NULL
     /// rule, answering [`Truth::False`] on a NULL field.
     IsNotDistinctFrom(String),
+    /// `col IN (<value>, …)`, the values in the order written, answering
+    /// exactly as the [`Expr::Or`] of one [`Self::Eq`] term per value would —
+    /// but finding and decoding its field once a row, and answering by one
+    /// lookup however long the list (`docs/design/decisions.md`, "D53").
+    ///
+    /// A value is read as an `Eq` term's is, once per block, so a literal that
+    /// is not of the column's type is `Error::PredicateValueDecode` for the
+    /// first such value, naming the operator `IN`. **`None` is SQL's `NULL`**,
+    /// which no row equals: it never makes the membership true, and wherever
+    /// no other value matches it makes it [`Truth::Unknown`] rather than
+    /// `False`. A NULL field is `Unknown` against any list with a value in it;
+    /// the empty list is `False` on every row, as the empty disjunction is,
+    /// and a list holding nothing but NULLs reads no field at all, as `= NULL`
+    /// reads none.
+    In(Vec<Option<String>>),
+    /// `col NOT IN (<value>, …)` — [`Self::In`]'s truth negated, as
+    /// [`Expr::Not`] over it answers, so a list holding a NULL keeps no row.
+    /// Only `In` lets a dynamic filter's row evaluation drop the bounds it
+    /// implies (`docs/design/decisions.md`, "D93").
+    NotIn(Vec<Option<String>>),
+}
+
+/// What a [`PredicateOp`] compares its column against
+/// ([`PredicateOp::operand`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Operand<'a> {
+    /// The NULL and unrepresentable tests, which read none.
+    None,
+    /// The literal a comparing operator holds.
+    Literal(&'a str),
+    /// The list a membership holds, `None` a NULL.
+    Set(&'a [Option<String>]),
 }
 
 impl PredicateOp {
@@ -104,12 +138,14 @@ impl PredicateOp {
             Self::IsNotDistinctFrom(_) => "IS NOT DISTINCT FROM",
             Self::IsUnrepresentable => "IS UNREPRESENTABLE",
             Self::IsNotUnrepresentable => "IS NOT UNREPRESENTABLE",
+            Self::In(_) => "IN",
+            Self::NotIn(_) => "NOT IN",
         }
     }
 
-    /// The value this operator compares against: `None` for the NULL tests
-    /// and the unrepresentable tests, which read none.
-    pub fn value(&self) -> Option<&str> {
+    /// What this operator compares against: one literal, a membership's
+    /// list, or nothing for the NULL and unrepresentable tests.
+    pub fn operand(&self) -> Operand<'_> {
         match self {
             Self::Eq(value)
             | Self::Ne(value)
@@ -118,11 +154,12 @@ impl PredicateOp {
             | Self::Gt(value)
             | Self::Ge(value)
             | Self::IsDistinctFrom(value)
-            | Self::IsNotDistinctFrom(value) => Some(value),
+            | Self::IsNotDistinctFrom(value) => Operand::Literal(value),
+            Self::In(values) | Self::NotIn(values) => Operand::Set(values),
             Self::IsNull
             | Self::IsNotNull
             | Self::IsUnrepresentable
-            | Self::IsNotUnrepresentable => None,
+            | Self::IsNotUnrepresentable => Operand::None,
         }
     }
 
@@ -136,7 +173,7 @@ impl PredicateOp {
 /// [`Expr`] — a query carries one expression and keeps a row only if its
 /// root evaluates [`Truth::True`] (`QueryOptions::filter`). `column` is
 /// matched against the queried table's column names, the `COPY` header's
-/// list; `op` carries the value it compares against, if any.
+/// list; `op` carries what it compares against, if anything.
 ///
 /// A NULL field is [`Truth::Unknown`] under every comparing operator, and a
 /// row survives only where the root is `True`. The operators that are
@@ -200,34 +237,9 @@ impl Truth {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Term(Predicate),
-    /// `column IN (…)`, answering exactly as the [`Expr::Or`] of one
-    /// [`PredicateOp::Eq`] term per value would — a `None` value as SQL's
-    /// `= NULL`, which no [`Predicate`] spells — and `NOT IN` as [`Expr::Not`]
-    /// over it — but finding and decoding its field once a row, and answering
-    /// by one lookup however long the list (`docs/design/decisions.md`,
-    /// "D53").
-    In(Membership),
     And(Vec<Expr>),
     Or(Vec<Expr>),
     Not(Box<Expr>),
-}
-
-/// The leaf [`Expr::In`] carries: a column and the values it is tested for
-/// membership of, in the order written.
-///
-/// A value is read as a [`PredicateOp::Eq`] term's is, once per block, so a
-/// literal that is not of the column's type is `Error::PredicateValueDecode`
-/// for the first such value, naming the operator `IN`. **`None` is SQL's
-/// `NULL`**, which no row equals: it never makes the membership true, and
-/// wherever no other value matches it makes it [`Truth::Unknown`] rather than
-/// `False` — so `NOT IN` over a list holding one keeps no row. A NULL field
-/// is `Unknown` against any list with a value in it; the empty list is
-/// `False` on every row, as the empty disjunction is, and a list holding
-/// nothing but NULLs reads no field at all, as `= NULL` reads none.
-#[derive(Debug, Clone)]
-pub struct Membership {
-    pub column: String,
-    pub values: Vec<Option<String>>,
 }
 
 impl Expr {
@@ -249,7 +261,6 @@ impl Expr {
     pub(crate) fn first_unrepresentable_test(&self) -> Option<&Predicate> {
         match self {
             Self::Term(predicate) => predicate.op.tests_unrepresentable().then_some(predicate),
-            Self::In(_) => None,
             Self::And(children) | Self::Or(children) => {
                 children.iter().find_map(Self::first_unrepresentable_test)
             }
