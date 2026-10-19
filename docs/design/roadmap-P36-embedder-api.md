@@ -192,8 +192,7 @@ cluster's disposition is decided in the grilling.
 These were checked and look fine: `Origin`, `OriginProbe`, `Recognized`,
 `KnownCompression`; `CacheClaim` as a type; `StrictIdentity`; `SourceWatch`;
 `MapRun`; `StatisticsSelection` and `StatisticsTarget`; `PlanNote` and
-`PlanLever`; `DynamicFilter` and `DynamicPartitions`; `Expr`, `Membership`
-and `PredicateOp`; `EarlyStop` and `BudgetAccount`; `register_dump`;
+`PlanLever`; `DynamicFilter` and `DynamicPartitions`; `Expr` and `PredicateOp`; `EarlyStop` and `BudgetAccount`; `register_dump`;
 `ScanBudget`; `Error` as a whole (D74); `Unusable` and `RowEndingRefusal`;
 the catalog types; `Finding`, `DiagnosticSink` and `drain`; `SchemaMode` and
 `UnrepresentableMode`; and the contents of every `internal` module.
@@ -505,6 +504,11 @@ These close the rest of clusters C, G and L.
   take one name. `DumpIndex::blocks_for(&str)` goes with the selector.
 - **A filter term's operator carries its value.** Neither `IsNull` with a
   value nor `Eq` without one can be built.
+- **`IN` is an operator, and `NOT IN` beside it.** A membership tests one
+  column against literal operands, as every term does, so it is a
+  `Predicate` whose operator holds the list, `NULL` included, and
+  `Membership` and `Expr::In` go. One accessor answers which operand an
+  operator holds: none, one literal, or a set.
 - **`scan` and `preamble_only` take only the fields they read.** They stop
   taking a `ScanOptions` whose `cancel` they ignore by design (D26), as D77
   already requires of the statistics request.

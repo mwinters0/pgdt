@@ -39,8 +39,8 @@ is gone, a test being the operator whose `value()` is `None`.
 - **D53's `Rejected` line had to change.** Its reason for refusing an `IN`
   operator was that every operator would then carry a list. That stopped
   being true here: each variant now carries its own value. The line now
-  says what still holds. Whether `IN` should become an operator is under
-  STATUS's "Decisions worth another look".
+  says what still holds until 36.13 makes `IN` an operator
+  ([2026-10-19](../status/history/2026-10-19.md), "`IN` is an operator").
 - **Not counted.** This is not one of the three reshapes in "What a hot-path
   slice owes". The row path still matches the operator's tag. What the slice
   changed on that path is the resolved term's size: the operator went from

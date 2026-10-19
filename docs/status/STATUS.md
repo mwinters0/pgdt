@@ -111,6 +111,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.8.1** pgdt-query: the plan's streams — `TablePartitions::in_file_order`, every partition merged on its batches' source offsets into one stream in file order, the earliest failing piece's error raised after the rows before it, its token the whole table's; `TablePartitions::resume`, serial from that token over the plan in hand; `read_table` gone ([notes](../design/roadmap-P36.8.1-file-order-notes.md))
 - [x] **36.8.4** pgdt-query: the cold path onto the `Dump` — an early-stopped pass yielding the owning `Table` for the table it settled, `MappedTable` gone; `max_rows` on the stream; the selector in place of the `&str` pattern and `QueryOptions.database`, `blocks_for` gone; `pgdt query` and the stream entry points opening through `CacheMode::open`, `pgdt query` reading the plan's stream in file order and its merge gone; `claim`, `CacheMode::load`, `CacheLoad` and `pgdt`'s `open_for_scan` gone ([notes](../design/roadmap-P36.8.4-cold-path-notes.md))
 - [x] **36.8.2** pgdt-query: a filter term's operator carrying its value (spec, "The small fixes") — `PredicateOp`'s comparing variants hold their literal, `Predicate` is `{ column, op }`, `takes_no_value` gone ([notes](../design/roadmap-P36.8.2-filter-operators-notes.md))
+- [ ] **36.13** pgdt-query: `IN` and `NOT IN` as `PredicateOp`s holding their list, `Membership` and `Expr::In` gone, one accessor naming an operator's operand in place of `value()`; both front ends building them; D53 rewritten (spec, "The small fixes")
 - [ ] **36.9** pgdt-query: one record per column in `ResolvedSchema`, rendering and `ValueKey` through it; closes `KD121`; counted by `measure.py --count-pair HEAD~1`
 - [ ] **36.10** Errors in library terms, `pgdt`'s spelling layer pinned by a test, the cache's "Not in one place" line struck; closes `KD92`
 - [ ] **36.11** datafusion-pgdump: `PgDump` over a `Dump`, one session-readying function, `Located` public, the sink at construction, `PgDumpTableOptions` folded
@@ -146,24 +147,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A cold `pgdt query` now holds its table's statistics through the replay**
-  (36.8.4, `KD123`). It plans through `Table::plan`, and the
-  `TablePartitions` that returns keeps the matched blocks' statistics for a
-  dynamic filter. The old cold path dropped them before the first row. The
-  replay is still carved around none. The call was to route the cold path
-  through the one plan the spec asks for and record the gap, rather than
-  give `pgdt` a plan of its own. Reconsidering picks one of two fixes. One
-  carves the replay after the pass, around the table's statistics, which
-  moves its status line after the pass's. The other has a plan keep no
-  statistics until a dynamic filter is handed to it, which changes
-  `TablePartitions::under` and so the adapter (36.11).
-- **`IN` stays `Expr::In`, though each operator now carries its value**
-  (36.8.2, D53). D53 refused an `IN` `PredicateOp` because every operator
-  would then carry a list. That reason no longer holds, since each variant
-  carries its own value, so its `Rejected` line now gives the reason that
-  does: one operator would hold a set where every other holds one literal.
-  The call was to correct the reason and leave the membership where it is,
-  because folding it is not this slice's row. Reconsidering makes `IN` a
-  `PredicateOp::In(Vec<Option<String>>)`, answered as an operator by
-  resolution, the row evaluator, the group truths and both front ends.
-  `Expr::In` and `Membership` would then go.
