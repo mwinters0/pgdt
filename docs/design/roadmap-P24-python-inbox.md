@@ -65,3 +65,37 @@ not list, and reads an embedder's sources for `internal` only once
 
 **Origin.** Filed 2026-10-10, grilling the crate split; contingent on D68's
 graph and D106.
+
+---
+
+## An embedder tells one `.xz` failure from another only by naming `xz_seek`
+
+**Fact.** `pgdt_core::Error::Xz` carries `xz_seek`'s error boxed, and
+`Error::xz_cause::<E>()` downcasts it, so a caller distinguishing
+`InvalidTable` from `BlockCheckFailed` depends on `xz-seek` and names its
+type. P36 made the seek table opaque (`pgdt_io::SeekTable`) and left this
+path unweighed; no embedder in the workspace reads it.
+
+**Why P24 cares.** A Python exception hierarchy either maps those causes to
+classes of its own, which needs the binding to name `xz_seek`'s error, or
+reports every `.xz` failure as one class; the library offering the
+distinction in its own terms is the alternative, and a spec change.
+
+**Origin.** P36.2.1's notes, filed at P36's wrap, 2026-10-19; contingent on
+`Error::xz_cause` (`crates/pgdt-core/src/error.rs`).
+
+---
+
+## Every table stream is `'static`, and its type still carries a lifetime
+
+**Fact.** `TableStream<'a>` and `BlockingTableIter<'a>` keep their lifetime
+parameter though every stream a plan hands back owns its source, watch and
+blocks (`Table` and `TablePartitions` hold them by `Arc`), so each is
+`TableStream<'static>` in practice. P36 left the parameter in place because
+dropping it touches the DataFusion adapter's signatures.
+
+**Why P24 cares.** A `pyo3` class cannot hold a borrowing type; the binding
+names `TableStream<'static>`, or the parameter goes first.
+
+**Origin.** P36.8.4's notes, filed at P36's wrap, 2026-10-19; contingent on
+`crates/pgdt-query/src/stream/table.rs`.

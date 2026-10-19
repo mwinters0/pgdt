@@ -145,7 +145,7 @@ our API, CLI, or data until we reach v1.0.
     - [x] CLI text / TSV
     - [x] Parquet, CSV, etc via `pgdt sql`
 - Consumers
-    - [x] Rust library, as layered crates whose dependency graph Cargo enforces
+    - [x] Rust library, as layered crates whose dependency graph Cargo enforces, each API shaped for its embedder
     - [x] DataFusion provider + shell, in the one `pgdt` binary
     - [ ] Python
     - [ ] DuckDB
