@@ -13,7 +13,7 @@ use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use pgdt_codec::{ResolvedSchema, SchemaMode, compare::ComparisonSemantics};
 use pgdt_model::{DiagnosticSink, TableName};
-use pgdt_query::{ComparisonNote, PlanNote, QueryOptions, TableSelector};
+use pgdt_query::{ComparisonNote, PlanNote, QueryOptions, Table, TableSelector};
 
 use crate::budget::{BudgetAccount, ScanBudget, pool_limit};
 use crate::dump::PgDump;
@@ -24,13 +24,14 @@ use crate::report::{BudgetedPlanNote, Located, Reporting, UncollatedColumns};
 use crate::settings::PgDumpSettings;
 use crate::statistics::{output_orderings, scanned, table_statistics};
 
-/// One table of an opened [`PgDump`]. Its schema is settled when it is built,
-/// from the map and the DDL alone ([`pgdt_query::Table::schema`]), so asking
-/// for it reads nothing; a scan is the library's partitioned replay over the
-/// dump's complete map ([`pgdt_query::Table::plan`]).
+/// One table of an opened [`PgDump`], holding the library's [`Table`] it was
+/// resolved into once, when it is built. Its schema is settled then, from the
+/// table's blocks and the DDL alone ([`Table::schema`]), so asking for it
+/// reads nothing; a scan is the library's partitioned replay over those
+/// blocks ([`Table::plan`]).
 pub struct PgDumpTable {
     dump: Arc<PgDump>,
-    name: TableName,
+    table: Table,
     resolved: ResolvedSchema,
     /// How each column's comparison in DataFusion's semantics diverges from
     /// PostgreSQL's, settled with the schema and reported with it.
@@ -50,7 +51,7 @@ impl fmt::Debug for PgDumpTable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PgDumpTable")
             .field("dump", &self.dump.origin())
-            .field("name", &self.name)
+            .field("name", self.table.name())
             .finish()
     }
 }
@@ -68,19 +69,24 @@ impl PgDumpTable {
     /// library refuses too and this names the parse for
     /// ([`Error::MetadataLevel`]).
     pub(crate) fn build(dump: Arc<PgDump>, name: TableName) -> Result<Self, Error> {
-        let unmapped = dump.index().blocks_of(&name).any(|block| block.census.is_none());
+        let table = dump
+            .dump()
+            .table(&TableSelector::from(name))
+            .expect("a selector stating every part selects one table at most")
+            .expect("a table registered over a dump is one of its tables");
+        let unmapped = table.blocks().iter().any(|block| block.census.is_none());
         if unmapped && dump.schema_mode() == SchemaMode::Typed {
             return Err(Error::MetadataLevel {
-                table: describe(&name),
-                parse: dump.parse_at_data_level(&name),
+                table: describe(table.name()),
+                parse: dump.parse_at_data_level(table.name()),
             });
         }
-        let (table, options) = (dump.table_of(&name), query_options(&dump));
+        let options = query_options(&dump);
         let resolved = table.schema(&options)?;
         let divergences = table.divergences(&options)?;
         Ok(Self {
             dump,
-            name,
+            table,
             resolved,
             divergences,
             statistics: OnceLock::new(),
@@ -90,7 +96,7 @@ impl PgDumpTable {
 
     /// The table this provider reads.
     pub fn name(&self) -> &TableName {
-        &self.name
+        self.table.name()
     }
 
     /// The schema and per-column resolution every scan of this table carries,
@@ -163,7 +169,7 @@ impl PgDumpTable {
         if let Some(statistics) = self.statistics.get() {
             return Ok(Arc::clone(statistics));
         }
-        let summary = self.dump.table_of(&self.name).summary(&query_options(&self.dump))?;
+        let summary = self.table.summary(&query_options(&self.dump))?;
         let statistics = Arc::new(table_statistics(&summary, &self.resolved));
         Ok(Arc::clone(self.statistics.get_or_init(|| statistics)))
     }
@@ -257,7 +263,7 @@ impl TableProvider for PgDumpTable {
                 };
                 let tests = translated.tests_unrepresentable();
                 let options = QueryOptions { filter: translated, ..query_options(&self.dump) };
-                match self.dump.table_of(&self.name).schema(&options) {
+                match self.table.schema(&options) {
                     Ok(_) => Ok(TableProviderFilterPushDown::Exact),
                     Err(err) if tests => Err(external(err)),
                     Err(_) => Ok(TableProviderFilterPushDown::Unsupported),
@@ -287,7 +293,7 @@ impl TableProvider for PgDumpTable {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        let source = Arc::clone(self.dump.source());
+        let source = self.table.source();
         let budget = ScanBudget::of(state);
         // A table registered by hand reaches its session's budget only here.
         self.dump.bill(&budget);
@@ -326,11 +332,8 @@ impl TableProvider for PgDumpTable {
             max_rows: state.config().batch_size(),
             ..query_options(&self.dump)
         };
-        let partitions = self
-            .dump
-            .table_of(&self.name)
-            .plan(settings.read_options(), query_options)
-            .map_err(external)?;
+        let partitions =
+            self.table.plan(settings.read_options(), query_options).map_err(external)?;
         self.report_plan(partitions.plan_notes(), draw.account());
         let metrics = ScanMetrics::planned(partitions.plan_notes());
         let partitions = Arc::new(partitions);

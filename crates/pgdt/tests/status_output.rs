@@ -22,7 +22,7 @@ use std::process::Command;
 use pgdt_dump::{ScanOptions, cache};
 use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
 use pgdt_mapping::build_index;
-use pgdt_model::{DumpIndex, DumpMetadata, Span, SpanBody};
+use pgdt_model::{DumpIndex, Span, SpanBody};
 
 mod common;
 use common::{fixture, run, stderr_of};
@@ -82,7 +82,7 @@ async fn write_truncated_cache(dump: &Path, frontier: u64) -> PathBuf {
     let index = DumpIndex {
         spans,
         scanned_through: frontier,
-        metadata: full.metadata.clone().map(|m| DumpMetadata { databases: m.databases }),
+        metadata: full.metadata.clone(),
         roles: full.roles.clone(),
         tablespaces: full.tablespaces.clone(),
         diagnostics: Vec::new(),

@@ -33,8 +33,9 @@ use crate::stream::note::{PlanNote, PlanNoteKind};
 
 /// Everything a replay needs that the mapping pass produced, shared unchanged
 /// by every sub-stream of a partitioned replay
-/// (`docs/design/decisions.md`, "D51"). Held behind an `Arc`, `metadata` being
-/// the whole dump's DDL, and never mutated once shared with a sub-stream —
+/// (`docs/design/decisions.md`, "D51"). Held behind an `Arc`, its `metadata`
+/// the whole dump's DDL shared with the map it was planned over, and never
+/// mutated once shared with a sub-stream —
 /// `plan_replay` writes the derived span onto `query_options`
 /// after the mapping pass and before the `Arc`: the table's columns
 /// in particular — their order, and their census, the union over **every**
@@ -46,7 +47,7 @@ pub(in crate::stream) struct ReplayPlan {
     /// The chunk and the line limit every piece of the replay reads with.
     pub(in crate::stream) read: ReadOptions,
     pub(in crate::stream) query_options: QueryOptions,
-    pub(in crate::stream) metadata: Option<DumpMetadata>,
+    pub(in crate::stream) metadata: Option<Arc<DumpMetadata>>,
     /// The database every matched block is in — the one their spans record,
     /// a table's blocks sharing it (`docs/design/decisions.md`, "D49").
     pub(in crate::stream) database: Option<String>,
@@ -86,10 +87,10 @@ impl ReplayPlan {
         query_options: QueryOptions,
         database: Option<String>,
         matches: &[CopyBlock],
-        metadata: Option<DumpMetadata>,
+        metadata: Option<Arc<DumpMetadata>>,
     ) -> Result<Self> {
         let (table, blocks) =
-            plan_table(database.as_deref(), matches, &query_options, metadata.as_ref())?;
+            plan_table(database.as_deref(), matches, &query_options, metadata.as_deref())?;
         let mut unrepresentable = materialized_unrepresentable(matches, &blocks, &query_options);
         if query_options.unrepresentable == UnrepresentableMode::Refuse
             && !unrepresentable.is_empty()
@@ -100,7 +101,13 @@ impl ReplayPlan {
         }
         let read_as_null = read_as_null(unrepresentable, &query_options);
         let Pruned { kept, stops, note: pruned, rows: kept_rows, value_bytes: kept_value_bytes } =
-            prune_blocks(matches, &blocks, &query_options, metadata.as_ref(), database.as_deref());
+            prune_blocks(
+                matches,
+                &blocks,
+                &query_options,
+                metadata.as_deref(),
+                database.as_deref(),
+            );
         Ok(Self {
             read,
             query_options,
@@ -739,7 +746,7 @@ pub(in crate::stream) fn plan_replay(
     source: &dyn ByteRangeSource,
     database: Option<String>,
     matches: &[CopyBlock],
-    metadata: Option<DumpMetadata>,
+    metadata: Option<Arc<DumpMetadata>>,
     read: ReadOptions,
     query_options: QueryOptions,
 ) -> Result<PlannedReplay> {

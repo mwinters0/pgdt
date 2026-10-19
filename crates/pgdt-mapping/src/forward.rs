@@ -315,14 +315,15 @@ pub async fn map_forward(
                     if metadata_covers.as_ref() != Some(&db) {
                         let spans =
                             splice(&prefix, builder.snapshot(boundary), seg_start, boundary, size);
-                        index.metadata = Some(dump_metadata_from_spans(&spans));
+                        index.metadata = Some(Arc::new(dump_metadata_from_spans(&spans)));
                         metadata_covers = Some(db.clone());
                     }
                     // After the restatement, so the count and the
                     // observer resolve the block against its own
                     // database's DDL.
                     let plan = census.then(|| {
-                        let counter = counter_for(&header, index.metadata.as_ref(), db.as_deref());
+                        let counter =
+                            counter_for(&header, index.metadata.as_deref(), db.as_deref());
                         builder.count_block(Arc::clone(&counter));
                         CensusPlan { width: header.columns.len(), counter }
                     });
@@ -332,7 +333,7 @@ pub async fn map_forward(
                         gather::observer_for(
                             request,
                             &header,
-                            index.metadata.as_ref(),
+                            index.metadata.as_deref(),
                             db.as_deref(),
                             account,
                             invalid,

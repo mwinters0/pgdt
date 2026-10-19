@@ -2,6 +2,8 @@
 //! extended until the queried table is settled, and the census a
 //! metadata-level table lacks.
 
+use std::sync::Arc;
+
 use pgdt_codec::SchemaMode;
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::statistics_loaded;
@@ -23,7 +25,7 @@ use pgdt_mapping::internal::{MapStop, Pass, map_forward, reread_rows, splice};
 pub(super) struct MappedTable {
     pub(super) database: Option<String>,
     pub(super) matches: Vec<CopyBlock>,
-    pub(super) metadata: Option<DumpMetadata>,
+    pub(super) metadata: Option<Arc<DumpMetadata>>,
 }
 
 /// The two checks that are about the *request* rather than about the file, so
@@ -101,7 +103,7 @@ pub(super) async fn map_for_query(
         // own output onto.
         let (metadata, spans, preamble_end, roles, tablespaces) =
             scan_preamble(source, scan_options).await?;
-        index.metadata = Some(metadata);
+        index.metadata = Some(Arc::new(metadata));
         index.spans = splice(&[], spans, 0, preamble_end, size);
         index.roles.extend(roles);
         index.tablespaces.extend(tablespaces);
@@ -175,7 +177,7 @@ pub(super) async fn map_for_query(
         &unfired,
         query_options,
         cache,
-        metadata.as_ref(),
+        metadata.as_deref(),
         database.as_deref(),
         &mut matches,
         size,

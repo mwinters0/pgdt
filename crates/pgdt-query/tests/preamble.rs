@@ -33,7 +33,9 @@ fn not_null(column: ColumnDef) -> ColumnDef {
 async fn single_database(path: &Path) -> DatabaseMetadata {
     let source = LocalFileSource::open(path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    let mut metadata = index.metadata.expect("build_index always populates metadata");
+    let mut metadata = std::sync::Arc::unwrap_or_clone(
+        index.metadata.expect("build_index always populates metadata"),
+    );
     assert_eq!(metadata.databases.len(), 1, "no fixture here is a multi-database dump");
     metadata.databases.pop().unwrap()
 }
@@ -801,7 +803,7 @@ async fn every_dumpall_database_keeps_its_own_version_headers() {
 
         let source = LocalFileSource::open(&fixture).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-        assert_eq!(versions(index.metadata.as_ref().unwrap()), want, "pg_dump {version}: eager");
+        assert_eq!(versions(index.metadata.as_deref().unwrap()), want, "pg_dump {version}: eager");
 
         let (_dir, dump) = sandboxed(&fixture, "dumpall.sql");
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
@@ -817,7 +819,11 @@ async fn every_dumpall_database_keeps_its_own_version_headers() {
         .await
         .unwrap()
         .index;
-        assert_eq!(versions(mapped.metadata.as_ref().unwrap()), want, "pg_dump {version}: mapped");
+        assert_eq!(
+            versions(mapped.metadata.as_deref().unwrap()),
+            want,
+            "pg_dump {version}: mapped"
+        );
     }
 }
 
@@ -948,7 +954,7 @@ async fn a_connection_string_connect_opens_its_own_database() {
     for version in VERSIONS {
         let source = LocalFileSource::open(fixture(version, "emitters", "dumpall")).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-        let metadata = index.metadata.as_ref().unwrap();
+        let metadata = index.metadata.as_deref().unwrap();
         let names: Vec<Option<&str>> =
             metadata.databases.iter().map(|db| db.name.as_deref()).collect();
         let at = names
@@ -1035,7 +1041,7 @@ async fn a_strict_parse_names_what_it_leaves_unchecked_in_the_emitters_schema() 
             assert!(index.blocks().next().is_some(), "{label}");
             for (database, block) in index.blocks_with_database() {
                 let table = block.header.qualified_name();
-                let unchecked = strict_unchecked(block, index.metadata.as_ref(), database);
+                let unchecked = strict_unchecked(block, index.metadata.as_deref(), database);
                 if flag_set == "data-only" {
                     assert!(!unchecked.declared, "{label}: {table}");
                     assert_eq!(
@@ -1143,7 +1149,7 @@ async fn a_partition_s_bound_and_its_root_s_routing_are_named_per_block() {
             let mut named = Vec::new();
             for (database, block) in index.blocks_with_database() {
                 let table = block.header.qualified_name();
-                let unchecked = strict_unchecked(block, index.metadata.as_ref(), database);
+                let unchecked = strict_unchecked(block, index.metadata.as_deref(), database);
                 let expected = match table.as_str() {
                     "public.evt_a" if !via_root => {
                         vec![bound("public.evt_a", "public.evt", "FOR VALUES IN ('a')")]
@@ -1184,7 +1190,7 @@ async fn a_partition_s_bound_and_its_root_s_routing_are_named_per_block() {
             };
             assert_eq!(named, expected, "{label}");
             // The bound is the partition's whichever way its rows load.
-            let db = index.metadata.as_ref().unwrap().databases.first().unwrap();
+            let db = index.metadata.as_deref().unwrap().databases.first().unwrap();
             let feel_a = db.tables["public.feel_a"].partition_of.as_ref().unwrap();
             assert_eq!(
                 (feel_a.parent.as_str(), feel_a.bound.as_deref()),
@@ -1217,7 +1223,7 @@ async fn a_hand_written_partition_hierarchy_is_named_per_block() {
                 .map(|(database, block)| {
                     (
                         block.header.qualified_name(),
-                        strict_unchecked(block, index.metadata.as_ref(), database),
+                        strict_unchecked(block, index.metadata.as_deref(), database),
                     )
                 })
                 .collect::<Vec<_>>()

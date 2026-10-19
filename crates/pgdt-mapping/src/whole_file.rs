@@ -50,7 +50,7 @@ pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) ->
     let roles = builder.roles().clone();
     let tablespaces = builder.tablespaces().clone();
     let mut spans = builder.finish(size);
-    let metadata = Some(dump_metadata_from_spans(&spans));
+    let metadata = Some(Arc::new(dump_metadata_from_spans(&spans)));
     attach_text(source, &mut spans).await?;
     let mut diagnostics = tiling_diagnostics(&spans, size);
     diagnostics.push(toc_coverage_diagnostic(&spans));
@@ -418,7 +418,7 @@ async fn map_file_watched(
         .await;
         match prepass {
             Ok((metadata, spans, preamble_end, roles, tablespaces)) => {
-                index.metadata = Some(metadata);
+                index.metadata = Some(Arc::new(metadata));
                 index.spans = spans;
                 index.roles.extend(roles);
                 index.tablespaces.extend(tablespaces);
@@ -511,7 +511,7 @@ async fn map_file_watched(
         return Ok(interrupted_run(index, resumed_from, &account));
     }
 
-    index.metadata = Some(dump_metadata_from_spans(&index.spans));
+    index.metadata = Some(Arc::new(dump_metadata_from_spans(&index.spans)));
     let mut diagnostics = carried;
     diagnostics.extend(tiling_diagnostics(&index.spans, size));
     diagnostics.push(toc_coverage_diagnostic(&index.spans));

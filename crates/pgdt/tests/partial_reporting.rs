@@ -62,13 +62,13 @@ async fn write_truncated_cache(
         toc_owned: false,
         body: SpanBody::Unscanned,
     });
-    let mut metadata = full.metadata.clone().unwrap();
+    let mut metadata = DumpMetadata::clone(full.metadata.as_ref().unwrap());
     metadata.databases.truncate(keep_databases);
 
     let index = DumpIndex {
         spans,
         scanned_through: frontier,
-        metadata: Some(DumpMetadata { databases: metadata.databases }),
+        metadata: Some(std::sync::Arc::new(metadata)),
         roles: full.roles.clone(),
         tablespaces: full.tablespaces.clone(),
         diagnostics: Vec::new(),

@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 use std::ops::ControlFlow;
+use std::sync::Arc;
 
 use crate::cache::{CacheMode, Held, Opened, SourceWatch};
 use crate::ddl::dump_metadata_from_spans;
@@ -140,7 +141,7 @@ async fn preamble_only_watched(
     if !known {
         let (metadata, mut spans, preamble_end, roles, tablespaces) =
             scan_preamble(source, options).await?;
-        base_index.metadata = Some(metadata);
+        base_index.metadata = Some(Arc::new(metadata));
         base_index.roles.extend(roles);
         base_index.tablespaces.extend(tablespaces);
         base_index.scanned_through = base_index.scanned_through.max(preamble_end);
@@ -177,5 +178,5 @@ async fn preamble_only_watched(
     {
         base_index.diagnostics.push(d);
     }
-    Ok((base_index.metadata.unwrap_or_default(), base_index.diagnostics))
+    Ok((base_index.metadata.map(Arc::unwrap_or_clone).unwrap_or_default(), base_index.diagnostics))
 }

@@ -97,7 +97,7 @@ pub(crate) async fn backfill_statistics(
     which: Backfill,
 ) -> Result<BackfillRun> {
     // Positions into `index.spans`, which nothing below adds to or reorders.
-    let metadata = index.metadata.as_ref();
+    let metadata = index.metadata.as_deref();
     let strict = invalid == PostgresInvalidValues::Strict;
     let gathers = statistics.gathers() && which == Backfill::Lacking;
     let rereads: Vec<(usize, Option<StatisticsBackfill>, bool)> = index
@@ -153,7 +153,7 @@ pub(crate) async fn backfill_statistics(
         let SpanBody::Data(DataBlock::Copy(block)) = body else {
             unreachable!("the positions were read off copy blocks of this span list");
         };
-        if !reader.fill(metadata.as_ref(), database.as_deref(), block, backfill).await? {
+        if !reader.fill(metadata.as_deref(), database.as_deref(), block, backfill).await? {
             cache.save(watch, source, index).await?;
             run.interrupted = true;
             return Ok(run);

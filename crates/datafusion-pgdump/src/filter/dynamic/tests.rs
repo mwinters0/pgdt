@@ -123,8 +123,8 @@ async fn read(
         schema_mode: dump.schema_mode(),
         ..QueryOptions::default()
     };
-    let partitions =
-        dump.table_of(table).plan(ReadOptions::default(), options).map_err(|e| e.to_string())?;
+    let table = dump.dump().table(&table.into()).unwrap().expect("one of the dump's tables");
+    let partitions = table.plan(ReadOptions::default(), options).map_err(|e| e.to_string())?;
     let mut batches = Vec::new();
     for partition in 0..partitions.len() {
         let mut stream = partitions.stream(partition, 1024);
@@ -164,8 +164,8 @@ async fn read_dynamic(
         parallelism: Parallelism::workers(DYNAMIC_JOBS, 1 << 30),
         ..QueryOptions::default()
     };
-    let partitions =
-        dump.table_of(table).plan(ReadOptions::default(), options).map_err(|e| e.to_string())?;
+    let table = dump.dump().table(&table.into()).unwrap().expect("one of the dump's tables");
+    let partitions = table.plan(ReadOptions::default(), options).map_err(|e| e.to_string())?;
     let children =
         collect_columns(tree).into_iter().map(|c| Arc::new(c) as Arc<dyn PhysicalExpr>).collect();
     let dynamic = Arc::new(DynamicFilterPhysicalExpr::new(children, lit(true)));

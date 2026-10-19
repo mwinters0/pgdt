@@ -409,8 +409,10 @@ pub struct DumpIndex {
     /// Dump-level preamble metadata — see [`DumpMetadata`]. `None` only for
     /// a `DumpIndex` built by hand rather than by `pgdt_mapping::build_index`. A derived
     /// view over `spans` (`pgdt_dump::dump_metadata_from_spans`),
-    /// computed once (`docs/design/decisions.md`, "D34").
-    pub metadata: Option<DumpMetadata>,
+    /// computed once (`docs/design/decisions.md`, "D34"), and shared by `Arc`
+    /// with every table and plan read over the map rather than copied into
+    /// each.
+    pub metadata: Option<Arc<DumpMetadata>>,
     /// Roles referenced anywhere the scan has reached — the TOC `Owner:`
     /// field, `ALTER ... OWNER TO`, and `GRANT`/`REVOKE`/`ALTER DEFAULT
     /// PRIVILEGES FOR ROLE`. The pseudo-role `PUBLIC` is never included. Flat and per-file — a

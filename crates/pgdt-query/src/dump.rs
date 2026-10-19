@@ -13,7 +13,7 @@ use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::{Held, Opened, SourceWatch};
 use pgdt_io::ByteRangeSource;
 use pgdt_mapping::MapRun;
-use pgdt_model::{DumpIndex, TableName};
+use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata, TableName};
 
 use crate::options::QueryOptions;
 use crate::predicate::{ComparisonNote, column_divergences};
@@ -28,7 +28,7 @@ use crate::summary::{TableSummary, table_summary};
 /// under.
 ///
 /// **It never maps and never writes.** A table's schema, its summary and its
-/// plan are read off the map and the DDL alone; only a plan's streams read
+/// plan are read off its blocks and the DDL alone; only a plan's streams read
 /// the source, and those read rows ([`Table::plan`]).
 pub struct Dump {
     source: Arc<dyn ByteRangeSource>,
@@ -128,10 +128,12 @@ impl Dump {
         names
     }
 
-    /// The one table `selector` selects ([`TableSelector::selects`]), `None`
-    /// where it selects none, and [`Error::AmbiguousTable`] where it selects
-    /// more than one, naming each (`docs/design/decisions.md`, "D49").
-    pub fn table(&self, selector: &TableSelector) -> Result<Option<Table<'_>>> {
+    /// The one table `selector` selects ([`TableSelector::selects`]), holding
+    /// its blocks and sharing this dump's source, watch and DDL ([`Table`]);
+    /// `None` where it selects none, and [`Error::AmbiguousTable`] where it
+    /// selects more than one, naming each (`docs/design/decisions.md`,
+    /// "D49").
+    pub fn table(&self, selector: &TableSelector) -> Result<Option<Table>> {
         let mut selected = self.tables.iter().filter(|name| selector.selects(name));
         let Some(name) = selected.next() else { return Ok(None) };
         let rest: Vec<&TableName> = selected.collect();
@@ -141,7 +143,13 @@ impl Dump {
                 candidates: std::iter::once(name).chain(rest).map(render_candidate).collect(),
             });
         }
-        Ok(Some(Table { dump: self, name }))
+        Ok(Some(Table {
+            source: Arc::clone(&self.source),
+            watch: Arc::clone(&self.watch),
+            metadata: self.index.metadata.clone(),
+            name: name.clone(),
+            blocks: self.index.blocks_of(name).cloned().collect(),
+        }))
     }
 }
 
@@ -221,24 +229,47 @@ impl fmt::Display for TableSelector {
 }
 
 /// One table of a [`Dump`] ([`Dump::table`]): its schema, its summary and its
-/// plan under a query's options, each read off the dump's complete map and
-/// none reading a byte of the dump.
-#[derive(Clone, Copy)]
-pub struct Table<'a> {
-    dump: &'a Dump,
-    name: &'a TableName,
+/// plan under a query's options, each read off the table's blocks and the
+/// dump's DDL and none reading a byte of the dump.
+///
+/// **It owns what it plans over**: the dump's source, watch and DDL shared by
+/// `Arc`, and its own blocks — every block of the table in the complete map
+/// it was resolved from, cloned once, their statistics shared with that map.
+/// So it outlives the [`Dump`] that resolved it, and a plan made from it
+/// reads the source the blocks describe, checked against the baseline the
+/// map was believed under.
+pub struct Table {
+    source: Arc<dyn ByteRangeSource>,
+    watch: Arc<SourceWatch>,
+    metadata: Option<Arc<DumpMetadata>>,
+    name: TableName,
+    blocks: Vec<CopyBlock>,
 }
 
-impl fmt::Debug for Table<'_> {
+impl fmt::Debug for Table {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Table").field("name", self.name).finish_non_exhaustive()
+        f.debug_struct("Table")
+            .field("name", &self.name)
+            .field("blocks", &self.blocks.len())
+            .finish_non_exhaustive()
     }
 }
 
-impl<'a> Table<'a> {
+impl Table {
     /// The table, exactly.
-    pub fn name(&self) -> &'a TableName {
-        self.name
+    pub fn name(&self) -> &TableName {
+        &self.name
+    }
+
+    /// Every block of the table, in file order.
+    pub fn blocks(&self) -> &[CopyBlock] {
+        &self.blocks
+    }
+
+    /// The source the table's blocks describe, which every plan's streams
+    /// read.
+    pub fn source(&self) -> &Arc<dyn ByteRangeSource> {
+        &self.source
     }
 
     /// The schema a query of this table under `options` resolves, projection
@@ -250,7 +281,8 @@ impl<'a> Table<'a> {
     /// naming a column twice, which only planning refuses: here the column
     /// comes back twice.
     pub fn schema(&self, options: &QueryOptions) -> Result<ResolvedSchema> {
-        table_schema(&self.dump.index, self.name, options)
+        let database = self.name.database.as_deref();
+        table_schema(database, &self.blocks, self.metadata.as_deref(), options)
     }
 
     /// What the map's statistics say about the whole table, against the
@@ -260,8 +292,9 @@ impl<'a> Table<'a> {
     /// (`docs/design/decisions.md`, "D89").
     pub fn summary(&self, options: &QueryOptions) -> Result<TableSummary> {
         let resolved = self.schema(options)?;
-        let reading = options.statistics_view();
-        Ok(table_summary(&self.dump.index, self.name, &resolved, options.semantics, reading))
+        let (database, metadata) = (self.name.database.as_deref(), self.metadata.as_deref());
+        let (semantics, reading) = (options.semantics, options.statistics_view());
+        Ok(table_summary(database, &self.blocks, metadata, &resolved, semantics, reading))
     }
 
     /// How each column's comparison in `options`' semantics diverges from
@@ -277,12 +310,12 @@ impl<'a> Table<'a> {
     /// plan refuses, before a byte is read, and a source the dump's watch
     /// cannot check while it is read (`docs/design/decisions.md`, "D21").
     pub fn plan(&self, read: ReadOptions, options: QueryOptions) -> Result<TablePartitions> {
-        let dump = self.dump;
         TablePartitions::new(
-            Arc::clone(&dump.source),
-            Arc::clone(&dump.watch),
-            &dump.index,
-            self.name,
+            Arc::clone(&self.source),
+            Arc::clone(&self.watch),
+            self.metadata.clone(),
+            &self.name,
+            &self.blocks,
             read,
             options,
         )

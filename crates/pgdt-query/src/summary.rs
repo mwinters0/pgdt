@@ -26,8 +26,8 @@ use pgdt_mapping::internal::{
     believed_under, declared_column, dictionary_holds_field_text, keeps_sums, stored_resolution,
 };
 use pgdt_model::{
-    Bounds, ColumnDictionary, CopyBlock, DumpIndex, DumpMetadata, Sortedness, StatisticsView,
-    TableName, UnrepresentableTier,
+    Bounds, ColumnDictionary, CopyBlock, DumpMetadata, Sortedness, StatisticsView,
+    UnrepresentableTier,
 };
 
 /// What a table's stored statistics amount to, one entry per column of the
@@ -97,8 +97,8 @@ pub struct Bound {
     pub exact: bool,
 }
 
-/// Summarize `table` over `index`, a complete map, against the schema a query
-/// of it resolves and in the semantics that query compares in, reading each
+/// Summarize a table over `blocks`, every block of it in a complete map, in
+/// `database`, against the schema a query of it resolves and in the semantics that query compares in, reading each
 /// column in the view that query reads a value its type cannot hold in
 /// ([`crate::QueryOptions::statistics_view`]).
 ///
@@ -113,13 +113,13 @@ pub struct Bound {
 /// view taking every value reads nowhere such a value is
 /// (`docs/design/decisions.md`, "D97", "D98").
 pub(crate) fn table_summary(
-    index: &DumpIndex,
-    table: &TableName,
+    database: Option<&str>,
+    blocks: &[CopyBlock],
+    metadata: Option<&DumpMetadata>,
     resolved: &ResolvedSchema,
     semantics: ComparisonSemantics,
     reading: StatisticsView,
 ) -> TableSummary {
-    let metadata = index.metadata.as_ref();
     let fields = resolved.schema.fields();
     let mut accumulators: Vec<Accumulator> = (0..fields.len())
         .map(|i| {
@@ -143,7 +143,7 @@ pub(crate) fn table_summary(
         })
         .collect();
     let mut rows = 0;
-    for block in index.blocks_of(table) {
+    for block in blocks {
         rows += block.row_count;
         let Some(statistics) = block.statistics.as_deref() else {
             accumulators.iter_mut().for_each(Accumulator::uncounted);
@@ -153,7 +153,7 @@ pub(crate) fn table_summary(
             accumulators.iter_mut().for_each(Accumulator::uncounted);
             continue;
         }
-        let (database, qualified) = (table.database.as_deref(), block.header.qualified_name());
+        let qualified = block.header.qualified_name();
         let gathered = stored_resolution(&block.header, metadata, database);
         let tiers = column_tiers(&gathered);
         let mut seen = vec![false; fields.len()];

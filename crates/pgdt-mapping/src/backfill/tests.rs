@@ -89,7 +89,7 @@ async fn every_fixture_block_past_its_cap_gathers_what_its_final_size_gathers() 
     for fixture in all_fixtures() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&fixture).unwrap());
         let index = mapped(source.clone(), &StatisticsRequest::METADATA).await;
-        let metadata = index.metadata.as_ref();
+        let metadata = index.metadata.as_deref();
         let refused = refused_field(&fixture).map(|r| r.table);
         // A block holding a field PostgreSQL refuses is refused by every
         // re-read (`pgdt-query`'s `tests/decode.rs`,
@@ -169,7 +169,7 @@ async fn every_fixture_block_sized_by_its_minimum_gathers_what_its_final_size_ga
     for fixture in all_fixtures() {
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&fixture).unwrap());
         let index = mapped(source.clone(), &StatisticsRequest::METADATA).await;
-        let metadata = index.metadata.as_ref();
+        let metadata = index.metadata.as_deref();
         let refused = refused_field(&fixture).map(|r| r.table);
         // A block holding a field PostgreSQL refuses is refused by every
         // re-read (`pgdt-query`'s `tests/decode.rs`,
@@ -230,7 +230,7 @@ async fn a_held_column_lacks_bounds_only_where_gathering_keeps_them() {
     let dump = statistics_fixture(16, "default");
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let index = mapped(source, &StatisticsRequest::DATA).await;
-    let metadata = index.metadata.as_ref();
+    let metadata = index.metadata.as_deref();
     let ordered = index.blocks_for("public.ordered").next().unwrap();
     let bounded = bounded_columns(ordered, metadata, None);
     assert!(bounded.iter().all(|&b| b), "every column of `ordered` is bounded: {bounded:?}");

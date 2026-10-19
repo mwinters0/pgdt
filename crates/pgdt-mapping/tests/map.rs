@@ -66,7 +66,7 @@ async fn metadata_from_spans_is_a_pure_function_of_the_spans() {
         let source = LocalFileSource::open(&path).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
         let from_spans = dump_metadata_from_spans(&index.spans);
-        assert_eq!(from_spans, index.metadata.unwrap(), "{}", path.display());
+        assert_eq!(from_spans, *index.metadata.unwrap(), "{}", path.display());
     }
 }
 

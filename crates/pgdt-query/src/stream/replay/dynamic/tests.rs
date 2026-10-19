@@ -53,7 +53,7 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
     .unwrap();
     let block = run.index.blocks_for("public.t").next().unwrap();
     let statistics = Arc::clone(block.statistics.as_ref().unwrap());
-    let metadata = run.index.metadata.as_ref();
+    let metadata = run.index.metadata.as_deref();
     let census = vec![ArrayShape::default(); block.header.columns.len()];
     let full = resolve_block(
         &block.header,

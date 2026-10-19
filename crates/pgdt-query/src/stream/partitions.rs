@@ -15,7 +15,7 @@ use pgdt_core::Result;
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, Partitioning};
-use pgdt_model::{BlockStatistics, CopyBlock, DumpIndex, Sortedness, TableName};
+use pgdt_model::{BlockStatistics, CopyBlock, DumpMetadata, Sortedness, TableName};
 
 use super::mapping::{MappedTable, map_for_query, validate_request};
 use super::note::PlanNote;
@@ -150,8 +150,9 @@ pub struct TablePartitions {
 }
 
 impl TablePartitions {
-    /// Plan the replay of `table` over `index`, a complete map of `source`:
-    /// its columns, every block resolved, statistics consulted, and the blocks
+    /// Plan the replay of `table` over `blocks`, every block of it in a
+    /// complete map of `source`, against `metadata`, the dump's DDL: its
+    /// columns, every block resolved, statistics consulted, and the blocks
     /// cut into as many partitions as `query_options.parallelism` and the
     /// source's own advice allow — the same plan
     /// [`table_stream_partitions`](crate::stream::partitions::table_stream_partitions) makes after its mapping pass. A
@@ -160,19 +161,19 @@ impl TablePartitions {
     pub(crate) fn new(
         source: Arc<dyn ByteRangeSource>,
         watch: Arc<SourceWatch>,
-        index: &DumpIndex,
+        metadata: Option<Arc<DumpMetadata>>,
         table: &TableName,
+        blocks: &[CopyBlock],
         read: ReadOptions,
         query_options: QueryOptions,
     ) -> Result<Self> {
         validate_request(&query_options, None, 0)?;
         watch.require_checkable(source.as_ref())?;
-        let matches: Vec<CopyBlock> = index.blocks_of(table).cloned().collect();
         let PlannedReplay { plan, groups, plan_notes, advice } = plan_replay(
             source.as_ref(),
             table.database.clone(),
-            &matches,
-            index.metadata.clone(),
+            blocks,
+            metadata,
             read,
             query_options,
         )?;
@@ -185,19 +186,19 @@ impl TablePartitions {
             .unwrap_or_default();
         let reading = plan.query_options.statistics_view();
         let orders = partition_orders(
-            &matches,
-            index.metadata.as_ref(),
+            blocks,
+            plan.metadata.as_deref(),
             plan.database.as_deref(),
             &resolved,
             &block_runs(&groups),
             reading,
         );
         let use_statistics = plan.query_options.use_statistics;
-        let matches: Vec<CopyBlock> = matches
-            .into_iter()
+        let matches: Vec<CopyBlock> = blocks
+            .iter()
             .map(|block| match use_statistics {
-                true => block,
-                false => CopyBlock { statistics: None, ..block },
+                true => block.clone(),
+                false => CopyBlock { statistics: None, ..block.clone() },
             })
             .collect();
         let statistics = matches
@@ -356,7 +357,7 @@ impl TablePartitions {
         if self.orders.iter().all(|order| *order == Sortedness::Unsorted) {
             return true;
         }
-        let (metadata, database) = (self.plan.metadata.as_ref(), self.plan.database.as_deref());
+        let (metadata, database) = (self.plan.metadata.as_deref(), self.plan.database.as_deref());
         let resolved = self.resolved_schema();
         let reading = self.plan.query_options.statistics_view();
         let runs = block_runs(groups);

@@ -11,7 +11,7 @@ use futures::Stream;
 
 use pgdt_codec::ResolvedSchema;
 use pgdt_core::Result;
-use pgdt_model::{CopyBlock, DumpIndex, TableName};
+use pgdt_model::{CopyBlock, DumpMetadata};
 
 use super::note::{EarlyStop, PlanNote};
 use super::replay::plan::plan_table;
@@ -206,9 +206,10 @@ impl StreamShared {
     }
 }
 
-/// The schema a query of `table` would resolve over `index`, a complete map,
-/// read off the map and the DDL alone ([`Table::schema`](crate::Table::schema)):
-/// no byte of the dump is read, and nothing is asked of a source.
+/// The schema a query of a table would resolve over `blocks`, every block of
+/// it in a complete map, in `database`, read off the blocks and the DDL alone
+/// ([`Table::schema`](crate::Table::schema)): no byte of the dump is read,
+/// and nothing is asked of a source.
 ///
 /// It is the schema every batch of that query carries, projection included
 /// ([`TableColumns`](super::replay::plan::TableColumns)), read off the
@@ -217,19 +218,18 @@ impl StreamShared {
 /// projected name no block carries — but for the refuse mode's, which only
 /// planning the replay raises, and a projection naming a column twice, which
 /// only the query's request check refuses: here the column comes back twice.
-/// A table the map holds no block for has the empty schema, as its stream
-/// has no rows. A complete map is what [`Dump`](crate::Dump) holds by
+/// A table with no block has the empty schema, as its stream has no rows.
+/// Every block of a complete map is what a [`Table`](crate::Table) holds by
 /// construction: a table's later blocks are part of its census and of its
 /// column-set check.
 pub(crate) fn table_schema(
-    index: &DumpIndex,
-    table: &TableName,
+    database: Option<&str>,
+    blocks: &[CopyBlock],
+    metadata: Option<&DumpMetadata>,
     query_options: &QueryOptions,
 ) -> Result<ResolvedSchema> {
-    let matches: Vec<CopyBlock> = index.blocks_of(table).cloned().collect();
-    let (_, blocks) =
-        plan_table(table.database.as_deref(), &matches, query_options, index.metadata.as_ref())?;
-    Ok(blocks.into_values().next().map(|planned| planned.resolved).unwrap_or_default())
+    let (_, planned) = plan_table(database, blocks, query_options, metadata)?;
+    Ok(planned.into_values().next().map(|planned| planned.resolved).unwrap_or_default())
 }
 
 /// Blocking [`Iterator`] wrapper over a [`TableStream`], for sync callers

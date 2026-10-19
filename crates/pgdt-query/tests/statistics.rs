@@ -1044,7 +1044,7 @@ async fn a_text_column_held_without_bounds_is_reread_for_them() {
     // The block alone, back-filled, is what the pass below makes of it.
     let source = LocalFileSource::open(&dump).unwrap();
     let mut unbounded = block(&older, "public.ordered").clone();
-    let (request, metadata) = (StatisticsRequest::DATA, older.metadata.as_ref());
+    let (request, metadata) = (StatisticsRequest::DATA, older.metadata.as_deref());
     let read = backfilled(&source, &serial(), &request, metadata, &mut unbounded).await;
     assert!(read.unwrap(), "a bounded column held without bounds lacks them");
     assert_eq!(&unbounded, block(&fresh, "public.ordered"));
@@ -1177,13 +1177,14 @@ async fn one_block_is_gathered_on_its_own() {
     let source = LocalFileSource::open(&dump).unwrap();
     let mut ordered = block(&bare, "public.ordered").clone();
     assert!(ordered.census.is_none(), "mapped at the metadata level");
-    let read = backfilled(&source, &serial(), &wanted, bare.metadata.as_ref(), &mut ordered).await;
+    let read =
+        backfilled(&source, &serial(), &wanted, bare.metadata.as_deref(), &mut ordered).await;
     assert!(read.unwrap(), "it holds no statistics");
     let gathered = block(&reference, "public.ordered");
     assert_eq!(&ordered, gathered);
     let mut again = gathered.clone();
     let read =
-        backfilled(&source, &serial(), &wanted, reference.metadata.as_ref(), &mut again).await;
+        backfilled(&source, &serial(), &wanted, reference.metadata.as_deref(), &mut again).await;
     assert!(!read.unwrap(), "it lacks nothing");
     assert_eq!(&again, gathered);
 }
@@ -2552,7 +2553,7 @@ async fn a_block_rewritten_at_the_same_size_is_refused() {
     );
     assert!(err.to_string().contains(&cache_path.display().to_string()), "{err}");
 
-    let (request, metadata) = (StatisticsRequest::DATA, mapped.metadata.as_ref());
+    let (request, metadata) = (StatisticsRequest::DATA, mapped.metadata.as_deref());
     let mut moved = mapped_block.clone();
     let read = backfilled(source.as_ref(), &serial(), &request, metadata, &mut moved).await;
     let err = read.expect_err("the block moved");
@@ -2731,7 +2732,7 @@ async fn one_block_backfilled_past_its_allowance_declines_until_a_larger_one() {
     let allowance = tight.statistics_allowance().unwrap();
 
     let bare = gathered(&dump, &StatisticsRequest::METADATA).await;
-    let metadata = bare.metadata.as_ref();
+    let metadata = bare.metadata.as_deref();
     let mut held = block(&bare, "public.t").clone();
     let source = source.as_ref();
     let read = backfilled(source, &tight, &wanted, metadata, &mut held).await;

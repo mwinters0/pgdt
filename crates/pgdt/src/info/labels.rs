@@ -207,7 +207,7 @@ pub(super) fn block_resolutions(
             let resolved = resolve_columns(
                 &block.header.qualified_name(),
                 &block.header.columns,
-                index.metadata.as_ref(),
+                index.metadata.as_deref(),
                 database,
                 SchemaMode::Typed,
                 census,
@@ -225,7 +225,7 @@ pub(super) fn block_unchecked(
     database: Option<&str>,
     block: &pgdt_model::CopyBlock,
 ) -> StrictUnchecked {
-    strict_unchecked(block, index.metadata.as_ref(), database)
+    strict_unchecked(block, index.metadata.as_deref(), database)
 }
 
 /// One-line label for a span in `--map` output.

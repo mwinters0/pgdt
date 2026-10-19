@@ -127,7 +127,7 @@ impl DynamicBlock {
         statistics: Option<&Arc<BlockStatistics>>,
         plan: &ReplayPlan,
     ) -> Option<Self> {
-        let metadata = plan.metadata.as_ref();
+        let metadata = plan.metadata.as_deref();
         let census = plan.table.census_for(&block.header.columns);
         let text = plan.table.text_for(&block.header.columns);
         let (schema_mode, semantics) =

@@ -21,11 +21,9 @@ operators 36.8.2 ([history, 2026-10-18](../status/history/2026-10-18.md),
   `Error::AmbiguousTable` naming each candidate. `PgDump::table`'s three
   `Option<&str>` build a selector, and keep the adapter's own wording for none
   and for several.
-- **`Table<'a>` borrows the `Dump`**, and `Table::plan` hands back the
-  `TablePartitions` owning the source and the watch, so its streams are
-  `'static` as before. `PgDumpTable` keeps its `TableName` and resolves its
-  `Table` again at each use (`PgDump::table_of`). The resolution clones
-  nothing; each method clones the table's blocks, and a plan the DDL.
+- **`Table::plan` hands back the `TablePartitions` owning the source and the
+  watch**, so its streams are `'static` as before. The `Table` itself owns
+  what it plans over ([36.8.3's notes](roadmap-P36.8.3-table-owns-notes.md)).
 - **A `Table` method takes the options its answer is read under.**
   `summary` and `divergences` resolve the schema under the same options, so
   the semantics and the statistics view can no longer come from a different
@@ -61,8 +59,8 @@ operators 36.8.2 ([history, 2026-10-18](../status/history/2026-10-18.md),
   adapter could read why from it, was refused. The adapter reads the `Held`
   before it builds the `Dump`, keeping its wording, and the library's
   refusal stays an `Error`.
-- **`Table<'a>` borrowing its `Dump` is what landed, and is reversed**: a
-  `Table` owns what it plans over, and an early-stopped pass yields one too
+- **A `Table<'a>` borrowing its `Dump` was reversed**: a `Table` owns what
+  it plans over, and an early-stopped pass yields one too
   ([history, 2026-10-19](../status/history/2026-10-19.md), "The `Dump`'s
   table owns its blocks; `info` reads the cache").
 

@@ -29,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 async fn metadata(path: &Path) -> DumpMetadata {
     let source = LocalFileSource::open(path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    index.metadata.expect("build_index always populates metadata")
+    std::sync::Arc::unwrap_or_clone(index.metadata.expect("build_index always populates metadata"))
 }
 
 /// Resolve every declared column of `qualified`, in DDL order, as though a
@@ -500,7 +500,7 @@ async fn a_bit_string_s_length_is_read_off_the_spelling_pg_dump_writes() {
             .unwrap_or_else(|e| panic!("{label}: a strict parse refused: {e}"));
             let block = run.index.blocks_for("public.t_bit").next();
             let block = block.unwrap_or_else(|| panic!("{label}: no `t_bit` block"));
-            let Some(meta) = run.index.metadata.as_ref() else { panic!("{label}") };
+            let Some(meta) = run.index.metadata.as_deref() else { panic!("{label}") };
             let db = meta.databases.first().unwrap();
             if !db.tables.contains_key("public.t_bit") {
                 assert!(path.ends_with("data-only.sql"), "{label}");
@@ -745,7 +745,7 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
             let resolved = resolve_columns(
                 &qualified,
                 &block.header.columns,
-                index.metadata.as_ref(),
+                index.metadata.as_deref(),
                 database,
                 SchemaMode::Typed,
                 block.array_shapes().unwrap_or_default(),

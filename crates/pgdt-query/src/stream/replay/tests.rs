@@ -83,7 +83,7 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
             block.header_offset,
             mapped.database.as_deref(),
             &query_options,
-            mapped.metadata.as_ref(),
+            mapped.metadata.as_deref(),
             &plan.table,
             block.unrepresentable(),
         )

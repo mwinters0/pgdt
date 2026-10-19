@@ -508,7 +508,7 @@ async fn a_full_scan_recovers_every_databases_ddl() {
         .await
         .unwrap()
         .index;
-        let metadata = index.metadata.as_ref().expect("a full scan always has metadata");
+        let metadata = index.metadata.as_deref().expect("a full scan always has metadata");
         assert_eq!(metadata.databases.len(), 2, "pg_dump {version}");
         for db in &metadata.databases {
             assert!(db.preamble_complete, "pg_dump {version}: {:?}", db.name);
@@ -1149,7 +1149,7 @@ async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
     assert_eq!(run.resumed_from, 0, "the prepass is this run's work, not a resume point");
     assert!(run.index.blocks().next().is_none(), "no block was mapped");
     assert!(run.index.scanned_through > 0, "the preamble was read");
-    let metadata = run.index.metadata.as_ref().expect("the preamble prepass banked its DDL");
+    let metadata = run.index.metadata.as_deref().expect("the preamble prepass banked its DDL");
     assert!(metadata.databases.first().unwrap().preamble_complete);
 
     // On disk, and resumable from where the prepass stopped.
@@ -1181,7 +1181,7 @@ fn multidb(version: u32) -> (tempfile::TempDir, PathBuf) {
 /// against the index's own metadata, with no census (a partial index may not
 /// believe one — `DumpIndex::is_complete`).
 fn outcomes(index: &DumpIndex) -> Vec<(String, Vec<ColumnResolution>)> {
-    let metadata = index.metadata.as_ref();
+    let metadata = index.metadata.as_deref();
     index
         .blocks_with_database()
         .map(|(database, b)| {
@@ -1300,7 +1300,7 @@ async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
         .filter_map(|(database, _)| database.map(str::to_owned))
         .collect();
     assert!(banked.contains(second), "{label}: the scan banked a {second} block");
-    let metadata = run.index.metadata.as_ref().unwrap_or_else(|| panic!("{label}: metadata"));
+    let metadata = run.index.metadata.as_deref().unwrap_or_else(|| panic!("{label}: metadata"));
     for name in &banked {
         let db = metadata
             .databases
@@ -1385,7 +1385,7 @@ async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() 
             let schema = resolve_columns(
                 &block.header.qualified_name(),
                 &block.header.columns,
-                index.metadata.as_ref(),
+                index.metadata.as_deref(),
                 Some(database),
                 SchemaMode::Typed,
                 &[],

@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::cache::{CacheMode, Held, StrictIdentity};
-use pgdt_io::{ByteRangeSource, Origin};
-use pgdt_model::{Diagnostic, DumpIndex, PostgresInvalidValues, TableName};
-use pgdt_query::{Dump, Table, TableSelector};
+use pgdt_io::Origin;
+use pgdt_model::{Diagnostic, PostgresInvalidValues, TableName};
+use pgdt_query::Dump;
 
 use crate::budget::{Hold, ScanBudget};
 use crate::error::Error;
@@ -178,20 +178,10 @@ impl PgDump {
         &self.dump.index().diagnostics
     }
 
-    pub(crate) fn index(&self) -> &DumpIndex {
-        self.dump.index()
-    }
-
-    pub(crate) fn source(&self) -> &Arc<dyn ByteRangeSource> {
-        self.dump.source()
-    }
-
-    /// `name`, one of [`Self::tables`], as the library plans it.
-    pub(crate) fn table_of(&self, name: &TableName) -> Table<'_> {
-        self.dump
-            .table(&TableSelector::from(name))
-            .expect("a selector stating every part selects one table at most")
-            .expect("a table registered over a dump is one of its tables")
+    /// The dump and its complete map, which a table of it is resolved from
+    /// once ([`Dump::table`]).
+    pub(crate) fn dump(&self) -> &Dump {
+        &self.dump
     }
 
     pub(crate) fn schema_mode(&self) -> SchemaMode {

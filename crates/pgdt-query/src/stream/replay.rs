@@ -490,7 +490,7 @@ fn activate(
                 header_offset,
                 database.as_deref(),
                 &plan.query_options,
-                plan.metadata.as_ref(),
+                plan.metadata.as_deref(),
                 &plan.table,
                 None,
             )?;

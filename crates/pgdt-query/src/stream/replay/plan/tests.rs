@@ -126,7 +126,7 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
     )
     .await
     .unwrap();
-    let metadata = run.index.metadata.as_ref();
+    let metadata = run.index.metadata.as_deref();
     let filter = |table: &str, op: PredicateOp, value: Option<&str>| {
         let block = run.index.blocks_for(table).next().unwrap();
         let census = vec![ArrayShape::default(); block.header.columns.len()];
