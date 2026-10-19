@@ -28,6 +28,7 @@ BASE: dict[str, str] = {
     "pgdt-codec/src/pgtype.rs": "pub enum TypeOutcome {}\n",
     "pgdt-mapping/src/lib.rs": "pub mod statistics;\n",
     "pgdt-mapping/src/statistics.rs": "pub struct StatisticsRequest;\n",
+    "pgdt-query/tests/embedder.rs": "use pgdt_query::Dump;\n",
 }
 
 
@@ -205,6 +206,52 @@ class Embedders(unittest.TestCase):
 
     def test_the_apparatus_is_not_an_embedder(self):
         self.assertEqual(problems({"peak-rss/src/main.rs": "use pgdt_core::internal::X;\n"}), [])
+
+
+class EmbedderTest(unittest.TestCase):
+    WHO = "crates/pgdt-query/tests/embedder.rs (the embedder test)"
+
+    def test_it_must_exist(self):
+        ws = Workspace({}, {})
+        (ws.root / "crates/pgdt-query/tests/embedder.rs").unlink()
+        self.assertEqual(
+            ws.problems(), ["crates/pgdt-query/tests/embedder.rs, the embedder test, is missing"]
+        )
+
+    def test_an_internal_path_or_macro_is_refused(self):
+        for text, refusal in (
+            ("use pgdt_codec::internal::column_of;\n", "names a crate's `internal` module"),
+            ("fn f() { timed!(x, {}); }\n", "names `timed!`"),
+        ):
+            with self.subTest(text=text):
+                found = problems({"pgdt-query/tests/embedder.rs": text})
+                self.assertEqual(found, [f"{self.WHO} {refusal}"])
+
+    def test_the_fixture_vocabulary_is_refused(self):
+        found = problems({"pgdt-query/tests/embedder.rs": "use pgdt_fixtures::edge_cases;\n"})
+        self.assertEqual(
+            found, [f"{self.WHO} names `pgdt_fixtures`, which no embedder depends on"]
+        )
+
+    def test_a_module_it_declares_is_read(self):
+        for module in ("pgdt-query/tests/helpers.rs", "pgdt-query/tests/helpers/mod.rs"):
+            with self.subTest(module=module):
+                files = {
+                    "pgdt-query/tests/embedder.rs": "#[cfg(test)]\nmod helpers;\n",
+                    module: "use pgdt_fixtures::edge_cases;\n",
+                }
+                self.assertEqual(
+                    problems(files),
+                    [f"crates/{module} (the embedder test) names `pgdt_fixtures`, which no embedder depends on"],
+                )
+
+    def test_a_comment_naming_them_is_not_a_use(self):
+        text = "//! No `pgdt_fixtures`, no `pgdt_core::internal`, no `timed!`.\nuse pgdt_query::Dump;\n"
+        self.assertEqual(problems({"pgdt-query/tests/embedder.rs": text}), [])
+
+    def test_another_test_of_its_crate_is_not_held(self):
+        files = {"pgdt-query/tests/cache.rs": "use pgdt_codec::internal::column_of;\nuse pgdt_fixtures::edge_cases;\n"}
+        self.assertEqual(problems(files), [])
 
 
 class Modules(unittest.TestCase):

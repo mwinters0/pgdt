@@ -20,6 +20,10 @@ refuses a name a crate could reach but should not, so this holds:
 * **no embedder names a crate's `internal` module, nor `timed!` or
   `row_evaluated!`**, which `#[macro_export]` roots at `pgdt_core` whatever
   module declares them -- in any of its sources, tests included;
+* **the embedder test (`EMBEDDER_TEST`) exists and is held to the same
+  rule**, it and every file its `mod` lines reach, and **names no
+  `pgdt_fixtures`**, which no embedder can depend on (`GRAPH`): it walks the
+  library naming only what an embedder outside the workspace could;
 * **no module loads by `#[path]`**, in any member, tests included, so a file
   is the module its name says and a test's sources are the files its `mod`
   lines reach (`check.py`'s `module_files`) -- a crate's tests reach another's
@@ -129,12 +133,18 @@ NO_IO = ("async fn", "ByteRangeSource", "std::fs", "tokio", "xz_seek")
 #: The macros an embedder never invokes or imports.
 INTERNAL_MACROS = ("timed", "row_evaluated")
 
+#: The integration test written as an embedder: its crate, and its root
+#: there. It is the surface an embedder is promised
+#: (`docs/design/roadmap.md`, "Pre-1.0: no compatibility obligations").
+EMBEDDER_TEST = ("pgdt-query", "tests/embedder.rs")
+
 INTERNAL_PATH_RE = re.compile(r"\bpgdt_\w+\s*::\s*(?:internal\b|\{[^;]*?\binternal\b)")
 MACRO_RE = re.compile(
     r"\b(" + "|".join(INTERNAL_MACROS) + r")\s*!(?!=)"
     r"|\bpgdt_core\s*::\s*(?:\{[^;]*?)?\b(" + "|".join(INTERNAL_MACROS) + r")\b"
 )
 ARROW_BUFFER_RE = re.compile(r"\barrow_buffer\s*::\s*(\{[^}]*\}|\w+)")
+FIXTURES_RE = re.compile(r"\bpgdt_fixtures\b")
 PATH_ATTR_RE = re.compile(r"#\s*\[\s*path\b")
 MOD_DECL_RE = re.compile(r"(?m)^[ \t]*(pub(?:\([^)]*\))?\s+)?mod\s+([A-Za-z_]\w*)\s*([{;])")
 PUB_ITEM_RE = re.compile(
@@ -219,6 +229,42 @@ def module_tree(src: Path, root: str = "lib.rs") -> dict[Path, str]:
                     pending.append(child)
                     break
     return out
+
+
+def test_target(root: Path) -> list[Path]:
+    """A test target's root and every file its `mod name;` lines reach, at
+    the conventional paths -- no member loads a module by `#[path]` -- as
+    `check.py`'s `module_files` follows them. A declaration under
+    `#[cfg(test)]` is followed too: in a test target, it is compiled."""
+    out: list[Path] = []
+    pending = [(root, True)]
+    while pending:
+        file, is_mod_root = pending.pop()
+        if file in out or not file.is_file():
+            continue
+        out.append(file)
+        base = file.parent if is_mod_root else file.with_suffix("")
+        text = masked(file.read_text(encoding="utf-8"))
+        for m in MOD_DECL_RE.finditer(text):
+            if m.group(3) != ";":
+                continue
+            name = m.group(2)
+            for child, root_like in ((base / f"{name}.rs", False), (base / name / "mod.rs", True)):
+                if child.is_file():
+                    pending.append((child, root_like))
+                    break
+    return out
+
+
+def names_internal(text: str, who: str) -> list[str]:
+    """What `who`'s masked `text` names that no embedder may: a crate's
+    `internal` module, or one of `INTERNAL_MACROS`."""
+    found = []
+    if INTERNAL_PATH_RE.search(text):
+        found.append(f"{who} names a crate's `internal` module")
+    for m in MACRO_RE.finditer(text):
+        found.append(f"{who} names `{m.group(1) or m.group(2)}!`")
+    return found
 
 
 def _use_names(tree: str) -> list[str]:
@@ -361,10 +407,20 @@ def problems(meta: dict, repo: Path) -> list[str]:
             continue
         for file in rust_files(dirs[name]):
             text = masked(file.read_text(encoding="utf-8"))
-            if INTERNAL_PATH_RE.search(text):
-                found.append(f"{rel(file)} ({name}) names a crate's `internal` module")
-            for m in MACRO_RE.finditer(text):
-                found.append(f"{rel(file)} ({name}) names `{m.group(1) or m.group(2)}!`")
+            found += names_internal(text, f"{rel(file)} ({name})")
+
+    # What the embedder test names.
+    crate, path = EMBEDDER_TEST
+    if crate in dirs:
+        root = dirs[crate] / path
+        if not root.is_file():
+            found.append(f"{rel(root)}, the embedder test, is missing")
+        for file in test_target(root):
+            text = masked(file.read_text(encoding="utf-8"))
+            who = f"{rel(file)} (the embedder test)"
+            found += names_internal(text, who)
+            if FIXTURES_RE.search(text):
+                found.append(f"{who} names `pgdt_fixtures`, which no embedder depends on")
     return found
 
 
