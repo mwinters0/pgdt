@@ -424,13 +424,13 @@ No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column;
 Rejected: `Expr::In`, a second kind of leaf for an embedder to build; recognizing the `Or`, every front end emitting `In`. Evidence: `tests/membership.rs`.
 
 ### D54 One tree, no planner yet, short-circuit defined against the root
-`filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath `Not`, since only the root's `True`
-matters; a decode failure surfaces only where evaluation reaches it: never in a group statistics rule out, nor serially past a sorted block's stop, but split a
-later piece evaluates one row past it, so outside the contract `--jobs` decides. Resolution refusals come from the plan before any row, for the first refusing
-block in file order, walking leaves the evaluator would skip; a block with no column list refuses where reached. Rejected: DNF; exact Kleene everywhere; not
-skipping a group holding an unkeyed value (a nested column, `KD2`'s, is never keyed) or under a term naming one; the stop asked first, every valid dump paying
-for invalid text. A planner is deferred, not refused: one is built when it buys more than its complexity costs, and meanwhile a resolution-time rewrite
-removing redundant work — a field decoded once a row for every leaf reading it, bounds an `IN` implies — is admitted where a reading shows it pays. Evidence: `tests/pruning.rs`.
+`filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath `Not`, since only the root's `True` matters; a decode failure
+surfaces only where evaluation reaches it: never in a group statistics rule out, nor serially past a sorted block's stop, but split a later piece evaluates one row past it, so
+outside the contract `--jobs` decides. Resolution refusals come from the plan before any row, for the first refusing block in file order, walking leaves the evaluator would skip,
+and in a block names first, a column it lacks before what any term asks (`check_columns`); a block with no column list refuses where reached. Rejected: DNF; exact Kleene
+everywhere; not skipping a group holding an unkeyed value (a nested column, `KD2`'s) or under a term naming one; the stop asked first, every valid dump paying for invalid text;
+names checked across blocks first (a pass more); a mode first (its remedy fixing no typo). A planner is deferred, not refused, until it buys more than it costs; a resolution-time
+rewrite removing redundant work (one decode a row per field, bounds an `IN` implies) is admitted where a reading shows it pays. Evidence: `tests/pruning.rs`, `tests/ordering.rs`.
 
 ### D55 A literal is read in the type's `*_out` form at least and its `*_in` grammar at most
 `*_out` is the 1.0 floor, `*_in` the ceiling: a literal `*_in` refuses is refused. Between them effort is minimized: an `*_in` spelling is read where free,

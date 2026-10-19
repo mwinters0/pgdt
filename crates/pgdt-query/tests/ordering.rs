@@ -767,6 +767,20 @@ async fn a_range_declaring_a_canonical_function_refuses_every_operator() {
             )
         );
     }
+    // A misspelled column beside it is refused first (`docs/design/decisions.md`,
+    // "D54").
+    let options = QueryOptions {
+        filter: Expr::all([
+            term("v_span", PredicateOp::Eq, "[1,10]"),
+            term("nosuch", PredicateOp::Eq, "1"),
+        ]),
+        ..Default::default()
+    };
+    let err = query_in(&path, "public.t_canon", options).await.map(drop).unwrap_err();
+    assert!(
+        matches!(&err, Error::UnknownPredicateColumn { column, .. } if column == "nosuch"),
+        "{err:?}"
+    );
     // `IS NOT NULL` reads no value and consults no plan, so the row still
     // comes back — the refusal is of comparisons, not of the column.
     let options = QueryOptions {
@@ -801,6 +815,60 @@ async fn strings_mode_refuses_every_ordering_operator() {
         "{err:?}"
     );
     assert!(err.to_string().ends_with("in the typed schema mode"), "{err}");
+}
+
+/// **A misspelled column is refused before anything a term asks** — the
+/// strings schema mode's refusal, an order's, a literal's — whichever term
+/// names it, in either schema mode (`docs/design/decisions.md`, "D54"). Each
+/// other term is first shown refused on its own, so the typo is what outranks
+/// it rather than a filter nothing refuses.
+#[tokio::test]
+async fn a_misspelled_column_is_refused_before_what_any_term_asks() {
+    let unknown = |err: &Error| matches!(err, Error::UnknownPredicateColumn { column, .. } if column == "nosuch");
+    let typo = term("nosuch", PredicateOp::Eq, "1");
+    let refusal = async |table, terms: Vec<Predicate>, schema_mode| {
+        let options = QueryOptions { filter: Expr::all(terms), schema_mode, ..Default::default() };
+        drain(table, options).await.unwrap_err()
+    };
+    let mode_refusal: fn(&Error) -> bool = |e| matches!(e, Error::TestNeedsDeclaredType { .. });
+    let order_refusal: fn(&Error) -> bool = |e| matches!(e, Error::UnorderedPredicateColumn { .. });
+    let literal_refusal: fn(&Error) -> bool = |e| matches!(e, Error::PredicateValueDecode { .. });
+    let cases = [
+        // The strings schema mode's refusal, of an ordering operator.
+        (
+            "public.t_int",
+            term("v_integer", PredicateOp::Gt, "0"),
+            SchemaMode::Strings,
+            mode_refusal,
+        ),
+        // An order the register does not give: `box` inside an array.
+        (
+            "public.t_delimiter",
+            term("v_box_domain_array", PredicateOp::Gt, "{}"),
+            SchemaMode::Typed,
+            order_refusal,
+        ),
+        // A literal that is not a value of the column's type.
+        (
+            "public.t_int",
+            term("v_integer", PredicateOp::Eq, "abc"),
+            SchemaMode::Typed,
+            literal_refusal,
+        ),
+    ];
+    for (table, asked, mode, refused_alone) in cases {
+        let alone = refusal(table, vec![asked.clone()], mode).await;
+        assert!(refused_alone(&alone), "{asked:?} alone: {alone:?}");
+        for terms in [vec![asked.clone(), typo.clone()], vec![typo.clone(), asked.clone()]] {
+            let err = refusal(table, terms, mode).await;
+            assert!(unknown(&err), "{asked:?} beside the typo: {err:?}");
+        }
+    }
+    // The typo itself ordered under the strings schema mode: a name it lacks,
+    // not a mode it needs.
+    let ordered = term("nosuch", PredicateOp::Gt, "0");
+    let err = refusal("public.t_int", vec![ordered], SchemaMode::Strings).await;
+    assert!(unknown(&err), "{err:?}");
 }
 
 /// PostgreSQL's special values are ordered, against the fixture's own

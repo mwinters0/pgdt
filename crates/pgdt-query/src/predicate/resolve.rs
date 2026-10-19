@@ -893,15 +893,18 @@ impl ResolvedExpr {
 /// schema — once per block, returning the same tree with every leaf
 /// resolved. The empty conjunction resolves to an empty conjunction.
 ///
-/// **This is where a predicate is validated against a block**, and the only
-/// place (`docs/design/decisions.md`, "D54"): a term naming a column this
-/// block does not carry is `Error::UnknownPredicateColumn`, an ordering
+/// **This is where what a term asks is validated against a block**, and the
+/// only place (`docs/design/decisions.md`, "D54"): an ordering
 /// operator on a column the register gives no order is, in PostgreSQL's
 /// semantics, `Error::UnorderedPredicateColumn`, any comparing operator on a column whose
 /// server comparison is not a text one is `Error::UncomparablePredicateColumn`,
 /// and a literal that is not a value of
 /// the column's type — `=` included — is `Error::PredicateValueDecode`. All
-/// are raised for the first offending term in a left-to-right walk. The plan
+/// are raised for the first offending term in a left-to-right walk. A term
+/// naming a column this block does not carry is
+/// `Error::UnknownPredicateColumn`, which the plan raises ahead of every
+/// other refusal, [`check_columns`] walking the whole tree first; here it is
+/// reached only by a caller that has not. The plan
 /// runs it for every block before any is read, and raises the first refusing
 /// block's refusal in file order before any row of the table
 /// (the stream's `plan_blocks`). It takes the whole [`ResolvedSchema`] because the ordering
@@ -934,6 +937,25 @@ pub(crate) fn resolve_expr(
             ResolvedExpr::Not(Box::new(resolve_expr(inner, resolved, header_offset, semantics)?))
         }
     })
+}
+
+/// Refuse the first term of `filter`, left to right, naming a column
+/// `resolved` — the block's own **unprojected** schema — does not carry, as
+/// `Error::UnknownPredicateColumn`. **Names come before what a term asks**:
+/// the plan runs this ahead of the strings schema mode's refusal and of
+/// [`resolve_expr`]'s (`docs/design/decisions.md`, "D54").
+pub(crate) fn check_columns(
+    filter: &Expr,
+    resolved: &ResolvedSchema,
+    header_offset: u64,
+) -> Result<()> {
+    let unknown = |term: &Predicate| column_position(resolved, &term.column).is_none();
+    match filter.first_term(&unknown) {
+        Some(term) => {
+            Err(Error::UnknownPredicateColumn { header_offset, column: term.column.clone() })
+        }
+        None => Ok(()),
+    }
 }
 
 /// Where the column `name` sits in the block's unprojected schema.

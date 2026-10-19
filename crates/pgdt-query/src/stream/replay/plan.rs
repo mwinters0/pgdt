@@ -24,9 +24,9 @@ use pgdt_model::{
 
 use super::partition::plan_partitions;
 use super::segment::{Segment, SegmentEntry};
-use crate::PredicateOp;
+use crate::Predicate;
 use crate::options::QueryOptions;
-use crate::predicate::{ComparisonNote, ResolvedExpr, resolve_expr};
+use crate::predicate::{ComparisonNote, ResolvedExpr, check_columns, resolve_expr};
 use crate::prune::{SortedStop, prune_block};
 use crate::stream::note::{PlanNote, PlanNoteKind};
 
@@ -385,8 +385,9 @@ pub(in crate::stream) struct PlannedBlock {
 }
 
 /// Resolve one block for a query: its schema, the filter against
-/// the unprojected schema, then the projection — in that order, which is the
-/// order their refusals are raised in.
+/// the unprojected schema — every term's column, then what each term asks —
+/// then the projection, in that order, which is the order their refusals are
+/// raised in.
 ///
 /// **An unprojected query projects the table's order** ([`TableColumns`]),
 /// so the batches of a block listing its columns in another order come out
@@ -415,6 +416,9 @@ pub(super) fn resolve_for_query(
         query_options.semantics,
     )?;
     let unrepresentable = query_reads(header, metadata, database, &full, counts, query_options);
+    // Every term's column before anything a term asks
+    // (`docs/design/decisions.md`, "D54").
+    check_columns(&query_options.filter, &full, header_offset)?;
     let tests = query_tests(header, metadata, database, counts, query_options)?;
     // Against the *unprojected* schema, in the block's own order: a term's
     // index numbers the raw row's fields, and a term may name a column the
@@ -462,7 +466,7 @@ pub(in crate::stream) fn query_reads(
 /// ([`unrepresentable_tests`]), and nothing where its filter holds none — or,
 /// under [`SchemaMode::Strings`], which resolves no declared type, the
 /// refusal of the first term that reads one
-/// ([`PredicateOp::reads_declared_type`];
+/// ([`crate::PredicateOp::reads_declared_type`];
 /// `docs/design/decisions.md`, "D101", "D107").
 fn query_tests(
     header: &CopyHeader,
@@ -473,7 +477,7 @@ fn query_tests(
 ) -> Result<Vec<Option<UnrepresentableRead>>> {
     let filter = &query_options.filter;
     if query_options.schema_mode == SchemaMode::Strings {
-        let reads = |op: &PredicateOp| op.reads_declared_type(query_options.semantics);
+        let reads = |term: &Predicate| term.op.reads_declared_type(query_options.semantics);
         if let Some(term) = filter.first_term(&reads) {
             return Err(Error::TestNeedsDeclaredType {
                 column: term.column.clone(),

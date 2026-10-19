@@ -342,7 +342,8 @@ pub enum Error {
     /// (`docs/design/decisions.md`, "D101"); and an ordering operator in
     /// PostgreSQL's semantics, which orders as the declared type does. One
     /// cause and one remedy, the typed schema mode. Raised at planning,
-    /// before a row is read.
+    /// before a row is read, and only once every term's column is in the
+    /// block — a misspelled one is [`Self::UnknownPredicateColumn`].
     #[error(
         "`{column} {op}` reads the column's declared type — the values it accepts, or its order — and this query reads every column as its text, resolving no declared type; ask it of a query in the typed schema mode"
     )]
