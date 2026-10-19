@@ -46,7 +46,7 @@ pub(crate) fn table_statistics(summary: &TableSummary, resolved: &ResolvedSchema
         .iter()
         .enumerate()
         .map(|(i, column)| {
-            let data_type = resolved.schema.field(i).data_type();
+            let data_type = resolved.schema().field(i).data_type();
             let mut statistics = ColumnStatistics::new_unknown();
             statistics.null_count = count(column.nulls, column.nulls_complete);
             // Never the union's size where a group kept no dictionary: that

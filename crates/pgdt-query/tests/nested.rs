@@ -18,7 +18,6 @@ use pgdt_codec::nested::{
     decode_array, decode_int2vector, decode_multirange, decode_range, decode_record, render_array,
     render_int2vector, render_multirange, render_range, render_record,
 };
-use pgdt_codec::pgtype::NestedPlan;
 use pgdt_io::LocalFileSource;
 use pgdt_query::{QueryOptions, render_field};
 
@@ -66,7 +65,7 @@ const NESTED_COLUMNS: &[(&str, &str, Kind, u32)] = &[
 ];
 
 mod common;
-use common::{Cold, types_fixture};
+use common::{Cold, scalar_column, types_fixture};
 
 /// One column's non-NULL values, as decoded COPY text. `SchemaMode::Strings`
 /// is deliberate: it never consults the DDL, so what comes back is exactly
@@ -86,7 +85,8 @@ async fn column_values(path: &Path, table: &str, column: &str) -> Vec<String> {
             // which is the point: what comes back is the codec's input,
             // not something the typed path has already parsed.
             let column = batch.column(index).as_ref();
-            let rendered = render_field(column, row, &NestedPlan::Scalar).expect("renders back");
+            let rendered = render_field(column, row, &scalar_column(column.data_type()))
+                .expect("renders back");
             if let Some(value) = rendered {
                 out.push(value);
             }

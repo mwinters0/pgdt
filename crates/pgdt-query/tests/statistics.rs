@@ -687,7 +687,7 @@ async fn a_summary_reads_no_column_whose_groups_disagree_with_the_block() {
     let summary = async |index: &DumpIndex| -> ColumnSummary {
         let dump = dump_over(Arc::clone(&source), index, dir.path()).await.unwrap();
         let table = dump.table(&(&name).into()).unwrap().unwrap();
-        let id = table.schema(&options).unwrap().schema.index_of("id").unwrap();
+        let id = table.schema(&options).unwrap().schema().index_of("id").unwrap();
         table.summary(&options).unwrap().columns[id].clone()
     };
     assert!(summary(&index).await.bounds_complete, "every group of `id` is bounded");

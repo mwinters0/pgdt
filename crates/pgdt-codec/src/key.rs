@@ -35,7 +35,7 @@ use self::emitted::emitted_value;
 use self::order::{OrderKey, Side, literal_key, order_key, order_keys};
 use self::relate::{NestedOrder, ScalarOrder};
 use crate::compare::{CompareKind, ComparisonPlan, ComparisonSemantics};
-use crate::resolve::ResolvedSchema;
+use crate::resolve::ResolvedColumn;
 use crate::unrepresentable::holds_value;
 use crate::value::nested::key::{NestedKey, nested_key};
 
@@ -112,57 +112,50 @@ fn nested_tree(
 }
 
 impl ValueKey {
-    /// The key of one unescaped field of column `column` of `resolved`,
-    /// ordered as `semantics` orders it. `None` where `semantics` gives the
-    /// column no order, where `resolved` has no such column, or where the
-    /// text is not a value of its type, read as a field is: put through its
+    /// The key of one unescaped field of `column`, ordered as `semantics`
+    /// orders it. `None` where `semantics` gives the column no order, where
+    /// the untyped mode read the column as its text under the other
+    /// semantics ([`ResolvedColumn::read_as_text_under`]), or where the text
+    /// is not a value of its type, read as a field is: put through its
     /// typmod, and refused where the type's `*_in` refuses it
     /// ([`PostgresInvalidValues::Default`]).
     ///
-    /// `resolved` is the schema a query reads the column under, in
+    /// `column` is the record a query reads the column under, in
     /// `semantics`: its comparison plan orders the key, and in DataFusion's
     /// semantics its Arrow field is the type the key carries.
-    pub fn of(
-        resolved: &ResolvedSchema,
-        column: usize,
-        semantics: ComparisonSemantics,
-        text: &str,
-    ) -> Option<Self> {
-        Self::read(resolved, column, semantics, text, Side::Field(PostgresInvalidValues::Default))
+    pub fn of(column: &ResolvedColumn, semantics: ComparisonSemantics, text: &str) -> Option<Self> {
+        Self::read(column, semantics, text, Side::Field(PostgresInvalidValues::Default))
     }
 
-    /// The key of a filter's literal compared against column `column` of
-    /// `resolved` in `semantics`, read in its type's input grammar
+    /// The key of a filter's literal compared against `column` in
+    /// `semantics`, read in its type's input grammar
     /// (`docs/design/decisions.md`, "D55"): with no typmod, and in
     /// DataFusion's semantics as DataFusion reads the value. `None` where
-    /// `semantics` gives the column no order, where `resolved` has no such
-    /// column, or where the text is not a literal of its type.
+    /// [`Self::of`] would be for the column, or where the text is not a
+    /// literal of its type.
     pub fn literal(
-        resolved: &ResolvedSchema,
-        column: usize,
+        column: &ResolvedColumn,
         semantics: ComparisonSemantics,
         text: &str,
     ) -> Option<Self> {
-        Self::read(resolved, column, semantics, text, Side::Literal)
+        Self::read(column, semantics, text, Side::Literal)
     }
 
     /// [`Self::of`] or [`Self::literal`], as `side` says.
     fn read(
-        resolved: &ResolvedSchema,
-        column: usize,
+        column: &ResolvedColumn,
         semantics: ComparisonSemantics,
         text: &str,
         side: Side,
     ) -> Option<Self> {
-        // deficiency: KD121 — `semantics` is not checked against the one
-        // `resolve::read_as_text` widened `resolved` under, which it does not
-        // record: a column widened under PostgreSQL's keeps its declared plan,
-        // so a key asked for in DataFusion's orders the text as that type
-        // where DataFusion compares it bytewise as `Utf8View`, and one widened
-        // under DataFusion's is `Refused`, so a PostgreSQL key is `None`.
-        // **(b) owned by P36**: the column record carries the widening's
-        // semantics, and a key asked for in the other answers `None`.
-        let plan = resolved.comparisons.get(column)?;
+        // A column read as its text compares in its widening's semantics
+        // alone: under PostgreSQL's it keeps its declared plan, which
+        // DataFusion's would order as that type where it compares the text
+        // bytewise (`docs/design/decisions.md`, "D100").
+        if column.read_as_text_under().is_some_and(|widened| widened != semantics) {
+            return None;
+        }
+        let plan = column.comparison();
         if let Some(kind) = scalar_kind(plan, semantics) {
             let key = match side {
                 Side::Literal => literal_key(&kind, text, semantics)?,
@@ -170,9 +163,8 @@ impl ValueKey {
             };
             let order = ScalarOrder::of(&kind, semantics);
             let emitted = (semantics == ComparisonSemantics::DataFusion)
-                .then(|| resolved.schema.fields().get(column).map(|field| field.data_type()))
-                .flatten()
-                .filter(|data_type| holds_value(data_type, &resolved.plans[column], text))
+                .then(|| column.data_type())
+                .filter(|data_type| holds_value(data_type, column.plan(), text))
                 .cloned();
             return Some(Self { semantics, key: Key::Scalar { order, key, emitted } });
         }

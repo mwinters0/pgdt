@@ -75,7 +75,7 @@ impl<'a> TableStream<'a> {
     /// alone (`pgdt_codec::compare::ComparisonDivergence::affects_equality`), so a
     /// `text` column with no `COLLATE` clause earns a note under `<` and none
     /// under `=`. A third channel beside `DumpIndex.diagnostics` (the model)
-    /// and `ResolvedSchema.notes` (the codec), each a [`pgdt_model::Finding`] a
+    /// and `ResolvedSchema::notes` (the codec), each a [`pgdt_model::Finding`] a
     /// caller drains into one sink with the others. Like
     /// [`Self::resolved_schema`], it describes the **last** block whose schema
     /// resolved.
@@ -87,7 +87,7 @@ impl<'a> TableStream<'a> {
     /// predicate ([`PlanNoteKind`](super::note::PlanNoteKind)): the memory budget in force declining
     /// something, the row groups statistics let the replay skip, and each
     /// column's values read as NULL ([`PlanNoteKind::ReadAsNull`](crate::stream::note::PlanNoteKind::ReadAsNull)). A fourth
-    /// channel beside `DumpIndex.diagnostics` (the model), `ResolvedSchema.notes`
+    /// channel beside `DumpIndex.diagnostics` (the model), `ResolvedSchema::notes`
     /// (the codec) and [`Self::comparison_notes`] (query).
     ///
     /// **Settled before any block is read**, from the map and the source's own

@@ -23,7 +23,7 @@ pub fn stored_bounds_kinds(
     database: Option<&str>,
 ) -> Vec<[Option<CompareKind>; 2]> {
     let resolved = stored_resolution(header, metadata, database);
-    (0..header.columns.len()).map(|i| resolved.bounds_kinds(i)).collect()
+    resolved.columns().iter().map(|column| column.bounds_kinds()).collect()
 }
 
 /// Which of `block`'s columns gathering keeps bounds and row order for,
@@ -66,8 +66,9 @@ pub fn stored_resolution(
 /// `DictionaryGatherer::observe` decide it: every dictionary kept but a
 /// `character` column's, whose entries give up their trailing blanks.
 pub fn dictionary_holds_field_text(stored: &ResolvedSchema, i: usize) -> bool {
-    let comparison = &stored.comparisons[i];
-    stored.plans[i].is_scalar()
+    let column = &stored.columns()[i];
+    let comparison = column.comparison();
+    column.plan().is_scalar()
         && comparison.dictionary_answers_in(ComparisonSemantics::Postgres)
         && !matches!(
             comparison,

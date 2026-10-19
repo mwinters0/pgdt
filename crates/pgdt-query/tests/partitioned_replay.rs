@@ -980,7 +980,7 @@ async fn a_dump_s_plan_replays_as_the_mapping_pass_would() {
         let plan = table.plan(ReadOptions::default(), options.clone()).unwrap();
         assert_eq!(plan.len(), count, "{}", name.qualified_name());
         let schema = table.schema(&options).unwrap();
-        assert_eq!(plan.resolved_schema().schema, schema.schema);
+        assert_eq!(plan.resolved_schema().schema(), schema.schema());
         for _ in 0..2 {
             let mut rows = Rows::new();
             for partition in 0..plan.len() {
@@ -988,7 +988,7 @@ async fn a_dump_s_plan_replays_as_the_mapping_pass_would() {
                 while let Some(batch) = stream.next().await {
                     let batch = batch.unwrap();
                     assert!(batch.num_rows() <= 1);
-                    assert_eq!(batch.schema(), schema.schema);
+                    assert_eq!(batch.schema(), *schema.schema());
                     rows.extend(rows_of(&batch));
                 }
             }

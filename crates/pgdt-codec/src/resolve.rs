@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use arrow_schema::{Field, Schema, SchemaRef};
+use arrow_schema::{DataType, Field, FieldRef, Schema, SchemaRef};
 
 use crate::compare::{CompareKind, ComparisonPlan, ComparisonSemantics, comparison_for};
 use crate::declared::domain_not_null;
@@ -118,7 +118,7 @@ pub enum ColumnResolution {
     /// in DataFusion's, the order DataFusion evaluates a `Utf8View` in, so no
     /// statistic gathered in the declared type's order is read for it; and in
     /// PostgreSQL's in its declared type's order, special values ranked
-    /// ([`ResolvedSchema::comparisons`] keeping the declared type's plan
+    /// ([`ResolvedColumn::comparison`] keeping the declared type's plan
     /// there alone). A property of the query as much as of the column, so
     /// only a query's resolution produces it ([`read_as_text`]).
     UnrepresentableValues,
@@ -213,84 +213,175 @@ impl Finding for ColumnNote {
 }
 
 /// A table query's resolved schema: the Arrow schema a query's
-/// `RecordBatch`es carry (see the module docs), plus one [`ColumnNote`] per
-/// column.
+/// `RecordBatch`es carry (see the module docs), and one [`ResolvedColumn`]
+/// per field, in its order — each column's resolution read through its
+/// record, never matched up by index across parallel lists.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedSchema {
-    pub schema: SchemaRef,
-    /// Positional, parallel to `schema.fields()`.
-    pub columns: Vec<ColumnResolution>,
-    /// Named, one entry per column, in the same order.
-    pub notes: Vec<ColumnNote>,
-    /// Which PostgreSQL literal form fills each field — positional, parallel
-    /// to `schema.fields()` like `columns`.
-    ///
-    /// The Arrow type cannot say (`docs/design/decisions.md`, "D43"), so the
-    /// plan travels beside it from resolution into `pgdt_query::batch::RowBatcher`
-    /// and `pgdt_query::render_field`. A scalar column's entry is
-    /// `NestedPlan::Scalar`, so every column has one.
-    pub plans: Vec<NestedPlan>,
-    /// How each column compares — positional, parallel to `schema.fields()`
-    /// like `columns` and `plans`.
-    ///
-    /// A codec conclusion, produced here because this is where its inputs meet:
-    /// the declared type string and the database's own `CREATE TYPE` list.
-    /// `pgdt_query::predicate` reads this instead of inspecting the Arrow type
-    /// (`crate::compare::comparison_for`).
-    ///
-    /// A column that did not resolve `Mapped` is [`ComparisonPlan::Refused`]
-    /// whatever its declared type said — the census can take a column out of
-    /// `Mapped` after the declared type has been read — but for
-    /// [`ColumnResolution::UnrepresentableValues`] under
-    /// [`crate::compare::ComparisonSemantics::Postgres`], which keeps the declared
-    /// type's plan ([`read_as_text`]).
-    pub comparisons: Vec<ComparisonPlan>,
-    /// Whether each column's declaration makes it `NOT NULL` — on the column,
-    /// at the table, through a parent or through a domain — positional like
-    /// `columns` (I76). A NULL in such a column is refused wherever it is
-    /// read, but under [`pgdt_model::PostgresInvalidValues::Ignore`]; the Arrow
-    /// field stays nullable whatever this says (`docs/design/decisions.md`,
-    /// "D37"). `false` for every column of a schema resolved with no DDL, the
-    /// strings schema mode's included.
-    pub not_null: Vec<bool>,
+    /// Built from the records' own fields, so the two cannot disagree.
+    schema: SchemaRef,
+    columns: Vec<ResolvedColumn>,
 }
 
 impl Default for ResolvedSchema {
     /// The empty schema — what a caller sees before a matching block has
     /// been found (or if the table never appears at all).
     fn default() -> Self {
-        Self {
-            schema: Arc::new(Schema::empty()),
-            columns: Vec::new(),
-            notes: Vec::new(),
-            plans: Vec::new(),
-            comparisons: Vec::new(),
-            not_null: Vec::new(),
-        }
+        Self { schema: Arc::new(Schema::empty()), columns: Vec::new() }
     }
 }
 
+/// One column of a [`ResolvedSchema`]: its Arrow field, its note, the plan
+/// that says which PostgreSQL literal form fills it, how it compares, whether
+/// its declaration refuses a NULL, and the semantics the untyped mode read it
+/// as its text under, if it did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedColumn {
+    field: FieldRef,
+    note: ColumnNote,
+    plan: NestedPlan,
+    comparison: ComparisonPlan,
+    not_null: bool,
+    read_as_text: Option<ComparisonSemantics>,
+}
+
 impl ResolvedSchema {
+    /// The Arrow schema a query's batches carry, one field per
+    /// [`Self::columns`] entry, in their order.
+    pub fn schema(&self) -> &SchemaRef {
+        &self.schema
+    }
+
+    /// Every column, in the schema's order.
+    pub fn columns(&self) -> &[ResolvedColumn] {
+        &self.columns
+    }
+
+    /// Each column's [`ColumnNote`], in the schema's order: the channel a
+    /// caller drains beside the file's diagnostics
+    /// ([`pgdt_model::drain`]).
+    pub fn notes(&self) -> impl Iterator<Item = &ColumnNote> {
+        self.columns.iter().map(ResolvedColumn::note)
+    }
+
     /// How many columns have no `Mapped` resolution — the count `pgdt info`'s
     /// default summary line reports (`"N of M columns unmapped"`).
     pub fn unmapped_count(&self) -> usize {
-        self.columns.iter().filter(|c| **c != ColumnResolution::Mapped).count()
+        self.columns.iter().filter(|c| *c.resolution() != ColumnResolution::Mapped).count()
+    }
+}
+
+impl ResolvedColumn {
+    /// The Arrow field the column's values are emitted as. Always nullable,
+    /// whatever [`Self::not_null`] says (`docs/design/decisions.md`, "D37").
+    pub fn field(&self) -> &FieldRef {
+        &self.field
     }
 
-    /// The kinds gathering orders column `i`'s bounds and row order by, one
-    /// per [`pgdt_model::BoundsSet`] ([`ComparisonPlan::bounds_kinds`]), for a scalar
-    /// column — and none for a nested one. A column nothing declared is
-    /// [`ComparisonPlan::Refused`], and bounded as its text.
+    /// The column's name, as its `COPY` header gives it.
+    pub fn name(&self) -> &str {
+        self.field.name()
+    }
+
+    /// The Arrow type the column's values are emitted as.
+    pub fn data_type(&self) -> &DataType {
+        self.field.data_type()
+    }
+
+    /// The column's one note: its name, its declared type and its
+    /// resolution, as a [`Finding`].
+    pub fn note(&self) -> &ColumnNote {
+        &self.note
+    }
+
+    /// How the column resolved.
+    pub fn resolution(&self) -> &ColumnResolution {
+        &self.note.resolution
+    }
+
+    /// The type the DDL declares the column, where any DDL named one.
+    pub fn declared(&self) -> Option<&str> {
+        self.note.declared.as_deref()
+    }
+
+    /// Which PostgreSQL literal form fills the column: the Arrow type cannot
+    /// say (`docs/design/decisions.md`, "D43"), so rendering and the batch's
+    /// builders read it here. A scalar column's is `NestedPlan::Scalar`.
+    pub fn plan(&self) -> &NestedPlan {
+        &self.plan
+    }
+
+    /// How the column compares: a codec conclusion, produced at resolution
+    /// because that is where its inputs meet — the declared type string and
+    /// the database's own `CREATE TYPE` list. `pgdt_query::predicate` reads
+    /// this instead of inspecting the Arrow type
+    /// (`crate::compare::comparison_for`).
+    ///
+    /// A column that did not resolve `Mapped` is [`ComparisonPlan::Refused`]
+    /// whatever its declared type said — the census can take a column out of
+    /// `Mapped` after the declared type has been read — but for
+    /// [`ColumnResolution::UnrepresentableValues`] read as its text under
+    /// [`ComparisonSemantics::Postgres`], which keeps the declared type's
+    /// plan ([`read_as_text`]).
+    pub fn comparison(&self) -> &ComparisonPlan {
+        &self.comparison
+    }
+
+    /// Whether the column's declaration makes it `NOT NULL` — on the column,
+    /// at the table, through a parent or through a domain (I76). A NULL in
+    /// such a column is refused wherever it is read, but under
+    /// [`pgdt_model::PostgresInvalidValues::Ignore`]. `false` for every
+    /// column of a schema resolved with no DDL, the strings schema mode's
+    /// included.
+    pub fn not_null(&self) -> bool {
+        self.not_null
+    }
+
+    /// The semantics the untyped mode read the column as its text under
+    /// ([`ColumnResolution::UnrepresentableValues`]), `None` for a column it
+    /// did not widen. Its [`Self::comparison`] is that semantics' alone: a
+    /// key asked for in the other answers `None`
+    /// ([`crate::key::ValueKey::of`]).
+    pub fn read_as_text_under(&self) -> Option<ComparisonSemantics> {
+        self.read_as_text
+    }
+
+    /// The kinds gathering orders the column's bounds and row order by, one
+    /// per [`pgdt_model::BoundsSet`] ([`ComparisonPlan::bounds_kinds`]), for
+    /// a scalar column — and none for a nested one. A column nothing
+    /// declared is [`ComparisonPlan::Refused`], and bounded as its text.
     ///
     /// **Meaningful for a schema resolved as gathering resolves it**:
     /// `SchemaMode::Typed` against the block's own DDL and no census
-    /// (`pgdt_mapping`'s `statistics::gather`). A query's schema says only which kind a term reads
-    /// bounds by ([`ComparisonPlan::bounds_read_by`]); which stored set that
-    /// is, is read off these kinds recomputed for the block
-    /// ([`crate::compare::bounds_set_keyed_by`]).
-    pub fn bounds_kinds(&self, i: usize) -> [Option<CompareKind>; 2] {
-        if self.plans[i].is_scalar() { self.comparisons[i].bounds_kinds() } else { [None, None] }
+    /// (`pgdt_mapping`'s `statistics::gather`). A query's schema says only
+    /// which kind a term reads bounds by ([`ComparisonPlan::bounds_read_by`]);
+    /// which stored set that is, is read off these kinds recomputed for the
+    /// block ([`crate::compare::bounds_set_keyed_by`]).
+    pub fn bounds_kinds(&self) -> [Option<CompareKind>; 2] {
+        if self.plan.is_scalar() { self.comparison.bounds_kinds() } else { [None, None] }
     }
+}
+
+/// A column record assembled from its parts, for a caller resolving no DDL —
+/// a test's hand-built schema — with no untyped widening; [`resolve_columns`]
+/// is how a query's are built.
+pub fn column_of(
+    field: Field,
+    declared: Option<String>,
+    resolution: ColumnResolution,
+    plan: NestedPlan,
+    comparison: ComparisonPlan,
+    not_null: bool,
+) -> ResolvedColumn {
+    let note = ColumnNote { column: field.name().clone(), declared, resolution };
+    ResolvedColumn { field: Arc::new(field), note, plan, comparison, not_null, read_as_text: None }
+}
+
+/// The schema of `columns`, in their order, its Arrow fields theirs and no
+/// metadata — a hand-built schema's, or a projection of a resolved one's.
+pub fn schema_of(columns: Vec<ResolvedColumn>) -> ResolvedSchema {
+    let fields: Vec<FieldRef> = columns.iter().map(|column| Arc::clone(&column.field)).collect();
+    ResolvedSchema { schema: Arc::new(Schema::new(fields)), columns }
 }
 
 /// Find the database named `database` in `metadata.databases` — an exact
@@ -373,10 +464,8 @@ fn shape_verdict(shape: ArrayShape) -> ShapeVerdict {
 fn retype_from_census(
     shape: ArrayShape,
     resolution: ColumnResolution,
-    pair: (arrow_schema::DataType, NestedPlan),
-) -> (ColumnResolution, (arrow_schema::DataType, NestedPlan)) {
-    use arrow_schema::DataType;
-
+    pair: (DataType, NestedPlan),
+) -> (ColumnResolution, (DataType, NestedPlan)) {
     let NestedPlan::Array(_) = &pair.1 else { return (resolution, pair) };
     match shape_verdict(shape) {
         ShapeVerdict::Keep => (resolution, pair),
@@ -433,14 +522,9 @@ pub fn resolve_columns(
     let unscanned_database =
         mode == SchemaMode::Typed && metadata.is_some() && !db.is_some_and(|d| d.preamble_complete);
 
-    let mut fields = Vec::with_capacity(columns.len());
-    let mut resolutions = Vec::with_capacity(columns.len());
-    let mut notes = Vec::with_capacity(columns.len());
-    let mut plans = Vec::with_capacity(columns.len());
-    let mut comparisons = Vec::with_capacity(columns.len());
-    let mut not_null = Vec::with_capacity(columns.len());
+    let mut records = Vec::with_capacity(columns.len());
 
-    let string = || (arrow_schema::DataType::Utf8View, NestedPlan::Scalar);
+    let string = || (DataType::Utf8View, NestedPlan::Scalar);
     for (i, name) in columns.iter().enumerate() {
         let declared = db.and_then(|d| d.declared_column(qualified_table, name));
         let (resolution, pair, comparison) = match declared {
@@ -506,37 +590,34 @@ pub fn resolve_columns(
             ),
             _ => field,
         };
-        fields.push(field);
-        notes.push(ColumnNote {
-            column: name.clone(),
-            declared: declared.map(|c| c.declared_type.clone()),
-            resolution: resolution.clone(),
-        });
-        resolutions.push(resolution);
-        plans.push(plan);
-        comparisons.push(comparison);
         // Whatever the type resolved to: a column read as its text is still
         // declared `NOT NULL`.
-        not_null.push(declared.is_some_and(|column| {
+        let not_null = declared.is_some_and(|column| {
             let db = db.expect("a declared column came from a database entry");
             db.column_not_null(qualified_table, name)
                 || domain_not_null(&column.declared_type, &db.types)
-        }));
+        });
+        let note = ColumnNote {
+            column: name.clone(),
+            declared: declared.map(|c| c.declared_type.clone()),
+            resolution,
+        };
+        records.push(ResolvedColumn {
+            field: Arc::new(field),
+            note,
+            plan,
+            comparison,
+            not_null,
+            read_as_text: None,
+        });
     }
 
-    ResolvedSchema {
-        schema: Arc::new(Schema::new(fields)),
-        columns: resolutions,
-        notes,
-        plans,
-        comparisons,
-        not_null,
-    }
+    schema_of(records)
 }
 
 /// **Read each column `text` marks as its text**, the untyped mode's widening
-/// ([`ColumnResolution::UnrepresentableValues`]): positional like `resolved`'s
-/// columns, and applied, as the census is, after the DDL has spoken and only
+/// ([`ColumnResolution::UnrepresentableValues`]): `text` positional over
+/// `resolved`'s columns, and applied, as the census is, after the DDL has spoken and only
 /// to a column still `Mapped` to a type other than `Utf8View` — one the census
 /// or the register already took to text holds every value
 /// (`docs/design/decisions.md`, "D100").
@@ -546,33 +627,33 @@ pub fn resolve_columns(
 /// semantics'**: the declared type's plan under
 /// [`ComparisonSemantics::Postgres`], and under
 /// [`ComparisonSemantics::DataFusion`] [`ComparisonPlan::Refused`], which
-/// that semantics compares bytewise as every column read as text.
+/// that semantics compares bytewise as every column read as text. The column
+/// records the semantics ([`ResolvedColumn::read_as_text_under`]), so a key
+/// asked for in the other answers `None`.
 pub fn read_as_text(resolved: &mut ResolvedSchema, text: &[bool], semantics: ComparisonSemantics) {
-    use arrow_schema::DataType;
-
     if !text.contains(&true) {
         return;
     }
-    let mut fields: Vec<Field> =
-        resolved.schema.fields().iter().map(|field| field.as_ref().clone()).collect();
     let mut widened = false;
-    for (i, field) in fields.iter_mut().enumerate() {
+    for (i, column) in resolved.columns.iter_mut().enumerate() {
         let read_as_text = text.get(i).copied().unwrap_or(false)
-            && resolved.columns[i] == ColumnResolution::Mapped
-            && *field.data_type() != DataType::Utf8View;
+            && column.note.resolution == ColumnResolution::Mapped
+            && *column.field.data_type() != DataType::Utf8View;
         if !read_as_text {
             continue;
         }
         widened = true;
-        *field = Field::new(field.name(), DataType::Utf8View, true);
-        resolved.columns[i] = ColumnResolution::UnrepresentableValues;
-        resolved.notes[i].resolution = ColumnResolution::UnrepresentableValues;
-        resolved.plans[i] = NestedPlan::Scalar;
+        column.field = Arc::new(Field::new(column.field.name(), DataType::Utf8View, true));
+        column.note.resolution = ColumnResolution::UnrepresentableValues;
+        column.plan = NestedPlan::Scalar;
+        column.read_as_text = Some(semantics);
         if semantics == ComparisonSemantics::DataFusion {
-            resolved.comparisons[i] = ComparisonPlan::Refused;
+            column.comparison = ComparisonPlan::Refused;
         }
     }
     if widened {
+        let fields: Vec<FieldRef> =
+            resolved.columns.iter().map(|column| Arc::clone(&column.field)).collect();
         resolved.schema =
             Arc::new(Schema::new_with_metadata(fields, resolved.schema.metadata().clone()));
     }

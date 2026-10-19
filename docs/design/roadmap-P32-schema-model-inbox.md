@@ -22,7 +22,7 @@ design.
 
 **Why P32 cares.** The grammar already tells a constraint from a
 column, so holding one is additive: the decision is the model's shape, not
-the parse. A `NOT NULL` is held already (`ResolvedSchema::not_null`, refusing
+the parse. A `NOT NULL` is held already (`ResolvedColumn::not_null`, refusing
 a NULL), the Arrow field staying nullable because `ignore` reads one (D37);
 a `PRIMARY KEY` or `UNIQUE` could answer a distinct count without statistics.
 

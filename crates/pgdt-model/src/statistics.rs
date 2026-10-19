@@ -485,7 +485,7 @@ pub struct ColumnStatisticsParts {
     pub null_counts: Vec<u64>,
     /// Present for a scalar column, in the register's order where that is
     /// exact and DataFusion semantics' otherwise — as its text for a column
-    /// nothing declared ([`pgdt_codec::ResolvedSchema::bounds_kinds`]):
+    /// nothing declared ([`pgdt_codec::ResolvedColumn::bounds_kinds`]):
     /// [`BoundsSet::Primary`].
     pub bounds: Option<ColumnBounds>,
     /// A second set in DataFusion semantics' order, present only where the

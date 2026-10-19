@@ -193,7 +193,7 @@ async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
         }
         let resolved = stream.resolved_schema();
         assert_eq!(
-            &resolved.columns[1..],
+            &resolved.columns()[1..].iter().map(|c| c.resolution().clone()).collect::<Vec<_>>(),
             &[
                 ColumnResolution::Mapped,
                 ColumnResolution::VaryingArrayShape,
@@ -260,7 +260,10 @@ async fn a_metadata_level_table_is_censused_by_its_query_and_refused_by_a_held_p
         batch.unwrap();
     }
     assert_eq!(
-        &stream.resolved_schema().columns[1..],
+        &stream.resolved_schema().columns()[1..]
+            .iter()
+            .map(|c| c.resolution().clone())
+            .collect::<Vec<_>>(),
         &[
             ColumnResolution::Mapped,
             ColumnResolution::VaryingArrayShape,

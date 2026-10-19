@@ -109,7 +109,7 @@ async fn library_answer(
     while let Some(batch) = stream.next().await {
         batches.push(batch.map_err(|e| e.to_string())?);
     }
-    Ok((stream.resolved_schema().schema, batches))
+    Ok((stream.resolved_schema().schema().clone(), batches))
 }
 
 /// **Every fixture table's `SELECT *` through the provider is the library's

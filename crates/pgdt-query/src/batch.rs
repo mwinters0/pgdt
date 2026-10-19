@@ -89,22 +89,19 @@ impl RowBatcher {
         field_targets: Vec<Option<usize>>,
         unrepresentable: Vec<Option<UnrepresentableRead>>,
     ) -> Self {
-        let schema = resolved.schema.clone();
+        let schema = resolved.schema().clone();
         let mut projected = vec![None; schema.fields().len()];
         for (field, target) in field_targets.iter().enumerate() {
             if let Some(target) = *target {
                 projected[target] = unrepresentable.get(field).cloned().flatten();
             }
         }
-        let declared_types = resolved.notes.iter().map(|n| n.declared.clone()).collect();
-        // `plans` is positional and parallel to `schema.fields()`:
-        // `resolve_columns` fills one entry per column, `NestedPlan::Scalar`
-        // included.
-        let columns = schema
-            .fields()
+        let declared_types =
+            resolved.columns().iter().map(|c| c.declared().map(str::to_string)).collect();
+        let columns = resolved
+            .columns()
             .iter()
-            .zip(&resolved.plans)
-            .map(|(f, plan)| new_column_builder(f.data_type(), plan))
+            .map(|column| new_column_builder(column.data_type(), column.plan()))
             .collect();
         Self {
             schema,
@@ -117,7 +114,7 @@ impl RowBatcher {
             bytes_in_batch: 0,
             span: None,
             unrepresentable: projected,
-            not_null: resolved.not_null.clone(),
+            not_null: resolved.columns().iter().map(|column| column.not_null()).collect(),
             options,
             max_rows,
         }

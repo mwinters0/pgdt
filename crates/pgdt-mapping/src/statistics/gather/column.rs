@@ -67,7 +67,7 @@ pub(super) struct ColumnGatherer {
 
 impl ColumnGatherer {
     /// A set of bounds under each of `bounds`, the kinds some semantics
-    /// orders the column by exactly (`pgdt_codec::ResolvedSchema::bounds_kinds`),
+    /// orders the column by exactly (`pgdt_codec::ResolvedColumn::bounds_kinds`),
     /// and a dictionary where the comparison equates exactly
     /// (`docs/design/decisions.md`, "D79"); a sum per group where the typed
     /// read emits `data_type` as an integer or a `Decimal128`; a count per

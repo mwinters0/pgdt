@@ -80,7 +80,7 @@ fn agrees(column: &ArrayRef, plan: &NestedPlan, child: &NestedPlan) {
     for row in 0..column.len() {
         let expected = prior_shape::render_array(column.as_ref(), row, child)
             .expect("the oracle renders every corpus row");
-        let actual = render_field(column.as_ref(), row, plan)
+        let actual = render_plan(column.as_ref(), row, plan)
             .expect("the walk renders every corpus row")
             .expect("no corpus row is a SQL NULL array");
         assert_eq!(actual, expected, "row {row}");

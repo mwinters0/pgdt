@@ -285,7 +285,7 @@ pub(crate) struct ResolvedTerm {
 /// The [`ResolvedTerm::not_null`] of column `index` of `resolved`, named
 /// `column`.
 fn not_null_column(resolved: &ResolvedSchema, index: usize, column: &str) -> Option<String> {
-    resolved.not_null.get(index).copied().unwrap_or(false).then(|| column.to_string())
+    resolved.columns().get(index).is_some_and(|c| c.not_null()).then(|| column.to_string())
 }
 
 impl ResolvedTerm {
@@ -348,7 +348,7 @@ impl ResolvedTerm {
 ///
 /// Nothing here reads the Arrow type: how a column compares is a conclusion
 /// resolution already reached (`pgdt_codec::compare::comparison_for`), carried in
-/// [`ResolvedSchema::comparisons`].
+/// [`pgdt_codec::ResolvedColumn::comparison`].
 ///
 /// **Under [`ComparisonSemantics::DataFusion`]** a scalar compares by its kind's
 /// [`CompareKind::datafusion_order`], a column with no plan — every one of which
@@ -393,7 +393,8 @@ pub(super) fn resolve_term(
         op: predicate.op.symbol(),
         reason: NESTED_IN_DATAFUSION.to_string(),
     };
-    let declared_type = resolved.notes[index].declared.clone().unwrap_or_default();
+    let record = &resolved.columns()[index];
+    let declared_type = record.declared().unwrap_or_default().to_string();
     // `kind` is what knows which grammar was applied, so the refusal is built
     // where it is in scope.
     let refuse_literal = |kind: &CompareKind| Error::PredicateValueDecode {
@@ -403,8 +404,8 @@ pub(super) fn resolve_term(
         declared_type: declared_type.clone(),
         accepted: accepted_form(kind),
     };
-    let mut plan = Some(&resolved.comparisons[index]);
-    if !compares_as_declared(&resolved.columns[index]) {
+    let mut plan = Some(record.comparison());
+    if !compares_as_declared(record.resolution()) {
         if ordering && !arrow {
             return Err(refuse(NOT_MAPPED));
         }
@@ -436,7 +437,7 @@ pub(super) fn resolve_term(
             }
             plan = None;
         }
-    } else if !resolved.plans[index].is_scalar() {
+    } else if !record.plan().is_scalar() {
         // A column the *resolver* calls nested and the register does not.
         // One shape reaches it — a range whose DDL stated no `subtype`, so
         // the resolver keeps the struct with `Utf8View` bounds and the
@@ -506,7 +507,7 @@ pub(super) fn resolve_term(
             },
             BelievedStatistics {
                 bounds: believed_bounds(
-                    &resolved.comparisons[index],
+                    record.comparison(),
                     semantics,
                     &CompareKind::Text { length: None, varying: false },
                     text,
@@ -519,7 +520,7 @@ pub(super) fn resolve_term(
             Comparison::Canonical(Spellings::one(text.to_string())),
             BelievedStatistics {
                 bounds: believed_bounds(
-                    &resolved.comparisons[index],
+                    record.comparison(),
                     semantics,
                     &CompareKind::Text { length: None, varying: false },
                     text,
@@ -935,7 +936,7 @@ pub(crate) fn resolve_expr(
 
 /// Where the column `name` sits in the block's unprojected schema.
 fn column_position(resolved: &ResolvedSchema, name: &str) -> Option<usize> {
-    resolved.schema.fields().iter().position(|f| f.name() == name)
+    resolved.schema().fields().iter().position(|f| f.name() == name)
 }
 
 /// A `DynamicFilter`'s state resolved as [`resolve_expr`] resolves a static

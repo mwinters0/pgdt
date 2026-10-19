@@ -90,7 +90,7 @@ async fn read(dump: &Path, table: &str, schema_mode: SchemaMode) -> (ResolvedSch
         batches.push(batch.unwrap());
     }
     let resolved = stream.resolved_schema();
-    let batch = arrow::compute::concat_batches(&resolved.schema, &batches).unwrap();
+    let batch = arrow::compute::concat_batches(resolved.schema(), &batches).unwrap();
     (resolved, batch)
 }
 
@@ -99,14 +99,17 @@ async fn read(dump: &Path, table: &str, schema_mode: SchemaMode) -> (ResolvedSch
 async fn keys(dump: &Path, table: &str, column: &str) -> Vec<(i32, ValueKey)> {
     let (resolved, _) = read(dump, table, SchemaMode::Typed).await;
     let (_, text) = read(dump, table, SchemaMode::Strings).await;
-    let index = resolved.schema.index_of(column).unwrap();
+    let index = resolved.schema().index_of(column).unwrap();
     let ids = text.column_by_name("id").unwrap().as_string_view();
     let values = text.column_by_name(column).unwrap().as_string_view();
     (0..text.num_rows())
         .filter(|row| values.is_valid(*row))
         .map(|row| {
-            let key =
-                ValueKey::of(&resolved, index, ComparisonSemantics::DataFusion, values.value(row));
+            let key = ValueKey::of(
+                &resolved.columns()[index],
+                ComparisonSemantics::DataFusion,
+                values.value(row),
+            );
             (ids.value(row).parse().unwrap(), key.expect("a value of the column"))
         })
         .collect()

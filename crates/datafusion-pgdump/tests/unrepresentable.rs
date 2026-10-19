@@ -571,7 +571,7 @@ impl Oracle {
             let (mut null_columns, mut text_columns, mut text_fields) =
                 (Vec::new(), Vec::new(), Vec::new());
             let mut unrepresentable = 0;
-            for (i, field) in resolved.schema.fields().iter().enumerate() {
+            for (i, field) in resolved.schema().fields().iter().enumerate() {
                 let mut decoded: Vec<ArrayRef> = Vec::new();
                 let mut spelled: Vec<ArrayRef> = Vec::new();
                 let mut widened = false;
@@ -586,7 +586,7 @@ impl Oracle {
                             continue;
                         }
                         let text = column.value(row);
-                        match decode_field(field.data_type(), &resolved.plans[i], text) {
+                        match decode_field(&resolved.columns()[i], text) {
                             Some(value) if arrow_holds(&value).is_ok() => decoded.push(value),
                             _ => {
                                 widened = true;
@@ -611,7 +611,7 @@ impl Oracle {
             assert!(unrepresentable > 0, "{table} holds no value its typed columns cannot");
             let null_schema = Arc::new(Schema::new(
                 resolved
-                    .schema
+                    .schema()
                     .fields()
                     .iter()
                     .map(|f| f.as_ref().clone().with_nullable(true))
@@ -933,7 +933,7 @@ async fn extremes(major: u32) -> Extremes {
         for batch in &batches {
             let ids = cast(batch.column(0), &DataType::Int32).unwrap();
             let ids = ids.as_any().downcast_ref::<arrow::array::Int32Array>().unwrap();
-            for (i, field) in resolved.schema.fields().iter().enumerate().skip(1) {
+            for (i, field) in resolved.schema().fields().iter().enumerate().skip(1) {
                 let column = cast(batch.column(i), &DataType::Utf8View).unwrap();
                 let column =
                     column.as_any().downcast_ref::<arrow::array::StringViewArray>().unwrap();
@@ -944,7 +944,7 @@ async fn extremes(major: u32) -> Extremes {
                     let key = (format!("{table}.{}", field.name()), ids.value(row));
                     present.insert(key.clone());
                     let text = column.value(row);
-                    match decode_field(field.data_type(), &resolved.plans[i], text) {
+                    match decode_field(&resolved.columns()[i], text) {
                         None => {
                             outside.insert(key, (Why::Format, text.to_string()));
                         }

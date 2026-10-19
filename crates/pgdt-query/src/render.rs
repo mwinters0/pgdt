@@ -10,6 +10,7 @@ use arrow::array::{
 };
 use arrow::datatypes::{DataType, Int32Type, IntervalUnit, TimeUnit};
 
+use pgdt_codec::ResolvedColumn;
 use pgdt_codec::decode;
 use pgdt_codec::internal::{push_array_null, push_integer, quote_array_element};
 use pgdt_codec::nested::{
@@ -21,9 +22,9 @@ use pgdt_model::PostgresInvalidValues;
 
 use crate::batch::{append_typed, finish_column, new_column_builder};
 
-/// Render one row of `column` back to the same PostgreSQL text form
-/// `pgdt_core::unescape_field` would have produced for it
-/// (`docs/design/decisions.md`, "D66"), and the round-trip tests' oracle.
+/// Render one row of `array`, a batch's array of `column`, back to the same
+/// PostgreSQL text form `pgdt_core::unescape_field` would have produced for
+/// it (`docs/design/decisions.md`, "D66"), and the round-trip tests' oracle.
 /// `Ok(None)` for SQL NULL. Covers exactly the [`DataType`]s
 /// [`pgdt_codec::resolve_columns`] can ever produce.
 ///
@@ -33,15 +34,26 @@ use crate::batch::{append_typed, finish_column, new_column_builder};
 /// crate builds can reach it, so it is a statement about arrays a caller
 /// assembled itself.
 ///
-/// `plan` is needed for the same reason
+/// `column` is needed for the same reason
 /// [`ColumnBuilder`](crate::batch::ColumnBuilder) needs it: the Arrow type
 /// does not say which literal form a nested value is written in, and
-/// `int4range[]` and `int4multirange` share one. It comes from
-/// [`pgdt_codec::ResolvedSchema::plans`], positionally; a caller that
-/// knows its column is scalar passes `&NestedPlan::Scalar`, which is
-/// [`NestedPlan`]'s `Default`. There is no plan-less entry point
+/// `int4range[]` and `int4multirange` share one. Its
+/// [`ResolvedColumn::plan`] says; there is no plan-less entry point
 /// (`docs/design/decisions.md`, "D43").
-pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result<Option<String>> {
+pub fn render_field(
+    array: &dyn Array,
+    row: usize,
+    column: &ResolvedColumn,
+) -> Result<Option<String>> {
+    render_plan(array, row, column.plan())
+}
+
+/// [`render_field`] over a plan, which each nested level recurses through.
+pub(crate) fn render_plan(
+    column: &dyn Array,
+    row: usize,
+    plan: &NestedPlan,
+) -> Result<Option<String>> {
     // Checked here rather than left to the sink so a SQL NULL costs no
     // allocation at all.
     if column.is_null(row) {
@@ -51,20 +63,20 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
     // `push_str` writes into it first, where one allocation suffices for a
     // value of 16 bytes or fewer.
     let mut out = String::with_capacity(16);
-    if render_field_into(column, row, plan, &mut out)? { Ok(Some(out)) } else { Ok(None) }
+    if render_plan_into(column, row, plan, &mut out)? { Ok(Some(out)) } else { Ok(None) }
 }
 
-/// [`render_field`]'s inverse for one field: `text`, unescaped as a row's
-/// field arrives, as the one-element array a batch of this column would hold —
-/// or `None` where the text is not a value of the column's type, which is
-/// [`Error::FieldDecode`]'s condition without the row that raises it.
+/// [`render_field`]'s inverse for one field of `column`: `text`, unescaped as
+/// a row's field arrives, as the one-element array a batch of the column
+/// would hold — or `None` where the text is not a value of the column's
+/// type, which is [`Error::FieldDecode`]'s condition without the row that
+/// raises it.
 ///
 /// It exists so that a caller holding field text out of band — a stored bound
 /// ([`pgdt_model::Bounds`]) — reads it back through the one decoder,
 /// rather than a second one that could disagree with what a scan emits.
-/// `plan` travels beside the Arrow type as it does for [`render_field`].
-pub fn decode_field(data_type: &DataType, plan: &NestedPlan, text: &str) -> Option<ArrayRef> {
-    let mut builder = new_column_builder(data_type, plan);
+pub fn decode_field(column: &ResolvedColumn, text: &str) -> Option<ArrayRef> {
+    let mut builder = new_column_builder(column.data_type(), column.plan());
     append_typed(&mut builder, text, PostgresInvalidValues::Default).ok()?;
     Some(finish_column(&mut builder))
 }
@@ -82,6 +94,17 @@ pub fn decode_field(data_type: &DataType, plan: &NestedPlan, text: &str) -> Opti
 /// **An error may leave a partial value behind**, so the discipline this asks
 /// for is not to publish a buffer an error came out of.
 pub fn render_field_into(
+    array: &dyn Array,
+    row: usize,
+    column: &ResolvedColumn,
+    out: &mut String,
+) -> Result<bool> {
+    render_plan_into(array, row, column.plan(), out)
+}
+
+/// [`render_field_into`] over a plan, which each nested level recurses
+/// through.
+pub(crate) fn render_plan_into(
     column: &dyn Array,
     row: usize,
     plan: &NestedPlan,
@@ -107,7 +130,7 @@ pub fn render_field_into(
             let range = NestedPlan::Range(bound.clone());
             let rendered: Vec<String> = (0..members.len())
                 .map(|i| {
-                    Ok(render_field(members.as_ref(), i, &range)?
+                    Ok(render_plan(members.as_ref(), i, &range)?
                         .expect("a multirange's members are never SQL NULL"))
                 })
                 .collect::<Result<_>>()?;
@@ -141,7 +164,7 @@ pub fn render_field_into(
                 .columns()
                 .iter()
                 .zip(field_plans)
-                .map(|(child, p)| render_field(child.as_ref(), row, &p.plan))
+                .map(|(child, p)| render_plan(child.as_ref(), row, &p.plan))
                 .collect::<Result<_>>()?;
             out.push_str(&render_record(&RecordLiteral { fields }));
             return Ok(true);
@@ -152,8 +175,8 @@ pub fn render_field_into(
                 |i: usize| s.column(i).as_any().downcast_ref::<BooleanArray>().unwrap().value(row);
             out.push_str(&render_range(&RangeLiteral {
                 empty: flag(4),
-                lower: render_field(s.column(0).as_ref(), row, bound)?,
-                upper: render_field(s.column(1).as_ref(), row, bound)?,
+                lower: render_plan(s.column(0).as_ref(), row, bound)?,
+                upper: render_plan(s.column(1).as_ref(), row, bound)?,
                 lower_inclusive: flag(2),
                 upper_inclusive: flag(3),
             }));
@@ -320,7 +343,7 @@ fn render_list_level(
             continue;
         }
         let mark = out.len();
-        if render_field_into(values.as_ref(), i, child_plan, out)? {
+        if render_plan_into(values.as_ref(), i, child_plan, out)? {
             quote_array_element(out, mark, scratch);
         } else {
             push_array_null(out);

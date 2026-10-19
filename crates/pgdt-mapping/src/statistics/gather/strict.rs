@@ -35,8 +35,9 @@ pub(super) fn field_checks(
     header
         .columns
         .iter()
-        .zip(resolved.comparisons.iter().zip(&resolved.not_null))
-        .map(|(name, (plan, &not_null))| {
+        .zip(resolved.columns())
+        .map(|(name, column)| {
+            let (plan, not_null) = (column.comparison(), column.not_null());
             let declared_type = declared_column(metadata, database, &qualified, name)
                 .map(|def| def.declared_type.clone())
                 .unwrap_or_default();
@@ -159,7 +160,8 @@ pub fn strict_unchecked(
     };
     let resolved = stored_resolution(header, metadata, database);
     let mut columns = Vec::new();
-    for (name, plan) in header.columns.iter().zip(&resolved.comparisons) {
+    for (name, plan) in header.columns.iter().zip(resolved.columns().iter().map(|c| c.comparison()))
+    {
         let Some(def) = db.declared_column(&qualified, name) else {
             columns.push(UncheckedColumn {
                 column: name.clone(),

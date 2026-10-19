@@ -21,7 +21,7 @@ fn collect_array(
                 collect_array(values.as_ref(), i, &inner.plan, depth + 1, dims, elements)?;
             }
             _ => elements
-                .push(render_field(values.as_ref(), i, child_plan)?.map(std::borrow::Cow::Owned)),
+                .push(render_plan(values.as_ref(), i, child_plan)?.map(std::borrow::Cow::Owned)),
         }
     }
     Ok(())

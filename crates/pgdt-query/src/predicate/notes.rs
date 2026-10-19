@@ -191,7 +191,7 @@ pub fn column_divergences(
     semantics: ComparisonSemantics,
 ) -> Vec<ComparisonNote> {
     let mut out = Vec::new();
-    for (index, note) in resolved.notes.iter().enumerate() {
+    for (index, note) in resolved.notes().enumerate() {
         let declared = note.declared.clone().unwrap_or_default();
         let positions = match semantics {
             ComparisonSemantics::Postgres => postgres_divergences(resolved, index),
@@ -243,20 +243,21 @@ pub(super) fn announced(
     index: usize,
     ordering: bool,
 ) -> Vec<DivergingPosition> {
-    let declared = resolved.notes[index].declared.clone().unwrap_or_default();
+    let record = &resolved.columns()[index];
+    let declared = record.declared().unwrap_or_default().to_string();
     let reaches = |d: &ComparisonDivergence| ordering || d.affects_equality();
     let column = |divergence: Option<ComparisonDivergence>| {
         divergence.filter(reaches).map(|d| (None, declared.clone(), d)).into_iter().collect()
     };
-    if !compares_as_declared(&resolved.columns[index]) {
-        return match resolved.columns[index] {
+    if !compares_as_declared(record.resolution()) {
+        return match record.resolution() {
             ColumnResolution::UnknownType | ColumnResolution::OpaqueBaseType => {
                 column(Some(ComparisonDivergence::UnmodelledType))
             }
             _ => Vec::new(),
         };
     }
-    match &resolved.comparisons[index] {
+    match record.comparison() {
         ComparisonPlan::Unanswerable(_) => Vec::new(),
         ComparisonPlan::Nested(tree) => tree
             .divergences()
@@ -264,7 +265,7 @@ pub(super) fn announced(
             .filter(|(_, _, d)| reaches(d))
             .map(|(path, declared, d)| (Some(path), declared, d))
             .collect(),
-        _ if !resolved.plans[index].is_scalar() => Vec::new(),
+        _ if !record.plan().is_scalar() => Vec::new(),
         ComparisonPlan::Compared { divergence, .. } => column(*divergence),
         ComparisonPlan::Refused => Vec::new(),
     }
@@ -278,7 +279,7 @@ fn postgres_divergences(resolved: &ResolvedSchema, index: usize) -> Vec<Divergin
     // column refusing `<` announces nothing `<` would add, its one
     // divergence, `UnmodelledType`, reaching `=`.
     let ordering = !matches!(
-        &resolved.comparisons[index],
+        resolved.columns()[index].comparison(),
         ComparisonPlan::Nested(tree) if tree.uncomparable().is_some()
     );
     announced(resolved, index, ordering)
@@ -295,14 +296,15 @@ fn datafusion_divergences(
     index: usize,
     declared: &str,
 ) -> Vec<DivergingPosition> {
+    let record = &resolved.columns()[index];
     let column = |divergence| (None, declared.to_string(), divergence);
-    if resolved.columns[index] != ColumnResolution::Mapped {
+    if *record.resolution() != ColumnResolution::Mapped {
         return Vec::new();
     }
-    if !resolved.plans[index].is_scalar() {
+    if !record.plan().is_scalar() {
         // The container's order, then each position's own divergence; a
         // plan with no tree has no position to name.
-        let positions = match &resolved.comparisons[index] {
+        let positions = match record.comparison() {
             ComparisonPlan::Nested(tree) => tree.datafusion_divergences(),
             _ => Vec::new(),
         };
@@ -310,7 +312,7 @@ fn datafusion_divergences(
             .chain(positions.into_iter().map(|(path, declared, d)| (Some(path), declared, d)))
             .collect();
     }
-    match &resolved.comparisons[index] {
+    match record.comparison() {
         ComparisonPlan::Compared { kind, divergence } => {
             datafusion_position_divergences(kind, *divergence).into_iter().map(column).collect()
         }

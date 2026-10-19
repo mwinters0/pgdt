@@ -5,14 +5,16 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use arrow::datatypes::DataType;
 use futures::StreamExt;
-use pgdt_codec::pgtype::NestedPlan;
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions, TablePartitions, render_field};
 
 mod common;
-use common::{Cold, edge_cases, edge_cases_fixture, rows_of, types_fixture, widgets_expected};
+use common::{
+    Cold, edge_cases, edge_cases_fixture, rows_of, scalar_column, types_fixture, widgets_expected,
+};
 
 /// `path` opened as a source a cold query reads.
 fn open(path: impl AsRef<Path>) -> Arc<dyn ByteRangeSource> {
@@ -351,7 +353,7 @@ async fn a_nested_predicate_compares_structurally_when_the_column_is_typed() {
                 // `id` is `integer` in both modes; only the array column's
                 // type changed underneath.
                 ids.push(
-                    render_field(batch.column(0).as_ref(), row, &NestedPlan::Scalar)
+                    render_field(batch.column(0).as_ref(), row, &scalar_column(&DataType::Int32))
                         .expect("renders back"),
                 );
             }

@@ -120,10 +120,11 @@ pub(crate) fn table_summary(
     semantics: ComparisonSemantics,
     reading: StatisticsView,
 ) -> TableSummary {
-    let fields = resolved.schema.fields();
+    let fields = resolved.schema().fields();
     let mut accumulators: Vec<Accumulator> = (0..fields.len())
         .map(|i| {
-            let kind = resolved.comparisons[i]
+            let kind = resolved.columns()[i]
+                .comparison()
                 .bounds_read_by(semantics)
                 // A `character(n)`'s set is stored without the trailing
                 // blanks its comparison ignores, so its bounds are not values
@@ -205,7 +206,7 @@ pub(crate) fn table_summary(
                 .kind
                 .as_ref()
                 .filter(|_| believed)
-                .and_then(|kind| bounds_set_keyed_by(&gathered.bounds_kinds(c), kind))
+                .and_then(|kind| bounds_set_keyed_by(&gathered.columns()[c].bounds_kinds(), kind))
                 // A set or a NULL count not one to a group describes other
                 // groups, and nothing it says is read.
                 .filter(|&set| column.listed_groups(set) == Some(groups) && counted == groups);
@@ -338,10 +339,10 @@ impl<'a> Accumulator<'a> {
 
     fn finish(self, resolved: &ResolvedSchema, i: usize, rows: u64) -> ColumnSummary {
         let mut complete = self.complete && self.kind.is_some();
-        let data_type = resolved.schema.field(i).data_type();
+        let column = &resolved.columns()[i];
         let mut decode = |end: Option<(OrderKey, String, bool)>| {
             let (_, text, exact) = end?;
-            match decode_field(data_type, &resolved.plans[i], &text) {
+            match decode_field(column, &text) {
                 Some(value) => Some(Bound { value, exact }),
                 None => {
                     complete = false;
@@ -352,7 +353,7 @@ impl<'a> Accumulator<'a> {
         let min = decode(self.min);
         let max = decode(self.max);
         let valued = self.nulls_complete && self.nulls < rows;
-        let sum = self.sum.filter(|_| valued && keeps_sums(data_type));
+        let sum = self.sum.filter(|_| valued && keeps_sums(column.data_type()));
         ColumnSummary {
             nulls: self.nulls,
             nulls_complete: self.nulls_complete,
@@ -400,7 +401,7 @@ pub(crate) fn partition_orders(
     runs: &[Vec<u64>],
     reading: StatisticsView,
 ) -> Vec<Sortedness> {
-    (0..resolved.schema.fields().len())
+    (0..resolved.schema().fields().len())
         .map(|i| {
             column_order(matches, metadata, database, resolved, i, runs, reading)
                 .unwrap_or(Sortedness::Unsorted)
@@ -421,8 +422,9 @@ fn column_order(
     runs: &[Vec<u64>],
     reading: StatisticsView,
 ) -> Option<Sortedness> {
-    let kind = resolved.comparisons[i].bounds_read_by(ComparisonSemantics::DataFusion)?;
-    let name = resolved.schema.field(i).name();
+    let kind =
+        resolved.columns()[i].comparison().bounds_read_by(ComparisonSemantics::DataFusion)?;
+    let name = resolved.schema().field(i).name();
     let mut order = None;
     // Each block's first and last group holding a row, by header offset. A
     // block holding no row has none, and orders nothing.
@@ -444,7 +446,7 @@ fn column_order(
             return None;
         }
         let gathered = stored_resolution(&block.header, metadata, database);
-        let set = bounds_set_keyed_by(&gathered.bounds_kinds(c), &kind)?;
+        let set = bounds_set_keyed_by(&gathered.columns()[c].bounds_kinds(), &kind)?;
         if column.listed_groups(set)? != statistics.groups.len() {
             return None;
         }

@@ -373,7 +373,7 @@ async fn every_aggregate(
         seen.count |=
             agrees(reading, blind, &format!("SELECT COUNT(*) FROM {from}")).await.answered();
         let provider = dump.table(table.database.as_deref(), None, &table.table).unwrap();
-        for field in provider.resolved_schema().schema.fields() {
+        for field in provider.resolved_schema().schema().fields() {
             let column = quoted(field.name());
             // `COUNT(c)` is the table's rows less the column's NULLs, so it
             // reads the null count rather than a bound.
@@ -1085,7 +1085,7 @@ async fn estimates_over(fixtures: Vec<PathBuf>) -> Estimates {
                     let field = schema.field(at);
                     terms.push(column(field.name()).is_null());
                     terms.push(column(field.name()).is_not_null());
-                    if !resolved.plans[index].is_scalar() {
+                    if !resolved.columns()[index].plan().is_scalar() {
                         continue;
                     }
                     let values =
@@ -1342,7 +1342,7 @@ async fn orderings_over(fixtures: Vec<PathBuf>) -> BTreeMap<usize, bool> {
                 let from = from(&catalog, name);
                 let resolved = table.resolved_schema();
                 for (at, &index) in projection.iter().enumerate() {
-                    if !resolved.plans[index].is_scalar() {
+                    if !resolved.columns()[index].plan().is_scalar() {
                         continue;
                     }
                     let field = schema.field(at);

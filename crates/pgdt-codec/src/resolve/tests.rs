@@ -28,7 +28,7 @@ fn mapped_and_not_declared_columns() {
     let cols = vec!["id".to_string(), "name".to_string(), "extra".to_string()];
     let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
     assert_eq!(
-        resolved.columns,
+        resolutions(&resolved),
         [ColumnResolution::Mapped, ColumnResolution::Mapped, ColumnResolution::NotDeclared,]
     );
     assert_eq!(resolved.schema.field(0).data_type(), &arrow_schema::DataType::Int32);
@@ -43,7 +43,7 @@ fn strings_mode_never_looks_up_ddl() {
     let meta = one_db(&[("public.t", &[("id", "integer")])], vec![]);
     let cols = vec!["id".to_string()];
     let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Strings, &[]);
-    assert_eq!(resolved.columns, [ColumnResolution::NotDeclared]);
+    assert_eq!(resolutions(&resolved), [ColumnResolution::NotDeclared]);
     assert_eq!(resolved.schema.field(0).data_type(), &arrow_schema::DataType::Utf8View);
 }
 
@@ -51,7 +51,7 @@ fn strings_mode_never_looks_up_ddl() {
 fn no_metadata_at_all_is_every_column_not_declared() {
     let cols = vec!["id".to_string()];
     let resolved = resolve_columns("public.t", &cols, None, None, SchemaMode::Typed, &[]);
-    assert_eq!(resolved.columns, [ColumnResolution::NotDeclared]);
+    assert_eq!(resolutions(&resolved), [ColumnResolution::NotDeclared]);
 }
 
 /// A block attributed to a database the metadata does not cover is
@@ -69,15 +69,15 @@ fn a_database_the_scan_never_reached_is_told_apart_from_undeclared_columns() {
 
     let later =
         resolve_columns("public.t", &cols, Some(&meta), Some("second"), SchemaMode::Typed, &[]);
-    assert_eq!(later.columns, [ColumnResolution::MetadataNotScanned]);
+    assert_eq!(resolutions(&later), [ColumnResolution::MetadataNotScanned]);
     assert_eq!(later.schema.field(0).data_type(), &arrow_schema::DataType::Utf8View);
-    assert_eq!(later.notes[0].severity(), Severity::Warning);
+    assert_eq!(later.columns[0].note.severity(), Severity::Warning);
 
     // The same metadata, asked about a table the database it *did* read
     // never declared: final, and says so.
     let undeclared =
         resolve_columns("public.absent", &cols, Some(&meta), Some("first"), SchemaMode::Typed, &[]);
-    assert_eq!(undeclared.columns, [ColumnResolution::NotDeclared]);
+    assert_eq!(resolutions(&undeclared), [ColumnResolution::NotDeclared]);
 }
 
 /// A database entry that exists but is not `preamble_complete` is the same
@@ -92,7 +92,10 @@ fn an_incomplete_database_entry_is_also_metadata_not_scanned() {
     let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
     // The column the fragment *does* declare still resolves; only the
     // unexplained one carries the "ask again later" outcome.
-    assert_eq!(resolved.columns, [ColumnResolution::Mapped, ColumnResolution::MetadataNotScanned]);
+    assert_eq!(
+        resolutions(&resolved),
+        [ColumnResolution::Mapped, ColumnResolution::MetadataNotScanned]
+    );
 }
 
 /// `SchemaMode::Strings` never looks, so it never reaches this outcome
@@ -106,7 +109,7 @@ fn strings_mode_never_reports_metadata_not_scanned() {
     let cols = vec!["id".to_string()];
     let resolved =
         resolve_columns("public.t", &cols, Some(&meta), Some("second"), SchemaMode::Strings, &[]);
-    assert_eq!(resolved.columns, [ColumnResolution::NotDeclared]);
+    assert_eq!(resolutions(&resolved), [ColumnResolution::NotDeclared]);
 }
 
 /// Every non-`Mapped` outcome `crate::pgtype` can produce but
@@ -131,7 +134,7 @@ fn unknown_opaque_and_empty_enum_outcomes() {
     let cols = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
     let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
     assert_eq!(
-        resolved.columns,
+        resolutions(&resolved),
         [
             ColumnResolution::UnknownType,
             ColumnResolution::OpaqueElementType,
@@ -143,12 +146,12 @@ fn unknown_opaque_and_empty_enum_outcomes() {
         resolved.schema.fields().iter().all(|f| *f.data_type() == arrow_schema::DataType::Utf8View),
         "every unmapped outcome falls back to text"
     );
-    assert_eq!(resolved.plans, vec![NestedPlan::Scalar; 4]);
+    assert_eq!(plans(&resolved), vec![NestedPlan::Scalar; 4]);
 }
 
-/// The `(DataType, NestedPlan)` pair reaches the schema positionally,
-/// with one entry per column whether or not the column is nested — so no
-/// consumer has to ask whether `plans` applies to it.
+/// The `(DataType, NestedPlan)` pair reaches each column's record, whether
+/// or not the column is nested — so no consumer has to ask whether a plan
+/// applies to it.
 #[test]
 fn a_nested_column_carries_its_plan_beside_its_type() {
     let types = vec![TypeDef {
@@ -161,16 +164,16 @@ fn a_nested_column_carries_its_plan_beside_its_type() {
     );
     let cols = vec!["id".to_string(), "v".to_string(), "p".to_string()];
     let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
-    assert!(resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped));
+    assert!(resolutions(&resolved).iter().all(|c| *c == ColumnResolution::Mapped));
     assert_eq!(
-        resolved.plans,
+        plans(&resolved),
         [
             NestedPlan::Scalar,
             NestedPlan::array(NestedPlan::Scalar),
             NestedPlan::record(vec![NestedPlan::Scalar]),
         ]
     );
-    assert_eq!(resolved.plans.len(), resolved.schema.fields().len());
+    assert_eq!(plans(&resolved).len(), resolved.schema.fields().len());
 }
 
 fn shape(dims: Option<(u8, u8)>, lower_bound_prefix: bool) -> ArrayShape {
@@ -198,12 +201,12 @@ fn a_uniformly_deep_array_column_gains_a_list_level_per_dimension() {
     {
         let resolved = array_column(&[shape(Some((depth, depth)), false)]);
         assert_eq!(resolved.schema.field(0).data_type(), &expected, "depth {depth}");
-        assert_eq!(resolved.columns, [ColumnResolution::Mapped], "depth {depth}");
+        assert_eq!(resolutions(&resolved), [ColumnResolution::Mapped], "depth {depth}");
         let mut plan = NestedPlan::Scalar;
         for _ in 0..depth {
             plan = NestedPlan::array(plan);
         }
-        assert_eq!(resolved.plans, [plan], "depth {depth}");
+        assert_eq!(plans(&resolved), [plan], "depth {depth}");
     }
 }
 
@@ -216,22 +219,22 @@ fn a_varying_or_decorated_array_column_becomes_text_and_says_why() {
         (shape(Some((1, 1)), true), "a lower-bound prefix, however uniform"),
     ] {
         let resolved = array_column(&[census]);
-        assert_eq!(resolved.columns, [ColumnResolution::VaryingArrayShape], "{why}");
+        assert_eq!(resolutions(&resolved), [ColumnResolution::VaryingArrayShape], "{why}");
         assert_eq!(
             resolved.schema.field(0).data_type(),
             &arrow_schema::DataType::Utf8View,
             "{why}"
         );
-        assert_eq!(resolved.plans, [NestedPlan::Scalar], "{why}");
+        assert_eq!(plans(&resolved), [NestedPlan::Scalar], "{why}");
         // Still a `Warning` on the shared scale, like every other
         // fallback to text.
-        assert_eq!(resolved.notes[0].severity(), Severity::Warning, "{why}");
+        assert_eq!(resolved.columns[0].note.severity(), Severity::Warning, "{why}");
     }
 
     // Every value was NULL or `{}`: nothing was constrained, so the
     // optimistic type stands.
     let unconstrained = array_column(&[shape(None, false)]);
-    assert_eq!(unconstrained.columns, [ColumnResolution::Mapped]);
+    assert_eq!(resolutions(&unconstrained), [ColumnResolution::Mapped]);
     assert_eq!(unconstrained.schema.field(0).data_type(), &list_of(arrow_schema::DataType::Int32));
 }
 
@@ -243,7 +246,7 @@ fn a_varying_or_decorated_array_column_becomes_text_and_says_why() {
 fn a_brace_run_past_the_dimension_limit_is_not_evidence() {
     for dims in [(7, 7), (200, 200), (1, 200)] {
         let resolved = array_column(&[shape(Some(dims), false)]);
-        assert_eq!(resolved.columns, [ColumnResolution::Mapped], "{dims:?}");
+        assert_eq!(resolutions(&resolved), [ColumnResolution::Mapped], "{dims:?}");
         assert_eq!(
             resolved.schema.field(0).data_type(),
             &list_of(arrow_schema::DataType::Int32),
@@ -283,12 +286,12 @@ fn the_census_only_speaks_for_a_column_the_ddl_resolved_to_an_array() {
     let resolved =
         resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &census);
     assert_eq!(
-        resolved.columns,
+        resolutions(&resolved),
         [ColumnResolution::Mapped, ColumnResolution::Mapped, ColumnResolution::NestedArrayElement]
     );
     let untouched = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
     assert_eq!(resolved.schema, untouched.schema);
-    assert_eq!(resolved.plans, untouched.plans);
+    assert_eq!(plans(&resolved), plans(&untouched));
 }
 
 /// A census shorter than the column list — one ending at the highest
@@ -306,13 +309,16 @@ fn a_census_shorter_than_the_column_list_constrains_only_what_it_covers() {
         SchemaMode::Typed,
         &[shape(Some((1, 2)), false)],
     );
-    assert_eq!(resolved.columns, [ColumnResolution::VaryingArrayShape, ColumnResolution::Mapped]);
+    assert_eq!(
+        resolutions(&resolved),
+        [ColumnResolution::VaryingArrayShape, ColumnResolution::Mapped]
+    );
     assert_eq!(resolved.schema.field(1).data_type(), &list_of(arrow_schema::DataType::Int32));
 }
 
-/// The comparison plan is a fourth positional vector, one entry per column
-/// whether or not the column has an order — so no consumer has to ask
-/// whether it applies — and its value is the register's own answer.
+/// Every column's record carries a comparison plan, whether or not the
+/// column has an order — so no consumer has to ask whether it applies — and
+/// its value is the register's own answer.
 #[test]
 fn every_column_carries_a_comparison_plan() {
     use crate::compare::{CompareKind, ComparisonPlan};
@@ -336,9 +342,9 @@ fn every_column_carries_a_comparison_plan() {
     );
     let cols: Vec<String> = ["i", "s", "m", "v", "u"].iter().map(ToString::to_string).collect();
     let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
-    assert_eq!(resolved.comparisons.len(), resolved.schema.fields().len());
+    assert_eq!(comparisons(&resolved).len(), resolved.schema.fields().len());
     assert_eq!(
-        resolved.comparisons,
+        comparisons(&resolved),
         [
             ComparisonPlan::Compared { kind: CompareKind::Int { bytes: 4 }, divergence: None },
             ComparisonPlan::diverging(
@@ -372,7 +378,7 @@ fn every_column_carries_a_comparison_plan() {
     // `SchemaMode::Strings` resolves nothing, so it claims no order for
     // any column — which is what makes an ordering operator refuse.
     let strings = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Strings, &[]);
-    assert_eq!(strings.comparisons, vec![ComparisonPlan::Refused; 5]);
+    assert_eq!(comparisons(&strings), vec![ComparisonPlan::Refused; 5]);
 }
 
 /// The register is consulted **per column**, not per declared type: two
@@ -389,7 +395,7 @@ fn two_text_columns_of_one_table_can_compare_differently() {
     let cols = vec!["plain".to_string(), "bytewise".to_string()];
     let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
     assert_eq!(
-        resolved.comparisons,
+        comparisons(&resolved),
         [
             ComparisonPlan::diverging(
                 CompareKind::Text { length: None, varying: false },
@@ -427,14 +433,14 @@ fn the_dumps_own_collation_list_decides_whether_a_clause_is_deterministic() {
     };
 
     assert_eq!(
-        build(true).comparisons,
+        comparisons(&build(true)),
         [ComparisonPlan::diverging(
             CompareKind::Text { length: None, varying: false },
             ComparisonDivergence::NonBytewiseCollation
         )]
     );
     assert_eq!(
-        build(false).comparisons,
+        comparisons(&build(false)),
         [ComparisonPlan::diverging(
             CompareKind::Text { length: None, varying: false },
             ComparisonDivergence::NonDeterministicCollation
@@ -453,7 +459,7 @@ fn a_census_refused_column_claims_no_order() {
     let cols = vec!["v".to_string()];
     let text = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
     assert_eq!(
-        text.comparisons,
+        comparisons(&text),
         [ComparisonPlan::diverging(
             crate::compare::CompareKind::Text { length: None, varying: false },
             crate::compare::ComparisonDivergence::UnknownCollation,
@@ -464,8 +470,8 @@ fn a_census_refused_column_claims_no_order() {
     // list shape: `VaryingArrayShape` holds *array* literals as text, and
     // comparing them as text is not an order this build defines.
     let varying = array_column(&[shape(Some((1, 2)), false)]);
-    assert_eq!(varying.columns, [ColumnResolution::VaryingArrayShape]);
-    assert_eq!(varying.comparisons, [ComparisonPlan::Refused]);
+    assert_eq!(resolutions(&varying), [ColumnResolution::VaryingArrayShape]);
+    assert_eq!(comparisons(&varying), [ComparisonPlan::Refused]);
 }
 
 #[test]
@@ -473,8 +479,8 @@ fn diagnostic_carries_the_declared_string_when_present() {
     let meta = one_db(&[("public.t", &[("id", "integer")])], vec![]);
     let cols = vec!["id".to_string(), "extra".to_string()];
     let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
-    assert_eq!(resolved.notes[0].declared.as_deref(), Some("integer"));
-    assert_eq!(resolved.notes[1].declared, None);
+    assert_eq!(resolved.columns[0].note.declared.as_deref(), Some("integer"));
+    assert_eq!(resolved.columns[1].note.declared, None);
 }
 
 /// `database_for_name` selects by the attributed database's *name*, not by
@@ -503,8 +509,8 @@ fn database_selects_by_attributed_name_not_by_first_match() {
 /// **The untyped mode widens a marked column still `Mapped` and no
 /// other**: to `Utf8View` at a scalar plan, keeping the declared type's
 /// comparison in PostgreSQL's semantics and none in DataFusion's, which
-/// compares its text; a column already text holds every value, so is
-/// left as it is, and an unmarked one keeps its type.
+/// compares its text, and recording which; a column already text holds
+/// every value, so is left as it is, and an unmarked one keeps its type.
 #[test]
 fn the_untyped_mode_widens_a_marked_column_and_compares_it_per_semantics() {
     use arrow_schema::DataType;
@@ -524,17 +530,24 @@ fn the_untyped_mode_widens_a_marked_column_and_compares_it_per_semantics() {
             [&DataType::Int32, &DataType::Utf8View, &DataType::Utf8View, &DataType::Utf8View]
         );
         use ColumnResolution::{Mapped, UnrepresentableValues};
-        assert_eq!(widened.columns, [Mapped, UnrepresentableValues, Mapped, UnrepresentableValues]);
-        assert_eq!(widened.notes[1].resolution, UnrepresentableValues);
-        assert_eq!(widened.plans[3], NestedPlan::Scalar);
+        assert_eq!(
+            resolutions(&widened),
+            [Mapped, UnrepresentableValues, Mapped, UnrepresentableValues]
+        );
+        assert_eq!(widened.columns[1].note.resolution, UnrepresentableValues);
+        // The widening records its semantics on the columns it widened alone.
+        let under: Vec<_> = widened.columns().iter().map(|c| c.read_as_text_under()).collect();
+        assert_eq!(under, [None, Some(semantics), None, Some(semantics)]);
+        assert_eq!(widened.schema().fields()[1], *widened.columns()[1].field());
+        assert_eq!(plans(&widened)[3], NestedPlan::Scalar);
         let expected = |i: usize| match semantics {
-            ComparisonSemantics::Postgres => declared.comparisons[i].clone(),
+            ComparisonSemantics::Postgres => comparisons(&declared)[i].clone(),
             ComparisonSemantics::DataFusion => ComparisonPlan::Refused,
         };
-        assert_eq!(widened.comparisons[1], expected(1), "{semantics:?}");
-        assert_eq!(widened.comparisons[3], expected(3), "{semantics:?}");
-        assert_eq!(widened.comparisons[..1], declared.comparisons[..1]);
-        assert_eq!(widened.comparisons[2], declared.comparisons[2]);
+        assert_eq!(comparisons(&widened)[1], expected(1), "{semantics:?}");
+        assert_eq!(comparisons(&widened)[3], expected(3), "{semantics:?}");
+        assert_eq!(comparisons(&widened)[..1], comparisons(&declared)[..1]);
+        assert_eq!(comparisons(&widened)[2], comparisons(&declared)[2]);
     }
 }
 
@@ -572,4 +585,19 @@ fn both_channels_order_on_one_severity_scale() {
     };
     assert!(file.severity() > column.severity());
     assert!(matches!(file.kind(), DiagnosticKind::TilingBroken { .. }));
+}
+
+/// Each column's resolution, in order.
+fn resolutions(resolved: &ResolvedSchema) -> Vec<ColumnResolution> {
+    resolved.columns().iter().map(|column| column.resolution().clone()).collect()
+}
+
+/// Each column's literal plan, in order.
+fn plans(resolved: &ResolvedSchema) -> Vec<NestedPlan> {
+    resolved.columns().iter().map(|column| column.plan().clone()).collect()
+}
+
+/// Each column's comparison plan, in order.
+fn comparisons(resolved: &ResolvedSchema) -> Vec<ComparisonPlan> {
+    resolved.columns().iter().map(|column| column.comparison().clone()).collect()
 }

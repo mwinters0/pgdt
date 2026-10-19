@@ -1194,7 +1194,10 @@ fn outcomes(index: &DumpIndex) -> Vec<(String, Vec<ColumnResolution>)> {
                 SchemaMode::Typed,
                 &[],
             );
-            (b.header.qualified_name(), schema.columns)
+            (
+                b.header.qualified_name(),
+                schema.columns().iter().map(|c| c.resolution().clone()).collect(),
+            )
         })
         .collect()
 }
@@ -1392,11 +1395,11 @@ async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() 
                 &[],
             );
             assert!(
-                schema.columns.iter().all(|c| *c == ColumnResolution::Mapped),
+                schema.columns().iter().all(|c| *c.resolution() == ColumnResolution::Mapped),
                 "pg_dump {version}: {database}: {:?}",
-                schema.columns
+                schema.columns()
             );
-            schema.schema.fields().iter().map(|f| f.data_type().clone()).collect::<Vec<_>>()
+            schema.schema().fields().iter().map(|f| f.data_type().clone()).collect::<Vec<_>>()
         };
 
         assert_eq!(

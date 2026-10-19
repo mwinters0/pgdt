@@ -383,7 +383,7 @@ fn membership(
         .iter()
         .map(|item| member(index, item.downcast_ref::<Literal>()?.value(), table))
         .collect::<Option<Vec<_>>>()?;
-    Some((table.schema.field(index).name().clone(), values))
+    Some((table.schema().field(index).name().clone(), values))
 }
 
 /// A `CASE` as its branches alone: the branch answering a row is one of its
@@ -409,6 +409,6 @@ fn case_branches(case: &CaseExpr, parity: Parity, table: &ResolvedSchema) -> L {
 /// reads it, and only where the field there carries its name.
 fn column_at(expr: &Arc<dyn PhysicalExpr>, table: &ResolvedSchema) -> Option<usize> {
     let column = expr.downcast_ref::<Column>()?;
-    let field = table.schema.fields().get(column.index())?;
+    let field = table.schema().fields().get(column.index())?;
     (field.name() == column.name()).then_some(column.index())
 }

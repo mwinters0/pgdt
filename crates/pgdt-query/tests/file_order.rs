@@ -77,7 +77,7 @@ async fn the_whole_table_in_file_order_is_the_serial_replay() {
             let plan = plan(&table, jobs);
             split |= plan.len() > 1;
             let mut stream = plan.in_file_order(1);
-            assert_eq!(stream.resolved_schema().schema, plan.resolved_schema().schema);
+            assert_eq!(stream.resolved_schema().schema(), plan.resolved_schema().schema());
             let (mut rows, mut previous) = (Rows::new(), None);
             while let Some(batch) = stream.next().await {
                 rows.extend(rows_of(&batch.unwrap()));

@@ -152,8 +152,8 @@ async fn read_column(path: &Path, table: &str, column: &str) -> Result<Option<Re
     while let Some(batch) = stream.next().await {
         let batch = batch.map_err(|e| e.to_string())?;
         let resolved = stream.resolved_schema();
-        let index = resolved.schema.index_of(column).unwrap();
-        let plan = resolved.plans[index].clone();
+        let index = resolved.schema().index_of(column).unwrap();
+        let plan = resolved.columns()[index].plan().clone();
         let array = batch.column(batch.schema().index_of(column).unwrap());
         if is_text(array.data_type()) {
             return Ok(None);

@@ -508,13 +508,6 @@ than reading as a phase nobody has sliced.
   it and TOC coverage reads it as unattributed. **(c) unowned**; promoted by
   any change to the TOC header parser. Detail: `crates/pgdt-dump/src/map/toc.rs`.
 
-- **KD121** — a `ValueKey` takes its semantics beside a `ResolvedSchema` that
-  does not record the semantics its untyped widening was applied under, so a
-  key asked for in DataFusion's semantics over a column widened under
-  PostgreSQL's orders the column's text by its declared type, where DataFusion
-  compares it bytewise. **(b) owned by P36**, 36.9. Detail:
-  `crates/pgdt-codec/src/key.rs`.
-
 - **KD122** — `pgdt sql` prints an error that ends its run, a refused
   `--dump` or a failed `-c` statement, to stdout, as upstream's
   `datafusion-cli` does, where every other command writes errors to stderr; a

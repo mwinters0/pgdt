@@ -133,7 +133,7 @@ impl PgDumpTable {
         uncollated: &mut UncollatedColumns,
     ) {
         let resolved = self.resolved_schema();
-        for finding in &resolved.notes {
+        for finding in resolved.notes() {
             sink.report(&Located { subject, finding });
         }
         for finding in &self.divergences {
@@ -235,7 +235,7 @@ fn query_options(dump: &PgDump) -> QueryOptions {
 #[async_trait]
 impl TableProvider for PgDumpTable {
     fn schema(&self) -> SchemaRef {
-        Arc::clone(&self.resolved.schema)
+        Arc::clone(self.resolved.schema())
     }
 
     fn table_type(&self) -> TableType {
@@ -317,7 +317,7 @@ impl TableProvider for PgDumpTable {
             settings.memory,
         ));
         let parallelism = draw.parallelism();
-        let schema = self.resolved.schema.fields();
+        let schema = self.resolved.schema().fields();
         // A filter that does not translate was not answered `Exact`, so
         // DataFusion keeps it above the scan and it is not needed here.
         let (answered, translated): (Vec<&Expr>, Vec<_>) = filters
@@ -336,7 +336,7 @@ impl TableProvider for PgDumpTable {
         self.report_plan(partitions.plan_notes(), draw.account());
         let metrics = ScanMetrics::planned(partitions.plan_notes());
         let partitions = Arc::new(partitions);
-        let schema = partitions.resolved_schema().schema;
+        let schema = partitions.resolved_schema().schema().clone();
         let table = self.table_statistics().map_err(external)?;
         let kept =
             (!filters.is_empty()).then(|| (partitions.kept_rows(), partitions.kept_value_bytes()));

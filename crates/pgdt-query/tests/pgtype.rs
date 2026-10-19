@@ -48,7 +48,7 @@ fn resolve_table(meta: &DumpMetadata, qualified: &str) -> pgdt_codec::ResolvedSc
 
 /// Just the resolutions, for a terse per-table assertion.
 fn resolutions(meta: &DumpMetadata, qualified: &str) -> Vec<ColumnResolution> {
-    resolve_table(meta, qualified).columns
+    resolve_table(meta, qualified).columns().iter().map(|c| c.resolution().clone()).collect()
 }
 
 fn list_of(child: DataType) -> DataType {
@@ -228,8 +228,8 @@ async fn the_container_families_resolve_to_the_arrow_types_the_mapping_table_nam
 
         let arrays = resolve_table(&meta, "public.t_array");
         let field = |r: &pgdt_codec::ResolvedSchema, name: &str| {
-            let i = r.schema.index_of(name).unwrap();
-            (r.schema.field(i).data_type().clone(), r.plans[i].clone())
+            let i = r.schema().index_of(name).unwrap();
+            (r.schema().field(i).data_type().clone(), r.columns()[i].plan().clone())
         };
         let flat = NestedPlan::array(NestedPlan::Scalar);
         assert_eq!(
@@ -360,13 +360,13 @@ async fn enum_column_maps_to_a_dictionary_and_domain_to_its_base_type() {
             &[],
         );
         assert_eq!(
-            resolved.schema.field(0).data_type(),
+            resolved.schema().field(0).data_type(),
             &DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
             "pg_dump {version}"
         );
         // `derived_domain` is a domain over `base_domain`, itself a domain
         // over `integer` -- transitive resolution must reach `Int32`.
-        assert_eq!(resolved.schema.field(1).data_type(), &DataType::Int32, "pg_dump {version}");
+        assert_eq!(resolved.schema().field(1).data_type(), &DataType::Int32, "pg_dump {version}");
         assert!(db.tables.contains_key("public.t_enum_domain"), "pg_dump {version}");
     }
 }
@@ -379,8 +379,8 @@ async fn an_oid_column_resolves_unsigned() {
     for version in [13, 16, 18] {
         let meta = metadata(&types_fixture(version, "default")).await;
         let resolved = resolve_table(&meta, "public.t_oid");
-        assert_eq!(resolved.schema.field(1).name(), "v_oid", "pg_dump {version}");
-        assert_eq!(resolved.schema.field(1).data_type(), &DataType::UInt32, "pg_dump {version}");
+        assert_eq!(resolved.schema().field(1).name(), "v_oid", "pg_dump {version}");
+        assert_eq!(resolved.schema().field(1).data_type(), &DataType::UInt32, "pg_dump {version}");
     }
 }
 
@@ -398,16 +398,16 @@ async fn the_canonical_extension_names_land_on_the_columns_that_claim_them() {
         let meta = metadata(&types_fixture(version, "default")).await;
 
         let uuid = resolve_table(&meta, "public.t_uuid");
-        assert_eq!(uuid.schema.field(0).metadata().get(NAME), None, "pg_dump {version}: id");
+        assert_eq!(uuid.schema().field(0).metadata().get(NAME), None, "pg_dump {version}: id");
         assert_eq!(
-            uuid.schema.field(1).metadata().get(NAME).map(String::as_str),
+            uuid.schema().field(1).metadata().get(NAME).map(String::as_str),
             Some("arrow.uuid"),
             "pg_dump {version}: v_uuid"
         );
 
         let json = resolve_table(&meta, "public.t_json");
         for column in [1, 2] {
-            let field = json.schema.field(column);
+            let field = json.schema().field(column);
             assert_eq!(
                 field.metadata().get(NAME).map(String::as_str),
                 Some("arrow.json"),
@@ -424,7 +424,7 @@ async fn the_canonical_extension_names_land_on_the_columns_that_claim_them() {
 
         // A `text` column reaches the same `Utf8View` and claims nothing.
         let text = resolve_table(&meta, "public.t_text");
-        assert!(text.schema.fields().iter().all(|f| f.metadata().get(NAME).is_none()));
+        assert!(text.schema().fields().iter().all(|f| f.metadata().get(NAME).is_none()));
     }
 }
 
@@ -442,11 +442,16 @@ async fn every_column_resolves_alike_with_every_identifier_quoted() {
         for table in tables.keys() {
             let (q, b) = (resolve_table(&quoted, table), resolve_table(&bare, table));
             let orders = |r: &pgdt_codec::ResolvedSchema| {
-                r.comparisons.iter().map(|c| c.orders()).collect::<Vec<_>>()
+                r.columns().iter().map(|c| c.comparison().orders()).collect::<Vec<_>>()
             };
-            assert_eq!(q.schema, b.schema, "pg_dump {version}: {table}");
-            assert_eq!(q.columns, b.columns, "pg_dump {version}: {table}");
-            assert_eq!(q.plans, b.plans, "pg_dump {version}: {table}");
+            assert_eq!(q.schema(), b.schema(), "pg_dump {version}: {table}");
+            let resolutions = |r: &pgdt_codec::ResolvedSchema| {
+                r.columns()
+                    .iter()
+                    .map(|c| (c.resolution().clone(), c.plan().clone()))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(resolutions(&q), resolutions(&b), "pg_dump {version}: {table}");
             assert_eq!(orders(&q), orders(&b), "pg_dump {version}: {table}");
         }
     }
@@ -601,9 +606,12 @@ async fn a_type_name_needing_quotes_resolves_end_to_end() {
     .unwrap();
     let meta = metadata(&path).await;
     let resolved = resolve_table(&meta, "s.t");
-    assert!(resolved.columns.iter().all(|r| *r == ColumnResolution::Mapped), "{resolved:?}");
+    assert!(
+        resolved.columns().iter().all(|r| *r.resolution() == ColumnResolution::Mapped),
+        "{resolved:?}"
+    );
     let label = DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
-    let types: Vec<&DataType> = resolved.schema.fields().iter().map(|f| f.data_type()).collect();
+    let types: Vec<&DataType> = resolved.schema().fields().iter().map(|f| f.data_type()).collect();
     assert_eq!(
         types,
         [
@@ -651,10 +659,10 @@ async fn resolution_still_works_against_metadata_with_more_than_one_database() {
                 &[],
             );
             assert!(
-                resolved.columns.iter().all(|r| *r == Mapped),
+                resolved.columns().iter().all(|r| *r.resolution() == Mapped),
                 "pg_dump {version}, database {:?}: {:?}",
                 db.name,
-                resolved.columns
+                resolved.columns()
             );
         }
     }
@@ -756,7 +764,7 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
             };
             let table = dump.table(&TableName::of(database, block).into()).unwrap().unwrap();
             let queried = table.schema(&untyped).unwrap();
-            for note in resolved.notes.iter().chain(&queried.notes) {
+            for note in resolved.notes().chain(queried.notes()) {
                 witnesses
                     .entry(outcome_name(&note.resolution))
                     .or_insert_with(|| format!("{}: {qualified}.{}", path.display(), note.column));

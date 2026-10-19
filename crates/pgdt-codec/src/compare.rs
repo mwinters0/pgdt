@@ -737,7 +737,7 @@ impl NestedCompare {
 /// "This type has no order here" and "there is no way to decode a value of
 /// it" are one variant, not a pairing that could come to disagree.
 ///
-/// Carried per column in [`crate::resolve::ResolvedSchema::comparisons`] and
+/// Carried per column in [`crate::resolve::ResolvedColumn::comparison`] and
 /// consumed by `pgdt_query::predicate`, which reads it instead of inspecting the
 /// Arrow type.
 ///

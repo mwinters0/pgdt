@@ -664,16 +664,20 @@ async fn inherited_and_typed_columns_are_declared_through_their_references() {
                 assert_eq!(declared, expected, "{label}: {table}");
                 let resolved = typed_schema(&path, table).await;
                 let names: Vec<&str> =
-                    resolved.schema.fields().iter().map(|f| f.name().as_str()).collect();
+                    resolved.schema().fields().iter().map(|f| f.name().as_str()).collect();
                 let expected_names: Vec<&str> = expected.iter().map(|(name, _)| *name).collect();
                 assert_eq!(names, expected_names, "{label}: {table}");
                 assert!(
-                    resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped),
+                    resolved.columns().iter().all(|c| *c.resolution() == ColumnResolution::Mapped),
                     "{label}: {table} resolves {:?}",
-                    resolved.columns
+                    resolved.columns()
                 );
                 let (_, expected) = not_null.iter().find(|(t, _)| *t == table).unwrap();
-                assert_eq!(resolved.not_null, *expected, "{label}: {table}");
+                assert_eq!(
+                    resolved.columns().iter().map(|c| c.not_null()).collect::<Vec<_>>(),
+                    *expected,
+                    "{label}: {table}"
+                );
             }
         }
     }
@@ -852,9 +856,9 @@ async fn unlogged_and_foreign_tables_declare_their_columns() {
             assert_eq!(declared, expected, "{label}");
             let resolved = typed_schema(&path, table).await;
             assert!(
-                resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped),
+                resolved.columns().iter().all(|c| *c.resolution() == ColumnResolution::Mapped),
                 "{label} resolves {:?}",
-                resolved.columns
+                resolved.columns()
             );
         }
         for (flag_set, expected) in [
@@ -901,9 +905,9 @@ async fn a_composite_s_dropped_attribute_is_dropped_under_binary_upgrade() {
             );
             let resolved = typed_schema(&path, "emitters.trios").await;
             assert!(
-                resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped),
+                resolved.columns().iter().all(|c| *c.resolution() == ColumnResolution::Mapped),
                 "{label} resolves {:?}",
-                resolved.columns
+                resolved.columns()
             );
         }
     }
@@ -1007,9 +1011,9 @@ async fn a_reconnect_after_database_properties_continues_its_database() {
             assert_eq!(unique.len(), names.len(), "pg_dump {version} {flags}: {names:?}");
             let resolved = typed_schema(&path, "emitters.tuned").await;
             assert!(
-                resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped),
+                resolved.columns().iter().all(|c| *c.resolution() == ColumnResolution::Mapped),
                 "pg_dump {version} {flags}: {:?}",
-                resolved.columns
+                resolved.columns()
             );
         }
     }

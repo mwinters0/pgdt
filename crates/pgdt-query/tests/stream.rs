@@ -143,13 +143,13 @@ async fn resolved_schema_matches_the_batches_it_describes() {
     assert_eq!(batches[0].schema().field(3).data_type(), &DataType::Int64, "v_bigint");
 
     let resolved = stream.resolved_schema();
-    assert_eq!(*resolved.schema, *batches[0].schema());
-    assert_eq!(resolved.schema.field(0).data_type(), &DataType::Int32, "id");
-    assert_eq!(resolved.schema.field(1).data_type(), &DataType::Int16, "v_smallint");
-    assert_eq!(resolved.schema.field(2).data_type(), &DataType::Int32, "v_integer");
-    assert_eq!(resolved.schema.field(3).data_type(), &DataType::Int64, "v_bigint");
-    assert!(resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped));
-    assert!(resolved.schema.fields().iter().all(|f| f.is_nullable()));
+    assert_eq!(**resolved.schema(), *batches[0].schema());
+    assert_eq!(resolved.schema().field(0).data_type(), &DataType::Int32, "id");
+    assert_eq!(resolved.schema().field(1).data_type(), &DataType::Int16, "v_smallint");
+    assert_eq!(resolved.schema().field(2).data_type(), &DataType::Int32, "v_integer");
+    assert_eq!(resolved.schema().field(3).data_type(), &DataType::Int64, "v_bigint");
+    assert!(resolved.columns().iter().all(|c| *c.resolution() == ColumnResolution::Mapped));
+    assert!(resolved.schema().fields().iter().all(|f| f.is_nullable()));
 }
 
 /// `SchemaMode::Strings` resolves no column's type from the DDL — every
@@ -160,7 +160,7 @@ async fn strings_mode_never_resolves_types() {
     let mut stream = stream(types_fixture(16, "default"), "public.t_int", batch_options).await;
     while stream.next().await.transpose().unwrap().is_some() {}
     let resolved = stream.resolved_schema();
-    assert!(resolved.columns.iter().all(|c| *c == ColumnResolution::NotDeclared));
+    assert!(resolved.columns().iter().all(|c| *c.resolution() == ColumnResolution::NotDeclared));
 }
 
 /// `--dtcache none` (`CacheMode::DISABLED`) disables persistence, not
@@ -172,8 +172,8 @@ async fn disabled_cache_still_resolves_types() {
     let mut stream = stream(types_fixture(16, "default"), "public.t_int", batch_options).await;
     while stream.next().await.transpose().unwrap().is_some() {}
     let resolved = stream.resolved_schema();
-    assert_eq!(resolved.schema.field(0).data_type(), &DataType::Int32, "id");
-    assert!(resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped));
+    assert_eq!(resolved.schema().field(0).data_type(), &DataType::Int32, "id");
+    assert!(resolved.columns().iter().all(|c| *c.resolution() == ColumnResolution::Mapped));
 }
 
 /// The blocking `Iterator` wrapper drives the same stream to the same result

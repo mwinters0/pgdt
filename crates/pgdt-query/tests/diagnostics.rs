@@ -83,7 +83,7 @@ async fn one_sink_drains_all_three_channels() {
     };
     let sink: &dyn DiagnosticSink = &sink;
     drain(sink, &index.diagnostics);
-    drain(sink, &stream.resolved_schema().notes);
+    drain(sink, stream.resolved_schema().notes());
     drain(sink, &stream.comparison_notes());
     let seen = seen.into_inner().unwrap();
 
@@ -115,8 +115,8 @@ async fn one_sink_drains_all_three_channels() {
 async fn a_column_note_reads_as_a_finding() {
     let mut stream = query("public.t_int", QueryOptions::default()).await;
     while stream.next().await.transpose().unwrap().is_some() {}
-    let notes = stream.resolved_schema().notes;
-    let bigint = notes.iter().find(|n| n.column == "v_bigint").unwrap();
+    let resolved = stream.resolved_schema();
+    let bigint = resolved.notes().find(|n| n.column == "v_bigint").unwrap();
     assert_eq!(bigint.severity(), Severity::Info);
     assert_eq!(bigint.message(), "column `v_bigint` (bigint): mapped");
 }
@@ -156,7 +156,7 @@ async fn a_table_s_divergences_drain_at_registration() {
         "{}",
         arrow[0].2
     );
-    let empty = resolved.notes.iter().find(|n| n.column == "v_empty_enum").unwrap();
+    let empty = resolved.notes().find(|n| n.column == "v_empty_enum").unwrap();
     assert_eq!(empty.severity(), Severity::Warning);
     assert!(empty.message().ends_with("compares as that text"), "{}", empty.message());
 }

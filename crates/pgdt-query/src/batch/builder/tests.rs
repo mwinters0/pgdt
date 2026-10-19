@@ -5,7 +5,7 @@ use std::sync::Arc;
 use arrow::array::{Array, BooleanArray, Int32Array, RecordBatch};
 
 use super::*;
-use crate::render::render_field;
+use crate::render::render_plan;
 use pgdt_codec::pgtype::RANGE_STRUCT_FIELDS;
 use pgdt_core::Error;
 
@@ -58,7 +58,7 @@ fn round_trips(data_type: DataType, plan: NestedPlan, values: &[Option<&str>]) -
     assert_eq!(array.data_type(), &data_type, "built array's type must match the schema");
     assert_eq!(array.len(), values.len());
     let rendered: Vec<Option<String>> = (0..array.len())
-        .map(|i| render_field(array.as_ref(), i, &plan).expect("renders back"))
+        .map(|i| render_plan(array.as_ref(), i, &plan).expect("renders back"))
         .collect();
     let expected: Vec<Option<String>> = values.iter().map(|v| v.map(str::to_string)).collect();
     assert_eq!(rendered, expected);
@@ -78,13 +78,13 @@ fn render_refuses_an_interval_with_no_postgresql_text_form() {
     b.append_value(IntervalMonthDayNano { months: 0, days: 0, nanoseconds: 1_000 });
     let array = Arc::new(b.finish()) as ArrayRef;
 
-    let err = render_field(array.as_ref(), 0, &NestedPlan::Scalar).unwrap_err();
+    let err = render_plan(array.as_ref(), 0, &NestedPlan::Scalar).unwrap_err();
     assert!(
         matches!(&err, Error::FieldRender { declared_type: "interval", reason } if reason.contains("1500 ns")),
         "{err}"
     );
     assert_eq!(
-        render_field(array.as_ref(), 1, &NestedPlan::Scalar).unwrap().as_deref(),
+        render_plan(array.as_ref(), 1, &NestedPlan::Scalar).unwrap().as_deref(),
         Some("00:00:00.000001"),
     );
 
@@ -96,7 +96,7 @@ fn render_refuses_an_interval_with_no_postgresql_text_form() {
     );
     let plan = NestedPlan::array(NestedPlan::Scalar);
     assert!(matches!(
-        render_field(&list, 0, &plan).unwrap_err(),
+        render_plan(&list, 0, &plan).unwrap_err(),
         Error::FieldRender { declared_type: "interval", .. }
     ));
 }
@@ -140,7 +140,7 @@ fn render_refuses_an_int2vector_holding_a_null_element() {
         Arc::new(values.finish()) as ArrayRef,
         None,
     );
-    let err = render_field(&list, 0, &NestedPlan::Int2Vector).unwrap_err();
+    let err = render_plan(&list, 0, &NestedPlan::Int2Vector).unwrap_err();
     assert!(
         matches!(&err, Error::FieldRender { declared_type: "int2vector", reason }
                 if reason.contains("NULL element")),

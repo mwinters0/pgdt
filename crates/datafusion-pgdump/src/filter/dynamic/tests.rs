@@ -40,6 +40,7 @@ use datafusion::physical_expr::expressions::{
 use datafusion::physical_expr::utils::collect_columns;
 use futures::StreamExt;
 use pgdt_codec::compare::ComparisonSemantics;
+use pgdt_codec::{SchemaMode, resolve_columns};
 use pgdt_dump::ReadOptions;
 use pgdt_fixtures::parsed_copy;
 use pgdt_io::Parallelism;
@@ -236,7 +237,9 @@ impl Generator<'_> {
 
     /// The columns a comparison may name: the scalar ones.
     fn scalars(&self) -> Vec<usize> {
-        (0..self.batch.num_columns()).filter(|&i| self.resolved.plans[i].is_scalar()).collect()
+        (0..self.batch.num_columns())
+            .filter(|&i| self.resolved.columns()[i].plan().is_scalar())
+            .collect()
     }
 
     /// A value of column `index`, a `NULL` among them where the column holds
@@ -459,7 +462,7 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
             if whole.is_err() {
                 let table = PgDumpTable::build(Arc::clone(&dump), name.clone()).unwrap();
                 let mut decodes = Vec::new();
-                for field in table.resolved_schema().schema.fields() {
+                for field in table.resolved_schema().schema().fields() {
                     let one = Some(vec![field.name().clone()]);
                     if read(&dump, name, &one, L::default()).await.is_ok() {
                         decodes.push(field.name().clone());
@@ -542,32 +545,42 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
     assert!(tally.dynamic_stopping > 10, "{tally:?}");
 }
 
-/// A one-table schema as the provider resolves it, for the shapes below.
-fn resolved(fields: Vec<(&str, DataType, bool)>) -> ResolvedSchema {
-    let schema = Arc::new(Schema::new(
-        fields
-            .into_iter()
-            .map(|(name, data_type, nullable)| {
-                arrow::datatypes::Field::new(name, data_type, nullable)
-            })
-            .collect::<Vec<_>>(),
-    ));
-    let n = schema.fields().len();
-    ResolvedSchema {
-        schema,
-        columns: vec![pgdt_codec::ColumnResolution::NotDeclared; n],
-        notes: Vec::new(),
-        plans: vec![pgdt_codec::pgtype::NestedPlan::Scalar; n],
-        comparisons: vec![pgdt_codec::compare::ComparisonPlan::Refused; n],
-        not_null: vec![false; n],
-    }
+/// A one-table schema as the provider resolves it, for the shapes below:
+/// each column declared the type its Arrow type maps from.
+fn resolved(fields: Vec<(&str, DataType)>) -> ResolvedSchema {
+    use pgdt_model::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef};
+    let declared = |data_type: &DataType| match data_type {
+        DataType::Int32 => "integer",
+        DataType::Float32 => "real",
+        DataType::Float64 => "double precision",
+        other => panic!("no declared type here maps to {other}"),
+    };
+    let columns = fields.iter().map(|(name, ty)| ColumnDef::new(*name, declared(ty))).collect();
+    let mut database = DatabaseMetadata {
+        name: None,
+        preamble_complete: true,
+        server_version: None,
+        pg_dump_version: None,
+        extensions: Vec::new(),
+        types: Vec::new(),
+        collations: Vec::new(),
+        tables: Default::default(),
+    };
+    database.tables.insert("public.t".to_string(), TableDef::with_columns(columns));
+    let metadata = DumpMetadata { databases: vec![database] };
+    let names: Vec<String> = fields.iter().map(|(name, _)| name.to_string()).collect();
+    let resolved =
+        resolve_columns("public.t", &names, Some(&metadata), None, SchemaMode::Typed, &[]);
+    let types: Vec<&DataType> = resolved.columns().iter().map(|c| c.data_type()).collect();
+    assert_eq!(types, fields.iter().map(|(_, ty)| ty).collect::<Vec<_>>());
+    resolved
 }
 
 /// **A TopK whose heap admits no row rules out every row, and a filter not
 /// yet updated keeps every row.**
 #[test]
 fn a_filter_that_admits_nothing_rules_out_every_row() {
-    let table = resolved(vec![("k", DataType::Int32, true)]);
+    let table = resolved(vec![("k", DataType::Int32)]);
     let k: Arc<dyn PhysicalExpr> = Arc::new(Column::new("k", 0));
     let topk = DynamicFilterPhysicalExpr::new(vec![Arc::clone(&k)], lit(true));
     let topk: Arc<dyn PhysicalExpr> = Arc::new(topk);
@@ -585,7 +598,7 @@ fn a_part_with_no_term_keeps_every_row_wherever_it_sits() {
         arrow::datatypes::Field::new("a", DataType::Int32, true),
         arrow::datatypes::Field::new("b", DataType::Int32, true),
     ]);
-    let table = resolved(vec![("a", DataType::Int32, true), ("b", DataType::Int32, true)]);
+    let table = resolved(vec![("a", DataType::Int32), ("b", DataType::Int32)]);
     let (a, b): (Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>) =
         (Arc::new(Column::new("a", 0)), Arc::new(Column::new("b", 1)));
     let opaque = binary(Arc::clone(&a), Operator::Eq, Arc::clone(&b), &schema).unwrap();
@@ -608,7 +621,7 @@ fn a_float_compared_with_a_zero_has_no_term() {
         arrow::datatypes::Field::new("f", DataType::Float64, true),
         arrow::datatypes::Field::new("g", DataType::Float32, true),
     ]);
-    let table = resolved(vec![("f", DataType::Float64, true), ("g", DataType::Float32, true)]);
+    let table = resolved(vec![("f", DataType::Float64), ("g", DataType::Float32)]);
     let (f, g): (Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>) =
         (Arc::new(Column::new("f", 0)), Arc::new(Column::new("g", 1)));
     let above = binary(Arc::clone(&f), Operator::Gt, lit(-0.0f64), &schema).unwrap();
@@ -637,7 +650,7 @@ fn an_in_list_reaches_the_library_as_one_membership() {
         arrow::datatypes::Field::new("k", DataType::Int32, true),
         arrow::datatypes::Field::new("f", DataType::Float64, true),
     ]);
-    let table = resolved(vec![("k", DataType::Int32, true), ("f", DataType::Float64, true)]);
+    let table = resolved(vec![("k", DataType::Int32), ("f", DataType::Float64)]);
     let (k, f): (Arc<dyn PhysicalExpr>, Arc<dyn PhysicalExpr>) =
         (Arc::new(Column::new("k", 0)), Arc::new(Column::new("f", 1)));
     let values = || vec![lit(1i32), lit(ScalarValue::Int32(None)), lit(3i32)];

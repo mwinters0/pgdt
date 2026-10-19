@@ -6,8 +6,7 @@ use anyhow::Result;
 use arrow::array::RecordBatch;
 use clap::Args;
 use futures::StreamExt;
-use pgdt_codec::pgtype::NestedPlan;
-use pgdt_codec::{SchemaMode, UnrepresentableMode};
+use pgdt_codec::{ResolvedColumn, SchemaMode, UnrepresentableMode};
 use pgdt_dump::cache::Held;
 use pgdt_io::Origin;
 use pgdt_model::{BlockStatistics, Finding, PostgresInvalidValues, Severity};
@@ -315,7 +314,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     // The plan's one schema says how each nested column is written back
     // as a literal: a `List<Struct{…}>` as an array of ranges or a
     // multirange.
-    let plans = plan.resolved_schema().plans;
+    let resolved = plan.resolved_schema();
     // The whole table in file order, the earliest failing piece's error
     // after the rows before it (`docs/design/decisions.md`, "D52").
     let mut stream = plan.in_file_order(BATCH_ROWS);
@@ -339,7 +338,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
             println!("{}", names.join("\t"));
             header_printed = true;
         }
-        print_batch(&batch, &plans)?;
+        print_batch(&batch, resolved.columns())?;
         rows += batch.num_rows() as u64;
     }
     // A query that matched a block but selected no rows still
@@ -464,7 +463,7 @@ fn projection(columns: Vec<String>, no_columns: bool) -> Option<Vec<String>> {
 ///
 /// **Announced by the CLI rather than by a library channel** — the signal is
 /// per-column *and* conditional on a predicate, so query's, while
-/// `DumpIndex.diagnostics` is the model's and `ResolvedSchema.notes` the
+/// `DumpIndex.diagnostics` is the model's and `ResolvedSchema::notes` the
 /// codec's. An embedder
 /// drains `TableStream::comparison_notes` into its own
 /// `pgdt_model::DiagnosticSink` beside the other two; this command prints
@@ -532,10 +531,9 @@ fn announce_early_stops(stream: &pgdt_query::TableStream<'_>) {
 /// that is cleared per row and keeps its capacity across the batch, so a
 /// scalar field is written where it will be printed from.
 ///
-/// `plans` is the plan's own [`pgdt_codec::ResolvedSchema::plans`], which
-/// is what says whether a `List<Struct{…}>` column is written as an array of
-/// ranges or as a multirange. A column with no entry falls back to
-/// `NestedPlan::Scalar`, which is right for every non-nested type.
+/// `columns` is the plan's own [`pgdt_codec::ResolvedSchema::columns`], each
+/// of whose plans is what says whether a `List<Struct{…}>` column is written
+/// as an array of ranges or as a multirange, one per column of the batch.
 ///
 /// The `Result` is `render_field_into`'s refusal of a value with no PostgreSQL
 /// text form, which **no batch this binary prints can hold**: every typed
@@ -543,16 +541,17 @@ fn announce_early_stops(stream: &pgdt_query::TableStream<'_>) {
 /// back. Propagated rather than unwrapped, an unreachable panic in the output
 /// path being a worse answer than an error. A refused value can leave a
 /// partial field in the buffer; nothing prints it, the error ending the query.
-fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
+fn print_batch(batch: &RecordBatch, columns: &[ResolvedColumn]) -> Result<()> {
+    // The batch carries the plan's schema, which its columns build.
+    debug_assert_eq!(batch.num_columns(), columns.len());
     let mut line = String::new();
     for row in 0..batch.num_rows() {
         line.clear();
-        for (col, c) in batch.columns().iter().enumerate() {
+        for (col, (c, column)) in batch.columns().iter().zip(columns).enumerate() {
             if col > 0 {
                 line.push('\t');
             }
-            let plan = plans.get(col).unwrap_or(&NestedPlan::Scalar);
-            if !render_field_into(c.as_ref(), row, plan, &mut line)? {
+            if !render_field_into(c.as_ref(), row, column, &mut line)? {
                 line.push_str("\\N");
             }
         }

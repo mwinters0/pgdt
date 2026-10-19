@@ -1,11 +1,9 @@
 use arrow::datatypes::Field;
 
-use std::sync::Arc;
-
 use arrow::datatypes::DataType;
 
 use super::*;
-use crate::render::render_field;
+use crate::render::render_plan;
 use pgdt_codec::pgtype::NestedPlan;
 
 /// A [`RowBatcher`] over one nullable `data_type` column, fed by the field
@@ -17,24 +15,19 @@ fn one_column_batcher_fed_by(
     field_targets: Vec<Option<usize>>,
     data_type: DataType,
 ) -> RowBatcher {
-    use arrow::datatypes::Schema;
-
+    use pgdt_codec::ColumnResolution;
     use pgdt_codec::compare::comparison_for;
-    use pgdt_codec::{ColumnNote, ColumnResolution};
+    use pgdt_codec::internal::{column_of, schema_of};
 
     let declared = if data_type == DataType::Int32 { "integer" } else { "text" };
-    let resolved = ResolvedSchema {
-        schema: Arc::new(Schema::new(vec![Field::new("v", data_type, true)])),
-        columns: vec![ColumnResolution::Mapped],
-        notes: vec![ColumnNote {
-            column: "v".into(),
-            declared: Some(declared.into()),
-            resolution: ColumnResolution::Mapped,
-        }],
-        plans: vec![NestedPlan::Scalar],
-        comparisons: vec![comparison_for(declared, None, &[], &[])],
-        not_null: vec![false],
-    };
+    let resolved = schema_of(vec![column_of(
+        Field::new("v", data_type, true),
+        Some(declared.into()),
+        ColumnResolution::Mapped,
+        NestedPlan::Scalar,
+        comparison_for(declared, None, &[], &[]),
+        false,
+    )]);
     RowBatcher::new(&resolved, "public.t".into(), options, usize::MAX, field_targets, Vec::new())
 }
 
@@ -143,12 +136,7 @@ fn a_row_wider_than_the_block_reports_one_past_the_width() {
 /// what `RecordBatch::try_new` cannot express.
 #[test]
 fn a_zero_column_batch_carries_only_its_row_count() {
-    use arrow::datatypes::Schema;
-
-    let resolved = ResolvedSchema {
-        schema: Arc::new(Schema::new(Vec::<Field>::new())),
-        ..ResolvedSchema::default()
-    };
+    let resolved = ResolvedSchema::default();
     let mut batcher = RowBatcher::new(
         &resolved,
         "public.t".into(),
@@ -173,7 +161,7 @@ fn a_zero_column_batch_carries_only_its_row_count() {
 fn rendered(batch: &RecordBatch) -> Vec<Option<String>> {
     (0..batch.num_rows())
         .map(|row| {
-            render_field(batch.column(0).as_ref(), row, &NestedPlan::Scalar).expect("renders back")
+            render_plan(batch.column(0).as_ref(), row, &NestedPlan::Scalar).expect("renders back")
         })
         .collect()
 }

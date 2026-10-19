@@ -82,18 +82,14 @@ pub(super) fn print_index_json(
             table: block.header.qualified_name(),
             header_offset: block.header_offset,
             columns: resolved
-                .notes
+                .columns()
                 .iter()
-                .enumerate()
-                .map(|(i, note)| ColumnResolutionJson {
-                    name: &note.column,
-                    declared: note.declared.as_deref(),
-                    outcome: resolution_token(&note.resolution),
-                    arrow_type: arrow_type_label(
-                        resolved.schema.field(i).data_type(),
-                        &resolved.plans[i],
-                    ),
-                    plan: &resolved.plans[i],
+                .map(|column| ColumnResolutionJson {
+                    name: column.name(),
+                    declared: column.declared(),
+                    outcome: resolution_token(column.resolution()),
+                    arrow_type: arrow_type_label(column.data_type(), column.plan()),
+                    plan: column.plan(),
                 })
                 .collect(),
             unchecked: block_unchecked(index, database, block),

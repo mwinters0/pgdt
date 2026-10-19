@@ -7,10 +7,8 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use arrow::datatypes::Schema;
-
 use pgdt_codec::compare::ComparisonSemantics;
-use pgdt_codec::internal::{database_for_name, read_as_text};
+use pgdt_codec::internal::{database_for_name, read_as_text, schema_of};
 use pgdt_codec::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_codec::{
     UnrepresentableMode,
@@ -202,7 +200,8 @@ fn prune_blocks(
 ) -> Pruned {
     let (mut kept, mut stops) = (BTreeMap::new(), BTreeMap::new());
     let mut rows = 0;
-    let fields = blocks.values().next().map_or(0, |planned| planned.resolved.schema.fields().len());
+    let fields =
+        blocks.values().next().map_or(0, |planned| planned.resolved.schema().fields().len());
     let mut value_bytes = vec![Some(0); fields];
     let (mut consulted, mut groups, mut skipped_groups, mut skipped_bytes) = (false, 0, 0, 0);
     for block in matches {
@@ -276,7 +275,7 @@ fn materialized_unrepresentable(
     };
     let reach = query_options.unrepresentable_reach();
     let table = first.header.qualified_name();
-    let fields = planned.resolved.schema.fields();
+    let fields = planned.resolved.schema().fields();
     let mut found = Vec::new();
     for (i, field) in fields.iter().enumerate() {
         if matches!(field.data_type(), arrow::datatypes::DataType::Utf8View) {
@@ -289,7 +288,7 @@ fn materialized_unrepresentable(
         found.push(MaterializedUnrepresentable {
             table: table.clone(),
             column: field.name().clone(),
-            declared_type: planned.resolved.notes[i].declared.clone().unwrap_or_default(),
+            declared_type: planned.resolved.columns()[i].declared().unwrap_or_default().to_string(),
             values,
         });
     }
@@ -347,7 +346,7 @@ fn field_value_bytes(
     kept: Option<&[bool]>,
 ) -> Vec<Option<u64>> {
     let Some(planned) = planned else { return Vec::new() };
-    let mut bytes = vec![None; planned.resolved.schema.fields().len()];
+    let mut bytes = vec![None; planned.resolved.schema().fields().len()];
     let Some(statistics) = block.statistics.as_deref() else { return bytes };
     if statistics.columns.len() != block.header.columns.len() {
         return bytes;
@@ -687,8 +686,8 @@ fn refuse_metadata_level(matches: &[CopyBlock], query_options: &QueryOptions) ->
 }
 
 /// Cut `resolved` down to `projection`, and say which of the block's fields
-/// each projected column is fed by. All five of [`ResolvedSchema`]'s vectors
-/// are cut together, in the requested order
+/// each projected column is fed by: each requested column's record, in the
+/// requested order
 /// (`docs/design/decisions.md`, "D28").
 ///
 /// Returns the projected schema and `field_targets` — one entry per field of
@@ -701,7 +700,7 @@ fn project(
     projection: Option<&[String]>,
     header_offset: u64,
 ) -> Result<(ResolvedSchema, Vec<Option<usize>>)> {
-    let width = resolved.schema.fields().len();
+    let width = resolved.schema().fields().len();
     let Some(names) = projection else {
         return Ok((resolved.clone(), (0..width).map(Some).collect()));
     };
@@ -709,22 +708,13 @@ fn project(
     let mut sources = Vec::with_capacity(names.len());
     for name in names {
         let source =
-            resolved.schema.fields().iter().position(|f| f.name() == name).ok_or_else(|| {
+            resolved.schema().fields().iter().position(|f| f.name() == name).ok_or_else(|| {
                 Error::UnknownProjectionColumn { header_offset, column: name.clone() }
             })?;
         field_targets[source] = Some(sources.len());
         sources.push(source);
     }
-    let projected = ResolvedSchema {
-        schema: Arc::new(Schema::new(
-            sources.iter().map(|&i| resolved.schema.field(i).clone()).collect::<Vec<_>>(),
-        )),
-        columns: sources.iter().map(|&i| resolved.columns[i].clone()).collect(),
-        notes: sources.iter().map(|&i| resolved.notes[i].clone()).collect(),
-        plans: sources.iter().map(|&i| resolved.plans[i].clone()).collect(),
-        comparisons: sources.iter().map(|&i| resolved.comparisons[i].clone()).collect(),
-        not_null: sources.iter().map(|&i| resolved.not_null[i]).collect(),
-    };
+    let projected = schema_of(sources.iter().map(|&i| resolved.columns()[i].clone()).collect());
     Ok((projected, field_targets))
 }
 

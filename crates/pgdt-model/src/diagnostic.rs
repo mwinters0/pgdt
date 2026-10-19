@@ -76,7 +76,7 @@ impl<F: Fn(&dyn Finding) + Send + Sync> DiagnosticSink for F {
 }
 
 /// Hand every finding of one channel to `sink`, in the channel's own order —
-/// `sink` taking `&index.diagnostics`, `&resolved.notes`,
+/// `sink` taking `&index.diagnostics`, `resolved.notes()`,
 /// `&stream.comparison_notes()`, `&table.divergences(…)?` or
 /// `&stream.plan_notes()` alike.
 pub fn drain<'a, F: Finding + 'a>(

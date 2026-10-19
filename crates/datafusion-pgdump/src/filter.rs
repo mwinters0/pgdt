@@ -14,10 +14,7 @@ mod pushdown;
 use arrow::datatypes::DataType;
 use datafusion::common::ScalarValue;
 use datafusion::logical_expr::{Expr, Operator};
-use pgdt_codec::{
-    ColumnResolution, ResolvedSchema, compare::CompareKind, compare::ComparisonPlan,
-    pgtype::NestedPlan,
-};
+use pgdt_codec::{ColumnResolution, ResolvedSchema, compare::CompareKind, compare::ComparisonPlan};
 use pgdt_query::{Predicate, PredicateOp};
 
 pub(crate) use dynamic::{DynamicFilters, ReplayFilter};
@@ -43,11 +40,11 @@ fn compared(
         Operator::IsNotDistinctFrom => PredicateOp::IsNotDistinctFrom,
         _ => return None,
     };
-    if !table.plans[index].is_scalar() {
+    if !table.columns()[index].plan().is_scalar() {
         return None;
     }
     let value = literal_text(literal, index, table)?;
-    Some(Predicate { column: table.schema.field(index).name().clone(), op: op(value) })
+    Some(Predicate { column: table.schema().field(index).name().clone(), op: op(value) })
 }
 
 /// `literal` as one value of an `IN` list over column `index` of `table`:
@@ -64,13 +61,13 @@ fn member(index: usize, literal: &ScalarValue, table: &ResolvedSchema) -> Option
 /// `op` on column `index` of `table`, whatever its type — the NULL and
 /// unrepresentable tests read no value.
 fn null_term(index: usize, op: PredicateOp, table: &ResolvedSchema) -> Predicate {
-    Predicate { column: table.schema.field(index).name().clone(), op }
+    Predicate { column: table.schema().field(index).name().clone(), op }
 }
 
 /// `op` on column `index` of `table`: `None` unless the column is `Boolean`.
 /// A value `op` carries is spelled by [`boolean_text`].
 fn boolean_term(index: usize, op: PredicateOp, table: &ResolvedSchema) -> Option<Predicate> {
-    if table.schema.field(index).data_type() != &DataType::Boolean {
+    if table.schema().field(index).data_type() != &DataType::Boolean {
         return None;
     }
     Some(null_term(index, op, table))
@@ -85,15 +82,15 @@ fn boolean_text(value: bool) -> String {
 /// answers from a set of the values' bits rather than through `=`, so `-0`
 /// and `0` stay apart there and nowhere else.
 fn is_float(index: usize, table: &ResolvedSchema) -> bool {
-    matches!(table.schema.field(index).data_type(), DataType::Float32 | DataType::Float64)
+    matches!(table.schema().field(index).data_type(), DataType::Float32 | DataType::Float64)
 }
 
 /// Where `expr`, a bare column, sits in `table` — `None` for anything else,
 /// and for a nested column, whose comparisons DataFusion semantics refuses.
 fn column_index(expr: &Expr, table: &ResolvedSchema) -> Option<usize> {
     let Expr::Column(column) = expr else { return None };
-    let index = table.schema.index_of(&column.name).ok()?;
-    table.plans[index].is_scalar().then_some(index)
+    let index = table.schema().index_of(&column.name).ok()?;
+    table.columns()[index].plan().is_scalar().then_some(index)
 }
 
 /// The text the library reads `literal` from, for comparison with column
@@ -110,7 +107,7 @@ fn literal_text(literal: &ScalarValue, index: usize, table: &ResolvedSchema) -> 
     if literal.is_null() {
         return None;
     }
-    let column_type = table.schema.field(index).data_type();
+    let column_type = table.schema().field(index).data_type();
     if let Some(text) = string_value(literal) {
         let emitted_as_text = match column_type {
             DataType::Utf8View => true,
@@ -136,7 +133,7 @@ fn literal_text(literal: &ScalarValue, index: usize, table: &ResolvedSchema) -> 
         return None;
     }
     let array = literal.to_array().ok()?;
-    pgdt_query::render_field(&array, 0, &NestedPlan::Scalar).ok().flatten()
+    pgdt_query::render_field(&array, 0, &table.columns()[index]).ok().flatten()
 }
 
 /// A string literal's text, bare or as a dictionary's value.
@@ -154,10 +151,10 @@ fn string_value(literal: &ScalarValue) -> Option<&str> {
 /// text in DataFusion semantics: a column with no plan, and every kind DataFusion
 /// semantics moves to text.
 fn compared_as_text(table: &ResolvedSchema, index: usize) -> bool {
-    if table.columns[index] != ColumnResolution::Mapped {
+    if *table.columns()[index].resolution() != ColumnResolution::Mapped {
         return true;
     }
-    match &table.comparisons[index] {
+    match table.columns()[index].comparison() {
         ComparisonPlan::Compared { kind, .. } => {
             matches!(kind.datafusion_order(), CompareKind::Text { .. })
         }

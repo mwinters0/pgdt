@@ -17,9 +17,10 @@ use pgdt_codec::compare::{
     bounds_set_keyed_by, comparison_for,
 };
 use pgdt_codec::decode;
+use pgdt_codec::internal::schema_of;
 use pgdt_codec::internal::{DiscreteExt, compare_keys, field_refused, order_key};
 use pgdt_codec::pgtype::NestedPlan;
-use pgdt_codec::{ColumnNote, ColumnResolution, ResolvedSchema};
+use pgdt_codec::{ColumnResolution, ResolvedSchema};
 use pgdt_core::internal::{RawRow, RowSplit};
 use pgdt_core::{Error, Result};
 use pgdt_model::{BoundsSet, CollationDef, ColumnDef, Finding, TypeDef, TypeKind};
@@ -698,8 +699,11 @@ fn an_undecodable_literal_is_refused_at_resolution() {
 fn an_ordering_operator_is_refused_off_a_mapped_scalar_column() {
     let p = order_predicate(PredicateOp::Gt, "1");
 
-    let mut unmapped = one_column("mystery", DataType::Utf8View);
-    unmapped.columns[0] = ColumnResolution::UnknownType;
+    let unmapped = Column {
+        resolution: ColumnResolution::UnknownType,
+        ..Column::of("mystery", DataType::Utf8View)
+    }
+    .schema();
     assert!(matches!(
         resolve_term(&p, 0, &unmapped, 7).unwrap_err(),
         Error::UnorderedPredicateColumn { reason, header_offset: 7, .. } if reason == NOT_MAPPED
@@ -707,8 +711,11 @@ fn an_ordering_operator_is_refused_off_a_mapped_scalar_column() {
 
     // A nested column the register compares not at all — a range whose
     // DDL stated no subtype, so there is no bound type to compare by.
-    let mut nested = one_column("public.opaquerange", DataType::Utf8View);
-    nested.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
+    let nested = Column {
+        plan: NestedPlan::Range(Box::new(NestedPlan::Scalar)),
+        ..Column::of("public.opaquerange", DataType::Utf8View)
+    }
+    .schema();
     assert!(matches!(
         resolve_term(&p, 0, &nested, 0).unwrap_err(),
         Error::UnorderedPredicateColumn { reason, .. } if reason == NESTED
@@ -717,8 +724,11 @@ fn an_ordering_operator_is_refused_off_a_mapped_scalar_column() {
     // A nested column whose *shape* compares here and one of whose
     // positions does not: refused too, and the sentence names the
     // position and the type rather than the nesting.
-    let mut inherited = one_column("json[]", DataType::Utf8View);
-    inherited.plans[0] = NestedPlan::array(NestedPlan::Scalar);
+    let inherited = Column {
+        plan: NestedPlan::array(NestedPlan::Scalar),
+        ..Column::of("json[]", DataType::Utf8View)
+    }
+    .schema();
     let err = resolve_term(&p, 0, &inherited, 0).unwrap_err();
     let Error::UnorderedPredicateColumn { reason, .. } = &err else { panic!("{err:?}") };
     assert!(reason.contains("`[]` inside it is `json`"), "{reason}");
@@ -804,11 +814,17 @@ fn datafusion_semantics_refuses_a_nested_column_under_every_comparing_operator()
     let arrow = |p: &Predicate, resolved: &ResolvedSchema| {
         super::resolve::resolve_term(p, 0, resolved, 0, ComparisonSemantics::DataFusion)
     };
-    let mut opaque = one_column("public.opaquerange", DataType::Utf8View);
-    opaque.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
+    let opaque = Column {
+        plan: NestedPlan::Range(Box::new(NestedPlan::Scalar)),
+        ..Column::of("public.opaquerange", DataType::Utf8View)
+    }
+    .schema();
     let array = nested_column("integer[]", &[]);
-    let mut inherited = one_column("json[]", DataType::Utf8View);
-    inherited.plans[0] = NestedPlan::array(NestedPlan::Scalar);
+    let inherited = Column {
+        plan: NestedPlan::array(NestedPlan::Scalar),
+        ..Column::of("json[]", DataType::Utf8View)
+    }
+    .schema();
     for resolved in [&opaque, &array, &inherited] {
         for op in [PredicateOp::Eq, PredicateOp::IsDistinctFrom, PredicateOp::Lt] {
             let err = arrow(&order_predicate(op, "{}"), resolved).unwrap_err();
@@ -821,8 +837,11 @@ fn datafusion_semantics_refuses_a_nested_column_under_every_comparing_operator()
         let is_null = Predicate { column: "v".into(), op: PredicateOp::IsNull };
         assert!(arrow(&is_null, resolved).is_ok());
     }
-    let mut unknown = one_column("box", DataType::Utf8View);
-    unknown.columns[0] = ColumnResolution::UnknownType;
+    let unknown = Column {
+        resolution: ColumnResolution::UnknownType,
+        ..Column::of("box", DataType::Utf8View)
+    }
+    .schema();
     let term = arrow(&order_predicate(PredicateOp::Eq, "(1,1),(0,0)"), &unknown).unwrap();
     assert!(term.comparison_notes().is_empty());
     assert_eq!(term.eval_value(Some("(1,1),(0,0)")), Some(Truth::True));
@@ -842,36 +861,32 @@ fn datafusion_semantics_refuses_a_nested_column_under_every_comparing_operator()
 fn a_column_s_divergences_follow_the_semantics_asked_for() {
     use ComparisonDivergence as D;
     let columns = [
-        one_column("real", DataType::Float32),
-        one_column("text", DataType::Utf8View),
-        one_column("interval", DataType::Interval(IntervalUnit::MonthDayNano)),
-        nested_column("integer[]", &[]),
-        {
-            let mut undeclared = one_column("text", DataType::Utf8View);
-            undeclared.columns[0] = ColumnResolution::NotDeclared;
-            undeclared.notes[0].declared = None;
-            undeclared.comparisons[0] = ComparisonPlan::Refused;
-            undeclared
+        Column::of("real", DataType::Float32),
+        Column::of("text", DataType::Utf8View),
+        Column::of("interval", DataType::Interval(IntervalUnit::MonthDayNano)),
+        Column::nested("integer[]", &[]),
+        Column {
+            declared: None,
+            resolution: ColumnResolution::NotDeclared,
+            comparison: ComparisonPlan::Refused,
+            ..Column::of("text", DataType::Utf8View)
         },
-        {
-            let mut unknown = one_column("box", DataType::Utf8View);
-            unknown.columns[0] = ColumnResolution::UnknownType;
-            unknown.comparisons[0] = ComparisonPlan::Refused;
-            unknown
+        Column {
+            resolution: ColumnResolution::UnknownType,
+            comparison: ComparisonPlan::Refused,
+            ..Column::of("box", DataType::Utf8View)
         },
-        nested_column("numeric[]", &[]),
-        nested_column("text[]", &[]),
-        nested_column("real[]", &[]),
+        Column::nested("numeric[]", &[]),
+        Column::nested("text[]", &[]),
+        Column::nested("real[]", &[]),
     ];
-    let mut resolved = ResolvedSchema::default();
-    for (i, c) in columns.into_iter().enumerate() {
-        resolved.columns.extend(c.columns);
-        resolved
-            .notes
-            .extend(c.notes.into_iter().map(|n| ColumnNote { column: format!("c{i}"), ..n }));
-        resolved.plans.extend(c.plans);
-        resolved.comparisons.extend(c.comparisons);
-    }
+    let resolved = schema_of(
+        columns
+            .into_iter()
+            .enumerate()
+            .map(|(i, c)| Column { name: format!("c{i}"), ..c }.record())
+            .collect(),
+    );
     let report = |semantics| {
         column_divergences(&resolved, semantics)
             .into_iter()
@@ -964,8 +979,8 @@ fn a_literal_not_spelled_as_the_server_writes_misses_in_datafusion_semantics() {
 fn a_nested_float_s_negative_zero_is_not_zero_to_datafusion() {
     let resolved = nested_column("real[]", &[]);
     let array = crate::batch::column_of(
-        resolved.schema.field(0).data_type(),
-        &resolved.plans[0],
+        resolved.schema().field(0).data_type(),
+        resolved.columns()[0].plan(),
         &["{-0}", "{0}"],
     )
     .unwrap();
@@ -984,11 +999,17 @@ fn a_nested_float_s_negative_zero_is_not_zero_to_datafusion() {
 /// it (`pgdt_codec::compare::bounds_set_keyed_by`).
 #[test]
 fn datafusion_semantics_orders_a_column_with_no_plan_bytewise() {
-    let mut unknown = one_column("box", DataType::Utf8View);
-    unknown.columns[0] = ColumnResolution::UnknownType;
-    let mut undeclared = one_column("text", DataType::Utf8View);
-    undeclared.columns[0] = ColumnResolution::NotDeclared;
-    undeclared.comparisons[0] = ComparisonPlan::Refused;
+    let unknown = Column {
+        resolution: ColumnResolution::UnknownType,
+        ..Column::of("box", DataType::Utf8View)
+    }
+    .schema();
+    let undeclared = Column {
+        resolution: ColumnResolution::NotDeclared,
+        comparison: ComparisonPlan::Refused,
+        ..Column::of("text", DataType::Utf8View)
+    }
+    .schema();
     // Bytewise, so an upper-case letter is below every lower-case one and
     // a multi-byte character above both.
     let cases = [
@@ -1040,7 +1061,7 @@ fn datafusion_semantics_reads_only_the_statistics_that_hold_there() {
             let p = order_predicate(op, literal);
             let resolved = one_column(declared, DataType::Utf8View);
             let term = super::resolve::resolve_term(&p, 0, &resolved, 0, semantics).unwrap();
-            (term.compared.unwrap().statistics, resolved.bounds_kinds(0))
+            (term.compared.unwrap().statistics, resolved.columns()[0].bounds_kinds())
         };
         let (lt, stored) = believed(PredicateOp::Lt);
         let set = lt.bounds.and_then(|b| bounds_set_keyed_by(&stored, &b.0));
@@ -1844,8 +1865,11 @@ fn a_column_with_no_comparison_answers_equality_and_says_when_that_is_a_guess() 
     // `box` is `ColumnResolution::UnknownType` in a real query, this
     // build mapping no Arrow type for it, and that is the outcome the
     // announcement is keyed on.
-    let mut scalar = one_column("box", DataType::Utf8View);
-    scalar.columns[0] = ColumnResolution::UnknownType;
+    let scalar = Column {
+        resolution: ColumnResolution::UnknownType,
+        ..Column::of("box", DataType::Utf8View)
+    }
+    .schema();
     let term = resolve_term(&p, 0, &scalar, 0).unwrap();
     let note = only_note(&term).expect("an unmodelled scalar announces");
     assert_eq!(note.divergence, ComparisonDivergence::UnmodelledType);
@@ -1866,15 +1890,21 @@ fn a_column_with_no_comparison_answers_equality_and_says_when_that_is_a_guess() 
     // plan-less population and is silent: its `range_out` text renders
     // the value, so a byte comparison of two canonical spellings is the
     // server's answer.
-    let mut nested = one_column("public.opaquerange", DataType::Utf8View);
-    nested.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
+    let nested = Column {
+        plan: NestedPlan::Range(Box::new(NestedPlan::Scalar)),
+        ..Column::of("public.opaquerange", DataType::Utf8View)
+    }
+    .schema();
     assert_eq!(only_note(&resolve_term(&p, 0, &nested, 0).unwrap()), None);
 
     // So is a column no DDL explained — `--data-only`, or
     // `--schema-mode strings`. There is no declared type to qualify, and
     // `ResolvedSchema::notes` has already said so.
-    let mut undeclared = one_column("mystery", DataType::Utf8View);
-    undeclared.columns[0] = ColumnResolution::NotDeclared;
+    let undeclared = Column {
+        resolution: ColumnResolution::NotDeclared,
+        ..Column::of("mystery", DataType::Utf8View)
+    }
+    .schema();
     assert_eq!(only_note(&resolve_term(&p, 0, &undeclared, 0).unwrap()), None);
 }
 
@@ -1953,13 +1983,13 @@ fn a_position_the_resolver_declined_announces_nothing() {
         ("box[]", ColumnResolution::OpaqueElementType),
         ("public.intarr[]", ColumnResolution::NestedArrayElement),
     ] {
-        let mut resolved = one_column(declared, DataType::Utf8View);
-        resolved.comparisons = vec![comparison_for(declared, None, &types, &[])];
+        let comparison = comparison_for(declared, None, &types, &[]);
         assert!(
-            matches!(resolved.comparisons[0], ComparisonPlan::Nested(NestedCompare::Array { .. })),
+            matches!(comparison, ComparisonPlan::Nested(NestedCompare::Array { .. })),
             "{declared} carries a tree with an uncomparable position"
         );
-        resolved.columns[0] = resolution;
+        let resolved =
+            Column { comparison, resolution, ..Column::of(declared, DataType::Utf8View) }.schema();
         let term = resolve_term(&order_predicate(PredicateOp::Eq, "{}"), 0, &resolved, 0).unwrap();
         assert_eq!(only_note(&term), None, "{declared}");
     }
@@ -1977,9 +2007,8 @@ fn a_position_the_resolver_declined_announces_nothing() {
 fn a_non_deterministic_collation_announces_under_equality_and_ordering() {
     let collations = [CollationDef { name: "public.icu_ci".to_string(), deterministic: false }];
     let schema = |collation: Option<&str>, declared: &[CollationDef]| {
-        let mut resolved = one_column("text", DataType::Utf8View);
-        resolved.comparisons = vec![comparison_for("text", collation, &[], declared)];
-        resolved
+        let comparison = comparison_for("text", collation, &[], declared);
+        Column { comparison, ..Column::of("text", DataType::Utf8View) }.schema()
     };
 
     for op in [PredicateOp::Gt, PredicateOp::Eq, PredicateOp::Ne] {
@@ -3121,11 +3150,12 @@ mod oracle {
             }
             for (declared, values) in outputs {
                 let resolved = schema(&declared, None, &types);
-                let ComparisonPlan::Compared { kind, .. } = &resolved.comparisons[0] else {
+                let ComparisonPlan::Compared { kind, .. } = resolved.columns()[0].comparison()
+                else {
                     continue;
                 };
-                let data_type = resolved.schema.field(0).data_type();
-                let plan = &resolved.plans[0];
+                let data_type = resolved.schema().field(0).data_type();
+                let plan = resolved.columns()[0].plan();
                 let held: Vec<&str> = values
                     .iter()
                     .map(String::as_str)
@@ -3273,7 +3303,7 @@ mod oracle {
             }
             for (declared, values) in outputs {
                 let resolved = schema(&declared, None, &types);
-                let kind = match &resolved.comparisons[0] {
+                let kind = match resolved.columns()[0].comparison() {
                     ComparisonPlan::Compared { kind, .. } => kind.clone(),
                     ComparisonPlan::Nested(_) => {
                         let literal = values.first().cloned().unwrap_or_default();
@@ -3293,7 +3323,7 @@ mod oracle {
                     }
                     _ => continue,
                 };
-                let data_type = resolved.schema.field(0).data_type();
+                let data_type = resolved.schema().field(0).data_type();
                 let emitted_as_text = match data_type {
                     DataType::Utf8View => true,
                     DataType::Dictionary(_, value) => value.as_ref() == &DataType::Utf8,
@@ -3305,7 +3335,7 @@ mod oracle {
                     kind.datafusion_order()
                 );
                 text_emitted += usize::from(emitted_as_text);
-                let plan = &resolved.plans[0];
+                let plan = resolved.columns()[0].plan();
                 let held: Vec<&str> = values
                     .iter()
                     .map(String::as_str)
@@ -3315,9 +3345,10 @@ mod oracle {
                     continue;
                 }
                 kinds.insert(kind_name(&kind), kind.clone());
-                let set = resolved.comparisons[0].bounds_in(ComparisonSemantics::DataFusion);
+                let set =
+                    resolved.columns()[0].comparison().bounds_in(ComparisonSemantics::DataFusion);
                 if matches!(
-                    resolved.comparisons[0],
+                    resolved.columns()[0].comparison(),
                     ComparisonPlan::Compared { divergence: None, .. }
                 ) {
                     let agrees = ARROW_AGREEMENT
@@ -3328,7 +3359,7 @@ mod oracle {
                     primary_in_both += usize::from(one);
                 }
                 let set = set.unwrap_or_else(|| panic!("{major} {declared}: no DataFusion bounds"));
-                let stored_kind = resolved.bounds_kinds(0)[match set {
+                let stored_kind = resolved.columns()[0].bounds_kinds()[match set {
                     BoundsSet::Primary => 0,
                     BoundsSet::DataFusion => 1,
                 }]
@@ -3505,7 +3536,7 @@ mod oracle {
                 let collation = clause(row[3].as_ref());
                 let schema = &resolved[&(declared.clone(), collation)];
                 let report = column_divergences(schema, ComparisonSemantics::DataFusion);
-                if matches!(schema.comparisons[0], ComparisonPlan::Nested(_)) {
+                if matches!(schema.columns()[0].comparison(), ComparisonPlan::Nested(_)) {
                     assert!(
                         report.iter().any(|n| n.divergence == ComparisonDivergence::NestedOrder),
                         "{major} {declared}: {report:?}"
@@ -3521,12 +3552,12 @@ mod oracle {
                 // A nested column's every term is refused here, so its
                 // answer is DataFusion's own: `make_comparator` over the
                 // two values as a batch emits them.
-                let nested = (!schema.plans[0].is_scalar()
-                    && schema.columns[0] == ColumnResolution::Mapped)
+                let nested = (!schema.columns()[0].plan().is_scalar()
+                    && *schema.columns()[0].resolution() == ColumnResolution::Mapped)
                     .then(|| {
                         let array = crate::batch::column_of(
-                            schema.schema.field(0).data_type(),
-                            &schema.plans[0],
+                            schema.schema().field(0).data_type(),
+                            schema.columns()[0].plan(),
                             &[field, bound],
                         )
                         .ok()?;
@@ -3580,7 +3611,8 @@ mod oracle {
                     if got != expected {
                         // A column that fell back to text is reported by
                         // its `Warning` column note, and nothing else.
-                        let fell_back = schema.columns[0] != ColumnResolution::Mapped;
+                        let fell_back =
+                            *schema.columns()[0].resolution() != ColumnResolution::Mapped;
                         assert!(
                             fell_back
                                 || report.iter().any(|n| {
@@ -3784,7 +3816,7 @@ mod oracle {
                 let pool: Vec<&str> = pool.iter().map(String::as_str).collect();
                 let literals: Vec<&str> = literals[&declared].iter().map(String::as_str).collect();
                 let resolved = schema(&declared, collation, &types);
-                let (key_kind, orders_exactly) = match &resolved.comparisons[0] {
+                let (key_kind, orders_exactly) = match resolved.columns()[0].comparison() {
                     ComparisonPlan::Compared { kind, divergence } => {
                         let keys = pool.iter().all(|v| order_key(kind, v).is_some());
                         (keys.then_some(kind.clone()), divergence.is_none())
@@ -3808,7 +3840,7 @@ mod oracle {
                 }
                 // A `NOT NULL` domain's column holds no NULL a dump can
                 // restore, and a read refuses one.
-                let nullable = !resolved.not_null[0];
+                let nullable = !resolved.columns()[0].not_null();
                 for _ in 0..30 {
                     let group_rows: Vec<Option<&str>> = (0..rng.below(6))
                         .map(|_| (!(nullable && rng.chance(4))).then(|| *rng.pick(&pool)))
@@ -3911,7 +3943,7 @@ mod oracle {
                         } else {
                             !matches!(term.op, PredicateOp::IsNull | PredicateOp::IsNotNull)
                                 && matches!(
-                                    resolved.comparisons[0],
+                                    resolved.columns()[0].comparison(),
                                     ComparisonPlan::Compared { .. }
                                 )
                                 && term.comparison_notes().is_empty()

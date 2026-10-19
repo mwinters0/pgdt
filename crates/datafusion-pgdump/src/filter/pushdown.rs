@@ -60,7 +60,7 @@ pub(crate) fn translate(filter: &Expr, table: &ResolvedSchema) -> Option<pgdt_qu
         }
         Expr::ScalarFunction(call) if call.name() == UNREPRESENTABLE_FUNCTION => {
             let [Expr::Column(column)] = call.args.as_slice() else { return None };
-            let index = table.schema.index_of(&column.name).ok()?;
+            let index = table.schema().index_of(&column.name).ok()?;
             L::Term(null_term(index, PredicateOp::IsUnrepresentable, table))
         }
         // A boolean column as the whole predicate is its own truth: `flag` is
@@ -87,7 +87,7 @@ pub(crate) fn translate(filter: &Expr, table: &ResolvedSchema) -> Option<pgdt_qu
                     _ => None,
                 })
                 .collect::<Option<_>>()?;
-            let column = table.schema.field(index).name().clone();
+            let column = table.schema().field(index).name().clone();
             let op = if *negated { PredicateOp::NotIn(values) } else { PredicateOp::In(values) };
             L::Term(Predicate { column, op })
         }
@@ -114,7 +114,7 @@ fn comparison(
 /// included: neither reads a value.
 fn null_test(column: &Expr, op: PredicateOp, table: &ResolvedSchema) -> Option<Predicate> {
     let Expr::Column(column) = column else { return None };
-    Some(null_term(table.schema.index_of(&column.name).ok()?, op, table))
+    Some(null_term(table.schema().index_of(&column.name).ok()?, op, table))
 }
 
 /// `op` on a `Boolean` column of `table`.

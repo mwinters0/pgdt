@@ -31,7 +31,10 @@ use arrow::array::{
 };
 use arrow::buffer::OffsetBuffer;
 use arrow::datatypes::{DataType, Field};
+use pgdt_codec::compare::ComparisonPlan;
+use pgdt_codec::internal::column_of;
 use pgdt_codec::pgtype::NestedPlan;
+use pgdt_codec::{ColumnResolution, ResolvedColumn};
 use pgdt_query::render_field_into;
 
 struct Counting;
@@ -70,6 +73,19 @@ unsafe impl GlobalAlloc for Counting {
 
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
+
+/// The record of a column `array` is a batch's array of, written as `plan`
+/// says, no DDL behind it.
+fn record(array: &ArrayRef, plan: NestedPlan) -> ResolvedColumn {
+    column_of(
+        Field::new("v", array.data_type().clone(), true),
+        None,
+        ColumnResolution::NotDeclared,
+        plan,
+        ComparisonPlan::Refused,
+        false,
+    )
+}
 
 /// One row of each of the control's sixteen columns, in its column order.
 fn control_row() -> Vec<ArrayRef> {
@@ -141,19 +157,23 @@ fn array_row(len: usize) -> (ArrayRef, ArrayRef) {
 #[test]
 fn the_render_path_allocation_budget_per_row() {
     let columns = control_row();
+    // Each column's record is built before anything is counted, as a
+    // consumer holds its schema's before it renders a row.
+    let records: Vec<ResolvedColumn> =
+        columns.iter().map(|column| record(column, NestedPlan::Scalar)).collect();
     let mut line = String::with_capacity(4096);
     // Warm the buffer, and keep the first pass out of the count: an empty
     // line grows, which is a cost of a batch's first row and not of a row.
-    for column in &columns {
-        render_field_into(column.as_ref(), 0, &NestedPlan::Scalar, &mut line).unwrap();
+    for (column, record) in columns.iter().zip(&records) {
+        render_field_into(column.as_ref(), 0, record, &mut line).unwrap();
     }
     let warm = line.clone();
 
     line.clear();
     let mut per_column = Vec::new();
-    for column in &columns {
+    for (column, record) in columns.iter().zip(&records) {
         per_column.push(counting(|| {
-            render_field_into(column.as_ref(), 0, &NestedPlan::Scalar, &mut line).unwrap();
+            render_field_into(column.as_ref(), 0, record, &mut line).unwrap();
         }));
     }
     assert_eq!(line, warm, "the counted pass rendered the same text");
@@ -170,8 +190,8 @@ fn the_render_path_allocation_budget_per_row() {
     let counted = counting(|| {
         for _ in 0..100 {
             line.clear();
-            for column in &columns {
-                render_field_into(column.as_ref(), 0, &NestedPlan::Scalar, &mut line).unwrap();
+            for (column, record) in columns.iter().zip(&records) {
+                render_field_into(column.as_ref(), 0, record, &mut line).unwrap();
             }
         }
     });
@@ -180,10 +200,11 @@ fn the_render_path_allocation_budget_per_row() {
     // A SQL NULL costs nothing: the sink writes nothing and reports `false`,
     // which is what lets the caller write its own `\N` marker.
     let null: ArrayRef = Arc::new(Int32Array::from(vec![None::<i32>]));
+    let null_record = record(&null, NestedPlan::Scalar);
     let mut wrote = true;
     let counted = counting(|| {
         line.clear();
-        wrote = render_field_into(null.as_ref(), 0, &NestedPlan::Scalar, &mut line).unwrap();
+        wrote = render_field_into(null.as_ref(), 0, &null_record, &mut line).unwrap();
     });
     assert!(!wrote);
     assert!(line.is_empty());
@@ -195,19 +216,19 @@ fn the_render_path_allocation_budget_per_row() {
     // left is `ListArray::value`'s slice, one `Arc` per array value, plus one
     // scratch `String` for a column whose elements need quoting — one for the
     // whole value, not one per element.
-    let array_plan = NestedPlan::array(NestedPlan::Scalar);
     let mut counts = Vec::new();
     for len in [5usize, 50] {
         let (ints, texts) = array_row(len);
         for column in [&ints, &texts] {
+            let array = record(column, NestedPlan::array(NestedPlan::Scalar));
             // Warm the scratch's growth out of the count for the same reason
             // the control's line buffer is warmed: it is not a per-row cost.
             line.clear();
-            render_field_into(column.as_ref(), 0, &array_plan, &mut line).unwrap();
+            render_field_into(column.as_ref(), 0, &array, &mut line).unwrap();
             let warm = line.clone();
             line.clear();
             counts.push(counting(|| {
-                render_field_into(column.as_ref(), 0, &array_plan, &mut line).unwrap();
+                render_field_into(column.as_ref(), 0, &array, &mut line).unwrap();
             }));
             assert_eq!(line, warm, "the counted pass rendered the same array");
         }

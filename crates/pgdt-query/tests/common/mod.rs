@@ -16,8 +16,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow::array::RecordBatch;
-use pgdt_codec::SchemaMode;
+use arrow::datatypes::{DataType, Field};
+use pgdt_codec::compare::ComparisonPlan;
+use pgdt_codec::internal::column_of;
 use pgdt_codec::pgtype::NestedPlan;
+use pgdt_codec::{ColumnResolution, ResolvedColumn, SchemaMode};
 use pgdt_dump::cache::{CacheMode, SourceWatch, StrictIdentity};
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::ByteRangeSource;
@@ -147,22 +150,39 @@ impl Cold {
 /// fixture's typed columns (`docs/design/decisions.md`, "D66":
 /// render-back is exactly this build's own decode/render round trip).
 ///
-/// The plan is `Scalar` for every column, which is right for every
-/// non-nested type. A test reading a nested column wants the stream's own
-/// `ResolvedSchema::plans` instead, and asks for them where it queries.
+/// Every column is read as a scalar one ([`scalar_column`]), which is right
+/// for every non-nested type. A test reading a nested column wants the
+/// stream's own `ResolvedSchema::columns` instead, and asks for them where it
+/// queries.
 pub fn rows_of(batch: &RecordBatch) -> Vec<Vec<Option<String>>> {
+    let columns: Vec<ResolvedColumn> =
+        batch.columns().iter().map(|c| scalar_column(c.data_type())).collect();
     (0..batch.num_rows())
         .map(|row| {
             batch
                 .columns()
                 .iter()
-                .map(|c| {
-                    render_field(c.as_ref(), row, &NestedPlan::Scalar)
-                        .expect("every fixture value renders back")
+                .zip(&columns)
+                .map(|(c, column)| {
+                    render_field(c.as_ref(), row, column).expect("every fixture value renders back")
                 })
                 .collect()
         })
         .collect()
+}
+
+/// A scalar column's record for an array of `data_type`, no DDL behind it:
+/// what renders a batch's column back without the stream's schema, right
+/// for every non-nested type.
+pub fn scalar_column(data_type: &DataType) -> ResolvedColumn {
+    column_of(
+        Field::new("v", data_type.clone(), true),
+        None,
+        ColumnResolution::NotDeclared,
+        NestedPlan::Scalar,
+        ComparisonPlan::Refused,
+        false,
+    )
 }
 
 /// `public.widgets` from the hand-written [`edge_cases`] dump, as decoded

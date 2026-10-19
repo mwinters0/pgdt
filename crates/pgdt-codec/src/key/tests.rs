@@ -3,11 +3,11 @@ use std::cmp::Ordering;
 use pgdt_model::{ColumnDef, DatabaseMetadata, DumpMetadata, TableDef, TypeDef, TypeKind};
 
 use super::*;
-use crate::resolve::{SchemaMode, resolve_columns};
+use crate::resolve::{ResolvedColumn, SchemaMode, resolve_columns};
 
 /// One column `c` of `declared` type, resolved as a query resolves it, typed
 /// and against no census, under the database's `types`.
-fn plan(declared: &str, types: &[TypeDef]) -> ResolvedSchema {
+fn plan(declared: &str, types: &[TypeDef]) -> ResolvedColumn {
     let mut database = DatabaseMetadata {
         name: None,
         preamble_complete: true,
@@ -22,7 +22,8 @@ fn plan(declared: &str, types: &[TypeDef]) -> ResolvedSchema {
     database.tables.insert("public.t".to_string(), TableDef::with_columns(columns));
     let metadata = DumpMetadata { databases: vec![database] };
     let names = ["c".to_string()];
-    resolve_columns("public.t", &names, Some(&metadata), None, SchemaMode::Typed, &[])
+    resolve_columns("public.t", &names, Some(&metadata), None, SchemaMode::Typed, &[]).columns()[0]
+        .clone()
 }
 
 /// A record of `fields` integers, `public.r<fields>`.
@@ -40,8 +41,8 @@ fn mood() -> TypeDef {
     TypeDef { name: "public.mood".to_string(), kind: TypeKind::Enum { labels, exact: true } }
 }
 
-fn field(plan: &ResolvedSchema, text: &str) -> ValueKey {
-    ValueKey::of(plan, 0, ComparisonSemantics::Postgres, text).expect("a value of the type")
+fn field(plan: &ResolvedColumn, text: &str) -> ValueKey {
+    ValueKey::of(plan, ComparisonSemantics::Postgres, text).expect("a value of the type")
 }
 
 /// **A nested value has a key**, read from its field as a scalar's is and
@@ -71,11 +72,11 @@ fn a_nested_value_is_keyed_from_its_plan() {
     // field form writes.
     let literals = [(&array, "{ 1 , 2 }", "{1,2}"), (&range, "[1,10]", "[1,11)")];
     for (plan, literal, written) in literals {
-        let literal = ValueKey::literal(plan, 0, postgres, literal).expect("a literal of the type");
+        let literal = ValueKey::literal(plan, postgres, literal).expect("a literal of the type");
         assert_eq!(literal.compare(&field(plan, written)), Some(Ordering::Equal));
     }
     // The field grammar is the strict one: `array_out` writes no blank.
-    assert!(ValueKey::of(&array, 0, postgres, "{ 1 , 2 }").is_none());
+    assert!(ValueKey::of(&array, postgres, "{ 1 , 2 }").is_none());
     assert!(field(&array, "{1,2}").heap_bytes() > 0);
 }
 
@@ -144,7 +145,7 @@ fn keys_no_order_relates_answer_none() {
     let types = cross_plan_types();
     let key = |declared: &str, text: &str| field(&plan(declared, &types), text);
     let datafusion = |declared: &str, text: &str| {
-        ValueKey::of(&plan(declared, &types), 0, ComparisonSemantics::DataFusion, text).unwrap()
+        ValueKey::of(&plan(declared, &types), ComparisonSemantics::DataFusion, text).unwrap()
     };
     let pairs = [
         (key("integer", "1"), key("text", "1")),
@@ -209,7 +210,7 @@ fn keys_an_order_relates_compare_across_plans() {
     let types = cross_plan_types();
     let key = |declared: &str, text: &str| field(&plan(declared, &types), text);
     let datafusion = |declared: &str, text: &str| {
-        ValueKey::of(&plan(declared, &types), 0, ComparisonSemantics::DataFusion, text).unwrap()
+        ValueKey::of(&plan(declared, &types), ComparisonSemantics::DataFusion, text).unwrap()
     };
     let ordered = [
         (key("smallint", "7"), key("bigint", "70000"), Less),
@@ -278,26 +279,24 @@ fn the_semantics_decides_the_order_a_key_is_read_in() {
     let types = [mood()];
     let mood = plan("public.mood", &types);
     let order = |semantics| {
-        let key = |text| ValueKey::of(&mood, 0, semantics, text).expect("a declared label");
+        let key = |text| ValueKey::of(&mood, semantics, text).expect("a declared label");
         key("sad").compare(&key("ok"))
     };
     assert_eq!(order(ComparisonSemantics::Postgres), Some(Ordering::Less));
     assert_eq!(order(ComparisonSemantics::DataFusion), Some(Ordering::Greater));
 
     let money = plan("money", &types);
-    assert_eq!(money.comparisons[0], ComparisonPlan::Refused);
-    assert!(ValueKey::of(&money, 0, ComparisonSemantics::Postgres, "$1.00").is_none());
-    let text = |text| ValueKey::of(&money, 0, ComparisonSemantics::DataFusion, text).unwrap();
+    assert_eq!(*money.comparison(), ComparisonPlan::Refused);
+    assert!(ValueKey::of(&money, ComparisonSemantics::Postgres, "$1.00").is_none());
+    let text = |text| ValueKey::of(&money, ComparisonSemantics::DataFusion, text).unwrap();
     assert_eq!(text("$10.00").compare(&text("$9.00")), Some(Ordering::Less));
 
     let array = plan("integer[]", &types);
-    assert!(ValueKey::of(&array, 0, ComparisonSemantics::DataFusion, "{1}").is_none());
-    assert!(ValueKey::literal(&array, 0, ComparisonSemantics::DataFusion, "{1}").is_none());
+    assert!(ValueKey::of(&array, ComparisonSemantics::DataFusion, "{1}").is_none());
+    assert!(ValueKey::literal(&array, ComparisonSemantics::DataFusion, "{1}").is_none());
     // An array of a type the register orders by nothing has no key either,
     // though its empty value would read.
-    assert!(
-        ValueKey::of(&plan("json[]", &types), 0, ComparisonSemantics::Postgres, "{}").is_none()
-    );
+    assert!(ValueKey::of(&plan("json[]", &types), ComparisonSemantics::Postgres, "{}").is_none());
 }
 
 /// **A literal is read as the server coerces one**, with no typmod (I63): a
@@ -310,14 +309,14 @@ fn a_literal_is_read_in_its_input_grammar() {
     let decimal = plan("numeric(2,1)", &[]);
     let postgres = ComparisonSemantics::Postgres;
     assert_eq!(field(&decimal, "1.04").compare(&field(&decimal, "1.0")), Some(Ordering::Equal));
-    assert!(ValueKey::literal(&decimal, 0, postgres, "1.04").is_none());
-    assert!(ValueKey::of(&decimal, 0, postgres, "12.5").is_none());
-    let literal = ValueKey::literal(&decimal, 0, postgres, "12.5").expect("a numeric literal");
+    assert!(ValueKey::literal(&decimal, postgres, "1.04").is_none());
+    assert!(ValueKey::of(&decimal, postgres, "12.5").is_none());
+    let literal = ValueKey::literal(&decimal, postgres, "12.5").expect("a numeric literal");
     assert_eq!(literal.compare(&field(&decimal, "9.9")), Some(Ordering::Greater));
 
     let smallint = plan("smallint", &[]);
-    assert!(ValueKey::literal(&smallint, 0, postgres, "70000").is_none());
-    let wide = ValueKey::literal(&smallint, 0, ComparisonSemantics::DataFusion, "70000");
+    assert!(ValueKey::literal(&smallint, postgres, "70000").is_none());
+    let wide = ValueKey::literal(&smallint, ComparisonSemantics::DataFusion, "70000");
     assert!(wide.is_some());
 }
 
@@ -351,7 +350,7 @@ fn a_datafusion_key_hands_over_its_emitted_value() {
     use arrow_schema::{IntervalUnit, TimeUnit};
     let types = [mood()];
     let datafusion = |declared: &str, text: &str| {
-        let key = ValueKey::of(&plan(declared, &types), 0, ComparisonSemantics::DataFusion, text);
+        let key = ValueKey::of(&plan(declared, &types), ComparisonSemantics::DataFusion, text);
         key.expect("a value of the type")
     };
     let emitted = |declared: &str, text: &str| {
@@ -404,6 +403,35 @@ fn a_datafusion_key_hands_over_its_emitted_value() {
     assert_eq!(field(&plan("integer[]", &types), "{1}").emitted(), None);
     // A literal is its column's type, which may not hold it.
     let smallint = plan("smallint", &types);
-    let wide = ValueKey::literal(&smallint, 0, ComparisonSemantics::DataFusion, "70000").unwrap();
+    let wide = ValueKey::literal(&smallint, ComparisonSemantics::DataFusion, "70000").unwrap();
     assert_eq!(wide.emitted(), Some((&DataType::Int16, EmittedValue::Integer(70000))));
+}
+
+/// **A column the untyped mode read as its text keys in its widening's
+/// semantics alone**: widened under PostgreSQL's, a `date` keeps its
+/// declared order there and has no key in DataFusion's, which compares the
+/// text bytewise; widened under DataFusion's, it orders its text there and
+/// has no key in PostgreSQL's.
+#[test]
+fn a_column_read_as_text_keys_only_in_the_semantics_it_was_widened_under() {
+    use crate::resolve::{read_as_text, schema_of};
+    let widened = |semantics| {
+        let column = plan("date", &[]);
+        let mut resolved = schema_of(vec![column]);
+        read_as_text(&mut resolved, &[true], semantics);
+        resolved.columns()[0].clone()
+    };
+    let (postgres, datafusion) = (ComparisonSemantics::Postgres, ComparisonSemantics::DataFusion);
+    let under_postgres = widened(postgres);
+    let key = |text| ValueKey::of(&under_postgres, postgres, text).expect("a date");
+    // A five-digit year is after a four-digit one, and before it bytewise.
+    let (later, earlier) = ("10000-01-01", "9999-12-31");
+    assert_eq!(key(later).compare(&key(earlier)), Some(Ordering::Greater));
+    assert!(ValueKey::of(&under_postgres, datafusion, "2020-01-01").is_none());
+    assert!(ValueKey::literal(&under_postgres, datafusion, "2020-01-01").is_none());
+
+    let under_datafusion = widened(datafusion);
+    let text = |text| ValueKey::of(&under_datafusion, datafusion, text).expect("a text");
+    assert_eq!(text(later).compare(&text(earlier)), Some(Ordering::Less));
+    assert!(ValueKey::of(&under_datafusion, postgres, "2020-01-01").is_none());
 }

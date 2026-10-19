@@ -112,7 +112,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.8.4** pgdt-query: the cold path onto the `Dump` — an early-stopped pass yielding the owning `Table` for the table it settled, `MappedTable` gone; `max_rows` on the stream; the selector in place of the `&str` pattern and `QueryOptions.database`, `blocks_for` gone; `pgdt query` and the stream entry points opening through `CacheMode::open`, `pgdt query` reading the plan's stream in file order and its merge gone; `claim`, `CacheMode::load`, `CacheLoad` and `pgdt`'s `open_for_scan` gone ([notes](../design/roadmap-P36.8.4-cold-path-notes.md))
 - [x] **36.8.2** pgdt-query: a filter term's operator carrying its value (spec, "The small fixes") — `PredicateOp`'s comparing variants hold their literal, `Predicate` is `{ column, op }`, `takes_no_value` gone ([notes](../design/roadmap-P36.8.2-filter-operators-notes.md))
 - [x] **36.13** pgdt-query: `IN` and `NOT IN` as `PredicateOp`s holding their list, `Membership` and `Expr::In` gone, one accessor naming an operator's operand in place of `value()`; both front ends building them; D53 rewritten (spec, "The small fixes") ([notes](../design/roadmap-P36.13-in-operator-notes.md))
-- [ ] **36.9** pgdt-query: one record per column in `ResolvedSchema`, rendering and `ValueKey` through it; closes `KD121`; counted by `measure.py --count-pair HEAD~1`
+- [x] **36.9** pgdt-query: one record per column in `ResolvedSchema`, rendering and `ValueKey` through it; counted by `measure.py --count-pair HEAD~1` — the reshape landed and its deficiency is struck; the count resolves falls on both `query` rows and rises on the data-level `parse` and `pgdt sql`, which callgrind puts outside the slice's changed code — the first in identical code's stack offset under a frame the tree grew, the second in the provider's scan planning, once a query — and both are accepted, the `pgdt sql` rise by the maintainer ([notes](../design/roadmap-P36.9-column-record-notes.md))
 - [ ] **36.10** Errors in library terms, `pgdt`'s spelling layer pinned by a test, the cache's "Not in one place" line struck; closes `KD92`
 - [ ] **36.11** datafusion-pgdump: `PgDump` over a `Dump`, one session-readying function, `Located` public, the sink at construction, `PgDumpTableOptions` folded
 - [ ] **36.12** The embedder test in `pgdt-query/tests/`, held by `layering.py` to the embedder rule
@@ -146,4 +146,31 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **36.9: the column record holds its `ColumnNote` whole.** The spec ("Values
+  passed back together") says the copy of each column's resolution in its note
+  goes; 36.9 removed the separate resolutions vector instead, so the
+  resolution lives once, in the note the record holds, and
+  `ResolvedColumn::resolution` reads it. Why: `ColumnNote` is the finding
+  every sink downcasts (`tests/registration.rs`, `tests/diagnostics.rs`), and
+  a note without its resolution is no finding, its severity and message being
+  the resolution's. Reconsidering means making the record itself the
+  finding — the note's name, declared type and resolution folded into
+  `ResolvedColumn`, `ColumnNote` gone — which moves every sink's downcast
+  target and `drain`'s channel from note to record.
+- **36.9: a count rise in identical code accepted, and `--count-pair` not
+  reopened.** Callgrind puts the data-level `parse` row's rise in `memcpy`
+  called as often by `ColumnGatherer::close_group`, identical machine code
+  in both builds: its frame sits 16 bytes lower under `Gatherer::observe_row`,
+  whose frame the tree grew, and the copies into it change alignment
+  (36.9's notes, "The count: two rises, outside the slice's code,
+  accepted"). 36.4.3's reading called a rise in identical code layout, and
+  said layout reopens how `--count-pair` is read. 36.9 read that as aimed at
+  a rise the build prices rather than the change, which 36.1.1's
+  identical-source pair rules out, and this one has a named cause in the
+  tree's own build; so it was accepted as the change's and the instrument
+  left alone. Reconsidering means either reworking until `observe_row`'s
+  frame is back to its parent's size, chasing a stack offset no source line
+  states, or deciding how a resolved row that callgrind puts in identical
+  code is read before the next slice is counted.
 

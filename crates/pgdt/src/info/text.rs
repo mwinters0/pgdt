@@ -187,11 +187,11 @@ pub(crate) fn print_index(
             println!("    columns: none (every column dropped or generated, or none declared)");
         } else {
             let columns: Vec<String> = resolved
-                .notes
+                .columns()
                 .iter()
-                .map(|d| match &d.declared {
-                    Some(ty) => format!("{} {ty}", d.column),
-                    None => format!("{} (unknown)", d.column),
+                .map(|column| match column.declared() {
+                    Some(ty) => format!("{} {ty}", column.name()),
+                    None => format!("{} (unknown)", column.name()),
                 })
                 .collect();
             println!("    columns: {}", columns.join(", "));
@@ -207,18 +207,18 @@ pub(crate) fn print_index(
                 // a user can read them without grepping the dump for its
                 // `CREATE TYPE`, and a continuation rather than a suffix
                 // keeps a long list from breaking the alignment.
-                for (i, note) in resolved.notes.iter().enumerate() {
-                    let data_type = resolved.schema.field(i).data_type();
-                    if note.resolution != ColumnResolution::Mapped {
-                        println!("    {}: {}", note.column, note.resolution.describe());
+                for (i, column) in resolved.columns().iter().enumerate() {
+                    let data_type = column.data_type();
+                    if *column.resolution() != ColumnResolution::Mapped {
+                        println!("    {}: {}", column.name(), column.resolution().describe());
                     } else if *data_type != DataType::Utf8View {
                         println!(
                             "    {}: {}",
-                            note.column,
-                            arrow_type_label(data_type, &resolved.plans[i])
+                            column.name(),
+                            arrow_type_label(data_type, column.plan())
                         );
                     }
-                    if let Some(labels) = enum_labels(&resolved.comparisons[i]) {
+                    if let Some(labels) = enum_labels(column.comparison()) {
                         println!("        labels: {}", label_list(labels));
                     }
                     let count = block.unrepresentable().and_then(|c| c.get(i));
@@ -229,7 +229,7 @@ pub(crate) fn print_index(
                     }
                 }
             }
-            total_columns += resolved.notes.len();
+            total_columns += resolved.columns().len();
             total_unmapped += resolved.unmapped_count();
         }
         if detail {

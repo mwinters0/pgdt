@@ -433,7 +433,7 @@ fn shape(expr: &ResolvedExpr) -> String {
 fn row_evaluation_drops_only_the_bounds_a_membership_implies() {
     let schema = two_integers();
     let term = |index: usize, op: Comparing, value: &str| {
-        let column = schema.schema.field(index).name().clone();
+        let column = schema.schema().field(index).name().clone();
         let p = Predicate { column, op: op(value.into()) };
         ResolvedExpr::Term(resolve_term(&p, index, &schema, 0).unwrap())
     };
@@ -501,7 +501,7 @@ fn row_evaluation_drops_only_the_bounds_a_membership_implies() {
 fn a_tree_and_its_row_form_keep_the_same_rows() {
     let schema = two_integers();
     let term = |index: usize, op: Comparing, value: String| {
-        let column = schema.schema.field(index).name().clone();
+        let column = schema.schema().field(index).name().clone();
         let p = Predicate { column, op: op(value) };
         ResolvedExpr::Term(resolve_term(&p, index, &schema, 0).unwrap())
     };

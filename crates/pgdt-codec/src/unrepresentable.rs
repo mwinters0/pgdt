@@ -151,13 +151,7 @@ pub fn counter_for(
 
 /// Each of `resolved`'s columns' leaf.
 fn leaves(resolved: &ResolvedSchema) -> Vec<Leaf> {
-    resolved
-        .schema
-        .fields()
-        .iter()
-        .zip(&resolved.plans)
-        .map(|(field, plan)| Leaf::of(field.data_type(), plan))
-        .collect()
+    resolved.columns().iter().map(|column| Leaf::of(column.data_type(), column.plan())).collect()
 }
 
 /// **One column's tier test**, for a reader holding the value's text already:
@@ -303,9 +297,8 @@ pub fn unrepresentable_reads(
     mode: UnrepresentableMode,
     reach: UnrepresentableTier,
 ) -> Vec<Option<UnrepresentableRead>> {
-    let width = resolved.schema.fields().len();
-    let read_as_text =
-        |i: usize| matches!(resolved.schema.field(i).data_type(), DataType::Utf8View);
+    let width = resolved.columns().len();
+    let read_as_text = |i: usize| matches!(resolved.columns()[i].data_type(), DataType::Utf8View);
     if mode != UnrepresentableMode::Null || (0..width).all(read_as_text) {
         return vec![None; width];
     }

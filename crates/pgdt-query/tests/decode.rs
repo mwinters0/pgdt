@@ -21,7 +21,6 @@ use std::sync::Arc;
 use arrow::datatypes::DataType;
 use futures::StreamExt;
 use pgdt_codec::UnrepresentableMode;
-use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnResolution, SchemaMode};
 use pgdt_core::Error;
 use pgdt_dump::cache::{self, CacheMode};
@@ -34,7 +33,7 @@ use pgdt_model::PostgresInvalidValues;
 use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions, TableStream, render_field};
 
 mod common;
-use common::{Cold, types_fixture};
+use common::{Cold, scalar_column, types_fixture};
 use pgdt_dump::ReadOptions;
 use pgdt_fixtures::arranged;
 use tokio_util::sync::CancellationToken;
@@ -86,15 +85,15 @@ async fn try_rows_in(
     let mut stream = stream_in(path, table, options, CacheMode::DISABLED).await?;
     let mut out = Vec::new();
     while let Some(batch) = stream.next().await.transpose()? {
-        let plans = stream.resolved_schema().plans;
+        let resolved = stream.resolved_schema();
         for row in 0..batch.num_rows() {
             out.push(
                 batch
                     .columns()
                     .iter()
-                    .enumerate()
-                    .map(|(col, c)| {
-                        render_field(c.as_ref(), row, plans.get(col).unwrap_or(&NestedPlan::Scalar))
+                    .zip(resolved.columns())
+                    .map(|(c, column)| {
+                        render_field(c.as_ref(), row, column)
                             .expect("every fixture value renders back")
                     })
                     .collect(),
@@ -210,12 +209,12 @@ async fn the_census_retypes_an_array_column_before_the_schema_commits() {
             true,
         )));
         assert_eq!(
-            resolved.schema.field(1).data_type(),
+            resolved.schema().field(1).data_type(),
             &list_of_list,
             "pg_dump {version}: v_multidim is uniformly 2-D"
         );
         assert_eq!(
-            &resolved.columns[1..],
+            &resolved.columns()[1..].iter().map(|c| c.resolution().clone()).collect::<Vec<_>>(),
             &[
                 ColumnResolution::Mapped,
                 ColumnResolution::VaryingArrayShape,
@@ -225,7 +224,7 @@ async fn the_census_retypes_an_array_column_before_the_schema_commits() {
         );
         for i in [2, 3] {
             assert_eq!(
-                resolved.schema.field(i).data_type(),
+                resolved.schema().field(i).data_type(),
                 &DataType::Utf8View,
                 "pg_dump {version}: column {i}"
             );
@@ -289,20 +288,20 @@ async fn an_array_declaration_pg_dump_never_writes_resolves_and_takes_its_census
     let list_of = |inner| DataType::List(Arc::new(Field::new("item", inner, true)));
     let resolved = resolved_schema(&path, "public.t_spelling").await;
     assert_eq!(
-        resolved.schema.field(1).data_type(),
+        resolved.schema().field(1).data_type(),
         &list_of(list_of(DataType::Int32)),
         "`integer[][]` is one array level from the DDL, deepened by the census"
     );
     assert_eq!(
-        resolved.schema.field(2).data_type(),
+        resolved.schema().field(2).data_type(),
         &list_of(DataType::Int32),
         "`integer ARRAY[4]`"
     );
-    assert_eq!(resolved.schema.field(3).data_type(), &list_of(DataType::Int32), "`integer[3]`");
+    assert_eq!(resolved.schema().field(3).data_type(), &list_of(DataType::Int32), "`integer[3]`");
     assert!(
-        resolved.columns.iter().all(|r| *r == ColumnResolution::Mapped),
+        resolved.columns().iter().all(|r| *r.resolution() == ColumnResolution::Mapped),
         "no spelling is a refusal: {:?}",
-        resolved.columns
+        resolved.columns()
     );
 }
 
@@ -415,7 +414,7 @@ async fn read_as_null_or_refused(table: &str, column: &str, declared: &str, valu
         let path = types_fixture(version, "default");
         let typed = rows(&path, table, SchemaMode::Typed).await;
         let strings = rows(&path, table, SchemaMode::Strings).await;
-        let index = resolved_schema(&path, table).await.schema.index_of(column).unwrap();
+        let index = resolved_schema(&path, table).await.schema().index_of(column).unwrap();
         let spelled: Vec<usize> = (0..strings.len())
             .filter(|&row| strings[row][index].as_deref() == Some(value))
             .collect();
@@ -432,18 +431,18 @@ async fn read_as_null_or_refused(table: &str, column: &str, declared: &str, valu
         let (text, widened) = try_rows_in(&path, table, untyped).await.unwrap();
         assert_eq!(text, strings, "pg_dump {version}: the untyped mode keeps every value");
         let declared_schema = resolved_schema(&path, table).await;
-        for (i, field) in widened.schema.fields().iter().enumerate() {
+        for (i, field) in widened.schema().fields().iter().enumerate() {
             let holds_one =
                 (0..strings.len()).any(|row| strings[row][i].is_some() && typed[row][i].is_none());
             let (resolution, data_type) = match holds_one {
                 true => (ColumnResolution::UnrepresentableValues, &DataType::Utf8View),
                 false => (
-                    declared_schema.columns[i].clone(),
-                    declared_schema.schema.field(i).data_type(),
+                    declared_schema.columns()[i].resolution().clone(),
+                    declared_schema.schema().field(i).data_type(),
                 ),
             };
             assert_eq!(
-                (&widened.columns[i], field.data_type()),
+                (widened.columns()[i].resolution(), field.data_type()),
                 (&resolution, data_type),
                 "pg_dump {version}: {table}.{}, which the typed read nulls a value of: {holds_one}",
                 field.name()
@@ -553,7 +552,7 @@ async fn a_scale_past_the_precision_or_arrows_reach_reads_every_value() {
     assert!(
         typed.iter().all(|row| row[0].as_deref() == Some("3") || row.iter().all(Option::is_some))
     );
-    let types: Vec<&DataType> = schema.schema.fields().iter().map(|f| f.data_type()).collect();
+    let types: Vec<&DataType> = schema.schema().fields().iter().map(|f| f.data_type()).collect();
     assert_eq!(
         types,
         [
@@ -645,7 +644,7 @@ async fn a_negative_scale_zero_reads_as_zero_in_every_mode() {
     assert_eq!(typed, rows(&path, "public.t", SchemaMode::Strings).await);
     let zeros = ["1", "0", "0", "0", "0"].map(|v| Some(v.to_string()));
     assert_eq!(typed[0], zeros, "zero renders back as written");
-    let types: Vec<&DataType> = schema.schema.fields().iter().map(|f| f.data_type()).collect();
+    let types: Vec<&DataType> = schema.schema().fields().iter().map(|f| f.data_type()).collect();
     assert_eq!(
         types,
         [
@@ -1633,7 +1632,10 @@ async fn a_float_past_its_range_is_read_as_the_largest_only_when_told_to_ignore_
                             batch
                                 .columns()
                                 .iter()
-                                .map(|c| render_field(c.as_ref(), r, &NestedPlan::Scalar).unwrap())
+                                .map(|c| {
+                                    render_field(c.as_ref(), r, &scalar_column(c.data_type()))
+                                        .unwrap()
+                                })
                                 .collect::<Vec<_>>(),
                         );
                     }

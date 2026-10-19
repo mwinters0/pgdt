@@ -84,11 +84,10 @@ async fn a_projection_cuts_the_batches_and_the_reported_schema_together() {
     assert_eq!(rows, expected);
 
     let resolved = stream.resolved_schema();
-    let names: Vec<String> = resolved.schema.fields().iter().map(|f| f.name().clone()).collect();
+    let names: Vec<String> = resolved.schema().fields().iter().map(|f| f.name().clone()).collect();
     assert_eq!(names, vec!["created_at".to_string(), "id".to_string()]);
-    assert_eq!(resolved.notes.iter().map(|n| n.column.clone()).collect::<Vec<_>>(), names);
-    assert_eq!(resolved.columns.len(), 2);
-    assert_eq!(resolved.plans.len(), 2);
+    assert_eq!(resolved.notes().map(|n| n.column.clone()).collect::<Vec<_>>(), names);
+    assert_eq!(resolved.columns().len(), 2);
 }
 
 /// The `COUNT(*)` shape: no column is built, and the batch still carries its
@@ -180,9 +179,9 @@ async fn projecting_a_column_away_escapes_its_decode_failure() {
             .unwrap_or_else(|e| panic!("pg_dump {version}: {e}"));
         assert!(!rows.is_empty(), "pg_dump {version}");
         assert!(
-            resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped),
+            resolved.columns().iter().all(|c| *c.resolution() == ColumnResolution::Mapped),
             "pg_dump {version}: the surviving columns are still typed: {:?}",
-            resolved.columns
+            resolved.columns()
         );
         // Projecting it back in restores the failure, so the escape is the
         // projection and not something else about the narrower query.

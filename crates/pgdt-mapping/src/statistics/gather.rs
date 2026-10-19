@@ -8,7 +8,7 @@
 //! semantics compares it by exactly, under the key a filter orders by, a
 //! float's zeros told apart ([`compare_keys_stored`](pgdt_codec::internal::compare_keys_stored)) — one set where the
 //! orders coincide, two where PostgreSQL's is exact and Arrow's is another
-//! (`pgdt_codec::ResolvedSchema::bounds_kinds`);
+//! (`pgdt_codec::ResolvedColumn::bounds_kinds`);
 //! a column its comparison equates exactly keeps a dictionary per group; and a
 //! column the typed read emits as an integer or a `Decimal128` keeps a sum per
 //! group; and every column keeps its values' text bytes per group. **A column
@@ -134,13 +134,14 @@ pub(crate) fn observer_tracking(
         .map(|(i, name)| {
             plan.columns.get(i).is_some_and(|&t| t).then(|| {
                 let def = declared_column(metadata, database, &qualified, name);
+                let record = &resolved.columns()[i];
                 let mut column = ColumnGatherer::new(
                     def.map(|d| d.declared_type.clone()),
                     def.and_then(|d| d.collation.clone()),
-                    resolved.bounds_kinds(i),
-                    &resolved.comparisons[i],
-                    &resolved.plans[i],
-                    resolved.schema.field(i).data_type(),
+                    record.bounds_kinds(),
+                    record.comparison(),
+                    record.plan(),
+                    record.data_type(),
                     tiers[i].clone(),
                     if plan.requested.get(i).copied().unwrap_or(false) {
                         invalid
@@ -148,7 +149,7 @@ pub(crate) fn observer_tracking(
                         PostgresInvalidValues::Ignore
                     },
                 );
-                column.not_null = resolved.not_null[i];
+                column.not_null = record.not_null();
                 column
             })
         })

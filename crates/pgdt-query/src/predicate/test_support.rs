@@ -1,21 +1,18 @@
 //! What the predicate's tests build their terms, schemas and row groups
 //! from, shared by the tests beside each of its modules.
 
-use std::sync::Arc;
-
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::datatypes::{DataType, Field};
 
 use super::resolve::{
     BelievedStatistics, ComparedTerm, Comparison, ResolvedMembership, Spellings, resolve_membership,
 };
 use super::truths::TruthSet;
 use super::*;
-use pgdt_codec::ColumnNote;
 use pgdt_codec::compare::comparison_for;
-use pgdt_codec::compare::{CompareKind, ComparisonSemantics};
-use pgdt_codec::internal::scalar_read;
+use pgdt_codec::compare::{CompareKind, ComparisonPlan, ComparisonSemantics};
+use pgdt_codec::internal::{column_of, scalar_read, schema_of};
 use pgdt_codec::pgtype::NestedPlan;
-use pgdt_codec::{ColumnResolution, ResolvedSchema};
+use pgdt_codec::{ColumnResolution, ResolvedColumn, ResolvedSchema};
 use pgdt_core::Result;
 use pgdt_core::internal::{RawRow, RowSplit};
 use pgdt_model::{PostgresInvalidValues, Unrepresentable};
@@ -84,48 +81,83 @@ pub(super) fn test_types() -> Vec<TypeDef> {
     ]
 }
 
-/// A one-column `ResolvedSchema` for `declared`/`data_type`, mapped and
-/// scalar — the shape an ordering term is allowed on.
-///
-/// The comparison plan comes from the register itself rather than being
-/// stated here, so these tests exercise the same `declared -> plan` walk
-/// `resolve_columns` makes.
-pub(super) fn one_column(declared: &str, data_type: DataType) -> ResolvedSchema {
-    ResolvedSchema {
-        schema: Arc::new(Schema::new(vec![Field::new("v", data_type, true)])),
-        columns: vec![ColumnResolution::Mapped],
-        notes: vec![ColumnNote {
-            column: "v".into(),
+/// One column's parts, for a test building a schema by hand: [`Self::of`]
+/// and [`Self::nested`] resolve them as a query does, and a test overrides
+/// the part it is about.
+#[derive(Debug, Clone)]
+pub(super) struct Column {
+    pub(super) name: String,
+    pub(super) declared: Option<String>,
+    pub(super) data_type: DataType,
+    pub(super) resolution: ColumnResolution,
+    pub(super) plan: NestedPlan,
+    pub(super) comparison: ComparisonPlan,
+}
+
+impl Column {
+    /// Column `v` of `declared`/`data_type`, mapped and scalar — the shape
+    /// an ordering term is allowed on.
+    ///
+    /// The comparison plan comes from the register itself rather than being
+    /// stated here, so these tests exercise the same `declared -> plan` walk
+    /// `resolve_columns` makes.
+    pub(super) fn of(declared: &str, data_type: DataType) -> Self {
+        Self {
+            name: "v".into(),
             declared: Some(declared.into()),
+            data_type,
             resolution: ColumnResolution::Mapped,
-        }],
-        plans: vec![NestedPlan::Scalar],
-        comparisons: vec![comparison_for(declared, None, &test_types(), &[])],
-        not_null: vec![false],
+            plan: NestedPlan::Scalar,
+            comparison: comparison_for(declared, None, &test_types(), &[]),
+        }
+    }
+
+    /// Column `v` of a **nested** declared type, resolved against `types` so
+    /// the Arrow type, the nested plan and the comparison plan agree the way
+    /// they do in a real query.
+    pub(super) fn nested(declared: &str, types: &[TypeDef]) -> Self {
+        let pgdt_codec::pgtype::TypeOutcome::Mapped(data_type, plan) =
+            pgdt_codec::pgtype::resolve_declared_type(declared, types)
+        else {
+            panic!("{declared} does not resolve")
+        };
+        Self {
+            name: "v".into(),
+            declared: Some(declared.into()),
+            data_type,
+            resolution: ColumnResolution::Mapped,
+            plan,
+            comparison: comparison_for(declared, None, types, &[]),
+        }
+    }
+
+    /// The column's record, nullable and declared nullable.
+    pub(super) fn record(self) -> ResolvedColumn {
+        column_of(
+            Field::new(self.name, self.data_type, true),
+            self.declared,
+            self.resolution,
+            self.plan,
+            self.comparison,
+            false,
+        )
+    }
+
+    /// The one-column schema of the column.
+    pub(super) fn schema(self) -> ResolvedSchema {
+        schema_of(vec![self.record()])
     }
 }
 
-/// A one-column schema for a **nested** declared type, resolved against
-/// `types` so the Arrow type, the nested plan and the comparison plan
-/// agree the way they do in a real query.
+/// A one-column `ResolvedSchema` for `declared`/`data_type`, mapped and
+/// scalar ([`Column::of`]).
+pub(super) fn one_column(declared: &str, data_type: DataType) -> ResolvedSchema {
+    Column::of(declared, data_type).schema()
+}
+
+/// A one-column schema for a **nested** declared type ([`Column::nested`]).
 pub(super) fn nested_column(declared: &str, types: &[TypeDef]) -> ResolvedSchema {
-    let pgdt_codec::pgtype::TypeOutcome::Mapped(data_type, plan) =
-        pgdt_codec::pgtype::resolve_declared_type(declared, types)
-    else {
-        panic!("{declared} does not resolve")
-    };
-    ResolvedSchema {
-        schema: Arc::new(Schema::new(vec![Field::new("v", data_type, true)])),
-        columns: vec![ColumnResolution::Mapped],
-        notes: vec![ColumnNote {
-            column: "v".into(),
-            declared: Some(declared.into()),
-            resolution: ColumnResolution::Mapped,
-        }],
-        plans: vec![plan],
-        comparisons: vec![comparison_for(declared, None, types, &[])],
-        not_null: vec![false],
-    }
+    Column::nested(declared, types).schema()
 }
 
 /// A comparing operator before its value: the [`PredicateOp`] variant, as
@@ -236,22 +268,10 @@ pub(super) fn sets(truths: &[Truth]) -> TruthSet {
 /// A two-column schema, both `integer`, for the tests about *where* a
 /// decode failure surfaces.
 pub(super) fn two_integers() -> ResolvedSchema {
-    let note = |name: &str| ColumnNote {
-        column: name.into(),
-        declared: Some("integer".into()),
-        resolution: ColumnResolution::Mapped,
+    let integer = |name: &str| {
+        Column { name: name.into(), ..Column::of("integer", DataType::Int32) }.record()
     };
-    ResolvedSchema {
-        schema: Arc::new(Schema::new(vec![
-            Field::new("a", DataType::Int32, true),
-            Field::new("b", DataType::Int32, true),
-        ])),
-        columns: vec![ColumnResolution::Mapped; 2],
-        notes: vec![note("a"), note("b")],
-        plans: vec![NestedPlan::Scalar; 2],
-        comparisons: vec![comparison_for("integer", None, &[], &[]); 2],
-        not_null: vec![false; 2],
-    }
+    schema_of(vec![integer("a"), integer("b")])
 }
 
 /// `column IN (values)` over `schema`'s column `index`, in PostgreSQL's
@@ -261,7 +281,7 @@ pub(super) fn membership(
     index: usize,
     values: &[Option<&str>],
 ) -> Result<ResolvedMembership> {
-    let column = schema.schema.field(index).name().clone();
+    let column = schema.schema().field(index).name().clone();
     let values: Vec<Option<String>> = values.iter().map(|v| v.map(str::to_string)).collect();
     resolve_membership(&column, &values, "IN", index, schema, 0, ComparisonSemantics::Postgres)
 }

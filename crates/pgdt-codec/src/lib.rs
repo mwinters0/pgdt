@@ -15,7 +15,9 @@ mod resolve;
 mod unrepresentable;
 mod value;
 
-pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
+pub use resolve::{
+    ColumnNote, ColumnResolution, ResolvedColumn, ResolvedSchema, SchemaMode, resolve_columns,
+};
 pub use unrepresentable::UnrepresentableMode;
 
 /// What a crate above reaches that is not this crate's API: public only
@@ -32,7 +34,7 @@ pub mod internal {
         OrderKey, Side, compare_keys, compare_keys_stored, field_key, literal_key, order_key,
         read_key, special_order_key,
     };
-    pub use crate::resolve::{database_for_name, read_as_text};
+    pub use crate::resolve::{column_of, database_for_name, read_as_text, schema_of};
     pub use crate::unrepresentable::{
         ColumnTier, UnrepresentableRead, column_tiers, counter_for, unrepresentable_reads,
         unrepresentable_tests,

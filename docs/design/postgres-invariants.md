@@ -5022,7 +5022,7 @@ subcommands), are not followed; no `pg_dump` writes the latter.
 16.15 (observed).
 
 **Relied on by:** `DatabaseMetadata::column_not_null` and
-`declared::domain_not_null`, through `ResolvedSchema::not_null`, which a parse
+`declared::domain_not_null`, through `ResolvedColumn::not_null`, which a parse
 keying, a query reading or filtering on and a strict parse checking a column
 refuse a NULL by, and through `pgtype::Position::not_null`, which a query
 reading or comparing a nested column, a filter literal and a strict parse
