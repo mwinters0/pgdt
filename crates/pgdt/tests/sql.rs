@@ -301,8 +301,47 @@ async fn the_unrepresentable_function_is_guarded_at_planning() {
     assert!(!said.contains("ready_session"), "{said}");
 }
 
-/// **A dump with no complete cache ends the run before any SQL**, naming the
-/// parse that builds it.
+/// **A refusal names its remedy in the grammar that registered its dump,
+/// wherever it is printed**: a statement `-f` runs, its refusal printed by
+/// DataFusion's CLI itself, is spelled in `--dump`'s suffixes for a dump
+/// `--dump` registered, and in `pgdump.` options for one a statement
+/// registered.
+#[tokio::test]
+async fn a_refusal_is_spelled_in_the_grammar_that_registered_its_dump() {
+    let dir = tempfile::tempdir().unwrap();
+    let copy = common::parsed_copy(&fixture("types"), dir.path(), &StatisticsRequest::DATA).await;
+    common::ungathered(&copy).await;
+    let file = |name: &str, sql: &str| {
+        let path = dir.path().join(name);
+        std::fs::write(&path, sql).unwrap();
+        path.to_str().unwrap().to_string()
+    };
+
+    let select = file("select.sql", "SELECT v_date FROM shop.public.t_date;\n");
+    let dump = format!("shop={}:unrepresentable=refuse", copy.display());
+    let out = run(&["-q", "--dump", &dump, "-f", &select]);
+    let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
+    assert!(said.contains("(`:unrepresentable=null`; `:unrepresentable=text`)"), "{said}");
+
+    let statement = file(
+        "statement.sql",
+        &format!(
+            "CREATE EXTERNAL TABLE d STORED AS PGDUMP LOCATION '{}' \
+             OPTIONS ('pgdump.table' 't_date', 'pgdump.unrepresentable' 'refuse');\n\
+             SELECT v_date FROM d;\n",
+            copy.display()
+        ),
+    );
+    let out = run(&["-q", "-f", &statement]);
+    let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
+    assert!(
+        said.contains("(`'pgdump.unrepresentable' 'null'`; `'pgdump.unrepresentable' 'text'`)"),
+        "{said}"
+    );
+}
+
+/// **A dump with no complete cache ends the run before any SQL**, spelled
+/// with the parse that builds it.
 #[tokio::test]
 async fn a_dump_with_no_cache_names_the_parse() {
     let dir = tempfile::tempdir().unwrap();

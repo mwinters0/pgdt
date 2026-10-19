@@ -21,6 +21,7 @@ use pgdt_query::TableSelector;
 
 use crate::budget::ScanBudget;
 use crate::dump::{PgDump, PgDumpOptions};
+use crate::error::Spelling;
 use crate::session::install;
 
 /// The word after `STORED AS`, as DataFusion keys a table factory by it.
@@ -167,9 +168,14 @@ impl ExtensionOptions for TableOptions {
 /// would bind once, at `CREATE` — the source every scan of the dump shares is
 /// watched from its open — where every other `pgdump.` setting binds at each
 /// scan's plan.
+///
+/// **Every refusal of a dump it opens is spelled by the spelling it was
+/// registered with** ([`Spelling`]), a front end's words for a statement,
+/// which need not be its words for a dump it registers another way.
 pub(crate) struct PgDumpTableFactory {
     sink: Arc<dyn DiagnosticSink>,
     strict_identity: StrictIdentity,
+    spelling: Option<Arc<dyn Spelling>>,
 }
 
 impl std::fmt::Debug for PgDumpTableFactory {
@@ -180,9 +186,14 @@ impl std::fmt::Debug for PgDumpTableFactory {
 
 impl PgDumpTableFactory {
     /// A factory reporting to `sink`, opening a dump that states no
-    /// strictness under `strict_identity` ([`PgDumpOptions::strict_identity`]).
-    fn new(sink: Arc<dyn DiagnosticSink>, strict_identity: StrictIdentity) -> Self {
-        Self { sink, strict_identity }
+    /// strictness under `strict_identity` ([`PgDumpOptions::strict_identity`])
+    /// and spelling its refusals with `spelling` ([`PgDumpOptions::spelling`]).
+    fn new(
+        sink: Arc<dyn DiagnosticSink>,
+        strict_identity: StrictIdentity,
+        spelling: Option<Arc<dyn Spelling>>,
+    ) -> Self {
+        Self { sink, strict_identity, spelling }
     }
 }
 
@@ -218,6 +229,7 @@ impl TableProviderFactory for PgDumpTableFactory {
         }
         let open = PgDumpOptions {
             strict_identity: options.strict_identity.unwrap_or(self.strict_identity),
+            spelling: self.spelling.clone(),
             ..options.open
         };
         let dump = PgDump::open(location, open).await?;
@@ -228,8 +240,10 @@ impl TableProviderFactory for PgDumpTableFactory {
 }
 
 /// Let `ctx` run `CREATE EXTERNAL TABLE … STORED AS PGDUMP`, reporting what
-/// each registration finds to `sink` and opening a dump whose statement states
-/// no `pgdump.strict_identity` under `strict_identity`, the session's: the
+/// each registration finds to `sink`, opening a dump whose statement states
+/// no `pgdump.strict_identity` under `strict_identity`, the session's, and
+/// spelling every refusal of a dump it opens with `spelling`, the front end's
+/// words for a statement's remedies ([`Spelling`]), where it hands one: the
 /// factory keyed [`PGDUMP_FILE_TYPE`] and the table options extension naming
 /// its `pgdump.` options, the session given what
 /// [`crate::catalog::register_dump`] gives it, so every table a statement
@@ -238,12 +252,13 @@ pub fn register_table_factory(
     ctx: &SessionContext,
     sink: Arc<dyn DiagnosticSink>,
     strict_identity: StrictIdentity,
+    spelling: Option<Arc<dyn Spelling>>,
 ) {
     ctx.register_table_options_extension(TableOptions::default());
     install(ctx);
     ctx.state_ref().write().table_factories_mut().insert(
         PGDUMP_FILE_TYPE.to_string(),
-        Arc::new(PgDumpTableFactory::new(sink, strict_identity)),
+        Arc::new(PgDumpTableFactory::new(sink, strict_identity, spelling)),
     );
 }
 

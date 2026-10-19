@@ -153,8 +153,8 @@ directory read each other's map with a warning the origin makes legible. A local
 default sitting beside the dump. Rejected: a canonical path as a local origin, advisory after every move.
 
 ### D90 The DataFusion provider reads only a complete cache, never maps, and is cancelled by a drop
-`PgDump::open` believes a cache reaching the file's end whose identity checks pass, and names the `pgdt parse` that
-builds anything short; `pgdt sql` never parses either, a parse wanting `pgdt`'s discovery, interrupt
+`PgDump::open` believes a cache reaching the file's end whose identity checks pass, and refuses anything short, carrying
+the mapping pass that builds it; `pgdt sql` never parses either, a parse wanting `pgdt`'s discovery, interrupt
 guard, status lines and cache rules. So every block a table owns is seen (`KD6` is the cold query's), a schema is
 stated from every block's census, no database's DDL is unread, and the partitioned replay is always available. With
 no partial map to keep, a dropped stream is its whole cancellation, as every query's is (D26). Rejected:
@@ -647,9 +647,10 @@ spelled twice); a published `pgtypes` crate out of the codec (its own catalog ty
 A library error states the condition and ends with its remedies as the API names them — a mode, a mapping pass, a selector naming a database — never a front end's flag or command, which only
 that front end has. What a front end must spell, the variant says, never its `String`: a refusal a mode causes names the mode that answers it, raised where the mode is known (an ordering
 operator under the strings schema mode is `TestNeedsDeclaredType`, as an unrepresentable test is), and an accepted form cut short counts what it left unlisted. `pgdt` appends its flag or
-command for each, in parentheses and the library's order, by an exhaustive match over the variants, on every refusal leaving a command, through any context; `datafusion-pgdump` adds the
-`pgdt parse` its never-mapping provider needs, under the mode it was opened in. `pgdt info` says a cache's refusal in the library's sentence. A log line names no flag either.
-Rejected: a structured `Remedy` value on the error (a second taxonomy beside the variants); a whole sentence per variant in each front end (the wording twice, which drifted); every enum label listed (nothing bounds how many a type declares). Code: `pgdt`'s `refusal::spelling`. Evidence: `each_refusal_names_the_flag_its_remedy_is`.
+command for each, in parentheses and the library's order, by an exhaustive match over the variants, on every refusal leaving a command, through any context; `datafusion-pgdump`'s refusals carry
+the mapping pass they need as data, and a front end's `Spelling` handed where a dump is opened or the factory registered rides in each message before DataFusion prints it, `pgdt sql` handing one
+per grammar (`--dump`'s suffixes, a statement's options). `pgdt info` says a cache's refusal in the library's sentence. A log line names no flag either.
+Rejected: a structured `Remedy` value on the error (a second taxonomy beside the variants); a whole sentence per variant in each front end (the wording twice, which drifted); every enum label listed (nothing bounds how many a type declares); `pgdt sql` spelling in its `run()` alone (the REPL's and `-f`'s refusals are upstream's `exec`'s to print). Code: `pgdt`'s `refusal::spelling`, `datafusion-cli-pgdump`'s `spelling::spelling`. Evidence: `each_refusal_names_the_flag_its_remedy_is`, `each_refusal_is_spelled_in_its_registration_s_grammar`.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family

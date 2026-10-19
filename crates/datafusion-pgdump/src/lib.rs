@@ -32,7 +32,11 @@
 //! as DataFusion answers `a < b` by [`compare_value_keys`].
 //!
 //! **It reads only the complete cache `pgdt parse` leaves, and never maps**
-//! (`docs/design/decisions.md`, "D90"). A partition's error is the first
+//! (`docs/design/decisions.md`, "D90"). **A refusal names its remedy in the
+//! library's terms** ([`Error`]): a front end hands its own words for them,
+//! a [`Spelling`], where it opens a dump ([`PgDumpOptions::spelling`]) or
+//! registers the factory, and every refusal of what those build carries them
+//! in its message ("D107"). A partition's error is the first
 //! DataFusion observes, as for any of its sources, not `pgdt query`'s earliest
 //! in file order ("D52"), and a partitioned read is not resumable.
 //!
@@ -70,7 +74,7 @@ mod unrepresentable;
 pub use budget::{BudgetAccount, ScanBudget};
 pub use catalog::{UNQUALIFIED_SCHEMA, register_dump};
 pub use dump::{PgDump, PgDumpOptions};
-pub use error::Error;
+pub use error::{Error, MappingPass, Spelling};
 pub use factory::{PGDUMP_FILE_TYPE, register_table_factory};
 pub use key::compare_value_keys;
 pub use report::{BudgetedPlanNote, Located, RefusedTable, UncollatedColumns};

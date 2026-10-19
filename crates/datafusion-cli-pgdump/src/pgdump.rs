@@ -1,11 +1,12 @@
 //! What this crate adds to `datafusion-cli`: `--dump`, `STORED AS PGDUMP`,
-//! and the sink printing what a registration finds to stderr; ending as its
-//! PID namespace's init (`docs/design/decisions.md`, "D26"); and what a caller
-//! composing the CLI reads of it — the copied release's version, `--dump`'s
-//! and `--strict-identity`'s help texts, and the introspection build's report
-//! section. It never parses: a dump without a complete cache is refused
-//! naming the `pgdt parse` that builds one (`docs/design/decisions.md`,
-//! "D90").
+//! the sink printing what a registration finds to stderr, and each
+//! registration's spelling of a refusal's remedy (`crate::spelling`); ending
+//! as its PID namespace's init (`docs/design/decisions.md`, "D26"); and what a
+//! caller composing the CLI reads of it — the copied release's version,
+//! `--dump`'s and `--strict-identity`'s help texts, and the introspection
+//! build's report section. It never parses: a dump without a complete cache is
+//! refused, spelled with the `pgdt parse` that builds one
+//! (`docs/design/decisions.md`, "D90").
 
 use std::sync::Arc;
 
@@ -16,6 +17,8 @@ use namespace_init::InitShutdown;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::cache::StrictIdentity;
 use pgdt_model::{DiagnosticSink, Finding, PostgresInvalidValues, Severity};
+
+use crate::spelling::Grammar;
 
 /// The `datafusion-cli` release the copy in `src/lib.rs` is, for a caller
 /// naming it beside its own version.
@@ -195,7 +198,8 @@ impl DiagnosticSink for StderrSink {
 /// Make `STORED AS PGDUMP` available in `ctx`, then open and register each
 /// of `dumps`; a dump that cannot be opened or named ends the run, before any
 /// SQL is read. `strict_identity` is the session's, which a dump or a
-/// statement stating its own overrides.
+/// statement stating its own overrides. Every refusal is spelled in the
+/// grammar that registered its dump ([`Grammar`]).
 pub async fn register(
     ctx: &SessionContext,
     dumps: &[DumpArg],
@@ -203,13 +207,19 @@ pub async fn register(
     quiet: bool,
 ) -> Result<()> {
     let sink: Arc<dyn DiagnosticSink> = Arc::new(StderrSink { quiet });
-    register_table_factory(ctx, Arc::clone(&sink), strict_identity);
+    register_table_factory(
+        ctx,
+        Arc::clone(&sink),
+        strict_identity,
+        Some(Arc::new(Grammar::Statement)),
+    );
     for dump in dumps {
         let options = PgDumpOptions {
             schema_mode: dump.schema_mode,
             unrepresentable: dump.unrepresentable,
             postgres_invalid_values: dump.postgres_invalid_values,
             strict_identity: dump.strict_identity.unwrap_or(strict_identity),
+            spelling: Some(Arc::new(Grammar::Dump)),
             ..PgDumpOptions::default()
         };
         let opened = PgDump::open(&dump.source, options).await?;

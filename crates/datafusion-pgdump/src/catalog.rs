@@ -55,28 +55,23 @@ pub fn register_dump(
         ([Some(database)], None) => vec![(Some(database.clone()), database.clone())],
         ([], Some(name)) => vec![(None, name.to_string())],
         ([None] | [], None) => {
-            return Err(Error::CatalogName(format!(
-                "{} names no database, so its catalog needs a name — give one",
-                dump.origin()
-            )));
+            let refused = Error::CatalogNameNeeded { origin: dump.origin().to_string() };
+            return Err(dump.speller().error(refused));
         }
         (_, Some(name)) => {
-            return Err(Error::CatalogName(format!(
-                "{} holds {} databases, each registered under its own name; `{name}` would name \
-                 none of them — leave the name out",
-                dump.origin(),
-                databases.len()
-            )));
+            let refused = Error::CatalogNameRefused {
+                origin: dump.origin().to_string(),
+                databases: databases.len(),
+                name: name.to_string(),
+            };
+            return Err(dump.speller().error(refused));
         }
         (_, None) => {
             let mut named = Vec::new();
             for database in databases {
                 let Some(catalog) = database.clone() else {
-                    return Err(Error::CatalogName(format!(
-                        "{} holds several databases and one of them has no name, so no catalog \
-                         name can be taken from the file for it",
-                        dump.origin()
-                    )));
+                    let refused = Error::DatabaseUnnamed { origin: dump.origin().to_string() };
+                    return Err(dump.speller().error(refused));
                 };
                 named.push((database, catalog));
             }
@@ -160,6 +155,7 @@ impl PgDumpCatalog {
                             schema.tables.insert(table, Arc::new(provider));
                         }
                         Err(error) => {
+                            let error = dump.speller().error(error);
                             refused.push((subject, RefusedTable { table: qualified, error }))
                         }
                     }

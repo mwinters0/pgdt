@@ -17,7 +17,7 @@ use pgdt_query::{PlanNote, QueryOptions, Table, TableSelector};
 
 use crate::budget::{BudgetAccount, ScanBudget, pool_limit};
 use crate::dump::PgDump;
-use crate::error::{Error, external};
+use crate::error::Error;
 use crate::exec::{PgDumpExec, Replay, ScanMetrics, StaticFilter};
 use crate::filter::translate;
 use crate::report::{BudgetedPlanNote, Reporting, UncollatedColumns};
@@ -60,7 +60,8 @@ impl PgDumpTable {
     /// `table`, resolved from `dump`, under the schema its plan resolves —
     /// refused as the library refuses it, bar a table the cache holds at the
     /// metadata level under a typed schema, which the library refuses too and
-    /// this names the parse for ([`Error::MetadataLevel`]). Built, its findings
+    /// this names the mapping pass for ([`Error::MetadataLevel`]); the caller
+    /// spells either. Built, its findings
     /// go to `reporting`: how each column resolved, and how each column's
     /// comparison in DataFusion's semantics diverges from PostgreSQL's, bar
     /// the columns no collation is recorded for, which are counted into
@@ -74,8 +75,9 @@ impl PgDumpTable {
         let options = query_options(&dump);
         let resolved = table.schema(&options).map_err(|refused| match refused {
             refused @ pgdt_core::Error::TableAtMetadataLevel { .. } => Error::MetadataLevel {
-                parse: dump.parse_at_data_level(table.name()),
                 refused: Box::new(refused),
+                pass: dump.pass().clone(),
+                table: Box::new(table.name().clone()),
             },
             other => Error::Library(other),
         })?;
@@ -129,7 +131,8 @@ impl PgDumpTable {
 impl PgDump {
     /// **The one table `selector` selects, on its own** — the provider its
     /// catalog would hand out — refused where it selects none, or more than
-    /// one ([`pgdt_core::Error::AmbiguousTable`]).
+    /// one ([`pgdt_core::Error::AmbiguousTable`]), as the dump's spelling
+    /// spells it.
     ///
     /// **`sink` hears its findings now, and every scan's plan notes from
     /// then on**, each about `subject`, the name SQL reaches the table by:
@@ -145,12 +148,15 @@ impl PgDump {
         subject: &str,
         sink: Arc<dyn DiagnosticSink>,
     ) -> Result<Arc<PgDumpTable>, Error> {
-        let Some(table) = self.dump().table(selector)? else {
-            return Err(Error::Table(format!("{} holds no table `{selector}`", self.origin())));
+        let spelled = |err: Error| self.speller().error(err);
+        let Some(table) = self.dump().table(selector).map_err(|err| spelled(err.into()))? else {
+            let refused = Error::Table(format!("{} holds no table `{selector}`", self.origin()));
+            return Err(spelled(refused));
         };
         let mut uncollated = UncollatedColumns::of(subject);
         let reporting = Reporting { subject: subject.to_string(), sink: Arc::clone(&sink) };
-        let built = PgDumpTable::build(Arc::clone(self), table, reporting, &mut uncollated)?;
+        let built = PgDumpTable::build(Arc::clone(self), table, reporting, &mut uncollated)
+            .map_err(spelled)?;
         uncollated.report(sink.as_ref());
         Ok(Arc::new(built))
     }
@@ -203,7 +209,7 @@ impl TableProvider for PgDumpTable {
                 let options = QueryOptions { filter: translated, ..query_options(&self.dump) };
                 match self.table.schema(&options) {
                     Ok(_) => Ok(TableProviderFilterPushDown::Exact),
-                    Err(err) if tests => Err(external(err)),
+                    Err(err) if tests => Err(self.dump.speller().external(err)),
                     Err(_) => Ok(TableProviderFilterPushDown::Unsupported),
                 }
             })
@@ -269,18 +275,26 @@ impl TableProvider for PgDumpTable {
             parallelism,
             ..query_options(&self.dump)
         };
+        let refused = |err| self.dump.speller().external(err);
         let partitions =
-            self.table.plan(settings.read_options(), query_options).map_err(external)?;
+            self.table.plan(settings.read_options(), query_options).map_err(refused)?;
         self.report_plan(partitions.plan_notes(), draw.account());
         let metrics = ScanMetrics::planned(partitions.plan_notes());
         let partitions = Arc::new(partitions);
         let schema = partitions.resolved_schema().schema().clone();
-        let table = self.table_statistics().map_err(external)?;
+        let table = self.table_statistics().map_err(refused)?;
         let kept =
             (!filters.is_empty()).then(|| (partitions.kept_rows(), partitions.kept_value_bytes()));
         let statistics = scanned(&table, projection, &schema, kept);
         let orderings = output_orderings(&schema, partitions.orders());
-        let replay = Replay::new(partitions, schema, draw, metrics, settings.dynamic_filter_rows);
+        let replay = Replay::new(
+            partitions,
+            schema,
+            draw,
+            metrics,
+            settings.dynamic_filter_rows,
+            self.dump.speller().clone(),
+        );
         let answered = StaticFilter::new(answered);
         Ok(Arc::new(PgDumpExec::new(replay, orderings, limit, statistics, answered)?))
     }

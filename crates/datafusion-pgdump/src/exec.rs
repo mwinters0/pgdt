@@ -62,7 +62,7 @@ use pgdt_query::{
 };
 
 use crate::budget::Draw;
-use crate::error::external;
+use crate::error::Speller;
 use crate::filter::{DynamicFilters, ReplayFilter};
 use crate::statistics::fetched;
 
@@ -496,6 +496,8 @@ pub(crate) struct Replay {
     /// Whether a sub-stream evaluates each row against the dynamic filters
     /// it is handed, as the session said when the scan was planned.
     evaluation: RowEvaluation,
+    /// The dump's spelling, which a sub-stream's refusal carries.
+    speller: Speller,
 }
 
 impl fmt::Debug for Replay {
@@ -511,8 +513,9 @@ impl Replay {
         draw: Arc<Draw>,
         metrics: ScanMetrics,
         evaluation: RowEvaluation,
+        speller: Speller,
     ) -> Self {
-        Self { partitions, schema, draw, metrics, evaluation }
+        Self { partitions, schema, draw, metrics, evaluation, speller }
     }
 
     /// The schema the sub-streams emit, as the library resolved it: what a
@@ -572,6 +575,7 @@ impl PartitionStream for Partition {
     /// DataFusion's own sources read it.
     fn execute(&self, ctx: Arc<TaskContext>) -> SendableRecordBatchStream {
         let draw = Arc::clone(&self.replay.draw);
+        let speller = self.replay.speller.clone();
         let batch_size = ctx.session_config().batch_size();
         let stream = match &self.dynamic {
             Some(dynamic) => dynamic.stream(self.index, batch_size),
@@ -579,7 +583,7 @@ impl PartitionStream for Partition {
         };
         let rows = self.replay.metrics.counted(stream, self.index).map(move |batch| {
             let _held = &draw;
-            batch.map_err(external)
+            batch.map_err(|err| speller.external(err))
         });
         Box::pin(RecordBatchStreamAdapter::new(Arc::clone(&self.replay.schema), rows))
     }

@@ -16,8 +16,8 @@ use arrow::array::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
-    Located, PgDump, PgDumpOptions, RefusedTable, UncollatedColumns, register_dump,
-    register_table_factory,
+    Error, Located, PgDump, PgDumpOptions, RefusedTable, Spelling, UncollatedColumns,
+    register_dump, register_table_factory,
 };
 use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
 use pgdt_codec::{ResolvedColumn, SchemaMode};
@@ -213,12 +213,13 @@ async fn a_table_whose_plan_refuses_is_reported_and_not_listed() {
 }
 
 /// **A table the cache holds at the metadata level is not listed, and its
-/// refusal names the parse that puts it at the data level**; the table that
-/// parse leaves at the data level is listed and answers, and the strings
-/// schema mode, which reads no census, lists both
-/// (`docs/design/decisions.md`, "D35").
+/// refusal names the mapping pass that puts it at the data level**, in the
+/// library's terms and carrying that pass and the table for a front end's
+/// spelling, which a dump opened with one adds; the table already at the data
+/// level is listed and answers, and the strings schema mode, which reads no
+/// census, lists both (`docs/design/decisions.md`, "D35").
 #[tokio::test(flavor = "multi_thread")]
-async fn a_metadata_level_table_is_refused_naming_its_parse() {
+async fn a_metadata_level_table_is_refused_naming_its_mapping_pass() {
     let dir = tempfile::tempdir().unwrap();
     let dump_path = dir.path().join("levels.sql");
     std::fs::write(
@@ -254,17 +255,35 @@ async fn a_metadata_level_table_is_refused_naming_its_parse() {
     register_dump(&ctx, Some("shop"), &dump, Arc::clone(&heard) as _).unwrap();
     let refused: Vec<_> =
         heard.take().into_iter().filter(|(_, _, channel)| *channel == "refused").collect();
-    let parse =
-        format!("pgdt parse --source {location} --statistics-level metadata,public.meta=data");
     assert!(
         matches!(refused.as_slice(), [(Severity::Error, message, _)]
-            if message.starts_with("shop.public.meta: ") && message.contains(&parse)),
+            if message.starts_with("shop.public.meta: ")
+                && message.contains("map it again at the data level")
+                && !message.contains("pgdt parse")),
         "{refused:#?}"
     );
     let schema = ctx.catalog("shop").unwrap().schema("public").unwrap();
     assert_eq!(schema.table_names(), ["ok"]);
     let ok = rows(&ctx, "SELECT * FROM shop.public.ok").await.unwrap();
     assert_eq!(ok.iter().map(RecordBatch::num_rows).sum::<usize>(), 1);
+
+    let spelling: Arc<dyn Spelling> = Arc::new(|refused: &Error| match refused {
+        Error::MetadataLevel { pass, table, .. } => {
+            Some(format!("map {} with {} at data", pass.location, table.qualified_name()))
+        }
+        _ => None,
+    });
+    let spelled = PgDumpOptions { spelling: Some(spelling), ..PgDumpOptions::default() };
+    let dump = PgDump::open(location, spelled).await.unwrap();
+    let heard = Arc::new(Heard::default());
+    register_dump(&SessionContext::new(), Some("shop"), &dump, Arc::clone(&heard) as _).unwrap();
+    let refused: Vec<_> =
+        heard.take().into_iter().filter(|(_, _, channel)| *channel == "refused").collect();
+    let spelled = format!("(map {location} with public.meta at data)");
+    assert!(
+        matches!(refused.as_slice(), [(_, message, _)] if message.ends_with(&spelled)),
+        "{refused:#?}"
+    );
 
     let strings = PgDumpOptions { schema_mode: SchemaMode::Strings, ..PgDumpOptions::default() };
     let dump = PgDump::open(location, strings).await.unwrap();
@@ -292,6 +311,7 @@ async fn a_pgdump_external_table_answers_as_its_catalog_table() {
         &ctx,
         Arc::clone(&heard) as Arc<dyn DiagnosticSink>,
         StrictIdentity::ADVISORY,
+        None,
     );
     rows(
         &ctx,
@@ -348,7 +368,7 @@ async fn a_pgdump_external_table_refuses_what_it_cannot_mean() {
     ungathered(&copy).await;
     let location = copy.to_str().unwrap();
     let ctx = SessionContext::new();
-    register_table_factory(&ctx, Arc::new(|_: &dyn Finding| {}), StrictIdentity::ADVISORY);
+    register_table_factory(&ctx, Arc::new(|_: &dyn Finding| {}), StrictIdentity::ADVISORY, None);
     let create = |name: &str, columns: &str, options: &str| {
         format!(
             "CREATE EXTERNAL TABLE {name} {columns} STORED AS PGDUMP LOCATION '{location}' \
@@ -378,7 +398,7 @@ async fn a_pgdump_external_table_refuses_what_it_cannot_mean() {
         bare.display()
     ))
     .await;
-    assert!(err.contains(&format!("pgdt parse --source {}", bare.display())), "{err}");
+    assert!(err.contains("a mapping pass to the file's end"), "{err}");
 }
 
 /// **A statement's `pgdump.strict_identity` is its dump's, the session's the
@@ -405,7 +425,7 @@ async fn a_statement_s_strictness_overrides_the_session_s() {
     };
     let session = |strict| {
         let ctx = SessionContext::new();
-        register_table_factory(&ctx, Arc::new(|_: &dyn Finding| {}), strict);
+        register_table_factory(&ctx, Arc::new(|_: &dyn Finding| {}), strict, None);
         ctx
     };
 
@@ -499,7 +519,7 @@ async fn every_refusal_is_the_provider_s_error_over_the_library_s() {
     let foreign = dir.path().join("foreign.sql");
     std::fs::copy(&dump_path, &foreign).unwrap();
     std::fs::write(cache::colocated_path(&foreign), "not a cache").unwrap();
-    register_table_factory(&ctx, Arc::new(|_: &dyn Finding| {}), StrictIdentity::ADVISORY);
+    register_table_factory(&ctx, Arc::new(|_: &dyn Finding| {}), StrictIdentity::ADVISORY, None);
     let create = format!(
         "CREATE EXTERNAL TABLE f STORED AS PGDUMP LOCATION '{}' OPTIONS ('pgdump.table' 't')",
         foreign.display()
@@ -508,8 +528,99 @@ async fn every_refusal_is_the_provider_s_error_over_the_library_s() {
     assert!(matches!(library_error(&err), pgdt_core::Error::CacheUnusable { .. }), "{err:?}");
 }
 
+/// **A spelling handed in closes every refusal of what it built**, the
+/// library's error still beneath it: the open's, `PgDump::table`'s, a scan's
+/// and a `STORED AS PGDUMP` statement's each end with the spelling in
+/// parentheses, downcast to [`Error::Spelled`] at the top of what DataFusion
+/// carries, and reach the refusal unspelled by [`Error::unspelled`] and the
+/// library's by a walk of their sources; a refusal the spelling has no words
+/// for is left as it is (`docs/design/decisions.md`, "D74", "D107").
+#[tokio::test(flavor = "multi_thread")]
+async fn a_spelling_closes_every_refusal_of_what_it_built() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump_path = dir.path().join("refusing.sql");
+    std::fs::write(
+        &dump_path,
+        "CREATE TABLE public.t (\n    a integer\n);\n\n\
+         COPY public.t (a) FROM stdin;\n1\nabc\n\\.\n\n\
+         COPY public.u (a, b) FROM stdin;\n1\tx\n\\.\n\n\
+         COPY public.u (a, c) FROM stdin;\n4\tz\n\\.\n",
+    )
+    .unwrap();
+    let location = dump_path.to_str().unwrap();
+    let spelling: Arc<dyn Spelling> = Arc::new(|refused: &Error| match refused {
+        Error::Table(_) => None,
+        Error::Library(lib) => Some(format!("spelled {}", variant(lib))),
+        _ => Some("spelled".to_string()),
+    });
+    let options = || PgDumpOptions {
+        postgres_invalid_values: PostgresInvalidValues::Ignore,
+        spelling: Some(Arc::clone(&spelling)),
+        ..PgDumpOptions::default()
+    };
+    let spelled = |err: &Error, spelling: &str| {
+        assert!(matches!(err, Error::Spelled { .. }), "{err:?}");
+        assert!(err.to_string().ends_with(&format!(" ({spelling})")), "{err}");
+    };
+
+    let missing = PgDump::open(location, options()).await.unwrap_err();
+    spelled(&missing, "spelled");
+    assert!(matches!(missing.unspelled(), Error::CacheNotComplete { .. }), "{missing:?}");
+
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump_path).unwrap());
+    let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
+    map_file(
+        cache.open_source(Arc::clone(&source)).await.unwrap(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Ignore,
+        &StatisticsRequest::DATA,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let dump = PgDump::open(location, options()).await.unwrap();
+
+    let err = dump.table(&TableSelector::named("u"), "u", Arc::new(ignore)).unwrap_err();
+    spelled(&err, "spelled TableColumnsDisagree");
+    core_beneath(&err);
+    let err = dump.table(&TableSelector::named("v"), "v", Arc::new(ignore)).unwrap_err();
+    assert!(matches!(err, Error::Table(_)), "unspelled where it has no words: {err:?}");
+
+    let ctx = SessionContext::new();
+    ctx.register_table("t", dump.table(&TableSelector::named("t"), "t", Arc::new(ignore)).unwrap())
+        .unwrap();
+    let err = ctx.sql("SELECT * FROM t").await.unwrap().collect().await.unwrap_err();
+    let DataFusionError::External(top) = err.find_root() else { panic!("{err:?}") };
+    let top = top.downcast_ref::<Error>().unwrap();
+    spelled(top, &format!("spelled {}", variant(library_error(&err))));
+
+    register_table_factory(
+        &ctx,
+        Arc::new(|_: &dyn Finding| {}),
+        StrictIdentity::ADVISORY,
+        Some(Arc::new(|_: &Error| Some("by the factory".to_string()))),
+    );
+    let bare = dir.path().join("bare.sql");
+    std::fs::copy(&dump_path, &bare).unwrap();
+    let create = format!(
+        "CREATE EXTERNAL TABLE f STORED AS PGDUMP LOCATION '{}' OPTIONS ('pgdump.table' 't')",
+        bare.display()
+    );
+    let err = ctx.sql(&create).await.unwrap_err();
+    let DataFusionError::External(top) = err.find_root() else { panic!("{err:?}") };
+    spelled(top.downcast_ref::<Error>().unwrap(), "by the factory");
+}
+
+/// A library refusal's variant, as a test's spelling names it.
+fn variant(err: &pgdt_core::Error) -> String {
+    let debug = format!("{err:?}");
+    debug.split([' ', '(', '{']).next().unwrap().to_string()
+}
+
 /// **`PgDump::table` refusing a table the cache holds at the metadata level
-/// is its own variant**, matched as it is returned.
+/// is its own variant**, matched as it is returned, the library's refusal
+/// beneath it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_table_asked_for_at_the_metadata_level_is_refused_as_such() {
     let dir = tempfile::tempdir().unwrap();
@@ -530,6 +641,7 @@ async fn a_table_asked_for_at_the_metadata_level_is_refused_as_such() {
     let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let err = dump.table(&TableSelector::named("meta"), "meta", Arc::new(ignore)).unwrap_err();
     assert!(matches!(err, datafusion_pgdump::Error::MetadataLevel { .. }), "{err:?}");
+    assert!(matches!(core_beneath(&err), pgdt_core::Error::TableAtMetadataLevel { .. }));
 }
 
 /// **A registration's columns compared bytewise for want of a recorded
@@ -599,7 +711,7 @@ async fn a_registration_s_uncollated_columns_are_one_finding() {
 
     let (table, _) = expected.first().unwrap();
     let [_, schema, table] = table.split('.').collect::<Vec<_>>().try_into().unwrap();
-    register_table_factory(&ctx, Arc::clone(&heard) as _, StrictIdentity::ADVISORY);
+    register_table_factory(&ctx, Arc::clone(&heard) as _, StrictIdentity::ADVISORY, None);
     let create = format!(
         "CREATE EXTERNAL TABLE named STORED AS PGDUMP LOCATION '{}' \
          OPTIONS ('pgdump.table' '{table}', 'pgdump.schema' '{schema}')",

@@ -23,6 +23,11 @@ parse` command that would build it. So `pgdt parse` first, once per dump; see
 [dump inspection](dump-inspection.md). The cache is looked for where `pgdt`
 writes it — beside a local dump, and in the working directory for a URL.
 
+**A refusal ends with its remedy in parentheses**, in the words of whatever
+attached the dump — a `--dump` suffix such as `:strings`, or a `pgdump.`
+option such as `'pgdump.schema_mode' 'strings'` — or the `pgdt` command that
+is one, at registration, from `-c` and `-f`, and in the REPL alike.
+
 **Run as a container's init process** — `docker run image pgdt sql …`
 makes it one — it exits 128 plus the number of any
 signal that would end it elsewhere, which an init otherwise ignores, so Ctrl-C

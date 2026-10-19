@@ -15,7 +15,7 @@ use arrow::compute::concat_batches;
 use arrow::datatypes::SchemaRef;
 use datafusion::physical_plan::{ExecutionPlan, execute_stream_partitioned};
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_pgdump::{Error, PgDump, PgDumpOptions, ScanBudget, register_dump};
+use datafusion_pgdump::{Error, MappingPass, PgDump, PgDumpOptions, ScanBudget, register_dump};
 use futures::StreamExt;
 use pgdt_codec::{SchemaMode, compare::ComparisonSemantics};
 use pgdt_dump::ReadOptions;
@@ -177,7 +177,7 @@ async fn a_dump_registers_one_catalog_per_database_named_as_the_file_names_it() 
     // A plain dump names no database: a name is required.
     let (_, plain) = fixture_dump("edge_cases", "default", dir.path()).await;
     let refused = register_dump(&session(1, 8192), None, &plain, Arc::new(ignore)).unwrap_err();
-    assert!(matches!(refused, Error::CatalogName(_)), "{refused}");
+    assert!(matches!(refused, Error::CatalogNameNeeded { .. }), "{refused}");
     let ctx = session(1, 8192);
     assert_eq!(register_dump(&ctx, Some("shop"), &plain, Arc::new(ignore)).unwrap(), ["shop"]);
     let catalog = ctx.catalog("shop").unwrap();
@@ -189,7 +189,11 @@ async fn a_dump_registers_one_catalog_per_database_named_as_the_file_names_it() 
     let (_, all) = fixture_dump("edge_cases", "dumpall", dir.path()).await;
     let refused =
         register_dump(&session(1, 8192), Some("shop"), &all, Arc::new(ignore)).unwrap_err();
-    assert!(matches!(refused, Error::CatalogName(_)), "{refused}");
+    assert!(
+        matches!(&refused, Error::CatalogNameRefused { databases, name, .. }
+            if *databases > 1 && name == "shop"),
+        "{refused}"
+    );
     let ctx = session(1, 8192);
     let names = register_dump(&ctx, None, &all, Arc::new(ignore)).unwrap();
     assert!(names.contains(&"pgdt_fixture".to_string()), "{names:?}");
@@ -206,8 +210,11 @@ async fn a_dump_registers_one_catalog_per_database_named_as_the_file_names_it() 
     assert_eq!(rows[0].num_rows(), 1);
 }
 
-/// **A missing or partial cache is an error naming the parse that builds
-/// it**; the provider never maps.
+/// **A missing or partial cache is refused, carrying the mapping pass that
+/// builds it** — the dump as the open was handed it, the cache path it
+/// stated and the mode it reads a field PostgreSQL refuses in — and saying
+/// it in the library's terms, no front end's command; the provider never
+/// maps.
 #[tokio::test(flavor = "multi_thread")]
 async fn only_a_complete_cache_opens() {
     let dir = tempfile::tempdir().unwrap();
@@ -215,23 +222,30 @@ async fn only_a_complete_cache_opens() {
     let copy = dir.path().join("default.sql");
     std::fs::copy(&fixture, &copy).unwrap();
     let location = copy.to_str().unwrap();
+    let pass = |cache_path: Option<PathBuf>, postgres_invalid_values| MappingPass {
+        location: location.to_string(),
+        cache_path,
+        postgres_invalid_values,
+    };
+    let passed = |refused: &Error| match refused {
+        Error::CacheNotComplete { pass, .. } => pass.clone(),
+        other => panic!("not refused as incomplete: {other}"),
+    };
 
     let missing = PgDump::open(location, PgDumpOptions::default()).await.unwrap_err();
-    assert!(matches!(missing, Error::CacheNotComplete { .. }), "{missing}");
-    assert!(missing.to_string().contains(&format!("pgdt parse --source {location}")), "{missing}");
-    // Opened to go past what PostgreSQL refuses, it names a parse that goes
-    // past them too, which the default parse would fail at.
+    assert_eq!(passed(&missing), pass(None, PostgresInvalidValues::Default));
+    let said = missing.to_string();
+    assert!(said.contains("a mapping pass to the file's end"), "{said}");
+    assert!(!said.contains("pgdt parse") && !said.contains("PostgreSQL refuses"), "{said}");
+    // Opened to go past what PostgreSQL refuses, the pass must go past them
+    // too, where the default pass would fail at the first.
     let ignoring = PgDumpOptions {
         postgres_invalid_values: PostgresInvalidValues::Ignore,
         ..PgDumpOptions::default()
     };
     let missing = PgDump::open(location, ignoring).await.unwrap_err();
-    assert!(
-        missing
-            .to_string()
-            .contains(&format!("pgdt parse --source {location} --postgres-invalid-values ignore`")),
-        "{missing}"
-    );
+    assert_eq!(passed(&missing), pass(None, PostgresInvalidValues::Ignore));
+    assert!(missing.to_string().contains("going past the values PostgreSQL refuses"), "{missing}");
 
     // A preamble-only scan leaves a cache that stops short of the end.
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&copy).unwrap());
@@ -246,11 +260,11 @@ async fn only_a_complete_cache_opens() {
     assert!(partial.to_string().contains("covers"), "{partial}");
     let before = std::fs::read(pgdt_dump::cache::colocated_path(&copy)).unwrap();
 
-    // A named cache path is the one the remedy names.
+    // A named cache path is the one the pass carries.
     let elsewhere = dir.path().join("elsewhere.dtcache");
     let options = PgDumpOptions { cache_path: Some(elsewhere.clone()), ..PgDumpOptions::default() };
     let named = PgDump::open(location, options).await.unwrap_err();
-    assert!(named.to_string().contains(&format!("--dtcache {}", elsewhere.display())), "{named}");
+    assert_eq!(passed(&named), pass(Some(elsewhere.clone()), PostgresInvalidValues::Default));
 
     // Nothing was written by the refusals.
     assert_eq!(std::fs::read(pgdt_dump::cache::colocated_path(&copy)).unwrap(), before);

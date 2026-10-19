@@ -21,15 +21,17 @@
 // so a caller can embed the CLI: its `Args` and entry point are exported, and a
 // binary — `pgdt sql`, or an embedder's — parses and calls it. A downstream
 // `main` of its own is upstream's endorsed way to extend the CLI
-// (`datafusion-cli/examples/cli-session-context.rs`), and `src/pgdump.rs` holds
-// everything else. At each DataFusion major, diff upstream's new `main.rs`
-// against 55.1.0's and re-apply the marked lines. The provider's tests that pin
-// upstream behaviour fail on purpose when it moves: `RESET` reaching only
-// `datafusion.` keys (`crates/datafusion-pgdump/tests/settings.rs`), and a nested
-// column's NULL-first, unnormalized-zero order (`tests/pushdown.rs`).
+// (`datafusion-cli/examples/cli-session-context.rs`), and `src/pgdump.rs` and
+// `src/spelling.rs` hold everything else. At each DataFusion major, diff
+// upstream's new `main.rs` against 55.1.0's and re-apply the marked lines. The
+// provider's tests that pin upstream behaviour fail on purpose when it moves:
+// `RESET` reaching only `datafusion.` keys
+// (`crates/datafusion-pgdump/tests/settings.rs`), and a nested column's
+// NULL-first, unnormalized-zero order (`tests/pushdown.rs`).
 
 // pgdump: the registrations, and what a caller composing the CLI reads of them.
 mod pgdump;
+mod spelling;
 pub use pgdump::DATAFUSION_VERSION;
 #[cfg(feature = "introspect")]
 pub use pgdump::{INTROSPECT_OUT_VAR, introspection_section};

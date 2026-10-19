@@ -63,6 +63,13 @@ The library's vocabulary of failure, and how a front end says it
 
 - **pgdt-core** — `error.rs`: every crate fails in it, and a dependency's
   error is a cause it carries opaquely.
+- **datafusion-pgdump** — `error.rs`: the provider's refusals, carrying
+  what a front end needs to spell their remedies, and the `Spelling` a front
+  end hands at construction, which every refusal of what it built carries
+  across DataFusion's boundary — an embedder's own failures, beside the
+  library's.
+- **datafusion-cli-pgdump** — `spelling.rs`: the shell's spelling, in the
+  grammar of whatever registered the dump — a front end's syntax beside it.
 - **pgdt** — `refusal.rs`: a refusal as the binary says it, the source's
   name before it and its remedy spelled in the binary's flags after it — a
   front end's syntax in its binary (D107).
@@ -330,16 +337,17 @@ A dump's databases as DataFusion catalogs, a table as a `TableProvider`
 scanned by the partitioned replay, and the `pgdump.` session settings
 ([`decisions.md`](decisions.md), "D90", "D94").
 
-- **datafusion-pgdump** — `lib.rs`, `error.rs`, `catalog.rs`, `factory.rs`,
-  `table.rs`, `exec.rs`, `settings.rs`, `session.rs`: an embedder, above
-  every library crate, its root declaring and defining nothing.
+- **datafusion-pgdump** — `lib.rs`, `catalog.rs`, `factory.rs`, `table.rs`,
+  `exec.rs`, `settings.rs`, `session.rs`: an embedder, above every library
+  crate, its root declaring and defining nothing.
 
 ## The DataFusion CLI
 
 `datafusion-cli` with `--dump` and `STORED AS PGDUMP`: upstream's `main.rs`
 with each change marked, and everything of ours beside it.
 
-- **datafusion-cli-pgdump** — `lib.rs`, `pgdump.rs`.
+- **datafusion-cli-pgdump** — `lib.rs`, `pgdump.rs`; its spelling of a
+  refusal is "Failure"'s.
 
 ## The `pgdt` CLI
 

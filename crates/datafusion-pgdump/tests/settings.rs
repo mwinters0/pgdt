@@ -185,7 +185,7 @@ async fn the_read_settings_reach_the_scan() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_settings_are_listed_and_checked() {
     let ctx = SessionContext::new_with_config(SessionConfig::new().with_information_schema(true));
-    register_table_factory(&ctx, Arc::new(Plans::default()), StrictIdentity::ADVISORY);
+    register_table_factory(&ctx, Arc::new(Plans::default()), StrictIdentity::ADVISORY, None);
     run(&ctx, "SET pgdump.chunk_size = 65536").await.unwrap();
     let listed = printed(
         &run(&ctx, "SELECT name, value FROM information_schema.df_settings WHERE name LIKE 'pgdump.%' ORDER BY name")

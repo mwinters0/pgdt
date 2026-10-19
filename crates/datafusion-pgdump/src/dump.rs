@@ -11,7 +11,7 @@ use pgdt_model::{Diagnostic, PostgresInvalidValues, TableName};
 use pgdt_query::Dump;
 
 use crate::budget::{Hold, ScanBudget};
-use crate::error::Error;
+use crate::error::{Error, MappingPass, Speller, Spelling};
 
 /// How a dump is opened.
 #[derive(Debug, Clone, Default)]
@@ -44,6 +44,11 @@ pub struct PgDumpOptions {
     /// [`StrictIdentity::ADVISORY`], and [`StrictIdentity::NONE`] the only
     /// way to read an unpinnable remote dump.
     pub strict_identity: StrictIdentity,
+    /// The front end's words for the remedy each refusal names, which every
+    /// refusal of this dump, its tables and their scans carries in its
+    /// message ([`Spelling`]). `None`, the default, leaves each in the
+    /// library's terms alone.
+    pub spelling: Option<Arc<dyn Spelling>>,
 }
 
 /// A dump and the complete map of it its cache holds ([`Dump`]), opened once
@@ -56,8 +61,8 @@ pub struct PgDumpOptions {
 /// and its identity checks pass as they do for any load. A cache that cannot
 /// be used — another file's, another build's, damaged, or contradicting the
 /// file's compression — is the library's own refusal; one short of a complete
-/// map of this file, or none named, is an error naming the `pgdt parse` that
-/// would build it.
+/// map of this file, or none named, is [`Error::CacheNotComplete`], carrying
+/// the mapping pass that would build it.
 ///
 /// **The map is resident for as long as the dump is registered**, because
 /// DataFusion asks for a table's schema and statistics while it plans, and
@@ -77,8 +82,10 @@ pub struct PgDump {
     schema_mode: SchemaMode,
     unrepresentable: UnrepresentableMode,
     postgres_invalid_values: PostgresInvalidValues,
-    /// The `pgdt parse` that builds this dump's cache, which a refusal names.
-    parse: String,
+    /// The mapping pass that builds this dump's cache, which a refusal names.
+    pass: MappingPass,
+    /// The front end's spelling, which every refusal of this dump carries.
+    speller: Speller,
     statistics_bytes: u64,
     /// One per budget this dump's statistics are billed to.
     holds: Mutex<Vec<Hold>>,
@@ -92,25 +99,34 @@ impl std::fmt::Debug for PgDump {
 
 impl PgDump {
     /// Open `location` — a path, or anything `pgdt --source` accepts — through
-    /// its complete cache.
+    /// its complete cache, refused as [`PgDumpOptions::spelling`] spells it.
     pub async fn open(location: &str, options: PgDumpOptions) -> Result<Arc<Self>, Error> {
+        let speller = Speller(options.spelling.clone());
+        Self::open_unspelled(location, options, speller.clone())
+            .await
+            .map_err(|err| speller.error(err))
+    }
+
+    async fn open_unspelled(
+        location: &str,
+        options: PgDumpOptions,
+        speller: Speller,
+    ) -> Result<Arc<Self>, Error> {
         #[cfg(feature = "http")]
         let origin = Origin::resolve(location)?;
         #[cfg(not(feature = "http"))]
         let origin = Origin::local(location);
         let mode = CacheMode::resolve(&origin, options.cache_path.as_deref())
             .with_strict_identity(options.strict_identity);
-        let incomplete = |why: String| Error::CacheNotComplete {
-            parse: parse_command(
-                location,
-                options.cache_path.as_deref(),
-                options.postgres_invalid_values,
-            ),
-            why,
+        let pass = MappingPass {
+            location: location.to_string(),
+            cache_path: options.cache_path.clone(),
+            postgres_invalid_values: options.postgres_invalid_values,
         };
+        let incomplete = |why: String| Error::CacheNotComplete { pass: pass.clone(), why };
         // An unusable cache is the scans' own refusal, word for word: this
-        // provider never writes, so nothing here may overwrite one, and the
-        // remedy it names is `pgdt`'s (`docs/design/decisions.md`, "D20").
+        // provider never writes, so nothing here may overwrite one
+        // (`docs/design/decisions.md`, "D20").
         let opened = mode.open(&origin).await?;
         // Every scan reads, so a source its in-flight check cannot cover is
         // refused at registration rather than at a scan.
@@ -141,11 +157,8 @@ impl PgDump {
             schema_mode: options.schema_mode,
             unrepresentable: options.unrepresentable,
             postgres_invalid_values: options.postgres_invalid_values,
-            parse: parse_command(
-                location,
-                options.cache_path.as_deref(),
-                options.postgres_invalid_values,
-            ),
+            pass,
+            speller,
             statistics_bytes,
             holds: Mutex::default(),
         }))
@@ -204,29 +217,13 @@ impl PgDump {
         self.postgres_invalid_values
     }
 
-    /// The `pgdt parse` that puts `table` at the data level, keeping every
-    /// other table's level: a parse never records less than a cache holds.
-    pub(crate) fn parse_at_data_level(&self, table: &TableName) -> String {
-        format!("{} --statistics-level metadata,{}=data", self.parse, table.qualified_name())
+    /// The mapping pass that builds this dump's cache, which a refusal names.
+    pub(crate) fn pass(&self) -> &MappingPass {
+        &self.pass
     }
-}
 
-/// The `pgdt parse` that builds the cache this open looked for, under the
-/// mode this dump reads a field PostgreSQL refuses in: one ignoring them
-/// names a parse that goes past them too, where the default parse would fail
-/// at the first it keys (`docs/design/decisions.md`, "D103"). `Strict`
-/// reads as the default does, so it names the default parse.
-fn parse_command(
-    location: &str,
-    cache_path: Option<&Path>,
-    invalid: PostgresInvalidValues,
-) -> String {
-    let mut parse = format!("pgdt parse --source {location}");
-    if let Some(path) = cache_path {
-        parse.push_str(&format!(" --dtcache {}", path.display()));
+    /// The front end's spelling, which every refusal of this dump carries.
+    pub(crate) fn speller(&self) -> &Speller {
+        &self.speller
     }
-    if invalid == PostgresInvalidValues::Ignore {
-        parse.push_str(&format!(" --postgres-invalid-values {invalid}"));
-    }
-    parse
 }
