@@ -9,6 +9,8 @@ mod notes;
 mod resolve;
 mod truths;
 
+use pgdt_codec::compare::ComparisonSemantics;
+
 pub use notes::ComparisonNote;
 pub(crate) use notes::column_divergences;
 pub(crate) use resolve::{ResolvedExpr, ResolvedTerm, resolve_expr, resolve_loosened};
@@ -167,6 +169,16 @@ impl PredicateOp {
     pub fn tests_unrepresentable(&self) -> bool {
         matches!(self, Self::IsUnrepresentable | Self::IsNotUnrepresentable)
     }
+
+    /// Whether this operator reads its column's declared type under
+    /// `semantics`, so that a query resolving none —
+    /// [`SchemaMode::Strings`](pgdt_codec::SchemaMode::Strings) — cannot
+    /// answer it: an unrepresentable test always, and an ordering operator in
+    /// PostgreSQL's semantics, DataFusion's ordering the text bytewise.
+    pub(crate) fn reads_declared_type(&self, semantics: ComparisonSemantics) -> bool {
+        self.tests_unrepresentable()
+            || (self.is_ordering() && semantics == ComparisonSemantics::Postgres)
+    }
 }
 
 /// A single-column post-parse filter, `column <op>`, and the **leaf** of an
@@ -254,17 +266,18 @@ impl Expr {
     /// Whether this tree holds an unrepresentable test
     /// ([`PredicateOp::tests_unrepresentable`]).
     pub fn tests_unrepresentable(&self) -> bool {
-        self.first_unrepresentable_test().is_some()
+        self.first_term(&PredicateOp::tests_unrepresentable).is_some()
     }
 
-    /// The first unrepresentable test in this tree, left to right.
-    pub(crate) fn first_unrepresentable_test(&self) -> Option<&Predicate> {
+    /// The first term in this tree, left to right, whose operator `wanted`
+    /// picks.
+    pub(crate) fn first_term(&self, wanted: &impl Fn(&PredicateOp) -> bool) -> Option<&Predicate> {
         match self {
-            Self::Term(predicate) => predicate.op.tests_unrepresentable().then_some(predicate),
+            Self::Term(predicate) => wanted(&predicate.op).then_some(predicate),
             Self::And(children) | Self::Or(children) => {
-                children.iter().find_map(Self::first_unrepresentable_test)
+                children.iter().find_map(|child| child.first_term(wanted))
             }
-            Self::Not(inner) => inner.first_unrepresentable_test(),
+            Self::Not(inner) => inner.first_term(wanted),
         }
     }
 }

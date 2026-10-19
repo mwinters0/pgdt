@@ -10,7 +10,7 @@ use pgdt_codec::internal::{
     NestedKey, OrderKey, Side, UnrepresentableRead, accepted_form, compare_keys, compare_nested,
     int_in, literal_key, nested_accepted_form, nested_key, numeric_in_stores, order_key,
     render_macaddr, render_timestamp_postgres_micros, special_order_key, time_of_day_micros,
-    timestamp_postgres_micros,
+    timestamp_postgres_micros, unlisted_labels,
 };
 use pgdt_core::{Error, Result};
 use pgdt_model::PostgresInvalidValues;
@@ -403,6 +403,7 @@ pub(super) fn resolve_term(
         value: text.to_string(),
         declared_type: declared_type.clone(),
         accepted: accepted_form(kind),
+        unlisted: unlisted_labels(kind),
     };
     let mut plan = Some(record.comparison());
     if !compares_as_declared(record.resolution()) {
@@ -486,6 +487,7 @@ pub(super) fn resolve_term(
                         value: text.to_string(),
                         declared_type: declared_type.clone(),
                         accepted: nested_accepted_form(tree),
+                        unlisted: 0,
                     }
                 })?,
             })),
@@ -716,9 +718,9 @@ pub(super) fn resolve_membership(
 /// membership's operator `op`.
 fn named(error: Error, op: &'static str) -> Error {
     match error {
-        Error::PredicateValueDecode { column, value, declared_type, accepted, .. } => {
-            Error::PredicateValueDecode { column, op, value, declared_type, accepted }
-        }
+        Error::PredicateValueDecode {
+            column, value, declared_type, accepted, unlisted, ..
+        } => Error::PredicateValueDecode { column, op, value, declared_type, accepted, unlisted },
         Error::UncomparablePredicateColumn { header_offset, column, reason, .. } => {
             Error::UncomparablePredicateColumn { header_offset, column, op, reason }
         }

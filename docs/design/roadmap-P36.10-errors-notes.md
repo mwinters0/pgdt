@@ -42,18 +42,11 @@ wording follows it.
 
 ## Negative results
 
-- **Two clauses lose pgdt's words with nothing re-adding them**, the variant
-  not telling `pgdt` when the clause is there: `NOT_MAPPED`'s parenthesis in
-  `UnorderedPredicateColumn`'s reason now says "the strings schema mode" (an
-  explanation of the mode the user chose, not a remedy), and an enum
-  literal's overflow clause says its declaration lists the rest where it said
-  "see `info --detail`". STATUS's "Decisions worth another look" carries it.
 - **`pgdt sql` adds no spelling.** Its errors are DataFusion's CLI printing
   the adapter's; `datafusion-cli-pgdump` is plumbing (spec, "Scope"), so a
   shell user reads "with `time` bound" where it read `--strict-identity=time`.
-- **Out of scope, still naming a flag**: pgdt-mapping's `tracing` line for a
-  declined block's statistics (`--memory`, `backfill.rs`) — a log line, not a
-  refusal. pgdt-model's `--block-size` in an xz diagnostic is `xz`'s flag.
+- **Out of scope, still naming a flag**: pgdt-model's `--block-size` in an xz
+  diagnostic is `xz`'s flag.
 - **Not counted.** No hot-path code moved.
 
 ## What the next round inherits

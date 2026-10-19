@@ -189,7 +189,8 @@ pub enum Error {
         reason: String,
     },
     #[error(
-        "filter value `{value}` for `{column} {op} ...` does not parse as the column's declared type `{declared_type}`, which is written {accepted}"
+        "filter value `{value}` for `{column} {op} ...` does not parse as the column's declared type `{declared_type}`, which is written {accepted}{}",
+        unlisted_labels(*.unlisted)
     )]
     PredicateValueDecode {
         column: String,
@@ -205,6 +206,12 @@ pub enum Error {
         /// own comparison payload — an enum's declared labels, a
         /// `numeric(p,s)`'s scale.
         accepted: String,
+        /// How many of an enum's declared labels `accepted` leaves unlisted,
+        /// zero where it lists the whole form: the rest are in the type's
+        /// declaration, which a front end names its own way of printing
+        /// (`docs/design/decisions.md`, "D107"). From
+        /// `pgdt_codec::internal::unlisted_labels`.
+        unlisted: usize,
     },
     #[error("projected column `{column}` not found in COPY block at offset {header_offset}")]
     UnknownProjectionColumn { header_offset: u64, column: String },
@@ -328,15 +335,18 @@ pub enum Error {
         "{table}.{column} holds {values} `{declared_type}` value(s) the column's Arrow type cannot hold, and this query refuses a column holding one — read them in the null mode, as NULL, or in the text mode, the column as its text, or leave the column unmaterialized, read only by a filter the library answers"
     )]
     Unrepresentable { table: String, column: String, declared_type: String, values: u64 },
-    /// `IS [NOT] UNREPRESENTABLE` in a query under
-    /// [`pgdt_codec::SchemaMode::Strings`], which resolves no declared type: every
-    /// value is text its column holds, and no NULL was made of one, so there
-    /// is nothing for the test to tell apart (`docs/design/decisions.md`,
-    /// "D101"). Raised before a row is read.
+    /// A filter term that reads its column's declared type, in a query under
+    /// [`pgdt_codec::SchemaMode::Strings`], which resolves none: `IS [NOT]
+    /// UNREPRESENTABLE`, every value being text its column holds and no NULL
+    /// made of one, so there is nothing for the test to tell apart
+    /// (`docs/design/decisions.md`, "D101"); and an ordering operator in
+    /// PostgreSQL's semantics, which orders as the declared type does. One
+    /// cause and one remedy, the typed schema mode. Raised at planning,
+    /// before a row is read.
     #[error(
-        "`{column} {op}` asks whether a value is one its declared type accepts and its column's type cannot hold, and this query reads every column as its text, resolving no declared type — ask it of a query in the typed schema mode"
+        "`{column} {op}` reads the column's declared type — the values it accepts, or its order — and this query reads every column as its text, resolving no declared type; ask it of a query in the typed schema mode"
     )]
-    UnrepresentableTestUntyped { column: String, op: &'static str },
+    TestNeedsDeclaredType { column: String, op: &'static str },
     /// [`Self::FieldDecode`]'s mirror, met on the way **out**: an Arrow array
     /// holds a value no PostgreSQL text form spells, so `render_field`
     /// refuses rather than writing something the file could not have held
@@ -365,6 +375,15 @@ fn null_refused(table: &str, column: &str, line: Option<u64>, line_offset: u64) 
             "COPY {table}, line {line}, column {column}: {REFUSED}; the line is at offset {line_offset}"
         ),
         None => format!("{table}.{column}: the line at offset {line_offset} holds {REFUSED}"),
+    }
+}
+
+/// [`Error::PredicateValueDecode`]'s closing clause: where the rest of an
+/// enum's labels are, when the accepted form stopped short of them.
+fn unlisted_labels(unlisted: usize) -> String {
+    match unlisted {
+        0 => String::new(),
+        n => format!(", and {n} more, which the type's declaration lists"),
     }
 }
 

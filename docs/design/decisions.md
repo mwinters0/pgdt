@@ -645,10 +645,11 @@ spelled twice); a published `pgtypes` crate out of the codec (its own catalog ty
 
 ### D107 A library refusal names its remedy in the library's terms, and each embedder spells it after the sentence
 A library error states the condition and ends with its remedies as the API names them — a mode, a mapping pass, a selector naming a database — never a front end's flag or command, which only
-that front end has. `pgdt` appends its flag or command for each, in parentheses and the library's order, by an exhaustive match over the variants, on every refusal leaving a command, through any
-context; `datafusion-pgdump` adds the `pgdt parse` its never-mapping provider needs, under the mode it was opened in. `pgdt info` says a cache's refusal in the library's sentence.
-Rejected: a structured `Remedy` value on the error (a second taxonomy beside the variants); a whole sentence per variant in each front end (the wording twice, which drifted); a variant
-carrying why a filter's column has no order or an enum's labels overflow, for pgdt to spell (an explanation, not a remedy). Code: `pgdt`'s `refusal::spelling`. Evidence: `each_refusal_names_the_flag_its_remedy_is`.
+that front end has. What a front end must spell, the variant says, never its `String`: a refusal a mode causes names the mode that answers it, raised where the mode is known (an ordering
+operator under the strings schema mode is `TestNeedsDeclaredType`, as an unrepresentable test is), and an accepted form cut short counts what it left unlisted. `pgdt` appends its flag or
+command for each, in parentheses and the library's order, by an exhaustive match over the variants, on every refusal leaving a command, through any context; `datafusion-pgdump` adds the
+`pgdt parse` its never-mapping provider needs, under the mode it was opened in. `pgdt info` says a cache's refusal in the library's sentence. A log line names no flag either.
+Rejected: a structured `Remedy` value on the error (a second taxonomy beside the variants); a whole sentence per variant in each front end (the wording twice, which drifted); every enum label listed (nothing bounds how many a type declares). Code: `pgdt`'s `refusal::spelling`. Evidence: `each_refusal_names_the_flag_its_remedy_is`.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family

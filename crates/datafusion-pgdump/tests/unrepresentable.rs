@@ -1199,7 +1199,7 @@ async fn the_unrepresentable_function_refuses_where_datafusion_would_evaluate_it
     let mut untyped = false;
     while let Some(err) = cause {
         untyped |=
-            matches!(err.downcast_ref(), Some(pgdt_core::Error::UnrepresentableTestUntyped { .. }));
+            matches!(err.downcast_ref(), Some(pgdt_core::Error::TestNeedsDeclaredType { .. }));
         cause = err.source();
     }
     assert!(untyped, "{err}");

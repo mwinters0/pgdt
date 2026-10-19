@@ -331,8 +331,8 @@ fn datafusion_divergences(
 
 /// The refusal an ordering operator earns on a column that cannot carry one.
 /// Four reasons, each a different fact about the column.
-pub(super) const NOT_MAPPED: &str = "the column's declared type did not resolve to an Arrow type, so it has no order of its own \
-     (the strings schema mode resolves no column, by design)";
+pub(super) const NOT_MAPPED: &str =
+    "the column's declared type did not resolve to an Arrow type, so it has no order of its own";
 pub(super) const NESTED: &str = "the column is nested (array, composite, range or multirange), and an order over such a \
      literal is not defined here";
 

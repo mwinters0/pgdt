@@ -80,7 +80,7 @@ pub(crate) fn about_the_source(err: &pgdt_core::Error) -> bool {
         | Lib::NullRefused { .. }
         | Lib::FieldRefusedRecorded { .. }
         | Lib::Unrepresentable { .. }
-        | Lib::UnrepresentableTestUntyped { .. }
+        | Lib::TestNeedsDeclaredType { .. }
         | Lib::FieldRender { .. } => false,
     }
 }
@@ -121,7 +121,12 @@ pub(crate) fn spelling(err: &pgdt_core::Error) -> Option<String> {
         Lib::Unrepresentable { .. } => {
             "`--unrepresentable null`; `--unrepresentable text`".to_string()
         }
-        Lib::UnrepresentableTestUntyped { .. } => "`--schema-mode typed`".to_string(),
+        Lib::TestNeedsDeclaredType { .. } => "`--schema-mode typed`".to_string(),
+        // The rest of an enum's labels are in its declaration, which `info
+        // --detail` prints.
+        Lib::PredicateValueDecode { unlisted, .. } if *unlisted > 0 => {
+            "`pgdt info --detail`".to_string()
+        }
         // No remedy, or none `pgdt` has a flag for: the condition alone, a
         // remedy that is the user's own act, or one the sentence states
         // beside the request it refuses.

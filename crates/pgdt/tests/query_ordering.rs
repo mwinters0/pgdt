@@ -135,8 +135,8 @@ fn an_ordering_operator_on_a_nested_column_is_refused() {
 }
 
 /// Under `--schema-mode strings` nothing resolves, so every ordering
-/// operator is refused — a consequence of the rule rather than a case of its
-/// own, and the message says which mode caused it, in the library's words.
+/// operator is refused, and the message names the mode that answers it, in
+/// the library's words and then as `pgdt` spells it.
 #[test]
 fn strings_mode_refuses_every_ordering_operator() {
     let out = query(
@@ -145,7 +145,8 @@ fn strings_mode_refuses_every_ordering_operator() {
         &["--schema-mode", "strings", "--filter", "v_integer>0"],
     );
     assert!(!out.status.success());
-    assert!(stderr_of(&out).contains("the strings schema mode"), "{}", stderr_of(&out));
+    let stderr = stderr_of(&out);
+    assert!(stderr.contains("in the typed schema mode (`--schema-mode typed`)"), "{stderr}");
 }
 
 /// PostgreSQL's `infinity` is a value with an order, not a decode failure, so

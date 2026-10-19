@@ -6,8 +6,8 @@ use crate::internal::NUMERIC_INTEGER_DIGITS_MAX;
 
 /// The enum clause names the labels themselves, quoted the way the dump
 /// writes them and a `--filter` value reads them back, and stops at
-/// [`ENUM_LABELS_SHOWN`] with a pointer at the output that carries the
-/// rest.
+/// [`ENUM_LABELS_SHOWN`], counting the rest for the refusal to say
+/// ([`unlisted_labels`]).
 #[test]
 fn the_enum_clause_quotes_its_labels_and_caps_the_list() {
     let kind = |labels: &[&str]| CompareKind::Enum {
@@ -20,16 +20,20 @@ fn the_enum_clause_quotes_its_labels_and_caps_the_list() {
         "as one of the type's declared labels: 'sad', 'has space', 'has''quote'"
     );
 
+    assert_eq!(unlisted_labels(&kind(&["sad", "has space", "has'quote"])), 0);
+
     let many: Vec<String> = (0..ENUM_LABELS_SHOWN + 3).map(|i| format!("l{i}")).collect();
-    let clause = accepted_form(&CompareKind::Enum {
+    let many = CompareKind::Enum {
         name: "public.e".into(),
         labels: many.iter().cloned().collect(),
         exact: true,
-    });
+    };
+    let clause = accepted_form(&many);
     assert!(clause.contains("'l0'"), "{clause}");
-    assert!(clause.contains(&format!("'l{}'", ENUM_LABELS_SHOWN - 1)), "{clause}");
+    assert!(clause.ends_with(&format!("'l{}'", ENUM_LABELS_SHOWN - 1)), "{clause}");
     assert!(!clause.contains(&format!("'l{ENUM_LABELS_SHOWN}'")), "{clause}");
-    assert!(clause.ends_with("and 3 more, which its declaration lists"), "{clause}");
+    assert_eq!(unlisted_labels(&many), 3);
+    assert_eq!(unlisted_labels(&CompareKind::Bool), 0);
 }
 
 /// The `numeric(p,s)` clause branches on the sign of the scale, as what

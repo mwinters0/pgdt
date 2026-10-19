@@ -779,9 +779,11 @@ async fn a_range_declaring_a_canonical_function_refuses_every_operator() {
     assert_eq!(rows_of(&batch), [[Some("1".to_string())]]);
 }
 
-/// `SchemaMode::Strings` resolves no column, so every ordering operator is
-/// refused there. It falls out of the `Mapped` rule rather than needing a
-/// case of its own — which is what this pins.
+/// `SchemaMode::Strings` resolves no declared type, so every ordering
+/// operator in PostgreSQL's semantics is refused there at planning, naming the
+/// typed schema mode as its remedy, the refusal an unrepresentable test meets
+/// there (`docs/design/decisions.md`, "D107"); DataFusion's semantics orders
+/// the text bytewise (`pruning.rs`).
 #[tokio::test]
 async fn strings_mode_refuses_every_ordering_operator() {
     let err = drain(
@@ -794,7 +796,11 @@ async fn strings_mode_refuses_every_ordering_operator() {
     )
     .await
     .unwrap_err();
-    assert!(matches!(err, Error::UnorderedPredicateColumn { .. }), "{err:?}");
+    assert!(
+        matches!(&err, Error::TestNeedsDeclaredType { column, op: ">" } if column == "v_integer"),
+        "{err:?}"
+    );
+    assert!(err.to_string().ends_with("in the typed schema mode"), "{err}");
 }
 
 /// PostgreSQL's special values are ordered, against the fixture's own

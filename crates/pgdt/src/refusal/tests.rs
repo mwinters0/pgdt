@@ -140,11 +140,26 @@ fn each_refusal_names_the_flag_its_remedy_is() {
             &["`--unrepresentable null`", "`--unrepresentable text`"],
         ),
         (
-            pgdt_core::Error::UnrepresentableTestUntyped {
+            pgdt_core::Error::TestNeedsDeclaredType {
                 column: "d".into(),
                 op: "IS UNREPRESENTABLE",
             },
             &["`--schema-mode typed`"],
+        ),
+        (
+            pgdt_core::Error::TestNeedsDeclaredType { column: "v".into(), op: ">" },
+            &["`--schema-mode typed`"],
+        ),
+        (
+            pgdt_core::Error::PredicateValueDecode {
+                column: "mood".into(),
+                op: "=",
+                value: "x".into(),
+                declared_type: "public.mood".into(),
+                accepted: "as one of the type's declared labels: 'a'".into(),
+                unlisted: 3,
+            },
+            &["`pgdt info --detail`"],
         ),
     ];
     for (err, flags) in cases {

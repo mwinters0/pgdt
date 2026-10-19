@@ -115,7 +115,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.9** pgdt-query: one record per column in `ResolvedSchema`, rendering and `ValueKey` through it; counted by `measure.py --count-pair HEAD~1` — the reshape landed and its deficiency is struck; the count resolves falls on both `query` rows and rises on the data-level `parse` and `pgdt sql`, which callgrind puts outside the slice's changed code — the first in identical code's stack offset under a frame the tree grew, the second in the provider's scan planning, once a query — and both are accepted, the `pgdt sql` rise by the maintainer ([notes](../design/roadmap-P36.9-column-record-notes.md))
 - [x] **36.9.1** pgdt-codec: the column record its finding — `ResolvedColumn` implements `Finding`, holding the declared type and the resolution itself and reading its name off its field; `ColumnNote` and `ResolvedSchema::notes()` gone, a sink downcasting to the record and draining `columns()` (spec, "Values passed back together"); counted by `measure.py --count-pair HEAD~1` — the reshape landed; the count resolves no rise, one fall on `query` typed, unattributed ([notes](../design/roadmap-P36.9.1-column-finding-notes.md))
 - [x] **36.10** Errors in library terms, `pgdt`'s spelling layer pinned by a test, the cache's "Not in one place" line struck; closes `KD92` — `pgdt_core::Error` names its remedies as the library does, `pgdt`'s `refusal.rs` spells them on every refusal leaving a command, `info` says the library's sentence, and the adapter's metadata-level refusal is the library's with its parse added, that parse carrying the open's invalid-values mode; D107 ([notes](../design/roadmap-P36.10-errors-notes.md))
-- [ ] **36.10.1** Errors a front end can spell: `UnrepresentableTestUntyped` generalised to a test the strings schema mode cannot answer, an ordering operator under that mode refused by it at plan time with the typed schema mode as its remedy, `NOT_MAPPED`'s aside gone; `PredicateValueDecode` carrying how many labels its accepted form left unlisted; `pgdt` spelling both (`--schema-mode typed`, `pgdt info --detail`); the back-fill's declined-statistics log line naming the statistics allowance, not `--memory`, the manual's quotation with it; D107 rewritten (spec, "Errors and their remedies")
+- [x] **36.10.1** Errors a front end can spell: `UnrepresentableTestUntyped` generalised to a test the strings schema mode cannot answer, an ordering operator under that mode refused by it at plan time with the typed schema mode as its remedy, `NOT_MAPPED`'s aside gone; `PredicateValueDecode` carrying how many labels its accepted form left unlisted; `pgdt` spelling both (`--schema-mode typed`, `pgdt info --detail`); the back-fill's declined-statistics log line naming the statistics allowance, not `--memory`, the manual's quotation with it; D107 rewritten (spec, "Errors and their remedies") — `TestNeedsDeclaredType` the generalised variant ([notes](../design/roadmap-P36.10.1-spellable-errors-notes.md))
 - [ ] **36.11** datafusion-pgdump: `PgDump` over a `Dump`, one session-readying function, `Located` public, the sink and the front end's spelling at construction, `pgdt sql`'s shell spelling every refusal in its own grammar; the adapter's `CacheNotComplete` and `MetadataLevel` in library terms, carrying the open's invalid-values mode, their `parse` strings gone; `PgDumpTableOptions` folded
 - [ ] **36.12** The embedder test in `pgdt-query/tests/`, held by `layering.py` to the embedder rule
 
@@ -149,3 +149,15 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **36.10.1: the strings schema mode's refusal is raised before the filter is
+  resolved.** Under PostgreSQL's semantics, `--schema-mode strings --filter
+  'nosuch>0'` is now refused as `TestNeedsDeclaredType` ("ask it … in the
+  typed schema mode"), not as `UnknownPredicateColumn`. Before, the ordering
+  refusal came out of per-block resolution, after the column lookup. It now
+  comes from `query_tests` (`crates/pgdt-query/src/stream/replay/plan.rs`),
+  which runs ahead of `resolve_expr`, because that is where the
+  unrepresentable test's refusal was already raised, and the 2026-10-19 entry
+  put both there. So a typo under that mode gets a remedy that does not fix
+  it, as `nosuch IS UNREPRESENTABLE` already did. Reconsidering means having
+  `query_tests` skip a term whose column the block's header lacks, which
+  changes the unrepresentable test's precedence too.

@@ -624,7 +624,7 @@ block after that point declines too, and the statistics you get are a prefix of
 the file rather than a sample of it:
 
 ```
-2026-07-23T15:10:09.570412108Z  INFO statistics declined: this block's do not fit the allowance, and a larger --memory is what re-reads it table=public.wide header_offset=4823 declined_under_bytes=89128960 allowance_bytes=89128960
+2026-07-23T15:10:09.570412108Z  INFO statistics declined: this block's do not fit the statistics allowance, and a larger one is what re-reads it table=public.wide header_offset=4823 declined_under_bytes=89128960 allowance_bytes=89128960
 ```
 
 **Nothing is killed for want of statistics**, and the remedy is memory: a table

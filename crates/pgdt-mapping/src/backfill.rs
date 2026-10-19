@@ -230,8 +230,8 @@ pub(crate) fn report_statistics_declines(
             header_offset = block.header_offset,
             declined_under_bytes = under,
             allowance_bytes = %allowance.map_or_else(|| "(none)".to_string(), |a| a.to_string()),
-            "statistics declined: this block's do not fit the allowance, and a larger --memory is \
-             what re-reads it",
+            "statistics declined: this block's do not fit the statistics allowance, and a larger \
+             one is what re-reads it",
         );
     }
     declined

@@ -1827,6 +1827,30 @@ fn a_refused_literal_names_the_form_the_column_accepts() {
     }
 }
 
+/// An enum declaring more labels than the refusal lists says how many it left
+/// out — a count, which a front end reads to say where they are printed —
+/// and that its declaration lists them (`docs/design/decisions.md`, "D107");
+/// one listing them all counts none.
+#[test]
+fn a_refused_enum_literal_counts_the_labels_it_leaves_unlisted() {
+    let labels: Vec<String> = (0..15).map(|i| format!("l{i}")).collect();
+    let types =
+        [TypeDef { name: "public.many".into(), kind: TypeKind::Enum { labels, exact: true } }];
+    let schema = Column {
+        comparison: comparison_for("public.many", None, &types, &[]),
+        ..Column::of("public.many", DataType::Utf8View)
+    }
+    .schema();
+    let err = resolve_term(&order_predicate(PredicateOp::Eq, "x"), 0, &schema, 0).unwrap_err();
+    assert!(matches!(err, Error::PredicateValueDecode { unlisted: 3, .. }), "{err:?}");
+    assert!(err.to_string().ends_with("and 3 more, which the type's declaration lists"), "{err}");
+
+    let few = one_column("public.mood", DataType::Utf8View);
+    let err = resolve_term(&order_predicate(PredicateOp::Eq, "x"), 0, &few, 0).unwrap_err();
+    assert!(matches!(err, Error::PredicateValueDecode { unlisted: 0, .. }), "{err:?}");
+    assert!(err.to_string().ends_with("'sad', 'ok'"), "{err}");
+}
+
 /// A divergence is operator-conditional, and a collation's reaches
 /// ordering alone: a libc collation is deterministic, so `texteq` is a
 /// byte comparison whatever the collation is.

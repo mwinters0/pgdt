@@ -24,6 +24,7 @@ use pgdt_model::{
 
 use super::partition::plan_partitions;
 use super::segment::{Segment, SegmentEntry};
+use crate::PredicateOp;
 use crate::options::QueryOptions;
 use crate::predicate::{ComparisonNote, ResolvedExpr, resolve_expr};
 use crate::prune::{SortedStop, prune_block};
@@ -458,9 +459,11 @@ pub(in crate::stream) fn query_reads(
 }
 
 /// What `query_options`' unrepresentable tests test each column's text by
-/// ([`unrepresentable_tests`]), and nothing where its filter holds none — or
-/// its refusal, under [`SchemaMode::Strings`], which resolves no declared type
-/// for a test to read (`docs/design/decisions.md`, "D101").
+/// ([`unrepresentable_tests`]), and nothing where its filter holds none — or,
+/// under [`SchemaMode::Strings`], which resolves no declared type, the
+/// refusal of the first term that reads one
+/// ([`PredicateOp::reads_declared_type`];
+/// `docs/design/decisions.md`, "D101", "D107").
 fn query_tests(
     header: &CopyHeader,
     metadata: Option<&DumpMetadata>,
@@ -468,14 +471,19 @@ fn query_tests(
     counts: Option<&[Unrepresentable]>,
     query_options: &QueryOptions,
 ) -> Result<Vec<Option<UnrepresentableRead>>> {
-    let Some(test) = query_options.filter.first_unrepresentable_test() else {
-        return Ok(Vec::new());
-    };
+    let filter = &query_options.filter;
     if query_options.schema_mode == SchemaMode::Strings {
-        return Err(Error::UnrepresentableTestUntyped {
-            column: test.column.clone(),
-            op: test.op.symbol(),
-        });
+        let reads = |op: &PredicateOp| op.reads_declared_type(query_options.semantics);
+        if let Some(term) = filter.first_term(&reads) {
+            return Err(Error::TestNeedsDeclaredType {
+                column: term.column.clone(),
+                op: term.op.symbol(),
+            });
+        }
+        return Ok(Vec::new());
+    }
+    if !filter.tests_unrepresentable() {
+        return Ok(Vec::new());
     }
     let reach = query_options.unrepresentable_reach();
     Ok(unrepresentable_tests(header, metadata, database, counts, reach))

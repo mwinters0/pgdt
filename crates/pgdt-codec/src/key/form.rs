@@ -191,14 +191,24 @@ pub fn accepted_form(kind: &CompareKind) -> String {
 /// would hand the user a spelling that is not a label. Nothing bounds how
 /// many labels a type declares.
 ///
-/// The overflow clause has somewhere to send the reader, in the library's
-/// terms: the type's declaration, which the dump holds and the map records
-/// uncapped (`pgdt info --detail` prints it, `docs/design/decisions.md`,
-/// "D107").
+/// What the cap leaves out is counted by [`unlisted_labels`], so the refusal
+/// says where the rest are — the type's declaration, which the dump holds and
+/// the map records uncapped — and a front end how it prints them
+/// (`docs/design/decisions.md`, "D107").
 const ENUM_LABELS_SHOWN: usize = 12;
 
+/// How many of `kind`'s declared labels [`accepted_form`] leaves unlisted:
+/// zero for every kind but an enum declaring more than [`ENUM_LABELS_SHOWN`].
+pub fn unlisted_labels(kind: &CompareKind) -> usize {
+    match kind {
+        CompareKind::Enum { labels, .. } => labels.len().saturating_sub(ENUM_LABELS_SHOWN),
+        _ => 0,
+    }
+}
+
 /// The enum clause: the declared labels themselves, which are the whole of
-/// what a refused enum literal is missing.
+/// what a refused enum literal is missing, up to [`ENUM_LABELS_SHOWN`] of
+/// them; the refusal says how many more there are ([`unlisted_labels`]).
 ///
 /// Each label is single-quoted with any interior quote doubled — the spelling
 /// the dump's own `CREATE TYPE … AS ENUM (…)` writes and the CLI's `dequote`
@@ -212,12 +222,7 @@ fn enum_accepted_form(labels: &[String]) -> String {
         .map(|label| format!("'{}'", label.replace('\'', "''")))
         .collect::<Vec<_>>()
         .join(", ");
-    match labels.len() - shown {
-        0 => format!("as one of the type's declared labels: {list}"),
-        more => format!(
-            "as one of the type's declared labels: {list}, and {more} more, which its declaration lists"
-        ),
-    }
+    format!("as one of the type's declared labels: {list}")
 }
 
 /// A scale-free `numeric` literal's shape: `numeric_in`'s storage bounds
