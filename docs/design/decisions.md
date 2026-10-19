@@ -245,7 +245,7 @@ max depth, or `{1,2}` beside `{{1,2}}` resolves to a wrong `List`. A table any c
 the data level is censused, and so is every block a query's pass maps: gating on a full scan left
 early blocks uncensused. The metadata level records `None` and, but under a strict parse, splits no field; a typed query re-reads
 such a table for itself, writing nothing, and a `Dump`'s plan refuses it. Rejected: degrading
-to the DDL's `List`; a census-only level a user can reach. Evidence: `statistics-gathering`, profiled.
+to the DDL's `List`; a census-only level a user can reach; the census as a `Table`'s own step, which a `Dump`'s would offer. Evidence: `statistics-gathering`, profiled.
 
 ### D96 The unrepresentable count rides the census, typed by the DDL, in two tiers, under a recorded calendar
 Every census-taking read counts per block and column what the declared type's typed pair (no census) cannot hold, a leaf
@@ -334,11 +334,11 @@ claim with no batch-size figure behind it; the *shipped* chunk as the floor, whi
 readers the announced one seats. Reopens: a floored span measurably slower than an unfloored one. Code: `stream/replay/partition.rs`. Evidence: `parallel-scan-throughput`.
 
 ### D48 Mapping and replay are separate passes, and `splice` owns the seam
-The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is
-spliced by extending the *preceding* span; a start floor on `Builder` made assembly visible in the
-map. A cold query's pass (`Table::settle`) yields its table and no row, stopped by its token or a drop (I1). Cached replay and the
-cold interior split share `worker_count` and `cut`, and differ in what they cut and in the replay
-charging each sub-stream its batch span (D84).
+The map is never behind the rows, so a `ResumeToken` points inside mapped territory. A segment is spliced by extending the
+*preceding* span; a start floor on `Builder` made assembly visible in the map. A cold query's pass (`Table::settle`) yields its
+table and no row, stopped by its token or a drop (I1), taking the extent and schema mode it reads as arguments. Cached replay and the
+cold interior split share `worker_count` and `cut`, differing in what they cut and in the replay charging each sub-stream its batch span
+(D84). Rejected: the pass taking the `QueryOptions` it is planned under, its `Table` planned under others anyway (Strings then Typed refuses, D35); a value for those two alone.
 
 ### D49 One target per query, the early stop conservative, and `ResumeToken` opaque, fingerprinting the query
 A `TableSelector` narrows to one `TableName` before replay or `AmbiguousTable`; `target_settled`
@@ -547,7 +547,7 @@ leader's split would decide; a floor under the coarsening, a constant nothing pr
 
 ### D85 Statistics are billed against the margin, and a block that cannot fit declines
 `statistics_allowance` is what the arrangement leaves under `margin_allowance`, carved after the workers, a count fixed before a
-byte is read; a cache's are known first, the loading pass's `held`, a replay's segments dropping them. The CLI's is `--memory`,
+byte is read; a cache's are known first, the loading pass's `held`; a replay's plan keeps its table's, `pgdt query` billing none (`KD123`). The CLI's is `--memory`,
 else the limit, else half of `MemAvailable` (RT8), an embedder stating none declines nothing (D1). A declined piece declines its
 block, dense group indices expressing no gap, and the account sees a window's pieces, so a decline differs serial and parallel,
 as meant. `finish`'s last close is kept even past it; the next block declines at its first charge. Rejected: a constant bound,

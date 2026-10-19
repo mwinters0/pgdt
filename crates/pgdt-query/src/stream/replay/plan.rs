@@ -675,7 +675,7 @@ pub(super) fn resolve_block(
 /// whose union ([`union_census`]) would read as a table holding no array
 /// deeper than its DDL says (`docs/design/decisions.md`, "D35"). A query that
 /// maps for itself has censused every block before it plans
-/// (`census_metadata_level`); [`SchemaMode::Strings`] reads no census.
+/// ([`Table::settle`](crate::Table::settle)); [`SchemaMode::Strings`] reads no census.
 fn refuse_metadata_level(matches: &[CopyBlock], query_options: &QueryOptions) -> Result<()> {
     if query_options.schema_mode != SchemaMode::Typed {
         return Ok(());

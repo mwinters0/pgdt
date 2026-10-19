@@ -488,7 +488,7 @@ struct BlockReread {
 /// them against the DDL `metadata` states for the block in `database`, handing each to
 /// `observer` where there is one, and answer the census and count:
 /// what a back-fill's read (`Rereads::reread`) and a query's census of a block mapped
-/// at the metadata level (`census_metadata_level`) both read. `None` is
+/// at the metadata level (`pgdt_query::Table::settle`) both read. `None` is
 /// `cancel` stopping it first, and nothing else answers it; a block no
 /// longer ending where the map says is [`Error::CachedBlockChanged`], naming
 /// `cache_path`.

@@ -233,13 +233,9 @@ impl Discovered<'_> {
     /// queried table's statistics: the table the pass settles holds its
     /// blocks, and its plan keeps their statistics for a dynamic filter this
     /// command never states (`pgdt_query::TablePartitions::under`), so its
-    /// readers are carved as if those bytes were free. Billing them would
-    /// need them known before the mapping pass has found them, which carving
-    /// the replay after the pass would answer, its status line moving after
-    /// the pass's. **(c) unowned**; promoted by a reading of a cold `query`'s
-    /// resident set over a table whose statistics are a sizeable part of the
-    /// margin, the fix a choice between that carve and a plan keeping no
-    /// statistics it is not asked to filter under.
+    /// readers are carved as if those bytes were free. Billing them needs them
+    /// known, which only the pass finds; the fix carves the replay after the
+    /// pass, around the settled table's statistics.
     pub(crate) fn resolve_query(
         &self,
         source: &dyn ByteRangeSource,

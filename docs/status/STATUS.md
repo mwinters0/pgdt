@@ -146,19 +146,6 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A cold query's pass takes its extent and its schema mode as arguments**
-  (36.8.4): `Table::settle(opened, &selector, scan, extent, schema_mode,
-  &cancel)`. `ScanExtent` left `QueryOptions` with `database` and `max_rows`,
-  because the plan never read it (cluster C). The schema mode stays on
-  `QueryOptions` and is passed to the pass as well, because the pass censuses
-  a metadata-level table only for a typed query. The call was to prefer one
-  argument more over an options value the plan half-ignores. Reconsidering
-  means one of two shapes. The pass could take the `QueryOptions` it will be
-  planned under, which a pass under `Strings` planned `Typed` could not then
-  disagree with (today that pairing refuses `TableAtMetadataLevel` at the
-  plan). Or a small value for the pass alone could hold the extent and the
-  schema mode. Either rewrites `Table::settle`, `pgdt query` and
-  `tests/common`'s `Cold`.
 - **A cold `pgdt query` now holds its table's statistics through the replay**
   (36.8.4, `KD123`). It plans through `Table::plan`, and the
   `TablePartitions` that returns keeps the matched blocks' statistics for a

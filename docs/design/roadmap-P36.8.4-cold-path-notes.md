@@ -66,8 +66,9 @@ order (`TablePartitions::in_file_order`), and its own merge is gone.
   though every stream is now `'static`. Dropping it touches the adapter's
   signatures and is no part of this row.
 - **No `QueryOptions` field for the extent.** The plan would ignore it, which
-  is cluster C's complaint about the field. Under "Decisions worth another
-  look", with the schema mode the pass and the plan both take.
+  is cluster C's complaint about the field. The pass takes it as an
+  argument, beside the schema mode it reads for the census
+  (`docs/design/decisions.md`, "D48").
 - **Not counted.** No reshape in "What a hot-path slice owes" is this one.
   The batcher's flush test reads its own `max_rows` field in place of the
   options' field.
