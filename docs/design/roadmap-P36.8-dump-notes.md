@@ -24,7 +24,8 @@ operators 36.8.2 ([history, 2026-10-18](../status/history/2026-10-18.md),
 - **`Table<'a>` borrows the `Dump`**, and `Table::plan` hands back the
   `TablePartitions` owning the source and the watch, so its streams are
   `'static` as before. `PgDumpTable` keeps its `TableName` and resolves its
-  `Table` again at each use (`PgDump::table_of`), which clones nothing.
+  `Table` again at each use (`PgDump::table_of`). The resolution clones
+  nothing; each method clones the table's blocks, and a plan the DDL.
 - **A `Table` method takes the options its answer is read under.**
   `summary` and `divergences` resolve the schema under the same options, so
   the semantics and the statistics view can no longer come from a different
@@ -50,8 +51,8 @@ operators 36.8.2 ([history, 2026-10-18](../status/history/2026-10-18.md),
 - **`pgdt info` was not moved onto the `Dump`.** It reports an incomplete
   cache, its completion stated at the top (D67), and a cache with no source
   at all (D61), and a `Dump` holds neither. It opens through
-  `CacheMode::open` already, the first of the two layers. Under STATUS's
-  "Decisions worth another look".
+  `CacheMode::open` already, the first of the two layers
+  (`docs/design/decisions.md`, "D61").
 - **Keeping the free functions until 36.11** was refused. It leaves two ways
   to plan a table, and the adapter was their only production caller, so
   moving it onto a `Dump` here is a field swap in `PgDump` and three call
@@ -60,10 +61,10 @@ operators 36.8.2 ([history, 2026-10-18](../status/history/2026-10-18.md),
   adapter could read why from it, was refused. The adapter reads the `Held`
   before it builds the `Dump`, keeping its wording, and the library's
   refusal stays an `Error`.
-- **A `Table` owning its blocks and metadata** was refused for now. It would
-  clone a table's blocks and the dump's DDL per table the adapter registers,
-  where a borrow clones nothing. Under STATUS's "Decisions worth another
-  look", since 36.8.1 designs what an early-stopped pass yields.
+- **`Table<'a>` borrowing its `Dump` is what landed, and is reversed**: a
+  `Table` owns what it plans over, and an early-stopped pass yields one too
+  ([history, 2026-10-19](../status/history/2026-10-19.md), "The `Dump`'s
+  table owns its blocks; `info` reads the cache").
 
 ## What the next round inherits
 
@@ -72,7 +73,7 @@ operators 36.8.2 ([history, 2026-10-18](../status/history/2026-10-18.md),
   own load and watch; the merge in `pgdt/src/query.rs` remains; the
   `&str` pattern, `QueryOptions.database` and `DumpIndex::blocks_for` remain.
   An early-stopped pass settles one table from a map short of the file's
-  end, which no `Dump` holds, so its shape is that round's to design.
+  end, which no `Dump` holds, and yields the owning `Table`.
 - **36.11 inherits `PgDump` over a `Dump`.** What is left there is the
   session-readying function, `Located` public, the sink at construction and
   `PgDumpTableOptions` folded; the metadata-level pre-check in

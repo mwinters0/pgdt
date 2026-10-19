@@ -584,7 +584,7 @@ Rejected: every value's bounds and the count alone; a set per view per column fr
 ## The CLI
 ### D61 `info` never scans
 The surprise is that a scan happened at all; `parse` scans ahead, a `query` maps only what the cache
-lacks (D48), and `--preamble-only` hangs off `parse`. Rejected: a scanning fallback; `--no-scan`.
+lacks (D48), and `--preamble-only` hangs off `parse`. It reports the cache through `CacheMode::open`, or `OfflineCache` with no source, never a `pgdt_query::Dump`, which holds no partial map, container or envelope and offers only tables. Rejected: a scanning fallback; `--no-scan`; a `Dump` where the cache is complete, a second path for one cache.
 
 ### D62 The save throttle is a ratio, and its gate opens splice too
 A save is skipped unless `K` times the last save's duration has elapsed, which bounds overhead in

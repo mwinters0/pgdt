@@ -218,20 +218,24 @@ the crate that already owns its part.**
   either from a complete open, or by a mapping pass run to the file's end.
   It owns the source, the index and the watch, so they can't come from
   different opens. It answers `tables()` and `databases()`, and `table(…)`
-  resolves one selector into a table. That table gives a schema, a summary
-  and a plan. Completeness, which `table_schema` and `table_summary`
+  resolves one selector into a table. That table owns what it plans over,
+  sharing the source, the watch and the DDL and holding its own blocks, and
+  gives a schema, a summary and a plan
+  ([history, 2026-10-19](../status/history/2026-10-19.md), "The `Dump`'s
+  table owns its blocks; `info` reads the cache"). Completeness, which `table_schema` and `table_summary`
   document today and do not check, becomes a property of the type. D90 then
   reads as "the provider takes a `Dump`".
 - **`datafusion-pgdump`'s `PgDump` is a `Dump` plus its modes and its budget
   holds.** Its open sequence, its database list and its metadata-level
-  pre-check move down. `pgdt info` and `pgdt query` open through the same
-  two layers. A cold `pgdt query` maps first, then plans over the `Dump` the
+  pre-check move down. `pgdt query` opens through the same two layers;
+  `pgdt info`, which reports the cache itself, partial or source-less, and
+  reads no table, opens through the first alone. A cold `pgdt query` maps first, then plans over the `Dump` the
   mapping pass completes, exactly as a warm one does.
 
 **A cold query keeps its early stop** (`ScanExtent::UntilTargetSettled`, the
 default today), since this phase changes no behaviour. Only a pass run to the
 file's end builds a `Dump`. A pass that stops once its target is settled
-yields something that plans that table alone, and 36.8 designs its shape.
+yields the same owning table a `Dump` hands back, for that table alone.
 Either pass is one the caller runs, and so it takes the cancellation (The
 small fixes); the plan and its streams take none.
 
@@ -646,7 +650,7 @@ the concept map; the slice is not bent around the boundary.
 8. **pgdt-query: the `Dump`.** The selector; `Table::plan` with partitions, a
    file-ordered stream and serial resume; `read_table` gone; `max_rows` on
    the stream; filter operators carrying their values; the summary and the
-   divergences as table methods. `pgdt info` and `pgdt query` move onto it,
+   divergences as table methods. `pgdt query` moves onto it,
    and `pgdt`'s merge goes.
 9. **pgdt-query: one record per column.** `ResolvedSchema` reshaped, and
    rendering and `ValueKey` through the record. Closes `KD121`. Counted: `measure.py --count-pair HEAD~1`.

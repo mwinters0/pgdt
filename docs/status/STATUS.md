@@ -107,7 +107,8 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.7** pgdt-mapping: back-fill one call, `backfill_block`, over the arrangement, computing the mask and recording what it read in the block; `StatisticsBackfill`, `bounded_columns` and the re-read's outcome crate-private; `MapRun` hands back the source and the watch beside the index; closes `KD115` ([notes](../design/roadmap-P36.7-backfill-notes.md))
 - [x] **36.7.1** pgdt-mapping: `map_file` takes the arrangement as `backfill_block` does — `read`, `&Arrangement` and the invalid-values mode, three arguments in that order in both — reading its parallelism and statistics allowance out of the one carve; `GatherOptions` gone, `ScanOptions` taken only by the passes that gather nothing; `Arrangement::resolve` its only constructor (spec, "The arrangement") ([notes](../design/roadmap-P36.7.1-mapping-arrangement-notes.md))
 - [x] **36.8** pgdt-query: `Dump`, complete by construction — a complete open (`Dump::opened`) or a mapping pass run to the end (`Dump::mapped`) — answering `tables()`, `databases()` and `table(&TableSelector)`, the selector; a `Table`'s `schema`, `summary`, `divergences` and `plan`, its partitions `TablePartitions`; the free `table_schema`, `table_summary`, `column_divergences` and `TablePartitions::plan` gone; the replay plan reading a `ReadOptions`; `PgDump` over a `Dump` ([notes](../design/roadmap-P36.8-dump-notes.md))
-- [ ] **36.8.1** pgdt-query: the cold path onto the `Dump` — what an early-stopped pass yields; a file-ordered stream and serial resume on the plan; `read_table` gone; `max_rows` on the stream; the selector in place of the `&str` pattern and `QueryOptions.database`, `blocks_for` gone; `pgdt query` and the stream entry points opening through `CacheMode::open`, `pgdt`'s merge gone; `claim`, `CacheMode::load`, `CacheLoad` and `pgdt`'s `open_for_scan` gone
+- [ ] **36.8.3** pgdt-query: a `Table` owning what it plans over — the source, the watch and the DDL shared, its own blocks held, built by `Dump::table`; `schema`, `summary` and `plan` reading those blocks; `PgDumpTable` holding a `Table`, `PgDump::table_of` gone ([history, 2026-10-19](history/2026-10-19.md), "The `Dump`'s table owns its blocks; `info` reads the cache")
+- [ ] **36.8.1** pgdt-query: the cold path onto the `Dump` — an early-stopped pass yielding the owning `Table` for the table it settled, `MappedTable` gone; a file-ordered stream and serial resume on the plan; `read_table` gone; `max_rows` on the stream; the selector in place of the `&str` pattern and `QueryOptions.database`, `blocks_for` gone; `pgdt query` and the stream entry points opening through `CacheMode::open`, `pgdt`'s merge gone; `claim`, `CacheMode::load`, `CacheLoad` and `pgdt`'s `open_for_scan` gone
 - [ ] **36.8.2** pgdt-query: a filter term's operator carrying its value (spec, "The small fixes")
 - [ ] **36.9** pgdt-query: one record per column in `ResolvedSchema`, rendering and `ValueKey` through it; closes `KD121`; counted by `measure.py --count-pair HEAD~1`
 - [ ] **36.10** Errors in library terms, `pgdt`'s spelling layer pinned by a test, the cache's "Not in one place" line struck; closes `KD92`
@@ -143,26 +144,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **36.8: `pgdt info` stays on `CacheMode::open`, not a `Dump`.** The row had
-  `pgdt info` move onto the `Dump`, and the spec's "The opened dump" has it
-  open "through the same two layers". The call: a `Dump` is complete by
-  construction, and `info` reports an incomplete cache with its completion
-  stated once (D67) and a cache with no source (D61), neither of which a
-  `Dump` holds; it already opens through the first layer, and reads nothing
-  a `Table` offers. Moving it would mean a second path for a complete cache
-  beside the one for every other. Reconsidering means either `info` building
-  a `Dump` where the cache is complete and reporting from it, or a `Dump`
-  that admits a partial map, which reverses "complete by construction".
-- **36.8: `Table<'a>` borrows its `Dump`.** `Dump::table` hands back a
-  `Table` borrowing the dump, and `Table::plan` the `TablePartitions` that
-  owns the source and the watch. The call: `PgDumpTable` holds an
-  `Arc<PgDump>` and resolves its `Table` again at each use, cloning nothing,
-  where an owning `Table` would clone a table's blocks and the dump's DDL per
-  registered table. It bears on 36.8.1: an early-stopped cold pass settles
-  one table from a map short of the file's end, which no `Dump` holds, so it
-  cannot hand back a borrowing `Table`, and needs a shape of its own or a
-  `Table` that owns what it plans over. Reconsidering means an owning
-  `Table` (an `Arc` on the DDL, the blocks cloned) that both the `Dump` and
-  the early-stopped pass build.
-

@@ -118,6 +118,7 @@ pub(crate) async fn run(args: InfoArgs) -> Result<()> {
     // source that moved, so it goes out through the classifier the
     // scanning commands use; the selection means here what it means on
     // the commands that scan (`docs/design/decisions.md`, "D21").
+    // It reports the cache itself, never a `Dump` (`docs/design/decisions.md`, "D61").
     let Opened { cache, .. } = match mode.open(&origin).await {
         Ok(opened) => opened,
         Err(pgdt_core::Error::CacheUnusable { unusable, .. }) => {
