@@ -308,8 +308,8 @@ impl ResolvedTerm {
     }
 
     /// The operator this term applies.
-    pub(crate) fn op(&self) -> PredicateOp {
-        self.op
+    pub(crate) fn op(&self) -> &PredicateOp {
+        &self.op
     }
 
     /// The column this term reads, numbered by the block's unprojected
@@ -364,9 +364,9 @@ pub(super) fn resolve_term(
     header_offset: u64,
     semantics: ComparisonSemantics,
 ) -> Result<ResolvedTerm> {
-    if predicate.op.takes_no_value() {
+    let Some(text) = predicate.op.value() else {
         return Ok(ResolvedTerm {
-            op: predicate.op,
+            op: predicate.op.clone(),
             index,
             compared: None,
             unrepresentable: None,
@@ -374,7 +374,7 @@ pub(super) fn resolve_term(
             invalid: PostgresInvalidValues::Default,
             not_null: not_null_column(resolved, index, &predicate.column),
         });
-    }
+    };
     let ordering = predicate.op.is_ordering();
     let refuse = |reason: &str| Error::UnorderedPredicateColumn {
         header_offset,
@@ -390,12 +390,6 @@ pub(super) fn resolve_term(
         reason: NESTED_IN_DATAFUSION.to_string(),
     };
     let declared_type = resolved.notes[index].declared.clone().unwrap_or_default();
-    // `value` is `Some` for every operator taking one. An
-    // embedder that builds a `Gt` term without one is read as having stated
-    // the empty string: a fault wherever the kind's decoder rejects it, and
-    // silently a comparison against `""` for the text kinds, which refuse no
-    // literal.
-    let text = predicate.value.as_deref().unwrap_or_default();
     // `kind` is what knows which grammar was applied, so the refusal is built
     // where it is in scope.
     let refuse_literal = |kind: &CompareKind| Error::PredicateValueDecode {
@@ -534,7 +528,7 @@ pub(super) fn resolve_term(
     // PostgreSQL is the column's (`docs/design/decisions.md`, "D40").
     let divergences = if arrow { Vec::new() } else { announced(resolved, index, ordering) };
     Ok(ResolvedTerm {
-        op: predicate.op,
+        op: predicate.op.clone(),
         index,
         unrepresentable: None,
         tested: None,
@@ -692,11 +686,8 @@ pub(super) fn resolve_membership(
         .iter()
         .flatten()
         .map(|value| {
-            let equal = Predicate {
-                column: membership.column.clone(),
-                op: PredicateOp::Eq,
-                value: Some(value.clone()),
-            };
+            let equal =
+                Predicate { column: membership.column.clone(), op: PredicateOp::Eq(value.clone()) };
             resolve_term(&equal, index, resolved, header_offset, semantics).map_err(named_in)
         })
         .collect::<Result<Vec<_>>>()?;

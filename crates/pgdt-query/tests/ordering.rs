@@ -39,8 +39,9 @@ async fn query(table: &str, options: QueryOptions) -> pgdt_core::Result<TableStr
     query_in(&types_fixture(16, "default"), table, options).await
 }
 
-fn term(column: &str, op: PredicateOp, value: &str) -> Predicate {
-    Predicate { column: column.into(), op, value: Some(value.into()) }
+/// `column <op> value`, `op` the comparing variant's constructor.
+fn term(column: &str, op: fn(String) -> PredicateOp, value: &str) -> Predicate {
+    Predicate { column: column.into(), op: op(value.into()) }
 }
 
 /// Drain `table` from the 16 `types` fixture under `options`, returning the
@@ -399,8 +400,10 @@ async fn jsonb_announces_its_string_leaves() {
 #[tokio::test]
 async fn a_null_survives_no_ordering_operator() {
     for op in [PredicateOp::Lt, PredicateOp::Le, PredicateOp::Gt, PredicateOp::Ge] {
-        let rows = kept("public.t_int", "v_bigint", vec![term("v_bigint", op, "0")]).await;
-        assert!(!rows.contains(&None), "a NULL survived {}", op.symbol());
+        let leaf = term("v_bigint", op, "0");
+        let symbol = leaf.op.symbol();
+        let rows = kept("public.t_int", "v_bigint", vec![leaf]).await;
+        assert!(!rows.contains(&None), "a NULL survived {symbol}");
     }
 }
 
@@ -740,11 +743,12 @@ async fn a_range_declaring_a_canonical_function_refuses_every_operator() {
         query_in(&path, "public.t_canon", options).await.map(drop).unwrap_err()
     };
     for op in [PredicateOp::Lt, PredicateOp::Ge, PredicateOp::Eq, PredicateOp::Ne] {
+        let symbol = term("v_span", op, "[1,10]").op.symbol();
         let err = refusal(op, "[1,10]").await;
         let Error::UncomparablePredicateColumn { reason, .. } = &err else {
-            panic!("{op:?}: {err:?}")
+            panic!("{symbol}: {err:?}")
         };
-        assert!(reason.contains("public.canonrange_canonical"), "{op:?}: {reason}");
+        assert!(reason.contains("public.canonrange_canonical"), "{symbol}: {reason}");
         // The whole message, word for word — `docs/manual/type-handling.md`
         // prints it for a user to recognise, so the wording is a contract
         // and not an implementation detail. Only the offset differs there,
@@ -759,18 +763,14 @@ async fn a_range_declaring_a_canonical_function_refuses_every_operator() {
                  build cannot run, so two spellings the server calls one value would be two \
                  values here; no operator can be answered for this column, `=` and `!=` \
                  included",
-                op.symbol()
+                symbol
             )
         );
     }
     // `IS NOT NULL` reads no value and consults no plan, so the row still
     // comes back — the refusal is of comparisons, not of the column.
     let options = QueryOptions {
-        filter: Expr::all([Predicate {
-            column: "v_span".into(),
-            op: PredicateOp::IsNotNull,
-            value: None,
-        }]),
+        filter: Expr::all([Predicate { column: "v_span".into(), op: PredicateOp::IsNotNull }]),
         projection: Some(vec!["id".to_string()]),
         ..Default::default()
     };
@@ -842,7 +842,7 @@ async fn the_typed_mode_compares_a_special_value_as_null() {
         kept_ids("public.t_numeric", vec![term("v_small", PredicateOp::Gt, "0.00")]).await,
         []
     );
-    let is_null = Predicate { column: "v_date".into(), op: PredicateOp::IsNull, value: None };
+    let is_null = Predicate { column: "v_date".into(), op: PredicateOp::IsNull };
     assert_eq!(
         kept_ids("public.t_date", vec![is_null]).await,
         [Some("1".to_string()), Some("2".to_string()), Some("7".to_string())]

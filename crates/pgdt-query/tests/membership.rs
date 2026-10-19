@@ -225,11 +225,9 @@ fn pair(column: &str, values: Vec<Option<String>>) -> (Expr, Expr) {
     let disjunction = values
         .iter()
         .map(|value| match value {
-            Some(v) => Expr::Term(Predicate {
-                column: column.to_string(),
-                op: PredicateOp::Eq,
-                value: Some(v.clone()),
-            }),
+            Some(v) => {
+                Expr::Term(Predicate { column: column.to_string(), op: PredicateOp::Eq(v.clone()) })
+            }
             None => Expr::In(Membership { column: column.to_string(), values: vec![None] }),
         })
         .collect();

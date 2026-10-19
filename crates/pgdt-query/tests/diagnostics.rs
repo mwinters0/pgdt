@@ -64,8 +64,7 @@ async fn one_sink_drains_all_three_channels() {
         QueryOptions {
             filter: Expr::all([Predicate {
                 column: "v_box_domain".into(),
-                op: PredicateOp::Eq,
-                value: Some("(1,1),(0,0)".into()),
+                op: PredicateOp::Eq("(1,1),(0,0)".into()),
             }]),
             projection: Some(vec!["v_box_domain".to_string()]),
             ..Default::default()

@@ -20,9 +20,8 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
 
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(two_blocks(dir.path())).unwrap();
-    let not_null = |column: &str| {
-        Expr::all([Predicate { column: column.into(), op: PredicateOp::IsNotNull, value: None }])
-    };
+    let not_null =
+        |column: &str| Expr::all([Predicate { column: column.into(), op: PredicateOp::IsNotNull }]);
     let query_options = QueryOptions {
         filter: not_null("a"),
         projection: Some(vec!["a".into()]),

@@ -14,7 +14,7 @@ use datafusion::logical_expr::{Between, BinaryExpr, Expr, Operator};
 use pgdt_codec::ResolvedSchema;
 use pgdt_query::{Membership, Predicate, PredicateOp};
 
-use super::{boolean_term, column_index, compared, is_float, member, null_term};
+use super::{boolean_term, boolean_text, column_index, compared, is_float, member, null_term};
 use crate::unrepresentable::UNREPRESENTABLE_FUNCTION;
 
 /// `filter` as the library's tree over `table`'s columns, or `None` where some
@@ -44,19 +44,19 @@ pub(crate) fn translate(filter: &Expr, table: &ResolvedSchema) -> Option<pgdt_qu
         Expr::Not(inner) => L::Not(Box::new(translate(inner, table)?)),
         Expr::IsNull(inner) => L::Term(null_test(inner, PredicateOp::IsNull, table)?),
         Expr::IsNotNull(inner) => L::Term(null_test(inner, PredicateOp::IsNotNull, table)?),
-        Expr::IsUnknown(inner) => L::Term(boolean(inner, PredicateOp::IsNull, None, table)?),
-        Expr::IsNotUnknown(inner) => L::Term(boolean(inner, PredicateOp::IsNotNull, None, table)?),
+        Expr::IsUnknown(inner) => L::Term(boolean(inner, PredicateOp::IsNull, table)?),
+        Expr::IsNotUnknown(inner) => L::Term(boolean(inner, PredicateOp::IsNotNull, table)?),
         Expr::IsTrue(inner) => {
-            L::Term(boolean(inner, PredicateOp::IsNotDistinctFrom, Some(true), table)?)
+            L::Term(boolean(inner, PredicateOp::IsNotDistinctFrom(boolean_text(true)), table)?)
         }
         Expr::IsFalse(inner) => {
-            L::Term(boolean(inner, PredicateOp::IsNotDistinctFrom, Some(false), table)?)
+            L::Term(boolean(inner, PredicateOp::IsNotDistinctFrom(boolean_text(false)), table)?)
         }
         Expr::IsNotTrue(inner) => {
-            L::Term(boolean(inner, PredicateOp::IsDistinctFrom, Some(true), table)?)
+            L::Term(boolean(inner, PredicateOp::IsDistinctFrom(boolean_text(true)), table)?)
         }
         Expr::IsNotFalse(inner) => {
-            L::Term(boolean(inner, PredicateOp::IsDistinctFrom, Some(false), table)?)
+            L::Term(boolean(inner, PredicateOp::IsDistinctFrom(boolean_text(false)), table)?)
         }
         Expr::ScalarFunction(call) if call.name() == UNREPRESENTABLE_FUNCTION => {
             let [Expr::Column(column)] = call.args.as_slice() else { return None };
@@ -65,7 +65,7 @@ pub(crate) fn translate(filter: &Expr, table: &ResolvedSchema) -> Option<pgdt_qu
         }
         // A boolean column as the whole predicate is its own truth: `flag` is
         // `flag = true` in three values, a NULL unknown under both.
-        Expr::Column(_) => L::Term(boolean(filter, PredicateOp::Eq, Some(true), table)?),
+        Expr::Column(_) => L::Term(boolean(filter, PredicateOp::Eq(boolean_text(true)), table)?),
         Expr::Between(Between { expr, negated, low, high }) => {
             let both = L::And(vec![
                 L::Term(comparison(expr, Operator::GtEq, low, table)?),
@@ -117,13 +117,7 @@ fn null_test(column: &Expr, op: PredicateOp, table: &ResolvedSchema) -> Option<P
     Some(null_term(table.schema.index_of(&column.name).ok()?, op, table))
 }
 
-/// A term on a `Boolean` column of `table` against `value`, spelled as the
-/// file spells a boolean.
-fn boolean(
-    column: &Expr,
-    op: PredicateOp,
-    value: Option<bool>,
-    table: &ResolvedSchema,
-) -> Option<Predicate> {
-    boolean_term(column_index(column, table)?, op, value, table)
+/// `op` on a `Boolean` column of `table`.
+fn boolean(column: &Expr, op: PredicateOp, table: &ResolvedSchema) -> Option<Predicate> {
+    boolean_term(column_index(column, table)?, op, table)
 }

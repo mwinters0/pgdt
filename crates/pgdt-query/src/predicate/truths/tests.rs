@@ -100,8 +100,8 @@ fn truth_sets_combine_as_their_members_do() {
 #[test]
 fn a_group_is_answered_from_its_statistics() {
     use Truth::{False, True, Unknown};
-    let term = |declared: &str, op, literal: Option<&str>| {
-        let p = Predicate { column: "v".into(), op, value: literal.map(str::to_string) };
+    let term = |declared: &str, op: PredicateOp| {
+        let p = Predicate { column: "v".into(), op };
         ResolvedExpr::Term(
             resolve_term(&p, 0, &one_column(declared, DataType::Utf8View), 0).unwrap(),
         )
@@ -118,7 +118,7 @@ fn a_group_is_answered_from_its_statistics() {
         bounds: None,
         dictionary: Some(entries.iter().map(|e| e.to_string()).collect()),
     };
-    let lt5 = term("integer", PredicateOp::Lt, Some("5"));
+    let lt5 = term("integer", PredicateOp::Lt("5".into()));
     let not_lt5 = ResolvedExpr::Not(Box::new(lt5.clone()));
     let cases: Vec<(&str, &ResolvedExpr, Group, TruthSet)> = vec![
         ("above the literal", &lt5, bounded("6", "9", 0), sets(&[False])),
@@ -140,13 +140,13 @@ fn a_group_is_answered_from_its_statistics() {
             sets(&[Unknown]),
         ),
     ];
-    let eq5 = term("integer", PredicateOp::Eq, Some("5"));
-    let ne5 = term("integer", PredicateOp::Ne, Some("5"));
-    let distinct = term("integer", PredicateOp::IsDistinctFrom, Some("5"));
-    let is_null = term("integer", PredicateOp::IsNull, None);
-    let decimal = term("numeric", PredicateOp::Eq, Some("1.5"));
-    let unknown_collation_lt = term("text", PredicateOp::Lt, Some("b"));
-    let unknown_collation_eq = term("text", PredicateOp::Eq, Some("b"));
+    let eq5 = term("integer", PredicateOp::Eq("5".into()));
+    let ne5 = term("integer", PredicateOp::Ne("5".into()));
+    let distinct = term("integer", PredicateOp::IsDistinctFrom("5".into()));
+    let is_null = term("integer", PredicateOp::IsNull);
+    let decimal = term("numeric", PredicateOp::Eq("1.5".into()));
+    let unknown_collation_lt = term("text", PredicateOp::Lt("b".into()));
+    let unknown_collation_eq = term("text", PredicateOp::Eq("b".into()));
     let more: Vec<(&str, &ResolvedExpr, Group, TruthSet)> = vec![
         ("= outside the bounds", &eq5, bounded("6", "9", 0), sets(&[False])),
         // Bounds equal to the literal say nothing about spellings.

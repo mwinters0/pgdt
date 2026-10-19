@@ -3,10 +3,14 @@
 use anyhow::Result;
 use pgdt_query::{Expr, Membership, Predicate, PredicateOp};
 
+/// A comparing operator before its value is read: the [`PredicateOp`]
+/// variant it spells, as the constructor that takes the value.
+pub(super) type Comparing = fn(String) -> PredicateOp;
+
 /// The comparison spellings, in the order they are tried **at one position**
 /// — longest first, so `>=` is never read as `>` followed by a stray `=`
 /// (`docs/design/decisions.md`, "D60").
-const FILTER_OPS: [(&str, PredicateOp); 6] = [
+const FILTER_OPS: [(&str, Comparing); 6] = [
     ("!=", PredicateOp::Ne),
     (">=", PredicateOp::Ge),
     ("<=", PredicateOp::Le),
@@ -39,12 +43,12 @@ fn skip_spaces(bytes: &[u8], i: usize) -> Option<usize> {
 /// **Whitespace is required on both sides of the phrase**, so a column named
 /// `is distinct from` is still askable as `is distinct from=x`. Any run of
 /// whitespace separates the words, as in SQL, and the case is free.
-fn distinct_from_at(bytes: &[u8], i: usize) -> Option<(usize, PredicateOp)> {
+fn distinct_from_at(bytes: &[u8], i: usize) -> Option<(usize, Comparing)> {
     if i == 0 || !bytes[i - 1].is_ascii_whitespace() {
         return None;
     }
     let mut j = skip_spaces(bytes, word_at(bytes, i, "is")?)?;
-    let op = match word_at(bytes, j, "not") {
+    let op: Comparing = match word_at(bytes, j, "not") {
         Some(after) => {
             j = skip_spaces(bytes, after)?;
             PredicateOp::IsNotDistinctFrom
@@ -77,9 +81,9 @@ fn in_at(bytes: &[u8], i: usize) -> Option<(usize, TermOp)> {
 }
 
 /// A term's operator: one comparison, or `IN` before a list.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 pub(super) enum TermOp {
-    Compare(PredicateOp),
+    Compare(Comparing),
     In,
 }
 
@@ -339,8 +343,7 @@ pub(super) fn parse_filter(spec: &str) -> Result<Expr> {
     match split_filter_op(spec) {
         FilterSplit::Op(column, TermOp::Compare(op), value) => Ok(Expr::Term(Predicate {
             column: filter_part(column, "column name", spec)?,
-            op,
-            value: Some(filter_part(value, "value", spec)?),
+            op: op(filter_part(value, "value", spec)?),
         })),
         FilterSplit::Op(column, TermOp::In, list) => Ok(Expr::In(Membership {
             column: filter_part(column, "column name", spec)?,
@@ -359,7 +362,6 @@ pub(super) fn parse_filter(spec: &str) -> Result<Expr> {
                     return Ok(Expr::Term(Predicate {
                         column: filter_part(column, "column name", spec)?,
                         op,
-                        value: None,
                     }));
                 }
             }

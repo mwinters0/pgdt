@@ -593,8 +593,8 @@ async fn a_scale_past_the_precision_or_arrows_reach_reads_every_value() {
     }
     assert_eq!(blocks, 1);
 
-    let against_zero = |column: &str, op| QueryOptions {
-        filter: Expr::all([Predicate { column: column.into(), op, value: Some("0".into()) }]),
+    let against_zero = |column: &str, op: fn(String) -> PredicateOp| QueryOptions {
+        filter: Expr::all([Predicate { column: column.into(), op: op("0".into()) }]),
         projection: Some(vec!["id".into()]),
         ..Default::default()
     };
@@ -604,11 +604,13 @@ async fn a_scale_past_the_precision_or_arrows_reach_reads_every_value() {
         ("v1_200", "1", "4", "2"),
         ("v2_m129", "1", "4", "2"),
     ] {
-        for (op, id) in
-            [(PredicateOp::Gt, above), (PredicateOp::Lt, below), (PredicateOp::Eq, zero)]
-        {
+        for (op, id) in [
+            (PredicateOp::Gt as fn(String) -> PredicateOp, above),
+            (PredicateOp::Lt, below),
+            (PredicateOp::Eq, zero),
+        ] {
             let (kept, _) = try_rows_in(&path, "public.t", against_zero(column, op)).await.unwrap();
-            assert_eq!(kept, [vec![Some(id.to_string())]], "{column} {op:?} 0");
+            assert_eq!(kept, [vec![Some(id.to_string())]], "{column} {:?}", op("0".into()));
         }
     }
 }
@@ -684,11 +686,7 @@ async fn a_negative_scale_zero_reads_as_zero_in_every_mode() {
     assert_eq!(blocks, 1);
 
     let zero = |column: &str| QueryOptions {
-        filter: Expr::all([Predicate {
-            column: column.into(),
-            op: PredicateOp::Eq,
-            value: Some("0".into()),
-        }]),
+        filter: Expr::all([Predicate { column: column.into(), op: PredicateOp::Eq("0".into()) }]),
         projection: Some(vec!["id".into()]),
         ..Default::default()
     };
@@ -747,13 +745,13 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
         stored.iter().map(|row| row.iter().map(|v| Some(v.to_string())).collect()).collect();
     assert_eq!(typed, stored);
 
-    let kept = |column: &str, op, value: &str| QueryOptions {
-        filter: Expr::all([Predicate { column: column.into(), op, value: Some(value.into()) }]),
+    let kept = |column: &str, op: fn(String) -> PredicateOp, value: &str| QueryOptions {
+        filter: Expr::all([Predicate { column: column.into(), op: op(value.into()) }]),
         projection: Some(vec!["id".into()]),
         ..Default::default()
     };
     for (column, op, value, ids) in [
-        ("v100_2", PredicateOp::Eq, "1.01", &["1"][..]),
+        ("v100_2", PredicateOp::Eq as fn(String) -> PredicateOp, "1.01", &["1"][..]),
         ("v100_2", PredicateOp::Lt, "0", &["3"]),
         ("v100_2", PredicateOp::Eq, "123.44", &["2"]),
         ("v100_2", PredicateOp::Gt, "1.005", &["1", "2"]),
@@ -764,7 +762,7 @@ async fn a_numeric_field_is_rounded_to_its_scale_and_refused_past_its_precision(
         let (rows, _) = try_rows_in(&path, "public.t", kept(column, op, value)).await.unwrap();
         let ids: Vec<Vec<Option<String>>> =
             ids.iter().map(|id| vec![Some(id.to_string())]).collect();
-        assert_eq!(rows, ids, "{column} {op:?} {value}");
+        assert_eq!(rows, ids, "{column} {:?}", op(value.into()));
     }
 
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
@@ -954,11 +952,7 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
             other => panic!("{declared} `{field}`: expected the read to refuse it, got {other:?}"),
         }
         let ordered = QueryOptions {
-            filter: Expr::all([Predicate {
-                column: "v".into(),
-                op: PredicateOp::Ge,
-                value: Some("a".into()),
-            }]),
+            filter: Expr::all([Predicate { column: "v".into(), op: PredicateOp::Ge("a".into()) }]),
             projection: Some(vec!["id".into()]),
             ..Default::default()
         };
@@ -1021,16 +1015,18 @@ async fn a_character_field_past_its_length_is_refused_wherever_it_is_read() {
 
     // A literal past the length is read, in either semantics of order.
     let path = char_typmod_dump(dir.path(), "character varying(3)", "abc");
-    for (op, ids) in [(PredicateOp::Eq, &[][..]), (PredicateOp::Lt, &["2"][..])] {
+    for (op, ids) in
+        [(PredicateOp::Eq as fn(String) -> PredicateOp, &[][..]), (PredicateOp::Lt, &["2"][..])]
+    {
         let filtered = QueryOptions {
-            filter: Expr::all([Predicate { column: "v".into(), op, value: Some("abcdef".into()) }]),
+            filter: Expr::all([Predicate { column: "v".into(), op: op("abcdef".into()) }]),
             projection: Some(vec!["id".into()]),
             ..Default::default()
         };
         let rows = read(path.clone(), filtered).await.unwrap();
         let ids: Vec<Vec<Option<String>>> =
             ids.iter().map(|id| vec![Some(id.to_string())]).collect();
-        assert_eq!(rows, ids, "{op:?}");
+        assert_eq!(rows, ids, "{:?}", op("abcdef".into()));
     }
 }
 
@@ -1220,11 +1216,7 @@ async fn a_null_in_a_not_null_column_is_refused_wherever_it_is_read() {
             other => panic!("{ddl}: expected the read to refuse the NULL, got {other:?}"),
         }
         let filtered = QueryOptions {
-            filter: Expr::all([Predicate {
-                column: "v".into(),
-                op: PredicateOp::IsNotNull,
-                value: None,
-            }]),
+            filter: Expr::all([Predicate { column: "v".into(), op: PredicateOp::IsNotNull }]),
             projection: Some(vec!["id".into()]),
             ..Default::default()
         };
@@ -1360,8 +1352,8 @@ async fn a_null_beneath_a_not_null_domain_is_refused_wherever_it_is_read() {
     };
     let both = || Some(vec!["id".to_string(), "v".to_string()]);
     let strict = PostgresInvalidValues::Strict;
-    let term = |op, value: &str| QueryOptions {
-        filter: Expr::Term(Predicate { column: "v".into(), op, value: Some(value.into()) }),
+    let term = |op: fn(String) -> PredicateOp, value: &str| QueryOptions {
+        filter: Expr::Term(Predicate { column: "v".into(), op: op(value.into()) }),
         projection: Some(vec!["id".into()]),
         ..Default::default()
     };
@@ -1580,8 +1572,8 @@ async fn a_float_past_its_range_is_read_as_the_largest_only_when_told_to_ignore_
         postgres_invalid_values: invalid,
         ..Default::default()
     };
-    let term = |op, value: &str| {
-        Expr::Term(Predicate { column: "v_double".into(), op, value: Some(value.into()) })
+    let term = |op: fn(String) -> PredicateOp, value: &str| {
+        Expr::Term(Predicate { column: "v_double".into(), op: op(value.into()) })
     };
     let row = |id: &str, v: &str| vec![Some(id.to_string()), Some(v.to_string())];
     let (largest, lowest) =
@@ -1681,8 +1673,8 @@ async fn an_escape_output_dump_reads_and_filters_as_its_hex_twin() {
         let escaped = spelled(rows(&escape, table, SchemaMode::Strings).await);
         assert_ne!(literals, escaped, "{version}: the fixture holds the escape form");
         literals.extend(escaped);
-        let term = |op, value: &str| {
-            Expr::Term(Predicate { column: "v_bytea".into(), op, value: Some(value.into()) })
+        let term = |op: fn(String) -> PredicateOp, value: &str| {
+            Expr::Term(Predicate { column: "v_bytea".into(), op: op(value.into()) })
         };
         let mut filters: Vec<Expr> = literals
             .iter()
@@ -1698,7 +1690,7 @@ async fn an_escape_output_dump_reads_and_filters_as_its_hex_twin() {
         for filter in &filters {
             let want = kept(&hex, filter).await;
             assert_eq!(kept(&escape, filter).await, want, "{version}: {filter:?}");
-            if matches!(filter, Expr::Term(Predicate { op: PredicateOp::Eq, .. })) {
+            if matches!(filter, Expr::Term(Predicate { op: PredicateOp::Eq(_), .. })) {
                 matched += want.len();
             }
         }

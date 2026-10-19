@@ -405,7 +405,7 @@ mod tests {
                 // one does not, so the rendering reads the way the term was
                 // written.
                 let symbol = term.op.symbol();
-                match &term.value {
+                match term.op.value() {
                     Some(value) if symbol.starts_with(|c: char| c.is_ascii_alphabetic()) => {
                         format!("{} {symbol} {value}", term.column)
                     }
@@ -702,11 +702,14 @@ mod tests {
         let ops: Vec<PredicateOp> = children
             .iter()
             .map(|child| match child {
-                Expr::Term(term) => term.op,
+                Expr::Term(term) => term.op.clone(),
                 other => panic!("a term, got {}", show(other)),
             })
             .collect();
-        assert_eq!(ops, [PredicateOp::IsDistinctFrom, PredicateOp::IsNotDistinctFrom]);
+        assert_eq!(
+            ops,
+            [PredicateOp::IsDistinctFrom("1".into()), PredicateOp::IsNotDistinctFrom("2".into())]
+        );
     }
 
     /// **An `IN` list is the term's value, not a group**: its parens, and a

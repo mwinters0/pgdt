@@ -1,9 +1,9 @@
 use super::*;
 
 /// One parsed comparison term, or the message it was refused with.
-fn filter(spec: &str) -> Result<(String, PredicateOp, Option<String>), String> {
+fn filter(spec: &str) -> Result<(String, PredicateOp), String> {
     match parse_filter(spec) {
-        Ok(Expr::Term(p)) => Ok((p.column, p.op, p.value)),
+        Ok(Expr::Term(p)) => Ok((p.column, p.op)),
         Ok(other) => panic!("`{spec}` should be a comparison, parsed as {other:?}"),
         Err(e) => Err(e.to_string()),
     }
@@ -45,7 +45,7 @@ fn in_reads_a_list_of_values_as_equality_reads_one() {
     // The earliest operator wins: an `=` before the word keeps the term
     // a comparison, and the word needs whitespace before it and a paren
     // after it to be one.
-    assert_eq!(ok("note=x in (y)"), ("note".into(), PredicateOp::Eq, Some("x in (y)".into())));
+    assert_eq!(ok("note=x in (y)"), ("note".into(), PredicateOp::Eq("x in (y)".into())));
     assert!(err("tin (y)").contains("--filter must be"));
     assert!(err("x in y").contains("--filter must be"));
     for (spec, says) in [
@@ -65,7 +65,7 @@ fn in_reads_a_list_of_values_as_equality_reads_one() {
 }
 
 /// `column`, `op` and `value` of a term that must parse.
-fn ok(spec: &str) -> (String, PredicateOp, Option<String>) {
+fn ok(spec: &str) -> (String, PredicateOp) {
     filter(spec).unwrap_or_else(|e| panic!("`{spec}` should parse: {e}"))
 }
 
@@ -81,9 +81,9 @@ fn err(spec: &str) -> String {
 /// quote to strip.
 #[test]
 fn a_bare_term_parses_as_it_reads() {
-    assert_eq!(ok("name=alpha"), ("name".into(), PredicateOp::Eq, Some("alpha".into())));
-    assert_eq!(ok("v>=5"), ("v".into(), PredicateOp::Ge, Some("5".into())));
-    assert_eq!(ok("v!=5"), ("v".into(), PredicateOp::Ne, Some("5".into())));
+    assert_eq!(ok("name=alpha"), ("name".into(), PredicateOp::Eq("alpha".into())));
+    assert_eq!(ok("v>=5"), ("v".into(), PredicateOp::Ge("5".into())));
+    assert_eq!(ok("v!=5"), ("v".into(), PredicateOp::Ne("5".into())));
 }
 
 /// Whitespace outside quotes is not data, on **both** sides of the
@@ -91,8 +91,8 @@ fn a_bare_term_parses_as_it_reads() {
 /// silently on a text one.
 #[test]
 fn whitespace_outside_quotes_is_trimmed_on_both_sides() {
-    assert_eq!(ok(" name = alpha "), ("name".into(), PredicateOp::Eq, Some("alpha".into())));
-    assert_eq!(ok("v >= 5"), ("v".into(), PredicateOp::Ge, Some("5".into())));
+    assert_eq!(ok(" name = alpha "), ("name".into(), PredicateOp::Eq("alpha".into())));
+    assert_eq!(ok("v >= 5"), ("v".into(), PredicateOp::Ge("5".into())));
 }
 
 /// Whitespace is `str::trim`'s, not ASCII space's, so a non-breaking
@@ -101,7 +101,7 @@ fn whitespace_outside_quotes_is_trimmed_on_both_sides() {
 fn trimming_is_unicode_whitespace() {
     assert_eq!(
         ok("name\u{a0}=\u{a0}alpha\u{a0}"),
-        ("name".into(), PredicateOp::Eq, Some("alpha".into()))
+        ("name".into(), PredicateOp::Eq("alpha".into()))
     );
 }
 
@@ -110,16 +110,16 @@ fn trimming_is_unicode_whitespace() {
 /// quoted spelling is there for anyone who meant the spaces.
 #[test]
 fn an_all_whitespace_value_collapses_to_empty() {
-    assert_eq!(ok("name=   "), ("name".into(), PredicateOp::Eq, Some(String::new())));
+    assert_eq!(ok("name=   "), ("name".into(), PredicateOp::Eq(String::new())));
 }
 
 /// A quoted value is taken exactly as written, which is what keeps a
 /// space-padded `char(n)` value askable from the command line.
 #[test]
 fn a_quoted_value_is_taken_as_written() {
-    assert_eq!(ok(r#"name = " x""#), ("name".into(), PredicateOp::Eq, Some(" x".into())));
-    assert_eq!(ok("name = 'x '"), ("name".into(), PredicateOp::Eq, Some("x ".into())));
-    assert_eq!(ok("name=''"), ("name".into(), PredicateOp::Eq, Some(String::new())));
+    assert_eq!(ok(r#"name = " x""#), ("name".into(), PredicateOp::Eq(" x".into())));
+    assert_eq!(ok("name = 'x '"), ("name".into(), PredicateOp::Eq("x ".into())));
+    assert_eq!(ok("name=''"), ("name".into(), PredicateOp::Eq(String::new())));
 }
 
 /// Both quote characters open a value: which one a user reaches for is
@@ -127,9 +127,9 @@ fn a_quoted_value_is_taken_as_written() {
 /// quotes already.
 #[test]
 fn both_quote_characters_open_a_value() {
-    let (_, _, double) = ok(r#"name="the answer""#);
-    let (_, _, single) = ok("name='the answer'");
-    assert_eq!(double, Some("the answer".into()));
+    let (_, double) = ok(r#"name="the answer""#);
+    let (_, single) = ok("name='the answer'");
+    assert_eq!(double.value(), Some("the answer"));
     assert_eq!(single, double);
 }
 
@@ -138,17 +138,17 @@ fn both_quote_characters_open_a_value() {
 /// be written in the other, with no doubling at all.
 #[test]
 fn an_interior_quote_is_doubled_or_written_in_the_other_quote() {
-    assert_eq!(ok("note='it''s'").2, Some("it's".into()));
-    assert_eq!(ok(r#"note="say ""hi""""#).2, Some(r#"say "hi""#.into()));
-    assert_eq!(ok(r#"note="it's""#).2, Some("it's".into()));
+    assert_eq!(ok("note='it''s'").1.value(), Some("it's"));
+    assert_eq!(ok(r#"note="say ""hi""""#).1.value(), Some(r#"say "hi""#));
+    assert_eq!(ok(r#"note="it's""#).1.value(), Some("it's"));
 }
 
 /// A quote that does not open the value is ordinary data, to this parser
 /// and to `--where`'s tokenizer alike.
 #[test]
 fn a_quote_inside_an_unquoted_value_is_data() {
-    assert_eq!(ok("note=don't").2, Some("don't".into()));
-    assert_eq!(ok(r#"note=a"b"#).2, Some(r#"a"b"#.into()));
+    assert_eq!(ok("note=don't").1.value(), Some("don't"));
+    assert_eq!(ok(r#"note=a"b"#).1.value(), Some(r#"a"b"#));
 }
 
 /// Quotes work on the column side too, and the operator split skips them,
@@ -156,15 +156,15 @@ fn a_quote_inside_an_unquoted_value_is_data() {
 #[test]
 fn a_quoted_column_name_survives_the_split() {
     assert_eq!(ok(r#""my column"=x"#).0, "my column");
-    assert_eq!(ok(r#""a=b"=x"#), ("a=b".into(), PredicateOp::Eq, Some("x".into())));
-    assert_eq!(ok(r#" "a=b" = "y=z" "#).2, Some("y=z".into()));
+    assert_eq!(ok(r#""a=b"=x"#), ("a=b".into(), PredicateOp::Eq("x".into())));
+    assert_eq!(ok(r#" "a=b" = "y=z" "#).1.value(), Some("y=z"));
 }
 
 /// The split rule is otherwise unchanged: earliest position, longest
 /// spelling, so a value carrying an operator byte still cannot steal it.
 #[test]
 fn the_earliest_operator_outside_quotes_still_wins() {
-    assert_eq!(ok("name=alpha>x"), ("name".into(), PredicateOp::Eq, Some("alpha>x".into())));
+    assert_eq!(ok("name=alpha>x"), ("name".into(), PredicateOp::Eq("alpha>x".into())));
 }
 
 /// The two worded infix operators, in every case and with any run of
@@ -172,17 +172,14 @@ fn the_earliest_operator_outside_quotes_still_wins() {
 /// names them by, so the grammar and every refusal message agree.
 #[test]
 fn the_distinct_from_forms_parse() {
-    assert_eq!(
-        ok("v is distinct from 1"),
-        ("v".into(), PredicateOp::IsDistinctFrom, Some("1".into()))
-    );
+    assert_eq!(ok("v is distinct from 1"), ("v".into(), PredicateOp::IsDistinctFrom("1".into())));
     assert_eq!(
         ok("v IS NOT DISTINCT FROM 1"),
-        ("v".into(), PredicateOp::IsNotDistinctFrom, Some("1".into()))
+        ("v".into(), PredicateOp::IsNotDistinctFrom("1".into()))
     );
     assert_eq!(
         ok("v Is  Not   Distinct\tFrom  ' x'"),
-        ("v".into(), PredicateOp::IsNotDistinctFrom, Some(" x".into()))
+        ("v".into(), PredicateOp::IsNotDistinctFrom(" x".into()))
     );
 }
 
@@ -193,11 +190,11 @@ fn the_distinct_from_forms_parse() {
 fn the_earliest_operator_wins_against_a_worded_one_too() {
     assert_eq!(
         ok("note=a is distinct from b"),
-        ("note".into(), PredicateOp::Eq, Some("a is distinct from b".into()))
+        ("note".into(), PredicateOp::Eq("a is distinct from b".into()))
     );
     assert_eq!(
         ok("a is distinct from b=c"),
-        ("a".into(), PredicateOp::IsDistinctFrom, Some("b=c".into()))
+        ("a".into(), PredicateOp::IsDistinctFrom("b=c".into()))
     );
 }
 
@@ -206,10 +203,7 @@ fn the_earliest_operator_wins_against_a_worded_one_too() {
 /// there being `=` rather than a space.
 #[test]
 fn a_worded_operator_needs_whitespace_around_it() {
-    assert_eq!(
-        ok("is distinct from=x"),
-        ("is distinct from".into(), PredicateOp::Eq, Some("x".into()))
-    );
+    assert_eq!(ok("is distinct from=x"), ("is distinct from".into(), PredicateOp::Eq("x".into())));
     // Only the exact words, and only with a value after them: a prefix
     // match on `distinctly`, or a `FROM` with nothing behind it, falls
     // through to the usage message rather than splitting.
@@ -224,28 +218,22 @@ fn a_worded_operator_needs_whitespace_around_it() {
 /// than an `IS NULL` on a column `note=this`.
 #[test]
 fn a_value_ending_in_is_null_is_not_an_is_null_term() {
-    assert_eq!(
-        ok("note=this is null"),
-        ("note".into(), PredicateOp::Eq, Some("this is null".into()))
-    );
+    assert_eq!(ok("note=this is null"), ("note".into(), PredicateOp::Eq("this is null".into())));
 }
 
 /// The `IS` forms parse case-insensitively and take a quoted column name,
 /// which is what lets a column called `is null` be named.
 #[test]
 fn the_is_forms_parse_on_a_term_with_no_operator() {
-    assert_eq!(ok("created_at IS NULL"), ("created_at".into(), PredicateOp::IsNull, None));
-    assert_eq!(ok("created_at is not null"), ("created_at".into(), PredicateOp::IsNotNull, None));
+    assert_eq!(ok("created_at IS NULL"), ("created_at".into(), PredicateOp::IsNull));
+    assert_eq!(ok("created_at is not null"), ("created_at".into(), PredicateOp::IsNotNull));
     assert_eq!(ok(r#" "my column" Is Null "#).0, "my column");
-    assert_eq!(
-        ok("v_date IS UNREPRESENTABLE"),
-        ("v_date".into(), PredicateOp::IsUnrepresentable, None)
-    );
+    assert_eq!(ok("v_date IS UNREPRESENTABLE"), ("v_date".into(), PredicateOp::IsUnrepresentable));
     assert_eq!(
         ok("v_date is not unrepresentable"),
-        ("v_date".into(), PredicateOp::IsNotUnrepresentable, None)
+        ("v_date".into(), PredicateOp::IsNotUnrepresentable)
     );
-    assert_eq!(ok(r#""is null" = x"#), ("is null".into(), PredicateOp::Eq, Some("x".into())));
+    assert_eq!(ok(r#""is null" = x"#), ("is null".into(), PredicateOp::Eq("x".into())));
 }
 
 /// A malformed quote is refused, never reinterpreted. Unterminated and

@@ -38,7 +38,7 @@ use datafusion::physical_plan::apply_expression_roots;
 use pgdt_codec::ResolvedSchema;
 use pgdt_query::{DynamicFilter, Expr as L, Membership, PredicateOp};
 
-use super::{boolean_term, compared, is_float, member, null_term};
+use super::{boolean_term, boolean_text, compared, is_float, member, null_term};
 
 #[cfg(test)]
 mod tests;
@@ -272,7 +272,7 @@ fn translate(expr: &Arc<dyn PhysicalExpr>, parity: Parity, table: &ResolvedSchem
     }
     // A boolean column standing alone is its own truth, as `= true`.
     column_at(expr, table)
-        .and_then(|index| boolean_term(index, PredicateOp::Eq, Some(true), table))
+        .and_then(|index| boolean_term(index, PredicateOp::Eq(boolean_text(true)), table))
         .map_or_else(|| parity.anything(), L::Term)
 }
 

@@ -271,10 +271,10 @@ impl ResolvedTerm {
         let low = compare_keys(low, literal);
         let high = compare_keys(high, literal);
         let (can_be_true, can_be_false) = match self.op {
-            PredicateOp::Lt => (low.is_lt(), high.is_ge()),
-            PredicateOp::Le => (low.is_le(), high.is_gt()),
-            PredicateOp::Gt => (high.is_gt(), low.is_le()),
-            PredicateOp::Ge => (high.is_ge(), low.is_lt()),
+            PredicateOp::Lt(_) => (low.is_lt(), high.is_ge()),
+            PredicateOp::Le(_) => (low.is_le(), high.is_gt()),
+            PredicateOp::Gt(_) => (high.is_gt(), low.is_le()),
+            PredicateOp::Ge(_) => (high.is_ge(), low.is_lt()),
             _ => {
                 let can_be_equal = low.is_le() && high.is_ge();
                 if self.wants_equal() { (can_be_equal, true) } else { (true, can_be_equal) }

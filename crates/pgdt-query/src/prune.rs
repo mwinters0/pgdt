@@ -245,8 +245,8 @@ fn sorted_stop(filter: &ResolvedExpr, view: &Believed<'_>) -> Option<SortedStop>
             let Some(sortedness) = view.sortedness(term.index(), kind) else { return false };
             matches!(
                 (sortedness, term.op()),
-                (Sortedness::Ascending, PredicateOp::Lt | PredicateOp::Le)
-                    | (Sortedness::Descending, PredicateOp::Gt | PredicateOp::Ge)
+                (Sortedness::Ascending, PredicateOp::Lt(_) | PredicateOp::Le(_))
+                    | (Sortedness::Descending, PredicateOp::Gt(_) | PredicateOp::Ge(_))
             )
         })
         .cloned()

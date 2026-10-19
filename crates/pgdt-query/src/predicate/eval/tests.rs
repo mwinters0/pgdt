@@ -25,14 +25,14 @@ fn matches_all(filters: &[Predicate], indices: &[usize], raw_row: &[u8]) -> bool
 
 #[test]
 fn eq_matches_the_decoded_value() {
-    let p = Predicate { column: "x".into(), op: PredicateOp::Eq, value: Some("a\tb".into()) };
+    let p = Predicate { column: "x".into(), op: PredicateOp::Eq("a\tb".into()) };
     assert_eq!(truth(&p, b"other\ta\\tb", 1), Truth::True);
     assert_eq!(truth(&p, b"other\tc", 1), Truth::False);
 }
 
 #[test]
 fn ne_matches_everything_but_the_decoded_value() {
-    let p = Predicate { column: "x".into(), op: PredicateOp::Ne, value: Some("a".into()) };
+    let p = Predicate { column: "x".into(), op: PredicateOp::Ne("a".into()) };
     assert_eq!(truth(&p, b"other\tb", 1), Truth::True);
     assert_eq!(truth(&p, b"other\ta", 1), Truth::False);
 }
@@ -41,8 +41,8 @@ fn ne_matches_everything_but_the_decoded_value() {
 /// kept only where the root is true.
 #[test]
 fn null_is_unknown_under_eq_and_ne() {
-    let eq = Predicate { column: "x".into(), op: PredicateOp::Eq, value: Some("a".into()) };
-    let ne = Predicate { column: "x".into(), op: PredicateOp::Ne, value: Some("a".into()) };
+    let eq = Predicate { column: "x".into(), op: PredicateOp::Eq("a".into()) };
+    let ne = Predicate { column: "x".into(), op: PredicateOp::Ne("a".into()) };
     assert_eq!(truth(&eq, b"other\t\\N", 1), Truth::Unknown);
     assert_eq!(truth(&ne, b"other\t\\N", 1), Truth::Unknown);
     assert!(!matches_all(&[eq, ne], &[1, 1], b"other\t\\N"));
@@ -52,13 +52,8 @@ fn null_is_unknown_under_eq_and_ne() {
 /// one thing `NOT` cannot express: `NOT (x = a)` drops a NULL row.
 #[test]
 fn is_distinct_from_counts_null_as_a_value() {
-    let idf =
-        Predicate { column: "x".into(), op: PredicateOp::IsDistinctFrom, value: Some("a".into()) };
-    let indf = Predicate {
-        column: "x".into(),
-        op: PredicateOp::IsNotDistinctFrom,
-        value: Some("a".into()),
-    };
+    let idf = Predicate { column: "x".into(), op: PredicateOp::IsDistinctFrom("a".into()) };
+    let indf = Predicate { column: "x".into(), op: PredicateOp::IsNotDistinctFrom("a".into()) };
     assert_eq!(truth(&idf, b"other\t\\N", 1), Truth::True);
     assert_eq!(truth(&idf, b"other\tb", 1), Truth::True);
     assert_eq!(truth(&idf, b"other\ta", 1), Truth::False);
@@ -67,7 +62,7 @@ fn is_distinct_from_counts_null_as_a_value() {
     assert_eq!(truth(&indf, b"other\ta", 1), Truth::True);
 
     // The half `NOT` gets wrong, stated as the pair it is.
-    let eq = Predicate { column: "x".into(), op: PredicateOp::Eq, value: Some("a".into()) };
+    let eq = Predicate { column: "x".into(), op: PredicateOp::Eq("a".into()) };
     let negated = ResolvedExpr::Not(Box::new(ResolvedExpr::Term(text_term(&eq, 1))));
     assert!(
         !negated
@@ -83,8 +78,8 @@ fn is_distinct_from_counts_null_as_a_value() {
 
 #[test]
 fn is_null_and_is_not_null() {
-    let is_null = Predicate { column: "x".into(), op: PredicateOp::IsNull, value: None };
-    let is_not_null = Predicate { column: "x".into(), op: PredicateOp::IsNotNull, value: None };
+    let is_null = Predicate { column: "x".into(), op: PredicateOp::IsNull };
+    let is_not_null = Predicate { column: "x".into(), op: PredicateOp::IsNotNull };
     assert_eq!(truth(&is_null, b"other\t\\N", 1), Truth::True);
     assert_eq!(truth(&is_null, b"other\ta", 1), Truth::False);
     assert_eq!(truth(&is_not_null, b"other\t\\N", 1), Truth::False);
@@ -141,8 +136,8 @@ fn an_empty_conjunction_matches_every_row() {
 #[test]
 fn every_term_must_match() {
     let filters = [
-        Predicate { column: "a".into(), op: PredicateOp::Eq, value: Some("1".into()) },
-        Predicate { column: "b".into(), op: PredicateOp::Eq, value: Some("2".into()) },
+        Predicate { column: "a".into(), op: PredicateOp::Eq("1".into()) },
+        Predicate { column: "b".into(), op: PredicateOp::Eq("2".into()) },
     ];
     assert!(matches_all(&filters, &[0, 1], b"1\t2"));
     assert!(!matches_all(&filters, &[0, 1], b"1\t3"));
@@ -154,8 +149,8 @@ fn every_term_must_match() {
 #[test]
 fn two_terms_may_name_the_same_column() {
     let filters = [
-        Predicate { column: "a".into(), op: PredicateOp::Ne, value: Some("1".into()) },
-        Predicate { column: "a".into(), op: PredicateOp::Ne, value: Some("2".into()) },
+        Predicate { column: "a".into(), op: PredicateOp::Ne("1".into()) },
+        Predicate { column: "a".into(), op: PredicateOp::Ne("2".into()) },
     ];
     assert!(matches_all(&filters, &[0, 0], b"3"));
     assert!(!matches_all(&filters, &[0, 0], b"2"));
@@ -240,8 +235,8 @@ fn the_root_verdict_survives_the_short_circuit() {
 #[test]
 fn a_decode_failure_surfaces_only_where_it_is_reached() {
     let schema = two_integers();
-    let term = |column: &str, op, value: &str, index| {
-        let p = Predicate { column: column.into(), op, value: Some(value.into()) };
+    let term = |column: &str, op: Comparing, value: &str, index| {
+        let p = Predicate { column: column.into(), op: op(value.into()) };
         ResolvedExpr::Term(resolve_term(&p, index, &schema, 0).unwrap())
     };
     // `b` holds text no `integer` decoder will read, so any term over it
@@ -276,7 +271,7 @@ fn a_decode_failure_surfaces_only_where_it_is_reached() {
     // answers. Field 2 does not exist in this row, so the leading term
     // reads NULL and is unknown.
     let unknown = || {
-        let p = Predicate { column: "c".into(), op: PredicateOp::Eq, value: Some("x".into()) };
+        let p = Predicate { column: "c".into(), op: PredicateOp::Eq("x".into()) };
         ResolvedExpr::And(vec![ResolvedExpr::Term(text_term(&p, 2)), corrupt()])
     };
     assert!(
@@ -316,19 +311,11 @@ fn a_membership_answers_as_its_disjunction_of_equalities() {
             list.iter()
                 .map(|value| match value {
                     Some(v) => {
-                        let p = Predicate {
-                            column: "a".into(),
-                            op: PredicateOp::Eq,
-                            value: Some((*v).into()),
-                        };
+                        let p = Predicate { column: "a".into(), op: PredicateOp::Eq((*v).into()) };
                         ResolvedExpr::Term(resolve_term(&p, 0, &schema, 0).unwrap())
                     }
                     None => {
-                        let p = Predicate {
-                            column: "z".into(),
-                            op: PredicateOp::Eq,
-                            value: Some("0".into()),
-                        };
+                        let p = Predicate { column: "z".into(), op: PredicateOp::Eq("0".into()) };
                         ResolvedExpr::Term(text_term(&p, 99))
                     }
                 })
@@ -445,9 +432,9 @@ fn shape(expr: &ResolvedExpr) -> String {
 #[test]
 fn row_evaluation_drops_only_the_bounds_a_membership_implies() {
     let schema = two_integers();
-    let term = |index: usize, op, value: &str| {
+    let term = |index: usize, op: Comparing, value: &str| {
         let column = schema.schema.field(index).name().clone();
-        let p = Predicate { column, op, value: Some(value.into()) };
+        let p = Predicate { column, op: op(value.into()) };
         ResolvedExpr::Term(resolve_term(&p, index, &schema, 0).unwrap())
     };
     let listed =
@@ -485,8 +472,8 @@ fn row_evaluation_drops_only_the_bounds_a_membership_implies() {
 
     // A decoded kind's `=` keys its field, so a bound is implied by key.
     let numeric = one_column("numeric", DataType::Utf8View);
-    let numeric_term = |op, value: &str| {
-        let p = Predicate { column: "v".into(), op, value: Some(value.into()) };
+    let numeric_term = |op: Comparing, value: &str| {
+        let p = Predicate { column: "v".into(), op: op(value.into()) };
         ResolvedExpr::Term(resolve_term(&p, 0, &numeric, 0).unwrap())
     };
     let decoded = ResolvedExpr::In(membership(&numeric, 0, &[Some("1.50"), Some("2")]).unwrap());
@@ -503,9 +490,9 @@ fn row_evaluation_drops_only_the_bounds_a_membership_implies() {
 #[test]
 fn a_tree_and_its_row_form_keep_the_same_rows() {
     let schema = two_integers();
-    let term = |index: usize, op, value: String| {
+    let term = |index: usize, op: Comparing, value: String| {
         let column = schema.schema.field(index).name().clone();
-        let p = Predicate { column, op, value: Some(value) };
+        let p = Predicate { column, op: op(value) };
         ResolvedExpr::Term(resolve_term(&p, index, &schema, 0).unwrap())
     };
     let values = ["0", "2", "4"];
@@ -567,7 +554,7 @@ fn a_tree_and_its_row_form_keep_the_same_rows() {
 fn missing_column_index_is_treated_as_null() {
     // Can't happen once a caller resolves the index from the block's own
     // schema; the fallback is exercised anyway.
-    let p = Predicate { column: "x".into(), op: PredicateOp::Ne, value: Some("a".into()) };
+    let p = Predicate { column: "x".into(), op: PredicateOp::Ne("a".into()) };
     assert_eq!(truth(&p, b"onlyone", 5), Truth::Unknown);
 }
 
@@ -593,7 +580,7 @@ fn a_value_outside_any_row_is_answered_as_the_row_holding_it_is() {
         (
             "null test",
             resolve_term(
-                &Predicate { column: "v".into(), op: PredicateOp::IsNull, value: None },
+                &Predicate { column: "v".into(), op: PredicateOp::IsNull },
                 0,
                 &one_column("integer", DataType::Int32),
                 0,

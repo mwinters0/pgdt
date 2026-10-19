@@ -110,8 +110,7 @@ async fn a_filter_may_name_a_column_the_projection_does_not() {
     let options = QueryOptions {
         filter: pgdt_query::Expr::all([pgdt_query::Predicate {
             column: "name".into(),
-            op: pgdt_query::PredicateOp::Eq,
-            value: Some("beta".into()),
+            op: pgdt_query::PredicateOp::Eq("beta".into()),
         }]),
         ..projecting(&[])
     };

@@ -108,21 +108,21 @@ fn hash_expr<H: std::hash::Hasher>(expr: &Expr, hasher: &mut H) {
             0u8.hash(hasher);
             term.column.hash(hasher);
             match term.op {
-                PredicateOp::Eq => 0u8,
-                PredicateOp::Ne => 1u8,
+                PredicateOp::Eq(_) => 0u8,
+                PredicateOp::Ne(_) => 1u8,
                 PredicateOp::IsNull => 2u8,
                 PredicateOp::IsNotNull => 3u8,
-                PredicateOp::Lt => 4u8,
-                PredicateOp::Le => 5u8,
-                PredicateOp::Gt => 6u8,
-                PredicateOp::Ge => 7u8,
-                PredicateOp::IsDistinctFrom => 8u8,
-                PredicateOp::IsNotDistinctFrom => 9u8,
+                PredicateOp::Lt(_) => 4u8,
+                PredicateOp::Le(_) => 5u8,
+                PredicateOp::Gt(_) => 6u8,
+                PredicateOp::Ge(_) => 7u8,
+                PredicateOp::IsDistinctFrom(_) => 8u8,
+                PredicateOp::IsNotDistinctFrom(_) => 9u8,
                 PredicateOp::IsUnrepresentable => 10u8,
                 PredicateOp::IsNotUnrepresentable => 11u8,
             }
             .hash(hasher);
-            term.value.hash(hasher);
+            term.op.value().hash(hasher);
         }
         Expr::In(membership) => {
             4u8.hash(hasher);

@@ -90,7 +90,7 @@ async fn predicate_eq_filters_to_matching_rows() {
     let rows = collect_with_predicate(
         &edge_cases(),
         "public.widgets",
-        Predicate { column: "name".into(), op: PredicateOp::Eq, value: Some("beta".into()) },
+        Predicate { column: "name".into(), op: PredicateOp::Eq("beta".into()) },
     )
     .await
     .unwrap();
@@ -102,7 +102,7 @@ async fn predicate_ne_excludes_the_matching_row() {
     let rows = collect_with_predicate(
         &edge_cases(),
         "public.widgets",
-        Predicate { column: "name".into(), op: PredicateOp::Ne, value: Some("beta".into()) },
+        Predicate { column: "name".into(), op: PredicateOp::Ne("beta".into()) },
     )
     .await
     .unwrap();
@@ -121,11 +121,15 @@ async fn predicate_never_matches_a_null_field() {
         let rows = collect_with_predicate(
             &edge_cases(),
             "public.widgets",
-            Predicate { column: "description".into(), op, value: Some("a simple widget".into()) },
+            Predicate { column: "description".into(), op: op("a simple widget".into()) },
         )
         .await
         .unwrap();
-        assert!(rows.iter().all(|r| r[1].as_deref() != Some("beta")), "{op:?}");
+        assert!(
+            rows.iter().all(|r| r[1].as_deref() != Some("beta")),
+            "{:?}",
+            op("a simple widget".into())
+        );
     }
 }
 
@@ -134,7 +138,7 @@ async fn predicate_is_null_and_is_not_null() {
     let null_rows = collect_with_predicate(
         &edge_cases(),
         "public.widgets",
-        Predicate { column: "description".into(), op: PredicateOp::IsNull, value: None },
+        Predicate { column: "description".into(), op: PredicateOp::IsNull },
     )
     .await
     .unwrap();
@@ -143,7 +147,7 @@ async fn predicate_is_null_and_is_not_null() {
     let not_null_rows = collect_with_predicate(
         &edge_cases(),
         "public.widgets",
-        Predicate { column: "description".into(), op: PredicateOp::IsNotNull, value: None },
+        Predicate { column: "description".into(), op: PredicateOp::IsNotNull },
     )
     .await
     .unwrap();
@@ -160,8 +164,8 @@ async fn every_term_of_a_conjunction_must_match() {
         &edge_cases(),
         "public.widgets",
         vec![
-            Predicate { column: "description".into(), op: PredicateOp::IsNotNull, value: None },
-            Predicate { column: "created_at".into(), op: PredicateOp::IsNotNull, value: None },
+            Predicate { column: "description".into(), op: PredicateOp::IsNotNull },
+            Predicate { column: "created_at".into(), op: PredicateOp::IsNotNull },
         ],
     )
     .await
@@ -175,9 +179,8 @@ async fn every_term_of_a_conjunction_must_match() {
 /// filter rather than a term inside one.
 #[tokio::test]
 async fn a_disjunction_keeps_either_arm() {
-    let name = |v: &str| {
-        Expr::Term(Predicate { column: "name".into(), op: PredicateOp::Eq, value: Some(v.into()) })
-    };
+    let name =
+        |v: &str| Expr::Term(Predicate { column: "name".into(), op: PredicateOp::Eq(v.into()) });
     let rows = collect_with_expr(
         &edge_cases(),
         "public.widgets",
@@ -200,8 +203,10 @@ async fn a_disjunction_keeps_either_arm() {
 /// they are.
 #[tokio::test]
 async fn not_drops_a_null_row_and_is_distinct_from_keeps_it() {
-    let term =
-        |op| Predicate { column: "description".into(), op, value: Some("a simple widget".into()) };
+    let term = |op: fn(String) -> PredicateOp| Predicate {
+        column: "description".into(),
+        op: op("a simple widget".into()),
+    };
     let negated = collect_with_expr(
         &edge_cases(),
         "public.widgets",
@@ -240,8 +245,8 @@ async fn a_contradictory_conjunction_yields_no_rows() {
         &edge_cases(),
         "public.widgets",
         vec![
-            Predicate { column: "name".into(), op: PredicateOp::Eq, value: Some("alpha".into()) },
-            Predicate { column: "name".into(), op: PredicateOp::Eq, value: Some("beta".into()) },
+            Predicate { column: "name".into(), op: PredicateOp::Eq("alpha".into()) },
+            Predicate { column: "name".into(), op: PredicateOp::Eq("beta".into()) },
         ],
     )
     .await
@@ -257,8 +262,8 @@ async fn an_unknown_column_in_a_later_term_is_refused() {
         &edge_cases(),
         "public.widgets",
         vec![
-            Predicate { column: "name".into(), op: PredicateOp::IsNotNull, value: None },
-            Predicate { column: "nope".into(), op: PredicateOp::Eq, value: Some("x".into()) },
+            Predicate { column: "name".into(), op: PredicateOp::IsNotNull },
+            Predicate { column: "nope".into(), op: PredicateOp::Eq("x".into()) },
         ],
     )
     .await
@@ -281,8 +286,8 @@ async fn a_resume_token_covers_the_whole_conjunction() {
         let plan = Cold::default().plan(Arc::clone(&source), "public.widgets", options).await;
         plan.unwrap().unwrap()
     };
-    let one = Predicate { column: "id".into(), op: PredicateOp::IsNotNull, value: None };
-    let two = Predicate { column: "name".into(), op: PredicateOp::IsNotNull, value: None };
+    let one = Predicate { column: "id".into(), op: PredicateOp::IsNotNull };
+    let two = Predicate { column: "name".into(), op: PredicateOp::IsNotNull };
     let options = QueryOptions { filter: Expr::all([one.clone()]), ..QueryOptions::default() };
     let mut stream = plan(options.clone()).await.in_file_order(1);
     stream.next().await.unwrap().unwrap();
@@ -330,11 +335,8 @@ async fn a_nested_predicate_compares_structurally_when_the_column_is_typed() {
     use futures::StreamExt;
 
     async fn ids(path: &Path, mode: pgdt_codec::SchemaMode, value: &str) -> Vec<Option<String>> {
-        let predicate = Predicate {
-            column: "v_text_special".into(),
-            op: PredicateOp::Eq,
-            value: Some(value.to_string()),
-        };
+        let predicate =
+            Predicate { column: "v_text_special".into(), op: PredicateOp::Eq(value.to_string()) };
         let options = QueryOptions {
             schema_mode: mode,
             filter: Expr::all([predicate]),
@@ -390,7 +392,7 @@ async fn predicate_on_unknown_column_errors() {
     let err = collect_with_predicate(
         &edge_cases(),
         "public.widgets",
-        Predicate { column: "nope".into(), op: PredicateOp::Eq, value: Some("x".into()) },
+        Predicate { column: "nope".into(), op: PredicateOp::Eq("x".into()) },
     )
     .await
     .unwrap_err();

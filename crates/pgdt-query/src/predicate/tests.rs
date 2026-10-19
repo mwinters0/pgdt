@@ -38,11 +38,11 @@ fn only_note(term: &ResolvedTerm) -> Option<ComparisonNote> {
 fn nested_verdict(
     declared: &str,
     types: &[TypeDef],
-    op: PredicateOp,
+    op: Comparing,
     field: &str,
     literal: &str,
 ) -> Result<Truth> {
-    let p = Predicate { column: "v".into(), op, value: Some(literal.into()) };
+    let p = Predicate { column: "v".into(), op: op(literal.into()) };
     resolve_term(&p, 0, &nested_column(declared, types), 0)?.eval(
         RawRow::unchecked(field.as_bytes()),
         &mut RowSplit::default(),
@@ -56,7 +56,7 @@ fn nested_verdict(
 #[test]
 fn the_four_operators_differ_only_at_the_boundary() {
     for (op, below, at, above) in [
-        (PredicateOp::Lt, true, false, false),
+        (PredicateOp::Lt as Comparing, true, false, false),
         (PredicateOp::Le, true, true, false),
         (PredicateOp::Gt, false, false, true),
         (PredicateOp::Ge, false, true, true),
@@ -157,7 +157,8 @@ fn a_float_literal_past_its_range_is_refused_and_one_inside_it_read() {
             let err = resolve_term(&p, 0, &one_column(declared, data_type.clone()), 0).unwrap_err();
             assert!(
                 matches!(&err, Error::PredicateValueDecode { value, .. } if value == literal),
-                "{declared} {op:?} {literal}: {err:?}"
+                "{declared} {} {literal}: {err:?}",
+                op.symbol()
             );
         }
     };
@@ -244,7 +245,8 @@ fn an_integer_literal_past_its_width_is_refused_and_one_inside_it_read() {
             let err = resolve_term(&p, 0, &one_column(declared, data_type.clone()), 0).unwrap_err();
             assert!(
                 matches!(&err, Error::PredicateValueDecode { value, .. } if value == literal),
-                "{declared} {op:?} {literal}: {err:?}"
+                "{declared} {} {literal}: {err:?}",
+                op.symbol()
             );
         }
     };
@@ -317,7 +319,7 @@ fn an_integer_literal_past_its_width_is_not_refused_in_datafusion_semantics() {
         let truth = term
             .eval(RawRow::unchecked(b"32767"), &mut RowSplit::default(), "public.t", 0)
             .unwrap();
-        assert_eq!(truth, Truth::False, "{op:?}");
+        assert_eq!(truth, Truth::False, "{}", op.symbol());
     }
 }
 
@@ -359,7 +361,8 @@ fn a_date_or_time_postgresql_refuses_is_refused_as_literal_and_field() {
             let err = resolve_term(&p, 0, &one_column(declared, data_type.clone()), 0).unwrap_err();
             assert!(
                 matches!(&err, Error::PredicateValueDecode { value, .. } if value == refused),
-                "{declared} {op:?} {refused}: {err:?}"
+                "{declared} {} {refused}: {err:?}",
+                op.symbol()
             );
         }
         // `=` compares a field's spelling with the literal's canonical one
@@ -403,7 +406,8 @@ fn an_interval_postgresql_refuses_is_refused_as_literal_and_field() {
             let err = resolve_term(&p, 0, &one_column("interval", interval()), 0).unwrap_err();
             assert!(
                 matches!(&err, Error::PredicateValueDecode { value, .. } if value == refused),
-                "{op:?} {refused}: {err:?}"
+                "{} {refused}: {err:?}",
+                op.symbol()
             );
         }
         let got = ordered("interval", interval(), PredicateOp::Ge, field, refused);
@@ -433,7 +437,8 @@ fn a_uuid_postgresql_refuses_is_refused_as_literal_and_field() {
             let err = resolve_term(&p, 0, &one_column("uuid", uuid()), 0).unwrap_err();
             assert!(
                 matches!(&err, Error::PredicateValueDecode { value, .. } if value == refused),
-                "{op:?} {refused}: {err:?}"
+                "{} {refused}: {err:?}",
+                op.symbol()
             );
         }
         let got = ordered("uuid", uuid(), PredicateOp::Ge, canonical, refused);
@@ -476,7 +481,8 @@ fn a_numeric_past_numeric_ins_bounds_is_refused_as_literal_and_bare_field() {
                     resolve_term(&p, 0, &one_column(declared, data_type.clone()), 0).unwrap_err();
                 assert!(
                     matches!(&err, Error::PredicateValueDecode { .. }),
-                    "{declared} {op:?} {}: {err:?}",
+                    "{declared} {} {}: {err:?}",
+                    op.symbol(),
                     refused.len()
                 );
             }
@@ -490,9 +496,10 @@ fn a_numeric_past_numeric_ins_bounds_is_refused_as_literal_and_bare_field() {
         assert!(got.unwrap(), "{declared}");
     }
     for read in [fraction(16383), integer(131072), format!("{}1", "0".repeat(131073))] {
-        for (op, literal) in [(PredicateOp::Eq, read.as_str()), (PredicateOp::Ge, "1")] {
+        for (op, literal) in [(PredicateOp::Eq as Comparing, read.as_str()), (PredicateOp::Ge, "1")]
+        {
             let got = ordered("numeric", DataType::Utf8View, op, literal, &read);
-            assert!(got.unwrap(), "{op:?} {}", read.len());
+            assert!(got.unwrap(), "{} {}", op.symbol(), read.len());
         }
     }
     let verdict = nested_verdict(
@@ -812,7 +819,8 @@ fn datafusion_semantics_refuses_a_nested_column_under_every_comparing_operator()
                 "{err:?}"
             );
         }
-        assert!(arrow(&order_predicate(PredicateOp::IsNull, "{}"), resolved).is_ok());
+        let is_null = Predicate { column: "v".into(), op: PredicateOp::IsNull };
+        assert!(arrow(&is_null, resolved).is_ok());
     }
     let mut unknown = one_column("box", DataType::Utf8View);
     unknown.columns[0] = ColumnResolution::UnknownType;
@@ -985,7 +993,7 @@ fn datafusion_semantics_orders_a_column_with_no_plan_bytewise() {
     // Bytewise, so an upper-case letter is below every lower-case one and
     // a multi-byte character above both.
     let cases = [
-        (PredicateOp::Lt, "a", [true, false, false, false]),
+        (PredicateOp::Lt as Comparing, "a", [true, false, false, false]),
         (PredicateOp::Le, "a", [true, true, false, false]),
         (PredicateOp::Gt, "a", [false, false, true, true]),
         (PredicateOp::Ge, "b", [false, false, true, true]),
@@ -1093,20 +1101,20 @@ fn a_range_declaring_a_canonical_function_refuses_every_operator() {
         PredicateOp::IsDistinctFrom,
         PredicateOp::IsNotDistinctFrom,
     ] {
-        let p = Predicate { column: "v".into(), op, value: Some("[1,10]".into()) };
+        let p = Predicate { column: "v".into(), op: op("[1,10]".into()) };
         let err = resolve_term(&p, 0, &schema, 7).unwrap_err();
         let Error::UncomparablePredicateColumn { reason, header_offset: 7, .. } = &err else {
-            panic!("{op:?}: {err:?}")
+            panic!("{}: {err:?}", op.symbol())
         };
         // The sentence names the range type and its function, which is
         // what a user needs to go and look at the DDL.
-        assert!(reason.contains("`public.canonrange`"), "{op:?}: {reason}");
-        assert!(reason.contains("`public.canonrange_canonical`"), "{op:?}: {reason}");
+        assert!(reason.contains("`public.canonrange`"), "{}: {reason}", op.symbol());
+        assert!(reason.contains("`public.canonrange_canonical`"), "{}: {reason}", op.symbol());
     }
     for op in [PredicateOp::IsNull, PredicateOp::IsNotNull] {
-        let p = Predicate { column: "v".into(), op, value: None };
+        let p = Predicate { column: "v".into(), op };
         let term = resolve_term(&p, 0, &schema, 0).expect("a NULL test consults no plan");
-        assert!(term.compared.is_none(), "{op:?}");
+        assert!(term.compared.is_none(), "{:?}", p.op);
     }
 }
 
@@ -1242,7 +1250,7 @@ fn a_top_level_scalar_outranks_an_empty_array() {
 /// written, which is what the server stores.
 #[test]
 fn a_jsonb_literal_is_canonicalized_the_way_the_server_stores_it() {
-    fn holds(field: &str, op: PredicateOp, literal: &str) -> bool {
+    fn holds(field: &str, op: Comparing, literal: &str) -> bool {
         ordered("jsonb", DataType::Utf8View, op, literal, field).unwrap()
     }
     fn equal(field: &str, literal: &str) {
@@ -1979,7 +1987,7 @@ fn a_non_deterministic_collation_announces_under_equality_and_ordering() {
         let p = order_predicate(op, "a");
         let resolved = schema(Some("public.icu_ci"), &collations);
         let note = only_note(&resolve_term(&p, 0, &resolved, 0).unwrap())
-            .unwrap_or_else(|| panic!("{op:?} announces"));
+            .unwrap_or_else(|| panic!("{} announces", op.symbol()));
         assert_eq!(note.divergence, ComparisonDivergence::NonDeterministicCollation);
         assert!(note.message().contains("non-deterministic"), "{}", note.message());
     }
@@ -2203,7 +2211,7 @@ fn a_discrete_range_is_canonicalized_and_a_continuous_one_is_not() {
     // Under every operator, and from either bound; one below it is a
     // value. A bound past the width is refused before that
     // (`an_integer_literal_past_its_width_is_refused_and_one_inside_it_read`).
-    let refused = |declared: &str, op: PredicateOp, literal: &str| {
+    let refused = |declared: &str, op: Comparing, literal: &str| {
         let field = if declared.starts_with("date") { "[2020-01-01,2020-01-02)" } else { "[1,10)" };
         let field =
             if declared.contains("multi") { format!("{{{field}}}") } else { field.to_string() };
@@ -2223,7 +2231,7 @@ fn a_discrete_range_is_canonicalized_and_a_continuous_one_is_not() {
         ("datemultirange", "{[2020-01-01,5874897-12-31]}"),
     ] {
         for op in [PredicateOp::Eq, PredicateOp::Lt, PredicateOp::Ge] {
-            assert!(refused(declared, op, literal), "{declared} {op:?} {literal}");
+            assert!(refused(declared, op, literal), "{declared} {} {literal}", op.symbol());
         }
     }
     assert_eq!(eq("int4range", "[1,2147483647)", "[1,2147483646]"), Truth::True);
@@ -2318,7 +2326,7 @@ mod oracle {
     /// `1.50` and a `jsonb` number written two ways. `character(10)`'s
     /// trimmed comparison is reached only over values the file pads
     /// alike.
-    const ASSERTED: [(usize, PredicateOp); 6] = [
+    const ASSERTED: [(usize, Comparing); 6] = [
         (0, PredicateOp::Lt),
         (1, PredicateOp::Le),
         (2, PredicateOp::Gt),
@@ -2567,12 +2575,12 @@ mod oracle {
         declared: &str,
         collation: Option<&str>,
         types: &[TypeDef],
-        op: PredicateOp,
+        op: Comparing,
         field: Option<&str>,
         bound: &str,
     ) -> (std::result::Result<Truth, String>, bool) {
         let resolved = schema(declared, collation, types);
-        let p = Predicate { column: "v".into(), op, value: Some(bound.into()) };
+        let p = Predicate { column: "v".into(), op: op(bound.into()) };
         let term = match resolve_term(&p, 0, &resolved, 0) {
             Ok(term) => term,
             Err(e) => return (Err(e.to_string()), false),
@@ -3229,7 +3237,7 @@ mod oracle {
     /// `macaddr` among them — and a second set everywhere else.
     #[tokio::test]
     async fn datafusion_semantics_answers_as_arrow_s_kernels_do() {
-        const OPS: [PredicateOp; 8] = [
+        const OPS: [Comparing; 8] = [
             PredicateOp::Eq,
             PredicateOp::Ne,
             PredicateOp::Lt,
@@ -3269,15 +3277,16 @@ mod oracle {
                 let kind = match &resolved.comparisons[0] {
                     ComparisonPlan::Compared { kind, .. } => kind.clone(),
                     ComparisonPlan::Nested(_) => {
-                        let literal = values.first().cloned();
+                        let literal = values.first().cloned().unwrap_or_default();
                         for op in OPS {
-                            let p = Predicate { column: "v".into(), op, value: literal.clone() };
+                            let p = Predicate { column: "v".into(), op: op(literal.clone()) };
                             assert!(
                                 matches!(
                                     arrow_term(&p, &resolved),
                                     Err(Error::UncomparablePredicateColumn { .. })
                                 ),
-                                "{major} {declared} {op:?}"
+                                "{major} {declared} {:?}",
+                                p.op
                             );
                             nested_refused += 1;
                         }
@@ -3346,25 +3355,27 @@ mod oracle {
                     let arrow = arrow_against(&array, j)
                         .unwrap_or_else(|e| panic!("{major} {declared}: {e}"));
                     for op in OPS {
-                        let p = Predicate { column: "v".into(), op, value: Some(b.to_string()) };
+                        let p = Predicate { column: "v".into(), op: op(b.to_string()) };
                         let term = arrow_term(&p, &resolved)
-                            .unwrap_or_else(|e| panic!("{major} {declared} {op:?} {b:?}: {e}"));
+                            .unwrap_or_else(|e| panic!("{major} {declared} {:?}: {e}", p.op));
                         assert!(term.comparison_notes().is_empty(), "{major} {declared}");
                         for (i, a) in held.iter().enumerate() {
                             let ord = arrow[i];
-                            let want = match op {
-                                PredicateOp::Eq | PredicateOp::IsNotDistinctFrom => ord.is_eq(),
-                                PredicateOp::Ne | PredicateOp::IsDistinctFrom => ord.is_ne(),
-                                PredicateOp::Lt => ord.is_lt(),
-                                PredicateOp::Le => ord.is_le(),
-                                PredicateOp::Gt => ord.is_gt(),
+                            let want = match p.op {
+                                PredicateOp::Eq(_) | PredicateOp::IsNotDistinctFrom(_) => {
+                                    ord.is_eq()
+                                }
+                                PredicateOp::Ne(_) | PredicateOp::IsDistinctFrom(_) => ord.is_ne(),
+                                PredicateOp::Lt(_) => ord.is_lt(),
+                                PredicateOp::Le(_) => ord.is_le(),
+                                PredicateOp::Gt(_) => ord.is_gt(),
                                 _ => ord.is_ge(),
                             };
                             assert_eq!(
                                 term.eval_value(Some(a)),
                                 Some(Truth::of(want)),
                                 "{major} {declared}: {a:?} {} {b:?}",
-                                op.symbol()
+                                p.op.symbol()
                             );
                             answered += 1;
                         }
@@ -3438,7 +3449,7 @@ mod oracle {
                 let announced = outputs.get(&declared).into_iter().flatten().find_map(|v| {
                     let mut notes = Vec::new();
                     for op in [PredicateOp::Eq, PredicateOp::Lt] {
-                        let p = Predicate { column: "v".into(), op, value: Some(v.clone()) };
+                        let p = Predicate { column: "v".into(), op: op(v.clone()) };
                         match resolve_term(&p, 0, &resolved, 0) {
                             Ok(term) => notes.extend(term.comparison_notes()),
                             Err(Error::PredicateValueDecode { .. }) => return None,
@@ -3531,22 +3542,21 @@ mod oracle {
                         "f" => Truth::False,
                         _ => continue,
                     };
+                    let p = Predicate { column: "v".into(), op: op(bound.clone()) };
                     let got = match nested {
                         Some(None) => continue,
                         Some(Some(ord)) => {
                             nested_asserted += 1;
-                            Truth::of(match op {
-                                PredicateOp::Eq => ord.is_eq(),
-                                PredicateOp::Ne => ord.is_ne(),
-                                PredicateOp::Lt => ord.is_lt(),
-                                PredicateOp::Le => ord.is_le(),
-                                PredicateOp::Gt => ord.is_gt(),
+                            Truth::of(match p.op {
+                                PredicateOp::Eq(_) => ord.is_eq(),
+                                PredicateOp::Ne(_) => ord.is_ne(),
+                                PredicateOp::Lt(_) => ord.is_lt(),
+                                PredicateOp::Le(_) => ord.is_le(),
+                                PredicateOp::Gt(_) => ord.is_gt(),
                                 _ => ord.is_ge(),
                             })
                         }
                         None => {
-                            let p =
-                                Predicate { column: "v".into(), op, value: Some(bound.clone()) };
                             let Ok(term) = crate::predicate::resolve::resolve_term(
                                 &p,
                                 0,
@@ -3693,11 +3703,13 @@ mod oracle {
         }
     }
 
-    const OPERATORS: [PredicateOp; 10] = [
+    /// Every operator, each built over the literal it is handed, which the
+    /// two NULL tests drop.
+    const OPERATORS: [Comparing; 10] = [
         PredicateOp::Eq,
         PredicateOp::Ne,
-        PredicateOp::IsNull,
-        PredicateOp::IsNotNull,
+        |_| PredicateOp::IsNull,
+        |_| PredicateOp::IsNotNull,
         PredicateOp::Lt,
         PredicateOp::Le,
         PredicateOp::Gt,
@@ -3783,11 +3795,11 @@ mod oracle {
                 let mut terms = Vec::new();
                 for _ in 0..40 {
                     let op = *rng.pick(&OPERATORS);
-                    let value = match op {
-                        PredicateOp::IsNull | PredicateOp::IsNotNull => None,
-                        _ => Some(rng.pick(&literals).to_string()),
+                    let literal = match op(String::new()).value() {
+                        None => String::new(),
+                        Some(_) => rng.pick(&literals).to_string(),
                     };
-                    let p = Predicate { column: "v".into(), op, value };
+                    let p = Predicate { column: "v".into(), op: op(literal) };
                     if let Ok(term) = resolve_term(&p, 0, &resolved, 0) {
                         terms.push(term);
                     }

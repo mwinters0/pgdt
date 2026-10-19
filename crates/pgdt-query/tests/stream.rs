@@ -614,11 +614,7 @@ async fn a_tables_blocks_come_out_in_one_column_order() {
     use pgdt_query::{Expr, Predicate};
     let options = QueryOptions {
         projection: Some(vec!["a".into()]),
-        filter: Expr::all([Predicate {
-            column: "b".into(),
-            op: PredicateOp::IsNotNull,
-            value: None,
-        }]),
+        filter: Expr::all([Predicate { column: "b".into(), op: PredicateOp::IsNotNull }]),
         ..QueryOptions::default()
     };
     let rows = flat(one_table(&path, "public.t", options).await.unwrap());

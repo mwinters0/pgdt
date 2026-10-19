@@ -127,7 +127,7 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
     .await
     .unwrap();
     let metadata = run.index.metadata.as_deref();
-    let filter = |table: &str, op: PredicateOp, value: Option<&str>| {
+    let filter = |table: &str, op: PredicateOp| {
         let block = run.index.blocks().find(|b| b.header.matches(table)).unwrap();
         let census = vec![ArrayShape::default(); block.header.columns.len()];
         let full = resolve_block(
@@ -140,7 +140,7 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
             ComparisonSemantics::Postgres,
         )
         .unwrap();
-        let term = Predicate { column: "d".into(), op, value: value.map(str::to_string) };
+        let term = Predicate { column: "d".into(), op };
         let expr = Expr::all([term]);
         (
             block,
@@ -148,8 +148,8 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
         )
     };
     // The values each view's pruning keeps a group of, in file order.
-    let kept = |table: &str, op: PredicateOp, value: Option<&str>, view: StatisticsView| {
-        let (block, filter) = filter(table, op, value);
+    let kept = |table: &str, op: PredicateOp, view: StatisticsView| {
+        let (block, filter) = filter(table, op);
         let pruning = prune_block(block, &filter, metadata, None, view).unwrap();
         let statistics = block.statistics.as_ref().unwrap();
         let values = ["2024-01-01", "infinity", "-infinity", "262143-01-01", "NULL"];
@@ -164,17 +164,17 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
             .collect::<Vec<_>>()
     };
     use StatisticsView::{Displayable, Every, Representable};
-    let later = |view| kept("public.t", PredicateOp::Gt, Some("2030-01-01"), view);
+    let later = |view| kept("public.t", PredicateOp::Gt("2030-01-01".into()), view);
     assert_eq!(later(Every), ["infinity", "262143-01-01"]);
     assert_eq!(later(Representable), ["262143-01-01"]);
     assert_eq!(later(Displayable), Vec::<&str>::new());
-    let null = |view| kept("public.t", PredicateOp::IsNull, None, view);
+    let null = |view| kept("public.t", PredicateOp::IsNull, view);
     assert_eq!(null(Every), ["NULL"]);
     assert_eq!(null(Representable), ["infinity", "-infinity", "NULL"]);
     assert_eq!(null(Displayable), ["infinity", "-infinity", "262143-01-01", "NULL"]);
 
     let stops = |view| {
-        let (block, filter) = filter("public.u", PredicateOp::Lt, Some("2021-06-01"));
+        let (block, filter) = filter("public.u", PredicateOp::Lt("2021-06-01".into()));
         prune_block(block, &filter, metadata, None, view).unwrap().stop.is_some()
     };
     assert!(!stops(Every), "-infinity closes the column out of order");

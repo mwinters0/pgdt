@@ -32,7 +32,7 @@ fn compared(
     literal: &ScalarValue,
     table: &ResolvedSchema,
 ) -> Option<Predicate> {
-    let op = match op {
+    let op: fn(String) -> PredicateOp = match op {
         Operator::Eq => PredicateOp::Eq,
         Operator::NotEq => PredicateOp::Ne,
         Operator::Lt => PredicateOp::Lt,
@@ -47,7 +47,7 @@ fn compared(
         return None;
     }
     let value = literal_text(literal, index, table)?;
-    Some(Predicate { column: table.schema.field(index).name().clone(), op, value: Some(value) })
+    Some(Predicate { column: table.schema.field(index).name().clone(), op: op(value) })
 }
 
 /// `literal` as one value of an `IN` list over column `index` of `table`:
@@ -61,25 +61,24 @@ fn member(index: usize, literal: &ScalarValue, table: &ResolvedSchema) -> Option
     literal_text(literal, index, table).map(Some)
 }
 
-/// `op`, one of the operators taking no value
-/// ([`PredicateOp::takes_no_value`]), on column `index` of `table`.
+/// `op` on column `index` of `table`, whatever its type — the NULL and
+/// unrepresentable tests read no value.
 fn null_term(index: usize, op: PredicateOp, table: &ResolvedSchema) -> Predicate {
-    Predicate { column: table.schema.field(index).name().clone(), op, value: None }
+    Predicate { column: table.schema.field(index).name().clone(), op }
 }
 
-/// `op` on column `index` of `table` against the boolean `value`, spelled as the file spells
-/// one: `None` unless the column is `Boolean`.
-fn boolean_term(
-    index: usize,
-    op: PredicateOp,
-    value: Option<bool>,
-    table: &ResolvedSchema,
-) -> Option<Predicate> {
+/// `op` on column `index` of `table`: `None` unless the column is `Boolean`.
+/// A value `op` carries is spelled by [`boolean_text`].
+fn boolean_term(index: usize, op: PredicateOp, table: &ResolvedSchema) -> Option<Predicate> {
     if table.schema.field(index).data_type() != &DataType::Boolean {
         return None;
     }
-    let value = value.map(|v| if v { "t" } else { "f" }.to_string());
-    Some(Predicate { column: table.schema.field(index).name().clone(), op, value })
+    Some(null_term(index, op, table))
+}
+
+/// `value` spelled as the file spells a boolean.
+fn boolean_text(value: bool) -> String {
+    if value { "t" } else { "f" }.to_string()
 }
 
 /// Whether column `index` of `table` is a float, whose `IN` DataFusion

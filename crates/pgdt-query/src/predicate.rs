@@ -14,7 +14,12 @@ pub(crate) use notes::column_divergences;
 pub(crate) use resolve::{ResolvedExpr, ResolvedTerm, resolve_expr, resolve_loosened};
 pub(crate) use truths::GroupStatistics;
 
-/// Comparison operator for [`Predicate`].
+/// A filter term's operator, carrying the value it compares against.
+///
+/// The eight comparing operators each hold their literal, the text a
+/// `pgdt query --filter` value or a DataFusion literal spells; the NULL and
+/// unrepresentable tests hold none. So a test cannot be given a value and a
+/// comparison cannot be built without one.
 ///
 /// Every operator but the NULL and unrepresentable tests compares typed,
 /// through the column's own [`ComparisonPlan`](pgdt_codec::compare::ComparisonPlan): the four ordering operators decode both sides and
@@ -27,14 +32,25 @@ pub(crate) use truths::GroupStatistics;
 /// all — `Eq`/`Ne` compare the canonical `*_out` text the file holds and the
 /// ordering operators are refused, where a query's DataFusion semantics orders a
 /// scalar one bytewise instead.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The value is read with the column's own decoder wherever the register
+/// gives the column a comparison, whatever the operator, once when the
+/// block's schema resolves rather than per row — so a literal that is not a
+/// value of the column's type is `Error::PredicateValueDecode` before any row
+/// is read, and both sides of a `numeric(p,s)` comparison held as a decimal
+/// carry that column's scale. An ordering operator keeps the decoded key and
+/// decodes the field to match; `Eq`/`Ne` usually keep the literal rendered
+/// back into the `*_out` spelling the file holds and compare bytes
+/// ([`equality_comparison`](resolve::equality_comparison)).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredicateOp {
-    Eq,
-    Ne,
+    Eq(String),
+    Ne(String),
     /// `col IS NULL` — matches a NULL field (`\N`), and under
     /// [`pgdt_codec::UnrepresentableMode::Null`] a value the query reads as NULL,
     /// which [`Self::IsUnrepresentable`] tells apart. Rounds out the NULL
-    /// semantics `Eq`/`Ne` deliberately can't express (see [`Predicate::value`]).
+    /// semantics `Eq`/`Ne` deliberately can't express: a NULL field is
+    /// [`Truth::Unknown`] under every comparing operator.
     IsNull,
     /// `col IS NOT NULL` — matches every field [`Self::IsNull`] does not.
     IsNotNull,
@@ -43,87 +59,84 @@ pub enum PredicateOp {
     /// (`docs/design/decisions.md`, "D101"): past Arrow's format spec in
     /// PostgreSQL's semantics, past the engine's calendar too in DataFusion's
     /// — exactly the values [`pgdt_codec::UnrepresentableMode::Null`] reads as
-    /// NULL there. Two-valued, as `IsNull` is, and takes no value; answered
+    /// NULL there. Two-valued, as `IsNull` is; answered
     /// under every [`pgdt_codec::UnrepresentableMode`], and refused under
     /// [`pgdt_codec::SchemaMode::Strings`], which reads no declared type.
     IsUnrepresentable,
     /// `col IS NOT UNREPRESENTABLE` — matches every field
     /// [`Self::IsUnrepresentable`] does not, a NULL field among them.
     IsNotUnrepresentable,
-    Lt,
-    Le,
-    Gt,
-    Ge,
+    Lt(String),
+    Le(String),
+    Gt(String),
+    Ge(String),
     /// `col IS DISTINCT FROM <value>` — [`Self::Ne`] with NULL counted as a
     /// value rather than as unknown, so a NULL field answers [`Truth::True`]
     /// where `!=` answers [`Truth::Unknown`]
     /// (`docs/design/decisions.md`, "D53").
-    IsDistinctFrom,
+    IsDistinctFrom(String),
     /// `col IS NOT DISTINCT FROM <value>` — [`Self::Eq`] with the same NULL
     /// rule, answering [`Truth::False`] on a NULL field.
-    IsNotDistinctFrom,
+    IsNotDistinctFrom(String),
 }
 
 impl PredicateOp {
     /// Whether this operator compares by the column's own order rather than
     /// as text — the four that need, in PostgreSQL's semantics, a column
     /// compared as its declared type (`compares_as_declared`).
-    pub fn is_ordering(self) -> bool {
-        matches!(self, Self::Lt | Self::Le | Self::Gt | Self::Ge)
+    pub fn is_ordering(&self) -> bool {
+        matches!(self, Self::Lt(_) | Self::Le(_) | Self::Gt(_) | Self::Ge(_))
     }
 
     /// How an error message names this operator — the same spelling
     /// `pgdt query --filter` accepts.
-    pub fn symbol(self) -> &'static str {
+    pub fn symbol(&self) -> &'static str {
         match self {
-            Self::Eq => "=",
-            Self::Ne => "!=",
+            Self::Eq(_) => "=",
+            Self::Ne(_) => "!=",
             Self::IsNull => "IS NULL",
             Self::IsNotNull => "IS NOT NULL",
-            Self::Lt => "<",
-            Self::Le => "<=",
-            Self::Gt => ">",
-            Self::Ge => ">=",
-            Self::IsDistinctFrom => "IS DISTINCT FROM",
-            Self::IsNotDistinctFrom => "IS NOT DISTINCT FROM",
+            Self::Lt(_) => "<",
+            Self::Le(_) => "<=",
+            Self::Gt(_) => ">",
+            Self::Ge(_) => ">=",
+            Self::IsDistinctFrom(_) => "IS DISTINCT FROM",
+            Self::IsNotDistinctFrom(_) => "IS NOT DISTINCT FROM",
             Self::IsUnrepresentable => "IS UNREPRESENTABLE",
             Self::IsNotUnrepresentable => "IS NOT UNREPRESENTABLE",
         }
     }
 
-    /// Whether this operator reads no comparison value: the NULL tests and
-    /// the unrepresentable tests.
-    pub fn takes_no_value(self) -> bool {
-        matches!(
-            self,
-            Self::IsNull | Self::IsNotNull | Self::IsUnrepresentable | Self::IsNotUnrepresentable
-        )
+    /// The value this operator compares against: `None` for the NULL tests
+    /// and the unrepresentable tests, which read none.
+    pub fn value(&self) -> Option<&str> {
+        match self {
+            Self::Eq(value)
+            | Self::Ne(value)
+            | Self::Lt(value)
+            | Self::Le(value)
+            | Self::Gt(value)
+            | Self::Ge(value)
+            | Self::IsDistinctFrom(value)
+            | Self::IsNotDistinctFrom(value) => Some(value),
+            Self::IsNull
+            | Self::IsNotNull
+            | Self::IsUnrepresentable
+            | Self::IsNotUnrepresentable => None,
+        }
     }
 
     /// Whether this is one of the two unrepresentable tests.
-    pub fn tests_unrepresentable(self) -> bool {
+    pub fn tests_unrepresentable(&self) -> bool {
         matches!(self, Self::IsUnrepresentable | Self::IsNotUnrepresentable)
     }
 }
 
-/// A single-column post-parse filter: `column <op> value`, and the **leaf**
-/// of an [`Expr`] — a query carries one expression and keeps a row only if
-/// its root evaluates [`Truth::True`] (`QueryOptions::filter`). `column` is
+/// A single-column post-parse filter, `column <op>`, and the **leaf** of an
+/// [`Expr`] — a query carries one expression and keeps a row only if its
+/// root evaluates [`Truth::True`] (`QueryOptions::filter`). `column` is
 /// matched against the queried table's column names, the `COPY` header's
-/// list. `value` is `None` for the NULL and unrepresentable tests, which need
-/// no comparison value ([`PredicateOp::takes_no_value`]); both parsers give
-/// one for every other operator, and a `None` there is read as the empty
-/// value.
-///
-/// `value` is read with the column's own decoder wherever the register gives
-/// the column a comparison, whatever the operator, once when the block's schema
-/// resolves rather than per row — so a literal that
-/// is not a value of the column's type is `Error::PredicateValueDecode`
-/// before any row is read, and both sides of a `numeric(p,s)` comparison held
-/// as a decimal carry that column's scale. An ordering operator keeps the decoded key and
-/// decodes the field to match; `Eq`/`Ne` usually keep the literal rendered
-/// back into the `*_out` spelling the file holds and compare bytes
-/// ([`equality_comparison`](resolve::equality_comparison)).
+/// list; `op` carries the value it compares against, if any.
 ///
 /// A NULL field is [`Truth::Unknown`] under every comparing operator, and a
 /// row survives only where the root is `True`. The operators that are
@@ -135,7 +148,6 @@ impl PredicateOp {
 pub struct Predicate {
     pub column: String,
     pub op: PredicateOp,
-    pub value: Option<String>,
 }
 
 /// SQL's three-valued truth domain, which is what a filter evaluates in.

@@ -377,7 +377,6 @@ async fn a_filtered_and_projected_query_splits_to_the_same_rows() {
         filter: Expr::Term(Predicate {
             column: "v_integer".to_string(),
             op: PredicateOp::IsNotNull,
-            value: None,
         }),
         ..Default::default()
     };

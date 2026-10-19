@@ -48,8 +48,8 @@ impl DynamicFilter for Constant {
     }
 }
 
-fn term(op: PredicateOp, value: &str) -> Expr {
-    Expr::Term(Predicate { column: "id".into(), op, value: Some(value.into()) })
+fn term(op: fn(String) -> PredicateOp, value: &str) -> Expr {
+    Expr::Term(Predicate { column: "id".into(), op: op(value.into()) })
 }
 
 /// A join's filter as the provider hands it over: the build side's bounds,

@@ -42,16 +42,16 @@ pub(super) fn resolve_term(
 /// every `Eq`/`Ne` on an unresolved column falls back to, and what the
 /// two NULL tests always are.
 pub(super) fn text_term(p: &Predicate, index: usize) -> ResolvedTerm {
-    let compared = p.value.as_ref().map(|value| ComparedTerm {
+    let compared = p.op.value().map(|value| ComparedTerm {
         column: p.column.clone(),
-        comparison: Comparison::Canonical(Spellings::one(value.clone())),
+        comparison: Comparison::Canonical(Spellings::one(value.to_string())),
         declared_type: String::new(),
         divergences: Vec::new(),
         statistics: BelievedStatistics::NONE,
     });
     let compared = if p.op.is_ordering() { None } else { compared };
     ResolvedTerm {
-        op: p.op,
+        op: p.op.clone(),
         index,
         compared,
         unrepresentable: None,
@@ -124,8 +124,28 @@ pub(super) fn nested_column(declared: &str, types: &[TypeDef]) -> ResolvedSchema
     }
 }
 
-pub(super) fn order_predicate(op: PredicateOp, value: &str) -> Predicate {
-    Predicate { column: "v".into(), op, value: Some(value.into()) }
+/// A comparing operator before its value: the [`PredicateOp`] variant, as
+/// the constructor taking the value.
+pub(super) type Comparing = fn(String) -> PredicateOp;
+
+/// What a test reads of a [`Comparing`] operator before it holds a value.
+pub(super) trait ComparingExt {
+    fn symbol(self) -> &'static str;
+    fn is_ordering(&self) -> bool;
+}
+
+impl ComparingExt for Comparing {
+    fn symbol(self) -> &'static str {
+        self(String::new()).symbol()
+    }
+
+    fn is_ordering(&self) -> bool {
+        self(String::new()).is_ordering()
+    }
+}
+
+pub(super) fn order_predicate(op: Comparing, value: &str) -> Predicate {
+    Predicate { column: "v".into(), op: op(value.into()) }
 }
 
 /// Resolve `op value` against a one-column schema and evaluate it over a
@@ -133,7 +153,7 @@ pub(super) fn order_predicate(op: PredicateOp, value: &str) -> Predicate {
 pub(super) fn ordered(
     declared: &str,
     data_type: DataType,
-    op: PredicateOp,
+    op: Comparing,
     value: &str,
     field: &str,
 ) -> Result<bool> {
@@ -147,7 +167,7 @@ pub(super) fn ordered(
 /// `op` over a `date` column, testing in the tiers `reach` reads and read
 /// as the null mode reads it there, or tested by nothing.
 pub(super) fn date_test(op: PredicateOp, reach: Option<UnrepresentableTier>) -> ResolvedExpr {
-    let predicate = Predicate { column: "v".into(), op, value: None };
+    let predicate = Predicate { column: "v".into(), op };
     let resolved = one_column("date", DataType::Date32);
     let term = resolve_term(&predicate, 0, &resolved, 0).unwrap();
     let reads = [reach.and_then(|reach| scalar_read(&DataType::Date32, reach))];
@@ -167,7 +187,7 @@ pub(super) fn leaf(want: Truth) -> ResolvedExpr {
         Truth::False => (0, "2"),
         Truth::Unknown => (1, "1"),
     };
-    let p = Predicate { column: "v".into(), op: PredicateOp::Eq, value: Some(value.into()) };
+    let p = Predicate { column: "v".into(), op: PredicateOp::Eq(value.into()) };
     ResolvedExpr::Term(text_term(&p, index))
 }
 

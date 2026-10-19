@@ -224,9 +224,14 @@ fn pruned(notes: &[PlanNote]) -> Option<(u64, u64, u64, u64)> {
     })
 }
 
-fn term(column: &str, op: PredicateOp, value: Option<&str>) -> Predicate {
-    Predicate { column: column.to_string(), op, value: value.map(str::to_string) }
+/// `column <op> value`, `op` the comparing variant's constructor.
+fn term(column: &str, op: Comparing, value: &str) -> Predicate {
+    Predicate { column: column.to_string(), op: op(value.to_string()) }
 }
+
+/// A comparing operator before its value: the [`PredicateOp`] variant, as the
+/// constructor taking the value.
+type Comparing = fn(String) -> PredicateOp;
 
 fn with(filter: Expr, use_statistics: bool, jobs: usize) -> QueryOptions {
     QueryOptions {
@@ -500,7 +505,7 @@ fn every_fixture_prunes_to_the_rows_it_returns_unpruned() {
     assert!(tally.errors_raised_pruned > 0, "{tally:?}");
 }
 
-const OPERATORS: [PredicateOp; 8] = [
+const OPERATORS: [Comparing; 8] = [
     PredicateOp::Eq,
     PredicateOp::Ne,
     PredicateOp::Lt,
@@ -603,8 +608,9 @@ async fn check_fixture(
                 PredicateOp::IsUnrepresentable,
                 PredicateOp::IsNotUnrepresentable,
             ] {
-                terms.push(term(name, op, None));
-                arrow_terms.push(term(name, op, None));
+                let test = Predicate { column: name.to_string(), op };
+                terms.push(test.clone());
+                arrow_terms.push(test);
             }
             let values = literals(&blocks, i, oracle, rng);
             if values.is_empty() {
@@ -612,7 +618,7 @@ async fn check_fixture(
             }
             for op in OPERATORS {
                 for _ in 0..LITERALS_PER_OPERATOR {
-                    let candidate = term(name, op, Some(&values[rng.below(values.len())]));
+                    let candidate = term(name, op, &values[rng.below(values.len())]);
                     // Kept only where it resolves: a refusal refuses both
                     // queries alike, and a tree holding one compares nothing.
                     if resolves(&dump, &plain, (db, &table), &arrow, &candidate).await {
@@ -683,7 +689,7 @@ async fn a_sorted_column_under_a_range_filter_skips_every_group_before_the_bound
             id.iter().flatten().filter(|b| b.max.parse::<i64>().unwrap() < 990).count() as u64;
         assert!(below > 10, "pg_dump {version}: {below} group(s) below the bound");
 
-        let filter = Expr::all([term("id", PredicateOp::Ge, Some("990"))]);
+        let filter = Expr::all([term("id", PredicateOp::Ge, "990")]);
         for jobs in [1, SPLIT_JOBS] {
             let (rows, notes, ..) = answer(
                 &dump,
@@ -753,7 +759,7 @@ async fn a_plan_bounds_its_rows_by_the_groups_its_pruning_kept() {
         let opened = Dump::opened(mode.open_source(source).await.unwrap()).await.unwrap();
         let selector = TableSelector::named("ordered").in_schema("public");
         let table = opened.table(&selector).unwrap().unwrap();
-        let filter = Expr::all([term("id", PredicateOp::Ge, Some("990"))]);
+        let filter = Expr::all([term("id", PredicateOp::Ge, "990")]);
         for (options, expected, kept) in [
             (with(filter.clone(), true, SPLIT_JOBS), block.row_count - below, 1),
             (with(filter.clone(), false, SPLIT_JOBS), block.row_count, 0),
@@ -793,7 +799,7 @@ async fn collated_text_prunes_by_its_bytewise_bounds_in_datafusion_semantics_alo
         let below = bounds.iter().flatten().filter(|b| b.max.as_str() < "a").count() as u64;
         assert!(below > 10, "pg_dump {version}: {below} group(s) below the bound");
 
-        let filter = Expr::all([term("default_text", PredicateOp::Ge, Some("a"))]);
+        let filter = Expr::all([term("default_text", PredicateOp::Ge, "a")]);
         for semantics in [ComparisonSemantics::Postgres, ComparisonSemantics::DataFusion] {
             for jobs in [1, SPLIT_JOBS] {
                 let options = |use_statistics| QueryOptions {
@@ -843,18 +849,19 @@ async fn an_enum_is_pruned_by_the_set_of_bounds_in_the_order_asked_for() {
         assert_eq!(extremes(BoundsSet::DataFusion), ("has space".into(), "sad".into()));
 
         for (semantics, op, literal, rows, skipped) in [
-            (Postgres, PredicateOp::Gt, "sad", 3, 0),
+            (Postgres, PredicateOp::Gt as Comparing, "sad", 3, 0),
             (Postgres, PredicateOp::Lt, "sad", 0, 1),
             (DataFusion, PredicateOp::Lt, "has,comma", 2, 0),
             (DataFusion, PredicateOp::Gt, "sad", 0, 1),
         ] {
-            let filter = Expr::all([term("v_mood", op, Some(literal))]);
+            let leaf = term("v_mood", op, literal);
+            let what = format!("pg_dump {version}, {semantics:?}, {} {literal}", leaf.op.symbol());
+            let filter = Expr::all([leaf]);
             let options = |use_statistics| QueryOptions {
                 semantics,
                 ..with(filter.clone(), use_statistics, 1)
             };
             let cache = cache::colocated_path(&dump);
-            let what = format!("pg_dump {version}, {semantics:?}, {} {literal}", op.symbol());
             let (answered, notes, ..) =
                 answer(&dump, &cache, "public.t_enum_domain", options(true)).await.unwrap();
             let (unpruned, ..) =
@@ -880,7 +887,7 @@ async fn a_term_reads_the_set_gathering_stored_under_the_kind_it_compares_by() {
     use pgdt_codec::SchemaMode::{Strings, Typed};
     for version in VERSIONS {
         for (flag_set, schema_mode, semantics, column, op, literal, rows, skipped) in [
-            ("data-only", Typed, DataFusion, "v_mood", PredicateOp::Gt, "sad", 0, 1),
+            ("data-only", Typed, DataFusion, "v_mood", PredicateOp::Gt as Comparing, "sad", 0, 1),
             ("data-only", Typed, DataFusion, "v_mood", PredicateOp::Lt, "has,comma", 2, 0),
             ("data-only", Typed, DataFusion, "id", PredicateOp::Gt, "4", 0, 1),
             // PostgreSQL's semantics believes no bounds for a column it has
@@ -895,18 +902,19 @@ async fn a_term_reads_the_set_gathering_stored_under_the_kind_it_compares_by() {
             let block = index.blocks().find(|b| b.header.matches("public.t_enum_domain")).unwrap();
             let statistics = block.statistics.as_deref().unwrap();
             assert_eq!(statistics.groups.len(), 1, "pg_dump {version} {flag_set}");
-            let filter = Expr::all([term(column, op, Some(literal))]);
+            let leaf = term(column, op, literal);
+            let what = format!(
+                "pg_dump {version} {flag_set}, {schema_mode:?}, {semantics:?}, {column} {} \
+                 {literal}",
+                leaf.op.symbol()
+            );
+            let filter = Expr::all([leaf]);
             let options = |use_statistics| QueryOptions {
                 semantics,
                 schema_mode,
                 ..with(filter.clone(), use_statistics, 1)
             };
             let cache = cache::colocated_path(&dump);
-            let what = format!(
-                "pg_dump {version} {flag_set}, {schema_mode:?}, {semantics:?}, {column} {} \
-                 {literal}",
-                op.symbol()
-            );
             let (answered, notes, ..) =
                 answer(&dump, &cache, "public.t_enum_domain", options(true)).await.unwrap();
             let (unpruned, ..) =
@@ -930,7 +938,7 @@ async fn a_dictionary_under_an_absent_literal_skips_every_group() {
         let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
         let groups = block.statistics.as_ref().unwrap().groups.len() as u64;
 
-        let absent = Expr::all([term("low_card", PredicateOp::Eq, Some("bravo"))]);
+        let absent = Expr::all([term("low_card", PredicateOp::Eq, "bravo")]);
         for jobs in [1, SPLIT_JOBS] {
             let (rows, notes, ..) = answer(
                 &dump,
@@ -956,7 +964,7 @@ async fn a_dictionary_under_an_absent_literal_skips_every_group() {
 #[tokio::test]
 async fn statistics_gathered_under_another_declared_type_prune_nothing() {
     let (_dir, dump, mut index) = gathered(&statistics_fixture(16, "default"), SMALL_GROUP).await;
-    let absent = Expr::all([term("low_card", PredicateOp::Eq, Some("bravo"))]);
+    let absent = Expr::all([term("low_card", PredicateOp::Eq, "bravo")]);
     let (_, notes, ..) = answer(
         &dump,
         &cache::colocated_path(&dump),
@@ -993,9 +1001,9 @@ async fn statistics_gathered_under_another_declared_type_prune_nothing() {
 async fn a_pruned_stream_resumes_across_its_gaps() {
     let (_dir, dump, _index) = gathered(&statistics_fixture(16, "default"), SMALL_GROUP).await;
     let filter = Expr::Or(vec![
-        Expr::Term(term("id", PredicateOp::Lt, Some("40"))),
-        Expr::Term(term("id", PredicateOp::Ge, Some("500"))),
-        Expr::Term(term("id", PredicateOp::Eq, Some("300"))),
+        Expr::Term(term("id", PredicateOp::Lt, "40")),
+        Expr::Term(term("id", PredicateOp::Ge, "500")),
+        Expr::Term(term("id", PredicateOp::Eq, "300")),
     ]);
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let cache = cache::colocated_path(&dump);
@@ -1108,8 +1116,8 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
     assert!((block.data_offset..block.terminator_offset).any(deep), "the fixture has a deep gap");
 
     let filter = Expr::Or(vec![
-        Expr::Term(term("id", PredicateOp::Lt, Some("40"))),
-        Expr::Term(term("id", PredicateOp::Ge, Some("500"))),
+        Expr::Term(term("id", PredicateOp::Lt, "40")),
+        Expr::Term(term("id", PredicateOp::Ge, "500")),
     ]);
     let source = Arc::new(Recording {
         inner: LocalFileSource::open(&dump).unwrap(),
@@ -1158,8 +1166,8 @@ async fn a_pruned_query_reads_nothing_deep_inside_a_skipped_run() {
     }
     let paused = last_in_group_2.unwrap().to_string();
     let straddling = Expr::Or(vec![
-        Expr::Term(term("id", PredicateOp::Eq, Some(&paused))),
-        Expr::Term(term("id", PredicateOp::Ge, Some("900"))),
+        Expr::Term(term("id", PredicateOp::Eq, &paused)),
+        Expr::Term(term("id", PredicateOp::Ge, "900")),
     ]);
     for (filter, max_rows, expected) in [(filter, 13, 39 + 501), (straddling, 1, 1 + 101)] {
         let options =
@@ -1241,7 +1249,7 @@ async fn a_sorted_block_is_read_no_further_than_its_first_row_past_the_bound() {
         read: ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() },
         ..ScanOptions::default()
     };
-    let single = |column, op, value| Expr::Term(term(column, op, Some(value)));
+    let single = |column, op, value| Expr::Term(term(column, op, value));
 
     // A filter, its row count, and where its stop ends reading.
     let cases = [
@@ -1345,7 +1353,7 @@ async fn a_pruned_stop_reports_the_rest_of_its_run_beside_the_skipped_groups() {
         let block = index.blocks().find(|b| b.header.matches("public.ordered")).unwrap();
         let n = block.statistics.as_deref().unwrap().group_size;
         let cache = cache::colocated_path(&dump);
-        let filter = Expr::all([term("id", PredicateOp::Lt, Some("500"))]);
+        let filter = Expr::all([term("id", PredicateOp::Lt, "500")]);
         let end = ordered_line_end(&dump, block, 500);
         let group_of = |offset: u64| (offset - block.data_offset) / n;
         // The row 500 starts in: kept only where 499 starts there too.
@@ -1418,8 +1426,7 @@ fn with_undecodable(dir: &Path, rows: u32, corrupt: impl Fn(u32) -> bool) -> Pat
 ///   later piece evaluating its own first row, past the stop.
 #[tokio::test]
 async fn a_value_no_decoder_reads_raises_only_where_evaluation_reaches_it() {
-    let bad_first =
-        |id: Expr| Expr::And(vec![Expr::Term(term("bad", PredicateOp::Ge, Some("0"))), id]);
+    let bad_first = |id: Expr| Expr::And(vec![Expr::Term(term("bad", PredicateOp::Ge, "0")), id]);
     let raises = |attempt: Attempt, what: &str| {
         let error = attempt.outcome.err().unwrap_or_else(|| panic!("{what}: answered"));
         assert!(error.contains("0x1F"), "{what}: {error}");
@@ -1439,7 +1446,7 @@ async fn a_value_no_decoder_reads_raises_only_where_evaluation_reaches_it() {
     let dump = with_undecodable(dir.path(), 1000, |id| (100..110).contains(&id));
     let (_dir, dump, _) = gathered(&dump, SMALL_GROUP).await;
     let cache = cache::colocated_path(&dump);
-    let filter = bad_first(Expr::Term(term("id", PredicateOp::Ge, Some("900"))));
+    let filter = bad_first(Expr::Term(term("id", PredicateOp::Ge, "900")));
     for jobs in [1, SPLIT_JOBS] {
         let what = format!("a skipped group at {jobs} job(s)");
         raises(attempt(&dump, &cache, "public.t", with(filter.clone(), false, jobs)).await, &what);
@@ -1468,7 +1475,7 @@ async fn a_value_no_decoder_reads_raises_only_where_evaluation_reaches_it() {
         1
     );
     let cache = cache::colocated_path(&dump);
-    let filter = bad_first(Expr::Term(term("id", PredicateOp::Lt, Some("20"))));
+    let filter = bad_first(Expr::Term(term("id", PredicateOp::Lt, "20")));
     for jobs in [1, SPLIT_JOBS] {
         let what = format!("past a stop, unpruned, at {jobs} job(s)");
         raises(attempt(&dump, &cache, "public.t", with(filter.clone(), false, jobs)).await, &what);
@@ -1494,7 +1501,7 @@ async fn a_stopped_stream_resumes_to_the_same_rows() {
     .await;
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let cache = cache::colocated_path(&dump);
-    let filter = Expr::Term(term("id", PredicateOp::Le, Some("19")));
+    let filter = Expr::Term(term("id", PredicateOp::Le, "19"));
     for max_rows in [1, 7, 19, 20] {
         let options = QueryOptions {
             filter: filter.clone(),

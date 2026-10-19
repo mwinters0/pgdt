@@ -65,11 +65,7 @@ async fn a_dynamic_stop_is_armed_only_where_a_row_can_pass_it() {
         ComparisonSemantics::Postgres,
     )
     .unwrap();
-    let below = Expr::all([Predicate {
-        column: "id".into(),
-        op: PredicateOp::Lt,
-        value: Some("150".into()),
-    }]);
+    let below = Expr::all([Predicate { column: "id".into(), op: PredicateOp::Lt("150".into()) }]);
     let filter =
         resolve_expr(&below, &full, block.header_offset, ComparisonSemantics::Postgres).unwrap();
     let reading = pgdt_model::StatisticsView::Every;

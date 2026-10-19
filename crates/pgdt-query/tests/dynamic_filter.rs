@@ -84,8 +84,9 @@ impl DynamicFilter for Moving {
     }
 }
 
-fn term(column: &str, op: PredicateOp, value: &str) -> Expr {
-    Expr::Term(Predicate { column: column.into(), op, value: Some(value.into()) })
+/// `column <op> value`, `op` the comparing variant's constructor.
+fn term(column: &str, op: fn(String) -> PredicateOp, value: &str) -> Expr {
+    Expr::Term(Predicate { column: column.into(), op: op(value.into()) })
 }
 
 /// The `statistics` fixture of `version` beside a cache gathering every

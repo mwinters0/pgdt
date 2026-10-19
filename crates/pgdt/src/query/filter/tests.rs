@@ -23,7 +23,7 @@ fn the_flag_refuses_structure_before_it_parses_a_term() {
     let Expr::Term(term) = parse_filter_flag("name=alpha").expect("a plain term") else {
         panic!("a comparison")
     };
-    assert_eq!(term.value.as_deref(), Some("alpha"));
+    assert_eq!(term.op.value(), Some("alpha"));
     // A membership is one term under either flag, its paren no structure.
     let Expr::In(membership) = parse_filter_flag("name in (alpha, 'and')").expect("a list") else {
         panic!("a membership")

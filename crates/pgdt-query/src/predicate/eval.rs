@@ -99,19 +99,19 @@ impl ResolvedTerm {
             return Some(Truth::of(match self.op {
                 PredicateOp::IsNull => self.as_read(value).is_none(),
                 PredicateOp::IsNotNull => self.as_read(value).is_some(),
-                op => {
+                _ => {
                     let unrepresentable = value
                         .zip(self.tested.as_ref())
                         .is_some_and(|(text, test)| timed!(Part::Compare, test.cannot_hold(text)));
-                    unrepresentable == (op == PredicateOp::IsUnrepresentable)
+                    unrepresentable == matches!(self.op, PredicateOp::IsUnrepresentable)
                 }
             }));
         };
         let value = self.as_read(value);
         let Some(text) = value else {
             return Some(match self.op {
-                PredicateOp::IsDistinctFrom => Truth::True,
-                PredicateOp::IsNotDistinctFrom => Truth::False,
+                PredicateOp::IsDistinctFrom(_) => Truth::True,
+                PredicateOp::IsNotDistinctFrom(_) => Truth::False,
                 _ => Truth::Unknown,
             });
         };
@@ -125,9 +125,9 @@ impl ResolvedTerm {
                     timed!(Part::Compare, compare_keys(&key, bound))
                 };
                 match self.op {
-                    PredicateOp::Lt => ord.is_lt(),
-                    PredicateOp::Le => ord.is_le(),
-                    PredicateOp::Gt => ord.is_gt(),
+                    PredicateOp::Lt(_) => ord.is_lt(),
+                    PredicateOp::Le(_) => ord.is_le(),
+                    PredicateOp::Gt(_) => ord.is_gt(),
                     _ => ord.is_ge(),
                 }
             }
@@ -154,10 +154,10 @@ impl ResolvedTerm {
                     timed!(Part::Compare, compare_nested(&key, &nested.bound))
                 };
                 match self.op {
-                    PredicateOp::Lt => ord.is_lt(),
-                    PredicateOp::Le => ord.is_le(),
-                    PredicateOp::Gt => ord.is_gt(),
-                    PredicateOp::Ge => ord.is_ge(),
+                    PredicateOp::Lt(_) => ord.is_lt(),
+                    PredicateOp::Le(_) => ord.is_le(),
+                    PredicateOp::Gt(_) => ord.is_gt(),
+                    PredicateOp::Ge(_) => ord.is_ge(),
                     _ => ord.is_eq() == self.wants_equal(),
                 }
             }
@@ -179,7 +179,7 @@ impl ResolvedTerm {
     /// and `IsNotDistinctFrom` do, `Ne` and `IsDistinctFrom` do not, and no
     /// other operator reaches it.
     pub(super) fn wants_equal(&self) -> bool {
-        matches!(self.op, PredicateOp::Eq | PredicateOp::IsNotDistinctFrom)
+        matches!(self.op, PredicateOp::Eq(_) | PredicateOp::IsNotDistinctFrom(_))
     }
 }
 
@@ -256,9 +256,9 @@ impl ResolvedMembership {
         let meets = |key: &OrderKey| {
             let ord = compare_keys(key, bound);
             match term.op {
-                PredicateOp::Lt => ord.is_lt(),
-                PredicateOp::Le => ord.is_le(),
-                PredicateOp::Gt => ord.is_gt(),
+                PredicateOp::Lt(_) => ord.is_lt(),
+                PredicateOp::Le(_) => ord.is_le(),
+                PredicateOp::Gt(_) => ord.is_gt(),
                 _ => ord.is_ge(),
             }
         };

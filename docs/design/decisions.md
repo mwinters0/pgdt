@@ -419,7 +419,7 @@ recording the mode; refusing such a cache (D20); `Strict` failing from the recor
 No `LIKE` (collation-dependent folding), `BETWEEN` (`And`), or column-to-column; `IS [NOT] DISTINCT FROM` is what three-valued logic forces. `IN` is
 `Expr::In`, answering as the `Or` of `=` but decoding once and looking up once, since per row that `Or` costs per term (`dynamic-filter-join`).
 `IS [NOT] UNREPRESENTABLE` is what the null mode forces, its NULL otherwise the dump's to every operator (D101).
-Rejected: an `IN` `PredicateOp`, every operator carrying a list; recognizing the `Or`, every front end emitting `In`. Evidence: `tests/membership.rs`.
+Rejected: an `IN` `PredicateOp`, a set among operators each carrying one literal; recognizing the `Or`, every front end emitting `In`. Evidence: `tests/membership.rs`.
 
 ### D54 One tree, no planner yet, short-circuit defined against the root
 `filter` is one n-ary `Expr`, by default the empty conjunction. `And` may stop at the first `Unknown` except beneath `Not`, since only the root's `True`
