@@ -48,7 +48,8 @@ crosses DataFusion's boundary. `pgdt sql` hands one grammar per registration:
 
 ## What the next round inherits
 
-- **The spelled refusal's shape is put to the maintainer**
-  ([`STATUS.md`](../status/STATUS.md), "Decisions worth another look"): a
-  variant wrapping the refusal, which an embedder handing a spelling matches
-  through `Error::unspelled`.
+- **The spelled refusal's shape is reshaped by `M229`**, ahead of 36.12:
+  `Error` a struct holding a `Refusal` and its spelling, in place of the
+  `Spelled` variant
+  ([2026-10-19](../status/history/2026-10-19.md), "A spelled refusal is the
+  error's field, not a variant").

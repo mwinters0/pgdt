@@ -151,15 +151,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A spelled refusal is a variant wrapping the refusal** (36.11.1,
-  `crates/datafusion-pgdump/src/error.rs`). A front end's spelling must ride
-  in the message of the `datafusion_pgdump::Error` at the top of what
-  DataFusion carries (D74), so `Error::Spelled { refused, spelling }` wraps
-  any other variant and an embedder handing a spelling matches through
-  `Error::unspelled()`. The call: a variant, not a spelling field on every
-  variant (every construction site changes and `Library`'s `#[from]` goes, but
-  a match needs no unwrapping), nor a wrapper type above `Error` (the top
-  would no longer be `Error`, against D74), nor DataFusion's `Context` (it
-  prints the spelling on lines of its own before the refusal).
-  Reconsidering means the field instead: `Spelled` and `unspelled` go, and
-  each variant prints its own spelling.
