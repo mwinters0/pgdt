@@ -71,7 +71,7 @@ fn a_database_the_scan_never_reached_is_told_apart_from_undeclared_columns() {
         resolve_columns("public.t", &cols, Some(&meta), Some("second"), SchemaMode::Typed, &[]);
     assert_eq!(resolutions(&later), [ColumnResolution::MetadataNotScanned]);
     assert_eq!(later.schema.field(0).data_type(), &arrow_schema::DataType::Utf8View);
-    assert_eq!(later.columns[0].note.severity(), Severity::Warning);
+    assert_eq!(later.columns[0].severity(), Severity::Warning);
 
     // The same metadata, asked about a table the database it *did* read
     // never declared: final, and says so.
@@ -228,7 +228,7 @@ fn a_varying_or_decorated_array_column_becomes_text_and_says_why() {
         assert_eq!(plans(&resolved), [NestedPlan::Scalar], "{why}");
         // Still a `Warning` on the shared scale, like every other
         // fallback to text.
-        assert_eq!(resolved.columns[0].note.severity(), Severity::Warning, "{why}");
+        assert_eq!(resolved.columns[0].severity(), Severity::Warning, "{why}");
     }
 
     // Every value was NULL or `{}`: nothing was constrained, so the
@@ -479,8 +479,8 @@ fn diagnostic_carries_the_declared_string_when_present() {
     let meta = one_db(&[("public.t", &[("id", "integer")])], vec![]);
     let cols = vec!["id".to_string(), "extra".to_string()];
     let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
-    assert_eq!(resolved.columns[0].note.declared.as_deref(), Some("integer"));
-    assert_eq!(resolved.columns[1].note.declared, None);
+    assert_eq!(resolved.columns[0].declared(), Some("integer"));
+    assert_eq!(resolved.columns[1].declared(), None);
 }
 
 /// `database_for_name` selects by the attributed database's *name*, not by
@@ -534,7 +534,7 @@ fn the_untyped_mode_widens_a_marked_column_and_compares_it_per_semantics() {
             resolutions(&widened),
             [Mapped, UnrepresentableValues, Mapped, UnrepresentableValues]
         );
-        assert_eq!(widened.columns[1].note.resolution, UnrepresentableValues);
+        assert_eq!(widened.columns[1].resolution, UnrepresentableValues);
         // The widening records its semantics on the columns it widened alone.
         let under: Vec<_> = widened.columns().iter().map(|c| c.read_as_text_under()).collect();
         assert_eq!(under, [None, Some(semantics), None, Some(semantics)]);
@@ -551,12 +551,12 @@ fn the_untyped_mode_widens_a_marked_column_and_compares_it_per_semantics() {
     }
 }
 
-/// A [`ColumnNote`]'s severity is derived from its resolution, never
+/// A column record's severity is derived from its resolution, never
 /// stored — so it cannot drift out of agreement with the outcome it
 /// describes.
 #[test]
-fn column_note_severity_follows_its_resolution() {
-    let note = |resolution| ColumnNote { column: "c".to_string(), declared: None, resolution };
+fn a_column_s_severity_follows_its_resolution() {
+    let note = |resolution| column("c", resolution);
     assert_eq!(note(ColumnResolution::Mapped).severity(), Severity::Info);
     for fell_back in [
         ColumnResolution::UnknownType,
@@ -578,13 +578,15 @@ fn both_channels_order_on_one_severity_scale() {
     use pgdt_model::{Diagnostic, DiagnosticKind};
 
     let file = Diagnostic::tiling_broken(vec![pgdt_model::TilingIssue::Empty { index: 0 }]);
-    let column = ColumnNote {
-        column: "c".to_string(),
-        declared: None,
-        resolution: ColumnResolution::UnknownType,
-    };
+    let column = column("c", ColumnResolution::UnknownType);
     assert!(file.severity() > column.severity());
     assert!(matches!(file.kind(), DiagnosticKind::TilingBroken { .. }));
+}
+
+/// A text column named `name`, declared nothing, resolved as `resolution`.
+fn column(name: &str, resolution: ColumnResolution) -> ResolvedColumn {
+    let field = arrow_schema::Field::new(name, arrow_schema::DataType::Utf8View, true);
+    column_of(field, None, resolution, NestedPlan::Scalar, ComparisonPlan::Refused, false)
 }
 
 /// Each column's resolution, in order.

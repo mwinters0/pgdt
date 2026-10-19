@@ -127,7 +127,7 @@ pub enum ColumnResolution {
 impl ColumnResolution {
     /// The sentence a human reads for this outcome — what `pgdt info
     /// --detail` prints beside the column, and the tail of
-    /// [`ColumnNote`]'s [`Finding::message`].
+    /// a [`ResolvedColumn`]'s [`Finding::message`].
     pub fn describe(&self) -> &'static str {
         match self {
             Self::Mapped => "mapped",
@@ -157,61 +157,6 @@ impl ColumnResolution {
     }
 }
 
-/// One column's full resolution, named and carrying the raw declared type
-/// string (if any DDL named one) alongside the outcome — what a human-facing
-/// display (`pgdt info`) needs in one place, for every column.
-///
-/// **A note, not a diagnostic**: there is exactly one per column, always. The
-/// file-level exception channel is [`pgdt_model::Diagnostic`], kept a
-/// separate type because `DumpIndex` is the model's and [`ColumnResolution`]
-/// a codec conclusion (`docs/design/decisions.md`, "D68"). What they share is the
-/// [`Severity`] scale, so a caller reading both filters uniformly.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ColumnNote {
-    pub column: String,
-    pub declared: Option<String>,
-    pub resolution: ColumnResolution,
-}
-
-impl Finding for ColumnNote {
-    /// Where this column sits on the shared [`Severity`] scale: a column that
-    /// resolved to a real Arrow type is `Info`; anything that fell back to
-    /// `Utf8View` is a `Warning`, since its values come back unparsed.
-    ///
-    /// Derived rather than stored — it is a pure function of `resolution`,
-    /// and a stored copy could disagree with it.
-    fn severity(&self) -> Severity {
-        match self.resolution {
-            ColumnResolution::Mapped => Severity::Info,
-            _ => Severity::Warning,
-        }
-    }
-
-    /// The column, its declared type where DDL named one, and
-    /// [`ColumnResolution::describe`] — and, for a column that fell back,
-    /// that its value is the file's text and compares as that text, which is
-    /// the only finding such a column earns about its comparison under
-    /// DataFusion's semantics; under PostgreSQL's, an `UnknownType` or
-    /// `OpaqueBaseType` column is also announced as unmodelled
-    /// (`pgdt_query::column_divergences`).
-    fn message(&self) -> String {
-        let declared = self.declared.as_deref().map(|d| format!(" ({d})")).unwrap_or_default();
-        let fallback = match self.resolution {
-            ColumnResolution::Mapped => "",
-            ColumnResolution::UnrepresentableValues => {
-                "; its value is the file's text, compared as that text in DataFusion's semantics \
-                 and in its declared type's order in PostgreSQL's"
-            }
-            _ => "; its value is the file's text, and compares as that text",
-        };
-        format!("column `{}`{declared}: {}{fallback}", self.column, self.resolution.describe())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
-
 /// A table query's resolved schema: the Arrow schema a query's
 /// `RecordBatch`es carry (see the module docs), and one [`ResolvedColumn`]
 /// per field, in its order — each column's resolution read through its
@@ -231,14 +176,24 @@ impl Default for ResolvedSchema {
     }
 }
 
-/// One column of a [`ResolvedSchema`]: its Arrow field, its note, the plan
-/// that says which PostgreSQL literal form fills it, how it compares, whether
-/// its declaration refuses a NULL, and the semantics the untyped mode read it
-/// as its text under, if it did.
+/// One column of a [`ResolvedSchema`]: its Arrow field, the type its DDL
+/// declares and how that resolved, the plan that says which PostgreSQL
+/// literal form fills it, how it compares, whether its declaration refuses a
+/// NULL, and the semantics the untyped mode read it as its text under, if it
+/// did.
+///
+/// **The record is the column's finding** ([`Finding`]): exactly one per
+/// column, always, drained beside the file's diagnostics
+/// ([`pgdt_model::drain`] over [`ResolvedSchema::columns`]). The file-level
+/// exception channel is [`pgdt_model::Diagnostic`], kept a separate type
+/// because `DumpIndex` is the model's and [`ColumnResolution`] a codec
+/// conclusion (`docs/design/decisions.md`, "D68"). What they share is the
+/// [`Severity`] scale, so a caller reading both filters uniformly.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedColumn {
     field: FieldRef,
-    note: ColumnNote,
+    declared: Option<String>,
+    resolution: ColumnResolution,
     plan: NestedPlan,
     comparison: ComparisonPlan,
     not_null: bool,
@@ -252,16 +207,11 @@ impl ResolvedSchema {
         &self.schema
     }
 
-    /// Every column, in the schema's order.
+    /// Every column, in the schema's order — each one its column's
+    /// [`Finding`], the channel a caller drains beside the file's
+    /// diagnostics ([`pgdt_model::drain`]).
     pub fn columns(&self) -> &[ResolvedColumn] {
         &self.columns
-    }
-
-    /// Each column's [`ColumnNote`], in the schema's order: the channel a
-    /// caller drains beside the file's diagnostics
-    /// ([`pgdt_model::drain`]).
-    pub fn notes(&self) -> impl Iterator<Item = &ColumnNote> {
-        self.columns.iter().map(ResolvedColumn::note)
     }
 
     /// How many columns have no `Mapped` resolution — the count `pgdt info`'s
@@ -288,20 +238,14 @@ impl ResolvedColumn {
         self.field.data_type()
     }
 
-    /// The column's one note: its name, its declared type and its
-    /// resolution, as a [`Finding`].
-    pub fn note(&self) -> &ColumnNote {
-        &self.note
-    }
-
     /// How the column resolved.
     pub fn resolution(&self) -> &ColumnResolution {
-        &self.note.resolution
+        &self.resolution
     }
 
     /// The type the DDL declares the column, where any DDL named one.
     pub fn declared(&self) -> Option<&str> {
-        self.note.declared.as_deref()
+        self.declared.as_deref()
     }
 
     /// Which PostgreSQL literal form fills the column: the Arrow type cannot
@@ -362,6 +306,45 @@ impl ResolvedColumn {
     }
 }
 
+impl Finding for ResolvedColumn {
+    /// Where this column sits on the shared [`Severity`] scale: a column that
+    /// resolved to a real Arrow type is `Info`; anything that fell back to
+    /// `Utf8View` is a `Warning`, since its values come back unparsed.
+    ///
+    /// Derived rather than stored — it is a pure function of the
+    /// resolution, and a stored copy could disagree with it.
+    fn severity(&self) -> Severity {
+        match self.resolution {
+            ColumnResolution::Mapped => Severity::Info,
+            _ => Severity::Warning,
+        }
+    }
+
+    /// The column, its declared type where DDL named one, and
+    /// [`ColumnResolution::describe`] — and, for a column that fell back,
+    /// that its value is the file's text and compares as that text, which is
+    /// the only finding such a column earns about its comparison under
+    /// DataFusion's semantics; under PostgreSQL's, an `UnknownType` or
+    /// `OpaqueBaseType` column is also announced as unmodelled
+    /// (`pgdt_query::Table::divergences`).
+    fn message(&self) -> String {
+        let declared = self.declared().map(|d| format!(" ({d})")).unwrap_or_default();
+        let fallback = match self.resolution {
+            ColumnResolution::Mapped => "",
+            ColumnResolution::UnrepresentableValues => {
+                "; its value is the file's text, compared as that text in DataFusion's semantics \
+                 and in its declared type's order in PostgreSQL's"
+            }
+            _ => "; its value is the file's text, and compares as that text",
+        };
+        format!("column `{}`{declared}: {}{fallback}", self.name(), self.resolution.describe())
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// A column record assembled from its parts, for a caller resolving no DDL —
 /// a test's hand-built schema — with no untyped widening; [`resolve_columns`]
 /// is how a query's are built.
@@ -373,8 +356,15 @@ pub fn column_of(
     comparison: ComparisonPlan,
     not_null: bool,
 ) -> ResolvedColumn {
-    let note = ColumnNote { column: field.name().clone(), declared, resolution };
-    ResolvedColumn { field: Arc::new(field), note, plan, comparison, not_null, read_as_text: None }
+    ResolvedColumn {
+        field: Arc::new(field),
+        declared,
+        resolution,
+        plan,
+        comparison,
+        not_null,
+        read_as_text: None,
+    }
 }
 
 /// The schema of `columns`, in their order, its Arrow fields theirs and no
@@ -597,14 +587,10 @@ pub fn resolve_columns(
             db.column_not_null(qualified_table, name)
                 || domain_not_null(&column.declared_type, &db.types)
         });
-        let note = ColumnNote {
-            column: name.clone(),
-            declared: declared.map(|c| c.declared_type.clone()),
-            resolution,
-        };
         records.push(ResolvedColumn {
             field: Arc::new(field),
-            note,
+            declared: declared.map(|c| c.declared_type.clone()),
+            resolution,
             plan,
             comparison,
             not_null,
@@ -637,14 +623,14 @@ pub fn read_as_text(resolved: &mut ResolvedSchema, text: &[bool], semantics: Com
     let mut widened = false;
     for (i, column) in resolved.columns.iter_mut().enumerate() {
         let read_as_text = text.get(i).copied().unwrap_or(false)
-            && column.note.resolution == ColumnResolution::Mapped
+            && column.resolution == ColumnResolution::Mapped
             && *column.field.data_type() != DataType::Utf8View;
         if !read_as_text {
             continue;
         }
         widened = true;
         column.field = Arc::new(Field::new(column.field.name(), DataType::Utf8View, true));
-        column.note.resolution = ColumnResolution::UnrepresentableValues;
+        column.resolution = ColumnResolution::UnrepresentableValues;
         column.plan = NestedPlan::Scalar;
         column.read_as_text = Some(semantics);
         if semantics == ComparisonSemantics::DataFusion {

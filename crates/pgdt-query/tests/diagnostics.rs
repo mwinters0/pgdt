@@ -5,7 +5,7 @@
 use std::sync::{Arc, Mutex};
 
 use futures::StreamExt;
-use pgdt_codec::ColumnNote;
+use pgdt_codec::ResolvedColumn;
 use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
 use pgdt_dump::ScanOptions;
 use pgdt_io::{ByteRangeSource, LocalFileSource};
@@ -41,7 +41,7 @@ fn channel_of(finding: &dyn Finding) -> &'static str {
     let any = finding.as_any();
     if any.is::<Diagnostic>() {
         "file"
-    } else if any.is::<ColumnNote>() {
+    } else if any.is::<ResolvedColumn>() {
         "column"
     } else if any.is::<ComparisonNote>() {
         "comparison"
@@ -83,7 +83,7 @@ async fn one_sink_drains_all_three_channels() {
     };
     let sink: &dyn DiagnosticSink = &sink;
     drain(sink, &index.diagnostics);
-    drain(sink, stream.resolved_schema().notes());
+    drain(sink, stream.resolved_schema().columns());
     drain(sink, &stream.comparison_notes());
     let seen = seen.into_inner().unwrap();
 
@@ -112,11 +112,11 @@ async fn one_sink_drains_all_three_channels() {
 /// outcome — what a sink filtering at `Warning` keeps is exactly the columns
 /// whose values come back unparsed.
 #[tokio::test]
-async fn a_column_note_reads_as_a_finding() {
+async fn a_column_reads_as_a_finding() {
     let mut stream = query("public.t_int", QueryOptions::default()).await;
     while stream.next().await.transpose().unwrap().is_some() {}
     let resolved = stream.resolved_schema();
-    let bigint = resolved.notes().find(|n| n.column == "v_bigint").unwrap();
+    let bigint = resolved.columns().iter().find(|c| c.name() == "v_bigint").unwrap();
     assert_eq!(bigint.severity(), Severity::Info);
     assert_eq!(bigint.message(), "column `v_bigint` (bigint): mapped");
 }
@@ -126,7 +126,7 @@ async fn a_column_note_reads_as_a_finding() {
 /// label-less enum of `t_enum_domain` report nothing in PostgreSQL's
 /// semantics, and in DataFusion's the enum is compared by its label text. The
 /// label-less one, emitted as text, earns no second finding beside its
-/// `Warning` column note, which says so. The domain over `integer` reports in
+/// `Warning` column finding, which says so. The domain over `integer` reports in
 /// neither.
 #[tokio::test]
 async fn a_table_s_divergences_drain_at_registration() {
@@ -156,7 +156,7 @@ async fn a_table_s_divergences_drain_at_registration() {
         "{}",
         arrow[0].2
     );
-    let empty = resolved.notes().find(|n| n.column == "v_empty_enum").unwrap();
+    let empty = resolved.columns().iter().find(|c| c.name() == "v_empty_enum").unwrap();
     assert_eq!(empty.severity(), Severity::Warning);
     assert!(empty.message().ends_with("compares as that text"), "{}", empty.message());
 }

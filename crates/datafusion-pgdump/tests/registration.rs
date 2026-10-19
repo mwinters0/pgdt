@@ -1,7 +1,7 @@
 //! What a registration reports, and the single-table form.
 //!
 //! **A registration's findings are the library's own, named.** Each finding a
-//! sink hears is one the library produced — a `Diagnostic`, a `ColumnNote` or
+//! sink hears is one the library produced — a `Diagnostic`, a `ResolvedColumn` or
 //! a `ComparisonNote`, recovered through `as_any` — or the provider's
 //! `RefusedTable` for a table whose plan refuses, with the dump or the table
 //! it is about in front of its sentence. What a refusal is across
@@ -20,7 +20,7 @@ use datafusion_pgdump::{
     register_table_factory,
 };
 use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
-use pgdt_codec::{ColumnNote, SchemaMode};
+use pgdt_codec::{ResolvedColumn, SchemaMode};
 use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::{self, CacheMode, StrictIdentity};
 use pgdt_fixtures::arranged;
@@ -51,7 +51,7 @@ impl DiagnosticSink for Heard {
         }
         let channel = if any.is::<Diagnostic>() {
             "file"
-        } else if any.is::<ColumnNote>() {
+        } else if any.is::<ResolvedColumn>() {
             "column"
         } else if any.is::<ComparisonNote>() {
             "comparison"

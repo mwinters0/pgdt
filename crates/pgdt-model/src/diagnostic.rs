@@ -25,10 +25,10 @@
 //! across producers, not one enum: `DumpIndex` is the model's and
 //! `pgdt_codec::ColumnResolution` is a codec conclusion, so a
 //! [`DiagnosticKind`] variant carrying one would make the model name a codec
-//! type (`docs/design/decisions.md`, "D68"). `pgdt_codec::ColumnNote` is
+//! type (`docs/design/decisions.md`, "D68"). `pgdt_codec::ResolvedColumn` is
 //! the per-column record in the codec — one per column, always present — and
 //! `pgdt_query::ComparisonNote` the comparison one in query, per term
-//! or, from `pgdt_query::column_divergences`, per column, and
+//! or, from `pgdt_query::Table::divergences`, per column, and
 //! `pgdt_query::PlanNote` what a query's plan settled, also in query.
 //!
 //! **The four are unified at the drain, not at the storage type**: each
@@ -46,7 +46,7 @@ use serde::Serialize;
 /// One finding from any of the library's diagnostic channels, as a
 /// [`DiagnosticSink`] receives it: where it sits on the shared [`Severity`]
 /// scale, and the sentence a human reads. Implemented by [`Diagnostic`] (the
-/// model, about the file), `pgdt_codec::ColumnNote` (the codec, about one
+/// model, about the file), `pgdt_codec::ResolvedColumn` (the codec, about one
 /// column's type), `pgdt_query::ComparisonNote` (query, about one term of
 /// a query, or one column in a query's semantics) and `pgdt_query::PlanNote`
 /// (query, about one query's plan).
@@ -76,7 +76,7 @@ impl<F: Fn(&dyn Finding) + Send + Sync> DiagnosticSink for F {
 }
 
 /// Hand every finding of one channel to `sink`, in the channel's own order —
-/// `sink` taking `&index.diagnostics`, `resolved.notes()`,
+/// `sink` taking `&index.diagnostics`, `resolved.columns()`,
 /// `&stream.comparison_notes()`, `&table.divergences(…)?` or
 /// `&stream.plan_notes()` alike.
 pub fn drain<'a, F: Finding + 'a>(

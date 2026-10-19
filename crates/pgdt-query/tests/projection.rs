@@ -86,7 +86,7 @@ async fn a_projection_cuts_the_batches_and_the_reported_schema_together() {
     let resolved = stream.resolved_schema();
     let names: Vec<String> = resolved.schema().fields().iter().map(|f| f.name().clone()).collect();
     assert_eq!(names, vec!["created_at".to_string(), "id".to_string()]);
-    assert_eq!(resolved.notes().map(|n| n.column.clone()).collect::<Vec<_>>(), names);
+    assert_eq!(resolved.columns().iter().map(|c| c.name().to_string()).collect::<Vec<_>>(), names);
     assert_eq!(resolved.columns().len(), 2);
 }
 

@@ -13,7 +13,7 @@ use pgdt_model::{Finding, Severity};
 /// One term of one query whose comparison does not answer what PostgreSQL's
 /// own operator for that column would — reported per stream by
 /// `crate::stream::TableStream::comparison_notes`, on its own channel rather
-/// than as a `Diagnostic` or a [`pgdt_codec::ColumnNote`]
+/// than as a `Diagnostic` or a [`pgdt_codec::ResolvedColumn`]
 /// (`docs/design/decisions.md`, "D59", "D68"), and reaching a caller's
 /// `pgdt_model::DiagnosticSink` beside them as a
 /// [`pgdt_model::Finding`].
@@ -185,20 +185,20 @@ impl Finding for ComparisonNote {
 /// [`CompareKind::datafusion_divergence`](pgdt_codec::compare::CompareKind::datafusion_divergence), beside any collation the register
 /// already announced; `jsonb`'s string collation is dropped, the whole value
 /// being compared as text. A column that fell back to text reports nothing,
-/// its `Warning` column note being the finding.
+/// its `Warning` column record being the finding.
 pub fn column_divergences(
     resolved: &ResolvedSchema,
     semantics: ComparisonSemantics,
 ) -> Vec<ComparisonNote> {
     let mut out = Vec::new();
-    for (index, note) in resolved.notes().enumerate() {
-        let declared = note.declared.clone().unwrap_or_default();
+    for (index, column) in resolved.columns().iter().enumerate() {
+        let declared = column.declared().unwrap_or_default().to_string();
         let positions = match semantics {
             ComparisonSemantics::Postgres => postgres_divergences(resolved, index),
             ComparisonSemantics::DataFusion => datafusion_divergences(resolved, index, &declared),
         };
         out.extend(positions.into_iter().map(|(path, declared_type, divergence)| ComparisonNote {
-            column: note.column.clone(),
+            column: column.name().to_string(),
             path,
             declared_type,
             divergence,
@@ -289,7 +289,7 @@ fn postgres_divergences(resolved: &ResolvedSchema, index: usize) -> Vec<Divergin
 /// emits rather than off which terms this build answers.
 ///
 /// A column that did not resolve says nothing here: its fall-back
-/// [`pgdt_codec::ColumnNote`] is already a `Warning` saying the value is
+/// [`pgdt_codec::ResolvedColumn`] is already a `Warning` saying the value is
 /// the file's text, which is all DataFusion compares.
 fn datafusion_divergences(
     resolved: &ResolvedSchema,

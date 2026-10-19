@@ -855,7 +855,7 @@ fn datafusion_semantics_refuses_a_nested_column_under_every_comparing_operator()
 /// its element's collation, `real[]` its element's unnormalized zero; a
 /// float column reports nothing in either.
 /// A column that fell back to text reports nothing in DataFusion's semantics,
-/// its column note being the finding. One schema, so the order of the
+/// its column record being the finding. One schema, so the order of the
 /// report is the columns'.
 #[test]
 fn a_column_s_divergences_follow_the_semantics_asked_for() {
@@ -3509,7 +3509,7 @@ mod oracle {
     /// the server does**: every oracle cell a term in DataFusion's semantics
     /// answers differently from PostgreSQL falls on a column reporting a
     /// divergence that reaches the cell's operator, or on one that fell
-    /// back to text, whose column note is its finding. A nested column,
+    /// back to text, whose column record is its finding. A nested column,
     /// whose every term is refused here, is answered as DataFusion
     /// answers it — `make_comparator` over the arrays a batch builds —
     /// and asserted to report its order, so its equality cells hold the
@@ -3610,7 +3610,7 @@ mod oracle {
                     asserted += 1;
                     if got != expected {
                         // A column that fell back to text is reported by
-                        // its `Warning` column note, and nothing else.
+                        // its `Warning` column record, and nothing else.
                         let fell_back =
                             *schema.columns()[0].resolution() != ColumnResolution::Mapped;
                         assert!(

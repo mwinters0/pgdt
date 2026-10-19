@@ -357,7 +357,7 @@ impl Finding for PlanNote {
     /// "D84"), where the `Warning` beside it is what says a count still came
     /// up short — and `Warning` for every note saying the budget in force
     /// declined something asked of it, and for values read as NULL. Derived from the kind, as
-    /// `ColumnNote`'s is from its resolution, so a caller printing it and one
+    /// a `ResolvedColumn`'s is from its resolution, so a caller printing it and one
     /// draining it into a sink cannot disagree.
     fn severity(&self) -> Severity {
         match self.kind {

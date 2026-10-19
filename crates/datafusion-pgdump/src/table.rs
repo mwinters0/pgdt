@@ -133,7 +133,7 @@ impl PgDumpTable {
         uncollated: &mut UncollatedColumns,
     ) {
         let resolved = self.resolved_schema();
-        for finding in resolved.notes() {
+        for finding in resolved.columns() {
             sink.report(&Located { subject, finding });
         }
         for finding in &self.divergences {

@@ -764,10 +764,10 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
             };
             let table = dump.table(&TableName::of(database, block).into()).unwrap().unwrap();
             let queried = table.schema(&untyped).unwrap();
-            for note in resolved.notes().chain(queried.notes()) {
-                witnesses
-                    .entry(outcome_name(&note.resolution))
-                    .or_insert_with(|| format!("{}: {qualified}.{}", path.display(), note.column));
+            for column in resolved.columns().iter().chain(queried.columns()) {
+                witnesses.entry(outcome_name(column.resolution())).or_insert_with(|| {
+                    format!("{}: {qualified}.{}", path.display(), column.name())
+                });
             }
         }
     }

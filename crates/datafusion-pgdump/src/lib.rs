@@ -22,7 +22,7 @@
 //!
 //! **What a registration finds is handed to the caller's sink**
 //! (`pgdt_model::DiagnosticSink`): the dump's file-level findings, and each
-//! table's column notes and divergence from PostgreSQL, the columns compared
+//! table's column findings and divergence from PostgreSQL, the columns compared
 //! bytewise for want of a recorded collation one finding a registration
 //! ([`UncollatedColumns`]); and what a scan's
 //! plan settles is handed to it when the scan is planned ([`crate::report`]).

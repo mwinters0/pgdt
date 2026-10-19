@@ -1,7 +1,7 @@
 //! What registration and planning report to the caller's sink.
 //!
 //! **What a dump or a table is, is reported when it is registered**: the
-//! file-level channel once per registration, and each table's per-column notes and
+//! file-level channel once per registration, and each table's per-column findings and
 //! its columns' divergence from PostgreSQL in the semantics every scan asks
 //! for — or, for a table the catalog does not list, its [`RefusedTable`] —
 //! save the columns compared bytewise for want of a recorded collation, which
@@ -37,7 +37,7 @@ use crate::error::Error;
 
 /// A finding with what it is about named in front of its sentence: the dump,
 /// or a table as SQL names it. The library's findings name a column at most
-/// (`pgdt_codec::ColumnNote`, `pgdt_query::ComparisonNote`), and one sink
+/// (`pgdt_codec::ResolvedColumn`, `pgdt_query::ComparisonNote`), and one sink
 /// hears every table of every registered dump.
 ///
 /// [`Finding::as_any`] is the wrapped finding's, so a sink downcasting to the

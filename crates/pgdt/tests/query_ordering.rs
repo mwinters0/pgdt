@@ -7,7 +7,7 @@
 //! What only the binary can say is how a term is split into column, operator
 //! and value, and that a divergent comparison is announced on stderr — the
 //! signal that exists nowhere else, since it is neither a `Diagnostic` nor a
-//! `ColumnNote`.
+//! `ResolvedColumn`.
 
 use std::process::Output;
 

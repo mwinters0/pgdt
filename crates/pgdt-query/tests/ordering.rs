@@ -960,7 +960,7 @@ async fn a_literal_of_the_wrong_type_is_refused_before_any_row() {
 
 /// The divergent register rows a real dump can show, reported through the
 /// stream's own channel — per-column *and* conditional on the predicate,
-/// which is why it is neither a `Diagnostic` nor a `ColumnNote`.
+/// which is why it is neither a `Diagnostic` nor a `ResolvedColumn`.
 ///
 /// Every text column in the fixture tree carries no `COLLATE` clause, which
 /// is why `UnknownCollation` is the text row here and the *agreeing* halves

@@ -15,9 +15,7 @@ mod resolve;
 mod unrepresentable;
 mod value;
 
-pub use resolve::{
-    ColumnNote, ColumnResolution, ResolvedColumn, ResolvedSchema, SchemaMode, resolve_columns,
-};
+pub use resolve::{ColumnResolution, ResolvedColumn, ResolvedSchema, SchemaMode, resolve_columns};
 pub use unrepresentable::UnrepresentableMode;
 
 /// What a crate above reaches that is not this crate's API: public only
