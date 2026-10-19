@@ -442,9 +442,12 @@ This closes `KD115` and the rest of cluster D.
   arrangement, and applies what it read to the block. `bounded_columns`,
   `StatisticsBackfill` and `BlockReread` become `pub(crate)`.
 - **`ResolvedSchema` is one record per column**, holding the Arrow field, the
-  `NestedPlan`, the note and the comparison plan, read through accessors. It
-  no longer has six parallel `pub` vectors, and the copy of each column's
-  resolution in its note goes.
+  `NestedPlan`, the declared type, the resolution and the comparison plan,
+  read through accessors. It no longer has six parallel `pub` vectors.
+  **The record is the column's finding**: it implements `Finding`, a sink
+  downcasts to it, and `ColumnNote` goes, so the name, the declared type and
+  the resolution are each stored once (history, 2026-10-19, "The column
+  record is its finding").
 - **A `ValueKey` is built from the column record.** `ValueKey::of` and
   `ValueKey::literal` take it in place of the schema and an index. The record
   carries the semantics a widened column was read as text under (D100), and
@@ -573,6 +576,16 @@ accepted where none does: this phase's goal is the architecture, and a rise
 the size of a reshape's indirection does not outweigh it. Reasoning:
 [`../status/history/2026-10-16.md`](../status/history/2026-10-16.md),
 "36.4's refusal: attribute exactly, then rework or accept".
+
+**Callgrind's self charge locates a rise; the caller chain says whose it
+is.** A rise callgrind reproduces is the change's where it sits in machine
+code the tree changed, or in identical code reached under a frame of machine
+code the tree changed, whether or not that code's source changed. It is
+**layout**, reopening how `--count-pair` is read before another slice is
+counted, only where callgrind does not reproduce it or no changed machine
+code sits above it. **No rise is too small to owe the attribution**: the gate
+is resolution, with no floor. Reasoning: history, 2026-10-19, "A rise reached
+through changed code is the change's".
 - **It builds the shipped (fat) leg twice**, once at `<rev>` and once at the
   working tree. Each build runs in the release image, in its own target
   directory under the scratch alloc-builds root, from a git worktree, as

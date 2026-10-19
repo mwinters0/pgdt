@@ -16,8 +16,9 @@ semantics keys in it alone, `None` in the other (D100).
   goes.** The record holds the `ColumnNote` whole, so the finding a sink
   downcasts is unchanged, and `ResolvedColumn::resolution` reads the note's.
   The spec's "the copy of each column's resolution in its note goes" was
-  read as the copy *beside* the note; the call is under STATUS's "Decisions
-  worth another look".
+  read as the copy *beside* the note. Reviewed, that is reversed: the record
+  is the finding and `ColumnNote` goes, which is 36.9.1 (history, 2026-10-19,
+  "The column record is its finding").
 - **Rendering takes the record.** `render_field`, `render_field_into` and
   `decode_field` take a `&ResolvedColumn`; the plan-taking recursion is
   `render.rs`'s `render_plan` and `render_plan_into`, crate-private, which
@@ -98,9 +99,10 @@ ticked. **The `pgdt sql` rise was accepted by the maintainer** on
 2026-10-19, relayed to this round by the session that launched it, without
 an exact count; the count above was already running and was finished. **The
 data-level `parse` rise is accepted by this round**: no shape of the slice's
-code recovers a stack offset in code it did not change. That a rise in
-identical code does not reopen how `--count-pair` is read, as 36.4.3's
-reading said layout would, is under STATUS's "Decisions worth another look".
+code recovers a stack offset in code it did not change. That this does not
+reopen how `--count-pair` is read, `observe_row` being machine code the tree
+changed, was reviewed and affirmed, and the reading is the spec's ("What a
+hot-path slice owes").
 
 ## What the next round inherits
 
