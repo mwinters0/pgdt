@@ -14,7 +14,7 @@ use pgdt_model::{DiagnosticSink, TableName};
 use pgdt_query::TableSelector;
 
 use crate::dump::PgDump;
-use crate::error::Error;
+use crate::error::{Error, Refusal};
 use crate::report::{RefusedTable, Reporting, UncollatedColumns, report_located};
 use crate::session::install;
 use crate::table::PgDumpTable;
@@ -55,11 +55,11 @@ pub fn register_dump(
         ([Some(database)], None) => vec![(Some(database.clone()), database.clone())],
         ([], Some(name)) => vec![(None, name.to_string())],
         ([None] | [], None) => {
-            let refused = Error::CatalogNameNeeded { origin: dump.origin().to_string() };
+            let refused = Refusal::CatalogNameNeeded { origin: dump.origin().to_string() };
             return Err(dump.speller().error(refused));
         }
         (_, Some(name)) => {
-            let refused = Error::CatalogNameRefused {
+            let refused = Refusal::CatalogNameRefused {
                 origin: dump.origin().to_string(),
                 databases: databases.len(),
                 name: name.to_string(),
@@ -70,7 +70,7 @@ pub fn register_dump(
             let mut named = Vec::new();
             for database in databases {
                 let Some(catalog) = database.clone() else {
-                    let refused = Error::DatabaseUnnamed { origin: dump.origin().to_string() };
+                    let refused = Refusal::DatabaseUnnamed { origin: dump.origin().to_string() };
                     return Err(dump.speller().error(refused));
                 };
                 named.push((database, catalog));

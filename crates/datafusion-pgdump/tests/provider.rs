@@ -15,7 +15,9 @@ use arrow::compute::concat_batches;
 use arrow::datatypes::SchemaRef;
 use datafusion::physical_plan::{ExecutionPlan, execute_stream_partitioned};
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_pgdump::{Error, MappingPass, PgDump, PgDumpOptions, ScanBudget, register_dump};
+use datafusion_pgdump::{
+    Error, MappingPass, PgDump, PgDumpOptions, Refusal, ScanBudget, register_dump,
+};
 use futures::StreamExt;
 use pgdt_codec::{SchemaMode, compare::ComparisonSemantics};
 use pgdt_dump::ReadOptions;
@@ -177,7 +179,7 @@ async fn a_dump_registers_one_catalog_per_database_named_as_the_file_names_it() 
     // A plain dump names no database: a name is required.
     let (_, plain) = fixture_dump("edge_cases", "default", dir.path()).await;
     let refused = register_dump(&session(1, 8192), None, &plain, Arc::new(ignore)).unwrap_err();
-    assert!(matches!(refused, Error::CatalogNameNeeded { .. }), "{refused}");
+    assert!(matches!(refused.refusal(), Refusal::CatalogNameNeeded { .. }), "{refused}");
     let ctx = session(1, 8192);
     assert_eq!(register_dump(&ctx, Some("shop"), &plain, Arc::new(ignore)).unwrap(), ["shop"]);
     let catalog = ctx.catalog("shop").unwrap();
@@ -190,7 +192,7 @@ async fn a_dump_registers_one_catalog_per_database_named_as_the_file_names_it() 
     let refused =
         register_dump(&session(1, 8192), Some("shop"), &all, Arc::new(ignore)).unwrap_err();
     assert!(
-        matches!(&refused, Error::CatalogNameRefused { databases, name, .. }
+        matches!(refused.refusal(), Refusal::CatalogNameRefused { databases, name, .. }
             if *databases > 1 && name == "shop"),
         "{refused}"
     );
@@ -227,8 +229,8 @@ async fn only_a_complete_cache_opens() {
         cache_path,
         postgres_invalid_values,
     };
-    let passed = |refused: &Error| match refused {
-        Error::CacheNotComplete { pass, .. } => pass.clone(),
+    let passed = |refused: &Error| match refused.refusal() {
+        Refusal::CacheNotComplete { pass, .. } => pass.clone(),
         other => panic!("not refused as incomplete: {other}"),
     };
 
@@ -489,8 +491,8 @@ async fn a_single_table_registers_on_its_own() {
         .table(&TableSelector::named("widgets").in_schema("public"), "widgets", Arc::new(ignore))
         .unwrap_err();
     let ambiguous = matches!(
-        &refused,
-        Error::Library(pgdt_core::Error::AmbiguousTable { candidates, .. }) if candidates.len() > 1
+        refused.refusal(),
+        Refusal::Library(pgdt_core::Error::AmbiguousTable { candidates, .. }) if candidates.len() > 1
     );
     assert!(ambiguous, "{refused}");
     assert!(refused.to_string().contains("pgdt_tenant"), "{refused}");

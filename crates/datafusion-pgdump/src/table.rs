@@ -17,7 +17,7 @@ use pgdt_query::{PlanNote, QueryOptions, Table, TableSelector};
 
 use crate::budget::{BudgetAccount, ScanBudget, pool_limit};
 use crate::dump::PgDump;
-use crate::error::Error;
+use crate::error::{Error, Refusal};
 use crate::exec::{PgDumpExec, Replay, ScanMetrics, StaticFilter};
 use crate::filter::translate;
 use crate::report::{BudgetedPlanNote, Reporting, UncollatedColumns};
@@ -60,7 +60,7 @@ impl PgDumpTable {
     /// `table`, resolved from `dump`, under the schema its plan resolves —
     /// refused as the library refuses it, bar a table the cache holds at the
     /// metadata level under a typed schema, which the library refuses too and
-    /// this names the mapping pass for ([`Error::MetadataLevel`]); the caller
+    /// this names the mapping pass for ([`Refusal::MetadataLevel`]); the caller
     /// spells either. Built, its findings
     /// go to `reporting`: how each column resolved, and how each column's
     /// comparison in DataFusion's semantics diverges from PostgreSQL's, bar
@@ -74,12 +74,13 @@ impl PgDumpTable {
     ) -> Result<Self, Error> {
         let options = query_options(&dump);
         let resolved = table.schema(&options).map_err(|refused| match refused {
-            refused @ pgdt_core::Error::TableAtMetadataLevel { .. } => Error::MetadataLevel {
+            refused @ pgdt_core::Error::TableAtMetadataLevel { .. } => Refusal::MetadataLevel {
                 refused: Box::new(refused),
                 pass: dump.pass().clone(),
                 table: Box::new(table.name().clone()),
-            },
-            other => Error::Library(other),
+            }
+            .into(),
+            other => Error::from(other),
         })?;
         let divergences = table.divergences(&options)?;
         for finding in resolved.columns() {
@@ -150,8 +151,8 @@ impl PgDump {
     ) -> Result<Arc<PgDumpTable>, Error> {
         let spelled = |err: Error| self.speller().error(err);
         let Some(table) = self.dump().table(selector).map_err(|err| spelled(err.into()))? else {
-            let refused = Error::Table(format!("{} holds no table `{selector}`", self.origin()));
-            return Err(spelled(refused));
+            let refused = Refusal::Table(format!("{} holds no table `{selector}`", self.origin()));
+            return Err(spelled(refused.into()));
         };
         let mut uncollated = UncollatedColumns::of(subject);
         let reporting = Reporting { subject: subject.to_string(), sink: Arc::clone(&sink) };

@@ -11,7 +11,7 @@ use pgdt_model::{Diagnostic, PostgresInvalidValues, TableName};
 use pgdt_query::Dump;
 
 use crate::budget::{Hold, ScanBudget};
-use crate::error::{Error, MappingPass, Speller, Spelling};
+use crate::error::{Error, MappingPass, Refusal, Speller, Spelling};
 
 /// How a dump is opened.
 #[derive(Debug, Clone, Default)]
@@ -61,7 +61,7 @@ pub struct PgDumpOptions {
 /// and its identity checks pass as they do for any load. A cache that cannot
 /// be used — another file's, another build's, damaged, or contradicting the
 /// file's compression — is the library's own refusal; one short of a complete
-/// map of this file, or none named, is [`Error::CacheNotComplete`], carrying
+/// map of this file, or none named, is [`Refusal::CacheNotComplete`], carrying
 /// the mapping pass that would build it.
 ///
 /// **The map is resident for as long as the dump is registered**, because
@@ -123,7 +123,8 @@ impl PgDump {
             cache_path: options.cache_path.clone(),
             postgres_invalid_values: options.postgres_invalid_values,
         };
-        let incomplete = |why: String| Error::CacheNotComplete { pass: pass.clone(), why };
+        let incomplete =
+            |why: String| Error::from(Refusal::CacheNotComplete { pass: pass.clone(), why });
         // An unusable cache is the scans' own refusal, word for word: this
         // provider never writes, so nothing here may overwrite one
         // (`docs/design/decisions.md`, "D20").

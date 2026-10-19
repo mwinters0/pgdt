@@ -9,8 +9,8 @@ fn pass(postgres_invalid_values: PostgresInvalidValues) -> MappingPass {
     MappingPass { location: "/d/koji.dump".to_string(), cache_path: None, postgres_invalid_values }
 }
 
-fn metadata_level(postgres_invalid_values: PostgresInvalidValues) -> Error {
-    Error::MetadataLevel {
+fn metadata_level(postgres_invalid_values: PostgresInvalidValues) -> Refusal {
+    Refusal::MetadataLevel {
         refused: Box::new(pgdt_core::Error::TableAtMetadataLevel { table: "public.meta".into() }),
         pass: pass(postgres_invalid_values),
         table: Box::new(TableName {
@@ -29,11 +29,11 @@ fn metadata_level(postgres_invalid_values: PostgresInvalidValues) -> Error {
 /// spelling under each grammar, `None` where that grammar has none.
 #[test]
 fn each_refusal_is_spelled_in_its_registration_s_grammar() {
-    let lib = |err: pgdt_core::Error| Error::Library(err);
+    let lib = |err: pgdt_core::Error| Refusal::Library(err);
     let cache = || PathBuf::from("koji.dump.dtcache");
-    let cases: Vec<(Error, Option<&str>, Option<&str>)> = vec![
+    let cases: Vec<(Refusal, Option<&str>, Option<&str>)> = vec![
         (
-            Error::CacheNotComplete {
+            Refusal::CacheNotComplete {
                 pass: pass(PostgresInvalidValues::Default),
                 why: "there is no cache".into(),
             },
@@ -43,7 +43,7 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
         // Opened to go past what PostgreSQL refuses, the parse goes past
         // them too, where the default parse would fail at the first.
         (
-            Error::CacheNotComplete {
+            Refusal::CacheNotComplete {
                 pass: MappingPass {
                     cache_path: Some(cache()),
                     ..pass(PostgresInvalidValues::Ignore)
@@ -83,12 +83,12 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
             ),
         ),
         (
-            Error::CatalogNameNeeded { origin: "/d/koji.dump".into() },
+            Refusal::CatalogNameNeeded { origin: "/d/koji.dump".into() },
             Some("`--dump NAME=SOURCE`"),
             None,
         ),
         (
-            Error::CatalogNameRefused {
+            Refusal::CatalogNameRefused {
                 origin: "/d/all.dump".into(),
                 databases: 2,
                 name: "shop".into(),
@@ -96,8 +96,8 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
             Some("`--dump SOURCE`, without `NAME=`"),
             None,
         ),
-        (Error::DatabaseUnnamed { origin: "/d/all.dump".into() }, None, None),
-        (Error::Table("/d/koji.dump holds no table `x`".into()), None, None),
+        (Refusal::DatabaseUnnamed { origin: "/d/all.dump".into() }, None, None),
+        (Refusal::Table("/d/koji.dump holds no table `x`".into()), None, None),
         (
             lib(pgdt_core::Error::SourceChangedWhileRead { differences: "its size moved".into() }),
             Some("`:strict-identity=none`"),
@@ -206,15 +206,4 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
             assert!(!said.contains(spelled), "{said}");
         }
     }
-}
-
-/// **A spelled refusal is not spelled again**, whatever grammar asks.
-#[test]
-fn a_spelled_refusal_is_not_spelled_again() {
-    let spelled = Error::Spelled {
-        refused: Box::new(metadata_level(PostgresInvalidValues::Default)),
-        spelling: "`pgdt parse`".into(),
-    };
-    assert_eq!(spelling(Grammar::Dump, &spelled), None);
-    assert_eq!(spelling(Grammar::Statement, &spelled), None);
 }

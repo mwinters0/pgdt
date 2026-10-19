@@ -74,7 +74,7 @@ mod unrepresentable;
 pub use budget::{BudgetAccount, ScanBudget};
 pub use catalog::{UNQUALIFIED_SCHEMA, register_dump};
 pub use dump::{PgDump, PgDumpOptions};
-pub use error::{Error, MappingPass, Spelling};
+pub use error::{Error, MappingPass, Refusal, Spelling};
 pub use factory::{PGDUMP_FILE_TYPE, register_table_factory};
 pub use key::compare_value_keys;
 pub use report::{BudgetedPlanNote, Located, RefusedTable, UncollatedColumns};

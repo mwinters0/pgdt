@@ -9,19 +9,50 @@ use std::sync::Arc;
 use datafusion::common::DataFusionError;
 use pgdt_model::{PostgresInvalidValues, TableName};
 
+/// **A refusal of a dump, and the front end's words for its remedy where it
+/// handed any** — the one error every path of this crate returns and the top
+/// of what DataFusion carries (`docs/design/decisions.md`, "D74"). An
+/// embedder matches [`Error::refusal`]; a front end that hands the dump its
+/// [`Spelling`] has every refusal carry that spelling, closing its message in
+/// parentheses ("D107").
+///
+/// Its fields are private, so a refusal is spelled only on its way out of
+/// what the spelling was handed to, and at most once. Its
+/// [`source`](std::error::Error::source) is the refusal's own: the library's
+/// error beneath [`Refusal::Library`] and [`Refusal::MetadataLevel`], and none
+/// beneath the rest.
+#[derive(Debug)]
+pub struct Error {
+    /// Boxed so that a `Result` carrying the error stays small.
+    refusal: Box<Refusal>,
+    spelling: Option<String>,
+}
+
+impl Error {
+    /// What was refused.
+    pub fn refusal(&self) -> &Refusal {
+        &self.refusal
+    }
+
+    /// The front end's words for the remedy, as its [`Spelling`] answered;
+    /// `None` where it handed none, or had none for this refusal.
+    pub fn spelling(&self) -> Option<&str> {
+        self.spelling.as_deref()
+    }
+}
+
 /// What opening or registering a dump can refuse.
 ///
 /// **Each sentence states the condition and names its remedy in the
 /// library's terms** — a mapping pass, a mode, a name given or left out —
 /// never a front end's flag or command; what a front end needs to spell one
-/// is in the variant's fields, and a front end that hands the dump its
-/// [`Spelling`] has every refusal carry that spelling in its message, as
-/// [`Error::Spelled`] (`docs/design/decisions.md`, "D107").
+/// is in the variant's fields (`docs/design/decisions.md`, "D107"). It is
+/// carried as an [`Error`], never alone.
 #[derive(Debug)]
-pub enum Error {
+pub enum Refusal {
     /// The library's own refusal: a source it cannot read, a cache it cannot
     /// use, a table whose blocks disagree. Its sentence is the library's, and
-    /// the library's error is its source, so a walk of
+    /// the library's error is the [`Error`]'s source, so a walk of
     /// [`std::error::Error::source`] reaches it.
     Library(pgdt_core::Error),
     /// The cache this provider reads does not cover the whole file, or is not
@@ -29,9 +60,9 @@ pub enum Error {
     /// to the file's end (`docs/design/decisions.md`, "D90").
     CacheNotComplete { pass: MappingPass, why: String },
     /// A table the cache holds at the metadata level, opened typed: the
-    /// library's refusal ([`pgdt_core::Error::TableAtMetadataLevel`]), its
-    /// source, beside `pass`, which maps `table` again at the data level
-    /// (`docs/design/decisions.md`, "D35").
+    /// library's refusal ([`pgdt_core::Error::TableAtMetadataLevel`]), the
+    /// [`Error`]'s source, beside `pass`, which maps `table` again at the data
+    /// level (`docs/design/decisions.md`, "D35").
     MetadataLevel { refused: Box<pgdt_core::Error>, pass: MappingPass, table: Box<TableName> },
     /// A file naming no database registered with no catalog name, where
     /// nothing else supplies one.
@@ -46,10 +77,6 @@ pub enum Error {
     /// ambiguous is the library's refusal
     /// ([`pgdt_core::Error::AmbiguousTable`]).
     Table(String),
-    /// `refused`, closed by the front end's spelling of its remedy in
-    /// parentheses, as its [`Spelling`] answered. Its source is `refused`;
-    /// [`Error::unspelled`] reaches it whatever the variant.
-    Spelled { refused: Box<Error>, spelling: String },
 }
 
 /// **The mapping pass that builds the cache a dump reads**, as a refusal
@@ -80,11 +107,11 @@ impl MappingPass {
 /// default pass's way.
 const GOING_PAST: &str = "going past the values PostgreSQL refuses, as this dump reads them";
 
-impl fmt::Display for Error {
+impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Library(err) => write!(f, "{err}"),
-            Error::CacheNotComplete { pass, why } => {
+            Refusal::Library(err) => write!(f, "{err}"),
+            Refusal::CacheNotComplete { pass, why } => {
                 write!(
                     f,
                     "{why}; the provider reads only a complete cache, which a mapping pass to \
@@ -95,65 +122,70 @@ impl fmt::Display for Error {
                 }
                 Ok(())
             }
-            Error::MetadataLevel { refused, pass, .. } => {
+            Refusal::MetadataLevel { refused, pass, .. } => {
                 write!(f, "{refused}")?;
                 if pass.goes_past_refused_values() {
                     write!(f, "; that mapping pass maps it {GOING_PAST}")?;
                 }
                 Ok(())
             }
-            Error::CatalogNameNeeded { origin } => {
+            Refusal::CatalogNameNeeded { origin } => {
                 write!(f, "{origin} names no database, so its catalog needs a name — give one")
             }
-            Error::CatalogNameRefused { origin, databases, name } => write!(
+            Refusal::CatalogNameRefused { origin, databases, name } => write!(
                 f,
                 "{origin} holds {databases} databases, each registered under its own name; \
                  `{name}` would name none of them — leave the name out"
             ),
-            Error::DatabaseUnnamed { origin } => write!(
+            Refusal::DatabaseUnnamed { origin } => write!(
                 f,
                 "{origin} holds several databases and one of them has no name, so no catalog \
                  name can be taken from the file for it"
             ),
-            Error::Table(why) => f.write_str(why),
-            Error::Spelled { refused, spelling } => write!(f, "{refused} ({spelling})"),
+            Refusal::Table(why) => f.write_str(why),
         }
     }
 }
 
-/// Written by hand rather than derived, so that a boxed refusal's source is
-/// the refusal itself and not what lies beneath it: `Box<E>`'s own
-/// `source()` is `E`'s, which a derived impl handing back the box would skip
-/// past.
+/// The refusal, closed by the front end's spelling of its remedy in
+/// parentheses where it has one.
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.refusal)?;
+        match &self.spelling {
+            Some(spelling) => write!(f, " ({spelling})"),
+            None => Ok(()),
+        }
+    }
+}
+
+/// The refusal's own source: the [`Refusal`] is not an error of its own, so a
+/// walk reaches the library's error in one step, spelled or not.
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Library(err) => Some(err),
-            Error::MetadataLevel { refused, .. } => Some(refused.as_ref()),
-            Error::Spelled { refused, .. } => Some(refused.as_ref()),
-            Error::CacheNotComplete { .. }
-            | Error::CatalogNameNeeded { .. }
-            | Error::CatalogNameRefused { .. }
-            | Error::DatabaseUnnamed { .. }
-            | Error::Table(_) => None,
+        match self.refusal.as_ref() {
+            Refusal::Library(err) => Some(err),
+            Refusal::MetadataLevel { refused, .. } => Some(refused.as_ref()),
+            Refusal::CacheNotComplete { .. }
+            | Refusal::CatalogNameNeeded { .. }
+            | Refusal::CatalogNameRefused { .. }
+            | Refusal::DatabaseUnnamed { .. }
+            | Refusal::Table(_) => None,
         }
     }
 }
 
+/// A refusal no spelling has been asked of.
+impl From<Refusal> for Error {
+    fn from(refusal: Refusal) -> Self {
+        Error { refusal: Box::new(refusal), spelling: None }
+    }
+}
+
+/// The library's refusal, unspelled.
 impl From<pgdt_core::Error> for Error {
     fn from(err: pgdt_core::Error) -> Self {
-        Error::Library(err)
-    }
-}
-
-impl Error {
-    /// The refusal beneath any front end's spelling of it: itself, but for
-    /// [`Error::Spelled`].
-    pub fn unspelled(&self) -> &Error {
-        match self {
-            Error::Spelled { refused, .. } => refused.unspelled(),
-            other => other,
-        }
+        Refusal::Library(err).into()
     }
 }
 
@@ -167,17 +199,17 @@ impl Error {
 /// statement meets is printed by DataFusion's own machinery, out of the
 /// front end's reach (`docs/design/decisions.md`, "D107").
 ///
-/// It is asked of every [`Error`] but [`Error::Spelled`], the library's
-/// beneath [`Error::Library`].
+/// It is asked once of each refusal, the library's beneath
+/// [`Refusal::Library`].
 pub trait Spelling: Send + Sync {
-    fn spell(&self, refused: &Error) -> Option<String>;
+    fn spell(&self, refused: &Refusal) -> Option<String>;
 }
 
 impl<F> Spelling for F
 where
-    F: Fn(&Error) -> Option<String> + Send + Sync,
+    F: Fn(&Refusal) -> Option<String> + Send + Sync,
 {
-    fn spell(&self, refused: &Error) -> Option<String> {
+    fn spell(&self, refused: &Refusal) -> Option<String> {
         self(refused)
     }
 }
@@ -189,21 +221,20 @@ impl fmt::Debug for dyn Spelling {
 }
 
 /// The spelling a dump or a factory was handed, applied to each refusal on
-/// its way out — the only place a refusal becomes [`Error::Spelled`].
+/// its way out — the only place an [`Error`] gains a spelling.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Speller(pub(crate) Option<Arc<dyn Spelling>>);
 
 impl Speller {
-    /// `refused`, closed by the front end's spelling where it has one.
+    /// `refused`, closed by the front end's spelling where it has one; one
+    /// already spelled is left as it is.
     pub(crate) fn error(&self, refused: impl Into<Error>) -> Error {
-        let refused = refused.into();
-        if matches!(refused, Error::Spelled { .. }) {
-            return refused;
+        let mut refused = refused.into();
+        if refused.spelling.is_none() {
+            refused.spelling =
+                self.0.as_deref().and_then(|spelling| spelling.spell(&refused.refusal));
         }
-        match self.0.as_deref().and_then(|spelling| spelling.spell(&refused)) {
-            Some(spelling) => Error::Spelled { refused: Box::new(refused), spelling },
-            None => refused,
-        }
+        refused
     }
 
     /// The library's refusal across DataFusion's boundary, spelled.
@@ -223,5 +254,28 @@ impl Speller {
 impl From<Error> for DataFusionError {
     fn from(err: Error) -> Self {
         DataFusionError::External(Box::new(err))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **A refusal is spelled once**: one already spelled keeps its spelling
+    /// whatever speller it passes next, and one a spelling has no words for
+    /// says the refusal alone.
+    #[test]
+    fn a_refusal_is_spelled_once() {
+        let spelling = |words: &'static str| {
+            Speller(Some(Arc::new(move |_: &Refusal| Some(words.to_string()))))
+        };
+        let refused = || Refusal::Table("no table `x`".to_string());
+        let spelled = spelling("first").error(refused());
+        let respelled = spelling("second").error(spelled);
+        assert_eq!(respelled.spelling(), Some("first"));
+        assert_eq!(respelled.to_string(), "no table `x` (first)");
+        let silent = Speller(Some(Arc::new(|_: &Refusal| None)));
+        assert_eq!(silent.error(refused()).to_string(), "no table `x`");
+        assert_eq!(Speller::default().error(refused()).spelling(), None);
     }
 }

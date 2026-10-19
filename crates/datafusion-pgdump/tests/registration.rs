@@ -16,7 +16,7 @@ use arrow::array::RecordBatch;
 use datafusion::error::DataFusionError;
 use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_pgdump::{
-    Error, Located, PgDump, PgDumpOptions, RefusedTable, Spelling, UncollatedColumns,
+    Error, Located, PgDump, PgDumpOptions, Refusal, RefusedTable, Spelling, UncollatedColumns,
     register_dump, register_table_factory,
 };
 use pgdt_codec::compare::{ComparisonDivergence, ComparisonSemantics};
@@ -267,8 +267,8 @@ async fn a_metadata_level_table_is_refused_naming_its_mapping_pass() {
     let ok = rows(&ctx, "SELECT * FROM shop.public.ok").await.unwrap();
     assert_eq!(ok.iter().map(RecordBatch::num_rows).sum::<usize>(), 1);
 
-    let spelling: Arc<dyn Spelling> = Arc::new(|refused: &Error| match refused {
-        Error::MetadataLevel { pass, table, .. } => {
+    let spelling: Arc<dyn Spelling> = Arc::new(|refused: &Refusal| match refused {
+        Refusal::MetadataLevel { pass, table, .. } => {
             Some(format!("map {} with {} at data", pass.location, table.qualified_name()))
         }
         _ => None,
@@ -500,7 +500,7 @@ async fn every_refusal_is_the_provider_s_error_over_the_library_s() {
     let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
 
     let err = dump.table(&TableSelector::named("u"), "u", Arc::new(ignore)).unwrap_err();
-    assert!(matches!(err, datafusion_pgdump::Error::Library(_)), "{err:?}");
+    assert!(matches!(err.refusal(), Refusal::Library(_)), "{err:?}");
     core_beneath(&err);
     library_error(&DataFusionError::from(err));
 
@@ -531,10 +531,10 @@ async fn every_refusal_is_the_provider_s_error_over_the_library_s() {
 /// **A spelling handed in closes every refusal of what it built**, the
 /// library's error still beneath it: the open's, `PgDump::table`'s, a scan's
 /// and a `STORED AS PGDUMP` statement's each end with the spelling in
-/// parentheses, downcast to [`Error::Spelled`] at the top of what DataFusion
-/// carries, and reach the refusal unspelled by [`Error::unspelled`] and the
-/// library's by a walk of their sources; a refusal the spelling has no words
-/// for is left as it is (`docs/design/decisions.md`, "D74", "D107").
+/// parentheses, downcast to [`Error`] at the top of what DataFusion carries,
+/// holding the spelling as [`Error::spelling`] beside [`Error::refusal`], and
+/// reach the library's refusal by a walk of their sources; a refusal the
+/// spelling has no words for is left unspelled (`docs/design/decisions.md`, "D74", "D107").
 #[tokio::test(flavor = "multi_thread")]
 async fn a_spelling_closes_every_refusal_of_what_it_built() {
     let dir = tempfile::tempdir().unwrap();
@@ -548,9 +548,9 @@ async fn a_spelling_closes_every_refusal_of_what_it_built() {
     )
     .unwrap();
     let location = dump_path.to_str().unwrap();
-    let spelling: Arc<dyn Spelling> = Arc::new(|refused: &Error| match refused {
-        Error::Table(_) => None,
-        Error::Library(lib) => Some(format!("spelled {}", variant(lib))),
+    let spelling: Arc<dyn Spelling> = Arc::new(|refused: &Refusal| match refused {
+        Refusal::Table(_) => None,
+        Refusal::Library(lib) => Some(format!("spelled {}", variant(lib))),
         _ => Some("spelled".to_string()),
     });
     let options = || PgDumpOptions {
@@ -559,13 +559,13 @@ async fn a_spelling_closes_every_refusal_of_what_it_built() {
         ..PgDumpOptions::default()
     };
     let spelled = |err: &Error, spelling: &str| {
-        assert!(matches!(err, Error::Spelled { .. }), "{err:?}");
+        assert_eq!(err.spelling(), Some(spelling), "{err:?}");
         assert!(err.to_string().ends_with(&format!(" ({spelling})")), "{err}");
     };
 
     let missing = PgDump::open(location, options()).await.unwrap_err();
     spelled(&missing, "spelled");
-    assert!(matches!(missing.unspelled(), Error::CacheNotComplete { .. }), "{missing:?}");
+    assert!(matches!(missing.refusal(), Refusal::CacheNotComplete { .. }), "{missing:?}");
 
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump_path).unwrap());
     let cache = CacheMode::enabled(cache::colocated_path(&dump_path));
@@ -585,7 +585,9 @@ async fn a_spelling_closes_every_refusal_of_what_it_built() {
     spelled(&err, "spelled TableColumnsDisagree");
     core_beneath(&err);
     let err = dump.table(&TableSelector::named("v"), "v", Arc::new(ignore)).unwrap_err();
-    assert!(matches!(err, Error::Table(_)), "unspelled where it has no words: {err:?}");
+    assert!(matches!(err.refusal(), Refusal::Table(_)), "{err:?}");
+    assert_eq!(err.spelling(), None, "unspelled where it has no words: {err:?}");
+    assert!(!err.to_string().ends_with(')'), "{err}");
 
     let ctx = SessionContext::new();
     ctx.register_table("t", dump.table(&TableSelector::named("t"), "t", Arc::new(ignore)).unwrap())
@@ -599,7 +601,7 @@ async fn a_spelling_closes_every_refusal_of_what_it_built() {
         &ctx,
         Arc::new(|_: &dyn Finding| {}),
         StrictIdentity::ADVISORY,
-        Some(Arc::new(|_: &Error| Some("by the factory".to_string()))),
+        Some(Arc::new(|_: &Refusal| Some("by the factory".to_string()))),
     );
     let bare = dir.path().join("bare.sql");
     std::fs::copy(&dump_path, &bare).unwrap();
@@ -619,8 +621,8 @@ fn variant(err: &pgdt_core::Error) -> String {
 }
 
 /// **`PgDump::table` refusing a table the cache holds at the metadata level
-/// is its own variant**, matched as it is returned, the library's refusal
-/// beneath it.
+/// is its own refusal**, matched by [`Error::refusal`], the library's
+/// refusal beneath it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_table_asked_for_at_the_metadata_level_is_refused_as_such() {
     let dir = tempfile::tempdir().unwrap();
@@ -640,7 +642,7 @@ async fn a_table_asked_for_at_the_metadata_level_is_refused_as_such() {
     .unwrap();
     let dump = PgDump::open(dump_path.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
     let err = dump.table(&TableSelector::named("meta"), "meta", Arc::new(ignore)).unwrap_err();
-    assert!(matches!(err, datafusion_pgdump::Error::MetadataLevel { .. }), "{err:?}");
+    assert!(matches!(err.refusal(), Refusal::MetadataLevel { .. }), "{err:?}");
     assert!(matches!(core_beneath(&err), pgdt_core::Error::TableAtMetadataLevel { .. }));
 }
 

@@ -3,7 +3,7 @@
 //! statement's options; and `pgdt`'s own commands where the remedy is a
 //! parse (`docs/design/decisions.md`, "D107").
 
-use datafusion_pgdump::{Error, MappingPass, Spelling};
+use datafusion_pgdump::{MappingPass, Refusal, Spelling};
 use pgdt_model::TableName;
 
 /// Which of the shell's two grammars a dump was registered in, and so which
@@ -19,7 +19,7 @@ pub(crate) enum Grammar {
 }
 
 impl Spelling for Grammar {
-    fn spell(&self, refused: &Error) -> Option<String> {
+    fn spell(&self, refused: &Refusal) -> Option<String> {
         spelling(*self, refused)
     }
 }
@@ -31,28 +31,27 @@ impl Spelling for Grammar {
 /// own `refusal::spelling` is: whether a remedy has a spelling here is a
 /// property of each variant, so one added to either does not compile until
 /// it has been spelled or said to need none.
-pub(crate) fn spelling(grammar: Grammar, refused: &Error) -> Option<String> {
+pub(crate) fn spelling(grammar: Grammar, refused: &Refusal) -> Option<String> {
     let option = |key: &str, value: &str| format!("`'pgdump.{key}' '{value}'`");
     let spelled = match (refused, grammar) {
-        (Error::Library(refused), _) => return library(grammar, refused),
-        (Error::CacheNotComplete { pass, .. }, _) => format!("`{}`", parse(pass, None)),
-        (Error::MetadataLevel { pass, table, .. }, Grammar::Dump) => {
+        (Refusal::Library(refused), _) => return library(grammar, refused),
+        (Refusal::CacheNotComplete { pass, .. }, _) => format!("`{}`", parse(pass, None)),
+        (Refusal::MetadataLevel { pass, table, .. }, Grammar::Dump) => {
             format!("`{}`; `:strings`", parse(pass, Some(table)))
         }
-        (Error::MetadataLevel { pass, table, .. }, Grammar::Statement) => {
+        (Refusal::MetadataLevel { pass, table, .. }, Grammar::Statement) => {
             format!("`{}`; {}", parse(pass, Some(table)), option("schema_mode", "strings"))
         }
-        (Error::CatalogNameNeeded { .. }, Grammar::Dump) => "`--dump NAME=SOURCE`".to_string(),
-        (Error::CatalogNameRefused { .. }, Grammar::Dump) => {
+        (Refusal::CatalogNameNeeded { .. }, Grammar::Dump) => "`--dump NAME=SOURCE`".to_string(),
+        (Refusal::CatalogNameRefused { .. }, Grammar::Dump) => {
             "`--dump SOURCE`, without `NAME=`".to_string()
         }
         // A statement registers one table, never a catalog.
-        (Error::CatalogNameNeeded { .. } | Error::CatalogNameRefused { .. }, Grammar::Statement)
+        (Refusal::CatalogNameNeeded { .. } | Refusal::CatalogNameRefused { .. }, Grammar::Statement)
         // No name can be given, and none taken from the file.
-        | (Error::DatabaseUnnamed { .. }, _)
+        | (Refusal::DatabaseUnnamed { .. }, _)
         // The table asked for is not there: the user's own act.
-        | (Error::Table(_), _)
-        | (Error::Spelled { .. }, _) => return None,
+        | (Refusal::Table(_), _) => return None,
     };
     Some(spelled)
 }
