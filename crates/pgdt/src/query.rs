@@ -19,7 +19,7 @@ use crate::args::{
     parse_max_line_bytes, scan_options,
 };
 use crate::parallel::{ParallelArgs, Resolved};
-use crate::source::{about_the_source, naming_the_source};
+use crate::refusal::{about_the_source, refusal};
 use filter::{parse_filter_flag, parse_where};
 
 mod filter;
@@ -248,7 +248,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     // does, and the second once the replay is carved.
     let stated = parallel.discover();
     stated.announce();
-    let opened = mode.open(&origin).await.map_err(|e| naming_the_source(e, &origin))?;
+    let opened = mode.open(&origin).await.map_err(|e| refusal(e, &origin))?;
     let cached_statistics = match &opened.cache {
         Held::Loaded(loaded) => loaded.index.statistics_heap_bytes(),
         Held::Missing | Held::Disabled | Held::Replacing(_) => 0,
@@ -260,11 +260,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     // asked of [`about_the_source`] rather than listed again here — a
     // second list is how this command went slices behind `parse`'s.
     let report = |err: pgdt_core::Error| {
-        if about_the_source(&err) {
-            naming_the_source(err, &origin)
-        } else {
-            name_taken_verbatim(err)
-        }
+        if about_the_source(&err) { refusal(err, &origin) } else { name_taken_verbatim(err) }
     };
     let mut query_options = QueryOptions {
         schema_mode,

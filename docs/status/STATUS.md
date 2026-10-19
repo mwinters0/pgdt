@@ -114,7 +114,7 @@ Spec: [`../design/roadmap-P36-embedder-api.md`](../design/roadmap-P36-embedder-a
 - [x] **36.13** pgdt-query: `IN` and `NOT IN` as `PredicateOp`s holding their list, `Membership` and `Expr::In` gone, one accessor naming an operator's operand in place of `value()`; both front ends building them; D53 rewritten (spec, "The small fixes") ([notes](../design/roadmap-P36.13-in-operator-notes.md))
 - [x] **36.9** pgdt-query: one record per column in `ResolvedSchema`, rendering and `ValueKey` through it; counted by `measure.py --count-pair HEAD~1` — the reshape landed and its deficiency is struck; the count resolves falls on both `query` rows and rises on the data-level `parse` and `pgdt sql`, which callgrind puts outside the slice's changed code — the first in identical code's stack offset under a frame the tree grew, the second in the provider's scan planning, once a query — and both are accepted, the `pgdt sql` rise by the maintainer ([notes](../design/roadmap-P36.9-column-record-notes.md))
 - [x] **36.9.1** pgdt-codec: the column record its finding — `ResolvedColumn` implements `Finding`, holding the declared type and the resolution itself and reading its name off its field; `ColumnNote` and `ResolvedSchema::notes()` gone, a sink downcasting to the record and draining `columns()` (spec, "Values passed back together"); counted by `measure.py --count-pair HEAD~1` — the reshape landed; the count resolves no rise, one fall on `query` typed, unattributed ([notes](../design/roadmap-P36.9.1-column-finding-notes.md))
-- [ ] **36.10** Errors in library terms, `pgdt`'s spelling layer pinned by a test, the cache's "Not in one place" line struck; closes `KD92`
+- [x] **36.10** Errors in library terms, `pgdt`'s spelling layer pinned by a test, the cache's "Not in one place" line struck; closes `KD92` — `pgdt_core::Error` names its remedies as the library does, `pgdt`'s `refusal.rs` spells them on every refusal leaving a command, `info` says the library's sentence, and the adapter's metadata-level refusal is the library's with its parse added, that parse carrying the open's invalid-values mode; D107 ([notes](../design/roadmap-P36.10-errors-notes.md))
 - [ ] **36.11** datafusion-pgdump: `PgDump` over a `Dump`, one session-readying function, `Located` public, the sink at construction, `PgDumpTableOptions` folded
 - [ ] **36.12** The embedder test in `pgdt-query/tests/`, held by `layering.py` to the embedder rule
 
@@ -148,4 +148,19 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **36.10: two clauses lose `pgdt`'s words and nothing spells them back.**
+  `UnorderedPredicateColumn` under `--schema-mode strings` said "(`--schema-mode
+  strings` resolves no column, by design)" and now says "the strings schema
+  mode"; an enum literal naming an undeclared label, past twelve labels, said
+  "see `info --detail`" and now says "which its declaration lists"
+  (`crates/pgdt-query/src/predicate/notes.rs`, `NOT_MAPPED`;
+  `crates/pgdt-codec/src/key/form.rs`, `enum_accepted_form`). Both sit in a
+  variant's `String`, so `pgdt`'s spelling layer, matching variants (D107),
+  cannot tell when the clause is there; `query_ordering.rs`'s
+  `strings_mode_refuses_every_ordering_operator` now asserts the library's
+  words. Also `pgdt sql` adds no spelling, so its users read "with `time`
+  bound" for `--strict-identity=time`. Reconsidering means a variant carrying
+  the reason as an enum (and the overflow) for `pgdt` to spell, or
+  `datafusion-cli-pgdump` spelling the adapter's errors — each a change to a
+  surface this slice left.
 

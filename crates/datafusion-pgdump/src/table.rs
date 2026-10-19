@@ -11,7 +11,7 @@ use datafusion::common::{Result, Statistics};
 use datafusion::datasource::TableType;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
-use pgdt_codec::{ResolvedSchema, SchemaMode, compare::ComparisonSemantics};
+use pgdt_codec::{ResolvedSchema, compare::ComparisonSemantics};
 use pgdt_model::{DiagnosticSink, TableName};
 use pgdt_query::{ComparisonNote, PlanNote, QueryOptions, Table, TableSelector};
 
@@ -74,15 +74,14 @@ impl PgDumpTable {
             .table(&TableSelector::from(name))
             .expect("a selector stating every part selects one table at most")
             .expect("a table registered over a dump is one of its tables");
-        let unmapped = table.blocks().iter().any(|block| block.census.is_none());
-        if unmapped && dump.schema_mode() == SchemaMode::Typed {
-            return Err(Error::MetadataLevel {
-                table: describe(table.name()),
-                parse: dump.parse_at_data_level(table.name()),
-            });
-        }
         let options = query_options(&dump);
-        let resolved = table.schema(&options)?;
+        let resolved = table.schema(&options).map_err(|refused| match refused {
+            refused @ pgdt_core::Error::TableAtMetadataLevel { .. } => Error::MetadataLevel {
+                parse: dump.parse_at_data_level(table.name()),
+                refused: Box::new(refused),
+            },
+            other => Error::Library(other),
+        })?;
         let divergences = table.divergences(&options)?;
         Ok(Self {
             dump,

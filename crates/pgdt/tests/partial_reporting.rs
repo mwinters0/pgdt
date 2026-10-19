@@ -127,7 +127,7 @@ async fn info_against_a_changed_file_says_the_file_changed() {
     let out = run(&["info", "--source", dump.to_str().unwrap()]);
     assert!(!out.status.success());
     let err = stderr_of(&out);
-    assert!(err.contains("has changed since it was parsed"), "{err}");
+    assert!(err.contains("describes another file"), "{err}");
     assert!(err.contains("pgdt parse"), "{err}");
     assert!(!err.contains("no cache at"), "the two messages must not collapse: {err}");
 }
@@ -196,14 +196,13 @@ async fn the_scanning_commands_replace_an_unusable_cache_when_told_to() {
 }
 
 /// **The ways out are worded once, and every refusal says all three.** A cache
-/// that describes another file reaches the user from two places — the library
-/// error `parse` and `query` surface, and the sentence `info` prints — for the
-/// size mismatch here and for a contradicted compression claim in
-/// `tests/xz_source.rs`, and each names removing it, naming another path and
-/// `--overwrite-unusable-cache` (`docs/design/decisions.md`, "D20"). A refusal
-/// that named fewer would read as a tool with less recourse than it has; one
-/// that named a way out the others do not is the drift this test exists to
-/// catch, the wording living in two crates.
+/// that describes another file reaches the user from every command — the
+/// library error `parse`, `query` and `info` all say — for the size mismatch
+/// here and for a contradicted compression claim in `tests/xz_source.rs`, and
+/// each names removing it, naming another path and having a scan replace it,
+/// with `pgdt`'s `--overwrite-unusable-cache` after it
+/// (`docs/design/decisions.md`, "D20", "D107"). A refusal that named fewer
+/// would read as a tool with less recourse than it has.
 ///
 /// `info`'s is the arm that must name the ways out **and** `pgdt parse`, in
 /// that order: `parse` refuses this same condition, so a reader sent straight
@@ -227,6 +226,7 @@ async fn refusals_name_both_ways_out() {
         assert!(!out.status.success(), "{}: {}", args[0], stdout_of(&out));
         let err = stderr_of(&out);
         assert!(err.contains(OVERWRITE_WAYS_OUT), "{}: {err}", args[0]);
+        assert!(err.contains("`--overwrite-unusable-cache`"), "{}: {err}", args[0]);
     }
 
     let err = stderr_of(&run(&["info", "--source", source]));

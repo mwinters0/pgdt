@@ -58,10 +58,14 @@ and polls it, and hands it to a source whose wait is a request.
 
 ## Failure
 
-The library's vocabulary of failure ([`decisions.md`](decisions.md), "D74").
+The library's vocabulary of failure, and how a front end says it
+([`decisions.md`](decisions.md), "D74", "D107").
 
 - **pgdt-core** — `error.rs`: every crate fails in it, and a dependency's
   error is a cause it carries opaquely.
+- **pgdt** — `refusal.rs`: a refusal as the binary says it, the source's
+  name before it and its remedy spelled in the binary's flags after it — a
+  front end's syntax in its binary (D107).
 
 ## Self-measurement
 
@@ -170,10 +174,6 @@ format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
 - **datafusion-pgdump** — `dump.rs`: a dump opened through its complete
   cache, with the modes and the budget holds every scan of it reads under
   (D90).
-
-**Not in one place.** Why a cache cannot be used is worded twice, by
-pgdt-core's `Error` and by the `pgdt` binary's `info`, and the two disagree
-(a changed source among them).
 
 ## What a pass records of a block's rows
 
@@ -346,7 +346,7 @@ with each change marked, and everything of ours beside it.
 The three subcommands, their flags and what each prints
 ([`decisions.md`](decisions.md), "The CLI").
 
-- **pgdt** — `main.rs`, `version.rs`, `args.rs`, `source.rs`, `parse.rs`,
+- **pgdt** — `main.rs`, `version.rs`, `args.rs`, `parse.rs`,
   `info.rs`, `info/text.rs`, `info/json.rs`, `info/labels.rs`, `query.rs`: a
   module a subcommand, each owning its flags; the root dispatches and holds
   nothing a subcommand reads, and what more than one reads — the shared flag

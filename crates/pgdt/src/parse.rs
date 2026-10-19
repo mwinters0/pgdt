@@ -25,7 +25,7 @@ use crate::info::{print_diagnostics, print_index, print_metadata};
 use crate::interrupt::install_interrupt_guard;
 use crate::introspect;
 use crate::parallel::ParallelArgs;
-use crate::source::naming_the_source;
+use crate::refusal::refusal;
 
 /// `pgdt parse`'s flags.
 #[derive(Args)]
@@ -228,7 +228,7 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
     // limit are announced ahead of it, neither waiting on the file (D64).
     let stated = parallel.discover();
     stated.announce();
-    let opened = mode.open(&origin).await.map_err(|e| naming_the_source(e, &origin))?;
+    let opened = mode.open(&origin).await.map_err(|e| refusal(e, &origin))?;
     let source = Arc::clone(&opened.source);
     let cached_statistics = match &opened.cache {
         Held::Loaded(loaded) => loaded.index.statistics_heap_bytes(),
@@ -239,7 +239,7 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
     if preamble_only_flag {
         let (metadata, diagnostics) = preamble_only(opened, &scan_options(read, &parallel))
             .await
-            .map_err(|e| naming_the_source(e, &origin))?;
+            .map_err(|e| refusal(e, &origin))?;
         print_metadata(&metadata, false);
         print_diagnostics(&diagnostics);
         println!();
@@ -258,7 +258,7 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
         &cancel,
     )
     .await
-    .map_err(|e| naming_the_source(e, &origin))?;
+    .map_err(|e| refusal(e, &origin))?;
     introspect::statistics_returned(&run.statistics);
     if run.interrupted {
         // No listing: `pgdt info` is the command that reports. Both

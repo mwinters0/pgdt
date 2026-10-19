@@ -191,9 +191,10 @@ pub fn accepted_form(kind: &CompareKind) -> String {
 /// would hand the user a spelling that is not a label. Nothing bounds how
 /// many labels a type declares.
 ///
-/// The overflow clause has somewhere to send the reader: `pgdt info --detail`
-/// prints every label of an enum column *and* lists every user-defined type
-/// with its labels, both uncapped (`docs/design/decisions.md`, "The CLI").
+/// The overflow clause has somewhere to send the reader, in the library's
+/// terms: the type's declaration, which the dump holds and the map records
+/// uncapped (`pgdt info --detail` prints it, `docs/design/decisions.md`,
+/// "D107").
 const ENUM_LABELS_SHOWN: usize = 12;
 
 /// The enum clause: the declared labels themselves, which are the whole of
@@ -214,7 +215,7 @@ fn enum_accepted_form(labels: &[String]) -> String {
     match labels.len() - shown {
         0 => format!("as one of the type's declared labels: {list}"),
         more => format!(
-            "as one of the type's declared labels: {list}, and {more} more; see `info --detail`"
+            "as one of the type's declared labels: {list}, and {more} more, which its declaration lists"
         ),
     }
 }

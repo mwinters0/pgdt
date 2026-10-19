@@ -1030,7 +1030,7 @@ async fn a_source_nothing_can_check_is_refused_where_a_read_begins_unless_nothin
             panic!("{strict:?} binds the in-flight check, got {refused:?}")
         };
         assert_eq!(why, "nothing pins it");
-        assert!(refused.to_string().contains("--strict-identity=none"), "{refused}");
+        assert!(refused.to_string().contains("binding no identity signal"), "{refused}");
     };
     for strict in [
         StrictIdentity::ADVISORY,

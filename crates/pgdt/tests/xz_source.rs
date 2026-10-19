@@ -436,9 +436,8 @@ fn parse_scans_once_the_refused_cache_is_removed_or_may_be_replaced() {
 /// out of the way — and one that reads the cache first reports the mismatch.
 /// The two are told apart in the output, which no timing assertion could do.
 ///
-/// Each command keeps the sentence it had: the library's own error for the two
-/// that scan, and for `info` the one that names the ways out ahead of
-/// `pgdt parse` (`docs/design/decisions.md`, "D20").
+/// Every command says the library's own sentence, `info` naming the `parse`
+/// the ways out enable after it (`docs/design/decisions.md`, "D20").
 #[test]
 fn a_cache_recorded_against_another_file_is_refused_without_walking_this_one() {
     let (_dir, path) = seekable_xz();
@@ -464,16 +463,13 @@ fn a_cache_recorded_against_another_file_is_refused_without_walking_this_one() {
             args[0]
         );
     }
-    assert!(
-        stderr_of(&run(&["info", "--source", path.to_str().unwrap()]))
-            .contains("has changed since it was parsed"),
-        "`info` keeps its own sentence for this condition"
-    );
-    assert!(
-        stderr_of(&run(&["parse", "--source", path.to_str().unwrap()]))
-            .contains("was written for a source of"),
-        "the two scanning commands keep the library's"
-    );
+    for command in ["info", "parse"] {
+        assert!(
+            stderr_of(&run(&[command, "--source", path.to_str().unwrap()]))
+                .contains("was written for a source of"),
+            "{command} says the library's sentence"
+        );
+    }
 
     assert_eq!(std::fs::read(&cache).unwrap(), before, "the refused cache is untouched");
 

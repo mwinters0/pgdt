@@ -101,7 +101,11 @@ impl PgDump {
         let mode = CacheMode::resolve(&origin, options.cache_path.as_deref())
             .with_strict_identity(options.strict_identity);
         let incomplete = |why: String| Error::CacheNotComplete {
-            parse: parse_command(location, options.cache_path.as_deref()),
+            parse: parse_command(
+                location,
+                options.cache_path.as_deref(),
+                options.postgres_invalid_values,
+            ),
             why,
         };
         // An unusable cache is the scans' own refusal, word for word: this
@@ -137,7 +141,11 @@ impl PgDump {
             schema_mode: options.schema_mode,
             unrepresentable: options.unrepresentable,
             postgres_invalid_values: options.postgres_invalid_values,
-            parse: parse_command(location, options.cache_path.as_deref()),
+            parse: parse_command(
+                location,
+                options.cache_path.as_deref(),
+                options.postgres_invalid_values,
+            ),
             statistics_bytes,
             holds: Mutex::default(),
         }))
@@ -203,13 +211,22 @@ impl PgDump {
     }
 }
 
-/// The `pgdt parse` that builds the cache this open looked for.
-// deficiency: KD92 — it carries no `--postgres-invalid-values`, so one
-// opened to ignore what PostgreSQL refuses names a parse that fails at the
-// first such field it keys, where `ignore` would build the cache.
-fn parse_command(location: &str, cache_path: Option<&Path>) -> String {
-    match cache_path {
-        Some(path) => format!("pgdt parse --source {location} --dtcache {}", path.display()),
-        None => format!("pgdt parse --source {location}"),
+/// The `pgdt parse` that builds the cache this open looked for, under the
+/// mode this dump reads a field PostgreSQL refuses in: one ignoring them
+/// names a parse that goes past them too, where the default parse would fail
+/// at the first it keys (`docs/design/decisions.md`, "D103"). `Strict`
+/// reads as the default does, so it names the default parse.
+fn parse_command(
+    location: &str,
+    cache_path: Option<&Path>,
+    invalid: PostgresInvalidValues,
+) -> String {
+    let mut parse = format!("pgdt parse --source {location}");
+    if let Some(path) = cache_path {
+        parse.push_str(&format!(" --dtcache {}", path.display()));
     }
+    if invalid == PostgresInvalidValues::Ignore {
+        parse.push_str(&format!(" --postgres-invalid-values {invalid}"));
+    }
+    parse
 }

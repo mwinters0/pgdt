@@ -17,15 +17,18 @@ pub enum Error {
     /// named.
     #[error("{why}; the provider reads only a complete cache — run `{parse}` to build it")]
     CacheNotComplete { parse: String, why: String },
-    /// A table the cache holds at the metadata level, opened typed: the cache
-    /// records no census of its rows to settle its schema from, and the
-    /// provider never maps, so the remedy is the parse named, which puts that
-    /// table at the data level and leaves every other table as it is
-    /// (`docs/design/decisions.md`, "D35").
-    #[error(
-        "{table} is mapped at the metadata level, which records nothing drawn from its rows, and a typed query needs its census — run `{parse}` to record it"
-    )]
-    MetadataLevel { table: String, parse: String },
+    /// A table the cache holds at the metadata level, opened typed: the
+    /// library's refusal ([`pgdt_core::Error::TableAtMetadataLevel`]), and
+    /// its source. The provider never maps, so it spells the mapping pass the
+    /// library names as the parse that puts that table at the data level and
+    /// leaves every other table as it is (`docs/design/decisions.md`, "D35",
+    /// "D107").
+    #[error("{refused} (`{parse}`)")]
+    MetadataLevel {
+        #[source]
+        refused: Box<pgdt_core::Error>,
+        parse: String,
+    },
     /// A catalog name is needed and nothing supplies one, or one was supplied
     /// for a file of several databases, where it could name none of them.
     #[error("{0}")]

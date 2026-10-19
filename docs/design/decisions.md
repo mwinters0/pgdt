@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D106 -->
+<!-- decision-watermark: D107 -->
 
 ## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
@@ -607,7 +607,7 @@ Logged durations are diagnostics, never figures: one stderr subscriber, no termi
 
 ### D66 Output of what `pg_dump` writes is byte-identical whether typing is on or off, but for a value its type cannot hold or an `escape` `bytea`
 Every value renders back to its `*_out` text, which is what `pg_dump` wrote — a hand-written spelling `*_out` never writes rendering as `*_out` would — but one its type cannot hold, NULL in the null mode (D98), and an `escape` `bytea`, `hex` (I56), which `byteain` reads alike.
-One contradicting its type is `FieldDecode` naming `--schema-mode strings`, never a null. Rejected: Arrow's display; a `bytea`'s form kept per database or flagged, read by no comparison.
+One contradicting its type is `FieldDecode` naming the strings schema mode, never a null. Rejected: Arrow's display; a `bytea`'s form kept per database or flagged, read by no comparison.
 
 ### D67 `--json` is the internal struct; a flag's help is its doc comment
 The whole cache file, keyed by block, no version of its own, compact and streamed, group values in:
@@ -642,6 +642,13 @@ adopts a lower `internal` item into its own API by re-exporting it, where it mus
 directly, and a binding makes its own entry point. Library crates are `pgdt-<name>`; the DataFusion crates keep `datafusion-*`, the prefix that ecosystem finds a provider by.
 Rejected: what was `pub` before the carve (forced by one crate's integration tests), or what an embedder names today, as the test of API; a facade re-exporting the crates (every public name
 spelled twice); a published `pgtypes` crate out of the codec (its own catalog types, Arrow behind a feature: a product decision); an `introspect` reading in `internal`, or that feature exempt from the embedder rule (a counting allocator, which only a binary installs, calls `pgdt_core::instrument`'s `allocated` and `freed`: the readings are API to whoever turns the feature on, the hooks `internal`'s); the DataFusion adapter exempt so `EmittedValue` stays `internal`'s (a value in its column's emitted units is what any Arrow engine's binding relates two emitted types by). Code: `scripts/layering.py`, each crate's `internal`.
+
+### D107 A library refusal names its remedy in the library's terms, and each embedder spells it after the sentence
+A library error states the condition and ends with its remedies as the API names them — a mode, a mapping pass, a selector naming a database — never a front end's flag or command, which only
+that front end has. `pgdt` appends its flag or command for each, in parentheses and the library's order, by an exhaustive match over the variants, on every refusal leaving a command, through any
+context; `datafusion-pgdump` adds the `pgdt parse` its never-mapping provider needs, under the mode it was opened in. `pgdt info` says a cache's refusal in the library's sentence.
+Rejected: a structured `Remedy` value on the error (a second taxonomy beside the variants); a whole sentence per variant in each front end (the wording twice, which drifted); a variant
+carrying why a filter's column has no order or an enum's labels overflow, for pgdt to spell (an explanation, not a remedy). Code: `pgdt`'s `refusal::spelling`. Evidence: `each_refusal_names_the_flag_its_remedy_is`.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 ### D69 Fixtures are real `pg_dump` output on a pinned glibc image family

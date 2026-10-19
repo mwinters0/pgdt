@@ -4,14 +4,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Args;
-use pgdt_dump::cache::{
-    CacheStatus, Held, LoadedCache, OVERWRITE_WAYS_OUT, OfflineCache, Opened, Unusable,
-};
+use pgdt_dump::cache::{CacheStatus, Held, LoadedCache, OfflineCache, Opened};
 use pgdt_io::Origin;
-use pgdt_model::CACHE_FORMAT_VERSION;
 
 use crate::args::{IdentityArgs, cache_mode};
-use crate::source::naming_the_source;
+use crate::refusal::{refusal, spelled};
 use json::print_index_json;
 // `parse` prints the map it leaves as the listing prints it.
 pub(crate) use text::{print_diagnostics, print_index, print_metadata};
@@ -113,27 +110,26 @@ pub(crate) async fn run(args: InfoArgs) -> Result<()> {
         .to_path_buf();
     // A cache `info` cannot use leaves it nothing to report from, and
     // it says so having read no more than the file's leading bytes, in
-    // its own sentence: it never writes, so what it names is the
-    // `parse` the ways out enable. A strict-identity refusal is about a
-    // source that moved, so it goes out through the classifier the
-    // scanning commands use; the selection means here what it means on
-    // the commands that scan (`docs/design/decisions.md`, "D21").
+    // the library's sentence with `pgdt`'s spelling, then the `parse` the
+    // ways out enable: it never writes. A strict-identity refusal is
+    // about a source that moved, so it goes out through the classifier
+    // the scanning commands use; the selection means here what it means
+    // on the commands that scan (`docs/design/decisions.md`, "D21").
     // It reports the cache itself, never a `Dump` (`docs/design/decisions.md`, "D61").
     let Opened { cache, .. } = match mode.open(&origin).await {
         Ok(opened) => opened,
-        Err(pgdt_core::Error::CacheUnusable { unusable, .. }) => {
-            anyhow::bail!(unusable_cache_message(
-                &CacheStatus::Unusable(unusable),
-                &path,
-                Some(&origin)
-            ))
+        Err(err @ pgdt_core::Error::CacheUnusable { .. }) => {
+            anyhow::bail!(unusable_cache_message(err, Some(&origin)))
         }
-        Err(e) => return Err(naming_the_source(e, &origin)),
+        Err(e) => return Err(refusal(e, &origin)),
     };
     let loaded = match cache {
         Held::Loaded(loaded) => loaded,
         Held::Missing => {
-            anyhow::bail!(unusable_cache_message(&CacheStatus::Missing, &path, Some(&origin)))
+            anyhow::bail!(
+                "no cache at {} — run `pgdt parse --source {origin}` first",
+                path.display()
+            )
         }
         Held::Disabled | Held::Replacing(_) => {
             unreachable!("`info` opens an enabled cache it never replaces")
@@ -149,71 +145,37 @@ pub(crate) async fn run(args: InfoArgs) -> Result<()> {
 async fn info_offline(path: &Path, detail: bool, map: bool, json: bool) -> Result<()> {
     match OfflineCache::new(path).load().await? {
         CacheStatus::Loaded(loaded) => report(&loaded, detail, map, json),
-        unusable => anyhow::bail!(unusable_cache_message(&unusable, path, None)),
+        CacheStatus::Missing => anyhow::bail!("no cache at {}", path.display()),
+        CacheStatus::Unusable(unusable) => anyhow::bail!(unusable_cache_message(
+            pgdt_core::Error::CacheUnusable { path: path.to_path_buf(), unusable },
+            None
+        )),
     }
 }
 
-/// The sentence `pgdt info` prints for a cache it cannot use — one per cause,
-/// because the fact the user needs to know differs. Each ends as the scanning
-/// commands' refusals do, in `OVERWRITE_WAYS_OUT`, and then names the `parse`
-/// those ways out enable; a file that is not a pgdt cache names neither, no
-/// scan being allowed to write over it (`docs/design/decisions.md`, "D20"),
-/// and a missing one names only the `parse` that builds it.
+/// What `pgdt info` says of a cache it cannot use: the library's own refusal,
+/// [`pgdt_core::Error::CacheUnusable`], as the scanning commands say it —
+/// worded once, so `info` and a scan never disagree on why — and, with a
+/// source and a cache recognisably ours, the `parse` its ways out enable. A
+/// file that is not a pgdt cache names no `parse`, no scan being allowed to
+/// write over it (`docs/design/decisions.md`, "D20").
 ///
-/// **One match, two renderings**, so a new [`Unusable`] variant has to answer
-/// both. `source` is `None` in cache-only mode, which states the fault and
-/// stops; it cannot reach [`Unusable::SourceChanged`] or
-/// [`Unusable::CompressionContradicted`] at all, there being no live file to
-/// compare against — what its `CacheOffline` diagnostic warns about.
-///
-/// Takes the whole [`CacheStatus`] rather than a narrowed type so the match
-/// stays exhaustive: a usable status reaching here is a caller bug.
-fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Origin>) -> String {
-    let shown = path.display();
-    let live = || source.expect("cache-only mode has no live source to compare against");
-    let found = match status {
-        CacheStatus::Missing => {
-            return match source {
-                Some(s) => format!("no cache at {shown} — run `pgdt parse --source {s}` first"),
-                None => format!("no cache at {shown}"),
-            };
-        }
-        CacheStatus::Unusable(Unusable::NotACache) => {
-            return format!("{shown} is not a pgdt cache — check the path");
-        }
-        CacheStatus::Unusable(Unusable::Unreadable) => {
-            format!("the cache at {shown} is cut short or damaged and cannot be read")
-        }
-        CacheStatus::Unusable(Unusable::UnsupportedVersion { found }) => format!(
-            "the cache at {shown} was written by a different pgdt build (cache format {found}, \
-             where this build reads {CACHE_FORMAT_VERSION}) and cannot be read"
-        ),
-        CacheStatus::Unusable(Unusable::SourceChanged {
-            cached_stored_size: cached_size,
-            live_stored_size: live_size,
-        }) => format!(
-            "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when the \
-             cache at {shown} was written), so every offset in the cache could be wrong",
-            live()
-        ),
-        CacheStatus::Unusable(Unusable::CompressionContradicted) => format!(
-            "the cache at {shown} records compression details that {} contradicts, so it was \
-             written for another file",
-            live()
-        ),
-        CacheStatus::Unusable(Unusable::CalendarChanged { counted_under, build }) => format!(
-            "the cache at {shown} counted the values a query cannot display against a calendar \
-             ending {}, where this build's ends {}, so it cannot be read",
-            pgdt_codec::decode::render_date32(*counted_under),
-            pgdt_codec::decode::render_date32(*build),
-        ),
-        CacheStatus::Loaded(_) => unreachable!("a usable cache is reported, not refused"),
-    };
+/// `source` is `None` in cache-only mode, which cannot reach
+/// [`pgdt_core::Unusable::SourceChanged`] or
+/// [`pgdt_core::Unusable::CompressionContradicted`] at
+/// all, there being no live file to compare against — what its
+/// `CacheOffline` diagnostic warns about.
+fn unusable_cache_message(err: pgdt_core::Error, source: Option<&Origin>) -> String {
+    let overwritable = matches!(
+        &err,
+        pgdt_core::Error::CacheUnusable { unusable, .. } if unusable.overwritable()
+    );
     match source {
-        Some(s) => format!(
-            "{found}{OVERWRITE_WAYS_OUT}; `pgdt parse --source {s}` then builds a fresh one"
-        ),
-        None => found,
+        Some(s) if overwritable => {
+            format!("{}; `pgdt parse --source {s}` then builds a fresh one", refusal(err, s))
+        }
+        Some(s) => refusal(err, s).to_string(),
+        None => spelled(&err),
     }
 }
 

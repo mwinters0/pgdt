@@ -219,6 +219,19 @@ async fn only_a_complete_cache_opens() {
     let missing = PgDump::open(location, PgDumpOptions::default()).await.unwrap_err();
     assert!(matches!(missing, Error::CacheNotComplete { .. }), "{missing}");
     assert!(missing.to_string().contains(&format!("pgdt parse --source {location}")), "{missing}");
+    // Opened to go past what PostgreSQL refuses, it names a parse that goes
+    // past them too, which the default parse would fail at.
+    let ignoring = PgDumpOptions {
+        postgres_invalid_values: PostgresInvalidValues::Ignore,
+        ..PgDumpOptions::default()
+    };
+    let missing = PgDump::open(location, ignoring).await.unwrap_err();
+    assert!(
+        missing
+            .to_string()
+            .contains(&format!("pgdt parse --source {location} --postgres-invalid-values ignore`")),
+        "{missing}"
+    );
 
     // A preamble-only scan leaves a cache that stops short of the end.
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&copy).unwrap());
@@ -266,7 +279,7 @@ async fn a_stated_strictness_binds_the_cache_s_identity_at_open() {
     let strict =
         PgDumpOptions { strict_identity: "time".parse().unwrap(), ..PgDumpOptions::default() };
     let refused = PgDump::open(location, strict).await.unwrap_err();
-    assert!(refused.to_string().contains("`--strict-identity=time`"), "{refused}");
+    assert!(refused.to_string().contains("with `time` bound"), "{refused}");
 }
 
 /// **Projection is the library's, `COUNT(*)` is the empty projection, and a

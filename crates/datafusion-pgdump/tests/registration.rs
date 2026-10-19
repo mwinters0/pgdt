@@ -404,7 +404,7 @@ async fn a_statement_s_strictness_overrides_the_session_s() {
 
     let strict = session(StrictIdentity::binding(true, false));
     let err = rows(&strict, &create("a", None)).await.unwrap_err();
-    assert!(err.contains("`--strict-identity=time`"), "{err}");
+    assert!(err.contains("with `time` bound"), "{err}");
     rows(&strict, &create("b", Some("none"))).await.unwrap();
     assert!(!rows(&strict, "SELECT * FROM b").await.unwrap().is_empty());
     rows(&strict, &create("b2", Some("advisory"))).await.unwrap();
@@ -413,7 +413,7 @@ async fn a_statement_s_strictness_overrides_the_session_s() {
     let advisory = session(StrictIdentity::ADVISORY);
     rows(&advisory, &create("c", None)).await.unwrap();
     let err = rows(&advisory, &create("d", Some("time"))).await.unwrap_err();
-    assert!(err.contains("`--strict-identity=time`"), "{err}");
+    assert!(err.contains("with `time` bound"), "{err}");
     let err = rows(&advisory, &create("e", Some("tiem"))).await.unwrap_err();
     assert!(err.contains("pgdump.strict_identity `tiem`"), "{err}");
 }

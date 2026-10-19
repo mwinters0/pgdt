@@ -7,6 +7,9 @@ use thiserror::Error as ThisError;
 /// the cause downcasts it (`docs/design/decisions.md`, "D74").
 pub type Cause = Box<dyn std::error::Error + Send + Sync + 'static>;
 
+/// What the library refuses. A sentence ends with its remedy in the
+/// library's own terms, never a front end's flag, which each front end adds
+/// when it reports one (`docs/design/decisions.md`, "D107").
 #[derive(Debug, ThisError)]
 pub enum Error {
     #[error("io error: {0}")]
@@ -72,7 +75,9 @@ pub enum Error {
     /// ([`Error::cache_encode`]).
     #[error("failed to encode structure cache: {0}")]
     CacheEncode(#[source] Cause),
-    #[error("cache is disabled (`--dtcache none`), but `{operation}` requires a cache file")]
+    /// An operation needing a cache file asked of a cache mode that is
+    /// disabled (`pgdt_dump::cache::CacheMode::require_enabled`).
+    #[error("`{operation}` requires a cache file, and the cache is disabled — name one")]
     CacheDisabled { operation: &'static str },
     /// A scan was asked to build forward from a cache it cannot use — one
     /// that is not a pgdt cache, is damaged, is another build's, or describes
@@ -100,7 +105,7 @@ pub enum Error {
     /// describes the file as it was — is left exactly as it is
     /// (`docs/design/decisions.md`, "D20").
     #[error(
-        "the dump changed while it was being read — {differences} — so nothing was saved and no cache was removed; re-run against a file nothing is rewriting, or pass `--strict-identity=none` to read it anyway"
+        "the dump changed while it was being read — {differences} — so nothing was saved and no cache was removed; re-run against a file nothing is rewriting, or read it anyway binding no identity signal"
     )]
     SourceChangedWhileRead { differences: String },
     /// A run that binds the in-flight identity — every
@@ -114,7 +119,7 @@ pub enum Error {
     /// stated and not kept (`docs/design/decisions.md`, "D21"). `why` is the
     /// source's own sentence ([`pgdt_io::ByteRangeSource::in_flight_unchecked`]).
     #[error(
-        "nothing can tell whether the dump changes while it is being read — {why} — so the run was refused before reading it; pass `--strict-identity=none` to read it anyway"
+        "nothing can tell whether the dump changes while it is being read — {why} — so the run was refused before reading it; read it anyway binding no identity signal"
     )]
     SourceUncheckable { why: String },
     /// A weak identity signal the caller asked to *bind* does not hold, or
@@ -131,7 +136,7 @@ pub enum Error {
     /// `pgdt_dump::cache::WeakIdentity` and `pgdt_dump::cache::OriginMatch` carry the
     /// evidence out of their comparisons for it.
     #[error(
-        "the cache at {} cannot be trusted under `--strict-identity={term}`: {unmet} — drop `{term}` from the selection to treat that signal as advisory, or parse again",
+        "the cache at {} cannot be trusted with `{term}` bound: {unmet} — map the file again, or leave `{term}` unbound to treat that signal as advisory",
         path.display()
     )]
     StrictIdentityUnmet { path: PathBuf, term: &'static str, unmet: String },
@@ -210,7 +215,7 @@ pub enum Error {
     )]
     ResumeQueryMismatch,
     #[error(
-        "table `{name}` is ambiguous: matches {}; qualify the name or pass --database",
+        "table `{name}` is ambiguous: matches {}; qualify the name or name its database",
         candidates.join(", ")
     )]
     AmbiguousTable { name: String, candidates: Vec<String> },
@@ -241,7 +246,7 @@ pub enum Error {
     )]
     TableAtMetadataLevel { table: String },
     #[error(
-        "metadata for database {} was not scanned — run `pgdt parse` first, or use --schema-mode strings",
+        "metadata for database {} was not scanned — map it first, or read it in the strings schema mode",
         database.as_deref().unwrap_or("(unnamed)")
     )]
     MetadataNotScanned { database: Option<String> },
@@ -250,7 +255,7 @@ pub enum Error {
     /// reading from a kept row group or a parallel partition starts mid-block,
     /// with no count of the rows before it to number the line by.
     #[error(
-        "{table}.{column}: the line at offset {line_offset} holds `{value}`, which does not parse as its mapped type `{declared_type}` — use --schema-mode strings to read this column verbatim"
+        "{table}.{column}: the line at offset {line_offset} holds `{value}`, which does not parse as its mapped type `{declared_type}` — read this column verbatim in the strings schema mode"
     )]
     FieldDecode {
         table: String,
@@ -368,7 +373,7 @@ fn null_refused(table: &str, column: &str, line: Option<u64>, line_offset: u64) 
 fn cached_block_changed(path: Option<&Path>, header_offset: u64) -> String {
     match path {
         Some(path) => format!(
-            "the COPY block the cache at {} records at offset {header_offset} no longer ends where that cache says, so the file changed since it was scanned — remove that cache and parse again",
+            "the COPY block the cache at {} records at offset {header_offset} no longer ends where that cache says, so the file changed since it was scanned — remove that cache and map the file again",
             path.display()
         ),
         None => format!(
@@ -472,11 +477,10 @@ fn calendar_day(days: i32) -> String {
 }
 
 /// What a user can do about a cache that is recognisably ours and cannot be
-/// used, in the words every such refusal ends with — the library's
-/// [`Error::CacheUnusable`] and the sentences `pgdt info` prints
-/// (`docs/design/decisions.md`, "D20").
-pub const OVERWRITE_WAYS_OUT: &str = " — remove it, name a different cache path, or pass \
-     `--overwrite-unusable-cache` to have a scan replace it";
+/// used, in the words every such refusal ends with — [`Error::CacheUnusable`],
+/// which `pgdt info` prints too (`docs/design/decisions.md`, "D20").
+pub const OVERWRITE_WAYS_OUT: &str =
+    " — remove it, name a different cache path, or have a scan replace it";
 
 /// What a scan refusing an unusable cache says: which way it cannot be used,
 /// then what the user can do. **A cache recognisably ours names three ways
@@ -507,7 +511,7 @@ fn cache_unusable(path: &Path, unusable: &Unusable) -> String {
         ),
         Unusable::CalendarChanged { counted_under, build } => format!(
             "the cache at {path} counted the values a query cannot display against a calendar \
-             ending {}, where this build's ends {}, so a `parse` must count them again",
+             ending {}, where this build's ends {}, so a mapping pass must count them again",
             calendar_day(*counted_under),
             calendar_day(*build),
         ),

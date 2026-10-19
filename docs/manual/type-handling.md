@@ -890,8 +890,8 @@ record, so we assume one dimension and find out at the value:
 
 ```
 public.t_shipments.v: the line at offset 9311 holds `(a,"{{1,2},{3,4}}")`,
-which does not parse as its mapped type `public.boxed` — use --schema-mode
-strings to read this column verbatim
+which does not parse as its mapped type `public.boxed` — read this column
+verbatim in the strings schema mode (`--schema-mode strings`)
 ```
 
 Reading more of the file will not change this one, and there are **two** ways

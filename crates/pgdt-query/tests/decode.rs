@@ -310,7 +310,7 @@ async fn an_array_declaration_pg_dump_never_writes_resolves_and_takes_its_census
 /// an array nested *inside* a composite. Such a column therefore stays on the
 /// optimistic path however much of the file has been scanned, and a
 /// multi-dimensional value there is a `FieldDecode` — with
-/// `--schema-mode strings`, which the message names, as its only remedy.
+/// the strings schema mode, which the message names, as its only remedy.
 ///
 /// Hand-written, though the types fixture's `t_composite_matrix` holds the
 /// same shape, so that it sits beside its control: `t_nested_ok` says the
@@ -384,7 +384,7 @@ async fn an_array_inside_a_composite_keeps_the_optimistic_path() {
     let err = try_rows(&path, "public.t_nested_bad", SchemaMode::Typed).await.unwrap_err();
     // The message names the remedy, and the remedy works.
     assert!(
-        format!("{err}").contains("--schema-mode strings"),
+        format!("{err}").contains("in the strings schema mode"),
         "the error names its one remaining remedy: {err}"
     );
     match err {

@@ -345,12 +345,12 @@ check could see a change: such a run is refused before it reads anything, and
 
 ```
 $ pgdt parse --source https://example.org/mydump.sql
-Error: https://example.org/mydump.sql: nothing can tell whether the dump changes while it is being read — the server states neither an entity tag nor a `Last-Modified`, so no read can be pinned to the version this run opened on — so the run was refused before reading it; pass `--strict-identity=none` to read it anyway
+Error: https://example.org/mydump.sql: nothing can tell whether the dump changes while it is being read — the server states neither an entity tag nor a `Last-Modified`, so no read can be pinned to the version this run opened on — so the run was refused before reading it; read it anyway binding no identity signal (`--strict-identity=none`)
 ```
 
 ```
 $ pgdt parse --source mydump.sql
-Error: mydump.sql: the dump changed while it was being read — its stored size went from 4096 to 8192 byte(s) — so nothing was saved and no cache was removed; re-run against a file nothing is rewriting, or pass `--strict-identity=none` to read it anyway
+Error: mydump.sql: the dump changed while it was being read — its stored size went from 4096 to 8192 byte(s) — so nothing was saved and no cache was removed; re-run against a file nothing is rewriting, or read it anyway binding no identity signal (`--strict-identity=none`)
 ```
 
 **Nothing is saved and nothing is deleted.** The check says when the change was
@@ -1362,8 +1362,8 @@ are seven different messages because they mean seven different things:
 | `… is not a pgdt cache` | Something else is at that path. Check `--dtcache`. |
 | `… is cut short or damaged` | A pgdt cache, but not all of it is there. |
 | `… was written by a different pgdt build` | The cache's format version is not this build's. Pre-1.0 this happens after an upgrade; nothing is migrated. |
-| `… has changed since it was parsed` | The dump file's size no longer matches. Every offset in the cache could be wrong. |
-| `… records compression details that … contradicts` | The cache says this file is compressed and it is not, or the other way round, or the seek table it recorded does not fit the file. |
+| `… was written for a source of …` | The dump file's size no longer matches. Every offset in the cache could be wrong. |
+| `… records compression details this source contradicts` | The cache says this file is compressed and it is not, or the other way round, or the seek table it recorded does not fit the file. |
 | `… counted the values a query cannot display against a calendar ending …` | The cache counts the dates a DataFusion query cannot display (below, "Values a column's type cannot hold") against a calendar that ends on another day than this build's, which only a library upgrade moves. Its counts are not this build's. |
 
 **Only the first sends you straight to `pgdt parse`.** `parse` and `query`
@@ -1372,8 +1372,9 @@ bytes, rather than scanning and
 writing over what they found: each is almost always a wrong path or a file that
 changed, and a cache that does not describe this file is a valid index for
 *some* file. So the last five name three ways out — **remove it, name a
-different cache path, or pass `--overwrite-unusable-cache`** — and `parse`
-builds a fresh one once you have taken any of them.
+different cache path, or have a scan replace it**, the last two spelled
+`--dtcache <path>` and `--overwrite-unusable-cache` after the sentence — and
+`parse` builds a fresh one once you have taken any of them.
 
 `--overwrite-unusable-cache`, on `parse` and `query`, starts cold over such a
 cache and replaces it. It is for a dump whose file is replaced under the same

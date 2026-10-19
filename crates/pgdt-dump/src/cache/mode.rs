@@ -204,9 +204,9 @@ impl CacheMode {
     }
 
     /// The path this mode resolves to, or `Error::CacheDisabled` if the
-    /// caller disabled the cache but `operation` requires one — so an
-    /// incompatible `--dtcache none` is rejected up front rather than
-    /// discovered when a write silently no-ops.
+    /// caller disabled the cache but `operation` requires one — so a
+    /// disabled cache is rejected up front rather than discovered when a
+    /// write silently no-ops.
     pub fn require_enabled(&self, operation: &'static str) -> Result<&Path> {
         match self {
             CacheMode::Enabled { path, .. } => Ok(path),

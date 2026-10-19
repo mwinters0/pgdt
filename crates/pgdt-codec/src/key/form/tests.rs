@@ -29,7 +29,7 @@ fn the_enum_clause_quotes_its_labels_and_caps_the_list() {
     assert!(clause.contains("'l0'"), "{clause}");
     assert!(clause.contains(&format!("'l{}'", ENUM_LABELS_SHOWN - 1)), "{clause}");
     assert!(!clause.contains(&format!("'l{ENUM_LABELS_SHOWN}'")), "{clause}");
-    assert!(clause.ends_with("and 3 more; see `info --detail`"), "{clause}");
+    assert!(clause.ends_with("and 3 more, which its declaration lists"), "{clause}");
 }
 
 /// The `numeric(p,s)` clause branches on the sign of the scale, as what

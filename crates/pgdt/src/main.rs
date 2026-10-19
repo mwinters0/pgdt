@@ -13,7 +13,7 @@ mod parallel;
 mod parse;
 mod profile;
 mod query;
-mod source;
+mod refusal;
 mod version;
 
 #[derive(Parser)]
@@ -114,7 +114,11 @@ fn main() -> Result<ExitCode> {
             let _instrument = introspect::at_exit(introspect::Sections::AllocatorAndEvaluation);
             Ok(datafusion_cli_pgdump::run(args))
         }
-        Invocation::Native(command) => commands(command).map(|()| ExitCode::SUCCESS),
+        // Each library refusal says its remedy in `pgdt`'s flags, however
+        // it reached here (`docs/design/decisions.md`, "D107").
+        Invocation::Native(command) => {
+            commands(command).map(|()| ExitCode::SUCCESS).map_err(refusal::spelled_chain)
+        }
     }
 }
 

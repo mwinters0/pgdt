@@ -318,7 +318,7 @@ async fn strict_identity_binds_both_registrations() {
     let out = run(&["-q", "--strict-identity=time", "--dump", &catalog, "-c", "SELECT 1"]);
     assert!(!out.status.success());
     let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
-    assert!(said.contains("`--strict-identity=time`"), "{said}");
+    assert!(said.contains("with `time` bound"), "{said}");
 
     let create = format!(
         "CREATE EXTERNAL TABLE ev STORED AS PGDUMP LOCATION '{dump}' \
@@ -326,7 +326,7 @@ async fn strict_identity_binds_both_registrations() {
     );
     let out = run(&["-q", "--strict-identity", "-c", &create]);
     let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
-    assert!(said.contains("`--strict-identity=time`"), "{said}");
+    assert!(said.contains("with `time` bound"), "{said}");
 }
 
 /// **A dump's own strictness overrides the session's**, from either front
@@ -345,7 +345,7 @@ async fn a_dump_s_own_strictness_overrides_the_session_s() {
     let count = "SELECT count(*) AS n FROM shop.logs.events";
     let refused = |out: &Output| {
         let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
-        assert!(said.contains("`--strict-identity=time`"), "{said}");
+        assert!(said.contains("with `time` bound"), "{said}");
     };
 
     for loose in ["none", "advisory"] {

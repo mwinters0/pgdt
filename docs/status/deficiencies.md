@@ -385,12 +385,6 @@ than reading as a phase nobody has sliced.
   does not. **(c) unowned**; promoted by a hand-written dump holding one.
   Detail: `crates/pgdt-dump/src/ddl/types.rs`.
 
-- **KD92** — a provider opened to ignore what PostgreSQL refuses, refused for
-  want of a complete cache, names a `pgdt parse` without
-  `--postgres-invalid-values ignore`, which fails at the first such field it
-  keys. **(b) owned by P36**, 36.10. Detail:
-  `crates/datafusion-pgdump/src/dump.rs`.
-
 - **KD93** — a `COPY` line past `max_line_bytes`, 64 MiB by default, is
   refused though PostgreSQL writes and reads one up to I71's bound, and one up
   to a read chunk past the limit is read or refused by where the reads fall —
