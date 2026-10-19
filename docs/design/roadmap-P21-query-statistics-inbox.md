@@ -7,26 +7,25 @@ facts filed by destination".
 
 ---
 
-## A query's replay is carved with no statistics held
+## A query's replay is carved around the statistics it already holds
 
-**Fact.** `pgdt query` carves its two passes apart
-(`crates/pgdt/src/parallel.rs`, `Discovered::resolve_query`): the mapping pass is billed a
-loaded cache's statistics as `held`, the replay nothing. That is true only
-because the replay keeps none — `Segment::new` in `crates/pgdt-query/src/stream/replay/segment.rs`
-drops a block's statistics from each segment, and the matched blocks are
-dropped before a row is read.
+**Fact.** `pgdt query` carves each of its passes around what it holds
+(`crates/pgdt/src/parallel.rs`, `Discovered::resolve_pass`): the mapping pass
+around a loaded cache's statistics, and the replay, carved once that pass has
+settled the table, around the settled table's — those its `Table` and its plan
+keep by `Arc` (`TablePartitions::under`). Nothing the replay gathers is billed:
+`Segment::new` in `crates/pgdt-query/src/stream/replay/segment.rs` drops a
+block's statistics from each segment, and the replay gathers none.
 
-**Why P21 cares.** A gather during the replay that keeps a matched block's
-statistics, or merges into them, breaks that premise silently: the replay
-would hold what its carving billed as nothing, under-billing with nothing
-failing. Such a gather has to bill what it keeps in the replay's own carving.
-Keeping them is local — the `Arc` each `CopyBlock` already carries — so the
-premise costs P21 nothing to change, only something to remember.
+**Why P21 cares.** A gather during the replay adds to what its carving billed,
+which is fixed before a row is read: what it keeps or merges into a matched
+block's statistics past that bill is held with nothing failing. Such a gather
+has to bill what it adds in the replay's own carving.
 
 **Origin.** 2026-09-23 ([`decisions.md`](decisions.md), "D85");
-[`../status/history/2026-09-23.md`](../status/history/2026-09-23.md),
-"`pgdt query`'s two passes are carved apart". *Contingent on* `Segment` still
-dropping a block's statistics.
+[`../status/history/2026-10-19.md`](../status/history/2026-10-19.md),
+"`pgdt query` bills the statistics its replay holds". *Contingent on* the
+replay gathering nothing.
 
 ## A query already maps a metadata-level table, and gathers nothing
 

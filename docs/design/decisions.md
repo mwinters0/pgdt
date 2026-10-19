@@ -547,7 +547,7 @@ leader's split would decide; a floor under the coarsening, a constant nothing pr
 
 ### D85 Statistics are billed against the margin, and a block that cannot fit declines
 `statistics_allowance` is what the arrangement leaves under `margin_allowance`, carved after the workers, a count fixed before a
-byte is read; a cache's are known first, the loading pass's `held`; a replay's plan keeps its table's, `pgdt query` billing none (`KD123`). The CLI's is `--memory`,
+byte is read; a cache's are known first, the loading pass's `held`; a replay's plan keeps its table's, `pgdt query` carving its replay after the pass, around them. The CLI's is `--memory`,
 else the limit, else half of `MemAvailable` (RT8), an embedder stating none declines nothing (D1). A declined piece declines its
 block, dense group indices expressing no gap, and the account sees a window's pieces, so a decline differs serial and parallel,
 as meant. `finish`'s last close is kept even past it; the next block declines at its first charge. Rejected: a constant bound,

@@ -1021,7 +1021,8 @@ reading `(not stated)` where you gave none — which is
 the line to check a value against when a run does something you did not expect.
 
 The **second**, `resolved the arrangement`, comes once the file has been opened
-and asked what it recommends. It is the only one that can report a count cut to
+and asked what it recommends — on `query`, once the pass that finds the table
+is done (below, at `scan arrangement`). It is the only one that can report a count cut to
 fit, since the cutting is that recommendation meeting the budget.
 
 `jobs` is the worker count, and it reads differently depending on who chose
@@ -1078,16 +1079,16 @@ follows it.
 
 **`scan arrangement` is what says how many readers really ran.** `scan
 started`'s `jobs=` is the count `resolved the arrangement` announced — except
-on a `query` over a cache holding statistics, where `resolved the arrangement`
-names what the rows are read under and `scan started` names the mapping that
-comes first, which pays for those statistics and so may run fewer workers on a
-smaller budget. That mapping pass's own lines say so: each is prefixed
-`mapping{held_bytes=… replay_jobs=9}:`, `held_bytes` being what the cache's
-statistics hold and `replay_jobs` the count `resolved the arrangement` named,
-present only where the mapping pass runs fewer. A query the cache already
-settles runs no mapping pass and prints none of them. Mind the prefix when
-searching a log for `jobs=`: `replay_jobs=9` contains it. Two things can still
-cut the count: a compressed dump whose largest block the
+on a `query`, which reads the file twice and carves each pass from the
+allowance around what it holds. Its mapping pass, which reads on from where the
+cache stops until the table is settled, comes first, and over a cache holding
+statistics it pays for them and so may run fewer workers on a smaller budget:
+each of its own lines is then prefixed `mapping{held_bytes=…}:`, what the
+cache's statistics hold. A query the cache already settles runs no mapping
+pass and prints none of them. `resolved the arrangement` comes after that
+pass, naming what the rows are read under, and where the table holds
+statistics it pays for those and ends `held_bytes=…`, what they hold. Two
+things can still cut the count: a compressed dump whose largest block the
 budget cannot hold is read through the streaming decoder and is **serial
 whatever `--jobs` said**, and a budget too small for the readers asked for buys
 fewer of them. Either prints one line, once per scan:

@@ -338,47 +338,33 @@ fn a_cache_s_statistics_lower_the_count_and_then_the_budget() {
     assert_eq!(squeezed.statistics_allowance(), Some(room + short));
 }
 
-/// **`query`'s replay is carved with nothing held**, its mapping pass
-/// around the cache's statistics: the same holding that lowers the
-/// mapping pass's count leaves the replay the arrangement a cache without
-/// statistics would, under a discovered limit and a stated one alike.
+/// **Each of `query`'s passes is carved around what it holds**: the mapping
+/// pass around the cache's statistics and the replay around the settled
+/// table's, each exactly as a pass holding that much is carved — the same
+/// holding lowering either's count, under a discovered limit and a stated
+/// one alike, and a pass holding none carved as one with nothing held.
 #[test]
-fn a_query_s_replay_is_carved_around_no_statistics() {
+fn a_query_s_passes_are_each_carved_around_what_they_hold() {
     let reader = Recommends::reader(24, READER);
     let flagless = ParallelArgs { jobs: None, memory: None };
     let limited = v2_limit();
     let stated = ParallelArgs { jobs: None, memory: Some(1 << 30) };
     let unlimited = no_limit();
     for discovered in [flagless.found(limited.clone()), stated.found(unlimited.clone())] {
-        let passes = discovered.resolve_query(&reader, 2 * READER);
-        let bare = discovered.resolve(&reader, 0).parallelism();
-        assert_eq!(
-            passes.mapping.parallelism(),
-            discovered.resolve(&reader, 2 * READER).parallelism()
-        );
-        assert_eq!(passes.mapping.parallelism().jobs(), 7);
-        assert_eq!(passes.replay.parallelism(), bare);
+        let holding = discovered.resolve_pass(&reader, 2 * READER).resolved.parallelism();
+        assert_eq!(holding, discovered.resolve(&reader, 2 * READER).parallelism());
+        assert_eq!(holding.jobs(), 7);
+        let bare = discovered.resolve_pass(&reader, 0).resolved.parallelism();
+        assert_eq!(bare, discovered.resolve(&reader, 0).parallelism());
         assert_eq!(bare.jobs(), 9);
-        // What the mapping span's `replay_jobs=` says: seven of the nine,
-        // cut by the statistics; with none held the passes agree.
-        assert_eq!(passes.mapping_shortfall(), Some((7, 9)));
-        assert_eq!(discovered.resolve_query(&reader, 0).mapping_shortfall(), None);
     }
     // A stated count is never lowered, so only its budget can differ.
-    let typed = ParallelArgs { jobs: Some(9), memory: None };
-    let passes = typed.found(limited.clone()).resolve_query(&reader, 2 * READER);
-    assert_eq!(passes.mapping_shortfall(), None);
+    let typed = ParallelArgs { jobs: Some(9), memory: None }.found(limited);
+    assert_eq!(typed.resolve_pass(&reader, 2 * READER).resolved.parallelism().jobs(), 9);
 }
 
-/// **What a mapping pass's line reads as, in the format `pgdt` installs**:
-/// `held_bytes` wherever the cache holds statistics, `replay_jobs` only
-/// where they cut the count, and no span at all where it holds none. The
-/// binary's own test (`a_query_s_mapping_pass_says_what_it_was_carved_around`)
-/// reaches this through the real `await` on a plain source, whose count
-/// cannot fall; the cut count is reached here, under a runtime root's
-/// limit.
-#[test]
-fn the_mapping_span_carries_the_holding_and_a_cut_count() {
+/// What `emit` says, in the format `pgdt` installs.
+fn rendered(emit: impl FnOnce()) -> String {
     #[derive(Clone, Default)]
     struct Captured(Arc<std::sync::Mutex<Vec<u8>>>);
     impl std::io::Write for Captured {
@@ -390,38 +376,61 @@ fn the_mapping_span_carries_the_holding_and_a_cut_count() {
             Ok(())
         }
     }
-    let rendered = |passes: &QueryPasses| -> String {
-        let captured = Captured::default();
-        let writer = captured.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .with_target(false)
-            .without_time()
-            .finish();
-        tracing::subscriber::with_default(subscriber, || {
-            passes.mapping_span().in_scope(|| tracing::info!(jobs = 7, "scan started"));
-        });
-        String::from_utf8(captured.0.lock().unwrap().clone()).unwrap()
-    };
+    let captured = Captured::default();
+    let writer = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .with_target(false)
+        .without_time()
+        .finish();
+    tracing::subscriber::with_default(subscriber, emit);
+    String::from_utf8(captured.0.lock().unwrap().clone()).unwrap()
+}
 
+/// **What a mapping pass's line reads as**: `held_bytes` wherever the cache
+/// holds statistics, whether or not they cut the count, and no span at all
+/// where it holds none. The binary's own test
+/// (`a_query_s_passes_say_what_they_were_carved_around`) reaches this through
+/// the real `await` on a plain source, whose count cannot fall; the cut count
+/// is reached here, under a runtime root's limit.
+#[test]
+fn the_mapping_span_carries_the_holding() {
     let reader = Recommends::reader(24, READER);
     let limited = v2_limit();
-    let flagless = ParallelArgs { jobs: None, memory: None }.found(limited.clone());
-    let cut = rendered(&flagless.resolve_query(&reader, 2 * READER));
     let held = 2 * READER;
-    assert!(
-        cut.contains(&format!("mapping{{held_bytes={held} replay_jobs=9}}: scan started jobs=7")),
-        "{cut}"
-    );
-
-    let typed = ParallelArgs { jobs: Some(9), memory: None }.found(limited.clone());
-    let uncut = rendered(&typed.resolve_query(&reader, held));
-    assert!(uncut.contains(&format!("mapping{{held_bytes={held}}}: scan started")), "{uncut}");
-
-    let none = rendered(&flagless.resolve_query(&reader, 0));
+    let flagless = ParallelArgs { jobs: None, memory: None }.found(limited.clone());
+    let typed = ParallelArgs { jobs: Some(9), memory: None }.found(limited);
+    for discovered in [&flagless, &typed] {
+        let pass = discovered.resolve_pass(&reader, held);
+        let line =
+            rendered(|| pass.mapping_span().in_scope(|| tracing::info!(jobs = 7, "scan started")));
+        assert!(line.contains(&format!("mapping{{held_bytes={held}}}: scan started")), "{line}");
+    }
+    let pass = flagless.resolve_pass(&reader, 0);
+    let none =
+        rendered(|| pass.mapping_span().in_scope(|| tracing::info!(jobs = 7, "scan started")));
     assert!(!none.contains("mapping"), "{none}");
     assert!(none.contains("scan started"), "{none}");
+}
+
+/// **The replay's `resolved the arrangement` names what it holds**: the
+/// settled table's statistics as `held_bytes=` where it holds any, beside
+/// the count they lowered, and the line `parse` prints where it holds none.
+#[test]
+fn the_replay_s_line_names_the_statistics_it_holds() {
+    let reader = Recommends::reader(24, READER);
+    let flagless = ParallelArgs { jobs: None, memory: None }.found(v2_limit());
+    let held = 2 * READER;
+    let holding = flagless.resolve_pass(&reader, held);
+    let line = rendered(|| holding.announce_replay());
+    assert!(line.contains("resolved the arrangement"), "{line}");
+    assert!(line.contains("lowered from 24"), "{line}");
+    assert!(line.contains(&format!("held_bytes={held}")), "{line}");
+    let bare = flagless.resolve_pass(&reader, 0);
+    let line = rendered(|| bare.announce_replay());
+    assert!(!line.contains("held_bytes"), "{line}");
+    assert_eq!(line, rendered(|| bare.resolved.announce()));
 }
 
 /// **The check `introspect` owes: the instrument must not move the plan it

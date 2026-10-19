@@ -10,7 +10,7 @@ use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::cache::Held;
 use pgdt_io::Origin;
-use pgdt_model::{Finding, PostgresInvalidValues, Severity};
+use pgdt_model::{BlockStatistics, Finding, PostgresInvalidValues, Severity};
 use pgdt_query::{QueryOptions, ScanExtent, Table, TableSelector, render_field_into};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
@@ -19,7 +19,7 @@ use crate::args::{
     IdentityArgs, ModeParser, OverwriteArgs, ReadFlags, cache_mode, parse_chunk_size,
     parse_max_line_bytes, scan_options,
 };
-use crate::parallel::{ParallelArgs, QueryPasses, Resolved};
+use crate::parallel::{ParallelArgs, Resolved};
 use crate::source::{about_the_source, naming_the_source};
 use filter::{parse_filter_flag, parse_where};
 
@@ -246,7 +246,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     // not describe this file is refused having read no more than the
     // file's leading bytes (`docs/design/decisions.md`, "D20").
     // Announced in two lines, the first ahead of the open, as `parse`
-    // does.
+    // does, and the second once the replay is carved.
     let stated = parallel.discover();
     stated.announce();
     let opened = mode.open(&origin).await.map_err(|e| naming_the_source(e, &origin))?;
@@ -254,10 +254,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
         Held::Loaded(loaded) => loaded.index.statistics_heap_bytes(),
         Held::Missing | Held::Disabled | Held::Replacing(_) => 0,
     };
-    let passes = stated.resolve_query(opened.source.as_ref(), cached_statistics);
-    passes.replay.announce();
-    let mapping_span = passes.mapping_span();
-    let QueryPasses { mapping, replay, .. } = passes;
+    let mapping = stated.resolve_pass(opened.source.as_ref(), cached_statistics);
     // The refusals a query can raise that want more than the
     // library's own words: those about the source gain its name, and
     // a column name not found gains a note. Which wants the name is
@@ -270,13 +267,12 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
             name_taken_verbatim(err)
         }
     };
-    let query_options = QueryOptions {
+    let mut query_options = QueryOptions {
         schema_mode,
         unrepresentable,
         postgres_invalid_values,
         filter,
         projection: projection(column, no_columns),
-        parallelism: replay.parallelism(),
         use_statistics: statistics == QueryStatistics::All,
         ..QueryOptions::default()
     };
@@ -290,17 +286,25 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     let settled = Table::settle(
         opened,
         &selector,
-        scan_options(read, &mapping),
+        scan_options(read, &mapping.resolved),
         ScanExtent::UntilTargetSettled,
         schema_mode,
         &CancellationToken::new(),
     )
-    .instrument(mapping_span)
+    .instrument(mapping.mapping_span())
     .await
     .map_err(&report)?;
     let Some(settled) = settled else {
         return no_rows(&table, &origin);
     };
+    // The replay, carved now the pass is done: the map it extended is
+    // gone, and what stays resident beside the replay's readers is the
+    // settled table's statistics, which it and its plan keep
+    // (`docs/design/decisions.md`, "D85").
+    let replay = stated.resolve_pass(settled.source().as_ref(), statistics_held(&settled));
+    replay.announce_replay();
+    let replay = replay.resolved;
+    query_options.parallelism = replay.parallelism();
     // Partitioned, not serial: `Parallelism::Serial` — `--jobs 1` — is
     // one partition, so the serial path is reached through the same
     // plan rather than branched to (D51).
@@ -349,6 +353,18 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     }
     eprintln!("{rows} row(s)");
     Ok(())
+}
+
+/// The heap `table`'s blocks' statistics hold, which it and every plan made
+/// from it share ([`pgdt_model::DumpIndex::statistics_heap_bytes`] over one
+/// table).
+fn statistics_held(table: &Table) -> u64 {
+    table
+        .blocks()
+        .iter()
+        .filter_map(|b| b.statistics.as_deref())
+        .map(BlockStatistics::heap_bytes)
+        .sum()
 }
 
 /// The rows a batch of `pgdt query`'s stream holds: what it prints a batch

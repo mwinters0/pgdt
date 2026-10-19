@@ -521,10 +521,3 @@ than reading as a phase nobody has sliced.
   redirected run writes the refusal into its output. **(c) unowned**; promoted
   by the maintainer deciding whether the shell departs from upstream's `main`
   there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
-
-- **KD123** — `pgdt query`'s replay holds the queried table's statistics,
-  in its `Table` and in the plan that keeps them for a dynamic filter the
-  command never states, while its readers are carved around none, so they
-  may take what the statistics hold past the margin. **(b) owned by
-  `M227`**, which carves the replay after the pass, around them. Detail:
-  `crates/pgdt/src/parallel.rs`.

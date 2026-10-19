@@ -22,7 +22,7 @@ use std::process::Command;
 use pgdt_dump::{ScanOptions, cache};
 use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
 use pgdt_mapping::build_index;
-use pgdt_model::{DumpIndex, Span, SpanBody};
+use pgdt_model::{BlockStatistics, DumpIndex, Span, SpanBody};
 
 mod common;
 use common::{fixture, run, stderr_of};
@@ -814,17 +814,16 @@ fn a_gathering_parse_is_not_corrected() {
     }
 }
 
-/// **A query's mapping pass says what it was carved around, on its own lines
-/// and nowhere else.** Over a cache holding statistics, `scan started` and
-/// `scan complete` are said inside a `mapping` span carrying `held_bytes`, the
-/// heap those statistics hold, which `resolved the arrangement` — the
-/// replay's, carved around nothing — does not carry; a cache that already
-/// settles the table maps nothing and prints no such line. A plain source's
-/// count cannot fall, so no `replay_jobs=` rides it; the span's rendering with
-/// a cut count is `parallel.rs`'s
-/// `the_mapping_span_carries_the_holding_and_a_cut_count`.
+/// **Each of a query's passes says what it was carved around.** Over a cache
+/// holding statistics, `scan started` and `scan complete` are said inside a
+/// `mapping` span carrying `held_bytes`, the heap those statistics hold; a
+/// cache that already settles the table maps nothing and prints no such line.
+/// The replay's `resolved the arrangement` follows the pass, carved around
+/// the settled table's statistics and naming them as its own `held_bytes=`.
+/// A plain source's count cannot fall; the span under a cut count is
+/// `parallel.rs`'s `the_mapping_span_carries_the_holding`.
 #[tokio::test]
-async fn a_query_s_mapping_pass_says_what_it_was_carved_around() {
+async fn a_query_s_passes_say_what_they_were_carved_around() {
     let (_dir, dump) = common::sandboxed(&fixture(16, "edge_cases", "default"), "dump.sql");
     let cache_path = cache::colocated_path(&dump);
     let out = run(&["parse", "--source", dump.to_str().unwrap()]);
@@ -844,6 +843,21 @@ async fn a_query_s_mapping_pass_says_what_it_was_carved_around() {
         assert!(out.status.success(), "{}", stderr_of(&out));
         stderr_of(&out)
     };
+    // What the replay holds: the statistics of the table's blocks the map
+    // keeps them for.
+    let table_heap = |index: &DumpIndex| -> u64 {
+        index
+            .blocks()
+            .filter(|b| b.header.matches("public.generated_column"))
+            .filter_map(|b| b.statistics.as_deref())
+            .map(BlockStatistics::heap_bytes)
+            .sum()
+    };
+    let replay_line = |stderr: &str| -> String {
+        let resolved = resolved_report(stderr);
+        assert!(!resolved.contains("mapping{"), "the replay's line is not the pass's: {resolved}");
+        resolved.to_string()
+    };
     let settled = query();
     assert!(main_scan_lines(&settled).is_empty(), "{settled}");
     assert!(!settled.contains("mapping{"), "{settled}");
@@ -858,6 +872,9 @@ async fn a_query_s_mapping_pass_says_what_it_was_carved_around() {
     };
     assert!(loaded.is_complete(), "the parse wrote a complete cache");
     let full = loaded.index;
+    let whole = table_heap(&full);
+    assert!(whole > 0, "the parse gathered the table's statistics");
+    assert!(replay_line(&settled).contains(&format!("held_bytes={whole}")), "{settled}");
     let frontier = full.blocks().nth(1).expect("the fixture has two blocks").end_offset;
     let mut spans: Vec<Span> = full.spans.iter().filter(|s| s.start < frontier).cloned().collect();
     spans.last_mut().unwrap().end = frontier;
@@ -872,6 +889,7 @@ async fn a_query_s_mapping_pass_says_what_it_was_carved_around() {
     });
     let truncated = DumpIndex { spans, scanned_through: frontier, ..full };
     let held = truncated.statistics_heap_bytes();
+    let kept = table_heap(&truncated);
     assert!(held > 0, "the kept blocks hold statistics");
     saved(&cache_path, &source, &truncated).await;
 
@@ -881,6 +899,15 @@ async fn a_query_s_mapping_pass_says_what_it_was_carved_around() {
     for line in &main {
         assert!(line.contains(&format!("mapping{{held_bytes={held}}}: scan ")), "{line}");
     }
-    let resolved = stderr.lines().find(|l| l.contains("resolved the arrangement")).expect(&stderr);
-    assert!(!resolved.contains("mapping{"), "the replay's line is not the pass's: {resolved}");
+    // Said once the pass is done, around what the settled table's blocks
+    // kept: a block the pass mapped gathered none.
+    let resolved = replay_line(&stderr);
+    let lines: Vec<&str> = stderr.lines().collect();
+    let after = lines.iter().position(|l| *l == resolved).unwrap();
+    let last_mapping = lines.iter().rposition(|l| l.contains("mapping{")).unwrap();
+    assert!(after > last_mapping, "the replay is announced after the pass: {stderr}");
+    match kept {
+        0 => assert!(!resolved.contains("held_bytes"), "{resolved}"),
+        kept => assert!(resolved.contains(&format!("held_bytes={kept}")), "{resolved}"),
+    }
 }

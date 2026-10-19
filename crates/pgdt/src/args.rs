@@ -188,7 +188,7 @@ impl ReadFlags {
 ///
 /// **Resolved once per command and passed in, not re-resolved here.** `query`
 /// passes its mapping pass's, its replay's going into [`pgdt_query::QueryOptions`]
-/// ([`crate::parallel::Discovered::resolve_query`]).
+/// ([`crate::parallel::Discovered::resolve_pass`]).
 pub(crate) fn scan_options(read: ReadFlags, parallel: &Resolved) -> ScanOptions {
     ScanOptions { read: read.options(), parallelism: parallel.parallelism() }
 }

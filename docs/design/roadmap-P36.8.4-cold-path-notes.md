@@ -58,10 +58,10 @@ order (`TablePartitions::in_file_order`), and its own merge is gone.
 
 ## Negative results
 
-- **A cold query's replay now holds the queried table's statistics**
-  (`KD123`). `TablePartitions` keeps every matched block's statistics for a
-  dynamic filter (`under`), and the old cold path planned without one. The
-  replay is still carved around none. Under "Decisions worth another look".
+- **A cold query's replay now holds the queried table's statistics**.
+  `TablePartitions` keeps every matched block's statistics for a dynamic
+  filter (`under`), and the old cold path planned without one; `pgdt query`
+  carves its replay around them (`M227`).
 - **`TableStream<'a>` and `BlockingTableIter<'a>` keep their lifetime**,
   though every stream is now `'static`. Dropping it touches the adapter's
   signatures and is no part of this row.

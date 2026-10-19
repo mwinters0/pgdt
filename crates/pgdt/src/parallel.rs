@@ -210,7 +210,7 @@ impl Discovered<'_> {
     /// against the margin's ceiling as the provider bills a resident map, so
     /// it lowers the count first and, where the count cannot fall, the budget (`pgdt_io::ArrangementRequest::held`;
     /// `docs/design/decisions.md`, "D85"). A pass holding none passes `0`
-    /// ([`Discovered::resolve_query`]).
+    /// ([`Discovered::resolve_pass`]).
     pub(crate) fn resolve(&self, source: &dyn ByteRangeSource, held: u64) -> Resolved {
         // A stated `--memory` replaces the discovered allowance rather than
         // bypassing the reserve and the margin: one carving, whichever end
@@ -223,82 +223,54 @@ impl Discovered<'_> {
         Resolved(Arrangement::resolve(&allowance, request))
     }
 
-    /// **`query`'s two passes, carved apart**: each from the one allowance
-    /// with nothing drawn, since they never run at once. The mapping pass
-    /// holds the loaded map while its readers extend it, so it is carved
-    /// around `cached_statistics`; the map is gone before a row is read, and
-    /// the replay is carved around nothing.
-    ///
-    /// Deficiency register: `deficiency: KD123` — the replay still holds the
-    /// queried table's statistics: the table the pass settles holds its
-    /// blocks, and its plan keeps their statistics for a dynamic filter this
-    /// command never states (`pgdt_query::TablePartitions::under`), so its
-    /// readers are carved as if those bytes were free. Billing them needs them
-    /// known, which only the pass finds; the fix carves the replay after the
-    /// pass, around the settled table's statistics.
-    pub(crate) fn resolve_query(
-        &self,
-        source: &dyn ByteRangeSource,
-        cached_statistics: u64,
-    ) -> QueryPasses {
-        QueryPasses {
-            mapping: self.resolve(source, cached_statistics),
-            replay: self.resolve(source, 0),
-            held: cached_statistics,
-        }
+    /// **`query`'s passes, each carved around what it holds**: the mapping
+    /// pass around the statistics a loaded cache hands it, `held` its index's
+    /// heap, and the replay — carved only once that pass has settled the
+    /// table — around the settled table's, which the table and its plan keep
+    /// (`pgdt_query::TablePartitions::under`). Each from the one allowance
+    /// with nothing drawn, since the two never run at once and the map is
+    /// gone before a row is read (`docs/design/decisions.md`, "D85").
+    pub(crate) fn resolve_pass(&self, source: &dyn ByteRangeSource, held: u64) -> QueryPass {
+        QueryPass { resolved: self.resolve(source, held), held }
     }
 }
 
-/// The arrangement each of `query`'s passes runs under
-/// ([`Discovered::resolve_query`]).
-pub(crate) struct QueryPasses {
-    /// The mapping pass's, in [`pgdt_dump::ScanOptions::parallelism`]: its count and
-    /// budget are on its own `scan started` line, printed only when it reads,
-    /// inside the span [`QueryPasses::mapping_span`] opens.
-    pub(crate) mapping: Resolved,
-    /// The replay's, in [`pgdt_query::QueryOptions::parallelism`]: what `resolved the
-    /// arrangement` announces and a plan note's origin clause quotes, the
-    /// only one that reads over a map already settling the table.
-    pub(crate) replay: Resolved,
-    /// The heap the cache's statistics hold once loaded, which the mapping
-    /// pass was carved around and the replay was not.
+/// One of `query`'s passes, the arrangement it runs under beside the
+/// statistics heap it was carved around ([`Discovered::resolve_pass`]).
+pub(crate) struct QueryPass {
+    /// The mapping pass's in [`pgdt_dump::ScanOptions::parallelism`], its
+    /// count and budget on its own `scan started` line; the replay's in
+    /// [`pgdt_query::QueryOptions::parallelism`], which `resolved the
+    /// arrangement` announces and a plan note's origin clause quotes.
+    pub(crate) resolved: Resolved,
+    /// The statistics heap the pass holds while it runs.
     held: u64,
 }
 
-impl QueryPasses {
-    /// The mapping pass's count and the replay's, where the statistics the
-    /// mapping pass holds cut the first below the second. The two passes are
-    /// carved from one allowance, read once, and differ only in `held`; a
-    /// stated `--jobs` is never lowered, and only its budget can differ.
-    fn mapping_shortfall(&self) -> Option<(usize, usize)> {
-        let (jobs, asked) = (self.mapping.parallelism().jobs(), self.replay.parallelism().jobs());
-        (jobs < asked).then_some((jobs, asked))
-    }
-
+impl QueryPass {
     /// The span the mapping pass's own lines — `scan started`, `scan
-    /// arrangement`, `scan complete` — are said inside, so each carries what
-    /// the pass was carved around: `held_bytes`, and `replay_jobs`, the count
-    /// `resolved the arrangement` named, where the pass runs fewer. Its
-    /// presence is the cause, so no `bound_by=` rides it
-    /// (`docs/design/decisions.md`, "D64", "D85").
+    /// arrangement`, `scan complete` — are said inside, carrying
+    /// `held_bytes`, what the pass was carved around. Its presence is the
+    /// cause, so no `bound_by=` rides it (`docs/design/decisions.md`, "D64",
+    /// "D85").
     ///
-    /// **Opened whenever the cache holds statistics**, not only where they cut
-    /// the count: the pass's budget can then differ from the replay's, stated
-    /// `--jobs` or not. It prefixes only what the pass emits, so a cache that
-    /// already settles the table, whose query maps nothing, prints none of it.
+    /// **Opened whenever the cache holds statistics**, not only where they
+    /// cut the count: the pass's budget can then differ from what it would
+    /// be holding none, stated `--jobs` or not. It prefixes only what the
+    /// pass emits, so a cache that already settles the table, whose query
+    /// maps nothing, prints none of it.
     pub(crate) fn mapping_span(&self) -> tracing::Span {
         if self.held == 0 {
             return tracing::Span::none();
         }
-        let span = tracing::info_span!(
-            "mapping",
-            held_bytes = self.held,
-            replay_jobs = tracing::field::Empty,
-        );
-        if let Some((_, replay_jobs)) = self.mapping_shortfall() {
-            span.record("replay_jobs", replay_jobs);
-        }
-        span
+        tracing::info_span!("mapping", held_bytes = self.held)
+    }
+
+    /// The replay's `resolved the arrangement`, said once the mapping pass
+    /// has settled the table and the replay is carved: [`Resolved::announce`],
+    /// with `held_bytes=` where the settled table holds statistics.
+    pub(crate) fn announce_replay(&self) {
+        self.resolved.announce_holding(self.held);
     }
 }
 
@@ -429,12 +401,14 @@ impl Resolved {
         format!("{bytes} ({origin})")
     }
 
-    /// Say, once per scanning command and before the scan starts, what the
-    /// source's recommendation and the allowance fitted to.
+    /// Say, once per scanning command and before the pass it arranges
+    /// starts, what the source's recommendation and the allowance fitted to
+    /// — `query`'s replay's once its mapping pass has settled the table
+    /// ([`QueryPass::announce_replay`]).
     ///
     /// **The line that names the count the allowance lowered** — a query's
-    /// mapping pass, carved around its cached statistics, says what cut its
-    /// count on its own lines' span ([`QueryPasses::mapping_span`]), and a
+    /// mapping pass, carved around its cached statistics, says what it was
+    /// carved around on its own lines' span ([`QueryPass::mapping_span`]), and a
     /// leader's shortfall is `scan arrangement`'s `bound_by=` — which is why
     /// the report is two lines: neither number
     /// exists until the file has been opened and asked
@@ -444,12 +418,25 @@ impl Resolved {
     /// (`RT8`)
     /// (`docs/design/decisions.md`, "D64").
     pub(crate) fn announce(&self) {
-        tracing::info!(
-            jobs = %self.jobs_display(),
-            memory_bytes = %self.budget_display(),
-            statistics_bytes = %self.statistics_allowance_display(),
-            "resolved the arrangement",
-        );
+        self.announce_holding(0);
+    }
+
+    /// [`Resolved::announce`], naming `held` as `held_bytes=` where the pass
+    /// was carved around statistics it holds.
+    fn announce_holding(&self, held: u64) {
+        let (jobs, memory_bytes) = (self.jobs_display(), self.budget_display());
+        let statistics_bytes = self.statistics_allowance_display();
+        if held == 0 {
+            tracing::info!(%jobs, %memory_bytes, %statistics_bytes, "resolved the arrangement");
+        } else {
+            tracing::info!(
+                %jobs,
+                %memory_bytes,
+                %statistics_bytes,
+                held_bytes = held,
+                "resolved the arrangement",
+            );
+        }
     }
 }
 
