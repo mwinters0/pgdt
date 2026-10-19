@@ -70,7 +70,8 @@ pub(crate) fn render_plan(
 /// a row's field arrives, as the one-element array a batch of the column
 /// would hold — or `None` where the text is not a value of the column's
 /// type, which is [`Error::FieldDecode`]'s condition without the row that
-/// raises it.
+/// raises it, or is one its Arrow type cannot hold, which a scan reads as
+/// NULL.
 ///
 /// It exists so that a caller holding field text out of band — a stored bound
 /// ([`pgdt_model::Bounds`]) — reads it back through the one decoder,

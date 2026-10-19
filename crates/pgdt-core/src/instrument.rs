@@ -9,13 +9,14 @@
 //! an empty guard, [`timed!`](crate::timed) is what it wraps beside its part
 //! evaluated and dropped, [`row_evaluated!`](crate::row_evaluated) what it
 //! wraps and nothing more, and every function recording or reading a figure
-//! does nothing.
+//! either absent or doing nothing.
 //! The library still installs no allocator; the binary's counting allocator
 //! calls `allocated` and `freed`, and this module decides what counts.
 //!
 //! Each child is one concern whole: what an instrumented binary reads, which
 //! this module re-exports, and the hooks a crate above calls to record it,
-//! which `internal` re-exports.
+//! which `internal` re-exports — `decode`'s count, which a test reads rather
+//! than a binary, among them.
 
 pub(crate) mod decode;
 pub(crate) mod evaluation;

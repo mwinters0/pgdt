@@ -77,7 +77,7 @@ masked in containers and undefined over LVM/NFS. Reopens: parse CPU exceeding re
 ### D11 Limit discovery takes a root; the seam is `internal`'s
 `discover_memory_limit_in` reads the least of `memory.max` and `memory.high` (RT3), walking ancestors to the mount point (RT5); with no limit, a source recommending a charge is capped at half
 of `MemAvailable`, untuned (RT8), uncapped where that is unreadable (`KD113`), and one recommending none is not. The arms worth pinning are ones no machine is more than one of, so tests need the root;
-an embedder discovers at `/` (`Allowance::discover`) or states its allowance, so the root-taking readers and the memory constants are `internal`'s (D106). Rejected: an env var overriding the root; the seam public, only tests reaching it.
+an embedder discovers at `/` (`Allowance::discover`) or states its allowance, so the root-taking readers and the reserve's, margin's and unpooled bound's constants are `internal`'s (D106). Rejected: an env var overriding the root; the seam public, only tests reaching it.
 
 ### D12 Workers are `spawn_blocking`; no runtime flavour is imposed
 The library keeps `tokio` at `rt`+`sync`; `pgdt`'s own commands run `current_thread`, so thread count
@@ -114,7 +114,7 @@ unit. Eviction runs before acquisition and the reservation drops before the evic
 released buffer meets a reservation and is discarded. A reuse rule, not progress: see D5.
 
 ### D18 The seek table is persisted and identity is three-state
-A many-stream file costs a footer read per stream, so `cache::save` records the table, `CacheMode::open` reads
+A many-stream file costs a footer read per stream, so `CacheMode::save` records the table, `CacheMode::open` reads
 it before a source exists and `XzSource::with_table` walks nothing. `KnownCompression` is
 `Unknown`/`Plain`/`Xz`, checked against the file's magic; a contradiction is `Recognized::Mismatch`
 and condemns the span index too, both having come from one save of one file.
@@ -133,7 +133,7 @@ A cache not ours, damaged, another build's or another file's (stored size, or a 
 contradicts) is almost always a wrong path or a changed file, so `CacheMode::refusal` refuses it before the dump
 is read past its magic, at every scan entry point, each opening through `CacheMode::open`. `--overwrite-unusable-cache` (`with_overwrite_unusable`)
 starts cold over one recognisably ours, by a header read first, for a file replaced under a stable name; foreign
-bytes never. Rejected: a cold start (a silent re-scan after a typo or an upgrade); the guard in `cache::save` (policy
+bytes never. Rejected: a cold start (a silent re-scan after a typo or an upgrade); the guard in `CacheMode::save` (policy
 an embedder cannot override); refusing a damaged one of ours (nothing readable lost, an unbumped version its likely
 cause); `load` checking size alone (a claimless open gets another file's map). A moved block is `CachedBlockChanged`.
 
@@ -191,7 +191,7 @@ command**: `parse` interrupts, at byte 0 too, then dies by the signal, and a sec
 handler. As init (RT19) `pgdt` exits 128+n on every signal ending them elsewhere but a fault's, left to the kernel, and what `parse`'s guard
 or the REPL's `ctrl_c` catches. Rejected: polling alone; a `ScanOptions` field; a token of our own; keying on what was banked (a race); `exit(128+n)` elsewhere (RT20); needing an init; as init, INT and TERM alone; fault handlers; an `Option<&CancellationToken>` inside, which still asserts and adds a branch per poll; a `Stop` trait whose `Interrupted` is uninhabited where nothing stops the pass, a type parameter through every pass to prove one gate.
 
-### D27 UTF-8 is validated once per chunk, and the library's one `unsafe` is the view append
+### D27 UTF-8 is validated once per chunk, and the library's one shipped `unsafe` is the view append
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with
 `str::get`, delimiters being ASCII. The escaped path still validates (`\xNN` synthesizes bytes); the
 bulk pass runs only when a row will decode something. Four `unsafe` attempts lost to the safe shape;
@@ -519,7 +519,7 @@ entries, in the library (the CLI refuses both, a person's intent being ambiguous
 None is believed from a cache sized unlike the live source (D20); the mtime stays advisory (D21) so a same-size rewrite prunes against its predecessor's, knowingly. Bounds, order and
 dictionary hold only under the declared type and `COLLATE` recorded with them, and changing how a kind orders or equates bumps the version. Both ends stream; a save renames its own file
 over the cache, so no copy meets the statistics and a kill keeps the last save, orphaning its file. Rejected: a separable statistics file; its own semantics version; the copy charged;
-one beside name two saves share. Code: `prune::prune_block`, `cache::save`. Evidence: `golden_order_is_pinned_to_the_format_version`.
+one beside name two saves share. Code: `prune::prune_block`, `CacheMode::save`. Evidence: `golden_order_is_pinned_to_the_format_version`.
 
 ### D79 Bounds go in each order a semantics compares by exactly, a dictionary where it equates exactly
 A scalar column keeps bounds and row order per exact order, one set where two coincide: the register's where exact, else DataFusion's
@@ -586,7 +586,7 @@ Rejected: every value's bounds and the count alone; a set per view per column fr
 ## The CLI
 ### D61 `info` never scans
 The surprise is that a scan happened at all; `parse` scans ahead, a `query` maps only what the cache
-lacks (D48), and `--preamble-only` hangs off `parse`. It reports the cache through `CacheMode::open`, or `OfflineCache` with no source, never a `pgdt_query::Dump`, which holds no partial map, container or envelope and offers only tables. Rejected: a scanning fallback; `--no-scan`; a `Dump` where the cache is complete, a second path for one cache.
+lacks (D48), and `--preamble-only` hangs off `parse`. It reports the cache through `CacheMode::open`, or `OfflineCache` with no source, never a `pgdt_query::Dump`, which holds no partial map, container or envelope. Rejected: a scanning fallback; `--no-scan`; a `Dump` where the cache is complete, a second path for one cache.
 
 ### D62 The save throttle is a ratio, and its gate opens splice too
 A save is skipped unless `K` times the last save's duration has elapsed, which bounds overhead in
@@ -623,7 +623,7 @@ held to tables in `scripts/layering.py`. Model is what the cache persists, apart
 below the parsers so the codec does not recompile with the grammar. Gathering decodes and builds no array, so is mapping's, with the pass handing it rows and the interior split
 that pass leads; the ordering keys it shares with a filter are value semantics, so codec's; worker sizing and the cut are io's, the leader asking them. The tests' fixture vocabulary is `pgdt-fixtures`,
 a member only a dev-dependency reaches, its edges, to mapping and what a call to it names, behind a feature. Rejected: four layers
-in one crate with upward deviations; the cache a crate of its own (the loader scans, so it is dump's); the mapping pass query's (it reads nothing of query); the graph held to the libraries alone (a new member unplaced, `namespace-init` open to a library); any `pub mod` a namespace (one line past `internal`); a test module included across crates by `#[path]` (rust-analyzer resolves nothing outside its package), or a test's own `#[path]` within one (`check.py --affected` reads a test's files off its `mod` lines); statistics a crate apart from query (its edges run both ways); codec and query, or dump and query, one crate (D74's boundaries).
+in one crate with upward deviations; the cache a crate of its own (the loader re-derives the map's diagnostics, so it is dump's); the mapping pass query's (it reads nothing of query); the graph held to the libraries alone (a new member unplaced, `namespace-init` open to a library); any `pub mod` a namespace (one line past `internal`); a test module included across crates by `#[path]` (rust-analyzer resolves nothing outside its package), or a test's own `#[path]` within one (`check.py --affected` reads a test's files off its `mod` lines); statistics a crate apart from query (its edges run both ways); codec and query, or dump and query, one crate (D74's boundaries).
 
 ### D74 Below the codec no Arrow, the codec pure, and the core's error naming no dependency
 Core, model, io and dump never name Arrow; the codec and mapping only its schema types, and the codec `i256`; the codec is synchronous and does no I/O, nor does
@@ -649,7 +649,7 @@ that front end has. What a front end must spell, the variant says, never its `St
 operator under the strings schema mode is `TestNeedsDeclaredType`, as an unrepresentable test is), and an accepted form cut short counts what it left unlisted. `pgdt` appends its flag or
 command for each, in parentheses and the library's order, by an exhaustive match over the variants, on every refusal leaving a command, through any context; `datafusion-pgdump`'s refusals carry
 the mapping pass they need as data, and a front end's `Spelling` handed where a dump is opened or the factory registered is asked of each `Refusal` once, its words the `Error`'s field beside it and closing its message before DataFusion prints it, `pgdt sql` handing one
-per grammar (`--dump`'s suffixes, a statement's options). `pgdt info` says a cache's refusal in the library's sentence. A log line names no flag either.
+per grammar (`--dump`'s suffixes, a statement's options). `pgdt info` says a cache's refusal in the library's sentence, spelled as a scan's is. A log line names no flag either.
 Rejected: a structured `Remedy` value on the error (a second taxonomy beside the variants); a whole sentence per variant in each front end (the wording twice, which drifted); every enum label listed (nothing bounds how many a type declares); `pgdt sql` spelling in its `run()` alone (the REPL's and `-f`'s refusals are upstream's `exec`'s to print); the spelling a variant wrapping any refusal (a match missing it silently, a refusal spelled twice representable), a field on every variant (unrelated to each one's condition), a wrapper not named `Error` (D74), DataFusion's `Context` (the spelling printed before the refusal), the `Refusal` the `Error`'s source (the sentence again down a walk, and a second error type to `?` unspelled), public fields (a refusal spelled after it left the dump). Code: `pgdt`'s `refusal::spelling`, `datafusion_pgdump::Error`, `datafusion-cli-pgdump`'s `spelling::spelling`. Evidence: `each_refusal_names_the_flag_its_remedy_is`, `each_refusal_is_spelled_in_its_registration_s_grammar`, `a_refusal_is_spelled_once`.
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)

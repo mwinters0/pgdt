@@ -211,8 +211,9 @@ impl TablePartitions {
         self.sub_stream(partition, max_rows, None)
     }
 
-    /// **The whole table in file order, as one stream**: every partition run
-    /// at once, cutting batches at `max_rows` rows, and merged on each
+    /// **The whole table in file order, as one stream**: every partition
+    /// polled in the first round and after it only the one just emitted from
+    /// (`KD57`), cutting batches at `max_rows` rows, and merged on each
     /// batch's source offset, so it yields exactly the rows and the order a
     /// serial replay does, holding at most one batch per partition
     /// ([`TableStream::batch_source_offset`]). A failure is the lowest-indexed

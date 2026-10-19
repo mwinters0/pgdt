@@ -51,7 +51,8 @@ pub struct ColumnSummary {
     pub nulls_complete: bool,
     /// The least and greatest value the stored bounds reach, decoded as the
     /// column emits them; `None` where no group was bounded, or where the
-    /// bound's text does not read back as a value of the column's type.
+    /// bound's text does not read back as a value the column emits
+    /// ([`crate::decode_field`]).
     pub min: Option<Bound>,
     pub max: Option<Bound>,
     /// Whether every group of every block contributed — an unbounded group

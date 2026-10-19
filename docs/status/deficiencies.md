@@ -331,8 +331,8 @@ than reading as a phase nobody has sliced.
 
 - **KD52** — a `--filter` term or `--where` leaf ending `is [not] null` or
   `is [not] unrepresentable` is matched as that literal suffix, so `xis null`
-  asks for `x IS NULL` and `x is  null` is refused. **(c) unowned**; promoted by a user meeting
-  either. Detail: `crates/pgdt/src/query/filter/term.rs`.
+  asks for `x IS NULL`, `x is  null` is refused, and a term whose cut falls inside a multi-byte
+  character panics. **(c) unowned**; promoted by a user meeting any. Detail: `crates/pgdt/src/query/filter/term.rs`.
 
 - **KD58** — `map_file` drops the non-seekable warning a cache load adds and
   never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it

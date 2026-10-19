@@ -30,7 +30,7 @@ use crate::statistics::account::Term;
 
 /// A field PostgreSQL refuses — one its type's `*_in` refuses, met while
 /// keying it ([`BoundsGatherer::observe`]), or a NULL its column's `NOT NULL`
-/// refuses — or one a strict parse's check refuses.
+/// refuses. A strict parse's check refuses through `check_row` instead.
 #[derive(Debug)]
 pub(super) struct Refused;
 

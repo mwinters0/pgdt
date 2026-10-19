@@ -1900,7 +1900,7 @@ by building the range under this figure's wrapper
   image's own mappings, resident before a source is opened — `pgdt --version`
   carries them. It lifts every row and no slope, and so does DataFusion, which
   every build links, at a share no leg here prices.
-- **The save's two copies went.** `d767794` (D78) stopped `cache::save`
+- **The save's two copies went.** `d767794` (D78) stopped the cache's save
   cloning the whole `DumpIndex` and encoding the clone into a `Vec` — doubling
   to the next power of two above the cache file — before one write. Both copies
   grew per table and were live together at the save, the peak of a

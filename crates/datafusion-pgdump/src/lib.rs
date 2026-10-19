@@ -21,7 +21,8 @@
 //! bytes each emits ([`crate::statistics`]).
 //!
 //! **What a registration finds is handed to the caller's sink**
-//! (`pgdt_model::DiagnosticSink`): the dump's file-level findings, and each
+//! (`pgdt_model::DiagnosticSink`): the dump's file-level findings, which a
+//! table had alone hears only through [`PgDump::report`], and each
 //! table's column findings and divergence from PostgreSQL, the columns compared
 //! bytewise for want of a recorded collation one finding a registration
 //! ([`UncollatedColumns`]); and what a scan's
@@ -51,8 +52,8 @@
 //! **Three figures time it, through `pgdt sql`**:
 //! `dynamic-filter-join`, `dynamic-filter-topk` and
 //! `parallel-scan-throughput`'s provider legs, under `pgdt`'s allocator, which
-//! is the embedder's (`docs/design/decisions.md`, "D13").
-//! Every other `query` figure in `docs/design/measurements.md` times `pgdt`,
+//! is the embedder's (`docs/design/decisions.md`, "D13"); `release-profile`
+//! counts it too, on its `pgdt sql` row. Every other `query` figure in `docs/design/measurements.md` times `pgdt`,
 //! its text rendering included and, cold, a mapping pass, neither of which an
 //! embedder holding a cache pays.
 

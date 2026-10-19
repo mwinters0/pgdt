@@ -70,8 +70,9 @@ pub enum CompareKind {
     Bytea,
     /// Bytewise over the text the file holds. `length` is a `character
     /// varying(n)`'s `n`, past which a field is refused but for trailing
-    /// blanks ([`char_typmod_refuses`](crate::value::text::char_typmod_refuses)); `None` for every
-    /// other text, and for a literal's reading, which no typmod reaches.
+    /// blanks ([`char_typmod_refuses`](crate::value::text::char_typmod_refuses)), or in
+    /// DataFusion's order a `character(n)`'s; `None` for every other text,
+    /// and for a literal's reading, which no typmod reaches.
     /// The length refuses a field and never moves a key.
     ///
     /// `varying` is `character varying`'s, `text` and `name` holding none.
@@ -590,8 +591,8 @@ pub(crate) mod discrete {
         /// leaf's key is an `i64` whatever the column's width, so the width
         /// is stated here rather than found in the key. A literal's bound past
         /// the width itself, `int4range '[1,3000000000)'`, is refused before
-        /// any successor is taken, as `int4in` refuses it (I60); a field's is
-        /// read as written.
+        /// any successor is taken, as `int4in` refuses it (I60), and a
+        /// field's alike, read through the column's width.
         ///
         /// A date's is `5874897-12-31` as days since 1970, the day before
         /// `IS_VALID_DATE`'s exclusive `DATE_END_JULIAN`.

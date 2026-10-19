@@ -123,8 +123,8 @@ pub enum TilingIssue {
 /// What a [`Diagnostic`] is about.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum DiagnosticKind {
-    /// The map does not tile its file: a gap, an overlap, an empty span, or
-    /// a span list that doesn't reach the scanned end. Always a bug in
+    /// The map does not tile its file: one or more [`TilingIssue`]s. Always a
+    /// bug in
     /// `pgdt_dump::map`, never a property of the input
     /// (`docs/design/decisions.md`, "D30").
     TilingBroken { issues: Vec<TilingIssue> },

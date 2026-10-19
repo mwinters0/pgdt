@@ -148,10 +148,10 @@ pub trait ByteRangeSource: Send + Sync {
     /// stated no count of its own — a **recommendation**, never a bound.
     ///
     /// **The default is one, which is the serial path**, the same convention
-    /// [`ByteRangeSource::partitions`] follows. Nothing in the library reads
-    /// this — a caller that states a count gets that count — and it exists for
-    /// the layer above, which has a person's flags to fill in
-    /// (`pgdt`'s `Discovered::resolve`).
+    /// [`ByteRangeSource::partitions`] follows. The library reads it only
+    /// where a caller states no count ([`ArrangementRequest::of`](crate::ArrangementRequest::of))
+    /// — a caller that states one gets that count — for the layer above, which
+    /// has a person's flags to fill in (`pgdt`'s `Discovered::resolve`).
     ///
     /// **It is a raw count, not a budgeted one**: what the byte budget affords
     /// is `worker_count`'s question, asked of every count
@@ -175,9 +175,9 @@ pub trait ByteRangeSource: Send + Sync {
     /// limit found" from meaning "serial", that constant affording no
     /// block-decoding reader (`docs/design/decisions.md`, "D3").
     ///
-    /// **Nothing in the library budgets by it**, exactly as with the worker
-    /// count: a plan's notes read it only to say whether a larger allowance
-    /// would raise a budget.
+    /// **The arrangement carves by it** ([`ArrangementRequest::of`](crate::ArrangementRequest::of)),
+    /// solving the worker count and the budget against it, and a plan's notes
+    /// read it to say whether a larger allowance would raise a budget.
     /// It is a [`WorkerMemory`] rather than a scalar because one source's cost
     /// is not linear in the count (`docs/design/decisions.md`, "D4").
     fn default_worker_memory(&self) -> Option<WorkerMemory> {

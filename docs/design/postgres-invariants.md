@@ -5307,7 +5307,7 @@ v16.15 (`set_var_from_non_decimal_integer_str`, the exponent loop); v15
 differs from v14 only in a negative scale's typmod, and v17 and v18 from v16
 in nothing these functions do.
 
-**Observed.** Every `numeric` case of `key/tests.rs`'s
+**Observed.** Every `numeric` case of `key/order/tests.rs`'s
 `a_field_no_reader_reads_is_refused_only_where_every_major_refuses_it`, put to
 `numeric_in` with no typmod, with `numeric(10,2)`'s and from v15 with
 `numeric(3,-2)`'s, in a `postgres:<major>-trixie` container at all six

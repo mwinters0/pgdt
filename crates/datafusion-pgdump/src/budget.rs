@@ -184,7 +184,7 @@ impl ScanBudget {
     }
 
     /// The budget `state` carries, or the process's own where a session was
-    /// built without one — [`crate::install`] installs one, so this is a
+    /// built without one — [`crate::session::install`] installs one, so this is a
     /// provider registered by hand. Shared by every such session, which keeps
     /// the bound rather than multiplying it.
     pub(crate) fn of(state: &dyn Session) -> Arc<Self> {
@@ -207,7 +207,7 @@ pub(crate) fn pool_limit(state: &dyn Session) -> u64 {
 }
 
 /// `ctx`'s [`ScanBudget`], installed discovered from the process's allowance
-/// where the session carries none yet ([`crate::install`]).
+/// where the session carries none yet ([`crate::session::install`]).
 pub(crate) fn session_budget(ctx: &SessionContext) -> Arc<ScanBudget> {
     let state = ctx.state_ref();
     let mut state = state.write();

@@ -2,7 +2,7 @@
 //!
 //! **What a dump or a table is, is reported when it is registered**, a table
 //! to the sink it is built with: the file-level channel once per
-//! registration, and each table's per-column findings and its columns'
+//! registration of the dump ([`PgDump::report`] for a table had alone), and each table's per-column findings and its columns'
 //! divergence from PostgreSQL in the semantics every scan asks for — or, for
 //! a table the catalog does not list, its [`RefusedTable`] — save the columns
 //! compared bytewise for want of a recorded collation, which are one

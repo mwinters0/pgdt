@@ -60,8 +60,10 @@ pub enum Held {
     /// caller (`docs/design/decisions.md`, "D22").
     Disabled,
     /// A cache this mode cannot use and may replace, and why: a scan starts
-    /// cold over it and writes over it at its first save. The source was
-    /// opened claiming nothing, so nothing the cache recorded reaches it.
+    /// cold over it and writes over it at its first save. Nothing the cache
+    /// recorded reaches the source: [`CacheMode::open`] opens it claiming
+    /// nothing, and [`CacheMode::open_source`]'s was built before the cache
+    /// was read.
     Replacing(Unusable),
 }
 

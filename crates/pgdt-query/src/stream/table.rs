@@ -85,10 +85,12 @@ impl<'a> TableStream<'a> {
 
     /// Facts about *this query's plan* rather than about a column or a
     /// predicate ([`PlanNoteKind`](super::note::PlanNoteKind)): the memory budget in force declining
-    /// something, the row groups statistics let the replay skip, and each
-    /// column's values read as NULL ([`PlanNoteKind::ReadAsNull`](crate::stream::note::PlanNoteKind::ReadAsNull)). A fourth
-    /// channel beside `DumpIndex.diagnostics` (the model), `ResolvedSchema::notes`
-    /// (the codec) and [`Self::comparison_notes`] (query).
+    /// something or narrowing the batch span, the row groups statistics let
+    /// the replay skip, and each column's values read as NULL
+    /// ([`PlanNoteKind::ReadAsNull`](crate::stream::note::PlanNoteKind::ReadAsNull)). A fourth
+    /// channel beside `DumpIndex.diagnostics` (the model), the column records
+    /// `ResolvedSchema::columns` holds (the codec) and
+    /// [`Self::comparison_notes`] (query).
     ///
     /// **Settled before any block is read**, from the map and the source's own
     /// advice, and held from the start: a partition's and the whole table's

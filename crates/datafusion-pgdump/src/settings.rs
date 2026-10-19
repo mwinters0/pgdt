@@ -25,8 +25,9 @@ use pgdt_query::RowEvaluation;
 ///
 /// **Read when a scan is planned**, so one set mid-session binds every scan
 /// planned after it and none planned before: a live scan keeps what it drew,
-/// as it keeps its partitions. A session never [`install`](crate::install)ed —
-/// a provider registered by hand in it — plans under the defaults below.
+/// as it keeps its partitions. A session neither readied
+/// ([`ready_session`](crate::ready_session)) nor registered into by this crate
+/// — a provider registered by hand in it — plans under the defaults below.
 ///
 /// **Each but `pgdump.dynamic_filter_rows` is a byte count.** A read chunk or
 /// a line limit of zero is refused, as `pgdt`'s flags refuse one: a read that

@@ -340,8 +340,10 @@ impl Builder {
     ///
     /// `toc_owned` is `true` iff *this span's own* preceding comment carried
     /// a TOC header — `false` for a follow-on statement inheriting
-    /// [`governing_toc`](Self::governing_toc), and `true` with `toc` `None`
-    /// where that header did not parse; a `Framing` statement's is vetoed
+    /// [`governing_toc`](Self::governing_toc), and, for a statement span
+    /// alone, `true` with `toc` `None` where that header did not parse —
+    /// every other kind owns a header only where it parsed; a `Framing`
+    /// statement's is vetoed
     /// before it reaches here. This is also where
     /// [`governing_toc`](Self::governing_toc) updates, every span this module
     /// produces passing through here.
