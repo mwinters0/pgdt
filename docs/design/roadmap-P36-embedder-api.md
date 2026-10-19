@@ -326,6 +326,16 @@ upstream's `exec` prints it, the REPL included. Reasoning:
 [2026-10-19](../status/history/2026-10-19.md), "A refusal a front end cannot
 spell is reshaped until it can".
 
+**A misspelled column is refused before anything it asks** (36.10.2): a
+filter term naming a column the block lacks is `UnknownPredicateColumn`
+ahead of every refusal about what a term asks — the strings schema mode's,
+an order's, a comparison's, a literal's — in either schema mode, since a
+remedy for a question the user did not mean to ask is noise. The mode's
+refusal stays where the mode is known. Names come first within each block;
+the first refusing block in file order is still the error. Reasoning:
+[2026-10-19](../status/history/2026-10-19.md), "A misspelled column is
+refused before what it asks".
+
 [`concepts.md`](concepts.md)'s "The cache" carries a **Not in one place**
 line: why a cache cannot be used is worded twice, once by the core's `Error`
 and once by `pgdt info`, and the two disagree. That line is struck by the

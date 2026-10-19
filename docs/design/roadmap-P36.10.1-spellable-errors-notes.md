@@ -34,7 +34,9 @@ statistics allowance. D107 is rewritten to match.
   PostgreSQL's semantics, `nosuch > 0` is refused as `TestNeedsDeclaredType`
   rather than `UnknownPredicateColumn`, as `nosuch IS UNREPRESENTABLE`
   already was. This refusal names no `header_offset`, where the per-block one
-  named a block. STATUS's "Decisions worth another look" carries the call.
+  named a block. Reviewed and reversed: 36.10.2 checks names first
+  ([2026-10-19](../status/history/2026-10-19.md), "A misspelled column is
+  refused before what it asks").
 - **Not counted.** The added walk runs once per block at planning and touches
   no row path.
 
