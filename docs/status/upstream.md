@@ -39,8 +39,19 @@ back. **`UF1`–`UF3` are allocated, and none is reused.**
   aggregate's cannot be told from a TopK's and declined by the scan. A shell
   user is told what it costs to turn on in
   [`../manual/pgdt-sql.md`](../manual/pgdt-sql.md),
-  "Types". Rejected: patching DataFusion in this workspace, which fixes our
-  builds and no consumer's.
+  "Types". Off whatever the builder's config says, since DataFusion 55.1's
+  `ConfigOptions` keeps a value and not whether it was stated, so a stated
+  `true` is the default `true`; and off is right for every table in the
+  session, the defect being the aggregate's and met by any scan pruning under
+  its filter. Rejected: patching DataFusion in this workspace, which fixes our
+  builds and no consumer's; a parameter on `ready_session` saying whether to
+  keep the config's value, public surface whose one use ends with this entry;
+  and the library reading the option's environment variable, which overrides
+  an embedder that chose not to build its config from the environment, so the
+  override is `pgdt sql`'s alone. That override is the aggregate's own
+  variable, not `enable_dynamic_filter_pushdown`'s, which DataFusion's
+  `from_env` lets set it too: the umbrella's `true` is DataFusion's default
+  and says nothing of this filter.
 - **Watch.** `crates/datafusion-pgdump/tests/aggregate_bounds.rs` asserts the wrong
   answers with the filter on, and fails at the pin carrying the fix.
 - **When it lands.** Drop the readying's setting, the shell's restoring of

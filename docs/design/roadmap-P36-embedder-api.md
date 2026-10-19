@@ -507,8 +507,11 @@ This closes cluster M.
 - **One `datafusion-pgdump` function readies a session.** It takes a
   `SessionStateBuilder` and applies three things: the guard that refuses
   `pgdump_unrepresentable` at planning, what `install` does today, and
-  `enable_aggregate_dynamic_filter_pushdown` off (`KD56`), unless the caller
-  already set that option. The crate doc's two "an embedder should" requests
+  `enable_aggregate_dynamic_filter_pushdown` off (`KD56`), whatever the
+  builder's config says, a caller wanting it on setting it after the call
+  (`../status/upstream.md`, "UF1"; reasoning:
+  [history, 2026-10-19](../status/history/2026-10-19.md), "The aggregate's
+  filter is off whatever the config says"). The crate doc's two "an embedder should" requests
   become this call. UF1's code marker moves with the workaround.
   The environment override stays `pgdt sql`'s.
 - **A finding keeps its subject.** `Located` becomes public, so a structured

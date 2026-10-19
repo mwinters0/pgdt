@@ -150,15 +150,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`ready_session` turns the ungrouped aggregate's dynamic filter off
-  whatever the builder's config says** (`crates/datafusion-pgdump/src/session.rs`),
-  where the spec ("Readying a DataFusion session") says off "unless the caller
-  already set that option". DataFusion 55.1's `ConfigOptions` keeps a value,
-  not whether it was stated, so a stated `true` and the default `true` cannot
-  be told apart. So the call was: always off, with a caller who wants the
-  filter on setting it after the call, as `pgdt sql` does when its
-  environment states the option. Reconsidering means one of two things: a
-  parameter on `ready_session`, which the spec has taking a builder alone, or
-  the library reading DataFusion's environment variable itself, which the spec
-  keeps as `pgdt sql`'s override.

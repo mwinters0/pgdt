@@ -233,9 +233,11 @@ the same schema.
 DataFusion 55.1's filter for an ungrouped `MIN` and `MAX` can lose a column's
 bounds once a batch holds no value of it — a NULL, or a value read as one —
 and a scan skipping rows under what is left answers a `MIN` too high, or
-another column's `MIN` and `MAX` as NULL. Turning it on, directly or by
-setting or resetting `datafusion.optimizer.enable_dynamic_filter_pushdown`,
-which sets it too, brings that back.
+another column's `MIN` and `MAX` as NULL. Turning it on brings that back:
+`SET` directly, `SET datafusion.optimizer.enable_dynamic_filter_pushdown`,
+which sets it too, or `RESET` directly, which restores DataFusion's default,
+on, not the shell's. `RESET datafusion.optimizer.enable_dynamic_filter_pushdown`
+leaves it as it is.
 
 **`:unrepresentable=refuse` refuses when the query is planned**, before a
 row is read, wherever it needs the values of a column the dump holds such a

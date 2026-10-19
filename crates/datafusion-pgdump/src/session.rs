@@ -23,9 +23,11 @@ use crate::unrepresentable::{PgDumpUnrepresentable, with_guard};
 /// (`KD56`).
 ///
 /// **Called last before [`SessionStateBuilder::build`]**, after the config:
-/// a config set after it replaces what it readied. A caller wanting the
-/// aggregate's filter on all the same sets it after this call, as `pgdt sql`
-/// does where its environment states the option.
+/// a config set after it replaces what it readied. The aggregate's filter is
+/// turned off whatever the config already says, DataFusion 55.1's config
+/// keeping a value and not whether it was stated (`docs/status/upstream.md`,
+/// "UF1"); a caller wanting it on all the same sets it after this call, as
+/// `pgdt sql` does where its environment states the option.
 ///
 /// Offered on a builder alone, so nothing rebuilds a session its embedder
 /// owns: one holding a live [`SessionContext`] rebuilds it through

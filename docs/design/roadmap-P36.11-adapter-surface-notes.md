@@ -16,8 +16,7 @@ errors restated in library terms, are 36.11.1
   crate-private: `register_dump` and `register_table_factory` still give an
   unreadied session the settings, the budget and the function. The aggregate
   filter is turned off whatever the config says, and a caller wanting it on
-  sets it after; see "Decisions worth another look" in
-  [`STATUS.md`](../status/STATUS.md). `pgdt sql` restores the option where
+  sets it after ([`upstream.md`](../status/upstream.md), "UF1"). `pgdt sql` restores the option where
   `DATAFUSION_OPTIMIZER_ENABLE_AGGREGATE_DYNAMIC_FILTER_PUSHDOWN` states it,
   so its environment override is unchanged. UF1's marker moved with it.
 - **`Located` owns its subject and its finding** (`String`,
