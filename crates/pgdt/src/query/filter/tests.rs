@@ -118,7 +118,7 @@ fn every_term_the_filter_flag_accepts_means_the_same_under_where() {
             rng.pick(&SPACES),
             rng.pick(&STRUCTURE),
         ]
-        .join(if rng.next() % 4 == 0 { "" } else { " " });
+        .join(if rng.next().is_multiple_of(4) { "" } else { " " });
         let Ok(filter) = parse_filter_flag(&spec) else { continue };
         accepted += 1;
         let filter = format!("{filter:?}");
