@@ -662,6 +662,7 @@ ABOUT_CONFIG = REPO / "release" / "about.toml"
 NOTICES_NAME = "THIRD-PARTY-NOTICES"
 #: The package a release ships, whose linked closure the notices cover.
 SHIPPED = "pgdt"
+SHIPPED_MANIFEST = REPO / "crates" / SHIPPED / "Cargo.toml"
 #: A licence whose duty in executable form includes saying where the source
 #: is: each crate under one gets a line naming it.
 SOURCE_POINTER_LICENSES = ("MPL-2.0",)
@@ -733,7 +734,7 @@ def about_json(target: str, config: Path = ABOUT_CONFIG) -> dict:
     out = subprocess.run(
         [
             "cargo-about", "generate", "--fail", "--format", "json", "--locked", "--offline",
-            "-m", str(REPO / SHIPPED / "Cargo.toml"), "--target", target, "-c", str(config),
+            "-m", str(SHIPPED_MANIFEST), "--target", target, "-c", str(config),
         ],
         cwd=REPO, check=True, stdout=subprocess.PIPE, text=True,
     ).stdout  # fmt: skip

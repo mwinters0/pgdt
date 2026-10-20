@@ -514,6 +514,10 @@ class ThisRepo(unittest.TestCase):
                         self.assertNotIn("version", spec, f"{member}'s {table}.{dep}")
         self.assertIn("Apache License\n", (release.REPO / "LICENSE").read_text())
 
+    def test_the_notices_read_the_shipped_package_s_own_manifest(self):
+        manifest = tomllib.loads(release.SHIPPED_MANIFEST.read_text())
+        self.assertEqual(manifest["package"]["name"], release.SHIPPED)
+
     def test_the_dockerfile_builds_from_one_debian_digest(self):
         base = release.pinned_base(release.DOCKERFILE.read_text())
         self.assertTrue(base.startswith("debian:trixie@sha256:"), base)
