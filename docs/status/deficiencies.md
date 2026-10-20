@@ -503,9 +503,3 @@ than reading as a phase nobody has sliced.
   redirected run writes the refusal into its output. **(c) unowned**; promoted
   by the maintainer deciding whether the shell departs from upstream's `main`
   there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
-
-- **KD126** — the map's tiling-failure diagnostic counts every issue as a
-  "gap(s)/overlap(s)", though an issue may be a span out of order, a map not
-  starting at byte 0, one not reaching the scanned end or an empty span.
-  **(b) owned by `M232`**, which tallies them by kind. Detail:
-  `crates/pgdt-model/src/diagnostic.rs`.

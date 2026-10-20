@@ -193,14 +193,9 @@ impl Finding for Diagnostic {
 
     fn message(&self) -> String {
         match &self.kind {
-            // deficiency: KD126 — every `TilingIssue` is counted as a gap or an
-            // overlap, though `OutOfOrder`, `DoesNotStartAtZero`,
-            // `DoesNotReachEnd` and `Empty` are neither; the message names no
-            // kind of the issues it counts.
             DiagnosticKind::TilingBroken { issues } => format!(
-                "the file map has {} gap(s)/overlap(s) that don't tile the file — this is a pgdt \
-                 bug, please report it",
-                issues.len()
+                "the file map does not tile the file ({}) — this is a pgdt bug, please report it",
+                tiling_tally(issues)
             ),
             DiagnosticKind::CacheMtimeChanged => "the dump file's mtime has changed since the \
                 cache was saved (size still matches, so the cache was kept)"
@@ -228,6 +223,45 @@ impl Finding for Diagnostic {
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// `issues` counted by kind, a [`TilingIssue::Discontinuity`] a gap where the
+/// next span starts past this one's end and an overlap where it starts before
+/// it, in [`TilingIssue`]'s order and with every kind that has none left out:
+/// `"2 gap(s), 1 overlap(s)"`. A kind the check raises at most once per map is
+/// named without a count. The issues themselves are the kind's data.
+fn tiling_tally(issues: &[TilingIssue]) -> String {
+    let (mut gaps, mut overlaps, mut out_of_order, mut empty) = (0, 0, 0, 0);
+    let (mut not_at_zero, mut short) = (false, false);
+    for issue in issues {
+        match issue {
+            TilingIssue::Discontinuity { span_end, next_start, .. } => {
+                if next_start > span_end {
+                    gaps += 1;
+                } else {
+                    overlaps += 1;
+                }
+            }
+            TilingIssue::OutOfOrder { .. } => out_of_order += 1,
+            TilingIssue::DoesNotStartAtZero { .. } => not_at_zero = true,
+            TilingIssue::DoesNotReachEnd { .. } => short = true,
+            TilingIssue::Empty { .. } => empty += 1,
+        }
+    }
+    let counted =
+        [(gaps, "gap(s)"), (overlaps, "overlap(s)"), (out_of_order, "span(s) out of order")];
+    let mut named: Vec<String> =
+        counted.iter().filter(|(n, _)| *n > 0).map(|(n, kind)| format!("{n} {kind}")).collect();
+    if not_at_zero {
+        named.push("not starting at byte 0".to_string());
+    }
+    if short {
+        named.push("not ending where the scan did".to_string());
+    }
+    if empty > 0 {
+        named.push(format!("{empty} empty span(s)"));
+    }
+    named.join(", ")
 }
 
 impl Diagnostic {
@@ -294,3 +328,6 @@ impl DiagnosticExt for Diagnostic {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheOriginChanged }
     }
 }
+
+#[cfg(test)]
+mod tests;
