@@ -53,7 +53,8 @@ pub(crate) fn parse_where(spec: &str) -> Result<Expr> {
 /// (`docs/design/decisions.md`, "D60"): a term is accepted only where
 /// [`tokenize`] gives back a single [`Token::Leaf`], or nothing at all, which
 /// makes every disagreeing string refused by construction, with some that
-/// would not disagree — a lone `)`, `and` or `or` — refused beside them.
+/// would not disagree — a lone `)`, `and` or `or` — refused beside them;
+/// `every_term_the_filter_flag_accepts_means_the_same_under_where` sweeps it.
 ///
 /// **The check is on the `--filter` path alone.** A `--where` leaf is what
 /// came *out* of this tokenizer, and its edges met a boundary there as they

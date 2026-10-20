@@ -481,10 +481,3 @@ than reading as a phase nobody has sliced.
   redirected run writes the refusal into its output. **(c) unowned**; promoted
   by the maintainer deciding whether the shell departs from upstream's `main`
   there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
-
-- **KD127** — a `--filter` term opening with whitespace before `IS [NOT]
-  DISTINCT FROM` is split at that operator, naming the empty column, which no
-  table holds, where `--where` and the refusal ahead of the split find no
-  operator there and `--where` refuses the term as malformed (D60). **(b)
-  owned by `M237`**, which trims the term's start before it splits. Detail:
-  `crates/pgdt/src/query/filter.rs`.

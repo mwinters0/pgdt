@@ -41,3 +41,108 @@ fn column_of(expr: Expr) -> String {
         other => panic!("a comparison, not {other:?}"),
     }
 }
+
+/// SplitMix64, seeded, so a failing term is the same term on every run.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
+    }
+
+    fn pick<'a>(&mut self, pieces: &[&'a str]) -> &'a str {
+        pieces[(self.next() % pieces.len() as u64) as usize]
+    }
+}
+
+/// **Whatever `--filter` accepts, `--where` reads as the same term**: the
+/// property `refuse_where_structure` claims (`docs/design/decisions.md`,
+/// "D60"), over terms built from the grammar's pieces — every operator
+/// spelling, the worded ones in either case, both quotes, parens, the
+/// keywords, and ASCII and Unicode whitespace in every gap — some with a
+/// piece of structure before or after. A string `--where` refuses, or reads
+/// otherwise, is one `--filter` should have refused.
+#[test]
+fn every_term_the_filter_flag_accepts_means_the_same_under_where() {
+    const SPACES: [&str; 6] = ["", " ", "  ", "\t", "\u{a0}", "\u{3000}"];
+    const COLUMNS: [&str; 8] = ["", "x", "\"a b\"", "\"a=b\"", "is", "and", "in", "not"];
+    const OPERATORS: [&str; 16] = [
+        "=",
+        "!=",
+        "<>",
+        "<",
+        "<=",
+        ">",
+        ">=",
+        "is distinct from",
+        "is not distinct from",
+        "IS  Distinct\tFROM",
+        "in",
+        "IN",
+        "is null",
+        "is not null",
+        "IS UNREPRESENTABLE",
+        "is not unrepresentable",
+    ];
+    const VALUES: [&str; 12] = [
+        "",
+        "1",
+        "'a''b'",
+        "\"q\"",
+        "don't",
+        "'open",
+        "(1, 2)",
+        "('a', \"b\")",
+        "a and b",
+        "x=1",
+        "null",
+        ")",
+    ];
+    const STRUCTURE: [&str; 9] = ["", "", "", "(", ")", "and", "or", "not", "x=1 and"];
+
+    let mut rng = Rng(0x00f1_17e2);
+    let mut accepted = 0usize;
+    for _ in 0..50_000 {
+        let spec = [
+            rng.pick(&STRUCTURE),
+            rng.pick(&SPACES),
+            rng.pick(&COLUMNS),
+            rng.pick(&SPACES),
+            rng.pick(&OPERATORS),
+            rng.pick(&SPACES),
+            rng.pick(&VALUES),
+            rng.pick(&SPACES),
+            rng.pick(&STRUCTURE),
+        ]
+        .join(if rng.next() % 4 == 0 { "" } else { " " });
+        let Ok(filter) = parse_filter_flag(&spec) else { continue };
+        accepted += 1;
+        let filter = format!("{filter:?}");
+        let r#where = parse_where(&spec).map(|expr| format!("{expr:?}"));
+        assert_eq!(
+            r#where.as_ref().ok(),
+            Some(&filter),
+            "--filter `{spec:?}` accepted as {filter}, --where read {where:?}"
+        );
+    }
+    assert!(accepted > 1_000, "only {accepted} terms were accepted: the sweep asks too little");
+}
+
+/// A worded infix operator after leading whitespace, read under `--filter`
+/// as `--where` reads it: refused, there being no column before it.
+#[test]
+fn leading_whitespace_before_a_worded_operator_reads_alike_under_both_flags() {
+    for spec in
+        [" is distinct from x", "\t is not distinct from x", " is distinct from don't and x"]
+    {
+        let filter =
+            parse_filter_flag(spec).map(|e| format!("{e:?}")).map_err(|e| format!("{e:#}"));
+        let r#where = parse_where(spec).map(|e| format!("{e:?}")).map_err(|e| format!("{e:#}"));
+        assert_eq!(filter.is_ok(), r#where.is_ok(), "{spec:?}: {filter:?} / {where:?}");
+        assert!(filter.is_err(), "{spec:?} names no column: {filter:?}");
+    }
+}

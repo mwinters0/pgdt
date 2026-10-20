@@ -343,7 +343,10 @@ fn unbalanced_quote(what: &str, quote: char, spec: &str) -> anyhow::Error {
 /// that has none, so `note=this is null` is an equality against
 /// `this is null`.
 pub(super) fn parse_filter(spec: &str) -> Result<Expr> {
-    match split_filter_op(spec) {
+    // The term `--where` hands here, its tokenizer's leaf trimmed, so a
+    // string both flags take is split from one start: `filter_op_at` reads
+    // the first byte as no boundary.
+    match split_filter_op(spec.trim()) {
         FilterSplit::Op(column, TermOp::Compare(op), value) => Ok(Expr::Term(Predicate {
             column: filter_part(column, "column name", spec)?,
             op: op(filter_part(value, "value", spec)?),
