@@ -233,6 +233,58 @@ fn a_table_whose_name_extends_the_runs_own_starts_a_new_run() {
     assert_eq!(runs, vec![("public.widgets", 1), ("public.widgets2", 1)]);
 }
 
+/// `_printTocEntry()`'s last field runs to the line's end (I18), so the TOC
+/// header is read from the line as `pg_dump` wrote it: `COMMENT ON
+/// EXTENSION`'s empty `Owner: ` is an attributed entry with no owner, and an
+/// owner or tablespace name ending in a space reaches the cross-reference
+/// sets whole.
+#[test]
+fn a_toc_header_is_read_to_the_end_of_its_line() {
+    let comment = spans_of(&[
+        "--",
+        "-- Name: EXTENSION file_fdw; Type: COMMENT; Schema: -; Owner: ",
+        "--",
+        "",
+        "COMMENT ON EXTENSION file_fdw IS 'foreign-data wrapper for flat file access';",
+    ]);
+    assert_eq!(comment.len(), 1);
+    assert!(comment[0].toc_owned);
+    assert_eq!(
+        comment[0].toc,
+        Some(TocHeader {
+            name: "EXTENSION file_fdw".to_string(),
+            kind: "COMMENT".to_string(),
+            schema: None,
+            owner: None,
+            tablespace: None,
+        })
+    );
+
+    let mut builder = Builder::new();
+    let mut offset = 0u64;
+    for line in [
+        "--",
+        "-- Name: t; Type: TABLE; Schema: public; Owner: bob ",
+        "--",
+        "",
+        "CREATE TABLE public.t (id integer);",
+        "",
+        "--",
+        "-- Name: u; Type: TABLE; Schema: public; Owner: carol; Tablespace: fast ",
+        "--",
+        "",
+        "CREATE TABLE public.u (id integer);",
+    ] {
+        builder.feed_line(offset, line.as_bytes());
+        offset += line.len() as u64 + 1;
+    }
+    assert!(builder.roles().contains("bob "), "{:?}", builder.roles());
+    assert!(builder.tablespaces().contains("fast "), "{:?}", builder.tablespaces());
+    let spans = builder.finish(offset);
+    assert_eq!(spans[0].toc.as_ref().and_then(|t| t.owner.as_deref()), Some("bob "));
+    assert_eq!(spans[1].toc.as_ref().and_then(|t| t.tablespace.as_deref()), Some("fast "));
+}
+
 /// `--verbose` inserts `-- TOC entry ...`/`-- Dependencies: ...` lines
 /// ahead of the Name line (`fixtures/*/objects/verbose.sql`) — they don't
 /// parse as headers themselves, and don't stop the Name line after them

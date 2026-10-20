@@ -486,14 +486,6 @@ than reading as a phase nobody has sliced.
   (`../design/roadmap.md`). **(c) unowned**; promoted by such a host reaching a
   user. Detail: `crates/pgdt-io/src/arrangement.rs`.
 
-- **KD114** — a TOC header whose owner is empty (`; Owner: `, as
-  `COMMENT ON EXTENSION` writes it) parses to no header at all, so its entry
-  owns its span with no `TocHeader`: `pgdt info`'s `object kinds:` never counts
-  it and TOC coverage reads it as unattributed; and the same trim clips an
-  owner or tablespace name ending in whitespace before it reaches `roles` or
-  `tablespaces`. **(b) owned by `M234`**, which parses the line untrimmed at
-  its end. Detail: `crates/pgdt-dump/src/map/toc.rs`.
-
 - **KD122** — `pgdt sql` prints an error that ends its run, a refused
   `--dump` or a failed `-c` statement, to stdout, as upstream's
   `datafusion-cli` does, where every other command writes errors to stderr; a

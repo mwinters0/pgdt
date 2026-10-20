@@ -85,9 +85,9 @@ pub struct TocHeader {
     /// `None` for `Schema: -` (no namespace — a database-level or
     /// namespace-less object).
     pub schema: Option<String>,
-    /// `None` for `Owner: -` (`--no-owner`, or an owner-less kind like
-    /// `COMMENT`): "no owner recorded here" to a reader. An empty `Owner: `
-    /// leaves no header at all (`KD114`).
+    /// `None` for `Owner: -` (`--no-owner`, or an entry with no owner) and
+    /// for an empty `Owner: ` (`COMMENT ON EXTENSION`'s, I18): "no owner
+    /// recorded here" to a reader.
     pub owner: Option<String>,
     /// The `; Tablespace: <name>` suffix, present only when the entry has a
     /// non-default tablespace and `--no-tablespaces` was not given.

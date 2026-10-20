@@ -9,8 +9,11 @@ use pgdt_model::{SpanBody, TocHeader};
 /// comment line that doesn't match, which leaves
 /// [`Span::toc`](pgdt_model::Span::toc) `None` — a comment block shaped like an
 /// entry still owning its span, so inheriting nothing
-/// ([`Span::toc_owned`](pgdt_model::Span::toc_owned)). `trimmed` is expected to
-/// have leading/trailing whitespace already removed.
+/// ([`Span::toc_owned`](pgdt_model::Span::toc_owned)). `line` is expected to
+/// have its leading whitespace and its terminator removed and nothing else:
+/// the last field, the owner or the tablespace, runs to the line's end, so an
+/// empty owner's `; Owner: ` must arrive whole to split, and a name ending in
+/// whitespace is the name `sanitize_line` wrote.
 ///
 /// All three of `_printTocEntry()`'s prefixes go through one code path:
 /// `TOC_PREFIX_DATA` ("Data for ") and `TOC_PREFIX_STATS` ("Statistics for ",
@@ -25,19 +28,8 @@ use pgdt_model::{SpanBody, TocHeader};
 /// mis-split. I3 treats the TOC comment as a hint, and this parser only ever
 /// feeds enrichment, never a boundary.
 ///
-/// deficiency: KD114 — `step` hands this a trimmed line, so an empty owner's
-/// `; Owner: ` arrives as `; Owner:`, the split on `"; Owner: "` fails, and the
-/// whole header is `None`: the entry (`COMMENT ON EXTENSION`'s, in the
-/// fixtures) still owns its span but carries no `TocHeader`, so `pgdt info`'s
-/// `object kinds:` census never counts it and TOC coverage reads it as
-/// unattributed; the same trim clips an owner or tablespace name ending in
-/// whitespace before `harvest_toc_cross_refs` records it. The empty-string arm
-/// of the owner's placeholder test is reached only by an untrimmed line, which
-/// `a_hyphen_schema_and_an_empty_owner_both_parse_to_none` passes. **(b) owned
-/// by its out-of-band row** (`docs/status/deficiencies.md`), which hands this
-/// the line with only its terminator and leading whitespace removed.
-pub(super) fn parse_toc_header_line(trimmed: &str) -> Option<TocHeader> {
-    let rest = trimmed.strip_prefix("-- ")?;
+pub(super) fn parse_toc_header_line(line: &str) -> Option<TocHeader> {
+    let rest = line.strip_prefix("-- ")?;
     let rest = rest
         .strip_prefix("Data for ")
         .or_else(|| rest.strip_prefix("Statistics for "))

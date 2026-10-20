@@ -547,7 +547,7 @@ impl Builder {
                         saw_name: looks_like_toc_name_line(trimmed),
                         server_version,
                         pg_dump_version,
-                        toc: parse_toc_header_line(trimmed),
+                        toc: parse_toc_header_line(line.trim_start()),
                     };
                     return false;
                 }
@@ -571,7 +571,7 @@ impl Builder {
                         Some((false, v)) => *pg_dump_version = Some(v),
                         None => {}
                     }
-                    if let Some(header) = parse_toc_header_line(trimmed) {
+                    if let Some(header) = parse_toc_header_line(line.trim_start()) {
                         *toc = Some(header);
                     }
                     return false;
