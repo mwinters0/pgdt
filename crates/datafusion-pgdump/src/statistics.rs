@@ -250,7 +250,7 @@ pub(crate) fn output_orderings(schema: &Schema, orders: &[Sortedness]) -> Vec<Le
         .enumerate()
         .filter_map(|(i, order)| {
             let descending = match order {
-                Sortedness::Ascending => false,
+                Sortedness::Ascending | Sortedness::Constant => false,
                 Sortedness::Descending => true,
                 Sortedness::Unsorted => return None,
             };

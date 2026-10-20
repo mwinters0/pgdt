@@ -244,11 +244,6 @@ than reading as a phase nobody has sliced.
   choose, decides a scan's speed. **(c) unowned**; promoted by a measured join
   of two pgdump tables slowed by it. Detail: `crates/datafusion-pgdump/src/budget.rs`.
 
-- **KD46** — a block holding one distinct value records `Ascending`, so a
-  descending table holding one declares no ordering to DataFusion and a sort
-  it would satisfy is planned. **(b) owned by `M236`**, which records such a
-  block `Constant` at gather time. Detail: `crates/pgdt-query/src/summary.rs`.
-
 - **KD40** — a `--create` or `pg_dumpall` dump states each database's
   collation (I32), and nothing reads it: every column of a type taking the
   database's collation with no `COLLATE` clause still warns that the dump does not record its collation, so a `C`

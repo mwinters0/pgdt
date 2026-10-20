@@ -375,9 +375,12 @@ impl<'a> Accumulator<'a> {
 ///
 /// A column is proved `Ascending` or `Descending` only where all three hold:
 ///
-/// - **Every block holding a row recorded that order**, in the stored set
-///   keyed by the kind DataFusion orders the column by and under the DDL it was
-///   gathered under, as [`table_summary`] reads its bounds.
+/// - **Every block holding a row recorded that order, or `Constant`**, in the
+///   stored set keyed by the kind DataFusion orders the column by and under
+///   the DDL it was gathered under, as [`table_summary`] reads its bounds. A
+///   constant block is in both orders, so where every block is, the boundaries
+///   alone decide, `Ascending` before `Descending`: DataFusion keeps one
+///   ordering a column.
 /// - **No group of any block holds a NULL.** A block's row order skips its
 ///   NULLs, and an ordering says where they fall.
 /// - **Each boundary a partition crosses is in that order**: ascending, the
@@ -458,22 +461,35 @@ fn column_order(
             .map(|(g, _)| column.group_bounds(set, reading, g));
         let Some(first) = holding.next() else { continue };
         let last = holding.next_back().unwrap_or(first);
-        // deficiency: KD46 — a block holding one distinct value records
-        // `Ascending` (`Sortedness`), so a descending table with such a block
-        // declares nothing, where the block is in either order. **(b) owned by
-        // its out-of-band row** (`docs/status/deficiencies.md`): the gatherer records such a block `Sortedness::Constant`,
-        // which sets no direction here, the edges deciding one where no block
-        // does; equal exact extremes would miss a block whose bounds were
-        // truncated.
         match (sortedness, order) {
             (Sortedness::Unsorted, _) => return None,
+            (Sortedness::Constant, _) => {}
             (recorded, None) => order = Some(recorded),
             (recorded, Some(held)) if recorded != held => return None,
             _ => {}
         }
         edges.insert(block.header_offset, (first?, last?));
     }
-    let order = order?;
+    // Where every block holding a row is constant, the edges alone decide a
+    // direction, ascending first.
+    let directions = match order {
+        Some(order) => vec![order],
+        None if edges.is_empty() => return None,
+        None => vec![Sortedness::Ascending, Sortedness::Descending],
+    };
+    directions.into_iter().find(|&order| {
+        edges_in_order(&edges, runs, order, |text| order_key(&kind, text)).unwrap_or(false)
+    })
+}
+
+/// Whether each boundary a partition of `runs` crosses between two of
+/// `edges`' blocks is in `order`, `None` where a bound does not key.
+fn edges_in_order(
+    edges: &HashMap<u64, (&Bounds, &Bounds)>,
+    runs: &[Vec<u64>],
+    order: Sortedness,
+    key: impl Fn(&str) -> Option<OrderKey>,
+) -> Option<bool> {
     for run in runs {
         let mut offsets = run.clone();
         offsets.dedup();
@@ -484,13 +500,12 @@ fn column_order(
                 Sortedness::Descending => (&later.max, &earlier.min),
                 _ => (&earlier.max, &later.min),
             };
-            let key = |text| order_key(&kind, text);
             if compare_keys_stored(&key(high)?, &key(low)?) == std::cmp::Ordering::Greater {
-                return None;
+                return Some(false);
             }
         }
     }
-    Some(order)
+    Some(true)
 }
 
 #[cfg(test)]

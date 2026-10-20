@@ -147,6 +147,8 @@ impl RowOrder {
     fn sortedness(&self) -> Sortedness {
         if self.lost {
             Sortedness::Unsorted
+        } else if self.never_decreased && self.never_increased {
+            Sortedness::Constant
         } else if self.never_decreased {
             Sortedness::Ascending
         } else if self.never_increased {

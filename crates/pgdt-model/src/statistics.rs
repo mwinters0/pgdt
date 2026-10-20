@@ -593,14 +593,16 @@ pub struct Bounds {
 }
 
 /// Whether a column's non-NULL values are in order row by row over a block.
-/// Equal neighbours are in either order; a column with at most one distinct
-/// value, every one placed, is `Ascending`. A value gathering cannot place against its neighbour —
+/// Equal neighbours are in either order. A value gathering cannot place against its neighbour —
 /// one that does not key, a keyed one past [`DICTIONARY_ENTRY_MAX_BYTES`], or a bytewise
 /// one agreeing with it past what a bound reads — makes the column `Unsorted`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sortedness {
     Ascending,
     Descending,
+    /// At most one distinct value, every one placed: in both orders, so a
+    /// block of it sets no direction for the blocks beside it.
+    Constant,
     Unsorted,
 }
 

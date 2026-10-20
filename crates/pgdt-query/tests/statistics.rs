@@ -411,7 +411,7 @@ async fn every_statistic_describes_the_file() {
 /// (`docs/design/decisions.md`, "D79") — and a dictionary for that text too.
 #[tokio::test]
 async fn sortedness_is_the_blocks_row_order() {
-    use Sortedness::{Ascending, Descending, Unsorted};
+    use Sortedness::{Ascending, Constant, Descending, Unsorted};
     for version in VERSIONS {
         let dump = statistics_fixture(version, "default");
         let index = gathered(&dump, &request(StatisticsSelection::DATA, SMALL_GROUP)).await;
@@ -421,10 +421,10 @@ async fn sortedness_is_the_blocks_row_order() {
             ("reversed", Descending),
             ("stepped", Ascending),
             ("unsorted", Unsorted),
-            ("constant", Ascending),
-            ("all_null", Ascending),
+            ("constant", Constant),
+            ("all_null", Constant),
             ("gappy", Ascending),
-            ("single", Ascending),
+            ("single", Constant),
             ("low_card", Unsorted),
             ("high_card", Unsorted),
             ("c_text", Ascending),
@@ -622,6 +622,66 @@ async fn a_gathering_scan_is_the_serial_scan_whatever_the_worker_count() {
         assert_eq!(sortedness(t, "a"), Some(Sortedness::Ascending), "{jobs} jobs");
         assert_eq!(sortedness(t, "b"), Some(Sortedness::Descending), "{jobs} jobs");
         assert_eq!(index.spans, serial_index.spans, "{jobs} jobs");
+    }
+}
+
+/// **A block of at most one distinct value sets no direction in a table's
+/// order** (`Sortedness::Constant`): between descending blocks it leaves the
+/// table descending, and a table of such blocks alone takes its direction
+/// from their boundaries, ascending where both hold. One partition, so each
+/// boundary is crossed.
+#[tokio::test]
+async fn a_constant_block_sets_no_direction_in_a_tables_order() {
+    use Sortedness::{Ascending, Constant, Descending};
+    use pgdt_dump::ScanOptions;
+    use pgdt_io::Parallelism;
+    use pgdt_model::TableName;
+    use pgdt_query::QueryOptions;
+
+    let tables: [(&str, Vec<Vec<i32>>, Sortedness); 4] = [
+        (
+            "falling",
+            vec![(201..=300).rev().collect(), vec![150; 100], (1..=100).rev().collect()],
+            Descending,
+        ),
+        ("rising", vec![(1..=100).collect(), vec![150; 100]], Ascending),
+        ("stepping_down", vec![vec![9; 50], vec![3; 50]], Descending),
+        ("level", vec![vec![5; 50], vec![5; 50]], Ascending),
+    ];
+    let mut text = String::new();
+    for (table, _, _) in &tables {
+        text.push_str(&format!("CREATE TABLE public.{table} (\n    id integer\n);\n\n"));
+    }
+    for (table, blocks, _) in &tables {
+        for rows in blocks {
+            let rows: String = rows.iter().map(|id| format!("{id}\n")).collect();
+            text.push_str(&format!("COPY public.{table} (id) FROM stdin;\n{rows}\\.\n\n"));
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("constant.sql");
+    std::fs::write(&path, &text).unwrap();
+    let index = gathered(&path, &request(StatisticsSelection::DATA, 256)).await;
+    let falling: Vec<_> = index.blocks().filter(|b| b.header.matches("public.falling")).collect();
+    let recorded: Vec<_> = falling.iter().map(|b| sortedness(b, "id")).collect();
+    assert_eq!(recorded, [Some(Descending), Some(Constant), Some(Descending)]);
+
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
+    let dump = dump_over(source, &index, dir.path()).await.unwrap();
+    for (table, _, expected) in &tables {
+        let name = TableName::of(None, block(&index, &format!("public.{table}")));
+        let options = QueryOptions {
+            parallelism: Parallelism::workers(1, 1 << 30),
+            ..QueryOptions::default()
+        };
+        let plan = dump
+            .table(&(&name).into())
+            .unwrap()
+            .unwrap()
+            .plan(ScanOptions::default().read, options)
+            .unwrap();
+        assert_eq!(plan.len(), 1, "{table}");
+        assert_eq!(plan.orders(), [*expected], "{table}");
     }
 }
 

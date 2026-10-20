@@ -123,6 +123,10 @@ fn stored_bounds_and_order_hold_every_value_under_its_key() {
                 ordered += 1;
                 assert!(pairs.clone().all(Ordering::is_le), "{kind:?}: not descending");
             }
+            Sortedness::Constant => {
+                ordered += 1;
+                assert!(pairs.clone().all(Ordering::is_eq), "{kind:?}: not constant");
+            }
             Sortedness::Unsorted => {}
         }
     }
@@ -255,6 +259,9 @@ fn each_view_bounds_and_orders_the_values_it_takes() {
             let expected = match row.iter().map(Option::as_ref).collect::<Option<Vec<&OrderKey>>>()
             {
                 None => Sortedness::Unsorted,
+                Some(keys) if keys.windows(2).all(|w| compare_keys(w[1], w[0]).is_eq()) => {
+                    Sortedness::Constant
+                }
                 Some(keys) if keys.windows(2).all(|w| compare_keys(w[1], w[0]).is_ge()) => {
                     Sortedness::Ascending
                 }

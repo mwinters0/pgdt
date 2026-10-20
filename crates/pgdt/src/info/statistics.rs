@@ -67,12 +67,13 @@ pub struct ColumnStatisticsSummary<'a> {
 pub struct SortednessCounts {
     pub ascending: u64,
     pub descending: u64,
+    pub constant: u64,
     pub unsorted: u64,
 }
 
 impl SortednessCounts {
     fn total(&self) -> u64 {
-        self.ascending + self.descending + self.unsorted
+        self.ascending + self.descending + self.constant + self.unsorted
     }
 }
 
@@ -134,6 +135,7 @@ impl<'a> TableStatistics<'a> {
                 match sortedness {
                     Sortedness::Ascending => summary.sortedness.ascending += 1,
                     Sortedness::Descending => summary.sortedness.descending += 1,
+                    Sortedness::Constant => summary.sortedness.constant += 1,
                     Sortedness::Unsorted => summary.sortedness.unsorted += 1,
                 }
             }
@@ -221,6 +223,7 @@ impl SortednessCounts {
         let states = [
             ("ascending", self.ascending),
             ("descending", self.descending),
+            ("constant", self.constant),
             ("unsorted", self.unsorted),
         ];
         let present: Vec<(&str, u64)> = states.into_iter().filter(|&(_, n)| n > 0).collect();
@@ -413,6 +416,36 @@ mod tests {
         assert_eq!(
             t.columns[1].line(t.blocks),
             "doc: over 1 of 1 block(s), no bounds, no dictionary"
+        );
+    }
+
+    #[test]
+    fn a_constant_block_is_tallied_as_constant() {
+        let gathered = |sortedness| BlockStatistics {
+            group_size: 64,
+            sizing: GroupSizing::Stated,
+            groups: groups(&[2]),
+            columns: vec![column(sortedness, &[true])],
+        };
+        let index = DumpIndex {
+            spans: vec![
+                block(header("t", &["id"]), None, Some(gathered(Sortedness::Constant))),
+                block(header("t", &["id"]), None, Some(gathered(Sortedness::Ascending))),
+                block(header("u", &["id"]), None, Some(gathered(Sortedness::Constant))),
+            ],
+            ..DumpIndex::default()
+        };
+        let tables = table_statistics(&index);
+        let line = |t: &TableStatistics<'_>| t.columns[0].line(t.blocks);
+        assert_eq!(
+            line(&tables[0]),
+            "id: over 2 of 2 block(s), ascending in 1, constant in 1 of 2 block(s), bounds in 2 \
+             of 2 group(s), dictionary in 2 of 2 group(s)"
+        );
+        assert_eq!(
+            line(&tables[1]),
+            "id: over 1 of 1 block(s), constant, bounds in 1 of 1 group(s), dictionary in 1 of \
+             1 group(s)"
         );
     }
 

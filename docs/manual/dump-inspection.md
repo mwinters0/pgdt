@@ -656,7 +656,8 @@ note: row-group statistics rule out 11 of 12 group(s), so 45092 of the 48592 byt
 bound.** Where the statistics record that a table's data holds a column in
 ascending order, and the filter requires `<` or `<=` of it — alone, or joined
 to other terms by `AND` — reading stops at the first row past the bound, since
-no later row can satisfy it; descending order stops `>` and `>=` the same way.
+no later row can satisfy it; descending order stops `>` and `>=` the same way,
+and a block holding one value stops any of the four.
 A stop is found only as rows are read, so where one ended reading early stderr
 says so after the rows, in bytes that add to the skipped groups':
 
@@ -1335,8 +1336,8 @@ statistics:
   starts, left by a row longer than the group size, is counted as `empty` and
   left out of the averages and of every share below.
 - **Each column line** says over how many blocks that column was gathered,
-  then its **order**: `ascending`, `descending` or `unsorted` row by row
-  through each block (a column whose blocks differ says how many are which),
+  then its **order**: `ascending`, `descending`, `constant` — at most one
+  distinct value — or `unsorted` row by row through each block (a column whose blocks differ says how many are which),
   followed by how many groups carry a least and greatest value — or `no bounds`
   where pgdt keeps none for the column, an array or a composite for one; a
   text column's are by bytes, and its order too, whatever its collation, as
