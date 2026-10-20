@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D108 -->
+<!-- decision-watermark: D109 -->
 
 ## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
@@ -718,3 +718,11 @@ it in wall clock by the roadmap's downstream-build rule, closed in the code wher
 Rejected: Cargo's default (more retired on every row, a resolved gain traded for nothing); thin LTO (more retired than fat on every query row, and than the default on `pgdt sql`; its quicker build
 a cost to us, not a user); user time as the ranker (as layout-exposed as wall clock). Reopens: thin's or the default's count at or below fat's on `pgdt sql`; another leg ahead of fat there in wall
 clock, resolved, at successive trees; DataFusion moving its own release profile. Code: `Cargo.toml`'s `[profile.release]`, `test_the_shipped_profile_is_the_fat_leg_restated`. Evidence: `release-profile`.
+
+### D109 arm64's archive is built on the maintainer's machine and attested by its release alone; x86-64's is CI's, with build provenance
+CI's runner cannot hold arm64's fat link (D105), so the rehearsal's arm64 archive, built in the pinned image from the draft's commit, goes onto CI's draft by `release_ci.py attach`, with one `SHA256SUMS` over both;
+an immutable release has GitHub attest every asset, which `installing.md`'s `verify-asset` and mise's `github:` backend accept alone (RL1, RL2): the asset is the release's, put there with write access, not which commit or machine built it.
+The arm64 smoke runs in `release-publish` on real arm64, against the draft's own asset. `attach` reports whether CI's x86-64 archive is the rehearsal's byte for byte and never refuses, until readings decide what the property may carry.
+Rejected: swap on the runner (`release.py`'s `--memory-swap` tied to `-m`, a cap sized against a peak nobody has read, a fat link paging); `ubuntu-24.04-arm` (the same memory and aarch64 backend); a larger paid runner; an arm64-only profile (reopens D105, the targets shipping different builds); a self-hosted runner for the arm64 build (a standing setting GitHub advises against on a public repository, up at each dispatch, `sudo nerdctl` on it);
+a keyless Sigstore signature under the maintainer's identity (no source repository, so mise's `github:` backend fails it); the local build attested by a workflow's `actions/attest` (provenance that verifies cleanly and is false); the archive uploaded before the dispatch (no input carries a file, and `preflight` refuses a pre-made draft); two checksum files (`installing.md`'s one `sha256sum -c` broken); qemu-user here for the smoke (the last real-arm64 run of the shipped binary dropped); refusing on an x86-64 mismatch now (a release blocked on a property nobody has shown).
+Reopens: a GitHub-hosted runner holding the fat arm64 link; RL1 or RL2 failing. Code: `release_ci.py`'s `step_attach`, `plan_attach`, `step_fetch`, `CI_TARGETS`; `release-publish.yml`'s `arm64-smoke`. Evidence: RL1–RL3; `test_release_ci.py`'s `Attach`, `Fetch`, `Workflows`.

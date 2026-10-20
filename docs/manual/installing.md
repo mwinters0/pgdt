@@ -41,25 +41,34 @@ about itself; a build from source adds `(unreleased)` after the version.**
 ## Verify
 
 **The checksum proves the download arrived whole; it does not prove who made
-it**, since `SHA256SUMS` came from the same place. Two checks prove that, and
-neither needs a key of ours: both are GitHub's attestations, signed through
-Sigstore, checked with the [`gh`](https://cli.github.com/) CLI.
+it**, since `SHA256SUMS` came from the same place. GitHub's attestations prove
+more, and none needs a key of ours: each is signed through Sigstore and checked
+with the [`gh`](https://cli.github.com/) CLI. Which ones an archive carries
+depends on its target.
 
-**The build's attestation** says the archive was built by this repository's
-`release-build` workflow from a named commit. Give it the commit the tag names:
+**The release's attestation**, on both archives, says the archive is an asset
+of that release, which is **immutable**: once published, its tag and its files
+cannot change, so a mistake in a release is fixed by a new version and never by
+replacing one.
+
+```sh
+gh release verify-asset v$v pgdt-v$v-$target.tar.xz -R mwinters0/pgdt
+```
+
+**The build's attestation**, on the x86-64 archive alone, says it was built by
+this repository's `release-build` workflow from a named commit. Give it the
+commit the tag names:
 
 ```sh
 sha=$(git ls-remote https://github.com/mwinters0/pgdt "refs/tags/v$v^{}" | cut -f1)
 gh attestation verify pgdt-v$v-$target.tar.xz -R mwinters0/pgdt --source-digest $sha
 ```
 
-**The release's attestation** says this archive is an asset of that release,
-which is **immutable**: once published, its tag and its files cannot change, so
-a mistake in a release is fixed by a new version and never by replacing one.
+**The arm64 archive is built outside GitHub's runners**, by the maintainer, so
+it carries no build attestation, and the release's is its check. That proves
+the archive is an asset of this immutable release, uploaded by someone with
+write access to the repository; it does not prove which commit or which
+machine built it.
 
-```sh
-gh release verify-asset v$v pgdt-v$v-$target.tar.xz -R mwinters0/pgdt
-```
-
-Both must pass. A failure of either is a reason not to run the binary, and to
-open an issue.
+Every check your archive carries must pass. A failure of any is a reason not to
+run the binary, and to open an issue.

@@ -4,9 +4,11 @@ description: Prepare a `pgdt` release on the maintainer's machine — check the 
 ---
 
 A release is cut in three hands: **this skill makes one commit and a
-rehearsal; the maintainer pushes, dispatches the build and tags; CI owns the
-bytes** (`scripts/release_ci.py`, "Build first, tag second"). **Nothing here
-leaves the machine** — no `git push`, no `gh workflow run`, no tag — since a
+rehearsal; the maintainer pushes, dispatches the build, attaches the arm64
+archive and tags; CI owns the x86-64 bytes, and the rehearsal the arm64 ones**
+(`scripts/release_ci.py`, "Build first, tag second";
+`docs/design/decisions.md`, "D109"). **Nothing here leaves the machine** — no
+`git push`, no `gh workflow run`, no `release_ci.py attach`, no tag — since a
 draft is visible to anyone with access to the repository and a tag is a
 `releases.atom` entry at once. It asks the maintainer one
 question, in step 2.
@@ -56,7 +58,8 @@ The workflows' own commands, run for both targets at once rather than a job a
 target, with the scripts' tests beside them and without `preflight` and
 `draft`, which reach GitHub: the image, both targets' release builds, both `THIRD-PARTY-NOTICES` under the allow-list, the
 x86-64 suite, the archives, the smoke run of the x86-64 one, the checksums.
-arm64 is a build only: this host runs no arm64 code.
+arm64 is a build only: this host runs no arm64 code. The arm64 archive in
+`dist/` is the one step 5 attaches, so nothing touches `dist/` after it.
 
 **It runs long**, so per `CLAUDE.md`, "Long-running processes": detached and
 logging under `runs/`. Unlike a sweep it is watched, by the maintainer's
@@ -103,10 +106,19 @@ HEAD~1` undoes it.
 ```sh
 git push origin main
 gh workflow run release-build -f ref=<SHA>
-# once the draft exists: gh release view v<V>
+# once the draft exists (gh release view v<V>), from this clean checkout of <SHA>:
+python3 scripts/release_ci.py attach
 git tag -a v<V> <SHA>       # the editor opens: the message is the Release body
 git push origin v<V>
 ```
+
+`attach` uploads the rehearsal's arm64 archive and a `SHA256SUMS` over both
+archives, refusing a dirty tree or a draft of another commit, and prints
+whether CI's x86-64 archive is byte-identical to the rehearsal's. **That line
+goes into the day's history entry**, one a release, until a decision consumes
+the readings (D109): relay it when the maintainer runs `attach` in the
+session, and otherwise say that it is owed there. The tag's workflow runs the draft's arm64
+archive on real arm64 before it publishes.
 
 and `git log --oneline v<previous>..<SHA>` as an aid to the text, which is the
 maintainer's. **The tag must be annotated**: the publish workflow refuses a
@@ -114,4 +126,7 @@ lightweight one, and a draft built from another commit. Say that
 **publishing makes the release immutable**, so a mistake in it is a new
 version, and that [`docs/manual/installing.md`](../../../docs/manual/installing.md)
 is how it is verified from outside. Relay step 1's `ok:` line if the Debian pin
-is in its six-to-twelve-month band.
+is in its six-to-twelve-month band. A rehearsal, an `attach` or a publication
+meeting something unexpected of GitHub or of an installer is a walk of
+[`docs/design/release-invariants.md`](../../../docs/design/release-invariants.md)
+before anything is worked around.

@@ -1,11 +1,14 @@
-# The release build: a manually dispatched workflow that builds `pgdt` for both
-# targets from one pushed commit and leaves a DRAFT Release. Publishing is
-# `release-publish.yml`, run by the tag the maintainer pushes once the draft
-# exists (`scripts/release_ci.py`, "Build first, tag second").
+# The release build: a manually dispatched workflow that builds `pgdt` for
+# x86-64 from one pushed commit, runs the suite on both architectures, and
+# leaves a DRAFT Release of the x86-64 archive. The arm64 archive is built from
+# the same commit on the maintainer's machine, whose link a runner cannot hold,
+# and attached to the draft there (`docs/design/decisions.md`, "D109").
+# Publishing is `release-publish.yml`, run by the tag the maintainer pushes
+# once the draft is whole (`scripts/release_ci.py`, "Build first, tag second").
 #
 # **The workflow holds no logic.** Every `run:` step is one line of `scripts/release.py`
 # (the image, the builds, the notices, the suites) or `scripts/release_ci.py`
-# (the archives, the smoke run, the checksums, the draft), whose tests hold
+# (the archive, the smoke run, the checksums, the draft), whose tests hold
 # these lines to those scripts' own command lines
 # (`scripts/test_release_ci.py`). The commit arrives as `INPUT_REF` in the
 # environment, never interpolated into a shell line, and the scripts validate
@@ -87,30 +90,10 @@ jobs:
       - run: python3 scripts/release_ci.py perf-events
       - run: python3 scripts/release.py suite
 
-  arm64-release:
-    needs: preflight
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-      - run: python3 scripts/release.py image
-      - run: python3 scripts/release.py build --release --target=aarch64-unknown-linux-gnu
-      - run: python3 scripts/release.py notices --target=aarch64-unknown-linux-gnu
-      - run: python3 scripts/release_ci.py archive --target=aarch64-unknown-linux-gnu
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: archive-aarch64-unknown-linux-gnu
-          path: dist/*.tar.xz
-          if-no-files-found: error
-          compression-level: 0
-
   # arm64 code runs on the arm64 runner: the suite, built and run in the arm64
-  # image of the same Dockerfile, beside the cross build rather than after it,
-  # needing nothing of it. Rejected: the test binaries cross-built and passed
+  # image of the same Dockerfile, needing nothing of another job; the shipped
+  # arm64 archive runs on one too, from the draft, in `release-publish.yml`.
+  # Rejected: the test binaries cross-built and passed
   # between jobs, gigabytes every release would upload and download; qemu-user
   # on an x86-64 runner, which would run the tests under that host's `/proc`,
   # cgroups and page size and without arm's memory ordering, the very things
@@ -130,32 +113,15 @@ jobs:
       - run: python3 scripts/release_ci.py perf-events
       - run: python3 scripts/release.py suite
 
-  # And the shipped archive's `pgdt`, in a fresh `debian:trixie`: the one thing
-  # that crosses to the arm64 runner from another job.
-  arm64-smoke:
-    needs: arm64-release
-    runs-on: ubuntu-24.04-arm
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ inputs.ref }}
-          persist-credentials: false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: archive-aarch64-unknown-linux-gnu
-          path: dist
-      - run: python3 scripts/release_ci.py smoke --target=aarch64-unknown-linux-gnu
-
-  # Only a build that passed everything is drafted. The archives are attested
+  # Only a build that passed everything is drafted. The archive is attested
   # here, from the commit, before any tag exists: a failed suite leaves no
   # attestation for an archive that ships nowhere, and the signing permissions
   # sit in the one job that runs no dependency code, the build jobs running
   # every build script. The attestation names this job's run as its builder,
-  # the bytes being the build jobs' artifacts of the same run and commit.
+  # the bytes being the build job's artifact of the same run and commit. The
+  # checksums are over this archive alone until the arm64 one is attached.
   draft:
-    needs: [x86-64-release, x86-64-suite, arm64-suite, arm64-smoke]
+    needs: [x86-64-release, x86-64-suite, arm64-suite]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -169,10 +135,9 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: archive-*
-          merge-multiple: true
+          name: archive-x86_64-unknown-linux-gnu
           path: dist
-      - run: python3 scripts/release_ci.py checksums
+      - run: python3 scripts/release_ci.py checksums --target=x86_64-unknown-linux-gnu
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/*.tar.xz

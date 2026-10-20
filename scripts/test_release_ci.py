@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Unit tests for release_ci.py, run with `uv run python -m unittest test_release_ci`.
 
-The archive, the checksums, the smoke run's checks and the publication's
-refusals are held here against stand-ins for `gh` and the container runtime,
+The archive, the checksums, the smoke run's checks, the attachment's and the
+publication's refusals are held here against stand-ins for `gh` and the container runtime,
 and `Workflows` holds the two committed workflow files to what
 `release_ci.py`'s docstring commits them to: no step but a `release.py` or
 `release_ci.py` line the parsers accept, no input interpolated into a shell,
@@ -51,10 +51,13 @@ def annotated(message: str = "pgdt 0.1.0\n\nThe first release.\n", commit: str =
 
 
 class FakeGh:
-    """`release_ci.Gh`'s calls answered from a table, and recorded."""
+    """`release_ci.Gh`'s calls answered from a table, and recorded; an asset's
+    bytes from `blobs`, by its id."""
 
-    def __init__(self, answers: dict[str, Any], releases: list[dict] | None = None):
+    def __init__(self, answers: dict[str, Any], releases: list[dict] | None = None, blobs=None):
         self.answers, self._releases, self.calls = answers, releases or [], []
+        self.blobs: dict[int, bytes] = blobs or {}
+        self.uploaded: dict[str, bytes] = {}
 
     def api(self, path: str, **kwargs: Any) -> Any:
         self.calls.append((path, kwargs))
@@ -65,6 +68,14 @@ class FakeGh:
 
     def create_draft(self, tag: str, sha: str, files) -> None:
         self.calls.append(("create_draft", {"tag": tag, "sha": sha, "files": [f.name for f in files]}))
+
+    def upload(self, tag: str, files) -> None:
+        self.calls.append(("upload", {"tag": tag, "files": [f.name for f in files]}))
+        self.uploaded.update({f.name: f.read_bytes() for f in files})
+
+    def download_asset(self, asset_id: int, dest: Path) -> None:
+        self.calls.append(("download_asset", {"id": asset_id}))
+        dest.write_bytes(self.blobs[asset_id])
 
 
 class Names(unittest.TestCase):
@@ -81,6 +92,13 @@ class Names(unittest.TestCase):
         self.assertEqual(assets[-1], "SHA256SUMS")
         for target in release.TARGETS:
             self.assertIn(f"pgdt-v{VERSION}-{target}.tar.xz", assets)
+
+    def test_ci_builds_one_target_and_the_other_is_attached(self):
+        self.assertEqual(sorted((*release_ci.CI_TARGETS, *release_ci.ATTACHED_TARGETS)), TARGETS)
+        self.assertEqual(release_ci.CI_TARGETS, (release.NATIVE_TARGET,))
+        self.assertEqual(
+            release_ci.draft_assets(VERSION), [release_ci.archive_name(VERSION, release.NATIVE_TARGET), "SHA256SUMS"]
+        )
 
     def test_a_ref_must_be_the_checked_out_full_commit(self):
         self.assertEqual(release_ci.check_ref(SHA, SHA), SHA)
@@ -184,7 +202,7 @@ class Checksums(unittest.TestCase):
             dist = Path(tmp)
             self.archives(dist)
             with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(release_ci.step_checksums(VERSION, dist), 0)
+                self.assertEqual(release_ci.step_checksums(version=VERSION, dist=dist), 0)
             lines = (dist / "SHA256SUMS").read_text().splitlines()
             self.assertEqual(len(lines), len(release.TARGETS))
             for line in lines:
@@ -196,11 +214,23 @@ class Checksums(unittest.TestCase):
             dist = Path(tmp)
             self.archives(dist, skip=release.NATIVE_TARGET)
             with self.assertRaisesRegex(ReleaseError, "not the release's archives"):
-                release_ci.step_checksums(VERSION, dist)
+                release_ci.step_checksums(version=VERSION, dist=dist)
             self.archives(dist)
             (dist / "pgdt-v0.0.9-x.tar.xz").write_bytes(b"old")
             with self.assertRaisesRegex(ReleaseError, "not the release's archives"):
-                release_ci.step_checksums(VERSION, dist)
+                release_ci.step_checksums(version=VERSION, dist=dist)
+
+    def test_ci_sums_its_own_archive_alone_and_refuses_the_other_beside_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dist = Path(tmp)
+            self.archives(dist, skip=release.CROSS_TARGET)
+            with contextlib.redirect_stdout(io.StringIO()):
+                release_ci.step_checksums(release_ci.CI_TARGETS, VERSION, dist)
+            (line,) = (dist / "SHA256SUMS").read_text().splitlines()
+            self.assertTrue(line.endswith(release_ci.archive_name(VERSION, release.NATIVE_TARGET)), line)
+            self.archives(dist)
+            with self.assertRaisesRegex(ReleaseError, "not the release's archives"):
+                release_ci.step_checksums(release_ci.CI_TARGETS, VERSION, dist)
 
 
 class Smoke(unittest.TestCase):
@@ -304,7 +334,7 @@ class Draft(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, "published"):
             release_ci.plan_draft("0.1.0", [release_row(draft=False)])
 
-    def test_the_draft_holds_the_releases_assets_and_names_its_commit(self):
+    def test_the_draft_holds_cis_assets_and_names_its_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             dist = Path(tmp)
             with self.assertRaisesRegex(ReleaseError, "SHA256SUMS"):
@@ -318,7 +348,7 @@ class Draft(unittest.TestCase):
                 release_ci.step_draft(gh, SHA, dist)
             (call, args), = gh.calls
             self.assertEqual((call, args["tag"], args["sha"]), ("create_draft", "v0.1.0", SHA))
-            self.assertEqual(sorted(args["files"]), sorted(release_ci.expected_assets(VERSION)))
+            self.assertEqual(sorted(args["files"]), sorted(release_ci.draft_assets(VERSION)))
 
     def test_a_draft_of_another_checkout_or_an_existing_version_creates_nothing(self):
         gh = FakeGh({}, releases=[release_row()])
@@ -336,6 +366,164 @@ class Draft(unittest.TestCase):
         self.assertEqual(release_ci.flatten_pages([]), [])
         with self.assertRaises(ReleaseError):
             release_ci.flatten_pages({"message": "Not Found"})
+
+
+def sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+X86 = release_ci.archive_name(VERSION, release.NATIVE_TARGET)
+ARM = release_ci.archive_name(VERSION, release.CROSS_TARGET)
+CI_BYTES = b"ci's x86-64 archive"
+
+
+def ci_draft(*, commit: str = SHA, extra=(), digest: str | None = None, state: str = "uploaded") -> dict:
+    """The draft `release-build` leaves: CI's archive and its checksums."""
+    return {
+        "id": 7, "tag_name": f"v{VERSION}", "draft": True, "target_commitish": commit,
+        "assets": [
+            {"id": 11, "name": X86, "state": state, "digest": digest or f"sha256:{sha(CI_BYTES)}"},
+            {"id": 12, "name": "SHA256SUMS", "state": "uploaded"},
+            *({"id": 20 + i, "name": n, "state": "uploaded"} for i, n in enumerate(extra)),
+        ],
+    }  # fmt: skip
+
+
+class Attach(unittest.TestCase):
+    MTIME = 1_700_000_000
+
+    def rehearse(self, dist: Path, *, x86: bytes = CI_BYTES, mtime: int = MTIME) -> None:
+        """`dist/` as the rehearsal leaves it: both archives and their sums."""
+        src = dist.parent / "src"
+        src.mkdir(exist_ok=True)
+        for name in ("pgdt", "LICENSE", release.NOTICES_NAME, "README.md"):
+            (src / name).write_text(name)
+        files = [release_ci.Member(n, src / n, 0o644) for n in sorted(("pgdt", "LICENSE", release.NOTICES_NAME, "README.md"))]
+        release_ci.write_archive(dist / ARM, release_ci.archive_stem(VERSION, release.CROSS_TARGET), files, mtime)
+        (dist / X86).write_bytes(x86)
+        (dist / "SHA256SUMS").write_text("the rehearsal's\n")
+
+    def attach(self, gh: FakeGh, dist: Path, *, clean: bool = True, head: str = SHA) -> str:
+        out = io.StringIO()
+        with unittest.mock.patch.object(release, "workspace_version", return_value=VERSION), \
+                unittest.mock.patch.object(release_ci, "tree_is_clean", return_value=clean), \
+                unittest.mock.patch.object(release_ci, "head_commit", return_value=head), \
+                unittest.mock.patch.object(release_ci, "commit_time", return_value=self.MTIME), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(release_ci.step_attach(gh, dist), 0)
+        return out.getvalue()
+
+    def test_the_arm64_archive_and_sums_over_both_go_onto_heads_draft(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dist = Path(tmp) / "dist"
+            dist.mkdir()
+            self.rehearse(dist)
+            gh = FakeGh({}, releases=[ci_draft()], blobs={11: CI_BYTES})
+            out = self.attach(gh, dist)
+            self.assertEqual(sorted(gh.uploaded), sorted([ARM, "SHA256SUMS"]))
+            self.assertEqual(
+                gh.uploaded["SHA256SUMS"].decode(),
+                release_ci.checksum_lines({X86: sha(CI_BYTES), ARM: sha((dist / ARM).read_bytes())}),
+            )
+            self.assertEqual(gh.uploaded[ARM], (dist / ARM).read_bytes())
+            self.assertIn("byte-identical to the rehearsal's", out)
+            # dist/ is the rehearsal's still, the download and the new sums gone with their directory.
+            self.assertEqual(sorted(p.name for p in dist.iterdir()), sorted([ARM, X86, "SHA256SUMS"]))
+            self.assertEqual((dist / "SHA256SUMS").read_text(), "the rehearsal's\n")
+
+    def test_a_ci_archive_unlike_the_rehearsals_is_reported_and_attached_all_the_same(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dist = Path(tmp) / "dist"
+            dist.mkdir()
+            self.rehearse(dist, x86=b"the rehearsal's own bytes")
+            gh = FakeGh({}, releases=[ci_draft()], blobs={11: CI_BYTES})
+            out = self.attach(gh, dist)
+            here = sha(b"the rehearsal's own bytes")
+            self.assertIn(f"differs from the rehearsal's: CI {sha(CI_BYTES)}, rehearsal {here}", out)
+            self.assertIn("SHA256SUMS", gh.uploaded)
+            (dist / X86).unlink()
+            self.assertIn("no rehearsal archive", self.attach(FakeGh({}, releases=[ci_draft()], blobs={11: CI_BYTES}), dist))
+
+    def test_each_refusal_comes_before_anything_is_uploaded(self):
+        cases = {
+            "not clean": dict(clean=False),
+            "no draft Release is named": dict(releases=[]),
+            "Releases are named": dict(releases=[ci_draft(), ci_draft()]),
+            "already published": dict(releases=[{**ci_draft(), "draft": False}]),
+            "not this checkout's HEAD": dict(releases=[ci_draft(commit=OTHER)]),
+            "which no release does": dict(releases=[ci_draft(extra=["pgdt-evil.tar.xz"])]),
+            "lacks CI's uploaded": dict(releases=[ci_draft(state="starter")]),
+            "not the .* the API states": dict(releases=[ci_draft(digest=f"sha256:{'0' * 64}")]),
+            "not sha256:<hex>": dict(releases=[ci_draft(digest="md5:x")]),
+            "not at HEAD's commit time": dict(mtime=self.MTIME + 1),
+            "is missing: rehearse HEAD first": dict(no_arm=True),
+        }  # fmt: skip
+        for why, case in cases.items():
+            with self.subTest(why), tempfile.TemporaryDirectory() as tmp:
+                dist = Path(tmp) / "dist"
+                dist.mkdir()
+                self.rehearse(dist, mtime=case.get("mtime", self.MTIME))
+                if case.get("no_arm"):
+                    (dist / ARM).unlink()
+                gh = FakeGh({}, releases=case.get("releases", [ci_draft()]), blobs={11: CI_BYTES})
+                with self.assertRaisesRegex(ReleaseError, why):
+                    self.attach(gh, dist, clean=case.get("clean", True))
+                self.assertEqual(gh.uploaded, {})
+
+    def test_an_asset_with_no_stated_digest_is_downloaded_unheld(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gh = FakeGh({}, blobs={3: b"x"})
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                got = release_ci.fetch_asset(gh, {"id": 3, "name": "a"}, Path(tmp) / "a")
+            self.assertEqual(got, sha(b"x"))
+            self.assertIn("states no digest", err.getvalue())
+
+    def test_a_github_remote_names_its_repository_in_each_form(self):
+        for url in (
+            "git@github.com:mwinters0/pgdt.git\n", "git@github.com:mwinters0/pgdt",
+            "https://github.com/mwinters0/pgdt.git", "https://github.com/mwinters0/pgdt/",
+            "ssh://git@github.com/mwinters0/pgdt.git",
+        ):  # fmt: skip
+            self.assertEqual(release_ci.repo_of_remote(url), "mwinters0/pgdt", url)
+        for bad in ("git@gitlab.com:a/b.git", "https://github.com/a", "https://github.com/a/b/c", ""):
+            with self.assertRaises(ReleaseError, msg=bad):
+                release_ci.repo_of_remote(bad)
+
+
+class Fetch(unittest.TestCase):
+    def tag_answers(self, commit: str = SHA) -> dict:
+        return {
+            "git/ref/tags/v0.1.0": {"object": {"type": "tag", "sha": "t" * 40}},
+            f"git/tags/{'t' * 40}": {"message": "text\n", "object": {"type": "commit", "sha": commit}},
+        }  # fmt: skip
+
+    def whole_draft(self) -> dict:
+        draft = ci_draft()
+        draft["assets"] = [*draft["assets"], {"id": 13, "name": ARM, "state": "uploaded", "digest": f"sha256:{sha(b'arm')}"}]
+        return draft
+
+    def test_the_draft_the_tag_publishes_gives_its_arm64_archive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dist = Path(tmp) / "dist"
+            gh = FakeGh(self.tag_answers(), releases=[self.whole_draft()], blobs={13: b"arm"})
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(release_ci.step_fetch(gh, "v0.1.0", release.CROSS_TARGET, dist), 0)
+            self.assertEqual((dist / ARM).read_bytes(), b"arm")
+            self.assertIn(("download_asset", {"id": 13}), gh.calls)
+
+    def test_a_draft_the_publish_would_refuse_gives_nothing(self):
+        for releases, answers, why in (
+            ([ci_draft()], self.tag_answers(), "holds"),
+            ([self.whole_draft()], self.tag_answers(OTHER), "was built from"),
+        ):
+            with self.subTest(why), tempfile.TemporaryDirectory() as tmp:
+                gh = FakeGh(answers, releases=releases, blobs={13: b"arm"})
+                with self.assertRaisesRegex(ReleaseError, why):
+                    release_ci.step_fetch(gh, "v0.1.0", release.CROSS_TARGET, Path(tmp))
+                self.assertNotIn("download_asset", [c for c, _ in gh.calls])
+        with self.assertRaisesRegex(ReleaseError, "no tag"):
+            release_ci.step_fetch(FakeGh({}), None, release.CROSS_TARGET)
 
 
 class Publish(unittest.TestCase):
@@ -567,7 +755,10 @@ class Workflows(unittest.TestCase):
             writes = "contents: write" in text
             self.assertEqual(writes, job in ("preflight", "draft"), job)
             self.assertEqual("attestations: write" in text or "id-token: write" in text, job == "draft", job)
-        self.assertIn("contents: write", "\n".join(jobs_of("release-publish.yml")["publish"]))
+        for job, body in jobs_of("release-publish.yml").items():
+            text = "\n".join(body)
+            self.assertEqual("contents: write" in text, job in ("fetch", "publish"), job)
+            self.assertNotIn("id-token", text, job)
 
     def test_the_build_workflow_uses_the_image_runtime_and_the_ref_through_the_environment(self):
         text = "\n".join(lines_of("release-build.yml"))
@@ -601,30 +792,49 @@ class Workflows(unittest.TestCase):
                     todo.append(n)
         self.assertEqual(reached, set(jobs) - {"draft"})
 
-    def test_each_target_is_released_built_noticed_archived_smoked_and_tested(self):
-        runs = commands_of("release-build.yml")
-        for target in release.TARGETS:
+    def test_ci_builds_its_targets_and_smokes_every_one_and_the_suite_runs_on_both(self):
+        runs, published = commands_of("release-build.yml"), commands_of("release-publish.yml")
+        for target in release_ci.CI_TARGETS:
             flag = f"--target={target}"
             self.assertIn(("scripts/release.py", ["build", "--release", flag]), runs, target)
             self.assertIn(("scripts/release.py", ["notices", flag]), runs, target)
             self.assertIn(("scripts/release_ci.py", ["archive", flag]), runs, target)
             self.assertIn(("scripts/release_ci.py", ["smoke", flag]), runs, target)
-        self.assertIn(("scripts/release.py", ["suite"]), runs)
-        # Only a release's build is `--release`, and only the release builds.
+        self.assertIn(("scripts/release_ci.py", ["checksums", *(f"--target={t}" for t in release_ci.CI_TARGETS)]), runs)
+        for target in release_ci.ATTACHED_TARGETS:
+            flag = f"--target={target}"
+            self.assertFalse([a for _, a in runs + published if flag in a and a[0] not in ("smoke", "fetch")], target)
+            self.assertIn(("scripts/release_ci.py", ["fetch", flag]), published, target)
+            self.assertIn(("scripts/release_ci.py", ["smoke", flag]), published, target)
+        self.assertEqual(runs.count(("scripts/release.py", ["suite"])), 2)
+        # Only a release's build is `--release`, and only CI's targets build.
         builds = [a for s, a in runs if s == "scripts/release.py" and a[0] == "build"]
-        self.assertEqual(len(builds), len(release.TARGETS))
+        self.assertEqual(len(builds), len(release_ci.CI_TARGETS))
         self.assertTrue(all("--release" in a for a in builds))
 
     def test_the_arm64_suite_and_smoke_run_on_an_arm64_runner_and_the_rest_on_x86_64(self):
-        jobs = jobs_of("release-build.yml")
-        arm = {"arm64-suite", "arm64-smoke"}
-        for job, body in jobs.items():
-            runner = re.search(r"(?m)^    runs-on: (\S+)$", "\n".join(body)).group(1)
-            self.assertEqual(runner, "ubuntu-24.04-arm" if job in arm else "ubuntu-24.04", job)
-        suite = "\n".join(jobs["arm64-suite"])
+        arm = {("release-build.yml", "arm64-suite"), ("release-publish.yml", "arm64-smoke")}
+        for name in self.names:
+            for job, body in jobs_of(name).items():
+                runner = re.search(r"(?m)^    runs-on: (\S+)$", "\n".join(body)).group(1)
+                self.assertEqual(runner, "ubuntu-24.04-arm" if (name, job) in arm else "ubuntu-24.04", job)
+        suite = "\n".join(jobs_of("release-build.yml")["arm64-suite"])
         self.assertIn("release.py suite", suite)
         self.assertIn("needs: preflight", suite, "the suite waits on no build")
-        self.assertIn(f"smoke --target={release.CROSS_TARGET}", "\n".join(jobs["arm64-smoke"]))
+        self.assertIn(f"smoke --target={release.CROSS_TARGET}", "\n".join(jobs_of("release-publish.yml")["arm64-smoke"]))
+
+    def test_the_publication_waits_for_the_arm64_smoke_of_the_drafts_own_archive(self):
+        jobs = jobs_of("release-publish.yml")
+        self.assertEqual(sorted(jobs), ["arm64-smoke", "fetch", "publish"])
+        self.assertIn("    needs: fetch", jobs["arm64-smoke"])
+        self.assertIn("    needs: [fetch, arm64-smoke]", jobs["publish"])
+        text = "\n".join(lines_of("release-publish.yml"))
+        self.assertRegex(text, r"(?m)^  PGDT_RELEASE_CONTAINER: docker$")
+        fetch, smoke = "\n".join(jobs["fetch"]), "\n".join(jobs["arm64-smoke"])
+        artifact = f"name: archive-{release.CROSS_TARGET}"
+        self.assertIn(artifact, fetch)
+        self.assertIn(artifact, smoke)
+        self.assertLess(smoke.index("actions/download-artifact@"), smoke.index("release_ci.py smoke"))
 
     def test_every_suite_runs_where_its_events_can_be_counted(self):
         jobs = jobs_of("release-build.yml")

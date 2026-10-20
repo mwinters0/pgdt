@@ -1,6 +1,6 @@
 # The release publication: a pushed `v*` tag publishes the draft Release
-# `release-build.yml` made for it (`scripts/release_ci.py`, "Build first, tag
-# second").
+# `release-build.yml` made for it, once the arm64 archive attached to it has
+# run on arm64 (`scripts/release_ci.py`, "Build first, tag second").
 #
 # The tag must be annotated, its message becomes the Release body, and the
 # draft is found by the tag's name and checked against the tag's commit; a tag
@@ -16,8 +16,50 @@ on:
 
 permissions: {}
 
+env:
+  PGDT_RELEASE_CONTAINER: docker
+
 jobs:
+  # The draft's arm64 archive, the bytes to be published: a draft is visible
+  # only to a token with push access, so this job hands it to the smoke run,
+  # which holds none.
+  fetch:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 scripts/release_ci.py fetch --target=aarch64-unknown-linux-gnu
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: archive-aarch64-unknown-linux-gnu
+          path: dist/*.tar.xz
+          if-no-files-found: error
+          compression-level: 0
+
+  # Built off CI, the arm64 archive's `pgdt` runs on real arm64, in a fresh
+  # `debian:trixie`, before it is published (D109).
+  arm64-smoke:
+    needs: fetch
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: archive-aarch64-unknown-linux-gnu
+          path: dist
+      - run: python3 scripts/release_ci.py smoke --target=aarch64-unknown-linux-gnu
+
   publish:
+    needs: [fetch, arm64-smoke]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
