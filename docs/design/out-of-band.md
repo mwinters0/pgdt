@@ -74,3 +74,4 @@ table as a work queue.
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
 | M239 | 2026-10-20 | A filter literal's equality form moves from pgdt-query's `predicate/resolve.rs` to pgdt-codec's `key/equality.rs`, nested in `Comparison` as `Comparison::Equal`; priced by `--count-pair` | | [2026-10-20](../status/history/2026-10-20.md), "`M239` admitted: a filter literal's equality form, grilled with the maintainer" |
+| M240 | | arm64's release archive is built on the maintainer's machine in the release image and uploaded to the draft, attested by GitHub's release attestation alone; x86-64 stays CI-built with build provenance; `release-build`, `release_ci.py`'s publish check, `/release` and `installing.md` follow | | [2026-10-20](../status/history/2026-10-20.md), "`M240` admitted: arm64's archive built here, attested by its release alone, chosen with the maintainer" |
