@@ -485,12 +485,12 @@ than reading as a phase nobody has sliced.
 - **KD127** — a `--filter` term opening with whitespace before `IS [NOT]
   DISTINCT FROM` is split at that operator, naming the empty column, which no
   table holds, where `--where` and the refusal ahead of the split find no
-  operator there and `--where` refuses the term as malformed (D60). **(c)
-  unowned**; promoted by a term of that shape reaching a user. Detail:
+  operator there and `--where` refuses the term as malformed (D60). **(b)
+  owned by `M237`**, which trims the term's start before it splits. Detail:
   `crates/pgdt/src/query/filter.rs`.
 
 - **KD128** — `TilingBroken`'s message calls a map stopping short of the
   file's end "not ending where the scan did", though the check compares the
-  last span's end with the file's size, a partial map's included. **(c)
-  unowned**; promoted by its admission as an out-of-band fix. Detail:
+  last span's end with the file's size, a partial map's included. **(b) owned
+  by `M238`**, which names the file's end. Detail:
   `crates/pgdt-model/src/diagnostic.rs`.
