@@ -905,7 +905,7 @@ fn parse_over_a_remote_xz_announces_the_walk_before_paying_for_it() {
 
     // What it is about to cost, and both ways out of it — never a refusal.
     assert!(said.contains("seek table build started"), "{said}");
-    assert!(said.contains("one round trip per stream"), "{said}");
+    assert!(said.contains("several round trips per stream"), "{said}");
     assert!(said.contains("keep the cache"), "{said}");
     assert!(said.contains("parse a local copy"), "{said}");
     // And it lands before the walk's own fetches, not after them.

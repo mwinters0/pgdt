@@ -504,12 +504,6 @@ than reading as a phase nobody has sliced.
   by the maintainer deciding whether the shell departs from upstream's `main`
   there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
 
-- **KD125** — the warning a cold remote `.xz` walk announces says one round
-  trip per stream, where the walk makes at least four (`KD36`), so it states
-  a quarter of what the user is about to wait for. **(b) owned by `M231`**,
-  which says several, as the manual does. Detail:
-  `crates/pgdt-io/src/source/remote.rs`.
-
 - **KD126** — the map's tiling-failure diagnostic counts every issue as a
   "gap(s)/overlap(s)", though an issue may be a span out of order, a map not
   starting at byte 0, one not reaching the scanned end or an empty span.

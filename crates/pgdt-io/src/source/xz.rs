@@ -205,7 +205,10 @@ fn piece_of(block: Range<u64>, offset: u64, end: u64) -> Option<(usize, u64, usi
 /// better driver but a forward table build, which stops paying separately for
 /// the walk at all. **(c) unowned**; promoted by a phase that tunes the network,
 /// which is where the fetch policy this source defers belongs, and which is also
-/// what would take the figure.
+/// what would take the figure. Two copies say "several round trips per
+/// stream" because of this and are rewritten by its closure: the warning
+/// `announce_remote_walk` in `remote.rs` gives, and
+/// `docs/manual/dump-inspection.md`, "Reading a dump over HTTP".
 #[cfg(any(feature = "http", test))]
 pub(crate) async fn walk_seek_table(
     source: &dyn crate::ByteRangeSource,

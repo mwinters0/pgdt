@@ -304,7 +304,7 @@ async fn xz_source_of(url: &str) -> Arc<dyn ByteRangeSource> {
     };
     assert!(
         table.stream_count() > 1 && table.block_count() > table.stream_count(),
-        "{url} is {} stream(s) of {} block(s): the footer walk costs a round trip per stream and \
+        "{url} is {} stream(s) of {} block(s): the footer walk costs several round trips per stream and \
          a seek costs a block, so an object with one of either exercises neither. \
          CONTRIBUTING.md, \"Building and testing\" has a recipe.",
         table.stream_count(),

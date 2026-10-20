@@ -481,13 +481,10 @@ pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Res
 /// `--json` both print it — beside the source's own [`ByteRangeSource::seek_table`].
 /// What this line adds is neither of those, but its timing.
 fn announce_remote_walk(origin: &Origin) {
-    // deficiency: KD125 — "one round trip per stream" is a quarter of it:
-    // `walk_seek_table` makes at least four requests a stream (`KD36`, in
-    // `xz.rs`), so the warning understates the wait it announces.
     tracing::warn!(
         source = %origin,
         "seek table build started: a fetched `.xz` file's stream footers are walked one \
-         request at a time, which is one round trip per stream — thousands, on a dump \
+         request at a time, which is several round trips per stream — thousands, on a dump \
          compressed in many small streams. It is paid once: keep the cache this run \
          writes, or parse a local copy and read that.",
     );
