@@ -241,6 +241,13 @@ value's text ([`decisions.md`](decisions.md), "Predicates").
   own coercion, cast and comparison kernel, the only library linking them
   (D74).
 
+**Not in one place.** What a filter's literal of a kind reads as is split
+across two crates the layering does not divide: the form it has to take
+(`key/form.rs`) and its order key (`key/order.rs`) are pgdt-codec's, and its
+canonical equality form is pgdt-query's (`predicate/resolve.rs`'s
+`equality_comparison`), reaching the codec's type families through
+`internal`.
+
 ## Arrow batches
 
 A block's rows into typed `RecordBatch`es, one builder per column, views over
