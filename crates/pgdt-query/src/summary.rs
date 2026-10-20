@@ -306,35 +306,33 @@ impl<'a> Accumulator<'a> {
         }
     }
 
-    // deficiency: KD47 — of two groups' bounds with the same text, one exact
-    // and one clipped, whichever came first is kept, so a clipped one first
-    // leaves the column's extreme `Inexact` where the exact one would answer
-    // it. **(b) owned by its out-of-band row** (`docs/status/deficiencies.md`),
-    // which prefers the exact bound on a tie; no fixture reaches one.
     /// Fold one group's bounds into the extremes. Only a set chosen by
     /// [`Self::kind`] is folded, so every key is of that one kind, as
     /// [`compare_keys_stored`] asserts.
+    ///
+    /// **On a tie an exact bound replaces a truncated one**, and otherwise the
+    /// first folded is kept: a truncated lower bound orders below every value
+    /// of its group and a truncated upper bound above every one ([`Bounds`]),
+    /// so an exact bound keyed alike is a value the column holds at its
+    /// extreme.
     fn fold(&mut self, bounds: &Bounds) {
         let Some(kind) = self.kind.as_ref() else { return };
-        if let Some(key) = order_key(kind, &bounds.min) {
-            let lower = self.min.as_ref().is_none_or(|(held, _, _)| {
-                compare_keys_stored(&key, held) == std::cmp::Ordering::Less
+        for (end, text, exact, further) in [
+            (&mut self.min, &bounds.min, bounds.min_exact, std::cmp::Ordering::Less),
+            (&mut self.max, &bounds.max, bounds.max_exact, std::cmp::Ordering::Greater),
+        ] {
+            let Some(key) = order_key(kind, text) else {
+                self.complete = false;
+                continue;
+            };
+            let replaces = end.as_ref().is_none_or(|(held, _, held_exact)| {
+                let ordering = compare_keys_stored(&key, held);
+                ordering == further
+                    || (ordering == std::cmp::Ordering::Equal && exact && !held_exact)
             });
-            if lower {
-                self.min = Some((key, bounds.min.clone(), bounds.min_exact));
+            if replaces {
+                *end = Some((key, text.clone(), exact));
             }
-        } else {
-            self.complete = false;
-        }
-        if let Some(key) = order_key(kind, &bounds.max) {
-            let higher = self.max.as_ref().is_none_or(|(held, _, _)| {
-                compare_keys_stored(&key, held) == std::cmp::Ordering::Greater
-            });
-            if higher {
-                self.max = Some((key, bounds.max.clone(), bounds.max_exact));
-            }
-        } else {
-            self.complete = false;
         }
     }
 
@@ -494,3 +492,6 @@ fn column_order(
     }
     Some(order)
 }
+
+#[cfg(test)]
+mod tests;

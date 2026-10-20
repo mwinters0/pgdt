@@ -249,12 +249,6 @@ than reading as a phase nobody has sliced.
   it would satisfy is planned. **(b) owned by `M236`**, which records such a
   block `Constant` at gather time. Detail: `crates/pgdt-query/src/summary.rs`.
 
-- **KD47** — where an exact bound and a clipped one share their text, the
-  first folded is kept, so a clipped one first leaves a column's `MIN` or
-  `MAX` `Inexact` and read rather than answered from statistics. **(b) owned
-  by `M235`**, which prefers the exact bound on a tie. Detail:
-  `crates/pgdt-query/src/summary.rs`.
-
 - **KD40** — a `--create` or `pg_dumpall` dump states each database's
   collation (I32), and nothing reads it: every column of a type taking the
   database's collation with no `COLLATE` clause still warns that the dump does not record its collation, so a `C`
