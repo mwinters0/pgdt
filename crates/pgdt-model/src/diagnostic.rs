@@ -128,7 +128,10 @@ pub enum TilingIssue {
 pub enum DiagnosticKind {
     /// The map does not tile its file: one or more [`TilingIssue`]s. Always a
     /// bug in
-    /// `pgdt_dump::map`, never a property of the input
+    /// `pgdt_dump::map` (`KD106` names one a hand-written input reaches),
+    /// never a property of the input; `every_fixture_tiles_exactly`
+    /// (`pgdt-mapping`'s `tests/map.rs`) checks a parse's map over the
+    /// fixtures, and nothing checks other input
     /// (`docs/design/decisions.md`, "D30").
     TilingBroken { issues: Vec<TilingIssue> },
     /// A loaded cache recorded a different modification *time* than the source
@@ -172,7 +175,8 @@ pub enum DiagnosticKind {
     /// cache-only load, an incomplete one included.
     CacheOffline,
     /// A `.xz` source has no usable seek structure — one stream, one block —
-    /// so every read (forward included) decodes from byte zero. Never a
+    /// so a read anywhere is reached by decoding from byte zero — once for a
+    /// forward scan, and again for each read behind where it stands. Never a
     /// reason to refuse the file (`docs/design/decisions.md`, "D19").
     /// `block_count` is `SeekTable::block_count()` — 0 or 1 for a
     /// non-seekable table — pushed once per index, by
@@ -259,6 +263,10 @@ fn tiling_tally(issues: &[TilingIssue]) -> String {
         named.push("not starting at byte 0".to_string());
     }
     if short {
+        // deficiency: KD128 — the check compares the last span's end with
+        // the file's addressable size, which a partial map's `Unscanned`
+        // span reaches too, so this names the scan's end where the file's
+        // is meant.
         named.push("not ending where the scan did".to_string());
     }
     if empty > 0 {

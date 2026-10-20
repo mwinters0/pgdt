@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD127 -->
-**`KD1`–`KD127` are allocated, and nothing at or below `KD127` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD128 -->
+**`KD1`–`KD128` are allocated, and nothing at or below `KD128` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -488,3 +488,9 @@ than reading as a phase nobody has sliced.
   operator there and `--where` refuses the term as malformed (D60). **(c)
   unowned**; promoted by a term of that shape reaching a user. Detail:
   `crates/pgdt/src/query/filter.rs`.
+
+- **KD128** — `TilingBroken`'s message calls a map stopping short of the
+  file's end "not ending where the scan did", though the check compares the
+  last span's end with the file's size, a partial map's included. **(c)
+  unowned**; promoted by its admission as an out-of-band fix. Detail:
+  `crates/pgdt-model/src/diagnostic.rs`.

@@ -163,12 +163,15 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
 /// **This is the writer, not the run's save**: the in-flight identity check a
 /// scan makes rides [`CacheMode::save`](super::CacheMode::save), which is
 /// what every scan entry point calls ([`SourceWatch`](super::SourceWatch)),
-/// and this function is reached only from there and from tests.
+/// and this function is reached only from there and from tests: `store` is
+/// private, and `internal` re-exports it under `test-support` alone.
 ///
 /// **The index is encoded straight into a file beside `path`, which is then
 /// renamed over it** (`docs/design/decisions.md`, "D78"), so no encoded copy
 /// of the cache is held in memory, and at every moment `path` holds either
-/// the previous save or this one, whole. A save that fails removes its file;
+/// the previous save or this one, whole
+/// (`a_save_leaves_the_previous_cache_whole_until_it_renames`). A save that
+/// fails removes its file;
 /// one the process is killed during leaves it, named for the cache and ending
 /// `.tmp`, and the previous cache untouched. The replacement is a new file: a
 /// cache path that was a symbolic link becomes a regular file, and the file

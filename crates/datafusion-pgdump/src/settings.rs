@@ -37,7 +37,7 @@ use pgdt_query::RowEvaluation;
 /// its budget's own — the discovered one, where the provider installed the
 /// budget — as `datafusion.execution.target_partitions = 0` returns to the
 /// machine's parallelism: a `SET` cannot be taken back, and
-/// DataFusion 55's `RESET` reaches only its own `datafusion.` keys. `pgdt
+/// DataFusion 55's `RESET` reaches only its own `datafusion.` keys (UF3). `pgdt
 /// --memory 0` stays refused, because a flag is un-stated by leaving it off —
 /// absence is how `pgdt` asks for the discovered allowance
 /// (`docs/design/decisions.md`, "D64") — so there `0` could only mean no room to

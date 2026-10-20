@@ -332,7 +332,9 @@ fn unbalanced_quote(what: &str, quote: char, spec: &str) -> anyhow::Error {
 /// "D101").
 ///
 /// **`IN` has no NULL**: its values are read as `=`'s are, so `null` in the
-/// list is the text `null`, and `c in (a, b)` means `c=a or c=b` exactly —
+/// list is the text `null`, and `c in (a, b)` means `c=a or c=b` exactly
+/// (`pgdt-query`'s `tests/membership.rs`,
+/// `a_membership_answers_as_the_disjunction_of_equalities_it_replaces`) —
 /// answered as one [`PredicateOp::In`] term (`docs/design/decisions.md`,
 /// "D53").
 ///

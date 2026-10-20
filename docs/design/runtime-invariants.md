@@ -11,11 +11,11 @@ exists for the same reason**: a kernel release, a container runtime, or a
 toolchain bump can quietly invalidate one of these, and the resulting bug
 surfaces as a process that sized itself wrongly rather than as an error — an OOM
 kill under an orchestrator, or a scan that took a fifth of the machine it was
-given. The trigger to walk this file is therefore four-sided, and each side has
-its own entries: a **kernel major**, a **container-runtime upgrade**, a **Rust
+given. The trigger to walk this file is therefore an upgrade of any of these, each
+with its own entries: a **kernel major**, a **container-runtime upgrade**, a **Rust
 toolchain bump** (`RT7`, `RT11` and `RT12`, whose behaviour is `std`'s), a **glibc
 release** — the host's or the figures' image's (`RT10` only) — a **bash
-release** (`RT20`), and an
+release** (`RT20`), an **arrow or DataFusion upgrade** (`RT21`, `RT22`), and an
 **`object_store` upgrade** (`RT13`–`RT17`, whose behaviour is that crate's and
 whose re-verification is a test run against the oracle rather than a container;
 `crates/pgdt/tests/http_conformance.rs` reads the same claims against a real origin
@@ -38,7 +38,7 @@ crate's requirements register, which two phase inboxes cite by number
 ([`roadmap-P15-gzip-inbox.md`](roadmap-P15-gzip-inbox.md), "The seekable-xz
 crate is xz-only on purpose, and generalizing it was rejected").
 
-**`RT1`–`RT20` are allocated**, and nothing at or below `RT20` is reused.
+**`RT1`–`RT22` are allocated**, and nothing at or below `RT22` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is

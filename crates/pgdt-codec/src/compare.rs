@@ -199,7 +199,9 @@ pub enum ComparisonSemantics {
     Postgres,
     /// DataFusion's comparison of the value the column emits — Arrow's `cmp`
     /// kernels over the batch this build produces, a float's `-0` first made
-    /// `0` (DataFusion's `apply_cmp`). A comparison this build cannot answer
+    /// `0` (DataFusion's `apply_cmp`, which `datafusion-pgdump`'s
+    /// `sql_pushes_down_what_the_library_answers_and_answers_alike` holds a
+    /// pushed `= -0.0` to). A comparison this build cannot answer
     /// that way is refused rather than answered in the other semantics.
     DataFusion,
 }
@@ -410,7 +412,9 @@ pub enum ComparisonDivergence {
     /// `float8eq` equates them. Upstream, as of DataFusion 55.1.0: `apply_cmp`
     /// runs `normalize_cmp_input` over flat operands, and
     /// `compare_op_for_nested` calls `make_comparator` with nothing before it;
-    /// a release normalizing there too makes this variant a false note.
+    /// a release normalizing there too makes this variant a false note, and
+    /// fails `datafusion-pgdump`'s
+    /// `a_nested_column_s_arrow_notes_are_datafusion_s_comparison`.
     ///
     /// Announced from the schema alone, at every float position, as
     /// [`Self::UnknownCollation`] is on the possibility: the census does not
@@ -1029,7 +1033,7 @@ pub(crate) fn collated_text(
 /// identifier the way the server does.
 ///
 /// **A reference with no schema matches on the name alone.** `pg_dump` writes
-/// both sides schema-qualified, so the case is reachable only from a
+/// both sides schema-qualified (I8), so the case is reachable only from a
 /// hand-written file, whose search path is not read (`KD48`). Matching is
 /// the announcing direction — a spurious note over correct rows, never a
 /// silent wrong row set.

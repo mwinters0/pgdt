@@ -5,7 +5,7 @@
 //! `--json` exports block by block with no rollup (`docs/design/decisions.md`,
 //! "D67"). A rollup needs no merge rule, being sums: every block whose header
 //! names the table counts toward it — a partition root's leaves included where
-//! the dump names the root in their headers (`--load-via-partition-root`),
+//! the dump names the root in their headers (`--load-via-partition-root`, I2),
 //! which is what a query of the root reads — and a column is matched across
 //! blocks by name.
 //!
@@ -51,7 +51,8 @@ pub struct ColumnStatisticsSummary<'a> {
     /// Their groups holding a row: what the two counts below are shares of.
     pub groups_with_rows: u64,
     /// Of those, the groups carrying bounds — none of a group holding only
-    /// NULLs, so an all-NULL column reads bounds in none of its groups.
+    /// NULLs, gathering bounding a group by the values it observes alone, so
+    /// an all-NULL column reads bounds in none of its groups.
     pub groups_with_bounds: u64,
     /// Of those, the groups carrying a dictionary.
     pub groups_with_dictionary: u64,

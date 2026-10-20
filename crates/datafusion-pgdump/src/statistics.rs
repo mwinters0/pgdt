@@ -11,7 +11,11 @@
 //! literal it finds, and reads nothing but `Exact`. So a bound reaches
 //! `Exact` only where the summary covers every group of every block *and* the
 //! stored bound is the value it came from; everything else it can still bound
-//! is `Inexact`, which no answer is read from.
+//! is `Inexact`, which no answer is read from. `tests/statistics.rs` holds
+//! both halves to the rows: `statistics_never_change_an_answer` each answer
+//! the statistics give, and
+//! `a_filtered_scan_answers_nothing_from_the_table_s_statistics` an
+//! `Inexact` one read from nothing.
 //!
 //! **A value its column's type cannot hold is read here as the scan reads
 //! it**, in the view its mode states (`docs/design/decisions.md`, "D98"): as
@@ -222,7 +226,9 @@ fn count(value: u64, complete: bool) -> Precision<usize> {
 /// missing end with, so a `Utf8` would be refused beside it. SQL's `MIN(e)`
 /// aggregates a cast to text, which DataFusion reads no statistics through,
 /// so a lone one reads the rows; beside `MAX(e)` the cast is shared in a
-/// projection that carries the bounds across it, and both answer.
+/// projection that carries the bounds across it, and both answer
+/// (`an_enum_s_extremes_answer_in_label_text_order` asks the pair; nothing
+/// checks the lone one).
 fn bound(bound: Option<&pgdt_query::Bound>, complete: bool) -> Precision<ScalarValue> {
     let Some(bound) = bound else { return Precision::Absent };
     let Ok(value) = ScalarValue::try_from_array(&bound.value, 0) else {
@@ -243,7 +249,8 @@ fn bound(bound: Option<&pgdt_query::Bound>, complete: bool) -> Precision<ScalarV
 /// holds none, so either placement is true of it; but DataFusion keeps one
 /// order per expression and matches a nullable column's placement exactly,
 /// so only one can be declared, and it is the one an unqualified `ORDER BY`
-/// asks for.
+/// asks for (`a_declared_ordering_holds_in_every_partition_and_drops_the_sort`
+/// plans each placement against it).
 pub(crate) fn output_orderings(schema: &Schema, orders: &[Sortedness]) -> Vec<LexOrdering> {
     orders
         .iter()

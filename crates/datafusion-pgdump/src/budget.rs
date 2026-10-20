@@ -19,7 +19,8 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, Parallelism, Wor
 /// and which multiplies by the tables a join names; *and no budget*, sizing
 /// each scan by its worker count, which gives up bounded memory on a
 /// compressed source. DataFusion has nothing to divide instead: its memory
-/// pool does not cover data sources, and nothing in it reads a cgroup. The
+/// pool does not cover data sources, and nothing in it reads a cgroup — as
+/// of DataFusion 55.1.0, which no test here checks. The
 /// allowance means what `pgdt --memory` means — resident, the number a
 /// container is given — and each scan carves its read-buffer budget from it
 /// through [`Arrangement::resolve`], as `pgdt` does, the reserve once for the

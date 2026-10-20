@@ -91,6 +91,9 @@
 //!
 //! [`SpanBody::Unscanned`] covers whatever a partial scan has not reached, so
 //! **every** `DumpIndex` tiles its file, one built by a query included.
+//! `every_fixture_tiles_exactly` (`pgdt-mapping`'s `tests/map.rs`) checks a
+//! whole parse's over the fixtures; nothing checks a partial or a query's
+//! but the `TilingBroken` it would carry.
 //! `DumpMetadata` is [`crate::ddl::dump_metadata_from_spans`], a derived
 //! view over `spans` — which is what [`SpanBody::Connect`],
 //! [`SpanBody::VersionHeader`], [`SpanBody::AlterTypeAddValue`],
@@ -1067,7 +1070,8 @@ impl Builder {
 
 /// A bare `SET ...;` or `SELECT pg_catalog.set_config(...);` — the two
 /// statement shapes `_doSetFixedOutputState()` writes ahead of the archive
-/// proper and `_selectTablespace()` writes ahead of a definition. Both
+/// proper and `_selectTablespace()` writes ahead of a definition (I4, I19).
+/// Both
 /// classify as framing rather than `Unparsed` whichever producer wrote them;
 /// either way
 /// `push_statement_span`'s `extract_statement_cross_refs` call still reads

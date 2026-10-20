@@ -18,7 +18,7 @@
 //!
 //! The sink is the caller's because DataFusion 55 offers a provider no
 //! non-error channel — a `Diagnostic` rides only on an error — and `log` is
-//! hidden at `datafusion-cli`'s default level. *Rejected: reporting what a
+//! hidden at `datafusion-cli`'s default level, which no test here checks. *Rejected: reporting what a
 //! query raised after its statement*, which would mean owning
 //! `datafusion-cli`'s REPL loop; *a scan's counts drained per partition as
 //! `Info` findings*, which a stderr sink never prints, where a metric is what
