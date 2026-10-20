@@ -47,8 +47,8 @@ order with fixed ownership, and the commit's own time, so the same inputs give
 the same bytes.
 
 Usage (`archive` reads `release.py`'s output under the release state's target
-directory; `archive` and `checksums` write `dist/`, which `smoke` and `draft`
-read):
+directory; `archive` empties `dist/` and writes it, `checksums` adds to it, and
+`smoke` and `draft` read it):
 
     python3 scripts/release_ci.py preflight                   # INPUT_REF is HEAD; no Release for the version yet
     python3 scripts/release_ci.py archive [--target T]...     # dist/pgdt-v<version>-<target>.tar.xz
@@ -209,11 +209,15 @@ def commit_time(repo: Path = REPO) -> int:
     )
 
 
-def step_archive(targets: Sequence[str]) -> int:
+def step_archive(targets: Sequence[str], dist: Path = DIST) -> int:
+    """Each target's archive, in a `dist/` emptied first: one call archives a
+    release, and an earlier run's files are never checksummed beside it."""
     version, target_dir, mtime = release.workspace_version(), host_target_dir(), commit_time()
+    if dist.exists():
+        shutil.rmtree(dist)
     for target in targets:
         files = members(release.Build(target).binary(target_dir), release.notices_path(target, target_dir))
-        dest = DIST / archive_name(version, target)
+        dest = dist / archive_name(version, target)
         write_archive(dest, archive_stem(version, target), files, mtime)
         print(f"{target}: {dest} ({dest.stat().st_size} bytes)", flush=True)
     return 0

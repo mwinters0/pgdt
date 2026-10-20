@@ -154,12 +154,15 @@ class Archives(unittest.TestCase):
                 out.mkdir(parents=True)
                 (out / "pgdt").write_bytes(target.encode())
                 (out / release.NOTICES_NAME).write_text("notices")
+            # An earlier run's leavings: none survives into this one's dist/.
+            (dist / "pgdt-smoke-x").mkdir(parents=True)
+            (dist / release_ci.archive_name("0.0.1", release.NATIVE_TARGET)).write_bytes(b"old")
+            (dist / release_ci.CHECKSUMS).write_text("old")
             with unittest.mock.patch.object(release_ci, "host_target_dir", return_value=target_dir), \
-                    unittest.mock.patch.object(release_ci, "DIST", dist), \
                     unittest.mock.patch.object(release_ci, "commit_time", return_value=1), \
                     unittest.mock.patch.object(release.subprocess, "run"), \
                     contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(release_ci.step_archive(TARGETS), 0)
+                self.assertEqual(release_ci.step_archive(TARGETS, dist), 0)
             self.assertEqual(
                 sorted(p.name for p in dist.iterdir()),
                 sorted(release_ci.archive_name(release.workspace_version(), t) for t in release.TARGETS),

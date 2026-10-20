@@ -69,7 +69,6 @@ V=<the version>; mkdir -p runs/release-v$V
 ID=$(git rev-parse HEAD)
 setsid bash -c "set -euo pipefail
 trap 'echo REHEARSAL FAILED $ID' EXIT
-rm -rf dist
 (cd scripts && uv run release.py image && uv run release.py build --release \
   && uv run release.py notices && uv run release.py suite \
   && uv run python -m unittest test_release test_release_ci test_debian_window)
