@@ -3,7 +3,7 @@
 Inspect Postgres dumps and query them like they're parquet (with streaming Arrow batches).
 
 Available as:
-- Rust libraries: the `pgdt-*` crates, `pgdt-query` at the top
+- Rust library: `pgdt-query`
 - A CLI: `pgdt`
     - Parse & cache your dump's metadata
     - Inspect it: tables, roles, functions, row counts, etc.
@@ -12,19 +12,40 @@ Available as:
     - Full SQL support (See: the [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html))
     - Export to Parquet, etc
 
-_Human author, LLM autocomplete._
 
+<details>
+
+<summary>
+🧐🤖 _Human author, LLM bicycle._
+</summary>
+
+I'm experimenting in this repo to see whether I can negotiate a middle ground between traditional
+dev and vibe coding, aiming to keep the quality high.  I'm keeping a tight grip on the architecture
+while letting the agent perform the implementation, and I'm letting the agent "have" things in the
+repo which makes it noisier than a human repo but which seems to help the agent achieve the quality
+that I wanted.
+
+Keep in mind, this repo is still young and I'm intentionally leaving some messes around to come back
+to, just as I would when coding by hand.  Though admittedly, AI messes _are_ messier.
+
+I claim authorship because I've made literally thousands of architectural decisions via `/grilling`,
+and I frequently review the code with a "purely human" eye.  But not all of it, and only at
+checkpoints.
+
+Anyone is welcome to open human- or AI-generated PRs and Issues.
+
+</details>
 
 ## Why
-I have a 40Gb .xz dump which expands to 1.5Tb by the time it's loaded into Postgres with indexes.
-I want last week's data from it as Parquet.
+My use case: I have a 40Gb .xz dump which expands to 1.5Tb by the time it's loaded into Postgres
+with indexes. I want just last week's data from it (3% of the data) as Parquet.
 
 **Traditional approach:**
 1. Load it into Postgres: 36 hours + 1.5Tb of disk
 2. Extract it to Parquet: 5 minutes
 
 **With `pgdt`:**
-1. Build the cache: 1 hour + 200Mb of disk
+1. Build the cache: 40 minutes + 15Mb of disk
 2. Extract it to Parquet: 20 minutes
 
 
@@ -69,13 +90,7 @@ pgdt info --json --source=foo.xz | jq '.roles[]'
 pgdt query --source=foo.xz --table=mytable --where='mycolumn = bar'
 ```
 
-See: [dump inspection docs](docs/manual/dump-inspection.md) for more.  Notably, if you're never
-going to query the data then you can speed up the parse and reduce the cache file size with:
-
-```bash
-# Parse a dump with only metadata-level statistics
-pgdt parse --source=foo.xz --statistics-level=metadata
-```
+See: [dump inspection docs](docs/manual/dump-inspection.md) for more.
 
 ### `pgdt sql`
 
