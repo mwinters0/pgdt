@@ -246,13 +246,13 @@ than reading as a phase nobody has sliced.
 
 - **KD46** — a block holding one distinct value records `Ascending`, so a
   descending table holding one declares no ordering to DataFusion and a sort
-  it would satisfy is planned. **(c) unowned**; promoted by a table seen to lose its
-  ordering to one. Detail: `crates/pgdt-query/src/summary.rs`.
+  it would satisfy is planned. **(b) owned by `M236`**, which records such a
+  block `Constant` at gather time. Detail: `crates/pgdt-query/src/summary.rs`.
 
 - **KD47** — where an exact bound and a clipped one share their text, the
   first folded is kept, so a clipped one first leaves a column's `MIN` or
-  `MAX` `Inexact` and read rather than answered from statistics. **(c)
-  unowned**; promoted by an extreme seen read where it could answer. Detail:
+  `MAX` `Inexact` and read rather than answered from statistics. **(b) owned
+  by `M235`**, which prefers the exact bound on a tie. Detail:
   `crates/pgdt-query/src/summary.rs`.
 
 - **KD40** — a `--create` or `pg_dumpall` dump states each database's
@@ -331,8 +331,9 @@ than reading as a phase nobody has sliced.
 
 - **KD58** — `map_file` drops the non-seekable warning a cache load adds and
   never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it
-  where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
-  a file and is not told. Detail: `crates/pgdt-mapping/src/whole_file.rs`.
+  where `pgdt info` does. **(b) owned by `M233`**, one function computing the
+  derived diagnostics for every site. Detail:
+  `crates/pgdt-mapping/src/whole_file.rs`.
 
 - **KD82** — `=`, `!=` and `IN` on a canonicalized kind compare a field's
   spelling, so a hand-written field its decoder reads in a spelling `*_out`
@@ -494,8 +495,10 @@ than reading as a phase nobody has sliced.
 - **KD114** — a TOC header whose owner is empty (`; Owner: `, as
   `COMMENT ON EXTENSION` writes it) parses to no header at all, so its entry
   owns its span with no `TocHeader`: `pgdt info`'s `object kinds:` never counts
-  it and TOC coverage reads it as unattributed. **(c) unowned**; promoted by
-  any change to the TOC header parser. Detail: `crates/pgdt-dump/src/map/toc.rs`.
+  it and TOC coverage reads it as unattributed; and the same trim clips an
+  owner or tablespace name ending in whitespace before it reaches `roles` or
+  `tablespaces`. **(b) owned by `M234`**, which parses the line untrimmed at
+  its end. Detail: `crates/pgdt-dump/src/map/toc.rs`.
 
 - **KD122** — `pgdt sql` prints an error that ends its run, a refused
   `--dump` or a failed `-c` statement, to stdout, as upstream's

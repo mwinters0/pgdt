@@ -309,8 +309,8 @@ impl<'a> Accumulator<'a> {
     // deficiency: KD47 — of two groups' bounds with the same text, one exact
     // and one clipped, whichever came first is kept, so a clipped one first
     // leaves the column's extreme `Inexact` where the exact one would answer
-    // it. The fix prefers the exact bound on a tie; no fixture reaches one.
-    // **(c) unowned**; promoted by an extreme seen read where it could answer.
+    // it. **(b) owned by `M235`**, which prefers the exact bound on a tie; no
+    // fixture reaches one.
     /// Fold one group's bounds into the extremes. Only a set chosen by
     /// [`Self::kind`] is folded, so every key is of that one kind, as
     /// [`compare_keys_stored`] asserts.
@@ -462,10 +462,11 @@ fn column_order(
         let last = holding.next_back().unwrap_or(first);
         // deficiency: KD46 — a block holding one distinct value records
         // `Ascending` (`Sortedness`), so a descending table with such a block
-        // declares nothing, where the block is in either order. The fix treats a block
-        // whose exact extremes are equal as neutral here; no fixture holds one
-        // inside a descending table. **(c) unowned**; promoted by a table seen
-        // to lose its ordering to one.
+        // declares nothing, where the block is in either order. **(b) owned by
+        // `M236`**: the gatherer records such a block `Sortedness::Constant`,
+        // which sets no direction here, the edges deciding one where no block
+        // does; equal exact extremes would miss a block whose bounds were
+        // truncated.
         match (sortedness, order) {
             (Sortedness::Unsorted, _) => return None,
             (recorded, None) => order = Some(recorded),

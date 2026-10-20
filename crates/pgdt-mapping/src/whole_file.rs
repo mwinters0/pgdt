@@ -379,8 +379,8 @@ async fn map_file_watched(
     // load adds is dropped here and never recomputed, so this function's index
     // lacks the `NonSeekableCompressedSource` [`build_index`] and a loaded
     // cache carry, and `pgdt parse` of a one-block `.xz` does not list it
-    // where `pgdt info` does. **(c) unowned**; promoted by a user who parses
-    // such a file and is not told, the fix being one more recomputed figure.
+    // where `pgdt info` does. **(b) owned by `M233`**, one function computing
+    // the derived diagnostics for this site, `build_index` and the cache load.
     let carried: Vec<Diagnostic> = index
         .diagnostics
         .drain(..)
