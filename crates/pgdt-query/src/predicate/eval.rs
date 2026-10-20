@@ -2,7 +2,9 @@
 //! evaluated over one raw row, or over one value with no row around it, in
 //! SQL's `True`/`False`/`Unknown` domain (`docs/design/decisions.md`, "D54").
 
-use pgdt_codec::internal::{OrderKey, Side, compare_keys, compare_nested, nested_key, read_key};
+use pgdt_codec::internal::{
+    Equality, OrderKey, Side, compare_keys, compare_nested, nested_key, read_key,
+};
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::timed_span;
 use pgdt_core::internal::{RawRow, RowSplit};
@@ -10,9 +12,7 @@ use pgdt_core::{Error, Result};
 use pgdt_core::{instrument::EvaluationPart as Part, internal::timed};
 use pgdt_model::PostgresInvalidValues;
 
-use super::resolve::{
-    Comparison, Lookup, ResolvedExpr, ResolvedMembership, ResolvedTerm, Spellings,
-};
+use super::resolve::{Comparison, Lookup, ResolvedExpr, ResolvedMembership, ResolvedTerm};
 use super::{PredicateOp, Truth};
 
 impl ResolvedTerm {
@@ -131,14 +131,14 @@ impl ResolvedTerm {
                     _ => ord.is_ge(),
                 }
             }
-            Comparison::Canonical(bound) => {
+            Comparison::Equal(Equality::Canonical(bound)) => {
                 timed!(Part::Compare, bound.matches(text)) == self.wants_equal()
             }
-            Comparison::Trimmed(bound) => {
+            Comparison::Equal(Equality::Trimmed(bound)) => {
                 timed!(Part::Compare, text.trim_end_matches(' ') == bound.as_str())
                     == self.wants_equal()
             }
-            Comparison::Decoded { kind, bound } => {
+            Comparison::Equal(Equality::Decoded { kind, bound }) => {
                 let key = timed!(Part::Key, read_key(kind, text, self.invalid))?;
                 timed!(Part::Compare, compare_keys(&key, bound)).is_eq() == self.wants_equal()
             }
@@ -266,7 +266,8 @@ impl ResolvedMembership {
             Lookup::Canonical(_) => self.terms.iter().all(|value| {
                 matches!(
                     value.compared.as_ref().map(|c| &c.comparison),
-                    Some(Comparison::Canonical(spellings)) if term.eval_value(Some(&spellings.first)) == Some(Truth::True)
+                    Some(Comparison::Equal(Equality::Canonical(spellings)))
+                        if term.eval_value(Some(spellings.first())) == Some(Truth::True)
                 )
             }),
             Lookup::Decoded { kind, keys } => kind == ordered && keys.iter().all(meets),
@@ -437,12 +438,6 @@ impl Lookup {
                 false
             }
         })
-    }
-}
-
-impl Spellings {
-    fn matches(&self, text: &str) -> bool {
-        text == self.first || self.other.as_deref() == Some(text)
     }
 }
 

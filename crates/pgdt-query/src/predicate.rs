@@ -30,7 +30,7 @@ pub(crate) use truths::GroupStatistics;
 /// Every operator but the NULL and unrepresentable tests compares typed,
 /// through the column's own [`ComparisonPlan`](pgdt_codec::compare::ComparisonPlan): the four ordering operators decode both sides and
 /// compare the values, `Eq`/`Ne` take the cheapest of three canonicalizations
-/// that gives the server's answer for that column ([`equality_comparison`](resolve::equality_comparison)).
+/// that gives the server's answer for that column ([`literal_equality`](pgdt_codec::internal::literal_equality)).
 /// A nested column with a plan is compared structurally under every operator,
 /// and a query's DataFusion semantics refuses one under every operator instead.
 /// Where the register has no plan for a column — it did not resolve, one of
@@ -47,7 +47,7 @@ pub(crate) use truths::GroupStatistics;
 /// carry that column's scale. An ordering operator keeps the decoded key and
 /// decodes the field to match; `Eq`/`Ne` usually keep the literal rendered
 /// back into the `*_out` spelling the file holds and compare bytes
-/// ([`equality_comparison`](resolve::equality_comparison)).
+/// ([`literal_equality`](pgdt_codec::internal::literal_equality)).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PredicateOp {
     Eq(String),

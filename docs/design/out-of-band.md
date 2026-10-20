@@ -73,4 +73,4 @@ table as a work queue.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| M239 | | A filter literal's equality form moves from pgdt-query's `predicate/resolve.rs` to pgdt-codec's `key/equality.rs`, nested in `Comparison` as `Comparison::Equal`; priced by `--count-pair` | | [2026-10-20](../status/history/2026-10-20.md), "`M239` admitted: a filter literal's equality form, grilled with the maintainer" |
+| M239 | 2026-10-20 | A filter literal's equality form moves from pgdt-query's `predicate/resolve.rs` to pgdt-codec's `key/equality.rs`, nested in `Comparison` as `Comparison::Equal`; priced by `--count-pair` | | [2026-10-20](../status/history/2026-10-20.md), "`M239` admitted: a filter literal's equality form, grilled with the maintainer" |

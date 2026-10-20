@@ -35,7 +35,7 @@ use crate::grammar::TextGrammar;
 /// labels, a typmodded `numeric`'s precision and scale, whether one held as
 /// text admits the infinities — and the labels are not `Copy`.
 /// The kind is cloned into a term as the term's literal is resolved
-/// (`pgdt_query::predicate`'s `Comparison::Decoded`), once per term.
+/// (`key::equality`'s `Equality::Decoded`), once per term.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompareKind {
     Bool,

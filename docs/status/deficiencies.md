@@ -323,7 +323,7 @@ than reading as a phase nobody has sliced.
   never writes — `1.005` in a `numeric(10,2)`, a braced `uuid` — is missed
   where a typed read and an ordering operator take its value. **(c)
   unowned**; promoted by a user meeting it. Detail:
-  `crates/pgdt-query/src/predicate/resolve.rs`.
+  `crates/pgdt-codec/src/key/equality.rs`.
 
 - **KD84** — an `oid` written with a leading zero, which no `pg_dump` writes,
   is read in decimal as v15 and earlier read it, where v16 and later read it
@@ -342,7 +342,7 @@ than reading as a phase nobody has sliced.
   though the server may hold the label. **(c)
   unowned**; promoted by a hand-written dump renaming or adding a label in a
   statement this build does not read. Detail:
-  `crates/pgdt-query/src/predicate/resolve.rs`.
+  `crates/pgdt-codec/src/key/equality.rs`.
 
 - **KD87** — an enum's labels changed by code this build does not read as an
   `ALTER TYPE` — a `DO` block, a function a statement calls, a write to

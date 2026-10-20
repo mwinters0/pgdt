@@ -15,10 +15,12 @@
 //! of its orders is `emitted`'s.
 //!
 //! What a literal of each kind has to look like, for the refusal naming it,
-//! is `form`'s; the refusal checks a strict parse dispatches through these
-//! readers are `crate::grammar`'s.
+//! is `form`'s, and how `=`/`!=` compare a field against it, `equality`'s;
+//! the refusal checks a strict parse dispatches through these readers are
+//! `crate::grammar`'s.
 
 mod emitted;
+pub(crate) mod equality;
 pub(crate) mod form;
 pub(crate) mod order;
 mod relate;

@@ -5,12 +5,10 @@
 
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::compare::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedCompare};
-use pgdt_codec::decode;
 use pgdt_codec::internal::{
-    NestedKey, OrderKey, Side, UnrepresentableRead, accepted_form, compare_keys, compare_nested,
-    int_in, literal_key, nested_accepted_form, nested_key, numeric_in_stores, order_key,
-    render_macaddr, render_timestamp_postgres_micros, special_order_key, time_of_day_micros,
-    timestamp_postgres_micros, unlisted_labels,
+    Equality, NestedKey, OrderKey, Side, Spellings, UnrepresentableRead, accepted_form,
+    compare_keys, compare_nested, literal_equality, literal_key, nested_accepted_form, nested_key,
+    order_key, unlisted_labels,
 };
 use pgdt_core::{Error, Result};
 use pgdt_model::PostgresInvalidValues;
@@ -21,139 +19,6 @@ use super::notes::{
 };
 use super::{Expr, Operand, Predicate, PredicateOp};
 
-/// How `=`/`!=` compare two values of a column of `kind`, given the filter's
-/// own literal — settled once, when the block's schema resolves.
-///
-/// Three canonicalizations, chosen by whether the file's `*_out` text is a
-/// *unique* spelling of the value it holds (`docs/design/decisions.md`,
-/// "D56"):
-///
-/// - **[`Comparison::Canonical`] — the literal rendered once** into `*_out`
-///   form, so the per-row comparison is a byte comparison. `text`'s rendering
-///   is the identity.
-/// - **[`Comparison::Trimmed`] — the field narrowed per row.** `character(n)`
-///   alone, `bpchareq` stripping the padding from both sides (I38). It is
-///   admissible on the per-row path because it is a reverse scan for `0x20`,
-///   not a decode.
-/// - **[`Comparison::Decoded`] — both sides decoded per row**, for the kinds
-///   where `*_out` is *not* injective over the values one file can hold: a
-///   bare `numeric` (I33), an `interval` (I40), `jsonb` (I41), and
-///   `real`/`double precision`, which have two zeros. A `numeric` whose
-///   typmod `Decimal256` cannot carry shares the bare form's kind and so its
-///   comparison, `time with time zone`
-///   and `inet`/`cidr` decode for a reason about this build instead, and
-///   `macaddr` renders (`docs/design/decisions.md`, "D56").
-///
-/// Deficiency register: `deficiency: KD82` — `Canonical` takes the field's
-/// spelling for the value's only one, which holds of what `*_out` wrote. A
-/// hand-written field the decoder reads in another spelling — `1.005` or
-/// `1.0` in a `numeric(10,2)`, which a typed read rounds and pads to `1.01`
-/// and `1.00`, or a braced `uuid` (I64) — is missed by `=`, `!=`, `IN` and a
-/// group's dictionary, where an ordering operator and a typed read take its
-/// value. Closing it means decoding a field whose bytes miss the literal's,
-/// a cost every non-matching row of a dump `pg_dump` wrote would pay.
-/// **(c) unowned**; promoted by a user meeting it.
-///
-/// `None` when the literal is not a value of the column's type at all, which
-/// is `Error::PredicateValueDecode` — the same refusal an ordering operator
-/// makes, on the same grammar (`docs/design/decisions.md`, "D55").
-pub(super) fn equality_comparison(
-    kind: &CompareKind,
-    text: &str,
-    semantics: ComparisonSemantics,
-) -> Option<Comparison> {
-    use CompareKind as K;
-    let rendered = match kind {
-        // Both sides per row. `order_key` reads a special value on the way,
-        // so `NaN = NaN` and `Infinity = Infinity` come out of the same order
-        // the ordering operators use (I33, I34).
-        K::Float32
-        | K::Float64
-        | K::Numeric { .. }
-        | K::Interval { .. }
-        | K::IntervalFields { .. }
-        | K::Jsonb
-        | K::TimeTz
-        | K::Network { .. } => {
-            let bound = literal_key(kind, text, semantics)?;
-            return Some(Comparison::Decoded { kind: kind.clone(), bound });
-        }
-        K::PaddedText { .. } => {
-            return Some(Comparison::Trimmed(text.trim_end_matches(' ').to_string()));
-        }
-        // A special value is written in its own type's `*_out` spelling on
-        // both sides, so it renders to itself. Only `date`, `timestamp` and
-        // `numeric(p,s)` reach this arm and admit one.
-        _ if special_order_key(kind, text).is_some() => text.to_string(),
-        K::Bool => decode::render_bool(decode::decode_bool(text)?).to_string(),
-        K::Int { bytes } => match semantics {
-            ComparisonSemantics::Postgres => int_in(text, *bytes).ok()?,
-            ComparisonSemantics::DataFusion => text.parse::<i64>().ok()?,
-        }
-        .to_string(),
-        K::UnsignedInt => text.parse::<u32>().ok()?.to_string(),
-        K::Decimal { .. }
-            if semantics == ComparisonSemantics::Postgres && !numeric_in_stores(text) =>
-        {
-            return None;
-        }
-        K::Decimal { scale, .. } => {
-            decode::render_decimal(&decode::decimal_unscaled_digits(text, *scale)?, *scale)
-        }
-        // A label is its own canonical form; what the lookup buys is the
-        // refusal, a string the type does not declare being no value of the
-        // column.
-        // deficiency: KD86 — the refusal is made whether or not the labels
-        // were read exactly (`TypeKind::Enum`'s `exact`), so a literal naming
-        // a label an unread `RENAME VALUE` or `ADD VALUE IF NOT EXISTS` gave
-        // the type is refused, where the server reads it; an ordering term,
-        // and any term comparing an array or composite holding the enum,
-        // raises `FieldDecode` on a field naming one, having no position for
-        // it. Comparing by text would answer `=` but no ordering.
-        K::Enum { labels, .. } => labels.iter().find(|label| label.as_str() == text)?.clone(),
-        K::Date => decode::render_date32(decode::decode_date32(text)?),
-        K::Time => decode::render_time64_micros(time_of_day_micros(text).ok()?),
-        K::Timestamp { with_tz } => render_timestamp_postgres_micros(
-            timestamp_postgres_micros(text, *with_tz).ok()?,
-            *with_tz,
-        ),
-        K::MacAddr { octets } => render_macaddr(text, *octets)?,
-        K::Uuid => decode::render_uuid(&decode::decode_uuid(text)?),
-        K::Bytea => {
-            let bytes = decode::decode_bytea(text)?;
-            return Some(Comparison::Canonical(Spellings {
-                first: decode::render_bytea(&bytes),
-                other: Some(decode::render_bytea_escape(&bytes)),
-            }));
-        }
-        // The identity: `=` on a text column is a byte comparison, with no
-        // per-row work added. A literal past a `varchar(n)`'s length is
-        // read, the server coercing it with no typmod.
-        K::Text { .. } => text.to_string(),
-    };
-    Some(Comparison::Canonical(Spellings::one(rendered)))
-}
-
-/// A literal in each `*_out` form a file can write it in: one, but for a
-/// `bytea`, whose `bytea_output` the dump does not pin (I4), so a file holds
-/// `hex` or `escape`. No text is a spelling in both (I56), so a field is the
-/// literal exactly where it is one of these.
-#[derive(Debug, Clone)]
-pub(super) struct Spellings {
-    pub(super) first: String,
-    pub(super) other: Option<String>,
-}
-
-impl Spellings {
-    pub(super) fn one(text: String) -> Self {
-        Self { first: text, other: None }
-    }
-
-    pub(super) fn iter(&self) -> impl Iterator<Item = &String> {
-        std::iter::once(&self.first).chain(&self.other)
-    }
-}
-
 /// What one term compares, settled once when the block's schema resolves
 /// rather than per row.
 #[derive(Debug, Clone)]
@@ -161,21 +26,17 @@ pub(super) enum Comparison {
     /// The four ordering operators: the field is decoded per row with the
     /// column's own decoder and its key compared against `bound`.
     Ordered { kind: CompareKind, bound: OrderKey },
-    /// `=`/`!=` against the literal already rendered into each `*_out` form
-    /// the file can hold it in — a byte comparison per row (see
-    /// [`equality_comparison`]).
-    Canonical(Spellings),
-    /// `=`/`!=` on a `character(n)` column, against the literal with its own
-    /// trailing blanks already gone.
-    Trimmed(String),
-    /// `=`/`!=` where the field has to be decoded per row too, because the
-    /// file's spelling of a value is not unique.
-    Decoded { kind: CompareKind, bound: OrderKey },
+    /// `=`/`!=` on a scalar column, against the literal's [`Equality`]: its
+    /// `*_out` spellings, its text trimmed, or its key
+    /// ([`literal_equality`]) — or, where the register gives the column no
+    /// comparison, its own text as the one spelling.
+    Equal(Equality),
     /// A nested column, under **any** comparing operator: both sides read
     /// into a [`NestedKey`] and compared structurally
     /// (`docs/design/decisions.md`, "D58"). One variant for both operator
-    /// families, where a scalar has four, because a nested value's `=` is
-    /// byte-comparable only when *every* leaf beneath it canonicalizes.
+    /// families, where a scalar has one for each and its equality three
+    /// forms, because a nested value's `=` is byte-comparable only when
+    /// *every* leaf beneath it canonicalizes.
     ///
     /// *Rejected: rendering the literal back and comparing bytes where every
     /// leaf allows it* — a second code path whose decoded half, the half that
@@ -469,7 +330,9 @@ pub(super) fn resolve_term(
                         .ok_or_else(|| refuse_literal(kind))?,
                 }
             } else {
-                equality_comparison(kind, text, semantics).ok_or_else(|| refuse_literal(kind))?
+                Comparison::Equal(
+                    literal_equality(kind, text, semantics).ok_or_else(|| refuse_literal(kind))?,
+                )
             };
             let statistics = BelievedStatistics {
                 bounds: believed_bounds(compared, semantics, kind, text),
@@ -522,7 +385,7 @@ pub(super) fn resolve_term(
         ),
         _ if ordering => return Err(refuse(NO_ORDER)),
         _ => (
-            Comparison::Canonical(Spellings::one(text.to_string())),
+            Comparison::Equal(Equality::Canonical(Spellings::one(text.to_string()))),
             BelievedStatistics {
                 bounds: believed_bounds(
                     record.comparison(),
@@ -615,13 +478,13 @@ pub(crate) struct ResolvedMembership {
 // `pgdt --where`'s `in (…)`.
 #[derive(Debug, Clone)]
 pub(super) enum Lookup {
-    /// [`Comparison::Canonical`]: the literals in every spelling the file
+    /// [`Equality::Canonical`]: the literals in every spelling the file
     /// can hold them in, the field probed as it stands.
     Canonical(std::collections::HashSet<String>),
-    /// [`Comparison::Trimmed`]: the literals trimmed, the field trimmed
+    /// [`Equality::Trimmed`]: the literals trimmed, the field trimmed
     /// before it is probed.
     Trimmed(std::collections::HashSet<String>),
-    /// [`Comparison::Decoded`]: the literals' keys sorted by
+    /// [`Equality::Decoded`]: the literals' keys sorted by
     /// [`compare_keys`](pgdt_codec::internal::compare_keys), the field keyed once and searched for among them.
     Decoded { kind: CompareKind, keys: Vec<OrderKey> },
     /// [`Comparison::Nested`]: as `Decoded`, by [`compare_nested`](pgdt_codec::internal::compare_nested).
@@ -641,23 +504,27 @@ impl Lookup {
             comparisons.iter().map(|c| wanted(c).cloned()).collect::<Option<_>>()
         };
         let built = match comparisons.first() {
-            None | Some(Comparison::Canonical(_)) => comparisons
+            None | Some(Comparison::Equal(Equality::Canonical(_))) => comparisons
                 .iter()
                 .map(|c| match c {
-                    Comparison::Canonical(spellings) => Some(spellings.iter().cloned()),
+                    Comparison::Equal(Equality::Canonical(spellings)) => {
+                        Some(spellings.iter().cloned())
+                    }
                     _ => None,
                 })
                 .collect::<Option<Vec<_>>>()
                 .map(|spellings| Self::Canonical(spellings.into_iter().flatten().collect())),
-            Some(Comparison::Trimmed(_)) => texts(|c| match c {
-                Comparison::Trimmed(text) => Some(text),
+            Some(Comparison::Equal(Equality::Trimmed(_))) => texts(|c| match c {
+                Comparison::Equal(Equality::Trimmed(text)) => Some(text),
                 _ => None,
             })
             .map(Self::Trimmed),
-            Some(Comparison::Decoded { kind, .. }) => comparisons
+            Some(Comparison::Equal(Equality::Decoded { kind, .. })) => comparisons
                 .iter()
                 .map(|c| match c {
-                    Comparison::Decoded { kind: own, bound } if own == kind => Some(bound.clone()),
+                    Comparison::Equal(Equality::Decoded { kind: own, bound }) if own == kind => {
+                        Some(bound.clone())
+                    }
                     _ => None,
                 })
                 .collect::<Option<Vec<_>>>()

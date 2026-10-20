@@ -403,7 +403,7 @@ pub(crate) fn macaddr_octets(text: &str, octets: usize) -> Option<Vec<u8>> {
 /// A `macaddr`/`macaddr8` literal in `macaddr_out`'s own spelling: `octets`
 /// lowercase hex pairs joined by colons (I40). Those two rules are the whole
 /// of that output function, which is why this type canonicalizes where the
-/// two beside it decode per row — see `pgdt_query::predicate::resolve::equality_comparison`.
+/// two beside it decode per row — see [`literal_equality`](crate::key::equality::literal_equality).
 pub fn render_macaddr(text: &str, octets: usize) -> Option<String> {
     let bytes = macaddr_octets(text, octets)?;
     Some(bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":"))

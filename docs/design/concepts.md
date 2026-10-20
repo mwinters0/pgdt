@@ -235,18 +235,12 @@ value's text ([`decisions.md`](decisions.md), "Predicates").
   `relate` the order a `ValueKey` was read in and which two orders relate; its
   `emitted` the value a key read in DataFusion's semantics hands over in its
   column's emitted type; its `form` is the form a filter's literal has to take,
-  what the literal reader reads. The built-in table answering a type's
+  what the literal reader reads, and its `equality` how `=` compares a field
+  against the literal. The built-in table answering a type's
   comparison beside its Arrow type is the type mapping's (D40).
 - **datafusion-pgdump** — `key.rs`: two of DataFusion's orders related by its
   own coercion, cast and comparison kernel, the only library linking them
   (D74).
-
-**Not in one place.** What a filter's literal of a kind reads as is split
-across two crates the layering does not divide: the form it has to take
-(`key/form.rs`) and its order key (`key/order.rs`) are pgdt-codec's, and its
-canonical equality form is pgdt-query's (`predicate/resolve.rs`'s
-`equality_comparison`), reaching the codec's type families through
-`internal`.
 
 ## Arrow batches
 

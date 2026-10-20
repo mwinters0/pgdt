@@ -3995,7 +3995,7 @@ holds `t_bytea` in `escape` form at all six majors.
 both branches identical bar v17's overflow check).
 
 **Relied on by:** `decode::decode_bytea`, which tells the forms apart by the
-prefix; `predicate/resolve.rs`'s `Spellings`, an equality literal rendered in both;
+prefix; `key/equality.rs`'s `Spellings`, an equality literal rendered in both;
 `gather::bounds::Canonical::of`, which puts an `escape` value's head in `hex`.
 
 **Re-verify.**

@@ -27,10 +27,11 @@ pub mod internal {
     pub use crate::grammar::check::{
         column_grammar, field_refused, grammar_refuses, unchecked_positions,
     };
+    pub use crate::key::equality::{Equality, Spellings, literal_equality};
     pub use crate::key::form::{accepted_form, nested_accepted_form, unlisted_labels};
     pub use crate::key::order::{
         OrderKey, Side, compare_keys, compare_keys_stored, field_key, literal_key, order_key,
-        read_key, special_order_key,
+        read_key,
     };
     pub use crate::resolve::{column_of, database_for_name, read_as_text, schema_of};
     pub use crate::unrepresentable::{
@@ -40,17 +41,10 @@ pub mod internal {
     #[cfg(any(test, feature = "test-support"))]
     pub use crate::unrepresentable::{scalar_read, scalar_tier};
     pub use crate::value::bytea::bytea_unread;
-    pub use crate::value::datetime::{
-        render_timestamp_postgres_micros, time_of_day_micros, timestamp_postgres_micros,
-    };
     pub use crate::value::digits::push_integer;
     pub use crate::value::float::{Float, float_field};
-    pub use crate::value::int::int_in;
     pub use crate::value::nested::key::{NestedKey, compare_nested, nested_key};
     pub use crate::value::nested::{push_array_null, quote_array_element};
-    pub use crate::value::network::render_macaddr;
-    pub use crate::value::numeric::{
-        NUMERIC_DSCALE_MAX, NUMERIC_INTEGER_DIGITS_MAX, numeric_in_stores,
-    };
+    pub use crate::value::numeric::{NUMERIC_DSCALE_MAX, NUMERIC_INTEGER_DIGITS_MAX};
     pub use crate::value::text::char_typmod_refuses;
 }

@@ -4,13 +4,13 @@
 use arrow::datatypes::{DataType, Field};
 
 use super::resolve::{
-    BelievedStatistics, ComparedTerm, Comparison, ResolvedMembership, Spellings, resolve_membership,
+    BelievedStatistics, ComparedTerm, Comparison, ResolvedMembership, resolve_membership,
 };
 use super::truths::TruthSet;
 use super::*;
 use pgdt_codec::compare::comparison_for;
 use pgdt_codec::compare::{CompareKind, ComparisonPlan, ComparisonSemantics};
-use pgdt_codec::internal::{column_of, scalar_read, schema_of};
+use pgdt_codec::internal::{Equality, Spellings, column_of, scalar_read, schema_of};
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_codec::{ColumnResolution, ResolvedColumn, ResolvedSchema};
 use pgdt_core::Result;
@@ -45,7 +45,7 @@ pub(super) fn text_term(p: &Predicate, index: usize) -> ResolvedTerm {
     };
     let compared = value.map(|value| ComparedTerm {
         column: p.column.clone(),
-        comparison: Comparison::Canonical(Spellings::one(value.to_string())),
+        comparison: Comparison::Equal(Equality::Canonical(Spellings::one(value.to_string()))),
         declared_type: String::new(),
         divergences: Vec::new(),
         statistics: BelievedStatistics::NONE,

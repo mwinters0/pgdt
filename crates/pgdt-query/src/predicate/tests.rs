@@ -2370,7 +2370,7 @@ mod oracle {
     ///
     /// What they add over `<=`/`>=`, which already carried the register's
     /// equality, is the **canonicalization** — the three-way choice
-    /// `equality_comparison` makes. Both operands of a cell are values the
+    /// `literal_equality` makes. Both operands of a cell are values the
     /// server itself stored, so for a canonicalized kind the assertion is
     /// that the file's own spelling compares byte for byte; the content is
     /// in the kinds where it cannot, and every one of them has a case
