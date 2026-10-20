@@ -103,8 +103,7 @@ use std::sync::Arc;
 
 use self::statement::{StatementScan, in_open_quote, push_stmt_line, statement_complete};
 pub use self::tiling::{
-    attach_text, check_tiling, non_seekable_compression_diagnostic, tiling_diagnostics,
-    toc_coverage_diagnostic,
+    attach_text, check_tiling, derived_diagnostics, non_seekable_compression_diagnostic,
 };
 use self::toc::{
     close_comment, looks_like_toc_name_line, parse_toc_header_line, partition_root_marker,

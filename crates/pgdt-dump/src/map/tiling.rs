@@ -1,7 +1,8 @@
 //! What every map is checked for and carries, recomputed wherever one is
 //! mapped or loaded: the tiling check and its diagnostic, the TOC-coverage
-//! figure, an unseekable `.xz` source's warning, and each span's text read
-//! back from the file by offset (`docs/design/decisions.md`, "D30").
+//! figure, an unseekable `.xz` source's warning — the three
+//! [`derived_diagnostics`] — and each span's text read back from the file by
+//! offset (`docs/design/decisions.md`, "D30").
 
 use pgdt_core::Result;
 use pgdt_io::ByteRangeSource;
@@ -114,7 +115,7 @@ pub fn check_tiling(spans: &[Span], expected_end: u64) -> Vec<TilingIssue> {
 /// Run the tiling check over a finished map and turn any failure into a
 /// diagnostic; the map is still returned
 /// (`docs/design/decisions.md`, "D30").
-pub fn tiling_diagnostics(spans: &[Span], expected_end: u64) -> Vec<Diagnostic> {
+fn tiling_diagnostics(spans: &[Span], expected_end: u64) -> Vec<Diagnostic> {
     let issues = check_tiling(spans, expected_end);
     if issues.is_empty() { Vec::new() } else { vec![Diagnostic::tiling_broken(issues)] }
 }
@@ -125,17 +126,35 @@ pub fn tiling_diagnostics(spans: &[Span], expected_end: u64) -> Vec<Diagnostic> 
 /// exist at all (`docs/design/decisions.md`, "D31"). Always produced:
 /// `attributed == 0` is a legitimate value, a file with zero TOC comments
 /// being the map's header-less degraded mode rather than an error.
-pub fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
+fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
     let attributed = spans.iter().filter(|s| s.toc.is_some()).count();
     Diagnostic::toc_coverage(attributed, spans.len())
 }
 
+/// **What a whole-file map carries that nothing persists**
+/// (`pgdt_model::DumpIndex::diagnostics` is `#[serde(skip)]`): the tiling
+/// check's failure, the TOC-coverage figure and an unseekable `.xz` source's
+/// warning, each a pure function of the spans, the file's addressable `size`
+/// and the source's seek `table`. **The one place they are computed**, for
+/// every site a whole map is finished or loaded — `pgdt_mapping::build_index`,
+/// `pgdt_mapping::map_file`, `pgdt_mapping::map_forward` at EOF and
+/// `crate::cache::store::status_from_file` — so no site carries a subset of
+/// what another does.
+pub fn derived_diagnostics(
+    spans: &[Span],
+    size: u64,
+    table: Option<&pgdt_io::SeekTable>,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = tiling_diagnostics(spans, size);
+    diagnostics.push(toc_coverage_diagnostic(spans));
+    diagnostics.extend(non_seekable_compression_diagnostic(table));
+    diagnostics
+}
+
 /// D19's warning for a `.xz` source with no usable seek structure — `None` when
 /// there is no compression layer at all (`table` is `None`) or the table
-/// already has more than one block. One function for both callers: a live
-/// [`ByteRangeSource`] (`pgdt_mapping::build_index`,
-/// [`preamble_only`](crate::preamble::preamble_only)) and a persisted cache
-/// (`crate::cache::store::status_from_file`).
+/// already has more than one block. A whole map's is [`derived_diagnostics`]'s;
+/// a preamble's alone is [`preamble_only`](crate::preamble::preamble_only)'s.
 pub fn non_seekable_compression_diagnostic(
     table: Option<&pgdt_io::SeekTable>,
 ) -> Option<Diagnostic> {

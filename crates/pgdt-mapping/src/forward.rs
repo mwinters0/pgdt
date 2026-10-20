@@ -11,7 +11,7 @@ use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::announce_read_loop;
-use pgdt_dump::internal::{tiling_diagnostics, toc_coverage_diagnostic};
+use pgdt_dump::internal::derived_diagnostics;
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ScanOptions};
 use pgdt_io::{ByteRangeSource, internal::memory_budget_display};
 use pgdt_model::{DumpIndex, PostgresInvalidValues, Span, SpanBody};
@@ -509,8 +509,7 @@ pub async fn map_forward(
     index.tablespaces.extend(tablespaces);
     index.spans = spans;
     index.scanned_through = size;
-    index.diagnostics = tiling_diagnostics(&index.spans, size);
-    index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
+    index.diagnostics = derived_diagnostics(&index.spans, size, source.seek_table().as_ref());
     cache.save(watch, source, index).await?;
     // The true end of the file, as opposed to the two early
     // `Ok(MapStop::Reached)`s above that stop a query at its settled target.

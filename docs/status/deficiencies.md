@@ -329,12 +329,6 @@ than reading as a phase nobody has sliced.
   check. **(c) unowned**; promoted by a user who meets it on a dump of many
   streams. Detail: `crates/pgdt-io/src/source/remote.rs`.
 
-- **KD58** — `map_file` drops the non-seekable warning a cache load adds and
-  never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it
-  where `pgdt info` does. **(b) owned by `M233`**, one function computing the
-  derived diagnostics for every site. Detail:
-  `crates/pgdt-mapping/src/whole_file.rs`.
-
 - **KD82** — `=`, `!=` and `IN` on a canonicalized kind compare a field's
   spelling, so a hand-written field its decoder reads in a spelling `*_out`
   never writes — `1.005` in a `numeric(10,2)`, a braced `uuid` — is missed

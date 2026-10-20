@@ -34,8 +34,8 @@ use pgdt_model::{SpanBody, TocHeader};
 /// whitespace before `harvest_toc_cross_refs` records it. The empty-string arm
 /// of the owner's placeholder test is reached only by an untrimmed line, which
 /// `a_hyphen_schema_and_an_empty_owner_both_parse_to_none` passes. **(b) owned
-/// by `M234`**, which hands this the line with only its terminator and leading
-/// whitespace removed.
+/// by its out-of-band row** (`docs/status/deficiencies.md`), which hands this
+/// the line with only its terminator and leading whitespace removed.
 pub(super) fn parse_toc_header_line(trimmed: &str) -> Option<TocHeader> {
     let rest = trimmed.strip_prefix("-- ")?;
     let rest = rest

@@ -35,9 +35,7 @@ pub mod internal {
     /// watched save.
     #[cfg(any(test, feature = "test-support"))]
     pub use crate::cache::store::{load, load_offline, save};
-    pub use crate::map::{
-        Builder, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
-    };
+    pub use crate::map::{Builder, derived_diagnostics};
     pub use crate::preamble::scan_preamble;
     pub use crate::scan::{CopyScannerExt, PieceEndings, RowEnding, announce_read_loop};
 }

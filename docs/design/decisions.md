@@ -121,7 +121,7 @@ and condemns the span index too, both having come from one save of one file.
 
 ### D19 A budget decline is a `PlanNote`; a non-seekable file is warned, not refused
 A decline is a property of the file *and this run's budget*, which no persisted `DiagnosticKind` can be.
-A one-block file opens and raises `NonSeekableCompressedSource` naming `xz -T0` (`map_file` drops it, `KD58`): only the user
+A one-block file opens and raises `NonSeekableCompressedSource` naming `xz -T0`: only the user
 can judge one decode-from-zero. A statistics skip is a note too, stated at zero wherever statistics were consulted,
 and a narrowed span (D84) one wherever the plan charged less than stated; the ordinary case is the
 invisible one. Rejected: omitting a zero; counting only believed filtered columns; announcing a narrowing

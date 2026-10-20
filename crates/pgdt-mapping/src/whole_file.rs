@@ -13,9 +13,7 @@ use pgdt_dump::attach_text;
 use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch};
 use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
-use pgdt_dump::internal::{
-    non_seekable_compression_diagnostic, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
-};
+use pgdt_dump::internal::{derived_diagnostics, scan_preamble};
 use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
 use pgdt_io::{Arrangement, ByteRangeSource};
 use pgdt_model::internal::IgnoredRefusalsExt;
@@ -52,9 +50,7 @@ pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) ->
     let mut spans = builder.finish(size);
     let metadata = Some(Arc::new(dump_metadata_from_spans(&spans)));
     attach_text(source, &mut spans).await?;
-    let mut diagnostics = tiling_diagnostics(&spans, size);
-    diagnostics.push(toc_coverage_diagnostic(&spans));
-    diagnostics.extend(non_seekable_compression_diagnostic(source.seek_table().as_ref()));
+    let diagnostics = derived_diagnostics(&spans, size, source.seek_table().as_ref());
     Ok(DumpIndex { spans, scanned_through: size, metadata, roles, tablespaces, diagnostics })
 }
 
@@ -271,11 +267,11 @@ impl Mapped {
 ///   boundary [`dump_metadata_from_spans`] may be called at (I1), covering a
 ///   trailing database with no `COPY` block of its own, and a file with no
 ///   blocks at all.
-/// - `diagnostics` are the tiling and TOC-coverage figures, recomputed
-///   rather than inherited, being `#[serde(skip)]` — [`map_forward`]
-///   recomputes them at its own EOF exit too — and what is this function's
-///   is keeping what the open reported about the cache file's identity ahead
-///   of them.
+/// - `diagnostics` are the derived ones
+///   ([`pgdt_dump::internal::derived_diagnostics`]), recomputed rather than
+///   inherited, being `#[serde(skip)]` — [`map_forward`] recomputes them at
+///   its own EOF exit too — and what is this function's is keeping what the
+///   open reported about the cache file's identity ahead of them.
 /// - The cache is saved once more at the end, persisting the finished index.
 ///
 /// **A run interrupted before EOF states none of the three**, and returns
@@ -372,15 +368,8 @@ async fn map_file_watched(
         .map(|b| b.header_offset)
         .collect();
     // The diagnostics about the cache *file* rather than about the map — what
-    // the load said about its identity; of the rest, tiling and TOC coverage
-    // are recomputed below.
-    //
-    // Deficiency register: `deficiency: KD58` — the non-seekable warning the
-    // load adds is dropped here and never recomputed, so this function's index
-    // lacks the `NonSeekableCompressedSource` [`build_index`] and a loaded
-    // cache carry, and `pgdt parse` of a one-block `.xz` does not list it
-    // where `pgdt info` does. **(b) owned by `M233`**, one function computing
-    // the derived diagnostics for this site, `build_index` and the cache load.
+    // the load said about its identity; the rest are the derived ones,
+    // recomputed below.
     let carried: Vec<Diagnostic> = index
         .diagnostics
         .drain(..)
@@ -513,8 +502,7 @@ async fn map_file_watched(
 
     index.metadata = Some(Arc::new(dump_metadata_from_spans(&index.spans)));
     let mut diagnostics = carried;
-    diagnostics.extend(tiling_diagnostics(&index.spans, size));
-    diagnostics.push(toc_coverage_diagnostic(&index.spans));
+    diagnostics.extend(derived_diagnostics(&index.spans, size, source.seek_table().as_ref()));
     index.diagnostics = diagnostics;
     let backfill = backfill_statistics(
         source,

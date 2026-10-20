@@ -794,6 +794,36 @@ async fn a_non_seekable_warning_survives_the_cache_round_trip() {
     }
 }
 
+/// `map_file` carries the warning `build_index` and a cache load do, once,
+/// both on a cold run and on one resuming over the complete cache the first
+/// saved — whose load carried it already (`pgdt_dump::internal::derived_diagnostics`).
+#[tokio::test]
+async fn map_file_warns_about_a_non_seekable_xz_source_once() {
+    let non_seekable = xz_compress_single_block(&edge_cases());
+    let xz: Arc<dyn ByteRangeSource> = Arc::new(XzSource::open(non_seekable.path()).unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let mode = CacheMode::enabled(dir.path().join("single_block.xz.dtcache"));
+    for run in ["cold", "resumed"] {
+        let mapped = map_file(
+            mode.open_source(Arc::clone(&xz)).await.unwrap(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
+            &StatisticsRequest::default(),
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        let warnings = mapped
+            .index
+            .diagnostics
+            .iter()
+            .filter(|d| matches!(d.kind(), DiagnosticKind::NonSeekableCompressedSource { .. }))
+            .count();
+        assert_eq!(warnings, 1, "{run}: {:?}", mapped.index.diagnostics);
+    }
+}
+
 /// `preamble_only` pushes the same warning on a fresh scan, and does not
 /// duplicate it on a second call that finds the preamble already complete in
 /// the cache the first call just wrote.

@@ -16,9 +16,7 @@ use super::file::{
     ContainerKind, LoadedCache, read_cache_file, write_cache_file,
 };
 use super::identity::{OriginMatch, SourceIdentity, WeakIdentity};
-use crate::map::{
-    non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
-};
+use crate::map::derived_diagnostics;
 use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{Result, Unusable};
 use pgdt_io::{ByteRangeSource, KnownCompression, Origin};
@@ -138,13 +136,10 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
     let total_size = file.total_size;
     let mut index = file.index;
     // `DumpIndex::diagnostics` is `#[serde(skip)]`, so a loaded index arrives
-    // with none. Both file-level figures are pure functions of the spans and
-    // the persisted size, so they are recomputed on load rather than persisted
-    // (`pgdt_model::diagnostic`, "Not persisted").
-    index.diagnostics = tiling_diagnostics(&index.spans, total_size);
-    index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
+    // with none, and gets what every whole map carries from the persisted
+    // spans, size and seek table (`pgdt_model::diagnostic`, "Not persisted").
     let table = file.compression.as_ref().map(|CompressionIndex::Xz(table)| table);
-    index.diagnostics.extend(non_seekable_compression_diagnostic(table));
+    index.diagnostics = derived_diagnostics(&index.spans, total_size, table);
     // Derived for the same reason the diagnostics above are: a projection of
     // what the envelope already holds.
     let compression = file.compression.as_ref().map(CompressionShape::of);
