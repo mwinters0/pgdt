@@ -25,11 +25,11 @@ fn a_tiling_failure_names_each_kind_it_counts() {
             TilingIssue::DoesNotReachEnd { last_end: 10, expected_end: 20 },
         ]),
         "the file map does not tile the file (1 span(s) out of order, not starting at byte 0, \
-         not ending where the scan did, 1 empty span(s)) — this is a pgdt bug, please report it"
+         not reaching the end of the file, 1 empty span(s)) — this is a pgdt bug, please report it"
     );
     assert_eq!(
         tiling_message(vec![TilingIssue::DoesNotReachEnd { last_end: 0, expected_end: 20 }]),
-        "the file map does not tile the file (not ending where the scan did) — this is a pgdt \
+        "the file map does not tile the file (not reaching the end of the file) — this is a pgdt \
          bug, please report it"
     );
 }

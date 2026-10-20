@@ -115,8 +115,8 @@ pub fn check_tiling(spans: &[Span], expected_end: u64) -> Vec<TilingIssue> {
 /// Run the tiling check over a finished map and turn any failure into a
 /// diagnostic; the map is still returned
 /// (`docs/design/decisions.md`, "D30").
-fn tiling_diagnostics(spans: &[Span], expected_end: u64) -> Vec<Diagnostic> {
-    let issues = check_tiling(spans, expected_end);
+fn tiling_diagnostics(spans: &[Span], size: u64) -> Vec<Diagnostic> {
+    let issues = check_tiling(spans, size);
     if issues.is_empty() { Vec::new() } else { vec![Diagnostic::tiling_broken(issues)] }
 }
 

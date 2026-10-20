@@ -263,11 +263,7 @@ fn tiling_tally(issues: &[TilingIssue]) -> String {
         named.push("not starting at byte 0".to_string());
     }
     if short {
-        // deficiency: KD128 — the check compares the last span's end with
-        // the file's addressable size, which a partial map's `Unscanned`
-        // span reaches too, so this names the scan's end where the file's
-        // is meant.
-        named.push("not ending where the scan did".to_string());
+        named.push("not reaching the end of the file".to_string());
     }
     if empty > 0 {
         named.push(format!("{empty} empty span(s)"));
