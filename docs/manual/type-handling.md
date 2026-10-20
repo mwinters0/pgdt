@@ -554,8 +554,9 @@ Each value is trimmed, or quoted to keep its spaces, a comma or a paren —
 list is the text `null`, as `=null` is. An empty list, an empty value and
 anything after the closing `)` are refused.
 
-In `IS [NOT] DISTINCT FROM` and `IN`, any run of whitespace separates the
-words and the case is free. Whichever
+In `IS [NOT] NULL`, `IS [NOT] UNREPRESENTABLE`, `IS [NOT] DISTINCT FROM`
+and `IN`, any run of whitespace separates the words, whitespace has to come
+before `IS` or `IN`, and the case is free. Whichever
 operator comes first in the term wins, so `--filter 'note=a is distinct from
 b'` is the equality it reads as, and a column whose name really is
 `is distinct from` is still asked for as `--filter 'is distinct from=x'`.

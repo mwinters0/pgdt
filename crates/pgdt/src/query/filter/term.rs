@@ -302,9 +302,8 @@ fn dequote(part: &str) -> Option<Result<String, char>> {
 /// One side of a filter term as the [`Predicate`] should carry it: whitespace
 /// outside the quotes trimmed off, and a quoted part taken exactly as written.
 /// `what` names the side for the error message. Trimming is `str::trim`,
-/// Unicode's whitespace; the worded operators and the keyword boundaries
-/// separate words by ASCII whitespace alone, and the NULL and unrepresentable
-/// tests are the literal suffixes `strip_ci_suffix` matches.
+/// Unicode's whitespace; the worded operators, the `IS` tests ([`is_test`])
+/// and the keyword boundaries separate words by ASCII whitespace alone.
 fn filter_part(part: &str, what: &str, spec: &str) -> Result<String> {
     let part = part.trim();
     match dequote(part) {
@@ -336,8 +335,8 @@ fn unbalanced_quote(what: &str, quote: char, spec: &str) -> anyhow::Error {
 /// "D53").
 ///
 /// **The `IS` forms are the fallback, not the first test**: an operator
-/// outside quotes is looked for first and the suffix is only stripped from a
-/// term that has none, so `note=this is null` is an equality against
+/// outside quotes is looked for first and [`is_test`] asked only of a term
+/// that has none, so `note=this is null` is an equality against
 /// `this is null`.
 pub(super) fn parse_filter(spec: &str) -> Result<Expr> {
     match split_filter_op(spec) {
@@ -351,19 +350,11 @@ pub(super) fn parse_filter(spec: &str) -> Result<Expr> {
         })),
         FilterSplit::UnbalancedQuote(quote) => Err(unbalanced_quote("column name", quote, spec)),
         FilterSplit::NoOperator => {
-            let trimmed = spec.trim();
-            for (suffix, op) in [
-                ("is not null", PredicateOp::IsNotNull),
-                ("is null", PredicateOp::IsNull),
-                ("is not unrepresentable", PredicateOp::IsNotUnrepresentable),
-                ("is unrepresentable", PredicateOp::IsUnrepresentable),
-            ] {
-                if let Some(column) = strip_ci_suffix(trimmed, suffix) {
-                    return Ok(Expr::Term(Predicate {
-                        column: filter_part(column, "column name", spec)?,
-                        op,
-                    }));
-                }
+            if let Some((column, op)) = is_test(spec.trim()) {
+                return Ok(Expr::Term(Predicate {
+                    column: filter_part(column, "column name", spec)?,
+                    op,
+                }));
             }
             anyhow::bail!(
                 "--filter must be `column=value` (or `!=`, `<`, `<=`, `>`, `>=`), `column IS DISTINCT FROM value`, `column IS NOT DISTINCT FROM value`, `column IN (value, …)`, `column IS [NOT] NULL`, or `column IS [NOT] UNREPRESENTABLE`, got `{spec}`"
@@ -372,26 +363,39 @@ pub(super) fn parse_filter(spec: &str) -> Result<Expr> {
     }
 }
 
-/// Case-insensitive suffix strip, for matching `IS [NOT] NULL` and
-/// `IS [NOT] UNREPRESENTABLE` at the end of a `--filter` argument regardless
-/// of how the user cased it.
+/// The worded `IS` test `term` ends in, and the column before it:
+/// `IS [NOT] NULL` or `IS [NOT] UNREPRESENTABLE`, matched **as words** under
+/// the rule `docs/design/decisions.md`, "D60" states for every keyword —
+/// case-insensitively, any run of ASCII whitespace between them, and
+/// whitespace before `IS` as before the other worded operators, so `xis null`
+/// names no column `x` and a column is required.
 ///
-/// Deficiency register: `deficiency: KD52` — the suffix is matched as
-/// written, one space between its words and no boundary before `is`, so
-/// `x is  null` is refused as a term with no operator and `xis null` is read
-/// as `x IS NULL`, and so for each of the four, under `--filter` and every
-/// `--where` leaf alike. Closing it matches the worded operators as words,
-/// under the boundary rule `docs/design/decisions.md`, "D60" states for every
-/// keyword.
-fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
-    let split = s.len().checked_sub(suffix.len())?;
-    // deficiency: KD124 — `split` is a byte count with no character boundary
-    // checked, so a term whose cut falls inside a multi-byte character
-    // (`日本語` against `is null` cuts at byte 2) panics here instead of
-    // falling through to the usage message; `str::get` or `is_char_boundary`
-    // would refuse it as a term with no operator.
-    let (head, tail) = s.split_at(split);
-    tail.eq_ignore_ascii_case(suffix).then_some(head)
+/// `term` is trimmed. Every cut is at an ASCII whitespace byte, which no
+/// multi-byte character holds, so each slice is at a character boundary.
+fn is_test(term: &str) -> Option<(&str, PredicateOp)> {
+    let (head, last) = last_word(term)?;
+    let (head, word) = last_word(head)?;
+    let negated = word.eq_ignore_ascii_case("not");
+    let (column, is) = if negated { last_word(head)? } else { (head, word) };
+    if !is.eq_ignore_ascii_case("is") {
+        return None;
+    }
+    let op = if last.eq_ignore_ascii_case("null") {
+        if negated { PredicateOp::IsNotNull } else { PredicateOp::IsNull }
+    } else if last.eq_ignore_ascii_case("unrepresentable") {
+        if negated { PredicateOp::IsNotUnrepresentable } else { PredicateOp::IsUnrepresentable }
+    } else {
+        return None;
+    };
+    Some((column, op))
+}
+
+/// `s` split before its last word: what precedes it, trailing whitespace
+/// dropped, and the word — `None` where no ASCII whitespace precedes one,
+/// since every word an `IS` test names needs a boundary before it.
+fn last_word(s: &str) -> Option<(&str, &str)> {
+    let at = s.bytes().rposition(|b| b.is_ascii_whitespace())?;
+    Some((s[..at].trim_end_matches(|c: char| c.is_ascii_whitespace()), &s[at + 1..]))
 }
 
 #[cfg(test)]

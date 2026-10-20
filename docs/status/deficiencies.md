@@ -329,12 +329,6 @@ than reading as a phase nobody has sliced.
   check. **(c) unowned**; promoted by a user who meets it on a dump of many
   streams. Detail: `crates/pgdt-io/src/source/remote.rs`.
 
-- **KD52** — a `--filter` term or `--where` leaf ending `is [not] null` or
-  `is [not] unrepresentable` is matched as that literal suffix, so `xis null`
-  asks for `x IS NULL` and `x is  null` is refused. **(b) owned by
-  `M230`**, which matches the worded operators as words under D60's rule.
-  Detail: `crates/pgdt/src/query/filter/term.rs`.
-
 - **KD58** — `map_file` drops the non-seekable warning a cache load adds and
   never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it
   where `pgdt info` does. **(c) unowned**; promoted by a user who parses such
@@ -509,12 +503,6 @@ than reading as a phase nobody has sliced.
   redirected run writes the refusal into its output. **(c) unowned**; promoted
   by the maintainer deciding whether the shell departs from upstream's `main`
   there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
-
-- **KD124** — a `--filter` term or `--where` leaf with no operator whose
-  suffix cut falls inside a multi-byte character, `日本語` for `is null`,
-  panics `pgdt query` rather than being refused with the usage message.
-  **(b) owned by `M230`**, whose word match makes no byte cut. Detail:
-  `crates/pgdt/src/query/filter/term.rs`.
 
 - **KD125** — the warning a cold remote `.xz` walk announces says one round
   trip per stream, where the walk makes at least four (`KD36`), so it states

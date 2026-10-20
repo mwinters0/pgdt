@@ -530,6 +530,7 @@ mod tests {
             "v IS NOT DISTINCT FROM 1",
             "any run of whitespace, as in the term grammar"
         );
+        assert_eq!(ok("a=1 and b is\tnot  null"), "and(a=1, b IS NOT NULL)");
     }
 
     /// A keyword inside quotes is data — the tokenizer's scan skips a quoted

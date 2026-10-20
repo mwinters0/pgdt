@@ -239,6 +239,43 @@ fn the_is_forms_parse_on_a_term_with_no_operator() {
     assert_eq!(ok(r#""is null" = x"#), ("is null".into(), PredicateOp::Eq("x".into())));
 }
 
+/// The `IS` tests are words, as every worded operator is
+/// (`docs/design/decisions.md`, "D60"): any run of whitespace between them,
+/// and whitespace before `IS`, so a column ending `is` is not cut short.
+#[test]
+fn the_is_forms_are_matched_as_words() {
+    assert_eq!(ok("x is  null"), ("x".into(), PredicateOp::IsNull));
+    assert_eq!(ok("x\tIS\nNOT   Null"), ("x".into(), PredicateOp::IsNotNull));
+    assert_eq!(ok("v   is not\tunrepresentable"), ("v".into(), PredicateOp::IsNotUnrepresentable));
+    assert_eq!(ok("this is is null"), ("this is".into(), PredicateOp::IsNull));
+    assert_eq!(ok("not is null"), ("not".into(), PredicateOp::IsNull));
+    for spec in [
+        "xis null",
+        r#""x"is null"#,
+        "x isnull",
+        "x is notnull",
+        "is null",
+        "is not null",
+        "x not null",
+        "x is nullable",
+    ] {
+        let message = err(spec);
+        assert!(message.contains("--filter must be"), "`{spec}`: {message}");
+    }
+}
+
+/// A term with no operator whose words end in multi-byte characters is
+/// refused with the usage message, never cut inside a character.
+#[test]
+fn a_multi_byte_term_with_no_operator_is_a_usage_fault() {
+    for spec in ["日本語", "日本語 是 null", "é", "x is nulé", "日本語 is null 日本"]
+    {
+        let message = err(spec);
+        assert!(message.contains("--filter must be"), "`{spec}`: {message}");
+    }
+    assert_eq!(ok("日本語 is null"), ("日本語".into(), PredicateOp::IsNull));
+}
+
 /// A malformed quote is refused, never reinterpreted. Unterminated and
 /// trailing-text are one fault with one message.
 #[test]
