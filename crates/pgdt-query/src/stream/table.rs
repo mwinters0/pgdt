@@ -68,7 +68,8 @@ impl<'a> TableStream<'a> {
     /// The terms of this query whose comparison does not answer what
     /// PostgreSQL's own operator for that column's type would — one
     /// [`ComparisonNote`] per such term, in term order, empty until this
-    /// query's matching `COPY` block has resolved.
+    /// query's matching `COPY` block has resolved — but on a stream over a
+    /// plan's whole table, which holds the plan's from the start.
     ///
     /// **Per term, because a divergence is operator-conditional**
     /// (`docs/design/decisions.md`, "D59"): most are divergences of *order*

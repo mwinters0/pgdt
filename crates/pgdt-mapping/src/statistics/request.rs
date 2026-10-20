@@ -58,8 +58,9 @@ pub struct StatisticsRequest {
 /// gathered exactly, or the default size held between density bounds.
 ///
 /// **What was stated is kept apart from the default it stands for**: a stated
-/// minimum and the default minimum gather alike and are still different
-/// requests to a block already gathered under the other
+/// minimum and the default minimum gather alike and answer a block gathered
+/// under either alike, but differ towards one gathered under another sizing,
+/// which the stated one re-reads and the default keeps
 /// ([`crate::backfill_block`]); a stated size gathers unlike the unstated
 /// default whatever its value, with no cap and no merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

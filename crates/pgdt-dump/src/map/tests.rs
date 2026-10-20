@@ -80,8 +80,9 @@ fn a_toc_commented_table_is_one_span_from_the_comment_through_the_statement() {
 ///
 /// Deficiency register: `deficiency: KD1` — under I31's shape every data
 /// span in the file loses its TOC attribution, `COPY` and `INSERT` alike,
-/// so `Span::toc` is `None` where a plain dump names the table and the
-/// coverage diagnostic under-reports by that much. **(c) unowned**, the
+/// so `Span::toc` is `None` where a plain dump names the table, and the
+/// coverage diagnostic, counting the entry once on its comment block's own
+/// span, counts it against more spans than a plain dump's. **(c) unowned**, the
 /// shape being opt-in. Closing it takes three changes that land together —
 /// accept the prefix, veto on framing differently, re-tile the seam — and
 /// this test is the only thing that can observe the outcome.

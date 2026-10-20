@@ -52,11 +52,11 @@ pub(super) fn parse_toc_header_line(line: &str) -> Option<TocHeader> {
     })
 }
 
-/// Whether `-- Name: ...` (pg_dump's `_printTocEntry()` header, I3) is
-/// present in `line` — the lexical, field-blind boundary signal the module
-/// docs describe. Deliberately not full TOC parsing: it never reads
-/// `Type:`/`Schema:`/`Owner:`, only confirms this comment block is a real
-/// TOC entry rather than framing prose.
+/// Whether `line` opens with `-- Name: ` (pg_dump's `_printTocEntry()`
+/// header, I3) or `-- Statistics for Name: ` and holds the `; Type: ` marker
+/// — the lexical, field-blind boundary signal the module docs describe.
+/// Deliberately not full TOC parsing: it reads no field's value, only
+/// confirms this comment block is a real TOC entry rather than framing prose.
 ///
 /// `TOC_PREFIX_STATS` ("Statistics for ") counts, what follows a statistics
 /// entry being an ordinary statement the span must run into; `TOC_PREFIX_DATA`
@@ -92,9 +92,10 @@ pub(super) fn version_header_field(line: &str) -> Option<(bool, String)> {
     line.strip_prefix("-- Dumped by pg_dump version ").map(|rest| (false, rest.trim().to_string()))
 }
 
-/// What a closing comment block becomes: a TOC entry stays
-/// [`SpanBody::Unparsed`] (its span continues into the statement it precedes —
-/// see [`super::Builder::step`]'s `Mode::Comment` arm), the version-header
+/// What a closing comment block becomes: a TOC entry's that no statement
+/// follows stays [`SpanBody::Unparsed`] — asked only at a scan's end,
+/// [`super::Builder::step`] running a TOC entry into its statement without
+/// asking — the version-header
 /// block becomes [`SpanBody::VersionHeader`], and everything else is generic
 /// [`SpanBody::Framing`].
 pub(super) fn close_comment(

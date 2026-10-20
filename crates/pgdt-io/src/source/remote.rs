@@ -50,8 +50,8 @@ pub(super) struct RemoteObject {
     /// built from the validators **as the server stated them**
     /// (`docs/design/decisions.md`, "D21"), and a date
     /// round-tripped through a [`SystemTime`] is a second spelling of one of
-    /// them. Set by [`RemoteObject::probe`], which [`Origin::probe`] runs at
-    /// most once.
+    /// them. Set by [`RemoteObject::probe`], which [`Origin::probe`] runs
+    /// until it first succeeds.
     meta: std::sync::OnceLock<object_store::ObjectMeta>,
 }
 
@@ -398,9 +398,9 @@ impl ByteRangeSource for RemoteSource {
 /// [`open_local`](super::origin::open_local)'s sibling, acting on the same
 /// [`Verdict`] over the probe's magic bytes and `known`.
 ///
-/// **A remote `.xz` is read exactly as a local one is**, through
-/// [`FetchedXzSource`] over the plain source rather than through [`XzSource`](crate::XzSource),
-/// which pulls from a file (`docs/design/decisions.md`, "D14" and "D18").
+/// **A remote `.xz` is decoded as a local one is**, block by block, but
+/// through [`FetchedXzSource`] over the plain source rather than through
+/// [`XzSource`](crate::XzSource), which pulls from a file (`docs/design/decisions.md`, "D14" and "D18").
 /// Where the cache holds the seek table there is no walk at all; where
 /// it does not, the walk is announced before it is paid for
 /// ([`announce_remote_walk`]).

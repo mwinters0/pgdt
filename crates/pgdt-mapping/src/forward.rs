@@ -227,9 +227,10 @@ pub async fn map_forward(
     let seg_start = index.scanned_through;
     let prefix: Vec<Span> = index.spans.iter().filter(|s| s.end <= seg_start).cloned().collect();
     // The prefix tiles `[0, seg_start)`, so its last span ends exactly at the
-    // frontier and its `database` is the one in scope there. With no prefix,
-    // the preamble prepass has just run and I1 puts the frontier inside the
-    // first database it captured.
+    // frontier and its `database` is the one in scope there. With no prefix
+    // the frontier is byte zero — a preamble of no bytes, or a prepass
+    // skipped for a first preamble already known — and I1 puts it inside the
+    // first database the metadata captured.
     let database = prefix.last().and_then(|s| s.database.clone()).or_else(|| {
         index.metadata.as_ref().and_then(|m| m.databases.first()).and_then(|db| db.name.clone())
     });
@@ -250,7 +251,7 @@ pub async fn map_forward(
         ChunkedScanner::new(CopyScanner::resume(seg_start, None), size, scan_options.read);
     let mut throttle = SaveThrottle::new();
     // Whether the open `COPY` block is one `target_settled` would count — see
-    // the `CopyEnd` arm, its only reader.
+    // the `CopyEnd` arm and the `CopyStart` arm's closed region, its readers.
     let mut open_block_targets = false;
     // Whether `scan started`'s `jobs=` has already been corrected for this
     // scan — see [`report_shortfall`], its only reader and writer.
@@ -511,8 +512,9 @@ pub async fn map_forward(
     index.scanned_through = size;
     index.diagnostics = derived_diagnostics(&index.spans, size, source.seek_table().as_ref());
     cache.save(watch, source, index).await?;
-    // The true end of the file, as opposed to the two early
-    // `Ok(MapStop::Reached)`s above that stop a query at its settled target.
+    // The true end of the file, as opposed to the early
+    // `Ok(MapStop::Reached)`s above: one for a map already there, three
+    // stopping a query at its settled target.
     tracing::info!(bytes = size, reached_eof = true, "scan complete");
     Ok(MapStop::Reached)
 }

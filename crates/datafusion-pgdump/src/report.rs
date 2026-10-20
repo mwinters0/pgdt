@@ -140,8 +140,8 @@ impl Finding for RefusedTable {
 
 /// **The columns one registration compares bytewise because the dump records
 /// no collation for them** ([`ComparisonDivergence::UnknownCollation`]), as
-/// one finding in place of a [`ComparisonNote`] a column: on a real dump that
-/// is every text column of every table. [`crate::register_dump`] reports one
+/// one finding in place of a [`ComparisonNote`] a column: every column of a
+/// collatable type declaring no `COLLATE`, of every table. [`crate::register_dump`] reports one
 /// for the dump, every catalog's tables in it, and [`crate::PgDump::table`]
 /// one for its table — the factory's registration of a statement's table.
 /// None is reported where no column is uncollated.

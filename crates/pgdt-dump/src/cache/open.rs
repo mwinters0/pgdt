@@ -25,9 +25,11 @@ use pgdt_io::{ByteRangeSource, KnownCompression, Origin, Recognized};
 /// different opens, and a destructuring names `..`.
 #[non_exhaustive]
 pub struct Opened {
-    /// The source, ready to read: built from the compression layer the cache
-    /// settled, so an `.xz` file whose seek table the cache holds is not
-    /// walked again (`docs/design/decisions.md`, "D18").
+    /// The source, ready to read: built, where [`CacheMode::open`] loaded a
+    /// cache, from the compression layer it settled, so an `.xz` file whose
+    /// seek table the cache holds is not walked again
+    /// (`docs/design/decisions.md`, "D18"); opened claiming nothing where it
+    /// did not, and built by the caller under [`CacheMode::open_source`].
     pub source: Arc<dyn ByteRangeSource>,
     /// The baseline every later check of the source compares against, taken
     /// before the cache was judged against it.

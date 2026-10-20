@@ -49,7 +49,8 @@ pub trait ByteRangeSource: Send + Sync {
     /// `std::io::ErrorKind::UnexpectedEof`, not the prefix that does exist,
     /// on every implementation here: `read_exact_at` on a file, a length
     /// check on a fetched body, and a fill-or-fault decode on the compressed
-    /// ones.
+    /// ones — but a fetched range *starting* at or past the end, which the
+    /// server refuses, an `Error::Remote`.
     ///
     /// **A driver that is told what to fetch relies on that.**
     /// `xz_seek::Walk` derives each request from the bytes of the one before
@@ -119,7 +120,8 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// **Advisory, and the caller never learns what is underneath**: a local
     /// file answers "anywhere, a few chunk buffers each" and a compressed one
-    /// "at these block boundaries, a block each".
+    /// "at these block boundaries, a block each" where its budget
+    /// block-decodes, and one partition where it does not.
     ///
     /// **The default declines to advise**: one partition, at no stated cost.
     /// It answers where and at what cost, never whether — the caller decides
@@ -365,7 +367,8 @@ pub enum WaitPolicy {
 /// a chunk of any size is kept and reused by the local source's buffer pool.
 /// What a larger chunk costs is the pool holding four buffers of it, or the
 /// caller's stated memory budget's worth ([`crate::Parallelism`], defaulting
-/// to [`crate::DEFAULT_MEMORY_BUDGET`]), whichever is fewer — the slot count
+/// to [`crate::DEFAULT_MEMORY_BUDGET`]), whichever is fewer, and never fewer
+/// than one — the slot count
 /// falls out of that budget, so the cost levels off
 /// (`docs/design/decisions.md`, "D9").
 pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = 1 << 20;

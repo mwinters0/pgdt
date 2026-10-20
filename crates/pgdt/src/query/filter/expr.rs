@@ -30,10 +30,9 @@ pub(crate) fn parse_where(spec: &str) -> Result<Expr> {
     match parser.peek() {
         None => Ok(expr),
         Some(token) => {
-            // A stray `(` is almost always a composite or range literal
-            // written unquoted — the one collision between this grammar and
-            // the term grammar's values — so it earns a remedy, not only a
-            // diagnosis.
+            // A stray `(` after a complete expression is almost always a
+            // composite or range literal written unquoted, so it earns a
+            // remedy, not only a diagnosis.
             let hint = match token {
                 Token::Open => " — a `(` groups here, so quote a value that holds one",
                 _ => "",
@@ -620,8 +619,8 @@ mod tests {
     }
 
     /// A quote that never closes swallows the rest of the expression into one
-    /// leaf, which `parse_filter` refuses with the message every malformed
-    /// quote earns — never a fallback to the unquoted reading.
+    /// leaf, which `parse_filter` refuses as an unbalanced quote — never a
+    /// fallback to the unquoted reading.
     #[test]
     fn an_unclosed_quote_is_refused_by_the_leaf_grammar() {
         let message = err("name='alpha and b=2");

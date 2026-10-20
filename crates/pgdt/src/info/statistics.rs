@@ -126,8 +126,10 @@ impl<'a> TableStatistics<'a> {
             let summary = &mut self.columns[at];
             summary.gathered_blocks += 1;
             summary.groups_with_rows += with_rows.iter().filter(|&&r| r).count() as u64;
-            // The primary set over every value: what a query's pruning reads
-            // under the refuse and untyped modes (`QueryOptions::statistics_view`).
+            // The primary set over every value: the view a query's pruning
+            // reads under the refuse and untyped modes
+            // (`QueryOptions::statistics_view`), and the set it reads where a
+            // term's kind keys that one (`bounds_set_keyed_by`).
             if let Some(sortedness) = column.sortedness(BoundsSet::Primary, StatisticsView::Every) {
                 summary.groups_with_bounds += counted(&mut (0..statistics.groups.len()).map(|g| {
                     column.group_bounds(BoundsSet::Primary, StatisticsView::Every, g).is_some()

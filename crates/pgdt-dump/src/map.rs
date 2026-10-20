@@ -8,9 +8,11 @@
 //!
 //! ## Span boundaries: TOC-block-anchored, with a statement-grammar fallback
 //!
-//! A span opens at the `--` of a TOC comment block (recognized lexically —
-//! any run of `--`-prefixed lines containing one that matches `-- Name: ...;
-//! Type: ...`) or, absent one, at the first byte of a recognized statement.
+//! A span opens at the `--` of a comment block — a TOC entry's, recognized
+//! lexically by a line opening `-- Name: ` or `-- Statistics for Name: ` and
+//! holding `; Type: `, running into the statement it heads, a data entry's
+//! into its `COPY` block or `INSERT` run, and any other closing as a span of
+//! its own — or, absent one, at the first byte of a recognized statement.
 //! It runs greedily to the byte before the next span opens. **A span's `end`
 //! is where the next span starts**: pushing a span closes the one before it
 //! there, and [`Builder::finish`]/[`Builder::snapshot`] close the last at the
@@ -61,7 +63,9 @@
 //!
 //! - **TOC enrichment.** [`Span::toc`] is filled by [`parse_toc_header_line`]
 //!   whenever a comment block's TOC-Name line parses (I3, I16), unless the
-//!   statement it heads classifies as `Framing`, whose header is vetoed. The
+//!   statement it heads classifies as `Framing`, whose header is vetoed, or it
+//!   heads a large-object entry after a merged region's first, whose header is
+//!   harvested and kept by no span. The
 //!   verbose `-- TOC entry N (class C OID O)` / `-- Dependencies: ...` lines
 //!   that can precede the Name line are ordinary comment lines to this parser.
 //!
@@ -203,8 +207,9 @@ pub struct Builder {
     /// been seen with no flush since — see [`on_large_object_start`](Self::on_large_object_start).
     /// `.0` is the span's own start (the first region's preceding TOC
     /// comment, if it had one, else its own `BEGIN;` line); `.1` is the
-    /// offset just past the most recently closed `COMMIT;`, recorded and not
-    /// read — the span's `end` is the next span's start, as every span's is;
+    /// first `BEGIN;`'s offset until a `COMMIT;` closes it, then the latest
+    /// `COMMIT;`'s as [`on_large_object_end`](Self::on_large_object_end)
+    /// receives it, recorded and not read — the span's `end` is the next span's start, as every span's is;
     /// `.2` is the first
     /// region's own TOC header, kept as the merged span's single
     /// representative `toc` (`Span::toc` holds one header; a v17+ run can
@@ -340,8 +345,9 @@ impl Builder {
     /// `toc_owned` is `true` iff *this span's own* preceding comment carried
     /// a TOC header — `false` for a follow-on statement inheriting
     /// [`governing_toc`](Self::governing_toc), and, for a statement span
-    /// alone, `true` with `toc` `None` where that header did not parse —
-    /// every other kind owns a header only where it parsed; a `Framing`
+    /// and an `INSERT` run a statement turned out to open, `true` with `toc`
+    /// `None` where that header did not parse — every other kind owns a header
+    /// only where it parsed; a `Framing`
     /// statement's is vetoed
     /// before it reaches here. This is also where
     /// [`governing_toc`](Self::governing_toc) updates, every span this module
@@ -427,9 +433,9 @@ impl Builder {
                 if start < end {
                     // Only reachable for a comment block with no closing
                     // non-`--` line — never observed in a well-formed
-                    // `pg_dump` file, but classified the same way `step`'s own
-                    // comment-close arm would have, owning its header only
-                    // where it parsed.
+                    // `pg_dump` file. No statement follows, so a TOC entry's
+                    // block is a span alone (`close_comment`), owning its
+                    // header only where it parsed.
                     let owned = toc.is_some();
                     self.push_span(
                         start,
@@ -988,7 +994,8 @@ impl Builder {
         // deficiency: KD106 — `on_copy_start` and `on_large_object_start` call
         // this after their own `mem::replace` has left `self.mode` `Idle`, so
         // a run either one interrupts is dropped: its bytes extend the span
-        // before it and no `InsertRun` counts its rows. `pg_dump` follows every
+        // before it, or lie in none where the run opened the map, and no
+        // `InsertRun` counts its rows. `pg_dump` follows every
         // run with the next entry's TOC comment, which `step` closes it on.
         if let Mode::InsertRun { start, table, row_count, toc, toc_owned, .. } =
             std::mem::replace(&mut self.mode, Mode::Idle)

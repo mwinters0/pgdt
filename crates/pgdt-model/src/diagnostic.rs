@@ -32,7 +32,7 @@
 //! `pgdt_query::PlanNote` what a query's plan settled, also in query.
 //!
 //! **The four are unified at the drain, not at the storage type**: each
-//! implements [`Finding`], defined here in the model so that every crate can, and a
+//! implements [`Finding`], as does what the provider reports over them, defined here in the model so that every crate can, and a
 //! caller hands any of them to one [`DiagnosticSink`] of its own through
 //! [`drain`]. Each channel is still read where it is produced — a
 //! `DumpIndex`, a `ResolvedSchema`, a `TableStream` — so what the sink adds is
@@ -49,10 +49,12 @@ use serde::Serialize;
 /// model, about the file), `pgdt_codec::ResolvedColumn` (the codec, about one
 /// column's type), `pgdt_query::ComparisonNote` (query, about one term of
 /// a query, or one column in a query's semantics) and `pgdt_query::PlanNote`
-/// (query, about one query's plan).
+/// (query, about one query's plan), and by what `datafusion-pgdump` reports
+/// over them — `Located`, `RefusedTable`, `UncollatedColumns` and
+/// `BudgetedPlanNote`.
 ///
 /// A sink wanting the structured record rather than the sentence recovers it
-/// through [`Finding::as_any`], downcasting to one of those four.
+/// through [`Finding::as_any`], downcasting to one of those.
 pub trait Finding: Debug + Send + Sync {
     fn severity(&self) -> Severity;
     /// One sentence, with no severity label and no trailing newline: the
@@ -113,8 +115,9 @@ pub enum TilingIssue {
     OutOfOrder { index: usize },
     /// The first span doesn't start at byte 0.
     DoesNotStartAtZero { first_start: u64 },
-    /// The last span's `end` doesn't reach `expected_end` (the scanned
-    /// prefix's length, or the file size for a full scan).
+    /// The last span's `end` doesn't reach `expected_end`: the file's
+    /// addressable size, which a partial map's trailing `Unscanned` span
+    /// reaches too.
     DoesNotReachEnd { last_end: u64, expected_end: u64 },
     /// A span's own `start >= end`.
     Empty { index: usize },
@@ -172,9 +175,9 @@ pub enum DiagnosticKind {
     /// so every read (forward included) decodes from byte zero. Never a
     /// reason to refuse the file (`docs/design/decisions.md`, "D19").
     /// `block_count` is `SeekTable::block_count()` — 0 or 1 for a
-    /// non-seekable table — pushed once per index, whether the table was just
-    /// walked (`pgdt_mapping::build_index`, `pgdt_dump::preamble_only`) or
-    /// read back from a persisted cache (`pgdt_dump::cache::store::status_from_file`).
+    /// non-seekable table — pushed once per index, by
+    /// `pgdt_dump`'s `derived_diagnostics` wherever a whole map is finished or
+    /// loaded, and by `pgdt_dump::preamble_only` for a preamble alone.
     NonSeekableCompressedSource { block_count: usize },
 }
 

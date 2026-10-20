@@ -313,7 +313,9 @@ fn filter_part(part: &str, what: &str, spec: &str) -> Result<String> {
     }
 }
 
-/// The one message every malformed quote earns, wherever it was found.
+/// The message a malformed quote in a column name or value earns, wherever
+/// it was found — but a quote inside an `IN` list that never closes, which
+/// leaves the list unclosed and earns that refusal instead ([`in_list`]).
 fn unbalanced_quote(what: &str, quote: char, spec: &str) -> anyhow::Error {
     anyhow::anyhow!(
         "--filter `{spec}`: unbalanced `{quote}` quote in the {what} — a quoted {what} closes with the matching `{quote}` at its very end, and any `{quote}` inside it is doubled"

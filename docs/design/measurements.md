@@ -3763,8 +3763,8 @@ and a regression check rather than a throughput figure. The harness owns the
 2026-09-05 run (container `pgdt-koji`, `runs/pgdt-koji-scan.log`, `exit=0`,
 00:54:18Z → 01:57:03Z) is the regression check for the whole scan-performance
 campaign: eleven landed changes reworked how bytes reach the parser — the read buffer pool and the
-read-loop carry (`io.rs`, `scan.rs`, `stream.rs`), the bulk UTF-8 pass and the
-shared field split (`copy.rs`), the splice gate (`stream.rs`), the `INSERT`
+read-loop carry (`source/pool.rs`, `scan.rs`), the bulk UTF-8 pass and the
+shared field split (`copy.rs`), the splice gate (`forward.rs`), the `INSERT`
 statement scan (`preamble.rs`, `map.rs`) — and koji is the only input at a scale
 where *what the parser concludes is unchanged* can be checked against something
 other than a fixture.

@@ -991,9 +991,10 @@ distinct from `Owner: -`, and not covered by the `Owner:`/`Schema:` grammar
 above, since `dumpRelationStats` sets no owner at all). The flag that produces
 it is `--statistics`; `--with-statistics` exists in no version.
 `map::toc::parse_toc_header_line` recognizes all three prefixes; the boundary
-signal `looks_like_toc_name_line` recognizes `TOC_PREFIX_STATS` but not
-`TOC_PREFIX_DATA`, since only the former heads a statement rather than a
-`COPY` block.
+signal `looks_like_toc_name_line` recognizes `TOC_PREFIX_STATS`, whose entry
+runs into the statement it heads, but not `TOC_PREFIX_DATA`, whose comment its
+`COPY` block or `INSERT` run absorbs instead, so a statement intervening under
+I31 does not take the entry.
 
 **Verified against:** v18.6 source; fixtures at 13.23 through 18.6 for the
 `Schema:`/`Owner:` placeholder shapes and the `Tablespace:` suffix; v18.6
@@ -2161,7 +2162,7 @@ different strings.
 and `pg_dump` 16.14 (koji, no extra version).
 
 **Relied on by.** pgdt-dump's `map::toc::version_header_field`, which keeps the rest
-of the line whole, and `DatabaseMetadata::{server_version, pg_dump_version}`,
+of the line whole but for its surrounding whitespace, and `DatabaseMetadata::{server_version, pg_dump_version}`,
 which are reported and never compared or ordered.
 
 **Re-verify.**

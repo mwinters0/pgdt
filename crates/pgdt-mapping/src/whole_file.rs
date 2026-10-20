@@ -417,10 +417,8 @@ async fn map_file_watched(
             // **Nothing to bank, so nothing is written.** The prepass holds
             // every span aside until it is whole, and this arm is reached
             // only from a cold start, so a save here would write a map
-            // describing zero bytes — or strip an existing empty one of the
-            // identity diagnostics `carried` has already drained — and either
-            // can then refuse the resume it invited through
-            // `Error::CacheUnusable`. The source is asked directly,
+            // describing zero bytes, which can then refuse the resume it
+            // invited through `Error::CacheUnusable`. The source is asked directly,
             // there being no save left to ride ([`pgdt_dump::cache::SourceWatch`]).
             Err(e) if cancelled_read(&e, cancel) => {
                 watch.check(source).await?;

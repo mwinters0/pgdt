@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD126 -->
-**`KD1`–`KD126` are allocated, and nothing at or below `KD126` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD127 -->
+**`KD1`–`KD127` are allocated, and nothing at or below `KD127` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -421,8 +421,8 @@ than reading as a phase nobody has sliced.
 
 - **KD106** — an `INSERT` run that a `COPY` header or a large object's
   `BEGIN;` follows with no TOC comment between them is dropped rather than
-  closed: its bytes extend the span before it and no `InsertRun` counts its
-  rows; `pg_dump` follows every run with the next entry's TOC comment. **(c) unowned**; promoted
+  closed: its bytes extend the span before it, or lie in none where the run opened
+  the map, and no `InsertRun` counts its rows; `pg_dump` follows every run with the next entry's TOC comment. **(c) unowned**; promoted
   by a hand-written dump holding one. Detail: `crates/pgdt-dump/src/map.rs`.
 
 - **KD107** — a block's recorded first refused field, under
@@ -481,3 +481,10 @@ than reading as a phase nobody has sliced.
   redirected run writes the refusal into its output. **(c) unowned**; promoted
   by the maintainer deciding whether the shell departs from upstream's `main`
   there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
+
+- **KD127** — a `--filter` term opening with whitespace before `IS [NOT]
+  DISTINCT FROM` is split at that operator, naming the empty column, which no
+  table holds, where `--where` and the refusal ahead of the split find no
+  operator there and `--where` refuses the term as malformed (D60). **(c)
+  unowned**; promoted by a term of that shape reaching a user. Detail:
+  `crates/pgdt/src/query/filter.rs`.

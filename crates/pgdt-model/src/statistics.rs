@@ -13,7 +13,8 @@
 //! `character`'s without its trailing blanks, where the value fits
 //! [`DICTIONARY_ENTRY_MAX_BYTES`]; where it does not, a bytewise-ordered
 //! column's bound is a prefix or a successor of it ([`Bounds::min_exact`],
-//! [`Bounds::max_exact`]) and any other column's group keeps none.
+//! [`Bounds::max_exact`]), its group keeping none where no prefix has a
+//! successor, and any other column's group keeps none.
 //!
 //! **A row group is a byte range** (`docs/design/decisions.md`, "D34"): group
 //! `k` of a block is the rows whose first byte lies in `[k·N, (k+1)·N)` of the

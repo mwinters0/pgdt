@@ -405,8 +405,9 @@ pub struct DumpIndex {
     /// How much of the file the scan covered. Equal to the file size after an
     /// eager scan.
     pub scanned_through: u64,
-    /// Dump-level preamble metadata — see [`DumpMetadata`]. `None` only for
-    /// a `DumpIndex` built by hand rather than by `pgdt_mapping::build_index`. A derived
+    /// Dump-level preamble metadata — see [`DumpMetadata`]. `None` for a
+    /// `DumpIndex` built by hand, and for a mapping run interrupted before
+    /// its preamble prepass was whole. A derived
     /// view over `spans` (`pgdt_dump::dump_metadata_from_spans`),
     /// computed once (`docs/design/decisions.md`, "D34"), and shared by `Arc`
     /// with every table and plan read over the map rather than copied into
@@ -427,7 +428,8 @@ pub struct DumpIndex {
     /// Things worth telling the caller that have no `Result` to travel in —
     /// a tiling failure, a cache mtime mismatch. **Not persisted**
     /// (`#[serde(skip)]`, `docs/design/decisions.md`, "D34"): recomputed
-    /// wherever an index is mapped or loaded. A preamble-only run maps
+    /// wherever a whole index is mapped or loaded; an interrupted mapping
+    /// run's carries none. A preamble-only run maps
     /// only the preamble, so it returns a loaded cache's figures as they were, or none
     /// but its source's. See [`crate::Diagnostic`].
     #[serde(skip)]

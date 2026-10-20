@@ -16,6 +16,12 @@ mod term;
 /// structural and malformed earns the structural message —
 /// `--filter 'and is null'` is told that `AND` is a reserved spelling.
 pub(super) fn parse_filter_flag(spec: &str) -> Result<Expr> {
+    // deficiency: KD127 — `spec` reaches `parse_filter` untrimmed, where the
+    // tokenizer asked `filter_op_at` from its first non-blank byte, so a term
+    // opening with whitespace before `IS [NOT] DISTINCT FROM` passes the
+    // refusal as one leaf and then splits at that operator, at a boundary the
+    // tokenizer did not see: the empty column, which no table holds, where
+    // `--where` refuses the same term as malformed.
     refuse_where_structure(spec)?;
     parse_filter(spec)
 }

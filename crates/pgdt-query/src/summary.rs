@@ -208,8 +208,9 @@ pub(crate) fn table_summary(
                 .as_ref()
                 .filter(|_| believed)
                 .and_then(|kind| bounds_set_keyed_by(&gathered.columns()[c].bounds_kinds(), kind))
-                // A set or a NULL count not one to a group describes other
-                // groups, and nothing it says is read.
+                // A set not one to a group describes other groups and is not
+                // read, nor is one beside NULL counts that are not, whose
+                // total is then incomplete.
                 .filter(|&set| column.listed_groups(set) == Some(groups) && counted == groups);
             let Some(set) = set else {
                 accumulator.complete = false;
@@ -249,7 +250,8 @@ pub(crate) fn table_summary(
 /// already keeps, and only while one table is summarized.
 struct Accumulator<'a> {
     /// The kind bounds are read by, or `None` where this semantics believes
-    /// none for the column.
+    /// none for the column or reads a `character(n)`'s, whose stored set holds
+    /// no value the column emits.
     kind: Option<CompareKind>,
     nulls: u64,
     nulls_complete: bool,

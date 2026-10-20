@@ -15,7 +15,8 @@ use std::sync::Arc;
 /// **Every stored bound is on the right side of every value in its group,
 /// under the key a filter orders by, and a stated block order holds row by
 /// row** — over random groups of the three bytewise kinds and a keyed one,
-/// whose values collide on long shared prefixes past the cap.
+/// the two textual kinds' values colliding on long shared prefixes past the
+/// cap.
 #[test]
 fn stored_bounds_and_order_hold_every_value_under_its_key() {
     let mut rng = Rng(0x5eed);
@@ -294,7 +295,7 @@ fn a_long_texts_stored_bounds_are_on_the_right_side_of_it() {
     assert!(upper.len() <= DICTIONARY_ENTRY_MAX_BYTES);
     assert_eq!(cmp_text(&upper, &long), Ordering::Greater);
 
-    // The last character has no successor, so the one before it moves.
+    // A character past the prefix is never read: the prefix's own last moves.
     let top = format!("{}{}", "b".repeat(300), char::MAX);
     let upper = text_upper(&top, false).unwrap();
     assert_eq!(cmp_text(&upper, &top), Ordering::Greater);
@@ -330,7 +331,8 @@ fn a_long_byteas_stored_bounds_are_on_the_right_side_of_it() {
 /// **A `bytea` column gathers alike in `hex` and in `escape`**: bounds
 /// and row order over random groups, sorted in some rounds, of values
 /// short, either side of [`BYTEA_ESCAPE_HEAD_BYTES`] and past it, half
-/// sharing a head that long, over bytes each escaping differently.
+/// sharing a head that long, over bytes taking each of `escape`'s three
+/// forms.
 #[test]
 fn a_bytea_column_gathers_alike_in_either_output_form() {
     use pgdt_codec::decode::render_bytea_escape;

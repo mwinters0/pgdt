@@ -71,7 +71,8 @@ pub(crate) fn render_plan(
 /// would hold — or `None` where the text is not a value of the column's
 /// type, which is [`Error::FieldDecode`]'s condition without the row that
 /// raises it, or is one its Arrow type cannot hold, which a scan reads as
-/// NULL.
+/// NULL. An enum's undeclared label is the exception, read as any label is
+/// (`KD88`).
 ///
 /// It exists so that a caller holding field text out of band — a stored bound
 /// ([`pgdt_model::Bounds`]) — reads it back through the one decoder,

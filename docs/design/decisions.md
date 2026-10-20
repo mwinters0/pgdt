@@ -120,7 +120,7 @@ it before a source exists and `XzSource::with_table` walks nothing. `KnownCompre
 and condemns the span index too, both having come from one save of one file.
 
 ### D19 A budget decline is a `PlanNote`; a non-seekable file is warned, not refused
-A decline is a property of the file *and this run's budget*, which no persisted `DiagnosticKind` can be.
+A decline is a property of the file *and this run's budget*, and a `Diagnostic` is a finding about the file.
 A one-block file opens and raises `NonSeekableCompressedSource` naming `xz -T0`: only the user
 can judge one decode-from-zero. A statistics skip is a note too, stated at zero wherever statistics were consulted,
 and a narrowed span (D84) one wherever the plan charged less than stated; the ordinary case is the
@@ -233,7 +233,7 @@ TOC comment pending at its start (`KD1` where none is). `INSERT` runs fold in `f
 boundaries rest on no line-anchored invariant) and the run's end is lexed as the scanner lexes. Three cuts
 stay untaken until the `INSERT` row reader exists (`KD9`).
 
-### D34 `DumpIndex` stores no fact twice but sortedness; whole-file facts need `is_complete`
+### D34 `DumpIndex` stores no fact twice but sortedness, `metadata` and `scanned_through`; whole-file facts need `is_complete`
 `blocks()` is filtered, `metadata` computed once, diagnostics never persisted, roles excepted; a streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in
 their block behind an `Arc`, so save-gate clones copy a reference (`KD5`), and store sortedness; a group is a byte range, no piece knowing a global row index. A back-fill keeps a
 block's columns, and its size unless a stated size or bound it did not record moves it, a maximum it breaks re-reading it at the size its groups predict. Rejected: `SparseRowIndex`;
@@ -456,7 +456,7 @@ comparing operator, the NULL tests reading no value (I44–I47).
 `ComparisonNote` carries a path and its declared type, per term from `comparison_notes` (operator-
 conditional, so query's) and per column from `Table::divergences` in a query's semantics — DataFusion's variants
 there alone, as DataFusion's `ORDER BY` reaches a column no term names. See I45, `KD7`, `KD10`. A provider registration
-folds its `UnknownCollation` columns into one `UncollatedColumns` finding, every text column of a real dump earning one.
+folds its `UnknownCollation` columns into one `UncollatedColumns` finding, every column of a collatable type with no `COLLATE` earning one.
 Rejected: the front end folding them, re-reading the provider's sentences to recover a table and a reason.
 
 ### D60 `--where` is a second flag and the tokenizer defines the refusal set
