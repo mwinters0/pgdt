@@ -84,6 +84,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - run: python3 scripts/release.py image
+      - run: python3 scripts/release_ci.py perf-events
       - run: python3 scripts/release.py suite
 
   arm64-release:
@@ -126,6 +127,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - run: python3 scripts/release.py image
+      - run: python3 scripts/release_ci.py perf-events
       - run: python3 scripts/release.py suite
 
   # And the shipped archive's `pgdt`, in a fresh `debian:trixie`: the one thing
