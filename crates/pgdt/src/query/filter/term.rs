@@ -380,13 +380,16 @@ pub(super) fn parse_filter(spec: &str) -> Result<Expr> {
 /// written, one space between its words and no boundary before `is`, so
 /// `x is  null` is refused as a term with no operator and `xis null` is read
 /// as `x IS NULL`, and so for each of the four, under `--filter` and every
-/// `--where` leaf alike; a term whose cut for a suffix falls inside a
-/// multi-byte character, `日本語` for `is null`, panics in `split_at` rather
-/// than being refused. **(c)
+/// `--where` leaf alike. **(c)
 /// unowned**; closing it means the worded operators' own word boundaries
 /// here.
 fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
     let split = s.len().checked_sub(suffix.len())?;
+    // deficiency: KD124 — `split` is a byte count with no character boundary
+    // checked, so a term whose cut falls inside a multi-byte character
+    // (`日本語` against `is null` cuts at byte 2) panics here instead of
+    // falling through to the usage message; `str::get` or `is_char_boundary`
+    // would refuse it as a term with no operator.
     let (head, tail) = s.split_at(split);
     tail.eq_ignore_ascii_case(suffix).then_some(head)
 }

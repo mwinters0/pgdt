@@ -193,6 +193,10 @@ impl Finding for Diagnostic {
 
     fn message(&self) -> String {
         match &self.kind {
+            // deficiency: KD126 — every `TilingIssue` is counted as a gap or an
+            // overlap, though `OutOfOrder`, `DoesNotStartAtZero`,
+            // `DoesNotReachEnd` and `Empty` are neither; the message names no
+            // kind of the issues it counts.
             DiagnosticKind::TilingBroken { issues } => format!(
                 "the file map has {} gap(s)/overlap(s) that don't tile the file — this is a pgdt \
                  bug, please report it",
