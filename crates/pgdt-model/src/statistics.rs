@@ -602,7 +602,9 @@ pub enum Sortedness {
     Ascending,
     Descending,
     /// At most one distinct value, every one placed: in both orders, so a
-    /// block of it sets no direction for the blocks beside it.
+    /// block of it sets no direction for the blocks beside it. Recorded by the
+    /// gatherer, never read off equal bounds: a block of one value whose
+    /// bounds were truncated holds a prefix and a successor that differ.
     Constant,
     Unsorted,
 }

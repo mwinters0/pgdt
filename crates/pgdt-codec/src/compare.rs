@@ -121,7 +121,8 @@ pub enum CompareKind {
     /// `exact` is `TypeKind::Enum`'s: the labels are all the type holds, so
     /// a field naming another is one `enum_in` refuses (I70). `name` is the
     /// type's, schema-qualified as `TypeDef::name` spells it: two enum types
-    /// are two orders, which the server relates by no operator.
+    /// are two orders, which the server relates by no operator. Two `Arc`s,
+    /// not one holding both: that adds a dependent load to every label scan.
     Enum {
         name: Arc<str>,
         labels: Arc<[String]>,
@@ -216,7 +217,10 @@ impl CompareKind {
     /// `Dictionary`, compared by label text) and `character(n)` (emitted
     /// padded) among them, and `macaddr` too, though the file's text orders
     /// as its octets do (`docs/design/decisions.md`, "D40"). `interval`
-    /// becomes its field-wise variant.
+    /// becomes its field-wise variant. `Text`'s `varying` passes through, the
+    /// key's order dropping it in DataFusion's semantics: cleared here,
+    /// `bounds_kinds` would keep a second bounds set for every `character
+    /// varying` column.
     ///
     /// A special value the emitted type cannot hold (D96) keeps its rank in
     /// the key, which no Arrow value contradicts.

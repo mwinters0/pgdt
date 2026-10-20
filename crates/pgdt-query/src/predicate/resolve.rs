@@ -366,6 +366,9 @@ pub(super) fn resolve_term(
 ) -> Result<ResolvedTerm> {
     let text = match predicate.op.operand() {
         Operand::Literal(text) => text,
+        // Unreachable rather than typed away by a value-free mirror of the
+        // operator, public or private, which would save one clone a block and
+        // restate the operator set.
         Operand::Set(_) => unreachable!("a membership resolves through `resolve_leaf`"),
         Operand::None => {
             return Ok(ResolvedTerm {
@@ -943,7 +946,9 @@ pub(crate) fn resolve_expr(
 /// `resolved` — the block's own **unprojected** schema — does not carry, as
 /// `Error::UnknownPredicateColumn`. **Names come before what a term asks**:
 /// the plan runs this ahead of the strings schema mode's refusal and of
-/// [`resolve_expr`]'s (`docs/design/decisions.md`, "D54").
+/// [`resolve_expr`]'s (`docs/design/decisions.md`, "D54"). A pass of its
+/// own, not a lookup in that walk or a skip in the mode's check: either lets
+/// an earlier term's refusal outrank a later term's typo.
 pub(crate) fn check_columns(
     filter: &Expr,
     resolved: &ResolvedSchema,

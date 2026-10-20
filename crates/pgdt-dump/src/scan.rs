@@ -138,7 +138,8 @@ pub struct DollarQuoteEnd {
 /// [`CopyStart`] is boxed because it alone would set the enum's size, and
 /// every event is moved several times on its way out of a read loop. The box
 /// costs one allocation a block and keeps every event's move to a [`Row`]'s
-/// length.
+/// length. It is on the variant, not a `Box<CopyHeader>` in [`CopyStart`]:
+/// the enum's size is the problem, and a public field keeps no indirection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event<'a> {
     CopyStart(Box<CopyStart>),

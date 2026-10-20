@@ -328,6 +328,12 @@ impl<'a> ChunkEvents<'a> {
 
     /// Record what the pass just run out consumed, and move to the next:
     /// `true` where one follows, `false` once both have run out.
+    ///
+    /// Fallible, a long line refused where the chunk leaves it: checked by
+    /// `next_chunk` instead, it would move for a loop leaving between chunks
+    /// (the replay's dynamic filter), a semantic change bought for codegen;
+    /// nor does a further attribute or cold continuation split the switch,
+    /// its saving resting on inlining (`docs/design/decisions.md`, "D108").
     #[cold]
     fn end_pass(&mut self) -> Result<bool> {
         let used = self.scanner.take_consumed();

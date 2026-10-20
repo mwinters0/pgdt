@@ -37,7 +37,10 @@ pub struct Opened {
     /// What the cache held.
     pub cache: Held,
     /// The mode the cache was opened under: the path a pass saves to, and
-    /// the selection its watch and its refusals were taken under.
+    /// the selection its watch and its refusals were taken under. Whole, not
+    /// narrowed to where it saves: its strictness and `overwrite_unusable` are
+    /// the open's own values, and a narrower type would be a second name and
+    /// a second `save`.
     pub mode: CacheMode,
 }
 

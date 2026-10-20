@@ -268,7 +268,10 @@ impl QueryPass {
 
     /// The replay's `resolved the arrangement`, said once the mapping pass
     /// has settled the table and the replay is carved: [`Resolved::announce`],
-    /// with `held_bytes=` where the settled table holds statistics.
+    /// with `held_bytes=` where the settled table holds statistics. Said once,
+    /// after the pass: before it the line would name a count the held
+    /// statistics may lower, and the pass's own carve is printed where the
+    /// pass maps nothing.
     pub(crate) fn announce_replay(&self) {
         self.resolved.announce_holding(self.held);
     }

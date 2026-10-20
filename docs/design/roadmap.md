@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27–P31, P35 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P36 — the embedder API | **Complete** | [spec](roadmap-P36-embedder-api.md); [notes](roadmap-P36-embedder-api-notes.md) |
+| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27–P31, P35, P36 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
@@ -718,14 +717,6 @@ and "I/O, memory and parallelism").
   `CREATE TABLE`.
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
-
-## P36 — The embedder API
-
-**Complete.** Each library crate's surface, and `datafusion-pgdump`'s,
-reshaped for its embedder, with the orchestration every embedder repeats
-moved into the library. The spec is
-[`roadmap-P36-embedder-api.md`](roadmap-P36-embedder-api.md), and what it
-leaves the next phase its [notes](roadmap-P36-embedder-api-notes.md).
 
 ## P33 — Every line PostgreSQL writes and reads
 

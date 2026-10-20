@@ -22,10 +22,9 @@ which is fixed before a row is read: what it keeps or merges into a matched
 block's statistics past that bill is held with nothing failing. Such a gather
 has to bill what it adds in the replay's own carving.
 
-**Origin.** 2026-09-23 ([`decisions.md`](decisions.md), "D85");
-[`../status/history/2026-10-19.md`](../status/history/2026-10-19.md),
-"`pgdt query` bills the statistics its replay holds". *Contingent on* the
-replay gathering nothing.
+**Origin.** 2026-09-23, and 2026-10-19 for `pgdt query`'s carving
+([`decisions.md`](decisions.md), "D85"). *Contingent on* the replay gathering
+nothing.
 
 ## A query already maps a metadata-level table, and gathers nothing
 

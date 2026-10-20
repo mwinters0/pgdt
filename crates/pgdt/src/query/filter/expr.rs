@@ -284,7 +284,9 @@ fn tokenize(spec: &str) -> Vec<Token<'_>> {
 }
 
 /// Push `spec[start..end]`, trimmed, as a leaf — unless there is no pending
-/// leaf, or it is all whitespace.
+/// leaf, or it is all whitespace. Trimmed as `str::trim`, Unicode whitespace
+/// too: trimmed to ASCII alone, a leaf led by a wide space splits at `IN`
+/// under both flags, naming the empty column.
 fn flush<'a>(tokens: &mut Vec<Token<'a>>, spec: &'a str, start: Option<usize>, end: usize) {
     if let Some(start) = start {
         let text = spec[start..end].trim();

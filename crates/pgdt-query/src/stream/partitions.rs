@@ -59,7 +59,9 @@ use crate::summary::partition_orders;
 /// the query uses them, for a [`DynamicFilter`] to be read against as its
 /// sub-streams run ([`Self::under`]): nothing is copied, so they cost
 /// nothing the map does not while the dump is held, and a plan kept after
-/// the dump is dropped keeps them.
+/// the dump is dropped keeps them. Keeping none until a filter arrives would
+/// free nothing: the [`Table`](crate::Table) still holds them, and the
+/// provider bills its dump whole.
 pub struct TablePartitions {
     source: Arc<dyn ByteRangeSource>,
     watch: Arc<SourceWatch>,
@@ -238,7 +240,9 @@ impl TablePartitions {
     /// **serially**, cutting batches at `max_rows` rows: one stream over the
     /// rest of the plan's segments, whatever cut it was planned under, its
     /// own tokens resuming as [`Self::in_file_order`]'s do. Nothing is mapped,
-    /// loaded or saved (`docs/design/decisions.md`, "D49").
+    /// loaded or saved (`docs/design/decisions.md`, "D49"). Serial because a
+    /// re-cut would need a piece starting inside a block at the token's
+    /// in-copy state (`docs/design/decisions.md`, "D51").
     ///
     /// Refused, [`Error::ResumeQueryMismatch`](pgdt_core::Error::ResumeQueryMismatch),
     /// for a token another query produced — another table, filter,

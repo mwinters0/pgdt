@@ -255,7 +255,9 @@ impl fmt::Display for TableSelector {
 /// it was resolved from, cloned once, their statistics shared with that map.
 /// So it outlives the [`Dump`] that resolved it, and a plan made from it
 /// reads the source the blocks describe, checked against the baseline the
-/// map was believed under.
+/// map was believed under. It is the one `'static` type a complete map and a
+/// cold pass both yield, so an adapter holds it; a borrowing `Table<'a>`
+/// would need a second type for the cold pass, or a second owner lending it.
 pub struct Table {
     source: Arc<dyn ByteRangeSource>,
     watch: Arc<SourceWatch>,

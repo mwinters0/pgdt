@@ -289,7 +289,9 @@ impl Mapped {
 /// a field its type's `*_in` refuses ([`PostgresInvalidValues`]). **Neither
 /// is part of `statistics`**, which a cache's statistics are compared
 /// against: they are the run's, not what the cache holds
-/// (`docs/design/decisions.md`, "D19", "D103").
+/// (`docs/design/decisions.md`, "D19", "D103"). No options value groups
+/// `read` with `invalid`, a second grouping of [`ReadOptions`], or holds the
+/// arrangement too, which is resolved per run where options are reused.
 ///
 /// **`cancel` is the caller's ask that the run stop**
 /// (`docs/design/decisions.md`, "D26"): polled once per chunk, leader window

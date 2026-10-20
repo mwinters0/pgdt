@@ -2,7 +2,9 @@
 //! read in its semantics under two orders: by DataFusion's own comparison
 //! coercion, cast and comparison kernel, which the codec cannot reproduce,
 //! linking no arrow-cast (`docs/design/decisions.md`, "D74"). DataFusion is
-//! its oracle (`tests/key_order.rs`).
+//! its oracle (`tests/key_order.rs`). Not Arrow's `cmp` kernels alone, which
+//! relate one type: DataFusion coerces first, as PostgreSQL's answers count
+//! its casts.
 
 use std::cmp::Ordering;
 

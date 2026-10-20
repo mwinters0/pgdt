@@ -14607,7 +14607,8 @@ def cmd_verify_additive(since: str | None) -> int:
 #: limit, since the allowance it gathers within is discovered from the
 #: container (D85); both `query` modes; and the provider's typed scan. The
 #: same shapes the register times, so a count here and a figure there are one
-#: workload.
+#: workload. `pgdt sql`'s runs fall on two counts, so a rise smaller than their
+#: step is unresolved there, and the typed `query` counts the same decode finer.
 COUNT_PAIR_SHAPES: tuple[tuple[str, str, str | None], ...] = (
     ("parse", "`pgdt parse` at the metadata level", None),
     (f"{STATISTICS_FAMILY}data", "`pgdt parse` at the data level", STATISTICS_MEMORY),
@@ -14747,7 +14748,7 @@ def count_pair_resolution(parent: Sequence[int], tree: Sequence[int]) -> str:
     direction, and **unresolved** otherwise. A fact, not a verdict: a
     resolved rise is what refuses a hot-path slice, and on a pair of
     identical sources any resolved row, either way, falsifies the instrument
-    (`roadmap-P36-embedder-api.md`, "What a hot-path slice owes")."""
+    (`docs/design/decisions.md`, "D108")."""
     if resolved_above(tree, parent):
         return "resolved, a rise"
     if resolved_above(parent, tree):

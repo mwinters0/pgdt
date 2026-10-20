@@ -65,7 +65,10 @@ pub struct ValueKey {
 enum Key {
     /// A scalar column's value, through its kind's representation, and in
     /// DataFusion's semantics the type its column emits it as, where that
-    /// type holds it.
+    /// type holds it. Not derivable from `order`: a `Decimal` keeps its scale
+    /// alone, a `numeric(p,s)` is `Decimal128` or `Decimal256` by `p`, and an
+    /// enum ordered as `Text` is emitted as a `Dictionary`. One key type for
+    /// both semantics, not a second holding a `ScalarValue`.
     Scalar { order: ScalarOrder, key: OrderKey, emitted: Option<DataType> },
     /// An array's, a record's, a range's or a multirange's. Boxed: a
     /// `NestedKey` carries three vectors, and a scalar key is the common

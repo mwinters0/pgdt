@@ -56,7 +56,9 @@ tempfile = "3.27.0"
 thiserror = "2.0.20"
 tokio = "1.53.1"
 # `CancellationToken` alone, which needs no feature: the caller's ask that a
-# mapping pass stop (`docs/design/decisions.md`, "D26").
+# mapping pass stop (`docs/design/decisions.md`, "D26"). Chosen over a flag of
+# our own, cost not deciding: DataFusion and `object_store` already link it,
+# and `is_cancelled` locks an uncontended mutex, polled once a chunk.
 tokio-util = { version = "0.7.19", default-features = false }
 tracing = "0.1"
 # A frozen, read-only vendored copy — `vendor/xz-seek` is excluded from this

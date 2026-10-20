@@ -53,7 +53,8 @@ impl Table {
     /// mapping pass polls it (`docs/design/decisions.md`, "D26"): a pass it
     /// stops saves what it holds and answers [`Error::ScanCancelled`], the
     /// table being unsettled. A caller that never stops one passes a token it
-    /// never fires.
+    /// never fires. It is not handed to the source, so a remote read in flight
+    /// finishes before the next chunk's poll.
     pub async fn settle(
         opened: Opened,
         selector: &TableSelector,

@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D107 -->
+<!-- decision-watermark: D108 -->
 
 ## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
@@ -185,7 +185,7 @@ Evidence: `xz-decode-scaling`, `parallel-scan-throughput`, `scan-throughput-*`.
 ### D26 Cancellation is `map_file`'s argument, polled per chunk or leader window by the mapping passes alone
 A block can be hundreds of gigabytes, so block-boundary cancellation is a hang; `map_file`'s scan and back-fill keep a partial result. It
 takes a `tokio_util` `CancellationToken`, required: options are reused across runs, and a fired token in one stops every later run at byte 0.
-A query's plan and streams take none, a dropped stream being their cancellation (D90); a cold query's pass (`Table::settle`) takes one, answering `ScanCancelled` where it fires. The preamble scan polls none, a stop there reading as the first `COPY`
+A query's plan and streams take none, a dropped stream being their cancellation (D90), nothing they spawn outliving one chunk's `spawn_blocking`; a cold query's pass (`Table::settle`) takes one, answering `ScanCancelled` where it fires. The preamble scan polls none, a stop there reading as the first `COPY`
 header and caching as complete; the token handed to the source drops a read in flight, failing it unbanked. **The shape follows the
 command**: `parse` interrupts, at byte 0 too, then dies by the signal, and a second one, mid-save too, or one in the listing, ends it in the
 handler. As init (RT19) `pgdt` exits 128+n on every signal ending them elsewhere but a fault's, left to the kernel, and what `parse`'s guard
@@ -690,6 +690,15 @@ moving the calendar fails the check; `floor_mapping.py` holds columns and typed 
 forces its extremes (D38). Rejected: the list kept by review; a bound written per type (the list again); a decoder's refusal as the test,
 which took `24:00:00`; a binary type's cast, which reads its bytes as UTF-8. Code: `arrow_holds`, `floor_mapping.py`'s `extremes_problems`.
 Evidence: `every_extreme_is_held_by_arrow_or_recorded`.
+
+### D108 A hot-path change is priced by `--count-pair`, and a rise it resolves is placed by callgrind, then reworked or accepted
+`instructions:u` on the shipped build at the tree's parent and at the tree, `release-profile`'s reps a shape a leg, a row resolved where one leg's fewest clears the other's most:
+one build's counts move between runs, so a change is read against its own pair's spread, and a pair of identical sources resolves no row. A resolved rise is placed by callgrind's
+`Ir` on the two legs — the change's where it sits in machine code the tree changed or under a frame of it, source changed or not; layout only where callgrind does not reproduce it or
+no changed code sits above — then reworked into a shape as clean, or accepted; none is too small to place. A phase adopts the refusal by its spec. Rejected: `release-profile` sat twice
+(three legs, its `parse` row short of gathering); one count a leg; determinized shapes (a workload never shipped); a sampled profile placing it (line tables move the code); a figure's
+machinery (a count is no figure); a materiality floor; rework resting on codegen — inlining attributes, a cold continuation of `ChunkedScanner`'s pass switch, an infallible `end_pass`, an enum's name and labels behind
+one `Arc`. Code: `measure.py`'s `cmd_count_pair`, `count_pair_resolution`. Evidence: `test_measure.py`'s `CountPair`; `runs/attr-36.4.3-20261016-callgrind/`'s `run.sh` and `analyze.py`.
 
 ## Releases (`release/`, `scripts/release.py`, `scripts/release_ci.py`, `scripts/debian_window.py`)
 ### D104 A release is `pgdt` for Linux, linked against one digest-pinned Debian-stable image that also builds what the register times

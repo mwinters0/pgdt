@@ -135,6 +135,11 @@ impl ArrangementRequest {
 /// What one pass runs under, resolved from an allowance: the
 /// [`Parallelism`], what a gathering pass's statistics may hold, and where
 /// the allowance came from.
+///
+/// **No `Default`, and no constructor but [`Self::resolve`]**, so no caller
+/// pairs a parallelism with an allowance not carved from it: a parallelism
+/// stated alone is `Allowance::NoneFound` with `Jobs::Stated`, declining
+/// nothing (`docs/design/decisions.md`, "D1", "D83").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Arrangement {
     parallelism: Parallelism,
