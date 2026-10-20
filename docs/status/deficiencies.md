@@ -331,8 +331,9 @@ than reading as a phase nobody has sliced.
 
 - **KD52** — a `--filter` term or `--where` leaf ending `is [not] null` or
   `is [not] unrepresentable` is matched as that literal suffix, so `xis null`
-  asks for `x IS NULL` and `x is  null` is refused. **(c) unowned**; promoted by a user meeting
-  either. Detail: `crates/pgdt/src/query/filter/term.rs`.
+  asks for `x IS NULL` and `x is  null` is refused. **(b) owned by
+  `M230`**, which matches the worded operators as words under D60's rule.
+  Detail: `crates/pgdt/src/query/filter/term.rs`.
 
 - **KD58** — `map_file` drops the non-seekable warning a cache load adds and
   never recomputes it, so `pgdt parse` of a one-block `.xz` does not list it
@@ -512,17 +513,17 @@ than reading as a phase nobody has sliced.
 - **KD124** — a `--filter` term or `--where` leaf with no operator whose
   suffix cut falls inside a multi-byte character, `日本語` for `is null`,
   panics `pgdt query` rather than being refused with the usage message.
-  **(c) unowned**; promoted by the maintainer's grilling or by a user typing a
-  non-ASCII term. Detail: `crates/pgdt/src/query/filter/term.rs`.
+  **(b) owned by `M230`**, whose word match makes no byte cut. Detail:
+  `crates/pgdt/src/query/filter/term.rs`.
 
 - **KD125** — the warning a cold remote `.xz` walk announces says one round
   trip per stream, where the walk makes at least four (`KD36`), so it states
-  a quarter of what the user is about to wait for. **(c) unowned**; promoted
-  by the maintainer's grilling or by a user weighing the warning on a dump of
-  many streams. Detail: `crates/pgdt-io/src/source/remote.rs`.
+  a quarter of what the user is about to wait for. **(b) owned by `M231`**,
+  which says several, as the manual does. Detail:
+  `crates/pgdt-io/src/source/remote.rs`.
 
 - **KD126** — the map's tiling-failure diagnostic counts every issue as a
   "gap(s)/overlap(s)", though an issue may be a span out of order, a map not
   starting at byte 0, one not reaching the scanned end or an empty span.
-  **(c) unowned**; promoted by the maintainer's grilling or by a tiling bug
-  reaching a user. Detail: `crates/pgdt-model/src/diagnostic.rs`.
+  **(b) owned by `M232`**, which tallies them by kind. Detail:
+  `crates/pgdt-model/src/diagnostic.rs`.

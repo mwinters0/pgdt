@@ -380,9 +380,9 @@ pub(super) fn parse_filter(spec: &str) -> Result<Expr> {
 /// written, one space between its words and no boundary before `is`, so
 /// `x is  null` is refused as a term with no operator and `xis null` is read
 /// as `x IS NULL`, and so for each of the four, under `--filter` and every
-/// `--where` leaf alike. **(c)
-/// unowned**; closing it means the worded operators' own word boundaries
-/// here.
+/// `--where` leaf alike. Closing it matches the worded operators as words,
+/// under the boundary rule `docs/design/decisions.md`, "D60" states for every
+/// keyword.
 fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
     let split = s.len().checked_sub(suffix.len())?;
     // deficiency: KD124 — `split` is a byte count with no character boundary
