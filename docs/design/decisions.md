@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D109 -->
+<!-- decision-watermark: D110 -->
 
 ## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
@@ -726,3 +726,12 @@ The arm64 smoke runs in `release-publish` on real arm64, against the draft's own
 Rejected: swap on the runner (`release.py`'s `--memory-swap` tied to `-m`, a cap sized against a peak nobody has read, a fat link paging); `ubuntu-24.04-arm` (the same memory and aarch64 backend); a larger paid runner; an arm64-only profile (reopens D105, the targets shipping different builds); a self-hosted runner for the arm64 build (a standing setting GitHub advises against on a public repository, up at each dispatch, `sudo nerdctl` on it);
 a keyless Sigstore signature under the maintainer's identity (no source repository, so mise's `github:` backend fails it); the local build attested by a workflow's `actions/attest` (provenance that verifies cleanly and is false); the archive uploaded before the dispatch (no input carries a file, and `preflight` refuses a pre-made draft); two checksum files (`installing.md`'s one `sha256sum -c` broken); qemu-user here for the smoke (the last real-arm64 run of the shipped binary dropped); refusing on an x86-64 mismatch now (a release blocked on a property nobody has shown).
 Reopens: a GitHub-hosted runner holding the fat arm64 link; RL1 or RL2 failing. Code: `release_ci.py`'s `step_attach`, `plan_attach`, `step_fetch`, `CI_TARGETS`; `release-publish.yml`'s `arm64-smoke`. Evidence: RL1–RL3; `test_release_ci.py`'s `Attach`, `Fetch`, `Workflows`.
+
+### D110 The release suite is the round's, less the never-shipped measurement apparatus
+`release.py suite` runs the round's nextest and doctests (`check.every_check`) but for each member whose manifest sets `[package.metadata.pgdt] apparatus`, the harness's instruments;
+`mise run check` still tests every member. An attested build tests what ships: performance and the apparatus are verified on the maintainer's machine before a cut, never during one, and
+the apparatus needs host facilities a runner need not have, `count-instructions` a hardware counter that GitHub's x86-64 runner did not open.
+Rejected: lowering the runner's `perf_event_paranoid` (it answered the EACCES, not the ENOENT that followed); a counting test that skips where the counter does not open (a broken counter
+passing on this machine too); the apparatus named in `release.py` (a new instrument tested on the runner until someone edits the list). Reopens: an instrument shipping, or a shipped member
+needing a facility a runner lacks. Code: `release.py`'s `suite`, `check.Package.apparatus`. Evidence: `test_release.py`'s `test_the_suite_leaves_out_the_measurement_apparatus`,
+`test_the_apparatus_the_suite_leaves_out_is_a_dependency_of_no_member`; `runs/release-v0.2.0/x86-64-suite-39530108777.log`.

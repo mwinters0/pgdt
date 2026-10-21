@@ -623,28 +623,6 @@ class Publish(unittest.TestCase):
             release_ci.step_publish(gh, None)
 
 
-class PerfEvents(unittest.TestCase):
-    def level(self, tmp: str, value: int) -> Path:
-        path = Path(tmp) / "perf_event_paranoid"
-        path.write_text(f"{value}\n")
-        return path
-
-    def test_a_level_at_or_below_the_maximum_is_left_as_it_is(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            for value in (-1, 0, 2):
-                run = unittest.mock.Mock()
-                with contextlib.redirect_stdout(io.StringIO()):
-                    self.assertEqual(release_ci.step_perf_events(self.level(tmp, value), run), 0)
-                run.assert_not_called()
-
-    def test_a_level_above_the_maximum_is_lowered_to_it(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            run = unittest.mock.Mock()
-            with contextlib.redirect_stdout(io.StringIO()):
-                self.assertEqual(release_ci.step_perf_events(self.level(tmp, 4), run), 0)
-            run.assert_called_once_with(["sudo", "sysctl", "-w", "kernel.perf_event_paranoid=2"], check=True)
-
-
 class CommandLine(unittest.TestCase):
     def test_the_environment_names_the_repository(self):
         self.assertEqual(release_ci.repo_from_env({"GITHUB_REPOSITORY": "mwinters0/pgdt"}), "mwinters0/pgdt")
@@ -835,14 +813,6 @@ class Workflows(unittest.TestCase):
         self.assertIn(artifact, fetch)
         self.assertIn(artifact, smoke)
         self.assertLess(smoke.index("actions/download-artifact@"), smoke.index("release_ci.py smoke"))
-
-    def test_every_suite_runs_where_its_events_can_be_counted(self):
-        jobs = jobs_of("release-build.yml")
-        suites = [job for job, body in jobs.items() if "release.py suite" in "\n".join(body)]
-        self.assertEqual(sorted(suites), ["arm64-suite", "x86-64-suite"])
-        for job in suites:
-            text = "\n".join(jobs[job])
-            self.assertLess(text.index("release_ci.py perf-events"), text.index("release.py suite"), job)
 
     def test_the_artifacts_the_jobs_pass_on_are_the_paths_the_scripts_use(self):
         text = "\n".join(lines_of("release-build.yml"))

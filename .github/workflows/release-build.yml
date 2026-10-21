@@ -1,8 +1,10 @@
 # The release build: a manually dispatched workflow that builds `pgdt` for
-# x86-64 from one pushed commit, runs the suite on both architectures, and
-# leaves a DRAFT Release of the x86-64 archive. The arm64 archive is built from
-# the same commit on the maintainer's machine, whose link a runner cannot hold,
-# and attached to the draft there (`docs/design/decisions.md`, "D109").
+# x86-64 from one pushed commit, runs the suite on both architectures -- the
+# round's, less the measurement apparatus (`docs/design/decisions.md`,
+# "D110") -- and leaves a DRAFT Release of the x86-64 archive. The arm64
+# archive is built from the same commit on the maintainer's machine, whose
+# link a runner cannot hold, and attached to the draft there
+# (`docs/design/decisions.md`, "D109").
 # Publishing is `release-publish.yml`, run by the tag the maintainer pushes
 # once the draft is whole (`scripts/release_ci.py`, "Build first, tag second").
 #
@@ -87,7 +89,6 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - run: python3 scripts/release.py image
-      - run: python3 scripts/release_ci.py perf-events
       - run: python3 scripts/release.py suite
 
   # arm64 code runs on the arm64 runner: the suite, built and run in the arm64
@@ -110,7 +111,6 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - run: python3 scripts/release.py image
-      - run: python3 scripts/release_ci.py perf-events
       - run: python3 scripts/release.py suite
 
   # Only a build that passed everything is drafted. The archive is attested

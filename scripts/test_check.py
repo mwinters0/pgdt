@@ -587,6 +587,7 @@ WORKSPACE = {
     "base/tests/data/x.sql": "",
     "app/Cargo.toml": (
         '[package]\nname = "app"\nversion = "0.1.0"\nedition = "2021"\n'
+        '[package.metadata.pgdt]\napparatus = true\n'
         '[dependencies]\nbase = { path = "../base" }\n'
     ),
     "app/src/main.rs": 'fn main() { let _ = "../base/tests/data/x.sql"; }\n',
@@ -629,6 +630,8 @@ class Affected(unittest.TestCase):
         )
         (t,) = [t for t in by["base"].targets if t.kind == "test"]
         self.assertEqual(t.sources, ("base/tests/t.rs", "base/tests/common/mod.rs"))
+        # The manifest's marker, read for the release suite alone.
+        self.assertEqual({n: p.apparatus for n, p in by.items()}, {"app": True, "base": False})
 
     def test_an_affected_run_builds_in_the_image_as_a_whole_one_does(self):
         plan = self.plan("base/src/lib.rs")

@@ -8,7 +8,12 @@ publish.workspace = true
 # The measurement harness's instruction counter: it runs a command and reports
 # the user-space instructions it retired (`src/main.rs`). A workspace member
 # for `peak-rss`'s reasons, built static as it is and mounted into the
-# `release-profile` figure's container. Never shipped.
+# `release-profile` figure's container.
+
+# Never shipped: the measurement apparatus, which the release suite leaves
+# out (`docs/design/decisions.md`, "D110").
+[package.metadata.pgdt]
+apparatus = true
 
 [dependencies]
 # `syscall(SYS_perf_event_open, …)`, `read` and `close`.

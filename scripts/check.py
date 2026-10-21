@@ -423,6 +423,10 @@ class Package:
     #: Whether only dev-dependencies reach it: a test-support library, whose
     #: reads are its dependents' tests' too (`plan_changes`).
     support: bool = False
+    #: Whether its manifest marks it the measurement apparatus,
+    #: `[package.metadata.pgdt] apparatus = true`: tested by the round, left
+    #: out of the release suite (`release.py`, `suite`).
+    apparatus: bool = False
 
     @property
     def has_lib(self) -> bool:
@@ -665,7 +669,10 @@ def workspace(repo: Path) -> list[Package]:
                 continue  # benches, examples and build scripts run no tests
             targets.append(Target(bid, kind, tuple(sources)))
         support = kinds_into[name] == {"dev"}
-        packages.append(Package(name, pdir, frozenset(deps - {name}), tuple(targets), support))
+        apparatus = ((p.get("metadata") or {}).get("pgdt") or {}).get("apparatus") is True
+        packages.append(
+            Package(name, pdir, frozenset(deps - {name}), tuple(targets), support, apparatus)
+        )
     return packages
 
 

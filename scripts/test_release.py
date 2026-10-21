@@ -514,6 +514,22 @@ class ThisRepo(unittest.TestCase):
                         self.assertNotIn("version", spec, f"{member}'s {table}.{dep}")
         self.assertIn("Apache License\n", (release.REPO / "LICENSE").read_text())
 
+    def test_the_apparatus_the_suite_leaves_out_is_a_dependency_of_no_member(self):
+        manifests = {
+            path.parent.name: tomllib.loads(path.read_text())
+            for path in sorted(release.REPO.glob("crates/*/Cargo.toml"))
+        }
+        apparatus = {
+            name
+            for name, m in manifests.items()
+            if m.get("package", {}).get("metadata", {}).get("pgdt", {}).get("apparatus") is True
+        }
+        self.assertTrue(apparatus)
+        self.assertNotIn(release.SHIPPED, apparatus)
+        for name, m in manifests.items():
+            for table in ("dependencies", "dev-dependencies", "build-dependencies"):
+                self.assertFalse(apparatus & set(m.get(table, {})), f"{name}'s {table}")
+
     def test_the_notices_read_the_shipped_package_s_own_manifest(self):
         manifest = tomllib.loads(release.SHIPPED_MANIFEST.read_text())
         self.assertEqual(manifest["package"]["name"], release.SHIPPED)
@@ -550,6 +566,23 @@ class ThisRepo(unittest.TestCase):
             )
         names = {c.argv: c.name for c in check.CHECKS}
         self.assertEqual(names[NEXTEST], "nextest")
+
+    def test_the_suite_leaves_out_the_measurement_apparatus(self):
+        def lib(name: str, apparatus: bool) -> check.Package:
+            target = check.Target(name, "lib", (f"{name}.rs",))
+            return check.Package(name, name, frozenset(), (target,), apparatus=apparatus)
+
+        packages = [lib("base", False), lib("meter", True), lib("gauge", True)]
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("base", "meter", "gauge"):
+                Path(tmp, f"{name}.rs").write_text("/// ```\n/// assert!(true);\n/// ```\npub fn f() {}\n")
+            self.assertEqual(
+                release.suite(Path(tmp), lambda _: packages),
+                [
+                    (*NEXTEST, "--exclude", "meter", "--exclude", "gauge"),
+                    check.doctest_check(["base"]).argv,
+                ],
+            )
 
     def test_the_build_is_locked_and_per_target(self):
         argv = release.Build("aarch64-unknown-linux-gnu").cargo_argv()

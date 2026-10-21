@@ -10,7 +10,12 @@ publish.workspace = true
 # so the round's checks build and test it with the rest and its `libc` is the
 # lockfile's; `scripts/measure.py` builds it static, for
 # `<machine>-unknown-linux-musl`, and mounts it into every figure's container,
-# so it needs nothing of any image. Never shipped.
+# so it needs nothing of any image.
+
+# Never shipped: the measurement apparatus, which the release suite leaves
+# out (`docs/design/decisions.md`, "D110").
+[package.metadata.pgdt]
+apparatus = true
 
 [dependencies]
 # `getrusage` and `struct rusage`, whose layout is the target's rather than a

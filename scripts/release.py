@@ -30,10 +30,11 @@ another compiler's C and another glibc fill.
 runs `release.py <step>` as a host does, building the image from the
 Dockerfile there. `build --release` is the one release-only step: it hands the
 container the workspace version as `RELEASE_VARIABLE`, the only thing of the
-host's it is ever given. `suite` builds and runs the tests of the architecture
-the image is on, so an arm64 host's image is how the second target's code runs
-its tests: nothing of the suite crosses between hosts. What becomes of the output --
-the archives, the checksums, the draft, the publish -- is `scripts/release_ci.py`.
+host's it is ever given. `suite` builds and runs the round's tests, less the
+measurement apparatus (D110), for the architecture the image is on, so an
+arm64 host's image is how the second target's code runs its tests: nothing of
+the suite crosses between hosts. What becomes of the output -- the archives,
+the checksums, the draft, the publish -- is `scripts/release_ci.py`.
 
 **The register builds here too** (`scripts/measure.py`): the binary it times as
 the shipped one is `build --target x86_64-unknown-linux-gnu`'s, a release's
@@ -956,10 +957,19 @@ def suite(
     repo: Path = REPO, load: Callable[[Path], list[check.Package]] = check.workspace
 ) -> list[tuple[str, ...]]:
     """The round's own suite, as a run without `--affected` runs it
-    (`check.every_check`): nextest, then the doctests of the libraries
+    (`check.every_check`), less the measurement apparatus
+    (`check.Package.apparatus`, `docs/design/decisions.md`, "D110"): nextest
+    excluding each such member, then the doctests of the other libraries
     holding one, or none. Read when the suite runs, `cargo metadata` being
     the image's to run."""
-    return [c.argv for c in check.every_check(repo, load) if c.name in ("nextest", "doctest")]
+    packages = load(repo)
+    tested = [p for p in packages if not p.apparatus]
+    excluded = tuple(a for p in packages if p.apparatus for a in ("--exclude", p.name))
+    return [
+        c.argv + excluded if c.name == "nextest" else c.argv
+        for c in check.every_check(repo, lambda _: tested)
+        if c.name in ("nextest", "doctest")
+    ]
 
 
 def step_suite() -> int:

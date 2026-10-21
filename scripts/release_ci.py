@@ -66,7 +66,6 @@ directory; `archive` empties `dist/` and writes it, `checksums` adds to it,
 into it):
 
     python3 scripts/release_ci.py preflight                   # INPUT_REF is HEAD; no Release for the version yet
-    python3 scripts/release_ci.py perf-events                 # a runner lets the suite count its own events
     python3 scripts/release_ci.py archive [--target T]...     # dist/pgdt-v<version>-<target>.tar.xz
     python3 scripts/release_ci.py smoke --target T            # the archive, run in a fresh debian:trixie
     python3 scripts/release_ci.py checksums [--target T]...   # dist/SHA256SUMS over those archives, every target's by default
@@ -692,30 +691,6 @@ def step_publish(gh: Gh, name: str | None) -> int:
     return 0
 
 
-# --- the runner ------------------------------------------------------------
-
-#: The kernel's gate on `perf_event_open`, which no container namespaces.
-PERF_PARANOID = Path("/proc/sys/kernel/perf_event_paranoid")
-#: The highest level at which an unprivileged process may count its own
-#: user-space events, as `count-instructions`' tests do
-#: (`crates/count-instructions/tests/count_instructions.rs`).
-PERF_PARANOID_MAX = 2
-
-
-def step_perf_events(path: Path = PERF_PARANOID, run: Any = subprocess.run) -> int:
-    """The runner's `perf_event_paranoid` lowered to `PERF_PARANOID_MAX` when
-    it is above it, so the suite counts its own events where this machine
-    does; GitHub's Ubuntu image ships it higher. A runner is the job's alone, so
-    the change outlives nothing; a level already at or below is left as it is."""
-    level = int(path.read_text())
-    if level <= PERF_PARANOID_MAX:
-        print(f"perf_event_paranoid is {level}: left as it is", flush=True)
-        return 0
-    run(["sudo", "sysctl", "-w", f"kernel.perf_event_paranoid={PERF_PARANOID_MAX}"], check=True)
-    print(f"perf_event_paranoid lowered from {level} to {PERF_PARANOID_MAX}", flush=True)
-    return 0
-
-
 # --- the command line ------------------------------------------------------
 
 
@@ -728,7 +703,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("preflight", help="INPUT_REF is the checkout, and no Release carries the version's tag")
-    sub.add_parser("perf-events", help=f"the runner's perf_event_paranoid at most {PERF_PARANOID_MAX}, for the suite")
     a = sub.add_parser("archive", help="dist/pgdt-v<version>-<target>.tar.xz from release.py's output")
     a.add_argument(
         "--target", action="append", choices=sorted(release.TARGETS),
@@ -758,8 +732,6 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] = os.environ)
             return step_smoke(args.target)
         if args.cmd == "checksums":
             return step_checksums(args.target or list(release.TARGETS))
-        if args.cmd == "perf-events":
-            return step_perf_events()
         if args.cmd == "attach":
             return step_attach(Gh(origin_repo()))
         gh = Gh(repo_from_env(env))
