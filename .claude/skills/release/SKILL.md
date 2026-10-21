@@ -108,9 +108,17 @@ git push origin main
 gh workflow run release-build -f ref=<SHA>
 # once the draft exists (gh release view v<V>), from this clean checkout of <SHA>:
 python3 scripts/release_ci.py attach
-git tag -a v<V> <SHA>       # the editor opens: the message is the Release body
+# the message is the Release body; either, so a Markdown heading survives:
+git -c core.commentChar=';' tag -a v<V> <SHA>             # pasted into the editor
+git tag -a v<V> <SHA> -F <notes.md> --cleanup=whitespace  # or read from a file
 git push origin v<V>
 ```
+
+**Both forms are needed because a heading is a comment to git**: `git tag`'s
+default cleanup strips every line opening with `#`, from the editor and from
+`-F` alike, and no config key sets a tag's cleanup. In the editor,
+`--cleanup=whitespace` would keep git's own `#` template lines, so the comment
+character moves instead, and a line opening with `;` is what is lost.
 
 `attach` uploads the rehearsal's arm64 archive and a `SHA256SUMS` over both
 archives, refusing a dirty tree or a draft of another commit, and prints
