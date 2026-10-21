@@ -105,6 +105,23 @@ class CommittedSchemas(unittest.TestCase):
                 self.assertNotIn("=", spec.name)
                 self.assertNotIn("'", spec.value)
 
+    def test_a_compressing_set_is_written_as_gzip_and_every_other_as_sql(self):
+        # A `.sql.gz` is outside every `*.sql` sweep, the generator's own
+        # register join and `pgdt_fixtures::all_fixtures` both.
+        compressing = [
+            (schema, name)
+            for schema, sets in gf.SCHEMAS.items()
+            for name, spec in sets.items()
+            if gf.compresses(spec[1] if isinstance(spec, tuple) else spec)
+        ]
+        self.assertEqual(compressing, [("edge_cases", "compress")])
+        for flags in (["-Z", "6"], ["-Z6"], ["--compress=gzip:9"], ["--compress", "6"]):
+            with self.subTest(flags=flags):
+                self.assertEqual(gf.output_suffix(flags), ".sql.gz")
+        for flags in ([], ["--no-toast-compression"], gf.Dumpall(("--clean",)), gf.Setting("a", "b")):
+            with self.subTest(flags=flags):
+                self.assertEqual(gf.output_suffix(flags), ".sql")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 //! Fixtures more than one module's tests build: a file to read, a source
-//! that implements nothing it need not, an `.xz` file, a synthetic seek table
-//! and a fake filesystem root.
+//! that implements nothing it need not, an `.xz` file, a gzip and a BGZF
+//! file, a synthetic seek table and a fake filesystem root.
 
 use std::future::Future;
 use std::io::Write;
@@ -117,6 +117,41 @@ pub(crate) fn xz_test_payload() -> Vec<u8> {
     (0..20_000u32).map(|i| (i % 251) as u8).collect()
 }
 
+/// A payload of many lines, long enough that BGZF cuts it into several
+/// members and deflate into many blocks — a throwaway pattern, not a fixture,
+/// but shaped like a `COPY` block's rows so that it compresses as text does.
+pub(crate) fn gzip_test_payload() -> Vec<u8> {
+    (0..20_000u32)
+        .flat_map(|i| format!("{i}\tvalue {}\n", i.wrapping_mul(7919) % 10_007).into_bytes())
+        .collect()
+}
+
+/// Compress `bytes` as one gzip member with `flate2`, whose header states no
+/// name, comment or time — the shape `pg_dump -Fp -Z` writes — and return the
+/// temp file holding it.
+pub(crate) fn gzip_compress(bytes: &[u8]) -> tempfile::NamedTempFile {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(bytes).unwrap();
+    written(&encoder.finish().unwrap())
+}
+
+/// Compress `bytes` as BGZF with `noodles-bgzf`'s writer — a member to each
+/// block of at most 64 KiB, each stating its own length in a `BC` subfield,
+/// and the empty member that ends the file — and return the temp file
+/// holding it.
+pub(crate) fn bgzf_compress(bytes: &[u8]) -> tempfile::NamedTempFile {
+    let mut writer = noodles_bgzf::io::Writer::new(Vec::new());
+    writer.write_all(bytes).unwrap();
+    written(&writer.finish().unwrap())
+}
+
+fn written(bytes: &[u8]) -> tempfile::NamedTempFile {
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    file.write_all(bytes).unwrap();
+    file.flush().unwrap();
+    file
+}
+
 /// A filesystem root shaped like a Linux one, for driving discovery
 /// against something other than the machine the test is running on.
 ///
@@ -166,3 +201,6 @@ impl FakeRoot {
         self
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -1497,12 +1497,6 @@ EXEMPTIONS: tuple[Exemption, ...] = (
         Invariant("I89"),
     ),
     Exemption("option", "pg_dump", "format", Unsupported("`--format=custom`")),
-    Exemption(
-        "option",
-        "pg_dump",
-        "compress",
-        Unsupported("Dump-level compression (`-Z`/`--compress`) for plain format"),
-    ),
     Exemption("option", "pg_dump", "encoding", Unsupported("Non-UTF8 `client_encoding`")),
     Exemption("option", "pg_dumpall", "encoding", Unsupported("Non-UTF8 `client_encoding`")),
     _no_output("pg_dump", "dbname", "dopt.cparams.dbname = pg_strdup(optarg);"),

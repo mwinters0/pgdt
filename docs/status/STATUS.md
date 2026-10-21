@@ -85,7 +85,8 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
 
 Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 
-- [ ] **15.1** Evidence: `pg_dump -Z` fixtures from each tested major and synthetic single-member and BGZF payloads (`flate2`, `noodles-bgzf`); `measure.py` figures for serial inflate (zlib-ng, zlib-rs, `miniz_oxide`) against the plain parse on each measured device, and for candidate spacings — they set the spacing constant, `gz-seek`'s throughput floor, and whether a parallel first pass is built
+- [x] **15.1** Evidence, the fixtures: `pg_dump -Z` fixtures from each tested major and synthetic single-member and BGZF payloads (`flate2`, `noodles-bgzf`) — [notes](../design/roadmap-P15.1-fixtures-notes.md)
+- [ ] **15.1.1** Evidence, the figures: `measure.py` figures for serial inflate (zlib-ng, zlib-rs, `miniz_oxide`) against the plain parse on each measured device, and for candidate spacings — they set the spacing constant, `gz-seek`'s throughput floor, and whether a parallel first pass is built
 - [ ] **15.2** The cut: `source/compressed/` with the codec trait, xz its only implementor; one `CompressionIndex` owned by `pgdt-io`, `KnownCompression::Compressed`, the codec error, the cache key renamed (cache bump); `determinism.rs` gains `.xz`; behaviour-preserving
 - [ ] **15.3** `extent()`: `Exact` or `Open` in place of `size()` and `size_is_exact()`, every site relying on an exact size, plain and xz `Exact` throughout; behaviour-preserving
 - [ ] **15.4** `gz-seek` built in the workspace as a leaf crate: the sans-IO forward decode emitting checkpoints by the placement rule, resume from a checkpoint given its window, the unit CRC, the BGZF member walk, the index as a shareable handle, the leaf admitted to `layering.py`'s graph and claimed in `concepts.md`

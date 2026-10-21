@@ -251,12 +251,12 @@ def growth_since(repo: Path, stamp: str) -> Growth:
             continue
         if counting and line[:1] in "+-" and COMMENT_RE.match(line[1:]):
             comments += 1 if line[0] == "+" else -1
+    # Read only what is record: an untracked file may be binary (a fixture).
     for path in _git(repo, "ls-files", "--others", "--exclude-standard").splitlines():
-        lines = _lines(repo / path)
         if is_live_doc(path):
-            docs += len(lines)
+            docs += len(_lines(repo / path))
         elif is_source(path):
-            comments += sum(1 for line in lines if COMMENT_RE.match(line))
+            comments += sum(1 for line in _lines(repo / path) if COMMENT_RE.match(line))
     return Growth(docs, comments)
 
 

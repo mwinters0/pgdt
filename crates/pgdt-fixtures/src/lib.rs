@@ -35,7 +35,8 @@ pub fn edge_cases() -> PathBuf {
 }
 
 /// The root of the generated fixture tree, laid out as
-/// `fixtures/<version>/<schema>/<flag-set>.sql`.
+/// `fixtures/<version>/<schema>/<flag-set>.sql`, or `<flag-set>.sql.gz` for a
+/// flag set that compresses ([`gzip_fixture`]).
 pub fn fixtures_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures")
 }
@@ -45,6 +46,13 @@ pub fn fixtures_root() -> PathBuf {
 /// variable.
 pub fn fixture(version: u32, schema: &str, flag_set: &str) -> PathBuf {
     fixtures_root().join(version.to_string()).join(schema).join(format!("{flag_set}.sql"))
+}
+
+/// One generated fixture a flag set passing `--compress` wrote: the plain dump
+/// compressed whole, as `pg_dump` writes it. [`all_fixtures`] does not list
+/// it, being gzip rather than a dump's text.
+pub fn gzip_fixture(version: u32, schema: &str, flag_set: &str) -> PathBuf {
+    fixtures_root().join(version.to_string()).join(schema).join(format!("{flag_set}.sql.gz"))
 }
 
 /// Real `pg_dump` output for the `edge_cases` schema — as distinct from the

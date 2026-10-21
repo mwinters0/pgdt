@@ -189,6 +189,14 @@ class Meter(unittest.TestCase):
             g = repoint.growth_since(repo, repoint.read_stamp(repo))
         self.assertEqual(g.comments, 0)
 
+    def test_an_untracked_binary_outside_the_record_is_not_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(tmp)
+            (repo / "fixtures").mkdir()
+            (repo / "fixtures" / "dump.sql.gz").write_bytes(b"\x1f\x8b\x08\x00\xff")  # untracked
+            g = repoint.growth_since(repo, repoint.read_stamp(repo))
+        self.assertEqual((g.docs, g.comments), (0, 0))
+
     def test_a_re_vendor_is_not_this_project_s_record(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = make_repo(tmp)

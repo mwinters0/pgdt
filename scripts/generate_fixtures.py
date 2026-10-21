@@ -7,7 +7,8 @@ same doc's fixture-tree rules. Spins up a
 throwaway, memory-limited Postgres container per version (never a host-run
 process, per this repo's CPU-heavy-machine / glibc-arena caution), loads one
 fixture schema at a time, runs pg_dump across each schema's own flag matrix, and
-writes the output under fixtures/<major-version>/<schema>/<flag-set>.sql.
+writes the output under fixtures/<major-version>/<schema>/<flag-set>.sql
+(`.sql.gz` for a set that compresses).
 
 It also generates the **comparison oracle** -- what the server itself answers
 for a table of typed comparisons, written under
@@ -182,6 +183,11 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "rows-per-insert": ["--rows-per-insert=2"],
         "on-conflict-do-nothing": ["--inserts", "--on-conflict-do-nothing"],
         "disable-triggers": ["--data-only", "--disable-triggers"],
+        # The plain dump compressed whole, one gzip member at every major,
+        # written as `compress.sql.gz` (`output_suffix`): what P15's gzip
+        # source reads (`docs/design/roadmap-P15-gzip.md`, "Facts the
+        # grilling found").
+        "compress": ["--compress=6"],
     },
     "types": {
         "default": [],
@@ -551,12 +557,39 @@ def psql_command(name: str, database: str, sql: str) -> None:
     run(DOCKER + ["exec", name, "psql", "-U", DB_USER, "-d", database, "-c", sql], capture_output=True)
 
 
+#: gzip's magic, which a compressing flag set's output must open with.
+GZIP_MAGIC = b"\x1f\x8b"
+
+
+def compresses(flags: FlagSet) -> bool:
+    """Whether a `pg_dump` flag set compresses its plain output whole: it
+    passes `-Z`/`--compress`. A level of 0 compresses nothing, and no set
+    passes one."""
+    return isinstance(flags, list) and any(
+        flag.startswith("-Z") or flag.split("=", 1)[0] == "--compress" for flag in flags
+    )
+
+
+def output_suffix(flags: FlagSet) -> str:
+    """The suffix a flag set's output is written under: `.sql.gz` for one
+    that [`compresses`], the file being gzip rather than text, so that
+    nothing sweeping `*.sql` reads it as a dump; `.sql` otherwise."""
+    return ".sql.gz" if compresses(flags) else ".sql"
+
+
 def dump_flag_set(
     name: str, version: str, schema: str, flag_name: str, flags: FlagSet
 ) -> Path:
     out_dir = FIXTURES_DIR / version / schema
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{flag_name}.sql"
+    out_path = out_dir / f"{flag_name}{output_suffix(flags)}"
+    if compresses(flags):
+        cmd = DOCKER + ["exec", name, "pg_dump", *PG_DUMP_ARGS, *flags, DB_NAME]
+        result = run(cmd, stdout=subprocess.PIPE)
+        if not result.stdout.startswith(GZIP_MAGIC):
+            raise ValueError(f"{schema}/{flag_name}: {flags} wrote no gzip at {version}")
+        out_path.write_bytes(result.stdout)
+        return out_path
     if isinstance(flags, Setting):
         # On the database, so the dump's own new session takes it as a
         # server's would hand it over; reset before any other flag set runs.
