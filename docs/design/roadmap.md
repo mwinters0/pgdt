@@ -857,14 +857,16 @@ What it inherits:
   same sitting do not, and the worse leaves less of its allocation than
   `MEMORY_MARGIN_PERCENT` promises; the second, on the release image's build,
   puts each leg's worst rep over `MEMORY_RESERVE` too, in the `rule` band
-  (`measurements.md`, `reserve`). The shortfall blocks nothing, the
+  (`measurements.md`, `reserve`). A third, at `5629ecfa` and unpublished,
+  holds every leg inside all three (`runs/measure-20261021T151351/`). The shortfall blocks nothing, the
   allocator's gate reading a kill alone (`measurements.md`, "The apparatus"),
   so the unit mimalloc keeps there is this phase's, as is setting the bound
   under mimalloc; the diagnostic sitting attributed it to mimalloc
   and left its mechanism unconfirmed (`roadmap-P23-resident-reserve-inbox.md`,
-  "The unit mimalloc keeps of a 128 MiB block"). Part of that overrun is not
-  the allocator's: from two readers up the program holds a unit above its
-  charge on both builds (`KD111`), which this phase bills or removes.
+  "The unit mimalloc keeps of a 128 MiB block"). Part of that overrun was not
+  the allocator's: the program held a unit above its charge from two readers
+  up on both builds, and now holds one at five readers on 128 MiB blocks alone
+  (`KD111`), which this phase bills or removes.
 - **A branch already taken**: a remainder growing with the statistics volume
   is billed to the query rather than reserved — `pgdt query`'s mapping pass
   carves its workers around the statistics a loaded cache holds, and its

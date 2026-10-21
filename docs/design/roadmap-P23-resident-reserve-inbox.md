@@ -37,7 +37,8 @@ route and the worse one.
 reads two terms above the charge. The program's live high-water exceeds
 Rust's share of `Billed` (a reader's block slot and chunk buffer plus the
 pool's list; the decoder footprint is C's) by one unit from two readers up,
-on both builds (`KD111`). Peak RSS less Rust's live high-water and glibc's is,
+on both builds, at `27593d2c`; at `5629ecfa` it does so at five readers alone,
+in two reps of three (`runs/measure-20261021T151351/`, `KD111`). Peak RSS less Rust's live high-water and glibc's is,
 on the shipped build in four reps of six, the process's non-heap baseline
 plus about one unit, which the `system` twins never show (`KD34`): neither
 term alone leaves the `-m 1536m` leg short of the margin. glibc's high-water

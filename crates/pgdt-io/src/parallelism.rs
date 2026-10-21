@@ -26,17 +26,19 @@ use crate::memory::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, margin_allowance};
 /// has in flight — unbounded in the block size, which is why
 /// [`MEMORY_RESERVE`] cannot absorb it.
 ///
-/// deficiency: KD111 — from two block-decoding readers up, the process holds
-/// one unit more than this bills: Rust's live high-water, counted in front of
-/// the allocator, sits one block and a few MiB above the charge's Rust terms at
-/// every count read from two readers up, on 24 MiB blocks and on 128 MiB, and
-/// at one reader it does not (`runs/measure-20261005T193210/`, `reserve`'s
-/// instrument tables). Nothing here names the unit. Its candidate — a worker
-/// still holding its own block while its tail read decoded its successor's
-/// into a second slot, which only a second reader can cause — no longer
-/// happens, a second miss on a block waiting on the first one's decode
-/// ([`BlockCache::claim`](crate::source::xz::blocks::BlockCache::claim)), and no reading since says whether the unit went
-/// with it. Being the program's, it is on every allocator, and so far
+/// deficiency: KD111 — at 128 MiB blocks and five block-decoding readers, the
+/// process holds one unit more than this bills in two reps of three: Rust's
+/// live high-water, counted in front of the allocator, sits within a few MiB
+/// of one block above the charge's Rust terms there, and in the third rep at
+/// them (`runs/measure-20261021T151351/`, `reserve`'s instrument tables). At
+/// four readers on 128 MiB blocks, and at every count from one reader to
+/// twenty-four on 24 MiB, it holds none. Nothing here names the unit. The one
+/// read at every count from two readers up at `27593d2c` is gone; its
+/// candidate was a worker still holding its own block while its tail read
+/// decoded its successor's into a second slot, which a miss on a block in
+/// flight no longer does
+/// ([`BlockCache::claim`](crate::source::xz::blocks::BlockCache::claim)). Being the program's, it is on every
+/// allocator, and so far
 /// [`MEMORY_UNPOOLED_BOUND`](crate::internal::MEMORY_UNPOOLED_BOUND) has absorbed it. **(b) owned by P23**: closing it
 /// means a re-take, and billing the unit here if it stays.
 ///

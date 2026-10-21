@@ -292,11 +292,9 @@ than reading as a phase nobody has sliced.
 - **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
   its charge and its statistics account: a worst 544 MiB on a compressed
   `query`, every `wide-xz24` `query` leg from 1 GiB up killed — glibc's
-  readings, as is the reserve's choice. On mimalloc, `reserve`'s 128 MiB-block
-  legs from four readers overrun `MEMORY_UNPOOLED_BOUND` by `KD111`'s unit and
-  one mimalloc keeps, a worst rep the reserve and, in `-m 1536m`, the margin;
-  their `system` twins hold inside all three. **(b) owned by P23**, which
-  re-takes them, sets both constants and runs the blind gate. Detail: `crates/pgdt-io/src/memory.rs`.
+  readings, as is the reserve's choice, and neither yet read under mimalloc,
+  the shipped build's. **(b) owned by P23**, which re-takes them, sets both
+  constants and runs the blind gate. Detail: `crates/pgdt-io/src/memory.rs`.
 
 - **KD50** — on a host stating no limit, a flagless run cut to half of
   `MemAvailable` prints its budget as "what this source asks for" and its
@@ -448,13 +446,11 @@ than reading as a phase nobody has sliced.
   over CLI output (`../design/roadmap.md`, "Future — wanted, unscheduled").
   Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
 
-- **KD111** — from two block-decoding readers up, the program holds one block
-  unit more than `WorkerMemory`'s charge bills, on every allocator, so a run's
-  remainder above its charge carries a term that grows with the block size
-  rather than the count — half of `MEMORY_UNPOOLED_BOUND` at 128 MiB blocks.
-  Unattributed; its candidate, a tail read decoding its successor's block a
-  second time, is gone from the code, and no reading since says whether the
-  unit went with it. **(b) owned by P23**, which re-takes it and bills what stays.
+- **KD111** — at 128 MiB blocks and five block-decoding readers, the program
+  holds one block unit more than `WorkerMemory`'s charge bills in two reps of
+  three, on every allocator — half of `MEMORY_UNPOOLED_BOUND`; at four readers,
+  and at every count on 24 MiB blocks, it holds none. Unattributed. **(b) owned
+  by P23**, which re-takes it and bills what stays.
   Detail: `crates/pgdt-io/src/parallelism.rs`.
 
 - **KD112** — the provider splits a plain scan by `target_partitions` on any
