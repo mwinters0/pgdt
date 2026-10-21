@@ -5,9 +5,10 @@
 
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use bytes::Bytes;
+use tokio::sync::Notify;
 
 use pgdt_core::Result;
 
@@ -102,6 +103,11 @@ impl AsRef<[u8]> for BlockView {
 /// `workers` readers decoding at once hold up to `slots − 1 + workers` units
 /// (`docs/design/decisions.md`, "D17").
 ///
+/// **A block is decoded once however many readers miss on it together**
+/// ([`BlockCache::claim`]): a fused worker's tail read lands in the block its
+/// successor owns, so on the parallel path two misses on one block are the
+/// common case rather than a race.
+///
 /// *Rejected: retaining one block on the serial path.* A cap of one makes
 /// [`BlockCache::slot`] keep zero and drain before every decode, so any
 /// outstanding view forces a fresh allocation of the block unit.
@@ -111,8 +117,162 @@ pub(crate) struct BlockCache {
     /// the pool is hinted with so a slot survives [`POOL_MAX_BYTES`](crate::source::pool::POOL_MAX_BYTES).
     pub(super) unit: usize,
     pub(super) pool: Arc<BufferPool>,
+    /// The retained blocks and the decodes in flight, under **one lock**.
+    pub(super) retention: Mutex<Retention>,
+}
+
+/// What [`BlockCache`] holds behind its lock.
+///
+/// **The decodes in flight sit under the retention list's own mutex**, so
+/// the one acquisition a lookup always took answers all three cases of
+/// [`BlockCache::claim`]: a read colliding with no other reader pays nothing
+/// for the case where one does. *Rejected:* a map of its own, which puts a
+/// second lock in front of every miss.
+#[derive(Default)]
+pub(super) struct Retention {
     /// Retained blocks by index, least-recently-used first.
-    pub(super) retained: Mutex<Vec<(usize, Arc<DecodedBlock>)>>,
+    pub(super) blocks: Vec<(usize, Arc<DecodedBlock>)>,
+    /// The blocks a reader is decoding now, one flight each. Never an index
+    /// [`Retention::blocks`] also holds: a claim decodes only what neither
+    /// list has, and its landing moves it from this list to that one.
+    decoding: Vec<(usize, Arc<Flight>)>,
+}
+
+/// What [`BlockCache::claim`] answers for one block.
+pub(super) enum Claim<'a> {
+    /// Retained, and promoted to most-recently-used.
+    Hit(Arc<DecodedBlock>),
+    /// Another reader is decoding it. Wait on the flight rather than decode
+    /// it a second time, and claim again if it comes down empty.
+    Wait(Arc<Flight>),
+    /// Neither retained nor in flight: the caller decodes it, into
+    /// [`BlockCache::slot`], and lands it.
+    Decode(Decoding<'a>),
+}
+
+/// One block a reader is decoding, which every other miss on it waits for.
+///
+/// It comes down holding the block, or **empty** where its decoder failed or
+/// was dropped — a fetched read's future cancelled mid-fetch included — and
+/// a waiter that sees it empty claims again, so one of them decodes. **An
+/// error is not handed to the waiters**: the failure is the decoder's, and a
+/// waiter that fails the same way does so on a decode of its own, which keeps
+/// the error unshared and the block never half-landed.
+///
+/// **Two ways to wait, because the two sources wait differently**: the local
+/// one blocks the `spawn_blocking` thread its read already runs on
+/// ([`Flight::wait`]), the fetched one awaits ([`Flight::landed`]). A landing
+/// wakes both.
+pub(super) struct Flight {
+    state: Mutex<Landing>,
+    blocking: Condvar,
+    awaiting: Notify,
+}
+
+enum Landing {
+    Decoding,
+    Landed(Arc<DecodedBlock>),
+    Abandoned,
+}
+
+impl Flight {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(Landing::Decoding),
+            blocking: Condvar::new(),
+            awaiting: Notify::new(),
+        }
+    }
+
+    /// Bring it down, holding `block` or empty, and wake every waiter.
+    fn land(&self, block: Option<Arc<DecodedBlock>>) {
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = match block {
+            Some(block) => Landing::Landed(block),
+            None => Landing::Abandoned,
+        };
+        self.blocking.notify_all();
+        self.awaiting.notify_waiters();
+    }
+
+    /// `None` while the decode is running; once down, the block or `None`.
+    fn outcome(&self) -> Option<Option<Arc<DecodedBlock>>> {
+        match &*self.state.lock().unwrap_or_else(|e| e.into_inner()) {
+            Landing::Decoding => None,
+            Landing::Landed(block) => Some(Some(Arc::clone(block))),
+            Landing::Abandoned => Some(None),
+        }
+    }
+
+    /// The block once it is down, blocking this thread until then; `None`
+    /// where it came down empty and the caller claims again.
+    pub(super) fn wait(&self) -> Option<Arc<DecodedBlock>> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            match &*state {
+                Landing::Decoding => {
+                    state = self.blocking.wait(state).unwrap_or_else(|e| e.into_inner());
+                }
+                Landing::Landed(block) => return Some(Arc::clone(block)),
+                Landing::Abandoned => return None,
+            }
+        }
+    }
+
+    /// [`Flight::wait`], awaited. The notification is enabled *before* the
+    /// state is read, so a landing between the two is not missed.
+    pub(super) async fn landed(&self) -> Option<Arc<DecodedBlock>> {
+        loop {
+            let notified = self.awaiting.notified();
+            let mut notified = std::pin::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(outcome) = self.outcome() {
+                return outcome;
+            }
+            notified.await;
+        }
+    }
+}
+
+/// The claim to decode one block ([`Claim::Decode`]). It is landed with the
+/// block ([`Decoding::land`]); dropped without landing — a failed decode, a
+/// cancelled future — it brings its flight down empty, so no waiter is left
+/// on a decode nobody is running.
+pub(super) struct Decoding<'a> {
+    cache: &'a BlockCache,
+    index: usize,
+    flight: Option<Arc<Flight>>,
+}
+
+impl Decoding<'_> {
+    /// Retain `block` as most-recently-used and hand it to every reader
+    /// waiting on it. [`BlockCache::slot`] has already made room, so nothing
+    /// is evicted here.
+    pub(super) fn land(mut self, block: DecodedBlock) -> Arc<DecodedBlock> {
+        let block = Arc::new(block);
+        self.settle(Some(Arc::clone(&block)));
+        block
+    }
+
+    fn settle(&mut self, block: Option<Arc<DecodedBlock>>) {
+        let Some(flight) = self.flight.take() else {
+            return;
+        };
+        {
+            let mut retention = self.cache.retention.lock().unwrap_or_else(|e| e.into_inner());
+            retention.decoding.retain(|(i, _)| *i != self.index);
+            if let Some(block) = &block {
+                retention.blocks.push((self.index, Arc::clone(block)));
+                self.cache.pool.reserve(retention.blocks.len());
+            }
+        }
+        flight.land(block);
+    }
+}
+
+impl Drop for Decoding<'_> {
+    fn drop(&mut self) {
+        self.settle(None);
+    }
 }
 
 impl BlockCache {
@@ -131,7 +291,7 @@ impl BlockCache {
         let unit = usize::try_from(unit).ok()?;
         let pool = Arc::new(BufferPool::default());
         pool.hint(unit);
-        Some(BlockCache { unit, pool, retained: Mutex::new(Vec::new()) })
+        Some(BlockCache { unit, pool, retention: Mutex::new(Retention::default()) })
     }
 
     /// What **one concurrent reader** of this file holds while it decodes
@@ -141,7 +301,7 @@ impl BlockCache {
     ///
     /// **One unit, because the block a reader decodes *becomes* the block it
     /// retains**: [`BlockCache::slot`] drains the retention list to
-    /// `slots() - 1` before taking a slot, and [`BlockCache::retain`] pushes
+    /// `slots() - 1` before taking a slot, and [`Decoding::land`] pushes
     /// that same buffer's block onto the list it just drained. The rest of the
     /// list is `slots() - 1` units shared by every reader, and is
     /// [`WorkerMemory`]'s second term.
@@ -162,12 +322,11 @@ impl BlockCache {
     /// arithmetic from this pool rather than a measured term**: the free list
     /// and the retention list share the pool's slots
     /// ([`BufferPool::reserve`]), and [`BlockCache::slot`] drains to
-    /// `slots - 1` before obtaining the buffer [`BlockCache::retain`] then
+    /// `slots - 1` before obtaining the buffer [`Decoding::land`] then
     /// pushes onto that same list, so the pool holds `slots - 1 + workers`
-    /// units while each worker holds one unit at a time. No test asserts that
-    /// bound, and the case it has to survive is [`BlockCache::retain`]
-    /// replacing an entry for the same block while the reader that decoded it
-    /// still views it (`KD20`'s double decode). *Rejected:* charging
+    /// units while each worker holds one unit at a time — a reader waiting on
+    /// another's decode holding none ([`BlockCache::claim`]). No test asserts
+    /// that bound. *Rejected:* charging
     /// `2 × workers` plus a decaying floor
     /// (`docs/design/decisions.md`, "D4"; `parallel-peak-rss`).
     fn worker_memory(&self, chunk_bytes: u64, decode_bytes: u64) -> WorkerMemory {
@@ -207,14 +366,22 @@ impl BlockCache {
         self.worker_memory(chunk_bytes, decode_bytes).at(1) <= budget
     }
 
-    /// The retained block at `index`, promoted to most-recently-used.
-    pub(super) fn lookup(&self, index: usize) -> Option<Arc<DecodedBlock>> {
-        let mut retained = self.retained.lock().unwrap_or_else(|e| e.into_inner());
-        let at = retained.iter().position(|(i, _)| *i == index)?;
-        let entry = retained.remove(at);
-        let block = Arc::clone(&entry.1);
-        retained.push(entry);
-        Some(block)
+    /// Block `index` retained, in flight, or this caller's to decode — one
+    /// acquisition of the lock deciding which ([`Retention`]).
+    pub(super) fn claim(&self, index: usize) -> Claim<'_> {
+        let mut retention = self.retention.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(at) = retention.blocks.iter().position(|(i, _)| *i == index) {
+            let entry = retention.blocks.remove(at);
+            let block = Arc::clone(&entry.1);
+            retention.blocks.push(entry);
+            return Claim::Hit(block);
+        }
+        if let Some((_, flight)) = retention.decoding.iter().find(|(i, _)| *i == index) {
+            return Claim::Wait(Arc::clone(flight));
+        }
+        let flight = Arc::new(Flight::new());
+        retention.decoding.push((index, Arc::clone(&flight)));
+        Claim::Decode(Decoding { cache: self, index, flight: Some(flight) })
     }
 
     /// A slot to decode into, after making room for it: least-recently-used
@@ -236,23 +403,14 @@ impl BlockCache {
     pub(super) fn slot(&self) -> PooledBuffer {
         let keep = self.pool.slots().saturating_sub(1);
         let evicted = {
-            let mut retained = self.retained.lock().unwrap_or_else(|e| e.into_inner());
-            let over = retained.len().saturating_sub(keep);
-            let evicted: Vec<_> = retained.drain(..over).collect();
-            self.pool.reserve(retained.len());
+            let mut retention = self.retention.lock().unwrap_or_else(|e| e.into_inner());
+            let over = retention.blocks.len().saturating_sub(keep);
+            let evicted: Vec<_> = retention.blocks.drain(..over).collect();
+            self.pool.reserve(retention.blocks.len());
             evicted
         };
         drop(evicted);
         self.pool.obtain(self.unit)
-    }
-
-    /// Retain `block` as most-recently-used. [`BlockCache::slot`] has already
-    /// made room, so nothing is evicted here.
-    pub(super) fn retain(&self, index: usize, block: Arc<DecodedBlock>) {
-        let mut retained = self.retained.lock().unwrap_or_else(|e| e.into_inner());
-        retained.retain(|(i, _)| *i != index);
-        retained.push((index, block));
-        self.pool.reserve(retained.len());
     }
 }
 

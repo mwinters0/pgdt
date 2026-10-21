@@ -177,11 +177,11 @@ async fn a_read_retains_the_block_it_landed_in() {
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let source = XzSource::open(compressed.path()).unwrap();
     let cache = source.budget.blocks.clone().expect("4 KiB blocks are decoded whole");
-    assert!(cache.retained.lock().unwrap().is_empty());
+    assert!(cache.retention.lock().unwrap().blocks.is_empty());
 
     let first = source.read_range(100, 200).await.unwrap();
     assert_eq!(&first[..], &payload[100..300]);
-    let retained = cache.retained.lock().unwrap().clone();
+    let retained = cache.retention.lock().unwrap().blocks.clone();
     assert_eq!(retained.len(), 1, "one read, one block");
     let (index, block) = retained.into_iter().next().unwrap();
     assert_eq!(index, 0);
@@ -193,7 +193,7 @@ async fn a_read_retains_the_block_it_landed_in() {
     assert_eq!(Arc::strong_count(&block), 2, "the retention list and this handle");
     let second = source.read_range(1000, 500).await.unwrap();
     assert_eq!(&second[..], &payload[1000..1500]);
-    assert_eq!(cache.retained.lock().unwrap().len(), 1);
+    assert_eq!(cache.retention.lock().unwrap().blocks.len(), 1);
     assert_eq!(Arc::strong_count(&block), 3, "plus the view the second read handed back");
 }
 
@@ -211,10 +211,10 @@ async fn retention_is_bounded_by_the_pools_slot_count() {
     while offset < payload.len() as u64 {
         let len = 100.min(payload.len() as u64 - offset) as usize;
         source.read_range(offset, len).await.unwrap();
-        assert!(cache.retained.lock().unwrap().len() <= slots);
+        assert!(cache.retention.lock().unwrap().blocks.len() <= slots);
         offset += 4096;
     }
-    assert!(cache.retained.lock().unwrap().len() <= slots);
+    assert!(cache.retention.lock().unwrap().blocks.len() <= slots);
 }
 
 /// **The block arm takes none of the piecewise arm's locks**: with the live
@@ -356,7 +356,7 @@ fn a_permitted_wait_never_reaches_the_block_pool() {
     };
     // One live view per slot, and both blocks are retained as well.
     let held = vec![read(0).unwrap(), read(4096).unwrap()];
-    assert_eq!(cache.retained.lock().unwrap().len(), 2);
+    assert_eq!(cache.retention.lock().unwrap().blocks.len(), 2);
 
     let (tx, rx) = std::sync::mpsc::channel();
     let (table, blocks, layout, file, chunks) = (

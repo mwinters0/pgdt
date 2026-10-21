@@ -57,8 +57,8 @@ refusal is a memory floor against the file's remainder, erring serial (`KD22`). 
 
 ### D8 The cut is one unit wide, sized apart from the charge
 `BOUNDARIED_PARTITION_UNITS = 1`; on a boundaried source `window_end` sizes the cut, `partition_bytes` the
-charge, and on `Anywhere` the cut is the charge (`KD25`). A wider cut wins at two stated readers and loses at
-the flagless default. Rejected: deriving width from the charge. Reopens: an explanation of the flagless collapse.
+charge, and on `Anywhere` the cut is the charge (`KD25`). A wider cut won at two stated readers only by amortising a
+tail read's second decode, which a block in flight no longer costs, and lost at the flagless default. Rejected: deriving width from the charge. Reopens: an explanation of the flagless collapse.
 
 ### D9 Pool sizing constants
 `hint_read_size` *becomes* the slot size and larger buffers are dropped on release: a chunk read and
@@ -106,7 +106,7 @@ Whole-block decode, LRU-retained, afforded at one reader against the caller's nu
 block the budget cannot hold reads through one live `xz_seek::BlockRead` behind a mutex — one state machine
 both arms instantiate over their own `CompressedSource`, never one body branching on the provider — kept
 across reads so a forward scan continues, advising one partition (`KD35`); the fetched arm's window is
-charged rather than booked unpooled. Two misses decode one block twice (`KD20`). Evidence: `reserve`.
+charged rather than booked unpooled. A miss on a block in flight waits on its decode (`BlockCache::claim`). Evidence: `reserve`.
 
 ### D17 Two pools per source; retained and free units share a pool's slots
 The hinted unit drives both what a pool keeps and how it sizes, so one pool is wrong for either

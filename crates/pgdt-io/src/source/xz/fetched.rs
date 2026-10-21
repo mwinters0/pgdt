@@ -18,7 +18,7 @@ use crate::partition::Partitioning;
 use crate::source::pool::PooledBuffer;
 use crate::source::{ByteRangeSource, RemoteIdentity, WaitPolicy};
 
-use super::blocks::{BlockCache, DecodedBlock, XzBudget};
+use super::blocks::{BlockCache, Claim, DecodedBlock, XzBudget};
 use super::{LiveBlock, SeekTable, piece_of, xz_short_read};
 
 /// A `ByteRangeSource` decoding an `.xz`-compressed dump the bytes of which
@@ -154,16 +154,26 @@ impl FetchedXzSource {
         self.layout.block_task(index).ok_or_else(xz_short_read)
     }
 
-    /// Block `index`, from the retention list or fetched and decoded whole
-    /// into a slot of the block pool.
+    /// Block `index`, from the retention list, from another reader's fetch
+    /// and decode of it, or fetched and decoded whole into a slot of the
+    /// block pool ([`BlockCache::claim`]).
     ///
-    /// Deficiency register: two concurrent misses on one block fetch and
-    /// decode it twice, exactly as `KD20` describes for the local source; the
-    /// marker sits there, this being the same shape and not a second one.
+    /// **A future dropped while it holds the claim gives the block up**: the
+    /// claim's `Drop` brings its flight down empty, so a reader waiting on it
+    /// claims again, and a decode already handed to `spawn_blocking` runs on
+    /// to a result nobody retains.
     async fn block(&self, index: usize, cache: &Arc<BlockCache>) -> Result<Arc<DecodedBlock>> {
-        if let Some(hit) = cache.lookup(index) {
-            return Ok(hit);
-        }
+        let decoding = loop {
+            match cache.claim(index) {
+                Claim::Hit(block) => return Ok(block),
+                Claim::Wait(flight) => {
+                    if let Some(block) = flight.landed().await {
+                        return Ok(block);
+                    }
+                }
+                Claim::Decode(decoding) => break decoding,
+            }
+        };
         let task = self.task(index)?;
         let len = usize::try_from(task.uncompressed_len()).map_err(|_| xz_short_read())?;
         let window = self.window(&task).await?;
@@ -176,9 +186,7 @@ impl FetchedXzSource {
         })
         .await
         .map_err(Error::join)??;
-        let block = Arc::new(DecodedBlock { slot, len });
-        cache.retain(index, Arc::clone(&block));
-        Ok(block)
+        Ok(decoding.land(DecodedBlock { slot, len }))
     }
 
     /// A read served by decoding whole blocks — [`XzSource::read_by_blocks`](crate::XzSource::read_by_blocks)'s

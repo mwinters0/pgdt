@@ -11,11 +11,11 @@ use crate::parallelism::WorkerMemory;
 /// ([`Partitioning::window_end`], [`PartitionBoundaries::At`]) — **the cut
 /// width**. See `docs/design/decisions.md`, "D8".
 ///
-/// What a wider cut would buy is the tail read's second decode, amortised: a
-/// worker reads one chunk past its piece's end, and on a block-decoding source
-/// the successor decodes that block too (`KD20`). It does not widen what a
-/// reader holds — retention is capped by [`BufferPool::slots`](crate::source::pool::BufferPool::slots), not by the
-/// piece — and it costs granularity, a window being `want × k` units wide.
+/// A worker reads one chunk past its piece's end, into the block its successor
+/// owns, and a block-decoding source decodes that block once for both
+/// ([`BlockCache::claim`](crate::source::xz::blocks::BlockCache::claim)), so a wider cut amortises nothing. It does not
+/// widen what a reader holds — retention is capped by [`BufferPool::slots`](crate::source::pool::BufferPool::slots), not by
+/// the piece — and it costs granularity, a window being `want × k` units wide.
 const BOUNDARIED_PARTITION_UNITS: usize = 1;
 
 /// Where a source is willing to be split. See `docs/design/decisions.md`,
@@ -98,7 +98,7 @@ pub enum PartitionRead {
     /// where the piece is one unit, which is what
     /// [`BOUNDARIED_PARTITION_UNITS`](crate::partition::BOUNDARIED_PARTITION_UNITS) makes it. A block-decoding source's
     /// answer, where that read is a **zero-copy slice** of a block the worker
-    /// was going to decode anyway, against one [`BlockCache::lookup`](crate::source::xz::blocks::BlockCache::lookup) per
+    /// was going to decode anyway, against one [`BlockCache::claim`](crate::source::xz::blocks::BlockCache::claim) per
     /// chunk on the chunked arm.
     ///
     /// **The unit is what bounds the buffer, and it is the source's number

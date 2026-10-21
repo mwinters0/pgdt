@@ -3283,11 +3283,13 @@ side by side and never subtracted.
   here shows whether the seven wait on the plain source's four chunk slots, as
   `parse`'s fused workers do.
 - **The `.xz` provider column passes half its count at every row from two to
-  sixteen.** The `.xz` `parse` column does so at no row: `KD20`'s doubled
-  decode comes from a fused worker's tail read landing in its successor's
-  block. A replay sub-stream's last chunk reads past its limit into its
-  successor's bytes the same way (`crates/pgdt-query/src/stream/replay.rs`, `replay`), but
-  no reading here counts its decodes. Nothing explains why it gains so little
+  sixteen.** The `.xz` `parse` column does so at no row: at this sitting's
+  commit a fused worker's tail read decoded its successor's block a second
+  time, which a miss on a block in flight no longer does
+  (`crates/pgdt-io/src/source/xz/blocks.rs`, `BlockCache::claim`), so the
+  column is owed a re-take. A replay sub-stream's last chunk reads past its
+  limit into its successor's bytes the same way
+  (`crates/pgdt-query/src/stream/replay.rs`, `replay`). Nothing explains why it gains so little
   past sixteen.
 - **Rep 1 is slow**: the slowest of five on the plain provider rows at two
   partitions and from eight up, 0.081–0.228 s above its cell's median, and on

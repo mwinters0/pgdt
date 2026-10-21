@@ -131,13 +131,6 @@ than reading as a phase nobody has sliced.
   runs, a reorder buffer under the budget, and unordered output.
   Detail: `crates/pgdt-query/src/stream/merge.rs`.
 
-- **KD20** — a block-decoding worker decodes its **successor's block as well as
-  its own**, nothing sharing the two, so a parallel compressed scan does about
-  twice the decode work and its speedup is capped near half the reader count.
-  **(c) unowned**; promoted by a phase taking up compressed scan throughput,
-  and the fix left is an in-flight map, a wider cut having been measured and
-  refused. Detail: `crates/pgdt-io/src/source/xz/file.rs`.
-
 - **KD21** — the block pool's slot ceiling follows the worker count a caller
   *announced* rather than the one delivered, so a `--jobs` well above what the
   read-buffer budget affords holds more than that budget — 1,280 MiB against
@@ -459,8 +452,9 @@ than reading as a phase nobody has sliced.
   unit more than `WorkerMemory`'s charge bills, on every allocator, so a run's
   remainder above its charge carries a term that grows with the block size
   rather than the count — half of `MEMORY_UNPOOLED_BOUND` at 128 MiB blocks.
-  Unattributed; `KD20`'s duplicate decode is the candidate. **(b) owned by
-  P23**, which bills the unit or, if it is `KD20`'s, takes the in-flight map.
+  Unattributed; its candidate, a tail read decoding its successor's block a
+  second time, is gone from the code, and no reading since says whether the
+  unit went with it. **(b) owned by P23**, which re-takes it and bills what stays.
   Detail: `crates/pgdt-io/src/parallelism.rs`.
 
 - **KD112** — the provider splits a plain scan by `target_partitions` on any

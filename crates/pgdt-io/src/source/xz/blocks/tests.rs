@@ -54,11 +54,9 @@ fn a_block_pool_holds_one_slot_count_across_both_lists() {
 
     let mut live = None;
     for index in 0..12 {
-        let slot = cache.slot();
-        let block = Arc::new(DecodedBlock { slot, len: cache.unit });
-        cache.retain(index, Arc::clone(&block));
+        let block = decode(&cache, index);
         live = Some(block);
-        let retained = cache.retained.lock().unwrap().len();
+        let retained = cache.retention.lock().unwrap().blocks.len();
         let free = cache.pool.free_len();
         assert!(
             retained + free <= cache.pool.slots(),
@@ -67,6 +65,104 @@ fn a_block_pool_holds_one_slot_count_across_both_lists() {
         );
     }
     drop(live);
+}
+
+/// Block `index` decoded through the calls the decode path makes — a claim,
+/// a slot, a landing — with nothing written into it.
+fn decode(cache: &BlockCache, index: usize) -> Arc<DecodedBlock> {
+    let Claim::Decode(decoding) = cache.claim(index) else {
+        panic!("block {index} is neither retained nor in flight");
+    };
+    decoding.land(DecodedBlock { slot: cache.slot(), len: cache.unit })
+}
+
+/// **A miss on a block another reader is decoding waits for that decode
+/// rather than repeating it**, and is handed the very block the decoder
+/// lands; once landed, the block is a retained hit.
+#[test]
+fn a_second_miss_on_a_block_in_flight_joins_its_decode() {
+    let cache = BlockCache::for_table(&four_block_table()).expect("4 KiB blocks have a unit");
+    let Claim::Decode(decoding) = cache.claim(1) else { panic!("the first miss decodes") };
+    let Claim::Wait(flight) = cache.claim(1) else { panic!("the second miss waits") };
+    assert!(
+        matches!(cache.claim(2), Claim::Decode(_)),
+        "a different block is not held up by this one"
+    );
+
+    let landed = decoding.land(DecodedBlock { slot: cache.slot(), len: cache.unit });
+    let joined = flight.wait().expect("the decode landed");
+    assert!(Arc::ptr_eq(&landed, &joined), "one decode, handed to both readers");
+    let Claim::Hit(hit) = cache.claim(1) else { panic!("a landed block is retained") };
+    assert!(Arc::ptr_eq(&landed, &hit));
+}
+
+/// **A decode that never lands hands its block to the next claim**: its
+/// waiters wake to an empty flight rather than waiting on a decode nobody is
+/// running, and the block is claimable to decode again. A failed decode and
+/// a cancelled fetched read both drop their claim this way.
+#[test]
+fn a_dropped_decode_hands_its_block_to_the_next_claim() {
+    let cache = BlockCache::for_table(&four_block_table()).expect("4 KiB blocks have a unit");
+    let Claim::Decode(decoding) = cache.claim(0) else { panic!("the first miss decodes") };
+    let Claim::Wait(flight) = cache.claim(0) else { panic!("the second miss waits") };
+    drop(decoding);
+    assert!(flight.wait().is_none(), "the flight comes down empty");
+    assert!(matches!(cache.claim(0), Claim::Decode(_)), "and the block is anyone's to decode");
+    assert!(cache.retention.lock().unwrap().blocks.is_empty());
+}
+
+/// **However many threads miss on one block together, one decodes it** and
+/// every other is handed the block it landed — the shape a fused worker's
+/// tail read into its successor's block takes, raced rather than staged.
+#[test]
+fn concurrent_misses_on_one_block_decode_it_once() {
+    const READERS: usize = 8;
+    let cache = BlockCache::for_table(&four_block_table()).expect("4 KiB blocks have a unit");
+    let decodes = std::sync::atomic::AtomicUsize::new(0);
+    let start = std::sync::Barrier::new(READERS);
+    let blocks: Vec<_> = std::thread::scope(|scope| {
+        let readers: Vec<_> = (0..READERS)
+            .map(|_| {
+                scope.spawn(|| {
+                    start.wait();
+                    loop {
+                        match cache.claim(3) {
+                            Claim::Hit(block) => return block,
+                            Claim::Wait(flight) => {
+                                if let Some(block) = flight.wait() {
+                                    return block;
+                                }
+                            }
+                            Claim::Decode(decoding) => {
+                                decodes.fetch_add(1, Ordering::Relaxed);
+                                // Long enough that the others arrive mid-decode.
+                                std::thread::sleep(std::time::Duration::from_millis(20));
+                                let slot = cache.slot();
+                                return decoding.land(DecodedBlock { slot, len: cache.unit });
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+        readers.into_iter().map(|reader| reader.join().unwrap()).collect()
+    });
+    assert_eq!(decodes.load(Ordering::Relaxed), 1);
+    assert!(blocks.iter().all(|block| Arc::ptr_eq(block, &blocks[0])));
+}
+
+/// [`Flight::landed`] is woken by a landing that happens while it is
+/// parked, which is the fetched source's wait.
+#[tokio::test]
+async fn an_awaiting_miss_is_woken_by_the_landing() {
+    let cache = Arc::new(BlockCache::for_table(&four_block_table()).expect("a unit"));
+    let Claim::Decode(decoding) = cache.claim(2) else { panic!("the first miss decodes") };
+    let Claim::Wait(flight) = cache.claim(2) else { panic!("the second miss waits") };
+    let waiter = tokio::spawn(async move { flight.landed().await });
+    tokio::task::yield_now().await;
+    let landed = decoding.land(DecodedBlock { slot: cache.slot(), len: cache.unit });
+    let joined = waiter.await.unwrap().expect("the decode landed");
+    assert!(Arc::ptr_eq(&landed, &joined));
 }
 
 /// **A block the stated budget cannot hold is not decoded whole**, and the

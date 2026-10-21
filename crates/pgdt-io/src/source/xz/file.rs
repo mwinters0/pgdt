@@ -18,7 +18,7 @@ use crate::partition::Partitioning;
 use crate::source::pool::BufferPool;
 use crate::source::{ByteRangeSource, WaitPolicy};
 
-use super::blocks::{BlockCache, DecodedBlock, XzBudget};
+use super::blocks::{BlockCache, Claim, DecodedBlock, XzBudget};
 use super::{LiveBlock, SeekTable, piece_of, xz_short_read};
 
 /// A `ByteRangeSource` decoding an `.xz`-compressed local file on the fly
@@ -172,27 +172,29 @@ impl XzSource {
         &self.path
     }
 
-    /// The block at `index`, from the retention list or freshly decoded into a
-    /// slot of the block pool.
+    /// The block at `index`, from the retention list, from another reader's
+    /// decode of it, or freshly decoded into a slot of the block pool
+    /// ([`BlockCache::claim`]).
     ///
-    /// Deficiency register: `deficiency: KD20` — two concurrent misses on one
-    /// block decode it twice, and on the parallel scan path that is the common
-    /// case: every fused worker's chunk-sized tail read lands in the block its
-    /// *successor* owns, so a scan does about twice the decode work and its
-    /// speedup is capped near half the reader count (`measurements.md`,
-    /// `parallel-scan-throughput`'s `.xz` `parse` column). **(c) unowned.** The fix left is an
-    /// in-flight map here — not taken, since it puts a second lock in front of
-    /// the case that does *not* collide — a wider cut having been measured and
-    /// refused ([`BOUNDARIED_PARTITION_UNITS`](crate::partition::BOUNDARIED_PARTITION_UNITS)).
+    /// **A wait here blocks the thread**, which is the `spawn_blocking` one
+    /// [`XzSource::read_range`](ByteRangeSource::read_range) runs every read on.
     fn block(
         index: usize,
         cache: &BlockCache,
         layout: &xz_seek::Layout,
         file: &Arc<std::fs::File>,
     ) -> Result<Arc<DecodedBlock>> {
-        if let Some(hit) = cache.lookup(index) {
-            return Ok(hit);
-        }
+        let decoding = loop {
+            match cache.claim(index) {
+                Claim::Hit(block) => return Ok(block),
+                Claim::Wait(flight) => {
+                    if let Some(block) = flight.wait() {
+                        return Ok(block);
+                    }
+                }
+                Claim::Decode(decoding) => break decoding,
+            }
+        };
         // No lock: a `BlockTask` is `Copy` and owns its block, its check and
         // the layout's decode settings, and a `Layout` names one from the table
         // alone.
@@ -202,11 +204,10 @@ impl XzSource {
         // released slot is exactly the length the pool was hinted with.
         let mut slot = cache.slot();
         // A decode that fails drops its slot, which `Drop` releases to the
-        // pool as the plain source's failed read does.
+        // pool as the plain source's failed read does, and its claim, which
+        // leaves whoever was waiting on it to claim the block again.
         task.decode_into(file, &mut slot.as_mut()[..len]).map_err(Error::xz)?;
-        let block = Arc::new(DecodedBlock { slot, len });
-        cache.retain(index, Arc::clone(&block));
-        Ok(block)
+        Ok(decoding.land(DecodedBlock { slot, len }))
     }
 
     /// A read served by decoding the blocks it lands in.

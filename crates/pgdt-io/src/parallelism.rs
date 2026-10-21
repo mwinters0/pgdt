@@ -21,7 +21,7 @@ use crate::memory::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, margin_allowance};
 /// **The pool term is arithmetic from [`BufferPool`](crate::source::pool::BufferPool), not a safety margin.**
 /// [`BufferPool::slots`](crate::source::pool::BufferPool::slots) clamps a pool at `POOL_DEPTH.max(jobs)` and
 /// [`BlockCache::slot`](crate::source::xz::blocks::BlockCache::slot) drains the retention list to `slots − 1` *before*
-/// obtaining the buffer [`BlockCache::retain`](crate::source::xz::blocks::BlockCache::retain) then pushes back onto it, so
+/// obtaining the buffer a landed claim ([`BlockCache::claim`](crate::source::xz::blocks::BlockCache::claim)) then pushes back onto it, so
 /// the pool holds `slots − 1` retained units beside the one unit each worker
 /// has in flight — unbounded in the block size, which is why
 /// [`MEMORY_RESERVE`] cannot absorb it.
@@ -31,13 +31,14 @@ use crate::memory::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, margin_allowance};
 /// the allocator, sits one block and a few MiB above the charge's Rust terms at
 /// every count read from two readers up, on 24 MiB blocks and on 128 MiB, and
 /// at one reader it does not (`runs/measure-20261005T193210/`, `reserve`'s
-/// instrument tables). Nothing here names the unit. The candidate is `KD20`'s
-/// duplicate decode — a worker still holding its own block while its tail read
-/// decodes its successor's into a second slot — which only a second reader can
-/// cause; no reading confirms it. Being the program's, it is on every
-/// allocator, and so far [`MEMORY_UNPOOLED_BOUND`](crate::internal::MEMORY_UNPOOLED_BOUND) has absorbed it. **(b) owned
-/// by P23**: closing it means billing the unit here, or, if it is `KD20`'s,
-/// not holding it.
+/// instrument tables). Nothing here names the unit. Its candidate — a worker
+/// still holding its own block while its tail read decoded its successor's
+/// into a second slot, which only a second reader can cause — no longer
+/// happens, a second miss on a block waiting on the first one's decode
+/// ([`BlockCache::claim`](crate::source::xz::blocks::BlockCache::claim)), and no reading since says whether the unit went
+/// with it. Being the program's, it is on every allocator, and so far
+/// [`MEMORY_UNPOOLED_BOUND`](crate::internal::MEMORY_UNPOOLED_BOUND) has absorbed it. **(b) owned by P23**: closing it
+/// means a re-take, and billing the unit here if it stays.
 ///
 /// **A budget is solved against this, never divided by it**
 /// ([`WorkerMemory::affords`]).
