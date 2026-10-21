@@ -110,14 +110,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`CLAUDE.md` does not name `docs/design/release-invariants.md`** beside
-  its two sibling registers, under "Where things are, and when to read them".
-  The call: the register's read-trigger sits in `/release`, step 5 (a
-  rehearsal, `attach` or publication meeting something unexpected of GitHub
-  or an installer walks it), and in the register's own header, because
-  `CLAUDE.md` is at its 150-line cap (`scripts/repoint.py`,
-  `ORIENTATION_CAPS`) and only the maintainer moves a cap or chooses what to
-  strike there. Reconsidering means one line in that bullet, paid for by a
-  line struck elsewhere in `CLAUDE.md` or by the cap; the register is read
-  only at a release, so the skill may be trigger enough.

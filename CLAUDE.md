@@ -84,13 +84,13 @@ Never edit a `runs/` orchestration script while it is running.
   limits we wait on upstream to fix. **Invoke `upstream-issue` before working
   around a dependency's defect, and `upgrade-deps` before any dependency
   upgrade**; the first holds the register's rules.
-- `docs/design/postgres-invariants.md` (`I<n>`) and
-  `docs/design/runtime-invariants.md` (`RT<n>`) — properties of `pg_dump`
-  output and of the process's environment that decisions depend on. **Add an
-  entry when a decision starts depending on one; walk them at a new major.**
-  A difference between majors nothing depends on yet is a `VD<n>` in
-  `docs/design/postgres-major-differences.md`: **file one when you find it,
-  and read the file before adding an invariant about a major.**
+- `docs/design/postgres-invariants.md` (`I<n>`), `runtime-invariants.md`
+  (`RT<n>`) and `release-invariants.md` (`RL<n>`) — what decisions rely on in
+  `pg_dump`'s output, the process's environment, and where a release is
+  published and installed. **Add an entry when a decision starts depending on
+  one; walk each at the triggers its header names.** A difference between
+  majors nothing depends on yet is a `VD<n>` in `postgres-major-differences.md`:
+  **file one when you find it, and read the file before adding an invariant about a major.**
 - `docs/design/measurements.md` — every performance figure, with the command
   that reproduces it; "The apparatus" holds the rules for taking one. **Read
   before any performance claim.** `scripts/measure.py` takes the figures and

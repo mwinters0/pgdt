@@ -14,6 +14,8 @@ or one announced before it exists, rather than as an error of ours. The
 trigger to walk this file is a release whose rehearsal or publication meets
 something unexpected, a `mise` upgrade (`RL1`), and a change GitHub announces
 to releases, their attestations or their feed (`RL2`, `RL3`).
+Only the first has a carrier, `/release`'s step 5; the other two are events no
+session sees, and a release meeting the unexpected is their backstop.
 
 **Identifiers are `RL<n>`**, allocated on discovery and never reused. **`RL1`–`RL3`
 are allocated**, and nothing at or below `RL3` is reused.
