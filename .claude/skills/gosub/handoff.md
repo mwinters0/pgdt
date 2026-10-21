@@ -6,12 +6,12 @@ protocol still binds: detached, `setsid`, stdout and stderr to a file under
 `runs/`, never waited on. Three obligations on top, because the agent that reads
 the results is a fresh one, hours from now, with none of your context.
 
-## 1. Start it, then watch for five minutes
+## 1. Start it, then watch it to its first timed reading
 
-Confirm the job is *making progress*, not merely alive: sample twice, a few
-minutes apart, checking something that must move — the log's byte count, the
-output file's size, a row or block counter. Five minutes is a ceiling, not a
-target; stop early once progress is evident, and if it is not, kill the job by
+`CLAUDE.md`, "Long-running processes" sets the point: a moving byte count is
+not it, a build's output moving while the untimed step after it fails. A job
+with no timed readings, a koji scan, is watched until something that must
+move — a row or block counter — has moved twice. If it fails, kill it by
 process group, fix it, and start over. Never hand off a job you have not seen
 working.
 

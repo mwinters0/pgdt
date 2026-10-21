@@ -76,7 +76,8 @@ in, clear its Blocks column, and write that entry.
   it empty with an honest entry beside it. An out-of-band round ticks nothing.
 - **No `git commit`.** Leave the work in the tree for review.
 - **Long-running jobs follow `CLAUDE.md`'s protocol**: detached, logging to
-  `runs/`, never waited on, the log path recorded for a later session.
+  `runs/`, watched to the first timed reading and no further, the log path
+  recorded for a later session.
 
 ## Before you finish
 

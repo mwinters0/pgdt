@@ -45,13 +45,13 @@ are asserted there, not remembered here.
 
 ## Long-running processes
 
-Anything over ~10 minutes (a `measure.py --all` sweep, any `pgdt` run against
-the koji dump in `CLAUDE.local.md`) is launched fully detached with `setsid`,
-logging under `runs/` (gitignored), and **never waited on, monitored, or given
-a completion notification** — waiting expires the prompt cache and reloads the
-whole conversation. Record what was launched and the log path in today's
-history entry; a later session reads the result. Stop a sweep by process group
-(`pkill -g <pgid>`). Nothing else may build or test while a sweep runs.
+Anything over ~10 minutes (a `measure.py --all` sweep, a `pgdt` run on the koji
+dump) launches detached with `setsid`, logging under `runs/`, and is watched (a
+`Monitor` until-loop, never a sleep) to its **first timed reading** only: a
+preflight, staging or untimed-builder failure lands before it, while someone can
+act. Past it, **never waited on or monitored** — that expires the prompt cache.
+Then record the launch and its log in today's history entry. Stop it by process
+group (`pkill -g <pgid>`); nothing else builds or tests while a sweep runs.
 `measure.py --koji-recipe` prints the koji invocation with every path filled
 in; its load-bearing details are asserted by `scripts/test_measure.py`.
 Never edit a `runs/` orchestration script while it is running.

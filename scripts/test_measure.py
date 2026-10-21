@@ -8355,6 +8355,68 @@ class ApparatusPreflight(unittest.TestCase):
         )
 
 
+class MountPreflight(unittest.TestCase):
+    """A container reads its mounts from the runtime's mount namespace, not
+    the harness's, so before the first reading a nonce is written into each
+    staging directory and read back inside a container: a directory whose
+    probe the container does not see is refused, naming it."""
+
+    def _preflight(self, dirs, hidden=(), code=0):
+        """`mount_preflight` over `dirs`, the container answering by reading
+        each mounted probe off the host — except under `hidden`, which it
+        sees as another namespace's copy would: without the probe."""
+        started = []
+
+        def fake_run(argv, **_kwargs):
+            started.append(list(argv))
+            mounts = [a.split(":")[0] for a, prev in zip(argv[1:], argv) if prev == "-v"]
+            name = re.search(r"cat /probe/0/(\S+)", argv[-1]).group(1)
+            lines = [
+                "" if Path(m) in hidden else (Path(m) / name).read_text() for m in mounts
+            ]
+            return subprocess.CompletedProcess(argv, code, "\n".join(lines) + "\n", "no such image")
+
+        with unittest.mock.patch.object(measure.subprocess, "run", fake_run):
+            problems = measure.mount_preflight(measure.Config(), dirs)
+        return problems, started
+
+    def test_directories_the_container_sees_pass_and_keep_no_probe(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            dirs = [Path(a), Path(b), Path(a)]
+            problems, started = self._preflight(dirs)
+            self.assertEqual(problems, [])
+            self.assertEqual(len(started), 1, "one container start for every directory")
+            self.assertIn(measure.Config().image, started[0])
+            self.assertEqual(sum(arg == "-v" for arg in started[0]), 2, "each directory once")
+            self.assertEqual(list(Path(a).iterdir()) + list(Path(b).iterdir()), [])
+
+    def test_a_directory_the_container_sees_another_copy_of_is_refused(self):
+        with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+            problems, _ = self._preflight([Path(a), Path(b)], hidden={Path(b)})
+            self.assertEqual(len(problems), 1)
+            self.assertIn(b, problems[0])
+            self.assertIn("private /tmp or /var/tmp", problems[0])
+            self.assertEqual(list(Path(b).iterdir()), [], "the probe is removed either way")
+
+    def test_a_probe_that_cannot_start_is_one_problem(self):
+        with tempfile.TemporaryDirectory() as a:
+            problems, _ = self._preflight([Path(a)], code=125)
+            self.assertEqual(len(problems), 1)
+            self.assertIn("exit 125", problems[0])
+
+    def test_a_dry_run_starts_nothing(self):
+        with unittest.mock.patch.object(measure.subprocess, "run") as started:
+            problems = measure.mount_preflight(measure.Config(dry_run=True), [Path("/nonexistent")])
+        self.assertEqual(problems, [])
+        started.assert_not_called()
+
+    def test_the_sweep_probes_every_staging_area_before_its_first_reading(self):
+        source = inspect.getsource(measure.emit)
+        for area in ("cfg.cache_dir", "cfg.warm_dir", "cfg.nvme_dir"):
+            self.assertIn(area, source[source.index("mount_preflight("):])
+        self.assertLess(source.index("mount_preflight("), source.index("Session(cfg, stager"))
+
+
 class OomKillOracle(unittest.TestCase):
     """Telling an OOM kill from any other failure.
 

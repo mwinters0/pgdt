@@ -5630,6 +5630,58 @@ def apparatus_preflight(cfg: Config, log: Callable[[str], None]) -> list[str]:
     return problems
 
 
+def mount_preflight(cfg: Config, dirs: Sequence[Path]) -> list[str]:
+    """Each staging directory read back from inside a container before the
+    first reading, one problem line for each whose contents it does not see.
+
+    **The harness stages in its own mount namespace and the container runtime
+    mounts from the daemon's**, and the two need not agree: a process with a
+    private `/tmp` or `/var/tmp` stages, and unlinks, in its own copy, while
+    every container reads the runtime's — inputs an earlier sitting left, and
+    a cache an earlier build wrote, found twenty minutes in or never. A nonce
+    written from here and read there is the one test of that, and it costs one
+    container start."""
+    if cfg.dry_run:
+        return []
+    nonce = f"{os.getpid()}-{time.time_ns()}"
+    probe = f".mount-probe-{nonce}"
+    problems: list[str] = []
+    written: list[Path] = []
+    for d in dict.fromkeys(dirs):
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            (d / probe).write_text(nonce)
+            written.append(d)
+        except OSError as exc:
+            problems.append(f"{d} could not take the mount probe: {exc}")
+    if not written:
+        return problems
+    argv = [*cfg.container_argv(), "run", "--rm"]
+    for i, d in enumerate(written):
+        argv += ["-v", f"{d}:/probe/{i}:ro"]
+    script = "; ".join(f"cat /probe/{i}/{probe} 2>/dev/null; echo" for i in range(len(written)))
+    try:
+        proc = subprocess.run([*argv, cfg.image, "bash", "-c", script], text=True, capture_output=True)
+    finally:
+        for d in written:
+            (d / probe).unlink(missing_ok=True)
+    if proc.returncode != 0:
+        tail = " / ".join(proc.stderr.strip().splitlines()[-PREFLIGHT_STDERR_LINES:])
+        return [*problems, f"the mount probe did not start in {cfg.image} (exit {proc.returncode}: {tail})"]
+    seen = proc.stdout.split("\n")
+    for i, d in enumerate(written):
+        got = seen[i] if i < len(seen) else ""
+        if got != nonce:
+            problems.append(
+                f"{d} is not what a container mounts at that path: a probe written there "
+                f"reads back {'nothing' if not got else repr(got)} inside one. This process "
+                "and the container runtime see different directories — a private /tmp or "
+                "/var/tmp, say — so every run would read the runtime's copy instead of what "
+                "is staged. Run the sweep from a shell sharing the runtime's mount namespace"
+            )
+    return problems
+
+
 #: Whether this process has already built the `xz_decode` instrument. Per
 #: process rather than per file, for the reason the allocator legs are: a
 #: binary left in `runs/` by an earlier session was built from whatever the
@@ -12935,6 +12987,10 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     stager.plan(figures)
     problems = stager.preflight(figures)
     problems += apparatus_preflight(cfg, log)
+    problems += mount_preflight(
+        cfg,
+        [cfg.cache_dir, cfg.warm_dir, *([cfg.nvme_dir] if any(fig.nvme_inputs for fig in figures) else [])],
+    )
     if any(fig.counts_instructions for fig in figures):
         problems += counter_preflight(cfg, log)
     log(
