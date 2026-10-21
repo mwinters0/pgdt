@@ -81,12 +81,24 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
 "What an instrument can see"). `--count-pair <rev>` counts one change's
 `instructions:u` against the tree's parent and prints the comparison alone.
 
+## P15 progress
+
+Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
+
+- [ ] **15.1** Evidence: `pg_dump -Z` fixtures from each tested major and synthetic single-member and BGZF payloads (`flate2`, `noodles-bgzf`); `measure.py` figures for serial inflate (zlib-ng, zlib-rs, `miniz_oxide`) against the plain parse on each measured device, and for candidate spacings — they set the spacing constant, `gz-seek`'s throughput floor, and whether a parallel first pass is built
+- [ ] **15.2** The cut: `source/compressed/` with the codec trait, xz its only implementor; one `CompressionIndex` owned by `pgdt-io`, `KnownCompression::Compressed`, the codec error, the cache key renamed (cache bump); `determinism.rs` gains `.xz`; behaviour-preserving
+- [ ] **15.3** `extent()`: `Exact` or `Open` in place of `size()` and `size_is_exact()`, every site relying on an exact size, plain and xz `Exact` throughout; behaviour-preserving
+- [ ] **15.4** `gz-seek`'s requirements doc, written from here; no code here, the crate built in its own repo
+- [ ] **15.5** Single-member gzip: `gz-seek` vendored, the `deflate` adapter, checkpoints by the placement rule, unit CRCs, the window provider and the cache's window section, the first pass's `PlanNote`, determinism and resume assertions, over HTTP
+- [ ] **15.6** BGZF: the member walk at open, recognition at 18 bytes, members coalesced into units
+- [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the manual and `pg-dump-compatibility.md`
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** A dump is readable over HTTP, plain and `.xz`, with
+- **P15 is open** (above). A dump is readable over HTTP, plain and `.xz`, with
   nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
@@ -96,7 +108,7 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
   source recommends, a memory limit discovered and filled under the reserve
   and the margin, and a `parse` saying what it delivered rather than what it
   was asked for — is in [`../design/decisions.md`](../design/decisions.md).
-  Eleven phases remain sketched — P33, P32, P34, P22, P21, P23, P26, P15, P18, P8,
+  Ten phases remain sketched — P33, P32, P34, P22, P21, P23, P26, P18, P8,
   P24, in the roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each gets its own full grilling when it
   becomes current, and every one that carries an inbox must have it drained as
@@ -110,3 +122,15 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **P15's gzip addressing layer is a sibling crate, `gz-seek`, and `rapidgzip`
+  is not depended on.** Called unattended once the evaluation reported: the one
+  crate covering most of the layer fails the spec's residency, unit-CRC,
+  determinism, budget and thread rules, and accepts a truncated file
+  ([`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md), "Settled
+  in the grilling"; the run in `history/2026-10-21.md`); a sibling rather than a
+  `pgdt-io` module because P18's seekable zstd needs its own such layer and P8's
+  per-entry decode never needs one. **Deciding:** whether a new repo and agent
+  is the shape you want. Reconsidering — depending on `rapidgzip` or the
+  unevaluated `rusty_rapidgzip`, or owning the layer in `pgdt-io` — rewrites
+  slices 15.4–15.6 and the spec's crate bullets, and nothing before 15.4.

@@ -34,9 +34,9 @@ reason every register here numbers its entries: an entry gets cited, and a
 citation that renumbers is a citation that lies. Two letters rather than one is
 `docs/process.md`'s advice under "Known deficiencies", and here it is not
 merely advice — `R<n>` is already spoken for in this tree by the `xz-seek`
-crate's requirements register, which two phase inboxes cite by number
-([`roadmap-P15-gzip-inbox.md`](roadmap-P15-gzip-inbox.md), "The seekable-xz
-crate is xz-only on purpose, and generalizing it was rejected").
+crate's requirements register, which a phase spec and an inbox cite by number
+([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Inherited from the `.xz`
+source unchanged").
 
 **`RT1`–`RT22` are allocated**, and nothing at or below `RT22` is reused.
 

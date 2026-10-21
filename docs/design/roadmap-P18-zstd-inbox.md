@@ -27,8 +27,10 @@ frame content size is optional and a streaming writer — which is what
 compute the size, or a relaxed contract, and the relaxation's cost is now known
 to be a loop-termination change plus an honest answer for `info` when the total
 is not yet known, rather than a rewrite of every caller. **Contingent on P15:**
-it meets the same decision in gzip's form, so if it runs first the contract is
-already settled and this phase inherits it rather than deciding it.
+it meets the same decision in gzip's form and runs first, and its spec settles
+the contract as an `Extent` that is `Open` until the end is reached
+([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Settled in the grilling"),
+which this phase inherits rather than deciding.
 
 **Origin.** 2026-09-02, grilling the compressed-input work; the reasoning is
 now beside the mechanism ([`decisions.md`](decisions.md), "The compressed source and the cache", which states what `size()` promises and the two relaxations refused).

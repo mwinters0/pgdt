@@ -16,6 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27–P31, P35, P36 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P15 — gzip input | **Current** | [spec](roadmap-P15-gzip.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
@@ -23,7 +24,6 @@ reused, including a struck phase's.
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below; [inbox](roadmap-P23-resident-reserve-inbox.md) |
 | P26 — statistics refused on their cost, reconsidered | Sketched; not grilled | this file, below |
-| P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
 | P24 — Python bindings | Sketched; not grilled | this file, below; [inbox](roadmap-P24-python-inbox.md) |
@@ -932,40 +932,10 @@ corner-avoidance depth. What it starts from:
 
 ## P15 — gzip input
 
-**Inbox:** [`roadmap-P15-gzip-inbox.md`](roadmap-P15-gzip-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
-
-`.gz` input, in both shapes it arrives in: the single-member stream a writer
-produces streaming, and the multi-member one — of which `bgzip`'s BGZF is the
-disciplined case, every member carrying its compressed length in a header extra
-field. **One phase, not two**, because BGZF is a strict subset of gzip rather
-than a sibling format: the magic is the same, the decoder is the same, and a
-gzip source that could not read a BGZF file would be wrong. What differs
-between them is one thing, the payload of the index that makes a backward read
-affordable — a set of decoder *checkpoints* for the single-member shape, a list
-of member offsets for the multi-member one — and everything around that index
-is shared. Splitting them would build the recognition path, the decoder and the
-cache envelope's second variant twice, or once speculatively.
-
-Two things separate gzip from xz, and they are why this is a phase rather than
-one more arm of that source's:
-
-- **It does not answer `size()` from its own footer.** `ISIZE` is the
-  uncompressed length mod 2³², useless above 4 GiB. So this phase either relaxes
-  what `ByteRangeSource::size` promises or computes the size in a first pass —
-  a decision xz never forced, and one that reaches every caller that
-  clamps a read against `size()`. The two shapes do not answer it alike: a
-  member-walk sums exact per-member `ISIZE`s, while the single-member shape has
-  nothing short of a full decode.
-- **This is `pg_dump`'s own plain-format output.** For plain text a nonzero
-  `--compress` level compresses the entire output file, and gzip long predates
-  the method selector, so `pg_dump -Fp -Z9` has produced a file this build
-  cannot read for as long as there has been a build. That closes a
-  **compatibility gap**, not a convenience — and the file it has to read is the
-  non-seekable single-member shape, since `pg_dump` writes it streaming.
-
-**Scheduled ahead of P8**, whose Track B needs per-entry gzip streaming decode
-inside the archive container. Landing the decoder here means that track reuses
-it rather than acquiring it alongside a TOC parser.
+**Spec:** [`roadmap-P15-gzip.md`](roadmap-P15-gzip.md); its inbox is drained
+into it. `.gz` input in both its shapes, and the decompression
+layer redrawn so `.xz` and `.gz` are two implementors of one codec-generic
+layer.
 
 ## P18 — zstd and lz4 input
 
