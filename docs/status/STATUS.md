@@ -88,9 +88,9 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [ ] **15.1** Evidence: `pg_dump -Z` fixtures from each tested major and synthetic single-member and BGZF payloads (`flate2`, `noodles-bgzf`); `measure.py` figures for serial inflate (zlib-ng, zlib-rs, `miniz_oxide`) against the plain parse on each measured device, and for candidate spacings — they set the spacing constant, `gz-seek`'s throughput floor, and whether a parallel first pass is built
 - [ ] **15.2** The cut: `source/compressed/` with the codec trait, xz its only implementor; one `CompressionIndex` owned by `pgdt-io`, `KnownCompression::Compressed`, the codec error, the cache key renamed (cache bump); `determinism.rs` gains `.xz`; behaviour-preserving
 - [ ] **15.3** `extent()`: `Exact` or `Open` in place of `size()` and `size_is_exact()`, every site relying on an exact size, plain and xz `Exact` throughout; behaviour-preserving
-- [ ] **15.4** `gz-seek`'s requirements doc, written from here; no code here, the crate built in its own repo
-- [ ] **15.5** Single-member gzip: `gz-seek` vendored, the `deflate` adapter, checkpoints by the placement rule, unit CRCs, the window provider and the cache's window section, the first pass's `PlanNote`, determinism and resume assertions, over HTTP
-- [ ] **15.6** BGZF: the member walk at open, recognition at 18 bytes, members coalesced into units
+- [ ] **15.4** `gz-seek` built in the workspace as a leaf crate: the sans-IO forward decode emitting checkpoints by the placement rule, resume from a checkpoint given its window, the unit CRC, the BGZF member walk, the index as a shareable handle, the leaf admitted to `layering.py`'s graph and claimed in `concepts.md`
+- [ ] **15.5** Single-member gzip: the `deflate` adapter over `gz-seek`, checkpoints by the placement rule, unit CRCs, the window provider and the cache's window section, the first pass's `PlanNote`, determinism and resume assertions, over HTTP
+- [ ] **15.6** BGZF, `pgdt-io`'s side over the crate's walk: the walk run at open, recognition at 18 bytes, members coalesced into units
 - [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the manual and `pg-dump-compatibility.md`
 
 ## Not started
@@ -122,15 +122,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **P15's gzip addressing layer is a sibling crate, `gz-seek`, and `rapidgzip`
-  is not depended on.** Called unattended once the evaluation reported: the one
-  crate covering most of the layer fails the spec's residency, unit-CRC,
-  determinism, budget and thread rules, and accepts a truncated file
-  ([`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md), "Settled
-  in the grilling"; the run in `history/2026-10-21.md`); a sibling rather than a
-  `pgdt-io` module because P18's seekable zstd needs its own such layer and P8's
-  per-entry decode never needs one. **Deciding:** whether a new repo and agent
-  is the shape you want. Reconsidering — depending on `rapidgzip` or the
-  unevaluated `rusty_rapidgzip`, or owning the layer in `pgdt-io` — rewrites
-  slices 15.4–15.6 and the spec's crate bullets, and nothing before 15.4.

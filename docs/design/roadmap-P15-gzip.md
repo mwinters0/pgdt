@@ -42,13 +42,13 @@ a second copy of the xz source.
   the cache's `CompressionIndex`, and nothing for them is built here. This
   phase settles the `size()` contract for P18 as well (`roadmap.md`, "P18 —
   zstd and lz4 input").
-- **If no existing crate answers a positioned read over gzip, the addressing
-  layer is a sibling crate on `xz-seek`'s pattern** — its own repo and agent,
-  vendored read-only, changed only on request (D14) — not a module of
-  `pgdt-io`: it answers a file format's positioned read with no `pg_dump` in
-  it, and keeping it apart keeps its size contract its own, which is what the
-  xz crate declined to generalize. Where an existing crate covers most of it,
-  the standing rule against reinventing wheels governs instead. **None does**
+- **The addressing layer is a crate of its own, `gz-seek`, on `xz-seek`'s
+  pattern, not a module of `pgdt-io`**: it answers a file format's positioned
+  read with no `pg_dump` in it, and keeping it apart keeps its size contract
+  its own, which is what the xz crate declined to generalize. **It is built in
+  this workspace first** (below), and split off into its own repo once
+  functional. Where an existing crate covers most of it, the standing rule
+  against reinventing wheels governs instead. **None does**
   (the crates, below): the inflater is bought, never written, and what no
   crate supplies is the layer above it — checkpoints built during a forward
   decode, a resume from one, the BGZF walk, the index handed out. Rejected,
@@ -61,8 +61,8 @@ a second copy of the xz source.
   own (D1, D12); and does not link under a release profile as shipped. What
   stays admitted is its technique, for `gz-seek` to implement natively if the
   evidence slice earns a parallel first pass; `rusty_rapidgzip`, a native port
-  not evaluated here, is the first thing `gz-seek`'s own grilling reads.
-  **Why a sibling rather than a module** holds for the phases after this one:
+  not evaluated here, is the first thing slice 4 reads.
+  **Why a crate of its own rather than a module** holds for the phases after this one:
   P18's seekable zstd needs an addressing layer of its own, so a codec's
   positioned-read crate beside the generic layer is the pattern `xz-seek` and
   `gz-seek` set, while P8's per-entry decode is forward-only over the inflater
@@ -188,9 +188,9 @@ a second copy of the xz source.
   and a compressed source is where `--jobs` changes which decode work happens,
   so it is where a determinism defect would live. Rejected: checkpoints
   wherever the first pass's reads land, determinism asserted at one count.
-- **The sibling crate's bar is ours; its inflater is its own.** Its
-  requirements doc, written from here, kept there and frozen as `xz-seek`'s
-  is, states: sans-IO — a walk and a unit decode driven by bytes the caller
+- **`gz-seek`'s bar is ours; its inflater is its own.** What it must meet,
+  which becomes its frozen `docs/design/historical/initial.md` at the split as
+  `xz-seek`'s requirements are its: sans-IO — a walk and a unit decode driven by bytes the caller
   supplies, as `xz_seek::Walk` and `BlockTask` are, which is what lets the
   fetched arm exist; a forward decode emitting checkpoints by the rule above;
   a resume from a checkpoint given its window; a CRC-32 a unit; the index as a
@@ -236,16 +236,28 @@ a second copy of the xz source.
   forgoing what its headers state; reading a `.gzi` sidecar, which the
   persisted walk makes redundant and whose second file would need its own
   identity check.
-- **The sibling crate is `gz-seek`, provisionally** (`CLAUDE.local.md` names
-  its checkout once it exists, as it does `xz-seek`'s): its own repo on a copy of this one's `docs/process.md` and
-  skills, as `xz-seek` is, vendored read-only under `vendor/gz-seek/` by
-  `scripts/vendor_xz_seek.py` generalized to take the crate's name rather than
-  copied. Its `docs/design/historical/initial.md` is written from here, as a
-  slice of this phase. **The maintainer creates the repo and starts its
-  agent**; nothing here does either. Named for the container it addresses
-  (members, `BSIZE`, trailers), as `xz-seek` is; deflate is the codec beneath
-  it, and P8's zlib framing is a forward decode that never touches it.
-  Rejected: `deflate-seek`.
+- **`gz-seek`, provisionally, is built in this workspace as `crates/gz-seek/`,
+  and split off once functional.** A leaf: it depends on no workspace crate
+  and names nothing of `pg_dump`, so the split is a move rather than a
+  rewrite, and its one caller is `pgdt-io`'s `source/compressed/deflate`
+  adapter. Why here first: its interface is drawn at the same time as the
+  codec trait it serves, and developing it beside that caller keeps both in
+  one review until the interface settles; the leaf crate keeps the separation
+  the crate-of-its-own decision was for. **At the split** it becomes its own
+  repo on a copy of this one's `docs/process.md` and skills, vendored
+  read-only under `vendor/gz-seek/` by `scripts/vendor_xz_seek.py`
+  generalized to take the crate's name rather than copied; its own agent, its
+  `docs/design/historical/initial.md` written from the bar above, and
+  `CLAUDE.local.md`'s confirm-before-conversation rule apply from then, not
+  before. **Placement**: a member below `pgdt-io`, claimed by "The byte
+  sources" in [`concepts.md`](concepts.md) as a `gz-seek` line beside
+  `pgdt-io`'s, the crate holding a container's positioned read and `pgdt-io`
+  the source over it; like `namespace-init`, a member that is not one of
+  D68's seven libraries. Named for the container it addresses (members,
+  `BSIZE`, trailers), as `xz-seek` is; deflate is the codec beneath it, and
+  P8's zlib framing is a forward decode that never touches it. Rejected:
+  `deflate-seek`; a module of `pgdt-io` (Q3's rejected shape, the leaf crate
+  keeping the separation); its own repo from the start.
 - **Fixtures**: `pg_dump -Z` output from each tested major, generated by
   `scripts/generate_fixtures.py` from the oracle's `postgres:*` images and
   committed as the existing fixtures are — the compatibility claim's own
@@ -263,7 +275,7 @@ a second copy of the xz source.
   the budget cannot hold whole is read through one live forward-only handle
   kept across reads (D15). The xz crate declined generalizing on purpose
   (`xz-seek`'s `docs/design/historical/initial.md`, its R3), which is why the
-  gzip layer is a sibling rather than an extension of it.
+  gzip layer is a crate of its own rather than an extension of it.
 
 ## Slice order
 
@@ -283,20 +295,27 @@ it. The checklist is written into `STATUS.md` when the phase is sliced.
 3. **`extent()`.** The trait change and every site relying on an exact size,
    plain and xz answering `Exact` throughout. Behaviour-preserving, and apart
    from the cut because it reworks the scan loops, a different core path.
-4. **`gz-seek`'s requirements doc.** No code here; the crate is built there,
-   which this phase then waits on.
-5. **Single-member gzip.** Vendoring; the `deflate` adapter; checkpoints by the
+4. **`gz-seek` built in the workspace.** The sans-IO forward decode emitting
+   checkpoints by the placement rule; the resume from a checkpoint given its
+   window; the unit CRC; the BGZF member walk; the index as a shareable
+   handle; and the leaf admitted to the graph — a `scripts/layering.py`
+   `GRAPH` row with no members, `gz-seek` added to `pgdt-io`'s row, `gz_seek`
+   added beside `xz_seek` to the names `CORE_NAMES_NO_DEPENDENCY` and `NO_IO`
+   refuse, D68's entry naming it beside `namespace-init`, and its files
+   claimed in `concepts.md`.
+5. **Single-member gzip.** The `deflate` adapter over `gz-seek`; checkpoints by the
    placement rule; unit CRCs; the window provider and the cache's window
    section; the first pass's `PlanNote`; the determinism and resume
    assertions; over HTTP.
-6. **BGZF.** The walk at open, recognition at 18 bytes, coalescing members into
-   units.
+6. **BGZF.** `pgdt-io`'s side, over the crate's walk: the walk run at open,
+   recognition at 18 bytes, coalescing members into units.
 7. **Readings and the record.** Resident readings at two or more reader counts
    against the unpooled bound, the gzip throughput figures, the manual and
    [`pg-dump-compatibility.md`](pg-dump-compatibility.md).
 
 A parallel first pass becomes a row only if the evidence slice's reading earns
-it.
+it. The split is a row only if `gz-seek` is functional by the wrap; otherwise
+it is out-of-band work.
 
 ## Facts the grilling found
 
