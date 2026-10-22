@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use clap::Args;
 use pgdt_dump::cache::{CacheStatus, Held, LoadedCache, OfflineCache, Opened};
-use pgdt_io::Origin;
+use pgdt_io::{Extent, Origin};
 
 use crate::args::{IdentityArgs, cache_mode};
 use crate::refusal::{refusal, spelled};
@@ -16,6 +16,8 @@ pub(crate) use text::{print_diagnostics, print_index, print_metadata};
 mod json;
 mod labels;
 mod statistics;
+#[cfg(test)]
+mod tests;
 mod text;
 
 /// `pgdt info`'s flags.
@@ -186,8 +188,16 @@ fn unusable_cache_message(err: pgdt_core::Error, source: Option<&Origin>) -> Str
 /// only at a `CopyEnd` watermark, holding what its level records of every
 /// row, so every record it holds is complete in itself, and there is no
 /// half-known block.
-/// The percentage floors, so it reads 100% only for a finished scan.
-fn completion_line(scanned_through: u64, total_size: u64) -> String {
+/// The percentage floors, so it reads 100% only for a finished scan. A
+/// first pass over a source whose end it has not reached has no ratio, and
+/// says so rather than dividing by a bound.
+fn completion_line(scanned_through: u64, extent: Extent) -> String {
+    let Some(total_size) = extent.exact() else {
+        return format!(
+            "Scan completion: {scanned_through} bytes scanned; the total is not known until a \
+             scan reaches the end"
+        );
+    };
     // A zero-byte file is trivially covered in full, and has no ratio.
     let percent = (scanned_through.min(total_size) * 100).checked_div(total_size).unwrap_or(100);
     format!("Scan completion: {percent}% ({scanned_through} bytes)")
@@ -196,12 +206,12 @@ fn completion_line(scanned_through: u64, total_size: u64) -> String {
 /// Every `pgdt info` rendering goes through here: the coverage line, then the
 /// listing — or the export alone, which carries its coverage as fields.
 fn report(loaded: &LoadedCache, detail: bool, map: bool, json: bool) -> Result<()> {
-    let LoadedCache { index, total_size, compression, envelope, .. } = loaded;
+    let LoadedCache { index, extent, compression, envelope, .. } = loaded;
     let complete = loaded.is_complete();
     if json {
-        return print_index_json(index, *total_size, *compression, envelope, complete);
+        return print_index_json(index, extent.exact(), *compression, envelope, complete);
     }
-    println!("{}", completion_line(index.scanned_through, *total_size));
+    println!("{}", completion_line(index.scanned_through, *extent));
     println!();
     print_index(index, *compression, detail, map, complete, detail);
     Ok(())

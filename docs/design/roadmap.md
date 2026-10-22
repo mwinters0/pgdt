@@ -944,17 +944,18 @@ layer.
 The codecs `pg_dump` gained with PG 16, in the single-frame shape and in the
 seekable one (`t2sz`'s zstd seekable format, a skippable frame carrying the
 frame index). Same argument as P15 above — a `--compress=zstd` plain dump is
-ordinary `pg_dump` output this build cannot read — and the same `size()`
+ordinary `pg_dump` output this build cannot read — and the same length
 problem in its own form: zstd's frame content size is *optional* and a
 streaming writer omits it, so the number is unavailable for exactly the files
-this phase exists to read.
+this phase exists to read, whose extent is `Open` until a first pass ends
+([`decisions.md`](decisions.md), "D6").
 
 **Carved out of P15 rather than shipped with it**, because nothing the gzip
 work does is on this phase's critical path: a different decoder dependency, a
 different seekable container, a different index payload, and a codec that
 arrives with a PG version rather than predating everything. What the two share
-is the `size()` contract decision, and that is settled once — by whichever runs
-first — rather than being a reason to run them together.
+is the extent contract, settled once, by P15, rather than being a reason to run
+them together.
 
 **lz4 rides here**, for the reason it never belonged with gzip: it is the third
 arm of the same PG 16 method selector, with the same shape of problem and no

@@ -46,11 +46,12 @@ impl ByteRangeSource for Recommends {
     > {
         Box::pin(async { Ok(bytes::Bytes::new()) })
     }
-    fn size(
+    fn extent(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = pgdt_core::Result<u64>> + Send + '_>>
-    {
-        Box::pin(async { Ok(0) })
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>,
+    > {
+        Box::pin(async { Ok(pgdt_io::Extent::Exact(0)) })
     }
     fn modified(
         &self,

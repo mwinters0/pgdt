@@ -122,8 +122,8 @@ impl ByteRangeSource for Shifting {
         self.inner.read_range(offset, len)
     }
 
-    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
-        self.inner.size()
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<pgdt_io::Extent>> + Send + '_>> {
+        self.inner.extent()
     }
 
     /// The three the leader reads, forwarded so a scan through this wrapper
@@ -689,8 +689,8 @@ impl ByteRangeSource for Fetched {
         self.inner.read_range(offset, len)
     }
 
-    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
-        self.inner.size()
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<pgdt_io::Extent>> + Send + '_>> {
+        self.inner.extent()
     }
 
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
@@ -737,7 +737,14 @@ async fn a_cache_written_for_another_origin_loads_with_a_warning() {
 
     let elsewhere = Fetched::new(&dump, "https://two.example/koji.dump", Some("\"abc\""));
     let status = pgdt_dump::internal::load(&path, &elsewhere).await.unwrap();
-    let CacheStatus::Loaded(LoadedCache { origin, weak, index, total_size, .. }) = status else {
+    let CacheStatus::Loaded(LoadedCache {
+        origin,
+        weak,
+        index,
+        extent: pgdt_io::Extent::Exact(total_size),
+        ..
+    }) = status
+    else {
         panic!("an origin difference must not invalidate the cache, got {status:?}")
     };
     assert!(index.is_complete(total_size));
@@ -799,7 +806,13 @@ async fn a_local_cache_read_over_a_fetched_source_differs_in_origin() {
 
     let fetched = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"abc\""));
     let status = pgdt_dump::internal::load(&path, &fetched).await.unwrap();
-    let CacheStatus::Loaded(LoadedCache { origin, index, total_size, .. }) = status else {
+    let CacheStatus::Loaded(LoadedCache {
+        origin,
+        index,
+        extent: pgdt_io::Extent::Exact(total_size),
+        ..
+    }) = status
+    else {
         panic!("still usable, got {status:?}")
     };
     assert!(index.is_complete(total_size));
@@ -826,7 +839,14 @@ async fn an_entity_tag_outranks_a_modification_time_that_agrees_with_nothing() {
     // Same origin, same `Last-Modified`, a tag the server has changed.
     let second = Fetched::new(&dump, "https://one.example/koji.dump", Some("\"def\""));
     let status = pgdt_dump::internal::load(&path, &second).await.unwrap();
-    let CacheStatus::Loaded(LoadedCache { weak, origin, index, total_size, .. }) = status else {
+    let CacheStatus::Loaded(LoadedCache {
+        weak,
+        origin,
+        index,
+        extent: pgdt_io::Extent::Exact(total_size),
+        ..
+    }) = status
+    else {
         panic!("a tag difference must not invalidate the cache, got {status:?}")
     };
     assert!(index.is_complete(total_size));
@@ -1002,8 +1022,8 @@ impl ByteRangeSource for Unpinnable {
         self.inner.read_range(offset, len)
     }
 
-    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
-        self.inner.size()
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<pgdt_io::Extent>> + Send + '_>> {
+        self.inner.extent()
     }
 
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {

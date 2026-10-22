@@ -17,7 +17,7 @@ use pgdt_core::{Error, Result};
 use crate::parallelism::{Parallelism, WorkerMemory};
 use crate::partition::Partitioning;
 use crate::source::pool::PooledBuffer;
-use crate::source::{ByteRangeSource, RemoteIdentity, WaitPolicy};
+use crate::source::{ByteRangeSource, Extent, RemoteIdentity, WaitPolicy};
 
 use super::blocks::{BlockCache, Claim, DecodeBudget, DecodedBlock};
 use super::{Codec, CompressionIndex, LiveBlock, Positioned, codec_over, piece_of, short_read};
@@ -498,9 +498,10 @@ impl ByteRangeSource for FetchedCompressedSource {
         })
     }
 
-    /// The plaintext length, from the index — no decode, no fetch.
-    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
-        Box::pin(async move { Ok(self.codec.plaintext_size()) })
+    /// The plaintext length, from the index — no decode, no fetch, and
+    /// exact, the index being complete.
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<Extent>> + Send + '_>> {
+        Box::pin(async move { Ok(Extent::Exact(self.codec.plaintext_size())) })
     }
 
     /// The transport's, unchanged: the compression layer moves no file and
@@ -510,7 +511,7 @@ impl ByteRangeSource for FetchedCompressedSource {
     }
 
     /// The compressed object's own stored length — the transport's `size`,
-    /// never the index total [`FetchedCompressedSource::size`] answers.
+    /// never the index total [`FetchedCompressedSource::extent`] answers.
     fn stored_size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
         self.source.stored_size()
     }

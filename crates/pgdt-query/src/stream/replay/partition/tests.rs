@@ -232,8 +232,8 @@ fn the_count_note_offers_the_chunk_only_where_the_span_sits_on_it() {
         ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
             Box::pin(async { Ok(Bytes::new()) })
         }
-        fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
-            Box::pin(async { Ok(45) })
+        fn extent(&self) -> Pin<Box<dyn Future<Output = Result<pgdt_io::Extent>> + Send + '_>> {
+            Box::pin(async { Ok(pgdt_io::Extent::Exact(45)) })
         }
         fn modified(
             &self,

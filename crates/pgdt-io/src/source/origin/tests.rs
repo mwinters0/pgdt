@@ -90,7 +90,7 @@ async fn open_local_recognizes_xz_content_with_no_xz_name() {
 
     let source = recognize(compressed.path()).await;
     assert!(source.compression_index().is_some(), "content-sniffed as .xz");
-    assert_eq!(source.size().await.unwrap(), payload.len() as u64);
+    assert_eq!(source.extent().await.unwrap().exact().unwrap(), payload.len() as u64);
     let got = source.read_range(0, payload.len()).await.unwrap();
     assert_eq!(&got[..], &payload[..]);
 }
@@ -117,7 +117,7 @@ async fn open_local_treats_a_file_shorter_than_the_magic_as_plain() {
     let path = plain.path().to_path_buf();
     let source = recognize(&path).await;
     assert!(source.compression_index().is_none());
-    assert_eq!(source.size().await.unwrap(), 2);
+    assert_eq!(source.extent().await.unwrap().exact().unwrap(), 2);
 }
 
 /// A table a previous walk produced is handed back and used: the source
@@ -139,7 +139,7 @@ async fn open_local_builds_an_xz_source_from_a_handed_back_table() {
         Recognized::Mismatch => panic!("the file's own table must describe it"),
     };
     assert_eq!(seek_table_of(&*source), table);
-    assert_eq!(source.size().await.unwrap(), payload.len() as u64);
+    assert_eq!(source.extent().await.unwrap().exact().unwrap(), payload.len() as u64);
     let got = source.read_range(9_000, 4000).await.unwrap();
     assert_eq!(&got[..], &payload[9_000..13_000]);
 }
@@ -236,7 +236,7 @@ async fn open_local_accepts_a_plain_claim_about_a_plain_file() {
             Recognized::Mismatch => panic!("a plain file is what the claim said"),
         };
     assert!(source.compression_index().is_none());
-    assert_eq!(source.size().await.unwrap(), 16);
+    assert_eq!(source.extent().await.unwrap().exact().unwrap(), 16);
 }
 
 #[cfg(feature = "http")]

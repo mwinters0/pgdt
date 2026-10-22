@@ -52,7 +52,7 @@ async fn gathered_at(
         request: &StatisticsRequest::DATA,
         allowance: None,
         account: &account,
-        size: source.size().await.unwrap(),
+        extent: source.extent().await.unwrap(),
         loaded: HashSet::new(),
         shortfall_reported: false,
     };

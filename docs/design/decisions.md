@@ -47,9 +47,12 @@ sibling that finishes. A loop retaining into a batch holds the buffers it would 
 block pool never waits whatever the loop said. Rejected: gating on `Parallelism`.
 
 ### D6 `ByteRangeSource` mirrors `object_store` and is dyn-compatible
-`read_range`/`size`/`modified` copy `get_range`/`head` so a remote source is additive behind a
+`read_range`/`extent`/`modified` copy `get_range`/`head` so a remote source is additive behind a
 feature without the dependency. Boxed futures so wrappers compose rather than branching per caller.
-Rejected: generics matched per command; `enum AnySource`. `size_is_exact` is for gzip/zstd.
+`extent()` is `Exact` or `Open`, so each site needing the end says what it does without one: a read loop
+reads to an open end by `read_at_most`, `read_range` staying strict for a driver told what to fetch; a
+cut needs `Exact`; a map and its cache end at the watermark. Rejected: generics matched per command;
+`enum AnySource`; `size()` as a bound beside a flag each site must remember; a counting pre-pass.
 
 ### D7 `partitions()` says where and at what cost, never whether
 The same file is worth cutting for extraction and not for discovery, so the caller decides. The scheduler's only
@@ -139,7 +142,7 @@ an embedder cannot override); refusing a damaged one of ours (nothing readable l
 cause); `load` checking size alone (a claimless open gets another file's map). A moved block is `CachedBlockChanged`.
 
 ### D21 Identity is `stored_size()` plus weak signals, in an opaque enum
-`stored_size()` keeps the check a `stat` where `size()` needs a decompressing source opened first, and `SourceIdentity`'s variants are read through
+`stored_size()` keeps the check a `stat` where `extent()` needs a decompressing source opened first, and `SourceIdentity`'s variants are read through
 signal accessors, so two kinds compare rather than refuse. **Two questions, split by tense.** Between runs a weak signal — modification, and where a
 source was fetched from — is advisory, its warning reported and never persisted, and binds under its own `StrictIdentity` term alone, a missing time included.
 During one the cadence follows the cost of asking: `SourceWatch` re-reads the open descriptor at the save's cadence (D62), at run end and before a

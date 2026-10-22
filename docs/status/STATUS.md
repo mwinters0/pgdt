@@ -88,7 +88,7 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.1** Evidence, the fixtures: `pg_dump -Z` fixtures from each tested major and synthetic single-member and BGZF payloads (`flate2`, `noodles-bgzf`) — [notes](../design/roadmap-P15.1-fixtures-notes.md)
 - [x] **15.1.1** Evidence, the inflate figure: `inflate-throughput`, serial inflate against the plain parse on each measured device — it sets `gz-seek`'s throughput floor and whether a parallel first pass is built — [notes](../design/roadmap-P15.1.1-inflate-notes.md)
 - [x] **15.2** The cut: `source/compressed/` with the codec trait, xz its only implementor; one `CompressionIndex` owned by `pgdt-io`, `KnownCompression::Compressed`, the codec error, the cache key renamed (cache bump); `determinism.rs` gains `.xz`; behaviour-preserving — [notes](../design/roadmap-P15.2-cut-notes.md)
-- [ ] **15.3** `extent()`: `Exact` or `Open` in place of `size()` and `size_is_exact()`, every site relying on an exact size, plain and xz `Exact` throughout; behaviour-preserving
+- [x] **15.3** `extent()`: `Exact` or `Open` in place of `size()` and `size_is_exact()`, every site relying on an exact size, plain and xz `Exact` throughout; behaviour-preserving — [notes](../design/roadmap-P15.3-extent-notes.md)
 - [ ] **15.4** `gz-seek` built in the workspace as a leaf crate: the sans-IO forward decode emitting checkpoints by the placement rule, resume from a checkpoint given its window, the unit CRC, the BGZF member walk, the index as a shareable handle, the leaf admitted to `layering.py`'s graph and claimed in `concepts.md`
 - [ ] **15.1.2** Evidence, the spacing figure, on `gz-seek` after 15.4: gzip's own costs at candidate spacings — the checkpointing first pass against a serial inflate, a resumed unit decode's fixed cost, the window section's size — the costs shared with xz read off its figures; it sets the spacing constant `pgdt-io` passes `gz-seek`
 - [ ] **15.5** Single-member gzip: the `deflate` adapter over `gz-seek`, checkpoints by the placement rule, unit CRCs, the window provider and the cache's window section, the first pass's `PlanNote`, determinism and resume assertions, over HTTP
@@ -125,3 +125,15 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A map of a source whose end is not known ends at its watermark** (15.3).
+  Where `extent()` is `Open`, `splice` and `preamble_only` push no `Unscanned`
+  tail, the cache records `Open { at_least }` beside a map tiling
+  `[0, scanned_through)`, and a load checks the tiling to the watermark
+  ([`../design/decisions.md`](../design/decisions.md), "D6"). Why: a tail to
+  `at_least` would claim bytes against a bound a pass reads once at its start,
+  while each save re-reads the extent it records, so the map and the cache
+  could disagree about how much is known. Reconsidering means a tail to the
+  bound re-asked at every splice, and `info --map` over a gzip first pass cut
+  short listing an unscanned remainder of at least so many bytes, which today
+  it does not list at all.

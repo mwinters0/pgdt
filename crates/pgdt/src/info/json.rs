@@ -19,7 +19,9 @@ use super::labels::{arrow_type_label, block_resolutions, block_unchecked, resolu
 /// text.
 ///
 /// **Coverage is components, not a rendered percentage**: `scanned_through`
-/// and `total_size` sit side by side, so a script computes its own ratio.
+/// and `total_size` sit side by side, so a script computes its own ratio —
+/// `total_size` `null` where the source's end had not been read when the
+/// cache was saved.
 ///
 /// **Every block's per-group statistics are exported as the cache holds them**,
 /// with no per-table rollup, and the document is written compact and straight
@@ -30,7 +32,7 @@ struct IndexJson<'a> {
     envelope: &'a CacheEnvelope,
     #[serde(flatten)]
     index: &'a DumpIndex,
-    total_size: u64,
+    total_size: Option<u64>,
     /// The container's shape, `null` for a plain file — the same three
     /// numbers `text::compression_line` prints, exported because `--json` carries
     /// everything `--detail` would add.
@@ -69,7 +71,7 @@ struct ColumnResolutionJson<'a> {
 
 pub(super) fn print_index_json(
     index: &DumpIndex,
-    total_size: u64,
+    total_size: Option<u64>,
     compression: Option<CompressionShape>,
     envelope: &CacheEnvelope,
     complete: bool,

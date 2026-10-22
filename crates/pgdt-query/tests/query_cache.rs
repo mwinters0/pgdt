@@ -128,8 +128,10 @@ impl ByteRangeSource for CountingSource {
         self.inner.read_range(offset, len)
     }
 
-    fn size(&self) -> Pin<Box<dyn Future<Output = pgdt_core::Result<u64>> + Send + '_>> {
-        self.inner.size()
+    fn extent(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>> {
+        self.inner.extent()
     }
 
     fn modified(
@@ -245,7 +247,7 @@ async fn a_cold_query_maps_up_to_its_target_and_stops() {
         .find(|b| b.header.matches("public.widgets"))
         .expect("the queried block is mapped");
     assert_eq!(index.scanned_through, widgets.end_offset, "stopped at the target, not at EOF");
-    assert!(index.scanned_through < source.size().await.unwrap());
+    assert!(index.scanned_through < source.extent().await.unwrap().exact().unwrap());
 }
 
 /// `ScanExtent::Full` is the way back to a whole-file map from a query — the
@@ -265,7 +267,7 @@ async fn scan_extent_full_maps_the_whole_file_from_a_query() {
     let mut tables: Vec<&str> = index.blocks().map(|b| b.header.table.as_str()).collect();
     tables.sort_unstable();
     assert_eq!(tables, vec!["Odd Table", "empty_table", "no_column_list", "widgets"]);
-    assert_eq!(index.scanned_through, source.size().await.unwrap());
+    assert_eq!(index.scanned_through, source.extent().await.unwrap().exact().unwrap());
 }
 
 /// Why the cross-reference set can't stop where the map does:
@@ -290,7 +292,10 @@ async fn a_cold_query_misses_post_data_grants_but_scan_extent_full_finds_them() 
     )
     .await;
     let Some(index) = saved(&cache_path, &source).await else { panic!("a cache was written") };
-    assert!(index.scanned_through < source.size().await.unwrap(), "stopped before EOF");
+    assert!(
+        index.scanned_through < source.extent().await.unwrap().exact().unwrap(),
+        "stopped before EOF"
+    );
     assert!(index.roles.contains("postgres"));
     assert!(
         !index.roles.contains("fixture_reader"),
@@ -301,7 +306,7 @@ async fn a_cold_query_misses_post_data_grants_but_scan_extent_full_finds_them() 
     drain(&source, "objects.widgets", ScanExtent::Full, CacheMode::enabled(cache_path.clone()))
         .await;
     let Some(index) = saved(&cache_path, &source).await else { panic!("a cache was written") };
-    assert_eq!(index.scanned_through, source.size().await.unwrap());
+    assert_eq!(index.scanned_through, source.extent().await.unwrap().exact().unwrap());
     assert!(
         index.roles.contains("fixture_reader"),
         "a full scan reaches the GRANT: {:?}",
@@ -385,7 +390,7 @@ async fn interrupted_scan_still_captures_the_first_database_preamble() {
 
     let Some(index) = saved(&cache_path, &source).await else { panic!("progress was persisted") };
     assert!(
-        index.scanned_through < source.size().await.unwrap(),
+        index.scanned_through < source.extent().await.unwrap().exact().unwrap(),
         "sanity check: this scan really did stop well short of EOF"
     );
     let metadata = index.metadata.expect("preamble captured despite the early stop");
@@ -454,7 +459,7 @@ async fn a_query_built_index_tiles_in_every_cache_state() {
             std::fs::copy(&fixture, &dump).unwrap();
             let cache_path = cache::colocated_path(&dump);
             let source = open(&dump);
-            let size = source.size().await.unwrap();
+            let size = source.extent().await.unwrap().exact().unwrap();
             let label = format!("{schema_dir}/{flag_set}");
 
             // Cold: nothing cached, so the prepass's spans are the only
@@ -521,7 +526,7 @@ async fn a_resumed_query_leaves_a_tiling_index() {
     let (_dir, dump) = sandboxed_edge_cases();
     let cache_path = cache::colocated_path(&dump);
     let source = open(&dump);
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
 
     let cold = Cold { cache: CacheMode::enabled(cache_path.clone()), ..Cold::default() };
     let options = QueryOptions { max_bytes: None, ..Default::default() };

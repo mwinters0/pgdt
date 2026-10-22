@@ -286,3 +286,80 @@ fn a_file_ending_inside_a_copy_block_is_still_rejected() {
         );
     }
 }
+
+/// A file held in memory, its extent `Exact` or — with `open` — not stated
+/// until a read meets the end.
+struct InMemory {
+    file: Bytes,
+    open: bool,
+    reached: std::sync::atomic::AtomicBool,
+}
+
+impl ByteRangeSource for InMemory {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Bytes>> + Send + '_>> {
+        let at = offset as usize;
+        Box::pin(async move { Ok(self.file.slice(at..at + len)) })
+    }
+    fn read_at_most(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Bytes>> + Send + '_>> {
+        let at = (offset as usize).min(self.file.len());
+        let end = (at + len).min(self.file.len());
+        if end == self.file.len() {
+            self.reached.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        Box::pin(async move { Ok(self.file.slice(at..end)) })
+    }
+    fn extent(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Extent>> + Send + '_>> {
+        let len = self.file.len() as u64;
+        let known = !self.open || self.reached.load(std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async move {
+            Ok(if known { Extent::Exact(len) } else { Extent::Open { at_least: 0 } })
+        })
+    }
+    fn modified(
+        &self,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Option<std::time::SystemTime>>> + Send + '_>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+/// **A scan finds an end it was not told** from the read that answers short —
+/// or, where the file is a whole number of chunks, from the empty read after
+/// the last full one — and hands out the events a scan told the end hands
+/// out, answering the same end.
+#[tokio::test]
+async fn a_scan_finds_an_open_end_where_a_read_answers_short() {
+    let file = b"SET x = 1;\nCOPY public.t (a) FROM stdin;\n1\n2\n\\.\nSELECT 1;\n";
+    for chunk_size in [1usize, 3, file.len() / 2, file.len(), file.len() + 5] {
+        let mut answers = Vec::new();
+        for open in [false, true] {
+            let source = InMemory {
+                file: Bytes::from_static(file),
+                open,
+                reached: std::sync::atomic::AtomicBool::new(false),
+            };
+            let options = ScanOptions { read: options(chunk_size), ..ScanOptions::default() };
+            let mut events = Vec::new();
+            let end = scan(&source, &options, |event| {
+                events.push(format!("{event:?}"));
+                ControlFlow::Continue(())
+            })
+            .await
+            .unwrap();
+            answers.push((events, end));
+        }
+        assert_eq!(answers[0].1, Some(file.len() as u64), "chunk {chunk_size}");
+        assert_eq!(answers[0], answers[1], "chunk {chunk_size}");
+    }
+}

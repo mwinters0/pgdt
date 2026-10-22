@@ -165,8 +165,9 @@ async fn gathered(dump: &Path) -> (tempfile::TempDir, PathBuf, DumpIndex) {
     };
     let copy = parsed_copy(dump, dir.path(), &request).await;
     let path = cache::colocated_path(&copy);
-    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) =
-        pgdt_dump::internal::load_offline(&path).await.unwrap()
+    let CacheStatus::Loaded(LoadedCache {
+        index, extent: pgdt_io::Extent::Exact(total_size), ..
+    }) = pgdt_dump::internal::load_offline(&path).await.unwrap()
     else {
         panic!("the parse left a complete cache")
     };

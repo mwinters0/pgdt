@@ -21,7 +21,7 @@ pub use memory::{DEFAULT_MEMORY_BUDGET, MemoryLimit, available_memory, discover_
 pub use parallelism::{Parallelism, WorkerMemory};
 pub use partition::{PartitionBoundaries, PartitionRead, Partitioning, RetainedUnit};
 pub use source::{
-    ByteRangeSource, CompressedFileSource, CompressionIndex, FetchedCompressedSource,
+    ByteRangeSource, CompressedFileSource, CompressionIndex, Extent, FetchedCompressedSource,
     KnownCompression, LocalFileSource, Origin, OriginProbe, Recognized, RemoteIdentity,
     SCAN_CHUNK_DEFAULT_SIZE_BYTES, SeekTable, WaitPolicy, open,
 };

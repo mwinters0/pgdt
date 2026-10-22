@@ -54,7 +54,7 @@ pub mod internal {
 /// additive"); pre-1.0 a bump is free, nothing migrates (`CLAUDE.md`,
 /// "Pre-1.0"), and nothing records it (`docs/design/decisions.md`, "D22").
 /// A new way of *reading* an existing on-disk shape needs no bump:
-/// [`pgdt_dump::cache::LoadedCache::is_complete`] reinterprets `scanned_through` against a size
+/// [`pgdt_dump::cache::LoadedCache::is_complete`] reinterprets `scanned_through` against an extent
 /// already stored. A new way of *choosing* what an unchanged field holds does:
 /// a block recording the request that sized it is read back as already sized
 /// under it, so a cache whose sizes today's rule would not choose is as
@@ -63,4 +63,4 @@ pub mod internal {
 /// `persisted_index_is_pinned_to_the_format_version` pins what every fixture
 /// persists beside this number, as `golden_order_is_pinned_to_the_format_version`
 /// pins the comparison order, and each fails until it is bumped.
-pub const CACHE_FORMAT_VERSION: u32 = 72;
+pub const CACHE_FORMAT_VERSION: u32 = 73;

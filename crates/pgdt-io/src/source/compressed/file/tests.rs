@@ -4,23 +4,22 @@ use std::sync::Arc;
 use crate::parallelism::worker_count;
 use crate::source::pool::POOL_DEPTH;
 use crate::test_support::*;
-use crate::{PartitionBoundaries, RetainedUnit};
+use crate::{Extent, PartitionBoundaries, RetainedUnit};
 
 use super::*;
 
-/// The multi-block shape: `size()` is the exact uncompressed length from
+/// The multi-block shape: `extent()` is the exact uncompressed length from
 /// the seek table, with no read yet.
 #[tokio::test]
-async fn xz_source_size_is_the_uncompressed_length() {
+async fn xz_source_extent_is_the_exact_uncompressed_length() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let source = CompressedFileSource::open(compressed.path()).unwrap();
-    assert_eq!(source.size().await.unwrap(), payload.len() as u64);
-    assert!(source.size_is_exact());
+    assert_eq!(source.extent().await.unwrap(), Extent::Exact(payload.len() as u64));
 }
 
 /// `stored_size()` is a `stat` on the compressed file itself, not the
-/// uncompressed length `size()` answers — the two must disagree for a
+/// uncompressed length `extent()` answers — the two must disagree for a
 /// payload that actually compresses
 /// (`docs/design/decisions.md`, "D21").
 #[tokio::test]
@@ -30,7 +29,10 @@ async fn xz_source_stored_size_is_the_compressed_files_on_disk_length() {
     let on_disk = std::fs::metadata(compressed.path()).unwrap().len();
     let source = CompressedFileSource::open(compressed.path()).unwrap();
     assert_eq!(source.stored_size().await.unwrap(), on_disk);
-    assert_ne!(source.stored_size().await.unwrap(), source.size().await.unwrap());
+    assert_ne!(
+        source.stored_size().await.unwrap(),
+        source.extent().await.unwrap().exact().unwrap()
+    );
 }
 
 /// `compression_index()` is what the cache's save persists — a

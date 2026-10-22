@@ -579,8 +579,11 @@ async fn statistics_round_trip_through_the_cache() {
     for (a, b) in index.blocks().zip(clone.blocks()) {
         assert!(Arc::ptr_eq(a.statistics.as_ref().unwrap(), b.statistics.as_ref().unwrap()));
     }
-    let CacheStatus::Loaded(LoadedCache { index: loaded, total_size, .. }) =
-        pgdt_dump::internal::load(&cache::colocated_path(&dump), source.as_ref()).await.unwrap()
+    let CacheStatus::Loaded(LoadedCache {
+        index: loaded,
+        extent: pgdt_io::Extent::Exact(total_size),
+        ..
+    }) = pgdt_dump::internal::load(&cache::colocated_path(&dump), source.as_ref()).await.unwrap()
     else {
         panic!("a finished parse leaves a valid cache");
     };
@@ -863,8 +866,10 @@ impl ByteRangeSource for RecordingSource {
         self.inner.read_range(offset, len)
     }
 
-    fn size(&self) -> Pin<Box<dyn Future<Output = pgdt_core::Result<u64>> + Send + '_>> {
-        self.inner.size()
+    fn extent(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>> {
+        self.inner.extent()
     }
 
     fn modified(
@@ -943,8 +948,11 @@ async fn a_block_lacking_the_requested_statistics_is_reread_into_what_one_pass_g
             assert_eq!((run.lacking_statistics, run.backfilled), (*lacking, *lacking), "{label}");
             assert_eq!(run.index.spans, reference.spans, "{label}");
             let source = LocalFileSource::open(&dump).unwrap();
-            let CacheStatus::Loaded(LoadedCache { index: loaded, total_size, .. }) =
-                pgdt_dump::internal::load(&cache::colocated_path(&dump), &source).await.unwrap()
+            let CacheStatus::Loaded(LoadedCache {
+                index: loaded,
+                extent: pgdt_io::Extent::Exact(total_size),
+                ..
+            }) = pgdt_dump::internal::load(&cache::colocated_path(&dump), &source).await.unwrap()
             else {
                 panic!("{label}: a back-filled parse leaves a valid cache");
             };
@@ -2316,8 +2324,10 @@ impl ByteRangeSource for CancelsPast {
         self.inner.read_range(offset, len)
     }
 
-    fn size(&self) -> Pin<Box<dyn Future<Output = pgdt_core::Result<u64>> + Send + '_>> {
-        self.inner.size()
+    fn extent(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>> {
+        self.inner.extent()
     }
 
     fn modified(

@@ -12,7 +12,7 @@ use pgdt_core::{CopyHeader, Error, Result};
 use pgdt_dump::cache::{CacheMode, Held, Opened, SourceWatch};
 use pgdt_dump::internal::{announce_read_loop, scan_preamble};
 use pgdt_dump::{ScanOptions, attach_text};
-use pgdt_io::ByteRangeSource;
+use pgdt_io::{ByteRangeSource, Extent};
 use pgdt_mapping::internal::{MapStop, Pass, Target, map_forward, reread_rows, splice};
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata, TableName};
 use tokio_util::sync::CancellationToken;
@@ -94,7 +94,7 @@ impl ColdPass<'_> {
         schema_mode: SchemaMode,
     ) -> Result<Option<Settled>> {
         let (source, watch, mode) = (self.source, self.watch, self.mode);
-        let size = source.size().await?;
+        let source_extent = source.extent().await?;
         let mut index = match held {
             Held::Loaded(loaded) => loaded.index,
             // Nothing to build forward from, or a cache the mode may replace,
@@ -122,7 +122,7 @@ impl ColdPass<'_> {
             let (metadata, spans, preamble_end, roles, tablespaces) =
                 scan_preamble(source, &self.scan).await?;
             index.metadata = Some(Arc::new(metadata));
-            index.spans = splice(&[], spans, 0, preamble_end, size);
+            index.spans = splice(&[], spans, 0, preamble_end, source_extent.exact());
             index.roles.extend(roles);
             index.tablespaces.extend(tablespaces);
             index.scanned_through = index.scanned_through.max(preamble_end);
@@ -147,7 +147,7 @@ impl ColdPass<'_> {
             &mut index,
             target,
             Pass::Query,
-            size,
+            source_extent,
         )
         .await?;
         if stop == MapStop::Interrupted {
@@ -169,7 +169,8 @@ impl ColdPass<'_> {
         let Some(name) = select(&tables, selector)? else { return Ok(None) };
         let mut blocks: Vec<CopyBlock> = index.blocks_of(name).cloned().collect();
         if schema_mode == SchemaMode::Typed {
-            self.census(metadata.as_deref(), name.database.as_deref(), &mut blocks, size).await?;
+            self.census(metadata.as_deref(), name.database.as_deref(), &mut blocks, source_extent)
+                .await?;
         }
         // **A streamed schema needs no completeness test**
         // (`docs/design/decisions.md`, "D34"): the pass has finished and the
@@ -188,7 +189,7 @@ impl ColdPass<'_> {
         metadata: Option<&DumpMetadata>,
         database: Option<&str>,
         blocks: &mut [CopyBlock],
-        size: u64,
+        extent: Extent,
     ) -> Result<()> {
         let lacking: Vec<usize> =
             (0..blocks.len()).filter(|&i| blocks[i].census.is_none()).collect();
@@ -209,7 +210,7 @@ impl ColdPass<'_> {
                 metadata,
                 database,
                 &blocks[at],
-                size,
+                extent,
                 None,
                 &mut shortfall_reported,
             )

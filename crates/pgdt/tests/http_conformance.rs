@@ -161,7 +161,7 @@ async fn a_ranged_read_answers_the_bytes_at_the_offset_asked_for() {
 async fn a_read_past_the_end_is_refused_rather_than_answered_short() {
     let Some(url) = conformance_url() else { return };
     let source = source_of(&url).await;
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
 
     // Which refusal arrives is the server's to choose — a satisfiable range it
     // answers short, or a `416` — so this pins only that the short answer is
@@ -310,7 +310,7 @@ async fn xz_source_of(url: &str) -> Arc<dyn ByteRangeSource> {
         table.stream_count(),
         table.block_count(),
     );
-    let declared = source.size().await.unwrap();
+    let declared = source.extent().await.unwrap().exact().unwrap();
     assert_eq!(
         declared,
         dump_bytes().len() as u64,

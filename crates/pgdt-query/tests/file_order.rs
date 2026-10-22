@@ -170,8 +170,8 @@ impl ByteRangeSource for FailsWithin {
         })
     }
 
-    fn size(&self) -> Boxed<'_, u64> {
-        self.inner.size()
+    fn extent(&self) -> Boxed<'_, pgdt_io::Extent> {
+        self.inner.extent()
     }
 
     fn modified(&self) -> Boxed<'_, Option<std::time::SystemTime>> {

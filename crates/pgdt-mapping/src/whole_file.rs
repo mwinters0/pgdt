@@ -15,7 +15,7 @@ use pgdt_dump::dump_metadata_from_spans;
 use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::{derived_diagnostics, scan_preamble};
 use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
-use pgdt_io::{Arrangement, ByteRangeSource};
+use pgdt_io::{Arrangement, ByteRangeSource, Extent};
 use pgdt_model::internal::IgnoredRefusalsExt;
 use pgdt_model::{
     Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, PostgresInvalidValues, Span,
@@ -43,8 +43,7 @@ use crate::statistics::request::StatisticsRequest;
 /// database's DDL at its first `COPY` block as [`map_forward`] does
 /// (`docs/design/decisions.md`, "D96").
 pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<DumpIndex> {
-    let builder = eager_pass(source, options).await?;
-    let size = source.size().await?;
+    let (builder, size) = eager_pass(source, options).await?;
     let roles = builder.roles().clone();
     let tablespaces = builder.tablespaces().clone();
     let mut spans = builder.finish(size);
@@ -58,22 +57,23 @@ pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) ->
 /// [`build_index`]'s spans, alone. Always scans to EOF, so
 /// [`SpanBody::Unscanned`] never appears in the result.
 pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Vec<Span>> {
-    let builder = eager_pass(source, options).await?;
-    let mut spans = builder.finish(source.size().await?);
+    let (builder, end) = eager_pass(source, options).await?;
+    let mut spans = builder.finish(end);
     attach_text(source, &mut spans).await?;
     Ok(spans)
 }
 
 /// [`build_index`] and [`build_map`]'s one scan: every event to one builder,
-/// each block counted against the DDL above it, restated once per database.
-async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Builder> {
+/// each block counted against the DDL above it, restated once per database,
+/// and the end of the file it reached.
+async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<(Builder, u64)> {
     let mut builder = Builder::new();
     // What stopped the scan, a block's close failing it. None can: this pass
     // gathers no statistics, so no block meets a refused field.
     let mut failed: Option<Error> = None;
     // The database the metadata in hand was stated for, and that metadata.
     let mut stated: Option<(Option<String>, DumpMetadata)> = None;
-    scan_events(source, options, |event| {
+    let reached = scan_events(source, options, |event| {
         match event {
             Event::CopyStart(start) => {
                 let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
@@ -104,7 +104,7 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
     .await?;
     match failed {
         Some(e) => Err(e),
-        None => Ok(builder),
+        None => Ok((builder, reached.expect("only a failed block stops this scan short"))),
     }
 }
 
@@ -348,7 +348,7 @@ async fn map_file_watched(
     statistics: &StatisticsRequest,
     watch: &SourceWatch,
 ) -> Result<Mapped> {
-    let size = source.size().await?;
+    let extent = source.extent().await?;
     let mut index = match held {
         Held::Loaded(loaded) => loaded.index,
         // Nothing to build forward from, or a cache the mode may replace,
@@ -384,7 +384,8 @@ async fn map_file_watched(
             )
         })
         .collect();
-    let resumed_from = index.scanned_through.min(size);
+    let resumed_from =
+        extent.exact().map_or(index.scanned_through, |size| index.scanned_through.min(size));
 
     let first_db_preamble_known = index
         .metadata
@@ -402,7 +403,7 @@ async fn map_file_watched(
         let prepass = async {
             let (metadata, spans, preamble_end, roles, tablespaces) =
                 scan_preamble(source, scan_options).await?;
-            let mut spans = splice(&[], spans, 0, preamble_end, size);
+            let mut spans = splice(&[], spans, 0, preamble_end, extent.exact());
             attach_text(source, &mut spans).await?;
             Ok::<_, Error>((metadata, spans, preamble_end, roles, tablespaces))
         }
@@ -435,7 +436,7 @@ async fn map_file_watched(
     // a map at EOF the back-fill below checks them, in the read gathering any
     // statistics they lack.
     let mut checked_before = 0;
-    if resumed_from < size {
+    if !extent.reached_by(resumed_from) {
         let checked = backfill_statistics(
             source,
             scan_options,
@@ -447,7 +448,7 @@ async fn map_file_watched(
             &mut index,
             statistics,
             &account,
-            size,
+            extent,
             HashSet::new(),
             Backfill::Unchecked,
         )
@@ -472,7 +473,7 @@ async fn map_file_watched(
         &mut index,
         None,
         Pass::Parse(statistics, &account, invalid),
-        size,
+        extent,
     )
     .await
     {
@@ -500,6 +501,9 @@ async fn map_file_watched(
         return Ok(interrupted_run(index, resumed_from, &account));
     }
 
+    // The pass reached the end, so the map's watermark is the file's end
+    // where the source could not say it at the start.
+    let size = extent.exact().unwrap_or(index.scanned_through);
     index.metadata = Some(Arc::new(dump_metadata_from_spans(&index.spans)));
     let mut diagnostics = carried;
     diagnostics.extend(derived_diagnostics(
@@ -519,7 +523,7 @@ async fn map_file_watched(
         &mut index,
         statistics,
         &account,
-        size,
+        Extent::Exact(size),
         loaded,
         Backfill::Lacking,
     )

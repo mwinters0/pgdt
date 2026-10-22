@@ -75,8 +75,10 @@ impl ByteRangeSource for RecordingSource {
         self.inner.read_range(offset, len)
     }
 
-    fn size(&self) -> Pin<Box<dyn Future<Output = pgdt_core::Result<u64>> + Send + '_>> {
-        self.inner.size()
+    fn extent(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>> {
+        self.inner.extent()
     }
 
     fn modified(

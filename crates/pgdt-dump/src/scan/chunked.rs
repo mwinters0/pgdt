@@ -11,7 +11,7 @@ use bytes::Bytes;
 use super::{CopyScanner, Event};
 use pgdt_core::{Error, Result};
 use pgdt_io::{
-    ByteRangeSource, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
+    ByteRangeSource, Extent, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
     internal::memory_budget_display,
 };
 
@@ -187,6 +187,12 @@ impl<'a> Passes<'a> {
 /// A [`CopyScanner`] read a chunk at a time from `[position, end)` of a
 /// source: the protocol every serial read loop follows, in one place.
 ///
+/// **The end is given or found.** One given ([`new`](Self::new)) bounds every
+/// read, which is strict ([`ByteRangeSource::read_range`]); one read to a
+/// source's end whose extent is open ([`to_source_end`](Self::to_source_end))
+/// is found by the read that answers short
+/// ([`ByteRangeSource::read_at_most`]), and is [`end`](Self::end) from then on.
+///
 /// A loop asks for a chunk ([`next_chunk`](Self::next_chunk)) and drains its
 /// events ([`ChunkEvents::next_event`]); what it does between two chunks —
 /// polling a cancellation, consulting a dynamic filter — is its own. Once a
@@ -201,7 +207,8 @@ pub struct ChunkedScanner {
     chunk: Bytes,
     /// Where the next chunk is read from.
     read_pos: u64,
-    end: u64,
+    /// Where the scan ends — `None` until a short read finds it.
+    end: Option<u64>,
     chunk_size: usize,
     max_line_bytes: usize,
     /// Whether the chunk last handed out still has events to give.
@@ -213,6 +220,17 @@ impl ChunkedScanner {
     /// `end`, which is the true end of what it scans — the file's, or a replay
     /// segment's block's — in `read`'s chunks under its line limit.
     pub fn new(scanner: CopyScanner, end: u64, read: ReadOptions) -> Self {
+        Self::ending(scanner, Some(end), read)
+    }
+
+    /// Read `scanner` on to the end of a source whose extent is `extent`:
+    /// [`new`](Self::new) where it is exact, and otherwise to wherever a read
+    /// first answers short.
+    pub fn to_source_end(scanner: CopyScanner, extent: Extent, read: ReadOptions) -> Self {
+        Self::ending(scanner, extent.exact(), read)
+    }
+
+    fn ending(scanner: CopyScanner, end: Option<u64>, read: ReadOptions) -> Self {
         Self {
             read_pos: scanner.position(),
             scanner,
@@ -229,9 +247,19 @@ impl ChunkedScanner {
     /// read, so the last line is still scanned to the end — and hand out its
     /// events. A read's error is returned as the source gave it.
     pub async fn next_chunk(&mut self, source: &dyn ByteRangeSource) -> Result<ChunkEvents<'_>> {
-        let want = self.chunk_size.min((self.end - self.read_pos) as usize);
-        let bytes =
-            if want > 0 { source.read_range(self.read_pos, want).await? } else { Bytes::new() };
+        let bytes = match self.end {
+            Some(end) => {
+                let want = self.chunk_size.min((end - self.read_pos) as usize);
+                if want > 0 { source.read_range(self.read_pos, want).await? } else { Bytes::new() }
+            }
+            None => {
+                let bytes = source.read_at_most(self.read_pos, self.chunk_size).await?;
+                if bytes.len() < self.chunk_size {
+                    self.end = Some(self.read_pos + bytes.len() as u64);
+                }
+                bytes
+            }
+        };
         Ok(self.feed(bytes))
     }
 
@@ -241,7 +269,7 @@ impl ChunkedScanner {
         debug_assert!(!self.open, "a chunk was left before its events ran out");
         let offset = self.read_pos;
         self.read_pos += bytes.len() as u64;
-        let eof = self.read_pos >= self.end;
+        let eof = self.at_end();
         self.chunk = bytes;
         self.open = true;
         let passes = self.carry.absorb(&self.chunk, eof);
@@ -266,7 +294,13 @@ impl ChunkedScanner {
 
     /// Whether the chunk last handed out ran to the end.
     pub fn at_end(&self) -> bool {
-        self.read_pos >= self.end
+        self.end.is_some_and(|end| self.read_pos >= end)
+    }
+
+    /// Where the scan ends: the end it was given, or the one a short read
+    /// found, `None` until then.
+    pub fn end(&self) -> Option<u64> {
+        self.end
     }
 
     /// Put the scanner back down at `at`, a line start outside any block past
@@ -474,7 +508,9 @@ pub fn announce_read_loop(
 }
 
 /// Scan `source` from the beginning, invoking `on_event` for every event, in
-/// `options`' chunks, announcing their parallelism to the source.
+/// `options`' chunks, announcing their parallelism to the source, and answer
+/// where the source ended — `None` where the callback stopped the scan
+/// first.
 ///
 /// The callback may return [`ControlFlow::Break`] to stop early. Nothing
 /// stops it from outside: it polls no cancellation
@@ -483,26 +519,26 @@ pub async fn scan<F>(
     source: &dyn ByteRangeSource,
     options: &ScanOptions,
     mut on_event: F,
-) -> Result<()>
+) -> Result<Option<u64>>
 where
     F: FnMut(Event<'_>) -> ControlFlow<()>,
 {
     let ScanOptions { read, parallelism } = *options;
-    let size = source.size().await?;
+    let extent = source.extent().await?;
     // Named "preamble scan", not "scan": the caller a `parse` runs is
     // `preamble::scan_preamble`, and `pgdt_mapping`'s `map_forward` announces
     // itself as "scan". Its `build_index` and `build_map` share this label
     // while scanning to EOF; neither is reached from the CLI. A single `parse` runs both in sequence, so two passes sharing
     // one name would read as an interrupted-and-resumed run.
     tracing::info!(
-        bytes = size,
+        bytes = %extent,
         chunk_size = read.chunk_size_bytes,
         jobs = parallelism.jobs(),
         memory_bytes = %memory_budget_display(parallelism),
         "preamble scan started",
     );
     announce_read_loop(source, read, parallelism);
-    let mut chunked = ChunkedScanner::new(CopyScanner::new(), size, read);
+    let mut chunked = ChunkedScanner::to_source_end(CopyScanner::new(), extent, read);
 
     loop {
         let mut chunk = chunked.next_chunk(source).await?;
@@ -514,12 +550,12 @@ where
                 let (offset, chunk_bytes) = chunk.read();
                 let bytes = offset + chunk_bytes.len() as u64;
                 tracing::info!(bytes, reached_eof = false, "preamble scan complete");
-                return Ok(());
+                return Ok(None);
             }
         }
-        if chunked.at_end() {
-            tracing::info!(bytes = size, reached_eof = true, "preamble scan complete");
-            return Ok(());
+        if let Some(end) = chunked.end().filter(|_| chunked.at_end()) {
+            tracing::info!(bytes = end, reached_eof = true, "preamble scan complete");
+            return Ok(Some(end));
         }
     }
 }

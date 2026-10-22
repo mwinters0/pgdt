@@ -16,7 +16,7 @@ use crate::parallelism::Parallelism;
 use crate::partition::Partitioning;
 
 use super::pool::{BufferPool, POOL_DEPTH, POOL_MAX_BYTES, PooledBuffer, budget_bytes};
-use super::{ByteRangeSource, WaitPolicy};
+use super::{ByteRangeSource, Extent, WaitPolicy};
 
 /// How many read chunks a plain file's partition holds
 /// ([`LocalFileSource::partitions`]).
@@ -93,14 +93,14 @@ impl ByteRangeSource for LocalFileSource {
         })
     }
 
-    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<Extent>> + Send + '_>> {
         Box::pin(async move {
             let file = Arc::clone(&self.file);
             let len = tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
                 .await
                 .map_err(Error::join)?
                 .map_err(Error::from)?;
-            Ok(len)
+            Ok(Extent::Exact(len))
         })
     }
 

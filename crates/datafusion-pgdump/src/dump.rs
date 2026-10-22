@@ -140,7 +140,7 @@ impl PgDump {
                     "the cache at {} covers {} of {} byte(s)",
                     shown(),
                     loaded.index.scanned_through,
-                    loaded.total_size
+                    loaded.extent
                 )));
             }
             Held::Missing => {

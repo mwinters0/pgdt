@@ -16,7 +16,7 @@ use pgdt_core::{Error, Result};
 use crate::parallelism::{Parallelism, WorkerMemory};
 use crate::partition::Partitioning;
 use crate::source::pool::BufferPool;
-use crate::source::{ByteRangeSource, WaitPolicy};
+use crate::source::{ByteRangeSource, Extent, WaitPolicy};
 
 use super::blocks::{BlockCache, Claim, DecodeBudget, DecodedBlock};
 use super::xz::XzCodec;
@@ -326,9 +326,9 @@ impl ByteRangeSource for CompressedFileSource {
     }
 
     /// The plaintext length, from the index built at open — no further
-    /// decode, no I/O, and no lock.
-    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
-        Box::pin(async move { Ok(self.codec.plaintext_size()) })
+    /// decode, no I/O, and no lock, and exact, the index being complete.
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<Extent>> + Send + '_>> {
+        Box::pin(async move { Ok(Extent::Exact(self.codec.plaintext_size())) })
     }
 
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {

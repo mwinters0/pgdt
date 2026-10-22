@@ -41,15 +41,15 @@ pub async fn scan_preamble(
     options: &ScanOptions,
 ) -> Result<(DumpMetadata, Vec<Span>, u64, BTreeSet<String>, BTreeSet<String>)> {
     let mut spans = Builder::new();
-    let mut end = source.size().await?;
-    scan(source, options, |event| match event {
+    let mut stop = None;
+    let reached = scan(source, options, |event| match event {
         Event::CopyStart(start) => {
             // Not fed to the map builder: it would open a `Data` span this
             // scan never closes. The stop retreats to a pending TOC
             // comment's own start rather than guessing the comment's kind,
             // leaving it for the later scan that absorbs it into the `Data`
             // span (`docs/design/decisions.md`, "D31", "D33").
-            end = spans.pending_comment_start().unwrap_or(start.header_offset);
+            stop = Some(spans.pending_comment_start().unwrap_or(start.header_offset));
             ControlFlow::Break(())
         }
         Event::Line(line) => {
@@ -78,6 +78,8 @@ pub async fn scan_preamble(
         Event::Row(_) | Event::CopyEnd(_) => ControlFlow::Continue(()),
     })
     .await?;
+    // Where the scan stopped for a `COPY` block, or the end it reached.
+    let end = stop.or(reached).expect("a scan not stopped by its callback reached the end");
     let roles = spans.roles().clone();
     let tablespaces = spans.tablespaces().clone();
     let spans = spans.finish(end);
@@ -98,9 +100,9 @@ pub async fn scan_preamble(
 /// the mode may replace, which it starts cold over.
 ///
 /// A fresh scan's spans are persisted alongside the metadata, with a
-/// trailing [`SpanBody::Unscanned`] span covering the rest of the file — a
-/// genuinely partial scan, unlike `build_index`, which always reaches EOF
-/// (`docs/design/decisions.md`, "D30").
+/// trailing [`SpanBody::Unscanned`] span covering the rest of the file where
+/// its end is known — a genuinely partial scan, unlike `build_index`, which
+/// always reaches EOF (`docs/design/decisions.md`, "D30").
 ///
 /// Also returns whatever the open reported on the loaded index (e.g. a
 /// `CacheMtimeChanged` warning): answering with `DumpMetadata` alone rather
@@ -145,11 +147,13 @@ async fn preamble_only_watched(
         base_index.roles.extend(roles);
         base_index.tablespaces.extend(tablespaces);
         base_index.scanned_through = base_index.scanned_through.max(preamble_end);
-        let file_size = source.size().await?;
-        if preamble_end < file_size {
+        // A map of a source whose end is not known yet ends at its watermark:
+        // no span can claim bytes nothing has shown exist.
+        let end = source.extent().await?.exact().unwrap_or(preamble_end);
+        if preamble_end < end {
             spans.push(Span {
                 start: preamble_end,
-                end: file_size,
+                end,
                 database: None,
                 text: None,
                 toc: None,

@@ -20,7 +20,7 @@ use std::ops::Range;
 use pgdt_core::{Error, Result};
 use pgdt_dump::{CopyEnd, ScanOptions};
 use pgdt_io::{
-    ByteRangeSource, PartitionRead, Partitioning, WaitPolicy,
+    ByteRangeSource, Extent, PartitionRead, Partitioning, WaitPolicy,
     internal::{cut, worker_count},
 };
 use pgdt_model::internal::BlockCensusExt;
@@ -72,7 +72,8 @@ pub(crate) enum BoundBy {
     /// The source advises a single partition **over the whole file**, so it
     /// declines to be split at all — the shape a compressed source whose
     /// largest block the budget cannot hold reaches
-    /// ([`pgdt_io::ByteRangeSource::block_decode_bytes`]).
+    /// ([`pgdt_io::ByteRangeSource::block_decode_bytes`]) — or cannot be cut
+    /// at all, its end not being known yet ([`scan_region`]).
     Source,
     /// The source would be split, and the caller's memory budget affords fewer
     /// readers of it than were asked for (`pgdt_io::internal::worker_count`).
@@ -158,8 +159,11 @@ pub(crate) fn report_shortfall(flag: &mut bool, shortfall: Option<Shortfall>) {
 /// licence for handing them out to workers that never parse structure
 /// (`docs/design/decisions.md`, "D52").
 ///
-/// **Where the file ends is `size`, and `census` is how the block is censused
-/// and counted**, `None` where it is not ([`scan_piece`]).
+/// **Where the file ends is `extent`, and `census` is how the block is
+/// censused and counted**, `None` where it is not ([`scan_piece`]). A source
+/// whose end is not known yet is never cut: what is left of the file is
+/// unknown, and every cut is a range up to it — so it is left to the serial
+/// scanner as a source declining to be split is.
 /// `header_offset` is carried only to name the block in
 /// [`Error::UnterminatedCopyBlock`], which is this function's to raise: a
 /// [`scan_piece`] never claims end of file, and the leader is the only party
@@ -212,9 +216,18 @@ pub(crate) async fn scan_region(
     header_offset: u64,
     data_offset: u64,
     census: Option<CensusPlan>,
-    size: u64,
+    extent: Extent,
     observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<RegionOutcome> {
+    let Some(size) = extent.exact() else {
+        let shortfall = (options.parallelism.jobs() > 1).then(|| Shortfall {
+            asked: options.parallelism.jobs(),
+            delivered: 1,
+            bound_by: BoundBy::Source,
+            would_hold_bytes: source.block_decode_bytes(),
+        });
+        return Ok(RegionOutcome { scan: RegionScan::Declined, shortfall });
+    };
     let advice = source.partitions(data_offset..size);
     let partition_bytes = advice.partition_bytes();
     let workers = worker_count(options.parallelism, advice.worker_memory());

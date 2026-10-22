@@ -13,7 +13,7 @@ use pgdt_dump::internal::Builder;
 use pgdt_dump::internal::announce_read_loop;
 use pgdt_dump::internal::derived_diagnostics;
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ScanOptions};
-use pgdt_io::{ByteRangeSource, internal::memory_budget_display};
+use pgdt_io::{ByteRangeSource, Extent, internal::memory_budget_display};
 use pgdt_model::{DumpIndex, PostgresInvalidValues, Span, SpanBody};
 use tokio_util::sync::CancellationToken;
 
@@ -31,7 +31,8 @@ pub(crate) use self::save::SaveThrottle;
 /// `built` (a complete tiling of `[seg_start, watermark)` from
 /// [`pgdt_dump::internal::Builder`]), plus the trailing [`SpanBody::Unscanned`] span
 /// that makes the result tile the whole file even though the scan stopped
-/// early (`docs/design/decisions.md`, "D30").
+/// early (`docs/design/decisions.md`, "D30") — where the file's end, `end`,
+/// is known: a map of a source whose end is not yet read ends at `watermark`.
 ///
 /// Whole-region replacement rather than an incremental merge because
 /// `Builder`'s output is already a complete tiling of everything the segment
@@ -58,7 +59,7 @@ pub fn splice(
     mut built: Vec<Span>,
     seg_start: u64,
     watermark: u64,
-    size: u64,
+    end: Option<u64>,
 ) -> Vec<Span> {
     let mut spans: Vec<Span> = prefix.to_vec();
     match (spans.last_mut(), built.first_mut()) {
@@ -73,10 +74,10 @@ pub fn splice(
         (None, None) => {}
     }
     spans.extend(built);
-    if watermark < size {
+    if let Some(end) = end.filter(|&end| watermark < end) {
         spans.push(Span {
             start: watermark,
-            end: size,
+            end,
             database: None,
             text: None,
             toc: None,
@@ -202,9 +203,9 @@ pub async fn map_forward(
     index: &mut DumpIndex,
     target: Option<Target<'_>>,
     mapping: Pass<'_>,
-    size: u64,
+    extent: Extent,
 ) -> Result<MapStop> {
-    if index.scanned_through >= size {
+    if extent.reached_by(index.scanned_through) {
         return Ok(MapStop::Reached);
     }
     if target.is_some_and(|target| target_settled(index, target)) {
@@ -216,7 +217,7 @@ pub async fn map_forward(
     // here a real scan runs, at whatever arrangement `--jobs` and the stated
     // budget resolved to (`docs/design/decisions.md`, "D64").
     tracing::info!(
-        bytes = size,
+        bytes = %extent,
         resumed_from = index.scanned_through,
         chunk_size = scan_options.read.chunk_size_bytes,
         jobs = scan_options.parallelism.jobs(),
@@ -247,8 +248,14 @@ pub async fn map_forward(
     // leader's fused worker grants it for itself and restores this policy on
     // the way out ([`scan_region`]).
     announce_read_loop(source, scan_options.read, scan_options.parallelism);
-    let mut chunked =
-        ChunkedScanner::new(CopyScanner::resume(seg_start, None), size, scan_options.read);
+    let mut chunked = ChunkedScanner::to_source_end(
+        CopyScanner::resume(seg_start, None),
+        extent,
+        scan_options.read,
+    );
+    // Where the file ends, wherever the source said so at the start; one whose
+    // end was not known has its map end at each watermark ([`splice`]).
+    let file_end = extent.exact();
     let mut throttle = SaveThrottle::new();
     // Whether the open `COPY` block is one `target_settled` would count — see
     // the `CopyEnd` arm and the `CopyStart` arm's closed region, its readers.
@@ -319,8 +326,13 @@ pub async fn map_forward(
                     open_block_targets =
                         target.is_some_and(|target| target(db.as_deref(), &header));
                     if metadata_covers.as_ref() != Some(&db) {
-                        let spans =
-                            splice(&prefix, builder.snapshot(boundary), seg_start, boundary, size);
+                        let spans = splice(
+                            &prefix,
+                            builder.snapshot(boundary),
+                            seg_start,
+                            boundary,
+                            file_end,
+                        );
                         index.metadata = Some(Arc::new(dump_metadata_from_spans(&spans)));
                         metadata_covers = Some(db.clone());
                     }
@@ -365,7 +377,7 @@ pub async fn map_forward(
                         header_offset,
                         data_offset,
                         plan,
-                        size,
+                        extent,
                         builder.block_observer(),
                     )
                     .await?;
@@ -388,7 +400,7 @@ pub async fn map_forward(
                                 &mut throttle,
                                 &prefix,
                                 seg_start,
-                                size,
+                                file_end,
                                 target,
                                 targets,
                                 interior.end,
@@ -448,7 +460,7 @@ pub async fn map_forward(
                         &mut throttle,
                         &prefix,
                         seg_start,
-                        size,
+                        file_end,
                         target,
                         targets,
                         end,
@@ -497,7 +509,8 @@ pub async fn map_forward(
     // nothing.
     let roles: Vec<String> = builder.roles().iter().cloned().collect();
     let tablespaces: Vec<String> = builder.tablespaces().iter().cloned().collect();
-    let mut spans = splice(&prefix, builder.finish(size), seg_start, size, size);
+    let size = chunked.end().expect("a scan out of its loop reached the end");
+    let mut spans = splice(&prefix, builder.finish(size), seg_start, size, Some(size));
     match attach_text(source, &mut spans).await {
         Ok(()) => {}
         Err(e) if cancelled_read(&e, cancel) => {
@@ -552,7 +565,7 @@ async fn close_copy_block(
     throttle: &mut SaveThrottle,
     prefix: &[Span],
     seg_start: u64,
-    size: u64,
+    file_end: Option<u64>,
     target: Option<Target<'_>>,
     targets: bool,
     end: CopyEnd,
@@ -577,7 +590,7 @@ async fn close_copy_block(
     // `target_settled` is the one reader that would — which is why a block
     // whose header could satisfy it opens the gate too.
     if targets || cancelled || due {
-        index.spans = splice(prefix, builder.snapshot(watermark), seg_start, watermark, size);
+        index.spans = splice(prefix, builder.snapshot(watermark), seg_start, watermark, file_end);
         index.roles.extend(builder.roles().iter().cloned());
         index.tablespaces.extend(builder.tablespaces().iter().cloned());
         index.scanned_through = index.scanned_through.max(watermark);

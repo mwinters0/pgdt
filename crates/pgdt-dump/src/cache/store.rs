@@ -128,17 +128,19 @@ pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
 /// Shared by every load once a `CacheFile` has passed its header and (when
 /// live) stored-size and compression checks: the index with its unpersisted
 /// diagnostics recomputed, complete or not by its own coverage of the file's
-/// recorded addressable length ([`LoadedCache::is_complete`]). Reads [`CacheFile::total_size`] rather than
+/// recorded addressable length ([`LoadedCache::is_complete`]). Reads [`CacheFile::extent`] rather than
 /// re-deriving one from a live source: by this point the stored sizes are
 /// known equal wherever a live source exists, and `load_offline` has none.
 fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) -> CacheStatus {
-    let total_size = file.total_size;
+    let extent = file.extent;
     let mut index = file.index;
     // `DumpIndex::diagnostics` is `#[serde(skip)]`, so a loaded index arrives
     // with none, and gets what every whole map carries from the persisted
-    // spans, size and compression index (`pgdt_model::diagnostic`, "Not
-    // persisted").
-    index.diagnostics = derived_diagnostics(&index.spans, total_size, file.compression.as_ref());
+    // spans, extent and compression index (`pgdt_model::diagnostic`, "Not
+    // persisted"). A map of a source whose end was not known tiles up to its
+    // watermark and no further.
+    let tiled_to = extent.exact().unwrap_or(index.scanned_through);
+    index.diagnostics = derived_diagnostics(&index.spans, tiled_to, file.compression.as_ref());
     // Derived for the same reason the diagnostics above are: a projection of
     // what the envelope already holds.
     let compression = file.compression.as_ref().map(CompressionShape::of);
@@ -150,7 +152,7 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
         identity: file.identity,
         calendar_end: file.calendar_end,
     };
-    CacheStatus::Loaded(LoadedCache { index, weak, origin, total_size, compression, envelope })
+    CacheStatus::Loaded(LoadedCache { index, weak, origin, extent, compression, envelope })
 }
 
 /// Write `index` to `path` (colocated or explicit — whichever the caller
@@ -178,12 +180,12 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
 /// the guarantee is against a killed process, not a lost machine.
 pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) -> Result<()> {
     let identity = SourceIdentity::observe(source).await?;
-    let total_size = source.size().await?;
+    let extent = source.extent().await?;
     let file = CacheFileRef {
         container_kind: ContainerKind::Plain,
         compression: source.compression_index(),
         identity,
-        total_size,
+        extent,
         calendar_end: calendar_end(),
         index,
     };

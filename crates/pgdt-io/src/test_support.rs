@@ -12,7 +12,7 @@ use bytes::Bytes;
 
 use pgdt_core::Result;
 
-use crate::{ByteRangeSource, CompressionIndex, LocalFileSource, SeekTable};
+use crate::{ByteRangeSource, CompressionIndex, Extent, LocalFileSource, SeekTable};
 
 pub(crate) fn source_of(bytes: &[u8]) -> (tempfile::NamedTempFile, LocalFileSource) {
     let mut file = tempfile::NamedTempFile::new().unwrap();
@@ -35,8 +35,8 @@ impl ByteRangeSource for BareSource {
     ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
         Box::pin(async { Ok(Bytes::new()) })
     }
-    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
-        Box::pin(async { Ok(0) })
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<Extent>> + Send + '_>> {
+        Box::pin(async { Ok(Extent::Exact(0)) })
     }
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
         Box::pin(async { Ok(None) })

@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use super::identity::{OriginMatch, SourceIdentity, WeakIdentity};
 use pgdt_core::{Error, Result, Unusable};
-use pgdt_io::CompressionIndex;
+use pgdt_io::{CompressionIndex, Extent};
 use pgdt_model::{CACHE_FORMAT_VERSION, DumpIndex, calendar_end};
 
 /// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
@@ -63,11 +63,12 @@ pub struct CacheFile {
     pub compression: Option<CompressionIndex>,
     pub identity: SourceIdentity,
     /// The addressable (decompressed, for a compressed source) length —
-    /// [`ByteRangeSource::size`](pgdt_io::ByteRangeSource::size) as observed at
-    /// save time. Its own field, not an alias of `identity`'s stored size
-    /// (`docs/design/decisions.md`, "D21"), and the number
-    /// [`LoadedCache::total_size`] hands out for the coverage arithmetic.
-    pub total_size: u64,
+    /// [`ByteRangeSource::extent`](pgdt_io::ByteRangeSource::extent) as
+    /// observed at save time, open where the source's end had not been read
+    /// yet. Its own field, not an alias of `identity`'s stored size
+    /// (`docs/design/decisions.md`, "D21"), and what
+    /// [`LoadedCache::extent`] hands out for the coverage arithmetic.
+    pub extent: Extent,
     /// The last day of the calendar the index's unrepresentable counts were
     /// taken under ([`pgdt_model::calendar_end`]): a build whose calendar
     /// ends elsewhere refuses a cache holding one
@@ -119,7 +120,7 @@ impl CompressionShape {
     }
 }
 
-/// Everything a cache file persists beside its index and `total_size`, as it
+/// Everything a cache file persists beside its index and `extent`, as it
 /// was read — handed out on [`LoadedCache`] so a reporting caller can export the whole file, which `pgdt info --json`
 /// does (`docs/design/decisions.md`, "D67").
 ///
@@ -180,9 +181,9 @@ pub struct LoadedCache {
     /// What the source's origin says against the recorded one, as advisory
     /// as `weak`.
     pub origin: OriginMatch,
-    /// [`CacheFile::total_size`]: a reporting caller states coverage against
+    /// [`CacheFile::extent`]: a reporting caller states coverage against
     /// it, and a cache-only caller has no live source to stat.
-    pub total_size: u64,
+    pub extent: Extent,
     /// The container's shape where one sits under these offsets and `None` for
     /// a plain file — read off the persisted index, so a cache-only
     /// caller answers it with no dump present ([`CompressionShape`]).
@@ -194,9 +195,10 @@ pub struct LoadedCache {
 
 impl LoadedCache {
     /// Whether the index's `scanned_through` reaches the file's recorded
-    /// size — the whole file is mapped.
+    /// extent — the whole file is mapped, which a map of a source whose end
+    /// was not known never is.
     pub fn is_complete(&self) -> bool {
-        self.index.is_complete(self.total_size)
+        self.extent.reached_by(self.index.scanned_through)
     }
 }
 
@@ -267,7 +269,7 @@ pub struct CacheFileRef<'a> {
     pub container_kind: ContainerKind,
     pub compression: Option<CompressionIndex>,
     pub identity: SourceIdentity,
-    pub total_size: u64,
+    pub extent: Extent,
     pub calendar_end: i32,
     pub index: &'a DumpIndex,
 }

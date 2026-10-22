@@ -246,7 +246,6 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
         println!("wrote cache to {}", path.display());
         return Ok(());
     }
-    let size = source.size().await?;
     let cancel = CancellationToken::new();
     let guard = install_interrupt_guard(cancel.clone(), init)?;
     let run = pgdt_mapping::map_file(
@@ -260,13 +259,17 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
     .await
     .map_err(|e| refusal(e, &origin))?;
     introspect::statistics_returned(&run.statistics);
+    // Asked after the run, which is what tells a source whose end was not
+    // known at the start where it is.
+    let extent = source.extent().await?;
+    let complete = extent.reached_by(run.index.scanned_through);
     if run.interrupted {
         // No listing: `pgdt info` is the command that reports. Both
         // lines go to stderr, so a caller redirecting stdout gets an
         // empty report rather than a truncated one.
         // A stop inside the statistics back-fill leaves the map
         // whole, and only the same statistics flags pick it up again.
-        if run.index.is_complete(size) && run.lacking_statistics == 0 {
+        if complete && run.lacking_statistics == 0 {
             eprintln!(
                 "interrupted after checking {} block(s) no strict parse had checked — the \
                  cache at {} holds those checked so far",
@@ -274,7 +277,7 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
                 path.display()
             );
             eprintln!("re-run `pgdt parse --source {origin}` with the same flags to continue");
-        } else if run.index.is_complete(size) {
+        } else if complete {
             eprintln!(
                 "interrupted after re-reading {} of the {} block(s) lacking the requested \
                  statistics — the cache at {} holds those re-read so far",
@@ -294,11 +297,11 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
             // written (`docs/design/decisions.md`, "D26"). Naming one
             // here would send a reader to a file that may not exist,
             // and "continue" would promise a resume from byte 0.
-            eprintln!("interrupted at byte 0 of {size} — nothing was scanned or written");
+            eprintln!("interrupted at byte 0 of {extent} — nothing was scanned or written");
             eprintln!("re-run `pgdt parse --source {origin}` to scan from the start");
         } else {
             eprintln!(
-                "interrupted at byte {} of {size} — the cache at {} holds the scan so far",
+                "interrupted at byte {} of {extent} — the cache at {} holds the scan so far",
                 run.index.scanned_through,
                 path.display()
             );
@@ -314,6 +317,9 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
     // The listing describes the file's state after this run, not
     // this invocation's diff, so the one line that *is* about the
     // invocation goes above it.
+    // `map_file` reached EOF, so the map's watermark is the file's end
+    // wherever the source does not state one.
+    let size = extent.exact().unwrap_or(run.index.scanned_through);
     if let Some(notice) = resume_notice(run.resumed_from, size, run.backfilled, run.checked) {
         println!("{notice}");
         println!();

@@ -17,7 +17,7 @@ async fn map_of(path: &Path) -> (Vec<pgdt_model::Span>, u64) {
     let source = LocalFileSource::open(path).unwrap();
     let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
     use pgdt_io::ByteRangeSource;
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
     (spans, size)
 }
 

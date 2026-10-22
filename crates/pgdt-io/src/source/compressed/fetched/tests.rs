@@ -154,8 +154,8 @@ impl ByteRangeSource for Counting {
         self.reads.fetch_add(1, Ordering::Relaxed);
         self.inner.read_range(offset, len)
     }
-    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
-        self.inner.size()
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<crate::Extent>> + Send + '_>> {
+        self.inner.extent()
     }
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
         self.inner.modified()
@@ -167,7 +167,7 @@ impl ByteRangeSource for Counting {
 /// the machine asks for.
 async fn fetched_xz(path: &Path) -> (FetchedCompressedSource, usize) {
     let transport: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(path).unwrap());
-    let stored_size = transport.size().await.unwrap();
+    let stored_size = transport.extent().await.unwrap().exact().unwrap();
     let leading = transport.read_range(0, ORIGIN_LEADING_BYTES).await.unwrap();
     let (table, fetches) = walk_seek_table(&*transport, stored_size, &leading).await.unwrap();
     (
@@ -186,7 +186,7 @@ async fn a_fetched_xz_source_reads_what_the_file_holds() {
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let (source, _) = fetched_xz(compressed.path()).await;
 
-    assert_eq!(source.size().await.unwrap(), payload.len() as u64);
+    assert_eq!(source.extent().await.unwrap().exact().unwrap(), payload.len() as u64);
     assert_eq!(
         source.stored_size().await.unwrap(),
         std::fs::metadata(compressed.path()).unwrap().len()
@@ -219,7 +219,7 @@ async fn the_walk_spends_no_fetch_on_leading_bytes_the_caller_holds() {
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let file: Arc<dyn ByteRangeSource> =
         Arc::new(LocalFileSource::open(compressed.path()).unwrap());
-    let stored_size = file.size().await.unwrap();
+    let stored_size = file.extent().await.unwrap().exact().unwrap();
     let leading = file.read_range(0, ORIGIN_LEADING_BYTES).await.unwrap();
 
     let reads = Arc::new(AtomicUsize::new(0));
@@ -314,7 +314,7 @@ async fn a_table_from_another_file_is_an_invalid_table_rather_than_a_read() {
 
     let transport: Arc<dyn ByteRangeSource> =
         Arc::new(LocalFileSource::open(compressed.path()).unwrap());
-    let stored_size = transport.size().await.unwrap();
+    let stored_size = transport.extent().await.unwrap().exact().unwrap();
     let err =
         FetchedCompressedSource::with_index(transport, stored_size, CompressionIndex::Xz(table))
             .unwrap_err();

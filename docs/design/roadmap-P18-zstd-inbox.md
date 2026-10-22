@@ -11,29 +11,27 @@ own terms.
 
 ---
 
-## Relaxing `size()` is cheaper than it looks, and the `.xz` source deliberately did not spend it
+## A source's length is an `Extent`, `Open` until its end is read
 
-**Fact.** `ByteRangeSource::size()` still means the exact addressable
-length, because xz answers it exactly from its stream index. The alternative was
-weighed first: every read loop in the library is already written as
-`want = chunk_size.min(size - read_pos)` … `read_pos += bytes.len()`, so **all
-of them already tolerate a short read**. What actually depends on the number
-being exact is the loop's exit test, and the coverage denominator —
-`total_size`, `scanned_through`, and `pgdt info`'s percentages.
+**Fact.** `ByteRangeSource::extent()` answers `Exact(n)` or `Open { at_least }`,
+and a source answers `Exact` once a read has reached its end or a complete index
+was handed to it. Every site that needed an exact size says what it does without
+one ([`decisions.md`](decisions.md), "D6"): a read loop reads to an open end by
+`read_at_most`, learning the end from the read that answers short; anything
+cutting partitions requires `Exact`, so an open source is read in one partition;
+a map, and the cache saving it, end at the watermark with the extent recorded
+open; `pgdt info` states the bytes scanned with no total. The `.xz` sources
+answer `Exact` throughout, from their index.
 
-**Why P18 cares.** This is the decision this phase cannot avoid, since zstd's
-frame content size is optional and a streaming writer — which is what
-`pg_dump --compress=zstd` is — omits it. So the choice is a first pass to
-compute the size, or a relaxed contract, and the relaxation's cost is now known
-to be a loop-termination change plus an honest answer for `info` when the total
-is not yet known, rather than a rewrite of every caller. **Contingent on P15:**
-it meets the same decision in gzip's form and runs first, and its spec settles
-the contract as an `Extent` that is `Open` until the end is reached
-([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Settled in the grilling"),
-which this phase inherits rather than deciding.
+**Why P18 cares.** zstd's frame content size is optional and a streaming
+writer — which is what `pg_dump --compress=zstd` is — omits it, so a streamed
+frame with no content size is `Open` until its first pass ends: this phase
+inherits the contract rather than deciding it, and decides only when its source
+can state `Exact` (a seekable file's frame index, a frame that states its size).
 
-**Origin.** 2026-09-02, grilling the compressed-input work; the reasoning is
-now beside the mechanism ([`decisions.md`](decisions.md), "The compressed source and the cache", which states what `size()` promises and the two relaxations refused).
+**Origin.** 2026-09-02, grilling the compressed-input work; the contract is
+P15's ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Settled in the
+grilling").
 
 ---
 

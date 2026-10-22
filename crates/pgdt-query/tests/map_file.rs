@@ -185,7 +185,7 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
 
     // A cold query stops once `widgets` is settled, well short of EOF.
@@ -265,7 +265,7 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
     let dir = tempfile::tempdir().unwrap();
     let dump = block_rich(dir.path(), 40);
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let cold = Cold { cache: mode.clone(), ..Cold::default() };
@@ -343,7 +343,7 @@ async fn a_preamble_only_cache_is_finished_into_the_same_index() {
 async fn a_complete_cache_is_reported_without_rescanning() {
     let (_dir, dump) = sandboxed();
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
     let mode = CacheMode::enabled(cache::colocated_path(&dump));
 
     let first = map_file(
@@ -401,11 +401,12 @@ impl ByteRangeSource for FailsPast {
         })
     }
 
-    fn size(
+    fn extent(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = pgdt_core::Result<u64>> + Send + '_>>
-    {
-        self.inner.size()
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>,
+    > {
+        self.inner.extent()
     }
 
     fn modified(
@@ -435,7 +436,7 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
 
     let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
@@ -457,7 +458,10 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
     assert!(matches!(err, pgdt_core::Error::Io(_)), "{err:?}");
 
     let status = pgdt_dump::internal::load(&cache_path, source.as_ref()).await.unwrap();
-    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
+    let CacheStatus::Loaded(LoadedCache {
+        index, extent: pgdt_io::Extent::Exact(total_size), ..
+    }) = status
+    else {
         panic!("an interrupted scan must leave an incomplete cache, got {status:?}");
     };
     assert!(!index.is_complete(total_size));
@@ -543,11 +547,12 @@ impl ByteRangeSource for CancelsPast {
         self.inner.read_range(offset, len)
     }
 
-    fn size(
+    fn extent(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = pgdt_core::Result<u64>> + Send + '_>>
-    {
-        self.inner.size()
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>,
+    > {
+        self.inner.extent()
     }
 
     fn modified(
@@ -608,11 +613,12 @@ impl ByteRangeSource for DropsPast {
         self.inner.read_range(offset, len)
     }
 
-    fn size(
+    fn extent(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = pgdt_core::Result<u64>> + Send + '_>>
-    {
-        self.inner.size()
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>,
+    > {
+        self.inner.extent()
     }
 
     fn modified(
@@ -737,11 +743,12 @@ impl ByteRangeSource for FailsOutOfOrder {
         })
     }
 
-    fn size(
+    fn extent(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = pgdt_core::Result<u64>> + Send + '_>>
-    {
-        self.inner.size()
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>,
+    > {
+        self.inner.extent()
     }
 
     fn modified(
@@ -835,7 +842,7 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
 
     let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
@@ -862,7 +869,10 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     assert!(!run.index.is_complete(size), "and does not claim the whole file");
 
     let status = pgdt_dump::internal::load(&cache_path, source.as_ref()).await.unwrap();
-    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
+    let CacheStatus::Loaded(LoadedCache {
+        index, extent: pgdt_io::Extent::Exact(total_size), ..
+    }) = status
+    else {
         panic!("a cancelled scan must leave an incomplete cache, got {status:?}");
     };
     assert!(!index.is_complete(total_size));
@@ -898,7 +908,7 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
     let (_dir, dump) = sandboxed();
     let cache_path = cache::colocated_path(&dump);
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
 
     let eager = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
@@ -924,7 +934,10 @@ async fn a_dropped_read_is_the_same_interrupt_as_the_flag() {
     assert!(!run.index.is_complete(size), "and does not claim the whole file");
 
     let status = pgdt_dump::internal::load(&cache_path, source.as_ref()).await.unwrap();
-    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
+    let CacheStatus::Loaded(LoadedCache {
+        index, extent: pgdt_io::Extent::Exact(total_size), ..
+    }) = status
+    else {
         panic!("a dropped read must leave an incomplete cache, got {status:?}");
     };
     assert!(!index.is_complete(total_size));
@@ -1082,7 +1095,10 @@ async fn an_interrupted_backfill_banks_the_blocks_it_reread() {
     assert_eq!((run.lacking_statistics, run.backfilled), (blocks, 1));
 
     let status = pgdt_dump::internal::load(&cache_path, source.as_ref()).await.unwrap();
-    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) = status else {
+    let CacheStatus::Loaded(LoadedCache {
+        index, extent: pgdt_io::Extent::Exact(total_size), ..
+    }) = status
+    else {
         panic!("a back-fill leaves the map complete, got {status:?}");
     };
     assert!(index.is_complete(total_size));
@@ -1234,7 +1250,7 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
     .unwrap();
 
     assert!(run.interrupted);
-    assert!(!run.index.is_complete(source.size().await.unwrap()));
+    assert!(!run.index.is_complete(source.extent().await.unwrap().exact().unwrap()));
     let checked = outcomes(&run.index);
     assert!(!checked.is_empty(), "the scan banked blocks with column lists to check");
     for (table, columns) in &checked {

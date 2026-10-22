@@ -60,13 +60,13 @@ impl Dump {
         let index = match cache {
             Held::Loaded(loaded) if loaded.is_complete() => loaded.index,
             Held::Loaded(loaded) => {
-                let (scanned_through, size) = (loaded.index.scanned_through, loaded.total_size);
+                let (scanned_through, size) = (loaded.index.scanned_through, loaded.extent.exact());
                 return Err(Error::MapIncomplete { scanned_through, size });
             }
             Held::Missing | Held::Disabled | Held::Replacing(_) => {
                 return Err(Error::MapIncomplete {
                     scanned_through: 0,
-                    size: source.size().await?,
+                    size: source.extent().await?.exact(),
                 });
             }
         };
@@ -78,9 +78,12 @@ impl Dump {
     /// ([`MapRun::interrupted`]). An interrupt inside the back-fill leaves the
     /// map whole, and so builds one.
     pub async fn mapped(run: MapRun) -> Result<Self> {
-        let size = run.source.size().await?;
-        if !run.index.is_complete(size) {
-            return Err(Error::MapIncomplete { scanned_through: run.index.scanned_through, size });
+        let extent = run.source.extent().await?;
+        if !extent.reached_by(run.index.scanned_through) {
+            return Err(Error::MapIncomplete {
+                scanned_through: run.index.scanned_through,
+                size: extent.exact(),
+            });
         }
         Ok(Self::new(run.source, run.watch, run.index))
     }

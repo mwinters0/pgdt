@@ -242,10 +242,12 @@ pub enum Error {
     /// missing from its rows and its schema without anything saying so. Raised
     /// by `pgdt_query::Dump`'s constructors before a byte is read; building
     /// the rest of the map is a mapping pass's, the dump never scans.
+    /// `size` is `None` where the source's end is not known yet.
     #[error(
-        "the map covers {scanned_through} of the source's {size} byte(s); a dump read through its map needs one that reaches the end of the file"
+        "the map covers {scanned_through} of {}; a dump read through its map needs one that reaches the end of the file",
+        map_total(*.size)
     )]
-    MapIncomplete { scanned_through: u64, size: u64 },
+    MapIncomplete { scanned_through: u64, size: Option<u64> },
     /// A typed plan over a dump's complete map was handed a table that map
     /// holds at the metadata level, which records no census of its rows, so
     /// no schema can be settled for it (`docs/design/decisions.md`, "D35").
@@ -385,6 +387,13 @@ fn null_refused(table: &str, column: &str, line: Option<u64>, line_offset: u64) 
 
 /// [`Error::PredicateValueDecode`]'s closing clause: where the rest of an
 /// enum's labels are, when the accepted form stopped short of them.
+fn map_total(size: Option<u64>) -> String {
+    match size {
+        Some(size) => format!("the source's {size} byte(s)"),
+        None => "a source whose end has not been read yet".to_owned(),
+    }
+}
+
 fn unlisted_labels(unlisted: usize) -> String {
     match unlisted {
         0 => String::new(),

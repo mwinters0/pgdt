@@ -135,13 +135,13 @@ async fn saved_index_round_trips_exactly() {
     let loaded = match pgdt_dump::internal::load(&path, &source).await.unwrap() {
         CacheStatus::Loaded(loaded) => {
             assert!(loaded.is_complete(), "build_index always scans the whole file");
-            let LoadedCache { index, weak, total_size, compression, .. } = loaded;
+            let LoadedCache { index, weak, extent, compression, .. } = loaded;
             assert_eq!(
                 weak,
                 WeakIdentity::Agrees,
                 "just-saved cache must match the source's current mtime"
             );
-            assert_eq!(total_size, source.size().await.unwrap());
+            assert_eq!(extent, source.extent().await.unwrap());
             assert_eq!(compression, None, "a plain source sits under no container");
             index
         }
@@ -184,7 +184,7 @@ async fn preamble_only_persists_a_real_unscanned_tail() {
         }
         unusable => panic!("preamble_only must persist a cache, got {unusable:?}"),
     };
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
     assert!(index.scanned_through < size, "edge_cases.sql has COPY blocks past its preamble");
 
     let last = index.spans.last().expect("a partial scan still produces spans");
@@ -204,14 +204,14 @@ async fn save_overwrites_an_existing_cache() {
     std::fs::write(&path, b"stale placeholder").unwrap();
     pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
 
-    let total_size = source.size().await.unwrap();
+    let extent = source.extent().await.unwrap();
     let CacheStatus::Loaded(loaded) = pgdt_dump::internal::load(&path, &source).await.unwrap()
     else {
         panic!("the overwritten cache must load as the fresh save");
     };
     assert!(loaded.is_complete());
     assert_eq!((&loaded.weak, loaded.compression), (&WeakIdentity::Agrees, None));
-    assert_eq!((loaded.index, loaded.total_size), (index, total_size));
+    assert_eq!((loaded.index, loaded.extent), (index, extent));
 }
 
 /// A write failure (here: parent directory doesn't exist) must propagate as
@@ -245,7 +245,10 @@ async fn size_mismatch_invalidates_the_cache() {
     grown_bytes.push(b'\n');
     std::fs::write(&grown, &grown_bytes).unwrap();
     let grown_source = LocalFileSource::open(&grown).unwrap();
-    assert_ne!(grown_source.size().await.unwrap(), source.size().await.unwrap());
+    assert_ne!(
+        grown_source.extent().await.unwrap().exact().unwrap(),
+        source.extent().await.unwrap().exact().unwrap()
+    );
 
     assert_eq!(
         pgdt_dump::internal::load(&path, &grown_source).await.unwrap(),
@@ -392,7 +395,12 @@ async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
     std::fs::File::options().write(true).open(&dump).unwrap().set_modified(future).unwrap();
 
     match pgdt_dump::internal::load(&path, &source).await.unwrap() {
-        CacheStatus::Loaded(LoadedCache { index: loaded, weak, total_size, .. }) => {
+        CacheStatus::Loaded(LoadedCache {
+            index: loaded,
+            weak,
+            extent: pgdt_io::Extent::Exact(total_size),
+            ..
+        }) => {
             assert!(loaded.is_complete(total_size), "build_index always scans the whole file");
             let WeakIdentity::Differs { cached, live } = weak else {
                 panic!("a moved mtime differs, got {weak:?}")
@@ -565,7 +573,7 @@ async fn an_incomplete_cache_still_opens_as_a_loaded_index() {
     else {
         panic!("Incomplete still yields an index")
     };
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
     assert!(index.scanned_through < size, "a preamble-only cache never reaches EOF");
 }
 
@@ -584,9 +592,13 @@ async fn an_offline_load_reports_a_partial_scan_incomplete() {
         .await
         .unwrap();
 
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
     match OfflineCache::new(path).load().await.unwrap() {
-        CacheStatus::Loaded(LoadedCache { index, total_size, .. }) => {
+        CacheStatus::Loaded(LoadedCache {
+            index,
+            extent: pgdt_io::Extent::Exact(total_size),
+            ..
+        }) => {
             assert_eq!(total_size, size);
             assert!(index.scanned_through < total_size);
         }
@@ -609,7 +621,12 @@ async fn an_offline_load_always_pushes_the_cache_offline_diagnostic() {
     pgdt_dump::internal::save(&full_path, source.as_ref(), &index).await.unwrap();
 
     let status = OfflineCache::new(full_path).load().await.unwrap();
-    let CacheStatus::Loaded(LoadedCache { index: loaded, total_size, .. }) = status else {
+    let CacheStatus::Loaded(LoadedCache {
+        index: loaded,
+        extent: pgdt_io::Extent::Exact(total_size),
+        ..
+    }) = status
+    else {
         panic!("expected a fully scanned cache");
     };
     assert!(loaded.is_complete(total_size));
@@ -625,7 +642,12 @@ async fn an_offline_load_always_pushes_the_cache_offline_diagnostic() {
         .await
         .unwrap();
     let status = OfflineCache::new(partial_path).load().await.unwrap();
-    let CacheStatus::Loaded(LoadedCache { index: loaded, total_size, .. }) = status else {
+    let CacheStatus::Loaded(LoadedCache {
+        index: loaded,
+        extent: pgdt_io::Extent::Exact(total_size),
+        ..
+    }) = status
+    else {
         panic!("expected a preamble-only cache");
     };
     assert!(!loaded.is_complete(total_size));
@@ -687,7 +709,10 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
         "this test's whole point is the seekable shape — a non-seekable fixture would earn a \
          D19 diagnostic the plain file's index does not have, and pass for the wrong reason"
     );
-    assert_eq!(xz.size().await.unwrap(), plain.size().await.unwrap());
+    assert_eq!(
+        xz.extent().await.unwrap().exact().unwrap(),
+        plain.extent().await.unwrap().exact().unwrap()
+    );
     assert_ne!(
         xz.stored_size().await.unwrap(),
         plain.stored_size().await.unwrap(),
@@ -701,15 +726,19 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     let path = dir.path().join("edge_cases.sql.xz.dtcache");
     pgdt_dump::internal::save(&path, &xz, &xz_index).await.unwrap();
     match pgdt_dump::internal::load(&path, &xz).await.unwrap() {
-        CacheStatus::Loaded(LoadedCache { index, weak, total_size, compression, .. })
-            if index.is_complete(total_size) =>
-        {
+        CacheStatus::Loaded(LoadedCache {
+            index,
+            weak,
+            extent: pgdt_io::Extent::Exact(total_size),
+            compression,
+            ..
+        }) if index.is_complete(total_size) => {
             assert_eq!(
                 weak,
                 WeakIdentity::Agrees,
                 "just-saved cache must match the source's current mtime"
             );
-            assert_eq!(total_size, plain.size().await.unwrap());
+            assert_eq!(total_size, plain.extent().await.unwrap().exact().unwrap());
             assert_eq!(index, plain_index);
             // The shape comes back off the persisted seek table, so a
             // reader learns what to raise a budget to without `xz --list`.
@@ -789,9 +818,11 @@ async fn a_non_seekable_warning_survives_the_cache_round_trip() {
     let path = dir.path().join("single_block.xz.dtcache");
     pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
     match pgdt_dump::internal::load(&path, &xz).await.unwrap() {
-        CacheStatus::Loaded(LoadedCache { index, total_size, .. })
-            if index.is_complete(total_size) =>
-        {
+        CacheStatus::Loaded(LoadedCache {
+            index,
+            extent: pgdt_io::Extent::Exact(total_size),
+            ..
+        }) if index.is_complete(total_size) => {
             assert!(
                 has_non_seekable_warning(&index.diagnostics),
                 "diagnostics: {:?}",
@@ -895,8 +926,11 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
     assert!(matches!(opened.cache, Held::Loaded(_)), "the file's own cache describes it");
     let source = opened.source;
     assert_eq!(source.compression_index(), xz.compression_index());
-    assert_eq!(source.size().await.unwrap(), xz.size().await.unwrap());
-    let whole = source.size().await.unwrap() as usize;
+    assert_eq!(
+        source.extent().await.unwrap().exact().unwrap(),
+        xz.extent().await.unwrap().exact().unwrap()
+    );
+    let whole = source.extent().await.unwrap().exact().unwrap() as usize;
     assert_eq!(source.read_range(0, whole).await.unwrap(), xz.read_range(0, whole).await.unwrap());
 }
 
@@ -1156,7 +1190,10 @@ async fn an_open_hands_back_what_the_cache_holds() {
 
     let opened = mode.open(&origin).await.unwrap();
     assert_eq!(opened.cache, Held::Missing);
-    assert_eq!(opened.source.size().await.unwrap(), std::fs::metadata(&dump).unwrap().len());
+    assert_eq!(
+        opened.source.extent().await.unwrap().exact().unwrap(),
+        std::fs::metadata(&dump).unwrap().len()
+    );
 
     preamble_only(opened, &ScanOptions::default()).await.unwrap();
     let Held::Loaded(partial) = mode.open(&origin).await.unwrap().cache else {
@@ -1359,7 +1396,7 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
 /// The persisted format version and the digest of every fixture's persisted
 /// index it was pinned beside, re-pinned together
 /// (`persisted_index_is_pinned_to_the_format_version`).
-const PERSISTED_INDEX: (u32, u64) = (72, 2_944_908_134_061_493_649);
+const PERSISTED_INDEX: (u32, u64) = (73, 2_944_908_134_061_493_649);
 
 /// **Every fixture's persisted [`DumpIndex`](pgdt_model::DumpIndex)
 /// digests to the value pinned beside `CACHE_FORMAT_VERSION`.** A cache saved
@@ -1517,7 +1554,7 @@ mod encoding {
                 container_kind: ContainerKind::Plain,
                 compression: source.compression_index(),
                 identity: SourceIdentity::observe(source.as_ref()).await.unwrap(),
-                total_size: source.size().await.unwrap(),
+                extent: source.extent().await.unwrap(),
                 calendar_end: calendar_end(),
                 index: run.index.clone(),
             };
@@ -1610,7 +1647,7 @@ mod encoding {
                 container_kind: ContainerKind::Plain,
                 compression: None,
                 identity: SourceIdentity::observe(source.as_ref()).await.unwrap(),
-                total_size: source.size().await.unwrap(),
+                extent: source.extent().await.unwrap(),
                 calendar_end: other,
                 index,
             };

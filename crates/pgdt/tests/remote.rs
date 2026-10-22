@@ -22,7 +22,8 @@ use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_fixtures::arranged;
 use pgdt_io::{
-    ByteRangeSource, CompressionIndex, KnownCompression, Origin, Parallelism, Recognized, open,
+    ByteRangeSource, CompressionIndex, Extent, KnownCompression, Origin, Parallelism, Recognized,
+    open,
 };
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::PostgresInvalidValues;
@@ -163,10 +164,9 @@ async fn the_source_answers_its_size_and_identity_without_asking_again() {
     let source = source_of(&oracle.url()).await;
     let after_open = oracle.request_count();
 
-    assert_eq!(source.size().await.unwrap(), oracle.body().len() as u64);
+    assert_eq!(source.extent().await.unwrap(), Extent::Exact(oracle.body().len() as u64));
     assert_eq!(source.stored_size().await.unwrap(), oracle.body().len() as u64);
     assert!(source.modified().await.unwrap().is_some());
-    assert!(source.size_is_exact());
     assert_eq!(oracle.request_count(), after_open, "the probe already answered all three");
 }
 
@@ -174,7 +174,7 @@ async fn the_source_answers_its_size_and_identity_without_asking_again() {
 async fn the_source_declines_every_advisory_answer_it_has_no_reading_for() {
     let oracle = serving_dump();
     let source = source_of(&oracle.url()).await;
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
 
     assert_eq!(source.default_workers(), 1, "no block structure to cut at");
     assert!(source.default_worker_memory().is_none(), "no per-worker recommendation");
@@ -201,7 +201,7 @@ async fn a_ranged_read_answers_exactly_what_was_asked_for() {
 async fn a_read_past_the_end_is_an_unexpected_eof_naming_the_url() {
     let oracle = serving_dump();
     let source = source_of(&oracle.url()).await;
-    let size = source.size().await.unwrap();
+    let size = source.extent().await.unwrap().exact().unwrap();
     let err = source.read_range(size - 4, 64).await.unwrap_err().to_string();
     assert!(err.contains("byte(s) of the 64 asked for"), "{err}");
     assert!(err.contains(&oracle.url()), "{err}");
@@ -816,7 +816,11 @@ async fn a_remote_xz_source_reads_the_plain_bytes_the_file_holds() {
     };
     assert_eq!(table.stream_count(), 2, "the fixture is two concatenated streams");
     assert!(table.block_count() > 2, "and several blocks: {table:?}");
-    assert_eq!(source.size().await.unwrap(), plain.len() as u64, "the uncompressed length");
+    assert_eq!(
+        source.extent().await.unwrap().exact().unwrap(),
+        plain.len() as u64,
+        "the uncompressed length"
+    );
     assert_eq!(
         source.stored_size().await.unwrap(),
         oracle.body().len() as u64,

@@ -11,7 +11,7 @@ use pgdt_core::{Error, Result};
 use pgdt_dump::cache::{CacheMode, SourceWatch};
 use pgdt_dump::internal::announce_read_loop;
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ReadOptions, ScanOptions};
-use pgdt_io::{Arrangement, ByteRangeSource};
+use pgdt_io::{Arrangement, ByteRangeSource, Extent};
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
 use pgdt_model::{
     BlockCensus, BlockGathered, BlockStatistics, CopyBlock, DataBlock, DumpIndex, DumpMetadata,
@@ -92,7 +92,7 @@ pub(crate) async fn backfill_statistics(
     index: &mut DumpIndex,
     statistics: &StatisticsRequest,
     account: &Arc<StatisticsAccount>,
-    size: u64,
+    extent: Extent,
     loaded: HashSet<u64>,
     which: Backfill,
 ) -> Result<BackfillRun> {
@@ -140,7 +140,7 @@ pub(crate) async fn backfill_statistics(
         request: statistics,
         allowance,
         account,
-        size,
+        extent,
         loaded,
         shortfall_reported: false,
     };
@@ -293,7 +293,7 @@ pub async fn backfill_block(
         return Ok(false);
     }
     let scan_options = ScanOptions { read, parallelism: arrangement.parallelism() };
-    let size = source.size().await?;
+    let extent = source.extent().await?;
     announce_read_loop(source, read, scan_options.parallelism);
     // What the block holds is alive beside what a read gathers, as a
     // loaded block's statistics are in a pass, until a read replaces them.
@@ -311,7 +311,7 @@ pub async fn backfill_block(
         request,
         allowance,
         account: &account,
-        size,
+        extent,
         loaded,
         shortfall_reported: false,
     };
@@ -334,7 +334,7 @@ struct Rereads<'a> {
     request: &'a StatisticsRequest,
     allowance: Option<u64>,
     account: &'a Arc<StatisticsAccount>,
-    size: u64,
+    extent: Extent,
     /// The header offsets of the blocks whose statistics `account` carries
     /// as [`Term::Loaded`], until a re-read replaces them.
     loaded: HashSet<u64>,
@@ -398,7 +398,7 @@ impl Rereads<'_> {
             metadata,
             database,
             block,
-            self.size,
+            self.extent,
             Some(observer.as_mut()),
             &mut self.shortfall_reported,
         )
@@ -501,7 +501,7 @@ pub async fn reread_rows(
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     block: &CopyBlock,
-    size: u64,
+    extent: Extent,
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
     shortfall_reported: &mut bool,
 ) -> Result<Option<BlockCensus>> {
@@ -510,8 +510,9 @@ pub async fn reread_rows(
         header_offset: block.header_offset,
     };
     // A source cut short of the block's recorded end cannot end it there, and
-    // every read loop below takes its length from `size` less its position.
-    if block.end_offset > size {
+    // every read loop below takes its length from the end less its position.
+    // One whose end is not known yet is read until it ends.
+    if extent.exact().is_some_and(|size| block.end_offset > size) {
         return Err(moved());
     }
     let plan = CensusPlan {
@@ -526,7 +527,7 @@ pub async fn reread_rows(
         block.header_offset,
         block.data_offset,
         Some(plan.clone()),
-        size,
+        extent,
         observer.as_deref_mut(),
     )
     .await?;
@@ -535,7 +536,7 @@ pub async fn reread_rows(
         RegionScan::Closed(interior) => (interior.end, interior.census),
         RegionScan::Cancelled => return Ok(None),
         RegionScan::Declined => {
-            match observe_rows(source, scan_options.read, cancel, block, &plan, size, observer)
+            match observe_rows(source, scan_options.read, cancel, block, &plan, extent, observer)
                 .await?
             {
                 Some(read) => read,
@@ -562,11 +563,11 @@ async fn observe_rows(
     cancel: &CancellationToken,
     block: &CopyBlock,
     plan: &CensusPlan,
-    size: u64,
+    extent: Extent,
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<Option<(CopyEnd, BlockCensus)>> {
     let scanner = CopyScanner::resume(block.data_offset, Some((block.header_offset, 0)));
-    let mut chunked = ChunkedScanner::new(scanner, size, read);
+    let mut chunked = ChunkedScanner::to_source_end(scanner, extent, read);
     let mut census = BlockCensus::new(plan.width);
     loop {
         if cancel.is_cancelled() {

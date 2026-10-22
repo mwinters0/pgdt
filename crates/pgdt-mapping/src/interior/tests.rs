@@ -372,7 +372,7 @@ async fn a_scheduled_region_answers_what_the_serial_scanner_answers() {
                     block.header_offset,
                     block.data_offset,
                     plan(block.columns),
-                    size,
+                    pgdt_io::Extent::Exact(size),
                     None,
                 )
                 .await
@@ -412,11 +412,12 @@ impl pgdt_io::ByteRangeSource for Recording {
         self.reads.lock().unwrap().push((offset, len));
         self.inner.read_range(offset, len)
     }
-    fn size(
+    fn extent(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = pgdt_core::Result<u64>> + Send + '_>>
-    {
-        self.inner.size()
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>,
+    > {
+        self.inner.extent()
     }
     fn modified(
         &self,
@@ -473,7 +474,7 @@ async fn no_read_a_worker_makes_exceeds_the_chunk_size() {
                 block.header_offset,
                 block.data_offset,
                 plan(block.columns),
-                size,
+                pgdt_io::Extent::Exact(size),
                 None,
             )
             .await
@@ -549,7 +550,7 @@ async fn no_read_a_worker_makes_exceeds_the_stated_unit() {
                 block.header_offset,
                 block.data_offset,
                 plan(block.columns),
-                size,
+                pgdt_io::Extent::Exact(size),
                 None,
             )
             .await
@@ -611,7 +612,7 @@ async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        size,
+        pgdt_io::Extent::Exact(size),
         None,
     )
     .await
@@ -631,7 +632,7 @@ async fn a_region_too_small_to_cut_is_left_to_the_serial_scanner() {
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        size,
+        pgdt_io::Extent::Exact(size),
         None,
     )
     .await
@@ -657,7 +658,7 @@ async fn a_cancelled_region_closes_nothing_and_raises_nothing() {
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        size,
+        pgdt_io::Extent::Exact(size),
         None,
     )
     .await
@@ -692,7 +693,7 @@ async fn a_budget_affording_fewer_readers_than_asked_for_answers_a_shortfall() {
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        size,
+        pgdt_io::Extent::Exact(size),
         None,
     )
     .await
@@ -732,7 +733,7 @@ async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        size,
+        pgdt_io::Extent::Exact(size),
         None,
     )
     .await
@@ -756,7 +757,7 @@ async fn an_arrangement_that_delivers_what_was_asked_answers_no_shortfall() {
         block.header_offset,
         block.data_offset,
         plan(block.columns),
-        size,
+        pgdt_io::Extent::Exact(size),
         None,
     )
     .await
@@ -789,7 +790,7 @@ async fn a_block_the_file_ends_inside_is_unterminated() {
         0,
         data_offset,
         plan(Some(1)),
-        file.len() as u64,
+        pgdt_io::Extent::Exact(file.len() as u64),
         None,
     )
     .await
@@ -824,7 +825,7 @@ async fn a_row_longer_than_a_tail_read_is_still_one_row() {
             block.header_offset,
             block.data_offset,
             plan(block.columns),
-            file.len() as u64,
+            pgdt_io::Extent::Exact(file.len() as u64),
             None,
         )
         .await
@@ -871,7 +872,7 @@ async fn a_split_block_refuses_the_row_a_serial_scan_refuses() {
                     0,
                     header.len() as u64,
                     plan(Some(1)),
-                    file.len() as u64,
+                    pgdt_io::Extent::Exact(file.len() as u64),
                     None,
                 )
                 .await;

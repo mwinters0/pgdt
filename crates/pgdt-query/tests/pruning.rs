@@ -89,8 +89,9 @@ async fn gathered(dump: &Path, group_size: u64) -> (tempfile::TempDir, PathBuf, 
     };
     let copy = parsed_copy(dump, dir.path(), &request).await;
     let path = cache::colocated_path(&copy);
-    let CacheStatus::Loaded(LoadedCache { index, total_size, .. }) =
-        pgdt_dump::internal::load_offline(&path).await.unwrap()
+    let CacheStatus::Loaded(LoadedCache {
+        index, extent: pgdt_io::Extent::Exact(total_size), ..
+    }) = pgdt_dump::internal::load_offline(&path).await.unwrap()
     else {
         panic!("the parse left a complete cache")
     };
@@ -1069,11 +1070,12 @@ impl pgdt_io::ByteRangeSource for Recording {
         self.inner.partitions(range)
     }
 
-    fn size(
+    fn extent(
         &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = pgdt_core::Result<u64>> + Send + '_>>
-    {
-        self.inner.size()
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>,
+    > {
+        self.inner.extent()
     }
 
     fn modified(

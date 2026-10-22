@@ -21,7 +21,7 @@ use super::origin::{
     KnownCompression, Location, ORIGIN_LEADING_BYTES, Origin, OriginProbe, Recognized, Verdict,
     over_known_index,
 };
-use super::{ByteRangeSource, RemoteIdentity, is_weak_tag};
+use super::{ByteRangeSource, Extent, RemoteIdentity, is_weak_tag};
 
 /// How long a remote request may go without delivering a byte before it is
 /// abandoned.
@@ -357,8 +357,8 @@ impl ByteRangeSource for RemoteSource {
 
     /// The origin's probe answered this, so it costs no round trip and cannot
     /// disagree with the size the cache claim was settled against.
-    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
-        Box::pin(async move { Ok(self.size) })
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<Extent>> + Send + '_>> {
+        Box::pin(async move { Ok(Extent::Exact(self.size)) })
     }
 
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {

@@ -38,8 +38,9 @@ pub use self::remote::{REMOTE_READ_TIMEOUT, RemoteSource};
 /// Minimal async byte-range read abstraction.
 ///
 /// The three required methods mirror `object_store`'s `get_range`/`head`
-/// semantics. [`ByteRangeSource::hint_read_size`] sits outside that mirror and
-/// is defaulted, so an implementation need not know it exists.
+/// semantics, `extent` answering `head`'s size where the end is known.
+/// [`ByteRangeSource::hint_read_size`] sits outside that mirror and is
+/// defaulted, so an implementation need not know it exists.
 ///
 /// **Dyn-compatible on purpose**: each method returns a boxed future rather
 /// than `impl Future` (RPITIT), so callers can hold `&dyn ByteRangeSource` /
@@ -65,7 +66,39 @@ pub trait ByteRangeSource: Send + Sync {
         offset: u64,
         len: usize,
     ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>>;
-    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>>;
+    /// Up to `len` bytes at `offset`, **short only where the source ends
+    /// first** — empty at or past its end. The read a loop reading to the
+    /// source's end makes where [`ByteRangeSource::extent`] is
+    /// [`Extent::Open`], so that loop learns the end from the read that
+    /// meets it rather than from a size it cannot be told
+    /// (`pgdt_dump`'s `ChunkedScanner`).
+    ///
+    /// **The default reads within the exact extent**, right for every source
+    /// whose extent is always `Exact`; a source that can answer `Open` must
+    /// answer this itself, and the default refuses to read one.
+    fn read_at_most(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        Box::pin(async move {
+            let end = self.extent().await?.require_exact("read_at_most")?;
+            let len = (len as u64).min(end.saturating_sub(offset)) as usize;
+            if len == 0 { Ok(Bytes::new()) } else { self.read_range(offset, len).await }
+        })
+    }
+    /// How many addressable (decompressed, for a compressed source) bytes
+    /// this source holds, as far as it knows: [`Extent::Exact`], or
+    /// [`Extent::Open`] where its end has not been reached yet. A source
+    /// answers `Exact` once a read has reached its end or a complete index
+    /// was handed to it, and never `Open` again after that.
+    ///
+    /// **A type, not a number beside a flag**, so every site needing the end
+    /// says what it does where there is none yet: a read loop reads to the
+    /// end with [`ByteRangeSource::read_at_most`], anything cutting
+    /// partitions requires `Exact`, and a cache records the extent as
+    /// it was (`docs/design/decisions.md`, "D6").
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<Extent>> + Send + '_>>;
     /// Last-modified time, if the source exposes one — `object_store`'s
     /// `head` carries this too. `None` rather than an error for a source that
     /// genuinely has no notion of one; the structure cache treats an absent
@@ -75,22 +108,15 @@ pub trait ByteRangeSource: Send + Sync {
     /// `docs/design/decisions.md`, "D21".
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>>;
     /// Bytes as stored on the device — what a `stat` reports — as opposed to
-    /// [`ByteRangeSource::size`]'s addressable (possibly decompressed) length.
-    /// This is the structure cache's staleness check. See
+    /// [`ByteRangeSource::extent`]'s addressable (possibly decompressed)
+    /// length. This is the structure cache's staleness check. See
     /// `docs/design/decisions.md`, "D21".
     ///
-    /// Defaults to [`ByteRangeSource::size`], right for a source that does not
-    /// decompress; a decompressing source overrides it to the compressed
-    /// file's own length.
+    /// Defaults to the exact extent, right for a source that does not
+    /// decompress, whose extent is always `Exact`; a decompressing source
+    /// overrides it to the compressed file's own length.
     fn stored_size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
-        self.size()
-    }
-    /// Whether [`ByteRangeSource::size`] is this source's *exact* addressable
-    /// length rather than a bound. Every source implemented so far answers
-    /// `true` honestly; nothing reads it yet. See
-    /// `docs/design/decisions.md`, "D6".
-    fn size_is_exact(&self) -> bool {
-        true
+        Box::pin(async move { self.extent().await?.require_exact("stored_size") })
     }
     /// The read length this caller is about to ask for over and over — a
     /// read loop's `ReadOptions::chunk_size_bytes`, announced once before the loop
@@ -257,7 +283,7 @@ pub trait ByteRangeSource: Send + Sync {
     /// (`docs/design/decisions.md`, "D21").
     ///
     /// **The default is `None`: the watch's own re-read is the check**, which
-    /// holds wherever [`ByteRangeSource::size`] and
+    /// holds wherever [`ByteRangeSource::stored_size`] and
     /// [`ByteRangeSource::modified`] answer live. A source whose two answers
     /// are frozen at open, and that cannot have its reads compared some other
     /// way, is the one that must say otherwise — the sentence it returns is
@@ -283,6 +309,63 @@ pub trait ByteRangeSource: Send + Sync {
     /// makes the scan's next read start that block again.
     fn complete_reads(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async { Ok(()) })
+    }
+}
+
+/// How many addressable bytes a source holds, as far as it knows
+/// ([`ByteRangeSource::extent`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Extent {
+    /// Exactly this many bytes.
+    Exact(u64),
+    /// At least this many, the end not reached yet: a stream whose length
+    /// only a decode to its end tells, before one has.
+    Open { at_least: u64 },
+}
+
+impl Extent {
+    /// The exact length, `None` while the end is not known.
+    pub fn exact(self) -> Option<u64> {
+        match self {
+            Self::Exact(len) => Some(len),
+            Self::Open { .. } => None,
+        }
+    }
+
+    /// How many bytes are known to exist: the exact length, or the bound.
+    pub fn known(self) -> u64 {
+        match self {
+            Self::Exact(len) | Self::Open { at_least: len } => len,
+        }
+    }
+
+    /// Whether a scan that has read through `through` has read everything:
+    /// never while the end is not known.
+    pub fn reached_by(self, through: u64) -> bool {
+        self.exact().is_some_and(|len| through >= len)
+    }
+
+    /// The exact length, or an error naming `what` needed it — for a caller
+    /// whose source answering `Open` breaks a contract, never one a user
+    /// reaches.
+    pub fn require_exact(self, what: &str) -> Result<u64> {
+        self.exact().ok_or_else(|| {
+            pgdt_core::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                format!("`{what}` needs the source's exact extent, and its end is not known yet"),
+            ))
+        })
+    }
+}
+
+/// The length as a status line states it: the number, or `at least` it.
+impl std::fmt::Display for Extent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Exact(len) => write!(f, "{len}"),
+            Self::Open { at_least } => write!(f, "at least {at_least}"),
+        }
     }
 }
 
