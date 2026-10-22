@@ -342,6 +342,84 @@ def package(name: str, version: str, manifest: str = "/x/Cargo.toml", **extra) -
 C = release.Crate
 
 
+def build_script(package_id: str, out_dir: Path) -> str:
+    return json.dumps({
+        "reason": "build-script-executed",
+        "package_id": package_id,
+        "out_dir": str(out_dir),
+    })  # fmt: skip
+
+
+class CMake(unittest.TestCase):
+    """`docs/design/decisions.md`, "D111": a build is refused where a crate
+    the shipped package depends on ran CMake, and only there."""
+
+    def test_a_package_id_names_its_crate(self):
+        for spec, crate in (
+            ("registry+https://github.com/rust-lang/crates.io-index#aws-lc-sys@0.45.0", C("aws-lc-sys", "0.45.0")),
+            ("registry+https://github.com/rust-lang/crates.io-index#zstd-sys@2.1.0+zstd.1.5.7",
+             C("zstd-sys", "2.1.0+zstd.1.5.7")),
+            ("path+file:///work/crates/pgdt-io#0.2.0", C("pgdt-io", "0.2.0")),
+            ("path+file:///work/vendor/seek#xz-seek@0.1.0", C("xz-seek", "0.1.0")),
+            ("git+https://github.com/o/thing?rev=abc#1.2.3", C("thing", "1.2.3")),
+        ):  # fmt: skip
+            self.assertEqual(release.package_of(spec), crate, spec)
+        with self.assertRaises(release.ReleaseError):
+            release.package_of("aws-lc-sys 0.45.0 (registry+https://github.com/rust-lang/crates.io-index)")
+
+    def test_a_cache_counts_only_in_the_out_dir_of_a_crate_the_shipped_package_depends_on(self):
+        registry = "registry+https://github.com/rust-lang/crates.io-index#"
+        with tempfile.TemporaryDirectory() as tmp:
+            dirs = {name: Path(tmp, name, "out") for name in ("aws-lc-sys", "libz-ng-sys", "zstd-sys", "stale")}
+            for name in ("aws-lc-sys", "libz-ng-sys", "stale"):
+                (dirs[name] / "build").mkdir(parents=True)
+                (dirs[name] / "build" / release.CMAKE_CACHE).write_text("")
+            dirs["zstd-sys"].mkdir(parents=True)
+            messages = "\n".join([
+                build_script(f"{registry}aws-lc-sys@0.45.0", dirs["aws-lc-sys"]),
+                build_script(f"{registry}libz-ng-sys@1.1.22", dirs["libz-ng-sys"]),
+                build_script(f"{registry}zstd-sys@2.1.0+zstd.1.5.7", dirs["zstd-sys"]),
+                json.dumps({"reason": "compiler-artifact", "package_id": f"{registry}aws-lc-sys@0.45.0"}),
+                json.dumps(["not", "a", "message"]),
+                "not json",
+            ])  # fmt: skip
+            closure = {C("aws-lc-sys", "0.45.0"), C("zstd-sys", "2.1.0+zstd.1.5.7"), C("stale", "1.0.0")}
+            self.assertEqual(
+                release.cmake_caches(messages, closure),
+                [(C("aws-lc-sys", "0.45.0"), dirs["aws-lc-sys"] / "build" / release.CMAKE_CACHE)],
+            )
+
+    def test_a_build_reads_cargo_s_messages_and_is_refused_where_cmake_ran(self):
+        build = release.Build()
+        runs = []
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp, "out")
+            out.mkdir()
+            messages = build_script("registry+https://github.com/rust-lang/crates.io-index#aws-lc-sys@0.45.0", out)
+
+            def fake_run(argv, **_kwargs):
+                runs.append(list(argv))
+                return subprocess.CompletedProcess(argv, 0, stdout=messages)
+
+            for cached, status in ((False, 0), (True, 1)):
+                if cached:
+                    (out / release.CMAKE_CACHE).write_text("")
+                runs.clear()
+                stdout = io.StringIO()
+                with unittest.mock.patch.object(release.subprocess, "run", fake_run), \
+                        unittest.mock.patch.object(
+                            release, "shipped_tree", return_value={C("aws-lc-sys", "0.45.0")}
+                        ) as tree, \
+                        unittest.mock.patch.object(release, "readelf_of", return_value=with_needs("GLIBC_2.34")), \
+                        unittest.mock.patch.object(release, "image_floor", return_value=(2, 41)), \
+                        contextlib.redirect_stdout(stdout), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(release.step_build([build]), status)
+                self.assertEqual(runs, [[*build.cargo_argv(), "--message-format=json-render-diagnostics"]])
+                tree.assert_called_once_with(build.target, "normal", offline=False)
+                self.assertEqual("built under CMake" in stdout.getvalue(), cached)
+
+
 class Notices(unittest.TestCase):
     def test_the_closure_is_read_out_of_cargo_tree(self):
         tree = "pgdt v0.1.0 (/work/pgdt)\nserde v1.0.229\nserde v1.0.229 (*)\nzstd-sys v2.1.0+zstd.1.5.7\n\n"

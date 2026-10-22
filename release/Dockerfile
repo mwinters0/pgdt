@@ -70,7 +70,10 @@ RUN cd /opt/toolchain && rustc --version && cargo --version \
 # **The tools `mise.toml` pins**, installed by `mise` from that file, so the
 # suite and the notices find what a checkout's `mise install` gives it
 # (`docs/design/roadmap.md`, "A test may assume the tools `mise` pins").
-# Debian packages none of `mise`, `uv` or `cargo-nextest`, hence `mise`.
+# Debian packages none of `mise`, `uv` or `cargo-nextest`, hence `mise`; its
+# `cmake` is a version no checkout shares, so CMake is `mise`'s too, there for
+# the measurement apparatus and held out of the shipped build by
+# `scripts/release.py`'s `build` (`docs/design/decisions.md`, "D111").
 # `mise` itself is pinned here by version and one checksum per architecture
 # (both in the release's `SHASUMS256.txt`), and only installs: each tool is
 # linked onto `PATH`, so nothing runs through it.
@@ -92,7 +95,7 @@ RUN set -eu; \
     cd /opt/toolchain; \
     mise trust mise.toml; \
     mise install --yes; \
-    for tool in cargo-about cargo-nextest uv uvx; do \
+    for tool in cargo-about cargo-nextest cmake uv uvx; do \
         ln -s "$(mise which "$tool")" "/usr/local/bin/$tool"; \
     done; \
     rm -rf "$MISE_CACHE_DIR"; \

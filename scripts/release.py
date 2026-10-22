@@ -20,6 +20,9 @@ of the two copied files than the tree's.
 version it needs may be past the glibc of the image's `libc6-dev` its target
 links against. The link is against that glibc, so the check holds by
 construction; it is the guard that says so, and the one a host build fails.
+**And every `build` is refused where a crate `pgdt` depends on was built
+under CMake** (`cmake_caches`): the image has it, `mise.toml` pinning it for
+the measurement apparatus, and nothing shipped may reach it (D111).
 
 On the host each run is the invoking user's, under a memory limit, with the
 build's state under `target/release-image/` -- its cargo target directory,
@@ -622,11 +625,62 @@ def run_step(argv: Sequence[str]) -> None:
     subprocess.run(argv, cwd=REPO, check=True)
 
 
+#: What a `cmake`-driven build script leaves in its `OUT_DIR`.
+CMAKE_CACHE = "CMakeCache.txt"
+
+
+def package_of(package_id: str) -> Crate:
+    """The crate a Package ID Specification names, as cargo's JSON messages
+    print one: `<source>#<name>@<version>`, or `<source>#<version>` where the
+    name is the source's last path segment."""
+    source, hash_, fragment = package_id.rpartition("#")
+    if not hash_:
+        raise ReleaseError(f"not a package ID specification: {package_id!r}")
+    name, at, version = fragment.rpartition("@")
+    if not at:
+        name, version = source.split("?")[0].rstrip("/").rsplit("/", 1)[-1], fragment
+    return Crate(name, version)
+
+
+def cmake_caches(messages: str, closure: set[Crate]) -> list[tuple[Crate, Path]]:
+    """Each `CMakeCache.txt` a build script of a crate in `closure` left in
+    its `OUT_DIR`, out of `cargo build --message-format=json`'s messages,
+    which name every build script the build ran or found fresh. Only those
+    directories are read: another build in the same target directory, the
+    measurement apparatus's, may build under CMake."""
+    found = []
+    for line in messages.splitlines():
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(msg, dict) or msg.get("reason") != "build-script-executed":
+            continue
+        crate = package_of(msg["package_id"])
+        if crate in closure and msg.get("out_dir"):
+            found += [(crate, p) for p in sorted(Path(msg["out_dir"]).rglob(CMAKE_CACHE))]
+    return found
+
+
 def step_build(builds: Sequence[Build]) -> int:
-    """Each build, its binary held to the floor of the glibc its target links."""
+    """Each build, its binary held to the floor of the glibc its target links,
+    and refused where a crate the shipped package depends on was built under
+    CMake, which `mise.toml` pins for the measurement apparatus alone
+    (`docs/design/decisions.md`, "D111")."""
     failed = 0
     for build in builds:
-        run_step(build.cargo_argv())
+        argv = [*build.cargo_argv(), "--message-format=json-render-diagnostics"]
+        print(f"$ {shlex.join(argv)}", file=sys.stderr, flush=True)
+        messages = subprocess.run(
+            argv, cwd=REPO, check=True, stdout=subprocess.PIPE, text=True
+        ).stdout
+        closure = shipped_tree(build.target, "normal", offline=False)
+        for crate, cache in cmake_caches(messages, closure):
+            failed += 1
+            print(
+                f"{build.target}: {crate}, which {SHIPPED} depends on, built under CMake: {cache}",
+                flush=True,
+            )
         binary = build.binary(target_dir())
         ok, lines = check_floor(readelf_of(binary), image_floor(build.target))
         failed += not ok
@@ -698,19 +752,27 @@ def parse_tree(text: str) -> set[Crate]:
     return found
 
 
+def shipped_tree(target: str, edges: str, *, offline: bool) -> set[Crate]:
+    """The shipped package's dependencies for `target` along `edges`, at its
+    own features: `cargo tree` resolves them as `cargo build -p pgdt` does,
+    where `cargo metadata` resolves the whole workspace's at once."""
+    out = subprocess.run(
+        [
+            "cargo", "tree", "--locked", *(["--offline"] if offline else []),
+            "-p", SHIPPED, "--target", target,
+            "-e", edges, "--prefix", "none", "-f", "{p}",
+        ],
+        cwd=REPO, check=True, stdout=subprocess.PIPE, text=True,
+    ).stdout  # fmt: skip
+    return parse_tree(out)
+
+
 def linked_closure(target: str) -> set[Crate]:
     """Every crate the shipped binary links for `target`: its normal
     dependencies at its own features, a proc macro and what only it uses
     left out, since none of their code is in the binary. `cargo-about` reads
     the whole graph a build resolves, and this is what its output is cut to."""
-    out = subprocess.run(
-        [
-            "cargo", "tree", "--locked", "--offline", "-p", SHIPPED, "--target", target,
-            "-e", "normal,no-proc-macro", "--prefix", "none", "-f", "{p}",
-        ],
-        cwd=REPO, check=True, stdout=subprocess.PIPE, text=True,
-    ).stdout  # fmt: skip
-    return parse_tree(out)
+    return shipped_tree(target, "normal,no-proc-macro", offline=True)
 
 
 def workspace_crates() -> tuple[set[Crate], str]:

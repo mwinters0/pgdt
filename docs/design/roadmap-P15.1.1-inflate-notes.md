@@ -32,8 +32,9 @@ the inflate figure is built, untaken").
 
 ## Negative results
 
-- **zlib-ng is not a leg.** No binding to it builds in the release image:
-  `libz-ng-sys` is CMake-only and the image installs no CMake, and `libz-sys`'s
+- **zlib-ng is not a leg.** No binding to it builds in `pgdt-io`:
+  `libz-ng-sys` is CMake-only, which is the measurement apparatus's alone
+  (`decisions.md`, "D111"), and `libz-sys`'s
   `zlib-ng-no-cmake-experimental-community-maintained` build is broken at both
   versions tried — at 1.1.30 (zlib-ng 2.3.3) `WITH_OPTIM` is never defined, so
   the function table is left incomplete and `inflateInit2` fails with

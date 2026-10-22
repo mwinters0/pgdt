@@ -26,9 +26,10 @@
 //! binary taking a flag differs between legs by the decoder alone.
 //!
 //! **No zlib-ng leg**, though the spec names it as the floor's reference:
-//! neither binding to it builds where every figure's binary is built, the
-//! release image. `libz-ng-sys` builds only under CMake, which the image does
-//! not install, and `libz-sys`'s CMake-free build of zlib-ng fails — at
+//! neither binding to it builds here. `libz-ng-sys` builds only under CMake,
+//! which is the measurement apparatus's alone (`docs/design/decisions.md`,
+//! "D111"), so its leg waits for an apparatus member of its own, and
+//! `libz-sys`'s CMake-free build of zlib-ng fails — at
 //! 1.1.30 its function table is left incomplete (`WITH_OPTIM` undefined), so
 //! `inflateInit2` returns `Z_VERSION_ERROR`, and at 1.1.23 it does not link,
 //! defining `X86_AVX512` without compiling `chunkset_avx512.c`.

@@ -27,8 +27,8 @@ futures = { workspace = true }
 # `http` only, and `default-features = false` to leave out the `fs` backend:
 # what is wanted is one `HttpStore` over ranged GETs. The `http` feature
 # resolves to rustls over `aws-lc-rs`, whose `aws-lc-sys` is a C build by its
-# `cc` builder; nothing installs CMake, so a version falling back to it fails
-# the build by name.
+# `cc` builder; a version falling back to CMake is refused by
+# `scripts/release.py build` (`docs/design/decisions.md`, "D111").
 object_store = { version = "0.14.2", optional = true, default-features = false, features = [
     "http",
 ] }

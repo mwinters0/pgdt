@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D110 -->
+<!-- decision-watermark: D111 -->
 
 ## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
@@ -735,3 +735,10 @@ Rejected: lowering the runner's `perf_event_paranoid` (it answered the EACCES, n
 passing on this machine too); the apparatus named in `release.py` (a new instrument tested on the runner until someone edits the list). Reopens: an instrument shipping, or a shipped member
 needing a facility a runner lacks. Code: `release.py`'s `suite`, `check.Package.apparatus`. Evidence: `test_release.py`'s `test_the_suite_leaves_out_the_measurement_apparatus`,
 `test_the_apparatus_the_suite_leaves_out_is_a_dependency_of_no_member`; `runs/release-v0.2.0/x86-64-suite-39530108777.log`.
+
+### D111 CMake is a `mise.toml` pin for the apparatus, and a build is refused where a crate `pgdt` depends on ran it
+CMake is pinned for the measurement apparatus, zlib-ng's `libz-ng-sys` building under nothing else, so the image installs it; nothing shipped may reach it. `release.py build` reads every build script its build ran
+or found fresh off cargo's messages, and refuses where one of a crate in `pgdt`'s normal-dependency closure, at `pgdt`'s features (`cargo tree`), left a `CMakeCache.txt`; scoped so because the apparatus builds in the same target directory.
+Rejected: CMake absent, the guard `aws-lc-sys`'s fallback failed on by name (zlib-ng unbuildable where every figure's binary is built); `ENV AWS_LC_SYS_CMAKE_BUILDER=0` in the Dockerfile (one crate guarded by name);
+Debian's `cmake` (a version no checkout shares); the closure off `cargo metadata` (one resolve for the workspace, so a feature another member turns on in a crate `pgdt` links lands its dependency in it, `quinn` among them).
+Reopens: a shipped dependency needing CMake. Code: `release.py`'s `step_build`, `cmake_caches`, `shipped_tree`. Evidence: `test_release.py`'s `CMake`; `runs/M244-cmake-probe/`.
