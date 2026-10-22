@@ -86,11 +86,11 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
 Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 
 - [x] **15.1** Evidence, the fixtures: `pg_dump -Z` fixtures from each tested major and synthetic single-member and BGZF payloads (`flate2`, `noodles-bgzf`) — [notes](../design/roadmap-P15.1-fixtures-notes.md)
-- [ ] **15.1.1** Evidence, the inflate figure: `inflate-throughput`, serial inflate against the plain parse on each measured device — it sets `gz-seek`'s throughput floor and whether a parallel first pass is built. The instrument is landed, with `zlib-rs` and `miniz_oxide` legs, and untaken; the readings remain, and the zlib-ng leg, which no binding builds in the release image (below) — [notes](../design/roadmap-P15.1.1-inflate-notes.md)
-- [ ] **15.1.2** Evidence, the spacing figure: candidate spacings, by a checkpointing first pass and a unit decode resumed from a checkpoint — it sets the spacing constant
+- [ ] **15.1.1** Evidence, the inflate figure: `inflate-throughput`, serial inflate against the plain parse on each measured device — it sets `gz-seek`'s throughput floor and whether a parallel first pass is built. The instrument is landed, with `zlib-rs` and `miniz_oxide` legs, and untaken; the readings remain, and the zlib-ng leg, `libz-ng-sys` with the instrument moved to an apparatus member, after `M244` — [notes](../design/roadmap-P15.1.1-inflate-notes.md)
 - [ ] **15.2** The cut: `source/compressed/` with the codec trait, xz its only implementor; one `CompressionIndex` owned by `pgdt-io`, `KnownCompression::Compressed`, the codec error, the cache key renamed (cache bump); `determinism.rs` gains `.xz`; behaviour-preserving
 - [ ] **15.3** `extent()`: `Exact` or `Open` in place of `size()` and `size_is_exact()`, every site relying on an exact size, plain and xz `Exact` throughout; behaviour-preserving
 - [ ] **15.4** `gz-seek` built in the workspace as a leaf crate: the sans-IO forward decode emitting checkpoints by the placement rule, resume from a checkpoint given its window, the unit CRC, the BGZF member walk, the index as a shareable handle, the leaf admitted to `layering.py`'s graph and claimed in `concepts.md`
+- [ ] **15.1.2** Evidence, the spacing figure, on `gz-seek` after 15.4: gzip's own costs at candidate spacings — the checkpointing first pass against a serial inflate, a resumed unit decode's fixed cost, the window section's size — the costs shared with xz read off its figures; it sets the spacing constant `pgdt-io` passes `gz-seek`
 - [ ] **15.5** Single-member gzip: the `deflate` adapter over `gz-seek`, checkpoints by the placement rule, unit CRCs, the window provider and the cache's window section, the first pass's `PlanNote`, determinism and resume assertions, over HTTP
 - [ ] **15.6** BGZF, `pgdt-io`'s side over the crate's walk: the walk run at open, recognition at 18 bytes, members coalesced into units
 - [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the manual and `pg-dump-compatibility.md`
@@ -124,27 +124,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`inflate-throughput` has no zlib-ng leg** (15.1.1). The spec names
-  zlib-ng as the reference `gz-seek`'s throughput floor is set against, and no
-  binding to it builds where every figure's binary is built: `libz-ng-sys`
-  needs CMake, which the release image does not install, and `libz-sys`'s
-  CMake-free build of zlib-ng fails at both versions tried
-  ([notes](../design/roadmap-P15.1.1-inflate-notes.md), "Negative results").
-  The instrument landed with the two backends that build, rather than the
-  release image changing unattended. **The decision**: CMake in the release
-  image (a `mise.toml` tool or a Debian package — which also lifts the guard
-  by which a dependency falling back to CMake fails the build by name,
-  `crates/pgdt-io/Cargo.toml`'s `object_store` note), after which the leg is `libz-ng-sys` and a second
-  `--backend`; waiting on `libz-sys` to repair its CMake-free build, filed
-  as a `UF<k>`; or the floor set against `zlib-rs`, an amendment to the
-  spec's "`gz-seek`'s bar is ours".
-- **The candidate spacings split off as 15.1.2** (15.1.1). Their instrument
-  is a checkpoint-and-resume over a deflate backend's unstable or C-level
-  API — what 15.4 builds in `gz-seek` — so it is a review apart from a
-  serial inflate's ([history](history/2026-10-22.md), "15.1.1: the inflate
-  figure is built, untaken"). Nothing before 15.5 reads the spacing.
-  **The decision**: keep 15.1.2 where the spec puts evidence, ahead of the
-  cut, with a prototype of its own; or take it after 15.4, on `gz-seek`
-  itself, which measures the code the constant ships with and drops the
-  prototype — a reordering of the spec's "Slice order".

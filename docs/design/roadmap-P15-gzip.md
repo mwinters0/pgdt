@@ -281,13 +281,17 @@ a second copy of the xz source.
 
 Each slice makes the next one's mistakes visible: the generic layer is cut and
 its contract changed against xz, already tested, before any gzip code lands,
-and the evidence slice goes first because three later constants are read off
-it. The checklist is written into `STATUS.md` when the phase is sliced.
+and evidence lands before the slice that first reads it: the serial inflate
+figure goes first, deciding `gz-seek`'s throughput floor and whether a parallel
+first pass is built, and the spacing figure follows `gz-seek` and precedes the
+adapter, the spacing being the caller's parameter to `gz-seek` and `pgdt-io`'s
+shipped constant ([`../status/history/2026-10-22.md`](../status/history/2026-10-22.md),
+"The spacing figure, reordered"). The checklist is written into `STATUS.md` when the phase is sliced.
 
 1. **Evidence.** The fixtures above; `measure.py` figures for serial inflate
    (zlib-ng, zlib-rs, `miniz_oxide`) against the plain parse on each measured
-   device, and for candidate spacings. They decide the spacing constant,
-   `gz-seek`'s throughput floor, and whether a parallel first pass is built.
+   device. They decide `gz-seek`'s throughput floor and whether a parallel
+   first pass is built.
 2. **The cut.** `source/compressed/` with the codec trait and xz its only
    implementor; one `CompressionIndex`, `KnownCompression::Compressed`, the
    codec error, the cache key renamed under a format bump; `determinism.rs`
@@ -302,7 +306,12 @@ it. The checklist is written into `STATUS.md` when the phase is sliced.
    `GRAPH` row with no members, `gz-seek` added to `pgdt-io`'s row, `gz_seek`
    added beside `xz_seek` to the names `CORE_NAMES_NO_DEPENDENCY` and `NO_IO`
    refuse, D68's entry naming it beside `namespace-init`, and its files
-   claimed in `concepts.md`.
+   claimed in `concepts.md`. The spacing is a parameter the caller passes.
+   Then **the spacing figure**, on `gz-seek`: gzip's own costs at candidate
+   spacings in the range of xz's block sizes — the checkpointing first pass
+   against a serial inflate, a resumed unit decode's fixed cost, the window
+   section's size — the costs a unit's size shares with xz being read off
+   the figures xz already drives. It decides the spacing constant.
 5. **Single-member gzip.** The `deflate` adapter over `gz-seek`; checkpoints by the
    placement rule; unit CRCs; the window provider and the cache's window
    section; the first pass's `PlanNote`; the determinism and resume

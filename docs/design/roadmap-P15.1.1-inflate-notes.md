@@ -40,7 +40,14 @@ the inflate figure is built, untaken").
   `Z_VERSION_ERROR` after printing "Zlib-ng functable failed initialization!";
   at 1.1.23 (zlib-ng 2.2.5) it defines `X86_AVX512` without compiling
   `chunkset_avx512.c`, and the link fails on `inflate_fast_avx512`. What
-  replaces it is STATUS's "Decisions worth another look".
+  replaces it is `M244` and an apparatus member
+  ([`../status/history/2026-10-22.md`](../status/history/2026-10-22.md), "The
+  zlib-ng leg, reviewed").
+- **No zlib-ng reaches the image another way.** Debian trixie packages
+  none (`apt-cache` in the pinned base lists `cmake` 3.31.6-2 and no
+  zlib-ng), and zlib-ng's own `configure` + `make` build, CMake-free, is
+  driven by no crate but `libz-sys`'s broken one — using it is build plumbing
+  of our own.
 - **`zlib-rs` and `miniz_oxide` are driven directly**, not through `flate2`,
   whose backend is a build-time feature: one binary taking a flag keeps the
   legs differing by the decoder alone.
@@ -51,6 +58,7 @@ the inflate figure is built, untaken").
   `control_gz` generation and three cold regimes make it a long one, so it is
   handed off per `.claude/skills/gosub/handoff.md` if it runs past half an
   hour. Before reasoning from it, `measure.py --stale` as for any figure.
-- **15.1.2, the spacing figure**, is unbuilt; what a spacing leg times — a
-  checkpointing first pass, a unit decode resumed from a checkpoint, or both —
-  is that round's design.
+- **15.1.2, the spacing figure**, is taken on `gz-seek` after 15.4; what it
+  times is its STATUS row
+  ([`../status/history/2026-10-22.md`](../status/history/2026-10-22.md), "The
+  spacing figure, reordered").
