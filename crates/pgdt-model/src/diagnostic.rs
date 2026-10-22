@@ -117,7 +117,7 @@ pub enum TilingIssue {
     DoesNotStartAtZero { first_start: u64 },
     /// The last span's `end` doesn't reach `expected_end`: the file's
     /// addressable size, which a partial map's trailing `Unscanned` span
-    /// reaches too.
+    /// reaches too, or the map's watermark where that size is not known yet.
     DoesNotReachEnd { last_end: u64, expected_end: u64 },
     /// A span's own `start >= end`.
     Empty { index: usize },

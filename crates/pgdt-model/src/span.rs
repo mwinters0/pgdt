@@ -18,7 +18,8 @@ use pgdt_core::CopyHeader;
 /// One tile of the full file map. `start`/`end` are absolute file offsets;
 /// `[start, end)` never overlaps another span's range, and every span
 /// together tiles the file, a partial scan's unread rest one `Unscanned`
-/// span — see [`pgdt_dump::check_tiling`].
+/// span — or tiles it to the scan's watermark where the file's end is not
+/// known yet — see [`pgdt_dump::check_tiling`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {
     pub start: u64,

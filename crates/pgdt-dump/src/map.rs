@@ -90,7 +90,9 @@
 //!   "D30").
 //!
 //! [`SpanBody::Unscanned`] covers whatever a partial scan has not reached, so
-//! **every** `DumpIndex` tiles its file, one built by a query included.
+//! **every** `DumpIndex` tiles its file to its end, one built by a query
+//! included — or, where the source's end is not known yet, to its watermark
+//! (`docs/design/decisions.md`, "D6").
 //! `every_fixture_tiles_exactly` (`pgdt-mapping`'s `tests/map.rs`) checks a
 //! whole parse's over the fixtures; nothing checks a partial or a query's
 //! but the `TilingBroken` it would carry.

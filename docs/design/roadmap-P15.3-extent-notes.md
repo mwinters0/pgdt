@@ -41,10 +41,8 @@ answers `Exact`, so nothing a plain or `.xz` run does changed
 
 ## Negative results
 
-- **A tail to `at_least` was not used.** An `Unscanned` span ending at the
-  bound would claim bytes a pass's extent, read once at its start, may
-  undercount, and the cache's own extent is read again at each save, so the two
-  could disagree; a map ending at its watermark needs no second number.
+- **No `Unscanned` tail for an open source**, neither to the bound nor
+  open-ended ([`decisions.md`](decisions.md), "D6").
 - **`DumpIndex::is_complete(size)` stays in the model**, which cannot name
   `pgdt_io::Extent`; the library's own sites ask `Extent::reached_by` instead,
   and tests holding a plain file's cache still read it through a `u64`.

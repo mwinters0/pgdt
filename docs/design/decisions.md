@@ -47,12 +47,13 @@ sibling that finishes. A loop retaining into a batch holds the buffers it would 
 block pool never waits whatever the loop said. Rejected: gating on `Parallelism`.
 
 ### D6 `ByteRangeSource` mirrors `object_store` and is dyn-compatible
-`read_range`/`extent`/`modified` copy `get_range`/`head` so a remote source is additive behind a
-feature without the dependency. Boxed futures so wrappers compose rather than branching per caller.
-`extent()` is `Exact` or `Open`, so each site needing the end says what it does without one: a read loop
-reads to an open end by `read_at_most`, `read_range` staying strict for a driver told what to fetch; a
-cut needs `Exact`; a map and its cache end at the watermark. Rejected: generics matched per command;
-`enum AnySource`; `size()` as a bound beside a flag each site must remember; a counting pre-pass.
+`read_range`/`extent`/`modified` copy `get_range`/`head` so a remote source is additive behind a feature
+without the dependency; boxed futures so wrappers compose. `extent()` is `Exact` or `Open`, so each site
+needing the end says what it does without one: a read loop reads to an open end by `read_at_most`,
+`read_range` staying strict for a driver told what to fetch; a cut needs `Exact`; a map and its cache end
+at the watermark, `info`'s completion line stating the rest. Rejected: generics per command; `enum
+AnySource`; `size()` beside a flag each site must remember; a counting pre-pass; an `Unscanned` tail to
+the bound, which a pass reads once and each save re-reads, or open-ended, a case for every span consumer.
 
 ### D7 `partitions()` says where and at what cost, never whether
 The same file is worth cutting for extraction and not for discovery, so the caller decides. The scheduler's only

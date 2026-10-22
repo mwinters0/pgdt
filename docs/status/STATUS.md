@@ -125,15 +125,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A map of a source whose end is not known ends at its watermark** (15.3).
-  Where `extent()` is `Open`, `splice` and `preamble_only` push no `Unscanned`
-  tail, the cache records `Open { at_least }` beside a map tiling
-  `[0, scanned_through)`, and a load checks the tiling to the watermark
-  ([`../design/decisions.md`](../design/decisions.md), "D6"). Why: a tail to
-  `at_least` would claim bytes against a bound a pass reads once at its start,
-  while each save re-reads the extent it records, so the map and the cache
-  could disagree about how much is known. Reconsidering means a tail to the
-  bound re-asked at every splice, and `info --map` over a gzip first pass cut
-  short listing an unscanned remainder of at least so many bytes, which today
-  it does not list at all.
