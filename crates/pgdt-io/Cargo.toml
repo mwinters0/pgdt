@@ -52,6 +52,13 @@ url = { version = "2.5.8", optional = true }
 xz-seek = { workspace = true }
 
 [dev-dependencies]
+# The `inflate-throughput` figure's deflate backends, which
+# `examples/gzip_inflate.rs` drives directly, and the CRC-32 its `miniz_oxide`
+# leg checks with. **Pinned exactly**: a backend's version is what that
+# figure's row is a reading of, and `scripts/measure.py` declares this file.
+crc32fast = "=1.5.1"
+miniz_oxide = "=0.9.1"
+zlib-rs = "=0.6.8"
 # The gzip encoders `test_support` writes its single-member and BGZF payloads
 # with, neither ours, so a reader is checked against what someone else's
 # encoder writes; the lock pins each writer as `mise` pins a tool

@@ -303,9 +303,9 @@ class WorkerCount(unittest.TestCase):
 
     def test_a_shape_that_inherits_one_is_reported(self):
         # The check must fail loudly, since the shape it would pass still runs
-        # and still produces a table. Every shape but the two declared
-        # exemptions: `dd`, which is not a run of ours, and the flagless family,
-        # whose reading is the count a flagless run resolves —
+        # and still produces a table. Every shape but the declared exemptions:
+        # `_NO_WORKERS`, which runs no `pgdt`, and the flagless family, whose
+        # reading is the count a flagless run resolves —
         # `flagless_flag_problems` is what holds *that* family to stating
         # nothing, so neither exemption leaves a shape unchecked.
         with unittest.mock.patch.object(
@@ -317,7 +317,8 @@ class WorkerCount(unittest.TestCase):
             sorted(
                 c
                 for c in measure.command_shapes()
-                if c != "dd" and not c.startswith(measure.RESERVE_FLAGLESS)
+                if c not in measure._NO_WORKERS
+                and not c.startswith(measure.RESERVE_FLAGLESS)
             ),
         )
 
@@ -374,12 +375,22 @@ class WorkerCount(unittest.TestCase):
             with self.subTest(prefix=prefix):
                 self.assertTrue([s for s in shapes if s.startswith(prefix)])
 
-    def test_the_only_exempt_shape_runs_no_binary_of_ours(self):
-        # `dd` is the device floor. Anything else claiming the exemption would
-        # be a pgdt run measuring whatever the machine had.
+    def test_an_exempt_shape_runs_no_pgdt(self):
+        # `dd` is the device floor and the inflate instrument has one thread
+        # by construction. Anything else claiming the exemption would be a
+        # `pgdt` run measuring whatever count the machine had. `/pgdt` is the
+        # mount point every figure's binary takes, so what is refused is a
+        # `pgdt` subcommand there, or the SQL shell.
+        subcommand = re.compile(r"/pgdt (?:parse|query|info|sql)\b")
         for command in measure._NO_WORKERS:
             with self.subTest(command=command):
-                self.assertNotIn("/pgdt", measure._script(command))
+                script = measure._script(command)
+                self.assertIsNone(subcommand.search(script), script)
+                self.assertNotIn(measure.SQL_SHELL, script)
+
+    def test_the_inflate_shapes_are_exempt_and_nothing_else_new(self):
+        # Admitted on purpose, one name per backend, beside `dd`.
+        self.assertEqual(measure._NO_WORKERS, ("dd", *measure.INFLATE_SHAPES))
 
     def test_the_decode_instrument_pins_its_own_spelling(self):
         # It is not `pgdt`, so it has no `--jobs`; `--workers` is the same
@@ -911,7 +922,7 @@ class DynamicFilterFigures(unittest.TestCase):
         with unittest.mock.patch.object(measure, "_script", lambda c: script):
             self.assertEqual(sorted(measure.worker_count_problems()), sorted(
                 c for c in measure.command_shapes()
-                if c != "dd" and not c.startswith(measure.RESERVE_FLAGLESS)
+                if c not in measure._NO_WORKERS and not c.startswith(measure.RESERVE_FLAGLESS)
             ))
         stated = script.replace("time ", f"time {measure.DFCLI_PARTITIONS}=4 ")
         with unittest.mock.patch.object(measure, "_script", lambda c: stated):
@@ -4739,6 +4750,143 @@ class XzDecodeScaling(unittest.TestCase):
     def test_output_with_no_totals_line_is_refused(self):
         with self.assertRaises(SystemExit):
             generate_xz_input.parse_xz_totals("name\tkoji_xz.xz\n")
+
+
+class InflateThroughput(unittest.TestCase):
+    """Serial inflate of one gzip member against the plain `parse`, built and
+    waiting in `UNTAKEN` for its first sitting."""
+
+    EXAMPLE = measure.REPO / "crates/pgdt-io/examples/gzip_inflate.rs"
+
+    def test_it_waits_untaken(self):
+        # Registered before any reading: a figure marker asserts the stamp's
+        # first clause, so the figure waits here until a sitting from a commit
+        # carrying the instrument takes it.
+        self.assertIn("inflate-throughput", [f.id for f in measure.UNTAKEN])
+        self.assertNotIn("inflate-throughput", [f.id for f in measure.FIGURES])
+
+    def test_the_gzip_leg_is_a_compression_of_the_control(self):
+        # So its plaintext is `control`'s size exactly, which is what every
+        # inflate row's rate is per and what the instrument's count is held to.
+        spec = measure.INPUTS["control_gz"]
+        self.assertEqual(spec.derives_from, "control")
+        self.assertEqual(spec.generator, "generate_gzip_input.py")
+        self.assertEqual(measure.input_file("control_gz"), "control_gz.gz")
+        self.assertLess(measure.nominal_size(measure.Config(), "control_gz"),
+                        measure.Config().size_gib * measure.GIB)
+
+    def test_what_can_move_it_is_declared(self):
+        fig = measure.SELECTABLE_BY_ID["inflate-throughput"]
+        for path in (
+            "crates/pgdt-io/examples/gzip_inflate.rs",
+            # Where the backends' versions are pinned.
+            "crates/pgdt-io/Cargo.toml",
+            "scripts/generate_gzip_input.py",
+            *measure.GEN_PERF,
+            # The `parse` row's path, as every throughput figure declares it.
+            *measure.SCAN,
+            *measure.READ,
+            *measure.QUERY_CLI,
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, fig.depends)
+
+    def test_it_reads_both_files_on_every_device(self):
+        fig = measure.SELECTABLE_BY_ID["inflate-throughput"]
+        self.assertEqual(fig.stage.split("+"), [r for r, _ in measure.INFLATE_REGIMES])
+        for inputs in (fig.warm_inputs, fig.cold_inputs, fig.nvme_inputs):
+            self.assertEqual(set(inputs), {"control", "control_gz"})
+
+    def test_the_ratio_against_the_parse_is_a_declared_subtraction(self):
+        # Two inputs' readings divided, so both must come from one sweep.
+        fig = measure.SELECTABLE_BY_ID["inflate-throughput"]
+        self.assertEqual(
+            [set(s.inputs) for s in fig.subtracts], [{"control", "control_gz"}]
+        )
+        self.assertEqual(measure.subtraction_sweep("inflate-throughput", "control", "control_gz"), 0)
+
+    def test_every_backend_has_a_shape_naming_it(self):
+        for backend in measure.INFLATE_BACKENDS:
+            with self.subTest(backend=backend):
+                script = measure._script(f"{measure.INFLATE_FAMILY}{backend}")
+                self.assertIn(f"--backend {backend}", script)
+                self.assertEqual(script.count("time "), 1)
+                # Its stdout is where the delivered count comes back.
+                self.assertNotIn(">", script)
+
+    def test_a_backend_the_figure_does_not_carry_is_an_error(self):
+        for command in ("inflate-zlib", "inflate-", "inflate-zlib-ng"):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    measure._script(command)
+
+    def test_the_instrument_spells_every_backend_the_harness_asks_for(self):
+        # One vocabulary in two languages: a backend the harness names and the
+        # example does not would fail a whole sitting at its first rep.
+        source = self.EXAMPLE.read_text()
+        accepted = set(re.findall(r'^\s*"([a-z-]+)" => Ok\(Self::', source, re.MULTILINE))
+        self.assertEqual(accepted, set(measure.INFLATE_BACKENDS))
+
+    def test_every_row_runs_in_every_regime(self):
+        specs = measure._inflate_specs()
+        self.assertEqual(len(specs), len(measure.INFLATE_ROWS) * len(measure.INFLATE_REGIMES))
+        self.assertEqual(
+            {s.binary for s in specs if s.command.startswith(measure.INFLATE_FAMILY)},
+            {"gzinflate"},
+        )
+        self.assertEqual(
+            [s.command for s in specs if s.regime == "warm" and s.binary == "pgdt"], ["parse"]
+        )
+
+    # -- the generator ---------------------------------------------------
+
+    def test_the_header_it_holds_to_is_pg_dumps(self):
+        # Read off `pg_dump`'s own `-Z` fixture rather than restated: the
+        # generated file is `pg_dump`'s shape only while the two agree.
+        import generate_gzip_input
+
+        for fixture in sorted((measure.REPO / "fixtures").glob("*/edge_cases/compress.sql.gz")):
+            with self.subTest(fixture=str(fixture)):
+                header = fixture.read_bytes()[: len(generate_gzip_input.PG_DUMP_HEADER)]
+                self.assertEqual(header, generate_gzip_input.PG_DUMP_HEADER)
+
+    def test_another_zlib_is_refused(self):
+        import generate_gzip_input
+
+        generate_gzip_input.check_zlib(generate_gzip_input.ZLIB_VERSION)
+        with self.assertRaises(SystemExit):
+            generate_gzip_input.check_zlib("1.2.13")
+
+    def test_another_header_is_refused(self):
+        import generate_gzip_input
+
+        named = bytearray(generate_gzip_input.PG_DUMP_HEADER)
+        named[3] = 1 << 3  # FNAME, which `gzip` writes and `pg_dump` does not
+        with self.assertRaises(SystemExit):
+            generate_gzip_input.check_header(bytes(named))
+
+    def test_it_writes_one_member_holding_the_source(self):
+        import gzip
+        import zlib
+
+        import generate_gzip_input
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source, out = Path(tmp) / "plain.sql", Path(tmp) / "out.gz"
+            source.write_bytes(b"COPY public.t (a) FROM stdin;\n1\n\\.\n" * 1000)
+            # The version gate is tested above; this one is about the bytes.
+            with unittest.mock.patch.object(
+                generate_gzip_input.zlib, "ZLIB_RUNTIME_VERSION", generate_gzip_input.ZLIB_VERSION
+            ):
+                generate_gzip_input.compress(source, out)
+            data = out.read_bytes()
+            self.assertEqual(gzip.decompress(data), source.read_bytes())
+            # One member: a raw inflate of it leaves nothing after its trailer.
+            inflater = zlib.decompressobj(generate_gzip_input.GZIP_WINDOW_BITS)
+            inflater.decompress(data)
+            self.assertTrue(inflater.eof)
+            self.assertEqual(inflater.unused_data, b"")
+            self.assertFalse((Path(tmp) / "out.gz.partial").exists())
 
 
 class Reported(unittest.TestCase):

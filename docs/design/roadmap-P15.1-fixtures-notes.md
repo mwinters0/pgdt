@@ -1,8 +1,10 @@
 # P15.1 notes — The gzip fixtures
 
-The fixture half of the evidence slice; the figures are 15.1.1
+The fixture half of the evidence slice; the figures are 15.1.1 and 15.1.2
 ([`../status/history/2026-10-21.md`](../status/history/2026-10-21.md), "15.1
-split: the figures are 15.1.1").
+split: the figures are 15.1.1";
+[`../status/history/2026-10-22.md`](../status/history/2026-10-22.md), "15.1.1:
+the inflate figure is built, untaken").
 
 - **`pg_dump`'s own `-Z` output is `fixtures/<major>/edge_cases/compress.sql.gz`**
   at every routine major, the `edge_cases` schema's `compress` set
@@ -43,9 +45,8 @@ split: the figures are 15.1.1").
 
 ## What the next round inherits
 
-- **15.1.1 is the figures**: the serial inflate legs (zlib-ng, zlib-rs,
-  `miniz_oxide`) against the plain parse on each measured device, and the
-  candidate spacings, as an instrument landed in one commit and read from it
+- **The figures are 15.1.1 and 15.1.2**: the serial inflate figure and the
+  spacing figure, each an instrument landed in one commit and read from it
   (`measurements.md`, "A figure may be published outside the sweep"). A large
   gzip input for them is generated, never committed.
 - **Nothing reads the fixtures through a source yet.** 15.5's parity and

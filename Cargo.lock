@@ -3743,8 +3743,10 @@ name = "pgdt-io"
 version = "0.2.0"
 dependencies = [
  "bytes",
+ "crc32fast",
  "flate2",
  "futures",
+ "miniz_oxide",
  "noodles-bgzf",
  "object_store 0.14.2",
  "pgdt-core",
@@ -3756,6 +3758,7 @@ dependencies = [
  "tracing",
  "url",
  "xz-seek",
+ "zlib-rs",
 ]
 
 [[package]]

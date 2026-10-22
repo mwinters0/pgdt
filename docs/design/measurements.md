@@ -134,7 +134,7 @@ Eighteen standing rules for reading anything below:
   **The register times what a release ships, under the glibc it links.**
   Every binary a figure runs in the image — the shipped `pgdt`, each
   `allocator` leg, each `release-profile` leg, the instrument and the
-  `xz_decode` example — is built in
+  `xz_decode` and `gzip_inflate` examples — is built in
   the release image (`measure.build_in_image`), so a figure's two builds
   differ by what it names and never by a compiler or a glibc; and the image
   they run in is that image's base by its digest (`measure.register_image`),
@@ -190,7 +190,8 @@ Eighteen standing rules for reading anything below:
   the `reserve` figure's stated legs, which hold the count at
   `measure.RESERVE_JOBS` and vary the budget, and that figure's flagless legs,
   whose reading is the count a run stating nothing resolves. The `dd` floor
-  states no count because it is not a run of ours. koji is
+  states no count because it is not a run of `pgdt`, and neither does the
+  `gzip_inflate` instrument, serial by construction (`measure._NO_WORKERS`). koji is
   the one invocation that takes the count as a parameter (`--koji-jobs`),
   because what it checks is a leg at some count against a serial one rather
   than a table. **1 is what the published sitting measured**, every shape here

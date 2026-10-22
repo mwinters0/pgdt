@@ -50,7 +50,9 @@ does with it.
 The harness builds it (an *example* target, so the shipped binary is never
 replaced), stages `.xz` inputs beside the plain ones, and gives that figure its
 own container memory and its own contention row, both of which its table
-declares. The dynamic-filter figures time **`pgdt sql`**, DataFusion's CLI,
+declares. `inflate-throughput`'s inflate rows time the `gzip_inflate` example
+the same way, an example target built in the same image, over a `.gz`
+compression of the control staged beside it. The dynamic-filter figures time **`pgdt sql`**, DataFusion's CLI,
 with `pgdt parse` building the cache it reads first: it states its worker
 count as its session's `target_partitions` — held by a test and said in its
 tables.
@@ -1556,6 +1558,23 @@ INPUTS["control_xz128"] = InputSpec(
     # generous nominal `control_xz` carries, for the same reason.
     nominal_bytes=700 * MIB,
 )
+#: The `inflate-throughput` figure's compressed leg: `control` deflated into
+#: the one gzip member `pg_dump -Fp -Z` writes (`generate_gzip_input.py`).
+#:
+#: **A compression of `control`, as the `.xz` legs are**, so the plaintext the
+#: figure's rates are per is `control`'s own size, and a change to the perf
+#: generator regenerates this leg with the file it is set against.
+INPUTS["control_gz"] = InputSpec(
+    "control_gz",
+    "generate_gzip_input.py",
+    ("--from-dump", "@SOURCE@"),
+    scales=False,
+    suffix=".gz",
+    derives_from="control",
+    # gzip at level 6 packs text a shade under half as tightly as xz at
+    # preset 6; a generous nominal, for `control_xz`'s reason.
+    nominal_bytes=1024 * MIB,
+)
 #: The koji download, and where in it the koji leg's streams are taken from.
 #: **Not the head of the file**: koji's first 3 GiB of plaintext compresses
 #: 56.19x against the whole file's 19.41x, and a decode rate is per plaintext
@@ -2309,6 +2328,22 @@ DECODE_WORKERS: tuple[int, ...] = (1, 2, 4, 8, 12, 16, 24)
 #: The row every other decode row is a ratio against — one worker, which is
 #: what the serial path this project ships has today.
 DECODE_BASELINE = 1
+
+#: The `inflate-throughput` figure's command family: one serial inflate of a
+#: whole gzip member by the `gzip_inflate` example, a shape a backend.
+INFLATE_FAMILY = "inflate-"
+
+#: The deflate backends that figure is taken over, in its table's row order,
+#: each spelled as the instrument's `--backend` spells it.
+#:
+#: **Two of the three `docs/design/roadmap-P15-gzip.md` names**: zlib-ng,
+#: its third and the reference `gz-seek`'s throughput floor is stated against,
+#: has no binding that builds in the release image
+#: (`crates/pgdt-io/examples/gzip_inflate.rs`, whose header says why).
+INFLATE_BACKENDS: tuple[str, ...] = ("zlib-rs", "miniz-oxide")
+
+#: Every inflate shape, `INFLATE_FAMILY` and a backend.
+INFLATE_SHAPES: tuple[str, ...] = tuple(f"{INFLATE_FAMILY}{b}" for b in INFLATE_BACKENDS)
 
 #: The `--jobs` values the two `parallel-*` figures are taken at, and the row
 #: order of their tables.
@@ -4074,6 +4109,15 @@ def _script(command: str) -> str:
         if int(workers) not in DECODE_WORKERS:
             raise ValueError(f"{command!r} names a worker count the figure does not carry")
         return f"time /pgdt --source /dump.sql --workers {workers}"
+    if command.startswith(INFLATE_FAMILY):
+        # The `gzip_inflate` example, mounted where every figure's binary is:
+        # one serial inflate of the whole member. **Nothing is redirected**,
+        # for the decode instrument's reason — its stdout is where the
+        # plaintext it delivered comes back.
+        backend = command.removeprefix(INFLATE_FAMILY)
+        if backend not in INFLATE_BACKENDS:
+            raise ValueError(f"{command!r} names a backend the figure does not carry")
+        return f"time /pgdt --source /dump.sql --backend {backend}"
     if command == "dd":
         return "time dd if=/dump.sql of=/dev/null bs=4M"
     raise ValueError(f"unknown command shape {command!r}")
@@ -4129,6 +4173,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"{RESERVE_FLAGLESS}{token}" for token, _, _ in RESERVE_ARENAS),
         *(f"{RESERVE_STEP_FAMILY}{budget}" for budget in RESERVE_STEP_BUDGETS),
         *(f"decode-{w}" for w in DECODE_WORKERS),
+        *INFLATE_SHAPES,
         "dd",
     )
 
@@ -4138,16 +4183,18 @@ def command_shapes() -> tuple[str, ...]:
 #: a shape carrying neither.
 _WORKER_COUNT = re.compile(r"--(?:jobs|workers) \d+")
 
-#: The one shape that states no worker count and is right not to: `dd` is the
-#: device floor, not a run of ours. Named rather than inferred, so a second
-#: non-`pgdt` shape has to be admitted here on purpose.
-_NO_WORKERS = ("dd",)
+#: The shapes that state no worker count and are right not to, being no run
+#: of `pgdt`: `dd`, the device floor, and the inflate instrument's, which has
+#: one thread by construction and no default a count could be inherited from.
+#: Named rather than inferred, so another non-`pgdt` shape has to be admitted
+#: here on purpose.
+_NO_WORKERS = ("dd", *INFLATE_SHAPES)
 
 #: The one `pgdt` family that states no worker count and is right not to: the
 #: reserve figure's flagless legs, whose reading *is* the count a flagless run
 #: resolves. Declared as its own prefix rather than appended to `_NO_WORKERS`
-#: above, because that tuple's rule is "not a run of ours" and this is the
-#: opposite — it is exactly a run of ours, stating nothing on purpose
+#: above, because that tuple's rule is "no run of `pgdt`" and this is the
+#: opposite — it is exactly a run of `pgdt`, stating nothing on purpose
 #: (`RESERVE_FLAGLESS`).
 _NO_FLAGS = (RESERVE_FLAGLESS,)
 
@@ -4215,8 +4262,8 @@ def stated_threads(command: str) -> int | None:
     `--pin-cpus` places it by, or `None` where one of them discovers its own.
 
     Read off the script rather than declared beside the shape, so the count a
-    leg is placed by is the count it runs at. `dd` states none and is one
-    thread; the flagless family states none on purpose and stays unpinned,
+    leg is placed by is the count it runs at. `dd` and the inflate instrument
+    state none and are one thread each; the flagless family states none on purpose and stays unpinned,
     its reading being what discovery resolves."""
     if command in _NO_WORKERS:
         return 1
@@ -4580,6 +4627,8 @@ class Session:
             return self.cfg.bin_pgdt
         if which == "xzdecode":
             return ensure_xz_decode_binary(self.cfg, self.log)
+        if which == "gzinflate":
+            return ensure_gzip_inflate_binary(self.cfg, self.log)
         if which.startswith("alloc:"):
             return ensure_allocator_binary(self.cfg, which.removeprefix("alloc:"), self.log)
         if which.startswith("profile:"):
@@ -5720,6 +5769,32 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     shutil.copyfile(built, out)
     out.chmod(0o755)
     _XZ_DECODE_BUILT = True
+    return out
+
+
+#: Whether this process has already built the `gzip_inflate` instrument, per
+#: process for `_XZ_DECODE_BUILT`'s reason.
+_GZIP_INFLATE_BUILT = False
+
+
+def ensure_gzip_inflate_binary(cfg: Config, log: Callable[[str], None]) -> Path:
+    """`pgdt-io`'s `gzip_inflate` example, built and copied beside the other
+    measurement binaries — an example target in the release image, for every
+    reason `ensure_xz_decode_binary` gives."""
+    global _GZIP_INFLATE_BUILT
+    out = cfg.out_dir / "pgdt-gzip-inflate"
+    if _GZIP_INFLATE_BUILT:
+        return out
+    if cfg.dry_run:
+        log(f"  [dry-run] would build the gzip_inflate instrument into {out}")
+        _GZIP_INFLATE_BUILT = True
+        return out
+    log(f"  building the gzip_inflate instrument into {out}")
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    built = build_in_image(cfg, release.Build(package="pgdt-io", example="gzip_inflate"))
+    shutil.copyfile(built, out)
+    out.chmod(0o755)
+    _GZIP_INFLATE_BUILT = True
     return out
 
 
@@ -8160,6 +8235,120 @@ def run_xz_decode_scaling(session: Session) -> str:
         + "\n"
     )
     return table + notes + "\n" + _per_rep("xz-decode-scaling", session, specs)
+
+
+# -- serial inflate against the plain parse ---------------------------------
+
+#: The regimes `inflate-throughput` is taken in, in its table's column order:
+#: every device the register measures. **A first pass reads the compressed
+#: file and the plain parse the plaintext**, several times as many bytes, so
+#: which of the two a device leaves slower is the device's to say, and the
+#: answer on tmpfs is the CPU's alone.
+INFLATE_REGIMES: tuple[tuple[str, str], ...] = (
+    ("warm", "Warm, tmpfs"),
+    ("cold", "Cold, SATA SSD"),
+    ("cold-nvme", "Cold, NVMe"),
+)
+
+#: The figure's rows: a binary, an input, a command shape and its caption.
+#: Each file's `dd` floor, the plain `parse` every inflate row is read
+#: against, then a row a backend.
+INFLATE_ROWS: tuple[tuple[str, str, str, str], ...] = (
+    ("none", "control", "dd", "`dd` → `/dev/null`, plain"),
+    ("none", "control_gz", "dd", "`dd` → `/dev/null`, `.gz`"),
+    ("pgdt", "control", "parse", "`pgdt parse`, plain"),
+    *(
+        ("gzinflate", "control_gz", f"{INFLATE_FAMILY}{b}", f"Inflate, `{b}`")
+        for b in INFLATE_BACKENDS
+    ),
+)
+
+
+def _inflate_specs() -> list[RunSpec]:
+    return [
+        RunSpec(binary, inp, command, regime, f"{label} ({regime})")
+        for regime, _ in INFLATE_REGIMES
+        for binary, inp, command, label in INFLATE_ROWS
+    ]
+
+
+def run_inflate_throughput(session: Session) -> str:
+    """Serial inflate of one gzip member, against the plain `parse` of the
+    same plaintext, in every regime.
+
+    What it decides is the P15 spec's (`docs/design/roadmap-P15-gzip.md`,
+    "Slice order"): a single member's first pass inflates serially, so an
+    inflate row slower than the `parse` row beside it is a first pass bound
+    by the inflate, which only a parallel first pass would lift; and the
+    backends' rates are what `gz-seek`'s throughput floor is read off.
+
+    **The plain `parse` is this figure's own reading**, not borrowed from
+    `scan-throughput-*`: each inflate row is read as a ratio against it, and
+    a ratio between two inputs holds only within one sweep
+    (`Figure.subtracts`), so it is taken beside them. It is the shape and
+    count every throughput figure states, `--jobs 1`; what a wider parse
+    reaches is `parallel-scan-throughput`'s, set beside this table as a rate
+    and never divided into it.
+
+    **The rate is per plaintext byte**, which is `control`'s size exactly —
+    the `.gz` leg is a compression of it — and the instrument's own count of
+    what it delivered is held to that, so a short inflate cannot read as a
+    fast one. A floor's rate is per byte of its own file.
+
+    **Five reps**, as the decode figure takes: the reading that decides is a
+    ratio near wherever the two rates cross, and the whole sitting is the
+    cold `parse` rows' minutes rather than a sweep's hours.
+    """
+    figure = "inflate-throughput"
+    specs = _inflate_specs()
+    session.sweep(figure, specs, session.cfg.reps(5))
+
+    plaintext = {regime: session.input_size("control", regime) for regime, _ in INFLATE_REGIMES}
+    parse = {
+        spec.regime: median(session.get(figure, spec))
+        for spec in specs
+        if spec.command == "parse"
+    }
+    for spec in specs:
+        delivered = session.reported.get(spec.key(figure), {}).get("delivered")
+        if delivered is not None and int(delivered) != plaintext[spec.regime]:
+            raise RuntimeError(
+                f"{spec.label} delivered {delivered} plaintext bytes, and the file it is a "
+                f"compression of holds {plaintext[spec.regime]}: not a reading of that file"
+            )
+
+    rows = []
+    for _, inp, command, label in INFLATE_ROWS:
+        cells = [label]
+        for regime, _ in INFLATE_REGIMES:
+            spec = next(
+                s for s in specs if (s.regime, s.command, s.input) == (regime, command, inp)
+            )
+            values = session.get(figure, spec)
+            got = median(values)
+            nbytes = (
+                session.input_size(inp, regime) if command == "dd" else plaintext[regime]
+            )
+            cell = f"{fmt_median_spread(values)} · {fmt_rate(nbytes, got)}"
+            if command.startswith(INFLATE_FAMILY):
+                cell += f" · {got / parse[regime]:.2f}× the `parse`"
+            cells.append(cell)
+        rows.append(cells)
+    table = md_table(["Row", *(label for _, label in INFLATE_REGIMES)], rows)
+
+    compressed = session.input_size("control_gz", "warm")
+    plain = session.input_size("control", "warm")
+    notes = (
+        "\n\nEach cell is wall clock and the rate it implies — per plaintext byte for the "
+        "`parse` and inflate rows, per byte of its own file for a floor — and an inflate "
+        "row's time as a multiple of the same regime's `parse`: above 1, a serial first pass "
+        "is bound by its inflate. The instrument is `crates/pgdt-io/examples/gzip_inflate.rs`, "
+        "one thread, checking the member's CRC-32 and `ISIZE` as a first pass must.\n\n"
+        f"- `control_gz`: {_fmt_bytes(compressed)} compressed, {_fmt_bytes(plain)} of "
+        f"plaintext, {plain / compressed:.2f}× (`scripts/generate_gzip_input.py`: one member, "
+        "`pg_dump`'s header, level 6)\n"
+    )
+    return table + notes + "\n" + _per_rep(figure, session, specs)
 
 
 # -- what a second scan worker buys -----------------------------------------
@@ -11133,7 +11322,38 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = []
+UNTAKEN: list[Figure] = [
+    # A first pass's serial inflate against the plain parse, on every device.
+    # What can move it is the instrument and the backends it pins, the
+    # generators behind both files, and everything the `parse` row runs
+    # through — the scanner, the map, the read path and the CLI.
+    Figure(
+        id="inflate-throughput",
+        section="What serial inflate costs against the plain parse",
+        stage="warm+cold+cold-nvme",
+        depends=_declare(
+            "crates/pgdt-io/examples/gzip_inflate.rs",
+            "crates/pgdt-io/Cargo.toml",
+            "scripts/generate_gzip_input.py",
+            *GEN_PERF,
+            *SCAN,
+            *MAP,
+            *READ,
+            *QUERY_CLI,
+        ),
+        warm_inputs=("control", "control_gz"),
+        cold_inputs=("control", "control_gz"),
+        nvme_inputs=("control", "control_gz"),
+        subtracts=(
+            Subtraction(
+                "inflate-throughput",
+                ("control", "control_gz"),
+                "each inflate row's time against the plain `parse`'s",
+            ),
+        ),
+        run=run_inflate_throughput,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
