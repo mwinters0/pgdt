@@ -3077,9 +3077,9 @@ class Untaken(unittest.TestCase):
     What an entry waits on is a **commit to name** as its sitting, since a
     figure published outside a stamped sweep declares one inside its own marker
     and a sitting taken from a tree that carries the instrument uncommitted has
-    none. `xz-decode-scaling`, the two `parallel-*` figures and
-    `release-profile` each waited here for exactly that and left when the
-    commit existed."""
+    none. `xz-decode-scaling`, the two `parallel-*` figures, `release-profile`
+    and `inflate-throughput` each waited here for exactly that and left when
+    the commit existed."""
 
     def test_an_untaken_instrument_is_not_a_figure_the_doc_must_carry(self):
         for fig in measure.UNTAKEN:
@@ -4753,17 +4753,18 @@ class XzDecodeScaling(unittest.TestCase):
 
 
 class InflateThroughput(unittest.TestCase):
-    """Serial inflate of one gzip member against the plain `parse`, built and
-    waiting in `UNTAKEN` for its first sitting."""
+    """Serial inflate of one gzip member against the plain `parse`."""
 
     INSTRUMENT = measure.REPO / "crates/gzip-inflate/src/main.rs"
 
-    def test_it_waits_untaken(self):
-        # Registered before any reading: a figure marker asserts the stamp's
-        # first clause, so the figure waits here until a sitting from a commit
-        # carrying the instrument takes it.
-        self.assertIn("inflate-throughput", [f.id for f in measure.UNTAKEN])
-        self.assertNotIn("inflate-throughput", [f.id for f in measure.FIGURES])
+    def test_it_is_taken_and_borrows_nothing(self):
+        # Standing in no sharing edge is what lets it publish outside a sweep,
+        # from the commit carrying its instrument.
+        fig = measure.SELECTABLE_BY_ID["inflate-throughput"]
+        self.assertIn(fig, measure.FIGURES)
+        self.assertNotIn(fig, measure.UNTAKEN)
+        self.assertEqual(fig.shares, ())
+        self.assertEqual(measure.entangled_with("inflate-throughput"), [])
 
     def test_the_gzip_leg_is_a_compression_of_the_control(self):
         # So its plaintext is `control`'s size exactly, which is what every
@@ -7467,11 +7468,14 @@ class ColdNvme(unittest.TestCase):
         self.assertIn("chunk-size", cold)
         self.assertNotIn("scan-throughput-nvme", cold)
         nvme = [f.id for f in measure.FIGURES if "cold-nvme" in f.stage.split("+")]
-        self.assertEqual(sorted(nvme), ["chunk-size", "scan-throughput-nvme"])
-        # `chunk-size` is the one figure taken in all three regimes, so it is
-        # also the one that would catch a selection rule reading `cold` as a
+        self.assertEqual(
+            sorted(nvme), ["chunk-size", "inflate-throughput", "scan-throughput-nvme"]
+        )
+        # `chunk-size` and `inflate-throughput` are taken in all three regimes,
+        # so they are what would catch a selection rule reading `cold` as a
         # prefix of `cold-nvme` in either direction.
         self.assertIn("chunk-size", cold)
+        self.assertIn("inflate-throughput", cold)
 
 
 class ChunkSize(unittest.TestCase):

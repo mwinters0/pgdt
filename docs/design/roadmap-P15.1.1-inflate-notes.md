@@ -1,19 +1,17 @@
 # P15.1.1 notes — The serial inflate figure
 
-The instrument half of the figures 15.1 named; its readings are not yet taken,
-and the candidate spacings are 15.1.2
+The serial inflate figure, taken at `d2cf15c4` and read in
+[`measurements.md`](measurements.md), "What serial inflate costs against the
+plain parse"; the candidate spacings are 15.1.2
 ([`../status/history/2026-10-22.md`](../status/history/2026-10-22.md), "15.1.1:
-the inflate figure is built, untaken").
+the inflate figure, and 15.8 admitted").
 
-- **`inflate-throughput` is registered in `measure.UNTAKEN`**: one table, a row
-  each for both files' `dd` floors, the plain `pgdt parse --jobs 1`, and one
-  serial inflate a backend, a column a regime — warm, cold SSD, cold NVMe. An
-  inflate cell carries its time as a multiple of the same regime's `parse`,
-  the ratio declared as a `Subtraction` so both come from one sweep. Taken by
-  `cd scripts && uv run measure.py --figure inflate-throughput`, from a commit
-  carrying the instrument (`measurements.md`, "A figure may be published
-  outside the sweep"). It stands in no borrow edge, so a sitting of its own
-  publishes.
+- **`inflate-throughput` is a register figure published outside the sweep**:
+  one table, a row each for both files' `dd` floors, the plain `pgdt parse
+  --jobs 1`, and one serial inflate a backend, a column a regime — warm, cold
+  SSD, cold NVMe. An inflate cell carries its time as a multiple of the same
+  regime's `parse`, the ratio declared as a `Subtraction` so both come from one
+  sweep. It stands in no borrow edge, so a sitting of its own publishes.
 - **The instrument is the `gzip-inflate` member**, `crates/gzip-inflate/`,
   marked apparatus so the release suite leaves it out (`decisions.md`,
   "D110"), and built in the release image as every timed binary is:
@@ -57,10 +55,22 @@ the inflate figure is built, untaken").
 
 ## What the next round inherits
 
-- **The readings** are `--figure inflate-throughput`, all three legs, from
-  a commit carrying the `gzip-inflate` member; the sitting's `control_gz`
-  generation and three cold regimes make it a long one, so it is handed off
-  per `.claude/skills/gosub/handoff.md` if it runs past half an hour. Before reasoning from it, `measure.py --stale` as for any figure.
+- **The reading earns a parallel first pass, admitted as 15.8**: by the
+  figure's own criterion, an inflate row slower than the `parse` beside it,
+  a single member's serial first pass is bound by its inflate on tmpfs and
+  the NVMe, and only on the SATA SSD does the plain `parse`'s device bound
+  leave it the faster of the two. The call is under STATUS's "Decisions
+  worth another look".
+- **`gz-seek`'s throughput floor is the `Inflate, zlib-ng` row**: its forward
+  decode, checkpoints taken and every check made, no slower than zlib-ng's
+  serial inflate of the same member. A ratio between two binaries holds only
+  within one sitting, so the figure that reads the floor — 15.1.2's
+  checkpointing first pass against a serial inflate — carries a zlib-ng leg of
+  its own, which the `gzip-inflate` member already supplies.
+- **A re-take is about ten minutes** once `control_gz` exists, and it is kept
+  beside `control` in the SSD cache, so it needs no handoff. The gate discards
+  a reading taken while anything else on the machine compiles; a sitting
+  started under a neighbour's build fails on its first reading.
 - **15.1.2, the spacing figure**, is taken on `gz-seek` after 15.4; what it
   times is its STATUS row
   ([`../status/history/2026-10-22.md`](../status/history/2026-10-22.md), "The

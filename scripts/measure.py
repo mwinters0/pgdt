@@ -11000,6 +11000,36 @@ FIGURES: list[Figure] = [
         memory=DECODE_MEMORY,
         run=run_xz_decode_scaling,
     ),
+    # A first pass's serial inflate against the plain parse, on every device.
+    # What can move it is the instrument and the backends it pins, the
+    # generators behind both files, and everything the `parse` row runs
+    # through — the scanner, the map, the read path and the CLI.
+    Figure(
+        id="inflate-throughput",
+        section="What serial inflate costs against the plain parse",
+        stage="warm+cold+cold-nvme",
+        depends=_declare(
+            "crates/gzip-inflate/src/",
+            "crates/gzip-inflate/Cargo.toml",
+            "scripts/generate_gzip_input.py",
+            *GEN_PERF,
+            *SCAN,
+            *MAP,
+            *READ,
+            *QUERY_CLI,
+        ),
+        warm_inputs=("control", "control_gz"),
+        cold_inputs=("control", "control_gz"),
+        nvme_inputs=("control", "control_gz"),
+        subtracts=(
+            Subtraction(
+                "inflate-throughput",
+                ("control", "control_gz"),
+                "each inflate row's time against the plain `parse`'s",
+            ),
+        ),
+        run=run_inflate_throughput,
+    ),
     # The parallel scan's throughput claim, and the first figure in the register
     # whose axis is the worker count of `pgdt` itself. `depends` is the union of
     # everything a parallel scan runs through — the scanner, the map, the read
@@ -11320,38 +11350,7 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = [
-    # A first pass's serial inflate against the plain parse, on every device.
-    # What can move it is the instrument and the backends it pins, the
-    # generators behind both files, and everything the `parse` row runs
-    # through — the scanner, the map, the read path and the CLI.
-    Figure(
-        id="inflate-throughput",
-        section="What serial inflate costs against the plain parse",
-        stage="warm+cold+cold-nvme",
-        depends=_declare(
-            "crates/gzip-inflate/src/",
-            "crates/gzip-inflate/Cargo.toml",
-            "scripts/generate_gzip_input.py",
-            *GEN_PERF,
-            *SCAN,
-            *MAP,
-            *READ,
-            *QUERY_CLI,
-        ),
-        warm_inputs=("control", "control_gz"),
-        cold_inputs=("control", "control_gz"),
-        nvme_inputs=("control", "control_gz"),
-        subtracts=(
-            Subtraction(
-                "inflate-throughput",
-                ("control", "control_gz"),
-                "each inflate row's time against the plain `parse`'s",
-            ),
-        ),
-        run=run_inflate_throughput,
-    ),
-]
+UNTAKEN: list[Figure] = []
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

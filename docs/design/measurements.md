@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 25 figures below come from that sitting.** The other 2 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 26 figures below come from that sitting.** The other 3 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `inflate-throughput` (`d2cf15c4`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -3196,6 +3196,75 @@ twenty-fourth worker buys nothing over the sixteenth. The control keeps climbing
 further, to 10.88× at twenty-four, which is the ordering its lower density predicts.
 So a worker count read off a linear extrapolation of a one-worker rate is a
 **floor on what will be needed**, not an estimate of what will suffice.
+
+## What serial inflate costs against the plain parse
+
+<!-- figure: inflate-throughput — taken at `d2cf15c4` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure inflate-throughput` -->
+
+| Row | Warm, tmpfs | Cold, SATA SSD | Cold, NVMe |
+|---|---|---|---|
+| `dd` → `/dev/null`, plain | **0.324 s** (0.323–0.330) · ~9942 MB/s | **5.71 s** (5.71–5.71) · ~564 MB/s | **1.032 s** (1.018–1.098) · ~3121 MB/s |
+| `dd` → `/dev/null`, `.gz` | **0.079 s** (0.078–0.082) · ~10017 MB/s | **1.414 s** (1.413–1.415) · ~560 MB/s | **0.259 s** (0.251–0.286) · ~3055 MB/s |
+| `pgdt parse`, plain | **0.446 s** (0.426–0.456) · ~7222 MB/s | **5.71 s** (5.71–5.76) · ~564 MB/s | **1.108 s** (1.060–1.173) · ~2907 MB/s |
+| Inflate, `zlib-ng` | **2.76 s** (2.72–2.80) · ~1168 MB/s · 6.18× the `parse` | **2.98 s** (2.97–3.05) · ~1080 MB/s · 0.52× the `parse` | **2.89 s** (2.81–2.91) · ~1114 MB/s · 2.61× the `parse` |
+| Inflate, `zlib-rs` | **2.63 s** (2.50–2.65) · ~1224 MB/s · 5.90× the `parse` | **2.77 s** (2.69–2.78) · ~1164 MB/s · 0.48× the `parse` | **2.71 s** (2.58–2.75) · ~1187 MB/s · 2.45× the `parse` |
+| Inflate, `miniz-oxide` | **6.11 s** (5.89–6.23) · ~527 MB/s · 13.69× the `parse` | **6.33 s** (6.26–6.42) · ~509 MB/s · 1.11× the `parse` | **6.22 s** (6.17–6.35) · ~518 MB/s · 5.61× the `parse` |
+
+Each cell is wall clock and the rate it implies — per plaintext byte for the `parse` and inflate rows, per byte of its own file for a floor — and an inflate row's time as a multiple of the same regime's `parse`: above 1, a serial first pass is bound by its inflate. The instrument is `crates/gzip-inflate/src/main.rs`, one thread, checking the member's CRC-32 and `ISIZE` as a first pass must.
+
+- `control_gz`: 754.7 MB compressed, 3.00 GiB of plaintext, 4.07× (`scripts/generate_gzip_input.py`: one member, `pg_dump`'s header, level 6)
+
+Per-rep readings (s):
+- `dd` → `/dev/null`, plain (warm): 0.328, 0.324, 0.330, 0.323, 0.323
+- `dd` → `/dev/null`, `.gz` (warm): 0.079, 0.079, 0.082, 0.081, 0.078
+- `pgdt parse`, plain (warm): 0.442, 0.426, 0.449, 0.456, 0.446
+- Inflate, `zlib-ng` (warm): 2.76, 2.76, 2.80, 2.72, 2.74
+- Inflate, `zlib-rs` (warm): 2.58, 2.50, 2.63, 2.63, 2.65
+- Inflate, `miniz-oxide` (warm): 5.89, 6.20, 6.11, 6.05, 6.23
+- `dd` → `/dev/null`, plain (cold): 5.71, 5.71, 5.71, 5.71, 5.71
+- `dd` → `/dev/null`, `.gz` (cold): 1.415, 1.413, 1.415, 1.414, 1.414
+- `pgdt parse`, plain (cold): 5.72, 5.71, 5.71, 5.76, 5.71
+- Inflate, `zlib-ng` (cold): 3.05, 2.99, 2.98, 2.98, 2.97
+- Inflate, `zlib-rs` (cold): 2.76, 2.69, 2.78, 2.78, 2.77
+- Inflate, `miniz-oxide` (cold): 6.42, 6.37, 6.33, 6.32, 6.26
+- `dd` → `/dev/null`, plain (cold-nvme): 1.098, 1.032, 1.018, 1.025, 1.078
+- `dd` → `/dev/null`, `.gz` (cold-nvme): 0.259, 0.269, 0.251, 0.251, 0.286
+- `pgdt parse`, plain (cold-nvme): 1.165, 1.173, 1.060, 1.074, 1.108
+- Inflate, `zlib-ng` (cold-nvme): 2.89, 2.89, 2.91, 2.86, 2.81
+- Inflate, `zlib-rs` (cold-nvme): 2.71, 2.70, 2.58, 2.75, 2.71
+- Inflate, `miniz-oxide` (cold-nvme): 6.17, 6.31, 6.22, 6.17, 6.35
+
+Apparatus over every run in this table: CPU stall ≤22.23%, I/O stall ≤31.63%, machine ≤63% busy, steal ≤0.00%, busiest core ≥3.73 GHz, ≤83°C.
+
+**The summary line above counts two readings the gate threw away.** The
+miniz_oxide warm and zlib-rs cold first reps were each discarded once over
+the contention limit and re-taken; over the ninety readings the table is
+made of, the machine was at most 10.65% busy and CPU-stalled at most 0.34%
+(`runs/inflate-throughput-20261022-0146/log`, and the sitting's `raw.json`).
+
+**Inflate is the CPU's in every regime, so its rate is the backend's and not
+the device's.** Each backend's three cells sit within 8% of each other, and
+the `.gz` file's own `dd` floor is under half the fastest inflate on every
+device, the SATA SSD included: a serial inflate consumes the compressed member
+more slowly than any device here delivers it.
+
+**Against the plain `parse`, the device decides which side is slower.** On
+tmpfs and the NVMe every inflate row is slower than the plain `parse` beside
+it — 5.90–6.18× and 2.45–2.61× for the two zlib backends — so a single
+member's serial first pass is bound by its inflate there, which only a
+parallel first pass would lift ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md),
+"Settled in the grilling"). On the
+SATA SSD the plain `parse` reads 4.07× the bytes off a device it is already
+held by, and the inflate rows run at 0.48–0.52× of it: a `.gz` first pass
+beats the plain one there, while still taking about twice its own file's
+floor.
+
+**`zlib-rs` is the fastest backend in every regime, and zlib-ng's row is
+`gz-seek`'s floor.** `zlib-rs`'s cells lie wholly below zlib-ng's in all
+three, and `miniz_oxide` takes more than twice either's time. The floor
+`gz-seek`'s forward decode is held to is the `Inflate, zlib-ng` row
+([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Settled in the grilling");
+which backend it builds on is its own decision.
 
 ## What a second scan worker buys, and where the plain path stops
 

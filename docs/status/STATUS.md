@@ -61,11 +61,11 @@ quotes a number: every figure is in
 **Figures.** [`../design/measurements.md`](../design/measurements.md) carries
 the session stamp and its own account of what stands outside it; `cd scripts
 && uv run measure.py --stale` names what is red and why. **Every register
-figure but `session-drift` and `release-profile` was taken in one sitting at
+figure but `session-drift` and those the stamp names as their own sittings' was taken in one sitting at
 `3a34f062`, on the mimalloc build made in the release image under Cargo's default profile, before D105 made it fat LTO, and run in
 `debian:trixie` under its glibc, with its binaries staged on tmpfs**, the scan figures at the
 metadata level and the query figures over a data-level cache.
-`session-drift` is the `da05a72` pair's, `release-profile` its own sitting's at `ef442ad6`, and `reserve`'s 128 MiB-block `rule`
+`session-drift` is the `da05a72` pair's, and `reserve`'s 128 MiB-block `rule`
 cells are a reading `KD34` names.
 What a sweep does not re-take: `session-drift`, which only a second sweep on
 a first's commit does, and the koji section, outside the register and red,
@@ -86,13 +86,14 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
 Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 
 - [x] **15.1** Evidence, the fixtures: `pg_dump -Z` fixtures from each tested major and synthetic single-member and BGZF payloads (`flate2`, `noodles-bgzf`) — [notes](../design/roadmap-P15.1-fixtures-notes.md)
-- [ ] **15.1.1** Evidence, the inflate figure: `inflate-throughput`, serial inflate against the plain parse on each measured device — it sets `gz-seek`'s throughput floor and whether a parallel first pass is built. The instrument is landed, the `gzip-inflate` apparatus member with `zlib-ng`, `zlib-rs` and `miniz_oxide` legs, and untaken; the readings remain — [notes](../design/roadmap-P15.1.1-inflate-notes.md)
+- [x] **15.1.1** Evidence, the inflate figure: `inflate-throughput`, serial inflate against the plain parse on each measured device — it sets `gz-seek`'s throughput floor and whether a parallel first pass is built — [notes](../design/roadmap-P15.1.1-inflate-notes.md)
 - [ ] **15.2** The cut: `source/compressed/` with the codec trait, xz its only implementor; one `CompressionIndex` owned by `pgdt-io`, `KnownCompression::Compressed`, the codec error, the cache key renamed (cache bump); `determinism.rs` gains `.xz`; behaviour-preserving
 - [ ] **15.3** `extent()`: `Exact` or `Open` in place of `size()` and `size_is_exact()`, every site relying on an exact size, plain and xz `Exact` throughout; behaviour-preserving
 - [ ] **15.4** `gz-seek` built in the workspace as a leaf crate: the sans-IO forward decode emitting checkpoints by the placement rule, resume from a checkpoint given its window, the unit CRC, the BGZF member walk, the index as a shareable handle, the leaf admitted to `layering.py`'s graph and claimed in `concepts.md`
 - [ ] **15.1.2** Evidence, the spacing figure, on `gz-seek` after 15.4: gzip's own costs at candidate spacings — the checkpointing first pass against a serial inflate, a resumed unit decode's fixed cost, the window section's size — the costs shared with xz read off its figures; it sets the spacing constant `pgdt-io` passes `gz-seek`
 - [ ] **15.5** Single-member gzip: the `deflate` adapter over `gz-seek`, checkpoints by the placement rule, unit CRCs, the window provider and the cache's window section, the first pass's `PlanNote`, determinism and resume assertions, over HTTP
 - [ ] **15.6** BGZF, `pgdt-io`'s side over the crate's walk: the walk run at open, recognition at 18 bytes, members coalesced into units
+- [ ] **15.8** A parallel first pass, earned by 15.1.1's reading: `gz-seek` finds a single member's units speculatively — rapidgzip's technique, implemented natively and run on the caller's pool (D1, D12) — replacing only how the first pass finds them, never the index, the codec trait or the arms; checkpoints by the placement rule, so the index is the serial pass's at every worker count
 - [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the manual and `pg-dump-compatibility.md`
 
 ## Not started
@@ -124,3 +125,17 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **15.8, a parallel first pass, is admitted on 15.1.1's reading**
+  ([`../design/measurements.md`](../design/measurements.md), "What serial
+  inflate costs against the plain parse"). The spec makes it a row only if
+  that reading earns it, and states no threshold
+  ([`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md), "Slice
+  order"). The call applies the figure's own criterion, written before the
+  reading — an inflate row slower than the plain `parse` beside it is a first
+  pass bound by its inflate — which holds on tmpfs and the NVMe and fails only
+  on the SATA SSD, where the plain `parse` is held by the device; and the
+  standing rule against deciding by implementation cost leaves nothing to set
+  against it. Reconsidering strikes the row: a single member's first pass
+  stays serial at its backend's rate, and the seam still admits the parallel
+  pass later without reshaping the index, the codec trait or the arms.

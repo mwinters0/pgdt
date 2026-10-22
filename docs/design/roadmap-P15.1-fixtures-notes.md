@@ -4,7 +4,7 @@ The fixture half of the evidence slice; the figures are 15.1.1 and 15.1.2
 ([`../status/history/2026-10-21.md`](../status/history/2026-10-21.md), "15.1
 split: the figures are 15.1.1";
 [`../status/history/2026-10-22.md`](../status/history/2026-10-22.md), "15.1.1:
-the inflate figure is built, untaken").
+the inflate figure, and 15.8 admitted").
 
 - **`pg_dump`'s own `-Z` output is `fixtures/<major>/edge_cases/compress.sql.gz`**
   at every routine major, the `edge_cases` schema's `compress` set
