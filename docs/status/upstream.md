@@ -11,8 +11,8 @@ which keeps the mechanism's detail; this file keeps the upstream side.
 
 Each site to revisit carries an `upstream: UF<k>` comment, and
 `cd scripts && uv run upstream.py` resolves every entry to its markers and
-back. **`UF1`–`UF3` are allocated, and none is reused.**
-<!-- upstream-watermark: UF3 -->
+back. **`UF1`–`UF4` are allocated, and none is reused.**
+<!-- upstream-watermark: UF4 -->
 
 ## UF1 — DataFusion's ungrouped-aggregate dynamic filter loses a column's bounds
 
@@ -113,3 +113,46 @@ back. **`UF1`–`UF3` are allocated, and none is reused.**
   strike [`../design/roadmap.md`](../design/roadmap.md)'s Future item
   "`RESET` for a provider's session settings, upstream"; the test above then
   asserts `RESET` returns the setting to unstated.
+
+## UF4 — zlib-rs's safe API cannot resume a deflate stream at a block boundary
+
+- **The issue.** `zlib_rs::Inflate`, the engine's safe Rust API, stops at a
+  block's end under `InflateFlush::Block` but says nothing of where: it has no
+  `data_type` (the unused bits, whether the stop is a block boundary), no
+  `prime` to start inside a byte, and no read of the window. A gzip index needs
+  all three, so `gz-seek` reaches them through `libz-rs-sys`'s zlib C API,
+  whose calls are `unsafe`. A user meets nothing; the crate carries `unsafe` a
+  safe API would not need.
+- **Upstream.** No issue, PR or discussion found asking for them (searched
+  2026-10-22: trifectatechfoundation/zlib-rs issues and PRs for "prime",
+  "data_type", "Z_BLOCK", "inflatePrime", "get_dictionary", "internal-api",
+  "random access", "index"). Read in passing: #114, `Z_BLOCK` ignored by
+  `inflate`, closed 2024-06-13 by PR #113; #439, `Z_BLOCK` at a member's end
+  answering `Z_DATA_ERROR` in gzip mode, closed 2025-12-04 by PR #434, in
+  0.5.3. Under the unstable `__internal-api` feature `inflate::prime` is safe,
+  but `inflate` and `get_dictionary` are not and the stream's `data_type` is
+  private. No request opened: the maintainer's call.
+- **Fixed when.** `zlib_rs::Inflate` answers where a `Block` stop left its
+  reader (the unused bits, and whether it is a non-final block's end), primes
+  bits ahead of its input, and copies its window out, in a semver-stable API.
+- **Workaround.** `crates/gz-seek/src/zlib.rs` drives `libz-rs-sys` 0.6.8's
+  `inflateInit2_`, `inflate(Z_BLOCK)`, `inflatePrime`, `inflateSetDictionary`
+  and `inflateGetDictionary` behind a type whose methods are safe, and its
+  `crc32_z` and `crc32_combine` beside them, the crate denying `unsafe`
+  everywhere else. Rejected: `__internal-api`, an unstable surface still
+  needing `unsafe` for the decode; `miniz_oxide`'s safe
+  `block-boundary` API, its inflate slower than the floor in every regime
+  ([`../design/measurements.md`](../design/measurements.md), "What serial
+  inflate costs against the plain parse"); zlib-ng through `libz-ng-sys`,
+  CMake-built, which nothing shipped may reach
+  ([`../design/decisions.md`](../design/decisions.md), "D111"); an inflater of
+  our own, the spec buying it ([`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md),
+  "Settled in the grilling").
+- **Watch.** None can be a test: the fix is an API appearing. The
+  `upgrade-deps` skill's read of zlib-rs's `src/stable.rs` at each bump of
+  `libz-rs-sys`'s `=0.6.8` pin in `crates/gz-seek/Cargo.toml` is the watch.
+- **When it lands.** Rewrite `crates/gz-seek/src/zlib.rs` over
+  `zlib_rs::Inflate`, name `zlib-rs` for `libz-rs-sys` in
+  `crates/gz-seek/Cargo.toml` — its `crc32` module is safe already — and let
+  the crate `forbid` `unsafe` as `xz-seek` does; `crates/gz-seek/src/lib.rs`'s
+  last paragraph says so.

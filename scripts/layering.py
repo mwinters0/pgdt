@@ -76,15 +76,17 @@ EMBEDDERS = ("datafusion-pgdump", "datafusion-cli-pgdump", "pgdt")
 #: Every member and the members it may depend on, so a new member is placed
 #: deliberately (D68). The dump's parsers and the codec are siblings, neither
 #: reaching the other; `namespace-init` installs a binary's signal handlers
-#: (D26), which no library does, and `peak-rss`, `count-instructions` and
-#: `gzip-inflate` are the harness's. `pgdt-fixtures` is the tests' vocabulary, which no row
-#: lists, so only a dev-dependency reaches it; its edges, behind its
+#: (D26), which no library does; `gz-seek` is a gzip file's positioned read
+#: beneath io, a leaf depending on no member; and `peak-rss`,
+#: `count-instructions` and `gzip-inflate` are the harness's. `pgdt-fixtures`
+#: is the tests' vocabulary, which no row lists, so only a dev-dependency
+#: reaches it; its edges, behind its
 #: `mapping` feature, are for a sweep's request builders and a fixture mapped
 #: beside its cache, which takes the mapping pass and what its call names.
 GRAPH: dict[str, tuple[str, ...]] = {
     "pgdt-core": (),
     "pgdt-model": ("pgdt-core",),
-    "pgdt-io": ("pgdt-core", "pgdt-model"),
+    "pgdt-io": ("pgdt-core", "pgdt-model", "gz-seek"),
     "pgdt-dump": ("pgdt-core", "pgdt-model", "pgdt-io"),
     "pgdt-codec": ("pgdt-core", "pgdt-model"),
     "pgdt-mapping": ("pgdt-core", "pgdt-model", "pgdt-io", "pgdt-dump", "pgdt-codec"),
@@ -100,6 +102,7 @@ GRAPH: dict[str, tuple[str, ...]] = {
     "datafusion-cli-pgdump": (*LIBRARIES, "datafusion-pgdump", "namespace-init"),
     "pgdt": (*LIBRARIES, "datafusion-pgdump", "datafusion-cli-pgdump", "namespace-init"),
     "namespace-init": (),
+    "gz-seek": (),
     "peak-rss": (),
     "count-instructions": (),
     "gzip-inflate": (),
@@ -125,11 +128,11 @@ ARROW_BELOW_THE_CODEC = ("arrow", "arrow-schema", "arrow-buffer")
 
 #: What the core never names: every dependency whose error the core's error
 #: type would otherwise carry (D74).
-CORE_NAMES_NO_DEPENDENCY = ("xz_seek", "bincode", "tokio", "object_store")
+CORE_NAMES_NO_DEPENDENCY = ("xz_seek", "gz_seek", "bincode", "tokio", "object_store")
 
 #: What the model and the codec never name: they do no I/O, and the codec is
 #: synchronous (D74).
-NO_IO = ("async fn", "ByteRangeSource", "std::fs", "tokio", "xz_seek")
+NO_IO = ("async fn", "ByteRangeSource", "std::fs", "tokio", "xz_seek", "gz_seek")
 
 #: The macros an embedder never invokes or imports.
 INTERNAL_MACROS = ("timed", "row_evaluated")

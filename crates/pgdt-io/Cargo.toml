@@ -57,7 +57,7 @@ xz-seek = { workspace = true }
 # encoder writes; the lock pins each writer as `mise` pins a tool
 # (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling").
 flate2 = { workspace = true }
-noodles-bgzf = "0.52.0"
+noodles-bgzf = { workspace = true }
 # Where `pg_dump`'s own compressed fixtures are.
 pgdt-fixtures = { path = "../pgdt-fixtures" }
 tempfile = { workspace = true }

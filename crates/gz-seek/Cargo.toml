@@ -1,0 +1,30 @@
+[package]
+name = "gz-seek"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Random access into gzip files: the addressing layer `pgdt-io`'s gzip adapter
+# reads a `.gz` source through, as `xz-seek` is the `.xz` one's. A leaf — it
+# depends on no workspace crate and names nothing of `pg_dump` — so that the
+# split into its own repo is a move rather than a rewrite
+# (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling").
+
+[dependencies]
+# The inflater, bought: zlib-rs, the fastest serial inflate of the three the
+# `inflate-throughput` figure times (`docs/design/measurements.md`, "What
+# serial inflate costs against the plain parse"). Reached through its C API
+# crate, the one stable surface exposing what an index needs — `Z_BLOCK`'s
+# boundary state, `inflatePrime` and the window read — which its safe Rust API
+# does not, and the engine's CRC-32 and `crc32_combine` beside them. Pinned
+# exactly, so the build is the backend the figure read; the engine itself is
+# `zlib-rs` at the version `gzip-inflate` pins.
+# upstream: UF4
+libz-rs-sys = "=0.6.8"
+
+[dev-dependencies]
+# What the tests' members are written with: encoders not ours, so the decode
+# is checked against what someone else's encoder writes.
+flate2 = { workspace = true }
+noodles-bgzf = { workspace = true }

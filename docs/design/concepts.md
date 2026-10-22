@@ -27,6 +27,13 @@ the compressed file pulled or fetched, the remote object
   layer: the codec trait both compressed arms are written once over, the arms,
   the block cache and budget they share, the compression index, and each
   codec's adapter, the one module naming its codec's crate.
+- **gz-seek** — `index.rs`, `forward.rs`, `unit.rs`, `bgzf.rs`, `engine.rs`,
+  `member.rs`, `zlib.rs`, `error.rs`: a gzip file's positioned read — its
+  index of checkpoints, the forward pass that builds one, a unit decoded from
+  its checkpoint, the BGZF walk, the decode under them, gzip's framing, and
+  the inflater — a leaf beneath io naming no `pg_dump`, as `xz-seek` is the
+  `.xz` one's outside the workspace, so the source over it is io's and the
+  container's addressing its own (D68).
 
 ## Memory and parallelism
 

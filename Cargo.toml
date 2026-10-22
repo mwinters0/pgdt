@@ -51,6 +51,7 @@ insta = "1.48.0"
 libc = "0.2.189"
 memchr = "2.8.3"
 mimalloc = { version = "0.1.50", default-features = false }
+noodles-bgzf = "0.52.0"
 serde = "1.0.229"
 signal-hook = { version = "0.4.4", default-features = false }
 tempfile = "3.27.0"

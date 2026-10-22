@@ -15,7 +15,8 @@ given. The trigger to walk this file is therefore an upgrade of any of these, ea
 with its own entries: a **kernel major**, a **container-runtime upgrade**, a **Rust
 toolchain bump** (`RT7`, `RT11` and `RT12`, whose behaviour is `std`'s), a **glibc
 release** — the host's or the figures' image's (`RT10` only) — a **bash
-release** (`RT20`), an **arrow or DataFusion upgrade** (`RT21`, `RT22`), and an
+release** (`RT20`), an **arrow or DataFusion upgrade** (`RT21`, `RT22`), a
+**zlib-rs upgrade** (`RT23`), and an
 **`object_store` upgrade** (`RT13`–`RT17`, whose behaviour is that crate's and
 whose re-verification is a test run against the oracle rather than a container;
 `crates/pgdt/tests/http_conformance.rs` reads the same claims against a real origin
@@ -38,7 +39,7 @@ crate's requirements register, which a phase spec and an inbox cite by number
 ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Inherited from the `.xz`
 source unchanged").
 
-**`RT1`–`RT22` are allocated**, and nothing at or below `RT22` is reused.
+**`RT1`–`RT23` are allocated**, and nothing at or below `RT23` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is
@@ -1154,3 +1155,49 @@ cargo nextest run -p datafusion-pgdump --test unrepresentable unrepresentable_fu
 
 Both tests pass only while the function is planned where a scan answers it
 and refused wherever another node holds it.
+
+## RT23 — zlib-rs's raw inflate stops at every block's end, saying where, and takes no byte past a stream's end
+
+**Claim.** `inflate(Z_BLOCK)` through `libz-rs-sys`, over a raw deflate
+stream, returns at the end of every block exactly once, `data_type` then
+carrying `128`, `64` where the block was the final one, and in its low six
+bits the reader's unused bits; it returns `Z_STREAM_END` holding no unused
+bit, so the stream's next byte is the first it did not consume; and a stream
+reset, primed with the bits of a byte past a bit offset (`inflatePrime`) and
+given the preceding plaintext (`inflateSetDictionary`), decodes on from that
+offset as the uninterrupted stream did.
+
+**Proof.** zlib-rs 0.6.8, `src/inflate.rs`: the `Mode::Type` arm leaves under
+`Block`; `decoding_state` is the reader's bits plus `64` for
+`IS_LAST_BLOCK` plus `128` in `Mode::Type`; `Mode::TypeDo` after the final
+block calls `next_byte_boundary`; the slow path takes input a byte at a time
+(`need_bits!`, `pull_byte`) and `inflate_fast` hands back its unused whole
+bytes on exit (`return_unused_bytes`), so fewer than eight bits are held at
+any stop; `prime` and `set_dictionary` are what `inflatePrime` and
+`inflateSetDictionary` call. zlib's own `zlib.h` states the same `data_type`
+contract. Observed by `the_index_is_one_whatever_the_buffers`
+(`crates/gz-seek/src/forward/tests.rs`), every unit decoding alone in
+`crates/gz-seek/src/unit/tests.rs`, and
+`a_member_s_end_is_found_at_every_place_in_a_supply`
+(`crates/gz-seek/src/engine/tests.rs`), whose decode panics where a stream
+ends holding a bit.
+
+**Scope limit.** Raw deflate (`windowBits` −15) alone; the gzip and zlib
+modes and `Z_TREES` are not claimed. A block boundary's offset is computed
+from all six bits, so fewer than eight there is not relied on.
+
+**Verified against:** zlib-rs 0.6.8, `libz-rs-sys` 0.6.8.
+
+**Relied on by:** [`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Settled in
+the grilling" — a checkpoint's place a function of the file alone, and a unit
+resumed from its checkpoint and window; `crates/gz-seek/src/engine.rs`, which
+reads a member's trailer from the byte after its deflate data.
+
+**Re-verify:**
+
+```sh
+cargo nextest run -p gz-seek
+```
+
+The suite passes only while every buffer size gives one index and every unit
+decodes alone to the forward pass's plaintext.

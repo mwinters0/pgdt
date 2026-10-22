@@ -627,7 +627,7 @@ core, model, io, dump, codec, mapping, query, each using only crates before it, 
 held to tables in `scripts/layering.py`. Model is what the cache persists, apart from core so an edit there is the one asking whether the format bumps, and
 below the parsers so the codec does not recompile with the grammar. Gathering decodes and builds no array, so is mapping's, with the pass handing it rows and the interior split
 that pass leads; the ordering keys it shares with a filter are value semantics, so codec's; worker sizing and the cut are io's, the leader asking them. The tests' fixture vocabulary is `pgdt-fixtures`,
-a member only a dev-dependency reaches, its edges, to mapping and what a call to it names, behind a feature. Rejected: four layers
+a member only a dev-dependency reaches, its edges, to mapping and what a call to it names, behind a feature. `gz-seek`, a gzip file's positioned read, is a leaf member beneath io, as `namespace-init` is one above query. Rejected: four layers
 in one crate with upward deviations; the cache a crate of its own (the loader re-derives the map's diagnostics, so it is dump's); the mapping pass query's (it reads nothing of query); the graph held to the libraries alone (a new member unplaced, `namespace-init` open to a library); any `pub mod` a namespace (one line past `internal`); a test module included across crates by `#[path]` (rust-analyzer resolves nothing outside its package), or a test's own `#[path]` within one (`check.py --affected` reads a test's files off its `mod` lines); statistics a crate apart from query (its edges run both ways); codec and query, or dump and query, one crate (D74's boundaries).
 
 ### D74 Below the codec no Arrow, the codec pure, and the core's error naming no dependency
