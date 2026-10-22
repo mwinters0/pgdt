@@ -60,7 +60,7 @@ candidates are two:
   not reach it. `pgdt` frees cross-thread on every path — each read and each
   parse is its own `spawn_blocking` task, and a block's last `Arc` drops on
   whichever task evicts it or ends a scan holding its
-  view (`source/xz/blocks.rs`, `BlockCache::slot`, `claim`; `source/pool.rs`, `PooledBuffer`'s
+  view (`source/compressed/blocks.rs`, `BlockCache::slot`, `claim`; `source/pool.rs`, `PooledBuffer`'s
   `Drop`); a
   straddling first read's chunk buffer, never pooled, likewise.
 

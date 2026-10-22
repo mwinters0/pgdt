@@ -19,7 +19,7 @@ use crate::stream::note::PlanNote;
 /// `docs/design/decisions.md`, "D15").
 ///
 /// **Read off `partitions()`, not off a budget the caller would have to hand
-/// down**: a source holding a seek table with more than one block and still
+/// down**: a source holding a compression index with more than one unit and still
 /// advising a *single* partition over the whole of it has declined. What the
 /// source *is* asked for is the recourse the message names
 /// ([`pgdt_io::ByteRangeSource::block_decode_bytes`]). **Asked over the
@@ -31,11 +31,11 @@ fn compressed_block_path_declined(
     source: &dyn ByteRangeSource,
     parallelism: Parallelism,
 ) -> Option<PlanNote> {
-    let table = source.seek_table()?;
-    if !table.is_seekable() {
+    let index = source.compression_index()?;
+    if !index.is_seekable() {
         return None;
     }
-    if source.partitions(0..table.uncompressed_size()).max_partitions() != Some(1) {
+    if source.partitions(0..index.uncompressed_size()).max_partitions() != Some(1) {
         return None;
     }
     // The budget actually in force, which is what the source compared its
@@ -43,8 +43,8 @@ fn compressed_block_path_declined(
     // this one.
     let memory_bytes = parallelism.budget_bytes();
     Some(PlanNote::compressed_block_path_declined(
-        table.block_count(),
-        table.max_block_uncompressed(),
+        index.unit_count(),
+        index.largest_unit(),
         // What a reader of this file would have held on the path it declined.
         // The fallback is unreachable, but nothing in the trait obliges the
         // two answers to agree.

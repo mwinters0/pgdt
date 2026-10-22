@@ -178,8 +178,8 @@ pub enum DiagnosticKind {
     /// so a read anywhere is reached by decoding from byte zero — once for a
     /// forward scan, and again for each read behind where it stands. Never a
     /// reason to refuse the file (`docs/design/decisions.md`, "D19").
-    /// `block_count` is `SeekTable::block_count()` — 0 or 1 for a
-    /// non-seekable table — pushed once per index, by
+    /// `block_count` is `CompressionIndex::unit_count()` — 0 or 1 for a
+    /// non-seekable index — pushed once per index, by
     /// `pgdt_dump`'s `derived_diagnostics` wherever a whole map is finished or
     /// loaded, and by `pgdt_dump::preamble_only` for a preamble alone.
     NonSeekableCompressedSource { block_count: usize },

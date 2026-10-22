@@ -18,13 +18,15 @@ it.
 ## The byte sources
 
 Where a dump is and how its bytes are read: the read contract, the plain file,
-the `.xz` file pulled or fetched, the remote object
+the compressed file pulled or fetched, the remote object
 ([`decisions.md`](decisions.md), "The compressed source and the cache").
 
 - **pgdt-io** — `source/`: the whole concept, below the parsers that read
   through it — the read contract with its arms nested under it, the buffer
-  pool every arm but the remote one reads into, and what both `.xz` sources
-  share above the two of them.
+  pool every arm but the remote one reads into, and under it the compressed
+  layer: the codec trait both compressed arms are written once over, the arms,
+  the block cache and budget they share, the compression index, and each
+  codec's adapter, the one module naming its codec's crate.
 
 ## Memory and parallelism
 

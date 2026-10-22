@@ -3343,7 +3343,7 @@ class ParallelFigures(unittest.TestCase):
                 depends = measure.SELECTABLE_BY_ID[fid].depends
                 self.assertIn("crates/pgdt-mapping/src/interior.rs", depends)
                 self.assertIn("vendor/xz-seek/src/", depends)
-                self.assertIn("crates/pgdt-io/src/source/xz.rs", depends)
+                self.assertIn("crates/pgdt-io/src/source/compressed/xz.rs", depends)
 
     def test_a_stage_selection_does_not_reach_them(self):
         for fid in ("parallel-scan-throughput", "parallel-peak-rss"):
@@ -7896,7 +7896,7 @@ class SubstreamAnnotation(unittest.TestCase):
 
     def test_only_the_plain_leg_carries_a_cap_at_this_budget(self):
         # `plan_partitions` charges the held batch's span only where the source
-        # retains by the read chunk, and a block-decoding `XzSource` retains by
+        # retains by the read chunk, and a block-decoding `CompressedFileSource` retains by
         # the partition — so the `.xz` leg is charged what one reader holds,
         # `34.03 MiB`, plus a 24 MiB unit of the pool's retention list for each
         # reader past four, and affords twenty-nine against the margin ceiling,
@@ -9034,7 +9034,7 @@ class CensoredCells(unittest.TestCase):
     def test_the_fit_is_stated_against_the_charge_the_source_bills(self):
         # The point of taking the account: what a reader costs the program plus
         # the C dictionary the counter is blind to, against what
-        # `XzSource::block_reader_bytes` bills a sub-stream. It is the one
+        # what the compressed source bills a sub-stream. It is the one
         # comparison that says whether the number the budget rule divides by is
         # the number a reader actually is.
         body, _ = self._render()

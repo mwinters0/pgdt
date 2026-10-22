@@ -12,22 +12,20 @@ use std::time::SystemTime;
 use pgdt_core::{Error, Result};
 
 use super::ByteRangeSource;
+use super::compressed::{
+    CompressedFileSource, CompressionIndex, Format, LONGEST_MAGIC, index_refused,
+};
 use super::local::LocalFileSource;
 #[cfg(feature = "http")]
 use super::remote::{
     REMOTE_READ_TIMEOUT, RemoteObject, open_remote, remote_name_of, without_credentials,
 };
-use super::xz::{SeekTable, XzSource};
-
-/// The six bytes every `.xz` stream opens with
-/// (`docs/design/decisions.md`, "D14").
-pub(super) const XZ_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
 
 /// How many leading bytes an [`Origin`] probe brings back: the longest magic
-/// recognition compares, which is [`XZ_MAGIC`]'s. A source whose whole
+/// recognition compares ([`Format::recognize`]). A source whose whole
 /// content is shorter brings back fewer, which is not an error — it simply
 /// matches no magic.
-pub(super) const ORIGIN_LEADING_BYTES: usize = XZ_MAGIC.len();
+pub(super) const ORIGIN_LEADING_BYTES: usize = LONGEST_MAGIC;
 
 /// Where a dump is, as a caller's `--source` argument resolved it, together
 /// with the one cheap probe of it that everything before the source reads
@@ -44,7 +42,7 @@ pub(super) const ORIGIN_LEADING_BYTES: usize = XZ_MAGIC.len();
 ///
 /// So the origin answers exactly what is needed that early — **stored size,
 /// weak identity, and the leading magic bytes** — and nothing else. It never
-/// opens a source, never walks an `.xz` file's stream footers, and never
+/// opens a source, never builds a compressed file's index, and never
 /// reads past the longest magic recognition compares.
 ///
 /// **The probe runs at most once.** Locally that saves nothing worth naming;
@@ -256,7 +254,7 @@ impl std::fmt::Display for Origin {
 }
 
 /// One `stat` and one short read, on a blocking thread as a local source's
-/// reads are; opening an `.xz` source, its footer walk included, is not.
+/// reads are; opening a compressed source, its index build included, is not.
 async fn probe_local_file(path: &Path) -> Result<OriginProbe> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<OriginProbe> {
@@ -285,26 +283,27 @@ async fn probe_local_file(path: &Path) -> Result<OriginProbe> {
 
 /// What a caller already knows about a file's compression layer before
 /// [`open`] has looked at it — normally read out of a cache written from
-/// that same file (`pgdt_dump::cache::claim`), and the reason an `.xz` source need
-/// not re-walk its stream footers (`docs/design/decisions.md`, "D18").
+/// that same file (`pgdt_dump::cache::claim`), and the reason a compressed
+/// source need not rebuild its index — for `.xz`, re-walk its stream footers
+/// (`docs/design/decisions.md`, "D18").
 ///
-/// **A bare [`SeekTable`], not a cache.** What loads it is the
+/// **A bare [`CompressionIndex`], not a cache.** What loads it is the
 /// caller's business, which keeps this crate naming nothing in `pgdt_dump::cache`.
 ///
 /// Three states, not an `Option`: "the cache says this file is plain" is a
 /// claim recognition can *contradict* (`docs/design/decisions.md`, "D18").
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum KnownCompression {
-    /// Nothing is known — recognition reads the file's own bytes and, for
-    /// `.xz`, pays the walk. The only state that can never produce a
-    /// [`Recognized::Mismatch`].
+    /// Nothing is known — recognition reads the file's own bytes and, for a
+    /// compressed one, builds its index. The only state that can never
+    /// produce a [`Recognized::Mismatch`].
     #[default]
     Unknown,
     /// Known to have no compression layer at all.
     Plain,
-    /// Known to be `.xz`, with the seek table a previous walk of this file
-    /// produced.
-    Xz(SeekTable),
+    /// Known to be compressed, with the index a previous build over this file
+    /// produced — the format recognition checks being the index's own.
+    Compressed(CompressionIndex),
 }
 
 /// What [`open`] made of a dump, given what its caller claimed to know.
@@ -313,10 +312,10 @@ pub enum Recognized {
     Source(Arc<dyn ByteRangeSource>),
     /// The [`KnownCompression`] handed in does not describe this file: its
     /// compression layer disagrees with the file's own first bytes, or its
-    /// seek table was refused by `xz_seek`'s validation. Nothing beyond the
-    /// magic was read and no source was built, so the caller still has both
-    /// choices — pay the walk with [`KnownCompression::Unknown`], or report
-    /// the cache it came from as unusable
+    /// index was refused by the codec's validation. Nothing beyond the magic
+    /// was read and no source was built, so the caller still has both choices
+    /// — pay the build with [`KnownCompression::Unknown`], or report the
+    /// cache it came from as unusable
     /// (`docs/design/decisions.md`, "D18").
     ///
     /// The claim it contradicts and the cache's span index were written by
@@ -342,11 +341,12 @@ pub async fn open(origin: &Origin, known: KnownCompression) -> Result<Recognized
 }
 
 /// Open `origin` as a [`ByteRangeSource`], choosing between
-/// [`LocalFileSource`] and [`XzSource`] by **content**, not by name
-/// (`docs/design/decisions.md`, "D14"): the first six bytes are checked
-/// against `.xz`'s magic, whatever the file is called. A file that really is
-/// `.xz`-compressed is recognised however it is named or extensionless; a file
-/// merely *named* `.xz` whose bytes don't match opens as plain.
+/// [`LocalFileSource`] and [`CompressedFileSource`] by **content**, not by
+/// name (`docs/design/decisions.md`, "D14"): the first bytes are checked
+/// against each format's magic, whatever the file is called. A file that
+/// really is `.xz`-compressed is recognised however it is named or
+/// extensionless; a file merely *named* `.xz` whose bytes don't match opens as
+/// plain.
 ///
 /// **The magic comes from [`Origin::probe`], not from a read of its own.**
 /// Recognition is told what the source holds, which is what keeps it from
@@ -359,13 +359,13 @@ pub async fn open(origin: &Origin, known: KnownCompression) -> Result<Recognized
 /// fallback. [`KnownCompression::Unknown`] is the no-knowledge case and always
 /// yields a source.
 ///
-/// **An uncached `.xz` is opened on the calling task**, its footer walk
-/// included: only a first open reaches the walk, before anything else is
-/// scheduled, and it says `seek table build started` and `… complete` around
-/// itself (`crates/pgdt/tests/status_output.rs`), so the wait does not read as a
-/// hang. An embedder opening one inside a busy runtime would want it on a
-/// blocking thread; the DataFusion provider never walks, reading the table
-/// its complete cache holds.
+/// **An uncached compressed file is opened on the calling task**, its index
+/// build included — an `.xz` file's footer walk: only a first open reaches it,
+/// before anything else is scheduled, and it says `seek table build started`
+/// and `… complete` around itself (`crates/pgdt/tests/status_output.rs`), so
+/// the wait does not read as a hang. An embedder opening one inside a busy
+/// runtime would want it on a blocking thread; the DataFusion provider never
+/// builds one, reading the index its complete cache holds.
 pub(crate) async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
     // The kind is settled before the probe, so an origin this cannot open is
     // refused without a round trip being spent on it. The match has a second
@@ -383,11 +383,13 @@ pub(crate) async fn open_local(origin: &Origin, known: KnownCompression) -> Resu
         }
     };
     match Verdict::of(origin.probe().await?.leading(), known) {
-        // The saving: a table from a previous walk of this file, validated
+        // The saving: an index from a previous build over this file, validated
         // against the file's length and its own internal consistency without
-        // reading a byte, and never walked for.
-        Verdict::XzKnown(table) => over_known_table(XzSource::with_table(path, table)),
-        Verdict::XzUnknown => Ok(Recognized::Source(Arc::new(XzSource::open(path)?))),
+        // reading a byte, and never rebuilt.
+        Verdict::Known(index) => over_known_index(CompressedFileSource::with_index(path, index)),
+        Verdict::Unknown(format) => {
+            Ok(Recognized::Source(Arc::new(CompressedFileSource::walked(path, format)?)))
+        }
         Verdict::Mismatch => Ok(Recognized::Mismatch),
         Verdict::Plain => Ok(Recognized::Source(Arc::new(LocalFileSource::open(path)?))),
     }
@@ -397,43 +399,44 @@ pub(crate) async fn open_local(origin: &Origin, known: KnownCompression) -> Resu
 /// layer: the verdict both openers act on, each building its own kind of
 /// source from it (`docs/design/decisions.md`, "D14", "D18").
 pub(super) enum Verdict {
-    /// `.xz`, with the seek table a previous walk produced: validated against
-    /// the source, never walked for.
-    XzKnown(SeekTable),
-    /// `.xz` with nothing known: the footer walk is paid.
-    XzUnknown,
+    /// Compressed, with the index a previous build produced: validated
+    /// against the source, never rebuilt.
+    Known(CompressionIndex),
+    /// Compressed in this format with nothing known: the index build is paid.
+    Unknown(Format),
     /// No compression layer, claimed or found.
     Plain,
-    /// Both directions of "the cache describes a different file": a
-    /// compression index for a source whose bytes are plain, and a plain
-    /// cache for one whose bytes are `.xz`.
+    /// Every way "the cache describes a different file": a compression index
+    /// for a source whose bytes are plain or another format's, and a plain
+    /// cache for one whose bytes are compressed.
     Mismatch,
 }
 
 impl Verdict {
-    /// Recognition by **content**, not by name: `leading` compared with
-    /// `.xz`'s magic, and `known` checked against it rather than believed.
+    /// Recognition by **content**, not by name: `leading` compared with each
+    /// format's magic, and `known` checked against it rather than believed.
     pub(super) fn of(leading: &[u8], known: KnownCompression) -> Self {
-        match (leading.starts_with(&XZ_MAGIC), known) {
-            (true, KnownCompression::Xz(table)) => Self::XzKnown(table),
-            (true, KnownCompression::Unknown) => Self::XzUnknown,
-            (true, KnownCompression::Plain) | (false, KnownCompression::Xz(_)) => Self::Mismatch,
-            (false, KnownCompression::Unknown | KnownCompression::Plain) => Self::Plain,
+        match (Format::recognize(leading), known) {
+            (Some(format), KnownCompression::Compressed(index)) if index.format() == format => {
+                Self::Known(index)
+            }
+            (Some(format), KnownCompression::Unknown) => Self::Unknown(format),
+            (Some(_), KnownCompression::Plain | KnownCompression::Compressed(_))
+            | (None, KnownCompression::Compressed(_)) => Self::Mismatch,
+            (None, KnownCompression::Unknown | KnownCompression::Plain) => Self::Plain,
         }
     }
 }
 
-/// A source built over a seek table its caller handed in: a table
-/// `xz_seek`'s validation refuses does not describe this source, which is
+/// A source built over an index its caller handed in: an index the codec's
+/// validation refuses does not describe this source, which is
 /// [`Recognized::Mismatch`] rather than an error.
-pub(super) fn over_known_table<S: ByteRangeSource + 'static>(
+pub(super) fn over_known_index<S: ByteRangeSource + 'static>(
     built: Result<S>,
 ) -> Result<Recognized> {
     match built {
         Ok(source) => Ok(Recognized::Source(Arc::new(source))),
-        Err(error) if matches!(error.xz_cause(), Some(xz_seek::Error::InvalidTable { .. })) => {
-            Ok(Recognized::Mismatch)
-        }
+        Err(error) if index_refused(&error) => Ok(Recognized::Mismatch),
         Err(e) => Err(e),
     }
 }

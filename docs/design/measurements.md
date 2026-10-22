@@ -1186,7 +1186,7 @@ from the same code; the shipped heap's own blocks reach no call stack
 ([`../status/deficiencies.md`](../status/deficiencies.md), `KD109`). What it
 reads off directly is the term the counter is structurally blind to: on a `.xz` scan the decoder's allocation
 arrives attributed through `lzma_lz_decoder_init` ← `lzma_raw_decoder` ←
-`PayloadDecoder::new` ← `BlockDecode::start_chunked` ← `XzSource::block`, at
+`PayloadDecoder::new` ← `BlockDecode::start_chunked` ← the compressed source's block decode, at
 **8,388,608 bytes for one decoder** of an 8 MiB-dictionary file — exactly the
 dictionary term `XZ_DECODE_FOOTPRINT` models, and confirmation of the model
 rather than a correction to it.
@@ -3361,7 +3361,7 @@ side by side and never subtracted.
   sixteen.** The `.xz` `parse` column does so at no row, its two-worker cell
   reading 0.97× its one-worker one, at a commit where a fused worker's tail
   read no longer decodes its successor's block a second time but waits on the
-  decode in flight (`crates/pgdt-io/src/source/xz/blocks.rs`,
+  decode in flight (`crates/pgdt-io/src/source/compressed/blocks.rs`,
   `BlockCache::claim`). What holds the column is not attributed. A replay
   sub-stream's last chunk reads past its limit into its successor's bytes too
   (`crates/pgdt-query/src/stream/replay.rs`, `replay`). Nothing explains why

@@ -136,7 +136,7 @@ than reading as a phase nobody has sliced.
   read-buffer budget affords holds more than that budget — 1,280 MiB against
   1,024 at `--jobs 24` and a 1 GiB budget on a 128 MiB-block file.
   **(c) unowned**; promoted by a phase reworking the block pool's sizing rule.
-  Detail: `crates/pgdt-io/src/source/xz/blocks.rs`.
+  Detail: `crates/pgdt-io/src/source/compressed/blocks.rs`.
 
 - **KD22** — the leader cuts a window of `workers` partitions or more from a
   `COPY` block's start and drains every piece before merging, so a dump of
@@ -159,7 +159,7 @@ than reading as a phase nobody has sliced.
   flat in the count and never above the stated budget unless one chunk is. **(c) unowned**;
   promoted by a caller announcing a large chunk, or by a phase reworking
   `WorkerMemory`, which has no count-independent term to bill it with. Detail:
-  `crates/pgdt-io/src/source/xz/blocks.rs`.
+  `crates/pgdt-io/src/source/compressed/blocks.rs`.
 
 - **KD25** — the plain source bills `PLAIN_PARTITION_CHUNKS` chunks a reader,
   capped at `POOL_MAX_BYTES`, where the path holds `POOL_DEPTH` chunks flat, and recommends no per-reader
@@ -174,7 +174,7 @@ than reading as a phase nobody has sliced.
   3.33 MiB on koji's download against 4.11 KiB on the fixtures the bound was
   read off. **(c) unowned**; promoted by a source whose index is not small
   beside `MEMORY_UNPOOLED_BOUND`, or by a phase reworking `WorkerMemory`, which
-  has no per-source term to bill it with. Detail: `crates/pgdt-io/src/source/xz/file.rs`.
+  has no per-source term to bill it with. Detail: `crates/pgdt-io/src/source/compressed/file.rs`.
 
 - **KD32** — `max_source_span` is solved against the read-buffer budget, which
   D83 leaves at `DEFAULT_MEMORY_BUDGET` (capped by the allowance less
@@ -212,7 +212,7 @@ than reading as a phase nobody has sliced.
   fetched arm's statelessness, which would have served several partitions for
   want of cut points alone, was spent to stop it re-decoding a block a scan sits
   inside. **(c) unowned**; promoted by a phase taking up compressed scan
-  throughput, which is also what takes the figure. Detail: `crates/pgdt-io/src/source/xz/blocks.rs`.
+  throughput, which is also what takes the figure. Detail: `crates/pgdt-io/src/source/compressed/blocks.rs`.
 
 - **KD36** — a fetched `.xz` file with no cached seek table is walked one
   request at a time, so a cold remote open costs at least four round trips per
@@ -220,7 +220,7 @@ than reading as a phase nobody has sliced.
   read. The remedy is a straddling window, below which one fetch a stream is a
   floor rather than a remaining cost. **(c) unowned**; promoted by a phase that
   tunes the network, which is where the deferred fetch policy belongs.
-  Detail: `crates/pgdt-io/src/source/xz.rs`.
+  Detail: `crates/pgdt-io/src/source/compressed/xz.rs`.
 
 - **KD37** — a cancelled read the leader dispatched inside the statistics
   back-fill propagates instead of banking: a source answering a cancellation by

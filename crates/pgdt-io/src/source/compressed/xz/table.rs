@@ -1,22 +1,21 @@
-//! An `.xz` file's seek table as this crate hands it out: what a source
-//! built over the file answers ([`ByteRangeSource::seek_table`]), what a
-//! caller hands back to skip the walk ([`KnownCompression::Xz`]), and what a
-//! cache persists between the two (`docs/design/decisions.md`, "D18").
-//!
-//! [`ByteRangeSource::seek_table`]: crate::ByteRangeSource::seek_table
-//! [`KnownCompression::Xz`]: crate::KnownCompression::Xz
+//! What the compression index names of `.xz`: its seek table as this crate
+//! hands it out, and the magic recognition compares — a leaf, so the index can
+//! name the layout without reaching the codec that builds it.
 
 use std::ops::Range;
 
+/// The six bytes every `.xz` stream opens with
+/// (`docs/design/decisions.md`, "D14").
+pub(crate) const XZ_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
+
 /// Where an `.xz` file's streams and blocks sit, as a walk of its stream
-/// footers found them.
+/// footers found them: [`CompressionIndex::Xz`]'s layout.
 ///
 /// **Opaque**: `xz_seek`, whose table this wraps, is a vendored, unpublished
 /// crate (`docs/design/decisions.md`, "D14"), so its type is not part of
 /// this crate's API. What an embedder reads is the file's shape, through the
 /// methods below; what it persists is the value whole, under the `serde`
-/// feature, which serializes exactly as `xz_seek`'s own table does, so a
-/// cache written before this type existed reads back unchanged.
+/// feature, which serializes exactly as `xz_seek`'s own table does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize), serde(transparent))]
 pub struct SeekTable(pub(crate) xz_seek::SeekTable);

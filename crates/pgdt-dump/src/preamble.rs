@@ -170,10 +170,10 @@ async fn preamble_only_watched(
     // (`crate::cache::SourceWatch`).
     watch.check(source).await?;
     // A loaded cache already carries this diagnostic, computed by
-    // `cache::store::status_from_file` off the persisted table — so this is
+    // `cache::store::status_from_file` off the persisted index — so this is
     // idempotent rather than gated on `!known`, which would add it twice to
     // a cache that exists but whose preamble was not yet complete.
-    if let Some(d) = non_seekable_compression_diagnostic(source.seek_table().as_ref())
+    if let Some(d) = non_seekable_compression_diagnostic(source.compression_index().as_ref())
         && !base_index.diagnostics.contains(&d)
     {
         base_index.diagnostics.push(d);

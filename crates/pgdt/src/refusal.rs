@@ -55,7 +55,7 @@ pub(crate) fn about_the_source(err: &pgdt_core::Error) -> bool {
         Lib::Io(_)
         | Lib::Join(_)
         | Lib::Arrow(_)
-        | Lib::Xz(_)
+        | Lib::Codec { .. }
         | Lib::CacheEncode(_)
         | Lib::UnterminatedCopyBlock { .. }
         | Lib::UnterminatedLargeObjectRegion { .. }
@@ -142,7 +142,7 @@ pub(crate) fn spelling(err: &pgdt_core::Error) -> Option<String> {
         | Lib::Arrow(_)
         | Lib::SourceNotReadable { .. }
         | Lib::Remote { .. }
-        | Lib::Xz(_)
+        | Lib::Codec { .. }
         | Lib::CacheEncode(_)
         | Lib::UnknownPredicateColumn { .. }
         | Lib::UnorderedPredicateColumn { .. }

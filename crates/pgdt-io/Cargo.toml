@@ -47,8 +47,8 @@ tracing = { workspace = true }
 # crate builds is the one its backend takes. What reads it is
 # `Origin::resolve`, which classifies a `--source` argument.
 url = { version = "2.5.8", optional = true }
-# `XzSource` constructs a seek table, walking the file's stream footers at
-# open time.
+# The `.xz` codec's crate, named by `source/compressed/xz.rs` alone, which
+# builds a seek table by walking the file's stream footers at open time.
 xz-seek = { workspace = true }
 
 [dev-dependencies]

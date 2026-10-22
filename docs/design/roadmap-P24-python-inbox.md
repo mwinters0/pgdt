@@ -70,8 +70,9 @@ graph and D106.
 
 ## An embedder tells one `.xz` failure from another only by naming `xz_seek`
 
-**Fact.** `pgdt_core::Error::Xz` carries `xz_seek`'s error boxed, and
-`Error::xz_cause::<E>()` downcasts it, so a caller distinguishing
+**Fact.** `pgdt_core::Error::Codec` carries `xz_seek`'s error boxed for an
+`.xz` failure, naming the codec, and `Error::codec_cause::<E>()` downcasts it,
+so a caller distinguishing
 `InvalidTable` from `BlockCheckFailed` depends on `xz-seek` and names its
 type. The seek table is opaque (`pgdt_io::SeekTable`); this path is
 unweighed, and no embedder in the workspace reads it.
@@ -82,7 +83,7 @@ reports every `.xz` failure as one class; the library offering the
 distinction in its own terms is the alternative, and a spec change.
 
 **Origin.** Filed 2026-10-19, wrapping the embedder API's reshape;
-contingent on `Error::xz_cause` (`crates/pgdt-core/src/error.rs`).
+contingent on `Error::codec_cause` (`crates/pgdt-core/src/error.rs`).
 
 ---
 

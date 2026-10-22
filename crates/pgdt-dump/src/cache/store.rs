@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 
 use super::file::{
-    CacheEnvelope, CacheFile, CacheFileRef, CacheStatus, CompressionIndex, CompressionShape,
-    ContainerKind, LoadedCache, read_cache_file, write_cache_file,
+    CacheEnvelope, CacheFile, CacheFileRef, CacheStatus, CompressionShape, ContainerKind,
+    LoadedCache, read_cache_file, write_cache_file,
 };
 use super::identity::{OriginMatch, SourceIdentity, WeakIdentity};
 use crate::map::derived_diagnostics;
@@ -63,8 +63,7 @@ pub(super) async fn against_source(
             live_stored_size,
         }));
     }
-    let cached_table = file.compression.as_ref().map(|CompressionIndex::Xz(table)| table);
-    if cached_table != source.seek_table().as_ref() {
+    if file.compression != source.compression_index() {
         return Ok(CacheStatus::Unusable(Unusable::CompressionContradicted));
     }
     let weak = file.identity.weak_against(&live);
@@ -93,7 +92,7 @@ pub(super) async fn settled_by(
         });
     }
     Ok(match &file.compression {
-        Some(CompressionIndex::Xz(table)) => KnownCompression::Xz(table.clone()),
+        Some(index) => KnownCompression::Compressed(index.clone()),
         None => KnownCompression::Plain,
     })
 }
@@ -137,9 +136,9 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
     let mut index = file.index;
     // `DumpIndex::diagnostics` is `#[serde(skip)]`, so a loaded index arrives
     // with none, and gets what every whole map carries from the persisted
-    // spans, size and seek table (`pgdt_model::diagnostic`, "Not persisted").
-    let table = file.compression.as_ref().map(|CompressionIndex::Xz(table)| table);
-    index.diagnostics = derived_diagnostics(&index.spans, total_size, table);
+    // spans, size and compression index (`pgdt_model::diagnostic`, "Not
+    // persisted").
+    index.diagnostics = derived_diagnostics(&index.spans, total_size, file.compression.as_ref());
     // Derived for the same reason the diagnostics above are: a projection of
     // what the envelope already holds.
     let compression = file.compression.as_ref().map(CompressionShape::of);
@@ -147,7 +146,7 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
         // Only a file whose header states this build's version is decoded.
         format_version: CACHE_FORMAT_VERSION,
         container_kind: file.container_kind,
-        seek_table: file.compression,
+        compression_index: file.compression,
         identity: file.identity,
         calendar_end: file.calendar_end,
     };
@@ -182,7 +181,7 @@ pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) 
     let total_size = source.size().await?;
     let file = CacheFileRef {
         container_kind: ContainerKind::Plain,
-        compression: source.seek_table().map(CompressionIndex::Xz),
+        compression: source.compression_index(),
         identity,
         total_size,
         calendar_end: calendar_end(),

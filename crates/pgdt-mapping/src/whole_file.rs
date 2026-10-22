@@ -50,7 +50,7 @@ pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) ->
     let mut spans = builder.finish(size);
     let metadata = Some(Arc::new(dump_metadata_from_spans(&spans)));
     attach_text(source, &mut spans).await?;
-    let diagnostics = derived_diagnostics(&spans, size, source.seek_table().as_ref());
+    let diagnostics = derived_diagnostics(&spans, size, source.compression_index().as_ref());
     Ok(DumpIndex { spans, scanned_through: size, metadata, roles, tablespaces, diagnostics })
 }
 
@@ -502,7 +502,11 @@ async fn map_file_watched(
 
     index.metadata = Some(Arc::new(dump_metadata_from_spans(&index.spans)));
     let mut diagnostics = carried;
-    diagnostics.extend(derived_diagnostics(&index.spans, size, source.seek_table().as_ref()));
+    diagnostics.extend(derived_diagnostics(
+        &index.spans,
+        size,
+        source.compression_index().as_ref(),
+    ));
     index.diagnostics = diagnostics;
     let backfill = backfill_statistics(
         source,

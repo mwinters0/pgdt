@@ -112,7 +112,7 @@ would report it: its inner fault line is exactly this constant.
 
 ## A source's own file index is unbilled and grows with the input, and that was decided rather than overlooked
 
-**Fact.** `XzSource` holds its seek table — one 80 B entry a stream, one 32 B a
+**Fact.** The local compressed source holds an `.xz` file's seek table — one 80 B entry a stream, one 32 B a
 block — shared with the `xz_seek::Reader` that built it, and no charge bills it:
 3.33 MiB held on koji's 31,150-stream download against 4.11 KiB on the
 3 GiB fixtures `MEMORY_UNPOOLED_BOUND` was read off. It is the only unbilled
@@ -177,24 +177,25 @@ the root `Cargo.toml`'s `[workspace.dependencies]` still naming a path dependenc
 
 ## A compressed source composes over any transport, and one value holds its budget policy
 
-**Fact.** `FetchedXzSource` holds an `Arc<dyn ByteRangeSource>` and delegates
+**Fact.** `FetchedCompressedSource` holds an `Arc<dyn ByteRangeSource>` and delegates
 every trait answer to it, so the whole compressed-over-fetched composition is
 exercised over a local file with no server and no feature enabled. The budget
-policy that both `.xz` sources answer from — apportionment, the charged chunk,
-the block path and its partitions, the block decode charge — is one value they
-hold (`io::XzBudget`), with the transport reaching it only as the decoder
+policy that both compressed sources answer from — apportionment, the charged
+chunk, the block path and its partitions, the block decode charge — is one value
+they hold (`io::DecodeBudget`), with the transport reaching it only as the decoder
 charge its constructor is handed and as the wait policy each source announces
 for itself; `hint_wait_policy` and `default_workers` stayed outside it, being
 the two answers the two sources genuinely differ on.
 
 **Why P18 cares.** This phase adds a *format*, not a transport, so the shape
-to copy is that one: a source per codec, each holding the budget value and
-composing over whatever byte source it is given, rather than a source per
+to copy is P15's: a codec implementing `source/compressed`'s `Codec` trait,
+which both arms — each holding the budget value and composing over whatever
+byte source it is given — are written once over, rather than a source per
 (codec, transport) pair. If the codec's reader cannot be driven from a caller's
 window the way `xz-seek`'s block handle is, that is the difference to find
 before the slices are written, since it is what decides whether the fetched arm
 exists at all.
 
 **Origin.** The remote-input work, 2026-09-20. *Contingent on* both `.xz`
-sources still sharing one budget value — see `crates/pgdt-io/src/source/xz/blocks.rs` and
+sources still sharing one budget value — see `crates/pgdt-io/src/source/compressed/blocks.rs` and
 ([`decisions.md`](decisions.md), "D15").

@@ -271,7 +271,7 @@ fn query_over_a_real_origin_streams_the_same_rows_a_local_query_streams() {
 // large. A fetched `.xz` opens by walking stream footers backward — a chain of
 // tiny ranged GETs whose every position is read out of the bytes of the one
 // before it, ending at the object's last twelve bytes, at least one per stream
-// (`crates/pgdt-io/src/source/xz.rs`, `walk_seek_table`). The oracle answers one
+// (`crates/pgdt-io/src/source/compressed/xz.rs`, `walk_seek_table`). The oracle answers one
 // request per connection and says `Connection: close` on every response
 // (`tests/common/oracle.rs`), so it has never seen those requests arrive down
 // a connection it is holding open, which is what a real origin does with them.
@@ -296,7 +296,7 @@ fn query_over_a_real_origin_streams_the_same_rows_a_local_query_streams() {
 /// passes.
 async fn xz_source_of(url: &str) -> Arc<dyn ByteRangeSource> {
     let source = source_of(url).await;
-    let Some(table) = source.seek_table() else {
+    let Some(pgdt_io::CompressionIndex::Xz(table)) = source.compression_index() else {
         panic!(
             "{XZ_URL_VAR} names {url}, whose bytes are not `.xz` — this half of the file reads a \
              compressed object, and the plain one is {URL_VAR}"
@@ -340,7 +340,9 @@ async fn the_footer_walk_over_a_real_origin_builds_the_index_the_object_declares
     let Some(url) = conformance_xz_url() else { return };
     let body = dump_bytes();
     let source = xz_source_of(&url).await;
-    let table = source.seek_table().expect("`xz_source_of` already required one");
+    let Some(pgdt_io::CompressionIndex::Xz(table)) = source.compression_index() else {
+        unreachable!("`xz_source_of` already required one")
+    };
 
     // The walk read no payload: every number below came out of footers,
     // indexes and headers fetched a few bytes at a time from a server we did
@@ -366,7 +368,9 @@ async fn a_ranged_read_of_the_compressed_object_answers_the_plaintext_at_the_off
     let Some(url) = conformance_xz_url() else { return };
     let body = dump_bytes();
     let source = xz_source_of(&url).await;
-    let table = source.seek_table().expect("`xz_source_of` already required one");
+    let Some(pgdt_io::CompressionIndex::Xz(table)) = source.compression_index() else {
+        unreachable!("`xz_source_of` already required one")
+    };
 
     // Every block's first and last plaintext byte, which is where a window
     // fetched one byte short or one byte long shows: the block's compressed

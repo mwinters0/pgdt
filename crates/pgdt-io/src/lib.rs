@@ -1,4 +1,4 @@
-//! The byte sources — local, `.xz`, fetched, remote — and memory and
+//! The byte sources — local, compressed, fetched, remote — and memory and
 //! parallelism (`docs/design/decisions.md`, "D68"). The `http` feature is
 //! this crate's.
 //!
@@ -21,9 +21,9 @@ pub use memory::{DEFAULT_MEMORY_BUDGET, MemoryLimit, available_memory, discover_
 pub use parallelism::{Parallelism, WorkerMemory};
 pub use partition::{PartitionBoundaries, PartitionRead, Partitioning, RetainedUnit};
 pub use source::{
-    ByteRangeSource, FetchedXzSource, KnownCompression, LocalFileSource, Origin, OriginProbe,
-    Recognized, RemoteIdentity, SCAN_CHUNK_DEFAULT_SIZE_BYTES, SeekTable, WaitPolicy, XzSource,
-    open,
+    ByteRangeSource, CompressedFileSource, CompressionIndex, FetchedCompressedSource,
+    KnownCompression, LocalFileSource, Origin, OriginProbe, Recognized, RemoteIdentity,
+    SCAN_CHUNK_DEFAULT_SIZE_BYTES, SeekTable, WaitPolicy, open,
 };
 #[cfg(feature = "http")]
 pub use source::{REMOTE_READ_TIMEOUT, RemoteSource};

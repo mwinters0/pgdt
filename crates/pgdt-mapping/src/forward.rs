@@ -510,7 +510,8 @@ pub async fn map_forward(
     index.tablespaces.extend(tablespaces);
     index.spans = spans;
     index.scanned_through = size;
-    index.diagnostics = derived_diagnostics(&index.spans, size, source.seek_table().as_ref());
+    index.diagnostics =
+        derived_diagnostics(&index.spans, size, source.compression_index().as_ref());
     cache.save(watch, source, index).await?;
     // The true end of the file, as opposed to the early
     // `Ok(MapStop::Reached)`s above: one for a map already there, three

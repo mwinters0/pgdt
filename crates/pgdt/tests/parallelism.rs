@@ -80,7 +80,7 @@ fn a_query_reads_the_same_rows_at_any_stated_parallelism() {
 }
 
 /// **The budget decides a compressed source's read path, and never its
-/// answer.** Below the file's block unit `XzSource` falls back to the
+/// answer.** Below the file's block unit `CompressedFileSource` falls back to the
 /// streaming decoder; above it the same read is a slice of a decoded block.
 /// Both must produce the plain file's rows byte for byte.
 #[test]

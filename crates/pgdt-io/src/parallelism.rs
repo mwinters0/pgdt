@@ -20,8 +20,8 @@ use crate::memory::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, margin_allowance};
 ///
 /// **The pool term is arithmetic from [`BufferPool`](crate::source::pool::BufferPool), not a safety margin.**
 /// [`BufferPool::slots`](crate::source::pool::BufferPool::slots) clamps a pool at `POOL_DEPTH.max(jobs)` and
-/// [`BlockCache::slot`](crate::source::xz::blocks::BlockCache::slot) drains the retention list to `slots − 1` *before*
-/// obtaining the buffer a landed claim ([`BlockCache::claim`](crate::source::xz::blocks::BlockCache::claim)) then pushes back onto it, so
+/// [`BlockCache::slot`](crate::source::compressed::blocks::BlockCache::slot) drains the retention list to `slots − 1` *before*
+/// obtaining the buffer a landed claim ([`BlockCache::claim`](crate::source::compressed::blocks::BlockCache::claim)) then pushes back onto it, so
 /// the pool holds `slots − 1` retained units beside the one unit each worker
 /// has in flight — unbounded in the block size, which is why
 /// [`MEMORY_RESERVE`] cannot absorb it.
@@ -37,7 +37,7 @@ use crate::memory::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, margin_allowance};
 /// candidate was a worker still holding its own block while its tail read
 /// decoded its successor's into a second slot, which a miss on a block in
 /// flight no longer does
-/// ([`BlockCache::claim`](crate::source::xz::blocks::BlockCache::claim)). Being the program's, it is on every
+/// ([`BlockCache::claim`](crate::source::compressed::blocks::BlockCache::claim)). Being the program's, it is on every
 /// allocator, and so far
 /// [`MEMORY_UNPOOLED_BOUND`](crate::internal::MEMORY_UNPOOLED_BOUND) has absorbed it. **(b) owned by P23**: closing it
 /// means a re-take, and billing the unit here if it stays.

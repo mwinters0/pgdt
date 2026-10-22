@@ -93,7 +93,7 @@ pub(crate) struct BufferPool {
     /// What this pool may hold in free buffers at once, in bytes: for a chunk
     /// pool [`DEFAULT_MEMORY_BUDGET`] until a caller states one through
     /// [`ByteRangeSource::hint_parallelism`](crate::ByteRangeSource::hint_parallelism), for a block pool what its
-    /// source's chunk pool leaves of that (`XzBudget::apportion`).
+    /// source's chunk pool leaves of that (`DecodeBudget::apportion`).
     ///
     /// **The pool is bounded in bytes because a block pool cannot be bounded
     /// in slots** ([`POOL_DEPTH`] slots of a decoded xz block can be the whole
@@ -104,17 +104,17 @@ pub(crate) struct BufferPool {
     /// it.** [`BufferPool::slots`] clamps to at least one, so a unit larger
     /// than the budget still gets a slot at that unit's size; what keeps that
     /// floor from making the budget a fiction is that a decoded xz block is
-    /// refused *before* a slot is asked for ([`BlockCache::affordable`](crate::source::xz::blocks::BlockCache::affordable)).
+    /// refused *before* a slot is asked for ([`BlockCache::affordable`](crate::source::compressed::blocks::BlockCache::affordable)).
     ///
     /// `Relaxed` for the same reason [`BufferPool::hinted`] is.
     budget: AtomicUsize,
     /// The ceiling on the free list in slots, whatever the budget affords:
     /// [`POOL_DEPTH`], which every chunk pool keeps whatever count is
-    /// announced, and which [`XzBudget::apportion`](crate::source::xz::blocks::XzBudget::apportion) raises on the block pool
+    /// announced, and which [`DecodeBudget::apportion`](crate::source::compressed::blocks::DecodeBudget::apportion) raises on the block pool
     /// alone to one slot per announced reader above it.
     depth: AtomicUsize,
     /// How many of [`BufferPool::slots`] are held by a holder outside the free
-    /// list — `0` for every pool but [`BlockCache`](crate::source::xz::blocks::BlockCache)'s, whose retained blocks
+    /// list — `0` for every pool but [`BlockCache`](crate::source::compressed::blocks::BlockCache)'s, whose retained blocks
     /// own slots of this pool's own unit ([`BufferPool::reserve`]).
     reserved: AtomicUsize,
     /// The read length a caller announced through
@@ -247,7 +247,7 @@ impl BufferPool {
     /// A caller pricing a *reader* and a pool sizing a *slot* want different
     /// answers to "nobody has said": the pool's own is [`POOL_MAX_BYTES`], and
     /// a charge divided into a memory allowance wants the chunk the scan is
-    /// about to announce ([`XzBudget::charged_chunk_bytes`](crate::source::xz::blocks::XzBudget::charged_chunk_bytes)).
+    /// about to announce ([`DecodeBudget::charged_chunk_bytes`](crate::source::compressed::blocks::DecodeBudget::charged_chunk_bytes)).
     pub(super) fn announced_bytes(&self) -> Option<usize> {
         match self.hinted.load(Ordering::Relaxed) {
             0 => None,
@@ -317,16 +317,16 @@ impl BufferPool {
     /// anything above a slot and [`BufferPool::reserve`] takes the retained
     /// blocks out of the free list's share — and only for one reader**: with
     /// several decoding at once the retention list outgrows its share by up to
-    /// their number ([`BlockCache::worker_memory`](crate::source::xz::blocks::BlockCache::worker_memory)). This is what a source with
+    /// their number ([`BlockCache::worker_memory`](crate::source::compressed::blocks::BlockCache::worker_memory)). This is what a source with
     /// **two** read units subtracts before handing the remainder to the second
     /// pool (`docs/design/decisions.md`, "D17").
     ///
     /// **It bounds the two lists and not a buffer a caller is still holding.**
     /// A [`PooledBuffer`] taken by [`BufferPool::obtain`] is on neither list
-    /// until it is released, and a [`BlockCache`](crate::source::xz::blocks::BlockCache) block evicted while a
+    /// until it is released, and a [`BlockCache`](crate::source::compressed::blocks::BlockCache) block evicted while a
     /// [`Bytes`](bytes::Bytes) still views it is on neither list at all — so what this
     /// answers is the pool's own retention, the quantity
-    /// [`XzBudget::apportion`](crate::source::xz::blocks::XzBudget::apportion) divides (`docs/design/decisions.md`, "D4").
+    /// [`DecodeBudget::apportion`](crate::source::compressed::blocks::DecodeBudget::apportion) divides (`docs/design/decisions.md`, "D4").
     pub(super) fn held_bytes(&self) -> usize {
         self.slots().saturating_mul(self.slot_bytes())
     }
@@ -347,7 +347,8 @@ impl BufferPool {
     /// — `pgdt_dump::attach_text`'s run read, which is bounded by the spans
     /// it is filling rather than by the hint — and this rule is exactly what
     /// drops that buffer instead of pooling it. The two-unit sources are the
-    /// `.xz` ones, [`XzSource`](crate::XzSource) and `FetchedXzSource`, whose `XzBudget` takes
+    /// compressed ones, [`CompressedFileSource`](crate::CompressedFileSource) and
+    /// [`FetchedCompressedSource`](crate::FetchedCompressedSource), whose `DecodeBudget` takes
     /// a second pool rather than a second hint
     /// (`docs/design/decisions.md`, "D17").
     fn keeps(&self, len: usize) -> bool {
@@ -356,7 +357,7 @@ impl BufferPool {
 
     /// State how many slots a holder outside the free list is accounting for.
     ///
-    /// The only one is [`BlockCache`](crate::source::xz::blocks::BlockCache)'s retained list, whose blocks hold
+    /// The only one is [`BlockCache`](crate::source::compressed::blocks::BlockCache)'s retained list, whose blocks hold
     /// [`PooledBuffer`]s of this pool's own slot size
     /// (`docs/design/decisions.md`, "D17").
     ///

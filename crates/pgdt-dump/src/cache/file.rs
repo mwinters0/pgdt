@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use super::identity::{OriginMatch, SourceIdentity, WeakIdentity};
 use pgdt_core::{Error, Result, Unusable};
+use pgdt_io::CompressionIndex;
 use pgdt_model::{CACHE_FORMAT_VERSION, DumpIndex, calendar_end};
 
 /// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
@@ -35,28 +36,11 @@ pub const CACHE_MAGIC: [u8; 8] = *b"pgdtcach";
 /// A compressed source's indexed offsets are *also* plain-format offsets —
 /// byte for byte what a plain scan of the same decompressed content
 /// produces — so a compressed source never sets this to anything but
-/// `Plain`; what changes is [`CompressionIndex`], a sibling field
+/// `Plain`; what changes is the [`CompressionIndex`] beside it
 /// (`docs/design/decisions.md`, "D21").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContainerKind {
     Plain,
-}
-
-/// What compression sits between this cache's plain-format offsets and the
-/// bytes on disk — `None` for a source that needs no such index
-/// (`docs/design/decisions.md`, "D21"). A sibling of
-/// [`ContainerKind`], not a value of it: see that type's docs.
-///
-/// Built when a cache is saved, from
-/// [`ByteRangeSource::seek_table`](pgdt_io::ByteRangeSource::seek_table), which
-/// [`pgdt_io::XzSource`] answers from the table it already built while opening,
-/// so persisting a cache never re-walks the file; read back before any source
-/// exists ([`CacheMode::open`](super::CacheMode::open)), which spares every
-/// later command that walk. A future gzip index is a different *shape* and gets its
-/// own sibling variant.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum CompressionIndex {
-    Xz(pgdt_io::SeekTable),
 }
 
 /// What a cache file holds after [`CACHE_MAGIC`] and its version.
@@ -65,6 +49,17 @@ pub enum CompressionIndex {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheFile {
     pub container_kind: ContainerKind,
+    /// What compression sits between this cache's plain-format offsets and
+    /// the bytes on disk — `None` for a source that needs no such index
+    /// (`docs/design/decisions.md`, "D21"). A sibling of [`ContainerKind`],
+    /// not a value of it: see that type's docs.
+    ///
+    /// Saved from
+    /// [`ByteRangeSource::compression_index`](pgdt_io::ByteRangeSource::compression_index),
+    /// which a compressed source answers from the index it already built
+    /// while opening, so persisting a cache never rebuilds it; read back
+    /// before any source exists ([`CacheMode::open`](super::CacheMode::open)),
+    /// which spares every later command that build.
     pub compression: Option<CompressionIndex>,
     pub identity: SourceIdentity,
     /// The addressable (decompressed, for a compressed source) length —
@@ -82,7 +77,8 @@ pub struct CacheFile {
 }
 
 /// The shape of the container a cache's offsets sit under, read off the
-/// persisted [`CompressionIndex`].
+/// persisted [`CompressionIndex`] — its codec's own terms, so a variant per
+/// codec.
 ///
 /// Three numbers, each answering a question the user is otherwise sent to
 /// `xz --list` for. `max_block_uncompressed` is the largest term of what a
@@ -128,9 +124,9 @@ impl CompressionShape {
 /// does (`docs/design/decisions.md`, "D67").
 ///
 /// **Opaque to Rust, whole to serde**: the fields stay private, so no caller
-/// matches on [`SourceIdentity`] or reads the seek table through this, and
-/// its `Serialize` is the persisted types' own, variant tags included. The
-/// seek table serializes as `seek_table`, the name `compression` being
+/// matches on [`SourceIdentity`] or reads the index through this, and its
+/// `Serialize` is the persisted types' own, variant tags included. The index
+/// serializes as `compression_index`, the name `compression` being
 /// [`CompressionShape`]'s wherever the two sit side by side. Moved out of the
 /// decoded file rather than copied, so carrying it costs nothing the load did
 /// not already hold.
@@ -138,7 +134,7 @@ impl CompressionShape {
 pub struct CacheEnvelope {
     pub(super) format_version: u32,
     pub(super) container_kind: ContainerKind,
-    pub(super) seek_table: Option<CompressionIndex>,
+    pub(super) compression_index: Option<CompressionIndex>,
     pub(super) identity: SourceIdentity,
     pub(super) calendar_end: i32,
 }
@@ -188,7 +184,7 @@ pub struct LoadedCache {
     /// it, and a cache-only caller has no live source to stat.
     pub total_size: u64,
     /// The container's shape where one sits under these offsets and `None` for
-    /// a plain file — read off the persisted seek table, so a cache-only
+    /// a plain file — read off the persisted index, so a cache-only
     /// caller answers it with no dump present ([`CompressionShape`]).
     pub compression: Option<CompressionShape>,
     /// The rest of what the file persists, for a caller exporting it

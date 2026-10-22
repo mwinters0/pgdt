@@ -47,7 +47,7 @@ fn the_pool_keeps_a_buffer_of_the_announced_read_length() {
 /// **The free list holds no more bytes than the pool reports.** Every
 /// buffer it keeps fits a slot and every slot is counted, so
 /// `held_bytes()` is an upper bound — the number that divides one stated
-/// budget between a source's two pools (`XzBudget::apportion`).
+/// budget between a source's two pools (`DecodeBudget::apportion`).
 ///
 /// The buffer it refuses is a whole plain partition against a pool whose
 /// slot is a chunk: a second read unit, which the plain path does not

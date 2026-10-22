@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use crate::test_support::*;
-
 use super::*;
 
 /// **Whole-block decode is declined unless the budget affords the one
@@ -12,8 +10,7 @@ use super::*;
 /// [`POOL_DEPTH`] units is the line.
 #[test]
 fn the_block_path_wants_room_for_one_block_and_the_retention_list() {
-    let table = four_block_table();
-    let cache = BlockCache::for_table(&table).expect("4 KiB blocks have a unit");
+    let cache = BlockCache::for_unit(4096).expect("4 KiB blocks have a unit");
     // The two terms a decline does not save, held at zero so that this
     // test is about the block slots alone; its last assertion and
     // `a_block_too_large_to_hold_refuses_the_block_path` are where they
@@ -47,8 +44,7 @@ fn the_block_path_wants_room_for_one_block_and_the_retention_list() {
 /// then a retention — with the most recent block held live.
 #[test]
 fn a_block_pool_holds_one_slot_count_across_both_lists() {
-    let table = four_block_table();
-    let cache = BlockCache::for_table(&table).expect("4 KiB blocks have a unit");
+    let cache = BlockCache::for_unit(4096).expect("4 KiB blocks have a unit");
     cache.pool.set_limits(cache.unit * 3, POOL_DEPTH);
     assert_eq!(cache.pool.slots(), 3);
 
@@ -81,7 +77,7 @@ fn decode(cache: &BlockCache, index: usize) -> Arc<DecodedBlock> {
 /// lands; once landed, the block is a retained hit.
 #[test]
 fn a_second_miss_on_a_block_in_flight_joins_its_decode() {
-    let cache = BlockCache::for_table(&four_block_table()).expect("4 KiB blocks have a unit");
+    let cache = BlockCache::for_unit(4096).expect("4 KiB blocks have a unit");
     let Claim::Decode(decoding) = cache.claim(1) else { panic!("the first miss decodes") };
     let Claim::Wait(flight) = cache.claim(1) else { panic!("the second miss waits") };
     assert!(
@@ -102,7 +98,7 @@ fn a_second_miss_on_a_block_in_flight_joins_its_decode() {
 /// a cancelled fetched read both drop their claim this way.
 #[test]
 fn a_dropped_decode_hands_its_block_to_the_next_claim() {
-    let cache = BlockCache::for_table(&four_block_table()).expect("4 KiB blocks have a unit");
+    let cache = BlockCache::for_unit(4096).expect("4 KiB blocks have a unit");
     let Claim::Decode(decoding) = cache.claim(0) else { panic!("the first miss decodes") };
     let Claim::Wait(flight) = cache.claim(0) else { panic!("the second miss waits") };
     drop(decoding);
@@ -117,7 +113,7 @@ fn a_dropped_decode_hands_its_block_to_the_next_claim() {
 #[test]
 fn concurrent_misses_on_one_block_decode_it_once() {
     const READERS: usize = 8;
-    let cache = BlockCache::for_table(&four_block_table()).expect("4 KiB blocks have a unit");
+    let cache = BlockCache::for_unit(4096).expect("4 KiB blocks have a unit");
     let decodes = std::sync::atomic::AtomicUsize::new(0);
     let start = std::sync::Barrier::new(READERS);
     let blocks: Vec<_> = std::thread::scope(|scope| {
@@ -155,7 +151,7 @@ fn concurrent_misses_on_one_block_decode_it_once() {
 /// parked, which is the fetched source's wait.
 #[tokio::test]
 async fn an_awaiting_miss_is_woken_by_the_landing() {
-    let cache = Arc::new(BlockCache::for_table(&four_block_table()).expect("a unit"));
+    let cache = Arc::new(BlockCache::for_unit(4096).expect("a unit"));
     let Claim::Decode(decoding) = cache.claim(2) else { panic!("the first miss decodes") };
     let Claim::Wait(flight) = cache.claim(2) else { panic!("the second miss waits") };
     let waiter = tokio::spawn(async move { flight.landed().await });
@@ -167,41 +163,19 @@ async fn an_awaiting_miss_is_woken_by_the_landing() {
 
 /// **A block the stated budget cannot hold is not decoded whole**, and the
 /// line is the budget rather than a constant beside it
-/// (`docs/design/decisions.md`, "D15"). Asserted against a synthetic
-/// table, that being the only way to have a block this size without
-/// writing one.
+/// (`docs/design/decisions.md`, "D15"). Asserted against a stated unit,
+/// that being the only way to have a block this size without writing one.
 #[test]
 fn a_block_too_large_to_hold_refuses_the_block_path() {
-    let block = |uncompressed_size| xz_seek::BlockEntry {
-        compressed_offset: 12,
-        uncompressed_offset: 0,
-        unpadded_size: 64,
-        uncompressed_size,
-    };
-    let table = |uncompressed_size| xz_seek::SeekTable {
-        compressed_file_size: 1 << 20,
-        streams: vec![xz_seek::StreamEntry {
-            compressed_offset: 0,
-            uncompressed_offset: 0,
-            compressed_size: 1 << 20,
-            uncompressed_size,
-            check: xz_seek::Check::Crc64,
-            first_block_dict_size: Some(8 << 20),
-            padding: 0,
-            first_block: 0,
-            block_count: 1,
-        }],
-        blocks: vec![block(uncompressed_size)],
-    };
     // A cache exists for any file with blocks; whether the block path is
     // *taken* is the budget's answer, asked again on every read. The
     // decoder's charge is stated here rather than read off a reader — a
-    // synthetic table has none — and stands for what
+    // stated unit has none — and stands for what
     // `xz_seek::Layout::decode_footprint` answers on an 8 MiB-dictionary
     // file.
     const DECODE: u64 = 9_471_776;
     let affordable = |unit: u64, budget: u64| {
-        let cache = BlockCache::for_table(&table(unit)).expect("a block to build a unit from");
+        let cache = BlockCache::for_unit(unit).expect("a block to build a unit from");
         cache.affordable(crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES as u64, DECODE, budget)
     };
     // **`POOL_DEPTH` units, not one.** A single reader is charged the
@@ -223,23 +197,19 @@ fn a_block_too_large_to_hold_refuses_the_block_path() {
     assert!(!affordable(24 << 20, 96 << 20));
     // A file with no blocks at all — `xz -c /dev/null` writes one — has no
     // unit to size a slot with, so there is no cache to ask.
-    let empty =
-        xz_seek::SeekTable { compressed_file_size: 32, streams: Vec::new(), blocks: Vec::new() };
-    assert!(BlockCache::for_table(&empty).is_none());
+    assert!(BlockCache::for_unit(0).is_none());
 }
 
 /// **A streaming-fallback source advises one partition even though its
-/// table has boundaries** (`docs/design/decisions.md`, "D15"). Asserted
-/// against a synthetic multi-block table, `xz_partition_advice` being a free
-/// function precisely so that the fallback arm can be handed a table that
+/// file has boundaries** (`docs/design/decisions.md`, "D15"). Asserted
+/// against four 4 KiB units' boundaries, `partition_advice` being a free
+/// function precisely so that the fallback arm can be handed a file that
 /// *does* have boundaries.
 #[test]
 fn a_streaming_fallback_source_advises_one_partition() {
-    let table = four_block_table();
-    assert!(table.is_seekable(), "the table has boundaries to advise");
-
-    let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
-    let decoding = xz_partition_advice(&table, Some(&cache), 1 << 20, 9 << 20, 0..4 * 4096);
+    let cuts = || vec![4096, 2 * 4096, 3 * 4096];
+    let cache = BlockCache::for_unit(4096).expect("4 KiB blocks decode whole");
+    let decoding = partition_advice(cuts, Some(&cache), 1 << 20, 9 << 20);
     assert_eq!(decoding.max_partitions(), Some(4));
     assert_eq!(decoding.retained_unit(), RetainedUnit::Partition);
     assert_eq!(
@@ -248,7 +218,7 @@ fn a_streaming_fallback_source_advises_one_partition() {
         "one block slot, the chunk buffer, and the decoder's own retention"
     );
 
-    let streaming = xz_partition_advice(&table, None, 1 << 20, 9 << 20, 0..4 * 4096);
+    let streaming = partition_advice(cuts, None, 1 << 20, 9 << 20);
     assert_eq!(streaming.max_partitions(), Some(1));
     assert_eq!(
         streaming.partition_bytes(),
@@ -263,13 +233,8 @@ fn a_streaming_fallback_source_advises_one_partition() {
     // **The read shape is stated apart from both of those**: a
     // block-decoding piece is read whole and copies nothing, while a
     // piecewise read is assembled into a chunk buffer whatever length is
-    // asked for. The unit the block arm states is the table's own largest
-    // block rather than the piece.
+    // asked for. The unit the block arm states is the file's own largest
+    // unit rather than the piece.
     assert_eq!(decoding.partition_read(), PartitionRead::Whole { unit: 4096 });
-    assert_eq!(
-        table.max_block_uncompressed(),
-        4096,
-        "the stated unit is the table's largest block, not the piece"
-    );
     assert_eq!(streaming.partition_read(), PartitionRead::Chunked);
 }

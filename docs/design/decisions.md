@@ -15,7 +15,7 @@ provider's `ScanBudget` where no allowance is stated. Rejected: `default_workers
 
 ### D2 A plain file recommends one worker; a local compressed one the machine's cores
 A serial plain `parse` is device-bound on every real device wherever a split reaches, a `COPY` block's interior, an `INSERT` run admitting none (`KD9`); `query`'s typed scan,
-which on the NVMe is not, is held flat by `KD57`'s merge; each partition's tail past itself adds device bytes. `XzSource` answers `available_parallelism()` capped at its block count
+which on the NVMe is not, is held flat by `KD57`'s merge; each partition's tail past itself adds device bytes. `CompressedFileSource` answers `available_parallelism()` capped at its unit count
 (`RT7`); a fetched one answers one, the errors being asymmetric. Rejected: a plain split once a typed one outran one worker on the NVMe (`parallel-scan-throughput`'s cold-NVMe column), the provider delivering it from `target_partitions`, never from this.
 Reopens: `KD57` closing, which asks the plain answer per kind of work (`D7`): `query`'s replay is extraction, `parse` and the mapping pass discovery, and one `default_workers()` per source cannot tell them apart. Evidence: `scan-throughput-*`, `parallel-scan-throughput`.
 
@@ -103,8 +103,8 @@ checkout.
 ### D15 A read decodes whole blocks and retains them; reading one in pieces is the fallback
 Whole-block decode, LRU-retained, afforded at one reader against the caller's number from file-wide inputs
 (`BlockCache::affordable`). Rejected: a fixed refusal line; keying on block count. A file whose largest
-block the budget cannot hold reads through one live `xz_seek::BlockRead` behind a mutex — one state machine
-both arms instantiate over their own `CompressedSource`, never one body branching on the provider — kept
+unit the budget cannot hold reads through one live handle behind a mutex — one state machine both arms,
+each written once over the `Codec` trait, run over their own `Positioned` read, never one body branching on the provider — kept
 across reads so a forward scan continues, advising one partition (`KD35`); the fetched arm's window is
 charged rather than booked unpooled. A miss on a block in flight waits on its decode (`BlockCache::claim`). Evidence: `reserve`.
 
@@ -115,8 +115,8 @@ released buffer meets a reservation and is discarded. A reuse rule, not progress
 
 ### D18 The seek table is persisted and identity is three-state
 A many-stream file costs a footer read per stream, so `CacheMode::save` records the table, `CacheMode::open` reads
-it before a source exists and `XzSource::with_table` walks nothing. `KnownCompression` is
-`Unknown`/`Plain`/`Xz`, checked against the file's magic; a contradiction is `Recognized::Mismatch`
+it before a source exists and `CompressedFileSource::with_index` walks nothing. `KnownCompression` is
+`Unknown`/`Plain`/`Compressed`, checked against the file's magic; a contradiction is `Recognized::Mismatch`
 and condemns the span index too, both having come from one save of one file.
 
 ### D19 A budget decline is a `PlanNote`; a non-seekable file is warned, not refused

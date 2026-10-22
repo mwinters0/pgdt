@@ -21,7 +21,9 @@ use common::{fixture, run, run_in, run_ok, run_ok_in, stderr_of, strip_cache_lin
 use pgdt_dump::ReadOptions;
 use pgdt_dump::cache::CacheMode;
 use pgdt_fixtures::arranged;
-use pgdt_io::{ByteRangeSource, KnownCompression, Origin, Parallelism, Recognized, open};
+use pgdt_io::{
+    ByteRangeSource, CompressionIndex, KnownCompression, Origin, Parallelism, Recognized, open,
+};
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::PostgresInvalidValues;
 use tokio_util::sync::CancellationToken;
@@ -178,7 +180,7 @@ async fn the_source_declines_every_advisory_answer_it_has_no_reading_for() {
     assert!(source.default_worker_memory().is_none(), "no per-worker recommendation");
     assert!(source.block_decode_bytes().is_none(), "there is no block path to price");
     assert_eq!(source.partitions(0..size).max_partitions(), Some(1), "one partition");
-    assert!(source.seek_table().is_none());
+    assert!(source.compression_index().is_none());
 }
 
 #[tokio::test]
@@ -809,7 +811,9 @@ async fn a_remote_xz_source_reads_the_plain_bytes_the_file_holds() {
     let source = source_of(&xz_url(&oracle)).await;
     let plain = dump_bytes();
 
-    let table = source.seek_table().expect("a fetched `.xz` source carries its table");
+    let Some(CompressionIndex::Xz(table)) = source.compression_index() else {
+        panic!("a fetched `.xz` source carries its table")
+    };
     assert_eq!(table.stream_count(), 2, "the fixture is two concatenated streams");
     assert!(table.block_count() > 2, "and several blocks: {table:?}");
     assert_eq!(source.size().await.unwrap(), plain.len() as u64, "the uncompressed length");
@@ -842,13 +846,15 @@ async fn a_fetched_piecewise_scan_inside_one_block_fetches_it_once() {
     // costs one ranged GET rather than one per read; both are dropped when the
     // scan leaves the block, and nothing is cached behind them, so a read
     // going back re-fetches (D21). That a block is decoded once as well as
-    // fetched once is counted in `source/xz/fetched.rs` under `introspect`, this oracle
+    // fetched once is counted in `source/compressed/fetched.rs` under `introspect`, this oracle
     // seeing only the request stream.
     let oracle = serving_xz_dump();
     let source = source_of(&xz_url(&oracle)).await;
     source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
     let plain = dump_bytes();
-    let table = source.seek_table().expect("a fetched `.xz` source carries its table");
+    let Some(CompressionIndex::Xz(table)) = source.compression_index() else {
+        panic!("a fetched `.xz` source carries its table")
+    };
     let blocks: Vec<_> = table.block_ranges().collect();
     let first = (blocks[0].end - blocks[0].start) as usize;
     let step = first / 8;
@@ -885,7 +891,7 @@ async fn every_fetch_a_footer_walk_makes_is_pinned_to_the_probes_version() {
     // knowing it exists (D10, D11).
     let oracle = serving_xz_dump();
     let source = source_of(&xz_url(&oracle)).await;
-    assert!(source.seek_table().is_some());
+    assert!(source.compression_index().is_some());
 
     let requests = oracle.requests();
     assert!(requests.len() > 2, "the walk fetched more than the probe: {requests:?}");
@@ -979,12 +985,15 @@ async fn open_remote_reports_a_compression_claim_the_object_contradicts() {
     let mut file = tempfile::NamedTempFile::new().unwrap();
     std::io::Write::write_all(&mut file, &xz_dump_bytes()).unwrap();
     std::io::Write::flush(&mut file).unwrap();
-    let table = pgdt_io::XzSource::open(file.path()).unwrap().seek_table().unwrap();
+    let index = pgdt_io::CompressedFileSource::open(file.path()).unwrap().compression_index();
 
     let plain = serving_dump();
     let origin = Origin::resolve(&plain.url()).unwrap();
     assert!(
-        matches!(open(&origin, KnownCompression::Xz(table)).await.unwrap(), Recognized::Mismatch),
+        matches!(
+            open(&origin, KnownCompression::Compressed(index.unwrap())).await.unwrap(),
+            Recognized::Mismatch
+        ),
         "a compression index over plain bytes",
     );
 }

@@ -133,9 +133,9 @@ fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
 
 /// **What a whole-file map carries that nothing persists**
 /// (`pgdt_model::DumpIndex::diagnostics` is `#[serde(skip)]`): the tiling
-/// check's failure, the TOC-coverage figure and an unseekable `.xz` source's
-/// warning, each a pure function of the spans, the file's addressable `size`
-/// and the source's seek `table`. **The one place they are computed**, for
+/// check's failure, the TOC-coverage figure and an unseekable compressed
+/// source's warning, each a pure function of the spans, the file's
+/// addressable `size` and the source's compression `index`. **The one place they are computed**, for
 /// every site a whole map is finished or loaded — `pgdt_mapping::build_index`,
 /// `pgdt_mapping::map_file`, `pgdt_mapping::map_forward` at EOF and
 /// `crate::cache::store::status_from_file` — so no site carries a subset of
@@ -143,24 +143,24 @@ fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
 pub fn derived_diagnostics(
     spans: &[Span],
     size: u64,
-    table: Option<&pgdt_io::SeekTable>,
+    index: Option<&pgdt_io::CompressionIndex>,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = tiling_diagnostics(spans, size);
     diagnostics.push(toc_coverage_diagnostic(spans));
-    diagnostics.extend(non_seekable_compression_diagnostic(table));
+    diagnostics.extend(non_seekable_compression_diagnostic(index));
     diagnostics
 }
 
-/// D19's warning for a `.xz` source with no usable seek structure — `None` when
-/// there is no compression layer at all (`table` is `None`) or the table
-/// already has more than one block. A whole map's is [`derived_diagnostics`]'s;
+/// D19's warning for a compressed source with no usable seek structure —
+/// `None` when there is no compression layer at all (`index` is `None`) or the
+/// index already has more than one unit. A whole map's is [`derived_diagnostics`]'s;
 /// a preamble's alone is [`preamble_only`](crate::preamble::preamble_only)'s.
 pub fn non_seekable_compression_diagnostic(
-    table: Option<&pgdt_io::SeekTable>,
+    index: Option<&pgdt_io::CompressionIndex>,
 ) -> Option<Diagnostic> {
-    let table = table?;
-    if table.is_seekable() {
+    let index = index?;
+    if index.is_seekable() {
         return None;
     }
-    Some(Diagnostic::non_seekable_compressed_source(table.block_count()))
+    Some(Diagnostic::non_seekable_compressed_source(index.unit_count()))
 }

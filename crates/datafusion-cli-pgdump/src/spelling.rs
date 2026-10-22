@@ -122,7 +122,7 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
         | Lib::Arrow(_)
         | Lib::SourceNotReadable { .. }
         | Lib::Remote { .. }
-        | Lib::Xz(_)
+        | Lib::Codec { .. }
         | Lib::CacheEncode(_)
         | Lib::UnknownPredicateColumn { .. }
         | Lib::UnorderedPredicateColumn { .. }

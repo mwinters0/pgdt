@@ -63,14 +63,18 @@ pub enum Error {
     /// underlying failure rather than the backend's wording alone.
     #[error("{url}: {message}")]
     Remote { url: String, message: String },
-    /// From `xz_seek`: a walk, a seek, or a block decode failed against an
-    /// `.xz`-compressed [`pgdt_io::XzSource`]
+    /// From a codec's crate: an index build, a seek, or a unit decode failed
+    /// against a compressed source — for `.xz`, `xz_seek`
     /// (`docs/design/decisions.md`, "The compressed source and the cache").
-    /// The crate's own `Error::compressed_offset`/`uncompressed_range` carry
-    /// the position; this variant only wraps and displays it, the cause
-    /// being an `xz_seek::Error` ([`Error::xz`]).
-    #[error("xz error: {0}")]
-    Xz(#[source] Cause),
+    /// The codec's own error carries the position; this variant names the
+    /// codec and wraps and displays the cause ([`Error::codec`]).
+    #[error("{codec} error: {cause}")]
+    Codec {
+        /// The codec's name, as a message says it: `xz`.
+        codec: &'static str,
+        #[source]
+        cause: Cause,
+    },
     /// The cache did not encode; the cause is bincode's `EncodeError`
     /// ([`Error::cache_encode`]).
     #[error("failed to encode structure cache: {0}")]
@@ -408,9 +412,13 @@ impl Error {
         Error::Arrow(Box::new(cause))
     }
 
-    /// [`Error::Xz`] carrying `cause`, an `xz_seek::Error`.
-    pub fn xz(cause: impl std::error::Error + Send + Sync + 'static) -> Self {
-        Error::Xz(Box::new(cause))
+    /// [`Error::Codec`] naming `codec` and carrying `cause`, its crate's
+    /// error.
+    pub fn codec(
+        codec: &'static str,
+        cause: impl std::error::Error + Send + Sync + 'static,
+    ) -> Self {
+        Error::Codec { codec, cause: Box::new(cause) }
     }
 
     /// [`Error::CacheEncode`] carrying `cause`, bincode's `EncodeError`.
@@ -423,11 +431,12 @@ impl Error {
         Error::Join(Box::new(cause))
     }
 
-    /// The cause an [`Error::Xz`] carries, as the type it is — what a caller
-    /// telling one `xz_seek` failure from another matches on.
-    pub fn xz_cause<E: std::error::Error + 'static>(&self) -> Option<&E> {
+    /// The cause an [`Error::Codec`] carries, as the type it is — what a
+    /// caller telling one codec failure from another matches on, an
+    /// `xz_seek::Error` for `.xz`.
+    pub fn codec_cause<E: std::error::Error + 'static>(&self) -> Option<&E> {
         match self {
-            Error::Xz(cause) => cause.downcast_ref(),
+            Error::Codec { cause, .. } => cause.downcast_ref(),
             _ => None,
         }
     }
@@ -460,7 +469,7 @@ pub enum Unusable {
     /// carried: they are the evidence a refusal states.
     SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
     /// A cache whose compression layer is not the live source's — one says
-    /// `.xz` and the other not, or the two seek tables differ — at the same
+    /// compressed and the other not, or the two indexes differ — at the same
     /// stored size, so it was written for another file
     /// (`docs/design/decisions.md`, "D18"). Recognition reaches it first
     /// (`pgdt_io::Recognized::Mismatch`) wherever the cache's claim was handed

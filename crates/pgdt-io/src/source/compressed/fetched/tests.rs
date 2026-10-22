@@ -9,8 +9,8 @@ use bytes::Bytes;
 
 use pgdt_core::{Error, Result};
 
+use crate::source::compressed::walk_seek_table;
 use crate::source::origin::ORIGIN_LEADING_BYTES;
-use crate::source::xz::walk_seek_table;
 use crate::test_support::*;
 use crate::*;
 
@@ -28,8 +28,8 @@ async fn the_two_piecewise_arms_and_the_block_arm_read_one_file_alike() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
 
-    let whole = XzSource::open(compressed.path()).unwrap();
-    let pieces = XzSource::open(compressed.path()).unwrap();
+    let whole = CompressedFileSource::open(compressed.path()).unwrap();
+    let pieces = CompressedFileSource::open(compressed.path()).unwrap();
     pieces.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
     assert!(whole.budget.block_path().is_some() && pieces.budget.block_path().is_none());
     let (fetched, _) = fetched_xz(compressed.path()).await;
@@ -52,7 +52,7 @@ async fn the_two_piecewise_arms_and_the_block_arm_read_one_file_alike() {
 /// — and so every byte it decodes to — as it was. The check is the last
 /// field of a block's padded extent, so that byte is always the check's.
 fn corrupt_check(path: &Path, index: usize) {
-    let table = XzSource::open(path).unwrap().seek_table().unwrap();
+    let table = seek_table_of(&CompressedFileSource::open(path).unwrap());
     let block = &table.0.blocks[index];
     let at = usize::try_from(block.compressed_offset + block.total_size() - 1).unwrap();
     let mut bytes = std::fs::read(path).unwrap();
@@ -62,7 +62,7 @@ fn corrupt_check(path: &Path, index: usize) {
 
 /// Whether `result` is a block failing its own check.
 fn check_failed<T: std::fmt::Debug>(result: Result<T>) -> bool {
-    matches!(&result, Err(error) if matches!(error.xz_cause(), Some(xz_seek::Error::BlockCheckFailed { .. })))
+    matches!(&result, Err(error) if matches!(error.codec_cause(), Some(xz_seek::Error::BlockCheckFailed { .. })))
 }
 
 /// **A block a read stopped inside owes its check until the run ends.**
@@ -76,7 +76,7 @@ async fn a_block_a_read_stopped_inside_is_compared_when_reads_complete() {
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     corrupt_check(compressed.path(), 1);
 
-    let local = XzSource::open(compressed.path()).unwrap();
+    let local = CompressedFileSource::open(compressed.path()).unwrap();
     local.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
     let (fetched, _) = fetched_xz(compressed.path()).await;
     fetched.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
@@ -119,7 +119,7 @@ async fn a_block_left_behind_by_a_raised_budget_is_still_compared() {
     assert!(fetched.budget.block_path().is_some());
     assert!(check_failed(fetched.read_range(0, 100).await));
 
-    let local = XzSource::open(compressed.path()).unwrap();
+    let local = CompressedFileSource::open(compressed.path()).unwrap();
     local.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
     local.read_range(4096, 100).await.unwrap();
     local.hint_parallelism(Parallelism::default());
@@ -132,7 +132,7 @@ async fn a_block_left_behind_by_a_raised_budget_is_still_compared() {
 // fetched (`docs/design/decisions.md`, "D14", "D15" and "D18").
 //
 // The transport here is a local file, which is exactly the point: the
-// window-fed path and its local twin, `XzSource`, then read one file, so
+// window-fed path and its local twin, `CompressedFileSource`, then read one file, so
 // putting a file through it is what makes a divergence surface as a disagreement between
 // two read paths over one byte stream rather than between two sources.
 // -----------------------------------------------------------------------
@@ -165,12 +165,16 @@ impl ByteRangeSource for Counting {
 /// A fetched source over the compressed file at `path`, walked the way
 /// `open_remote` walks one: the probe's leading bytes first, then whatever
 /// the machine asks for.
-async fn fetched_xz(path: &Path) -> (FetchedXzSource, usize) {
+async fn fetched_xz(path: &Path) -> (FetchedCompressedSource, usize) {
     let transport: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(path).unwrap());
     let stored_size = transport.size().await.unwrap();
     let leading = transport.read_range(0, ORIGIN_LEADING_BYTES).await.unwrap();
     let (table, fetches) = walk_seek_table(&*transport, stored_size, &leading).await.unwrap();
-    (FetchedXzSource::with_table(transport, stored_size, SeekTable(table)).unwrap(), fetches)
+    (
+        FetchedCompressedSource::with_index(transport, stored_size, CompressionIndex::Xz(table))
+            .unwrap(),
+        fetches,
+    )
 }
 
 /// The composition, end to end: a table built by driving the walk over a
@@ -187,7 +191,7 @@ async fn a_fetched_xz_source_reads_what_the_file_holds() {
         source.stored_size().await.unwrap(),
         std::fs::metadata(compressed.path()).unwrap().len()
     );
-    assert!(source.seek_table().unwrap().block_count() > 1, "the fixture must be split");
+    assert!(seek_table_of(&source).block_count() > 1, "the fixture must be split");
     // Inside one block, straddling two, and the whole stream.
     assert_eq!(&source.read_range(100, 200).await.unwrap()[..], &payload[100..300]);
     assert_eq!(&source.read_range(4_000, 4_000).await.unwrap()[..], &payload[4_000..8_000]);
@@ -202,8 +206,8 @@ async fn a_walked_table_is_the_one_the_local_walk_produces() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let (source, _) = fetched_xz(compressed.path()).await;
-    let local = XzSource::open(compressed.path()).unwrap().seek_table().unwrap();
-    assert_eq!(source.seek_table().as_ref(), Some(&local));
+    let local = seek_table_of(&CompressedFileSource::open(compressed.path()).unwrap());
+    assert_eq!(seek_table_of(&source), local);
 }
 
 /// **The probe's bytes are the walk's first request**, so a caller holding
@@ -230,7 +234,7 @@ async fn the_walk_spends_no_fetch_on_leading_bytes_the_caller_holds() {
 }
 
 /// The piecewise arm: a budget too small to hold a decoded block reads the
-/// same bytes out of the same windows, through `xz_seek::BlockRead` rather
+/// same bytes out of the same windows, through a live handle rather
 /// than into a pooled slot (D15), each read asserted against the plaintext
 /// the file was compressed from.
 #[tokio::test]
@@ -261,7 +265,7 @@ async fn a_fetched_piecewise_scan_inside_one_block_decodes_it_once() {
     let (source, _) = fetched_xz(compressed.path()).await;
     source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
     assert!(source.budget.block_path().is_none(), "the piecewise arm, not the block cache");
-    let table = source.seek_table().unwrap();
+    let table = seek_table_of(&source);
     let first = table.0.blocks[0].uncompressed_size as usize;
     let step = first / 8;
     assert!(step > 0, "the fixture's blocks hold several reads apiece: {first} byte(s)");
@@ -306,13 +310,15 @@ async fn a_table_from_another_file_is_an_invalid_table_rather_than_a_read() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let other = xz_compress(&payload[..1000], &["--block-size=512"]);
-    let table = XzSource::open(other.path()).unwrap().seek_table().unwrap();
+    let table = seek_table_of(&CompressedFileSource::open(other.path()).unwrap());
 
     let transport: Arc<dyn ByteRangeSource> =
         Arc::new(LocalFileSource::open(compressed.path()).unwrap());
     let stored_size = transport.size().await.unwrap();
-    let err = FetchedXzSource::with_table(transport, stored_size, table).unwrap_err();
-    assert!(matches!(err.xz_cause(), Some(xz_seek::Error::InvalidTable { .. })), "{err:?}");
+    let err =
+        FetchedCompressedSource::with_index(transport, stored_size, CompressionIndex::Xz(table))
+            .unwrap_err();
+    assert!(matches!(err.codec_cause(), Some(xz_seek::Error::InvalidTable { .. })), "{err:?}");
 }
 
 /// The single-block shape reads correctly too — there is no seek structure
@@ -323,7 +329,7 @@ async fn a_single_block_file_is_read_by_the_same_two_arms() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &[]);
     let (source, _) = fetched_xz(compressed.path()).await;
-    assert!(!source.seek_table().unwrap().is_seekable());
+    assert!(!seek_table_of(&source).is_seekable());
     assert_eq!(&source.read_range(1_000, 500).await.unwrap()[..], &payload[1_000..1_500]);
     source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
     assert_eq!(&source.read_range(1_000, 500).await.unwrap()[..], &payload[1_000..1_500]);
@@ -343,7 +349,7 @@ async fn a_fetched_source_never_takes_the_wait_a_loop_grants() {
     fetched.hint_wait_policy(WaitPolicy::MayWait);
     assert_eq!(fetched.budget.pool.policy(), WaitPolicy::NeverWait);
 
-    let local = XzSource::open(compressed.path()).unwrap();
+    let local = CompressedFileSource::open(compressed.path()).unwrap();
     local.hint_wait_policy(WaitPolicy::MayWait);
     assert_eq!(local.budget.pool.policy(), WaitPolicy::MayWait);
 }
@@ -359,11 +365,11 @@ async fn the_compressed_window_is_inside_the_charge() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let (source, _) = fetched_xz(compressed.path()).await;
-    let table = source.seek_table().unwrap();
+    let table = seek_table_of(&source);
     let widest = table.0.blocks.iter().map(|b| b.total_size()).max().unwrap();
     assert!(widest > 0);
 
-    let local = XzSource::open(compressed.path()).unwrap();
+    let local = CompressedFileSource::open(compressed.path()).unwrap();
     let fetched_charge = source.block_decode_bytes().unwrap();
     let local_charge = local.block_decode_bytes().unwrap();
     // The local source's decoder charge carries an input chunk this one

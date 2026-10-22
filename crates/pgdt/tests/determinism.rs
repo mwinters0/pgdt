@@ -37,10 +37,19 @@
 //! parallel is [`a_region_past_the_shipped_chunk_size_writes_the_serial_cache`],
 //! whose dump is generated large enough to clear that floor with no chunk size
 //! stated at all.
+//!
+//! **A compressed source is where `--jobs` changes which decode work happens**
+//! — whole units by several readers, or one forward decode — so it is where a
+//! determinism defect would live, and
+//! [`an_xz_dump_writes_the_serial_cache_at_every_stated_parallelism`] runs the
+//! same comparison over `.xz` input.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
-use pgdt_io::{ByteRangeSource, LocalFileSource, SCAN_CHUNK_DEFAULT_SIZE_BYTES};
+use pgdt_io::{
+    ByteRangeSource, CompressedFileSource, LocalFileSource, SCAN_CHUNK_DEFAULT_SIZE_BYTES,
+};
 
 mod common;
 use common::{all_fixtures, refused_field, run, stderr_of};
@@ -269,4 +278,71 @@ fn a_region_past_the_shipped_chunk_size_writes_the_serial_cache() {
         let got = cache_of(&dump, &dir.path().join(format!("leg{l}.dtcache")), leg);
         assert_same_cache(&got, &reference, &dump, leg);
     }
+}
+
+/// `dump` compressed by `xz` with `args` beside it, as `<name>.xz`. `xz` is
+/// not `mise`-pinned, so a missing binary fails with the remedy rather than
+/// the test skipping (`docs/design/roadmap.md`, "A test may assume the tools
+/// `mise` pins").
+fn xz_beside(dump: &Path, args: &[&str]) -> PathBuf {
+    let out = Command::new("xz")
+        .args(args)
+        .arg("-c")
+        .arg(dump)
+        .output()
+        .expect("`xz` is not runnable, so this test cannot build its fixture; install it.");
+    assert!(out.status.success(), "xz failed: {}", String::from_utf8_lossy(&out.stderr));
+    let path = dump.with_extension("sql.xz");
+    std::fs::write(&path, &out.stdout).unwrap();
+    path
+}
+
+/// **A compressed dump writes one cache at every stated parallelism**, byte
+/// for byte: the serial reference decodes forward, the parallel legs decode
+/// whole blocks on several readers and cut at their boundaries, and the
+/// budget-starved leg reads every block in pieces through one live decode —
+/// three ways of reaching the plaintext, one cache. The gathering legs
+/// check the statistics a cut joins across a block boundary.
+///
+/// The cut is asserted rather than assumed: the file must hold more blocks
+/// than any leg's workers and clear the leader's floor at the source's own
+/// partition, or every leg would be the serial path compared to itself.
+#[test]
+fn an_xz_dump_writes_the_serial_cache_at_every_stated_parallelism() {
+    let dir = tempfile::tempdir().unwrap();
+    let partition = plain_partition_bytes(dir.path());
+    let (dump, data_offset) = dump_past_the_chunk_size(dir.path(), partition);
+    let xz = xz_beside(&dump, &["-0", "--block-size=1MiB"]);
+
+    let source = CompressedFileSource::open(&xz).unwrap();
+    let index = source.compression_index().expect("an `.xz` source has an index");
+    source.hint_read_size(SCAN_CHUNK_DEFAULT_SIZE_BYTES);
+    let advice = source.partitions(0..index.uncompressed_size());
+    assert!(index.unit_count() > 8, "{} blocks", index.unit_count());
+    assert!(
+        index.uncompressed_size() - data_offset >= 2 * advice.partition_bytes(),
+        "the generated dump no longer clears the leader's floor on `.xz`: {} data bytes \
+         against a {}-byte partition",
+        index.uncompressed_size() - data_offset,
+        advice.partition_bytes(),
+    );
+
+    let reference = cache_of(&xz, &dir.path().join("xz-serial.dtcache"), &["--jobs", "1"]);
+    let legs: [&[&str]; 4] = [
+        // The recommendation: the cores, capped at the block count.
+        &[],
+        &["--jobs", "4"],
+        &["--jobs", "8"],
+        // A budget below one block: the piecewise arm, one partition.
+        &["--jobs", "8", "--memory", "1048576"],
+    ];
+    for (l, leg) in legs.iter().enumerate() {
+        let got = cache_of(&xz, &dir.path().join(format!("xz-{l}.dtcache")), leg);
+        assert_same_cache(&got, &reference, &xz, leg);
+    }
+
+    let reference =
+        gathered_cache_of(&xz, &dir.path().join("xz-gathered.dtcache"), &["--jobs", "1"]);
+    let got = gathered_cache_of(&xz, &dir.path().join("xz-gathered-8.dtcache"), &["--jobs", "8"]);
+    assert_same_cache(&got, &reference, &xz, &["--jobs", "8"]);
 }

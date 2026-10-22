@@ -1,7 +1,7 @@
 //! The byte-range read every source implements, the vocabulary a reader and
 //! a source exchange through it — identity and wait policy — the read size a
 //! caller scales from, and beneath it the sources themselves: the plain file,
-//! the `.xz` file pulled or fetched, the remote object, the origin a
+//! the compressed file pulled or fetched, the remote object, the origin a
 //! `--source` argument resolves to, and the buffer pool every source but the
 //! remote one reads into.
 
@@ -18,6 +18,7 @@ use pgdt_core::Result;
 use crate::parallelism::{Parallelism, WorkerMemory};
 use crate::partition::Partitioning;
 
+pub(crate) mod compressed;
 pub(crate) mod local;
 mod origin;
 pub(crate) mod pool;
@@ -25,13 +26,14 @@ pub(crate) mod pool;
 mod remote;
 #[cfg(test)]
 mod tests;
-pub(crate) mod xz;
 
+pub use self::compressed::{
+    CompressedFileSource, CompressionIndex, FetchedCompressedSource, SeekTable,
+};
 pub use self::local::LocalFileSource;
 pub use self::origin::{KnownCompression, Origin, OriginProbe, Recognized, open};
 #[cfg(feature = "http")]
 pub use self::remote::{REMOTE_READ_TIMEOUT, RemoteSource};
-pub use self::xz::{FetchedXzSource, SeekTable, XzSource};
 
 /// Minimal async byte-range read abstraction.
 ///
@@ -57,7 +59,7 @@ pub trait ByteRangeSource: Send + Sync {
     /// it and reads a short supply as the file being shorter than the size it
     /// was constructed with, so a source answering a prefix would make a
     /// truncated file and a truncated *read* the same event (the footer walk
-    /// over a fetched `.xz`, `source/xz.rs`'s `walk_seek_table`).
+    /// over a fetched `.xz`, `source/compressed/xz.rs`'s `walk_seek_table`).
     fn read_range(
         &self,
         offset: u64,
@@ -100,19 +102,20 @@ pub trait ByteRangeSource: Send + Sync {
     /// chunk read from `map::attach_text`'s one coalesced span read. See
     /// `docs/design/decisions.md`, "D9".
     fn hint_read_size(&self, _len: usize) {}
-    /// The xz seek table behind this source, for a caller building a cache
-    /// envelope to persist alongside it (`pgdt_dump::internal::CompressionIndex`
-    /// wraps this at save time). See `docs/design/decisions.md`, "D18".
+    /// The compression index behind this source, for a caller building a
+    /// cache envelope to persist alongside it. See
+    /// `docs/design/decisions.md`, "D18".
     ///
     /// `None` by default, right for a source with no compression layer. Both
-    /// compressed sources answer `Some`, and the table is either the one
-    /// walked for at open ([`XzSource::open`](crate::XzSource::open), [`open`](crate::open) over a URL) or the one
-    /// handed in from a cache ([`XzSource::with_table`](crate::XzSource::with_table),
-    /// [`FetchedXzSource::with_table`](crate::FetchedXzSource::with_table)), which walks nothing at all —
-    /// that saving being the point (`docs/design/decisions.md`, "D18").
-    /// A cloned value rather than a borrow: a caller
-    /// building a `CacheFile` needs to own it across an `await`.
-    fn seek_table(&self) -> Option<SeekTable> {
+    /// compressed sources answer `Some`, and the index is either the one built
+    /// at open ([`CompressedFileSource::open`](crate::CompressedFileSource::open),
+    /// [`open`](crate::open) over a URL) or the one handed in from a cache
+    /// ([`CompressedFileSource::with_index`](crate::CompressedFileSource::with_index),
+    /// [`FetchedCompressedSource::with_index`](crate::FetchedCompressedSource::with_index)),
+    /// which builds nothing at all — that saving being the point. A cloned
+    /// value rather than a borrow: a caller building a `CacheFile` needs to
+    /// own it across an `await`.
+    fn compression_index(&self) -> Option<CompressionIndex> {
         None
     }
     /// How this source would like `range` split across concurrent readers,
@@ -135,7 +138,7 @@ pub trait ByteRangeSource: Send + Sync {
     /// that path to be taken at all, whether or not it was.
     ///
     /// One reader's charge *plus the retention list it leaves behind*, which
-    /// is the line [`BlockCache::affordable`](crate::source::xz::blocks::BlockCache::affordable) draws: a pool serving one reader
+    /// is the line [`BlockCache::affordable`](crate::source::compressed::blocks::BlockCache::affordable) draws: a pool serving one reader
     /// still holds [`POOL_DEPTH`](crate::source::pool::POOL_DEPTH) slots. `None` for a source with no such path
     /// to take, which is every source but a compressed one.
     ///
@@ -157,8 +160,8 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// **It is a raw count, not a budgeted one**: what the byte budget affords
     /// is `worker_count`'s question, asked of every count
-    /// alike. [`LocalFileSource`](crate::LocalFileSource) inherits the default; [`XzSource`](crate::XzSource) overrides
-    /// it. See `docs/design/decisions.md`, "D1" and "D2".
+    /// alike. [`LocalFileSource`](crate::LocalFileSource) inherits the default;
+    /// [`CompressedFileSource`](crate::CompressedFileSource) overrides it. See `docs/design/decisions.md`, "D1" and "D2".
     fn default_workers(&self) -> usize {
         1
     }
@@ -191,9 +194,9 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// **Advisory, and it defaults to doing nothing.** What a source makes of
     /// the numbers is its own business — [`LocalFileSource`](crate::LocalFileSource) sizes its one
-    /// free list, [`XzSource`](crate::XzSource) divides the budget between its two read units
-    /// and decides from it whether it can afford to decode a whole block at
-    /// all. A [`Parallelism`] that states no byte count leaves a source on
+    /// free list, [`CompressedFileSource`](crate::CompressedFileSource) divides the budget between
+    /// its two read units and decides from it whether it can afford to decode
+    /// a whole unit at all. A [`Parallelism`] that states no byte count leaves a source on
     /// [`DEFAULT_MEMORY_BUDGET`](crate::DEFAULT_MEMORY_BUDGET).
     fn hint_parallelism(&self, _parallelism: Parallelism) {}
     /// How long the read loop about to start will hold the bytes it gets back
@@ -203,7 +206,7 @@ pub trait ByteRangeSource: Send + Sync {
     ///
     /// **A source applies it only where the loop is the holder**: a wait on a
     /// pool the source retains from blocks on a slot the loop could never
-    /// free, so [`XzSource`](crate::XzSource)'s block pool is left at
+    /// free, so [`CompressedFileSource`](crate::CompressedFileSource)'s block pool is left at
     /// [`WaitPolicy::NeverWait`] however a loop announces itself.
     ///
     /// **Advisory, and it defaults to doing nothing** — which is

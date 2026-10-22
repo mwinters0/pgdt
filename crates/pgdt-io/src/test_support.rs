@@ -1,6 +1,6 @@
 //! Fixtures more than one module's tests build: a file to read, a source
-//! that implements nothing it need not, an `.xz` file, a gzip and a BGZF
-//! file, a synthetic seek table and a fake filesystem root.
+//! that implements nothing it need not, an `.xz` file and its seek table, a
+//! gzip and a BGZF file and a fake filesystem root.
 
 use std::future::Future;
 use std::io::Write;
@@ -12,7 +12,7 @@ use bytes::Bytes;
 
 use pgdt_core::Result;
 
-use crate::{ByteRangeSource, LocalFileSource};
+use crate::{ByteRangeSource, CompressionIndex, LocalFileSource, SeekTable};
 
 pub(crate) fn source_of(bytes: &[u8]) -> (tempfile::NamedTempFile, LocalFileSource) {
     let mut file = tempfile::NamedTempFile::new().unwrap();
@@ -23,8 +23,8 @@ pub(crate) fn source_of(bytes: &[u8]) -> (tempfile::NamedTempFile, LocalFileSour
 }
 
 /// A source implementing nothing but the three required methods, to pin
-/// what the *defaults* answer apart from any shipped source, `XzSource`
-/// overriding them and `LocalFileSource` free to.
+/// what the *defaults* answer apart from any shipped source,
+/// `CompressedFileSource` overriding them and `LocalFileSource` free to.
 pub(crate) struct BareSource;
 
 impl ByteRangeSource for BareSource {
@@ -43,32 +43,12 @@ impl ByteRangeSource for BareSource {
     }
 }
 
-/// A four-block seek table over 4 KiB blocks, built by hand rather than by
-/// `xz`: the block *cache* only ever reads a table's block lengths, so a
-/// synthetic one lets a slot be small enough for a budget to be stated in
-/// whole slots.
-pub(crate) fn four_block_table() -> xz_seek::SeekTable {
-    let count = 4;
-    let block = |i: u64| xz_seek::BlockEntry {
-        compressed_offset: 12 + i * 128,
-        uncompressed_offset: i * 4096,
-        unpadded_size: 64,
-        uncompressed_size: 4096,
-    };
-    xz_seek::SeekTable {
-        compressed_file_size: 1 << 20,
-        streams: vec![xz_seek::StreamEntry {
-            compressed_offset: 0,
-            uncompressed_offset: 0,
-            compressed_size: 1 << 20,
-            uncompressed_size: count * 4096,
-            check: xz_seek::Check::Crc64,
-            first_block_dict_size: Some(8 << 20),
-            padding: 0,
-            first_block: 0,
-            block_count: count as usize,
-        }],
-        blocks: (0..count).map(block).collect(),
+/// The `.xz` seek table a compressed source answers, for a test reading what
+/// only that layout states — streams, block ranges, the compressed length.
+pub(crate) fn seek_table_of(source: &dyn ByteRangeSource) -> SeekTable {
+    match source.compression_index() {
+        Some(CompressionIndex::Xz(table)) => table,
+        None => panic!("an `.xz` source always has a table"),
     }
 }
 
@@ -111,8 +91,8 @@ pub(crate) fn xz_compress(bytes: &[u8], extra_args: &[&str]) -> tempfile::NamedT
 }
 
 /// A payload long enough that a small `--block-size` reliably splits it
-/// into several blocks — a throwaway pattern for pinning `XzSource`'s own
-/// wiring, not a fixture.
+/// into several blocks — a throwaway pattern for pinning the compressed
+/// source's own wiring, not a fixture.
 pub(crate) fn xz_test_payload() -> Vec<u8> {
     (0..20_000u32).map(|i| (i % 251) as u8).collect()
 }

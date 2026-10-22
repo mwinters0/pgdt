@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pgdt_dump::{ScanOptions, cache};
-use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
+use pgdt_io::{ByteRangeSource, CompressedFileSource, LocalFileSource};
 use pgdt_mapping::build_index;
 use pgdt_model::{BlockStatistics, DumpIndex, Span, SpanBody};
 
@@ -607,7 +607,7 @@ fn info_announces_no_scan() {
 
 /// A fresh `.xz` open walks the footers and says so; a second `parse` against
 /// the cache that walk left behind opens from the persisted table instead
-/// (`XzSource::with_table`) and earns no line — the walk that gets no line is
+/// (`CompressedFileSource::with_table`) and earns no line — the walk that gets no line is
 /// the one a cached table exists to skip (`docs/design/decisions.md`,
 /// "D18").
 #[test]
@@ -659,11 +659,11 @@ fn the_seek_table_walk_is_announced_once_and_only_on_a_fresh_open() {
 fn an_xz_parse_defaults_to_the_cores_and_a_plain_one_to_serial() {
     let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let (_dir, xz_path) = seekable_xz();
-    let blocks = XzSource::open(&xz_path)
+    let blocks = CompressedFileSource::open(&xz_path)
         .unwrap()
-        .seek_table()
-        .expect("an XzSource always has a table")
-        .block_count();
+        .compression_index()
+        .expect("a compressed source always has an index")
+        .unit_count();
     let cores = cores.min(blocks);
     let cache_dir = tempfile::tempdir().unwrap();
 

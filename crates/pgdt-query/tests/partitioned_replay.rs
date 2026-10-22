@@ -23,7 +23,9 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use pgdt_dump::{ReadOptions, ScanOptions};
-use pgdt_io::{ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism, XzSource};
+use pgdt_io::{
+    ByteRangeSource, CompressedFileSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism,
+};
 use pgdt_model::Finding;
 use pgdt_query::{
     Expr, PlanLever, PlanNoteKind, Predicate, PredicateOp, QueryOptions, TablePartitions,
@@ -559,9 +561,9 @@ async fn a_seekable_xz_splits_at_its_own_block_boundaries() {
         serial_rows(local(edge_cases()), "public.widgets", QueryOptions::default()).await;
 
     let compressed = xz_compress(&edge_cases(), &["--block-size=64"]);
-    let xz = Arc::new(XzSource::open(compressed.path()).unwrap());
+    let xz = Arc::new(CompressedFileSource::open(compressed.path()).unwrap());
     assert!(
-        xz.seek_table().unwrap().is_seekable(),
+        xz.compression_index().unwrap().is_seekable(),
         "a single-block fixture would advise one partition and pass for the wrong reason"
     );
 
@@ -609,9 +611,9 @@ async fn a_block_shaped_source_is_not_charged_the_batch_span() {
     let expected = serial_rows(plain.clone(), "public.widgets", QueryOptions::default()).await;
 
     let compressed = xz_compress(&edge_cases(), &["--block-size=64"]);
-    let xz = Arc::new(XzSource::open(compressed.path()).unwrap());
+    let xz = Arc::new(CompressedFileSource::open(compressed.path()).unwrap());
     assert!(
-        xz.seek_table().unwrap().is_seekable(),
+        xz.compression_index().unwrap().is_seekable(),
         "a single-block fixture would advise one partition and pass for the wrong reason"
     );
     // **The budget is four of the compressed source's own reader charges**,
@@ -668,9 +670,9 @@ async fn a_single_block_xz_declines_to_be_split() {
         serial_rows(local(edge_cases()), "public.widgets", QueryOptions::default()).await;
 
     let compressed = xz_compress(&edge_cases(), &[]);
-    let xz = Arc::new(XzSource::open(compressed.path()).unwrap());
+    let xz = Arc::new(CompressedFileSource::open(compressed.path()).unwrap());
     assert!(
-        !xz.seek_table().unwrap().is_seekable(),
+        !xz.compression_index().unwrap().is_seekable(),
         "fixture must actually be single-block for this test to mean anything"
     );
 
@@ -691,12 +693,12 @@ async fn a_single_block_xz_declines_to_be_split() {
 #[tokio::test]
 async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
     let compressed = xz_compress(&edge_cases(), &["--block-size=512"]);
-    let xz = Arc::new(XzSource::open(compressed.path()).unwrap());
-    let table = xz.seek_table().unwrap();
-    assert!(table.is_seekable(), "the decline is only interesting on a file with blocks to lose");
+    let xz = Arc::new(CompressedFileSource::open(compressed.path()).unwrap());
+    let index = xz.compression_index().unwrap();
+    assert!(index.is_seekable(), "the decline is only interesting on a file with blocks to lose");
 
     // A budget below one block, so no whole block can be held.
-    let budget = table.max_block_uncompressed() - 1;
+    let budget = index.largest_unit() - 1;
     let options =
         QueryOptions { parallelism: Parallelism::workers(4, budget), ..Default::default() };
     let plan = plan_of(xz.clone(), "public.widgets", ScanOptions::default(), options).await;
@@ -726,10 +728,10 @@ async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
     // into, and the decoder's own retention. The assertion is a lower bound.
     let reader = xz.block_decode_bytes().expect("a compressed source states its block-path cost");
     assert!(
-        reader > 2 * table.max_block_uncompressed(),
+        reader > 2 * index.largest_unit(),
         "the chunk and the decoder are inside it too, not just the two blocks: {reader}"
     );
-    assert_eq!(declined, (table.block_count(), table.max_block_uncompressed(), reader, budget));
+    assert_eq!(declined, (index.unit_count(), index.largest_unit(), reader, budget));
 
     // The rows are unaffected — the fallback is slower on a backward read,
     // never a different answer.
@@ -749,7 +751,7 @@ async fn a_block_path_that_was_taken_is_silent() {
     };
 
     let compressed = xz_compress(&edge_cases(), &["--block-size=512"]);
-    let xz = Arc::new(XzSource::open(compressed.path()).unwrap());
+    let xz = Arc::new(CompressedFileSource::open(compressed.path()).unwrap());
     let affordable =
         QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..Default::default() };
     let plan = plan_of(xz, "public.widgets", ScanOptions::default(), affordable.clone()).await;
@@ -763,7 +765,7 @@ async fn a_block_path_that_was_taken_is_silent() {
     // block: still silent here, because it has nothing to seek by whatever
     // the budget says.
     let single = xz_compress(&edge_cases(), &[]);
-    let xz = Arc::new(XzSource::open(single.path()).unwrap());
+    let xz = Arc::new(CompressedFileSource::open(single.path()).unwrap());
     let options = QueryOptions { parallelism: Parallelism::workers(4, 64), ..Default::default() };
     let plan = plan_of(xz, "public.widgets", ScanOptions::default(), options).await;
     assert!(!declines(plan.plan_notes()), "{:?}", plan.plan_notes());

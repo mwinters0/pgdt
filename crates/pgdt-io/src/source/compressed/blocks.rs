@@ -1,5 +1,5 @@
-//! The decoded-block cache and the decode budget every `.xz` source reads
-//! through: a block decoded once into a pooled slot, sliced zero-copy or
+//! The decoded-block cache and the decode budget every compressed source
+//! reads through: a block decoded once into a pooled slot, sliced zero-copy or
 //! copied into a read straddling it, what a decoder may hold beside it, and
 //! how a range may be cut given which of the two a read takes.
 
@@ -18,7 +18,7 @@ use crate::partition::{PartitionRead, Partitioning, RetainedUnit};
 use crate::source::SCAN_CHUNK_DEFAULT_SIZE_BYTES;
 use crate::source::pool::{BufferPool, POOL_DEPTH, PooledBuffer, budget_bytes};
 
-use super::{piece_of, xz_short_read};
+use super::{Codec, piece_of, short_read};
 
 /// One block's plaintext, decoded whole into a pooled slot.
 ///
@@ -44,15 +44,15 @@ impl DecodedBlock {
     /// common case copies nothing.
     ///
     /// The read's covering block is the one at or below `offset`, so the
-    /// checked subtraction is what keeps a table that says otherwise a refusal
+    /// checked subtraction is what keeps an index that says otherwise a refusal
     /// rather than a panic.
     pub(super) fn slice(self: Arc<Self>, base: u64, offset: u64, len: usize) -> Result<Bytes> {
         let start = offset
             .checked_sub(base)
             .and_then(|at| usize::try_from(at).ok())
-            .ok_or_else(xz_short_read)?;
+            .ok_or_else(short_read)?;
         if start + len > self.len {
-            return Err(xz_short_read());
+            return Err(short_read());
         }
         Ok(Bytes::from_owner(BlockView(self)).slice(start..start + len))
     }
@@ -112,8 +112,8 @@ impl AsRef<[u8]> for BlockView {
 /// [`BlockCache::slot`] keep zero and drain before every decode, so any
 /// outstanding view forces a fresh allocation of the block unit.
 pub(crate) struct BlockCache {
-    /// Slot size: the file's largest block. Every slot fits every block, which
-    /// is what `BlockTask::decode_into` is documented to allow, and it is what
+    /// Slot size: the file's largest unit. Every slot fits every unit, a
+    /// decode being handed its unit's own length of it, and it is what
     /// the pool is hinted with so a slot survives [`POOL_MAX_BYTES`](crate::source::pool::POOL_MAX_BYTES).
     pub(super) unit: usize,
     pub(super) pool: Arc<BufferPool>,
@@ -276,15 +276,15 @@ impl Drop for Decoding<'_> {
 }
 
 impl BlockCache {
-    /// The cache for `table`, or `None` where there is no block unit to build
+    /// The cache for a file whose largest unit is `unit` plaintext bytes, or
+    /// `None` where there is no block unit to build
     /// one around: a file with no blocks at all, or a block longer than a
     /// length on this target.
     ///
     /// **Whether the unit is *affordable* is a separate question and a later
     /// one** ([`BlockCache::affordable`]): the answer depends on a budget the
     /// caller has not stated yet at construction.
-    pub(super) fn for_table(table: &xz_seek::SeekTable) -> Option<BlockCache> {
-        let unit = table.max_block_uncompressed();
+    pub(super) fn for_unit(unit: u64) -> Option<BlockCache> {
         if unit == 0 {
             return None;
         }
@@ -307,7 +307,7 @@ impl BlockCache {
     /// [`WorkerMemory`]'s second term.
     ///
     /// It is one number with three consumers — [`BlockCache::affordable`],
-    /// [`xz_partition_advice`] and [`BlockCache::worker_memory`]. *Rejected:*
+    /// [`partition_advice`] and [`BlockCache::worker_memory`]. *Rejected:*
     /// two statements of the one cost, which is how a divisor comes to charge
     /// nothing for the decoder.
     pub(super) fn reader_bytes(&self, chunk_bytes: u64, decode_bytes: u64) -> u64 {
@@ -392,7 +392,7 @@ impl BlockCache {
     /// guarantee**: a retained block is normally also the block some reader is
     /// holding a view into, so the drain may free no slot at all. That is why
     /// the block pool is never granted a wait
-    /// (`XzSource::hint_wait_policy`, and `docs/design/decisions.md`, "D5").
+    /// (`CompressedFileSource::hint_wait_policy`, and `docs/design/decisions.md`, "D5").
     /// A block evicted while a [`Bytes`](bytes::Bytes) still views it stays alive until that
     /// view drops.
     ///
@@ -414,11 +414,11 @@ impl BlockCache {
     }
 }
 
-/// **The budget policy both `.xz` sources hold**: what the caller announced,
+/// **The budget policy both compressed arms hold**: what the caller announced,
 /// the two pools that one number is divided between, and the answers derived
-/// from it — which arm a read takes ([`XzBudget::block_path`]), what a reader
-/// of this file costs ([`XzBudget::block_worker_memory`]), and how a range may
-/// be cut ([`XzBudget::partitions`]).
+/// from it — which arm a read takes ([`DecodeBudget::block_path`]), what a reader
+/// of this file costs ([`DecodeBudget::block_worker_memory`]), and how a range may
+/// be cut ([`DecodeBudget::partitions`]).
 ///
 /// **One value both sources hold, never a branch on the provider.** Nothing
 /// this policy *answers* differs by transport, which reaches it as the
@@ -426,12 +426,12 @@ impl BlockCache {
 /// policy, which each source announces for itself; two copies of one charge
 /// policy stay right exactly until one of them is edited
 /// (`docs/design/decisions.md`, "D15").
-pub(crate) struct XzBudget {
+pub(crate) struct DecodeBudget {
     /// The chunk unit: what a read spanning more than one block is assembled
     /// into, and what a piecewise read fills.
     pub(super) pool: Arc<BufferPool>,
     /// The block unit, or `None` where this file has no blocks to decode.
-    /// Present does not mean *taken*: [`XzBudget::block_path`] decides per
+    /// Present does not mean *taken*: [`DecodeBudget::block_path`] decides per
     /// read, a block the caller's budget cannot hold being streamed.
     pub(super) blocks: Option<Arc<BlockCache>>,
     /// What one decode of this file retains beyond the slot it writes into:
@@ -439,9 +439,9 @@ pub(crate) struct XzBudget {
     /// decodes.
     ///
     /// **It is the one term the transport moves**, so it is stated by whoever
-    /// builds this policy rather than derived here — [`XzSource::over`](crate::XzSource::over) pays
+    /// builds this policy rather than derived here — [`CompressedFileSource::over`](crate::CompressedFileSource::over) pays
     /// for a compressed input chunk its source does not lend,
-    /// [`FetchedXzSource::assembled`](crate::FetchedXzSource::assembled) for the window its source lends out of.
+    /// [`FetchedCompressedSource::assembled`](crate::FetchedCompressedSource::assembled) for the window its source lends out of.
     ///
     /// **Read once, at construction**: it is a property of the file and of the
     /// backend, not of a range.
@@ -451,7 +451,7 @@ pub(crate) struct XzBudget {
     ///
     /// Held here rather than pushed straight into the pools: the split is
     /// derived from it and from the announced chunk size, which arrive in
-    /// either order, and [`XzBudget::apportion`] recomputes from this on both
+    /// either order, and [`DecodeBudget::apportion`] recomputes from this on both
     /// announcements.
     budget: AtomicUsize,
     /// The worker ceiling the caller stated — 1 until one is announced. It is
@@ -462,18 +462,19 @@ pub(crate) struct XzBudget {
     jobs: AtomicUsize,
 }
 
-impl XzBudget {
-    /// The policy for a file `table` describes, over the `decode_bytes` its
+impl DecodeBudget {
+    /// The policy for a file whose largest unit is `largest_unit` plaintext
+    /// bytes, over the `decode_bytes` its
     /// provider states.
     ///
-    /// The block unit is sized from that table or refused
-    /// ([`BlockCache::for_table`]), and the budget is divided before this
+    /// The block unit is sized from that unit or refused
+    /// ([`BlockCache::for_unit`]), and the budget is divided before this
     /// returns: a source is readable before anything is announced to it, so
     /// the two pools are split at construction rather than at the first hint.
-    pub(super) fn over(table: &xz_seek::SeekTable, decode_bytes: u64) -> Self {
+    pub(super) fn over(largest_unit: u64, decode_bytes: u64) -> Self {
         let budget = Self {
             pool: Arc::new(BufferPool::default()),
-            blocks: BlockCache::for_table(table).map(Arc::new),
+            blocks: BlockCache::for_unit(largest_unit).map(Arc::new),
             decode_bytes,
             budget: AtomicUsize::new(DEFAULT_MEMORY_BUDGET as usize),
             jobs: AtomicUsize::new(1),
@@ -493,8 +494,8 @@ impl XzBudget {
     /// (`docs/design/decisions.md`, "D17").
     ///
     /// Recomputed from `self.budget` on **both** announcements rather than
-    /// composed incrementally, so [`XzBudget::hint_read_size`] and
-    /// [`XzBudget::hint_parallelism`] may arrive in either order and a source
+    /// composed incrementally, so [`DecodeBudget::hint_read_size`] and
+    /// [`DecodeBudget::hint_parallelism`] may arrive in either order and a source
     /// that is never told either still holds a coherent split.
     fn apportion(&self) {
         let budget = self.budget.load(Ordering::Relaxed);
@@ -556,14 +557,14 @@ impl XzBudget {
 
     /// What concurrent block-decoding readers of this file would cost, whether
     /// or not the budget admits one: [`BlockCache::worker_memory`] over this
-    /// source's own chunk size ([`XzBudget::charged_chunk_bytes`]) and decoder
+    /// source's own chunk size ([`DecodeBudget::charged_chunk_bytes`]) and decoder
     /// charge — the per-reader charge and the retention list shared beside
     /// it, as one shape.
     ///
     /// It composes the recommendation's shape
     /// ([`ByteRangeSource::default_worker_memory`](crate::ByteRangeSource::default_worker_memory)); the gate
     /// ([`BlockCache::affordable`]) reads [`BlockCache::worker_memory`] itself
-    /// and the advice ([`xz_partition_advice`]) builds the same shape from
+    /// and the advice ([`partition_advice`]) builds the same shape from
     /// [`BlockCache::reader_bytes`], which
     /// `the_recommendation_an_allowance_is_solved_against_is_the_scans_own_charge`
     /// holds alike.
@@ -589,32 +590,31 @@ impl XzBudget {
             .filter(|cache| cache.affordable(chunk_bytes, self.decode_bytes, budget))
     }
 
-    /// [`XzBudget::block_worker_memory`] evaluated at one reader: one
+    /// [`DecodeBudget::block_worker_memory`] evaluated at one reader: one
     /// statement of what the block path costs
     /// ([`ByteRangeSource::block_decode_bytes`](crate::ByteRangeSource::block_decode_bytes)).
     pub(super) fn block_decode_bytes(&self) -> Option<u64> {
         Some(self.block_worker_memory()?.at(1))
     }
 
-    /// How a range over `table` may be cut, read off the arm a read would
-    /// actually take ([`xz_partition_advice`]).
+    /// How a range over `codec`'s file may be cut, read off the arm a read
+    /// would actually take ([`partition_advice`]).
     ///
-    /// The table is passed in rather than held: the cut points are a property
-    /// of the file, which each source already holds its own alias of, and what
-    /// this policy decides is which arm they are priced for.
-    pub(super) fn partitions(&self, table: &xz_seek::SeekTable, range: Range<u64>) -> Partitioning {
-        xz_partition_advice(
-            table,
+    /// The codec is passed in rather than held: the cut points are a property
+    /// of the file, which each source already holds, and what this policy
+    /// decides is which arm they are priced for.
+    pub(super) fn partitions(&self, codec: &dyn Codec, range: Range<u64>) -> Partitioning {
+        partition_advice(
+            || unit_starts_inside(codec, range),
             self.block_path().map(|cache| &**cache),
             self.charged_chunk_bytes(),
             self.decode_bytes,
-            range,
         )
     }
 
     /// The chunk unit is announced to the chunk pool, and the split between
     /// the two pools is re-derived: the chunk pool's share is its own ceiling,
-    /// which this number is what sizes ([`XzBudget::apportion`]).
+    /// which this number is what sizes ([`DecodeBudget::apportion`]).
     pub(super) fn hint_read_size(&self, len: usize) {
         self.pool.hint(len);
         self.apportion();
@@ -636,31 +636,43 @@ impl XzBudget {
     }
 }
 
-/// An `.xz` source's partitioning advice, read off the **read path it took**
-/// rather than off the seek table.
+/// The plaintext offsets at which a unit of `codec`'s file starts strictly
+/// inside `range`: where a block-decoding partition may be cut.
+fn unit_starts_inside(codec: &dyn Codec, range: Range<u64>) -> Vec<u64> {
+    codec
+        .units_in(range.clone())
+        .filter_map(|unit| codec.plaintext(unit))
+        .map(|unit| unit.start)
+        .filter(|start| *start > range.start && *start < range.end)
+        .collect()
+}
+
+/// A compressed source's partitioning advice, read off the **read path it
+/// took** rather than off its index.
 ///
 /// Two answers, and which one applies is `blocks`:
 ///
-/// **Block-decoding** — the boundaries are the block starts inside
-/// `range`, so a partition is a whole number of blocks. A partition costs
+/// **Block-decoding** — the boundaries are the unit starts `cuts` answers,
+/// so a partition is a whole number of units. A partition costs
 /// what one concurrent reader holds — [`BlockCache::reader_bytes`], the
 /// per-reader term of the [`BlockCache::worker_memory`] whose `at(1)`
 /// [`BlockCache::affordable`] compares a budget against.
 ///
-/// **Piecewise** — one partition, whatever the table says: one live
-/// `xz_seek::BlockRead` goes forward only, so two workers on different
-/// partitions would each force the other's block to be left and begun again.
-/// That is true of both providers, each holding one handle behind one mutex
-/// (`xz`'s `LiveBlock`, and `docs/design/decisions.md`, "D15").
+/// **Piecewise** — one partition, whatever the index says: one live
+/// [`UnitRead`](super::UnitRead) goes forward only, so two workers on
+/// different partitions would each force the other's unit to be left and
+/// begun again. That is true of both providers, each holding one handle
+/// behind one mutex ([`LiveBlock`](super::LiveBlock), and
+/// `docs/design/decisions.md`, "D15").
 ///
-/// Taken as a free function over the two pieces of state it reads, so the
-/// piecewise arm is assertable against a table that *does* have blocks.
-fn xz_partition_advice(
-    table: &xz_seek::SeekTable,
+/// Taken as a free function over the pieces of state it reads, the cut
+/// points asked for only on the arm that cuts, so the piecewise arm is
+/// assertable against a file that *does* have units.
+fn partition_advice(
+    cuts: impl FnOnce() -> Vec<u64>,
     blocks: Option<&BlockCache>,
     chunk_bytes: u64,
     decode_bytes: u64,
-    range: Range<u64>,
 ) -> Partitioning {
     let Some(cache) = blocks else {
         // **The piecewise arm charges the chunk buffer and not the
@@ -679,18 +691,12 @@ fn xz_partition_advice(
         // for want of cut points alone, and was spent to stop it re-decoding
         // a block a scan sits inside ([`HeldBlock`]) — this is where that
         // option went. **(c) unowned**;
-        // closing it means a handle per reader — which `xz_seek::BlockRead`
-        // being `Send` and borrowing nothing already allows — and a figure
+        // closing it means a handle per reader — which a `UnitRead` being
+        // `Send` and borrowing nothing already allows — and a figure
         // over the count, and the figure is the half this cannot skip.
         return Partitioning::single(chunk_bytes);
     };
-    let covering = table.blocks_in(range.clone());
-    let at = covering
-        .filter_map(|i| {
-            let start = table.blocks[i].uncompressed_offset;
-            (start > range.start && start < range.end).then_some(start)
-        })
-        .collect();
+    let at = cuts();
     // Three statements the piecewise arm above does not make, each
     // because a read inside a decoded block is a zero-copy slice of it:
     //
@@ -701,7 +707,7 @@ fn xz_partition_advice(
     //   at the shipped cut width is the whole piece
     //   ([`PartitionRead::Whole`]). The unit is `cache.unit`, read off the
     //   cache rather than recomputed and non-zero by
-    //   `BlockCache::for_table`'s own guard;
+    //   `BlockCache::for_unit`'s own guard;
     // - **the block pool's retention list is stated beside the per-reader
     //   charge**, which is what lets `worker_count` solve
     //   for a count rather than divide by one

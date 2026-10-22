@@ -14,7 +14,7 @@ use super::*;
 async fn xz_source_size_is_the_uncompressed_length() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
     assert_eq!(source.size().await.unwrap(), payload.len() as u64);
     assert!(source.size_is_exact());
 }
@@ -28,20 +28,20 @@ async fn xz_source_stored_size_is_the_compressed_files_on_disk_length() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let on_disk = std::fs::metadata(compressed.path()).unwrap().len();
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
     assert_eq!(source.stored_size().await.unwrap(), on_disk);
     assert_ne!(source.stored_size().await.unwrap(), source.size().await.unwrap());
 }
 
-/// `seek_table()` is what the cache's save wraps into
-/// `CompressionIndex::Xz` — a multi-block file must actually report more
-/// than one block, or the "seekable" half of this test proves nothing.
+/// `compression_index()` is what the cache's save persists — a
+/// multi-block file must actually report more than one block, or the
+/// "seekable" half of this test proves nothing.
 #[tokio::test]
 async fn xz_source_seek_table_reports_every_block() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
-    let table = source.seek_table().expect("an XzSource always has a table");
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
+    let table = seek_table_of(&source);
     assert!(table.is_seekable(), "block_count = {}", table.block_count());
     assert_eq!(table.uncompressed_size(), payload.len() as u64);
 
@@ -75,55 +75,20 @@ fn an_xz_source_recommends_the_cores_it_was_given_capped_at_its_block_count() {
     // binds and the cap is inert.
     let wide: Vec<u8> = (0..4096u32 * 512).map(|i| (i % 251) as u8).collect();
     let compressed = xz_compress(&wide, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
-    assert!(source.table.block_count() > cores, "{} blocks", source.table.block_count());
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
+    assert!(source.codec.unit_count() > cores, "{} blocks", source.codec.unit_count());
     assert_eq!(source.default_workers(), cores);
 
     // A handful of blocks: the *file* binds on any machine wider than it,
     // which is the half that was missing.
     let narrow = xz_compress(&xz_test_payload(), &["--block-size=4096"]);
-    let source = XzSource::open(narrow.path()).unwrap();
-    let blocks = source.table.block_count();
+    let source = CompressedFileSource::open(narrow.path()).unwrap();
+    let blocks = source.codec.unit_count();
     assert!((2..64).contains(&blocks), "{blocks} blocks");
     assert_eq!(source.default_workers(), cores.min(blocks));
     if cores > blocks {
         assert_eq!(source.default_workers(), blocks, "the file is what binds here");
     }
-}
-
-/// **The seek table is held once, at a stated cost per entry** — the check
-/// for what is left of `KD26` (`docs/design/decisions.md`, "D4").
-///
-/// Two properties, neither checked anywhere else. The **share**:
-/// `XzSource::over` takes the layout's own `Arc` through
-/// `xz_seek::Layout::index_shared`, so the source's table and the layout's
-/// are one allocation, and both constructors go through `over`. The
-/// **per-entry cost** is a property of a vendored struct, so a re-sync
-/// that grew either entry fails here rather than silently moving a
-/// published number.
-#[test]
-fn the_seek_table_is_held_once_at_a_stated_cost_per_entry() {
-    assert_eq!(std::mem::size_of::<xz_seek::StreamEntry>(), 80);
-    assert_eq!(std::mem::size_of::<xz_seek::BlockEntry>(), 32);
-
-    let compressed = xz_compress(&xz_test_payload(), &["--block-size=4096"]);
-
-    // The walking constructor: the walk built the table and the layout
-    // hands its own handle out.
-    let source = XzSource::open(compressed.path()).unwrap();
-    let persisted = source.seek_table().unwrap();
-    assert!(
-        std::ptr::eq(&*source.table, source.layout.index()),
-        "the source's table must be the layout's own, not a clone of it",
-    );
-
-    // The cached one: a table handed in is the layout's table too, so the
-    // caller's copy is dropped rather than becoming a third.
-    let cached = XzSource::with_table(compressed.path(), persisted).unwrap();
-    assert!(
-        std::ptr::eq(&*cached.table, cached.layout.index()),
-        "a cached table must be shared with the layout it was handed to",
-    );
 }
 
 /// Reading forward in chunks that each land inside one block, straddle a
@@ -133,7 +98,7 @@ fn the_seek_table_is_held_once_at_a_stated_cost_per_entry() {
 async fn xz_source_reads_forward_matching_plain_bytes() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
 
     let mut offset = 0u64;
     for len in [100usize, 4096, 3000, 5000] {
@@ -152,7 +117,7 @@ async fn xz_source_reads_forward_matching_plain_bytes() {
 async fn xz_source_seeks_backward_across_a_block_boundary() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
 
     // Walk forward past several block boundaries first, exactly like the
     // multi-chunk test above.
@@ -175,7 +140,7 @@ async fn xz_source_seeks_backward_across_a_block_boundary() {
 async fn a_read_retains_the_block_it_landed_in() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
     let cache = source.budget.blocks.clone().expect("4 KiB blocks are decoded whole");
     assert!(cache.retention.lock().unwrap().blocks.is_empty());
 
@@ -203,7 +168,7 @@ async fn a_read_retains_the_block_it_landed_in() {
 async fn retention_is_bounded_by_the_pools_slot_count() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
     let cache = source.budget.blocks.clone().unwrap();
     let slots = cache.pool.slots();
 
@@ -219,14 +184,14 @@ async fn retention_is_bounded_by_the_pools_slot_count() {
 
 /// **The block arm takes none of the piecewise arm's locks**: with the live
 /// piecewise handle's mutex held by another thread outright, a block-path
-/// read — a cache miss as well as a hit — still answers. Naming a
-/// `BlockTask` is arithmetic over the layout's table, so what this arm locks
-/// is its own retention list and never the live handle.
+/// read — a cache miss as well as a hit — still answers. Naming a unit is
+/// arithmetic over the codec's index, so what this arm locks is its own
+/// retention list and never the live handle.
 #[tokio::test]
 async fn a_block_path_read_is_served_while_the_live_handle_is_held() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
     assert!(source.budget.block_path().is_some(), "4 KiB blocks fit the default budget");
 
     // Warm the block one of the reads below lands in: 9_000..10_000 is
@@ -269,7 +234,7 @@ async fn concurrent_reads_each_answer_their_own_bytes() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     for budget in [None, Some(1)] {
-        let source = Arc::new(XzSource::open(compressed.path()).unwrap());
+        let source = Arc::new(CompressedFileSource::open(compressed.path()).unwrap());
         source.hint_parallelism(Parallelism::Serial { memory_bytes: budget });
         assert_eq!(source.budget.block_path().is_none(), budget.is_some(), "{budget:?}");
 
@@ -296,16 +261,16 @@ async fn concurrent_reads_each_answer_their_own_bytes() {
 async fn a_stated_budget_is_divided_between_the_two_pools() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let held = |source: &XzSource| {
+    let held = |source: &CompressedFileSource| {
         let blocks = source.budget.blocks.as_ref().unwrap();
         (source.budget.pool.held_bytes(), blocks.pool.held_bytes(), blocks.pool.slots())
     };
 
     // Budget then chunk size, and chunk size then budget: same split.
-    let one = XzSource::open(compressed.path()).unwrap();
+    let one = CompressedFileSource::open(compressed.path()).unwrap();
     one.hint_parallelism(Parallelism::workers(8, 32 << 20));
     one.hint_read_size(1 << 20);
-    let two = XzSource::open(compressed.path()).unwrap();
+    let two = CompressedFileSource::open(compressed.path()).unwrap();
     two.hint_read_size(1 << 20);
     two.hint_parallelism(Parallelism::workers(8, 32 << 20));
     assert_eq!(held(&one), held(&two));
@@ -334,7 +299,7 @@ async fn a_stated_budget_is_divided_between_the_two_pools() {
 fn a_permitted_wait_never_reaches_the_block_pool() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
     // 12 KiB: four chunk slots of the announced 1 KiB, and the 8 KiB left
     // over is two 4 KiB block slots.
     source.hint_read_size(1 << 10);
@@ -344,12 +309,11 @@ fn a_permitted_wait_never_reaches_the_block_pool() {
     assert_eq!(cache.pool.slots(), 2, "two block slots inside the stated budget");
 
     let read = |offset: u64| {
-        XzSource::read_by_blocks(
+        CompressedFileSource::read_by_blocks(
             offset,
             100,
-            &source.table,
             &cache,
-            &source.layout,
+            &*source.codec,
             &source.file,
             &source.budget.pool,
         )
@@ -359,15 +323,14 @@ fn a_permitted_wait_never_reaches_the_block_pool() {
     assert_eq!(cache.retention.lock().unwrap().blocks.len(), 2);
 
     let (tx, rx) = std::sync::mpsc::channel();
-    let (table, blocks, layout, file, chunks) = (
-        Arc::clone(&source.table),
+    let (codec, blocks, file, chunks) = (
+        Arc::clone(&source.codec),
         Arc::clone(&cache),
-        source.layout.clone(),
         Arc::clone(&source.file),
         Arc::clone(&source.budget.pool),
     );
     std::thread::spawn(move || {
-        let got = XzSource::read_by_blocks(8192, 100, &table, &blocks, &layout, &file, &chunks);
+        let got = CompressedFileSource::read_by_blocks(8192, 100, &blocks, &*codec, &file, &chunks);
         let _ = tx.send(got.map(|bytes| bytes.to_vec()));
     });
     let third = rx
@@ -385,8 +348,8 @@ fn a_permitted_wait_never_reaches_the_block_pool() {
 async fn a_compressed_source_states_the_policy_to_its_chunk_pool_only() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
-    let policies = |source: &XzSource| {
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
+    let policies = |source: &CompressedFileSource| {
         (source.budget.pool.policy(), source.budget.blocks.as_ref().unwrap().pool.policy())
     };
     assert_eq!(policies(&source), (WaitPolicy::NeverWait, WaitPolicy::NeverWait));
@@ -409,7 +372,7 @@ async fn a_compressed_source_states_the_policy_to_its_chunk_pool_only() {
 async fn a_budget_below_the_block_unit_reads_in_pieces_and_still_reads_the_same_bytes() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
     assert!(source.budget.block_path().is_some(), "4 KiB blocks fit the default budget");
 
     // Under a budget of one chunk buffer there is nothing left for a
@@ -442,7 +405,7 @@ async fn a_budget_below_the_block_unit_reads_in_pieces_and_still_reads_the_same_
 async fn a_forward_piecewise_scan_continues_the_decode_it_has() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
     source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
     assert!(source.budget.block_path().is_none());
 
@@ -472,9 +435,9 @@ async fn a_forward_piecewise_scan_continues_the_decode_it_has() {
 async fn xz_source_reads_a_single_block_non_seekable_file() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &[]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
 
-    let table = source.seek_table().unwrap();
+    let table = seek_table_of(&source);
     assert_eq!(table.block_count(), 1);
     assert!(!table.is_seekable());
 
@@ -503,7 +466,7 @@ fn a_compressed_source_recommends_what_its_workers_hold() {
 
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
     let memory = source.default_worker_memory().expect("a block path to price");
     let unit = source.budget.blocks.as_ref().expect("a block cache").unit as u64;
     assert_eq!(source.block_decode_bytes(), Some(memory.at(1)));
@@ -534,7 +497,7 @@ fn a_compressed_source_recommends_what_its_workers_hold() {
 fn the_recommendation_an_allowance_is_solved_against_is_the_scans_own_charge() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
     let memory = source.default_worker_memory().expect("a block path to price");
 
     // Four readers' worth of allowance, as `Parallelism::fit` would spend
@@ -561,8 +524,8 @@ fn the_recommendation_an_allowance_is_solved_against_is_the_scans_own_charge() {
 async fn an_xz_source_advises_its_block_boundaries() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let source = XzSource::open(compressed.path()).unwrap();
-    let table = source.seek_table().unwrap();
+    let source = CompressedFileSource::open(compressed.path()).unwrap();
+    let table = seek_table_of(&source);
     let starts: Vec<u64> = table.block_ranges().map(|r| r.start).collect();
     assert!(starts.len() > 2, "this test needs several blocks, got {}", starts.len());
 
@@ -585,7 +548,7 @@ async fn an_xz_source_advises_its_block_boundaries() {
     // chunk buffer a straddling read is assembled into, and the decoder's
     // own retention. The chunk term is the one a scan settles at, no read
     // loop having announced one here
-    // ([`XzBudget::charged_chunk_bytes`]).
+    // ([`DecodeBudget::charged_chunk_bytes`]).
     let unit = source.budget.blocks.as_ref().unwrap().unit as u64;
     assert_eq!(
         whole.partition_bytes(),

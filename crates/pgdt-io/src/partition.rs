@@ -13,7 +13,7 @@ use crate::parallelism::WorkerMemory;
 ///
 /// A worker reads one chunk past its piece's end, into the block its successor
 /// owns, and a block-decoding source decodes that block once for both
-/// ([`BlockCache::claim`](crate::source::xz::blocks::BlockCache::claim)), so a wider cut amortises nothing. It does not
+/// ([`BlockCache::claim`](crate::source::compressed::blocks::BlockCache::claim)), so a wider cut amortises nothing. It does not
 /// widen what a reader holds — retention is capped by [`BufferPool::slots`](crate::source::pool::BufferPool::slots), not by
 /// the piece — and it costs granularity, a window being `want × k` units wide.
 const BOUNDARIED_PARTITION_UNITS: usize = 1;
@@ -98,7 +98,7 @@ pub enum PartitionRead {
     /// where the piece is one unit, which is what
     /// [`BOUNDARIED_PARTITION_UNITS`](crate::partition::BOUNDARIED_PARTITION_UNITS) makes it. A block-decoding source's
     /// answer, where that read is a **zero-copy slice** of a block the worker
-    /// was going to decode anyway, against one [`BlockCache::claim`](crate::source::xz::blocks::BlockCache::claim) per
+    /// was going to decode anyway, against one [`BlockCache::claim`](crate::source::compressed::blocks::BlockCache::claim) per
     /// chunk on the chunked arm.
     ///
     /// **The unit is what bounds the buffer, and it is the source's number
@@ -106,14 +106,14 @@ pub enum PartitionRead {
     /// `min(piece, unit)`, so at the shipped width — where a piece *is* one
     /// unit — this is the piece exactly, and above it the buffer is capped at
     /// one unit instead of growing with the width. It does not remove the
-    /// copy: `xz_seek::SeekTable::max_block_uncompressed` is a file-wide
-    /// maximum, so a read starting on a boundary can still cross into a
-    /// smaller successor block (`docs/design/decisions.md`, "D8").
+    /// copy: the largest unit is a file-wide maximum, so a read starting on a
+    /// boundary can still cross into a smaller successor unit
+    /// (`docs/design/decisions.md`, "D8").
     Whole {
-        /// The source's own unit, in bytes — the decoded block on the
-        /// block-decoding path, where [`BlockCache::unit`](crate::source::xz::blocks::BlockCache::unit) is
-        /// `xz_seek::SeekTable::max_block_uncompressed`. Never zero: a source
-        /// with no unit has nothing to state and stays [`PartitionRead::Chunked`].
+        /// The source's own unit, in bytes — the decoded unit on the
+        /// block-decoding path, where [`BlockCache::unit`](crate::source::compressed::blocks::BlockCache::unit)
+        /// is the codec's largest unit. Never zero: a source with no unit has
+        /// nothing to state and stays [`PartitionRead::Chunked`].
         unit: u64,
     },
 }

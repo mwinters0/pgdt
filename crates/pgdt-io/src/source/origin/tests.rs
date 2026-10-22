@@ -5,6 +5,8 @@ use std::sync::Arc;
 use crate::test_support::*;
 
 use super::*;
+use crate::CompressionIndex;
+use crate::source::compressed::CompressedFileSource;
 
 /// The three answers an origin exists to give, from one probe of a local
 /// file: the bytes as stored, the weak identity, and the leading magic.
@@ -18,7 +20,7 @@ async fn an_origin_probe_answers_size_identity_and_the_leading_bytes() {
         probed.modified(),
         Some(std::fs::metadata(file.path()).unwrap().modified().unwrap())
     );
-    assert_eq!(probed.leading(), &XZ_MAGIC[..]);
+    assert_eq!(probed.leading(), b"\xfd7zXZ\x00");
 }
 
 /// A source shorter than the magic brings back what it has, which is not
@@ -78,8 +80,8 @@ async fn recognize(path: &Path) -> Arc<dyn ByteRangeSource> {
 /// A genuinely `.xz`-compressed file is recognised whatever it is named
 /// (`docs/design/decisions.md`, "D14"): the temp file `xz_compress`
 /// returns carries no `.xz` suffix, and `open_local` still hands back a
-/// source whose `seek_table()` answers `Some`, which of what `open_local`
-/// returns only `XzSource` does.
+/// source whose `compression_index()` answers `Some`, which of what
+/// `open_local` returns only `CompressedFileSource` does.
 #[tokio::test]
 async fn open_local_recognizes_xz_content_with_no_xz_name() {
     let payload = xz_test_payload();
@@ -87,7 +89,7 @@ async fn open_local_recognizes_xz_content_with_no_xz_name() {
     assert_ne!(compressed.path().extension(), Some(std::ffi::OsStr::new("xz")));
 
     let source = recognize(compressed.path()).await;
-    assert!(source.seek_table().is_some(), "content-sniffed as .xz");
+    assert!(source.compression_index().is_some(), "content-sniffed as .xz");
     assert_eq!(source.size().await.unwrap(), payload.len() as u64);
     let got = source.read_range(0, payload.len()).await.unwrap();
     assert_eq!(&got[..], &payload[..]);
@@ -102,7 +104,7 @@ async fn open_local_opens_a_dot_xz_named_file_with_plain_content_as_plain() {
     file.flush().unwrap();
 
     let source = recognize(file.path()).await;
-    assert!(source.seek_table().is_none(), "no compression layer — read as plain");
+    assert!(source.compression_index().is_none(), "no compression layer — read as plain");
     let got = source.read_range(0, 23).await.unwrap();
     assert_eq!(&got[..], b"not actually compressed");
 }
@@ -114,7 +116,7 @@ async fn open_local_treats_a_file_shorter_than_the_magic_as_plain() {
     let (_file, plain) = source_of(b"ab");
     let path = plain.path().to_path_buf();
     let source = recognize(&path).await;
-    assert!(source.seek_table().is_none());
+    assert!(source.compression_index().is_none());
     assert_eq!(source.size().await.unwrap(), 2);
 }
 
@@ -124,17 +126,19 @@ async fn open_local_treats_a_file_shorter_than_the_magic_as_plain() {
 async fn open_local_builds_an_xz_source_from_a_handed_back_table() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let table = XzSource::open(compressed.path()).unwrap().seek_table().unwrap();
+    let table = seek_table_of(&CompressedFileSource::open(compressed.path()).unwrap());
 
-    let source =
-        match open_local(&Origin::local(compressed.path()), KnownCompression::Xz(table.clone()))
-            .await
-            .unwrap()
-        {
-            Recognized::Source(source) => source,
-            Recognized::Mismatch => panic!("the file's own table must describe it"),
-        };
-    assert_eq!(source.seek_table().as_ref(), Some(&table));
+    let source = match open_local(
+        &Origin::local(compressed.path()),
+        KnownCompression::Compressed(CompressionIndex::Xz(table.clone())),
+    )
+    .await
+    .unwrap()
+    {
+        Recognized::Source(source) => source,
+        Recognized::Mismatch => panic!("the file's own table must describe it"),
+    };
+    assert_eq!(seek_table_of(&*source), table);
     assert_eq!(source.size().await.unwrap(), payload.len() as u64);
     let got = source.read_range(9_000, 4000).await.unwrap();
     assert_eq!(&got[..], &payload[9_000..13_000]);
@@ -150,7 +154,7 @@ async fn open_local_builds_an_xz_source_from_a_handed_back_table() {
 async fn a_handed_back_table_is_used_rather_than_re_walked() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let mut table = XzSource::open(compressed.path()).unwrap().seek_table().unwrap();
+    let mut table = seek_table_of(&CompressedFileSource::open(compressed.path()).unwrap());
     let real = table.0.streams[0].check;
     let wrong =
         if real == xz_seek::Check::Crc32 { xz_seek::Check::Crc64 } else { xz_seek::Check::Crc32 };
@@ -158,9 +162,12 @@ async fn a_handed_back_table_is_used_rather_than_re_walked() {
         stream.check = wrong;
     }
 
-    let source = match open_local(&Origin::local(compressed.path()), KnownCompression::Xz(table))
-        .await
-        .unwrap()
+    let source = match open_local(
+        &Origin::local(compressed.path()),
+        KnownCompression::Compressed(CompressionIndex::Xz(table)),
+    )
+    .await
+    .unwrap()
     {
         Recognized::Source(source) => source,
         Recognized::Mismatch => panic!("`validate` does not police the check algorithm"),
@@ -181,12 +188,15 @@ async fn open_local_reports_a_table_that_does_not_describe_the_file() {
     // A second, shorter file's table: `validate` compares the table's
     // recorded compressed length against this source's.
     let other = xz_compress(&payload[..5_000], &["--block-size=4096"]);
-    let other_table = XzSource::open(other.path()).unwrap().seek_table().unwrap();
+    let other_table = seek_table_of(&CompressedFileSource::open(other.path()).unwrap());
 
     assert!(matches!(
-        open_local(&Origin::local(compressed.path()), KnownCompression::Xz(other_table))
-            .await
-            .unwrap(),
+        open_local(
+            &Origin::local(compressed.path()),
+            KnownCompression::Compressed(CompressionIndex::Xz(other_table))
+        )
+        .await
+        .unwrap(),
         Recognized::Mismatch
     ));
 }
@@ -198,11 +208,16 @@ async fn open_local_reports_a_table_that_does_not_describe_the_file() {
 async fn open_local_reports_a_compression_claim_the_file_contradicts() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let table = XzSource::open(compressed.path()).unwrap().seek_table().unwrap();
+    let table = seek_table_of(&CompressedFileSource::open(compressed.path()).unwrap());
     let (plain_file, _plain) = source_of(&payload);
 
     assert!(matches!(
-        open_local(&Origin::local(plain_file.path()), KnownCompression::Xz(table)).await.unwrap(),
+        open_local(
+            &Origin::local(plain_file.path()),
+            KnownCompression::Compressed(CompressionIndex::Xz(table))
+        )
+        .await
+        .unwrap(),
         Recognized::Mismatch
     ));
     assert!(matches!(
@@ -220,7 +235,7 @@ async fn open_local_accepts_a_plain_claim_about_a_plain_file() {
             Recognized::Source(source) => source,
             Recognized::Mismatch => panic!("a plain file is what the claim said"),
         };
-    assert!(source.seek_table().is_none());
+    assert!(source.compression_index().is_none());
     assert_eq!(source.size().await.unwrap(), 16);
 }
 

@@ -2430,7 +2430,7 @@ PARALLEL_NVME_JOBS: tuple[int, ...] = (1, 2, 4)
 #: table's ratios would be over two variables at once.
 #:
 #: **2 GiB, because it must admit the widest row's partitions on the coarsest
-#: input.** A block-decoding `XzSource` charges each reader its block unit, the
+#: input.** A block-decoding `CompressedFileSource` charges each reader its block unit, the
 #: chunk buffer and the decoder's own retention
 #: (`xz_seek::Reader::decode_footprint`, 9,471,776 B on this shape's 8 MiB
 #: dictionary), and the readers together the block pool's retention list,
@@ -2507,7 +2507,7 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 #:
 #: **The divisor is per source, not universal.** `plan_partitions` adds the
 #: held batch's `max_source_span` only where the source retains by the read
-#: chunk (`pgdt_io::RetainedUnit`); a block-decoding `XzSource` retains by the
+#: chunk (`pgdt_io::RetainedUnit`); a block-decoding `CompressedFileSource` retains by the
 #: partition, whose decoded blocks `partition_bytes` has already charged, so its
 #: per-reader term is what one reader of it holds and nothing more.
 #:
@@ -3093,19 +3093,19 @@ def reader_bytes(unit: int) -> int:
 
     `BlockCache::reader_bytes`, mirrored — the per-worker term of the charge
     `BlockCache::affordable` compares a budget against, and what
-    `XzSource::partition_advice` charges a sub-stream. It is not the whole
+    `partition_advice` charges a sub-stream. It is not the whole
     charge: `charge_bytes` adds the retention list the pool shares, which is
     `POOL_DEPTH - 1` units at one reader and `jobs - 1` above the depth.
 
     **It is one number and not two, at the default chunk every leg here runs
     at.** `BlockCache::reader_bytes` takes its chunk term from
-    `XzSource::charged_chunk_bytes`, which answers `SCAN_CHUNK_DEFAULT_SIZE_BYTES` whenever
+    `DecodeBudget::charged_chunk_bytes`, which answers `SCAN_CHUNK_DEFAULT_SIZE_BYTES` whenever
     no read loop has announced a length — so the charge
-    `XzSource::default_worker_memory` recommends against *before* the file is
+    `CompressedFileSource::default_worker_memory` recommends against *before* the file is
     open for reading and the charge `BlockCache::affordable` then compares a
     budget to are the same charge. *Rejected:* charging the unannounced pool's
     `POOL_MAX_BYTES` ceiling — it runs the recommendation 7 MiB a reader high
-    and costs a reader at every allocation (`source/xz/blocks.rs`, `charged_chunk_bytes`).
+    and costs a reader at every allocation (`source/compressed/blocks.rs`, `charged_chunk_bytes`).
     A flagless run's resolved budget is **never** this number times its count:
     the shared retention list is billed at every count,
     so a budget read off a run's own report carries `pool_bytes` besides, which
@@ -3280,7 +3280,7 @@ def block_path_afforded(unit: int, budget: int) -> bool:
     retention list that one reader leaves standing**, so the line is
     106.03 MiB at 24 MiB blocks and 522.03 at 128 — against 34.03 and 138.03 for
     the per-reader term alone. So `reader_bytes <= budget` is not this
-    comparison (`source/xz/blocks.rs`, `BlockCache::affordable`).
+    comparison (`source/compressed/blocks.rs`, `BlockCache::affordable`).
 
     **One function because the renderer asks the question at four places** — the
     flagless cell's own label, the fit's window, the model check's exclusion and
@@ -6634,10 +6634,12 @@ READ = tuple(
         "source/origin",
         "source/pool",
         "source/remote",
-        "source/xz",
-        "source/xz/blocks",
-        "source/xz/fetched",
-        "source/xz/file",
+        "source/compressed",
+        "source/compressed/blocks",
+        "source/compressed/fetched",
+        "source/compressed/file",
+        "source/compressed/index",
+        "source/compressed/xz",
     )
 )
 MAP = (
@@ -9959,7 +9961,7 @@ def run_reserve(session: Session) -> str:
             )
         # The account against the model, which is the point of taking it: what a
         # reader costs the program, plus the C dictionary the counter is blind
-        # to, against what `XzSource` bills a sub-stream. Computed here rather
+        # to, against what `CompressedFileSource` bills a sub-stream. Computed here rather
         # than left to a reader, because it is the one comparison that says
         # whether the charge the budget rule divides by is the charge a reader
         # actually is. **It reads the slope alone**, which is why a secant keeps

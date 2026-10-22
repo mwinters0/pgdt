@@ -101,7 +101,7 @@ fn info_json(path: &Path) -> serde_json::Value {
 /// compression warning on either side**, since a seekable `.xz` earns none
 /// (`docs/design/decisions.md`, "D19").
 ///
-/// The `compression` object, the persisted `seek_table` it is derived from and
+/// The `compression` object, the persisted `compression_index` it is derived from and
 /// the recorded `identity` are the fields that legitimately differ, and they
 /// are asserted rather than merely excused: they describe the *container* and
 /// the file on disk, which is the whole of what these two files do not share.
@@ -129,8 +129,8 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
     assert_eq!(shape["streams"], 1);
     assert!(shape["max_block_uncompressed"].as_u64().unwrap() > 0, "{shape}");
 
-    assert_eq!(plain_json["seek_table"], serde_json::Value::Null, "a plain file has no seek table");
-    let table = &xz_json["seek_table"]["Xz"];
+    assert_eq!(plain_json["compression_index"], serde_json::Value::Null, "a plain file has none");
+    let table = &xz_json["compression_index"]["Xz"];
     assert_eq!(table["blocks"].as_array().unwrap().len() as u64, shape["blocks"].as_u64().unwrap());
     assert_eq!(
         table["streams"].as_array().unwrap().len() as u64,
@@ -148,11 +148,11 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
     let out = run(&["info", "--dtcache", cache.to_str().unwrap(), "--json"]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let offline: serde_json::Value = serde_json::from_str(&stdout_of(&out)).unwrap();
-    for key in ["format_version", "container_kind", "seek_table", "identity"] {
+    for key in ["format_version", "container_kind", "compression_index", "identity"] {
         assert_eq!(offline[key], xz_json[key], "{key}");
     }
 
-    for key in ["compression", "seek_table", "identity"] {
+    for key in ["compression", "compression_index", "identity"] {
         plain_json.as_object_mut().unwrap().remove(key);
         xz_json.as_object_mut().unwrap().remove(key);
     }
@@ -233,11 +233,11 @@ fn non_seekable_xz_parses_to_the_same_index_plus_a_warning() {
     // `TocCoverage` note) — must agree exactly.
     plain_json.as_object_mut().unwrap().remove("diagnostics");
     xz_json.as_object_mut().unwrap().remove("diagnostics");
-    // The container's shape, its seek table and the recorded identity differ
+    // The container's shape, its index and the recorded identity differ
     // too, and describe the file rather than the index — a single-block file
     // reports exactly that.
     assert_eq!(xz_json["compression"]["blocks"], 1);
-    for key in ["compression", "seek_table", "identity"] {
+    for key in ["compression", "compression_index", "identity"] {
         plain_json.as_object_mut().unwrap().remove(key);
         xz_json.as_object_mut().unwrap().remove(key);
     }

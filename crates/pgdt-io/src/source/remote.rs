@@ -16,11 +16,11 @@ use tokio_util::sync::CancellationToken;
 
 use pgdt_core::{Error, Result};
 
+use super::compressed::{CompressionIndex, FetchedCompressedSource, Format, walk_seek_table};
 use super::origin::{
     KnownCompression, Location, ORIGIN_LEADING_BYTES, Origin, OriginProbe, Recognized, Verdict,
-    over_known_table,
+    over_known_index,
 };
-use super::xz::{FetchedXzSource, SeekTable, walk_seek_table};
 use super::{ByteRangeSource, RemoteIdentity, is_weak_tag};
 
 /// How long a remote request may go without delivering a byte before it is
@@ -398,12 +398,12 @@ impl ByteRangeSource for RemoteSource {
 /// [`open_local`](super::origin::open_local)'s sibling, acting on the same
 /// [`Verdict`] over the probe's magic bytes and `known`.
 ///
-/// **A remote `.xz` is decoded as a local one is**, block by block, but
-/// through [`FetchedXzSource`] over the plain source rather than through
-/// [`XzSource`](crate::XzSource), which pulls from a file (`docs/design/decisions.md`, "D14" and "D18").
-/// Where the cache holds the seek table there is no walk at all; where
-/// it does not, the walk is announced before it is paid for
-/// ([`announce_remote_walk`]).
+/// **A remote compressed file is decoded as a local one is**, unit by unit,
+/// but through [`FetchedCompressedSource`] over the plain source rather than
+/// through [`CompressedFileSource`](crate::CompressedFileSource), which pulls
+/// from a file (`docs/design/decisions.md`, "D14" and "D18"). Where the cache
+/// holds the index there is no build at all; where it does not, an `.xz`
+/// file's walk is announced before it is paid for ([`announce_remote_walk`]).
 ///
 /// Deficiency register: `deficiency: KD51` — a run that
 /// `pgdt_dump::cache::SourceWatch::require_checkable` will refuse for a server
@@ -425,12 +425,14 @@ pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Res
         || -> Arc<dyn ByteRangeSource> { Arc::new(RemoteSource::new(Arc::clone(object), probe)) };
     match Verdict::of(probe.leading(), known) {
         // The saving, and the reason the cold walk below is worth announcing
-        // rather than refusing: a table from a previous walk of this object
-        // costs no round trip at all (`docs/design/decisions.md`, "D18").
-        Verdict::XzKnown(table) => {
-            over_known_table(FetchedXzSource::with_table(fetched(), probe.stored_size(), table))
-        }
-        Verdict::XzUnknown => {
+        // rather than refusing: an index from a previous build over this
+        // object costs no round trip at all (`docs/design/decisions.md`, "D18").
+        Verdict::Known(index) => over_known_index(FetchedCompressedSource::with_index(
+            fetched(),
+            probe.stored_size(),
+            index,
+        )),
+        Verdict::Unknown(Format::Xz) => {
             let source = fetched();
             announce_remote_walk(origin);
             let (table, fetches) =
@@ -442,10 +444,10 @@ pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Res
                 fetches,
                 "seek table build complete",
             );
-            Ok(Recognized::Source(Arc::new(FetchedXzSource::with_table(
+            Ok(Recognized::Source(Arc::new(FetchedCompressedSource::with_index(
                 source,
                 probe.stored_size(),
-                SeekTable(table),
+                CompressionIndex::Xz(table),
             )?)))
         }
         Verdict::Mismatch => Ok(Recognized::Mismatch),
@@ -478,7 +480,8 @@ pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Res
 /// **The number itself is not owed to that channel.** The stream count is a
 /// property of the file, and [`pgdt_dump::cache::CompressionShape`] is the
 /// projection that carries it to a caller as data — `pgdt info --detail` and
-/// `--json` both print it — beside the source's own [`ByteRangeSource::seek_table`].
+/// `--json` both print it — beside the source's own
+/// [`ByteRangeSource::compression_index`].
 /// What this line adds is neither of those, but its timing.
 fn announce_remote_walk(origin: &Origin) {
     tracing::warn!(

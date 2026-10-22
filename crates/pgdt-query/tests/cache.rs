@@ -13,7 +13,9 @@ use pgdt_dump::cache::{
     WeakIdentity,
 };
 use pgdt_dump::{ScanOptions, cache, check_tiling, preamble_only};
-use pgdt_io::{ByteRangeSource, LocalFileSource, Origin, Parallelism, XzSource};
+use pgdt_io::{
+    ByteRangeSource, CompressedFileSource, CompressionIndex, LocalFileSource, Origin, Parallelism,
+};
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::CACHE_FORMAT_VERSION;
@@ -667,7 +669,7 @@ fn xz_compress(path: &Path) -> tempfile::NamedTempFile {
     compressed
 }
 
-/// `XzSource` is just another `ByteRangeSource` to everything above `pgdt-io`
+/// `CompressedFileSource` is just another `ByteRangeSource` to everything above `pgdt-io`
 /// (`docs/design/decisions.md`, "D6"): `build_index`'s scan and
 /// the cache's save and load round trip produce the same `DumpIndex` whether the
 /// bytes came straight off disk or through the decoder — the differential
@@ -679,9 +681,9 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     let plain_index = build_index(&plain, &ScanOptions::default()).await.unwrap();
 
     let compressed = xz_compress(&edge_cases());
-    let xz = XzSource::open(compressed.path()).unwrap();
+    let xz = CompressedFileSource::open(compressed.path()).unwrap();
     assert!(
-        xz.seek_table().unwrap().is_seekable(),
+        xz.compression_index().unwrap().is_seekable(),
         "this test's whole point is the seekable shape — a non-seekable fixture would earn a \
          D19 diagnostic the plain file's index does not have, and pass for the wrong reason"
     );
@@ -713,11 +715,14 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
             // reader learns what to raise a budget to without `xz --list`.
             let shape = compression.expect("an .xz source records its container's shape");
             assert_eq!(shape.container, "xz");
-            assert_eq!(shape.blocks, xz.seek_table().unwrap().block_count());
-            assert_eq!(shape.streams, xz.seek_table().unwrap().stream_count());
+            assert_eq!(shape.blocks, xz.compression_index().unwrap().unit_count());
+            let Some(CompressionIndex::Xz(table)) = xz.compression_index() else {
+                panic!("an `.xz` source's index is its seek table")
+            };
+            assert_eq!(shape.streams, table.stream_count());
             assert_eq!(
                 shape.max_block_uncompressed,
-                xz.seek_table().unwrap().max_block_uncompressed()
+                xz.compression_index().unwrap().largest_unit()
             );
             assert!(shape.blocks > 1, "the --block-size=512 fixture is multi-block");
         }
@@ -752,17 +757,20 @@ fn has_non_seekable_warning(diagnostics: &[pgdt_model::Diagnostic]) -> bool {
 #[tokio::test]
 async fn build_index_warns_about_a_non_seekable_xz_source() {
     let non_seekable = xz_compress_single_block(&edge_cases());
-    let xz = XzSource::open(non_seekable.path()).unwrap();
+    let xz = CompressedFileSource::open(non_seekable.path()).unwrap();
     assert!(
-        !xz.seek_table().unwrap().is_seekable(),
+        !xz.compression_index().unwrap().is_seekable(),
         "fixture must actually be single-block for this test to mean anything"
     );
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
     assert!(has_non_seekable_warning(&index.diagnostics), "diagnostics: {:?}", index.diagnostics);
 
     let seekable = xz_compress(&edge_cases());
-    let xz_seekable = XzSource::open(seekable.path()).unwrap();
-    assert!(xz_seekable.seek_table().unwrap().is_seekable(), "fixture must actually be seekable");
+    let xz_seekable = CompressedFileSource::open(seekable.path()).unwrap();
+    assert!(
+        xz_seekable.compression_index().unwrap().is_seekable(),
+        "fixture must actually be seekable"
+    );
     let seekable_index = build_index(&xz_seekable, &ScanOptions::default()).await.unwrap();
     assert!(!has_non_seekable_warning(&seekable_index.diagnostics));
 }
@@ -774,7 +782,7 @@ async fn build_index_warns_about_a_non_seekable_xz_source() {
 #[tokio::test]
 async fn a_non_seekable_warning_survives_the_cache_round_trip() {
     let non_seekable = xz_compress_single_block(&edge_cases());
-    let xz = XzSource::open(non_seekable.path()).unwrap();
+    let xz = CompressedFileSource::open(non_seekable.path()).unwrap();
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
@@ -800,7 +808,8 @@ async fn a_non_seekable_warning_survives_the_cache_round_trip() {
 #[tokio::test]
 async fn map_file_warns_about_a_non_seekable_xz_source_once() {
     let non_seekable = xz_compress_single_block(&edge_cases());
-    let xz: Arc<dyn ByteRangeSource> = Arc::new(XzSource::open(non_seekable.path()).unwrap());
+    let xz: Arc<dyn ByteRangeSource> =
+        Arc::new(CompressedFileSource::open(non_seekable.path()).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let mode = CacheMode::enabled(dir.path().join("single_block.xz.dtcache"));
     for run in ["cold", "resumed"] {
@@ -830,7 +839,8 @@ async fn map_file_warns_about_a_non_seekable_xz_source_once() {
 #[tokio::test]
 async fn preamble_only_warns_without_duplicating_across_calls() {
     let non_seekable = xz_compress_single_block(&edge_cases());
-    let xz: Arc<dyn ByteRangeSource> = Arc::new(XzSource::open(non_seekable.path()).unwrap());
+    let xz: Arc<dyn ByteRangeSource> =
+        Arc::new(CompressedFileSource::open(non_seekable.path()).unwrap());
     let dir = tempfile::tempdir().unwrap();
     let mode = CacheMode::enabled(dir.path().join("preamble.xz.dtcache"));
 
@@ -873,8 +883,8 @@ async fn preamble_only_warns_without_duplicating_across_calls() {
 #[tokio::test]
 async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
     let compressed = xz_compress(&edge_cases());
-    let xz = XzSource::open(compressed.path()).unwrap();
-    assert!(xz.seek_table().unwrap().is_seekable(), "fixture must actually be seekable");
+    let xz = CompressedFileSource::open(compressed.path()).unwrap();
+    assert!(xz.compression_index().unwrap().is_seekable(), "fixture must actually be seekable");
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
@@ -884,7 +894,7 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
     let opened = CacheMode::enabled(&path).open(&Origin::local(compressed.path())).await.unwrap();
     assert!(matches!(opened.cache, Held::Loaded(_)), "the file's own cache describes it");
     let source = opened.source;
-    assert_eq!(source.seek_table(), xz.seek_table());
+    assert_eq!(source.compression_index(), xz.compression_index());
     assert_eq!(source.size().await.unwrap(), xz.size().await.unwrap());
     let whole = source.size().await.unwrap() as usize;
     assert_eq!(source.read_range(0, whole).await.unwrap(), xz.read_range(0, whole).await.unwrap());
@@ -903,7 +913,7 @@ async fn a_cache_saved_from_a_plain_source_opens_plain() {
     pgdt_dump::internal::save(&path, &plain, &index).await.unwrap();
 
     let opened = CacheMode::enabled(&path).open(&Origin::local(edge_cases())).await.unwrap();
-    assert_eq!(opened.source.seek_table(), None);
+    assert_eq!(opened.source.compression_index(), None);
     let Held::Loaded(loaded) = opened.cache else { panic!("the file's own cache describes it") };
     assert_eq!(loaded.index.statistics_heap_bytes(), index.statistics_heap_bytes());
 }
@@ -952,7 +962,7 @@ async fn an_open_settles_nothing_wherever_nothing_is_cached_to_compare() {
     let missing = CacheMode::enabled(dir.path().join("nothing.dtcache"));
     let opened = missing.open(&Origin::local(edge_cases())).await.unwrap();
     assert_eq!(opened.cache, Held::Missing);
-    assert_eq!(opened.source.seek_table(), None);
+    assert_eq!(opened.source.compression_index(), None);
 
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
@@ -976,7 +986,7 @@ async fn an_open_settles_nothing_wherever_nothing_is_cached_to_compare() {
 async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exists() {
     let dir = tempfile::tempdir().unwrap();
     let compressed = xz_compress(&edge_cases());
-    let xz = XzSource::open(compressed.path()).unwrap();
+    let xz = CompressedFileSource::open(compressed.path()).unwrap();
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
     let path = dir.path().join("edge_cases.sql.xz.dtcache");
     pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
@@ -1018,7 +1028,7 @@ async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exis
 async fn a_load_refuses_a_cache_whose_compression_layer_is_not_the_sources() {
     let dir = tempfile::tempdir().unwrap();
     let compressed = xz_compress(&edge_cases());
-    let xz = XzSource::open(compressed.path()).unwrap();
+    let xz = CompressedFileSource::open(compressed.path()).unwrap();
     let as_plain = LocalFileSource::open(compressed.path()).unwrap();
     assert_eq!(xz.stored_size().await.unwrap(), as_plain.stored_size().await.unwrap());
 
@@ -1228,7 +1238,7 @@ async fn an_open_refuses_an_unusable_cache_unless_it_may_be_replaced() {
             Ok(opened) => {
                 assert!(why.overwritable(), "{why:?}");
                 assert_eq!(opened.cache, Held::Replacing(why.clone()));
-                assert_eq!(opened.source.seek_table(), None, "claiming nothing");
+                assert_eq!(opened.source.compression_index(), None, "claiming nothing");
             }
             Err(Error::CacheUnusable { unusable, .. }) => {
                 assert!(!why.overwritable(), "{why:?}");
@@ -1248,13 +1258,13 @@ async fn an_open_builds_the_source_on_the_layer_the_cache_settles() {
     let dir = tempfile::tempdir().unwrap();
     let compressed = xz_compress(&edge_cases());
     let origin = Origin::local(compressed.path());
-    let xz = XzSource::open(compressed.path()).unwrap();
+    let xz = CompressedFileSource::open(compressed.path()).unwrap();
     let path = dir.path().join("layer.dtcache");
     let index = pgdt_model::DumpIndex::default();
 
     pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
     let opened = CacheMode::enabled(path.clone()).open(&origin).await.unwrap();
-    assert_eq!(opened.source.seek_table(), xz.seek_table());
+    assert_eq!(opened.source.compression_index(), xz.compression_index());
     assert!(matches!(opened.cache, Held::Loaded(_)));
 
     let as_plain = LocalFileSource::open(compressed.path()).unwrap();
@@ -1307,8 +1317,8 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
     let compressed = xz_compress_single_block(&edge_cases());
     let dir = tempfile::tempdir().unwrap();
     let mode = CacheMode::enabled(dir.path().join("single_block.xz.dtcache"));
-    let intact = XzSource::open(compressed.path()).unwrap();
-    let table = intact.seek_table().unwrap();
+    let intact = CompressedFileSource::open(compressed.path()).unwrap();
+    let index = intact.compression_index().unwrap();
     map_file(
         mode.open_source(Arc::new(intact)).await.unwrap(),
         ReadOptions::default(),
@@ -1330,9 +1340,9 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
     bytes[at] ^= 0xFF;
     std::fs::write(compressed.path(), bytes).unwrap();
 
-    let xz = XzSource::open(compressed.path()).unwrap();
+    let xz = CompressedFileSource::open(compressed.path()).unwrap();
     let options = QueryOptions {
-        parallelism: Parallelism::Serial { memory_bytes: Some(table.max_block_uncompressed() - 1) },
+        parallelism: Parallelism::Serial { memory_bytes: Some(index.largest_unit() - 1) },
         ..Default::default()
     };
     let cold = Cold { cache: mode, ..Cold::default() };
@@ -1341,7 +1351,7 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
     let (last, rows) = items.split_last().expect("the stream yields");
     assert!(rows.iter().all(Result::is_ok) && !rows.is_empty(), "{items:?}");
     assert!(
-        matches!(&last, Err(error) if matches!(error.xz_cause(), Some(xz_seek::Error::BlockCheckFailed { .. }))),
+        matches!(&last, Err(error) if matches!(error.codec_cause(), Some(xz_seek::Error::BlockCheckFailed { .. }))),
         "the run must end on the block's check: {last:?}"
     );
 }
@@ -1349,7 +1359,7 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
 /// The persisted format version and the digest of every fixture's persisted
 /// index it was pinned beside, re-pinned together
 /// (`persisted_index_is_pinned_to_the_format_version`).
-const PERSISTED_INDEX: (u32, u64) = (71, 2_944_908_134_061_493_649);
+const PERSISTED_INDEX: (u32, u64) = (72, 2_944_908_134_061_493_649);
 
 /// **Every fixture's persisted [`DumpIndex`](pgdt_model::DumpIndex)
 /// digests to the value pinned beside `CACHE_FORMAT_VERSION`.** A cache saved
@@ -1436,12 +1446,12 @@ mod encoding {
     use pgdt_dump::ReadOptions;
     use pgdt_dump::cache::{CacheMode, CacheStatus, Unusable};
     use pgdt_dump::internal::{
-        CACHE_MAGIC, CacheFile, CacheFileRef, CompressionIndex, ContainerKind, SourceIdentity,
-        read_cache_file, write_cache_file,
+        CACHE_MAGIC, CacheFile, CacheFileRef, ContainerKind, SourceIdentity, read_cache_file,
+        write_cache_file,
     };
     use pgdt_dump::internal::{load, save};
     use pgdt_fixtures::arranged;
-    use pgdt_io::{ByteRangeSource, LocalFileSource, XzSource};
+    use pgdt_io::{ByteRangeSource, CompressedFileSource, LocalFileSource};
     use pgdt_mapping::map_file;
     use pgdt_mapping::statistics::StatisticsRequest;
     use pgdt_model::PostgresInvalidValues;
@@ -1473,7 +1483,7 @@ mod encoding {
         std::fs::write(&compressed, &out.stdout).unwrap();
 
         let plain = LocalFileSource::open(statistics_fixture()).unwrap();
-        let xz = XzSource::open(&compressed).unwrap();
+        let xz = CompressedFileSource::open(&compressed).unwrap();
         let sources: [(&str, Arc<dyn ByteRangeSource>); 2] =
             [("plain", Arc::new(plain)), ("xz", Arc::new(xz))];
         for (name, source) in sources {
@@ -1499,13 +1509,13 @@ mod encoding {
                 )),
                 "{name}: the encoding under test must carry statistics"
             );
-            assert_eq!(source.seek_table().is_some(), name == "xz");
+            assert_eq!(source.compression_index().is_some(), name == "xz");
 
             let path = dir.path().join(format!("{name}.dtcache"));
             save(&path, source.as_ref(), &run.index).await.unwrap();
             let whole = CacheFile {
                 container_kind: ContainerKind::Plain,
-                compression: source.seek_table().map(CompressionIndex::Xz),
+                compression: source.compression_index(),
                 identity: SourceIdentity::observe(source.as_ref()).await.unwrap(),
                 total_size: source.size().await.unwrap(),
                 calendar_end: calendar_end(),
