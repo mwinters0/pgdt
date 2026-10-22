@@ -107,6 +107,7 @@ unit the budget cannot hold reads through one live handle behind a mutex — one
 each written once over the `Codec` trait, run over their own `Positioned` read, never one body branching on the provider — kept
 across reads so a forward scan continues, advising one partition (`KD35`); the fetched arm's window is
 charged rather than booked unpooled. A miss on a block in flight waits on its decode (`BlockCache::claim`). Evidence: `reserve`.
+The `Codec` is `dyn`, an indirect call a unit or read. Rejected: generic arms, holders being `dyn` (D6) and `open` choosing by magic; an enum.
 
 ### D17 Two pools per source; retained and free units share a pool's slots
 The hinted unit drives both what a pool keeps and how it sizes, so one pool is wrong for either

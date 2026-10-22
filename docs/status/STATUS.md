@@ -125,15 +125,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **15.2's codec is a `dyn` trait, not a type parameter.** Both compressed
-  arms hold an `Arc<dyn Codec>` over unit indices, a decode pulling through a
-  `&dyn Positioned` that `source/compressed/xz.rs` bridges to `xz_seek`'s own
-  source; `XzSource` and `FetchedXzSource` are the codec-neutral
-  `CompressedFileSource` and `FetchedCompressedSource`. Why: the codec is
-  chosen at run time, from the magic or a cached index, and generic arms would
-  put a type parameter and a private bound in front of every holder of a
-  source — the spec settled the trait's contents, not its dispatch. The price
-  is a virtual call per decoder call on both arms, which no figure has read.
-  Reconsidering means generic arms behind public type aliases, before 15.5
-  writes the deflate adapter against the trait.

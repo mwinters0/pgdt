@@ -607,7 +607,7 @@ fn info_announces_no_scan() {
 
 /// A fresh `.xz` open walks the footers and says so; a second `parse` against
 /// the cache that walk left behind opens from the persisted table instead
-/// (`CompressedFileSource::with_table`) and earns no line — the walk that gets no line is
+/// (`CompressedFileSource::with_index`) and earns no line — the walk that gets no line is
 /// the one a cached table exists to skip (`docs/design/decisions.md`,
 /// "D18").
 #[test]
@@ -629,7 +629,7 @@ fn the_seek_table_walk_is_announced_once_and_only_on_a_fresh_open() {
     assert_eq!(first_stderr.matches("seek table build complete").count(), 1, "{first_stderr}");
 
     // The cache already covers the file, so this is the "nothing to do" case
-    // above and opens through `with_table` regardless — no walk either way.
+    // above and opens through `with_index` regardless — no walk either way.
     let second = run(&[
         "parse",
         "--source",

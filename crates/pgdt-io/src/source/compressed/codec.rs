@@ -64,9 +64,8 @@ impl Positioned for std::fs::File {
 /// (`docs/design/decisions.md`, "D15").
 ///
 /// **Object-safe, held as `Arc<dyn Codec>`**: the codec is chosen at run time,
-/// by the file's first bytes or the index a cache hands back, and a source
-/// generic over it would put a type parameter in front of every caller that
-/// holds one.
+/// by the file's first bytes or the index a cache hands back
+/// (`docs/design/decisions.md`, "D15").
 pub(crate) trait Codec: Send + Sync {
     /// The format's name, as a message and the codec error say it.
     fn name(&self) -> &'static str;

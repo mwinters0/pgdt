@@ -21,11 +21,9 @@ preserved; gzip arrives on top of it from 15.4
   adapter, so the index names it without reaching the codec that builds it. A
   gzip adapter keeps that shape.
 - **The codec is a `dyn` trait over unit indices**, held as `Arc<dyn Codec>`:
-  the codec is chosen at run time, from the magic or a cached index, and a
-  generic arm would have put a type parameter, and a private bound, in front
-  of every holder. The handle and the positioned read are object-safe for the
-  same reason; a decode costs a virtual call per decoder call, beside the
-  decode itself.
+  the codec is chosen at run time, from the magic or a cached index
+  ([`decisions.md`](decisions.md), "D15"). The handle and the positioned read
+  are object-safe for the same reason.
 - **What 15.3 to 15.6 inherit.** A gzip codec implements `Codec` and
   `UnitRead`, adds a `CompressionIndex` variant and a `Format` with its magic,
   and the compiler then names every site still assuming xz: `codec_over`,
