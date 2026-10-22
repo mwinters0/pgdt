@@ -50,8 +50,8 @@ does with it.
 The harness builds it (an *example* target, so the shipped binary is never
 replaced), stages `.xz` inputs beside the plain ones, and gives that figure its
 own container memory and its own contention row, both of which its table
-declares. `inflate-throughput`'s inflate rows time the `gzip_inflate` example
-the same way, an example target built in the same image, over a `.gz`
+declares. `inflate-throughput`'s inflate rows time the `gzip-inflate`
+apparatus member the same way, built in the same image, over a `.gz`
 compression of the control staged beside it. The dynamic-filter figures time **`pgdt sql`**, DataFusion's CLI,
 with `pgdt parse` building the cache it reads first: it states its worker
 count as its session's `target_partitions` — held by a test and said in its
@@ -2330,17 +2330,14 @@ DECODE_WORKERS: tuple[int, ...] = (1, 2, 4, 8, 12, 16, 24)
 DECODE_BASELINE = 1
 
 #: The `inflate-throughput` figure's command family: one serial inflate of a
-#: whole gzip member by the `gzip_inflate` example, a shape a backend.
+#: whole gzip member by the `gzip-inflate` instrument, a shape a backend.
 INFLATE_FAMILY = "inflate-"
 
 #: The deflate backends that figure is taken over, in its table's row order,
-#: each spelled as the instrument's `--backend` spells it.
-#:
-#: **Two of the three `docs/design/roadmap-P15-gzip.md` names**: zlib-ng,
-#: its third and the reference `gz-seek`'s throughput floor is stated against,
-#: has no binding that builds in the release image
-#: (`crates/pgdt-io/examples/gzip_inflate.rs`, whose header says why).
-INFLATE_BACKENDS: tuple[str, ...] = ("zlib-rs", "miniz-oxide")
+#: each spelled as the instrument's `--backend` spells it: the three
+#: `docs/design/roadmap-P15-gzip.md` names, zlib-ng first as the reference
+#: `gz-seek`'s throughput floor is stated against.
+INFLATE_BACKENDS: tuple[str, ...] = ("zlib-ng", "zlib-rs", "miniz-oxide")
 
 #: Every inflate shape, `INFLATE_FAMILY` and a backend.
 INFLATE_SHAPES: tuple[str, ...] = tuple(f"{INFLATE_FAMILY}{b}" for b in INFLATE_BACKENDS)
@@ -4110,7 +4107,7 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a worker count the figure does not carry")
         return f"time /pgdt --source /dump.sql --workers {workers}"
     if command.startswith(INFLATE_FAMILY):
-        # The `gzip_inflate` example, mounted where every figure's binary is:
+        # The `gzip-inflate` instrument, mounted where every figure's binary is:
         # one serial inflate of the whole member. **Nothing is redirected**,
         # for the decode instrument's reason — its stdout is where the
         # plaintext it delivered comes back.
@@ -5772,26 +5769,27 @@ def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     return out
 
 
-#: Whether this process has already built the `gzip_inflate` instrument, per
+#: Whether this process has already built the `gzip-inflate` instrument, per
 #: process for `_XZ_DECODE_BUILT`'s reason.
 _GZIP_INFLATE_BUILT = False
 
 
 def ensure_gzip_inflate_binary(cfg: Config, log: Callable[[str], None]) -> Path:
-    """`pgdt-io`'s `gzip_inflate` example, built and copied beside the other
-    measurement binaries — an example target in the release image, for every
-    reason `ensure_xz_decode_binary` gives."""
+    """The `gzip-inflate` apparatus member, built and copied beside the other
+    measurement binaries — another package's binary, so the shipped one is
+    untouched, built in the release image for every reason
+    `ensure_xz_decode_binary` gives."""
     global _GZIP_INFLATE_BUILT
     out = cfg.out_dir / "pgdt-gzip-inflate"
     if _GZIP_INFLATE_BUILT:
         return out
     if cfg.dry_run:
-        log(f"  [dry-run] would build the gzip_inflate instrument into {out}")
+        log(f"  [dry-run] would build the gzip-inflate instrument into {out}")
         _GZIP_INFLATE_BUILT = True
         return out
-    log(f"  building the gzip_inflate instrument into {out}")
+    log(f"  building the gzip-inflate instrument into {out}")
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
-    built = build_in_image(cfg, release.Build(package="pgdt-io", example="gzip_inflate"))
+    built = build_in_image(cfg, release.Build(package="gzip-inflate"))
     shutil.copyfile(built, out)
     out.chmod(0o755)
     _GZIP_INFLATE_BUILT = True
@@ -8342,7 +8340,7 @@ def run_inflate_throughput(session: Session) -> str:
         "\n\nEach cell is wall clock and the rate it implies — per plaintext byte for the "
         "`parse` and inflate rows, per byte of its own file for a floor — and an inflate "
         "row's time as a multiple of the same regime's `parse`: above 1, a serial first pass "
-        "is bound by its inflate. The instrument is `crates/pgdt-io/examples/gzip_inflate.rs`, "
+        "is bound by its inflate. The instrument is `crates/gzip-inflate/src/main.rs`, "
         "one thread, checking the member's CRC-32 and `ISIZE` as a first pass must.\n\n"
         f"- `control_gz`: {_fmt_bytes(compressed)} compressed, {_fmt_bytes(plain)} of "
         f"plaintext, {plain / compressed:.2f}× (`scripts/generate_gzip_input.py`: one member, "
@@ -11332,8 +11330,8 @@ UNTAKEN: list[Figure] = [
         section="What serial inflate costs against the plain parse",
         stage="warm+cold+cold-nvme",
         depends=_declare(
-            "crates/pgdt-io/examples/gzip_inflate.rs",
-            "crates/pgdt-io/Cargo.toml",
+            "crates/gzip-inflate/src/",
+            "crates/gzip-inflate/Cargo.toml",
             "scripts/generate_gzip_input.py",
             *GEN_PERF,
             *SCAN,

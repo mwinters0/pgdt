@@ -1,5 +1,5 @@
 //! The `inflate-throughput` figure's instrument: inflate one single-member
-//! gzip file whole, on one thread, through one of two deflate backends, and
+//! gzip file whole, on one thread, through one of three deflate backends, and
 //! print what was inflated.
 //!
 //! What the figure is for is P15's evidence slice
@@ -10,34 +10,29 @@
 //! floor is read off.
 //!
 //! ```sh
-//! cargo build --release -p pgdt-io --example gzip_inflate
-//! ./target/release/examples/gzip_inflate --source control_gz.gz --backend zlib-rs
+//! cargo build --release -p gzip-inflate
+//! ./target/release/gzip-inflate --source control_gz.gz --backend zlib-ng
 //! ```
 //!
 //! # The backends, each driven directly
 //!
+//! - **`zlib-ng`**: zlib-ng's native `zng_inflate`, through `libz-ng-sys` —
+//!   the reference `gz-seek`'s throughput floor is stated against (the spec's
+//!   "`gz-seek`'s bar is ours"). Its CMake build is why this instrument is a
+//!   member of its own (`Cargo.toml`).
 //! - **`zlib-rs`**: the `zlib-rs` crate's stable `Inflate`.
 //! - **`miniz_oxide`**: its streaming `inflate` over raw deflate, the gzip
 //!   header, CRC-32 and `ISIZE` checked here, the CRC by `crc32fast` — what
 //!   `flate2`'s Rust backend does around the same decoder.
 //!
-//! Not through `flate2`, which links one backend a build: two legs through it
-//! would be two builds of one example under two feature sets, where one
-//! binary taking a flag differs between legs by the decoder alone.
-//!
-//! **No zlib-ng leg**, though the spec names it as the floor's reference:
-//! neither binding to it builds here. `libz-ng-sys` builds only under CMake,
-//! which is the measurement apparatus's alone (`docs/design/decisions.md`,
-//! "D111"), so its leg waits for an apparatus member of its own, and
-//! `libz-sys`'s CMake-free build of zlib-ng fails — at
-//! 1.1.30 its function table is left incomplete (`WITH_OPTIM` undefined), so
-//! `inflateInit2` returns `Z_VERSION_ERROR`, and at 1.1.23 it does not link,
-//! defining `X86_AVX512` without compiling `chunkset_avx512.c`.
+//! Not through `flate2`, which links one backend a build: three legs through
+//! it would be three builds under three feature sets, where one binary taking
+//! a flag differs between legs by the decoder alone.
 //!
 //! # What a run checks, and why
 //!
-//! **The whole member, framing included**: `zlib-rs` is opened for gzip
-//! (`windowBits` 31) and checks the header, the CRC-32 and `ISIZE` itself;
+//! **The whole member, framing included**: `zlib-ng` and `zlib-rs` are opened
+//! for gzip (`windowBits` 31) and check the header, the CRC-32 and `ISIZE`;
 //! the `miniz_oxide` leg checks the same three here. A first pass
 //! has to check its member's CRC-32 (the P15 spec's "Each unit carries its
 //! own CRC-32"), so a rate without one would be a rate of something no first
@@ -59,9 +54,10 @@
 //! # What consumes the bytes
 //!
 //! [`std::hint::black_box`] over one byte of each filled buffer, as in
-//! `xz_decode.rs`: `O(1)` a call rather than a byte, so the figure's content
-//! stays the volume inflated divided by a time.
+//! `pgdt-io`'s `xz_decode` example: `O(1)` a call rather than a byte, so the
+//! figure's content stays the volume inflated divided by a time.
 
+use std::ffi::{c_int, c_uint, c_void};
 use std::fs::File;
 use std::hint::black_box;
 use std::io::Read;
@@ -78,8 +74,12 @@ const OUT_BUFFER: usize = 1 << 20;
 /// for the gzip framing.
 const GZIP_WINDOW_BITS: u8 = 15 + 16;
 
+/// What `--backend` takes, as its errors spell it.
+const BACKENDS: &str = "zlib-ng, zlib-rs, miniz-oxide";
+
 #[derive(Clone, Copy)]
 enum Backend {
+    ZlibNg,
     ZlibRs,
     MinizOxide,
 }
@@ -87,14 +87,16 @@ enum Backend {
 impl Backend {
     fn parse(raw: &str) -> Result<Self, String> {
         match raw {
+            "zlib-ng" => Ok(Self::ZlibNg),
             "zlib-rs" => Ok(Self::ZlibRs),
             "miniz-oxide" => Ok(Self::MinizOxide),
-            other => Err(format!("--backend {other}: one of zlib-rs, miniz-oxide")),
+            other => Err(format!("--backend {other}: one of {BACKENDS}")),
         }
     }
 
     fn name(self) -> &'static str {
         match self {
+            Self::ZlibNg => "zlib-ng",
             Self::ZlibRs => "zlib-rs",
             Self::MinizOxide => "miniz-oxide",
         }
@@ -173,6 +175,7 @@ fn run(args: &Args) -> Result<(), String> {
     let mut input = Input::new(file);
     let mut out = vec![0u8; OUT_BUFFER];
     let delivered = match args.backend {
+        Backend::ZlibNg => zlib_ng(&mut input, &mut out)?,
         Backend::ZlibRs => zlib_rs(&mut input, &mut out)?,
         Backend::MinizOxide => miniz_oxide(&mut input, &mut out)?,
     };
@@ -190,6 +193,113 @@ fn stalled(offered: usize, total_out: u64) -> String {
         format!("the file ends inside the member, after {total_out} plaintext bytes")
     } else {
         format!("inflate made no progress over {offered} bytes, after {total_out} plaintext bytes")
+    }
+}
+
+// -- zlib-ng ----------------------------------------------------------------
+
+/// zlib-ng's `zalloc`, over the C allocator: the binding's `z_stream` types it
+/// as a function, so it cannot be left null for zlib-ng to fill in its own.
+/// Called once a stream, so `calloc`'s zeroing is not a cost the figure sees.
+unsafe extern "C" fn zng_alloc(_: *mut c_void, items: c_uint, size: c_uint) -> *mut c_void {
+    // SAFETY: `calloc` takes any counts and returns null where it cannot.
+    unsafe { libc::calloc(items as usize, size as usize) }
+}
+
+/// zlib-ng's `zfree`, over what `zng_alloc` returned.
+unsafe extern "C" fn zng_free(_: *mut c_void, address: *mut c_void) {
+    // SAFETY: zlib-ng frees only what its `zalloc` returned.
+    unsafe { libc::free(address) }
+}
+
+/// A `zng_stream` inflating a gzip member, ended when dropped.
+///
+/// **Boxed, and never moved once initialised**: zlib-ng's state points back
+/// at its stream and refuses a call through any other address.
+struct ZngInflate(Box<libz_ng_sys::z_stream>);
+
+impl ZngInflate {
+    fn new() -> Result<Self, String> {
+        use libz_ng_sys::{Z_OK, z_stream, zng_inflateInit2};
+
+        let mut stream = Box::new(z_stream {
+            next_in: std::ptr::null_mut(),
+            avail_in: 0,
+            total_in: 0,
+            next_out: std::ptr::null_mut(),
+            avail_out: 0,
+            total_out: 0,
+            msg: std::ptr::null_mut(),
+            state: std::ptr::null_mut(),
+            zalloc: zng_alloc,
+            zfree: zng_free,
+            opaque: std::ptr::null_mut(),
+            data_type: 0,
+            adler: 0,
+            reserved: 0,
+        });
+        // SAFETY: the stream is initialised field by field above, at the
+        // address it keeps until `drop`.
+        let rc = unsafe { zng_inflateInit2(&mut *stream, c_int::from(GZIP_WINDOW_BITS)) };
+        if rc != Z_OK {
+            return Err(format!("zng_inflateInit2: {rc}"));
+        }
+        Ok(Self(stream))
+    }
+
+    /// What zlib-ng said of its last failure, where it said anything.
+    fn message(&self) -> String {
+        if self.0.msg.is_null() {
+            return "no message".to_string();
+        }
+        // SAFETY: a non-null `msg` is a NUL-terminated static string.
+        unsafe { std::ffi::CStr::from_ptr(self.0.msg) }.to_string_lossy().into_owned()
+    }
+}
+
+impl Drop for ZngInflate {
+    fn drop(&mut self) {
+        // SAFETY: initialised by `new`, and ended once.
+        unsafe { libz_ng_sys::inflateEnd(&mut *self.0) };
+    }
+}
+
+fn zlib_ng(input: &mut Input, out: &mut [u8]) -> Result<u64, String> {
+    use libz_ng_sys::{Z_BUF_ERROR, Z_NO_FLUSH, Z_OK, Z_STREAM_END, inflate};
+
+    let mut inflater = ZngInflate::new()?;
+    let out_len = c_uint::try_from(out.len()).expect("OUT_BUFFER fits a uInt");
+    loop {
+        let pending = input.pending()?;
+        let offered = pending.len();
+        let stream = &mut *inflater.0;
+        stream.next_in = pending.as_ptr().cast_mut();
+        stream.avail_in = c_uint::try_from(offered).expect("READ_BUFFER fits a uInt");
+        stream.next_out = out.as_mut_ptr();
+        stream.avail_out = out_len;
+        // SAFETY: `next_in` and `next_out` point into live buffers of the
+        // lengths stated, and zlib-ng writes only into the second.
+        let rc = unsafe { inflate(stream, Z_NO_FLUSH) };
+        let read = offered - stream.avail_in as usize;
+        let wrote = (out_len - stream.avail_out) as usize;
+        let total = stream.total_out as u64;
+        input.consume(read);
+        if wrote > 0 {
+            black_box(out[0]);
+        }
+        match rc {
+            Z_STREAM_END => return Ok(total),
+            // No progress was possible: only an input that ran out.
+            Z_BUF_ERROR => return Err(stalled(offered, total)),
+            Z_OK if read == 0 && wrote == 0 => return Err(stalled(offered, total)),
+            Z_OK => {}
+            _ => {
+                return Err(format!(
+                    "inflate: {rc} ({}), after {total} plaintext bytes",
+                    inflater.message()
+                ));
+            }
+        }
     }
 }
 
@@ -333,15 +443,17 @@ fn main() -> ExitCode {
     let args = match parse_args() {
         Ok(args) => args,
         Err(why) => {
-            eprintln!("gzip_inflate: {why}");
-            eprintln!("usage: gzip_inflate --source <file.gz> --backend zlib-rs|miniz-oxide");
+            eprintln!("gzip-inflate: {why}");
+            eprintln!(
+                "usage: gzip-inflate --source <file.gz> --backend zlib-ng|zlib-rs|miniz-oxide"
+            );
             return ExitCode::from(2);
         }
     };
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(why) => {
-            eprintln!("gzip_inflate: {why}");
+            eprintln!("gzip-inflate: {why}");
             ExitCode::from(1)
         }
     }

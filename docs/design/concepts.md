@@ -88,6 +88,10 @@ the gate is blind").
 - **peak-rss** — `main.rs`: the peak resident set `scripts/measure.py` reads.
 - **count-instructions** — `main.rs`: the user-space instructions
   `scripts/measure.py`'s `release-profile` figure reads beside its wall clock.
+- **gzip-inflate** — `main.rs`: one gzip member inflated serially through a
+  named deflate backend, `scripts/measure.py`'s `inflate-throughput`
+  instrument; a member of its own because its zlib-ng leg builds under CMake
+  (D111).
 
 ## The `COPY` format
 

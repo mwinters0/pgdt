@@ -14,12 +14,16 @@ the inflate figure is built, untaken").
   carrying the instrument (`measurements.md`, "A figure may be published
   outside the sweep"). It stands in no borrow edge, so a sitting of its own
   publishes.
-- **The instrument is `crates/pgdt-io/examples/gzip_inflate.rs`**, built in
-  the release image like `xz_decode`: `--backend zlib-rs|miniz-oxide`, one
-  thread, the header, CRC-32 and `ISIZE` checked, a second member refused,
-  `delivered=` printed and held by the harness to `control`'s size. The
-  backends and `crc32fast` are `pgdt-io` dev-dependencies pinned with `=`,
-  and the figure declares that manifest.
+- **The instrument is the `gzip-inflate` member**, `crates/gzip-inflate/`,
+  marked apparatus so the release suite leaves it out (`decisions.md`,
+  "D110"), and built in the release image as every timed binary is:
+  `--backend zlib-ng|zlib-rs|miniz-oxide`, one thread, the header, CRC-32 and
+  `ISIZE` checked, a second member refused, `delivered=` printed and held by
+  the harness to `control`'s size. The backends — `libz-ng-sys` (zlib-ng
+  2.3.3, native API, CMake-built), `zlib-rs`, `miniz_oxide` — and `crc32fast`
+  are its dependencies pinned with `=`, and the figure declares its manifest
+  and `src/`. Its tests run every backend over members `flate2` writes;
+  `flate2` became a workspace dependency to be named twice.
 - **The input is `control_gz`**, `control` deflated by
   `scripts/generate_gzip_input.py` through Python's `zlib`, refused unless it
   is `ZLIB_VERSION` and unless the header is `PG_DUMP_HEADER`, which a test
@@ -32,16 +36,14 @@ the inflate figure is built, untaken").
 
 ## Negative results
 
-- **zlib-ng is not a leg.** No binding to it builds in `pgdt-io`:
-  `libz-ng-sys` is CMake-only, which is the measurement apparatus's alone
-  (`decisions.md`, "D111"), and `libz-sys`'s
+- **zlib-ng has no CMake-free binding**, which is why its leg needs CMake
+  and the instrument a member of its own: `libz-sys`'s
   `zlib-ng-no-cmake-experimental-community-maintained` build is broken at both
   versions tried — at 1.1.30 (zlib-ng 2.3.3) `WITH_OPTIM` is never defined, so
   the function table is left incomplete and `inflateInit2` fails with
   `Z_VERSION_ERROR` after printing "Zlib-ng functable failed initialization!";
   at 1.1.23 (zlib-ng 2.2.5) it defines `X86_AVX512` without compiling
-  `chunkset_avx512.c`, and the link fails on `inflate_fast_avx512`. What
-  replaces it is `M244` and an apparatus member
+  `chunkset_avx512.c`, and the link fails on `inflate_fast_avx512`
   ([`../status/history/2026-10-22.md`](../status/history/2026-10-22.md), "The
   zlib-ng leg, reviewed").
 - **No zlib-ng reaches the image another way.** Debian trixie packages
@@ -49,16 +51,16 @@ the inflate figure is built, untaken").
   zlib-ng), and zlib-ng's own `configure` + `make` build, CMake-free, is
   driven by no crate but `libz-sys`'s broken one — using it is build plumbing
   of our own.
-- **`zlib-rs` and `miniz_oxide` are driven directly**, not through `flate2`,
+- **Every backend is driven directly**, not through `flate2`,
   whose backend is a build-time feature: one binary taking a flag keeps the
   legs differing by the decoder alone.
 
 ## What the next round inherits
 
-- **The readings** are `--figure inflate-throughput`; the sitting's
-  `control_gz` generation and three cold regimes make it a long one, so it is
-  handed off per `.claude/skills/gosub/handoff.md` if it runs past half an
-  hour. Before reasoning from it, `measure.py --stale` as for any figure.
+- **The readings** are `--figure inflate-throughput`, all three legs, from
+  a commit carrying the `gzip-inflate` member; the sitting's `control_gz`
+  generation and three cold regimes make it a long one, so it is handed off
+  per `.claude/skills/gosub/handoff.md` if it runs past half an hour. Before reasoning from it, `measure.py --stale` as for any figure.
 - **15.1.2, the spacing figure**, is taken on `gz-seek` after 15.4; what it
   times is its STATUS row
   ([`../status/history/2026-10-22.md`](../status/history/2026-10-22.md), "The

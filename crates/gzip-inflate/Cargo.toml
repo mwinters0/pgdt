@@ -1,0 +1,36 @@
+[package]
+name = "gzip-inflate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The `inflate-throughput` figure's instrument: one gzip member inflated whole,
+# on one thread, through the deflate backend a flag names (`src/main.rs`). A
+# workspace member of its own rather than a `pgdt-io` example because its
+# zlib-ng leg builds only under CMake, which nothing shipped may reach
+# (`docs/design/decisions.md`, "D111"); `scripts/measure.py` builds it in the
+# release image, as it builds every binary a figure times.
+
+# Never shipped: the measurement apparatus, which the release suite leaves
+# out (`docs/design/decisions.md`, "D110").
+[package.metadata.pgdt]
+apparatus = true
+
+# The backends and the CRC-32 the `miniz_oxide` leg checks with. **Pinned
+# exactly**: a backend's version is what the figure's row is a reading of, and
+# `scripts/measure.py` declares this file.
+[dependencies]
+crc32fast = "=1.5.1"
+# `calloc` and `free`, the allocator the zlib-ng leg hands its stream.
+libc = { workspace = true }
+# zlib-ng 2.3.3 in its native API, built from source by CMake.
+libz-ng-sys = "=1.1.30"
+miniz_oxide = "=0.9.1"
+zlib-rs = "=0.6.8"
+
+[dev-dependencies]
+# What the tests' members are written with: someone else's encoder, so each
+# backend is checked against output none of them wrote.
+flate2 = { workspace = true }
+tempfile = { workspace = true }

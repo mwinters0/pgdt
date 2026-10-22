@@ -76,8 +76,8 @@ EMBEDDERS = ("datafusion-pgdump", "datafusion-cli-pgdump", "pgdt")
 #: Every member and the members it may depend on, so a new member is placed
 #: deliberately (D68). The dump's parsers and the codec are siblings, neither
 #: reaching the other; `namespace-init` installs a binary's signal handlers
-#: (D26), which no library does, and `peak-rss` and `count-instructions` are
-#: the harness's. `pgdt-fixtures` is the tests' vocabulary, which no row
+#: (D26), which no library does, and `peak-rss`, `count-instructions` and
+#: `gzip-inflate` are the harness's. `pgdt-fixtures` is the tests' vocabulary, which no row
 #: lists, so only a dev-dependency reaches it; its edges, behind its
 #: `mapping` feature, are for a sweep's request builders and a fixture mapped
 #: beside its cache, which takes the mapping pass and what its call names.
@@ -102,6 +102,7 @@ GRAPH: dict[str, tuple[str, ...]] = {
     "namespace-init": (),
     "peak-rss": (),
     "count-instructions": (),
+    "gzip-inflate": (),
     "pgdt-fixtures": ("pgdt-model", "pgdt-io", "pgdt-dump", "pgdt-mapping"),
 }
 

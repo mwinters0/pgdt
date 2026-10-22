@@ -43,7 +43,7 @@ the checksums, the draft, the publish -- is `scripts/release_ci.py`.
 the shipped one is `build --target x86_64-unknown-linux-gnu`'s, a release's
 build but for `--release`'s variable, which only `--version` reads; each
 variant it times beside that one -- an allocator leg, the instrument, the
-`xz_decode` and `gzip_inflate` examples, a `release-profile` leg -- is this recipe with only its
+`xz_decode` example, the `gzip-inflate` member, a `release-profile` leg -- is this recipe with only its
 package, example, features, profile or target directory changed (`Build`), so
 two binaries a figure compares differ by what the figure names.
 A `cargo bench` a figure runs runs here as well (`Bench`), on the same compiler

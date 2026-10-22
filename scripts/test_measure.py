@@ -4756,7 +4756,7 @@ class InflateThroughput(unittest.TestCase):
     """Serial inflate of one gzip member against the plain `parse`, built and
     waiting in `UNTAKEN` for its first sitting."""
 
-    EXAMPLE = measure.REPO / "crates/pgdt-io/examples/gzip_inflate.rs"
+    INSTRUMENT = measure.REPO / "crates/gzip-inflate/src/main.rs"
 
     def test_it_waits_untaken(self):
         # Registered before any reading: a figure marker asserts the stamp's
@@ -4778,9 +4778,9 @@ class InflateThroughput(unittest.TestCase):
     def test_what_can_move_it_is_declared(self):
         fig = measure.SELECTABLE_BY_ID["inflate-throughput"]
         for path in (
-            "crates/pgdt-io/examples/gzip_inflate.rs",
+            "crates/gzip-inflate/src/",
             # Where the backends' versions are pinned.
-            "crates/pgdt-io/Cargo.toml",
+            "crates/gzip-inflate/Cargo.toml",
             "scripts/generate_gzip_input.py",
             *measure.GEN_PERF,
             # The `parse` row's path, as every throughput figure declares it.
@@ -4815,15 +4815,15 @@ class InflateThroughput(unittest.TestCase):
                 self.assertNotIn(">", script)
 
     def test_a_backend_the_figure_does_not_carry_is_an_error(self):
-        for command in ("inflate-zlib", "inflate-", "inflate-zlib-ng"):
+        for command in ("inflate-zlib", "inflate-", "inflate-libdeflate"):
             with self.subTest(command=command):
                 with self.assertRaises(ValueError):
                     measure._script(command)
 
     def test_the_instrument_spells_every_backend_the_harness_asks_for(self):
         # One vocabulary in two languages: a backend the harness names and the
-        # example does not would fail a whole sitting at its first rep.
-        source = self.EXAMPLE.read_text()
+        # instrument does not would fail a whole sitting at its first rep.
+        source = self.INSTRUMENT.read_text()
         accepted = set(re.findall(r'^\s*"([a-z-]+)" => Ok\(Self::', source, re.MULTILINE))
         self.assertEqual(accepted, set(measure.INFLATE_BACKENDS))
 
