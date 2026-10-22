@@ -93,7 +93,7 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [ ] **15.1.2** Evidence, the spacing figure, on `gz-seek` after 15.4: gzip's own costs at candidate spacings — the checkpointing first pass against a serial inflate, a resumed unit decode's fixed cost, the window section's size — the costs shared with xz read off its figures; it sets the spacing constant `pgdt-io` passes `gz-seek`
 - [ ] **15.5** Single-member gzip: the `deflate` adapter over `gz-seek`, checkpoints by the placement rule, unit CRCs, the window provider and the cache's window section, the first pass's `PlanNote`, determinism and resume assertions, over HTTP
 - [ ] **15.6** BGZF, `pgdt-io`'s side over the crate's walk: the walk run at open, recognition at 18 bytes, members coalesced into units
-- [ ] **15.8** A parallel first pass, earned by 15.1.1's reading: `gz-seek` finds a single member's units speculatively — rapidgzip's technique, implemented natively and run on the caller's pool (D1, D12) — replacing only how the first pass finds them, never the index, the codec trait or the arms; checkpoints by the placement rule, so the index is the serial pass's at every worker count
+- [ ] **15.8** A parallel first pass, earned by 15.1.1's reading: `gz-seek` finds a single member's units speculatively — rapidgzip's technique, implemented natively and run on the caller's pool (D1, D12) — replacing only how the first pass finds them, never the index, the codec trait or the arms; checkpoints by the placement rule, so the index is the serial pass's at every worker count; it lifts the inflate, the first pass's scan staying one partition unless its own spec partitions it (the spec's "Slice order")
 - [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the manual and `pg-dump-compatibility.md`
 
 ## Not started
@@ -125,17 +125,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **15.8, a parallel first pass, is admitted on 15.1.1's reading**
-  ([`../design/measurements.md`](../design/measurements.md), "What serial
-  inflate costs against the plain parse"). The spec makes it a row only if
-  that reading earns it, and states no threshold
-  ([`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md), "Slice
-  order"). The call applies the figure's own criterion, written before the
-  reading — an inflate row slower than the plain `parse` beside it is a first
-  pass bound by its inflate — which holds on tmpfs and the NVMe and fails only
-  on the SATA SSD, where the plain `parse` is held by the device; and the
-  standing rule against deciding by implementation cost leaves nothing to set
-  against it. Reconsidering strikes the row: a single member's first pass
-  stays serial at its backend's rate, and the seam still admits the parallel
-  pass later without reshaping the index, the codec trait or the arms.

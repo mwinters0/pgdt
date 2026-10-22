@@ -118,7 +118,8 @@ a second copy of the xz source.
   finding): it would replace only how the first pass finds units, never the
   index, the codec trait or the arms. Whether this phase builds it is decided
   on the evidence slice's reading of serial inflate against the plain parse
-  on the measured devices, not here. Rejected: a separate indexing pass,
+  on the measured devices, not here; the reading earned it ("Slice
+  order"). Rejected: a separate indexing pass,
   decoding the whole file twice cold for the same index; the `rapidgzip`
   binding's parallel path, which runs only on a thread pool of its own (D1,
   D12).
@@ -193,6 +194,9 @@ a second copy of the xz source.
   `xz-seek`'s requirements are its: sans-IO — a walk and a unit decode driven by bytes the caller
   supplies, as `xz_seek::Walk` and `BlockTask` are, which is what lets the
   fetched arm exist; a forward decode emitting checkpoints by the rule above;
+  a single member's parallel first pass, its units found speculatively and
+  decoded on the caller's threads (D1, D12), placing checkpoints by the same
+  rule;
   a resume from a checkpoint given its window; a CRC-32 a unit; the index as a
   shareable handle; its own size contract, open until the end; a safe API;
   and a throughput floor against zlib-ng, which the evidence slice measures.
@@ -322,9 +326,30 @@ shipped constant ([`../status/history/2026-10-22.md`](../status/history/2026-10-
    against the unpooled bound, the gzip throughput figures, the manual and
    [`pg-dump-compatibility.md`](pg-dump-compatibility.md).
 
-A parallel first pass becomes a row only if the evidence slice's reading earns
-it. The split is a row only if `gz-seek` is functional by the wrap; otherwise
-it is out-of-band work.
+**The evidence slice's reading earned a parallel first pass, slice 8, between
+6 and 7**, so 7's gzip figures read it
+([`../status/history/2026-10-22.md`](../status/history/2026-10-22.md), "15.8,
+reviewed"). **The test**: a single member's serial first pass is held by its
+inflate wherever a serial inflate is slower than the pass's own floor — the
+`.gz` file's device floor or its scan over plaintext from memory, whichever is
+slower — which holds on every measured device
+([`measurements.md`](measurements.md), "What serial inflate costs against the
+plain parse"); the ratio against the plain `parse` says only whether a `.gz`
+file is slower than the plain one. `gz-seek` finds a single member's units
+speculatively — rapidgzip's technique, implemented natively and driven sans-IO
+on the caller's threads — placing checkpoints by the placement rule, so the
+index is the serial pass's at every worker count; slice 4 builds none of it.
+**It lifts the inflate, not the scan**: a first pass's scan stays one partition
+(`extent()`, above), so a `parse`'s first pass falls toward its scan's floor,
+while a cold `query`'s stays bound by its one-partition typed scan, whose rate
+is of the order of a serial inflate's (`parallel-scan-throughput`). Whether the
+first pass's scan is partitioned too, over units whose plaintext offsets
+become known as the pass goes, is slice 8's own question, asked against the
+arms 2, 3 and 5 leave. Rejected: deferring it to a later phase or out-of-band,
+which moves only the wrap.
+
+The split is a row only if `gz-seek` is functional by the wrap; otherwise it
+is out-of-band work.
 
 ## Facts the grilling found
 

@@ -8276,9 +8276,14 @@ def run_inflate_throughput(session: Session) -> str:
 
     What it decides is the P15 spec's (`docs/design/roadmap-P15-gzip.md`,
     "Slice order"): a single member's first pass inflates serially, so an
-    inflate row slower than the `parse` row beside it is a first pass bound
-    by the inflate, which only a parallel first pass would lift; and the
-    backends' rates are what `gz-seek`'s throughput floor is read off.
+    inflate row slower than that pass's own floor — the `.gz` file's `dd` row
+    or the warm `parse`, the plaintext reaching its scan from memory,
+    whichever is slower — is a first pass bound by the inflate, which only a
+    parallel first pass would lift; and the backends' rates are what
+    `gz-seek`'s throughput floor is read off. **The ratio each inflate cell
+    carries answers a different question**, whether a `.gz` first pass is
+    slower than the plain file's `parse` on the same device: below 1 on a
+    device holding the plain `parse`, the pass can still be its inflate's.
 
     **The plain `parse` is this figure's own reading**, not borrowed from
     `scan-throughput-*`: each inflate row is read as a ratio against it, and
@@ -8339,8 +8344,10 @@ def run_inflate_throughput(session: Session) -> str:
     notes = (
         "\n\nEach cell is wall clock and the rate it implies — per plaintext byte for the "
         "`parse` and inflate rows, per byte of its own file for a floor — and an inflate "
-        "row's time as a multiple of the same regime's `parse`: above 1, a serial first pass "
-        "is bound by its inflate. The instrument is `crates/gzip-inflate/src/main.rs`, "
+        "row's time as a multiple of the same regime's `parse`: above 1, a `.gz` first pass "
+        "is slower than the plain file's. What holds a first pass to its inflate is an inflate "
+        "row slower than the pass's own floor, the `.gz` file's `dd` row or the warm `parse`, "
+        "whichever is slower. The instrument is `crates/gzip-inflate/src/main.rs`, "
         "one thread, checking the member's CRC-32 and `ISIZE` as a first pass must.\n\n"
         f"- `control_gz`: {_fmt_bytes(compressed)} compressed, {_fmt_bytes(plain)} of "
         f"plaintext, {plain / compressed:.2f}× (`scripts/generate_gzip_input.py`: one member, "

@@ -55,12 +55,10 @@ the inflate figure, and 15.8 admitted").
 
 ## What the next round inherits
 
-- **The reading earns a parallel first pass, admitted as 15.8**: by the
-  figure's own criterion, an inflate row slower than the `parse` beside it,
-  a single member's serial first pass is bound by its inflate on tmpfs and
-  the NVMe, and only on the SATA SSD does the plain `parse`'s device bound
-  leave it the faster of the two. The call is under STATUS's "Decisions
-  worth another look".
+- **The reading earns a parallel first pass, 15.8**: a single member's
+  serial first pass is held by its inflate on every measured device, each
+  inflate row exceeding the pass's own floor; the test and what 15.8 lifts
+  are the spec's "Slice order".
 - **`gz-seek`'s throughput floor is the `Inflate, zlib-ng` row**: its forward
   decode, checkpoints taken and every check made, no slower than zlib-ng's
   serial inflate of the same member. A ratio between two binaries holds only

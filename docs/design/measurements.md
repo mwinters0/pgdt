@@ -3210,7 +3210,7 @@ So a worker count read off a linear extrapolation of a one-worker rate is a
 | Inflate, `zlib-rs` | **2.63 s** (2.50–2.65) · ~1224 MB/s · 5.90× the `parse` | **2.77 s** (2.69–2.78) · ~1164 MB/s · 0.48× the `parse` | **2.71 s** (2.58–2.75) · ~1187 MB/s · 2.45× the `parse` |
 | Inflate, `miniz-oxide` | **6.11 s** (5.89–6.23) · ~527 MB/s · 13.69× the `parse` | **6.33 s** (6.26–6.42) · ~509 MB/s · 1.11× the `parse` | **6.22 s** (6.17–6.35) · ~518 MB/s · 5.61× the `parse` |
 
-Each cell is wall clock and the rate it implies — per plaintext byte for the `parse` and inflate rows, per byte of its own file for a floor — and an inflate row's time as a multiple of the same regime's `parse`: above 1, a serial first pass is bound by its inflate. The instrument is `crates/gzip-inflate/src/main.rs`, one thread, checking the member's CRC-32 and `ISIZE` as a first pass must.
+Each cell is wall clock and the rate it implies — per plaintext byte for the `parse` and inflate rows, per byte of its own file for a floor — and an inflate row's time as a multiple of the same regime's `parse`: above 1, a `.gz` first pass is slower than the plain file's. What holds a first pass to its inflate is an inflate row slower than the pass's own floor, the `.gz` file's `dd` row or the warm `parse`, whichever is slower. The instrument is `crates/gzip-inflate/src/main.rs`, one thread, checking the member's CRC-32 and `ISIZE` as a first pass must.
 
 - `control_gz`: 754.7 MB compressed, 3.00 GiB of plaintext, 4.07× (`scripts/generate_gzip_input.py`: one member, `pg_dump`'s header, level 6)
 
@@ -3248,16 +3248,20 @@ the `.gz` file's own `dd` floor is under half the fastest inflate on every
 device, the SATA SSD included: a serial inflate consumes the compressed member
 more slowly than any device here delivers it.
 
-**Against the plain `parse`, the device decides which side is slower.** On
+**A single member's serial first pass is its inflate's on every device.**
+Its floor is the `.gz` file's `dd` row or the warm `parse`, its scan reading
+plaintext from memory, whichever is slower, and every inflate row exceeds
+both in all three regimes: the two zlib backends take about six times the
+warm `parse` on tmpfs and the NVMe, and about twice the `.gz` floor on the
+SATA SSD. That margin is what only a parallel first pass would lift
+([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Slice order").
+
+**Against the plain `parse`, the device decides which file is slower.** On
 tmpfs and the NVMe every inflate row is slower than the plain `parse` beside
-it — 5.90–6.18× and 2.45–2.61× for the two zlib backends — so a single
-member's serial first pass is bound by its inflate there, which only a
-parallel first pass would lift ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md),
-"Settled in the grilling"). On the
-SATA SSD the plain `parse` reads 4.07× the bytes off a device it is already
-held by, and the inflate rows run at 0.48–0.52× of it: a `.gz` first pass
-beats the plain one there, while still taking about twice its own file's
-floor.
+it — 5.90–6.18× and 2.45–2.61× for the two zlib backends. On the SATA SSD the
+plain `parse` reads 4.07× the bytes off a device it is already held by, and
+the inflate rows run at 0.48–0.52× of it: a `.gz` first pass beats the plain
+one there, still held by its inflate.
 
 **`zlib-rs` is the fastest backend in every regime, and zlib-ng's row is
 `gz-seek`'s floor.** `zlib-rs`'s cells lie wholly below zlib-ng's in all
