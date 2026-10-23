@@ -19,6 +19,8 @@ mod file;
 mod index;
 mod xz;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use self::deflate::held::indexed_in_memory as gzip_indexed_in_memory;
 pub use self::deflate::{GzipIndex, WindowProvider};
 pub use self::fetched::FetchedCompressedSource;
 pub use self::file::CompressedFileSource;

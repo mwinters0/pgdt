@@ -1,10 +1,10 @@
 # P15.5 notes — single-member gzip, the codec
 
 The `deflate` adapter over `gz-seek`, reading a gzip file over a complete
-index handed in, on the local and the fetched arm; the first pass that builds
-the index is 15.5.1
+index handed in, on the local and the fetched arm; the cache's window section
+is 15.5.1 and the first pass that builds the index 15.5.2
 ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md), "15.5
-split: the codec landed, the first pass is 15.5.1").
+split: the codec, the window section, the first pass").
 
 - **`source/compressed/deflate.rs` is the codec**, `DeflateCodec` and its
   `UnitRead`, and `deflate/checkpoints.rs` the layout leaf the index names —
@@ -48,19 +48,14 @@ split: the codec landed, the first pass is 15.5.1").
   `pg_dump`'s own `-Z` fixture at every routine major read through its index.
   A checkpoint's size is pinned beside xz's per-entry cost (`KD26`).
 
-## What 15.5.1 inherits
+## What 15.5.2 inherits
 
-- **Where a first pass keeps the windows it produces until a save writes
-  them** is its first question, and the spec answers it for the index only
-  ("Only offsets, bit positions and CRCs are resident"). A save renames a new
-  cache over the old (`decisions.md`, "D78"), so a window section written
-  after the envelope is copied whole by each save of a pass unless it is laid
-  out otherwise, and the windows placed since the last save are held
-  somewhere until the next — in memory, a resident term no charge names yet,
-  or in a file beside the cache, a second file the cache's identity rules do
-  not cover.
+- **Where a first pass keeps the windows it produces until it ends** is its
+  first question, the section's layout settled by 15.5.1
+  ([`roadmap-P15.5.1-window-section-notes.md`](roadmap-P15.5.1-window-section-notes.md),
+  "What 15.5.2 inherits").
 - **A cached incomplete index is refused today** (`DeflateCodec::over`'s
-  `Unsupported` error), and is what 15.5.1's resume opens instead, through
+  `Unsupported` error), and is what 15.5.2's resume opens instead, through
   `gz_seek::Forward::resume` with its last checkpoint's window.
   `CompressionIndex::uncompressed_size` answers the last checkpoint's offset
   for one, which `compressed_block_path_declined` reads as the whole file.

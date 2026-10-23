@@ -1,6 +1,7 @@
 //! The cache file — its format, its header, what it encodes, and the reading
 //! and the writing of it ([`read_cache_file`], [`write_cache_file`]) that
-//! every load and save goes through — and what a read of it finds
+//! every load and save goes through, a gzip cache's window section after it
+//! ([`windows`]) — and what a read of it finds
 //! ([`CacheStatus`], [`LoadedCache`]), with the shape of the container under
 //! its offsets ([`CompressionShape`]) and the rest it persists
 //! ([`CacheEnvelope`]). Those are the cache's API; the format is not, reached
@@ -8,7 +9,7 @@
 
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
+use std::io::{BufReader, BufWriter, ErrorKind, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -20,8 +21,11 @@ use pgdt_core::{Error, Result, Unusable};
 use pgdt_io::{CompressionIndex, Extent};
 use pgdt_model::{CACHE_FORMAT_VERSION, DumpIndex, calendar_end};
 
+mod windows;
+
 /// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
-/// a little-endian `u32` and then the encoded [`CacheFile`]. **Both are read
+/// a little-endian `u32`, then the encoded [`CacheFile`] and, for a gzip
+/// source, its window section ([`windows`]). **Both are read
 /// before the rest is decoded, and neither is ever reshaped**, so any build
 /// tells a file that is not a pgdt cache ([`Unusable::NotACache`]) from another
 /// build's ([`Unusable::UnsupportedVersion`]) — the difference between a file
@@ -243,8 +247,11 @@ pub fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, Cac
     if found != CACHE_FORMAT_VERSION {
         return unusable(Unusable::UnsupportedVersion { found });
     }
-    match bincode::serde::decode_from_reader::<CacheFile, _, _>(reader, bincode::config::standard())
-    {
+    let decoded = bincode::serde::decode_from_reader::<CacheFile, _, _>(
+        &mut reader,
+        bincode::config::standard(),
+    );
+    match decoded {
         // Counts taken under another calendar are not this build's, and a
         // cache holding none has nothing to be wrong about.
         Ok(file)
@@ -256,11 +263,25 @@ pub fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, Cac
                 build: calendar_end(),
             })
         }
-        Ok(file) => Ok(Ok(file)),
+        Ok(file) => with_windows(file, reader),
         Err(DecodeError::Io { inner, .. }) if inner.kind() != ErrorKind::UnexpectedEof => {
             Err(Error::Io(inner))
         }
         Err(_) => unusable(Unusable::Unreadable),
+    }
+}
+
+/// `file` with its gzip index's provider attached, reading the window section
+/// that begins where `reader` stopped decoding — the encoded file's end,
+/// bincode reading no byte past what it decodes.
+fn with_windows(
+    mut file: CacheFile,
+    mut reader: BufReader<File>,
+) -> Result<std::result::Result<CacheFile, CacheStatus>> {
+    let base = reader.stream_position()?;
+    match windows::attach_section(file.compression.take(), reader.into_inner(), base)? {
+        Ok(compression) => Ok(Ok(CacheFile { compression, ..file })),
+        Err(why) => Ok(Err(CacheStatus::Unusable(why))),
     }
 }
 
@@ -279,18 +300,20 @@ pub struct CacheFileRef<'a> {
 }
 
 /// Write `file` to `path` as [`read_cache_file`] reads it back — [`CACHE_MAGIC`],
-/// [`CACHE_FORMAT_VERSION`] as a little-endian `u32`, then the encoded file —
-/// streamed into a file beside `path` and renamed over it ([`write_beside`]).
+/// [`CACHE_FORMAT_VERSION`] as a little-endian `u32`, the encoded file, then a
+/// gzip index's window section — streamed into a file beside `path` and
+/// renamed over it ([`write_beside`]).
 pub fn write_cache_file(path: &Path, file: &CacheFileRef<'_>) -> Result<()> {
     write_beside(path, |writer| {
         writer.write_all(&CACHE_MAGIC)?;
         writer.write_all(&CACHE_FORMAT_VERSION.to_le_bytes())?;
-        bincode::serde::encode_into_std_write(file, writer, bincode::config::standard())
-            .map(drop)
-            .map_err(|e| match e {
+        bincode::serde::encode_into_std_write(file, writer, bincode::config::standard()).map_err(
+            |e| match e {
                 EncodeError::Io { inner, .. } => Error::Io(inner),
                 other => Error::cache_encode(other),
-            })
+            },
+        )?;
+        windows::write_section(writer, file.compression.as_ref())
     })
 }
 

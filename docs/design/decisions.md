@@ -146,6 +146,13 @@ Rejected: a finer spacing, more window section and index for nothing on gzip's s
 a power of two for its own sake, a unit running past each multiple to a block boundary and so never one; a row of `gzseek-spacing` at it, gzip's costs flat across the rows either side and the window section arithmetic.
 Reopens: a resume's fixed cost resolved and not small at it; a gzip resident reading overrunning `MEMORY_UNPOOLED_BOUND`. Code: `CHECKPOINT_SPACING`, `source/compressed/deflate.rs`. Evidence: `gzseek-spacing`, `parallel-peak-rss`, `reserve`.
 
+### D114 A gzip cache's windows follow its encoded file, and every save writes them all
+Each checkpoint's window, in checkpoint order, after the encoded `CacheFile`, placed by the window lengths' running sum, the file whole only where it ends with the last; a load attaches a provider
+reading them positionally through a handle of its own, so a load that decodes the envelope alone (`info`) reads none and none is resident. A save writes them through whatever provider the saved
+index carries — a loaded cache's reading the previous file, which the rename over its name (D78) leaves open — so the section is rewritten whole, under D62's ratio, never patched. Rejected: windows
+inside the envelope, resident at open before any budget exists; a file beside the cache, which D20's and D21's identity checks do not cover, as D78 refused one for statistics; appending in place,
+which leaves a killed save no whole previous cache. Reopens: a save's copy of the section, not the index's, setting a save's duration. Code: `pgdt_dump::cache::file::windows`. Evidence: `a_cache_saved_over_itself_keeps_its_windows_and_reads_its_file`.
+
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
 contradicts) is almost always a wrong path or a changed file, so `CacheMode::refusal` refuses it before the dump

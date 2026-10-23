@@ -34,11 +34,15 @@ tracing = { workspace = true }
 [dev-dependencies]
 bincode = { workspace = true, features = ["serde"] }
 criterion = { workspace = true, features = ["async_tokio"] }
+# A gzip file to cache, its index built in memory under pgdt-io's
+# `test-support`, no first pass building one yet.
+flate2 = { workspace = true }
 insta = { workspace = true }
 # What this crate's tests reach there (each one's `test-support`).
 pgdt-codec = { path = "../pgdt-codec", features = ["test-support"] }
 pgdt-dump = { path = "../pgdt-dump", features = ["test-support"] }
 pgdt-fixtures = { path = "../pgdt-fixtures", features = ["mapping"] }
+pgdt-io = { path = "../pgdt-io", features = ["test-support"] }
 pgdt-mapping = { path = "../pgdt-mapping", features = ["test-support"] }
 # The benches' `#[global_allocator]`, as `pgdt-codec`'s.
 mimalloc = { workspace = true }

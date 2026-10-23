@@ -16,6 +16,8 @@ use pgdt_core::{Error, Result};
 use super::{Codec, CompressionIndex, Positioned, UnitRead, short_read};
 
 mod checkpoints;
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) mod held;
 
 pub(crate) use self::checkpoints::GZIP_MAGIC;
 pub use self::checkpoints::{GzipIndex, WindowProvider};

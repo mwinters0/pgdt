@@ -50,6 +50,6 @@ the inflate figure, and 15.8 admitted").
   (`measurements.md`, "A figure may be published outside the sweep"). A large
   gzip input for them is generated, never committed.
 - **15.5 reads the `-Z` fixtures through a source**, over an index built
-  for them; 15.5.1's determinism tests read them through its first pass, and
+  for them; 15.5.2's determinism tests read them through its first pass, and
   `pg_dump`'s single-member shape becomes an `I<n>` there, as the spec's
   "Facts the grilling found" says.

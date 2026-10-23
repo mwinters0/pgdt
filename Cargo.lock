@@ -3771,6 +3771,7 @@ version = "0.2.0"
 dependencies = [
  "bincode",
  "bytes",
+ "flate2",
  "futures",
  "memchr",
  "pgdt-core",
@@ -3857,6 +3858,7 @@ dependencies = [
  "bincode",
  "bytes",
  "criterion",
+ "flate2",
  "futures",
  "insta",
  "memchr",

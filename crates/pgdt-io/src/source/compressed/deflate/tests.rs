@@ -328,8 +328,7 @@ async fn pg_dump_s_compressed_dump_reads_through_its_index() {
         let file = std::fs::read(&path).unwrap();
         let mut plaintext = Vec::new();
         flate2::read::GzDecoder::new(&file[..]).read_to_end(&mut plaintext).unwrap();
-        let (index, windows) = gzip_index_of(&file, 1024);
-        let layout = GzipIndex { index, windows: Some(Arc::new(HeldWindows(windows))) };
+        let layout = held::indexed_in_memory(&file, 1024);
         for source in arms(&path, &layout).await {
             let got = source.read_range(0, plaintext.len()).await.unwrap();
             assert_eq!(&got[..], &plaintext[..], "{}", path.display());

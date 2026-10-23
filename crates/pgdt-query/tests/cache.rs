@@ -1396,7 +1396,7 @@ async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
 /// The persisted format version and the digest of every fixture's persisted
 /// index it was pinned beside, re-pinned together
 /// (`persisted_index_is_pinned_to_the_format_version`).
-const PERSISTED_INDEX: (u32, u64) = (74, 2_944_908_134_061_493_649);
+const PERSISTED_INDEX: (u32, u64) = (75, 2_944_908_134_061_493_649);
 
 /// **Every fixture's persisted [`DumpIndex`](pgdt_model::DumpIndex)
 /// digests to the value pinned beside `CACHE_FORMAT_VERSION`.** A cache saved
@@ -1481,14 +1481,16 @@ mod encoding {
 
     use pgdt_core::Error;
     use pgdt_dump::ReadOptions;
-    use pgdt_dump::cache::{CacheMode, CacheStatus, Unusable};
+    use pgdt_dump::cache::{CacheMode, CacheStatus, Held, Unusable};
     use pgdt_dump::internal::{
         CACHE_MAGIC, CacheFile, CacheFileRef, ContainerKind, SourceIdentity, read_cache_file,
         write_cache_file,
     };
     use pgdt_dump::internal::{load, save};
     use pgdt_fixtures::arranged;
-    use pgdt_io::{ByteRangeSource, CompressedFileSource, LocalFileSource};
+    use pgdt_io::{
+        ByteRangeSource, CompressedFileSource, CompressionIndex, LocalFileSource, Origin,
+    };
     use pgdt_mapping::map_file;
     use pgdt_mapping::statistics::StatisticsRequest;
     use pgdt_model::PostgresInvalidValues;
@@ -1601,6 +1603,71 @@ mod encoding {
                 "{name}: a file cut inside the magic never said it was a pgdt cache"
             );
         }
+    }
+
+    /// **A gzip cache carries its windows, and a source opened through it
+    /// reads every unit with them**: a metadata-level map over an index built
+    /// in memory saves the windows beside the index; an open through the
+    /// cache, its index settled before the source exists, re-reads each data
+    /// block at the data level through the cache's own window section and
+    /// saves over it, and the file read whole through the next open is the
+    /// plaintext (`docs/design/decisions.md`, "D114").
+    #[tokio::test]
+    async fn a_gzip_cache_reads_its_units_through_its_own_windows() {
+        use std::io::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let plaintext = std::fs::read(statistics_fixture()).unwrap();
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        // A flush ends a deflate block, so the member has boundaries to
+        // checkpoint at whichever backend `flate2` is built over.
+        for piece in plaintext.chunks(64 * 1024) {
+            encoder.write_all(piece).unwrap();
+            encoder.flush().unwrap();
+        }
+        let compressed = encoder.finish().unwrap();
+        let dump = dir.path().join("default.sql.gz");
+        std::fs::write(&dump, &compressed).unwrap();
+        let index = pgdt_io::internal::gzip_indexed_in_memory(&compressed, 128 * 1024);
+        assert!(index.unit_count() > 2, "{} units", index.unit_count());
+        let mode = CacheMode::enabled(dir.path().join("default.sql.gz.dtcache"));
+
+        let held = CompressedFileSource::with_index(&dump, CompressionIndex::Gzip(index)).unwrap();
+        let run = map_file(
+            mode.open_source(Arc::new(held)).await.unwrap(),
+            ReadOptions::default(),
+            &arranged(1),
+            PostgresInvalidValues::Default,
+            &StatisticsRequest::METADATA,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(!run.interrupted);
+
+        let opened = mode.open(&Origin::local(&dump)).await.unwrap();
+        assert!(matches!(&opened.cache, Held::Loaded(loaded) if loaded.is_complete()));
+        let Some(CompressionIndex::Gzip(cached)) = opened.source.compression_index() else {
+            panic!("a gzip source")
+        };
+        assert!(cached.has_windows(), "the cache's own windows");
+        let run = map_file(
+            opened,
+            ReadOptions::default(),
+            &arranged(2),
+            PostgresInvalidValues::Default,
+            &StatisticsRequest::DATA,
+            &CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert!(!run.interrupted);
+        assert!(run.index.blocks().any(|block| block.statistics.is_some()), "re-read at data");
+
+        let opened = mode.open(&Origin::local(&dump)).await.unwrap();
+        assert!(matches!(&opened.cache, Held::Loaded(loaded) if loaded.is_complete()));
+        let read = opened.source.read_range(0, plaintext.len()).await.unwrap();
+        assert_eq!(&read[..], &plaintext[..], "the plaintext through the saved-over cache");
+        opened.source.complete_reads().await.unwrap();
     }
 
     /// **A cache counted under another calendar is refused, and one holding

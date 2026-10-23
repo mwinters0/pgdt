@@ -20,6 +20,10 @@ http = ["dep:object_store", "dep:url", "tokio/net", "tokio/time"]
 # `SeekTable`'s persisted form, which `pgdt-dump`'s cache writes and reads:
 # `xz_seek`'s own table's, unchanged.
 serde = ["dep:serde", "xz-seek/serde"]
+# What a crate above's tests reach that nothing else may: a gzip file's index
+# built in memory (`internal::gzip_indexed_in_memory`), there being no first
+# pass that builds one yet.
+test-support = []
 
 [dependencies]
 bytes = { workspace = true }

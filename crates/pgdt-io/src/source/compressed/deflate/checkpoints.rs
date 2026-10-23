@@ -40,10 +40,11 @@ pub struct GzipIndex {
 /// a section of its own read positionally, or a test's memory — so this crate
 /// names nothing that holds them, and the index keeps none resident.
 pub trait WindowProvider: Send + Sync {
-    /// Fill `out` with the window of the checkpoint unit `unit` begins at:
-    /// exactly [`GzipIndex::window_len`] bytes, which `out` is long. Never
-    /// asked for an empty one.
-    fn read_window(&self, unit: usize, out: &mut [u8]) -> std::io::Result<()>;
+    /// Fill `out` with the window of checkpoint `checkpoint` — the one unit
+    /// `checkpoint` begins at, or an incomplete index's last, which begins
+    /// none yet: exactly [`GzipIndex::window_len`] bytes, which `out` is long.
+    /// Never asked for an empty one.
+    fn read_window(&self, checkpoint: usize, out: &mut [u8]) -> std::io::Result<()>;
 }
 
 impl GzipIndex {
@@ -113,10 +114,42 @@ impl GzipIndex {
         self.index.end().map(|end| end.compressed)
     }
 
-    /// The length of the window a decode of unit `unit` reads: zero at a
-    /// member start, its member's history before it, up to 32 KiB, otherwise.
-    pub fn window_len(&self, unit: usize) -> Option<usize> {
-        self.index.checkpoints().get(unit).map(gz_seek::Checkpoint::window_len)
+    /// How many checkpoints the index holds: one a unit, and an incomplete
+    /// index's last besides, which a pass resumes from.
+    pub fn checkpoint_count(&self) -> usize {
+        self.index.checkpoints().len()
+    }
+
+    /// The length of checkpoint `checkpoint`'s window, which a decode of the
+    /// unit it begins reads: zero at a member start, its member's history
+    /// before it, up to 32 KiB, otherwise.
+    pub fn window_len(&self, checkpoint: usize) -> Option<usize> {
+        self.index.checkpoints().get(checkpoint).map(gz_seek::Checkpoint::window_len)
+    }
+
+    /// Fill `out`, [`GzipIndex::window_len`] long, with checkpoint
+    /// `checkpoint`'s window, read through the provider riding beside the
+    /// checkpoints — what a cache saving this index writes out — or nothing
+    /// read for an empty one.
+    ///
+    /// # Errors
+    ///
+    /// The provider's, and [`std::io::ErrorKind::InvalidInput`] for a
+    /// checkpoint the index does not hold, an `out` of another length, or a
+    /// window with no provider to read it through.
+    pub fn read_window(&self, checkpoint: usize, out: &mut [u8]) -> std::io::Result<()> {
+        let invalid = |why: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, why);
+        let len = self.window_len(checkpoint).ok_or_else(|| invalid("no such checkpoint"))?;
+        if out.len() != len {
+            return Err(invalid("a window is read whole, into a buffer of its length"));
+        }
+        if len == 0 {
+            return Ok(());
+        }
+        let windows = self.windows.as_ref().ok_or_else(|| {
+            invalid("a gzip checkpoint's window has no provider to be read through")
+        })?;
+        windows.read_window(checkpoint, out)
     }
 
     /// Unit `unit`, which the caller has counted.

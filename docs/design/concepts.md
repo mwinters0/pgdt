@@ -186,7 +186,8 @@ format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
 
 - **pgdt-dump** — `cache/`: the loader re-derives the map's diagnostics with
   the map's own functions, so the cache sits beside the parsers (D68); its part is opening a source through its cache too, which
-  needs the source and the persisted map, both at or below it.
+  needs the source and the persisted map, both at or below it, and a gzip cache's window section, read through the
+  provider trait io defines, so io names nothing of the cache (D114).
 - **pgdt-query** — `dump.rs`: the complete dump an embedder reads tables
   through, a table named by a selector, and its schema, summary and plan;
   schema resolution, summaries and the replay are query's, so the handle

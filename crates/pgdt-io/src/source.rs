@@ -27,6 +27,8 @@ mod remote;
 #[cfg(test)]
 mod tests;
 
+#[cfg(any(test, feature = "test-support"))]
+pub use self::compressed::gzip_indexed_in_memory;
 pub use self::compressed::{
     CompressedFileSource, CompressionIndex, FetchedCompressedSource, GzipIndex, SeekTable,
     WindowProvider,
