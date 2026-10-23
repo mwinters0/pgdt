@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D111 -->
+<!-- decision-watermark: D112 -->
 
 ## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
@@ -115,14 +115,12 @@ The `Codec` is `dyn`, an indirect call a unit or read. Rejected: generic arms, h
 
 ### D17 Two pools per source; retained and free units share a pool's slots
 The hinted unit drives both what a pool keeps and how it sizes, so one pool is wrong for either
-unit. Eviction runs before acquisition and the reservation drops before the evicted blocks do, or a
-released buffer meets a reservation and is discarded. A reuse rule, not progress: see D5.
+unit. Eviction runs before acquisition and the reservation drops before the evicted blocks do, or a released buffer meets a reservation and is discarded. A reuse rule, not progress: see D5.
 
 ### D18 The seek table is persisted and identity is three-state
 A many-stream file costs a footer read per stream, so `CacheMode::save` records the table, `CacheMode::open` reads
 it before a source exists and `CompressedFileSource::with_index` walks nothing. `KnownCompression` is
-`Unknown`/`Plain`/`Compressed`, checked against the file's magic; a contradiction is `Recognized::Mismatch`
-and condemns the span index too, both having come from one save of one file.
+`Unknown`/`Plain`/`Compressed`, checked against the file's magic; a contradiction is `Recognized::Mismatch` and condemns the span index too, both having come from one save of one file.
 
 ### D19 A budget decline is a `PlanNote`; a non-seekable file is warned, not refused
 A decline is a property of the file *and this run's budget*, and a `Diagnostic` is a finding about the file.
@@ -132,6 +130,11 @@ and a narrowed span (D84) one wherever the plan charged less than stated; the or
 invisible one. Rejected: omitting a zero; counting only believed filtered columns; announcing a narrowing
 only where the count fell short too, which `ParallelismBudgetLimited` names. Reopens: a puzzling zero,
 which naming the columns lacking a statistic would answer.
+
+### D112 `gz-seek` inflates through zlib-rs, by `libz-rs-sys`'s zlib C API
+Of the engines exporting what an index needs through the zlib API, zlib-rs is the fastest at both of `gz-seek`'s costs, its first pass and a unit resumed from its checkpoint, and the one built with no C toolchain; why
+its C API rather than a safe one is UF4's. zlib-ng and stock zlib stay features, the figure's legs, each a build of its own. Rejected: zlib-ng (slower at both; its compatible build CMake-built and exporting zlib's own names, `libz-ng-sys`'s native `zng_` API not the one the module is written over, `libz-sys`'s `cc` build failing to initialise); stock zlib (slowest at both);
+the system's zlib (`libz.so.1` beside glibc, a dependency a release does not promise, D104); ISA-L (block stops only in rapidgzip's fork, its resume priming undocumented state fields). Reopens: another engine resolved ahead at either cost in a re-take, at a bump of any engine's pin. Code: `crates/gz-seek/Cargo.toml`'s `default`, `src/zlib.rs`. Evidence: `gzseek-backend`; RT23; `runs/p15.9-backend-legs/`, `runs/p15.9-zlib-ng-cc-probe/`.
 
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
@@ -154,8 +157,7 @@ check (`in_flight_unchecked`) is refused unless `NONE`. Rejected: a check per ch
 ### D87 A remote cache is named from the URL, and the origin it records is advisory
 Default `./<last URL segment>.dtcache`; no last segment is refused by name. Another origin is a diagnostic,
 the stored size still refusing (D20), so two same-named dumps of equal size from different hosts in one
-directory read each other's map with a warning the origin makes legible. A local cache records none, its
-default sitting beside the dump. Rejected: a canonical path as a local origin, advisory after every move.
+directory read each other's map with a warning the origin makes legible. A local cache records none, its default sitting beside the dump. Rejected: a canonical path as a local origin, advisory after every move.
 
 ### D90 The DataFusion provider reads only a complete cache, never maps, and is cancelled by a drop
 `PgDump::open` believes a cache reaching the file's end whose identity checks pass, and refuses anything short, carrying
@@ -169,8 +171,7 @@ falling back to a cold query's early-stopping map, which brings each of those ba
 An incomplete cache is usable (or `map_forward` restarts from zero), `Disabled` is about the caller and
 `Replacing` carries its reason to every caller. Bump on any persisted reshape, a parse fix changing what a span or
 the metadata holds included; record it nowhere: an older cache is then refused until replaced by the flag or deleted
-(D20), which is what a user hears of first. Rejected: an unbumped parse fix, its cache answering as the old parse did.
-Code: `pgdt_model::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_to_the_format_version`.
+(D20), which is what a user hears of first. Rejected: an unbumped parse fix, its cache answering as the old parse did. Code: `pgdt_model::CACHE_FORMAT_VERSION`. Evidence: `persisted_index_is_pinned_to_the_format_version`.
 
 ## The scanner
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural

@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 26 figures below come from that sitting.** The other 3 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `inflate-throughput` (`d2cf15c4`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 27 figures below come from that sitting.** The other 4 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzseek-backend` (`39744f33`), `inflate-throughput` (`d2cf15c4`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -3270,6 +3270,65 @@ three, and `miniz_oxide` takes more than twice either's time. The floor
 `gz-seek`'s forward decode is held to is the `Inflate, zlib-ng` row
 ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Settled in the grilling");
 which backend it builds on is its own decision.
+
+## Which engine `gz-seek` reads gzip through
+
+<!-- figure: gzseek-backend — taken at `39744f33` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure gzseek-backend` -->
+
+| Row | Warm, tmpfs |
+|---|---|
+| Serial inflate, `zlib-ng` | **2.88 s** (2.75–2.93) · ~1117 MB/s |
+| Serial inflate, `zlib-rs` | **2.58 s** (2.56–2.64) · ~1250 MB/s |
+| First pass, `zlib-rs` | **2.77 s** (2.75–2.84) · ~1162 MB/s · 0.96× `zlib-ng`'s serial inflate |
+| First pass, then every unit, `zlib-rs` | **5.50 s** (5.42–5.78) · ~586 MB/s |
+| Every unit resumed, `zlib-rs` (the row above less the first pass) | **2.73 s** · ~1180 MB/s |
+| First pass, `zlib-ng` | **3.07 s** (3.02–3.12) · ~1051 MB/s · 1.06× `zlib-ng`'s serial inflate |
+| First pass, then every unit, `zlib-ng` | **6.08 s** (5.92–6.19) · ~530 MB/s |
+| Every unit resumed, `zlib-ng` (the row above less the first pass) | **3.01 s** · ~1071 MB/s |
+| First pass, `zlib` | **6.85 s** (6.76–7.09) · ~470 MB/s · 2.38× `zlib-ng`'s serial inflate |
+| First pass, then every unit, `zlib` | **13.68 s** (13.54–14.05) · ~236 MB/s |
+| Every unit resumed, `zlib` (the row above less the first pass) | **6.82 s** · ~472 MB/s |
+
+Each cell is wall clock and the rate it implies, per plaintext byte, and a first pass's time as a multiple of `zlib-ng`'s serial inflate of the same member, the floor it is held to. The instrument is `crates/gz-seek/examples/gz_read.rs`, one build an engine (`crates/gz-seek/Cargo.toml`'s features), one thread, every member's CRC-32 and `ISIZE` and every unit's CRC-32 compared; the serial inflate rows are `crates/gzip-inflate/src/main.rs`'s.
+
+- `control_gz`: 754.7 MB compressed, 3.00 GiB of plaintext, checkpoints every 32 MiB of plaintext, 96 units
+
+Per-rep readings (s):
+- Serial inflate, `zlib-ng`: 2.93, 2.88, 2.88, 2.75, 2.79
+- Serial inflate, `zlib-rs`: 2.58, 2.56, 2.64, 2.58, 2.58
+- First pass, `zlib-rs`: 2.75, 2.77, 2.84, 2.77, 2.77
+- First pass, then every unit, `zlib-rs`: 5.78, 5.50, 5.62, 5.42, 5.45
+- First pass, `zlib-ng`: 3.07, 3.02, 3.07, 3.03, 3.12
+- First pass, then every unit, `zlib-ng`: 6.19, 6.15, 6.04, 6.08, 5.92
+- First pass, `zlib`: 6.85, 7.09, 6.92, 6.77, 6.76
+- First pass, then every unit, `zlib`: 14.05, 13.59, 13.74, 13.68, 13.54
+
+Apparatus over every run in this table: CPU stall ≤0.41%, I/O stall ≤9.80%, machine ≤10% busy, steal ≤0.00%, busiest core ≥3.72 GHz, ≤70°C.
+
+**`zlib-rs` is the fastest engine at both of `gz-seek`'s costs, resolved.**
+Every rep of its first pass, and of its first pass with every unit, lies below
+every rep of zlib-ng's; stock zlib takes more than twice either's time at
+both. So the backend is zlib-rs ([`decisions.md`](decisions.md), "D112"),
+which is also the one engine of the three needing no C build.
+
+**Its first pass meets the floor it is held to**, below zlib-ng's serial
+inflate of the same member ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md),
+"Settled in the grilling"), while zlib-ng's own first pass does not. Against
+its own engine's serial inflate row, each first pass takes about 7% longer —
+the stops at every block's end, the windows copied out and each unit's CRC-32,
+and the difference between two instruments' builds, the zlib-ng row's being
+`libz-ng-sys`'s native build where the leg's is `libz-sys`'s compatible one.
+Nothing here divides that remainder among them.
+
+**Every unit resumed costs about what the first pass does, on every engine**,
+both being a decode of all the plaintext. What 96 resumes add above that — a
+stream reset, a window primed, a range read each — is not separable here from
+the spread of the two rows the resumed row is the difference of; pricing it is
+the spacing figure's ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Slice
+order").
+
+**The reference rows agree with `inflate-throughput`'s warm cells**, taken at
+another commit, to within 5%.
 
 ## What a second scan worker buys, and where the plain path stops
 

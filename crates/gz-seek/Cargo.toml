@@ -17,8 +17,8 @@ publish.workspace = true
 # engine's CRC-32 and `crc32_combine` beside them (`src/zlib.rs`). Exactly one
 # is on, `src/zlib.rs` refusing any other count. A build naming another engine
 # is a leg of the backend figure, built in a target dir of its own: `libz-sys`'s
-# stock and zlib-ng builds exclude each other in one graph. Which engine ships
-# is that figure's to decide (`docs/design/roadmap-P15-gzip.md`, "Slice order").
+# stock and zlib-ng builds exclude each other in one graph. The default is the
+# engine that ships (`docs/design/decisions.md`, "D112").
 [features]
 default = ["zlib-rs"]
 # zlib-rs, a Rust engine, through `libz-rs-sys`.

@@ -140,14 +140,13 @@ back. **`UF1`–`UF4` are allocated, and none is reused.**
   `inflateInit2_`, `inflate(Z_BLOCK)`, `inflatePrime`, `inflateSetDictionary`
   and `inflateGetDictionary` behind a type whose methods are safe, and its
   `crc32_z` and `crc32_combine` beside them, the crate denying `unsafe`
-  everywhere else. Rejected: `__internal-api`, an unstable surface still
-  needing `unsafe` for the decode; `miniz_oxide`'s safe
-  `block-boundary` API, its inflate slower than the floor in every regime
-  ([`../design/measurements.md`](../design/measurements.md), "What serial
-  inflate costs against the plain parse"); zlib-ng, slower than zlib-rs at
-  serial inflate in every regime there, and CMake-built through `libz-ng-sys`
-  ([`../design/decisions.md`](../design/decisions.md), "D111"); an inflater of
-  our own, the spec buying it ([`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md),
+  everywhere else. Which engine is behind that API is
+  [`../design/decisions.md`](../design/decisions.md), "D112". Rejected:
+  `__internal-api`, an unstable surface still needing `unsafe` for the decode;
+  `miniz_oxide`'s safe `block-boundary` API, its inflate slower than the floor
+  in every regime ([`../design/measurements.md`](../design/measurements.md),
+  "What serial inflate costs against the plain parse"); an inflater of our
+  own, the spec buying it ([`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md),
   "Settled in the grilling").
 - **Watch.** None can be a test: the fix is an API appearing. The
   `upgrade-deps` skill's read of zlib-rs's `src/stable.rs` at each bump of

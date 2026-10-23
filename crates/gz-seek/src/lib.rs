@@ -70,8 +70,9 @@
 //!
 //! The inflater is reached through the zlib API in one module that holds every
 //! `unsafe` this crate has; the API above is safe. The engine behind it is a
-//! feature's — zlib-rs by default, zlib-ng or stock zlib otherwise — and
-//! [`engine`] names the one a build links.
+//! feature's — zlib-rs by default, the one that ships, zlib-ng or stock zlib
+//! otherwise (`docs/design/decisions.md`, "D112") — and [`engine`] names the
+//! one a build links.
 // upstream: UF4
 #![deny(unsafe_code)]
 #![warn(missing_docs)]

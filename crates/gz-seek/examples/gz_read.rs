@@ -3,8 +3,8 @@
 //! what was read printed.
 //!
 //! The `gzseek-backend` figure times it on each engine the crate builds over
-//! (`Cargo.toml`'s features), each a build of its own, to decide which ships
-//! (`docs/design/roadmap-P15-gzip.md`, "Slice order"):
+//! (`Cargo.toml`'s features), each a build of its own, which is what chose the
+//! one that ships (`docs/design/decisions.md`, "D112"):
 //!
 //! ```sh
 //! cargo build --release -p gz-seek --example gz_read --no-default-features --features zlib-ng

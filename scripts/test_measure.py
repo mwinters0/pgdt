@@ -3079,9 +3079,9 @@ class Untaken(unittest.TestCase):
     What an entry waits on is a **commit to name** as its sitting, since a
     figure published outside a stamped sweep declares one inside its own marker
     and a sitting taken from a tree that carries the instrument uncommitted has
-    none. `xz-decode-scaling`, the two `parallel-*` figures, `release-profile`
-    and `inflate-throughput` each waited here for exactly that and left when
-    the commit existed."""
+    none. `xz-decode-scaling`, the two `parallel-*` figures, `release-profile`,
+    `inflate-throughput` and `gzseek-backend` each waited here for exactly
+    that and left when the commit existed."""
 
     def test_an_untaken_instrument_is_not_a_figure_the_doc_must_carry(self):
         for fig in measure.UNTAKEN:
@@ -4903,12 +4903,14 @@ class GzseekBackend(unittest.TestCase):
 
         return tomllib.loads((self.CRATE / "Cargo.toml").read_text())
 
-    def test_it_is_untaken_and_borrows_nothing(self):
-        # Built ahead of the commit its readings are taken at, so it waits in
-        # `UNTAKEN`; standing in no sharing edge lets it publish alone.
+    def test_it_is_taken_and_borrows_nothing(self):
+        # Standing in no sharing edge is what lets it publish outside a sweep,
+        # from the commit carrying its instrument.
         fig = measure.SELECTABLE_BY_ID["gzseek-backend"]
-        self.assertIn(fig, measure.UNTAKEN)
+        self.assertIn(fig, measure.FIGURES)
+        self.assertNotIn(fig, measure.UNTAKEN)
         self.assertEqual(fig.shares, ())
+        self.assertEqual(measure.entangled_with("gzseek-backend"), [])
         self.assertEqual(fig.subtracts, ())
         self.assertEqual(fig.stage, "warm")
         self.assertEqual(fig.warm_inputs, ("control_gz",))
