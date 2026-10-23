@@ -54,7 +54,8 @@ declares. `inflate-throughput`'s inflate rows time the `gzip-inflate`
 apparatus member the same way, built in the same image, over a `.gz`
 compression of the control staged beside it, and `gzseek-backend` times
 `gz-seek`'s `gz_read` example, one build an engine in a target dir of its own,
-each asked its engine before it is timed. The dynamic-filter figures time **`pgdt sql`**, DataFusion's CLI,
+each asked its engine before it is timed, and `gzseek-spacing` the shipped
+engine's build at each candidate spacing. The dynamic-filter figures time **`pgdt sql`**, DataFusion's CLI,
 with `pgdt parse` building the cache it reads first: it states its worker
 count as its session's `target_partitions` — held by a test and said in its
 tables.
@@ -2370,6 +2371,35 @@ GZSEEK_SHAPES: tuple[str, ...] = tuple(
 #: end whatever the spacing (`crates/gz-seek/src/forward.rs`).
 GZSEEK_SPACING = 32 * MIB
 
+#: The `gzseek-spacing` figure's command family: `gz-seek`'s `gz_read`
+#: example on the engine that ships, a shape a stage and a spacing in MiB.
+GZSPACING_FAMILY = "gzspacing-"
+
+#: The engine that figure reads every spacing on: the crate's default, the
+#: one that ships (`docs/design/decisions.md`, "D112").
+GZSPACING_ENGINE = GZSEEK_ENGINES[0]
+
+#: Its `--shape`s: the first pass alone; that pass and every unit begun and
+#: brought to its first plaintext byte, whose excess over the first is a
+#: resume's fixed cost times the unit count; and that pass and every unit
+#: decoded whole.
+GZSPACING_STAGES: tuple[str, ...] = ("forward", "starts", "units")
+
+#: The candidate spacings, in MiB of plaintext, and the table's row order:
+#: powers of two across xz's block sizes — from the 1 MiB floor of `xz -T`'s
+#: default block (three times the dictionary, at least 1 MiB: `xz(1)`,
+#: `--block-size`) through the 24 and 128 MiB blocks the xz figures read —
+#: since a unit is also the decode unit, the block-cache unit and the
+#: partition grain (`docs/design/roadmap-P15-gzip.md`, "Settled in the
+#: grilling"). The smallest is where a resume's fixed cost is multiplied
+#: most, so it is the row that resolves it.
+GZSPACING_MIB: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128)
+
+#: Every spacing shape, `GZSPACING_FAMILY`, a stage and a spacing.
+GZSPACING_SHAPES: tuple[str, ...] = tuple(
+    f"{GZSPACING_FAMILY}{stage}-{mib}" for mib in GZSPACING_MIB for stage in GZSPACING_STAGES
+)
+
 #: The `--jobs` values the two `parallel-*` figures are taken at, and the row
 #: order of their tables.
 #:
@@ -4151,6 +4181,14 @@ def _script(command: str) -> str:
         if stage not in GZSEEK_STAGES or engine not in GZSEEK_ENGINES:
             raise ValueError(f"{command!r} names a stage or engine the figure does not carry")
         return f"time /pgdt --source /dump.sql --spacing {GZSEEK_SPACING} --shape {stage}"
+    if command.startswith(GZSPACING_FAMILY):
+        # The same example, the shipped engine's build, at one candidate
+        # spacing. **Nothing is redirected**, for the inflate instrument's
+        # reason.
+        stage, _, mib = command.removeprefix(GZSPACING_FAMILY).partition("-")
+        if stage not in GZSPACING_STAGES or not mib.isdigit() or int(mib) not in GZSPACING_MIB:
+            raise ValueError(f"{command!r} names a stage or spacing the figure does not carry")
+        return f"time /pgdt --source /dump.sql --spacing {int(mib) * MIB} --shape {stage}"
     if command == "dd":
         return "time dd if=/dump.sql of=/dev/null bs=4M"
     raise ValueError(f"unknown command shape {command!r}")
@@ -4208,6 +4246,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"decode-{w}" for w in DECODE_WORKERS),
         *INFLATE_SHAPES,
         *GZSEEK_SHAPES,
+        *GZSPACING_SHAPES,
         "dd",
     )
 
@@ -4222,7 +4261,7 @@ _WORKER_COUNT = re.compile(r"--(?:jobs|workers) \d+")
 #: instruments', each of which has one thread by construction and no default a
 #: count could be inherited from. Named rather than inferred, so another
 #: non-`pgdt` shape has to be admitted here on purpose.
-_NO_WORKERS = ("dd", *INFLATE_SHAPES, *GZSEEK_SHAPES)
+_NO_WORKERS = ("dd", *INFLATE_SHAPES, *GZSEEK_SHAPES, *GZSPACING_SHAPES)
 
 #: The one `pgdt` family that states no worker count and is right not to: the
 #: reserve figure's flagless legs, whose reading *is* the count a flagless run
@@ -5002,6 +5041,17 @@ class Session:
                         if pruned
                         else {}
                     ),
+                }
+            if spec.command.startswith(GZSPACING_FAMILY):
+                # A stand-in index, for the same reason: the spacing table
+                # divides by the unit count, and refuses stages that disagree
+                # on it or a `starts` leg that began fewer units than it holds.
+                stage, _, mib = spec.command.removeprefix(GZSPACING_FAMILY).partition("-")
+                units = -(-3 * GIB // (int(mib) * MIB))
+                self._last_stdout = {
+                    "units": str(units),
+                    "windows": str((units - 1) * 32 * 1024),
+                    **({"started": str(units)} if stage == "starts" else {}),
                 }
             if spec.memory is not None:
                 # A stand-in resolution, for the same reason the reading above
@@ -8568,6 +8618,156 @@ def run_gzseek_backend(session: Session) -> str:
     return table + notes + "\n" + _per_rep(figure, session, specs)
 
 
+# -- gz-seek's spacing --------------------------------------------------------
+
+
+def _gzspacing_specs() -> list[RunSpec]:
+    references = [
+        RunSpec("gzinflate", "control_gz", f"{INFLATE_FAMILY}{b}", "warm", f"Serial inflate, `{b}`")
+        for b in GZSEEK_REFERENCES
+    ]
+    labels = {
+        "forward": "First pass",
+        "starts": "First pass, then every unit begun",
+        "units": "First pass, then every unit",
+    }
+    legs = [
+        RunSpec(
+            f"gzseek:{GZSPACING_ENGINE}",
+            "control_gz",
+            f"{GZSPACING_FAMILY}{stage}-{mib}",
+            "warm",
+            f"{labels[stage]}, {mib} MiB",
+        )
+        for mib in GZSPACING_MIB
+        for stage in GZSPACING_STAGES
+    ]
+    return references + legs
+
+
+def run_gzseek_spacing(session: Session) -> str:
+    """gzip's own costs at each candidate checkpoint spacing, on the engine
+    `gz-seek` ships, against a serial inflate of the same member.
+
+    What it prices is the P15 spec's (`docs/design/roadmap-P15-gzip.md`,
+    "Slice order"): the three costs a spacing sets that xz does not share —
+    **the first pass**, which stops at every block's end whatever the spacing
+    and copies one window a checkpoint, set against zlib-ng's serial inflate,
+    the floor it is held to; **a resume's fixed cost**, the `starts` shape's
+    time less the `forward` shape's over the unit count, both of one binary in
+    one sweep, an upper bound because it holds the first block's header a
+    whole unit decode reads anyway; and **the window section**, every
+    checkpoint's window as the instrument counts it (`windows=`). Every unit
+    decoded whole, the `units` shape less `forward`, is the whole of a read at
+    each spacing. What a unit's size moves that xz shares — residency, the
+    block pool, the partition grain — is read off xz's figures, not here.
+
+    **What would falsify the premise that a spacing within xz's block sizes
+    costs gzip only its window section**: a first pass moving with the spacing
+    by more than its spread, or a resumed unit's fixed cost that is no one
+    constant across the rows whose unit count resolves it, or that, times the
+    unit count, is not small beside the unit decodes at the smallest spacing.
+
+    **Warm alone and five reps**, as `gzseek-backend`: inflate is the CPU's in
+    every regime (`inflate-throughput`). Each run's `delivered=` is held to
+    `control`'s size, each leg's `engine=` to the shipped engine, the three
+    stages at one spacing to one index, the unit count to fall as the spacing
+    grows, and a `starts` run to have begun every unit."""
+    figure = "gzseek-spacing"
+    specs = _gzspacing_specs()
+    session.sweep(figure, specs, session.cfg.reps(5))
+
+    plaintext = session.input_size("control", "warm")
+    index: dict[int, tuple[int, int]] = {}
+    for spec in specs:
+        reported = session.reported.get(spec.key(figure), {})
+        delivered = reported.get("delivered")
+        if delivered is not None and int(delivered) != plaintext:
+            raise RuntimeError(
+                f"{spec.label} delivered {delivered} plaintext bytes, and the file it is a "
+                f"compression of holds {plaintext}: not a reading of that file"
+            )
+        if not spec.command.startswith(GZSPACING_FAMILY):
+            continue
+        problem = gzseek_engine_problem(GZSPACING_ENGINE, reported.get("engine", ""))
+        if problem is not None and not session.cfg.dry_run:
+            raise RuntimeError(f"{spec.label}: {problem}")
+        stage, _, mib = spec.command.removeprefix(GZSPACING_FAMILY).partition("-")
+        units, windows = int(reported["units"]), int(reported["windows"])
+        if index.setdefault(int(mib), (units, windows)) != (units, windows):
+            raise RuntimeError(
+                f"{spec.label} built an index of {units} units and {windows} window bytes, "
+                f"another stage at {mib} MiB one of {index[int(mib)]}: a checkpoint's place "
+                "is the file's alone"
+            )
+        if stage == "starts" and int(reported.get("started", -1)) != units:
+            raise RuntimeError(
+                f"{spec.label} began {reported.get('started')} of its {units} units"
+            )
+    counts = [index[mib][0] for mib in GZSPACING_MIB]
+    if any(a < b for a, b in zip(counts, counts[1:])):
+        raise RuntimeError(f"unit counts {counts} rise with the spacing {GZSPACING_MIB} MiB")
+
+    def got(command: str) -> float:
+        return median(session.get(figure, next(s for s in specs if s.command == command)))
+
+    floor = got(f"{INFLATE_FAMILY}zlib-ng")
+    compressed = session.input_size("control_gz", "warm")
+    rows = []
+    for mib in GZSPACING_MIB:
+        units, windows = index[mib]
+        forward_spec = next(s for s in specs if s.command == f"{GZSPACING_FAMILY}forward-{mib}")
+        values = session.get(figure, forward_spec)
+        forward = median(values)
+        begun = got(f"{GZSPACING_FAMILY}starts-{mib}") - forward
+        resumed = got(f"{GZSPACING_FAMILY}units-{mib}") - forward
+        rows.append([
+            f"{mib} MiB",
+            str(units),
+            f"{_fmt_bytes(windows)} · {windows / compressed:.2%} of the `.gz`",
+            f"{fmt_median_spread(values)} · {forward / floor:.2f}× `zlib-ng`'s serial inflate",
+            f"{begun / units * 1e6:+.1f} µs",
+            f"**{fmt_s(resumed)} s** · {fmt_rate(plaintext, resumed)}",
+        ])
+    table = md_table(
+        [
+            "Spacing",
+            "Units",
+            "Window section",
+            "First pass",
+            "A unit begun (less the first pass, a unit)",
+            "Every unit resumed (less the first pass)",
+        ],
+        rows,
+    )
+
+    references = "".join(
+        f"- {spec.label}: {fmt_median_spread(session.get(figure, spec))} · "
+        f"{fmt_rate(plaintext, median(session.get(figure, spec)))}\n"
+        for spec in specs
+        if spec.binary == "gzinflate"
+    )
+    notes = (
+        "\n\nThe first pass is wall clock, and its time as a multiple of `zlib-ng`'s serial "
+        "inflate of the same member, the floor it is held to. A unit begun is the median of "
+        "the first pass with every unit begun and brought to its first plaintext byte, less "
+        "the first pass's, over the unit count: a fresh inflate state, the window set, the "
+        "bits primed, a positioned read and the first block's header — which a whole unit "
+        "decode reads anyway, so it bounds a resume's fixed cost from above. Every unit "
+        "resumed is the median of the first pass with every unit decoded whole, less the "
+        "first pass's, and the rate it implies per plaintext byte. The window section is "
+        "every checkpoint's window as the instrument counts it, and its share of the "
+        "compressed file. The instrument is `crates/gz-seek/examples/gz_read.rs`, the "
+        f"`{GZSPACING_ENGINE}` build (`crates/gz-seek/Cargo.toml`'s default), one thread, "
+        "every member's CRC-32 and `ISIZE` and every unit's CRC-32 compared; the serial "
+        "inflate rows are `crates/gzip-inflate/src/main.rs`'s.\n\n"
+        f"- `control_gz`: {_fmt_bytes(compressed)} compressed, {_fmt_bytes(plaintext)} of "
+        "plaintext\n"
+        + references
+    )
+    return table + notes + "\n" + _per_rep(figure, session, specs)
+
+
 # -- what a second scan worker buys -----------------------------------------
 
 #: The four legs of `parallel-scan-throughput`, in the table's column order:
@@ -11589,7 +11789,28 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = []
+UNTAKEN: list[Figure] = [
+    # gzip's own costs at each candidate checkpoint spacing, on the engine
+    # `gz-seek` ships. What can move it is the crate and its example, the
+    # engine its manifest pins, the inflate instrument behind the reference
+    # rows, and the generators behind the file.
+    Figure(
+        id="gzseek-spacing",
+        section="What a checkpoint's spacing costs gzip",
+        stage="warm",
+        depends=_declare(
+            "crates/gz-seek/src/",
+            "crates/gz-seek/examples/gz_read.rs",
+            "crates/gz-seek/Cargo.toml",
+            "crates/gzip-inflate/src/",
+            "crates/gzip-inflate/Cargo.toml",
+            "scripts/generate_gzip_input.py",
+            *GEN_PERF,
+        ),
+        warm_inputs=("control_gz",),
+        run=run_gzseek_spacing,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

@@ -4,7 +4,8 @@
 //!
 //! The `gzseek-backend` figure times it on each engine the crate builds over
 //! (`Cargo.toml`'s features), each a build of its own, which is what chose the
-//! one that ships (`docs/design/decisions.md`, "D112"):
+//! one that ships (`docs/design/decisions.md`, "D112"); `gzseek-spacing` times
+//! the shipped engine's build at each candidate spacing:
 //!
 //! ```sh
 //! cargo build --release -p gz-seek --example gz_read --no-default-features --features zlib-ng
@@ -22,6 +23,13 @@
 //!   positionally, each a fresh [`gz_seek::UnitTask::decode`] comparing the
 //!   unit's CRC-32. What a resumed unit decode costs is this shape's time
 //!   less `forward`'s, both taken in one sitting.
+//! - **`starts`**: that pass, then every unit begun alone from its checkpoint
+//!   and window and fed until it produces its first plaintext byte, its first
+//!   compressed bytes read positionally. What a resume costs before it
+//!   decodes — a fresh inflate state, the window set, the bits primed, a
+//!   read — is this shape's time less `forward`'s, over the unit count; the
+//!   first block's header, which a whole unit decode reads anyway, is inside
+//!   it, so it bounds that cost from above.
 //!
 //! # What it prints
 //!
@@ -29,7 +37,12 @@
 //! which the harness holds to the leg it built; `delivered=` — the plaintext
 //! the shape's last stage produced, the whole file's in both, which the
 //! harness holds to the file it is a compression of, so a short read cannot
-//! read as a fast one; and `units=`, the index's unit count. `--engine`
+//! read as a fast one — the first pass's in `starts`, whose last stage
+//! produces a byte a unit; `units=`, the index's unit count; `windows=`, the
+//! bytes of every checkpoint's window, which is the window section a cache
+//! holds for the index; and in `starts`, `started=`, the units begun and
+//! brought to their first plaintext, which the harness holds to `units=`.
+//! `--engine`
 //! alone prints the first and reads nothing, which is how the harness asks a
 //! build what it is before timing it.
 //!
@@ -57,10 +70,16 @@ const READ_BUFFER: usize = 1 << 20;
 /// Plaintext bytes asked of the first pass at a time.
 const OUT_BUFFER: usize = 1 << 20;
 
+/// Compressed bytes `starts` reads from a unit's start at a time: more than a
+/// deflate block's header and its first symbol, so one read almost always
+/// suffices.
+const START_READ: usize = 4 << 10;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Shape {
     Forward,
     Units,
+    Starts,
 }
 
 struct Args {
@@ -84,7 +103,10 @@ fn parse_args() -> Result<Args, String> {
                 shape = Some(match value.as_str() {
                     "forward" => Shape::Forward,
                     "units" => Shape::Units,
-                    other => return Err(format!("--shape {other}: one of forward, units")),
+                    "starts" => Shape::Starts,
+                    other => {
+                        return Err(format!("--shape {other}: one of forward, units, starts"));
+                    }
                 })
             }
             other => return Err(format!("unknown flag {other}")),
@@ -164,16 +186,59 @@ fn every_unit(file: &File, index: &Index, windows: &[Vec<u8>]) -> Result<u64, St
     Ok(delivered)
 }
 
+/// Every unit of `index` begun alone and fed from its start in `file` until
+/// it produces its first plaintext byte: how many were.
+fn every_start(file: &File, index: &Index, windows: &[Vec<u8>]) -> Result<u64, String> {
+    let mut compressed = vec![0u8; START_READ];
+    let mut first = [0u8; 1];
+    let mut started = 0u64;
+    for (unit, window) in windows.iter().enumerate().take(index.unit_count()) {
+        let task = index.unit(unit).expect("a unit");
+        let range = task.compressed_range();
+        let mut read = task.begin(window).map_err(|e| e.to_string())?;
+        let mut at = range.start;
+        let mut produced = 0;
+        while produced == 0 && !read.is_finished() {
+            let len = (range.end - at).min(START_READ as u64) as usize;
+            let chunk = &mut compressed[..len];
+            file.read_exact_at(chunk, at).map_err(|e| e.to_string())?;
+            let mut taken = 0;
+            while taken < len && produced == 0 && !read.is_finished() {
+                let step = read.read(&chunk[taken..], &mut first).map_err(|e| e.to_string())?;
+                if step == Default::default() {
+                    break;
+                }
+                taken += step.consumed;
+                produced += step.produced;
+            }
+            if taken == 0 && produced == 0 && !read.is_finished() {
+                return Err(format!("unit {unit} took nothing of its bytes at {at}"));
+            }
+            at += taken as u64;
+        }
+        black_box(first[0]);
+        started += 1;
+    }
+    Ok(started)
+}
+
 fn run(args: &Args) -> Result<(), String> {
     let mut file =
         File::open(&args.source).map_err(|e| format!("{}: {e}", args.source.display()))?;
     let (index, windows, mut delivered) = first_pass(&mut file, args.spacing)?;
-    if args.shape == Shape::Units {
-        delivered = every_unit(&file, &index, &windows)?;
+    let mut started = None;
+    match args.shape {
+        Shape::Forward => {}
+        Shape::Units => delivered = every_unit(&file, &index, &windows)?,
+        Shape::Starts => started = Some(every_start(&file, &index, &windows)?),
     }
     println!("engine={}", gz_seek::engine());
     println!("delivered={delivered}");
     println!("units={}", index.unit_count());
+    println!("windows={}", windows.iter().map(Vec::len).sum::<usize>());
+    if let Some(started) = started {
+        println!("started={started}");
+    }
     Ok(())
 }
 

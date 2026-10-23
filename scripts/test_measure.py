@@ -391,7 +391,8 @@ class WorkerCount(unittest.TestCase):
     def test_the_inflate_shapes_are_exempt_and_nothing_else_new(self):
         # Admitted on purpose, one name per backend or engine, beside `dd`.
         self.assertEqual(
-            measure._NO_WORKERS, ("dd", *measure.INFLATE_SHAPES, *measure.GZSEEK_SHAPES)
+            measure._NO_WORKERS,
+            ("dd", *measure.INFLATE_SHAPES, *measure.GZSEEK_SHAPES, *measure.GZSPACING_SHAPES),
         )
 
     def test_the_decode_instrument_pins_its_own_spelling(self):
@@ -4956,7 +4957,8 @@ class GzseekBackend(unittest.TestCase):
     def test_the_instrument_spells_every_stage_the_harness_asks_for(self):
         source = self.INSTRUMENT.read_text()
         accepted = set(re.findall(r'^\s*"([a-z]+)" => Shape::', source, re.MULTILINE))
-        self.assertEqual(accepted, set(measure.GZSEEK_STAGES))
+        # The spacing figure's stages are this example's too.
+        self.assertEqual(accepted, {*measure.GZSEEK_STAGES, *measure.GZSPACING_STAGES})
         self.assertIn('eq(["--engine"])', source)
 
     def test_a_leg_is_held_to_the_engine_it_names(self):
@@ -4994,6 +4996,108 @@ class GzseekBackend(unittest.TestCase):
         self.assertEqual(len(dirs), len(measure.GZSEEK_ENGINES))
         for leg in measure.ALLOCATOR_LEGS:
             self.assertNotIn(measure.image_target_dir(cfg, leg), dirs)
+
+
+class GzseekSpacing(unittest.TestCase):
+    """gzip's own costs at each candidate spacing, on the shipped engine."""
+
+    INSTRUMENT = measure.REPO / "crates/gz-seek/examples/gz_read.rs"
+
+    def test_it_is_untaken_and_borrows_nothing(self):
+        # Built ahead of the commit its readings are taken at, so it waits in
+        # `UNTAKEN`; standing in no sharing edge lets it publish alone.
+        fig = measure.SELECTABLE_BY_ID["gzseek-spacing"]
+        self.assertIn(fig, measure.UNTAKEN)
+        self.assertEqual(fig.shares, ())
+        self.assertEqual(fig.subtracts, ())
+        self.assertEqual(fig.stage, "warm")
+        self.assertEqual(fig.warm_inputs, ("control_gz",))
+
+    def test_what_can_move_it_is_declared(self):
+        fig = measure.SELECTABLE_BY_ID["gzseek-spacing"]
+        for path in (
+            "crates/gz-seek/src/",
+            "crates/gz-seek/examples/gz_read.rs",
+            "crates/gz-seek/Cargo.toml",
+            "crates/gzip-inflate/src/",
+            "crates/gzip-inflate/Cargo.toml",
+            "scripts/generate_gzip_input.py",
+            *measure.GEN_PERF,
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, fig.depends)
+
+    def test_it_reads_the_engine_that_ships(self):
+        # The crate's default, which `GZSEEK_ENGINES` lists first (held to the
+        # manifest by `GzseekBackend`).
+        self.assertEqual(measure.GZSPACING_ENGINE, measure.GZSEEK_ENGINES[0])
+        legs = {
+            s.binary
+            for s in measure._gzspacing_specs()
+            if s.command.startswith(measure.GZSPACING_FAMILY)
+        }
+        self.assertEqual(legs, {f"gzseek:{measure.GZSPACING_ENGINE}"})
+
+    def test_the_spacings_rise_and_reach_xz_s_block_sizes(self):
+        mib = measure.GZSPACING_MIB
+        self.assertEqual(list(mib), sorted(set(mib)))
+        # The 24 and 128 MiB blocks the xz figures read lie within the range.
+        self.assertLessEqual(mib[0], 24)
+        self.assertGreaterEqual(mib[-1], 128)
+        # The backend figure's spacing is a row, so the two tables meet.
+        self.assertIn(measure.GZSEEK_SPACING // measure.MIB, mib)
+
+    def test_every_shape_names_its_stage_and_its_spacing_in_bytes(self):
+        for mib in measure.GZSPACING_MIB:
+            for stage in measure.GZSPACING_STAGES:
+                with self.subTest(mib=mib, stage=stage):
+                    script = measure._script(f"{measure.GZSPACING_FAMILY}{stage}-{mib}")
+                    self.assertIn(f"--shape {stage}", script)
+                    self.assertIn(f"--spacing {mib * measure.MIB} ", script)
+                    self.assertEqual(script.count("time "), 1)
+                    # Its stdout is where the index's counts come back.
+                    self.assertNotIn(">", script)
+
+    def test_a_stage_or_spacing_the_figure_does_not_carry_is_an_error(self):
+        for command in (
+            "gzspacing-forward-3",
+            "gzspacing-index-32",
+            "gzspacing-forward-",
+            "gzspacing-starts-x",
+            "gzspacing-",
+        ):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    measure._script(command)
+
+    def test_the_family_cannot_be_read_as_the_backend_figure_s(self):
+        # Neither prefix is the other's, so `_script` never hands one
+        # figure's shape to the other's branch.
+        self.assertFalse(measure.GZSPACING_FAMILY.startswith(measure.GZSEEK_FAMILY))
+        self.assertFalse(measure.GZSEEK_FAMILY.startswith(measure.GZSPACING_FAMILY))
+
+    def test_every_stage_at_every_spacing_and_the_references_the_inflate_instrument(self):
+        specs = measure._gzspacing_specs()
+        self.assertEqual(
+            len(specs), len(measure.GZSEEK_REFERENCES) + len(measure.GZSPACING_SHAPES)
+        )
+        self.assertEqual({s.regime for s in specs}, {"warm"})
+        self.assertEqual({s.input for s in specs}, {"control_gz"})
+        self.assertEqual(
+            {s.command for s in specs if s.binary != "gzinflate"}, set(measure.GZSPACING_SHAPES)
+        )
+        references = [s.command for s in specs if s.binary == "gzinflate"]
+        self.assertEqual(
+            references, [f"{measure.INFLATE_FAMILY}{b}" for b in measure.GZSEEK_REFERENCES]
+        )
+        # Every label is its own, so the per-rep lines are told apart.
+        self.assertEqual(len({s.label for s in specs}), len(specs))
+
+    def test_the_instrument_prints_what_the_table_reads(self):
+        source = self.INSTRUMENT.read_text()
+        for key in ("engine", "delivered", "units", "windows", "started"):
+            with self.subTest(key=key):
+                self.assertIn(f'"{key}=', source)
 
 
 class Reported(unittest.TestCase):
