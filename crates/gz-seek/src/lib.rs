@@ -68,8 +68,10 @@
 //! # }
 //! ```
 //!
-//! The inflater is zlib-rs, reached through its zlib-compatible API in one
-//! module that holds every `unsafe` this crate has; the API above is safe.
+//! The inflater is reached through the zlib API in one module that holds every
+//! `unsafe` this crate has; the API above is safe. The engine behind it is a
+//! feature's — zlib-rs by default, zlib-ng or stock zlib otherwise — and
+//! [`engine`] names the one a build links.
 // upstream: UF4
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
@@ -91,4 +93,4 @@ pub use forward::{Forward, ForwardStep};
 pub use index::{Checkpoint, End, Index, Size, Start, UnitTask};
 pub use member::GZIP_MAGIC;
 pub use unit::{Progress, UnitRead};
-pub use zlib::WINDOW_SIZE;
+pub use zlib::{WINDOW_SIZE, engine};

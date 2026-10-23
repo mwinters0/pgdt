@@ -11,17 +11,33 @@ publish.workspace = true
 # split into its own repo is a move rather than a rewrite
 # (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling").
 
+# The inflater, one of three engines a feature names, each reached through its
+# zlib-compatible C API, the one surface exposing what an index needs —
+# `Z_BLOCK`'s boundary state, `inflatePrime` and the window read — and the
+# engine's CRC-32 and `crc32_combine` beside them (`src/zlib.rs`). Exactly one
+# is on, `src/zlib.rs` refusing any other count. A build naming another engine
+# is a leg of the backend figure, built in a target dir of its own: `libz-sys`'s
+# stock and zlib-ng builds exclude each other in one graph. Which engine ships
+# is that figure's to decide (`docs/design/roadmap-P15-gzip.md`, "Slice order").
+[features]
+default = ["zlib-rs"]
+# zlib-rs, a Rust engine, through `libz-rs-sys`.
+zlib-rs = ["dep:libz-rs-sys"]
+# zlib-ng 2.3.3 in its zlib-compatible build, by CMake, through `libz-sys`.
+zlib-ng = ["dep:libz-sys", "libz-sys/zlib-ng", "dep:libc"]
+# Stock zlib, the copy `libz-sys` bundles, built by `cc` and linked statically.
+zlib = ["dep:libz-sys", "libz-sys/stock-zlib", "libz-sys/static", "dep:libc"]
+
 [dependencies]
-# The inflater, bought: zlib-rs, the fastest serial inflate of the three the
-# `inflate-throughput` figure times (`docs/design/measurements.md`, "What
-# serial inflate costs against the plain parse"). Reached through its C API
-# crate, the one stable surface exposing what an index needs — `Z_BLOCK`'s
-# boundary state, `inflatePrime` and the window read — which its safe Rust API
-# does not, and the engine's CRC-32 and `crc32_combine` beside them. Pinned
-# exactly, so the build is the backend the figure read; the engine itself is
-# `zlib-rs` at the version `gzip-inflate` pins.
+# `calloc` and `free`, the allocator a `libz-sys` leg hands its stream, whose
+# `z_stream` takes no null allocator.
+libc = { workspace = true, optional = true }
+# Each pinned exactly, so a build is the engine a figure read.
 # upstream: UF4
-libz-rs-sys = "=0.6.8"
+libz-rs-sys = { version = "=0.6.8", optional = true }
+# No default features: its default is stock zlib, which a zlib-ng build must
+# leave off to be built at all.
+libz-sys = { version = "=1.1.30", optional = true, default-features = false, features = ["libc"] }
 
 [dev-dependencies]
 # What the tests' members are written with: encoders not ours, so the decode

@@ -31,7 +31,7 @@ the compressed file pulled or fetched, the remote object
   `member.rs`, `zlib.rs`, `error.rs`: a gzip file's positioned read — its
   index of checkpoints, the forward pass that builds one, a unit decoded from
   its checkpoint, the BGZF walk, the decode under them, gzip's framing, and
-  the inflater — a leaf beneath io naming no `pg_dump`, as `xz-seek` is the
+  the inflater over the zlib API, whichever engine a feature names — a leaf beneath io naming no `pg_dump`, as `xz-seek` is the
   `.xz` one's outside the workspace, so the source over it is io's and the
   container's addressing its own (D68).
 

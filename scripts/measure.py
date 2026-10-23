@@ -52,7 +52,9 @@ replaced), stages `.xz` inputs beside the plain ones, and gives that figure its
 own container memory and its own contention row, both of which its table
 declares. `inflate-throughput`'s inflate rows time the `gzip-inflate`
 apparatus member the same way, built in the same image, over a `.gz`
-compression of the control staged beside it. The dynamic-filter figures time **`pgdt sql`**, DataFusion's CLI,
+compression of the control staged beside it, and `gzseek-backend` times
+`gz-seek`'s `gz_read` example, one build an engine in a target dir of its own,
+each asked its engine before it is timed. The dynamic-filter figures time **`pgdt sql`**, DataFusion's CLI,
 with `pgdt parse` building the cache it reads first: it states its worker
 count as its session's `target_partitions` — held by a test and said in its
 tables.
@@ -2342,6 +2344,32 @@ INFLATE_BACKENDS: tuple[str, ...] = ("zlib-ng", "zlib-rs", "miniz-oxide")
 #: Every inflate shape, `INFLATE_FAMILY` and a backend.
 INFLATE_SHAPES: tuple[str, ...] = tuple(f"{INFLATE_FAMILY}{b}" for b in INFLATE_BACKENDS)
 
+#: The `gzseek-backend` figure's command family: `gz-seek`'s `gz_read`
+#: example over one gzip member, a shape a stage and an engine.
+GZSEEK_FAMILY = "gzseek-"
+
+#: The engines `gz-seek` builds over, each spelled as the crate's feature, in
+#: the table's row order, **the crate's default first** — `crates/gz-seek/
+#: Cargo.toml`'s `default`, which a test holds this to.
+GZSEEK_ENGINES: tuple[str, ...] = ("zlib-rs", "zlib-ng", "zlib")
+
+#: The instrument's `--shape`s: the checkpointing first pass alone, and that
+#: pass followed by every unit decoded alone from its checkpoint.
+GZSEEK_STAGES: tuple[str, ...] = ("forward", "units")
+
+#: Every `gz-seek` shape, `GZSEEK_FAMILY`, a stage and an engine.
+GZSEEK_SHAPES: tuple[str, ...] = tuple(
+    f"{GZSEEK_FAMILY}{stage}-{engine}" for engine in GZSEEK_ENGINES for stage in GZSEEK_STAGES
+)
+
+#: The checkpoint spacing the backend figure reads every engine at. **Not the
+#: spacing that ships**, which is `15.1.2`'s figure to set on the engine this
+#: one picks (`docs/design/roadmap-P15-gzip.md`, "Slice order"): one within xz's
+#: block sizes, so each engine's per-unit fixed cost is in its unit rows at a
+#: count the shipped spacing could give, and the decoder stops at every block's
+#: end whatever the spacing (`crates/gz-seek/src/forward.rs`).
+GZSEEK_SPACING = 32 * MIB
+
 #: The `--jobs` values the two `parallel-*` figures are taken at, and the row
 #: order of their tables.
 #:
@@ -4115,6 +4143,14 @@ def _script(command: str) -> str:
         if backend not in INFLATE_BACKENDS:
             raise ValueError(f"{command!r} names a backend the figure does not carry")
         return f"time /pgdt --source /dump.sql --backend {backend}"
+    if command.startswith(GZSEEK_FAMILY):
+        # `gz-seek`'s `gz_read` example, one build an engine, mounted where
+        # every figure's binary is. **Nothing is redirected**, for the inflate
+        # instrument's reason.
+        stage, _, engine = command.removeprefix(GZSEEK_FAMILY).partition("-")
+        if stage not in GZSEEK_STAGES or engine not in GZSEEK_ENGINES:
+            raise ValueError(f"{command!r} names a stage or engine the figure does not carry")
+        return f"time /pgdt --source /dump.sql --spacing {GZSEEK_SPACING} --shape {stage}"
     if command == "dd":
         return "time dd if=/dump.sql of=/dev/null bs=4M"
     raise ValueError(f"unknown command shape {command!r}")
@@ -4171,6 +4207,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"{RESERVE_STEP_FAMILY}{budget}" for budget in RESERVE_STEP_BUDGETS),
         *(f"decode-{w}" for w in DECODE_WORKERS),
         *INFLATE_SHAPES,
+        *GZSEEK_SHAPES,
         "dd",
     )
 
@@ -4181,11 +4218,11 @@ def command_shapes() -> tuple[str, ...]:
 _WORKER_COUNT = re.compile(r"--(?:jobs|workers) \d+")
 
 #: The shapes that state no worker count and are right not to, being no run
-#: of `pgdt`: `dd`, the device floor, and the inflate instrument's, which has
-#: one thread by construction and no default a count could be inherited from.
-#: Named rather than inferred, so another non-`pgdt` shape has to be admitted
-#: here on purpose.
-_NO_WORKERS = ("dd", *INFLATE_SHAPES)
+#: of `pgdt`: `dd`, the device floor, and the inflate and `gz-seek`
+#: instruments', each of which has one thread by construction and no default a
+#: count could be inherited from. Named rather than inferred, so another
+#: non-`pgdt` shape has to be admitted here on purpose.
+_NO_WORKERS = ("dd", *INFLATE_SHAPES, *GZSEEK_SHAPES)
 
 #: The one `pgdt` family that states no worker count and is right not to: the
 #: reserve figure's flagless legs, whose reading *is* the count a flagless run
@@ -4626,6 +4663,8 @@ class Session:
             return ensure_xz_decode_binary(self.cfg, self.log)
         if which == "gzinflate":
             return ensure_gzip_inflate_binary(self.cfg, self.log)
+        if which.startswith("gzseek:"):
+            return ensure_gzseek_binary(self.cfg, which.removeprefix("gzseek:"), self.log)
         if which.startswith("alloc:"):
             return ensure_allocator_binary(self.cfg, which.removeprefix("alloc:"), self.log)
         if which.startswith("profile:"):
@@ -5793,6 +5832,65 @@ def ensure_gzip_inflate_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     shutil.copyfile(built, out)
     out.chmod(0o755)
     _GZIP_INFLATE_BUILT = True
+    return out
+
+
+#: The `gz-seek` engine legs this process has built, per process for
+#: `_XZ_DECODE_BUILT`'s reason.
+_GZSEEK_BUILT: set[str] = set()
+
+
+def gzseek_engine_problem(engine: str, reported: str) -> str | None:
+    """Why a `gz_read` build reporting `reported` as its `engine=` is not the
+    `engine` leg, or `None` where it is.
+
+    Read off the engine's own `zlibVersion` (`gz_seek::engine`), the one
+    thing that names which library the binary links: zlib-rs's carries
+    `zlib-rs`, zlib-ng's compatible build `zlib-ng`, and stock zlib's neither.
+    A `libz-sys` build handed both of its modes builds stock zlib, so a
+    `zlib-ng` leg that silently lost its feature reads as the `zlib` one, and
+    the two rows would be one engine timed twice."""
+    names = {"zlib-rs": "zlib-rs" in reported, "zlib-ng": "zlib-ng" in reported}
+    got = next((name for name, hit in names.items() if hit), "zlib")
+    if sum(names.values()) > 1 or got != engine:
+        return f"the {engine} leg links `{reported}`, which is {got}'s"
+    return None
+
+
+def ensure_gzseek_binary(cfg: Config, engine: str, log: Callable[[str], None]) -> Path:
+    """One engine leg of `gz-seek`'s `gz_read` example, built and then
+    interrogated, as an `allocator` leg is (`ensure_allocator_binary`):
+    `--no-default-features --features <engine>`, so the leg is the one engine
+    it names, the crate refusing any other count; **its own target dir**, so
+    no leg's `libz-sys` build is another's; and `--engine` read back and held
+    to the leg (`gzseek_engine_problem`). An example of another package than
+    `pgdt`, built in the release image for every reason
+    `ensure_xz_decode_binary` gives."""
+    if engine not in GZSEEK_ENGINES:
+        raise ValueError(f"unknown gz-seek engine {engine!r}")
+    out = cfg.out_dir / f"pgdt-gzseek-{engine}"
+    if engine in _GZSEEK_BUILT:
+        return out
+    target = image_target_dir(cfg, f"gzseek-{engine}")
+    if cfg.dry_run:
+        log(f"  [dry-run] would build the gz-seek {engine} leg into {target}")
+        _GZSEEK_BUILT.add(engine)
+        return out
+    log(f"  building the gz-seek {engine} leg into {target}")
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    build = release.Build(
+        package="gz-seek", example="gz_read", features=(engine,), default_features=False
+    )
+    built = build_in_image(cfg, build, target_dir=target)
+    shutil.copyfile(built, out)
+    out.chmod(0o755)
+    reported = parse_reported(run([str(out), "--engine"], capture=True)).get("engine", "")
+    problem = gzseek_engine_problem(engine, reported)
+    if problem is not None:
+        out.unlink()
+        raise RuntimeError(f"{problem}: the build did not take the feature")
+    _GZSEEK_BUILT.add(engine)
+    log(f"  {out.name}: {reported}")
     return out
 
 
@@ -8354,6 +8452,118 @@ def run_inflate_throughput(session: Session) -> str:
         f"- `control_gz`: {_fmt_bytes(compressed)} compressed, {_fmt_bytes(plain)} of "
         f"plaintext, {plain / compressed:.2f}× (`scripts/generate_gzip_input.py`: one member, "
         "`pg_dump`'s header, level 6)\n"
+    )
+    return table + notes + "\n" + _per_rep(figure, session, specs)
+
+
+# -- gz-seek's engine ---------------------------------------------------------
+
+#: The `gzseek-backend` figure's reference rows: the serial inflate of the same
+#: member by the `inflate-throughput` instrument, on the two zlib-API engines
+#: it carries — zlib-ng's the floor `gz-seek`'s first pass is held to
+#: (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling").
+GZSEEK_REFERENCES: tuple[str, ...] = ("zlib-ng", "zlib-rs")
+
+
+def _gzseek_specs() -> list[RunSpec]:
+    references = [
+        RunSpec("gzinflate", "control_gz", f"{INFLATE_FAMILY}{b}", "warm", f"Serial inflate, `{b}`")
+        for b in GZSEEK_REFERENCES
+    ]
+    labels = {"forward": "First pass", "units": "First pass, then every unit"}
+    legs = [
+        RunSpec(
+            f"gzseek:{engine}",
+            "control_gz",
+            f"{GZSEEK_FAMILY}{stage}-{engine}",
+            "warm",
+            f"{labels[stage]}, `{engine}`",
+        )
+        for engine in GZSEEK_ENGINES
+        for stage in GZSEEK_STAGES
+    ]
+    return references + legs
+
+
+def run_gzseek_backend(session: Session) -> str:
+    """`gz-seek`'s first pass and its resumed unit decodes on each engine it
+    builds over, against a serial inflate of the same member.
+
+    What it decides is the P15 spec's (`docs/design/roadmap-P15-gzip.md`,
+    "Slice order"): which engine `gz-seek` ships, the fastest winning and the
+    lighter build within noise. **Two costs an engine sets**, read off one
+    build of the `gz_read` example an engine (`ensure_gzseek_binary`): the
+    first pass, which stops at every block's end and copies each
+    checkpoint's window; and every unit decoded alone from its checkpoint,
+    which is the `units` shape's time less the `forward` shape's, both of one
+    binary in one sweep. A first pass is set against zlib-ng's serial inflate,
+    the floor it is held to, taken beside it by the inflate instrument.
+
+    **Warm alone**: serial inflate's rate is the CPU's in every regime
+    (`inflate-throughput`), and an engine's is what is compared. The rate is
+    per plaintext byte, `control`'s size, which each run's `delivered=` is held
+    to, and each leg's `engine=` to the engine it names.
+
+    **Five reps**, as the inflate figure takes."""
+    figure = "gzseek-backend"
+    specs = _gzseek_specs()
+    session.sweep(figure, specs, session.cfg.reps(5))
+
+    plaintext = session.input_size("control", "warm")
+    units: set[str] = set()
+    for spec in specs:
+        reported = session.reported.get(spec.key(figure), {})
+        delivered = reported.get("delivered")
+        if delivered is not None and int(delivered) != plaintext:
+            raise RuntimeError(
+                f"{spec.label} delivered {delivered} plaintext bytes, and the file it is a "
+                f"compression of holds {plaintext}: not a reading of that file"
+            )
+        if spec.binary.startswith("gzseek:"):
+            engine = spec.binary.removeprefix("gzseek:")
+            problem = gzseek_engine_problem(engine, reported.get("engine", ""))
+            if problem is not None and not session.cfg.dry_run:
+                raise RuntimeError(f"{spec.label}: {problem}")
+            if "units" in reported:
+                units.add(reported["units"])
+    if len(units) > 1:
+        raise RuntimeError(
+            f"the engines built indexes of {sorted(units)} units over one file and spacing: "
+            "a checkpoint's place is the file's alone, so one engine stops where another does not"
+        )
+
+    def got(command: str) -> float:
+        return median(session.get(figure, next(s for s in specs if s.command == command)))
+
+    floor = got(f"{INFLATE_FAMILY}zlib-ng")
+    rows = []
+    for spec in specs:
+        values = session.get(figure, spec)
+        cell = f"{fmt_median_spread(values)} · {fmt_rate(plaintext, median(values))}"
+        if spec.command.startswith(f"{GZSEEK_FAMILY}forward-"):
+            cell += f" · {median(values) / floor:.2f}× `zlib-ng`'s serial inflate"
+        rows.append([spec.label, cell])
+        if spec.command.startswith(f"{GZSEEK_FAMILY}units-"):
+            engine = spec.command.removeprefix(f"{GZSEEK_FAMILY}units-")
+            resumed = median(values) - got(f"{GZSEEK_FAMILY}forward-{engine}")
+            rows.append([
+                f"Every unit resumed, `{engine}` (the row above less the first pass)",
+                f"**{resumed:.2f} s** · {fmt_rate(plaintext, resumed)}",
+            ])
+    table = md_table(["Row", "Warm, tmpfs"], rows)
+
+    compressed = session.input_size("control_gz", "warm")
+    count = next(iter(units), "?")
+    notes = (
+        "\n\nEach cell is wall clock and the rate it implies, per plaintext byte, and a first "
+        "pass's time as a multiple of `zlib-ng`'s serial inflate of the same member, the floor "
+        "it is held to. The instrument is `crates/gz-seek/examples/gz_read.rs`, one build an "
+        "engine (`crates/gz-seek/Cargo.toml`'s features), one thread, every member's CRC-32 "
+        "and `ISIZE` and every unit's CRC-32 compared; the serial inflate rows are "
+        "`crates/gzip-inflate/src/main.rs`'s.\n\n"
+        f"- `control_gz`: {_fmt_bytes(compressed)} compressed, {_fmt_bytes(plaintext)} of "
+        f"plaintext, checkpoints every {GZSEEK_SPACING // MIB} MiB of plaintext, "
+        f"{count} units\n"
     )
     return table + notes + "\n" + _per_rep(figure, session, specs)
 
@@ -11359,7 +11569,28 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = []
+UNTAKEN: list[Figure] = [
+    # `gz-seek`'s first pass and resumed unit decodes on each engine it builds
+    # over. What can move it is the crate and its example, the engines its
+    # manifest pins, the inflate instrument behind the reference rows, and the
+    # generators behind the file.
+    Figure(
+        id="gzseek-backend",
+        section="Which engine `gz-seek` reads gzip through",
+        stage="warm",
+        depends=_declare(
+            "crates/gz-seek/src/",
+            "crates/gz-seek/examples/gz_read.rs",
+            "crates/gz-seek/Cargo.toml",
+            "crates/gzip-inflate/src/",
+            "crates/gzip-inflate/Cargo.toml",
+            "scripts/generate_gzip_input.py",
+            *GEN_PERF,
+        ),
+        warm_inputs=("control_gz",),
+        run=run_gzseek_backend,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

@@ -389,8 +389,10 @@ class WorkerCount(unittest.TestCase):
                 self.assertNotIn(measure.SQL_SHELL, script)
 
     def test_the_inflate_shapes_are_exempt_and_nothing_else_new(self):
-        # Admitted on purpose, one name per backend, beside `dd`.
-        self.assertEqual(measure._NO_WORKERS, ("dd", *measure.INFLATE_SHAPES))
+        # Admitted on purpose, one name per backend or engine, beside `dd`.
+        self.assertEqual(
+            measure._NO_WORKERS, ("dd", *measure.INFLATE_SHAPES, *measure.GZSEEK_SHAPES)
+        )
 
     def test_the_decode_instrument_pins_its_own_spelling(self):
         # It is not `pgdt`, so it has no `--jobs`; `--workers` is the same
@@ -4888,6 +4890,108 @@ class InflateThroughput(unittest.TestCase):
             self.assertTrue(inflater.eof)
             self.assertEqual(inflater.unused_data, b"")
             self.assertFalse((Path(tmp) / "out.gz.partial").exists())
+
+
+class GzseekBackend(unittest.TestCase):
+    """`gz-seek`'s first pass and resumed unit decodes, an engine a build."""
+
+    CRATE = measure.REPO / "crates/gz-seek"
+    INSTRUMENT = CRATE / "examples/gz_read.rs"
+
+    def manifest(self) -> dict:
+        import tomllib
+
+        return tomllib.loads((self.CRATE / "Cargo.toml").read_text())
+
+    def test_it_is_untaken_and_borrows_nothing(self):
+        # Built ahead of the commit its readings are taken at, so it waits in
+        # `UNTAKEN`; standing in no sharing edge lets it publish alone.
+        fig = measure.SELECTABLE_BY_ID["gzseek-backend"]
+        self.assertIn(fig, measure.UNTAKEN)
+        self.assertEqual(fig.shares, ())
+        self.assertEqual(fig.subtracts, ())
+        self.assertEqual(fig.stage, "warm")
+        self.assertEqual(fig.warm_inputs, ("control_gz",))
+
+    def test_the_engines_are_the_crate_s_features_its_default_first(self):
+        features = self.manifest()["features"]
+        self.assertEqual(features["default"], [measure.GZSEEK_ENGINES[0]])
+        self.assertEqual(set(features) - {"default"}, set(measure.GZSEEK_ENGINES))
+
+    def test_what_can_move_it_is_declared(self):
+        fig = measure.SELECTABLE_BY_ID["gzseek-backend"]
+        for path in (
+            "crates/gz-seek/src/",
+            "crates/gz-seek/examples/gz_read.rs",
+            # Where the engines' versions are pinned.
+            "crates/gz-seek/Cargo.toml",
+            # The reference rows' instrument.
+            "crates/gzip-inflate/src/",
+            "crates/gzip-inflate/Cargo.toml",
+            "scripts/generate_gzip_input.py",
+            *measure.GEN_PERF,
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, fig.depends)
+
+    def test_every_shape_names_its_stage_and_the_spacing(self):
+        for engine in measure.GZSEEK_ENGINES:
+            for stage in measure.GZSEEK_STAGES:
+                with self.subTest(engine=engine, stage=stage):
+                    script = measure._script(f"{measure.GZSEEK_FAMILY}{stage}-{engine}")
+                    self.assertIn(f"--shape {stage}", script)
+                    self.assertIn(f"--spacing {measure.GZSEEK_SPACING}", script)
+                    self.assertEqual(script.count("time "), 1)
+                    # Its stdout is where the delivered count comes back.
+                    self.assertNotIn(">", script)
+
+    def test_a_stage_or_engine_the_figure_does_not_carry_is_an_error(self):
+        for command in ("gzseek-forward-miniz-oxide", "gzseek-index-zlib", "gzseek-", "gzseek-units"):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    measure._script(command)
+
+    def test_the_instrument_spells_every_stage_the_harness_asks_for(self):
+        source = self.INSTRUMENT.read_text()
+        accepted = set(re.findall(r'^\s*"([a-z]+)" => Shape::', source, re.MULTILINE))
+        self.assertEqual(accepted, set(measure.GZSEEK_STAGES))
+        self.assertIn('eq(["--engine"])', source)
+
+    def test_a_leg_is_held_to_the_engine_it_names(self):
+        # Each engine's `zlibVersion`, as the three builds report it.
+        versions = {"zlib-rs": "1.3.0-zlib-rs-0.6.8", "zlib-ng": "1.3.1.zlib-ng", "zlib": "1.3.2"}
+        for engine, version in versions.items():
+            for leg in measure.GZSEEK_ENGINES:
+                with self.subTest(engine=engine, leg=leg):
+                    problem = measure.gzseek_engine_problem(leg, version)
+                    if leg == engine:
+                        self.assertIsNone(problem)
+                    else:
+                        self.assertIn(version, problem)
+
+    def test_every_leg_is_its_own_build_and_the_references_the_inflate_instrument(self):
+        specs = measure._gzseek_specs()
+        self.assertEqual(len(specs), len(measure.GZSEEK_REFERENCES) + len(measure.GZSEEK_SHAPES))
+        self.assertEqual({s.regime for s in specs}, {"warm"})
+        self.assertEqual({s.input for s in specs}, {"control_gz"})
+        legs = {s.binary for s in specs if s.command.startswith(measure.GZSEEK_FAMILY)}
+        self.assertEqual(legs, {f"gzseek:{e}" for e in measure.GZSEEK_ENGINES})
+        references = [s for s in specs if s.binary == "gzinflate"]
+        self.assertEqual(
+            [s.command for s in references],
+            [f"{measure.INFLATE_FAMILY}{b}" for b in measure.GZSEEK_REFERENCES],
+        )
+        # zlib-ng's serial inflate is the floor each first pass is set against.
+        self.assertIn("zlib-ng", measure.GZSEEK_REFERENCES)
+        for backend in measure.GZSEEK_REFERENCES:
+            self.assertIn(backend, measure.INFLATE_BACKENDS)
+
+    def test_each_leg_builds_into_a_target_dir_of_its_own(self):
+        cfg = measure.Config(dry_run=True)
+        dirs = {measure.image_target_dir(cfg, f"gzseek-{e}") for e in measure.GZSEEK_ENGINES}
+        self.assertEqual(len(dirs), len(measure.GZSEEK_ENGINES))
+        for leg in measure.ALLOCATOR_LEGS:
+            self.assertNotIn(measure.image_target_dir(cfg, leg), dirs)
 
 
 class Reported(unittest.TestCase):
