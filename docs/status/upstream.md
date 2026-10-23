@@ -131,7 +131,8 @@ back. **`UF1`–`UF4` are allocated, and none is reused.**
   answering `Z_DATA_ERROR` in gzip mode, closed 2025-12-04 by PR #434, in
   0.5.3. Under the unstable `__internal-api` feature `inflate::prime` is safe,
   but `inflate` and `get_dictionary` are not and the stream's `data_type` is
-  private. No request opened: the maintainer's call.
+  private. A request is drafted for the maintainer to file,
+  `runs/UF4-upstream-request/issue.md`; none open on 2026-10-23.
 - **Fixed when.** `zlib_rs::Inflate` answers where a `Block` stop left its
   reader (the unused bits, and whether it is a non-final block's end), primes
   bits ahead of its input, and copies its window out, in a semver-stable API.
@@ -143,8 +144,8 @@ back. **`UF1`–`UF4` are allocated, and none is reused.**
   needing `unsafe` for the decode; `miniz_oxide`'s safe
   `block-boundary` API, its inflate slower than the floor in every regime
   ([`../design/measurements.md`](../design/measurements.md), "What serial
-  inflate costs against the plain parse"); zlib-ng through `libz-ng-sys`,
-  CMake-built, which nothing shipped may reach
+  inflate costs against the plain parse"); zlib-ng, slower than zlib-rs at
+  serial inflate in every regime there, and CMake-built through `libz-ng-sys`
   ([`../design/decisions.md`](../design/decisions.md), "D111"); an inflater of
   our own, the spec buying it ([`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md),
   "Settled in the grilling").

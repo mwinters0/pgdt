@@ -44,8 +44,9 @@ the overview; what follows is what the next slices inherit.
   `src/zlib.rs`, the crate `deny(unsafe_code)` elsewhere
   ([`../status/upstream.md`](../status/upstream.md), "UF4"). What the decode
   relies on of it is [`runtime-invariants.md`](runtime-invariants.md), "RT23".
-  Nothing shipped links the crate yet, so D27's one shipped `unsafe`
-  ([`decisions.md`](decisions.md), "D27") stays true until 15.5 links it.
+  D27's one shipped `unsafe` is the seven libraries'
+  ([`decisions.md`](decisions.md), "D27"), and `gz-seek` is none of them
+  ([`decisions.md`](decisions.md), "D68"), so 15.5 linking it leaves D27 true.
 - **Bytes after the last member are refused** as `Error::NotGzip` at their
   offset, trailing zeros included; GNU gzip's "trailing garbage ignored" is
   not followed, `pg_dump` and `gzip` writing none.
@@ -70,8 +71,9 @@ the overview; what follows is what the next slices inherit.
   zlib-rs's level 1 ends no block before the stream's finish, so such a file
   indexes as one unit whatever the spacing
   ([`../status/history/2026-10-22.md`](../status/history/2026-10-22.md),
-  "15.4: `gz-seek` landed, and a writer that ends no block"); what 15.5 does
-  with one is STATUS's "Decisions worth another look". A gzip test assumes
+  "15.4: `gz-seek` landed, and a writer that ends no block"); 15.5 warns of
+  one ([`decisions.md`](decisions.md), "D19") and 15.10 places checkpoints
+  inside its block ([`../status/deficiencies.md`](../status/deficiencies.md)). A gzip test assumes
   nothing of where blocks end: the suite's `flate2` backend is whichever
   feature unification picks.
 

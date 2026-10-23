@@ -16,6 +16,11 @@ invariant (`docs/process.md`, "The assumptions register"), not an entry; one
 upstream calls correct and we disagree with is an entry only while we are
 asking for the change.
 
+**No plan waits on an entry.** Where no existing crate meets a goal, assume a
+request upstream will be refused: the design proceeds on what is available
+now, and the entry records what a fix would let us remove, never a step the
+plan depends on.
+
 **An entry** is `## UF<k> — <title>`, then six fields, each `- **<field>.**`,
 in this order — `scripts/upstream.py` asserts the shape:
 

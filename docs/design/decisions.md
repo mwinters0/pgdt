@@ -196,7 +196,7 @@ command**: `parse` interrupts, at byte 0 too, then dies by the signal, and a sec
 handler. As init (RT19) `pgdt` exits 128+n on every signal ending them elsewhere but a fault's, left to the kernel, and what `parse`'s guard
 or the REPL's `ctrl_c` catches. Rejected: polling alone; a `ScanOptions` field; a token of our own; keying on what was banked (a race); `exit(128+n)` elsewhere (RT20); needing an init; as init, INT and TERM alone; fault handlers; an `Option<&CancellationToken>` inside, which still asserts and adds a branch per poll; a `Stop` trait whose `Interrupted` is uninhabited where nothing stops the pass, a type parameter through every pass to prove one gate.
 
-### D27 UTF-8 is validated once per chunk, and the library's one shipped `unsafe` is the view append
+### D27 UTF-8 is validated once per chunk, and the seven libraries' one shipped `unsafe` is the view append
 `validated_prefix` validates the largest line-terminated prefix and fields slice the `&str` with
 `str::get`, delimiters being ASCII. The escaped path still validates (`\xNN` synthesizes bytes); the
 bulk pass runs only when a row will decode something. Four `unsafe` attempts lost to the safe shape;
@@ -742,8 +742,8 @@ needing a facility a runner lacks. Code: `release.py`'s `suite`, `check.Package.
 `test_the_apparatus_the_suite_leaves_out_is_a_dependency_of_no_member`; `runs/release-v0.2.0/x86-64-suite-39530108777.log`.
 
 ### D111 CMake is a `mise.toml` pin for the apparatus, and a build is refused where a crate `pgdt` depends on ran it
-CMake is pinned for the measurement apparatus, zlib-ng's `libz-ng-sys` building under nothing else, so the image installs it; nothing shipped may reach it. `release.py build` reads every build script its build ran
-or found fresh off cargo's messages, and refuses where one of a crate in `pgdt`'s normal-dependency closure, at `pgdt`'s features (`cargo tree`), left a `CMakeCache.txt`; scoped so because the apparatus builds in the same target directory.
-Rejected: CMake absent, the guard `aws-lc-sys`'s fallback failed on by name (zlib-ng unbuildable where every figure's binary is built); `ENV AWS_LC_SYS_CMAKE_BUILDER=0` in the Dockerfile (one crate guarded by name);
+CMake is pinned for the measurement apparatus, zlib-ng's `libz-ng-sys` building under nothing else, so the image installs it. CMake is not refused as such: what the shipped build must not do is build `aws-lc-sys` under its CMake
+builder, whose compilation options are not its `cc` builder's. While no shipped crate needs CMake that is checked closure-wide: `release.py build` reads every build script its build ran or found fresh off cargo's messages, and refuses where one of a crate in `pgdt`'s normal-dependency closure, at `pgdt`'s features (`cargo tree`), left a `CMakeCache.txt`; scoped so because the apparatus builds in the same target directory.
+Rejected: CMake absent, the guard `aws-lc-sys`'s fallback failed on by name (zlib-ng unbuildable where every figure's binary is built); `ENV AWS_LC_SYS_CMAKE_BUILDER=0` in the Dockerfile (one crate guarded by name while nothing shipped needs CMake, another's fallback onto it unseen);
 Debian's `cmake` (a version no checkout shares); the closure off `cargo metadata` (one resolve for the workspace, so a feature another member turns on in a crate `pgdt` links lands its dependency in it, `quinn` among them).
-Reopens: a shipped dependency needing CMake. Code: `release.py`'s `step_build`, `cmake_caches`, `shipped_tree`. Evidence: `test_release.py`'s `CMake`; `runs/M244-cmake-probe/`.
+Reopens: a shipped dependency built by CMake, the check then narrowing to `aws-lc-sys` by name, its builder forced and its `OUT_DIR` holding no `CMakeCache.txt`. Code: `release.py`'s `step_build`, `cmake_caches`, `shipped_tree`. Evidence: `test_release.py`'s `CMake`; `runs/M244-cmake-probe/`.

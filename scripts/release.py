@@ -22,7 +22,7 @@ links against. The link is against that glibc, so the check holds by
 construction; it is the guard that says so, and the one a host build fails.
 **And every `build` is refused where a crate `pgdt` depends on was built
 under CMake** (`cmake_caches`): the image has it, `mise.toml` pinning it for
-the measurement apparatus, and nothing shipped may reach it (D111).
+the measurement apparatus, and `aws-lc-sys` must keep its `cc` builder (D111).
 
 On the host each run is the invoking user's, under a memory limit, with the
 build's state under `target/release-image/` -- its cargo target directory,

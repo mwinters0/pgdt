@@ -90,10 +90,12 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.2** The cut: `source/compressed/` with the codec trait, xz its only implementor; one `CompressionIndex` owned by `pgdt-io`, `KnownCompression::Compressed`, the codec error, the cache key renamed (cache bump); `determinism.rs` gains `.xz`; behaviour-preserving — [notes](../design/roadmap-P15.2-cut-notes.md)
 - [x] **15.3** `extent()`: `Exact` or `Open` in place of `size()` and `size_is_exact()`, every site relying on an exact size, plain and xz `Exact` throughout; behaviour-preserving — [notes](../design/roadmap-P15.3-extent-notes.md)
 - [x] **15.4** `gz-seek` built in the workspace as a leaf crate: the sans-IO forward decode emitting checkpoints by the placement rule, resume from a checkpoint given its window, the unit CRC, the BGZF member walk, the index as a shareable handle, the leaf admitted to `layering.py`'s graph and claimed in `concepts.md` — [notes](../design/roadmap-P15.4-gz-seek-notes.md)
+- [ ] **15.9** Evidence, the backend figure, on `gz-seek` after 15.4: its checkpointing first pass and a resumed unit decode over zlib-rs, zlib-ng (CMake- and `cc`-built) and stock zlib, each a leg under the one zlib-API module; it decides `gz-seek`'s backend, a `D<k>` of its own, UF4 keeping only why the engine is reached through its C API
 - [ ] **15.1.2** Evidence, the spacing figure, on `gz-seek` after 15.4: gzip's own costs at candidate spacings — the checkpointing first pass against a serial inflate, a resumed unit decode's fixed cost, the window section's size — the costs shared with xz read off its figures; it sets the spacing constant `pgdt-io` passes `gz-seek`
-- [ ] **15.5** Single-member gzip: the `deflate` adapter over `gz-seek`, checkpoints by the placement rule, unit CRCs, the window provider and the cache's window section, the first pass's `PlanNote`, determinism and resume assertions, over HTTP
+- [ ] **15.5** Single-member gzip: the `deflate` adapter over `gz-seek`, checkpoints by the placement rule, unit CRCs, the window provider and the cache's window section, the first pass's `PlanNote`, a member indexed as one unit warned as `NonSeekableCompressedSource` in gzip's words (D19) and tested on one `libz-rs-sys`'s level 1 writes, determinism and resume assertions, over HTTP
 - [ ] **15.6** BGZF, `pgdt-io`'s side over the crate's walk: the walk run at open, recognition at 18 bytes, members coalesced into units
 - [ ] **15.8** A parallel first pass, earned by 15.1.1's reading: `gz-seek` finds a single member's units speculatively — rapidgzip's technique, implemented natively and run on the caller's pool (D1, D12) — replacing only how the first pass finds them, never the index, the codec trait or the arms; checkpoints by the placement rule, so the index is the serial pass's at every worker count; it lifts the inflate, the first pass's scan staying one partition unless its own spec partitions it (the spec's "Slice order")
+- [ ] **15.10** Checkpoints inside a static block: the forward pass walks a static block's codes itself to place a checkpoint at the first symbol boundary at or after each multiple, the resume priming a synthetic static-block header; after 15.8, reading its native decoding first (`KD129`)
 - [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the manual and `pg-dump-compatibility.md`
 
 ## Not started
@@ -125,30 +127,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`gz-seek` reaches zlib-rs through its C API, so a crate 15.5 ships
-  carries `unsafe`** (15.4). The backend is zlib-rs, the fastest serial
-  inflate `inflate-throughput` reads and the only one at the floor that needs
-  no CMake (D111); its safe `Inflate` gives neither where a `Z_BLOCK` stop
-  left its reader, nor `inflatePrime`, nor the window read, so
-  `crates/gz-seek/src/zlib.rs` calls `libz-rs-sys`'s zlib API behind a safe
-  type, the crate denying `unsafe` elsewhere (`UF4`, `RT23`). Made so because
-  the spec left the backend to the crate and asked a safe API of it, which it
-  has; `__internal-api` is unstable and still unsafe, and `miniz_oxide`'s safe
-  resume is slower than the floor. Reconsidering: once 15.5 links the crate,
-  D27's "the library's one shipped `unsafe`" is false, so D27 is re-scoped to
-  name this module or the backend changes; and `UF4` records no upstream
-  request opened, which is a publication and yours to make.
-- **A single member whose writer ends no deflate block indexes as one unit**
-  (15.4). zlib-rs's level 1 writes one block to the stream's finish
-  (`runs/p15.4-level1-blocks/reading.txt`), and a checkpoint can only be a
-  block boundary, so `gz-seek` builds a correct one-unit index and every later
-  read of such a file decodes from its start; zlib-ng's level 1, which
-  `pg_dump` links where a distribution ships it as zlib, is unchecked. Left
-  as is because 15.4's contract holds for it and the spec decided nothing for
-  it ([`history/2026-10-22.md`](history/2026-10-22.md), "15.4:
-  `gz-seek` landed, and a writer that ends no block"). Reconsidering decides
-  what 15.5 does with such a file — read it serially and say so in the first
-  pass's `PlanNote`, refuse it, or checkpoint inside a block, which no
-  inflater's API offers — and whether a fixture from a zlib-ng `pg_dump` joins
-  15.1's.

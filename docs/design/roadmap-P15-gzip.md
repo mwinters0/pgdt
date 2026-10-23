@@ -201,15 +201,30 @@ a second copy of the xz source.
   shareable handle; its own size contract, open until the end; a safe API;
   and a throughput floor against zlib-ng, which the evidence slice measures.
   The backend is the crate's decision on its own measurement, as liblzma is
-  `xz-seek`'s; if it is `zlib-rs`, its unstable `prime` is a `UF<k>` with a
-  request upstream to stabilize it. Rejected: pinning `miniz_oxide`'s
-  `block-boundary` or `libz-rs-sys`'s C ABI from here.
+  `xz-seek`'s, taken through `gz-seek` itself: its checkpointing pass and a
+  resumed unit decode over every engine giving what an index needs — a C
+  library or a crate's C ABI as much as a safe crate, `unsafe` being
+  acceptable where an engine needs it — the fastest winning, the lighter build
+  within noise, those known to be slow last. A request upstream for a safe API
+  is made and never waited on
+  ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
+  "`gz-seek`'s backend and `unsafe`, reviewed"). Rejected: pinning
+  `miniz_oxide`'s `block-boundary` or `libz-rs-sys`'s C ABI from here; ISA-L,
+  whose block stops exist only in rapidgzip's fork and whose resume primes
+  bits by writing undocumented `inflate_state` fields, so the resume's
+  correctness would rest on a fork's internals — reopened only by a reading
+  showing the zlib family leaves a unit decode what bounds a gzip read.
 - **A first pass is a `PlanNote`, not a diagnostic.** A single member with no
   complete index raises no `NonSeekableCompressedSource`: the first pass makes
   it seekable and nothing the user does would help, so by D19's line it is a
   property of the run — a note that this run is serial, building the index,
   and later reads are parallel. `NonSeekableCompressedSource` stays the
-  one-block `.xz`'s, its text taken from the codec rather than saying `.xz`.
+  one-block `.xz`'s, its text taken from the codec rather than saying `.xz`,
+  and is a single member's whose complete index is one unit, its writer having
+  ended no deflate block before its last write: a finding about the file,
+  which recompressing answers, raised from the first pass's end on
+  ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
+  "A writer that ends no block, reviewed").
 - **The unpooled bound is checked on gzip, not argued.** The phase's own
   resident readings on gzip cover at least two reader counts, and `measure.py`'s
   `charge_model_problem`, whose inner fault line is `MEMORY_UNPOOLED_BOUND`,
@@ -348,6 +363,25 @@ become known as the pass goes, is slice 8's own question, asked against the
 arms 2, 3 and 5 leave. Rejected: deferring it to a later phase or out-of-band,
 which moves only the wrap.
 
+**The backend figure, slice 9, precedes the spacing figure**, so that the
+spacing is read on the engine that ships
+([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
+"`gz-seek`'s backend and `unsafe`, reviewed"): `gz-seek`'s checkpointing first
+pass and a resumed unit decode over zlib-rs, zlib-ng built by CMake and by
+`cc`, and stock zlib, each a leg under the one zlib-API module. It decides the
+backend, whose choice is a decision entry of its own, the upstream register
+keeping only why the engine is reached through its C API.
+
+**Checkpoints inside a static block, slice 10, follow 8**
+([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
+"A writer that ends no block, reviewed"):
+the forward pass walks a static block's codes itself, producing nothing, to
+place a checkpoint at the first symbol boundary at or after each multiple, and
+the resume primes a synthetic static-block header ahead of the byte's
+remaining bits. It reads 8's native decoding first rather than writing a
+second. A walker producing no output is not the inflater of our own the
+backend's rejection names.
+
 The split is a row only if `gz-seek` is functional by the wrap; otherwise it
 is out-of-band work.
 
@@ -383,7 +417,11 @@ offset, the first whole compressed byte, 0–7 bits of the byte before, and up t
 32 KiB of window (`zran.h`'s `point`). One can be taken at the start of **any**
 deflate block, found only by decoding with `Z_BLOCK`; zlib ends a block about
 every 16 K symbols at the default `memLevel`, so the choice of spacing is the
-reader's, not the writer's. The window is the cost: a full 32 KiB a checkpoint
+reader's, not the writer's — except at level 1 under zlib-ng's default build
+and zlib-rs, whose `deflate_quick` writes one static block to the stream's
+last write, `pg_dump` flushing nothing before its `Z_FINISH`
+(`runs/p15-level1-writers/reading.txt`; Fedora 44's zlib-ng is built without
+it). The window is the cost: a full 32 KiB a checkpoint
 is about 24 GB over koji's 784 GB at 1 MiB spacing and about 0.77 GB at 32 MiB
 (arithmetic, not a measurement). rapidgzip shrinks it with sparse windows. A
 single member's uncompressed size above 4 GiB is learnable only by a full

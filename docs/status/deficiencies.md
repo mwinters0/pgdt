@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD128 -->
-**`KD1`–`KD128` are allocated, and nothing at or below `KD128` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD129 -->
+**`KD1`–`KD129` are allocated, and nothing at or below `KD129` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -471,3 +471,10 @@ than reading as a phase nobody has sliced.
   redirected run writes the refusal into its output. **(c) unowned**; promoted
   by the maintainer deciding whether the shell departs from upstream's `main`
   there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
+
+- **KD129** — a single gzip member whose writer ends no deflate block before
+  its last write, `pg_dump -Z 1` linked against a default-built zlib-ng or
+  zlib-rs among them, indexes as one unit, so every read of it decodes from
+  its start, serially, warned as `NonSeekableCompressedSource`. **(b) owned by
+  P15**, its slice 15.10 placing checkpoints inside a static block. Detail:
+  `crates/gz-seek/src/forward.rs`.

@@ -8,8 +8,8 @@ publish.workspace = true
 # The `inflate-throughput` figure's instrument: one gzip member inflated whole,
 # on one thread, through the deflate backend a flag names (`src/main.rs`). A
 # workspace member of its own rather than a `pgdt-io` example because its
-# zlib-ng leg builds only under CMake, which nothing shipped may reach
-# (`docs/design/decisions.md`, "D111"); `scripts/measure.py` builds it in the
+# zlib-ng leg builds under CMake, which `scripts/release.py build` refuses in
+# a crate `pgdt` depends on (`docs/design/decisions.md`, "D111"); `scripts/measure.py` builds it in the
 # release image, as it builds every binary a figure times.
 
 # Never shipped: the measurement apparatus, which the release suite leaves
