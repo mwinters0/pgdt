@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D112 -->
+<!-- decision-watermark: D113 -->
 
 ## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
@@ -137,6 +137,13 @@ which naming the columns lacking a statistic would answer.
 Of the engines exporting what an index needs through the zlib API, zlib-rs is the fastest at both of `gz-seek`'s costs, its first pass and a unit resumed from its checkpoint, and the one built with no C toolchain; why
 its C API rather than a safe one is UF4's. zlib-ng and stock zlib stay features, the figure's legs, each a build of its own. Rejected: zlib-ng (slower at both; its compatible build CMake-built and exporting zlib's own names, `libz-ng-sys`'s native `zng_` API not the one the module is written over, `libz-sys`'s `cc` build failing to initialise); stock zlib (slowest at both);
 the system's zlib (`libz.so.1` beside glibc, a dependency a release does not promise, D104); ISA-L (block stops only in rapidgzip's fork, its resume priming undocumented state fields). Reopens: another engine resolved ahead at either cost in a re-take, at a bump of any engine's pin. Code: `crates/gz-seek/Cargo.toml`'s `default`, `src/zlib.rs`. Evidence: `gzseek-backend`; RT23; `runs/p15.9-backend-legs/`, `runs/p15.9-zlib-ng-cc-probe/`.
+
+### D113 gzip's checkpoint spacing is the block `xz -T0` writes by default
+A shipped constant, never derived from the file. Within xz's block sizes a spacing costs gzip only its window section and index entries, the first pass and a resume's fixed cost not moving with it,
+so it is set by what a unit shares with xz: the bytes a reader holds, the partition grain, and the default budget's block-decode line (D3), on which it falls where an ordinary `.xz` does.
+Its unit is the finer of the two `.xz` block sizes the resident bounds were read at, and a koji-scale member's index has the entry count of the seek table `KD26` is argued over.
+Rejected: a finer spacing, under D3's line, with more window section and index and nothing gained on gzip's side; a coarser one, holding more a reader where the unpooled bound has been seen overrun.
+Reopens: a resume's fixed cost resolved and not small at it; a gzip resident reading overrunning `MEMORY_UNPOOLED_BOUND`. Code: `CHECKPOINT_SPACING`, `source/compressed/deflate.rs`. Evidence: `gzseek-spacing`, `parallel-peak-rss`, `reserve`.
 
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source

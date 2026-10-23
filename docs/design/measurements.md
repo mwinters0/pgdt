@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 27 figures below come from that sitting.** The other 4 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzseek-backend` (`39744f33`), `inflate-throughput` (`d2cf15c4`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 28 figures below come from that sitting.** The other 5 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzseek-backend` (`39744f33`), `gzseek-spacing` (`4691536e`), `inflate-throughput` (`d2cf15c4`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -3329,6 +3329,97 @@ order").
 
 **The reference rows agree with `inflate-throughput`'s warm cells**, taken at
 another commit, to within 5%.
+
+## What a checkpoint's spacing costs gzip
+
+<!-- figure: gzseek-spacing — taken at `4691536e` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure gzseek-spacing` -->
+
+| Spacing | Units | Window section | First pass | A unit begun (less the first pass, a unit) | Every unit resumed (less the first pass) |
+|---|---|---|---|---|---|
+| 1 MiB | 3072 | 96.0 MB · 12.72% of the `.gz` | **2.80 s** (2.78–2.87) · 1.00× `zlib-ng`'s serial inflate | +9.1 µs | **2.70 s** · ~1193 MB/s |
+| 2 MiB | 1536 | 48.0 MB · 6.36% of the `.gz` | **2.84 s** (2.80–2.86) · 1.01× `zlib-ng`'s serial inflate | -5.9 µs | **2.68 s** · ~1202 MB/s |
+| 4 MiB | 768 | 24.0 MB · 3.18% of the `.gz` | **2.85 s** (2.76–2.86) · 1.02× `zlib-ng`'s serial inflate | +10.4 µs | **2.68 s** · ~1202 MB/s |
+| 8 MiB | 384 | 12.0 MB · 1.59% of the `.gz` | **2.86 s** (2.81–2.86) · 1.02× `zlib-ng`'s serial inflate | -122.4 µs | **2.71 s** · ~1190 MB/s |
+| 16 MiB | 192 | 6.0 MB · 0.79% of the `.gz` | **2.85 s** (2.73–2.86) · 1.02× `zlib-ng`'s serial inflate | +36.5 µs | **2.64 s** · ~1222 MB/s |
+| 32 MiB | 96 | 3.0 MB · 0.39% of the `.gz` | **2.82 s** (2.73–2.85) · 1.01× `zlib-ng`'s serial inflate | -125.0 µs | **2.78 s** · ~1161 MB/s |
+| 64 MiB | 48 | 1.5 MB · 0.19% of the `.gz` | **2.82 s** (2.71–2.86) · 1.01× `zlib-ng`'s serial inflate | +645.8 µs | **2.74 s** · ~1176 MB/s |
+| 128 MiB | 24 | 736 KB · 0.10% of the `.gz` | **2.75 s** (2.73–2.82) · 0.98× `zlib-ng`'s serial inflate | +2791.7 µs | **2.87 s** · ~1122 MB/s |
+
+The first pass is wall clock, and its time as a multiple of `zlib-ng`'s serial inflate of the same member, the floor it is held to. A unit begun is the median of the first pass with every unit begun and brought to its first plaintext byte, less the first pass's, over the unit count: a fresh inflate state, the window set, the bits primed, a positioned read and the first block's header — which a whole unit decode reads anyway, so it bounds a resume's fixed cost from above. Every unit resumed is the median of the first pass with every unit decoded whole, less the first pass's, and the rate it implies per plaintext byte. The window section is every checkpoint's window as the instrument counts it, and its share of the compressed file. The instrument is `crates/gz-seek/examples/gz_read.rs`, the `zlib-rs` build (`crates/gz-seek/Cargo.toml`'s default), one thread, every member's CRC-32 and `ISIZE` and every unit's CRC-32 compared; the serial inflate rows are `crates/gzip-inflate/src/main.rs`'s.
+
+- `control_gz`: 754.7 MB compressed, 3.00 GiB of plaintext
+- Serial inflate, `zlib-ng`: **2.80 s** (2.77–2.86) · ~1152 MB/s
+- Serial inflate, `zlib-rs`: **2.66 s** (2.60–2.70) · ~1211 MB/s
+
+Per-rep readings (s):
+- Serial inflate, `zlib-ng`: 2.85, 2.79, 2.80, 2.86, 2.77
+- Serial inflate, `zlib-rs`: 2.66, 2.60, 2.70, 2.66, 2.67
+- First pass, 1 MiB: 2.80, 2.78, 2.80, 2.80, 2.87
+- First pass, then every unit begun, 1 MiB: 2.94, 2.90, 2.83, 2.81, 2.80
+- First pass, then every unit, 1 MiB: 5.50, 5.55, 5.43, 5.66, 5.46
+- First pass, 2 MiB: 2.80, 2.86, 2.85, 2.84, 2.81
+- First pass, then every unit begun, 2 MiB: 2.83, 2.76, 2.83, 2.77, 2.83
+- First pass, then every unit, 2 MiB: 5.46, 5.53, 5.37, 5.52, 5.58
+- First pass, 4 MiB: 2.85, 2.86, 2.76, 2.85, 2.80
+- First pass, then every unit begun, 4 MiB: 2.77, 2.84, 2.87, 2.87, 2.85
+- First pass, then every unit, 4 MiB: 5.53, 5.37, 5.35, 5.59, 5.54
+- First pass, 8 MiB: 2.81, 2.86, 2.81, 2.86, 2.86
+- First pass, then every unit begun, 8 MiB: 2.78, 2.87, 2.69, 2.87, 2.81
+- First pass, then every unit, 8 MiB: 5.68, 5.39, 5.56, 5.57, 5.52
+- First pass, 16 MiB: 2.85, 2.86, 2.85, 2.76, 2.73
+- First pass, then every unit begun, 16 MiB: 2.81, 2.87, 2.87, 2.74, 2.85
+- First pass, then every unit, 16 MiB: 5.55, 5.44, 5.63, 5.36, 5.48
+- First pass, 32 MiB: 2.82, 2.85, 2.75, 2.85, 2.73
+- First pass, then every unit begun, 32 MiB: 2.78, 2.81, 2.83, 2.80, 2.77
+- First pass, then every unit, 32 MiB: 5.61, 5.63, 5.58, 5.59, 5.42
+- First pass, 64 MiB: 2.85, 2.76, 2.71, 2.82, 2.86
+- First pass, then every unit begun, 64 MiB: 2.84, 2.85, 2.85, 2.85, 2.78
+- First pass, then every unit, 64 MiB: 5.49, 5.56, 5.61, 5.65, 5.40
+- First pass, 128 MiB: 2.75, 2.82, 2.77, 2.73, 2.73
+- First pass, then every unit begun, 128 MiB: 2.86, 2.75, 2.82, 2.83, 2.80
+- First pass, then every unit, 128 MiB: 5.62, 5.55, 5.75, 5.66, 5.46
+
+Apparatus over every run in this table: CPU stall ≤0.19%, I/O stall ≤4.56%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤71°C.
+
+**Only the window section moves with the spacing, among gzip's own costs.** It
+is 32 KiB a checkpoint, so it halves with each doubling — 12.72% of the `.gz`
+at 1 MiB, 0.39% at 32 MiB — and between two rows it is arithmetic, not a
+reading.
+
+**The first pass does not move with the spacing.** Every row's spread
+overlaps every other's, 2.71 to 2.87 s over all forty reps; copying 3072
+windows at 1 MiB is not visible beside the inflate. It meets the floor it is
+held to at every spacing, 0.98 to 1.02 times `zlib-ng`'s serial inflate, and
+lies 3 to 8% above `zlib-rs`'s own.
+
+**A resume's fixed cost is below what this table resolves, at every
+spacing.** The `starts` row less the `forward` row lies inside the two rows'
+spreads in every row, of either sign, so the column bounds the cost and does
+not price it. The 1 MiB row, where 3072 resumes multiply it most, sets the
+bound: its difference of medians is 28 ms, and the widest it admits —
+`starts`' slowest rep less `forward`'s fastest — is 0.16 s, about 50 µs a
+unit, 6% of that row's unit decodes and under 0.5% of them from 16 MiB up. The
+large per-unit values at 64 and 128 MiB are differences no wider than their
+rows' spreads divided over 48 and 24 units, the 128 MiB `forward` median being
+the lowest in the table.
+
+**Every unit resumed decodes at about the first pass's rate**, 2.64 to 2.87 s.
+The 64 and 128 MiB rows sit highest, which is not resolved: their `units`
+reps overlap the 1 MiB row's. Unattributed; a candidate is the instrument's
+output buffer, one unit long and past the last-level cache at the larger
+spacings, a cost a unit-sized block buffer shares with xz, which a profile at
+both ends would name.
+
+**The premise holds**: none of `measure.run_gzseek_spacing`'s falsifying
+results appears — the first pass does not move by more than its spread; no
+row resolves a resume's fixed cost, so none shows it varying; and its bound
+times the unit count is small beside the unit decodes even at 1 MiB. Within
+xz's block sizes a spacing costs gzip its window section and its index's
+entries, and what sets the shipped one is what a unit's size shares with xz
+([`decisions.md`](decisions.md), "D113").
+
+**The reference rows agree with `gzseek-backend`'s**, taken at `39744f33`, to
+within about 3%.
 
 ## What a second scan worker buys, and where the plain path stops
 

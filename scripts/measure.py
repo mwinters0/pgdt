@@ -2364,11 +2364,11 @@ GZSEEK_SHAPES: tuple[str, ...] = tuple(
 )
 
 #: The checkpoint spacing the backend figure reads every engine at. **Not the
-#: spacing that ships**, which is `15.1.2`'s figure to set on the engine this
-#: one picks (`docs/design/roadmap-P15-gzip.md`, "Slice order"): one within xz's
-#: block sizes, so each engine's per-unit fixed cost is in its unit rows at a
-#: count the shipped spacing could give, and the decoder stops at every block's
-#: end whatever the spacing (`crates/gz-seek/src/forward.rs`).
+#: spacing that ships**, which `gzseek-spacing` set on the engine this one
+#: picked (`docs/design/decisions.md`, "D113"): one within xz's block sizes,
+#: so each engine's per-unit fixed cost is in its unit rows at a count the
+#: shipped spacing could give, and the decoder stops at every block's end
+#: whatever the spacing (`crates/gz-seek/src/forward.rs`).
 GZSEEK_SPACING = 32 * MIB
 
 #: The `gzseek-spacing` figure's command family: `gz-seek`'s `gz_read`
@@ -11469,6 +11469,26 @@ FIGURES: list[Figure] = [
         warm_inputs=("control_gz",),
         run=run_gzseek_backend,
     ),
+    # gzip's own costs at each candidate checkpoint spacing, on the engine
+    # `gz-seek` ships. What can move it is the crate and its example, the
+    # engine its manifest pins, the inflate instrument behind the reference
+    # rows, and the generators behind the file.
+    Figure(
+        id="gzseek-spacing",
+        section="What a checkpoint's spacing costs gzip",
+        stage="warm",
+        depends=_declare(
+            "crates/gz-seek/src/",
+            "crates/gz-seek/examples/gz_read.rs",
+            "crates/gz-seek/Cargo.toml",
+            "crates/gzip-inflate/src/",
+            "crates/gzip-inflate/Cargo.toml",
+            "scripts/generate_gzip_input.py",
+            *GEN_PERF,
+        ),
+        warm_inputs=("control_gz",),
+        run=run_gzseek_spacing,
+    ),
     # The parallel scan's throughput claim, and the first figure in the register
     # whose axis is the worker count of `pgdt` itself. `depends` is the union of
     # everything a parallel scan runs through — the scanner, the map, the read
@@ -11789,28 +11809,7 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = [
-    # gzip's own costs at each candidate checkpoint spacing, on the engine
-    # `gz-seek` ships. What can move it is the crate and its example, the
-    # engine its manifest pins, the inflate instrument behind the reference
-    # rows, and the generators behind the file.
-    Figure(
-        id="gzseek-spacing",
-        section="What a checkpoint's spacing costs gzip",
-        stage="warm",
-        depends=_declare(
-            "crates/gz-seek/src/",
-            "crates/gz-seek/examples/gz_read.rs",
-            "crates/gz-seek/Cargo.toml",
-            "crates/gzip-inflate/src/",
-            "crates/gzip-inflate/Cargo.toml",
-            "scripts/generate_gzip_input.py",
-            *GEN_PERF,
-        ),
-        warm_inputs=("control_gz",),
-        run=run_gzseek_spacing,
-    ),
-]
+UNTAKEN: list[Figure] = []
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

@@ -13,6 +13,7 @@ use pgdt_core::{Error, Result};
 
 pub(crate) mod blocks;
 mod codec;
+mod deflate;
 mod fetched;
 mod file;
 mod index;

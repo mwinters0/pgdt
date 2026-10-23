@@ -91,7 +91,7 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.3** `extent()`: `Exact` or `Open` in place of `size()` and `size_is_exact()`, every site relying on an exact size, plain and xz `Exact` throughout; behaviour-preserving — [notes](../design/roadmap-P15.3-extent-notes.md)
 - [x] **15.4** `gz-seek` built in the workspace as a leaf crate: the sans-IO forward decode emitting checkpoints by the placement rule, resume from a checkpoint given its window, the unit CRC, the BGZF member walk, the index as a shareable handle, the leaf admitted to `layering.py`'s graph and claimed in `concepts.md` — [notes](../design/roadmap-P15.4-gz-seek-notes.md)
 - [x] **15.9** Evidence, the backend figure, on `gz-seek` after 15.4: its checkpointing first pass and a resumed unit decode over zlib-rs, zlib-ng and stock zlib, each a leg under the one zlib-API module, the build routes to each engine found, tried and one recommended; it decides `gz-seek`'s backend, a `D<k>` of its own (D112, zlib-rs), UF4 keeping only why the engine is reached through its C API — [notes](../design/roadmap-P15.9-backend-notes.md)
-- [ ] **15.1.2** Evidence, the spacing figure, on `gz-seek` after 15.4: gzip's own costs at candidate spacings — the checkpointing first pass against a serial inflate, a resumed unit decode's fixed cost, the window section's size — the costs shared with xz read off its figures; it sets the spacing constant `pgdt-io` passes `gz-seek`. The `starts` shape and `gzseek-spacing` are landed and the figure is registered untaken; the readings remain, and the constant they set — [notes](../design/roadmap-P15.1.2-spacing-notes.md)
+- [x] **15.1.2** Evidence, the spacing figure, on `gz-seek` after 15.4: gzip's own costs at candidate spacings — the checkpointing first pass against a serial inflate, a resumed unit decode's fixed cost, the window section's size — the costs shared with xz read off its figures; it sets the spacing constant `pgdt-io` passes `gz-seek` (D113, `CHECKPOINT_SPACING`) — [notes](../design/roadmap-P15.1.2-spacing-notes.md)
 - [ ] **15.5** Single-member gzip: the `deflate` adapter over `gz-seek`, checkpoints by the placement rule, unit CRCs, the window provider and the cache's window section, the first pass's `PlanNote`, a member indexed as one unit warned as `NonSeekableCompressedSource` in gzip's words (D19) and tested on one `libz-rs-sys`'s level 1 writes, determinism and resume assertions, over HTTP
 - [ ] **15.6** BGZF, `pgdt-io`'s side over the crate's walk: the walk run at open, recognition at 18 bytes, members coalesced into units
 - [ ] **15.8** A parallel first pass, earned by 15.1.1's reading: `gz-seek` finds a single member's units speculatively — rapidgzip's technique, implemented natively and run on the caller's pool (D1, D12) — replacing only how the first pass finds them, never the index, the codec trait or the arms; checkpoints by the placement rule, so the index is the serial pass's at every worker count; it lifts the inflate, the first pass's scan staying one partition unless its own spec partitions it (the spec's "Slice order")
@@ -127,3 +127,16 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **gzip's checkpoint spacing is `xz -T0`'s default block, a value the figure
+  did not read as a row** (15.1.2, D113). `gzseek-spacing` showed gzip's own
+  costs flat across 1–128 MiB but for the window section, so the figure does
+  not pick a value; the call rests on what a unit shares with xz. Below about
+  16 MiB a unit falls under the default budget's block-decode line, where an
+  ordinary `.xz` does not (D3), and the window section and index grow; above
+  the finer `.xz` block the resident bounds were read at, a reader holds more
+  where `reserve`'s published 128 MiB legs overran `MEMORY_UNPOOLED_BOUND`. It
+  sits between the measured 16 and 32 MiB rows, by exact interpolation rather
+  than a reading. **To decide**: whether 24 MiB stands, or 16 or 32 MiB — a
+  measured row and a power of two — is preferred; changing it is one constant
+  and D113's wording, before 15.5 consumes it.
