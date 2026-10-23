@@ -367,10 +367,13 @@ which moves only the wrap.
 spacing is read on the engine that ships
 ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
 "`gz-seek`'s backend and `unsafe`, reviewed"): `gz-seek`'s checkpointing first
-pass and a resumed unit decode over zlib-rs, zlib-ng built by CMake and by
-`cc`, and stock zlib, each a leg under the one zlib-API module. It decides the
-backend, whose choice is a decision entry of its own, the upstream register
-keeping only why the engine is reached through its C API.
+pass and a resumed unit decode over zlib-rs, zlib-ng and stock zlib, each a
+leg under the one zlib-API module. Which build routes reach each engine, which
+of them work and which is recommended are the slice's own findings
+([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
+"15.9's build routes, reviewed"). It decides the backend, whose choice is a
+decision entry of its own, the upstream register keeping only why the engine
+is reached through its C API.
 
 **Checkpoints inside a static block, slice 10, follow 8**
 ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
