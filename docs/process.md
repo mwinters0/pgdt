@@ -82,7 +82,7 @@ one being unable to say which phase is short.
 
 ## The decision register
 
-`docs/design/decisions.md` is **capped at 750 lines** of numbered entries, each
+`docs/design/decisions.md` is **capped at 800 lines** of numbered entries, each
 at most seven lines: **Decision**, **Why**, **Rejected** (and why), **Reopens**,
 **Code** (the item), **Evidence** (a figure id, an invariant, a test).
 

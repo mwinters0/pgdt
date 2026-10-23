@@ -50,7 +50,9 @@ from typing import Iterable, Sequence
 REPO = Path(__file__).resolve().parent.parent
 
 #: The register's caps: `docs/process.md`, "The decision register".
-REGISTER_LINES = 750
+#: `REGISTER_LINES` raised from 750 on 2026-10-23 by the maintainer, D112
+#: having met it with no entry ready to strike.
+REGISTER_LINES = 800
 ENTRY_LINES = 7
 #: The one statement of this is `docs/status/history/README.md`; this is that
 #: number, held only for entries dated after the day the cap was adopted. Raised

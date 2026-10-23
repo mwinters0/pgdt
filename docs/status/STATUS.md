@@ -127,13 +127,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **D112 fits under the register's cap by re-wrapping, not by striking.**
-  `decisions.md` stood one line under 750, and D112 needed four more lines.
-  Rather than strike or cut another entry on my own, I joined the last two
-  lines of D17, D18, D87 and D22, which leaves their text unchanged. Why: none
-  of the four has stopped binding, and choosing which reasoning to lose is
-  the maintainer's call, not an unattended one. Reconsidering means either
-  accepting that re-wrapping counts as trimming, or naming an entry to strike
-  or shorten in their place, after which those four can go back to their old
-  wrapping.
