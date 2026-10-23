@@ -32,8 +32,8 @@ the code and xz's figures.
   removes the `dead_code` expectation; 15.6 passes it to `gz_seek::Walk`
   to coalesce members. A single member's unit runs from one checkpoint to the
   first block boundary past the next multiple, so it overshoots the spacing
-  by up to a deflate block — the whole member where its writer ends none
-  (`KD129`).
+  by up to a deflate block — all of the member but its final block where its
+  writer ends none before it (`KD129`).
 - **The resident readings 15.7 takes on gzip** are what D113's `Reopens`
   names: a gzip run overrunning `MEMORY_UNPOOLED_BOUND` at this unit would
   reopen the spacing beside the bound.

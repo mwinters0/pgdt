@@ -68,11 +68,13 @@ the overview; what follows is what the next slices inherit.
   beginning at a member start.
 - **15.8** reads `rusty-rapidgzip`'s `deflate::block_finder` first (below).
 - **A unit can be the whole member.** A checkpoint is a block boundary, and
-  zlib-rs's level 1 ends no block before the stream's finish, so such a file
-  indexes as one unit whatever the spacing
+  zlib-rs's level 1 ends no block before the final one, so such a file
+  indexes as one unit, or two the last that block, whatever the spacing
   ([`../status/history/2026-10-22.md`](../status/history/2026-10-22.md),
-  "15.4: `gz-seek` landed, and a writer that ends no block"); 15.5.2 warns of
-  one ([`decisions.md`](decisions.md), "D19") and 15.10 places checkpoints
+  "15.4: `gz-seek` landed, and a writer that ends no block"); 15.5.3 warns of
+  a unit wider than twice the spacing
+  ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
+  "15.5.3's warning, reviewed") and 15.10 places checkpoints
   inside its block ([`../status/deficiencies.md`](../status/deficiencies.md)). A gzip test assumes
   nothing of where blocks end: the suite's `flate2` backend is whichever
   feature unification picks.

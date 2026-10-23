@@ -64,8 +64,10 @@ split: the first pass, and its words").
   now every one is reachable from the CLI: `NonSeekableCompressedSource` on
   every complete one-unit index — every gzip file under the spacing, whatever
   its writer — `CompressedBlockPathDeclined` and `info`'s compression line.
-  Whether a file under the spacing should be warned at all is 15.5.3's to put
-  to the maintainer: one unit there is the file's size, not its writer's.
+  15.5.3 warns only a unit wider than twice the spacing, one unit under it
+  being the file's size, not its writer's
+  ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
+  "15.5.3's warning, reviewed").
 - **No status line announces the pass**, as `seek table build started` does a
   cold `.xz` walk; the `PlanNote` 15.5.3 adds is the place.
 - **15.8 replaces the frontier**, nothing else: `Pass::serve`'s frontier arm
@@ -79,7 +81,8 @@ split: the first pass, and its words").
 - **`flate2` at level 1 over zlib-rs ends no block on a sync flush**: a
   flush every 256 KiB over a payload of some megabytes wrote no `00 00 ff ff`
   marker, where the default level wrote one a flush, so a member it writes
-  that way indexes as one unit whatever the spacing (a probe, not kept). `determinism.rs` compresses at the default level for
+  that way indexes as one unit whatever the spacing, beside the empty one
+  below (a probe, not kept). `determinism.rs` compresses at the default level for
   it.
 - **A unit can be empty at the end**: that level-1 member indexed as a
   checkpoint at its start and one at its plaintext's end, the final empty

@@ -473,9 +473,9 @@ than reading as a phase nobody has sliced.
   there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
 
 - **KD129** — a single gzip member whose writer ends no deflate block before
-  its last write, `pg_dump -Z 1` linked against a default-built zlib-ng or
-  zlib-rs among them, indexes as one unit, so every read of it decodes from
-  its start, serially, warned as `NonSeekableCompressedSource`. **(b) owned by
+  its final one, `pg_dump -Z 1` linked against a default-built zlib-ng or
+  zlib-rs among them, indexes as one unit, or two the last that block, so
+  every read of it decodes from its start, serially. **(b) owned by
   P15**, its slice 15.10 placing checkpoints inside a static block. Detail:
   `crates/gz-seek/src/forward.rs`.
 

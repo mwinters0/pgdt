@@ -227,11 +227,14 @@ a second copy of the xz source.
   property of the run — a note that this run is serial, building the index,
   and later reads are parallel. `NonSeekableCompressedSource` stays the
   one-block `.xz`'s, its text taken from the codec rather than saying `.xz`,
-  and is a single member's whose complete index is one unit, its writer having
-  ended no deflate block before its last write: a finding about the file,
-  which recompressing answers, raised from the first pass's end on
-  ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
-  "A writer that ends no block, reviewed").
+  and is a gzip file's whose complete index has a unit wider than twice its
+  spacing, its writer having gone a whole spacing without ending a deflate
+  block: a finding about the file, which recompressing answers, raised from
+  the first pass's end on. A file under the spacing is one unit by the
+  reader's choice and is never warned. gzip's `is_seekable` is that rule, so
+  the declined-block note never fires beside the warning; `.xz` keeps D19's
+  one block ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
+  "15.5.3's warning, reviewed").
 - **The unpooled bound is checked on gzip, not argued.** The phase's own
   resident readings on gzip cover at least two reader counts, and `measure.py`'s
   `charge_model_problem`, whose inner fault line is `MEMORY_UNPOOLED_BOUND`,
@@ -428,9 +431,10 @@ offset, the first whole compressed byte, 0–7 bits of the byte before, and up t
 deflate block, found only by decoding with `Z_BLOCK`; zlib ends a block about
 every 16 K symbols at the default `memLevel`, so the choice of spacing is the
 reader's, not the writer's — except at level 1 under zlib-ng's default build
-and zlib-rs, whose `deflate_quick` writes one static block to the stream's
-last write, `pg_dump` flushing nothing before its `Z_FINISH`
-(`runs/p15-level1-writers/reading.txt`; Fedora 44's zlib-ng is built without
+and zlib-rs, whose `deflate_quick` ends no block before the final one, which
+it opens over its lookahead at `Z_FINISH`, `pg_dump` flushing nothing before
+it (`runs/p15-level1-writers/reading.txt`,
+`runs/p15.5.3-level1-units/reading.txt`; Fedora 44's zlib-ng is built without
 it). The window is the cost: a full 32 KiB a checkpoint
 is about 24 GB over koji's 784 GB at 1 MiB spacing and about 0.77 GB at 32 MiB
 (arithmetic, not a measurement). rapidgzip shrinks it with sparse windows. A

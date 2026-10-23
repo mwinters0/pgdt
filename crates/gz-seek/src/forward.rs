@@ -186,10 +186,11 @@ impl Forward {
                 Some(Checkpoint::member(plaintext, self.engine.member().offset))
             }
             // deficiency: KD129 — a checkpoint is a block boundary, so a
-            // member whose writer ends no block before its last write
+            // member whose writer ends no block before its final one
             // (`deflate_quick`, level 1 under zlib-ng's default build and
-            // zlib-rs) is one unit however small the spacing, and every read
-            // of it decodes from its start. A static block resumes at any
+            // zlib-rs, which opens that block over its lookahead at
+            // `Z_FINISH`) is one unit, or two the last that block, however
+            // small the spacing, and every read of it decodes from its start. A static block resumes at any
             // symbol boundary given a synthetic three-bit header primed ahead
             // of the byte's remaining bits; what is missing is a stop there,
             // which no inflater gives, so placing one means walking the static
