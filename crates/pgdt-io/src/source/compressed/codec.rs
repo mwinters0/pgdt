@@ -54,7 +54,8 @@ impl Positioned for std::fs::File {
 }
 
 /// One compressed file's units, as both arms read them: an `.xz` file's
-/// blocks today, each a unit, numbered in file order.
+/// blocks or the spans between a gzip file's checkpoints, numbered in file
+/// order.
 ///
 /// **What the arms need and nothing else** — each unit's plaintext and
 /// compressed ranges, the largest unit, what a decoder holds, a unit decoded

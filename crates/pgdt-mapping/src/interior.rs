@@ -41,8 +41,9 @@ pub(crate) enum RegionScan {
     /// would have stated at its `CopyEnd`.
     Closed(Interior),
     /// The region was not cut at all, and the serial scanner still owns it:
-    /// the caller allows one worker, the source declines to be split here, or
-    /// what is left of the file is smaller than one partition.
+    /// the caller allows one worker, the source declines to be split here or
+    /// does not know its end yet, or what is left of the file is smaller than
+    /// one partition.
     Declined,
     /// The pass's cancellation fired between two windows: nothing about the
     /// region is known, and the caller banks what it had before it.
@@ -321,7 +322,8 @@ fn shortfall(
 /// **A window is `workers` partitions wide**, so the memory the region holds
 /// at its peak is the worker count times what the source said one costs — the
 /// per-worker term `Parallelism::memory_bytes` was solved against to reach
-/// that count. **On a boundaried source, wide in the source's partitions, not
+/// that count — while no line outgrows its chunk, a worker's read growing up
+/// to `max_line_bytes` uncharged where one does. **On a boundaried source, wide in the source's partitions, not
 /// in its charge** (`Partitioning::window_end`, and
 /// `docs/design/decisions.md`, "D8"): the charge covers a block unit, a chunk
 /// and a decoder, so sizing the window by it would offer `cut` more boundaries

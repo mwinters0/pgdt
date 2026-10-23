@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD130 -->
-**`KD1`–`KD130` are allocated, and nothing at or below `KD130` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD132 -->
+**`KD1`–`KD132` are allocated, and nothing at or below `KD132` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -487,3 +487,16 @@ than reading as a phase nobody has sliced.
   argument is sound at. **(b) owned by P15**, its slice 15.5.4 spilling them to
   a file the run alone holds. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.
+
+- **KD131** — a complete map is saved before the reads that built it are
+  completed: the forward pass's end-of-file save and the back-fill's run
+  `SourceWatch::check` alone, so a block a source's `complete_reads` would
+  refuse can stand in a complete map on disk. **(c) unowned**; promoted by a
+  source whose completion refuses what the scan already handed out. Detail:
+  `crates/pgdt-mapping/src/forward.rs`.
+
+- **KD132** — a read behind a gzip first pass's frontier is compared with
+  nothing, so over a resumed index's cached windows a bad window hands out
+  wrong bytes unrefused. **(b) owned by P15**, its slice 15.11 checking a read
+  inside a closed unit against the CRC-32 that unit recorded. Detail:
+  `crates/pgdt-io/src/source/compressed/deflate/first_pass/pass.rs`.

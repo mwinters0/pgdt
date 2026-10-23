@@ -661,9 +661,10 @@ fn unit_starts_inside(codec: &dyn Codec, range: Range<u64>) -> Vec<u64> {
 /// **Piecewise** — one partition, whatever the index says: one live
 /// [`UnitRead`](super::UnitRead) goes forward only, so two workers on
 /// different partitions would each force the other's unit to be left and
-/// begun again. That is true of both providers, each holding one handle
-/// behind one mutex ([`LiveBlock`](super::LiveBlock), and
-/// `docs/design/decisions.md`, "D15").
+/// begun again. That is true of both providers: the local one holds one
+/// handle behind one mutex ([`LiveBlock`](super::LiveBlock)), and the fetched
+/// one takes its held unit for a read's duration, so a concurrent read begins
+/// a unit of its own (`docs/design/decisions.md`, "D15").
 ///
 /// Taken as a free function over the pieces of state it reads, the cut
 /// points asked for only on the arm that cuts, so the piecewise arm is
@@ -676,17 +677,18 @@ fn partition_advice(
 ) -> Partitioning {
     let Some(cache) = blocks else {
         // **The piecewise arm charges the chunk buffer and not the
-        // decoder**: on both providers the decoder is a fixed cost of the
-        // source rather than of a concurrent reader
-        // ([`Partitioning::partition_bytes`]).
+        // decoder**: the one partition makes the decoder a fixed cost of the
+        // source rather than of a worker ([`Partitioning::partition_bytes`]).
         //
         // Deficiency register: `deficiency: KD35` — one partition is not
         // what the budget affords: a decoder retains far less than a decoded
         // block, so several would fit where the blocks they decode do not,
         // and the budget that sends a file down this arm is exactly the one
         // that would benefit. **What pins the count at one is not the
-        // budget**: [`LiveBlock`] is forward-only behind one mutex on both
-        // providers, so two readers would force each other's restarts. The
+        // budget**: one live unit goes forward only on both providers — the
+        // local one's [`LiveBlock`] behind one mutex, the fetched one's held
+        // unit taken by a read — so two readers would force each other's
+        // restarts. The
         // fetched arm's statelessness would have let it serve N partitions
         // for want of cut points alone, and was spent to stop it re-decoding
         // a block a scan sits inside ([`HeldBlock`]) — this is where that

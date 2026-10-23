@@ -356,9 +356,8 @@ impl ByteRangeSource for CompressedFileSource {
     }
 
     /// The compressed file's own on-disk length — a `stat` on the handle every
-    /// decode also reads through, never the index
-    /// [`CompressedFileSource::size`] answers from memory
-    /// (`docs/design/decisions.md`, "D21").
+    /// decode also reads through, never the compressed length the index
+    /// answers from memory (`docs/design/decisions.md`, "D21").
     fn stored_size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
         Box::pin(async move {
             let file = Arc::clone(&self.file);

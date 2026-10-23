@@ -65,7 +65,7 @@ fn a_walk_reads_ahead_as_far_as_it_is_supplied() {
     };
     assert_eq!(index, walk_exactly(&file, 1).unwrap());
     assert!(supplies <= file.len() / 100_000 + 2, "{supplies} supplies");
-    // At a spacing of one byte every member but the empty last begins a unit.
+    // At a spacing of one byte every member begins a unit, the empty last too.
     let members = index.checkpoints().len();
     assert!(members > 5);
 }
@@ -85,7 +85,7 @@ fn a_forward_pass_over_bgzf_agrees_with_the_walk() {
         .filter(|c| c.start == Start::Member)
         .map(|c| c.bit)
         .collect();
-    // The forward pass places the empty last member's start too.
+    // Both place every member's start, the empty last's included.
     assert_eq!(members[..bits.len()], bits[..]);
     assert_eq!(pass.index.end(), walked.end());
 }

@@ -48,7 +48,7 @@ pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStat
 ///
 /// **The compression layer is compared as well as the size**: a source opened
 /// without the cache's claim — an embedder's, or one opened claiming nothing
-/// after recognition refused the claim — would otherwise be handed offsets
+/// where the origin could not be probed ([`settled_by`]) — would otherwise be handed offsets
 /// another file's seek table produced ([`Unusable::CompressionContradicted`];
 /// `docs/design/decisions.md`, "D20").
 pub(super) async fn against_source(

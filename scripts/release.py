@@ -33,7 +33,7 @@ another compiler's C and another glibc fill.
 runs `release.py <step>` as a host does, building the image from the
 Dockerfile there. `build --release` is the one release-only step: it hands the
 container the workspace version as `RELEASE_VARIABLE`, the only thing of the
-host's it is ever given. `suite` builds and runs the round's tests, less the
+host's a build is given. `suite` builds and runs the round's tests, less the
 measurement apparatus (D110), for the architecture the image is on, so an
 arm64 host's image is how the second target's code runs its tests: nothing of
 the suite crosses between hosts. What becomes of the output -- the archives,
@@ -118,8 +118,10 @@ CROSS_TARGET = "aarch64-unknown-linux-gnu"
 RELEASE_VARIABLE = "PGDT_RELEASE_VERSION"
 
 CONTAINER = os.environ.get("PGDT_RELEASE_CONTAINER", "sudo nerdctl")
-#: The container's memory limit: a whole-workspace test build links dozens of
-#: binaries at once, and this machine's rule is a limit on every container run.
+#: The memory limit of every container run that builds or tests: a
+#: whole-workspace test build links dozens of binaries at once, and this
+#: machine's rule is a limit on every such run. The smoke run alone has none
+#: (`release_ci.py`, `smoke_argv`).
 #: It is above an arm64 runner's memory, so running out there loses the runner
 #: rather than killing `ld`; nothing has read that job's time, memory or disk,
 #: and a runner that cannot hold the build wants a job cap or a lighter test

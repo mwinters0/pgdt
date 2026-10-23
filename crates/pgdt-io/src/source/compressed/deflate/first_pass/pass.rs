@@ -112,6 +112,13 @@ impl Pass {
         }) {
             return Ok(Route::Behind);
         }
+        // deficiency: KD132 — the decode behind the frontier begins with its
+        // checkpoint's CRC-32 cleared and is never finished, so what it hands
+        // out is compared with nothing: over the windows this pass placed it
+        // decodes the bytes the frontier checks, but over a resumed index's,
+        // read through its provider, a bad window hands out wrong bytes
+        // unrefused. **(b) owned by P15**, its slice 15.11 checking a read
+        // inside a closed unit against the CRC-32 that unit recorded.
         let mut parts = checkpoints[..=at].to_vec();
         parts[at].crc = None;
         let prefix =

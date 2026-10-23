@@ -1,5 +1,6 @@
-//! What a decode, a walk or an index refuses, each failure carrying the offset
-//! in the file — compressed or plaintext, as its field says — that it names.
+//! What a decode, a walk or an index refuses, each failure in the file
+//! carrying the offset — compressed or plaintext, as its field says — that it
+//! names.
 
 use std::fmt;
 
@@ -26,7 +27,8 @@ pub enum Error {
         /// What is wrong with it.
         reason: &'static str,
     },
-    /// The deflate data is invalid; `offset` is where the decode had read to.
+    /// The deflate data is invalid; `offset` is where the failing step's input
+    /// began.
     Deflate {
         /// Compressed offset.
         offset: u64,
@@ -61,7 +63,8 @@ pub enum Error {
         /// What the decode gives.
         computed: u32,
     },
-    /// The input ended inside a member, or inside a unit's compressed range.
+    /// The input ended inside a member or a unit's compressed range, or held
+    /// no member at all.
     Truncated {
         /// Compressed offset the bytes ran out at.
         offset: u64,
@@ -87,10 +90,12 @@ pub enum Error {
         /// What is wrong with them.
         reason: &'static str,
     },
-    /// The member at `offset` is not a BGZF block: no `BC` subfield where
-    /// BGZF puts it, or a plaintext larger than a BGZF block holds.
+    /// A member is not a BGZF block: a header not deflate's, no `BC` subfield
+    /// where BGZF puts it, a `BSIZE` below the smallest member, or a plaintext
+    /// larger than a BGZF block holds.
     NotBgzf {
-        /// Compressed offset of the member.
+        /// Compressed offset of the member, or for an oversized plaintext of
+        /// the first member of the unit holding it.
         offset: u64,
     },
     /// An output buffer that is not the length the call needs.

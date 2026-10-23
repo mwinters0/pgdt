@@ -10,9 +10,9 @@
 //! buffers.
 //!
 //! **The inflater stops at a deflate stream's end having taken no byte of the
-//! trailer**: its reader holds fewer than eight unused bits wherever it stops,
-//! as zlib's `data_type` contract states, and the stream ends on a byte
-//! boundary, so the next byte is the trailer's (`docs/design/runtime-invariants.md`,
+//! trailer**: its reader holds no unused bit where a stream ends, which the
+//! engine asserts, and the stream ends on a byte boundary, so the next byte is
+//! the trailer's (`docs/design/runtime-invariants.md`,
 //! "RT23").
 
 use crate::error::{Error, Result};
@@ -22,12 +22,13 @@ use crate::zlib::{Raw, WINDOW_SIZE};
 /// What a step stopped at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Event {
-    /// A member's header begins at [`Engine::member_offset`].
+    /// A member's header begins at the offset [`Engine::member`] carries.
     MemberStart,
     /// A deflate block that is not its member's last has ended; the next one
     /// begins at compressed bit `bit`.
     Block { bit: u64 },
-    /// A member's trailer was read and matched.
+    /// A member's trailer was read and matched: its `ISIZE` always, its CRC-32
+    /// where the decode knows the CRC of the member's plaintext before it began.
     MemberEnd,
 }
 

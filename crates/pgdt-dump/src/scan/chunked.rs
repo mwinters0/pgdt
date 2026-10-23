@@ -49,9 +49,9 @@ enum ChunkPass {
 /// copying one into the other.
 ///
 /// The degenerate case is a chunk containing no newline at all: the whole of
-/// it joins the carry, and from the second such chunk on the in-place pass is
-/// empty — the first is handed over whole, finds no newline and consumes
-/// nothing, there being no carry yet to base it against. That is the growth
+/// it joins the carry, the in-place pass empty wherever there is a carry to
+/// join — one arriving with none is handed over whole, finds no newline and
+/// consumes nothing, there being no carry yet to base it against. That is the growth
 /// [`ReadOptions::max_line_bytes`] bounds. **Its carry pass is empty too**
 /// short of the end of the file, since a span holding no newline is one the
 /// scanner can neither consume nor emit anything from; handing it over anyway

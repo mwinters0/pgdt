@@ -1,8 +1,8 @@
 //! The gzip adapter: the codec over `gz_seek`'s checkpoints, each unit decoded
 //! from its checkpoint with the window its provider reads, the bridge from a
 //! [`Positioned`] read to the bytes a `gz_seek` decode is fed, and the
-//! plaintext spacing this crate hands `gz_seek` — with its layout, the only
-//! modules of the compressed layer naming `gz_seek`.
+//! plaintext spacing this crate hands `gz_seek` — with its submodules, the
+//! only modules of the compressed layer naming `gz_seek`.
 //!
 //! **The codec is deflate; gzip is the framing** (`docs/design/roadmap-P15-gzip.md`,
 //! "Settled in the grilling"), so the module is named for the codec and its
@@ -76,8 +76,7 @@ pub(super) struct DeflateCodec {
 impl DeflateCodec {
     /// The codec over a complete index, checked against the compressed file's
     /// own length, **reading no bytes**: an index ending elsewhere than the
-    /// file is `gz_seek::Error::InvalidIndex` ([`refuses_index`]), as is one
-    /// whose parts `gz_seek` refused when it was decoded.
+    /// file is `gz_seek::Error::InvalidIndex` ([`refuses_index`]).
     ///
     /// An index that stops short of the file's end is refused as a caller's
     /// error rather than as another file's: only a first pass continues one,

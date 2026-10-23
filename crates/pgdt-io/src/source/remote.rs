@@ -403,9 +403,11 @@ impl ByteRangeSource for RemoteSource {
 /// **A remote compressed file is decoded as a local one is**, unit by unit,
 /// but through [`FetchedCompressedSource`] over the plain source rather than
 /// through [`CompressedFileSource`](crate::CompressedFileSource), which pulls
-/// from a file (`docs/design/decisions.md`, "D14" and "D18"). Where the cache
-/// holds the index there is no build at all; where it does not, an `.xz`
-/// file's walk is announced before it is paid for ([`announce_remote_walk`]).
+/// from a file (`docs/design/decisions.md`, "D14" and "D18") — a gzip file
+/// whose index is not complete through its first pass instead. Where the
+/// cache holds a complete index there is no build at all; where it does not,
+/// an `.xz` file's walk is announced before it is paid for
+/// ([`announce_remote_walk`]).
 ///
 /// Deficiency register: `deficiency: KD51` — a run that
 /// `pgdt_dump::cache::SourceWatch::require_checkable` will refuse for a server

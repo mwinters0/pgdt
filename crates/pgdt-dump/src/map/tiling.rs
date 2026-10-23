@@ -1,6 +1,6 @@
 //! What every map is checked for and carries, recomputed wherever one is
 //! mapped or loaded: the tiling check and its diagnostic, the TOC-coverage
-//! figure, an unseekable `.xz` source's warning — the three
+//! figure, an unseekable compressed source's warning — the three
 //! [`derived_diagnostics`] — and each span's text read back from the file by
 //! offset (`docs/design/decisions.md`, "D30").
 
@@ -73,8 +73,8 @@ pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Re
 
 /// Verify that `spans` tiles `[0, expected_end)` exactly: sorted, contiguous,
 /// no gaps or overlaps, starting at 0 and ending at `expected_end`. Returns
-/// every issue found, not just the first; a tiling failure is a bug in this
-/// module, never a reason to refuse the file
+/// every issue found, not just the first; a tiling failure is a bug in
+/// whatever built the spans, never a reason to refuse the file
 /// (`docs/design/decisions.md`, "D30").
 pub fn check_tiling(spans: &[Span], expected_end: u64) -> Vec<TilingIssue> {
     let mut issues = Vec::new();

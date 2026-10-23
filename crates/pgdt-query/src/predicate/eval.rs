@@ -24,8 +24,8 @@ impl ResolvedTerm {
     /// refuses raises under every operator; a field that does not unescape
     /// raises the row's own error.
     ///
-    /// A NULL field is [`Truth::Unknown`] under every comparing operator. The
-    /// six that answer two-valued instead are `IsNull`/`IsNotNull` and the two
+    /// A NULL field is [`Truth::Unknown`] under every operator but six. The
+    /// six that answer two-valued are `IsNull`/`IsNotNull` and the two
     /// unrepresentable tests, which compare nothing, and the two
     /// `IS DISTINCT FROM` forms, which count NULL as a value — so
     /// `IsDistinctFrom` on a NULL field is `True` where `Ne` is `Unknown`.

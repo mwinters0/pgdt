@@ -733,7 +733,7 @@ following Debian stable, the `postgres:*` images' base: a new stable gets at lea
 `debian:trixie` digest, its packages read from the snapshot it records, builds both targets and every binary the register times, run in the same base, so one pin names the build's
 glibc, the floor and every figure's runtime; `rust-toolchain.toml` pins one compiler for development, the register and the release; each pin moves through `upgrade-deps`, an
 apparatus change. Rejected: `cargo zigbuild` (zig's clang for every C dependency, a floor suffix synced by hand, a stray `CC` silently compiling against the host's headers); a build
-runner per architecture (arm64 rehearsed nowhere locally); cargo-dist (no glibc floor, no text from an annotated tag); the Rust pin in the image alone (the register timing host `stable`).
+runner per architecture (arm64 rehearsed nowhere locally); cargo-dist (no glibc floor, no text from an annotated tag); the Rust pin in the image alone (development compiling on another compiler than the register times and a release ships).
 
 ### D105 The shipped build is fat LTO in one codegen unit, the leg retiring the fewest instructions on the typed query
 `[profile.release]` restates the `release-fat` leg, so `profiling`, `bench`, the instrument and a release inherit it. Of the three legs fat retires the fewest `instructions:u` on every query

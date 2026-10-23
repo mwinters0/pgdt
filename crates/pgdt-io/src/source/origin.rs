@@ -340,8 +340,9 @@ pub async fn open(origin: &Origin, known: KnownCompression) -> Result<Recognized
     }
 }
 
-/// Open `origin` as a [`ByteRangeSource`], choosing between
-/// [`LocalFileSource`] and [`CompressedFileSource`] by **content**, not by
+/// Open `origin` as a [`ByteRangeSource`], choosing among
+/// [`LocalFileSource`], [`CompressedFileSource`] and a gzip file's first pass
+/// by **content**, not by
 /// name (`docs/design/decisions.md`, "D14"): the first bytes are checked
 /// against each format's magic, whatever the file is called. A file that
 /// really is `.xz`-compressed is recognised however it is named or

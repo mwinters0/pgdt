@@ -14,8 +14,9 @@
 //! a read meets the file's end, so nothing cuts the file and one forward
 //! decode serves the scan; at the end the complete index, its windows held
 //! beside it, opens the source a later run opens from its cache
-//! ([`CompressedFileSource`], [`FetchedCompressedSource`]), and every call is
-//! that source's from then on — so a cold `query`'s replay reads units.
+//! ([`CompressedFileSource`], [`FetchedCompressedSource`]), and every read,
+//! partitioning and worker recommendation is that source's from then on — so a
+//! cold `query`'s replay reads units.
 
 use std::future::Future;
 use std::num::NonZeroU64;
@@ -58,12 +59,13 @@ const DECODE_BYTES: u64 = gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64 +
 /// its first byte, kept across reads so a scan behind the frontier continues
 /// rather than restarting.
 ///
-/// **What its reads hand out is checked at the member's end**, as every byte
-/// of a single member is: its trailer is the only check the file carries, the
-/// units' own CRC-32s being recorded from the plaintext this pass decodes. A
-/// pass stopped short of it has compared nothing, and a later pass resumed
+/// **What the frontier hands out is checked at the member's end**, as every
+/// byte of a single member is: its trailer is the only check the file carries,
+/// the units' own CRC-32s being recorded from the plaintext this pass decodes.
+/// A pass stopped short of it has compared nothing, and a later pass resumed
 /// from its index compares the member's trailer against those recorded values
-/// combined, so a corrupted prefix is still refused at the end.
+/// combined, so a corrupted prefix is still refused at the end. A read behind
+/// the frontier is compared with nothing (`KD132`).
 // deficiency: KD130 — every window the pass places is held in memory, one
 // checkpoint's 32 KiB per `CHECKPOINT_SPACING` of plaintext, because each save
 // writes the whole window section out of the saved index's provider
@@ -77,8 +79,9 @@ pub(crate) struct FirstPass {
     feed: Feed,
     /// The compressed file's length, as the open's probe found it.
     stored_size: u64,
-    /// The forward decodes and the index as far as they have got, locked only
-    /// for a decode step or a snapshot, never across an `await`.
+    /// The forward decodes and the index as far as they have got, locked for
+    /// a pulled read whole, a fetched read's decode steps, or a snapshot, never
+    /// across an `await`.
     inner: Arc<Mutex<Pass>>,
     /// Serialises reads: the frontier goes forward only, and a fetched feed
     /// releases `inner` while it waits for bytes.

@@ -43,7 +43,7 @@ pub(crate) struct ParallelArgs {
     /// memory limit it is running under — the smallest cgroup limit that binds
     /// — and uses that; where no limit is set it stays inside half the memory
     /// the machine reports available. A number typed here replaces whatever
-    /// was discovered and is carved up exactly the same way.
+    /// was discovered and is carved up exactly as a discovered limit is.
     ///
     /// **What it is carved into.** A 384 MiB reserve comes off the top for
     /// everything pgdt holds that no buffer accounts for — the runtime's
@@ -208,7 +208,9 @@ impl Discovered<'_> {
     /// they are carved**: the heap a cache's statistics hold once a pass loads
     /// them — the opened cache's index — billed
     /// against the margin's ceiling as the provider bills a resident map, so
-    /// it lowers the count first and, where the count cannot fall, the budget (`pgdt_io::ArrangementRequest::held`;
+    /// it lowers the count first and, where the count cannot fall, the budget,
+    /// under an allowance carved with a margin — half of what the machine
+    /// reports available is not, and holds nothing off (`pgdt_io::ArrangementRequest::held`;
     /// `docs/design/decisions.md`, "D85"). A pass holding none passes `0`
     /// ([`Discovered::resolve_pass`]).
     pub(crate) fn resolve(&self, source: &dyn ByteRangeSource, held: u64) -> Resolved {

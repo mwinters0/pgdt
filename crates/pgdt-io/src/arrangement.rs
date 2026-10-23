@@ -95,8 +95,8 @@ pub struct ArrangementRequest {
     pub drawn: u64,
     /// What the process holds resident besides any arrangement: a cache's
     /// loaded statistics, or memory granted to something other than a scan.
-    /// It comes off the margin's ceiling alone
-    /// (`docs/design/decisions.md`, "D85").
+    /// It comes off the margin's ceiling alone, where the allowance is carved
+    /// with one (`docs/design/decisions.md`, "D85").
     pub held: u64,
     /// Whether [`Allowance::HalfAvailable`] is carved as a stated allowance
     /// is, reserve and margin included, rather than capping the pools alone.

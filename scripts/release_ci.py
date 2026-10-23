@@ -48,8 +48,8 @@ shell line**: the commit a build is dispatched for and the tag a publish is
 triggered by arrive as environment variables (`INPUT_REF`, `GITHUB_REF_NAME`)
 and are validated here before anything is built or published from them.
 
-**A draft is matched by name.** The build creates it as `v<manifest version>`;
-`attach` and the publish find it by that name and then check its commit, so a
+**A draft is matched by tag.** The build creates it as `v<manifest version>`;
+`attach` and the publish find it by that tag and then check its commit, so a
 tag naming another version finds nothing, and the tag, the draft and the
 archives carry one string. Publishing is refused unless the tag is annotated
 (its message is the Release body, and a lightweight tag has none), the draft
@@ -325,7 +325,11 @@ def smoke_argv(
 ) -> list[str]:  # fmt: skip
     """`pgdt <args>` run from the archive in a fresh image of the release's own
     base, as the invoking user: the binary mounted read-only, the data beside
-    it writable for the cache `parse` leaves."""
+    it writable for the cache `parse` leaves. **No memory limit**, unlike
+    `release.py`'s runs (`MEMORY`): under one `pgdt` carves the cgroup's limit,
+    where an installed archive on an ordinary host carves half of what the
+    machine reports available, and the run holds next to nothing over its
+    five rows."""
     return [
         *container, "run", "--rm", "--user", f"{uid}:{gid}",
         "-v", f"{bin_dir}:/pgdt:ro", "-v", f"{data_dir}:/data",
@@ -560,7 +564,7 @@ def step_attach(gh: Gh, dist: Path = DIST, repo: Path = REPO) -> int:
     """The attached targets' archives onto `HEAD`'s draft, and `SHA256SUMS`
     over them and CI's, replacing CI's own; CI's archive compared with the
     rehearsal's and reported. Refused on a dirty tree, an archive in `dist/`
-    not made at `HEAD`, and a draft `plan_attach` refuses, before anything is
+    not archived at `HEAD`'s commit time, and a draft `plan_attach` refuses, before anything is
     uploaded."""
     version = release.workspace_version()
     if not tree_is_clean(repo):

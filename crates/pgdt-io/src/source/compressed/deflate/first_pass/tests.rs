@@ -89,11 +89,10 @@ async fn a_first_pass_reads_the_file_and_builds_its_index() {
     }
 }
 
-/// **The pass hands over to the indexed source at the end**: every read,
-/// the partitioning and the worker recommendation are then the indexed
-/// source's, so a read anywhere decodes one unit and a range is cut at unit
-/// starts; a read past the end is short where it may be and refused where it
-/// may not.
+/// **The pass hands over to the indexed source at the end**: its reads and
+/// partitioning are then the indexed source's, so a range is cut at unit
+/// starts, a read anywhere answers the payload's bytes, and a read past the
+/// end is short where it may be and refused where it may not.
 #[tokio::test]
 async fn a_finished_pass_reads_as_the_indexed_source() {
     let payload = gzip_test_payload();
@@ -123,7 +122,8 @@ async fn a_finished_pass_reads_as_the_indexed_source() {
 /// **A read behind the frontier decodes from the last checkpoint at or
 /// before it** — inside a unit the pass has closed and inside the one it is
 /// in — and leaves the frontier where it stood, so the pass then builds the
-/// same index; a scan behind it continues one decode rather than restarting.
+/// same index. Its reads answer the payload's bytes, which a continued decode
+/// and a restarted one both do.
 #[tokio::test]
 async fn a_read_behind_the_frontier_reads_from_its_checkpoint() {
     let payload = gzip_test_payload();

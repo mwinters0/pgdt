@@ -19,9 +19,7 @@ const SPACING: u64 = 32 * 1024;
 /// decisions.md`, "D3", "D113"): a library caller stating no budget
 /// reads a single member's units piecewise. Asserted with no decoder
 /// charged, so it holds whatever the inflater's footprint; every unit
-/// but a file's last is at least the spacing. A unit of the power of two
-/// below the spacing is refused only for the chunk, so this pins the
-/// spacing's room from the line, not only the refusal (D113).
+/// but a file's last is at least the spacing (D113).
 #[test]
 fn the_default_budget_declines_a_unit_of_the_spacing() {
     let cache = BlockCache::for_unit(CHECKPOINT_SPACING.get()).expect("a nonzero unit");
@@ -253,9 +251,10 @@ async fn a_gzip_file_partitions_at_its_checkpoints() {
 
 /// **Recognition knows gzip by its magic**: an index a previous pass built
 /// opens the file without building one, an index for another file or a claim
-/// that the file is plain or `.xz` is a mismatch, and with nothing known the
-/// file opens for its first pass, which builds the index a previous pass
-/// would have. A `CompressedFileSource` opens one only over a complete index.
+/// that the file is plain is a mismatch, and with nothing known the file opens
+/// for its first pass, which builds a complete index at the shipped spacing
+/// with its windows. A `CompressedFileSource` opens one only over a complete
+/// index.
 #[tokio::test]
 async fn recognition_reads_gzip_through_an_index_or_its_first_pass() {
     let payload = gzip_test_payload();

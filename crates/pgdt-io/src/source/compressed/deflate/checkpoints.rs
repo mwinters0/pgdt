@@ -37,8 +37,8 @@ pub struct GzipIndex {
 /// forward pass that placed the checkpoint handed out as it did.
 ///
 /// **Implemented by whoever keeps the windows** — a cache, which holds them in
-/// a section of its own read positionally, or a test's memory — so this crate
-/// names nothing that holds them, and the index keeps none resident.
+/// a section of its own read positionally; a first pass, which holds those it
+/// placed in memory (`KD130`); or a test's memory.
 pub trait WindowProvider: Send + Sync {
     /// Fill `out` with the window of checkpoint `checkpoint` — the one unit
     /// `checkpoint` begins at, or an incomplete index's last, which begins

@@ -12,7 +12,7 @@
 //! ./target/release/examples/gz_read --source control_gz.gz --spacing 33554432 --shape units
 //! ```
 //!
-//! # The two shapes
+//! # The three shapes
 //!
 //! - **`forward`**: the first pass — [`gz_seek::Forward`] over the whole file,
 //!   a checkpoint at each multiple of `--spacing`, every member's CRC-32 and
@@ -35,7 +35,7 @@
 //!
 //! `engine=` — the engine the build links, as its `zlibVersion` names it,
 //! which the harness holds to the leg it built; `delivered=` — the plaintext
-//! the shape's last stage produced, the whole file's in both, which the
+//! the shape's last stage produced, the whole file's in `forward` and `units`, which the
 //! harness holds to the file it is a compression of, so a short read cannot
 //! read as a fast one — the first pass's in `starts`, whose last stage
 //! produces a byte a unit; `units=`, the index's unit count; `windows=`, the

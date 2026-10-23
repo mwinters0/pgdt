@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 
 /// What a source may hold in pooled buffers when the caller has stated no
 /// budget of its own — [`Parallelism::default`](crate::Parallelism::default)'s number, and what a `pgdt` run
-/// falls back to where neither `--memory` nor a limit says otherwise.
+/// over a source recommending no cost falls back to where neither `--memory`
+/// nor a limit says otherwise.
 ///
 /// **It is the serial path's budget and deliberately not the largest block
 /// anyone might write**: [`POOL_DEPTH`](crate::source::pool::POOL_DEPTH) slots at the largest chunk size the

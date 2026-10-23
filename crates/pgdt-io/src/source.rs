@@ -135,8 +135,9 @@ pub trait ByteRangeSource: Send + Sync {
     /// cache envelope to persist alongside it. See
     /// `docs/design/decisions.md`, "D18".
     ///
-    /// `None` by default, right for a source with no compression layer. Both
-    /// compressed sources answer `Some`, and the index is either the one built
+    /// `None` by default, right for a source with no compression layer. Every
+    /// compressed source answers `Some` — a gzip file's first pass the index
+    /// as far as it has got — and the index is otherwise either the one built
     /// at open ([`CompressedFileSource::open`](crate::CompressedFileSource::open),
     /// [`open`](crate::open) over a URL) or the one handed in from a cache
     /// ([`CompressedFileSource::with_index`](crate::CompressedFileSource::with_index),

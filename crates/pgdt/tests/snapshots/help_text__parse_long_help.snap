@@ -170,7 +170,7 @@ Options:
           container. Left unstated, pgdt reads the memory limit it is running under — the smallest
           cgroup limit that binds — and uses that; where no limit is set it stays inside half the
           memory the machine reports available. A number typed here replaces whatever was discovered
-          and is carved up exactly the same way.
+          and is carved up exactly as a discovered limit is.
           
           **What it is carved into.** A 384 MiB reserve comes off the top for everything pgdt holds
           that no buffer accounts for — the runtime's threads, the allocator's per-thread arenas,

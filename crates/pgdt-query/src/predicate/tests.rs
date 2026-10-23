@@ -365,8 +365,8 @@ fn a_date_or_time_postgresql_refuses_is_refused_as_literal_and_field() {
                 op.symbol()
             );
         }
-        // `=` compares a field's spelling with the literal's canonical one
-        // and decodes no field, so an ordering is what reads one.
+        // An ordering reads the field, where `=` on most of these compares
+        // its spelling with the literal's canonical one and decodes none.
         let got = ordered(declared, data_type.clone(), PredicateOp::Ge, field, refused);
         assert!(matches!(got, Err(Error::FieldDecode { .. })), "{declared} {refused}: {got:?}");
     }

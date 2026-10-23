@@ -7,7 +7,7 @@ use thiserror::Error as ThisError;
 /// the cause downcasts it (`docs/design/decisions.md`, "D74").
 pub type Cause = Box<dyn std::error::Error + Send + Sync + 'static>;
 
-/// What the library refuses. A sentence ends with its remedy in the
+/// What the library refuses. A sentence naming a remedy names it in the
 /// library's own terms, never a front end's flag, which each front end adds
 /// when it reports one (`docs/design/decisions.md`, "D107").
 #[derive(Debug, ThisError)]
@@ -385,8 +385,8 @@ fn null_refused(table: &str, column: &str, line: Option<u64>, line_offset: u64) 
     }
 }
 
-/// [`Error::PredicateValueDecode`]'s closing clause: where the rest of an
-/// enum's labels are, when the accepted form stopped short of them.
+/// [`Error::MapIncomplete`]'s total: the source's size, or that its end is
+/// not known yet.
 fn map_total(size: Option<u64>) -> String {
     match size {
         Some(size) => format!("the source's {size} byte(s)"),
@@ -394,6 +394,8 @@ fn map_total(size: Option<u64>) -> String {
     }
 }
 
+/// [`Error::PredicateValueDecode`]'s closing clause: where the rest of an
+/// enum's labels are, when the accepted form stopped short of them.
 fn unlisted_labels(unlisted: usize) -> String {
     match unlisted {
         0 => String::new(),
@@ -464,8 +466,8 @@ pub enum Unusable {
     /// The file does not open with the cache header's magic: something else is at this
     /// path. **Never overwritten.**
     NotACache,
-    /// This build's header, over a rest that does not decode — a file cut
-    /// short or damaged.
+    /// The cache header's magic, over a rest this build cannot read as a
+    /// cache whole — a file cut short or damaged.
     Unreadable,
     /// Another build's cache: `found` is the format version its header
     /// states, where this build reads `pgdt_model::CACHE_FORMAT_VERSION`; nothing

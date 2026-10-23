@@ -81,7 +81,7 @@ async fn recognize(path: &Path) -> Arc<dyn ByteRangeSource> {
 /// (`docs/design/decisions.md`, "D14"): the temp file `xz_compress`
 /// returns carries no `.xz` suffix, and `open_local` still hands back a
 /// source whose `compression_index()` answers `Some`, which of what
-/// `open_local` returns only `CompressedFileSource` does.
+/// `open_local` returns only a compressed source does.
 #[tokio::test]
 async fn open_local_recognizes_xz_content_with_no_xz_name() {
     let payload = xz_test_payload();

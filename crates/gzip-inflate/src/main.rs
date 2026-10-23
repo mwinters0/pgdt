@@ -22,7 +22,8 @@
 //!   member of its own (`Cargo.toml`).
 //! - **`zlib-rs`**: the `zlib-rs` crate's stable `Inflate`.
 //! - **`miniz_oxide`**: its streaming `inflate` over raw deflate, the gzip
-//!   header, CRC-32 and `ISIZE` checked here, the CRC by `crc32fast` — what
+//!   header parsed and the CRC-32 and `ISIZE` checked here, the CRC by
+//!   `crc32fast` — what
 //!   `flate2`'s Rust backend does around the same decoder.
 //!
 //! Not through `flate2`, which links one backend a build: three legs through
@@ -33,7 +34,8 @@
 //!
 //! **The whole member, framing included**: `zlib-ng` and `zlib-rs` are opened
 //! for gzip (`windowBits` 31) and check the header, the CRC-32 and `ISIZE`;
-//! the `miniz_oxide` leg checks the same three here. A first pass
+//! the `miniz_oxide` leg parses the header, its magic and method checked, and
+//! checks the other two here. A first pass
 //! has to check its member's CRC-32 (the P15 spec's "Each unit carries its
 //! own CRC-32"), so a rate without one would be a rate of something no first
 //! pass does.

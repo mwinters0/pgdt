@@ -154,5 +154,5 @@ back. **`UF1`–`UF4` are allocated, and none is reused.**
 - **When it lands.** Rewrite `crates/gz-seek/src/zlib.rs` over
   `zlib_rs::Inflate`, name `zlib-rs` for `libz-rs-sys` in
   `crates/gz-seek/Cargo.toml` — its `crc32` module is safe already — and let
-  the crate `forbid` `unsafe` as `xz-seek` does; `crates/gz-seek/src/lib.rs`'s
-  last paragraph says so.
+  the crate `forbid` `unsafe` as `xz-seek` does, in place of
+  `crates/gz-seek/src/lib.rs`'s `deny`.

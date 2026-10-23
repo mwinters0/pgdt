@@ -114,10 +114,11 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
 /// *started* at: `0` for a scan that began at byte 0, the cache's
 /// `scanned_through` for one that resumed.
 ///
-/// **Only a run builds one**: its fields are readable, but it is
-/// `#[non_exhaustive]`, so no crate above pairs a map with a source or a
-/// watch it was not built over, as [`Opened`] is not assembled from the parts
-/// of different opens.
+/// **Only a run builds one**: its fields are public, but it is
+/// `#[non_exhaustive]`, so no crate above assembles one from a map and a
+/// source or a watch it was not built over, as [`Opened`] is not assembled
+/// from the parts of different opens — though it may reassign a field of one
+/// it holds.
 #[non_exhaustive]
 pub struct MapRun {
     /// The source the run read, as the open handed it over.
@@ -536,9 +537,11 @@ async fn map_file_watched(
     if backfill.interrupted {
         watch.check(source).await?;
     } else {
-        // Before the save, so a complete map is never written from bytes that
-        // fail their own check ([`SourceWatch::finish`]); an interrupted run
-        // leaves the block it stopped inside for the resume to re-read.
+        // Before the save, so this save of a complete map is never written
+        // from bytes that fail their own check ([`SourceWatch::finish`]) —
+        // the forward pass's and the back-fill's before it are (`KD131`); an
+        // interrupted run leaves the block it stopped inside for the resume
+        // to re-read.
         watch.finish(source).await?;
         cache.save(watch, source, &index).await?;
         report_density_shortfall(statistics, &index);

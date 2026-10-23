@@ -56,7 +56,8 @@ pub enum PredicateOp {
     /// [`pgdt_codec::UnrepresentableMode::Null`] a value the query reads as NULL,
     /// which [`Self::IsUnrepresentable`] tells apart. Rounds out the NULL
     /// semantics `Eq`/`Ne` deliberately can't express: a NULL field is
-    /// [`Truth::Unknown`] under every comparing operator.
+    /// [`Truth::Unknown`] under every comparing operator but the two
+    /// `IS DISTINCT FROM` forms.
     IsNull,
     /// `col IS NOT NULL` — matches every field [`Self::IsNull`] does not.
     IsNotNull,
@@ -127,7 +128,7 @@ impl PredicateOp {
     }
 
     /// How an error message names this operator — the same spelling
-    /// `pgdt query --filter` accepts.
+    /// `pgdt query --filter` accepts, but for `NOT IN`, which no term spells.
     pub fn symbol(&self) -> &'static str {
         match self {
             Self::Eq(_) => "=",
@@ -189,8 +190,8 @@ impl PredicateOp {
 /// matched against the queried table's column names, the `COPY` header's
 /// list; `op` carries what it compares against, if anything.
 ///
-/// A NULL field is [`Truth::Unknown`] under every comparing operator, and a
-/// row survives only where the root is `True`. The operators that are
+/// A NULL field is [`Truth::Unknown`] under every operator but the six
+/// named next, and a row survives only where the root is `True`. The operators that are
 /// two-valued on a NULL field are `IsNull`/`IsNotNull`, which ask about the
 /// NULL directly, `IsUnrepresentable`/`IsNotUnrepresentable`, which ask of a
 /// field's text, and `IsDistinctFrom`/`IsNotDistinctFrom`, which count a NULL

@@ -25,7 +25,7 @@ use crate::value::numeric::numeric_in_stores;
 ///   form, so the per-row comparison is a byte comparison. `text`'s rendering
 ///   is the identity.
 /// - **[`Equality::Trimmed`] — the field narrowed per row.** `character(n)`
-///   alone, `bpchareq` stripping the padding from both sides (I38). It is
+///   and bare `bpchar` alone, `bpchareq` stripping the padding from both sides (I38). It is
 ///   admissible on the per-row path because it is a reverse scan for `0x20`,
 ///   not a decode.
 /// - **[`Equality::Decoded`] — both sides decoded per row**, for the kinds

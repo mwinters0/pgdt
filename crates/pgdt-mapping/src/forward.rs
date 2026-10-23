@@ -530,6 +530,14 @@ pub async fn map_forward(
     index.scanned_through = size;
     index.diagnostics =
         derived_diagnostics(&index.spans, size, source.compression_index().as_ref());
+    // deficiency: KD131 — this saves a complete map, its `scanned_through` the
+    // file's end, behind `SourceWatch::check` alone: the reads' own checks
+    // (`SourceWatch::finish`, a source's `complete_reads`) come only before
+    // `map_file`'s last save, after the back-fill's saves of this same map. So
+    // a block whose check a later completion would fail can stand in a
+    // complete map on disk; the fix is a save of a complete map that finishes
+    // the watch first. **(c) unowned**; promoted by a source whose
+    // `complete_reads` refuses what the scan already handed out.
     cache.save(watch, source, index).await?;
     // The true end of the file, as opposed to the early
     // `Ok(MapStop::Reached)`s above: one for a map already there, three

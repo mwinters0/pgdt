@@ -1,7 +1,8 @@
 //! The `.xz` adapter: the codec over `xz_seek`'s layout, its seek table as
 //! this crate hands it out, the walk over a fetched file that builds one, and
 //! the bridge from a [`Positioned`] read to `xz_seek`'s own source — with its
-//! table, the only modules of the compressed layer naming `xz_seek`.
+//! table, the only production modules of the compressed layer naming
+//! `xz_seek`.
 
 use std::ops::Range;
 use std::path::Path;

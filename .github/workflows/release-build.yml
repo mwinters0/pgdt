@@ -10,7 +10,7 @@
 #
 # **The workflow holds no logic.** Every `run:` step is one line of `scripts/release.py`
 # (the image, the builds, the notices, the suites) or `scripts/release_ci.py`
-# (the archive, the smoke run, the checksums, the draft), whose tests hold
+# (the preflight, the archive, the smoke run, the checksums, the draft), whose tests hold
 # these lines to those scripts' own command lines
 # (`scripts/test_release_ci.py`). The commit arrives as `INPUT_REF` in the
 # environment, never interpolated into a shell line, and the scripts validate

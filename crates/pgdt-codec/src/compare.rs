@@ -35,7 +35,8 @@ use crate::grammar::TextGrammar;
 /// labels, a typmodded `numeric`'s precision and scale, whether one held as
 /// text admits the infinities — and the labels are not `Copy`.
 /// The kind is cloned into a term as the term's literal is resolved
-/// (`key::equality`'s `Equality::Decoded`), once per term.
+/// (`key::equality`'s `Equality::Decoded` among them), per term and never
+/// per row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompareKind {
     Bool,
@@ -764,8 +765,9 @@ pub enum ComparisonPlan {
     /// position is the register saying the column has none, which is what
     /// [`Self::orders`] answers and what lets the refusal name the position.
     Nested(NestedCompare),
-    /// **No comparison at all** — every operator is refused, `=` and `!=`
-    /// included, and the payload says why.
+    /// **No comparison at all** — every comparing operator is refused, `=`
+    /// and `!=` included, and the payload says why; the NULL and
+    /// unrepresentable tests compare nothing and still answer.
     ///
     /// The stronger of the two refusals. [`Self::Refused`] means "no
     /// *order*", and lets `=`/`!=` fall through to a bytewise comparison of

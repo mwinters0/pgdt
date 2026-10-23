@@ -109,8 +109,8 @@ impl Index {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidIndex`] where the parts do not describe an index this
-    /// crate builds: no checkpoint at the file's start, offsets running
+    /// [`Error::InvalidIndex`] where the parts break an invariant every index
+    /// this crate builds holds: no checkpoint at the file's start, offsets running
     /// backward, a window other than its member's last 32 KiB, a unit that no
     /// check would cover, or an end before the last checkpoint.
     pub fn from_parts(

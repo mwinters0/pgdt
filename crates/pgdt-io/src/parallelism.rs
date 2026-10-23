@@ -21,7 +21,7 @@ use crate::memory::{DEFAULT_MEMORY_BUDGET, MEMORY_RESERVE, margin_allowance};
 /// **The pool term is arithmetic from [`BufferPool`](crate::source::pool::BufferPool), not a safety margin.**
 /// [`BufferPool::slots`](crate::source::pool::BufferPool::slots) clamps a pool at `POOL_DEPTH.max(jobs)` and
 /// [`BlockCache::slot`](crate::source::compressed::blocks::BlockCache::slot) drains the retention list to `slots − 1` *before*
-/// obtaining the buffer a landed claim ([`BlockCache::claim`](crate::source::compressed::blocks::BlockCache::claim)) then pushes back onto it, so
+/// obtaining the buffer a landed decode (`Decoding::land`, of a [`BlockCache::claim`](crate::source::compressed::blocks::BlockCache::claim)) then pushes back onto it, so
 /// the pool holds `slots − 1` retained units beside the one unit each worker
 /// has in flight — unbounded in the block size, which is why
 /// [`MEMORY_RESERVE`] cannot absorb it.
@@ -310,7 +310,8 @@ impl Parallelism {
     /// fall — a source recommending no per-worker memory, whose count no
     /// ceiling bounds, or one worker, the floor — the predicted resident still
     /// stays under the margin, or where one worker alone overruns it, no
-    /// further over it than with nothing held, and a budget pushed below a
+    /// further over it than with nothing held, unless what is held is more
+    /// than the budget can give up, and a budget pushed below a
     /// unit declines it (`docs/design/decisions.md`, "D4"). The cap is
     /// untouched, and with nothing held the budget is [`Parallelism::fit`]'s.
     /// *Rejected: a plain-source exception*, what a plain budget is worth

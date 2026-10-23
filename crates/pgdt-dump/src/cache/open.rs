@@ -144,7 +144,9 @@ impl CacheMode {
                 Ok(self.opened(source, watch, Held::Loaded(self.judged(loaded)?)))
             }
             // The file moved between the probe and the open, so the source
-            // was built on a claim about another file: opened again on none.
+            // was built on a claim about another file — or the probe failed
+            // and it was built on none, the cache being another file's:
+            // opened again on none.
             CacheStatus::Unusable(why) => {
                 let cache = self.replacing(why)?;
                 let source = open_claiming_nothing(origin).await?;

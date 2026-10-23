@@ -145,5 +145,5 @@ Options:
                                         cgroup limit that binds — and uses that; where no limit is
                                         set it stays inside half the memory the machine reports
                                         available. A number typed here replaces whatever was
-                                        discovered and is carved up exactly the same way
+                                        discovered and is carved up exactly as a discovered limit is
   -h, --help                            Print help (see more with '--help')

@@ -6,7 +6,8 @@ publication's refusals are held here against stand-ins for `gh` and the containe
 and `Workflows` holds the two committed workflow files to what
 `release_ci.py`'s docstring commits them to: no step but a `release.py` or
 `release_ci.py` line the parsers accept, no input interpolated into a shell,
-every action pinned, every permission earned. The files are read by line, not
+every action pinned, each job declaring its permissions, and `contents`,
+`attestations` and `id-token` write held only by the jobs that use them. The files are read by line, not
 parsed as YAML: the standard library has no parser, and the scripts'
 environment pins its two dependencies for the bytes they decide.
 """
