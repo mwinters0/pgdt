@@ -28,7 +28,8 @@ mod remote;
 mod tests;
 
 pub use self::compressed::{
-    CompressedFileSource, CompressionIndex, FetchedCompressedSource, SeekTable,
+    CompressedFileSource, CompressionIndex, FetchedCompressedSource, GzipIndex, SeekTable,
+    WindowProvider,
 };
 pub use self::local::LocalFileSource;
 pub use self::origin::{KnownCompression, Origin, OriginProbe, Recognized, open};

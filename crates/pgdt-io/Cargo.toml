@@ -24,6 +24,10 @@ serde = ["dep:serde", "xz-seek/serde"]
 [dependencies]
 bytes = { workspace = true }
 futures = { workspace = true }
+# The gzip codec's crate, named by `source/compressed/deflate.rs` and its
+# layout alone: a leaf of this workspace, linked with its default engine,
+# zlib-rs, which builds no C (`docs/design/decisions.md`, "D112").
+gz-seek = { path = "../gz-seek" }
 # `http` only, and `default-features = false` to leave out the `fs` backend:
 # what is wanted is one `HttpStore` over ranged GETs. The `http` feature
 # resolves to rustls over `aws-lc-rs`, whose `aws-lc-sys` is a C build by its
@@ -52,6 +56,9 @@ url = { version = "2.5.8", optional = true }
 xz-seek = { workspace = true }
 
 [dev-dependencies]
+# The cache's own encoding, which a gzip index's persisted parts are read back
+# through under the `serde` feature.
+bincode = { workspace = true, features = ["serde"] }
 # The gzip encoders `test_support` writes its single-member and BGZF payloads
 # with, neither ours, so a reader is checked against what someone else's
 # encoder writes; the lock pins each writer as `mise` pins a tool

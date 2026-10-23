@@ -94,4 +94,4 @@ pub use forward::{Forward, ForwardStep};
 pub use index::{Checkpoint, End, Index, Size, Start, UnitTask};
 pub use member::GZIP_MAGIC;
 pub use unit::{Progress, UnitRead};
-pub use zlib::{WINDOW_SIZE, engine};
+pub use zlib::{DECODER_BYTES, WINDOW_SIZE, engine};

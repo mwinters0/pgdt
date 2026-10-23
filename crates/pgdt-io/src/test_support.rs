@@ -1,18 +1,24 @@
 //! Fixtures more than one module's tests build: a file to read, a source
 //! that implements nothing it need not, an `.xz` file and its seek table, a
-//! gzip and a BGZF file and a fake filesystem root.
+//! gzip and a BGZF file, a gzip file's index and its windows, and a fake
+//! filesystem root.
 
 use std::future::Future;
 use std::io::Write;
+use std::num::NonZeroU64;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use bytes::Bytes;
 
 use pgdt_core::Result;
 
-use crate::{ByteRangeSource, CompressionIndex, Extent, LocalFileSource, SeekTable};
+use crate::{
+    ByteRangeSource, CompressionIndex, Extent, GzipIndex, LocalFileSource, SeekTable,
+    WindowProvider,
+};
 
 pub(crate) fn source_of(bytes: &[u8]) -> (tempfile::NamedTempFile, LocalFileSource) {
     let mut file = tempfile::NamedTempFile::new().unwrap();
@@ -48,7 +54,7 @@ impl ByteRangeSource for BareSource {
 pub(crate) fn seek_table_of(source: &dyn ByteRangeSource) -> SeekTable {
     match source.compression_index() {
         Some(CompressionIndex::Xz(table)) => table,
-        None => panic!("an `.xz` source always has a table"),
+        other => panic!("an `.xz` source always has a table, not {other:?}"),
     }
 }
 
@@ -123,6 +129,45 @@ pub(crate) fn bgzf_compress(bytes: &[u8]) -> tempfile::NamedTempFile {
     let mut writer = noodles_bgzf::io::Writer::new(Vec::new());
     writer.write_all(bytes).unwrap();
     written(&writer.finish().unwrap())
+}
+
+/// Each checkpoint's window, held in memory: a test's provider, standing in
+/// for the cache's window section.
+pub(crate) struct HeldWindows(pub(crate) Vec<Vec<u8>>);
+
+impl WindowProvider for HeldWindows {
+    fn read_window(&self, unit: usize, out: &mut [u8]) -> std::io::Result<()> {
+        out.copy_from_slice(&self.0[unit]);
+        Ok(())
+    }
+}
+
+/// The complete index of the gzip file `file` holds, checkpoints `spacing`
+/// plaintext bytes apart, and every checkpoint's window, as a forward pass
+/// over it hands them out — built by `gz_seek` directly, standing in for the
+/// first pass that builds one.
+pub(crate) fn gzip_index_of(file: &[u8], spacing: u64) -> (gz_seek::Index, Vec<Vec<u8>>) {
+    let mut pass = gz_seek::Forward::new(NonZeroU64::new(spacing).unwrap()).unwrap();
+    let (mut out, mut windows) = (vec![0u8; 16 * 1024], Vec::new());
+    loop {
+        let at = pass.compressed_position() as usize;
+        let step = pass.read(&file[at.min(file.len())..], &mut out).unwrap();
+        if step.checkpoint.is_some() {
+            windows.push(pass.window().to_vec());
+        }
+        if step.progress == Default::default() && step.checkpoint.is_none() {
+            break;
+        }
+    }
+    (pass.finish().unwrap(), windows)
+}
+
+/// `bytes` as one gzip member ([`gzip_compress`]), and its complete index at
+/// `spacing`, its windows held in memory.
+pub(crate) fn gzip_indexed(bytes: &[u8], spacing: u64) -> (tempfile::NamedTempFile, GzipIndex) {
+    let file = gzip_compress(bytes);
+    let (index, windows) = gzip_index_of(&std::fs::read(file.path()).unwrap(), spacing);
+    (file, GzipIndex { index, windows: Some(Arc::new(HeldWindows(windows))) })
 }
 
 fn written(bytes: &[u8]) -> tempfile::NamedTempFile {

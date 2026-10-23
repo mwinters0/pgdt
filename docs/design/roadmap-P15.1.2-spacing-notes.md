@@ -28,7 +28,7 @@ the code and xz's figures.
 
 ## What the next slices inherit
 
-- **15.5 passes `CHECKPOINT_SPACING` to `gz_seek::Forward::new`** and
+- **15.5.1 passes `CHECKPOINT_SPACING` to `gz_seek::Forward::new`** and
   removes the `dead_code` expectation; 15.6 passes it to `gz_seek::Walk`
   to coalesce members. A single member's unit runs from one checkpoint to the
   first block boundary past the next multiple, so it overshoots the spacing

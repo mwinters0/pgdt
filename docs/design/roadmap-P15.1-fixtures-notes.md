@@ -49,7 +49,7 @@ the inflate figure, and 15.8 admitted").
   spacing figure, each an instrument landed in one commit and read from it
   (`measurements.md`, "A figure may be published outside the sweep"). A large
   gzip input for them is generated, never committed.
-- **Nothing reads the fixtures through a source yet.** 15.5's parity and
-  determinism tests are where they are first read; `pg_dump`'s single-member
-  shape becomes an `I<n>` there, as the spec's "Facts the grilling found"
-  says.
+- **15.5 reads the `-Z` fixtures through a source**, over an index built
+  for them; 15.5.1's determinism tests read them through its first pass, and
+  `pg_dump`'s single-member shape becomes an `I<n>` there, as the spec's
+  "Facts the grilling found" says.

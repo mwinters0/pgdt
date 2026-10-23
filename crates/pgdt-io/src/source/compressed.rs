@@ -19,6 +19,7 @@ mod file;
 mod index;
 mod xz;
 
+pub use self::deflate::{GzipIndex, WindowProvider};
 pub use self::fetched::FetchedCompressedSource;
 pub use self::file::CompressedFileSource;
 pub use self::index::CompressionIndex;
@@ -26,6 +27,7 @@ pub(crate) use self::index::{Format, LONGEST_MAGIC};
 pub use self::xz::SeekTable;
 
 pub(crate) use self::codec::{Codec, Positioned, UnitRead, short_read};
+pub(crate) use self::deflate::unindexed;
 #[cfg(any(feature = "http", test))]
 pub(crate) use self::xz::walk_seek_table;
 
@@ -144,6 +146,9 @@ fn codec_over(index: CompressionIndex, stored_size: u64) -> Result<std::sync::Ar
         CompressionIndex::Xz(table) => {
             Ok(std::sync::Arc::new(xz::XzCodec::over(table, stored_size)?))
         }
+        CompressionIndex::Gzip(index) => {
+            Ok(std::sync::Arc::new(deflate::DeflateCodec::over(index, stored_size)?))
+        }
     }
 }
 
@@ -151,5 +156,5 @@ fn codec_over(index: CompressionIndex, stored_size: u64) -> Result<std::sync::Ar
 /// the file — what [`open`](crate::open) turns into
 /// [`Recognized::Mismatch`](crate::Recognized::Mismatch) rather than a rebuild.
 pub(crate) fn index_refused(error: &Error) -> bool {
-    xz::refuses_table(error)
+    xz::refuses_table(error) || deflate::refuses_index(error)
 }

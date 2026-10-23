@@ -78,8 +78,9 @@ pub struct CacheFile {
 }
 
 /// The shape of the container a cache's offsets sit under, read off the
-/// persisted [`CompressionIndex`] — its codec's own terms, so a variant per
-/// codec.
+/// persisted [`CompressionIndex`], each codec's terms mapped onto one shape:
+/// an `.xz` file's streams and blocks, a gzip file's members and the units
+/// between its checkpoints.
 ///
 /// Three numbers, each answering a question the user is otherwise sent to
 /// `xz --list` for. `max_block_uncompressed` is the largest term of what a
@@ -100,8 +101,8 @@ pub struct CacheFile {
 /// caller as `pgdt_query::PlanNoteKind::CompressedBlockPathDeclined`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct CompressionShape {
-    /// The container: `"xz"` today, and the only value there is. A word
-    /// rather than a one-variant enum, being a name to print.
+    /// The container: `"xz"` or `"gzip"`. A word rather than an enum, being a
+    /// name to print.
     pub container: &'static str,
     pub streams: usize,
     pub blocks: usize,
@@ -110,12 +111,15 @@ pub struct CompressionShape {
 
 impl CompressionShape {
     pub(super) fn of(index: &CompressionIndex) -> Self {
-        let CompressionIndex::Xz(table) = index;
+        let streams = match index {
+            CompressionIndex::Xz(table) => table.stream_count(),
+            CompressionIndex::Gzip(checkpoints) => checkpoints.member_count(),
+        };
         Self {
-            container: "xz",
-            streams: table.stream_count(),
-            blocks: table.block_count(),
-            max_block_uncompressed: table.max_block_uncompressed(),
+            container: index.codec(),
+            streams,
+            blocks: index.unit_count(),
+            max_block_uncompressed: index.largest_unit(),
         }
     }
 }

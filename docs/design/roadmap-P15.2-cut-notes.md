@@ -30,8 +30,8 @@ preserved; gzip arrives on top of it from 15.4
   `CompressedFileSource::opened`, `open_remote`'s unknown-format arm,
   `CompressionShape::of`, and `CompressionIndex`'s own methods. `index_refused`
   asks the xz adapter alone, and grows an arm per codec.
-  `NonSeekableCompressedSource` still names `xz -T0`; 15.5 takes its text from
-  the codec.
+  `NonSeekableCompressedSource` still names `xz -T0`; 15.5.1 takes its text
+  from the codec.
 - **The public surface moved with it.** `XzSource` and `FetchedXzSource` are
   `CompressedFileSource` (`open`, recognising the format itself, and
   `with_index`) and `FetchedCompressedSource` (`with_index`);
@@ -43,7 +43,7 @@ preserved; gzip arrives on top of it from 15.4
   `compression_index` where it said `seek_table`.
 - **`CACHE_FORMAT_VERSION` is 72**, as the spec asked. The encoded bytes did
   not change — bincode names no field and the moved enum encodes as the old
-  one did — so the bump only retires caches 15.5's window section would
+  one did — so the bump only retires caches 15.5.1's window section would
   retire anyway.
 - **`determinism.rs` reads `.xz`**:
   `an_xz_dump_writes_the_serial_cache_at_every_stated_parallelism` compresses

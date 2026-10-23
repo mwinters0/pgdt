@@ -3798,9 +3798,11 @@ dependencies = [
 name = "pgdt-io"
 version = "0.2.0"
 dependencies = [
+ "bincode",
  "bytes",
  "flate2",
  "futures",
+ "gz-seek",
  "noodles-bgzf",
  "object_store 0.14.2",
  "pgdt-core",

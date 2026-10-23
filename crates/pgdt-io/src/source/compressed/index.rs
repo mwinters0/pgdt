@@ -8,6 +8,7 @@
 //! [`ByteRangeSource::compression_index`]: crate::ByteRangeSource::compression_index
 //! [`KnownCompression::Compressed`]: crate::KnownCompression::Compressed
 
+use super::deflate::{GZIP_MAGIC, GzipIndex};
 use super::xz::{SeekTable, XZ_MAGIC};
 
 /// Where a compressed file's units sit, in its codec's own layout.
@@ -23,6 +24,8 @@ pub enum CompressionIndex {
     /// An `.xz` file's streams and blocks, as a walk of its stream footers
     /// found them.
     Xz(SeekTable),
+    /// A gzip file's checkpoints, and where each one's window is read from.
+    Gzip(GzipIndex),
 }
 
 impl CompressionIndex {
@@ -37,13 +40,16 @@ impl CompressionIndex {
     pub fn is_seekable(&self) -> bool {
         match self {
             Self::Xz(table) => table.is_seekable(),
+            Self::Gzip(index) => index.is_seekable(),
         }
     }
 
-    /// How many units — an `.xz` file's blocks — the file holds.
+    /// How many units — an `.xz` file's blocks, the spans between a gzip
+    /// file's checkpoints — the file holds.
     pub fn unit_count(&self) -> usize {
         match self {
             Self::Xz(table) => table.block_count(),
+            Self::Gzip(index) => index.unit_count(),
         }
     }
 
@@ -52,13 +58,16 @@ impl CompressionIndex {
     pub fn largest_unit(&self) -> u64 {
         match self {
             Self::Xz(table) => table.max_block_uncompressed(),
+            Self::Gzip(index) => index.largest_unit(),
         }
     }
 
-    /// The file's whole plaintext length.
+    /// The file's whole plaintext length — as far as the last checkpoint for
+    /// a gzip index that stops short of the file's end.
     pub fn uncompressed_size(&self) -> u64 {
         match self {
             Self::Xz(table) => table.uncompressed_size(),
+            Self::Gzip(index) => index.uncompressed_size(),
         }
     }
 
@@ -67,6 +76,7 @@ impl CompressionIndex {
     pub(crate) fn format(&self) -> Format {
         match self {
             Self::Xz(_) => Format::Xz,
+            Self::Gzip(_) => Format::Gzip,
         }
     }
 }
@@ -75,6 +85,7 @@ impl CompressionIndex {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Format {
     Xz,
+    Gzip,
 }
 
 impl Format {
@@ -82,17 +93,25 @@ impl Format {
     /// **content**, never by name (`docs/design/decisions.md`, "D14") — or
     /// `None` for a file with no compression layer this build reads.
     pub(crate) fn recognize(leading: &[u8]) -> Option<Self> {
-        leading.starts_with(&XZ_MAGIC).then_some(Self::Xz)
+        if leading.starts_with(&XZ_MAGIC) {
+            Some(Self::Xz)
+        } else if leading.starts_with(&GZIP_MAGIC) {
+            Some(Self::Gzip)
+        } else {
+            None
+        }
     }
 
     /// The format's name, as a message and the codec error say it.
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Xz => "xz",
+            Self::Gzip => "gzip",
         }
     }
 }
 
 /// The longest magic [`Format::recognize`] compares, which is how many leading
 /// bytes an origin's probe brings back.
-pub(crate) const LONGEST_MAGIC: usize = XZ_MAGIC.len();
+pub(crate) const LONGEST_MAGIC: usize =
+    if XZ_MAGIC.len() > GZIP_MAGIC.len() { XZ_MAGIC.len() } else { GZIP_MAGIC.len() };

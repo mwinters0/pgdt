@@ -148,7 +148,8 @@ is still read as plain text.
 
 **Other compression is not read yet.** `.gz`, `.zst` and `.lz4` — including
 what `pg_dump -Fp --compress=…` writes — still have to be decompressed before
-pgdt sees them.
+pgdt sees them. A gzip file is recognised by its first bytes and refused as
+one, rather than read as plain text.
 
 **One `.xz` file in three is slow to seek into, and pgdt says so when it is.**
 An `.xz` file made of a single compressed block has nothing to seek by, so

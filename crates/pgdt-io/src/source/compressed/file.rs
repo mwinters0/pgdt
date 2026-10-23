@@ -22,7 +22,7 @@ use super::blocks::{BlockCache, Claim, DecodeBudget, DecodedBlock};
 use super::xz::XzCodec;
 use super::{
     Codec, CompressionIndex, Format, LONGEST_MAGIC, LiveBlock, Positioned, codec_over, piece_of,
-    short_read,
+    short_read, unindexed,
 };
 
 /// A `ByteRangeSource` decoding a compressed local file on the fly, whatever
@@ -79,7 +79,8 @@ impl CompressedFileSource {
     /// its stream footers.
     ///
     /// A file whose first bytes name no format this build reads is refused,
-    /// [`Error::SourceNotReadable`]. Recognition that falls back to the plain
+    /// [`Error::SourceNotReadable`], and so is a gzip one, whose index only a
+    /// first pass builds: it opens through [`CompressedFileSource::with_index`]. Recognition that falls back to the plain
     /// source, and checks an index a cache hands in, is [`open`](crate::open).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
@@ -106,6 +107,7 @@ impl CompressedFileSource {
         let stored_size = file.metadata()?.len();
         let codec: Arc<dyn Codec> = match format {
             Format::Xz => Arc::new(XzCodec::walk(&path, &file, stored_size)?),
+            Format::Gzip => return Err(unindexed(path.display().to_string())),
         };
         Ok(Self::over(path, Arc::new(file), codec))
     }

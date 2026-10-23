@@ -16,7 +16,9 @@ use tokio_util::sync::CancellationToken;
 
 use pgdt_core::{Error, Result};
 
-use super::compressed::{CompressionIndex, FetchedCompressedSource, Format, walk_seek_table};
+use super::compressed::{
+    CompressionIndex, FetchedCompressedSource, Format, unindexed, walk_seek_table,
+};
 use super::origin::{
     KnownCompression, Location, ORIGIN_LEADING_BYTES, Origin, OriginProbe, Recognized, Verdict,
     over_known_index,
@@ -450,6 +452,7 @@ pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Res
                 CompressionIndex::Xz(table),
             )?)))
         }
+        Verdict::Unknown(Format::Gzip) => Err(unindexed(origin.to_string())),
         Verdict::Mismatch => Ok(Recognized::Mismatch),
         Verdict::Plain => Ok(Recognized::Source(fetched())),
     }

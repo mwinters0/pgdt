@@ -62,8 +62,8 @@ the overview; what follows is what the next slices inherit.
   section is `WINDOW_SIZE` a checkpoint, less only within a member's first
   32 KiB.
 - **15.5's footprint terms** are one inflate state and its 32 KiB window a
-  decode, and `Forward`'s own 32 KiB window copy; the crate states no
-  constant for them yet.
+  decode, which the crate states as `DECODER_BYTES`, and `Forward`'s own
+  32 KiB window copy, which 15.5.1's first pass holds.
 - **15.6** drives `Walk` at open; its coalescing is the spacing's, every unit
   beginning at a member start.
 - **15.8** reads `rusty-rapidgzip`'s `deflate::block_finder` first (below).
@@ -71,7 +71,7 @@ the overview; what follows is what the next slices inherit.
   zlib-rs's level 1 ends no block before the stream's finish, so such a file
   indexes as one unit whatever the spacing
   ([`../status/history/2026-10-22.md`](../status/history/2026-10-22.md),
-  "15.4: `gz-seek` landed, and a writer that ends no block"); 15.5 warns of
+  "15.4: `gz-seek` landed, and a writer that ends no block"); 15.5.1 warns of
   one ([`decisions.md`](decisions.md), "D19") and 15.10 places checkpoints
   inside its block ([`../status/deficiencies.md`](../status/deficiencies.md)). A gzip test assumes
   nothing of where blocks end: the suite's `flate2` backend is whichever

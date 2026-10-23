@@ -21,7 +21,7 @@ answers `Exact`, so nothing a plain or `.xz` run does changed
   from the source's later answer. `Error::MapIncomplete`'s `size` is `Option<u64>`;
   `pgdt info` prints bytes scanned and no ratio, and `--json`'s `total_size`
   is `null`. `pgdt parse` asks the extent after its run.
-- **What 15.5 inherits.** A gzip source answers `Open { at_least }` until its
+- **What 15.5.1 inherits.** A gzip source answers `Open { at_least }` until its
   first pass reads the end, and must answer `read_at_most` and `stored_size`
   itself: both defaults refuse an open extent (`Extent::require_exact`). Once
   it answers `Exact` it must never answer `Open` again. Its first-pass

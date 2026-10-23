@@ -31,7 +31,7 @@ fn the_seek_table_is_held_once_at_a_stated_cost_per_entry() {
 
     // The cached one: a table handed in is the layout's table too, so the
     // caller's copy is dropped rather than becoming a third.
-    let CompressionIndex::Xz(persisted) = walked.index();
+    let CompressionIndex::Xz(persisted) = walked.index() else { panic!("an `.xz` codec's index") };
     let cached = XzCodec::over(persisted, stored_size).unwrap();
     assert!(
         std::ptr::eq(&*cached.table, cached.layout.index()),
@@ -82,7 +82,10 @@ fn a_table_for_another_file_is_refused_as_not_describing_it() {
     let file = std::fs::File::open(one.path()).unwrap();
     let stored_size = file.metadata().unwrap().len();
     let CompressionIndex::Xz(table) =
-        XzCodec::walk(one.path(), &file, stored_size).unwrap().index();
+        XzCodec::walk(one.path(), &file, stored_size).unwrap().index()
+    else {
+        panic!("an `.xz` codec's index");
+    };
 
     let error = XzCodec::over(table, stored_size + 1).err().expect("a longer file is refused");
     assert!(refuses_table(&error), "{error}");

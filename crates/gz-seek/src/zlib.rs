@@ -82,6 +82,16 @@ pub fn engine() -> &'static str {
 /// The deflate window: the most history any back-reference reaches.
 pub const WINDOW_SIZE: usize = 32 * 1024;
 
+/// What one decode holds besides the buffers its caller hands it, in bytes:
+/// the engine's inflate state and its own sliding window, which every engine
+/// allocates once a stream, and the stream around them — the charge a caller
+/// budgeting a decode states for it.
+///
+/// A bound, held above zlib-rs's allocations by `tests/footprint.rs`, which
+/// counts what the Rust allocator sees; stock zlib and zlib-ng allocate the
+/// same two parts through `calloc`, which nothing here counts.
+pub const DECODER_BYTES: u64 = 64 * 1024;
+
 /// The CRC-32 of `bytes`, continuing `crc`: gzip's check, the same engine's.
 pub(crate) fn crc32(crc: u32, bytes: &[u8]) -> u32 {
     if bytes.is_empty() {
