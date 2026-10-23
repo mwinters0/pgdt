@@ -64,15 +64,15 @@ const DECODE_BYTES: u64 = gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64 +
 /// pass stopped short of it has compared nothing, and a later pass resumed
 /// from its index compares the member's trailer against those recorded values
 /// combined, so a corrupted prefix is still refused at the end.
-// deficiency: KD130 — every window the pass places is held in memory until
-// it ends, one checkpoint's 32 KiB per `CHECKPOINT_SPACING` of plaintext,
-// because each save writes the whole window section out of the saved index's
-// provider (`docs/design/decisions.md`, "D114") and nothing else holds them
-// yet. They grow with the file rather than with the worker count and no
-// charge names them, so a large member holds windows no budget was told of.
-// **(c) unowned**; closing it means the windows kept somewhere a
-// save can read without holding them — a file the run alone writes — or a
-// per-source term in the account, which `WorkerMemory` does not have.
+// deficiency: KD130 — every window the pass places is held in memory, one
+// checkpoint's 32 KiB per `CHECKPOINT_SPACING` of plaintext, because each save
+// writes the whole window section out of the saved index's provider
+// (`docs/design/decisions.md`, "D114") and nothing else holds them yet; the
+// index `hand_over` builds keeps them as its provider, so they stay resident
+// for the rest of the run. They grow with the file rather than with the worker
+// count and no charge names them, so a large member holds windows no budget
+// was told of. **(b) owned by P15**, its slice 15.5.4 writing each one as it is
+// placed to an unnamed file the run alone holds.
 pub(crate) struct FirstPass {
     feed: Feed,
     /// The compressed file's length, as the open's probe found it.

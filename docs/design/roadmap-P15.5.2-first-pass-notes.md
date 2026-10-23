@@ -27,7 +27,8 @@ split: the first pass, and its words").
   replay cuts at units. Until then the extent is open, one partition is
   advised, one worker is recommended (D2) and two forward decodes are
   charged.
-- **Windows are held in memory until the pass ends** (`KD130`), each save
+- **Windows are held in memory for the rest of the run** (`KD130`), the
+  index the hand-over builds keeping them as its provider, each save
   writing the section through the pass's provider (D114); a resumed pass reads
   the earlier ones through the loaded cache's own.
 - **The mapping pass asks the extent again after each chunk**
@@ -69,7 +70,9 @@ split: the first pass, and its words").
   cold `.xz` walk; the `PlanNote` 15.5.3 adds is the place.
 - **15.8 replaces the frontier**, nothing else: `Pass::serve`'s frontier arm
   is where units found speculatively would land.
-- **15.7's resident readings** are where `KD130` is first measured.
+- **15.5.4 closes `KD130`**, spilling the windows to a file the run alone
+  holds ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
+  "A first pass's windows, reviewed").
 
 ## Negative results
 

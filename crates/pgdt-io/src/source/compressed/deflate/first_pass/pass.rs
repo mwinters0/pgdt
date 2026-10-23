@@ -300,7 +300,8 @@ impl Inflating {
     }
 }
 
-/// Every window the pass has placed, held in memory until it ends, and
+/// Every window the pass has placed, held in memory for as long as an index
+/// carrying it lives — the one the pass hands over included — and
 /// before them those of the index it was resumed over, read through that
 /// index's own provider: what a saved index's windows are read through.
 pub(super) struct PassWindows {

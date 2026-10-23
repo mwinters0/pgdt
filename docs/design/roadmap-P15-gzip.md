@@ -174,7 +174,14 @@ a second copy of the xz source.
   slice, never derived from the file — a first pass does not know the file's
   size when it must choose — because the unit is also the decode unit, the
   block-cache unit and the partition grain. Sparse windows (rapidgzip's) are an
-  admitted later shrink, not built. **Whatever crate builds the index hands it
+  admitted later shrink, not built. **A first pass holds none either**: it
+  writes each window as it places it to an unnamed file the run alone holds,
+  in the enabled cache's directory or else the OS temp directory, named by
+  `open`'s caller so `pgdt-io` names no cache; it is read as the section is,
+  and a save copies the section out of it. A file that cannot be made is
+  refused, never answered from memory. Why, and what was rejected:
+  [`../status/history/2026-10-23.md`](../status/history/2026-10-23.md), "A
+  first pass's windows, reviewed". **Whatever crate builds the index hands it
   out as a shareable handle from the start** — `xz_seek` took its table by
   value and held a second copy until its API was widened (inbox, D4).
 - **A checkpoint's place is a function of the file alone**: the first deflate
