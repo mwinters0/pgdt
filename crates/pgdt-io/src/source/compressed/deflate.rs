@@ -26,7 +26,9 @@ mod tests {
     /// decisions.md`, "D3", "D113"): a library caller stating no budget
     /// reads a single member's units piecewise. Asserted with no decoder
     /// charged, so it holds whatever the inflater's footprint; every unit
-    /// but a file's last is at least the spacing.
+    /// but a file's last is at least the spacing. A unit of the power of two
+    /// below the spacing is refused only for the chunk, so this pins the
+    /// spacing's room from the line, not only the refusal (D113).
     #[test]
     fn the_default_budget_declines_a_unit_of_the_spacing() {
         let cache = BlockCache::for_unit(CHECKPOINT_SPACING.get()).expect("a nonzero unit");

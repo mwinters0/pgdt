@@ -128,15 +128,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **gzip's checkpoint spacing is `xz -T0`'s default block, a value the figure
-  did not read as a row** (15.1.2, D113). `gzseek-spacing` showed gzip's own
-  costs flat across 1–128 MiB but for the window section, so the figure does
-  not pick a value; the call rests on what a unit shares with xz. Below about
-  16 MiB a unit falls under the default budget's block-decode line, where an
-  ordinary `.xz` does not (D3), and the window section and index grow; above
-  the finer `.xz` block the resident bounds were read at, a reader holds more
-  where `reserve`'s published 128 MiB legs overran `MEMORY_UNPOOLED_BOUND`. It
-  sits between the measured 16 and 32 MiB rows, by exact interpolation rather
-  than a reading. **To decide**: whether 24 MiB stands, or 16 or 32 MiB — a
-  measured row and a power of two — is preferred; changing it is one constant
-  and D113's wording, before 15.5 consumes it.

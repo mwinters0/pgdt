@@ -141,8 +141,9 @@ the system's zlib (`libz.so.1` beside glibc, a dependency a release does not pro
 ### D113 gzip's checkpoint spacing is the block `xz -T0` writes by default
 A shipped constant, never derived from the file. Within xz's block sizes a spacing costs gzip only its window section and index entries, the first pass and a resume's fixed cost not moving with it,
 so it is set by what a unit shares with xz: the bytes a reader holds, the partition grain, and the default budget's block-decode line (D3), on which it falls where an ordinary `.xz` does.
-Its unit is the finer of the two `.xz` block sizes the resident bounds were read at, and a koji-scale member's index has the entry count of the seek table `KD26` is argued over.
-Rejected: a finer spacing, under D3's line, with more window section and index and nothing gained on gzip's side; a coarser one, holding more a reader where the unpooled bound has been seen overrun.
+Its unit is the finer of the two `.xz` block sizes the resident bounds were read at, where a gzip reader, its inflater lighter than xz's decoder, is billed no term above an `.xz` one's, and a koji-scale member's index has the entry count of the seek table `KD26` is argued over.
+Rejected: a finer spacing, more window section and index for nothing on gzip's side, the power of two below refused at D3's line only for the chunk and anything finer under it; a coarser one, its retention list past any leg the bounds were read at, toward the block size whose legs overran `MEMORY_RESERVE`;
+a power of two for its own sake, a unit running past each multiple to a block boundary and so never one; a row of `gzseek-spacing` at it, gzip's costs flat across the rows either side and the window section arithmetic.
 Reopens: a resume's fixed cost resolved and not small at it; a gzip resident reading overrunning `MEMORY_UNPOOLED_BOUND`. Code: `CHECKPOINT_SPACING`, `source/compressed/deflate.rs`. Evidence: `gzseek-spacing`, `parallel-peak-rss`, `reserve`.
 
 ### D20 The library never replaces cache data automatically
