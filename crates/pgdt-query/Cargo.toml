@@ -35,7 +35,7 @@ tracing = { workspace = true }
 bincode = { workspace = true, features = ["serde"] }
 criterion = { workspace = true, features = ["async_tokio"] }
 # A gzip file to cache, its index built in memory under pgdt-io's
-# `test-support`, no first pass building one yet.
+# `test-support` at a spacing the test states.
 flate2 = { workspace = true }
 insta = { workspace = true }
 # What this crate's tests reach there (each one's `test-support`).

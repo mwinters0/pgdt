@@ -122,7 +122,10 @@ impl ColdPass<'_> {
             let (metadata, spans, preamble_end, roles, tablespaces) =
                 scan_preamble(source, &self.scan).await?;
             index.metadata = Some(Arc::new(metadata));
-            index.spans = splice(&[], spans, 0, preamble_end, source_extent.exact());
+            // Asked again: a source whose end was open at the start may have
+            // met it in the preamble's reads.
+            let end = source.extent().await?.exact();
+            index.spans = splice(&[], spans, 0, preamble_end, end);
             index.roles.extend(roles);
             index.tablespaces.extend(tablespaces);
             index.scanned_through = index.scanned_through.max(preamble_end);

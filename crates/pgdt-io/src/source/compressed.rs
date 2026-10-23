@@ -29,7 +29,7 @@ pub(crate) use self::index::{Format, LONGEST_MAGIC};
 pub use self::xz::SeekTable;
 
 pub(crate) use self::codec::{Codec, Positioned, UnitRead, short_read};
-pub(crate) use self::deflate::unindexed;
+pub(crate) use self::deflate::{Feed, FirstPass};
 #[cfg(any(feature = "http", test))]
 pub(crate) use self::xz::walk_seek_table;
 

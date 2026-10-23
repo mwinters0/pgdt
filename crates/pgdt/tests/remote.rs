@@ -1001,3 +1001,82 @@ async fn open_remote_reports_a_compression_claim_the_object_contradicts() {
         "a compression index over plain bytes",
     );
 }
+
+// ---------------------------------------------------------------------------
+// A remote gzip member, read by its first pass (D6, D18)
+// ---------------------------------------------------------------------------
+
+/// `pg_dump -Fp --compress`'s own output, one gzip member.
+fn gzip_dump_bytes() -> Vec<u8> {
+    std::fs::read(common::gzip_fixture(16, "edge_cases", "compress")).unwrap()
+}
+
+/// An oracle serving the gzip dump, and its URL.
+fn serving_gzip_dump() -> (Oracle, String) {
+    let oracle = Oracle::serving(gzip_dump_bytes()).start();
+    let url = oracle.url_for("dump.sql.gz");
+    (oracle, url)
+}
+
+#[tokio::test]
+async fn a_remote_gzip_member_reads_by_its_first_pass_and_then_by_its_index() {
+    // The fetched arm's genericity: a single member's first pass is a serial
+    // ranged read of the object, open until it meets the end, which then
+    // reads as the indexed source whose index a cache would hold
+    // (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling").
+    let (_oracle, url) = serving_gzip_dump();
+    let source = source_of(&url).await;
+    assert_eq!(source.extent().await.unwrap(), Extent::Open { at_least: 0 });
+    let mut plaintext = Vec::new();
+    loop {
+        let read = source.read_at_most(plaintext.len() as u64, 1000).await.unwrap();
+        plaintext.extend_from_slice(&read);
+        if read.len() < 1000 {
+            break;
+        }
+    }
+    let mut expected = Vec::new();
+    std::io::Read::read_to_end(
+        &mut flate2::read::GzDecoder::new(&gzip_dump_bytes()[..]),
+        &mut expected,
+    )
+    .unwrap();
+    assert_eq!(plaintext, expected);
+    assert_eq!(source.extent().await.unwrap(), Extent::Exact(expected.len() as u64));
+    let Some(CompressionIndex::Gzip(index)) = source.compression_index() else {
+        panic!("a fetched gzip source answers its index");
+    };
+    assert!(index.is_complete() && index.has_windows());
+    assert_eq!(&source.read_range(100, 50).await.unwrap()[..], &expected[100..150]);
+}
+
+#[test]
+fn parse_and_query_over_a_remote_gzip_answer_what_the_local_file_answers() {
+    // A cold `query` over the URL runs the first pass through ranged GETs,
+    // and a `parse` leaves a cache from which `info` costs the origin probe
+    // alone, as a remote `.xz`'s does.
+    let (oracle, url) = serving_gzip_dump();
+    let local_dir = tempfile::tempdir().unwrap();
+    let local = local_dir.path().join("dump.sql.gz");
+    std::fs::write(&local, gzip_dump_bytes()).unwrap();
+    let query = |source: &str| {
+        run_ok(&[
+            "query",
+            "--source",
+            source,
+            "--table",
+            "public.widgets",
+            "--dtcache",
+            "none",
+            "--no-columns",
+        ])
+    };
+    assert_eq!(query(&url), query(local.to_str().unwrap()));
+
+    let dir = tempfile::tempdir().unwrap();
+    run_ok_in(&dir, &["parse", "--source", &url]);
+    let after_parse = oracle.request_count();
+    let report = run_ok_in(&dir, &["info", "--source", &url]);
+    assert!(report.contains("public.widgets"), "{report}");
+    assert_eq!(oracle.request_count() - after_parse, 1, "the origin probe, and nothing else");
+}

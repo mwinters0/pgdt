@@ -21,8 +21,8 @@ http = ["dep:object_store", "dep:url", "tokio/net", "tokio/time"]
 # `xz_seek`'s own table's, unchanged.
 serde = ["dep:serde", "xz-seek/serde"]
 # What a crate above's tests reach that nothing else may: a gzip file's index
-# built in memory (`internal::gzip_indexed_in_memory`), there being no first
-# pass that builds one yet.
+# built in memory at a spacing the test states (`internal::gzip_indexed_in_memory`),
+# where a first pass places checkpoints at the shipped one alone.
 test-support = []
 
 [dependencies]

@@ -146,10 +146,16 @@ is by content, not by name, so a compressed dump called something other than
 `.xz` is still read as one, and a file *named* `.xz` that is really plain text
 is still read as plain text.
 
-**Other compression is not read yet.** `.gz`, `.zst` and `.lz4` — including
-what `pg_dump -Fp --compress=…` writes — still have to be decompressed before
-pgdt sees them. A gzip file is recognised by its first bytes and refused as
-one, rather than read as plain text.
+**gzip is read the same way**, the `.gz` file `pg_dump -Fp --compress` or
+`pg_dump | gzip` writes included. A gzip file says nothing about where inside
+it a read could begin, so the first command to read one reads it from start
+to end with one reader, and the cache it writes records where later reads can
+begin; every later command reads it as an `.xz` file is read. A `parse`
+stopped part-way resumes from where it saved, as on an uncompressed file.
+
+**Other compression is not read yet.** `.zst` and `.lz4` — including what
+`pg_dump -Fp --compress=zstd` or `lz4` writes — still have to be decompressed
+before pgdt sees them.
 
 **One `.xz` file in three is slow to seek into, and pgdt says so when it is.**
 An `.xz` file made of a single compressed block has nothing to seek by, so

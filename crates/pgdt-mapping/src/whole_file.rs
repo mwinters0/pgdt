@@ -403,7 +403,10 @@ async fn map_file_watched(
         let prepass = async {
             let (metadata, spans, preamble_end, roles, tablespaces) =
                 scan_preamble(source, scan_options).await?;
-            let mut spans = splice(&[], spans, 0, preamble_end, extent.exact());
+            // Asked again rather than read off `extent`: a source whose end
+            // was open at the start may have met it in the preamble's reads.
+            let end = source.extent().await?.exact();
+            let mut spans = splice(&[], spans, 0, preamble_end, end);
             attach_text(source, &mut spans).await?;
             Ok::<_, Error>((metadata, spans, preamble_end, roles, tablespaces))
         }

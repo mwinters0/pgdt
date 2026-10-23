@@ -44,8 +44,8 @@ pub mod internal {
     pub use crate::parallelism::{memory_budget_display, worker_count};
     pub use crate::partition::cut;
     /// A gzip file's complete index, built by a forward pass over the file
-    /// held in memory, its windows held beside it: what a test above this
-    /// crate reads a gzip file through, no command building an index yet.
+    /// held in memory at a spacing the test states, its windows held beside
+    /// it: what a test above this crate builds an index through.
     #[cfg(feature = "test-support")]
     pub use crate::source::gzip_indexed_in_memory;
     pub use crate::source::is_weak_tag;

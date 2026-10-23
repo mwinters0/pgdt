@@ -26,7 +26,9 @@ the compressed file pulled or fetched, the remote object
   pool every arm but the remote one reads into, and under it the compressed
   layer: the codec trait both compressed arms are written once over, the arms,
   the block cache and budget they share, the compression index, and each
-  codec's adapter, the one module naming its codec's crate.
+  codec's adapter, the only modules naming its codec's crate — gzip's with
+  the first pass that builds a single member's index, the source a file no
+  cache has indexed is read through until it hands over to the arms.
 - **gz-seek** — `index.rs`, `forward.rs`, `unit.rs`, `bgzf.rs`, `engine.rs`,
   `member.rs`, `zlib.rs`, `error.rs`: a gzip file's positioned read — its
   index of checkpoints, the forward pass that builds one, a unit decoded from

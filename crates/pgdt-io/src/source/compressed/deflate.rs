@@ -16,11 +16,13 @@ use pgdt_core::{Error, Result};
 use super::{Codec, CompressionIndex, Positioned, UnitRead, short_read};
 
 mod checkpoints;
+mod first_pass;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod held;
 
 pub(crate) use self::checkpoints::GZIP_MAGIC;
 pub use self::checkpoints::{GzipIndex, WindowProvider};
+pub(crate) use self::first_pass::{Feed, FirstPass};
 
 /// The plaintext spacing a forward pass places a checkpoint at the first
 /// deflate block boundary at or after each multiple of, and BGZF members are
@@ -31,7 +33,6 @@ pub use self::checkpoints::{GzipIndex, WindowProvider};
 ///
 /// A shipped constant, never derived from the file: a first pass chooses it
 /// before it knows how long the file is.
-#[cfg_attr(not(test), expect(dead_code, reason = "no first pass hands it to `gz_seek` yet"))]
 pub(super) const CHECKPOINT_SPACING: NonZeroU64 = NonZeroU64::new(24 << 20).unwrap();
 
 /// The container's name, which the codec error and a message carry.
@@ -59,18 +60,6 @@ pub(super) fn refuses_index(error: &Error) -> bool {
     matches!(error.codec_cause(), Some(gz_seek::Error::InvalidIndex { .. }))
 }
 
-/// The refusal an uncached gzip file at `origin` gets: its index is a first
-/// pass's by-product, and no first pass is built yet, so only a caller handing
-/// in a complete index reads one.
-pub(crate) fn unindexed(origin: String) -> Error {
-    Error::SourceNotReadable {
-        origin,
-        why: "it is gzip-compressed, and this build reads gzip only over an index a previous \
-              pass built, which no command here builds yet"
-            .to_string(),
-    }
-}
-
 /// A gzip file's units as the compressed arms read them, each the span from
 /// one checkpoint to the next.
 ///
@@ -92,14 +81,14 @@ impl DeflateCodec {
     ///
     /// An index that stops short of the file's end is refused as a caller's
     /// error rather than as another file's: only a first pass continues one,
-    /// and this build runs none. So is one whose units begin inside a member
-    /// with no provider to read their windows through.
+    /// which [`open`](crate::open) runs over it. So is one whose units begin
+    /// inside a member with no provider to read their windows through.
     pub(super) fn over(layout: GzipIndex, stored_size: u64) -> Result<Self> {
         let Some(compressed_size) = layout.compressed_size() else {
             return Err(Error::Io(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "a gzip index that stops short of the file's end is continued only by a first \
-                 pass, which this build does not run",
+                 pass, which `pgdt_io::open` runs over it",
             )));
         };
         if compressed_size != stored_size {

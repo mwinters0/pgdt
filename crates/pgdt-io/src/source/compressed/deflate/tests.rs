@@ -254,9 +254,10 @@ async fn a_gzip_file_partitions_at_its_checkpoints() {
 /// **Recognition knows gzip by its magic**: an index a previous pass built
 /// opens the file without building one, an index for another file or a claim
 /// that the file is plain or `.xz` is a mismatch, and with nothing known the
-/// file is refused by name, no first pass being built.
+/// file opens for its first pass, which builds the index a previous pass
+/// would have. A `CompressedFileSource` opens one only over a complete index.
 #[tokio::test]
-async fn recognition_reads_gzip_through_an_index_and_refuses_it_without_one() {
+async fn recognition_reads_gzip_through_an_index_or_its_first_pass() {
     let payload = gzip_test_payload();
     let (compressed, layout) = gzip_indexed(&payload, SPACING);
     let origin = Origin::local(compressed.path());
@@ -276,13 +277,25 @@ async fn recognition_reads_gzip_through_an_index_and_refuses_it_without_one() {
         Recognized::Mismatch
     ));
 
-    let refused = crate::open(&origin, KnownCompression::Unknown).await.err().expect("refused");
+    let Recognized::Source(first) = crate::open(&origin, KnownCompression::Unknown).await.unwrap()
+    else {
+        panic!("claiming nothing is never a mismatch");
+    };
+    assert_eq!(first.extent().await.unwrap(), Extent::Open { at_least: 0 });
+    let read = first.read_at_most(0, payload.len() + 1).await.unwrap();
+    assert_eq!(&read[..], &payload[..]);
+    assert_eq!(first.extent().await.unwrap(), Extent::Exact(payload.len() as u64));
+    let Some(CompressionIndex::Gzip(built)) = first.compression_index() else {
+        panic!("a first pass answers a gzip index");
+    };
+    assert!(built.is_complete() && built.has_windows());
+    assert_eq!(built.spacing(), CHECKPOINT_SPACING.get());
+
+    let refused = CompressedFileSource::open(compressed.path()).err().expect("refused");
     assert!(
         matches!(&refused, pgdt_core::Error::SourceNotReadable { why, .. } if why.contains("gzip")),
         "{refused}"
     );
-    let refused = CompressedFileSource::open(compressed.path()).err().expect("refused");
-    assert!(matches!(refused, pgdt_core::Error::SourceNotReadable { .. }), "{refused}");
 }
 
 /// **An index is persisted as its checkpoints and read back as the same

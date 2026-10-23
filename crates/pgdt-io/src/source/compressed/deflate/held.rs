@@ -1,7 +1,7 @@
 //! A gzip file's index built by `gz_seek`'s forward pass over the file held
 //! in memory, its windows held beside it: what a test reads a gzip file
-//! through, in this crate and above it under `test-support`, where no first
-//! pass of this crate's builds one yet.
+//! through, in this crate and above it under `test-support`, at a spacing it
+//! states where a first pass places checkpoints at the shipped one alone.
 
 use std::num::NonZeroU64;
 use std::sync::Arc;

@@ -253,9 +253,11 @@ pub async fn map_forward(
         extent,
         scan_options.read,
     );
-    // Where the file ends, wherever the source said so at the start; one whose
-    // end was not known has its map end at each watermark ([`splice`]).
-    let file_end = extent.exact();
+    // Where the file ends, wherever the source has said so: one whose end is
+    // not known yet has its map end at each watermark ([`splice`]), and is
+    // asked again after each chunk, a read being where it can meet the end —
+    // so a map saved after it carries the tail the saved extent states.
+    let mut file_end = extent.exact();
     let mut throttle = SaveThrottle::new();
     // Whether the open `COPY` block is one `target_settled` would count — see
     // the `CopyEnd` arm and the `CopyStart` arm's closed region, its readers.
@@ -284,6 +286,9 @@ pub async fn map_forward(
             }
             Err(e) => return Err(e),
         };
+        if file_end.is_none() {
+            file_end = source.extent().await?.exact();
+        }
 
         // Where the leader closed a block the workers scanned, and so where
         // the serial scanner has to be put back down. `None` for a chunk no

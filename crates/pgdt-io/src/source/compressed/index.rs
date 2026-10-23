@@ -44,6 +44,15 @@ impl CompressionIndex {
         }
     }
 
+    /// Whether the index reaches the file's end: an `.xz` table always does,
+    /// and a gzip index a first pass stopped short of it describes a prefix.
+    pub fn is_complete(&self) -> bool {
+        match self {
+            Self::Xz(_) => true,
+            Self::Gzip(index) => index.is_complete(),
+        }
+    }
+
     /// How many units — an `.xz` file's blocks, the spans between a gzip
     /// file's checkpoints — the file holds.
     pub fn unit_count(&self) -> usize {

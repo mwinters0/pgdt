@@ -152,14 +152,16 @@ pub fn derived_diagnostics(
 }
 
 /// D19's warning for a compressed source with no usable seek structure —
-/// `None` when there is no compression layer at all (`index` is `None`) or the
-/// index already has more than one unit. A whole map's is [`derived_diagnostics`]'s;
+/// `None` when there is no compression layer at all (`index` is `None`), the
+/// index already has more than one unit, or it is a gzip first pass's that
+/// has not reached the end, which says nothing yet of how many units the file
+/// holds. A whole map's is [`derived_diagnostics`]'s;
 /// a preamble's alone is [`preamble_only`](crate::preamble::preamble_only)'s.
 pub fn non_seekable_compression_diagnostic(
     index: Option<&pgdt_io::CompressionIndex>,
 ) -> Option<Diagnostic> {
     let index = index?;
-    if index.is_seekable() {
+    if index.is_seekable() || !index.is_complete() {
         return None;
     }
     Some(Diagnostic::non_seekable_compressed_source(index.unit_count()))

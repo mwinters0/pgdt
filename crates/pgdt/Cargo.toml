@@ -125,6 +125,9 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 # `--jobs` asks the source for (`ParallelArgs::resolve`). The workspace's
 # version, as the library's, since the two `Bytes` must be one type.
 bytes = { workspace = true }
+# `tests/gzip_source.rs` and `tests/determinism.rs`: a gzip dump written, or
+# read back, by an encoder not ours.
+flate2 = { workspace = true }
 # `tests/help_text.rs` only. The workspace's version, as `pgdt-query`'s, so
 # one `cargo insta review` covers both crates' snapshots.
 insta = { workspace = true }

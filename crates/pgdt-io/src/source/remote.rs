@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 use pgdt_core::{Error, Result};
 
 use super::compressed::{
-    CompressionIndex, FetchedCompressedSource, Format, unindexed, walk_seek_table,
+    CompressionIndex, Feed, FetchedCompressedSource, FirstPass, Format, walk_seek_table,
 };
 use super::origin::{
     KnownCompression, Location, ORIGIN_LEADING_BYTES, Origin, OriginProbe, Recognized, Verdict,
@@ -426,6 +426,11 @@ pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Res
     let fetched =
         || -> Arc<dyn ByteRangeSource> { Arc::new(RemoteSource::new(Arc::clone(object), probe)) };
     match Verdict::of(probe.leading(), known) {
+        // A gzip index a first pass stopped short of the end saved, resumed
+        // from its last checkpoint.
+        Verdict::Known(CompressionIndex::Gzip(index)) if !index.is_complete() => over_known_index(
+            FirstPass::resumed(Feed::Fetched(fetched()), probe.stored_size(), index),
+        ),
         // The saving, and the reason the cold walk below is worth announcing
         // rather than refusing: an index from a previous build over this
         // object costs no round trip at all (`docs/design/decisions.md`, "D18").
@@ -452,7 +457,12 @@ pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Res
                 CompressionIndex::Xz(table),
             )?)))
         }
-        Verdict::Unknown(Format::Gzip) => Err(unindexed(origin.to_string())),
+        // A gzip file's index is its first full pass's by-product: a serial
+        // ranged read of the object, with no footer walk to announce.
+        Verdict::Unknown(Format::Gzip) => Ok(Recognized::Source(Arc::new(FirstPass::fresh(
+            Feed::Fetched(fetched()),
+            probe.stored_size(),
+        )?))),
         Verdict::Mismatch => Ok(Recognized::Mismatch),
         Verdict::Plain => Ok(Recognized::Source(fetched())),
     }

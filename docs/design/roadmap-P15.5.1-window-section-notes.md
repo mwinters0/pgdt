@@ -48,4 +48,7 @@ split: the codec, the window section, the first pass").
 
 - **`flate2`'s default level wrote two deflate blocks over the 1.4 MB
   statistics fixture**, so a test wanting units inside a member flushes as it
-  writes: a sync flush ends a block whichever backend `flate2` is built over.
+  writes at the default level: a sync flush there ends a block, and at level
+  1 over zlib-rs it ends none
+  ([`roadmap-P15.5.2-first-pass-notes.md`](roadmap-P15.5.2-first-pass-notes.md),
+  "Negative results").

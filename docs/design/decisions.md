@@ -16,7 +16,7 @@ provider's `ScanBudget` where no allowance is stated. Rejected: `default_workers
 ### D2 A plain file recommends one worker; a local compressed one the machine's cores
 A serial plain `parse` is device-bound on every real device wherever a split reaches, a `COPY` block's interior, an `INSERT` run admitting none (`KD9`); `query`'s typed scan,
 which on the NVMe is not, is held flat by `KD57`'s merge; each partition's tail past itself adds device bytes. `CompressedFileSource` answers `available_parallelism()` capped at its unit count
-(`RT7`); a fetched one answers one, the errors being asymmetric. Rejected: a plain split once a typed one outran one worker on the NVMe (`parallel-scan-throughput`'s cold-NVMe column), the provider delivering it from `target_partitions`, never from this.
+(`RT7`); a fetched one answers one, the errors being asymmetric, and a gzip first pass one until it hands over to the arms (`FirstPass`), its extent open. Rejected: a plain split once a typed one outran one worker on the NVMe (`parallel-scan-throughput`'s cold-NVMe column), the provider delivering it from `target_partitions`, never from this.
 Reopens: `KD57` closing, which asks the plain answer per kind of work (`D7`): `query`'s replay is extraction, `parse` and the mapping pass discovery, and one `default_workers()` per source cannot tell them apart. Evidence: `scan-throughput-*`, `parallel-scan-throughput`.
 
 ### D3 The memory constants, and what each one is

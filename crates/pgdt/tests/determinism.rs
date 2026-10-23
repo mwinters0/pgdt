@@ -42,14 +42,31 @@
 //! — whole units by several readers, or one forward decode — so it is where a
 //! determinism defect would live, and
 //! [`an_xz_dump_writes_the_serial_cache_at_every_stated_parallelism`] runs the
-//! same comparison over `.xz` input.
+//! same comparison over `.xz` input, and
+//! [`a_gzip_dump_writes_one_cache_however_its_first_pass_ran`] over a single
+//! gzip member, whose index a first pass builds — and where that pass was
+//! interrupted is the other thing that must not change the cache.
 
+use std::future::Future;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::Command;
+use std::sync::Arc;
+use std::time::SystemTime;
 
+use bytes::Bytes;
+use pgdt_core::Result;
+use pgdt_dump::ReadOptions;
+use pgdt_dump::cache::CacheMode;
 use pgdt_io::{
-    ByteRangeSource, CompressedFileSource, LocalFileSource, SCAN_CHUNK_DEFAULT_SIZE_BYTES,
+    ByteRangeSource, CompressedFileSource, CompressionIndex, Extent, KnownCompression,
+    LocalFileSource, Origin, Parallelism, Recognized, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
 };
+use pgdt_mapping::map_file;
+use pgdt_mapping::statistics::StatisticsRequest;
+use pgdt_model::PostgresInvalidValues;
+use tokio_util::sync::CancellationToken;
 
 mod common;
 use common::{all_fixtures, refused_field, run, stderr_of};
@@ -345,4 +362,168 @@ fn an_xz_dump_writes_the_serial_cache_at_every_stated_parallelism() {
         gathered_cache_of(&xz, &dir.path().join("xz-gathered.dtcache"), &["--jobs", "1"]);
     let got = gathered_cache_of(&xz, &dir.path().join("xz-gathered-8.dtcache"), &["--jobs", "8"]);
     assert_same_cache(&got, &reference, &xz, &["--jobs", "8"]);
+}
+
+/// A dump of `tables` tables of about `table_bytes` each, compressed as one
+/// gzip member by `flate2`, flushed every 256 KiB so its deflate blocks end
+/// whatever backend `flate2` is built over — a member of many units at the
+/// shipped spacing.
+fn gzip_dump_of(dir: &Path, tables: usize, table_bytes: usize) -> PathBuf {
+    let mut plain = String::from("SET client_encoding = 'UTF8';\n\n");
+    for t in 0..tables {
+        plain.push_str(&format!(
+            "CREATE TABLE public.t{t} (\n    id integer,\n    name text\n);\n\n\
+             COPY public.t{t} (id, name) FROM stdin;\n"
+        ));
+        let start = plain.len();
+        let mut id: u64 = 1;
+        while plain.len() - start < table_bytes {
+            plain.push_str(&format!("{id}\trow {id} of table {t}\n"));
+            id += 1;
+        }
+        plain.push_str("\\.\n\n");
+    }
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    for piece in plain.as_bytes().chunks(256 * 1024) {
+        encoder.write_all(piece).unwrap();
+        encoder.flush().unwrap();
+    }
+    let path = dir.join("many_units.sql.gz");
+    std::fs::write(&path, encoder.finish().unwrap()).unwrap();
+    path
+}
+
+/// A source that asks its run to stop once a read reaches `after`: an
+/// interruption at a place the test chooses, everything else the source's
+/// own.
+struct StopAfter {
+    inner: Arc<dyn ByteRangeSource>,
+    after: u64,
+    cancel: CancellationToken,
+}
+
+impl StopAfter {
+    fn note(&self, offset: u64) {
+        if offset >= self.after {
+            self.cancel.cancel();
+        }
+    }
+}
+
+impl ByteRangeSource for StopAfter {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        self.note(offset);
+        self.inner.read_range(offset, len)
+    }
+    fn read_at_most(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        self.note(offset);
+        self.inner.read_at_most(offset, len)
+    }
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<Extent>> + Send + '_>> {
+        self.inner.extent()
+    }
+    fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+        self.inner.modified()
+    }
+    fn stored_size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+        self.inner.stored_size()
+    }
+    fn hint_read_size(&self, len: usize) {
+        self.inner.hint_read_size(len);
+    }
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.inner.hint_parallelism(parallelism);
+    }
+    fn hint_wait_policy(&self, policy: WaitPolicy) {
+        self.inner.hint_wait_policy(policy);
+    }
+    fn hint_cancellation(&self, cancel: CancellationToken) {
+        self.inner.hint_cancellation(cancel);
+    }
+    fn compression_index(&self) -> Option<CompressionIndex> {
+        self.inner.compression_index()
+    }
+    fn partitions(&self, range: std::ops::Range<u64>) -> pgdt_io::Partitioning {
+        self.inner.partitions(range)
+    }
+    fn complete_reads(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+        self.inner.complete_reads()
+    }
+}
+
+/// `dump`'s first pass run in the library to the first read at or past
+/// `after`, where its run is asked to stop and saves what it holds to
+/// `cache` — the state an interrupted `pgdt parse` leaves — and the
+/// compression index it saved.
+async fn interrupted_at(dump: &Path, cache: &Path, after: u64) -> pgdt_io::GzipIndex {
+    let origin = Origin::local(dump);
+    let Recognized::Source(source) =
+        pgdt_io::open(&origin, KnownCompression::Unknown).await.unwrap()
+    else {
+        unreachable!("claiming nothing is never a mismatch");
+    };
+    let cancel = CancellationToken::new();
+    let stopping = Arc::new(StopAfter { inner: source, after, cancel: cancel.clone() });
+    let run = map_file(
+        CacheMode::enabled(cache).open_source(Arc::clone(&stopping) as _).await.unwrap(),
+        ReadOptions::default(),
+        &pgdt_fixtures::arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::METADATA,
+        &cancel,
+    )
+    .await
+    .unwrap();
+    assert!(run.interrupted, "the pass stops where it was asked to");
+    match stopping.compression_index() {
+        Some(CompressionIndex::Gzip(index)) => index,
+        other => panic!("a gzip first pass answers a gzip index, not {other:?}"),
+    }
+}
+
+/// **A gzip dump writes one cache however its first pass ran**, byte for
+/// byte: serially as every first pass is, under a stated `--jobs` that the
+/// open extent leaves serial, at a chunk that ends nowhere in particular, and
+/// resumed by `pgdt parse` from a pass interrupted after its first checkpoint
+/// past the start — before the interrupted map's watermark and after it.
+/// Checkpoints are placed by the file alone, so the index, its windows and
+/// the map are the uninterrupted pass's.
+#[tokio::test]
+async fn a_gzip_dump_writes_one_cache_however_its_first_pass_ran() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = gzip_dump_of(dir.path(), 6, 10 << 20);
+    let reference = cache_of(&dump, &dir.path().join("gz-serial.dtcache"), &["--jobs", "1"]);
+    let saved = pgdt_dump::cache::OfflineCache::new(dir.path().join("gz-serial.dtcache"));
+    let pgdt_dump::cache::CacheStatus::Loaded(saved) = saved.load().await.unwrap() else {
+        panic!("a parse saves a cache");
+    };
+    let shape = saved.compression.expect("a gzip cache records its compression");
+    assert!(
+        saved.is_complete() && shape.blocks > 2,
+        "{} units: {}",
+        shape.blocks,
+        serde_json::to_string(&saved.envelope).unwrap()
+    );
+
+    let legs: [&[&str]; 3] = [&[], &["--jobs", "8"], &["--jobs", "1", "--chunk-size", "4099"]];
+    for (l, leg) in legs.iter().enumerate() {
+        let got = cache_of(&dump, &dir.path().join(format!("gz-{l}.dtcache")), leg);
+        assert_same_cache(&got, &reference, &dump, leg);
+    }
+
+    for (n, after) in [(25u64 << 20), (45 << 20)].into_iter().enumerate() {
+        let cache = dir.path().join(format!("gz-resumed-{n}.dtcache"));
+        let partial = interrupted_at(&dump, &cache, after).await;
+        assert!(!partial.is_complete() && partial.unit_count() >= 1, "stopped at {after}");
+        let got = cache_of(&dump, &cache, &["--jobs", "1"]);
+        assert_same_cache(&got, &reference, &dump, &["resumed", &after.to_string()]);
+    }
 }

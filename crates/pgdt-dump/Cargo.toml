@@ -27,8 +27,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 # A gzip file to cache, written by an encoder not ours, and its index built in
-# memory (`pgdt_io::internal::gzip_indexed_in_memory`), no first pass building
-# one yet.
+# memory at a spacing the test states (`pgdt_io::internal::gzip_indexed_in_memory`).
 flate2 = { workspace = true }
 pgdt-io = { path = "../pgdt-io", features = ["serde", "test-support"] }
 tempfile = { workspace = true }
