@@ -81,9 +81,9 @@ impl GzipIndex {
         self.index.unit_count()
     }
 
-    /// How many members the file holds, as far as the index reaches: once
-    /// complete, as the pass or the BGZF walk that built it counted them — a
-    /// walk's unit holding many — and before, as many as its checkpoints begin.
+    /// How many members the file holds, as far as the index reaches: every
+    /// one once complete, and before, each beginning at or before its last
+    /// checkpoint — a unit of whole BGZF members holding many.
     pub fn member_count(&self) -> usize {
         usize::try_from(self.index.member_count()).unwrap_or(usize::MAX)
     }
@@ -197,6 +197,7 @@ mod persisted {
     struct Parts {
         spacing: NonZeroU64,
         checkpoints: Vec<Point>,
+        members: u64,
         end: Option<End>,
     }
 
@@ -214,7 +215,6 @@ mod persisted {
     struct End {
         plaintext: u64,
         compressed: u64,
-        members: u64,
     }
 
     impl Serialize for GzipIndex {
@@ -233,12 +233,9 @@ mod persisted {
                     crc: c.crc,
                 })
                 .collect();
-            let end = index.end().map(|e| End {
-                plaintext: e.plaintext,
-                compressed: e.compressed,
-                members: e.members,
-            });
-            Parts { spacing: index.spacing(), checkpoints, end }.serialize(serializer)
+            let end = index.end().map(|e| End { plaintext: e.plaintext, compressed: e.compressed });
+            Parts { spacing: index.spacing(), checkpoints, members: index.member_count(), end }
+                .serialize(serializer)
         }
     }
 
@@ -258,12 +255,10 @@ mod persisted {
                     crc: p.crc,
                 })
                 .collect();
-            let end = parts.end.map(|e| gz_seek::End {
-                plaintext: e.plaintext,
-                compressed: e.compressed,
-                members: e.members,
-            });
-            let index = gz_seek::Index::from_parts(parts.spacing, checkpoints, end)
+            let end = parts
+                .end
+                .map(|e| gz_seek::End { plaintext: e.plaintext, compressed: e.compressed });
+            let index = gz_seek::Index::from_parts(parts.spacing, checkpoints, parts.members, end)
                 .map_err(serde::de::Error::custom)?;
             Ok(GzipIndex { index, windows: None })
         }

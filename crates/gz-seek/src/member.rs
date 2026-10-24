@@ -60,6 +60,12 @@ impl Header {
         self.field == Field::Done
     }
 
+    /// Every byte of the header read so far: the whole header once
+    /// [`Header::is_done`].
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
     fn push(&mut self, byte: u8) -> Result<()> {
         self.bytes.push(byte);
         let n = self.bytes.len();

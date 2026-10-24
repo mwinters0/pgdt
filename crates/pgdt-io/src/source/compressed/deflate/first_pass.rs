@@ -9,6 +9,8 @@
 //! file is the decode that finds its checkpoints, placed by `gz_seek`'s rule
 //! at [`CHECKPOINT_SPACING`] — a function of the file alone, so a pass
 //! resumed from a saved index builds the one an uninterrupted pass builds.
+//! A fetched BGZF file is read here too, the rule coalescing its members as
+//! the local arm's walk does (`docs/design/decisions.md`, "D116").
 //!
 //! **Serial until the end, then the indexed source.** The extent is open until
 //! a read meets the file's end, so nothing cuts the file and one forward

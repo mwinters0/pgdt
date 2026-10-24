@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::{drive, forward, gzip, gzip_members, payload, spacing};
+use crate::test_support::{bgzf, drive, forward, gzip, gzip_members, payload, spacing};
 
 const SPACING: u64 = 64 * 1024;
 
@@ -153,11 +153,15 @@ fn what_follows_the_last_member_must_be_a_member() {
 fn a_resumed_pass_builds_the_uninterrupted_index() {
     let plaintext = payload(600_000, 31);
     let tail = payload(100_000, 37);
-    for file in
-        [gzip(&plaintext, 6), gzip(&plaintext, 0), gzip_members(&[&plaintext, &tail, &tail], 6)]
-    {
+    for file in [
+        gzip(&plaintext, 6),
+        gzip(&plaintext, 0),
+        gzip_members(&[&plaintext, &tail, &tail], 6),
+        bgzf(&plaintext),
+        [bgzf(&plaintext), gzip(&tail, 6), bgzf(&tail)].concat(),
+    ] {
         let whole = forward(&file, 32 * 1024, 1 << 20, 1 << 20).unwrap();
-        for stop in [1, 2, 5, whole.index.checkpoints().len() - 1] {
+        for stop in 1..whole.index.checkpoints().len() {
             let first = drive(
                 Forward::new(spacing(32 * 1024)).unwrap(),
                 &file,
@@ -201,4 +205,29 @@ fn an_empty_member_and_an_empty_file() {
     assert_eq!(pass.index.size(), Size::Exact(0));
     assert_eq!(pass.index.unit_count(), 1);
     assert_eq!(forward(b"", SPACING, 4096, 4096).err(), Some(Error::Truncated { offset: 0 }));
+}
+
+/// **A run of BGZF members ends at the first header that is not BGZF's**:
+/// before it, member starts a unit of the spacing apart, as a walk places
+/// them, with no CRC-32; from it, every member start and the block boundaries
+/// the spacing owes, each unit's CRC-32 recorded.
+#[test]
+fn a_run_of_bgzf_members_is_coalesced_until_a_header_is_not_bgzf_s() {
+    let (a, b) = (payload(400_000, 43), payload(300_000, 47));
+    let run = bgzf(&a);
+    let file = [run.clone(), gzip(&b, 6), bgzf(&b)].concat();
+    let pass = forward(&file, SPACING, 1 << 20, 1 << 20).unwrap();
+    assert_eq!(pass.plaintext, [&a[..], &b, &b].concat());
+    let checkpoints = pass.index.checkpoints();
+    let walked = forward(&run, SPACING, 1 << 20, 1 << 20).unwrap().index;
+    let breaks = checkpoints.iter().position(|c| c.bit == run.len() as u64 * 8).unwrap();
+    assert_eq!(checkpoints[..breaks], walked.checkpoints()[..], "the run, as its own file");
+    assert_eq!(checkpoints[breaks].start, Start::Member);
+    assert!(checkpoints[breaks..].iter().any(|c| matches!(c.start, Start::Block { .. })));
+    assert!(checkpoints[breaks..].iter().all(|c| c.crc.is_some()));
+    let after = bgzf(&b);
+    let members_after = forward(&after, 1, 1 << 20, 1 << 20).unwrap().index.member_count();
+    let starts = checkpoints[breaks + 1..].iter().filter(|c| c.start == Start::Member).count();
+    assert_eq!(starts as u64, members_after, "every member start once the run has ended");
+    assert_eq!(pass.index.member_count(), walked.member_count() + 1 + members_after);
 }

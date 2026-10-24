@@ -27,8 +27,8 @@ the compressed file pulled or fetched, the remote object
   layer: the codec trait both compressed arms are written once over, the arms,
   the block cache and budget they share, the compression index, and each
   codec's adapter, the only modules naming its codec's crate — gzip's with
-  the BGZF walk that reads a BGZF file's index at open, and the first pass
-  that builds any other's, the source a file no cache has indexed is read
+  the BGZF walk that reads a local BGZF file's index at open, and the first
+  pass that builds any other's, the source a file no cache has indexed is read
   through until it hands over to the arms, and the file it spills its
   windows to, in the directory `open`'s caller names.
 - **gz-seek** — `index.rs`, `forward.rs`, `unit.rs`, `bgzf.rs`, `engine.rs`,

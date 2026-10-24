@@ -25,8 +25,6 @@ mod walk;
 pub(crate) use self::checkpoints::{BGZF_HEADER_LEN, GZIP_MAGIC};
 pub use self::checkpoints::{GzipIndex, WindowProvider};
 pub(crate) use self::first_pass::{Feed, FirstPass};
-#[cfg(feature = "http")]
-pub(crate) use self::walk::walk_fetched;
 pub(crate) use self::walk::{is_bgzf, walk_file};
 
 /// The plaintext spacing a forward pass places a checkpoint at the first

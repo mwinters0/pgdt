@@ -415,9 +415,10 @@ pub(crate) async fn open_local(
         // against the file's length and its own internal consistency without
         // reading a byte, and never rebuilt.
         Verdict::Known(index) => over_known_index(CompressedFileSource::with_index(path, index)),
-        // A BGZF file's index is walked off its members' headers, and any
-        // other gzip file's — one whose chain the walk found broken included —
-        // is its first full pass's by-product.
+        // A BGZF file's index is walked off its members' headers, here
+        // rather than on the fetched arm, where it would be downloaded twice;
+        // any other gzip file's — one whose chain the walk found broken
+        // included — is its first full pass's by-product.
         Verdict::Unknown(Format::Gzip) => {
             if is_bgzf(probe.leading())
                 && let Some(source) = CompressedFileSource::bgzf(path, &origin.to_string())?

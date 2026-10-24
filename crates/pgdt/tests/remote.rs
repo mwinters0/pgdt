@@ -1091,55 +1091,92 @@ fn parse_and_query_over_a_remote_gzip_answer_what_the_local_file_answers() {
 }
 
 // ---------------------------------------------------------------------------
-// A remote BGZF file, walked at open (D18, D64)
+// A remote BGZF file, read by a first pass (D64, D116)
 // ---------------------------------------------------------------------------
 
 /// The gzip dump's plaintext as BGZF, by `noodles-bgzf`'s writer.
 fn bgzf_dump_bytes() -> Vec<u8> {
     use std::io::Write as _;
+    let mut writer = noodles_bgzf::io::Writer::new(Vec::new());
+    writer.write_all(&gzip_dump_plaintext()).unwrap();
+    writer.finish().unwrap()
+}
+
+/// The gzip dump's plaintext.
+fn gzip_dump_plaintext() -> Vec<u8> {
     let mut plaintext = Vec::new();
     std::io::Read::read_to_end(
         &mut flate2::read::GzDecoder::new(&gzip_dump_bytes()[..]),
         &mut plaintext,
     )
     .unwrap();
-    let mut writer = noodles_bgzf::io::Writer::new(Vec::new());
-    writer.write_all(&plaintext).unwrap();
-    writer.finish().unwrap()
+    plaintext
+}
+
+/// How many bytes the ranged GETs after the first asked for.
+fn bytes_ranged_after_the_probe(oracle: &Oracle) -> u64 {
+    oracle.requests()[1..]
+        .iter()
+        .map(|request| {
+            let range = request.range().expect("every read after the probe is ranged");
+            let (from, to) = range.trim_start_matches("bytes=").split_once('-').unwrap();
+            to.parse::<u64>().unwrap() - from.parse::<u64>().unwrap() + 1
+        })
+        .sum()
 }
 
 #[tokio::test]
-async fn a_remote_bgzf_file_is_walked_at_open_and_read_by_its_index() {
-    // The fetched arm's genericity again: a BGZF object's members are walked
-    // through ranged GETs as the source opens, so its extent is exact and its
-    // index complete before a byte of plaintext is asked for, every member
-    // counted, and a `parse` and `query` over the URL answer what the local
-    // file answers.
+async fn a_remote_bgzf_file_is_read_once_by_a_first_pass_that_builds_the_walk_s_index() {
+    // A fetched source recommends one reader, so walking a BGZF object's
+    // members at open would download it once for parallelism the run does not
+    // take before the scan downloads it again: the first pass reads it once,
+    // open until it meets the end, and builds the index a local walk reads
+    // off the same file's headers.
     let bytes = bgzf_dump_bytes();
     let oracle = Oracle::serving(bytes.clone()).start();
     let url = oracle.url_for("dump.sql.bgz");
     let source = source_of(&url).await;
-    let Some(CompressionIndex::Gzip(index)) = source.compression_index() else {
-        panic!("a fetched BGZF source answers its walked index");
-    };
-    assert!(index.is_complete() && !index.has_windows());
-    assert!(index.member_count() > index.unit_count(), "{} members", index.member_count());
-    let size = index.uncompressed_size();
-    assert_eq!(source.extent().await.unwrap(), Extent::Exact(size));
-    let plaintext = source.read_range(0, usize::try_from(size).unwrap()).await.unwrap();
-    let mut expected = Vec::new();
-    std::io::Read::read_to_end(
-        &mut flate2::read::GzDecoder::new(&gzip_dump_bytes()[..]),
-        &mut expected,
-    )
-    .unwrap();
+    assert_eq!(oracle.request_count(), 1, "the probe, and no walk");
+    assert_eq!(source.extent().await.unwrap(), Extent::Open { at_least: 0 });
+    let expected = gzip_dump_plaintext();
+    let plaintext = source.read_at_most(0, expected.len() + 1).await.unwrap();
     assert!(plaintext[..] == expected[..]);
+    assert_eq!(source.extent().await.unwrap(), Extent::Exact(expected.len() as u64));
+    assert!(
+        bytes_ranged_after_the_probe(&oracle) <= bytes.len() as u64,
+        "the object is downloaded once: {:?}",
+        oracle.requests()
+    );
 
     let local_dir = tempfile::tempdir().unwrap();
     let local = local_dir.path().join("dump.sql.bgz");
     std::fs::write(&local, &bytes).unwrap();
+    let Some(CompressionIndex::Gzip(index)) = source.compression_index() else {
+        panic!("a fetched BGZF source answers its index");
+    };
+    let walked = pgdt_io::CompressedFileSource::open(&local).unwrap().compression_index();
+    assert_eq!(Some(CompressionIndex::Gzip(index.clone())), walked, "the walk's index");
+    assert!(index.member_count() > index.unit_count(), "{} members", index.member_count());
+    assert_eq!(&source.read_range(100, 50).await.unwrap()[..], &expected[100..150]);
+
     let query = |source: &str| {
         run_ok(&["query", "--source", source, "--table", "public.widgets", "--dtcache", "none"])
     };
     assert_eq!(query(&url), query(local.to_str().unwrap()));
+}
+
+#[test]
+fn parse_over_a_remote_bgzf_file_announces_its_first_pass_and_no_walk() {
+    // The pass is the scan's own cost, so it is announced at `info` as any
+    // first pass is, and the walk a local file pays is neither run nor said.
+    let oracle = Oracle::serving(bgzf_dump_bytes()).start();
+    let dir = tempfile::tempdir().unwrap();
+    let out = run_in(&dir, &["parse", "--source", &oracle.url_for("dump.sql.bgz")]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let said = stderr_of(&out);
+    let line = |what: &str| said.lines().filter(|line| line.contains(what)).collect::<Vec<_>>();
+    let (started, complete) = (line("first pass started"), line("first pass complete"));
+    assert_eq!((started.len(), complete.len()), (1, 1), "{said}");
+    assert!(started[0].contains("INFO") && complete[0].contains("INFO"), "{said}");
+    assert!(!said.contains("BGZF member walk"), "{said}");
 }

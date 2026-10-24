@@ -95,7 +95,13 @@ fn a_recorded_crc_is_compared() {
     let unit = checkpoints.len() / 2;
     let stored = checkpoints[unit].crc.unwrap();
     checkpoints[unit].crc = Some(stored ^ 1);
-    let index = Index::from_parts(pass.index.spacing(), checkpoints, pass.index.end()).unwrap();
+    let index = Index::from_parts(
+        pass.index.spacing(),
+        checkpoints,
+        pass.index.member_count(),
+        pass.index.end(),
+    )
+    .unwrap();
     let task = index.unit(unit).unwrap();
     let mut out = vec![0u8; plaintext_of(&pass, &task).len()];
     let err = task.decode(&pass.windows[unit], slice(&file, task.compressed_range()), &mut out);
@@ -126,7 +132,13 @@ fn a_unit_ending_elsewhere_than_its_index_says_is_refused() {
         let mut checkpoints = c.to_vec();
         checkpoints[unit + 1].plaintext =
             checkpoints[unit + 1].plaintext.wrapping_add_signed(shift);
-        let index = Index::from_parts(pass.index.spacing(), checkpoints, pass.index.end()).unwrap();
+        let index = Index::from_parts(
+            pass.index.spacing(),
+            checkpoints,
+            pass.index.member_count(),
+            pass.index.end(),
+        )
+        .unwrap();
         let task = index.unit(unit).unwrap();
         let len = (task.plaintext_range().end - task.plaintext_range().start) as usize;
         let mut out = vec![0u8; len];
@@ -167,6 +179,7 @@ fn a_unit_of_whole_members_needs_no_crc_of_its_own() {
     let index = Index::from_parts(
         NonZeroU64::new(1 << 30).unwrap(),
         vec![Checkpoint::member(0, 0)],
+        pass.index.member_count(),
         Some(end),
     )
     .unwrap();

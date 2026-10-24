@@ -15,6 +15,7 @@
 //! the trailer's (`docs/design/runtime-invariants.md`,
 //! "RT23").
 
+use crate::bgzf::bgzf_member_len;
 use crate::error::{Error, Result};
 use crate::member::{Header, Trailer};
 use crate::zlib::{Raw, WINDOW_SIZE};
@@ -24,6 +25,8 @@ use crate::zlib::{Raw, WINDOW_SIZE};
 pub(crate) enum Event {
     /// A member's header begins at the offset [`Engine::member`] carries.
     MemberStart,
+    /// The member's header has been read, and is a BGZF member's or not.
+    Header { bgzf: bool },
     /// A deflate block that is not its member's last has ended; the next one
     /// begins at compressed bit `bit`.
     Block { bit: u64 },
@@ -210,12 +213,14 @@ impl Engine {
         };
         let consumed = header.read(input)?;
         self.fed += consumed as u64;
+        let mut event = None;
         if header.is_done() {
+            event = Some(Event::Header { bgzf: bgzf_member_len(header.bytes()).is_some() });
             self.raw.reset()?;
             self.last_boundary = None;
             self.phase = Phase::Deflate;
         }
-        Ok(Stepped { consumed, ..Stepped::default() })
+        Ok(Stepped { consumed, event, ..Stepped::default() })
     }
 
     fn inflate(&mut self, input: &[u8], out: &mut [u8]) -> Result<Stepped> {

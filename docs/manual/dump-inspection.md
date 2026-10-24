@@ -152,8 +152,8 @@ it a read could begin, so the first command to read one reads it from start
 to end with one reader, and the cache it writes records where later reads can
 begin; every later command reads it as an `.xz` file is read. A `parse`
 stopped part-way resumes from where it saved, as on an uncompressed file. A
-BGZF file — what `bgzip` writes — does say, so it is read as an `.xz` file is
-from the first command.
+BGZF file — what `bgzip` writes — does say, so a local one is read as an
+`.xz` file is from the first command.
 
 **Other compression is not read yet.** `.zst` and `.lz4` — including what
 `pg_dump -Fp --compress=zstd` or `lz4` writes — still have to be decompressed

@@ -74,26 +74,20 @@ fn a_walk_reads_ahead_as_far_as_it_is_supplied() {
     assert!(members > 5);
 }
 
+/// **A forward pass over a BGZF file builds the walk's index**, at every
+/// spacing: the same member starts, no block boundary, no unit CRC-32, and
+/// every member counted — the index a caller decoding the file once builds
+/// with no walk.
 #[test]
-fn a_forward_pass_over_bgzf_agrees_with_the_walk() {
+fn a_forward_pass_over_bgzf_builds_the_walk_s_index() {
     let plaintext = payload(300_000, 67);
     let file = bgzf(&plaintext);
-    let pass = forward(&file, 1, 1 << 20, 1 << 20).unwrap();
-    assert_eq!(pass.plaintext, plaintext);
-    let walked = walk_exactly(&file, 1).unwrap();
-    let bits: Vec<u64> = walked.checkpoints().iter().map(|c| c.bit).collect();
-    let members: Vec<u64> = pass
-        .index
-        .checkpoints()
-        .iter()
-        .filter(|c| c.start == Start::Member)
-        .map(|c| c.bit)
-        .collect();
-    // Both place every member's start, the empty last's included, and count
-    // every member.
-    assert_eq!(members[..bits.len()], bits[..]);
-    assert_eq!(pass.index.end(), walked.end());
-    assert_eq!(walk_exactly(&file, 1 << 20).unwrap().member_count(), members.len() as u64);
+    for spacing in [1, 50_000, 128 * 1024, 1 << 30] {
+        let pass = forward(&file, spacing, 1 << 20, 1 << 20).unwrap();
+        assert_eq!(pass.plaintext, plaintext);
+        assert_eq!(pass.index, walk_exactly(&file, spacing).unwrap(), "spacing {spacing}");
+        assert!(pass.windows.iter().all(Vec::is_empty), "spacing {spacing}");
+    }
 }
 
 #[test]

@@ -300,7 +300,8 @@ impl Pass {
                 let mut parts = checkpoints[..=at].to_vec();
                 parts[at].crc = None;
                 let prefix =
-                    gz_seek::Index::from_parts(index.spacing(), parts, None).map_err(gzip_error)?;
+                    gz_seek::Index::from_parts(index.spacing(), parts, index.member_count(), None)
+                        .map_err(gzip_error)?;
                 Behind::Open(gz_seek::Forward::resume(&prefix, &window).map_err(gzip_error)?)
             }
         };

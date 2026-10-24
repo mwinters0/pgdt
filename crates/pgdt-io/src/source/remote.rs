@@ -1,7 +1,8 @@
 //! The remote source, over `object_store`'s HTTP backend; what an
 //! [`Origin`] needs to name one; and opening a remote origin — recognising
-//! its compression, and the seek-table walk an uncached `.xz` pays, announced
-//! before it starts. Everything here is behind the `http` feature.
+//! its compression, the seek-table walk an uncached `.xz` pays, announced
+//! before it starts, and the first pass an uncached gzip file is read by.
+//! Everything here is behind the `http` feature.
 
 use std::future::Future;
 use std::path::Path;
@@ -18,8 +19,7 @@ use tokio_util::sync::CancellationToken;
 use pgdt_core::{Error, Result};
 
 use super::compressed::{
-    CompressionIndex, Feed, FetchedCompressedSource, FirstPass, Format, is_bgzf, walk_fetched,
-    walk_seek_table,
+    CompressionIndex, Feed, FetchedCompressedSource, FirstPass, Format, walk_seek_table,
 };
 use super::origin::{
     KnownCompression, Location, ORIGIN_LEADING_BYTES, Origin, OriginProbe, Recognized, Verdict,
@@ -407,9 +407,13 @@ impl ByteRangeSource for RemoteSource {
 /// through [`CompressedFileSource`](crate::CompressedFileSource), which pulls
 /// from a file (`docs/design/decisions.md`, "D14" and "D18") — a gzip file
 /// whose index is not complete through its first pass instead, a BGZF one
-/// once its members' walk has built it. Where the cache holds a complete
-/// index there is no build at all; where it does not, an `.xz` file's walk is
-/// announced before it is paid for ([`announce_remote_walk`]).
+/// included: a walk of its members would download the object once before the
+/// scan downloads it again, for parallelism a fetched source does not
+/// recommend, and the pass builds the walk's index as it reads (D116). Where
+/// the cache holds a complete index there is no build at all; where it does
+/// not, an `.xz` file's walk is announced before it is paid for
+/// ([`announce_remote_walk`]), a cost beyond the scan's own, where a first
+/// pass's is the scan's (D64).
 ///
 /// Deficiency register: `deficiency: KD51` — a run that
 /// `pgdt_dump::cache::SourceWatch::require_checkable` will refuse for a server
@@ -471,29 +475,15 @@ pub(crate) async fn open_remote(
                 CompressionIndex::Xz(table),
             )?)))
         }
-        // A BGZF file's index is walked off its members' headers, fetched
-        // ahead of each request; any other gzip file's — one whose chain the
-        // walk found broken included — is its first full pass's by-product, a
-        // serial ranged read of the object. Each announces itself.
-        Verdict::Unknown(Format::Gzip) => {
-            let source = fetched();
-            if is_bgzf(probe.leading())
-                && let Some(index) =
-                    walk_fetched(&origin.to_string(), &*source, probe.stored_size()).await?
-            {
-                return Ok(Recognized::Source(Arc::new(FetchedCompressedSource::with_index(
-                    source,
-                    probe.stored_size(),
-                    CompressionIndex::Gzip(index),
-                )?)));
-            }
-            Ok(Recognized::Source(Arc::new(FirstPass::fresh(
-                origin.to_string(),
-                Feed::Fetched(source),
-                probe.stored_size(),
-                spill,
-            )?)))
-        }
+        // Any gzip file's index, a BGZF file's included, is its first full
+        // pass's by-product, a serial ranged read of the object, announced
+        // as it starts and completes.
+        Verdict::Unknown(Format::Gzip) => Ok(Recognized::Source(Arc::new(FirstPass::fresh(
+            origin.to_string(),
+            Feed::Fetched(fetched()),
+            probe.stored_size(),
+            spill,
+        )?))),
         Verdict::Mismatch => Ok(Recognized::Mismatch),
         Verdict::Plain => Ok(Recognized::Source(fetched())),
     }

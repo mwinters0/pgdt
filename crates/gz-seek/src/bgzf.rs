@@ -12,7 +12,10 @@
 //! **Members are coalesced into units** of at least the spacing, each unit
 //! beginning at a member start: a 64 KiB unit would make a caller's block
 //! cache and partition grain absurd. A unit of whole members needs no CRC-32
-//! of its own, its members' trailers checking it as it is decoded.
+//! of its own, its members' trailers checking it as it is decoded. A
+//! [`Forward`](crate::Forward) pass over the file places the same checkpoints,
+//! so a caller with no reason to walk — one whose file arrives once, in
+//! order — builds the walk's index by decoding it.
 //!
 //! # The walk is a machine; the fetching is the caller's
 //!
@@ -151,11 +154,11 @@ impl Walk {
                 self.owed = false;
             }
             if self.pos == self.size {
-                let end =
-                    End { plaintext: self.plaintext, compressed: self.size, members: self.members };
+                let end = End { plaintext: self.plaintext, compressed: self.size };
                 return Ok(WalkStep::Done(Index::built(
                     self.spacing,
                     std::mem::take(&mut self.checkpoints),
+                    self.members,
                     Some(end),
                 )));
             }

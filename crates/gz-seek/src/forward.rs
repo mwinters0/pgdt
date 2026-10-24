@@ -13,6 +13,16 @@
 //! multiple; what the spacing moves is how many windows are copied, never how
 //! often the decoder stops.
 //!
+//! **Over a run of BGZF members the pass places what a [`Walk`](crate::Walk)
+//! places.** While every member's header so far has been a BGZF member's, a
+//! member start is a checkpoint only where it is the file's first or the unit
+//! since the last checkpoint holds the spacing, no block boundary is one, and
+//! each unit of whole members records no CRC-32, its trailers checking it: so
+//! the pass over a BGZF file builds the index its walk reads off the headers.
+//! From the first member whose header is not BGZF's, the rule above governs.
+//! Only a header ends the run, which a pass resumed at a member start reads
+//! again (`docs/design/decisions.md`, "D116").
+//!
 //! # What a step hands out
 //!
 //! The plaintext, into the caller's buffer, and each checkpoint as it is
@@ -46,6 +56,20 @@ pub struct Forward {
     /// The next multiple of the spacing a checkpoint is owed at.
     next_mark: u64,
     checkpoints: Vec<Checkpoint>,
+    /// Whether every member's header so far has been a BGZF member's: while
+    /// it holds, members are coalesced into units as a walk coalesces them.
+    coalescing: bool,
+    /// A member start the spacing does not owe, placed only if its header
+    /// proves not to be a BGZF member's.
+    deferred: Option<Checkpoint>,
+    /// How many members have begun.
+    members: u64,
+    /// How many members had begun when the last checkpoint was placed.
+    members_at_last: u64,
+    /// The member start the pass begins at and has yet to place, with the
+    /// member count of the index it stands for: what [`Forward::index`]
+    /// answers until it is placed.
+    replacing: Option<(Checkpoint, u64)>,
     window: Box<[u8; WINDOW_SIZE]>,
     window_len: usize,
 }
@@ -59,6 +83,11 @@ impl Forward {
             spacing,
             next_mark: 0,
             checkpoints: Vec::new(),
+            coalescing: true,
+            deferred: None,
+            members: 0,
+            members_at_last: 0,
+            replacing: Some((Checkpoint::member(0, 0), 1)),
             window: Box::new([0; WINDOW_SIZE]),
             window_len: 0,
         })
@@ -99,17 +128,30 @@ impl Forward {
                 Engine::at_block(last.bit, last.plaintext, window, member)?
             }
         };
+        let members = index.member_count();
         let mut forward = Forward {
             engine,
             spacing: index.spacing(),
             next_mark: 0,
             checkpoints,
+            coalescing: false,
+            deferred: None,
+            members,
+            members_at_last: members,
+            replacing: None,
             window: Box::new([0; WINDOW_SIZE]),
             window_len: 0,
         };
         if last.start == Start::Member {
-            // The member's start is placed again by the pass's first step.
+            // The member's start is placed again, and its member counted
+            // again, as the pass reads its header.
             forward.checkpoints.pop();
+            forward.members -= 1;
+            forward.replacing = Some((last, members));
+            // A run of BGZF members leaves its units with no CRC-32, and only
+            // such a run does: the unit before the member says whether the
+            // run reached it, and the member's own header is read again.
+            forward.coalescing = forward.checkpoints.last().is_none_or(|unit| unit.crc.is_none());
         } else {
             forward.checkpoints[at].crc = None;
             forward.placed(last.plaintext);
@@ -142,13 +184,17 @@ impl Forward {
     /// so that [`Forward::resume`] over it begins there.
     pub fn index(&self) -> Index {
         let mut checkpoints = self.checkpoints.clone();
-        if checkpoints.is_empty() {
-            checkpoints.push(Checkpoint::member(0, 0));
-        }
+        let members = match self.replacing {
+            Some((start, members)) => {
+                checkpoints.push(start);
+                members
+            }
+            None => self.members_at_last,
+        };
         if let Some(last) = checkpoints.last_mut() {
             last.crc = None;
         }
-        Index::built(self.spacing, checkpoints, None)
+        Index::built(self.spacing, checkpoints, members, None)
     }
 
     /// Take compressed bytes from `input`, which begins at
@@ -182,8 +228,20 @@ impl Forward {
         let plaintext = self.engine.plaintext();
         let checkpoint = match event {
             Some(Event::MemberStart) => {
+                self.members += 1;
                 self.window_len = 0;
-                Some(Checkpoint::member(plaintext, self.engine.member().offset))
+                let start = Checkpoint::member(plaintext, self.engine.member().offset);
+                if self.owes_member(plaintext) {
+                    Some(start)
+                } else {
+                    self.deferred = Some(start);
+                    None
+                }
+            }
+            Some(Event::Header { bgzf }) => {
+                self.coalescing &= bgzf;
+                let deferred = self.deferred.take();
+                if self.coalescing { None } else { deferred }
             }
             // deficiency: KD129 — a checkpoint is a block boundary, so a
             // member whose writer ends a block only at `Z_FINISH`, before its
@@ -195,7 +253,7 @@ impl Forward {
             // of the byte's remaining bits; what is missing is a stop there,
             // which no inflater gives, so placing one means walking the static
             // codes here.
-            Some(Event::Block { bit }) if plaintext >= self.next_mark => {
+            Some(Event::Block { bit }) if !self.coalescing && plaintext >= self.next_mark => {
                 self.close_unit();
                 self.window_len = self.engine.dictionary(&mut self.window);
                 Some(Checkpoint {
@@ -207,7 +265,8 @@ impl Forward {
                     crc: None,
                 })
             }
-            Some(Event::MemberEnd) => {
+            // A unit of whole BGZF members is checked by their trailers.
+            Some(Event::MemberEnd) if !self.coalescing => {
                 let crc = self.engine.run_crc();
                 self.checkpoints.last_mut().expect("a member began").crc = Some(crc);
                 None
@@ -216,6 +275,8 @@ impl Forward {
         };
         if let Some(checkpoint) = checkpoint {
             self.checkpoints.push(checkpoint);
+            self.members_at_last = self.members;
+            self.replacing = None;
             self.placed(plaintext);
         }
         Ok((ForwardStep { progress, checkpoint }, stepped.progressed()))
@@ -229,16 +290,25 @@ impl Forward {
     /// [`Error::Truncated`] where the input ended inside a member, or held
     /// none.
     pub fn finish(self) -> Result<Index> {
-        if self.checkpoints.is_empty() || !self.engine.is_between() {
+        if self.replacing.is_some() || !self.engine.is_between() {
             return Err(Error::Truncated { offset: self.engine.compressed_position() });
         }
-        let members = self.checkpoints.iter().filter(|c| c.start == Start::Member).count();
         let end = End {
             plaintext: self.engine.plaintext(),
             compressed: self.engine.compressed_position(),
-            members: members as u64,
         };
-        Ok(Index::built(self.spacing, self.checkpoints, Some(end)))
+        Ok(Index::built(self.spacing, self.checkpoints, self.members, Some(end)))
+    }
+
+    /// Whether a member beginning at `plaintext` begins a unit before its
+    /// header is read: always, unless members are being coalesced and the
+    /// unit since the last checkpoint is short of the spacing.
+    fn owes_member(&self, plaintext: u64) -> bool {
+        !self.coalescing
+            || self
+                .checkpoints
+                .last()
+                .is_none_or(|last| plaintext - last.plaintext >= self.spacing.get())
     }
 
     /// Record the unit ending here: the CRC-32 of the run since the last

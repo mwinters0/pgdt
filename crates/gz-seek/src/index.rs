@@ -5,7 +5,8 @@
 //! resumes at, and the window of history a back-reference there may reach —
 //! none at a member's start, which begins with no history. A single member's
 //! checkpoints are block boundaries a forward pass chose; a BGZF file's are
-//! member starts its walk chose; a file of several members has both. The span
+//! member starts, chosen alike by its walk and by a forward pass; a file of
+//! several members has both. The span
 //! from one checkpoint to the next is a **unit**, the thing a caller decodes
 //! independently, as an `.xz` block is.
 //!
@@ -49,9 +50,9 @@ pub struct Checkpoint {
     /// Whether the decode begins at a header or inside a member.
     pub start: Start,
     /// The CRC-32 of the unit this checkpoint begins, where one was recorded:
-    /// a forward pass records every unit's; a walk records none, its units
-    /// being whole members their own trailers check; the last unit of an
-    /// unfinished pass has none yet.
+    /// a forward pass records every unit's but one of whole BGZF members,
+    /// which their own trailers check, and a walk none, its units being all
+    /// such; the last unit of an unfinished pass has none yet.
     pub crc: Option<u32>,
 }
 
@@ -72,9 +73,6 @@ pub struct End {
     pub plaintext: u64,
     /// The compressed length the members occupy: the file's.
     pub compressed: u64,
-    /// How many members the file holds: a forward pass places a checkpoint
-    /// at every one's start, a walk only at those beginning a unit.
-    pub members: u64,
 }
 
 /// The plaintext's length as far as it is known: exact once a pass has read
@@ -102,24 +100,27 @@ struct Inner {
     checkpoints: Vec<Checkpoint>,
     /// For each checkpoint, the checkpoint its member begins at.
     member_of: Vec<u32>,
+    /// [`Index::member_count`].
+    members: u64,
     end: Option<End>,
 }
 
 impl Index {
-    /// Rebuild an index from what [`Index::spacing`], [`Index::checkpoints`]
-    /// and [`Index::end`] answered, as a caller that persisted it hands it
-    /// back.
+    /// Rebuild an index from what [`Index::spacing`], [`Index::checkpoints`],
+    /// [`Index::member_count`] and [`Index::end`] answered, as a caller that
+    /// persisted it hands it back.
     ///
     /// # Errors
     ///
     /// [`Error::InvalidIndex`] where the parts break an invariant every index
     /// this crate builds holds: no checkpoint at the file's start, offsets running
     /// backward, a window other than its member's last 32 KiB, a unit that no
-    /// check would cover, an end before the last checkpoint, or one counting
+    /// check would cover, an end before the last checkpoint, or a count of
     /// fewer members than the checkpoints begin.
     pub fn from_parts(
         spacing: NonZeroU64,
         checkpoints: Vec<Checkpoint>,
+        members: u64,
         end: Option<End>,
     ) -> Result<Index> {
         let invalid = |reason| Error::InvalidIndex { reason };
@@ -153,16 +154,17 @@ impl Index {
             member_of.push(u32::try_from(member).map_err(|_| invalid("too many checkpoints"))?);
         }
         let last = checkpoints.last().expect("not empty");
-        if let Some(end) = end {
-            if end.plaintext < last.plaintext || end.compressed * 8 <= last.bit {
-                return Err(invalid("the end is before the last checkpoint"));
-            }
-            let starts = checkpoints.iter().filter(|c| c.start == Start::Member).count();
-            if end.members < starts as u64 {
-                return Err(invalid("the end counts fewer members than the checkpoints begin"));
-            }
+        if let Some(end) = end
+            && (end.plaintext < last.plaintext || end.compressed * 8 <= last.bit)
+        {
+            return Err(invalid("the end is before the last checkpoint"));
         }
-        let index = Index { inner: Arc::new(Inner { spacing, checkpoints, member_of, end }) };
+        let starts = checkpoints.iter().filter(|c| c.start == Start::Member).count();
+        if members < starts as u64 {
+            return Err(invalid("the index counts fewer members than its checkpoints begin"));
+        }
+        let index =
+            Index { inner: Arc::new(Inner { spacing, checkpoints, member_of, members, end }) };
         for unit in 0..index.unit_count() {
             let task = index.unit(unit).expect("a counted unit");
             if task.start.crc.is_none()
@@ -179,10 +181,11 @@ impl Index {
     pub(crate) fn built(
         spacing: NonZeroU64,
         checkpoints: Vec<Checkpoint>,
+        members: u64,
         end: Option<End>,
     ) -> Index {
         if cfg!(debug_assertions) {
-            return Index::from_parts(spacing, checkpoints, end)
+            return Index::from_parts(spacing, checkpoints, members, end)
                 .expect("an index this crate built");
         }
         let mut member = 0u32;
@@ -196,7 +199,7 @@ impl Index {
                 member
             })
             .collect();
-        Index { inner: Arc::new(Inner { spacing, checkpoints, member_of, end }) }
+        Index { inner: Arc::new(Inner { spacing, checkpoints, member_of, members, end }) }
     }
 
     /// The plaintext spacing checkpoints were placed at.
@@ -214,16 +217,12 @@ impl Index {
         self.inner.end
     }
 
-    /// How many members the file holds, once complete — as its end counts
-    /// them, a walk's units holding several — and otherwise how many the
-    /// checkpoints so far begin.
+    /// How many members the index reaches: every member of the file once
+    /// complete, and otherwise each beginning at or before the last
+    /// checkpoint — a unit of whole members holding several, so the count is
+    /// stated rather than read off the checkpoints.
     pub fn member_count(&self) -> u64 {
-        match self.inner.end {
-            Some(end) => end.members,
-            None => {
-                self.inner.checkpoints.iter().filter(|c| c.start == Start::Member).count() as u64
-            }
-        }
+        self.inner.members
     }
 
     /// Whether the index covers the whole file.

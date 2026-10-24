@@ -9,8 +9,13 @@ fn pass_index() -> Index {
 #[test]
 fn an_index_rebuilt_from_its_parts_is_the_same_index() {
     let index = pass_index();
-    let rebuilt =
-        Index::from_parts(index.spacing(), index.checkpoints().to_vec(), index.end()).unwrap();
+    let rebuilt = Index::from_parts(
+        index.spacing(),
+        index.checkpoints().to_vec(),
+        index.member_count(),
+        index.end(),
+    )
+    .unwrap();
     assert_eq!(rebuilt, index);
     let clone = index.clone();
     assert!(Arc::ptr_eq(&clone.inner, &index.inner), "a clone shares, never copies");
@@ -19,11 +24,13 @@ fn an_index_rebuilt_from_its_parts_is_the_same_index() {
 #[test]
 fn parts_no_pass_builds_are_refused() {
     let index = pass_index();
-    let (s, end) = (index.spacing(), index.end());
+    let (s, members, end) = (index.spacing(), index.member_count(), index.end());
     let good = index.checkpoints().to_vec();
-    let refused = |checkpoints: Vec<Checkpoint>, end: Option<End>| {
-        matches!(Index::from_parts(s, checkpoints, end), Err(Error::InvalidIndex { .. }))
+    let counted = |checkpoints: Vec<Checkpoint>, members: u64, end: Option<End>| {
+        matches!(Index::from_parts(s, checkpoints, members, end), Err(Error::InvalidIndex { .. }))
     };
+    let refused =
+        |checkpoints: Vec<Checkpoint>, end: Option<End>| counted(checkpoints, members, end);
     assert!(refused(Vec::new(), None));
     let mut late = good.clone();
     late[0].bit = 8;
@@ -40,8 +47,8 @@ fn parts_no_pass_builds_are_refused() {
     assert!(refused(unchecked, end));
     let early = End { plaintext: good.last().unwrap().plaintext - 1, ..end.unwrap() };
     assert!(refused(good.clone(), Some(early)));
-    let fewer = End { members: 1, ..end.unwrap() };
-    assert!(refused(good.clone(), Some(fewer)));
+    assert!(counted(good.clone(), 1, end));
+    assert!(counted(good.clone(), 1, None));
     let mut inside = good;
     let m = inside.iter().rposition(|c| c.start == Start::Member).unwrap();
     inside[m].bit += 3;
@@ -73,7 +80,7 @@ fn an_unfinished_index_is_open_and_its_last_unit_undecodable() {
     let checkpoints = index.checkpoints()[..4].to_vec();
     let mut open = checkpoints.clone();
     open[3].crc = None;
-    let partial = Index::from_parts(spacing(40_000), open, None).unwrap();
+    let partial = Index::from_parts(spacing(40_000), open, 1, None).unwrap();
     assert_eq!(partial.size(), Size::Open { at_least: checkpoints[3].plaintext });
     assert_eq!(partial.unit_count(), 3);
     assert!(partial.unit(3).is_none());

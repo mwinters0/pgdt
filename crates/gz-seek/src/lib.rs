@@ -14,7 +14,9 @@
 //! handing each checkpoint's window out as it goes. A **BGZF** file states every
 //! member's length in its header, so [`Walk`] reads its index off the headers
 //! and trailers without decoding a byte, coalescing members into units of at
-//! least the spacing.
+//! least the spacing — and a [`Forward`] pass over one coalesces them alike,
+//! so a caller decoding the file anyway builds the same index without the
+//! walk's reads.
 //!
 //! **Nothing here reads a file.** Every type is driven by bytes the caller
 //! supplies — [`Forward::read`] and [`UnitRead::read`] take the next compressed

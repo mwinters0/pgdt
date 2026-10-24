@@ -29,8 +29,6 @@ pub(crate) use self::index::{Format, RECOGNITION_BYTES};
 pub use self::xz::SeekTable;
 
 pub(crate) use self::codec::{Codec, Positioned, UnitRead, short_read};
-#[cfg(feature = "http")]
-pub(crate) use self::deflate::walk_fetched;
 pub(crate) use self::deflate::{Feed, FirstPass, is_bgzf};
 #[cfg(any(feature = "http", test))]
 pub(crate) use self::xz::walk_seek_table;

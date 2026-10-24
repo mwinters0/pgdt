@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D115 -->
+<!-- decision-watermark: D116 -->
 
 ## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
@@ -122,9 +122,9 @@ released buffer meets a reservation and is discarded. A reuse rule, not progress
 A many-stream file costs a footer read per stream, so `CacheMode::save` records the table, `CacheMode::open` reads
 it before a source exists and `CompressedFileSource::with_index` walks nothing. `KnownCompression` is
 `Unknown`/`Plain`/`Compressed`, checked against the file's magic; a contradiction is `Recognized::Mismatch`
-and condemns the span index too, both having come from one save of one file. A BGZF file's member walk is
-persisted alike, as the gzip index a first pass builds, its member count in its end; one whose first member
-is BGZF's and whose chain then breaks is a first pass's. Rejected: refusing it, a gzip file the pass reads.
+and condemns the span index too, both having come from one save of one file. A local BGZF file's member walk
+is persisted alike, as the gzip index a first pass builds (D116), its member count beside the checkpoints; one
+whose first member is BGZF's and whose chain then breaks is a first pass's. Rejected: refusing it, a gzip file the pass reads.
 
 ### D19 A budget decline is a `PlanNote`; a non-seekable file is warned, not refused
 A decline is a property of the file *and this run's budget*, and a `Diagnostic` is a finding about the file.
@@ -163,6 +163,14 @@ Rejected: the windows held in memory, unbilled; billed through a per-source `Wor
 save and covering no disabled cache; the temp directory always, a tmpfs on common distributions' defaults whose pages the run's memory cgroup is charged; the directory a disabled cache would have had, beside a dump often
 on a read-only mount. Reopens: a spill directory a user needs to name apart from the cache's. Code: `first_pass/spill.rs` (`PassWindows`), `CacheMode::open`. Evidence: `a_first_pass_spills_its_windows_where_it_is_told`,
 `a_first_pass_spills_beside_its_cache_or_in_the_temp_directory`.
+
+### D116 A forward pass coalesces a run of BGZF members as the walk does, so a fetched BGZF file is read by a first pass
+A fetched source recommends one reader (D2), so a walk would download the object for parallelism the run does not take before the scan downloads it again; the first pass reads it once and builds the walk's index:
+while every member's header has been BGZF's, a member start begins a unit only at the spacing and no block boundary does, and from the first that is not, `gz_seek::Forward`'s block rule governs. The rule is the
+pass's on both arms, so a file whose chain breaks gets one index whichever arm reads it. Only a header ends the run, which a pass resumed at a member start reads again; the member count sits beside the checkpoints.
+Rejected: a pass placing every member start, a unit a BGZF block; a stated length or `ISIZE` the decode contradicts ending the run, which a pass resumed after that member cannot know of; the walk on both arms (two downloads).
+Reopens: a parallel first pass, which takes a fetched file's units from its headers. Code: `gz_seek::Forward`, `open_remote`. Evidence: `a_forward_pass_over_bgzf_builds_the_walk_s_index`,
+`a_run_of_bgzf_members_is_coalesced_until_a_header_is_not_bgzf_s`, `a_remote_bgzf_file_is_read_once_by_a_first_pass_that_builds_the_walk_s_index`.
 
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
@@ -640,7 +648,7 @@ Absence recommends, a stated count is never lowered, zero is refused. The arrang
 in two lines, before and after the open, because a fresh `.xz` walks footers first; the limit is
 read once, every pass carving from that reading. Whether a number was typed or discovered never enters `Parallelism`.
 Logged durations are diagnostics, never figures: one stderr subscriber, no terminal detection.
-A gzip first pass is announced by its source, started — naming the checkpoint it resumes from — and complete, so a `parse` says why it is serial; rejected: the reason in the arrangement's lines, which would put codec knowledge in the arrangement. A BGZF member walk is announced as the `.xz` walk is, started and complete.
+A gzip first pass is announced by its source, started — naming the checkpoint it resumes from — and complete, so a `parse` says why it is serial; rejected: the reason in the arrangement's lines, which would put codec knowledge in the arrangement. An index build is announced at `info` where its cost is the scan's own — a local BGZF member walk, started and complete as the `.xz` walk is, and any first pass, a fetched BGZF file's included — and at `warn`, before it is paid, where it goes beyond the scan, as the fetched `.xz` footer walk does.
 
 ### D66 Output of what `pg_dump` writes is byte-identical whether typing is on or off, but for a value its type cannot hold or an `escape` `bytea`
 Every value renders back to its `*_out` text, which is what `pg_dump` wrote — a hand-written spelling `*_out` never writes rendering as `*_out` would — but one its type cannot hold, NULL in the null mode (D98), and an `escape` `bytea`, `hex` (I56), which `byteain` reads alike.

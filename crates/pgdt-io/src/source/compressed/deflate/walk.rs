@@ -1,11 +1,14 @@
-//! A BGZF file's index, read at open off its members' headers and trailers
-//! with nothing decoded (`gz_seek::Walk`): pulled from a local file, or
-//! fetched — the place the `.xz` footer walk has, and announced as it is,
-//! being the same wait before any scan (`docs/design/decisions.md`, "D64").
+//! A local BGZF file's index, read at open off its members' headers and
+//! trailers with nothing decoded (`gz_seek::Walk`) — the place the `.xz`
+//! footer walk has, and announced as it is, being the same wait before any
+//! scan (`docs/design/decisions.md`, "D64").
 //!
 //! **The walk is how a BGZF file's index is found, nothing else**: what it
-//! builds is the checkpoint list a first pass builds, a unit of whole members
-//! at each multiple of [`CHECKPOINT_SPACING`], every one a member start
+//! builds is the checkpoint list a first pass over the file builds, a unit of
+//! whole members at least [`CHECKPOINT_SPACING`] long, every one a member start
+//! (`docs/design/decisions.md`, "D116"). It reads every part of the file, a
+//! member being at most 64 KiB, which locally buys a parallel first scan; a
+//! fetched file is read by a first pass instead, downloaded once
 //! (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling"). A file whose
 //! first member is BGZF's and whose chain then breaks — a later member not
 //! BGZF's, a length running past the file — is a gzip file of several members
@@ -16,9 +19,6 @@ use std::num::NonZeroU64;
 use std::ops::ControlFlow;
 
 use pgdt_core::Result;
-
-#[cfg(any(feature = "http", test))]
-use crate::source::ByteRangeSource;
 
 use super::super::Positioned;
 use super::{CHECKPOINT_SPACING, GZIP, GzipIndex, INPUT_CHUNK};
@@ -33,8 +33,7 @@ pub(crate) fn is_bgzf(leading: &[u8]) -> bool {
 
 /// How many bytes one read of the walk asks for at least: the input chunk a
 /// decode pulls. A member is at most 64 KiB, so the walk touches every part of
-/// the file whatever it reads; the chunk sets only how many reads, or round
-/// trips, that takes.
+/// the file whatever it reads; the chunk sets only how many reads that takes.
 const WALK_CHUNK: u64 = INPUT_CHUNK;
 
 /// Walk the local BGZF `file`, `stored_size` bytes, for its index, saying so
@@ -65,50 +64,13 @@ fn walk_file_spaced(
         let (offset, len) = walk.next_read();
         buf.resize(len, 0);
         let got = Positioned::read_at(file, offset, &mut buf)?;
-        if let ControlFlow::Break(walked) = walk.supply(offset, &buf[..got], None) {
+        if let ControlFlow::Break(walked) = walk.supply(offset, &buf[..got]) {
             return Ok(walked);
         }
     }
 }
 
-/// Walk the BGZF file `source` reaches, `stored_size` bytes, for its index,
-/// fetching ahead of each request, and say so before and after as `named`,
-/// with how many fetches it took: `None`, said too, where its chain breaks.
-///
-/// # Errors
-///
-/// A fetch failing.
-#[cfg(feature = "http")]
-pub(crate) async fn walk_fetched(
-    named: &str,
-    source: &dyn ByteRangeSource,
-    stored_size: u64,
-) -> Result<Option<GzipIndex>> {
-    walk_fetched_spaced(named, source, stored_size, CHECKPOINT_SPACING).await
-}
-
-/// [`walk_fetched`] coalescing into units of at least `spacing`.
-#[cfg(any(feature = "http", test))]
-async fn walk_fetched_spaced(
-    named: &str,
-    source: &dyn ByteRangeSource,
-    stored_size: u64,
-    spacing: NonZeroU64,
-) -> Result<Option<GzipIndex>> {
-    let mut walk = Walking::begin(named, stored_size, spacing);
-    let mut fetches = 0usize;
-    loop {
-        let (offset, len) = walk.next_read();
-        let bytes = source.read_at_most(offset, len).await?;
-        fetches += 1;
-        if let ControlFlow::Break(walked) = walk.supply(offset, &bytes, Some(fetches)) {
-            return Ok(walked);
-        }
-    }
-}
-
-/// One walk, its status lines and the reads it asks for, written once for
-/// both arms.
+/// One walk, its status lines and the reads it asks for.
 struct Walking<'a> {
     walk: gz_seek::Walk,
     named: &'a str,
@@ -132,12 +94,7 @@ impl<'a> Walking<'a> {
 
     /// The bytes at `offset` handed to the walk: the index once it is done,
     /// `None` where the chain broke, each said; or the next read.
-    fn supply(
-        &mut self,
-        offset: u64,
-        bytes: &[u8],
-        fetches: Option<usize>,
-    ) -> ControlFlow<Option<GzipIndex>> {
+    fn supply(&mut self, offset: u64, bytes: &[u8]) -> ControlFlow<Option<GzipIndex>> {
         match self.walk.supply(offset, bytes) {
             Ok(gz_seek::WalkStep::Need(_)) => ControlFlow::Continue(()),
             Ok(gz_seek::WalkStep::Done(index)) => {
@@ -147,7 +104,6 @@ impl<'a> Walking<'a> {
                     codec = %GZIP,
                     units = index.unit_count(),
                     members = index.member_count(),
-                    fetches,
                     "BGZF member walk complete",
                 );
                 ControlFlow::Break(Some(index))
