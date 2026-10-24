@@ -261,7 +261,8 @@ impl Finding for Diagnostic {
                  byte(s) of plaintext, more than twice the {spacing}-byte spacing its \
                  checkpoints are placed at, its writer having ended no deflate block across \
                  them ({block_count} unit(s)) — every read inside that unit decodes it from its \
-                 start; recompress with `gzip`, or write it at a level above 1, for random access"
+                 start; recompress with `bgzip` or `gzip`, or write it at a level above 1, for \
+                 random access"
             ),
         }
     }

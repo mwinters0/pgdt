@@ -36,6 +36,10 @@ fn a_walk_indexes_by_headers_alone_and_every_unit_decodes() {
     assert_eq!(index.end().unwrap().compressed, file.len() as u64);
     let checkpoints = index.checkpoints();
     assert!(checkpoints.iter().all(|c| c.start == Start::Member && c.crc.is_none()));
+    // Every member is counted, not only those beginning a unit: the walk at a
+    // spacing of one byte places a checkpoint at each.
+    assert_eq!(index.member_count(), walk_exactly(&file, 1).unwrap().checkpoints().len() as u64);
+    assert!(index.member_count() > checkpoints.len() as u64);
     for unit in 0..index.unit_count() {
         let task = index.unit(unit).unwrap();
         let range = task.plaintext_range();
@@ -85,9 +89,11 @@ fn a_forward_pass_over_bgzf_agrees_with_the_walk() {
         .filter(|c| c.start == Start::Member)
         .map(|c| c.bit)
         .collect();
-    // Both place every member's start, the empty last's included.
+    // Both place every member's start, the empty last's included, and count
+    // every member.
     assert_eq!(members[..bits.len()], bits[..]);
     assert_eq!(pass.index.end(), walked.end());
+    assert_eq!(walk_exactly(&file, 1 << 20).unwrap().member_count(), members.len() as u64);
 }
 
 #[test]

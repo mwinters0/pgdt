@@ -9,10 +9,12 @@ use crate::CompressionIndex;
 use crate::source::compressed::CompressedFileSource;
 
 /// The three answers an origin exists to give, from one probe of a local
-/// file: the bytes as stored, the weak identity, and the leading magic.
+/// file: the bytes as stored, the weak identity, and the leading bytes — as
+/// many as a BGZF member's header, which recognition reads past the magic.
 #[tokio::test]
 async fn an_origin_probe_answers_size_identity_and_the_leading_bytes() {
-    let (file, _source) = source_of(b"\xfd7zXZ\x00 and then some more bytes");
+    let content = b"\xfd7zXZ\x00 and then some more bytes";
+    let (file, _source) = source_of(content);
     let origin = Origin::local(file.path());
     let probed = origin.probe().await.unwrap();
     assert_eq!(probed.stored_size(), std::fs::metadata(file.path()).unwrap().len());
@@ -20,7 +22,8 @@ async fn an_origin_probe_answers_size_identity_and_the_leading_bytes() {
         probed.modified(),
         Some(std::fs::metadata(file.path()).unwrap().modified().unwrap())
     );
-    assert_eq!(probed.leading(), b"\xfd7zXZ\x00");
+    assert_eq!(probed.leading(), &content[..18]);
+    assert_eq!(ORIGIN_LEADING_BYTES, 18);
 }
 
 /// A source shorter than the magic brings back what it has, which is not

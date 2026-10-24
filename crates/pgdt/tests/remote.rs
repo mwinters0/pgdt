@@ -1089,3 +1089,57 @@ fn parse_and_query_over_a_remote_gzip_answer_what_the_local_file_answers() {
     assert!(report.contains("public.widgets"), "{report}");
     assert_eq!(oracle.request_count() - after_parse, 1, "the origin probe, and nothing else");
 }
+
+// ---------------------------------------------------------------------------
+// A remote BGZF file, walked at open (D18, D64)
+// ---------------------------------------------------------------------------
+
+/// The gzip dump's plaintext as BGZF, by `noodles-bgzf`'s writer.
+fn bgzf_dump_bytes() -> Vec<u8> {
+    use std::io::Write as _;
+    let mut plaintext = Vec::new();
+    std::io::Read::read_to_end(
+        &mut flate2::read::GzDecoder::new(&gzip_dump_bytes()[..]),
+        &mut plaintext,
+    )
+    .unwrap();
+    let mut writer = noodles_bgzf::io::Writer::new(Vec::new());
+    writer.write_all(&plaintext).unwrap();
+    writer.finish().unwrap()
+}
+
+#[tokio::test]
+async fn a_remote_bgzf_file_is_walked_at_open_and_read_by_its_index() {
+    // The fetched arm's genericity again: a BGZF object's members are walked
+    // through ranged GETs as the source opens, so its extent is exact and its
+    // index complete before a byte of plaintext is asked for, every member
+    // counted, and a `parse` and `query` over the URL answer what the local
+    // file answers.
+    let bytes = bgzf_dump_bytes();
+    let oracle = Oracle::serving(bytes.clone()).start();
+    let url = oracle.url_for("dump.sql.bgz");
+    let source = source_of(&url).await;
+    let Some(CompressionIndex::Gzip(index)) = source.compression_index() else {
+        panic!("a fetched BGZF source answers its walked index");
+    };
+    assert!(index.is_complete() && !index.has_windows());
+    assert!(index.member_count() > index.unit_count(), "{} members", index.member_count());
+    let size = index.uncompressed_size();
+    assert_eq!(source.extent().await.unwrap(), Extent::Exact(size));
+    let plaintext = source.read_range(0, usize::try_from(size).unwrap()).await.unwrap();
+    let mut expected = Vec::new();
+    std::io::Read::read_to_end(
+        &mut flate2::read::GzDecoder::new(&gzip_dump_bytes()[..]),
+        &mut expected,
+    )
+    .unwrap();
+    assert!(plaintext[..] == expected[..]);
+
+    let local_dir = tempfile::tempdir().unwrap();
+    let local = local_dir.path().join("dump.sql.bgz");
+    std::fs::write(&local, &bytes).unwrap();
+    let query = |source: &str| {
+        run_ok(&["query", "--source", source, "--table", "public.widgets", "--dtcache", "none"])
+    };
+    assert_eq!(query(&url), query(local.to_str().unwrap()));
+}

@@ -40,6 +40,8 @@ fn parts_no_pass_builds_are_refused() {
     assert!(refused(unchecked, end));
     let early = End { plaintext: good.last().unwrap().plaintext - 1, ..end.unwrap() };
     assert!(refused(good.clone(), Some(early)));
+    let fewer = End { members: 1, ..end.unwrap() };
+    assert!(refused(good.clone(), Some(fewer)));
     let mut inside = good;
     let m = inside.iter().rposition(|c| c.start == Start::Member).unwrap();
     inside[m].bit += 3;

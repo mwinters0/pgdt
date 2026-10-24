@@ -13,7 +13,8 @@ use pgdt_core::{Error, Result};
 
 use super::ByteRangeSource;
 use super::compressed::{
-    CompressedFileSource, CompressionIndex, Feed, FirstPass, Format, LONGEST_MAGIC, index_refused,
+    CompressedFileSource, CompressionIndex, Feed, FirstPass, Format, RECOGNITION_BYTES,
+    index_refused, is_bgzf,
 };
 use super::local::LocalFileSource;
 #[cfg(feature = "http")]
@@ -21,11 +22,12 @@ use super::remote::{
     REMOTE_READ_TIMEOUT, RemoteObject, open_remote, remote_name_of, without_credentials,
 };
 
-/// How many leading bytes an [`Origin`] probe brings back: the longest magic
-/// recognition compares ([`Format::recognize`]). A source whose whole
-/// content is shorter brings back fewer, which is not an error — it simply
-/// matches no magic.
-pub(super) const ORIGIN_LEADING_BYTES: usize = LONGEST_MAGIC;
+/// How many leading bytes an [`Origin`] probe brings back: as many as
+/// recognition reads — the longest magic [`Format::recognize`] compares, or a
+/// BGZF member's header. A source whose whole content is shorter brings back
+/// fewer, which is not an error — it simply matches no magic, or no BGZF
+/// header.
+pub(super) const ORIGIN_LEADING_BYTES: usize = RECOGNITION_BYTES;
 
 /// Where a dump is, as a caller's `--source` argument resolved it, together
 /// with the one cheap probe of it that everything before the source reads
@@ -43,7 +45,7 @@ pub(super) const ORIGIN_LEADING_BYTES: usize = LONGEST_MAGIC;
 /// So the origin answers exactly what is needed that early — **stored size,
 /// weak identity, and the leading magic bytes** — and nothing else. It never
 /// opens a source, never builds a compressed file's index, and never
-/// reads past the longest magic recognition compares.
+/// reads past the leading bytes recognition compares.
 ///
 /// **The probe runs at most once.** Locally that saves nothing worth naming;
 /// the reason it is cached is that a source whose probe is a round trip must
@@ -97,8 +99,8 @@ impl OriginProbe {
         self.modified
     }
 
-    /// The source's first bytes, as far as the longest magic recognition
-    /// compares — fewer for a source shorter than that.
+    /// The source's first bytes, as many as recognition reads — fewer for a
+    /// source shorter than that.
     pub fn leading(&self) -> &[u8] {
         &self.leading
     }
@@ -368,10 +370,12 @@ pub async fn open(origin: &Origin, known: KnownCompression, spill: &Path) -> Res
 /// yields a source.
 ///
 /// **An uncached compressed file is opened on the calling task**, its index
-/// build included — an `.xz` file's footer walk: only a first open reaches it,
-/// before anything else is scheduled, and it says `seek table build started`
-/// and `… complete` around itself (`crates/pgdt/tests/status_output.rs`), so
-/// the wait does not read as a hang. An embedder opening one inside a busy
+/// build included — an `.xz` file's footer walk, a BGZF file's member walk:
+/// only a first open reaches it, before anything else is scheduled, and it
+/// says it started and completed (`seek table build started`, `BGZF member
+/// walk started`, and each `… complete`;
+/// `crates/pgdt/tests/status_output.rs`, `crates/pgdt/tests/gzip_source.rs`),
+/// so the wait does not read as a hang. An embedder opening one inside a busy
 /// runtime would want it on a blocking thread; the DataFusion provider never
 /// builds one, reading the index its complete cache holds.
 pub(crate) async fn open_local(
@@ -411,15 +415,24 @@ pub(crate) async fn open_local(
         // against the file's length and its own internal consistency without
         // reading a byte, and never rebuilt.
         Verdict::Known(index) => over_known_index(CompressedFileSource::with_index(path, index)),
-        // A gzip file's index is its first full pass's by-product.
-        Verdict::Unknown(Format::Gzip) => Ok(Recognized::Source(Arc::new(FirstPass::fresh(
-            origin.to_string(),
-            Feed::file(path)?,
-            probe.stored_size(),
-            spill,
-        )?))),
-        Verdict::Unknown(format) => {
-            Ok(Recognized::Source(Arc::new(CompressedFileSource::walked(path, format)?)))
+        // A BGZF file's index is walked off its members' headers, and any
+        // other gzip file's — one whose chain the walk found broken included —
+        // is its first full pass's by-product.
+        Verdict::Unknown(Format::Gzip) => {
+            if is_bgzf(probe.leading())
+                && let Some(source) = CompressedFileSource::bgzf(path, &origin.to_string())?
+            {
+                return Ok(Recognized::Source(Arc::new(source)));
+            }
+            Ok(Recognized::Source(Arc::new(FirstPass::fresh(
+                origin.to_string(),
+                Feed::file(path)?,
+                probe.stored_size(),
+                spill,
+            )?)))
+        }
+        Verdict::Unknown(Format::Xz) => {
+            Ok(Recognized::Source(Arc::new(CompressedFileSource::xz(path)?)))
         }
         Verdict::Mismatch => Ok(Recognized::Mismatch),
         Verdict::Plain => Ok(Recognized::Source(Arc::new(LocalFileSource::open(path)?))),

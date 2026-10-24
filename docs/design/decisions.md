@@ -122,7 +122,9 @@ released buffer meets a reservation and is discarded. A reuse rule, not progress
 A many-stream file costs a footer read per stream, so `CacheMode::save` records the table, `CacheMode::open` reads
 it before a source exists and `CompressedFileSource::with_index` walks nothing. `KnownCompression` is
 `Unknown`/`Plain`/`Compressed`, checked against the file's magic; a contradiction is `Recognized::Mismatch`
-and condemns the span index too, both having come from one save of one file.
+and condemns the span index too, both having come from one save of one file. A BGZF file's member walk is
+persisted alike, as the gzip index a first pass builds, its member count in its end; one whose first member
+is BGZF's and whose chain then breaks is a first pass's. Rejected: refusing it, a gzip file the pass reads.
 
 ### D19 A budget decline is a `PlanNote`; a non-seekable file is warned, not refused
 A decline is a property of the file *and this run's budget*, and a `Diagnostic` is a finding about the file.
@@ -638,7 +640,7 @@ Absence recommends, a stated count is never lowered, zero is refused. The arrang
 in two lines, before and after the open, because a fresh `.xz` walks footers first; the limit is
 read once, every pass carving from that reading. Whether a number was typed or discovered never enters `Parallelism`.
 Logged durations are diagnostics, never figures: one stderr subscriber, no terminal detection.
-A gzip first pass is announced by its source, started — naming the checkpoint it resumes from — and complete, so a `parse` says why it is serial; rejected: the reason in the arrangement's lines, which would put codec knowledge in the arrangement.
+A gzip first pass is announced by its source, started — naming the checkpoint it resumes from — and complete, so a `parse` says why it is serial; rejected: the reason in the arrangement's lines, which would put codec knowledge in the arrangement. A BGZF member walk is announced as the `.xz` walk is, started and complete.
 
 ### D66 Output of what `pg_dump` writes is byte-identical whether typing is on or off, but for a value its type cannot hold or an `escape` `bytea`
 Every value renders back to its `*_out` text, which is what `pg_dump` wrote — a hand-written spelling `*_out` never writes rendering as `*_out` would — but one its type cannot hold, NULL in the null mode (D98), and an `escape` `bytea`, `hex` (I56), which `byteain` reads alike.

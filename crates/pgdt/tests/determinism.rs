@@ -45,7 +45,9 @@
 //! same comparison over `.xz` input, and
 //! [`a_gzip_dump_writes_one_cache_however_its_first_pass_ran`] over a single
 //! gzip member, whose index a first pass builds — and where that pass was
-//! interrupted is the other thing that must not change the cache.
+//! interrupted is the other thing that must not change the cache — and
+//! [`a_bgzf_dump_writes_the_serial_cache_at_every_stated_parallelism`] over
+//! BGZF, whose index is walked off its members' headers.
 
 use std::future::Future;
 use std::io::Write;
@@ -364,11 +366,8 @@ fn an_xz_dump_writes_the_serial_cache_at_every_stated_parallelism() {
     assert_same_cache(&got, &reference, &xz, &["--jobs", "8"]);
 }
 
-/// A dump of `tables` tables of about `table_bytes` each, compressed as one
-/// gzip member by `flate2`, flushed every 256 KiB so its deflate blocks end
-/// whatever backend `flate2` is built over — a member of many units at the
-/// shipped spacing.
-fn gzip_dump_of(dir: &Path, tables: usize, table_bytes: usize) -> PathBuf {
+/// A dump of `tables` tables of about `table_bytes` each, as its text.
+fn dump_text(tables: usize, table_bytes: usize) -> String {
     let mut plain = String::from("SET client_encoding = 'UTF8';\n\n");
     for t in 0..tables {
         plain.push_str(&format!(
@@ -383,6 +382,15 @@ fn gzip_dump_of(dir: &Path, tables: usize, table_bytes: usize) -> PathBuf {
         }
         plain.push_str("\\.\n\n");
     }
+    plain
+}
+
+/// A dump of `tables` tables of about `table_bytes` each ([`dump_text`]),
+/// compressed as one gzip member by `flate2`, flushed every 256 KiB so its
+/// deflate blocks end whatever backend `flate2` is built over — a member of
+/// many units at the shipped spacing.
+fn gzip_dump_of(dir: &Path, tables: usize, table_bytes: usize) -> PathBuf {
+    let plain = dump_text(tables, table_bytes);
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     for piece in plain.as_bytes().chunks(256 * 1024) {
         encoder.write_all(piece).unwrap();
@@ -525,5 +533,41 @@ async fn a_gzip_dump_writes_one_cache_however_its_first_pass_ran() {
         assert!(!partial.is_complete() && partial.unit_count() >= 1, "stopped at {after}");
         let got = cache_of(&dump, &cache, &["--jobs", "1"]);
         assert_same_cache(&got, &reference, &dump, &["resumed", &after.to_string()]);
+    }
+}
+
+/// **A BGZF dump writes the serial cache at every stated parallelism**, byte
+/// for byte, as an `.xz` one does: its index is walked at open, so the
+/// serial reference reads it forward unit by unit, the parallel legs decode
+/// whole units on several readers and cut at their boundaries, and the
+/// budget-starved leg reads each unit in pieces through one live decode.
+///
+/// The cut is asserted rather than assumed: the walk must find more units than
+/// one at the shipped spacing, each of whole members.
+#[test]
+fn a_bgzf_dump_writes_the_serial_cache_at_every_stated_parallelism() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut writer = noodles_bgzf::io::Writer::new(Vec::new());
+    writer.write_all(dump_text(6, 10 << 20).as_bytes()).unwrap();
+    let dump = dir.path().join("many_units.sql.bgz");
+    std::fs::write(&dump, writer.finish().unwrap()).unwrap();
+
+    let source = CompressedFileSource::open(&dump).unwrap();
+    let Some(CompressionIndex::Gzip(index)) = source.compression_index() else {
+        panic!("a BGZF file opens over its walked gzip index");
+    };
+    assert!(index.unit_count() > 2, "{} units", index.unit_count());
+    assert!(index.member_count() > 100 * index.unit_count(), "{} members", index.member_count());
+
+    let reference = cache_of(&dump, &dir.path().join("bgz-serial.dtcache"), &["--jobs", "1"]);
+    let legs: [&[&str]; 3] = [
+        &[],
+        &["--jobs", "8"],
+        // A budget below one unit: the piecewise arm, one partition.
+        &["--jobs", "8", "--memory", "1048576"],
+    ];
+    for (l, leg) in legs.iter().enumerate() {
+        let got = cache_of(&dump, &dir.path().join(format!("bgz-{l}.dtcache")), leg);
+        assert_same_cache(&got, &reference, &dump, leg);
     }
 }

@@ -1,12 +1,12 @@
 //! What the compression index names of gzip: its checkpoints as this crate
 //! hands them out, the provider a unit decode reads its window through, and
-//! the magic recognition compares — a leaf, so the index can name the layout
-//! without reaching the codec that decodes it.
+//! the magic and the BGZF header recognition reads — a leaf, so the index can
+//! name the layout without reaching the codec that decodes it.
 
 use std::ops::Range;
 use std::sync::Arc;
 
-pub(crate) use gz_seek::GZIP_MAGIC;
+pub(crate) use gz_seek::{BGZF_HEADER_LEN, GZIP_MAGIC};
 
 /// Where a gzip file's units sit — its checkpoints, each a place a decode can
 /// begin, the span from one to the next a unit — and where each checkpoint's
@@ -81,11 +81,11 @@ impl GzipIndex {
         self.index.unit_count()
     }
 
-    /// How many members the file holds, as far as the index reaches — of an
-    /// index a forward pass built, which places a checkpoint at every member
-    /// start; a BGZF walk's places one per unit, so counts its units.
+    /// How many members the file holds, as far as the index reaches: once
+    /// complete, as the pass or the BGZF walk that built it counted them — a
+    /// walk's unit holding many — and before, as many as its checkpoints begin.
     pub fn member_count(&self) -> usize {
-        self.index.checkpoints().iter().filter(|c| c.start == gz_seek::Start::Member).count()
+        usize::try_from(self.index.member_count()).unwrap_or(usize::MAX)
     }
 
     /// The plaintext spacing the checkpoints were placed at.
@@ -214,6 +214,7 @@ mod persisted {
     struct End {
         plaintext: u64,
         compressed: u64,
+        members: u64,
     }
 
     impl Serialize for GzipIndex {
@@ -232,7 +233,11 @@ mod persisted {
                     crc: c.crc,
                 })
                 .collect();
-            let end = index.end().map(|e| End { plaintext: e.plaintext, compressed: e.compressed });
+            let end = index.end().map(|e| End {
+                plaintext: e.plaintext,
+                compressed: e.compressed,
+                members: e.members,
+            });
             Parts { spacing: index.spacing(), checkpoints, end }.serialize(serializer)
         }
     }
@@ -253,9 +258,11 @@ mod persisted {
                     crc: p.crc,
                 })
                 .collect();
-            let end = parts
-                .end
-                .map(|e| gz_seek::End { plaintext: e.plaintext, compressed: e.compressed });
+            let end = parts.end.map(|e| gz_seek::End {
+                plaintext: e.plaintext,
+                compressed: e.compressed,
+                members: e.members,
+            });
             let index = gz_seek::Index::from_parts(parts.spacing, checkpoints, end)
                 .map_err(serde::de::Error::custom)?;
             Ok(GzipIndex { index, windows: None })

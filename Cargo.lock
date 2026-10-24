@@ -3718,6 +3718,7 @@ dependencies = [
  "libmimalloc-sys",
  "mimalloc",
  "namespace-init",
+ "noodles-bgzf",
  "pgdt-codec",
  "pgdt-core",
  "pgdt-dump",

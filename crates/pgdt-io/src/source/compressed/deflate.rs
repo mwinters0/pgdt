@@ -2,7 +2,8 @@
 //! from its checkpoint with the window its provider reads, the bridge from a
 //! [`Positioned`] read to the bytes a `gz_seek` decode is fed, and the
 //! plaintext spacing this crate hands `gz_seek` — with its submodules, the
-//! only modules of the compressed layer naming `gz_seek`.
+//! first pass and the BGZF walk that find a file's checkpoints, the only
+//! modules of the compressed layer naming `gz_seek`.
 //!
 //! **The codec is deflate; gzip is the framing** (`docs/design/roadmap-P15-gzip.md`,
 //! "Settled in the grilling"), so the module is named for the codec and its
@@ -19,10 +20,14 @@ mod checkpoints;
 mod first_pass;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) mod held;
+mod walk;
 
-pub(crate) use self::checkpoints::GZIP_MAGIC;
+pub(crate) use self::checkpoints::{BGZF_HEADER_LEN, GZIP_MAGIC};
 pub use self::checkpoints::{GzipIndex, WindowProvider};
 pub(crate) use self::first_pass::{Feed, FirstPass};
+#[cfg(any(feature = "http", test))]
+pub(crate) use self::walk::walk_fetched;
+pub(crate) use self::walk::{is_bgzf, walk_file};
 
 /// The plaintext spacing a forward pass places a checkpoint at the first
 /// deflate block boundary at or after each multiple of, and `gz_seek`'s BGZF

@@ -201,3 +201,70 @@ fn a_resumed_gzip_first_pass_names_its_checkpoint() {
     assert!(started[0].contains("checkpoint=0 plaintext=0"), "{stderr}");
     assert!(complete[0].contains("members=1"), "{stderr}");
 }
+
+/// `plain` written as BGZF beside it, by `noodles-bgzf`'s writer — a member
+/// to each 64 KiB of plaintext and the empty member that ends the file.
+fn bgzf_beside(plain: &Path) -> std::path::PathBuf {
+    use std::io::Write as _;
+    let mut writer = noodles_bgzf::io::Writer::new(Vec::new());
+    writer.write_all(&std::fs::read(plain).unwrap()).unwrap();
+    let path = plain.with_extension("sql.bgz");
+    std::fs::write(&path, writer.finish().unwrap()).unwrap();
+    path
+}
+
+/// The status lines naming a BGZF walk in `stderr`: those saying it started,
+/// and those saying it completed.
+fn walk_lines(stderr: &str) -> (Vec<&str>, Vec<&str>) {
+    let lines = |what: &str| stderr.lines().filter(|l| l.contains(what)).collect::<Vec<_>>();
+    (lines("BGZF member walk started"), lines("BGZF member walk complete"))
+}
+
+/// **A BGZF dump is walked at open and reads as its plaintext**: a cold
+/// `query` answers what the decompressed file answers, a cold `parse` says
+/// once that its members' walk started and that it completed — counting every
+/// member, the empty one ending the file included, not only the one unit's —
+/// and runs no first pass, `info` describes
+/// it in gzip's words with every member counted, and a `parse` and an `info`
+/// over its cache say nothing of the walk (`docs/design/decisions.md`,
+/// "D64").
+#[test]
+fn a_bgzf_dump_is_walked_at_open_and_reads_as_its_plaintext() {
+    let dir = tempfile::tempdir().unwrap();
+    let gz = dir.path().join("dump.sql.gz");
+    std::fs::copy(gzip_fixture(16, "edge_cases", "compress"), &gz).unwrap();
+    let plain = plaintext_beside(&gz);
+    let bgz = bgzf_beside(&plain);
+    let (bgz_arg, plain_arg) = (bgz.to_str().unwrap(), plain.to_str().unwrap());
+
+    for table in ["public.widgets", "logs.events", "public.escapes"] {
+        let expected = run_ok(&["query", "--source", plain_arg, "--table", table]);
+        let cold = ["query", "--source", bgz_arg, "--table", table, "--dtcache", "none"];
+        assert_eq!(run_ok(&cold), expected, "{table}, cold");
+    }
+
+    let stderr = stderr_ok(&["parse", "--source", bgz_arg]);
+    let (started, complete) = walk_lines(&stderr);
+    assert_eq!((started.len(), complete.len()), (1, 1), "{stderr}");
+    assert!(started[0].contains("codec=gzip"), "{stderr}");
+    let members: u64 = complete[0]
+        .split_once("units=1 members=")
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("one unit and its members: {stderr}"));
+    // The plaintext's member or members, and the empty one ending the file.
+    assert!(members >= 2, "{stderr}");
+    assert!(!stderr.contains("first pass"), "a BGZF file is walked, not passed: {stderr}");
+    let detail = run_ok(&["info", "--source", bgz_arg, "--detail"]);
+    let shape = format!("compression: gzip — 1 unit(s) in {members} member(s), largest unit ");
+    assert!(detail.contains(&shape), "{detail}");
+    for args in [["parse", "--source", bgz_arg], ["info", "--source", bgz_arg]] {
+        let stderr = stderr_ok(&args);
+        assert!(!stderr.contains("BGZF member walk"), "{args:?}: {stderr}");
+    }
+    for table in ["public.widgets", "logs.events"] {
+        let expected = run_ok(&["query", "--source", plain_arg, "--table", table]);
+        let warm = run_ok(&["query", "--source", bgz_arg, "--table", table]);
+        assert_eq!(warm, expected, "{table}, through the cache");
+    }
+}

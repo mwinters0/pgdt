@@ -232,9 +232,11 @@ impl Forward {
         if self.checkpoints.is_empty() || !self.engine.is_between() {
             return Err(Error::Truncated { offset: self.engine.compressed_position() });
         }
+        let members = self.checkpoints.iter().filter(|c| c.start == Start::Member).count();
         let end = End {
             plaintext: self.engine.plaintext(),
             compressed: self.engine.compressed_position(),
+            members: members as u64,
         };
         Ok(Index::built(self.spacing, self.checkpoints, Some(end)))
     }

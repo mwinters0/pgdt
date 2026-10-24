@@ -19,10 +19,11 @@ use crate::source::pool::BufferPool;
 use crate::source::{ByteRangeSource, Extent, WaitPolicy};
 
 use super::blocks::{BlockCache, Claim, DecodeBudget, DecodedBlock};
+use super::deflate::{DeflateCodec, is_bgzf, walk_file};
 use super::xz::XzCodec;
 use super::{
-    Codec, CompressionIndex, Format, LONGEST_MAGIC, LiveBlock, Positioned, codec_over, piece_of,
-    short_read,
+    Codec, CompressionIndex, Format, LiveBlock, Positioned, RECOGNITION_BYTES, codec_over,
+    piece_of, short_read,
 };
 
 /// A `ByteRangeSource` decoding a compressed local file on the fly, whatever
@@ -76,50 +77,70 @@ pub struct CompressedFileSource {
 impl CompressedFileSource {
     /// Open `path` as a compressed file of whichever format its first bytes
     /// name, building its index before this call returns — for `.xz`, walking
-    /// its stream footers.
+    /// its stream footers, and for BGZF, its members' headers.
     ///
     /// A file whose first bytes name no format this build reads is refused,
-    /// [`Error::SourceNotReadable`], and so is a gzip one, whose index only a
-    /// first pass builds — which [`open`](crate::open) runs — so it opens
-    /// here only through [`CompressedFileSource::with_index`]. Recognition
-    /// that falls back to the plain source, and checks an index a cache hands
-    /// in, is [`open`](crate::open).
+    /// [`Error::SourceNotReadable`], and so is any other gzip one, whose index
+    /// only a first pass builds — which [`open`](crate::open) runs — so it
+    /// opens here only through [`CompressedFileSource::with_index`].
+    /// Recognition that falls back to the plain source, and checks an index a
+    /// cache hands in, is [`open`](crate::open).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let file = std::fs::File::open(&path)?;
-        let mut leading = [0u8; LONGEST_MAGIC];
+        let mut leading = [0u8; RECOGNITION_BYTES];
         let read = Positioned::read_at(&file, 0, &mut leading)?;
-        let Some(format) = Format::recognize(&leading[..read]) else {
-            return Err(Error::SourceNotReadable {
-                origin: path.display().to_string(),
-                why: "its first bytes name no compressed format this build reads".to_string(),
-            });
+        let leading = &leading[..read];
+        let refuse = |why: &str| Error::SourceNotReadable {
+            origin: path.display().to_string(),
+            why: why.to_string(),
         };
-        Self::opened(path, file, format)
-    }
-
-    /// Open `path`, recognised as `format`, building its index: what
-    /// [`open`](crate::open) does where the origin's probe has already
-    /// recognised it.
-    pub(crate) fn walked(path: &Path, format: Format) -> Result<Self> {
-        Self::opened(path.to_path_buf(), std::fs::File::open(path)?, format)
-    }
-
-    fn opened(path: PathBuf, file: std::fs::File, format: Format) -> Result<Self> {
-        let stored_size = file.metadata()?.len();
-        let codec: Arc<dyn Codec> = match format {
-            Format::Xz => Arc::new(XzCodec::walk(&path, &file, stored_size)?),
-            Format::Gzip => {
-                return Err(Error::SourceNotReadable {
-                    origin: path.display().to_string(),
-                    why: "it is gzip-compressed, and a gzip file's index is built by a first \
-                          pass over it, which `pgdt_io::open` runs: this source opens one only \
-                          over a complete index (`CompressedFileSource::with_index`)"
-                        .to_string(),
-                });
+        match Format::recognize(leading) {
+            None => Err(refuse("its first bytes name no compressed format this build reads")),
+            Some(Format::Xz) => Self::walked_xz(path, file),
+            Some(Format::Gzip) => {
+                let named = path.display().to_string();
+                let walked =
+                    if is_bgzf(leading) { Self::walked_bgzf(&path, file, &named)? } else { None };
+                walked.ok_or_else(|| {
+                    refuse(
+                        "it is gzip-compressed and not BGZF, and such a file's index is built by \
+                         a first pass over it, which `pgdt_io::open` runs: this source opens one \
+                         only over a complete index (`CompressedFileSource::with_index`)",
+                    )
+                })
             }
-        };
+        }
+    }
+
+    /// Open the `.xz` file at `path`, walking its stream footers for its
+    /// table: what [`open`](crate::open) does where the origin's probe has
+    /// already recognised it.
+    pub(crate) fn xz(path: &Path) -> Result<Self> {
+        Self::walked_xz(path.to_path_buf(), std::fs::File::open(path)?)
+    }
+
+    fn walked_xz(path: PathBuf, file: std::fs::File) -> Result<Self> {
+        let stored_size = file.metadata()?.len();
+        let codec = Arc::new(XzCodec::walk(&path, &file, stored_size)?);
         Ok(Self::over(path, Arc::new(file), codec))
+    }
+
+    /// Open the BGZF file at `path`, walking its members' headers for its
+    /// index and naming it `named` as it says so: `None` where the chain
+    /// breaks, the file then being a first pass's to read
+    /// ([`open`](crate::open)).
+    pub(crate) fn bgzf(path: &Path, named: &str) -> Result<Option<Self>> {
+        Self::walked_bgzf(path, std::fs::File::open(path)?, named)
+    }
+
+    fn walked_bgzf(path: &Path, file: std::fs::File, named: &str) -> Result<Option<Self>> {
+        let stored_size = file.metadata()?.len();
+        let Some(index) = walk_file(named, &file, stored_size)? else {
+            return Ok(None);
+        };
+        let codec = Arc::new(DeflateCodec::over(index, stored_size)?);
+        Ok(Some(Self::over(path.to_path_buf(), Arc::new(file), codec)))
     }
 
     /// Open `path` from an index a previous build of the *same* file

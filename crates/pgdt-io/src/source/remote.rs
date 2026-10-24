@@ -18,7 +18,8 @@ use tokio_util::sync::CancellationToken;
 use pgdt_core::{Error, Result};
 
 use super::compressed::{
-    CompressionIndex, Feed, FetchedCompressedSource, FirstPass, Format, walk_seek_table,
+    CompressionIndex, Feed, FetchedCompressedSource, FirstPass, Format, is_bgzf, walk_fetched,
+    walk_seek_table,
 };
 use super::origin::{
     KnownCompression, Location, ORIGIN_LEADING_BYTES, Origin, OriginProbe, Recognized, Verdict,
@@ -405,10 +406,10 @@ impl ByteRangeSource for RemoteSource {
 /// but through [`FetchedCompressedSource`] over the plain source rather than
 /// through [`CompressedFileSource`](crate::CompressedFileSource), which pulls
 /// from a file (`docs/design/decisions.md`, "D14" and "D18") — a gzip file
-/// whose index is not complete through its first pass instead. Where the
-/// cache holds a complete index there is no build at all; where it does not,
-/// an `.xz` file's walk is announced before it is paid for
-/// ([`announce_remote_walk`]).
+/// whose index is not complete through its first pass instead, a BGZF one
+/// once its members' walk has built it. Where the cache holds a complete
+/// index there is no build at all; where it does not, an `.xz` file's walk is
+/// announced before it is paid for ([`announce_remote_walk`]).
 ///
 /// Deficiency register: `deficiency: KD51` — a run that
 /// `pgdt_dump::cache::SourceWatch::require_checkable` will refuse for a server
@@ -470,15 +471,29 @@ pub(crate) async fn open_remote(
                 CompressionIndex::Xz(table),
             )?)))
         }
-        // A gzip file's index is its first full pass's by-product: a serial
-        // ranged read of the object, with no footer walk, which announces
-        // itself.
-        Verdict::Unknown(Format::Gzip) => Ok(Recognized::Source(Arc::new(FirstPass::fresh(
-            origin.to_string(),
-            Feed::Fetched(fetched()),
-            probe.stored_size(),
-            spill,
-        )?))),
+        // A BGZF file's index is walked off its members' headers, fetched
+        // ahead of each request; any other gzip file's — one whose chain the
+        // walk found broken included — is its first full pass's by-product, a
+        // serial ranged read of the object. Each announces itself.
+        Verdict::Unknown(Format::Gzip) => {
+            let source = fetched();
+            if is_bgzf(probe.leading())
+                && let Some(index) =
+                    walk_fetched(&origin.to_string(), &*source, probe.stored_size()).await?
+            {
+                return Ok(Recognized::Source(Arc::new(FetchedCompressedSource::with_index(
+                    source,
+                    probe.stored_size(),
+                    CompressionIndex::Gzip(index),
+                )?)));
+            }
+            Ok(Recognized::Source(Arc::new(FirstPass::fresh(
+                origin.to_string(),
+                Feed::Fetched(source),
+                probe.stored_size(),
+                spill,
+            )?)))
+        }
         Verdict::Mismatch => Ok(Recognized::Mismatch),
         Verdict::Plain => Ok(Recognized::Source(fetched())),
     }

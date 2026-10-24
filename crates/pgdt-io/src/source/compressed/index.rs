@@ -8,7 +8,7 @@
 //! [`ByteRangeSource::compression_index`]: crate::ByteRangeSource::compression_index
 //! [`KnownCompression::Compressed`]: crate::KnownCompression::Compressed
 
-use super::deflate::{GZIP_MAGIC, GzipIndex};
+use super::deflate::{BGZF_HEADER_LEN, GZIP_MAGIC, GzipIndex};
 use super::xz::{SeekTable, XZ_MAGIC};
 
 /// Where a compressed file's units sit, in its codec's own layout.
@@ -123,7 +123,11 @@ impl Format {
     }
 }
 
-/// The longest magic [`Format::recognize`] compares, which is how many leading
-/// bytes an origin's probe brings back.
-pub(crate) const LONGEST_MAGIC: usize =
-    if XZ_MAGIC.len() > GZIP_MAGIC.len() { XZ_MAGIC.len() } else { GZIP_MAGIC.len() };
+/// How many leading bytes recognition reads, which is how many an origin's
+/// probe brings back: the longest magic [`Format::recognize`] compares, or
+/// the first BGZF member's header, whose `BC` subfield says that a gzip
+/// file's index is walked rather than built by a first pass — the longer.
+pub(crate) const RECOGNITION_BYTES: usize = {
+    let magic = if XZ_MAGIC.len() > GZIP_MAGIC.len() { XZ_MAGIC.len() } else { GZIP_MAGIC.len() };
+    if BGZF_HEADER_LEN > magic { BGZF_HEADER_LEN } else { magic }
+};

@@ -72,6 +72,9 @@ pub struct End {
     pub plaintext: u64,
     /// The compressed length the members occupy: the file's.
     pub compressed: u64,
+    /// How many members the file holds: a forward pass places a checkpoint
+    /// at every one's start, a walk only at those beginning a unit.
+    pub members: u64,
 }
 
 /// The plaintext's length as far as it is known: exact once a pass has read
@@ -112,7 +115,8 @@ impl Index {
     /// [`Error::InvalidIndex`] where the parts break an invariant every index
     /// this crate builds holds: no checkpoint at the file's start, offsets running
     /// backward, a window other than its member's last 32 KiB, a unit that no
-    /// check would cover, or an end before the last checkpoint.
+    /// check would cover, an end before the last checkpoint, or one counting
+    /// fewer members than the checkpoints begin.
     pub fn from_parts(
         spacing: NonZeroU64,
         checkpoints: Vec<Checkpoint>,
@@ -149,10 +153,14 @@ impl Index {
             member_of.push(u32::try_from(member).map_err(|_| invalid("too many checkpoints"))?);
         }
         let last = checkpoints.last().expect("not empty");
-        if let Some(end) = end
-            && (end.plaintext < last.plaintext || end.compressed * 8 <= last.bit)
-        {
-            return Err(invalid("the end is before the last checkpoint"));
+        if let Some(end) = end {
+            if end.plaintext < last.plaintext || end.compressed * 8 <= last.bit {
+                return Err(invalid("the end is before the last checkpoint"));
+            }
+            let starts = checkpoints.iter().filter(|c| c.start == Start::Member).count();
+            if end.members < starts as u64 {
+                return Err(invalid("the end counts fewer members than the checkpoints begin"));
+            }
         }
         let index = Index { inner: Arc::new(Inner { spacing, checkpoints, member_of, end }) };
         for unit in 0..index.unit_count() {
@@ -204,6 +212,18 @@ impl Index {
     /// Where the file ends, once a pass has reached it.
     pub fn end(&self) -> Option<End> {
         self.inner.end
+    }
+
+    /// How many members the file holds, once complete — as its end counts
+    /// them, a walk's units holding several — and otherwise how many the
+    /// checkpoints so far begin.
+    pub fn member_count(&self) -> u64 {
+        match self.inner.end {
+            Some(end) => end.members,
+            None => {
+                self.inner.checkpoints.iter().filter(|c| c.start == Start::Member).count() as u64
+            }
+        }
     }
 
     /// Whether the index covers the whole file.

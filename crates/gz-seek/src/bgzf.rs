@@ -81,6 +81,8 @@ pub struct Walk {
     /// Whether the member before `pos` has yet to have its `ISIZE` read.
     owed: bool,
     checkpoints: Vec<Checkpoint>,
+    /// Members read so far, each a unit's or one coalesced into it.
+    members: u64,
     /// Plaintext of the unit being built, so far.
     unit_plaintext: u64,
 }
@@ -96,6 +98,7 @@ impl Walk {
             plaintext: 0,
             owed: false,
             checkpoints: Vec::new(),
+            members: 0,
             unit_plaintext: 0,
         }
     }
@@ -148,7 +151,8 @@ impl Walk {
                 self.owed = false;
             }
             if self.pos == self.size {
-                let end = End { plaintext: self.plaintext, compressed: self.size };
+                let end =
+                    End { plaintext: self.plaintext, compressed: self.size, members: self.members };
                 return Ok(WalkStep::Done(Index::built(
                     self.spacing,
                     std::mem::take(&mut self.checkpoints),
@@ -176,6 +180,7 @@ impl Walk {
                 self.unit_plaintext = 0;
             }
             self.pos += len;
+            self.members += 1;
             self.owed = true;
             let next = self.request();
             if held < next.offset + next.len as u64 {

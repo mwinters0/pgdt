@@ -826,7 +826,10 @@ fn a_gzip_unit_wider_than_twice_its_spacing_is_warned_in_gzip_words() {
     assert!(message.starts_with("this gzip source has no seek structure"), "{message}");
     assert!(message.contains(&format!("{largest_unit} byte(s)")), "{message}");
     assert!(message.contains(&format!("{GZIP_SPACING}-byte spacing")), "{message}");
-    assert!(message.contains("`gzip`") && message.contains("a level above 1"), "{message}");
+    assert!(
+        message.contains("`bgzip` or `gzip`") && message.contains("a level above 1"),
+        "{message}"
+    );
     assert!(!message.contains(".xz"), "{message}");
 }
 
