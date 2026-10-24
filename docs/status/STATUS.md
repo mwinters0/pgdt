@@ -103,9 +103,10 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.13** A fetched BGZF file read by a first pass: the fetched arm hands an uncached BGZF file to a first pass, which reads the object once and builds the index the walk builds, the local arm still walking; D64's announcements stated by arm, `info` where the cost is the scan's own and `warn` where it goes beyond it — [notes](../design/roadmap-P15.13-fetched-bgzf-notes.md)
 - [x] **15.14** BGZF members coalesced per member: a member start joins the unit only where its own header is BGZF's and the unit began at a BGZF member start, so a run of BGZF members after a plain one is coalesced too and a resume reads the rule off the member's header alone; the walk's index unchanged on every file it accepts; before 15.8, which inherits the rule (`KD135`) — [notes](../design/roadmap-P15.14-per-member-notes.md)
 - [x] **15.8** A parallel first pass, `gz-seek`'s side, earned by 15.1.1's reading: `gz_seek::Parallel`, the forward pass with chunks of the file ahead of it found and decoded speculatively — rapidgzip's technique, implemented natively and driven sans-IO on the caller's threads (D1, D12, D117) — each taken only where the pass stands at its start; checkpoints by the placement rule both passes apply, so the index is the serial pass's at every worker count; `pgdt-io` untouched — [notes](../design/roadmap-P15.8-parallel-notes.md)
+- [ ] **15.15** A taken chunk decoded by the engine: a speculation supplies where its chunk begins and the history it ends with, still marked; the frontier resolves each window in order and the engine decodes every chunk from its start with the window before it, in parallel on the caller's threads as a unit decode is resumed (D112); a chunk's start and window proven by the engine's decode of the chunk before ending there with the same history, one it contradicts decoded again; no plaintext handed out the crate's own decoder's, D117 rewritten; before 15.8.1, whose contract with `Parallel` it changes
 - [ ] **15.8.1** A parallel first pass, `pgdt-io`'s side: the first pass driven over `gz_seek::Parallel` on the caller's pool, replacing only how it finds units, never the index, the codec trait or the arms; it lifts the inflate, the first pass's scan staying one partition unless its own spec partitions it (the spec's "Slice order"); the first pass's started line no longer saying serial where it is not; a fetched BGZF file's first pass taking its units from its members' headers rather than speculatively
 - [ ] **15.10** Checkpoints inside a static block: the forward pass walks a static block's codes itself to place a checkpoint at the first symbol boundary at or after each multiple, the resume priming a synthetic static-block header; after 15.8, reading its native decoding first (`KD129`)
-- [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the manual and `pg-dump-compatibility.md`
+- [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the parallel first pass's on more than one writer's files, the manual and `pg-dump-compatibility.md`
 
 ## Not started
 
@@ -136,18 +137,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A taken chunk's plaintext is `gz-seek`'s own decoder's** (15.8, D117). The
-  spec's grilling says the inflater is bought, never written, and its slice
-  order says 15.8 implements rapidgzip's technique natively; the two meet in
-  a decoder of the crate's own that no engine can stand in for, since none
-  decodes from a block whose history is unknown. So most of what a parallel
-  first pass hands out is that decoder's, checked by every trailer before a
-  chunk holding it is taken, by each member's trailer at its end otherwise,
-  and by every later read's unit CRC-32 against the values it recorded — the
-  serial pass's exposure to its engine, carried by new code. The call: the
-  native decode is the plaintext of record wherever a chunk is taken, rather
-  than re-decoding each chunk through the engine once its window is known,
-  which decodes the file twice and lifts nothing. Reconsidering changes
-  15.8.1's premise: without it, there is no parallel first pass to wire.
-

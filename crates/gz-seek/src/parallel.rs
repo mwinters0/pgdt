@@ -24,9 +24,10 @@
 //! **Every byte handed out is checked as a forward pass checks it**: each
 //! unit's CRC-32 is recorded from the plaintext, whoever decoded it, and each
 //! member's trailer is compared — by the engine where its decode reaches it,
-//! and before a chunk is taken where the chunk holds it — so a member a chunk
-//! decoded wrongly is decoded again through the engine, whose refusal is the
-//! one a caller sees.
+//! and before a chunk is taken where the chunk holds it. So a member a chunk
+//! holds whole and decoded wrongly is decoded again through the engine, whose
+//! refusal is the one a caller sees; one longer than a chunk is checked by its
+//! own trailer alone, once its plaintext has been handed out.
 //!
 //! # What the caller does
 //!

@@ -410,6 +410,13 @@ so its first run inflates in parallel over one download.
 file to a first pass, the local arm still walking, and D64 states its
 announcements by arm, so 8 widens a pass that already reads BGZF.
 
+**A taken chunk decoded by the engine, slice 15, follows 8 and precedes its
+`pgdt-io` side** ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
+"A taken chunk's plaintext, reviewed"): a speculation supplies only where its
+chunk begins and the history it begins with, and the engine decodes every
+chunk from there in parallel, so no plaintext a first pass hands out is the
+crate's own decoder's.
+
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
 "The broken BGZF chain, reviewed"): 13's pass ends its run of coalesced

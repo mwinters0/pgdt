@@ -2,7 +2,7 @@
 //! cannot make: from a block boundary found in the middle of a member, with
 //! the 32 KiB of history before it unknown.
 //!
-//! **What it is for is speculation, never the plaintext's authority.** A
+//! **What it is for is speculation.** A
 //! parallel first pass ([`Parallel`](crate::Parallel)) decodes each chunk of
 //! the file from a block boundary it guessed, before the chunk ahead of it is
 //! decoded, so a back-reference into the history before the boundary cannot
@@ -16,9 +16,11 @@
 //!
 //! **It refuses what zlib refuses**: the same over-subscribed and incomplete
 //! codes, the same missing end-of-block code, the same invalid symbols and
-//! distances, so a guess it accepts is a stream the engine accepts. What it
-//! hands out is checked as the engine's is, by the CRC-32s every unit and
-//! member carries (`docs/design/decisions.md`, "D117").
+//! distances, so a guess it accepts is a stream the engine accepts. A chunk
+//! taken hands out its plaintext as decoded here, checked before it is taken
+//! only by the member trailers it holds — a member longer than a chunk by its
+//! own trailer once the pass reaches it — and each unit's CRC-32 is recorded
+//! from it (`docs/design/decisions.md`, "D117").
 
 mod huffman;
 mod inflate;
