@@ -59,9 +59,9 @@ use self::spill::PassWindows;
 /// of, and the compressed input chunk.
 const DECODE_BYTES: u64 = gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64 + INPUT_CHUNK;
 
-/// What the pass holds besides the plaintext it hands out: its two forward
-/// decodes — the frontier and one behind it — and the scratch a read skipping
-/// to its first wanted byte decodes into.
+/// What the pass holds besides the plaintext it hands out: its two decodes —
+/// the frontier and one behind it, a forward decode at most — and the scratch
+/// a read skipping to its first wanted byte decodes into.
 const PASS_BYTES: u64 = 2 * DECODE_BYTES + SKIP_SCRATCH as u64;
 
 /// A gzip file read by its first pass ([`open`](crate::open)'s source for one
@@ -79,8 +79,11 @@ const PASS_BYTES: u64 = 2 * DECODE_BYTES + SKIP_SCRATCH as u64;
 /// the units' own CRC-32s being recorded from the plaintext this pass decodes.
 /// A pass stopped short of it has compared nothing, and a later pass resumed
 /// from its index compares the member's trailer against those recorded values
-/// combined, so a corrupted prefix is still refused at the end. A read behind
-/// the frontier is compared with nothing (`KD132`).
+/// combined, so a corrupted prefix is still refused at the end. **A read
+/// behind the frontier inside a closed unit is compared against that unit's
+/// recorded CRC-32** as the decode leaves the unit, or as the run's reads
+/// complete ([`ByteRangeSource::complete_reads`]); one inside the open unit
+/// decodes the frontier's own bytes and is the frontier's to check.
 pub(crate) struct FirstPass {
     feed: Feed,
     /// What the pass's status lines name the file by: its origin as a message
@@ -88,7 +91,7 @@ pub(crate) struct FirstPass {
     named: String,
     /// The compressed file's length, as the open's probe found it.
     stored_size: u64,
-    /// The forward decodes and the index as far as they have got, locked for
+    /// The decodes and the index as far as they have got, locked for
     /// a pulled read whole, a fetched read's decode steps, or a snapshot, never
     /// across an `await`.
     inner: Arc<Mutex<Pass>>,
@@ -215,7 +218,7 @@ impl FirstPass {
         named: String,
         feed: Feed,
         stored_size: u64,
-        frontier: Inflating,
+        frontier: Inflating<gz_seek::Forward>,
         placed: usize,
         resumed_over: Option<gz_seek::Index>,
         windows: PassWindows,
@@ -255,10 +258,8 @@ impl FirstPass {
             drop(turn);
             return delegated(done, offset, len, strict).await;
         }
-        let (out, filled, ended) = match &self.feed {
-            Feed::File { file, .. } => self.read_pulled(Arc::clone(file), offset, len).await?,
-            Feed::Fetched(raw) => self.read_fetched(Arc::clone(raw), offset, len).await?,
-        };
+        let (out, filled, ended) = self.run(Job::Read { offset, len }).await?;
+        let out = out.expect("a read is answered in a buffer");
         if ended {
             self.hand_over()?;
         }
@@ -269,27 +270,37 @@ impl FirstPass {
         Ok(Bytes::from_owner(out).slice(..filled))
     }
 
-    /// A read whose decode pulls its compressed bytes from the file, the
-    /// whole read inside one blocking task.
-    async fn read_pulled(
+    /// `job` run over the pass on its feed: what a read filled — its buffer,
+    /// how many bytes, and whether the frontier met the file's end.
+    async fn run(&self, job: Job) -> Result<(Option<PooledBuffer>, usize, bool)> {
+        match &self.feed {
+            Feed::File { file, .. } => self.run_pulled(Arc::clone(file), job).await,
+            Feed::Fetched(raw) => self.run_fetched(Arc::clone(raw), job).await,
+        }
+    }
+
+    /// `job`, its decode pulling its compressed bytes from the file, the
+    /// whole of it inside one blocking task.
+    async fn run_pulled(
         &self,
         file: Arc<std::fs::File>,
-        offset: u64,
-        len: usize,
-    ) -> Result<(PooledBuffer, usize, bool)> {
+        job: Job,
+    ) -> Result<(Option<PooledBuffer>, usize, bool)> {
         let (inner, windows, pool) =
             (Arc::clone(&self.inner), Arc::clone(&self.windows), Arc::clone(&self.pool));
         let stored_size = self.stored_size;
         tokio::task::spawn_blocking(move || {
-            let mut out = pool.obtain(len);
+            let mut out = job.obtain(&pool);
             let mut pass = inner.lock().unwrap_or_else(|e| e.into_inner());
-            let route = pass.route(offset, &windows)?;
+            let Some(route) = job.route(&mut pass)? else {
+                return Ok((None, 0, false));
+            };
             let mut filled = 0usize;
             loop {
                 match pass.serve(
                     route,
-                    offset,
-                    &mut out.as_mut()[..len],
+                    job.offset(),
+                    job.buffer(&mut out),
                     &mut filled,
                     &windows,
                     stored_size,
@@ -304,43 +315,51 @@ impl FirstPass {
         .map_err(Error::join)?
     }
 
-    /// A read whose decode is fed bytes fetched through the transport, back
-    /// on the runtime for each fetch.
-    async fn read_fetched(
+    /// `job`, its decode fed bytes fetched through the transport, back on
+    /// the runtime for each fetch.
+    async fn run_fetched(
         &self,
         raw: Arc<dyn ByteRangeSource>,
-        offset: u64,
-        len: usize,
-    ) -> Result<(PooledBuffer, usize, bool)> {
+        job: Job,
+    ) -> Result<(Option<PooledBuffer>, usize, bool)> {
         let stored_size = self.stored_size;
-        let mut state: Option<(PooledBuffer, usize, Route)> = None;
+        let mut state: Option<(Option<PooledBuffer>, usize, Route)> = None;
         let mut supply: Option<(u64, Bytes)> = None;
         loop {
             let (inner, windows, pool) =
                 (Arc::clone(&self.inner), Arc::clone(&self.windows), Arc::clone(&self.pool));
             let given = supply.take();
             let carried = state.take();
-            let (out, filled, route, served) = tokio::task::spawn_blocking(move || {
+            let stepped = tokio::task::spawn_blocking(move || {
                 let mut pass = inner.lock().unwrap_or_else(|e| e.into_inner());
                 let (mut out, mut filled, route) = match carried {
                     Some(carried) => carried,
-                    None => (pool.obtain(len), 0, pass.route(offset, &windows)?),
+                    None => {
+                        let out = job.obtain(&pool);
+                        match job.route(&mut pass)? {
+                            Some(route) => (out, 0, route),
+                            None => return Ok(None),
+                        }
+                    }
                 };
                 if let Some((at, bytes)) = given {
                     pass.supply(route, at, &bytes);
                 }
                 let served = pass.serve(
                     route,
-                    offset,
-                    &mut out.as_mut()[..len],
+                    job.offset(),
+                    job.buffer(&mut out),
                     &mut filled,
                     &windows,
                     stored_size,
                 )?;
-                Ok::<_, Error>((out, filled, route, served))
+                Ok::<_, Error>(Some((out, filled, route, served)))
             })
             .await
             .map_err(Error::join)??;
+            let Some((out, filled, route, served)) = stepped else {
+                return Ok((None, 0, false));
+            };
             match served {
                 Served::Full => return Ok((out, filled, false)),
                 Served::Ended => return Ok((out, filled, matches!(route, Route::Frontier))),
@@ -352,6 +371,13 @@ impl FirstPass {
                 }
             }
         }
+    }
+
+    /// Leave the decode behind the frontier where it sits inside a closed
+    /// unit, decoding the unit to its end so its check is compared.
+    async fn leave_behind(&self) -> Result<()> {
+        let _turn = self.turn.lock().await;
+        self.run(Job::Leave).await.map(|_| ())
     }
 
     /// The pass has reached the end: the indexed source over the complete
@@ -402,6 +428,47 @@ impl FirstPass {
         record(&mut hints);
         if let Some(done) = self.done.get() {
             forward(&**done);
+        }
+    }
+}
+
+/// What a run over the pass does: answer a read, or leave the decode behind
+/// the frontier.
+#[derive(Clone, Copy)]
+enum Job {
+    Read { offset: u64, len: usize },
+    Leave,
+}
+
+impl Job {
+    /// The buffer a read is answered in.
+    fn obtain(self, pool: &Arc<BufferPool>) -> Option<PooledBuffer> {
+        match self {
+            Job::Read { len, .. } => Some(pool.obtain(len)),
+            Job::Leave => None,
+        }
+    }
+
+    /// The decode the job is routed to, or none where there is nothing to do.
+    fn route(self, pass: &mut Pass) -> Result<Option<Route>> {
+        Ok(match self {
+            Job::Read { offset, .. } => Some(pass.route(offset)?),
+            Job::Leave => pass.leave().then_some(Route::Behind),
+        })
+    }
+
+    fn offset(self) -> u64 {
+        match self {
+            Job::Read { offset, .. } => offset,
+            Job::Leave => 0,
+        }
+    }
+
+    /// Where the job's plaintext goes: the read's buffer, or nowhere.
+    fn buffer(self, out: &mut Option<PooledBuffer>) -> &mut [u8] {
+        match (self, out) {
+            (Job::Read { len, .. }, Some(out)) => &mut out.as_mut()[..len],
+            _ => &mut [],
         }
     }
 }
@@ -486,7 +553,7 @@ impl ByteRangeSource for FirstPass {
             let pass = self.lock();
             Ok(match (&pass.ended, &pass.frontier) {
                 (Some(index), _) => Extent::Exact(index.end().expect("complete").plaintext),
-                (None, Some(frontier)) => Extent::Open { at_least: frontier.forward.position() },
+                (None, Some(frontier)) => Extent::Open { at_least: frontier.decode.position() },
                 (None, None) => Extent::Open { at_least: 0 },
             })
         })
@@ -599,8 +666,9 @@ impl ByteRangeSource for FirstPass {
         self.done.get().map_or(1, |done| done.default_workers())
     }
 
-    /// The whole pass: two forward decodes — the frontier and one behind it
-    /// — and the skip scratch, its windows being on disk.
+    /// The whole pass: two decodes, each charged a forward one's — the
+    /// frontier and one behind it — and the skip scratch, its windows being
+    /// on disk.
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
         match self.done.get() {
             Some(done) => done.default_worker_memory(),
@@ -608,12 +676,14 @@ impl ByteRangeSource for FirstPass {
         }
     }
 
-    /// The indexed source's, once there is one. Before it, nothing: a single
-    /// member's only check is its trailer, which a pass stopped short of it
-    /// has not reached, and reaching it would mean decoding the rest of the
-    /// file.
+    /// Leave the decode behind the frontier, comparing the check of a closed
+    /// unit it sits inside, and then the indexed source's, once there is one.
+    /// Nothing else: a single member's only check is its trailer, which a
+    /// pass stopped short of it has not reached, and reaching it would mean
+    /// decoding the rest of the file.
     fn complete_reads(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
         Box::pin(async move {
+            self.leave_behind().await?;
             match self.done.get() {
                 Some(done) => done.complete_reads().await,
                 None => Ok(()),

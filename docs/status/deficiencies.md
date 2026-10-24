@@ -486,12 +486,6 @@ than reading as a phase nobody has sliced.
   source whose completion refuses what the scan already handed out. Detail:
   `crates/pgdt-mapping/src/forward.rs`.
 
-- **KD132** — a read behind a gzip first pass's frontier is compared with
-  nothing, so over a resumed index's cached windows a bad window hands out
-  wrong bytes unrefused. **(b) owned by P15**, its slice 15.11 checking a read
-  inside a closed unit against the CRC-32 that unit recorded. Detail:
-  `crates/pgdt-io/src/source/compressed/deflate/first_pass/pass.rs`.
-
 - **KD133** — two concatenated dumps of one database name resolve every block
   against the first's DDL, so a column the second retyped is typed as the
   first declared it and a table only the second declares is `NotDeclared`,

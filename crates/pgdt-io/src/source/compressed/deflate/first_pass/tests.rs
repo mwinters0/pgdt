@@ -207,7 +207,9 @@ async fn a_finished_pass_reads_as_the_indexed_source() {
 /// before it** — inside a unit the pass has closed and inside the one it is
 /// in — and leaves the frontier where it stood, so the pass then builds the
 /// same index. Its reads answer the payload's bytes, which a continued decode
-/// and a restarted one both do.
+/// and a restarted one both do, across a closed unit's end and into the open
+/// unit, and every closed unit it leaves, or stops inside as the reads
+/// complete, compares its check and passes.
 #[tokio::test]
 async fn a_read_behind_the_frontier_reads_from_its_checkpoint() {
     let payload = gzip_test_payload();
@@ -225,10 +227,21 @@ async fn a_read_behind_the_frontier_reads_from_its_checkpoint() {
         let ahead = payload.len() * 2 / 3;
         pass.read_range(0, ahead).await.unwrap();
         let open_unit = gzip_index_of(&pass).unit_ranges().last().unwrap().end;
-        for (from, len) in [(10, 5000), (5010, 3000), (open_unit as usize + 7, 900), (0, 64)] {
+        let second = gzip_index_of(&pass).unit_ranges().nth(1).unwrap();
+        let across = second.end as usize - 50;
+        for (from, len) in [
+            (10, 5000),
+            (5010, 3000),
+            (open_unit as usize + 7, 900),
+            (0, 64),
+            (across, 100),
+            (open_unit as usize - 20, 40),
+            (second.start as usize + 3, 10),
+        ] {
             let read = pass.read_range(from as u64, len).await.unwrap();
             assert_eq!(&read[..], &payload[from..from + len], "{feed_name}: {from}+{len}");
         }
+        pass.complete_reads().await.unwrap();
         assert_eq!(pass.extent().await.unwrap(), Extent::Open { at_least: ahead as u64 });
         // Straddling the frontier, from behind it.
         let read = pass.read_range(ahead as u64 - 100, 300).await.unwrap();
@@ -236,6 +249,83 @@ async fn a_read_behind_the_frontier_reads_from_its_checkpoint() {
         let rest = scanned(&pass, ahead as u64, 4096).await;
         assert_eq!(&rest[..], &payload[ahead..], "{feed_name}");
         assert_eq!(gzip_index_of(&pass), expected, "{feed_name}");
+    }
+}
+
+/// A unit decode's refusal of a unit whose plaintext does not match the
+/// CRC-32 its index recorded.
+fn is_unit_check(error: &Error) -> bool {
+    matches!(error.codec_cause::<gz_seek::Error>(), Some(gz_seek::Error::UnitCheck { .. }))
+}
+
+/// **A read behind the frontier inside a closed unit is checked against the
+/// CRC-32 that unit recorded**, whatever provider its window was read through:
+/// over a resumed index whose provider hands out a damaged window for a unit
+/// the earlier pass closed, a read leaving that unit is refused, one stopped
+/// inside it is refused as the reads complete — once, the unit being left —
+/// and so is the read whose decode leaves it for another; while a read of an
+/// undamaged closed unit, and one inside the open unit, the frontier's own,
+/// answer the payload's bytes. On both feeds.
+#[tokio::test]
+async fn a_read_behind_the_frontier_is_checked_against_its_units_crc() {
+    let payload = gzip_test_payload();
+    let (compressed, _) = gzip_indexed(&payload, SPACING.get());
+    let stored = std::fs::metadata(compressed.path()).unwrap().len();
+    let interrupted = FirstPass::spaced(
+        named(compressed.path()),
+        Feed::file(compressed.path()).unwrap(),
+        stored,
+        SPACING,
+        &std::env::temp_dir(),
+    )
+    .unwrap();
+    interrupted.read_range(0, payload.len() - 1000).await.unwrap();
+    let saved = gzip_index_of(&interrupted);
+    let units: Vec<_> = saved.unit_ranges().collect();
+    assert!(units.len() >= 3, "{units:?}");
+    let damaged = 1;
+    let mut windows = windows_of(&saved);
+    assert!(!windows[damaged].is_empty(), "the damaged unit begins inside the member");
+    windows[damaged].iter_mut().for_each(|byte| *byte ^= 0x55);
+    let held = Arc::new(super::super::held::HeldWindows(windows));
+    let saved = saved.with_windows(held);
+    let unit = units[damaged].clone();
+    let open = units.last().unwrap().end as usize;
+    for feed_name in FEEDS {
+        let resumed = || {
+            FirstPass::resumed(
+                named(compressed.path()),
+                feed(feed_name, compressed.path()),
+                stored,
+                saved.clone(),
+                &std::env::temp_dir(),
+            )
+            .unwrap()
+        };
+
+        let pass = resumed();
+        let error = pass.read_range(unit.start + 5, (unit.end - unit.start) as usize).await;
+        assert!(is_unit_check(&error.unwrap_err()), "{feed_name}: leaving the unit");
+        for (from, len) in [(10, 3000), (units[2].start as usize + 9, 500), (open + 11, 700)] {
+            let read = pass.read_range(from as u64, len).await.unwrap();
+            assert_eq!(&read[..], &payload[from..from + len], "{feed_name}: {from}+{len}");
+        }
+        pass.complete_reads().await.unwrap();
+
+        let pass = resumed();
+        pass.read_range(unit.start + 5, 10).await.unwrap();
+        let error = pass.complete_reads().await.unwrap_err();
+        assert!(is_unit_check(&error), "{feed_name}: as the reads complete: {error}");
+        pass.complete_reads().await.unwrap();
+
+        let pass = resumed();
+        pass.read_range(unit.start + 5, 10).await.unwrap();
+        let error = pass.read_range(0, 10).await.unwrap_err();
+        assert!(is_unit_check(&error), "{feed_name}: leaving it for another: {error}");
+        let read = pass.read_range(0, 10).await.unwrap();
+        assert_eq!(&read[..], &payload[..10], "{feed_name}");
+        let rest = scanned(&pass, open as u64, 4096).await;
+        assert_eq!(&rest[..], &payload[open..], "{feed_name}");
     }
 }
 
