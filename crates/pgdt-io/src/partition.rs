@@ -68,7 +68,7 @@ pub enum RetainedUnit {
     ///
     /// **That rationale holds only where a partition is one unit wide, which
     /// the leader's window guarantees and a query's cut does not** — `KD23`.
-    /// `pgdt_mapping::interior::scan_region` sizes its window with
+    /// `pgdt_mapping::interior::run_region` sizes its window with
     /// [`Partitioning::window_end`] and is held to
     /// [`BOUNDARIED_PARTITION_UNITS`](crate::partition::BOUNDARIED_PARTITION_UNITS); `pgdt_query`'s `plan_partitions` cuts a
     /// whole `CopyBlock` into `min(workers, max_partitions)` pieces, so a
@@ -77,7 +77,7 @@ pub enum RetainedUnit {
 }
 
 /// How a worker reads the piece it was handed
-/// (`pgdt_mapping::interior::scan_region`) — **stated by the source, because the
+/// (`pgdt_mapping::interior::scan_partition`) — **stated by the source, because the
 /// right answer differs by source**.
 ///
 /// Separate from [`RetainedUnit`] and [`Partitioning::partition_bytes`], which
@@ -311,7 +311,7 @@ impl Partitioning {
 /// (`docs/design/decisions.md`, "D15"). An empty `At` is the source declining
 /// to be split, and it yields the range whole.
 ///
-/// **Shared with the leader** (`pgdt_mapping::interior::scan_region`), which cuts an
+/// **Shared with the leader** (`pgdt_mapping::interior::run_region`), which cuts an
 /// open block's interior window with it: one cut rule for the two
 /// arrangements (`docs/design/decisions.md`, "D52").
 pub fn cut(range: Range<u64>, advice: &Partitioning, want: usize) -> Vec<Range<u64>> {

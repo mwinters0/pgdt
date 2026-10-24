@@ -384,6 +384,14 @@ pub fn database_for_name<'a>(
     metadata: &'a DumpMetadata,
     database: Option<&str>,
 ) -> Option<&'a DatabaseMetadata> {
+    // deficiency: KD133 — the first segment of a name answers for every
+    // segment of it: two concatenated dumps of one database are two entries,
+    // so a block of the second resolves against the first's DDL — a column
+    // the second retyped typed as the first declared it, a table only the
+    // second declares `NotDeclared` — with no error, the gatherer and the
+    // replay plan reaching the same lookup. The fix is metadata keyed by the
+    // segment a block belongs to rather than by its name. **(c) unowned**;
+    // promoted by a same-name concatenation reaching a user.
     metadata.databases.iter().find(|db| db.name.as_deref() == database)
 }
 

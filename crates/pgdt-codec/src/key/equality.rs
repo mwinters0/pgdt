@@ -90,8 +90,8 @@ pub fn literal_equality(
             return Some(Equality::Trimmed(text.trim_end_matches(' ').to_string()));
         }
         // A special value is written in its own type's `*_out` spelling on
-        // both sides, so it renders to itself. Only `date`, `timestamp` and
-        // `numeric(p,s)` reach this arm and admit one.
+        // both sides, so it renders to itself. Only `date`, `timestamp` of
+        // either zone and `numeric(p,s)` reach this arm and admit one.
         _ if special_order_key(kind, text).is_some() => text.to_string(),
         K::Bool => decode::render_bool(decode::decode_bool(text)?).to_string(),
         K::Int { bytes } => match semantics {

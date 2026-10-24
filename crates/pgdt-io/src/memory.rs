@@ -178,8 +178,8 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
 /// worker's step leaves: a wide host at a high `--jobs` is where every block
 /// declines, not a narrow one. At or below `MEMORY_UNPOOLED_BOUND × 100 /
 /// (100 − MEMORY_MARGIN_PERCENT)` the ceiling is zero on its own and nothing is
-/// ever gathered. Both lines are arithmetic between the constants and both are
-/// pinned by this module's tests.
+/// ever gathered. Both lines are arithmetic between the constants; the zero
+/// line is pinned by this module's tests, the crossover by `parallelism`'s.
 ///
 /// Saturating, so an arrangement whose budget already fills the margin leaves
 /// zero rather than wrapping, and every block declines.

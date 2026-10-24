@@ -25,8 +25,8 @@ pub use self::checkpoints::{GzipIndex, WindowProvider};
 pub(crate) use self::first_pass::{Feed, FirstPass};
 
 /// The plaintext spacing a forward pass places a checkpoint at the first
-/// deflate block boundary at or after each multiple of, and BGZF members are
-/// coalesced into units of at least: **the block `xz -T0` writes at its
+/// deflate block boundary at or after each multiple of, and `gz_seek`'s BGZF
+/// walk coalesces members into units of at least, the last aside: **the block `xz -T0` writes at its
 /// default preset**, so a gzip unit is an ordinary `.xz` block's size for the
 /// block cache, the partition grain and the resident bounds read off `.xz`
 /// (`docs/design/decisions.md`, "D113").

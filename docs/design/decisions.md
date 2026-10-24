@@ -759,7 +759,7 @@ the apparatus needs host facilities a runner need not have, `count-instructions`
 Rejected: lowering the runner's `perf_event_paranoid` (it answered the EACCES, not the ENOENT that followed); a counting test that skips where the counter does not open (a broken counter
 passing on this machine too); the apparatus named in `release.py` (a new instrument tested on the runner until someone edits the list). Reopens: an instrument shipping, or a shipped member
 needing a facility a runner lacks. Code: `release.py`'s `suite`, `check.Package.apparatus`. Evidence: `test_release.py`'s `test_the_suite_leaves_out_the_measurement_apparatus`,
-`test_the_apparatus_the_suite_leaves_out_is_a_dependency_of_no_member`; `runs/release-v0.2.0/x86-64-suite-39530108777.log`.
+`test_the_apparatus_the_suite_leaves_out_is_a_dependency_of_no_member`; `runs/release-v0.2.0/x86-64-suite-39530108777.log`, the EACCES before it in `docs/status/history/2026-10-20.md`, "v0.2.0 is stalled at its build".
 
 ### D111 CMake is a `mise.toml` pin for the apparatus, and a build is refused where a crate `pgdt` depends on ran it
 CMake is pinned for the measurement apparatus, zlib-ng's `libz-ng-sys` building under nothing else, so the image installs it. CMake is not refused as such: what the shipped build must not do is build `aws-lc-sys` under its CMake

@@ -78,7 +78,9 @@ impl GzipIndex {
         self.index.unit_count()
     }
 
-    /// How many members the file holds, as far as the index reaches.
+    /// How many members the file holds, as far as the index reaches — of an
+    /// index a forward pass built, which places a checkpoint at every member
+    /// start; a BGZF walk's places one per unit, so counts its units.
     pub fn member_count(&self) -> usize {
         self.index.checkpoints().iter().filter(|c| c.start == gz_seek::Start::Member).count()
     }

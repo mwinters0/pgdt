@@ -10,9 +10,10 @@ pub(crate) fn spacing(n: u64) -> NonZeroU64 {
     NonZeroU64::new(n).expect("a nonzero spacing")
 }
 
-/// A deterministic payload a deflate stream codes in every block kind:
+/// A deterministic payload with the shape each deflate block kind codes:
 /// `COPY`-like lines, long repeats, phrases recurring just inside the 32 KiB
-/// window, and incompressible bursts an encoder stores.
+/// window, and incompressible bursts — which kinds a stream holds being its
+/// encoder's choice, level 1 under zlib-rs writing static blocks alone.
 pub(crate) fn payload(len: usize, seed: u64) -> Vec<u8> {
     let mut state = seed | 1;
     let mut next = move || {

@@ -14,7 +14,9 @@ fn a_pass_yields_the_plaintext_and_checks_each_unit() {
         let pass = forward(&gzip(&plaintext, level), SPACING, 1 << 20, 1 << 20).unwrap();
         assert_eq!(pass.plaintext, plaintext, "level {level}");
         assert_eq!(pass.index.size(), Size::Exact(plaintext.len() as u64));
-        // Not more: zlib-rs's level 1 writes one block nearly to the end.
+        // Not more: zlib-rs's level 1 writes one block nearly to the end —
+        // `flate2`'s backend in a workspace build, `parquet` enabling it, and
+        // `miniz_oxide` under `-p gz-seek` alone.
         assert!(pass.index.checkpoints().len() >= 2, "level {level} placed too few checkpoints");
         for unit in 0..pass.index.unit_count() {
             let task = pass.index.unit(unit).unwrap();

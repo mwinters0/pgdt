@@ -1173,7 +1173,8 @@ offset as the uninterrupted stream did.
 block calls `next_byte_boundary`; the slow path takes input a byte at a time
 (`need_bits!`, `pull_byte`) and `inflate_fast` hands back its unused whole
 bytes on exit (`return_unused_bytes`), so fewer than eight bits are held at
-any stop; `prime` and `set_dictionary` are what `inflatePrime` and
+a block-end stop — a stop inside a `need_bits!` may hold more, as `zlib.h`
+allows; `prime` and `set_dictionary` are what `inflatePrime` and
 `inflateSetDictionary` call. zlib's own `zlib.h` states the same `data_type`
 contract. Observed by `the_index_is_one_whatever_the_buffers`
 (`crates/gz-seek/src/forward/tests.rs`), every unit decoding alone in

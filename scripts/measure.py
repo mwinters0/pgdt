@@ -2275,10 +2275,10 @@ def projection_flags(width: int) -> str:
 #: 1-term one does.
 #:
 #: **Two depths, because what a shared split would remove is the walk.**
-#: `ResolvedTerm::eval` takes its field with `field_ranges(..).nth(i)`, from
-#: the front of the row, once per term -- so a term against the control's
-#: thirteenth column walks thirteen fields and one against its first walks
-#: one. `v_bool` is the deep column rather than the last one because the two
+#: `ResolvedTerm::eval` takes its field through the row's shared `RowSplit`,
+#: which walks from the front of the row once, as far as the deepest term
+#: asks -- so terms against the control's thirteenth column walk thirteen
+#: fields and terms against its first walk one, whatever their count. `v_bool` is the deep column rather than the last one because the two
 #: depths must differ by the walk and not by what decoding the field costs,
 #: and its values are one byte; `v_escaped` and `v_long_text` are the two the
 #: row order otherwise recommends and both are the wrong shape for that.

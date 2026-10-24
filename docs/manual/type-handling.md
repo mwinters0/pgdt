@@ -406,7 +406,8 @@ way their text sorts. The rules that surprise people are the server's own:
 
 - **Kind decides first**, and the order is object, then array, then boolean,
   then number, then string, then JSON `null`. So `--filter 'doc>1'` keeps every
-  object and array in the column and drops every string.
+  object, every boolean and every array but an empty one (the oddity below),
+  and drops every string.
 - **Then size**: a two-key object sorts above a one-key object whatever the
   keys say, and a two-element array above a one-element array.
 - **Then the members**, left to right — for an object, key and then value, with

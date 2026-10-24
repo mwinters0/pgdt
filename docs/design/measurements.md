@@ -3996,7 +3996,7 @@ and a regression check rather than a throughput figure. The harness owns the
 campaign: eleven landed changes reworked how bytes reach the parser — the read buffer pool and the
 read-loop carry (`source/pool.rs`, `scan.rs`), the bulk UTF-8 pass and the
 shared field split (`copy.rs`), the splice gate (`forward.rs`), the `INSERT`
-statement scan (`preamble.rs`, `map.rs`) — and koji is the only input at a scale
+statement scan (`map/statement.rs`, `map.rs`) — and koji is the only input at a scale
 where *what the parser concludes is unchanged* can be checked against something
 other than a fixture.
 

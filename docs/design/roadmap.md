@@ -890,7 +890,7 @@ What it inherits:
   `v_category` carries bounds its fidelity guard no longer asserts absent,
   `pgdt query` still reading only its dictionary. Since `542fdfb` a
   summed column keeps an `i128` a group and every tracked column a `u64` of
-  text bytes (D91), and `CACHE_FORMAT_VERSION` moved three times since.
+  text bytes (D91).
   `statistics-gathering` now prices the whole data level, census and
   unrepresentable count beside the statistics, and what the statistics alone
   cost is a profile's share ([`measurements.md`](measurements.md), "What the

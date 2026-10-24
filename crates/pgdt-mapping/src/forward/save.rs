@@ -44,7 +44,9 @@ impl SaveThrottle {
     }
 
     /// Save, and time the save — that duration is the whole input to the next
-    /// decision. A disabled cache makes this ~free and so never throttles.
+    /// decision. A disabled cache makes this ~free and so seldom throttles:
+    /// only a block ending within [`SAVE_THROTTLE_K`] times that measured
+    /// cost of the last is held back.
     pub(crate) async fn save(
         &mut self,
         cache: &CacheMode,

@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD132 -->
-**`KD1`–`KD132` are allocated, and nothing at or below `KD132` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD134 -->
+**`KD1`–`KD134` are allocated, and nothing at or below `KD134` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -70,8 +70,8 @@ than reading as a phase nobody has sliced.
   `crates/pgdt-codec/src/pgtype.rs`.
 
 - **KD5** — a map rebuild is still a whole-list clone, so mapping is O(blocks²)
-  wherever the save throttle's gate does not close it — which is every
-  `--dtcache none` scan, since a no-op save leaves nothing to amortize.
+  wherever the save throttle's gate seldom closes — which is every
+  `--dtcache none` scan, since a no-op save leaves next to nothing to amortize.
   **(c) unowned**; promoted by a dump with thousands of blocks
   scanned under `--dtcache none`. Detail: `crates/pgdt-mapping/src/forward.rs`.
 
@@ -472,8 +472,8 @@ than reading as a phase nobody has sliced.
   by the maintainer deciding whether the shell departs from upstream's `main`
   there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
 
-- **KD129** — a single gzip member whose writer ends no deflate block before
-  its final one, `pg_dump -Z 1` linked against a default-built zlib-ng or
+- **KD129** — a single gzip member whose writer ends a deflate block only at
+  `Z_FINISH`, before the final one, `pg_dump -Z 1` linked against a default-built zlib-ng or
   zlib-rs among them, indexes as one unit, or two the last that block, so
   every read of it decodes from its start, serially. **(b) owned by
   P15**, its slice 15.10 placing checkpoints inside a static block. Detail:
@@ -500,3 +500,15 @@ than reading as a phase nobody has sliced.
   wrong bytes unrefused. **(b) owned by P15**, its slice 15.11 checking a read
   inside a closed unit against the CRC-32 that unit recorded. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/pass.rs`.
+
+- **KD133** — two concatenated dumps of one database name resolve every block
+  against the first's DDL, so a column the second retyped is typed as the
+  first declared it and a table only the second declares is `NotDeclared`,
+  with no error. **(c) unowned**; promoted by a same-name concatenation
+  reaching a user. Detail: `crates/pgdt-codec/src/resolve.rs`.
+
+- **KD134** — a parallel interior region fails on what follows its block — a
+  line of `max_line_bytes` or more, a corrupt unit, a failed fetch — where the
+  serial scanner stops at `\.`, so a cold `query` at `--jobs` above one can
+  refuse a table it answers serially. **(c) unowned**; promoted by such a
+  refusal reaching a user. Detail: `crates/pgdt-mapping/src/interior.rs`.

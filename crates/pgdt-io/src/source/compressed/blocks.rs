@@ -326,7 +326,7 @@ impl BlockCache {
     /// pushes onto that same list, so the pool holds `slots - 1 + workers`
     /// units while each worker holds one unit at a time — a reader waiting on
     /// another's decode holding none ([`BlockCache::claim`]). No test asserts
-    /// that bound. *Rejected:* charging
+    /// that bound past one reader. *Rejected:* charging
     /// `2 × workers` plus a decaying floor
     /// (`docs/design/decisions.md`, "D4"; `parallel-peak-rss`).
     fn worker_memory(&self, chunk_bytes: u64, decode_bytes: u64) -> WorkerMemory {

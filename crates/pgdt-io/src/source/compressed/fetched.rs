@@ -531,8 +531,8 @@ impl ByteRangeSource for FetchedCompressedSource {
     /// so a `WaitPolicy::MayWait` holder blocks a blocking-pool thread while a
     /// sibling releases. Here the fetch has to `await`, so the buffer is
     /// obtained on the runtime's own task — and `BufferPool::obtain` waits on a
-    /// `Condvar`, which on the `current_thread` runtime this project dispatches
-    /// from (`docs/design/decisions.md`, "D12") would block the very thread the
+    /// `Condvar`, which on a `current_thread` runtime — `pgdt`'s own, the
+    /// library imposing no flavour (`docs/design/decisions.md`, "D12") — would block the very thread the
     /// releasing sibling needs. A wait that should not have been permitted is a
     /// hang with nothing to measure ([`WaitPolicy::NeverWait`]), so it is
     /// refused here rather than granted and hoped for.

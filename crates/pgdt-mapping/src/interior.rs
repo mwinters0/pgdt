@@ -387,6 +387,15 @@ async fn run_region(
         // order and [`futures::stream::FuturesOrdered`] hands the results back
         // in it: the `?` below fires on the earliest failing piece, where
         // `try_join_all` would return the first error it *observes*.
+        // deficiency: KD134 — every partition of the window is taken through
+        // the `?` below, those past the one holding the terminator included,
+        // so a piece failing on what follows the block — a line of
+        // `max_line_bytes` or more, a corrupt unit, a failed fetch — fails
+        // the region where the serial scanner would have stopped at `\.`: a
+        // cold `query` at `--jobs` above one refuses a table it answers
+        // serially. The fix is a partition's error raised only where no
+        // earlier one held the terminator. **(c) unowned**; promoted by such
+        // a refusal reaching a user.
         while let Some(partition) = futures::StreamExt::next(&mut dispatched).await {
             let (partition_scans, piece) = partition?;
             // Held here, in file order, so a refusal is raised ahead of any

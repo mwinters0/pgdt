@@ -49,7 +49,9 @@ pub(crate) use self::save::SaveThrottle;
 ///
 /// Deficiency register: `deficiency: KD5` — the replacement is a whole-list
 /// clone, so mapping is O(blocks × splices) and O(blocks²) wherever the save
-/// throttle's gate never closes, which is every `--dtcache none` scan
+/// throttle's gate seldom closes, which is every `--dtcache none` scan, a
+/// no-op save closing it only for blocks that end within
+/// `forward::save`'s `SAVE_THROTTLE_K` times its own measured duration
 /// (`measurements.md`, `per-block-quadratic`). **(c) unowned**; promoted by a
 /// dump of thousands of blocks scanned that way. Closing it means an
 /// appendable frontier here rather than a rebuild; a floor under the throttle
@@ -184,7 +186,8 @@ pub enum Pass<'a> {
 /// an error is** — see [`SaveThrottle`], an interrupt before the first read
 /// included; the two that return before the loop, the map unchanged, save
 /// nothing. **`index.metadata` is restated at each `\connect`ed
-/// database's first `COPY` block**, which per I1 is one of the two boundaries
+/// database's first `COPY` block** — the first after a change of name, a
+/// segment naming the database before it restating nothing (`KD133`) — which per I1 is one of the two boundaries
 /// [`dump_metadata_from_spans`] may be called at, and the only one this loop
 /// stands on.
 ///
@@ -342,8 +345,8 @@ pub async fn map_forward(
                         metadata_covers = Some(db.clone());
                     }
                     // After the restatement, so the count and the
-                    // observer resolve the block against its own
-                    // database's DDL.
+                    // observer resolve the block against its database's
+                    // DDL — the first segment of its name's (`KD133`).
                     let plan = census.then(|| {
                         let counter =
                             counter_for(&header, index.metadata.as_deref(), db.as_deref());
@@ -370,7 +373,8 @@ pub async fn map_forward(
                     // `data_offset` until `\.` is line-structured rows, so
                     // the region may be handed to workers that never parse
                     // structure. It answers the block's totals as the
-                    // serial scanner would have, or declines — and a
+                    // serial scanner would have, or declines, or fails on
+                    // what follows the block (`KD134`) — and a
                     // block it closes holds the statistics its pieces
                     // observed, as a declined one does the rows this loop
                     // hands on.

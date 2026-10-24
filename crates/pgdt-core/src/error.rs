@@ -39,9 +39,11 @@ pub enum Error {
     /// A `--source` argument names something this build does not read: a URL
     /// scheme it speaks nothing for, a `file:` URL naming another machine, a
     /// URL carrying a credential it would have to send, or a place whose kind
-    /// the opener it reached does not serve. Raised by `pgdt_io::Origin`'s
-    /// constructors and by the per-place openers below `pgdt_io::open`, before
-    /// anything is fetched.
+    /// the opener it reached does not serve, or a file
+    /// `pgdt_io::CompressedFileSource::open` is handed that is not one it
+    /// opens. Raised by `pgdt_io::Origin`'s constructors and by the per-place
+    /// openers below `pgdt_io::open`, before anything is fetched, and by
+    /// `CompressedFileSource::open` after its leading bytes.
     ///
     /// **It refuses by name**: `origin` is the argument as the user wrote it
     /// and `why` says which rule it met, so a mistyped scheme is a sentence
@@ -90,13 +92,18 @@ pub enum Error {
     /// cache (`pgdt_dump::cache::CacheMode::open`), which every scan entry
     /// point — `pgdt_mapping::map_file`, `pgdt_query::Table::settle` and
     /// `pgdt_dump::preamble_only` — reads, before any byte of the dump is
-    /// read past its magic, through `pgdt_dump::cache::CacheMode::refusal`,
-    /// which answers none where the mode may overwrite the cache instead.
+    /// read past its magic wherever the origin's probe answered (one that
+    /// failed and then answered the open has an `.xz` walked first), through
+    /// `pgdt_dump::cache::CacheMode::refusal`, which answers none where the
+    /// mode may overwrite the cache instead; and by
+    /// `pgdt_dump::cache::CacheMode::open_source`, over the source its caller
+    /// built.
     #[error("{}", cache_unusable(path, unusable))]
     CacheUnusable { path: PathBuf, unusable: Unusable },
     /// The source changed while this run was reading it, so every byte the
     /// run has already read is suspect and a map or row set built from them
-    /// could mix two versions of the file. Raised by
+    /// could mix two versions of the file. Raised by a remote source whose
+    /// server refuses a request's precondition, and by
     /// [`pgdt_dump::cache::SourceWatch`] — at a cache save, once when the run
     /// finishes, and in place of a failure met while reading, which the
     /// change often is (`pgdt_dump::cache::SourceWatch::attribute`) — and an

@@ -652,7 +652,8 @@ re-read table's data no longer ends where the cache says it does: delete that
 cache and parse again.
 
 **`query` skips every group its statistics rule out.** Given a `--filter` or
-`--where`, a group in which no row can satisfy it is never read, and stderr
+`--where`, a group whose statistics prove no row in it satisfies it is never
+read, and stderr
 says how much was skipped:
 
 ```

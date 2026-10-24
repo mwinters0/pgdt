@@ -36,7 +36,8 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             // with no new invocation's header pair staged (I9) and no block
             // read, is that reconnect and continues the segment. Every other
             // one opens a segment: two concatenated dumps of one database
-            // stay two, as `target_settled` and `database_for_name` expect.
+            // stay two, as `target_settled` expects — though
+            // `database_for_name` answers the first for both (`KD133`).
             SpanBody::Connect { database }
                 if seen_connect
                     && current.name.as_deref() == Some(database.as_str())
