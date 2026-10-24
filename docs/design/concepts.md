@@ -29,8 +29,9 @@ the compressed file pulled or fetched, the remote object
   codec's adapter, the only modules naming its codec's crate — gzip's with
   the BGZF walk that reads a local BGZF file's index at open, and the first
   pass that builds any other's, the source a file no cache has indexed is read
-  through until it hands over to the arms, and the file it spills its
-  windows to, in the directory `open`'s caller names.
+  through until it hands over to the arms, the tasks it runs ahead of its
+  frontier on the caller's threads, and the file it spills its windows to, in
+  the directory `open`'s caller names.
 - **gz-seek** — `index.rs`, `forward.rs`, `placement.rs`, `parallel/`,
   `speculate.rs`, `find.rs`, `native/`, `chunk.rs`, `unit.rs`, `bgzf.rs`,
   `engine.rs`, `member.rs`, `zlib.rs`, `error.rs`: a gzip file's positioned

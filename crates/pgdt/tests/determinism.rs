@@ -39,7 +39,8 @@
 //! stated at all.
 //!
 //! **A compressed source is where `--jobs` changes which decode work happens**
-//! — whole units by several readers, or one forward decode — so it is where a
+//! — whole units by several readers, one forward decode, or one forward pass
+//! taking chunks decoded ahead of it — so it is where a
 //! determinism defect would live, and
 //! [`an_xz_dump_writes_the_serial_cache_at_every_stated_parallelism`] runs the
 //! same comparison over `.xz` input, and
@@ -498,12 +499,13 @@ async fn interrupted_at(dump: &Path, cache: &Path, after: u64) -> pgdt_io::GzipI
 }
 
 /// **A gzip dump writes one cache however its first pass ran**, byte for
-/// byte: serially as every first pass is, under a stated `--jobs` that the
-/// open extent leaves serial, at a chunk that ends nowhere in particular, and
-/// resumed by `pgdt parse` from a pass interrupted after its first checkpoint
-/// past the start — before the interrupted map's watermark and after it.
-/// Checkpoints are placed by the file alone, so the index, its windows and
-/// the map are the uninterrupted pass's.
+/// byte: serially, inflating ahead in parallel under the cores the file
+/// recommends and under a stated `--jobs` — its scan one partition, the
+/// extent open — at a chunk that ends nowhere in particular, and resumed by
+/// `pgdt parse`, serially and in parallel, from a pass interrupted after its
+/// first checkpoint past the start — before the interrupted map's watermark
+/// and after it. Checkpoints are placed by the file alone, so the index, its
+/// windows and the map are the uninterrupted pass's.
 #[tokio::test]
 async fn a_gzip_dump_writes_one_cache_however_its_first_pass_ran() {
     let dir = tempfile::tempdir().unwrap();
@@ -528,11 +530,14 @@ async fn a_gzip_dump_writes_one_cache_however_its_first_pass_ran() {
     }
 
     for (n, after) in [(25u64 << 20), (45 << 20)].into_iter().enumerate() {
-        let cache = dir.path().join(format!("gz-resumed-{n}.dtcache"));
-        let partial = interrupted_at(&dump, &cache, after).await;
-        assert!(!partial.is_complete() && partial.unit_count() >= 1, "stopped at {after}");
-        let got = cache_of(&dump, &cache, &["--jobs", "1"]);
-        assert_same_cache(&got, &reference, &dump, &["resumed", &after.to_string()]);
+        for jobs in ["1", "8"] {
+            let cache = dir.path().join(format!("gz-resumed-{n}-{jobs}.dtcache"));
+            let partial = interrupted_at(&dump, &cache, after).await;
+            assert!(!partial.is_complete() && partial.unit_count() >= 1, "stopped at {after}");
+            let got = cache_of(&dump, &cache, &["--jobs", jobs]);
+            let leg = ["resumed", &after.to_string(), "--jobs", jobs];
+            assert_same_cache(&got, &reference, &dump, &leg);
+        }
     }
 }
 

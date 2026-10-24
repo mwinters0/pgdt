@@ -123,8 +123,9 @@ pub enum PlanNoteKind {
     },
     /// The compressed source this query reads has no complete index yet —
     /// a gzip file whose first pass is still under way, building the index
-    /// as it reads — so it is read **serially**, one forward decode, whatever
-    /// `--jobs` says, until a read reaches the file's end; from then on the
+    /// as it reads — so it is read **with one reader**, one forward pass,
+    /// whatever `--jobs` says, until a read reaches the file's end, however
+    /// many workers inflate ahead of that pass; from then on the
     /// index it built cuts its reads at checkpoints, as does every later run
     /// over the cache a save of it writes.
     ///

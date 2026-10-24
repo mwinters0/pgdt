@@ -60,7 +60,7 @@ fn compressed_block_path_declined(
 
 /// Whether this source is a compressed one still building its index — a gzip
 /// first pass, its index stopping short of the file's end — and so read
-/// serially until a read reaches it, whatever the budget
+/// with one reader until a read reaches it, whatever the budget
 /// (`PlanNoteKind::CompressedFirstPass`). Read off the index the source
 /// answers when the plan is made, so a cold query whose mapping pass reached
 /// the end, the pass having handed over to the indexed source, says nothing.

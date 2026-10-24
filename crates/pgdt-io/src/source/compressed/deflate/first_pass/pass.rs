@@ -1,6 +1,6 @@
-//! The pass's decodes — the forward one at the frontier placing checkpoints,
-//! one behind it reading what the frontier has passed — and the compressed
-//! input each is fed from.
+//! The pass's decodes — the frontier's pass placing checkpoints, one behind
+//! it reading what the frontier has passed — and which of them serves a
+//! read.
 //!
 //! **A read behind the frontier is checked as the indexed source's piecewise
 //! arm checks a unit.** Inside a closed unit, one whose end the frontier has
@@ -12,11 +12,16 @@
 //! are the frontier's own, from the window the frontier began from, and
 //! checked where the frontier's are.
 
+use std::sync::Arc;
+
 use pgdt_core::{Error, Result};
 
-use super::super::super::{Positioned, short_read};
-use super::super::{INPUT_CHUNK, WindowProvider, gzip_error};
+use super::super::super::Positioned;
+use super::super::{WindowProvider, gzip_error};
+use super::ahead::{Frontier, Lift};
+use super::inflating::{Decode, Filled, Inflating, Step};
 use super::spill::PassWindows;
+use crate::source::pool::{BufferPool, PooledBuffer};
 
 /// How many plaintext bytes a read skipping forward to its first wanted byte
 /// throws away per decoder call: the pass's one scratch buffer, which its
@@ -26,7 +31,7 @@ pub(super) const SKIP_SCRATCH: usize = 64 * 1024;
 /// The decodes and what the pass has learnt.
 pub(super) struct Pass {
     /// The decode at the frontier, until it reaches the end or fails.
-    pub(super) frontier: Option<Inflating<gz_seek::Forward>>,
+    pub(super) frontier: Option<Inflating<Frontier>>,
     /// The complete index, once the frontier has reached the end.
     pub(super) ended: Option<gz_seek::Index>,
     /// The index as far as a frontier decode got before it failed, which
@@ -88,7 +93,7 @@ impl Pass {
     /// The pass with `frontier` its decode, `placed` checkpoints held, and
     /// the index it was resumed over, if it was.
     pub(super) fn new(
-        frontier: Inflating<gz_seek::Forward>,
+        frontier: Inflating<Frontier>,
         placed: usize,
         resumed_over: Option<gz_seek::Index>,
     ) -> Pass {
@@ -109,7 +114,7 @@ impl Pass {
         let known = self.ended.as_ref().or(self.resumed_over.as_ref()).or(self.stopped.as_ref());
         match (known, &self.frontier) {
             (Some(index), _) => index.clone(),
-            (None, Some(frontier)) => frontier.decode.index(),
+            (None, Some(frontier)) => frontier.decode.pass.index(),
             (None, None) => unreachable!("a pass that lost its frontier records where it stood"),
         }
     }
@@ -122,6 +127,14 @@ impl Pass {
                 "an earlier read of this gzip file's first pass failed, and the pass does not \
                  continue past a failure",
             ))),
+        }
+    }
+
+    /// Let the frontier run tasks ahead of it as `lift` says, where it still
+    /// decodes.
+    pub(super) fn lift(&mut self, lift: &Lift) {
+        if let Some(frontier) = &mut self.frontier {
+            frontier.decode.lift(lift);
         }
     }
 
@@ -192,8 +205,8 @@ impl Pass {
     ) -> Result<Served> {
         let Pass { frontier, scratch, placed, resumed_over, ended, stopped, .. } = self;
         let decode = frontier.as_mut().expect("a frontier read has its decode");
-        let served = decode.fill(offset, out, filled, stored_size, scratch, |forward| {
-            windows.place(*placed, forward.window())?;
+        let served = decode.fill(offset, out, filled, stored_size, scratch, |frontier| {
+            windows.place(*placed, frontier.pass.window())?;
             *placed += 1;
             *resumed_over = None;
             Ok(())
@@ -201,8 +214,8 @@ impl Pass {
         match served {
             Ok(Filled::Ended) => {
                 let decode = frontier.take().expect("the frontier was decoding");
-                let before = decode.decode.index();
-                match decode.decode.finish() {
+                let before = decode.decode.pass.index();
+                match decode.decode.pass.finish() {
                     Ok(index) => {
                         *resumed_over = None;
                         *ended = Some(index);
@@ -219,7 +232,7 @@ impl Pass {
             Ok(Filled::UnitEnded) => unreachable!("the frontier is a forward pass"),
             Err(e) => {
                 let decode = frontier.take().expect("the frontier was decoding");
-                *stopped = Some(decode.decode.index());
+                *stopped = Some(decode.decode.pass.index());
                 Err(e)
             }
         }
@@ -332,7 +345,7 @@ impl Pass {
         }
     }
 
-    fn frontier_input(&mut self) -> &mut Inflating<gz_seek::Forward> {
+    fn frontier_input(&mut self) -> &mut Inflating<Frontier> {
         self.frontier.as_mut().expect("a frontier read has its decode")
     }
 
@@ -341,54 +354,44 @@ impl Pass {
     }
 }
 
-/// What filling a read left its decode at: [`Served`], and the end of a
-/// closed unit, past which the read goes on in the next unit's decode.
-enum Filled {
-    Full,
-    Needs(u64),
-    Ended,
-    UnitEnded,
+/// What a run over the pass does: answer a read, or leave the decode behind
+/// the frontier.
+#[derive(Clone, Copy)]
+pub(super) enum Job {
+    Read { offset: u64, len: usize },
+    Leave,
 }
 
-/// One step of a decode, as [`Inflating::fill`] drives either kind.
-pub(super) struct Step {
-    progress: gz_seek::Progress,
-    /// Whether the step placed a checkpoint.
-    checkpoint: bool,
-}
-
-/// A decode [`Inflating`] feeds: a forward pass, or the decode behind the
-/// frontier.
-pub(super) trait Decode {
-    fn position(&self) -> u64;
-    fn compressed_position(&self) -> u64;
-    /// Where the compressed bytes this decode may be fed end.
-    fn input_end(&self, stored_size: u64) -> u64;
-    fn step(&mut self, input: &[u8], out: &mut [u8]) -> Result<Step>;
-    /// Whether it is a closed unit decoded to its end and compared.
-    fn unit_ended(&self) -> bool;
-}
-
-impl Decode for gz_seek::Forward {
-    fn position(&self) -> u64 {
-        gz_seek::Forward::position(self)
+impl Job {
+    /// The buffer a read is answered in.
+    pub(super) fn obtain(self, pool: &Arc<BufferPool>) -> Option<PooledBuffer> {
+        match self {
+            Job::Read { len, .. } => Some(pool.obtain(len)),
+            Job::Leave => None,
+        }
     }
 
-    fn compressed_position(&self) -> u64 {
-        gz_seek::Forward::compressed_position(self)
+    /// The decode the job is routed to, or none where there is nothing to do.
+    pub(super) fn route(self, pass: &mut Pass) -> Result<Option<Route>> {
+        Ok(match self {
+            Job::Read { offset, .. } => Some(pass.route(offset)?),
+            Job::Leave => pass.leave().then_some(Route::Behind),
+        })
     }
 
-    fn input_end(&self, stored_size: u64) -> u64 {
-        stored_size
+    pub(super) fn offset(self) -> u64 {
+        match self {
+            Job::Read { offset, .. } => offset,
+            Job::Leave => 0,
+        }
     }
 
-    fn step(&mut self, input: &[u8], out: &mut [u8]) -> Result<Step> {
-        let step = self.read(input, out).map_err(gzip_error)?;
-        Ok(Step { progress: step.progress, checkpoint: step.checkpoint.is_some() })
-    }
-
-    fn unit_ended(&self) -> bool {
-        false
+    /// Where the job's plaintext goes: the read's buffer, or nowhere.
+    pub(super) fn buffer(self, out: &mut Option<PooledBuffer>) -> &mut [u8] {
+        match (self, out) {
+            (Job::Read { len, .. }, Some(out)) => &mut out.as_mut()[..len],
+            _ => &mut [],
+        }
     }
 }
 
@@ -428,7 +431,9 @@ impl Decode for Behind {
     fn step(&mut self, input: &[u8], out: &mut [u8]) -> Result<Step> {
         match self {
             Behind::Closed(read) => {
-                Ok(Step { progress: read.read(input, out).map_err(gzip_error)?, checkpoint: false })
+                let progress = read.read(input, out).map_err(gzip_error)?;
+                let needs_input = progress == gz_seek::Progress::default();
+                Ok(Step { progress, checkpoint: false, needs_input })
             }
             Behind::Open(forward) => Decode::step(forward, input, out),
         }
@@ -436,118 +441,5 @@ impl Decode for Behind {
 
     fn unit_ended(&self) -> bool {
         matches!(self, Behind::Closed(read) if read.is_finished())
-    }
-}
-
-/// One decode, and the compressed input it is fed from.
-pub(super) struct Inflating<D> {
-    pub(super) decode: D,
-    input: Vec<u8>,
-    /// The compressed offset of `input`'s first byte.
-    input_at: u64,
-}
-
-impl<D> Inflating<D> {
-    pub(super) fn new(decode: D) -> Inflating<D> {
-        Inflating { decode, input: Vec::new(), input_at: 0 }
-    }
-
-    /// Replace the input with the compressed bytes from `at`, up to
-    /// [`INPUT_CHUNK`] of them, read by `read`.
-    fn refill(
-        &mut self,
-        at: u64,
-        stored_size: u64,
-        read: impl FnOnce(&mut [u8]) -> Result<usize>,
-    ) -> Result<()> {
-        let want = usize::try_from(INPUT_CHUNK.min(stored_size.saturating_sub(at)))
-            .map_err(|_| short_read())?;
-        self.input.resize(want, 0);
-        let got = read(&mut self.input)?;
-        if got < want {
-            return Err(Error::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "the gzip file ended before the length it was opened at",
-            )));
-        }
-        self.input_at = at;
-        Ok(())
-    }
-
-    /// Replace the input with `bytes`, fetched from `at`.
-    #[cfg(any(feature = "http", test))]
-    fn supply(&mut self, at: u64, bytes: &[u8]) {
-        self.input.clear();
-        self.input.extend_from_slice(bytes);
-        self.input_at = at;
-    }
-}
-
-impl<D: Decode> Inflating<D> {
-    /// Decode on into `out[filled..]`, skipping the plaintext before
-    /// `offset` through `scratch`, `placed` told of each checkpoint a forward
-    /// pass places, and failing the read where it fails; a closed unit's
-    /// decode stops at the unit's end, compared.
-    fn fill(
-        &mut self,
-        offset: u64,
-        out: &mut [u8],
-        filled: &mut usize,
-        stored_size: u64,
-        scratch: &mut [u8],
-        mut placed: impl FnMut(&D) -> Result<()>,
-    ) -> Result<Filled> {
-        loop {
-            let position = self.decode.position();
-            let skipping = position < offset;
-            if !skipping && *filled == out.len() {
-                return Ok(Filled::Full);
-            }
-            if self.decode.unit_ended() {
-                return Ok(Filled::UnitEnded);
-            }
-            let at = self.decode.compressed_position();
-            let limit = self.decode.input_end(stored_size);
-            let held_end = self.input_at + self.input.len() as u64;
-            let held: &[u8] = if at >= self.input_at && at <= held_end {
-                let from = (at - self.input_at) as usize;
-                let to = (limit.max(at).min(held_end) - self.input_at) as usize;
-                &self.input[from..to]
-            } else {
-                &[]
-            };
-            let reaches_end = at + held.len() as u64 >= limit;
-            if held.is_empty() && !reaches_end {
-                return Ok(Filled::Needs(at));
-            }
-            let target = if skipping {
-                let skip = usize::try_from(offset - position).unwrap_or(usize::MAX);
-                let len = skip.min(scratch.len());
-                &mut scratch[..len]
-            } else {
-                &mut out[*filled..]
-            };
-            let step = self.decode.step(held, target)?;
-            if !skipping {
-                *filled += step.progress.produced;
-            }
-            if step.checkpoint {
-                placed(&self.decode)?;
-            }
-            if step.progress == gz_seek::Progress::default() && !step.checkpoint {
-                if self.decode.unit_ended() {
-                    return Ok(Filled::UnitEnded);
-                }
-                if reaches_end {
-                    return Ok(Filled::Ended);
-                }
-                if held.len() as u64 >= INPUT_CHUNK {
-                    return Err(Error::Io(std::io::Error::other(
-                        "a gzip decode made no progress over a whole input chunk",
-                    )));
-                }
-                return Ok(Filled::Needs(at));
-            }
-        }
     }
 }

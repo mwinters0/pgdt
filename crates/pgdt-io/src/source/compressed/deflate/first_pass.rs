@@ -12,9 +12,12 @@
 //! A fetched BGZF file is read here too, the rule coalescing its members as
 //! the local arm's walk does (`docs/design/decisions.md`, "D116").
 //!
-//! **Serial until the end, then the indexed source.** The extent is open until
-//! a read meets the file's end, so nothing cuts the file and one forward
-//! decode serves the scan; at the end the complete index, its windows in the
+//! **One partition until the end, then the indexed source.** The extent is
+//! open until a read meets the file's end, so nothing cuts the file and one
+//! forward pass serves the scan — `gz_seek`'s parallel pass, which on a local
+//! file runs chunks of the file ahead of it on as many of the caller's
+//! threads as its parallelism allows, lifting the inflate but not the scan
+//! (`ahead.rs`); at the end the complete index, its windows in the
 //! pass's spill file, opens the source a later run opens from its cache
 //! ([`CompressedFileSource`],
 //! [`FetchedCompressedSource`](crate::FetchedCompressedSource)), and every
@@ -25,12 +28,13 @@
 //! run alone holds, in the directory `open`'s caller names
 //! (`docs/design/decisions.md`, "D115").
 //!
-//! **Announced where it opens and where it completes**, on the status channel
-//! as the `.xz` walk is: the source says why its run is serial, the
-//! arrangement reading only its advice (`docs/design/decisions.md`, "D64").
+//! **Announced where its first read begins and where it completes**, on the
+//! status channel as the `.xz` walk is: the source says why its scan is one
+//! reader and whether its inflate runs ahead of it, the arrangement reading
+//! only its advice (`docs/design/decisions.md`, "D64").
 
 use std::future::Future;
-use std::num::NonZeroU64;
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -42,7 +46,7 @@ use tokio_util::sync::CancellationToken;
 
 use pgdt_core::{Error, Result};
 
-use crate::parallelism::{Parallelism, WorkerMemory};
+use crate::parallelism::{Parallelism, WorkerMemory, worker_count};
 use crate::partition::Partitioning;
 use crate::source::pool::{BufferPool, POOL_DEPTH, PooledBuffer, budget_bytes};
 use crate::source::{ByteRangeSource, Extent, RemoteIdentity, WaitPolicy};
@@ -52,10 +56,14 @@ use super::super::FetchedCompressedSource;
 use super::super::{CompressedFileSource, CompressionIndex, short_read};
 use super::{CHECKPOINT_SPACING, GZIP, GzipIndex, INPUT_CHUNK, WindowProvider, gzip_error};
 
+mod ahead;
+mod inflating;
 mod pass;
 mod spill;
 
-use self::pass::{Inflating, Pass, Route, SKIP_SCRATCH, Served};
+use self::ahead::{Chunking, Frontier, Lift};
+use self::inflating::Inflating;
+use self::pass::{Job, Pass, Route, SKIP_SCRATCH, Served};
 use self::spill::PassWindows;
 
 /// What one forward decode of the pass holds besides the plaintext it hands
@@ -72,8 +80,9 @@ const PASS_BYTES: u64 = 2 * DECODE_BYTES + SKIP_SCRATCH as u64;
 /// no cache has indexed), building its index as a forward decode reaches each
 /// checkpoint.
 ///
-/// **One forward decode at the frontier**, behind a lock and taken one read
-/// at a time, so the checkpoints are placed in file order whoever reads; a
+/// **One forward pass at the frontier**, behind a lock and taken one read
+/// at a time, so the checkpoints are placed in file order whoever reads,
+/// whichever of the caller's threads decoded the chunks it takes; a
 /// read behind it begins a second decode at the last checkpoint at or before
 /// its first byte, kept across reads so a scan behind the frontier continues
 /// rather than restarting.
@@ -112,6 +121,19 @@ pub(crate) struct FirstPass {
     /// What callers announced, replayed on the indexed source when it is
     /// built.
     hints: Mutex<Hints>,
+    /// How the file is cut into chunks for the tasks run ahead of the
+    /// frontier.
+    chunking: Chunking,
+    /// The started line, said by the first read, once the parallelism it
+    /// runs under is announced.
+    started: Mutex<Option<Started>>,
+}
+
+/// Where a pass started, for its started line.
+#[derive(Clone, Copy)]
+enum Started {
+    Fresh,
+    Resumed { checkpoint: usize, plaintext: u64 },
 }
 
 /// Where the compressed bytes come from: a local file, pulled inside the
@@ -149,8 +171,8 @@ impl FirstPass {
     }
 
     /// A pass named `named` from the file's first byte, placing checkpoints
-    /// at `spacing` and spilling their windows into `spill`, saying it has
-    /// started.
+    /// at `spacing` and spilling their windows into `spill`, its first read
+    /// saying it has started.
     pub(crate) fn spaced(
         named: String,
         feed: Feed,
@@ -158,21 +180,32 @@ impl FirstPass {
         spacing: NonZeroU64,
         spill: &Path,
     ) -> Result<FirstPass> {
-        let forward = gz_seek::Forward::new(spacing).map_err(gzip_error)?;
+        Self::chunked(named, feed, stored_size, spacing, Chunking::SHIPPED, spill)
+    }
+
+    /// [`FirstPass::spaced`], cutting the file as `chunking` says for the
+    /// tasks run ahead of the frontier.
+    fn chunked(
+        named: String,
+        feed: Feed,
+        stored_size: u64,
+        spacing: NonZeroU64,
+        chunking: Chunking,
+        spill: &Path,
+    ) -> Result<FirstPass> {
+        let pass = gz_seek::Parallel::new(spacing, chunking.bytes, chunking.limit, stored_size)
+            .map_err(gzip_error)?;
         let windows = PassWindows::fresh(spill);
-        let pass = Self::over(named, feed, stored_size, Inflating::new(forward), 0, None, windows);
-        tracing::info!(
-            source = %pass.named,
-            codec = %GZIP,
-            "first pass started, reading serially while it builds the index",
-        );
-        Ok(pass)
+        let frontier = Inflating::new(Frontier::new(pass));
+        let started = Started::Fresh;
+        Ok(Self::over(named, feed, stored_size, frontier, 0, None, windows, chunking, started))
     }
 
     /// A pass named `named` resumed at the last checkpoint of `index`, an
     /// incomplete index a previous pass over the *same* file saved, its
     /// windows read through the provider riding on it and those it places
-    /// spilled into `spill`, saying it has started and from which checkpoint.
+    /// spilled into `spill`, its first read saying it has started and from
+    /// which checkpoint.
     ///
     /// **Checked against the file, reading no bytes of it**: an index whose
     /// last checkpoint lies at or past the file's end, or that `gz_seek`
@@ -184,6 +217,18 @@ impl FirstPass {
         feed: Feed,
         stored_size: u64,
         index: GzipIndex,
+        spill: &Path,
+    ) -> Result<FirstPass> {
+        Self::resumed_chunked(named, feed, stored_size, index, Chunking::SHIPPED, spill)
+    }
+
+    /// [`FirstPass::resumed`], cutting the file as `chunking` says.
+    fn resumed_chunked(
+        named: String,
+        feed: Feed,
+        stored_size: u64,
+        index: GzipIndex,
+        chunking: Chunking,
         spill: &Path,
     ) -> Result<FirstPass> {
         let GzipIndex { index, windows } = index;
@@ -204,33 +249,40 @@ impl FirstPass {
             })?;
             provider.read_window(checkpoints.len() - 1, &mut window)?;
         }
-        let forward = gz_seek::Forward::resume(&index, &window).map_err(gzip_error)?;
+        let pass =
+            gz_seek::Parallel::resume(&index, &window, chunking.bytes, chunking.limit, stored_size)
+                .map_err(gzip_error)?;
         // A pass resumed at a member start places that checkpoint again.
         let placed = checkpoints.len() - usize::from(last.start == gz_seek::Start::Member);
         let base = checkpoints.len();
         let pass_windows = PassWindows::after(windows, base, spill);
-        let inflating = Inflating::new(forward);
-        let pass =
-            Self::over(named, feed, stored_size, inflating, placed, Some(index), pass_windows);
-        tracing::info!(
-            source = %pass.named,
-            codec = %GZIP,
-            checkpoint = base - 1,
-            plaintext = last.plaintext,
-            "first pass started, resuming from a saved checkpoint and reading serially while \
-             it builds the index",
-        );
-        Ok(pass)
+        let frontier = Inflating::new(Frontier::new(pass));
+        let started = Started::Resumed { checkpoint: base - 1, plaintext: last.plaintext };
+        let resumed_over = Some(index);
+        Ok(Self::over(
+            named,
+            feed,
+            stored_size,
+            frontier,
+            placed,
+            resumed_over,
+            pass_windows,
+            chunking,
+            started,
+        ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn over(
         named: String,
         feed: Feed,
         stored_size: u64,
-        frontier: Inflating<gz_seek::Forward>,
+        frontier: Inflating<Frontier>,
         placed: usize,
         resumed_over: Option<gz_seek::Index>,
         windows: PassWindows,
+        chunking: Chunking,
+        started: Started,
     ) -> FirstPass {
         let pass = Pass::new(frontier, placed, resumed_over);
         FirstPass {
@@ -243,6 +295,65 @@ impl FirstPass {
             pool: Arc::new(BufferPool::default()),
             done: OnceLock::new(),
             hints: Mutex::new(Hints::default()),
+            chunking,
+            started: Mutex::new(Some(started)),
+        }
+    }
+
+    /// How many tasks may run ahead of the frontier: on a pulled feed, every
+    /// worker the announced parallelism affords at a task's charge but the
+    /// one the frontier is, none before any is announced, and no more than
+    /// there are chunks past the first; on a fetched one, none (`ahead.rs`).
+    fn ahead_tasks(&self) -> usize {
+        if !matches!(self.feed, Feed::File { .. }) {
+            return 0;
+        }
+        let parallelism = self.hints.lock().unwrap_or_else(|e| e.into_inner()).parallelism;
+        let task = WorkerMemory::per_worker(self.chunking.task_bytes());
+        let ahead = self.chunking.chunks(self.stored_size) - 1;
+        let afforded = worker_count(parallelism.unwrap_or_default(), task).saturating_sub(1);
+        afforded.min(usize::try_from(ahead).unwrap_or(usize::MAX))
+    }
+
+    /// Say the pass has started, once, at its first read: the codec, where it
+    /// resumes from if it does, and whether its inflate runs ahead on `tasks`
+    /// more workers than the frontier or serially (`docs/design/decisions.md`,
+    /// "D64").
+    fn announce(&self, tasks: usize) {
+        let Some(started) = self.started.lock().unwrap_or_else(|e| e.into_inner()).take() else {
+            return;
+        };
+        let (source, codec, workers) = (&self.named, GZIP, tasks + 1);
+        match (started, tasks) {
+            (Started::Fresh, 0) => tracing::info!(
+                %source,
+                %codec,
+                "first pass started, reading serially while it builds the index",
+            ),
+            (Started::Fresh, _) => tracing::info!(
+                %source,
+                %codec,
+                workers,
+                "first pass started, inflating in parallel while it builds the index, its scan \
+                 one reader",
+            ),
+            (Started::Resumed { checkpoint, plaintext }, 0) => tracing::info!(
+                %source,
+                %codec,
+                checkpoint,
+                plaintext,
+                "first pass started, resuming from a saved checkpoint and reading serially \
+                 while it builds the index",
+            ),
+            (Started::Resumed { checkpoint, plaintext }, _) => tracing::info!(
+                %source,
+                %codec,
+                checkpoint,
+                plaintext,
+                workers,
+                "first pass started, resuming from a saved checkpoint and inflating in \
+                 parallel while it builds the index, its scan one reader",
+            ),
         }
     }
 
@@ -267,7 +378,9 @@ impl FirstPass {
             drop(turn);
             return delegated(done, offset, len, strict).await;
         }
-        let (out, filled, ended) = self.run(Job::Read { offset, len }).await?;
+        let tasks = self.ahead_tasks();
+        self.announce(tasks);
+        let (out, filled, ended) = self.run(Job::Read { offset, len }, tasks).await?;
         let out = out.expect("a read is answered in a buffer");
         if ended {
             self.hand_over()?;
@@ -279,29 +392,39 @@ impl FirstPass {
         Ok(Bytes::from_owner(out).slice(..filled))
     }
 
-    /// `job` run over the pass on its feed: what a read filled — its buffer,
-    /// how many bytes, and whether the frontier met the file's end.
-    async fn run(&self, job: Job) -> Result<(Option<PooledBuffer>, usize, bool)> {
+    /// `job` run over the pass on its feed, `tasks` let run ahead of a pulled
+    /// frontier: what a read filled — its buffer, how many bytes, and whether
+    /// the frontier met the file's end.
+    async fn run(&self, job: Job, tasks: usize) -> Result<(Option<PooledBuffer>, usize, bool)> {
         match &self.feed {
-            Feed::File { file, .. } => self.run_pulled(Arc::clone(file), job).await,
+            Feed::File { file, .. } => self.run_pulled(Arc::clone(file), job, tasks).await,
             #[cfg(any(feature = "http", test))]
             Feed::Fetched(raw) => self.run_fetched(Arc::clone(raw), job).await,
         }
     }
 
     /// `job`, its decode pulling its compressed bytes from the file, the
-    /// whole of it inside one blocking task.
+    /// whole of it inside one blocking task, `tasks` let run ahead of the
+    /// frontier each on a blocking task of its own.
     async fn run_pulled(
         &self,
         file: Arc<std::fs::File>,
         job: Job,
+        tasks: usize,
     ) -> Result<(Option<PooledBuffer>, usize, bool)> {
         let (inner, windows, pool) =
             (Arc::clone(&self.inner), Arc::clone(&self.windows), Arc::clone(&self.pool));
         let stored_size = self.stored_size;
+        let lift = Lift {
+            file: Arc::clone(&file),
+            stored_size,
+            runtime: tokio::runtime::Handle::current(),
+            tasks,
+        };
         tokio::task::spawn_blocking(move || {
             let mut out = job.obtain(&pool);
             let mut pass = inner.lock().unwrap_or_else(|e| e.into_inner());
+            pass.lift(&lift);
             let Some(route) = job.route(&mut pass)? else {
                 return Ok((None, 0, false));
             };
@@ -388,7 +511,7 @@ impl FirstPass {
     /// unit, decoding the unit to its end so its check is compared.
     async fn leave_behind(&self) -> Result<()> {
         let _turn = self.turn.lock().await;
-        self.run(Job::Leave).await.map(|_| ())
+        self.run(Job::Leave, 0).await.map(|_| ())
     }
 
     /// The pass has reached the end: the indexed source over the complete
@@ -441,47 +564,6 @@ impl FirstPass {
         record(&mut hints);
         if let Some(done) = self.done.get() {
             forward(&**done);
-        }
-    }
-}
-
-/// What a run over the pass does: answer a read, or leave the decode behind
-/// the frontier.
-#[derive(Clone, Copy)]
-enum Job {
-    Read { offset: u64, len: usize },
-    Leave,
-}
-
-impl Job {
-    /// The buffer a read is answered in.
-    fn obtain(self, pool: &Arc<BufferPool>) -> Option<PooledBuffer> {
-        match self {
-            Job::Read { len, .. } => Some(pool.obtain(len)),
-            Job::Leave => None,
-        }
-    }
-
-    /// The decode the job is routed to, or none where there is nothing to do.
-    fn route(self, pass: &mut Pass) -> Result<Option<Route>> {
-        Ok(match self {
-            Job::Read { offset, .. } => Some(pass.route(offset)?),
-            Job::Leave => pass.leave().then_some(Route::Behind),
-        })
-    }
-
-    fn offset(self) -> u64 {
-        match self {
-            Job::Read { offset, .. } => offset,
-            Job::Leave => 0,
-        }
-    }
-
-    /// Where the job's plaintext goes: the read's buffer, or nowhere.
-    fn buffer(self, out: &mut Option<PooledBuffer>) -> &mut [u8] {
-        match (self, out) {
-            (Job::Read { len, .. }, Some(out)) => &mut out.as_mut()[..len],
-            _ => &mut [],
         }
     }
 }
@@ -566,7 +648,9 @@ impl ByteRangeSource for FirstPass {
             let pass = self.lock();
             Ok(match (&pass.ended, &pass.frontier) {
                 (Some(index), _) => Extent::Exact(index.end().expect("complete").plaintext),
-                (None, Some(frontier)) => Extent::Open { at_least: frontier.decode.position() },
+                (None, Some(frontier)) => {
+                    Extent::Open { at_least: frontier.decode.pass.position() }
+                }
                 (None, None) => Extent::Open { at_least: 0 },
             })
         })
@@ -675,20 +759,41 @@ impl ByteRangeSource for FirstPass {
         self.done.get().and_then(|done| done.block_decode_bytes())
     }
 
-    /// One reader: the pass is serial, and only a later run reads the units
-    /// it finds in parallel.
+    /// On a local file, the machine's cores capped at the file's chunk count:
+    /// the scan is one partition whatever this says, and every worker past
+    /// the frontier runs a chunk ahead of it (`docs/design/decisions.md`,
+    /// "D2"). A fetched one, one: its pass runs nothing ahead (`ahead.rs`).
+    /// The indexed source's, once the pass has handed over to it.
     fn default_workers(&self) -> usize {
-        self.done.get().map_or(1, |done| done.default_workers())
+        if let Some(done) = self.done.get() {
+            return done.default_workers();
+        }
+        match &self.feed {
+            Feed::File { .. } => {
+                let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+                let chunks = self.chunking.chunks(self.stored_size);
+                cores.min(usize::try_from(chunks).unwrap_or(usize::MAX))
+            }
+            #[cfg(any(feature = "http", test))]
+            Feed::Fetched(_) => 1,
+        }
     }
 
-    /// The whole pass: two decodes, each charged a forward one's — the
-    /// frontier and one behind it — and the skip scratch, its windows being
-    /// on disk.
+    /// The whole pass at one worker: two decodes, each charged a forward
+    /// one's — the frontier and one behind it — and the skip scratch, its
+    /// windows being on disk. Past one, a task ahead a worker, each charged
+    /// what one holds running and waiting for the frontier, the pass's own
+    /// charge inside the first's — on a local file of more than one chunk,
+    /// where a task can run at all.
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
-        match self.done.get() {
-            Some(done) => done.default_worker_memory(),
-            None => Some(WorkerMemory::per_worker(PASS_BYTES)),
+        if let Some(done) = self.done.get() {
+            return done.default_worker_memory();
         }
+        let ahead =
+            matches!(self.feed, Feed::File { .. }) && self.chunking.chunks(self.stored_size) > 1;
+        let per_worker =
+            if ahead { PASS_BYTES.max(self.chunking.task_bytes()) } else { PASS_BYTES };
+        Some(WorkerMemory::per_worker(per_worker))
     }
 
     /// Leave the decode behind the frontier, comparing the check of a closed

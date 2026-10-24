@@ -132,9 +132,9 @@ fn stderr_ok(args: &[&str]) -> String {
 }
 
 /// **A gzip first pass says it ran, once, and why the run is serial**, as the
-/// `.xz` walk does (`docs/design/decisions.md`, "D64"): a cold `parse` says it
-/// started, naming the codec and that it reads serially while it builds the
-/// index, and that it completed, naming the units and members the index
+/// `.xz` walk does (`docs/design/decisions.md`, "D64"): a cold `parse` of a
+/// file of one chunk says it started, naming the codec and that it reads
+/// serially while it builds the index, and that it completed, naming the units and members the index
 /// holds; a `parse` and an `info` over the complete cache it saved say
 /// nothing of it.
 #[test]
@@ -159,17 +159,12 @@ fn a_gzip_first_pass_is_announced_once_started_and_complete() {
     }
 }
 
-/// **A resumed first pass names the checkpoint it resumes from**: a cold
-/// `query` stopped at a small table ahead of a large one saves an index
-/// reaching only as far as its pass got, saying it started and not that it
-/// completed, and the `parse` that resumes it says from which checkpoint,
-/// then that it completed.
-#[test]
-fn a_resumed_gzip_first_pass_names_its_checkpoint() {
+/// A dump of two tables, `small` then `large` of `rows` rows, compressed as
+/// one gzip member by `flate2` at its default level.
+fn two_table_gzip(dir: &Path, rows: u64) -> std::path::PathBuf {
     use std::io::Write as _;
-    let dir = tempfile::tempdir().unwrap();
     let mut plain = String::from("SET client_encoding = 'UTF8';\n\n");
-    for (table, rows) in [("small", 50u64), ("large", 200_000)] {
+    for (table, rows) in [("small", 50u64), ("large", rows)] {
         plain.push_str(&format!(
             "CREATE TABLE public.{table} (\n    id integer,\n    name text\n);\n\n\
              COPY public.{table} (id, name) FROM stdin;\n"
@@ -184,8 +179,49 @@ fn a_resumed_gzip_first_pass_names_its_checkpoint() {
     }
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(plain.as_bytes()).unwrap();
-    let gz = dir.path().join("dump.sql.gz");
+    let gz = dir.join("dump.sql.gz");
     std::fs::write(&gz, encoder.finish().unwrap()).unwrap();
+    gz
+}
+
+/// **A first pass says whether it inflates in parallel**: over a local file
+/// of several chunks, a cold `parse` at three workers says it inflates in
+/// parallel on them, its scan one reader, and at one that it reads serially;
+/// both build one index.
+#[test]
+fn a_gzip_first_pass_says_whether_it_inflates_in_parallel() {
+    let dir = tempfile::tempdir().unwrap();
+    let gz = two_table_gzip(dir.path(), 1_000_000);
+    assert!(std::fs::metadata(&gz).unwrap().len() > 2 << 20, "three chunks or more");
+    let gz_arg = gz.to_str().unwrap();
+    let mut described = Vec::new();
+    for (jobs, says) in [
+        ("3", "inflating in parallel while it builds the index, its scan one reader"),
+        ("1", "reading serially while it builds the index"),
+    ] {
+        let cache = dir.path().join(format!("at-{jobs}.dtcache"));
+        let cache_arg = cache.to_str().unwrap();
+        let stderr =
+            stderr_ok(&["parse", "--source", gz_arg, "--jobs", jobs, "--dtcache", cache_arg]);
+        let (started, complete) = first_pass_lines(&stderr);
+        assert_eq!((started.len(), complete.len()), (1, 1), "{jobs}: {stderr}");
+        assert!(started[0].contains(says), "{jobs}: {stderr}");
+        assert_eq!(started[0].contains("workers=3"), jobs == "3", "{jobs}: {stderr}");
+        let info = run_ok(&["info", "--source", gz_arg, "--dtcache", cache_arg, "--detail"]);
+        described.push(info);
+    }
+    assert_eq!(described[0], described[1]);
+}
+
+/// **A resumed first pass names the checkpoint it resumes from**: a cold
+/// `query` stopped at a small table ahead of a large one saves an index
+/// reaching only as far as its pass got, saying it started and not that it
+/// completed, and the `parse` that resumes it says from which checkpoint,
+/// then that it completed.
+#[test]
+fn a_resumed_gzip_first_pass_names_its_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let gz = two_table_gzip(dir.path(), 200_000);
     let gz_arg = gz.to_str().unwrap();
 
     let output = run(&["query", "--source", gz_arg, "--table", "public.small"]);
