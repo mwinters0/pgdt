@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD135 -->
-**`KD1`–`KD135` are allocated, and nothing at or below `KD135` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD136 -->
+**`KD1`–`KD136` are allocated, and nothing at or below `KD136` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -497,3 +497,10 @@ than reading as a phase nobody has sliced.
   serial scanner stops at `\.`, so a cold `query` at `--jobs` above one can
   refuse a table it answers serially. **(c) unowned**; promoted by such a
   refusal reaching a user. Detail: `crates/pgdt-mapping/src/interior.rs`.
+
+- **KD136** — a `parse` over a fetched compressed file reads each run of DDL
+  back after its scan through the indexed source, which fetches the unit
+  holding the run whole, so the object is downloaded again where it is under
+  one unit and the units holding its DDL where it is not. **(c) unowned**;
+  promoted by a remote `parse` whose second download a user minds. Detail:
+  `crates/pgdt-dump/src/map/tiling.rs`.

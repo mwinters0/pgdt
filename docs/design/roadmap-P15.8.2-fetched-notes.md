@@ -31,8 +31,9 @@ member header the search finds by magic.
   (`Chunking::download_bytes`) to the pass's own and to each task's.
 - **A fetched pass recommends what a local one does**, the machine's cores
   capped at its chunk count (D2), rather than one: its workers fetch nothing
-  a serial pass would not. That call is under STATUS's "Decisions worth
-  another look".
+  a serial pass would not. Reviewed and reversed: 15.8.4 restores one
+  ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
+  "15.8.2's fetched default and the take tests, reviewed").
 - **The evidence**: `a_fetched_pass_downloads_the_object_once_with_tasks_ahead`
   (the transport's ranges tiling the object once at one to eight workers),
   `a_pass_inflates_ahead_on_either_feed_and_builds_the_serial_index`,
@@ -62,12 +63,13 @@ member header the search finds by magic.
   every chunk before its decode lands (14 of 80 runs of a four-worker pass at
   4099-byte reads, eight test binaries at once, against none of 80 on the
   pulled feed). So the fetched test asserts a take at four workers or eight,
-  and the pulled test keeps its own assertion.
+  and the pulled test keeps its own assertion; both still race, which 15.8.4
+  removes by sequencing them.
 - **A `parse` over a fetched gzip file reads more than its pass**, as the
   serial pass did at `08c62385`: the scan's restart at the file's start reads
   behind the frontier, a piece fetched again, and `attach_text`'s read of each
   run of DDL back after the scan (D30) goes through the indexed source, which
   fetches the unit holding it whole — the whole object for a member under the
-  spacing. Observed by printing the oracle's requests after the `parse` in
+  spacing (`KD136`). Observed by printing the oracle's requests after the `parse` in
   `parse_and_query_over_a_remote_gzip_member_…`, on this tree and on it with
   this slice's `pgdt-io` and `gz-seek` stashed.

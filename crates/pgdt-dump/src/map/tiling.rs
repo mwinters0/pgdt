@@ -35,6 +35,13 @@ fn stores_text(body: &SpanBody) -> bool {
 /// be stored empty and `truncated` however short it is. **(c) unowned**;
 /// promoted by a `--map` listing seen to lose a statement's text, the fix
 /// being a read per span past the cap.
+///
+/// Deficiency register: `deficiency: KD136` — over a fetched compressed
+/// source each run's read is a fetch of the whole unit holding it, after the
+/// scan has already downloaded the object once: the object again where it is
+/// under one unit, the units holding its DDL where it is not. **(c)
+/// unowned**; promoted by a remote `parse` whose second download a user
+/// minds.
 pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Result<()> {
     let mut i = 0;
     while i < spans.len() {

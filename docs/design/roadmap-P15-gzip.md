@@ -402,7 +402,10 @@ arms 2, 3 and 5 leave. Rejected: deferring it to a later phase or out-of-band,
 which moves only the wrap. Slice 8 rewrites the first pass's started line
 where the pass is no longer serial. **A fetched BGZF file's first pass takes
 its units from its members' headers** rather than finding them speculatively,
-so its first run inflates in parallel over one download.
+so its first run under a stated `--jobs` inflates in parallel over one
+download, a fetched source recommending one reader (D2;
+[`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
+"15.8.2's fetched default and the take tests, reviewed").
 
 **A fetched BGZF file read by a first pass, slice 13, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
