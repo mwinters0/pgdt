@@ -1,29 +1,6 @@
 //! The forward pass: a whole gzip file decoded in order, its index built as a
-//! by-product.
-//!
-//! # Where a checkpoint goes is a function of the file alone
-//!
-//! A checkpoint is placed at **every member start**, and at **the first deflate
-//! block boundary at or after each multiple of the spacing** in plaintext — a
-//! member start counting as a boundary — so the same file and spacing give the
-//! same index however the caller cuts its buffers, wherever an earlier pass was
-//! interrupted, and on whatever thread each piece ran
-//! (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling"). The decoder
-//! stops at every block's end, and the pass checks each against the next
-//! multiple; what the spacing moves is how many windows are copied, never how
-//! often the decoder stops.
-//!
-//! **BGZF members are coalesced as a [`Walk`](crate::Walk) coalesces them.** A
-//! member start whose own header is a BGZF member's joins the unit before it
-//! where that unit began at a BGZF member start and is short of the spacing; no
-//! block boundary inside a BGZF member is a checkpoint; and a unit of whole
-//! BGZF members records no CRC-32, its trailers checking it. So the pass over
-//! a BGZF file builds the index its walk reads off the headers, and any run of
-//! BGZF members in another gzip file is coalesced alike, while a member whose
-//! header is not BGZF's begins a unit and takes the rule above. Each member is
-//! decided by its own header and the unit it would join, so a pass resumed at
-//! a member start reads the rule off that header alone
-//! (`docs/design/decisions.md`, "D116").
+//! by-product, its checkpoints where the placement rule puts them
+//! (`placement.rs`).
 //!
 //! # What a step hands out
 //!
@@ -36,9 +13,10 @@
 
 use std::num::NonZeroU64;
 
-use crate::engine::{Engine, Event, Member, Stepped};
+use crate::engine::{Engine, Event, Stepped};
 use crate::error::{Error, Result};
-use crate::index::{Checkpoint, End, Index, Size, Start};
+use crate::index::{Checkpoint, End, Index, Size};
+use crate::placement::{Placement, Resumed};
 use crate::unit::Progress;
 use crate::zlib::WINDOW_SIZE;
 
@@ -54,27 +32,7 @@ pub struct ForwardStep {
 /// A forward pass over one gzip file.
 pub struct Forward {
     engine: Engine,
-    spacing: NonZeroU64,
-    /// The next multiple of the spacing a checkpoint is owed at.
-    next_mark: u64,
-    checkpoints: Vec<Checkpoint>,
-    /// Whether the member being read has a BGZF member's header: no block
-    /// boundary inside one is a checkpoint, and its unit records no CRC-32.
-    member_bgzf: bool,
-    /// Whether the unit since the last checkpoint began at a BGZF member's
-    /// start, so that a later BGZF member may join it.
-    unit_bgzf: bool,
-    /// A member start the spacing does not owe, placed only if its header
-    /// proves not to be a BGZF member's.
-    deferred: Option<Checkpoint>,
-    /// How many members have begun.
-    members: u64,
-    /// How many members had begun when the last checkpoint was placed.
-    members_at_last: u64,
-    /// The member start the pass begins at and has yet to place, with the
-    /// member count of the index it stands for: what [`Forward::index`]
-    /// answers until it is placed.
-    replacing: Option<(Checkpoint, u64)>,
+    placement: Placement,
     window: Box<[u8; WINDOW_SIZE]>,
     window_len: usize,
 }
@@ -85,15 +43,7 @@ impl Forward {
     pub fn new(spacing: NonZeroU64) -> Result<Forward> {
         Ok(Forward {
             engine: Engine::at_member(0, 0)?,
-            spacing,
-            next_mark: 0,
-            checkpoints: Vec::new(),
-            member_bgzf: false,
-            unit_bgzf: false,
-            deferred: None,
-            members: 0,
-            members_at_last: 0,
-            replacing: Some((Checkpoint::member(0, 0), 1)),
+            placement: Placement::new(spacing),
             window: Box::new([0; WINDOW_SIZE]),
             window_len: 0,
         })
@@ -109,59 +59,14 @@ impl Forward {
     /// holding the last checkpoint has a unit with no CRC-32 — one no forward
     /// pass built; [`Error::WindowLength`] for a window of another length.
     pub fn resume(index: &Index, window: &[u8]) -> Result<Forward> {
-        if index.is_complete() {
-            return Err(Error::InvalidIndex { reason: "a complete index has nothing to resume" });
-        }
-        let checkpoints = index.checkpoints().to_vec();
-        let at = checkpoints.len() - 1;
-        let last = checkpoints[at];
-        if window.len() != last.window_len() {
-            return Err(Error::WindowLength { expected: last.window_len(), given: window.len() });
-        }
-        let engine = match last.start {
-            Start::Member => Engine::at_member(last.bit / 8, last.plaintext)?,
-            Start::Block { .. } => {
-                let prefix = index.member_prefix(at).ok_or(Error::InvalidIndex {
-                    reason: "a unit before the resume point carries no CRC-32",
-                })?;
-                let member_at = checkpoints[..=at]
-                    .iter()
-                    .rposition(|c| c.start == Start::Member)
-                    .expect("the first checkpoint is a member start");
-                let member = checkpoints[member_at];
-                let member =
-                    Member::resumed(member.bit / 8, member.plaintext, Some(prefix), last.plaintext);
-                Engine::at_block(last.bit, last.plaintext, window, member)?
+        let (placement, resumed) = Placement::resume(index, window)?;
+        let engine = match resumed {
+            Resumed::Member { offset, plaintext } => Engine::at_member(offset, plaintext)?,
+            Resumed::Block { bit, plaintext, member } => {
+                Engine::at_block(bit, plaintext, window, member)?
             }
         };
-        let members = index.member_count();
-        let mut forward = Forward {
-            engine,
-            spacing: index.spacing(),
-            next_mark: 0,
-            checkpoints,
-            // A checkpoint inside a member is one only a plain member has; a
-            // member start is placed again, its header read again.
-            member_bgzf: false,
-            unit_bgzf: false,
-            deferred: None,
-            members,
-            members_at_last: members,
-            replacing: None,
-            window: Box::new([0; WINDOW_SIZE]),
-            window_len: 0,
-        };
-        if last.start == Start::Member {
-            // The member's start is placed again, and its member counted
-            // again, as the pass reads its header.
-            forward.checkpoints.pop();
-            forward.members -= 1;
-            forward.replacing = Some((last, members));
-        } else {
-            forward.checkpoints[at].crc = None;
-            forward.placed(last.plaintext);
-        }
-        Ok(forward)
+        Ok(Forward { engine, placement, window: Box::new([0; WINDOW_SIZE]), window_len: 0 })
     }
 
     /// The plaintext offset of the next byte produced.
@@ -188,18 +93,7 @@ impl Forward {
     /// The index as far as the pass has got: its last checkpoint's unit open,
     /// so that [`Forward::resume`] over it begins there.
     pub fn index(&self) -> Index {
-        let mut checkpoints = self.checkpoints.clone();
-        let members = match self.replacing {
-            Some((start, members)) => {
-                checkpoints.push(start);
-                members
-            }
-            None => self.members_at_last,
-        };
-        if let Some(last) = checkpoints.last_mut() {
-            last.crc = None;
-        }
-        Index::built(self.spacing, checkpoints, members, None)
+        self.placement.index()
     }
 
     /// Take compressed bytes from `input`, which begins at
@@ -233,26 +127,10 @@ impl Forward {
         let plaintext = self.engine.plaintext();
         let checkpoint = match event {
             Some(Event::MemberStart) => {
-                self.members += 1;
                 self.window_len = 0;
-                self.member_bgzf = false;
-                let start = Checkpoint::member(plaintext, self.engine.member().offset);
-                if self.owes_member(plaintext) {
-                    Some(start)
-                } else {
-                    self.deferred = Some(start);
-                    None
-                }
+                self.placement.member_start(plaintext, self.engine.member().offset)
             }
-            // A start is deferred only into a unit a BGZF member began, so the
-            // unit this member is in now began at one exactly where its own
-            // header is BGZF's: joined to it, or placed at its own start.
-            Some(Event::Header { bgzf }) => {
-                self.member_bgzf = bgzf;
-                self.unit_bgzf = bgzf;
-                let deferred = self.deferred.take();
-                if bgzf { None } else { deferred }
-            }
+            Some(Event::Header { bgzf }) => self.placement.header(bgzf),
             // deficiency: KD129 — a checkpoint is a block boundary, so a
             // member whose writer ends a block only at `Z_FINISH`, before its
             // final one (`deflate_quick`, level 1 under zlib-ng's default build and
@@ -263,31 +141,20 @@ impl Forward {
             // of the byte's remaining bits; what is missing is a stop there,
             // which no inflater gives, so placing one means walking the static
             // codes here.
-            Some(Event::Block { bit }) if !self.member_bgzf && plaintext >= self.next_mark => {
-                self.close_unit();
+            Some(Event::Block { bit }) if self.placement.owes_block(plaintext) => {
+                self.placement.close(self.engine.cut());
                 self.window_len = self.engine.dictionary(&mut self.window);
-                Some(Checkpoint {
-                    plaintext,
-                    bit,
-                    start: Start::Block {
-                        window: u16::try_from(self.window_len).expect("a window is at most 32 KiB"),
-                    },
-                    crc: None,
-                })
+                Some(Checkpoint::block(plaintext, bit, self.window_len))
             }
             // A unit of whole BGZF members is checked by their trailers.
-            Some(Event::MemberEnd) if !self.member_bgzf => {
-                let crc = self.engine.run_crc();
-                self.checkpoints.last_mut().expect("a member began").crc = Some(crc);
+            Some(Event::MemberEnd) if self.placement.member_end_records_crc() => {
+                self.placement.close(self.engine.run_crc());
                 None
             }
             _ => None,
         };
         if let Some(checkpoint) = checkpoint {
-            self.checkpoints.push(checkpoint);
-            self.members_at_last = self.members;
-            self.replacing = None;
-            self.placed(plaintext);
+            self.placement.place(checkpoint);
         }
         Ok((ForwardStep { progress, checkpoint }, stepped.progressed()))
     }
@@ -300,39 +167,14 @@ impl Forward {
     /// [`Error::Truncated`] where the input ended inside a member, or held
     /// none.
     pub fn finish(self) -> Result<Index> {
-        if self.replacing.is_some() || !self.engine.is_between() {
+        if self.placement.is_replacing() || !self.engine.is_between() {
             return Err(Error::Truncated { offset: self.engine.compressed_position() });
         }
         let end = End {
             plaintext: self.engine.plaintext(),
             compressed: self.engine.compressed_position(),
         };
-        Ok(Index::built(self.spacing, self.checkpoints, self.members, Some(end)))
-    }
-
-    /// Whether a member beginning at `plaintext` begins a unit before its
-    /// header is read: always, unless the unit since the last checkpoint
-    /// began at a BGZF member's start and is short of the spacing.
-    fn owes_member(&self, plaintext: u64) -> bool {
-        !self.unit_bgzf
-            || self
-                .checkpoints
-                .last()
-                .is_none_or(|last| plaintext - last.plaintext >= self.spacing.get())
-    }
-
-    /// Record the unit ending here: the CRC-32 of the run since the last
-    /// checkpoint.
-    fn close_unit(&mut self) {
-        let crc = self.engine.cut();
-        self.checkpoints.last_mut().expect("a member began").crc = Some(crc);
-    }
-
-    /// A checkpoint was placed at `plaintext`: the next is owed at the next
-    /// multiple of the spacing past it.
-    fn placed(&mut self, plaintext: u64) {
-        let spacing = self.spacing.get();
-        self.next_mark = (plaintext / spacing + 1) * spacing;
+        Ok(self.placement.finish(end))
     }
 }
 

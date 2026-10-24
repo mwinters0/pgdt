@@ -11,19 +11,22 @@
 //! interior, so its index is a by-product of decoding it once: [`Forward`] is
 //! that pass, placing a checkpoint at the first block boundary at or after each
 //! multiple of a spacing the caller chooses, and at every member start, and
-//! handing each checkpoint's window out as it goes. A **BGZF** file states every
+//! handing each checkpoint's window out as it goes. [`Parallel`] is the same
+//! pass with chunks of the file ahead of it decoded speculatively, on whatever
+//! threads the caller runs its [`Speculation`]s on, and it builds the same
+//! index whatever ran. A **BGZF** file states every
 //! member's length in its header, so [`Walk`] reads its index off the headers
 //! and trailers without decoding a byte, coalescing members into units of at
-//! least the spacing — and a [`Forward`] pass over one coalesces them alike,
+//! least the spacing — and a forward pass over one coalesces them alike,
 //! so a caller decoding the file anyway builds the same index without the
 //! walk's reads.
 //!
 //! **Nothing here reads a file.** Every type is driven by bytes the caller
-//! supplies — [`Forward::read`] and [`UnitRead::read`] take the next compressed
-//! bytes and space for plaintext, [`Walk`] hands out a [`Request`] and takes
-//! the bytes back — and none starts a thread, holds a borrow across calls, or
-//! has a lifetime, so a caller decodes on whatever thread and over whatever
-//! transport it has.
+//! supplies — [`Forward::read`], [`Parallel::read`] and [`UnitRead::read`]
+//! take the next compressed bytes and space for plaintext, a [`Speculation`]
+//! and a [`Walk`] say where they need bytes from and take them back — and
+//! none starts a thread, holds a borrow across calls, or has a lifetime, so a
+//! caller decodes on whatever thread and over whatever transport it has.
 //!
 //! **Every byte handed out is checked.** The forward pass compares each
 //! member's CRC-32 and `ISIZE` and records each unit's own CRC-32 as it goes; a
@@ -74,7 +77,11 @@
 //! `unsafe` this crate has; the API above is safe. The engine behind it is a
 //! feature's — zlib-rs by default, the one that ships, zlib-ng or stock zlib
 //! otherwise (`docs/design/decisions.md`, "D112") — and [`engine`] names the
-//! one a build links.
+//! one a build links. A speculation decodes with a deflate decoder of the
+//! crate's own, the one decode the zlib API cannot make — from a block found
+//! mid-member, its history unknown — and its plaintext is handed out only
+//! where it checks out against the engine's pass (`docs/design/decisions.md`,
+//! "D117").
 // upstream: UF4
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
@@ -82,9 +89,14 @@
 mod bgzf;
 mod engine;
 mod error;
+mod find;
 mod forward;
 mod index;
 mod member;
+mod native;
+mod parallel;
+mod placement;
+mod speculate;
 #[cfg(test)]
 mod test_support;
 mod unit;
@@ -95,5 +107,7 @@ pub use error::{Error, Result};
 pub use forward::{Forward, ForwardStep};
 pub use index::{Checkpoint, End, Index, Size, Start, UnitTask};
 pub use member::GZIP_MAGIC;
+pub use parallel::{Parallel, ParallelStep};
+pub use speculate::{Speculated, Speculation};
 pub use unit::{Progress, UnitRead};
 pub use zlib::{DECODER_BYTES, WINDOW_SIZE, engine};

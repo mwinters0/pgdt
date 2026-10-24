@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D116 -->
+<!-- decision-watermark: D117 -->
 
 ## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
@@ -166,11 +166,16 @@ on a read-only mount. Reopens: a spill directory a user needs to name apart from
 
 ### D116 A forward pass coalesces BGZF members as the walk does, so a fetched BGZF file is read by a first pass
 A fetched source recommends one reader (D2), so a walk would download the object for parallelism the run does not take before the scan downloads it again; the first pass reads it once and builds the walk's index:
-a member start whose own header is BGZF's joins a unit begun at a BGZF member start until it holds the spacing, no block boundary inside a BGZF member begins one, and a plain member begins a unit under `gz_seek::Forward`'s block rule. The rule is the
+a member start whose own header is BGZF's joins a unit begun at a BGZF member start until it holds the spacing, no block boundary inside a BGZF member begins one, and a plain member begins a unit under the block rule. The rule is the
 pass's on both arms, so a file whose chain breaks gets one index whichever arm reads it. Each member is decided by its own header, which a pass resumed at a member start reads again; the member count sits beside the checkpoints.
 Rejected: a pass placing every member start, a unit a BGZF block; the run ending for good at the first plain header, every later BGZF member a unit of its own; a stated length or `ISIZE` the decode contradicts ending a unit, which a pass resumed after that member cannot know of; the walk on both arms (two downloads); a mode the caller chooses, persisted for a resume, a broken file then indexed per arm; a pass starting again from zero where its run breaks (two downloads).
-Reopens: a parallel first pass, which takes a fetched file's units from its headers. Code: `gz_seek::Forward`, `open_remote`. Evidence: `a_forward_pass_over_bgzf_builds_the_walk_s_index`,
+Reopens: a parallel first pass, which takes a fetched file's units from its headers. Code: `gz-seek`'s `placement.rs`, `open_remote`. Evidence: `a_forward_pass_over_bgzf_builds_the_walk_s_index`,
 `bgzf_members_are_coalesced_on_both_sides_of_a_plain_member`, `a_remote_bgzf_file_is_read_once_by_a_first_pass_that_builds_the_walk_s_index`.
+
+### D117 A parallel first pass speculates with a decoder of `gz-seek`'s own, and takes a chunk only where its own pass stands
+No engine decodes from a block whose history is unknown, so a chunk ahead of the frontier is decoded natively, a marker written where its history would be read and resolved once the frontier's is known (rapidgzip's technique), on the caller's threads (D1, D12); the frontier, every resume and every unit decode stay on the engine (D112). A chunk is taken only where the frontier stands exactly at its start — a stored header at any of its aliases — and every trailer it holds matches; otherwise the engine decodes its bytes, so each refusal is the engine's and the index is the serial pass's at every count.
+Rejected: re-decoding a chunk through the engine once its window is known (the file decoded twice); trusting a guess no decode ended at; searching for fixed or last blocks, three bits found everywhere; a chunk's damage retried without bound; a pool of the crate's own.
+Reopens: a reading of the native decode too slow to lift a first pass at the counts a machine runs. Code: `gz_seek::Parallel`, `speculate.rs`, `find.rs`, `native.rs`. Evidence: `the_index_is_the_serial_pass_s_at_every_worker_count`, `damage_is_refused_as_the_serial_pass_refuses_it`.
 
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source

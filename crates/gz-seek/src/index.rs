@@ -304,6 +304,13 @@ impl Checkpoint {
     pub(crate) fn member(plaintext: u64, offset: u64) -> Checkpoint {
         Checkpoint { plaintext, bit: offset * 8, start: Start::Member, crc: None }
     }
+
+    /// A block's start at compressed `bit`, `window` bytes of its member's
+    /// history before it.
+    pub(crate) fn block(plaintext: u64, bit: u64, window: usize) -> Checkpoint {
+        let window = u16::try_from(window).expect("a window is at most 32 KiB");
+        Checkpoint { plaintext, bit, start: Start::Block { window }, crc: None }
+    }
 }
 
 /// One unit, as one decode takes it: `Copy` and `Send`, holding no index.

@@ -1,4 +1,5 @@
 use super::*;
+use crate::index::Start;
 use crate::test_support::{bgzf, drive, forward, gzip, gzip_members, payload, spacing};
 
 const SPACING: u64 = 64 * 1024;
