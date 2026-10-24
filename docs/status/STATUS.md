@@ -106,8 +106,9 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.15** A taken chunk decoded by the engine: a speculation supplies where its chunk begins and the history it ends with, still marked; the frontier resolves each window in order and the engine decodes every chunk from its start with the window before it, in parallel on the caller's threads as a unit decode is resumed (D112); a chunk's start and window proven by the engine's decode of the chunk before ending there with the same history, one it contradicts decoded again; no plaintext handed out the crate's own decoder's, D117 rewritten; before 15.8.1, whose contract with `Parallel` it changes — [notes](../design/roadmap-P15.15-engine-notes.md)
 - [x] **15.8.1** A parallel first pass, `pgdt-io`'s side, the local arm: the first pass driven over `gz_seek::Parallel` on both feeds, a pulled one running the tasks it hands out ahead of its frontier on the caller's blocking threads, as many as its parallelism affords at a task's charge, replacing only how it finds units, never the index, the codec trait or the arms; it lifts the inflate, the scan staying one partition; a local file recommending its cores capped at its chunk count; the started line, said at the first read, no longer saying serial where it is not — [notes](../design/roadmap-P15.8.1-local-notes.md)
 - [ ] **15.8.2** A parallel first pass, the fetched arm, earned by 15.8.1's split: the fetched first pass inflating ahead over one download, what its tasks and its frontier read fetched once; a fetched BGZF file's first pass taking its units from its members' headers rather than speculatively (the spec's "Slice order")
+- [ ] **15.16** A chunk cut at its plaintext limit continued, in `gz-seek`: a speculation stopped by the limit hands back its guess and the pass speculates on from its stop to where the next chunk's guess begins, so a limit never ends the chain of windows, the limit restated as a constant of its own, twice the largest block zlib ends; before 15.7, which reads the arm (the spec's "Slice order")
 - [ ] **15.10** Checkpoints inside a static block: the forward pass walks a static block's codes itself to place a checkpoint at the first symbol boundary at or after each multiple, the resume priming a synthetic static-block header; after 15.8, reading its native decoding first (`KD129`)
-- [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the parallel first pass's on more than one writer's files, the manual and `pg-dump-compatibility.md`
+- [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the parallel first pass's on more than one writer's files and at two chunk lengths, the manual and `pg-dump-compatibility.md`
 
 ## Not started
 
@@ -138,19 +139,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **15.8.1's chunking, set without a figure.** A local first pass cuts its
-  file into chunks of the gzip input chunk, 1 MiB, lets a speculation hold
-  sixteen times that in plaintext, and runs a task for each worker its
-  parallelism affords past the frontier, charging each worker what one task
-  holds at those (`Chunking::SHIPPED`, `Chunking::task_bytes`,
-  `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`). Why:
-  no figure prices either constant (15.8's notes leave both to the caller); a
-  task then reads its chunk in one positioned read, and the limit covers a
-  chunk compressing up to sixteen-fold, past which its guess is cut at its
-  last block boundary and the frontier decodes the rest of it itself; the
-  frontier counts as a worker because `Serial` is one (D1). Reconsidering:
-  a larger chunk or a higher limit trades a larger charge, so fewer
-  workers under an allowance, for fewer stretches the frontier decodes
-  alone on very compressible tables; 15.7's readings on more than one
-  writer's files are where it shows, and the two constants are the change.

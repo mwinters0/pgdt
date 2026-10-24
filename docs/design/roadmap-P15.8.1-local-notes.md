@@ -44,9 +44,11 @@ headers, are 15.8.2's
   engine's decode of it reads it again, so a fetched pass running them
   as built here would download the object more than once.
 - **The chunk length and the plaintext limit** (`Chunking::SHIPPED`) are set
-  without a figure; 15.7's readings on more than one writer's files say
-  whether a chunk compressing past the limit, which the frontier then decodes
-  itself, binds.
+  without a figure. A chunk cut at the limit ends the chain of windows, so the
+  frontier decodes alone to the next chunk's start and through that chunk;
+  15.16 continues the cut, and 15.7 prices the chunk length
+  ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
+  "15.8.1's chunking, reviewed").
 - **15.7's resident readings** read a pass now holding its tasks too; the
   charge is the bound to compare them against.
 - **Nothing is timed**, as 15.8 left it: what the lift buys is 15.7's.

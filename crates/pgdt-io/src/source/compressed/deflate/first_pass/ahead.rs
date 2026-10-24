@@ -31,8 +31,9 @@ const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new(INPUT_CHUNK).unwrap();
 
 /// The most plaintext a speculation decodes, and so a chunk's decode holds:
 /// sixteen times its chunk, the compression ratio past which a chunk is cut
-/// short at its last block boundary and the frontier decodes the rest of it
-/// itself.
+/// short at its last block boundary. Nothing begins there, so the chain of
+/// windows ends with it: the frontier decodes on to the next chunk's start and
+/// that chunk too before tasks run ahead of it again.
 const CHUNK_PLAINTEXT_LIMIT: usize = 16 * INPUT_CHUNK as usize;
 
 /// How a pass cuts its file into chunks: their compressed length, and the most

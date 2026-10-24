@@ -9,7 +9,10 @@
 //! and the engine's decode of each can begin at once, on whatever thread the
 //! caller has. Each window rests on every guess before it; the frontier proves
 //! one only by standing at that decode's start with that very history, which
-//! nothing but the engine's decode of everything before it gives it.
+//! nothing but the engine's decode of everything before it gives it. **A guess
+//! stopping short of where the next begins ends the chain**, a limit or a
+//! refusal having cut it: the frontier decodes on to the next guess, anchors
+//! there, and decodes that chunk itself.
 //!
 //! **A generation is one anchor's chain**: anchoring again, or a window the
 //! frontier contradicts, drops every decode of the last — queued, running or

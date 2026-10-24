@@ -417,6 +417,20 @@ chunk begins and the history it begins with, and the engine decodes every
 chunk from there in parallel, so no plaintext a first pass hands out is the
 crate's own decoder's.
 
+**A chunk cut at its plaintext limit continued, slice 16, precedes 7**
+([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
+"15.8.1's chunking, reviewed"): a speculation stopped by the limit hands back
+its guess, and the pass speculates on from that guess's stop — a start it need
+not search for — to where the next chunk's guess begins, so a limit never ends
+the chain of windows. The limit then bounds what one speculation holds, never
+how much of the file the frontier decodes alone, and is restated as a constant
+of its own rather than a multiple of the chunk: twice the largest block zlib
+ends, at its largest `memLevel`, a piece reaching no boundary under it
+returning nothing. **7's throughput figure prices the chunk length**: the
+parallel first pass at the shipped length and at rapidgzip's 4 MiB, at one
+worker count, the limit held fixed across both; the limit itself is priced
+by 7's resident readings against a task's charge, not by a leg.
+
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
 "The broken BGZF chain, reviewed"): 13's pass ends its run of coalesced
