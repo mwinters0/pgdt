@@ -1,16 +1,20 @@
 //! A speculation: one chunk of a gzip file decoded from a place found in it,
-//! before anything ahead of it is decoded.
+//! before anything ahead of it is decoded, to guess where the chunk begins
+//! and stops and what history it stops with.
 //!
 //! The file is cut into chunks of a fixed compressed length, chunk `k`
 //! covering the bits from `k` chunks in to `k + 1`. A speculation searches its
 //! chunk for the first place a decode may resume ([`find`](crate::find)), and
 //! decodes from there — markers for the unknown history, as the
-//! [`native`](crate::native) decoder writes them — until the first block
-//! boundary or member start at or past the chunk's end, recording every event
-//! an index is made of on the way. So where it stops is where the next
-//! chunk's search begins, and a pass that reaches a chunk's start exactly —
-//! by its own decode or another chunk's — takes the chunk's plaintext as
-//! decoded.
+//! [`native`](crate::native) decoder writes them — until the first member
+//! start at or past the chunk's end, or block boundary there that the next
+//! chunk's search would begin at, so that a guess stops where the next one
+//! begins wherever both are right. What it hands back is
+//! a [`Guess`]: that start and stop, the plaintext's length between them, and
+//! the 32 KiB of history at the stop, still marked. Its plaintext is never
+//! handed out: the parallel pass resolves the history once the history at the
+//! start is known, and the engine decodes the chunk from it
+//! (`docs/design/decisions.md`, "D117").
 //!
 //! **A speculation never fails.** A candidate whose decode is refused was not
 //! a block's start, and the search goes on past it — up to a few refused only
@@ -23,10 +27,10 @@
 //! **Nothing here reads a file**: the caller feeds the bytes from
 //! [`Speculation::wants`] on, as many at a time as it has, on whatever thread.
 
-use crate::find::{Candidate, Found, find, stored_length_at};
+use crate::find::{Candidate, Found, find, is_searched_for, stored_length_at};
 use crate::member::{Header, Trailer};
-use crate::native::{Inflater, Input, Marked, Plain, Sink, Stop};
-use crate::zlib;
+use crate::native::{Inflater, Input, MARKER, Marked, Plain, Sink, Stop};
+use crate::zlib::WINDOW_SIZE;
 
 /// A place a decode stands between two steps: where a chunk begins or ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -54,7 +58,7 @@ pub(crate) enum Event {
 
 impl Event {
     /// The place a decode may resume at that this event stands for.
-    fn point(&self) -> Option<Point> {
+    pub(crate) fn point(&self) -> Option<Point> {
         match *self {
             Event::Block { bit } => Some(Point::Block(bit)),
             Event::MemberStart { offset } => Some(Point::Member(8 * offset)),
@@ -63,29 +67,27 @@ impl Event {
     }
 }
 
-/// A chunk decoded: everything a pass standing at its start takes.
-pub(crate) struct Chunk {
+/// A chunk speculated: where a decode of it begins and stops, and what it
+/// would hand the next chunk.
+pub(crate) struct Guess {
     pub(crate) start: Point,
     /// Where the length of the stored block the chunk begins with is, for a
     /// chunk that begins with one.
     pub(crate) stored: Option<u64>,
     pub(crate) stop: Point,
-    /// The plaintext written before the history stopped mattering: markers
-    /// among it, to be resolved against the history at the start.
-    pub(crate) marked: Vec<u16>,
-    /// The plaintext after it, its first `history` bytes the 32 KiB before
-    /// it rather than plaintext of the chunk's.
-    pub(crate) plain: Vec<u8>,
-    pub(crate) history: usize,
-    /// Every event after the start, the stop's included, by plaintext offset
-    /// from the start.
-    pub(crate) events: Vec<(u64, Event)>,
-    /// The CRC-32 of each piece of the bytes part of the plaintext, cut at
-    /// every event inside it: its pieces in order.
-    pub(crate) plain_crcs: Vec<u32>,
+    /// The plaintext's length from the start to the stop.
+    pub(crate) len: u64,
+    /// The last 32 KiB the chunk wrote before its stop, no further back than
+    /// its member's start: markers among it for bytes of the history before
+    /// the chunk's start.
+    pub(crate) end: Vec<u16>,
+    /// Whether `end` is the whole history at the stop, its member beginning
+    /// inside the chunk or at its start; otherwise the history before the
+    /// start makes up the rest.
+    pub(crate) fresh: bool,
 }
 
-impl Chunk {
+impl Guess {
     /// Whether a decode standing at `point` stands where this chunk begins:
     /// at its start, or, for a chunk beginning with a stored block, at any
     /// header of that block's the search could have read
@@ -99,46 +101,33 @@ impl Chunk {
         }
     }
 
-    /// The chunk's plaintext length.
-    pub(crate) fn len(&self) -> u64 {
-        (self.marked.len() + self.plain.len() - self.history) as u64
-    }
-
-    /// The offsets the plaintext is cut at for its CRC-32s inside the range
-    /// from `from` to `to`, both ends included.
-    pub(crate) fn cuts(&self, from: u64, to: u64) -> Vec<u64> {
-        let mut cuts = vec![from];
-        for &(at, _) in &self.events {
-            if at > from && at < to && cuts.last() != Some(&at) {
-                cuts.push(at);
-            }
+    /// The history at the stop, given `window`, the history at the start:
+    /// `None` where a marker reaches before the member's history, which no
+    /// decode of a real block does.
+    pub(crate) fn history_at_stop(&self, window: &[u8]) -> Option<Vec<u8>> {
+        let unknown = WINDOW_SIZE - window.len();
+        let kept = if self.fresh { 0 } else { WINDOW_SIZE - self.end.len() };
+        let mut out = Vec::with_capacity(kept.min(window.len()) + self.end.len());
+        out.extend_from_slice(&window[window.len().saturating_sub(kept)..]);
+        for &value in &self.end {
+            out.push(match value.checked_sub(MARKER) {
+                None => value as u8,
+                Some(j) => *window.get(usize::from(j).checked_sub(unknown)?)?,
+            });
         }
-        cuts.push(to);
-        cuts
+        Some(out)
     }
 
-    /// The bytes held, whatever their kind: what a caller's budget is billed.
+    /// The bytes held: what a caller's budget is billed.
     pub(crate) fn held(&self) -> usize {
-        2 * self.marked.capacity() + self.plain.capacity()
+        2 * self.end.capacity()
     }
 }
 
-/// What a speculation came to: the chunk it decoded, if it found one.
-pub struct Speculated {
+/// What a speculation came to: its guess, if it found a start.
+pub(crate) struct Speculated {
     pub(crate) chunk: u64,
-    pub(crate) found: Option<Chunk>,
-}
-
-impl Speculated {
-    /// Which chunk of the file this is.
-    pub fn chunk(&self) -> u64 {
-        self.chunk
-    }
-
-    /// The bytes it holds until the pass takes or drops it.
-    pub fn held(&self) -> usize {
-        self.found.as_ref().map_or(0, Chunk::held)
-    }
+    pub(crate) found: Option<Guess>,
 }
 
 /// Where the decode is in the gzip framing.
@@ -166,11 +155,22 @@ struct Decode {
     events: Vec<(u64, Event)>,
     /// The index in `events` of the last place a decode may resume at.
     last_point: Option<usize>,
+    /// A boundary past the chunk's end, the next block's type not yet read.
+    boundary: Option<u64>,
 }
 
 impl Decode {
     fn produced(&self) -> usize {
         self.marked.as_ref().map_or(0, |m| m.out.len()) + self.plain.produced()
+    }
+
+    /// The value written at plaintext offset `i`: a byte, or a marker.
+    fn value(&self, i: u64) -> u16 {
+        let marked = self.marked.as_ref().map_or(&[][..], |m| &m.out[..]);
+        match marked.get(i as usize) {
+            Some(&value) => value,
+            None => u16::from(self.plain.out[self.plain.history + i as usize - marked.len()]),
+        }
     }
 
     /// Whether the decode is still writing markers.
@@ -199,7 +199,7 @@ enum State {
     /// Searching from this bit.
     Finding(u64),
     Decoding(Decode),
-    Done(Option<Chunk>),
+    Done(Option<Guess>),
 }
 
 /// One chunk's speculation, fed by its caller: `Send`, holding no borrow, so
@@ -209,7 +209,7 @@ enum State {
 /// chunk of them, and the bytes of the block it stops in — and at most the
 /// plaintext limit, twice over while it is still writing markers, beside a
 /// few kilobytes of code tables.
-pub struct Speculation {
+pub(crate) struct Speculation {
     chunk: u64,
     /// Where the chunk's search ends, and its decode may stop: the next
     /// chunk's first bit.
@@ -244,13 +244,13 @@ impl Speculation {
     }
 
     /// Which chunk of the file this is.
-    pub fn chunk(&self) -> u64 {
+    pub(crate) fn chunk(&self) -> u64 {
         self.chunk
     }
 
     /// The compressed offset of the next byte the speculation wants, `None`
     /// once it is done.
-    pub fn wants(&self) -> Option<u64> {
+    pub(crate) fn wants(&self) -> Option<u64> {
         match self.state {
             State::Done(_) => None,
             _ => Some(self.input.end()),
@@ -259,7 +259,7 @@ impl Speculation {
 
     /// Take the file's bytes from [`Speculation::wants`] on, as many as the
     /// caller has, and decode as far as they go.
-    pub fn supply(&mut self, bytes: &[u8]) {
+    pub(crate) fn supply(&mut self, bytes: &[u8]) {
         if self.wants().is_none() {
             return;
         }
@@ -268,7 +268,7 @@ impl Speculation {
     }
 
     /// What the speculation came to; one not yet done hands back nothing.
-    pub fn finish(self) -> Speculated {
+    pub(crate) fn finish(self) -> Speculated {
         let found = match self.state {
             State::Done(found) => found,
             _ => None,
@@ -293,7 +293,10 @@ impl Speculation {
                     }
                 }
                 State::Decoding(mut decode) => match self.step(&mut decode) {
-                    Ok(Some(stop)) => State::Done(Some(self.complete(decode, stop))),
+                    Ok(Some(stop)) => {
+                        let at = decode.produced() as u64;
+                        State::Done(Some(guess(&decode, decode.events.len(), stop, at)))
+                    }
                     Ok(None) => {
                         self.state = State::Decoding(decode);
                         return;
@@ -303,16 +306,12 @@ impl Speculation {
                     // a few of those the bytes are more likely damaged, and
                     // the chunk ends at the last boundary reached.
                     Err(Halt::Limit) => match decode.last_point {
-                        Some(i) => {
-                            let stop = decode.events[i].1.point().expect("a point");
-                            State::Done(Some(self.truncate(decode, i, stop)))
-                        }
+                        Some(i) => State::Done(Some(truncated(&decode, i))),
                         None => State::Done(None),
                     },
                     Err(Halt::Refused) => match decode.last_point {
                         Some(i) if self.refused_past_a_boundary >= REFUSALS_PAST_A_BOUNDARY => {
-                            let stop = decode.events[i].1.point().expect("a point");
-                            State::Done(Some(self.truncate(decode, i, stop)))
+                            State::Done(Some(truncated(&decode, i)))
                         }
                         last => {
                             self.refused_past_a_boundary += u32::from(last.is_some());
@@ -347,7 +346,18 @@ impl Speculation {
         let bytes = marked.is_none();
         let plain = Plain::new();
         let events = Vec::new();
-        Decode { start, stored, phase, bit, marked, bytes, plain, events, last_point: None }
+        Decode {
+            start,
+            stored,
+            phase,
+            bit,
+            marked,
+            bytes,
+            plain,
+            events,
+            last_point: None,
+            boundary: None,
+        }
     }
 
     /// Decode as far as the input goes: `Some` with where the chunk stops once
@@ -362,6 +372,17 @@ impl Speculation {
         loop {
             match &mut decode.phase {
                 Phase::Deflate => {
+                    // Past the chunk's end, the decode stops at the first
+                    // boundary the next chunk's search would begin at.
+                    if let Some(bit) = decode.boundary {
+                        if self.input.end_bit() < bit + 3 {
+                            return if complete { Err(Halt::Refused) } else { Ok(None) };
+                        }
+                        decode.boundary = None;
+                        if is_searched_for(self.input.peek(bit)) {
+                            return Ok(Some(Point::Block(bit)));
+                        }
+                    }
                     let limit = self.limit;
                     let stop = if decode.is_marked() {
                         let sink = decode.marked.as_mut().expect("marked");
@@ -376,7 +397,7 @@ impl Speculation {
                         Stop::Block { bit } => {
                             decode.push(Event::Block { bit });
                             if bit >= self.until {
-                                return Ok(Some(Point::Block(bit)));
+                                decode.boundary = Some(bit);
                             }
                         }
                         Stop::End { bit } => {
@@ -438,51 +459,34 @@ impl Speculation {
             }
         }
     }
+}
 
-    /// The chunk the decode built, ending at `stop`.
-    fn complete(&self, decode: Decode, stop: Point) -> Chunk {
-        let Decode { start, stored, marked, plain, events, .. } = decode;
-        let marked = marked.map_or_else(Vec::new, |m| m.out);
-        let history = plain.history;
-        let mut chunk = Chunk {
-            start,
-            stored,
-            stop,
-            marked,
-            plain: plain.out,
-            history,
-            events,
-            plain_crcs: Vec::new(),
-        };
-        let from = chunk.marked.len() as u64;
-        let cuts = chunk.cuts(from, chunk.len());
-        chunk.plain_crcs = cuts
-            .windows(2)
-            .map(|piece| {
-                let at = |offset: u64| (offset - from) as usize + chunk.history;
-                zlib::crc32(0, &chunk.plain[at(piece[0])..at(piece[1])])
-            })
-            .collect();
-        chunk
-    }
+/// The guess the decode makes, cut at its event `i`, the last place it
+/// reached that a decode may resume at.
+fn truncated(decode: &Decode, i: usize) -> Guess {
+    let (at, event) = decode.events[i];
+    guess(decode, i + 1, event.point().expect("a point"), at)
+}
 
-    /// The chunk the decode built, cut at its event `i`, which stands for
-    /// `stop`.
-    fn truncate(&self, mut decode: Decode, i: usize, stop: Point) -> Chunk {
-        let at = decode.events[i].0 as usize;
-        decode.events.truncate(i + 1);
-        let marked = decode.marked.as_ref().map_or(0, |m| m.out.len());
-        if at <= marked {
-            if let Some(m) = decode.marked.as_mut() {
-                m.out.truncate(at);
-            }
-            decode.plain = Plain::new();
-        } else {
-            let keep = decode.plain.history + at - marked;
-            decode.plain.out.truncate(keep);
+/// The guess a decode makes standing at `stop`, plaintext offset `at`, its
+/// first `events` events behind it.
+fn guess(decode: &Decode, events: usize, stop: Point, at: u64) -> Guess {
+    let floor = decode.events[..events]
+        .iter()
+        .rev()
+        .find(|(_, e)| matches!(e, Event::MemberStart { .. }))
+        .map(|&(p, _)| p)
+        .or(matches!(decode.start, Point::Member(_)).then_some(0));
+    let end = match stop {
+        Point::Block(_) => {
+            let from = at.saturating_sub(WINDOW_SIZE as u64).max(floor.unwrap_or(0));
+            (from..at).map(|i| decode.value(i)).collect()
         }
-        self.complete(decode, stop)
-    }
+        // Nothing of the history reaches past a member's start.
+        Point::Member(_) | Point::End => Vec::new(),
+    };
+    let fresh = floor.is_some() || !matches!(stop, Point::Block(_));
+    Guess { start: decode.start, stored: decode.stored, stop, len: at, end, fresh }
 }
 
 #[cfg(test)]

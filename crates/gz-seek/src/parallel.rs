@@ -1,55 +1,66 @@
 //! The parallel first pass: [`Forward`](crate::Forward)'s pass, with chunks of
-//! the file ahead of it decoded speculatively on the caller's threads.
+//! the file ahead of it decoded on the caller's threads.
 //!
-//! **Its frontier is a forward pass**, decoding through the zlib API and
-//! handing out plaintext and checkpoints in file order, exactly as
-//! [`Forward`](crate::Forward) does. Beside it, the caller takes
-//! [`Speculation`]s — chunk `k` the file's compressed bytes from `k` chunk
-//! lengths in to `k + 1` — runs each wherever it likes, and hands each result
-//! back. Each block boundary or member start the frontier reaches, it looks for
-//! a chunk beginning exactly there; finding one whose markers resolve against
-//! the frontier's own history and whose every member trailer matches, it hands
-//! out that chunk's plaintext as decoded and stands where the chunk stopped,
-//! where the next chunk begins. Wherever no chunk begins where it stands, it
-//! decodes on itself (`docs/design/decisions.md`, "D117").
+//! **Its frontier is a forward pass**, handing out plaintext and checkpoints in
+//! file order, exactly as [`Forward`](crate::Forward) does. Beside it, the
+//! caller takes [`ChunkTask`]s, runs each wherever it likes, and hands each
+//! result back. A **speculation** guesses where its chunk — the file's
+//! compressed bytes from `k` chunk lengths in to `k + 1` — begins and stops,
+//! and the history at its stop, still marked; resolving those histories in
+//! order from a place the frontier stands at gives each chunk ahead a window,
+//! and a **decode** decodes the chunk through the engine from its start with
+//! it (`chain.rs`). Each block boundary or member start the frontier reaches,
+//! it looks for a decode beginning exactly there and begun with the very
+//! history the frontier holds there; finding one whose every member trailer
+//! matches, it hands out that decode's plaintext and stands where it stopped.
+//! Wherever none does, it decodes on itself (`docs/design/decisions.md`,
+//! "D117").
 //!
-//! **So the index is the serial pass's at every worker count.** Both kinds of
+//! **So every byte handed out is the engine's, and the index is the serial
+//! pass's at every worker count.** A decode is taken only where its start and
+//! window are those the engine's decode of everything before it ends with —
+//! by induction from the file's start, whoever decoded each piece — so a guess
+//! changes only who decoded the bytes, never what they are. Both kinds of
 //! decode report the same events at the same bits and plaintext offsets, and
-//! one placement rule turns them into checkpoints (`placement.rs`); a chunk
-//! changes only who decoded the bytes, never where a checkpoint goes, its
-//! window or its CRC-32. A speculation the caller never
-//! runs, or one that guessed wrong, leaves the frontier to decode those bytes
-//! itself, so a pass with none at all is the serial pass.
+//! one placement rule turns them into checkpoints (`placement.rs`). A task the
+//! caller never runs, a guess that was wrong, or a decode a window the
+//! frontier holds contradicts, leaves the frontier to decode those bytes
+//! itself, so a pass with no task run at all is the serial pass.
 //!
 //! **Every byte handed out is checked as a forward pass checks it**: each
-//! unit's CRC-32 is recorded from the plaintext, whoever decoded it, and each
-//! member's trailer is compared — by the engine where its decode reaches it,
-//! and before a chunk is taken where the chunk holds it. So a member a chunk
-//! holds whole and decoded wrongly is decoded again through the engine, whose
-//! refusal is the one a caller sees; one longer than a chunk is checked by its
-//! own trailer alone, once its plaintext has been handed out.
+//! unit's CRC-32 is recorded from the plaintext, and each member's trailer is
+//! compared — by the frontier's own decode where it reaches it, and before a
+//! decode is taken where the decode holds it, a mismatch leaving those bytes to
+//! the frontier, whose refusal is the one a caller sees.
 //!
 //! # What the caller does
 //!
 //! Read as [`Forward::read`](crate::Forward::read) is read, supplying bytes
-//! from [`Parallel::compressed_position`], which jumps forward past a chunk
-//! taken. Take [`Parallel::speculate`] tasks while it has memory and threads
-//! for them, feed each from its [`Speculation::wants`], and hand each result
-//! to [`Parallel::speculated`]. A step whose `wait` names a chunk stands where
-//! that chunk may begin: the next read waits for its result rather than
-//! decoding those bytes a second time.
+//! from [`Parallel::compressed_position`], which jumps forward past a decode
+//! taken. Take [`Parallel::task`]s while it has memory and threads for them,
+//! feed each from its [`ChunkTask::wants`], and hand each result to
+//! [`Parallel::done`]. A step whose `wait` names a task stands where that
+//! task's result may be used: the next read waits for it rather than decoding
+//! those bytes a second time.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::num::NonZeroU64;
 
+use crate::chunk::{ChunkDecoded, Decoded};
 use crate::engine::{Engine, Event as EngineEvent, Member};
 use crate::error::{Error, Result};
 use crate::index::{Checkpoint, End, Index, Size, Start};
-use crate::native::MARKER;
 use crate::placement::{Placement, Resumed};
-use crate::speculate::{Chunk, Event as ChunkEvent, Point, Speculated, Speculation};
+use crate::speculate::{Event as ChunkEvent, Point, Speculation};
 use crate::unit::Progress;
 use crate::zlib::{self, WINDOW_SIZE};
+
+use self::chain::{Chain, Here, start_bit};
+use self::task::Finished;
+pub use self::task::{ChunkDone, ChunkTask, TaskId};
+
+mod chain;
+mod task;
 
 /// What a step of the parallel pass did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,9 +70,9 @@ pub struct ParallelStep {
     pub progress: Progress,
     /// The checkpoint this step placed, its window at [`Parallel::window`].
     pub checkpoint: Option<Checkpoint>,
-    /// The chunk whose speculation the pass stands waiting for: hand its
-    /// result to [`Parallel::speculated`] before reading on.
-    pub wait: Option<u64>,
+    /// The task whose result the pass stands waiting for: hand it to
+    /// [`Parallel::done`] before reading on.
+    pub wait: Option<TaskId>,
     /// The pass moved past a chunk to where the input given does not reach.
     moved: bool,
 }
@@ -130,6 +141,22 @@ impl History {
         self.len = (self.len + bytes.len()).min(WINDOW_SIZE);
     }
 
+    /// The history, oldest first.
+    fn to_vec(&self) -> Vec<u8> {
+        let mut out = [0u8; WINDOW_SIZE];
+        let len = self.copy_to(&mut out);
+        out[..len].to_vec()
+    }
+
+    /// Whether the history is `window`.
+    fn is(&self, window: &[u8]) -> bool {
+        let start = (self.head + WINDOW_SIZE - self.len) % WINDOW_SIZE;
+        let first = self.len.min(WINDOW_SIZE - start);
+        window.len() == self.len
+            && window[..first] == self.ring[start..start + first]
+            && window[first..] == self.ring[..self.len - first]
+    }
+
     /// Copy the history, oldest first, into `out`, answering its length.
     fn copy_to(&self, out: &mut [u8; WINDOW_SIZE]) -> usize {
         let start = (self.head + WINDOW_SIZE - self.len) % WINDOW_SIZE;
@@ -140,30 +167,14 @@ impl History {
     }
 }
 
-/// A chunk being handed out.
+/// A chunk's decode being handed out.
 struct Serving {
-    chunk: Chunk,
-    /// Its marked part, resolved.
-    resolved: Vec<u8>,
-    /// Each piece's plaintext range and CRC-32, in order, cut at every event.
-    pieces: Vec<(u64, u64, u32)>,
+    chunk: Decoded,
     /// The next plaintext offset handed out, from the chunk's start.
     cursor: u64,
     /// The next event and piece not yet passed.
     event: usize,
     piece: usize,
-}
-
-impl Serving {
-    /// The chunk's plaintext from offset `at`, as far as one buffer holds it.
-    fn bytes(&self, at: u64) -> &[u8] {
-        let marked = self.resolved.len() as u64;
-        if at < marked {
-            &self.resolved[at as usize..]
-        } else {
-            &self.chunk.plain[self.chunk.history + (at - marked) as usize..]
-        }
-    }
 }
 
 /// What one engine step did: its progress, the checkpoint it placed,
@@ -213,18 +224,19 @@ pub struct Parallel {
     plaintext: u64,
     folded: u64,
     next_chunk: u64,
-    in_flight: BTreeSet<u64>,
-    done: BTreeMap<u64, Chunk>,
+    /// The speculations handed out.
+    speculating: BTreeSet<u64>,
+    chain: Chain,
     window: Box<[u8; WINDOW_SIZE]>,
     window_len: usize,
-    /// How many chunks the pass took.
+    /// How many decodes the pass took.
     taken: u64,
 }
 
 impl Parallel {
     /// A pass from the file's first byte, placing checkpoints `spacing`
     /// plaintext bytes apart, over a file `file_len` bytes long cut into
-    /// chunks of `chunk_bytes`, a speculation holding at most `limit` bytes
+    /// chunks of `chunk_bytes`, a speculation decoding at most `limit` bytes
     /// of plaintext.
     pub fn new(
         spacing: NonZeroU64,
@@ -296,52 +308,72 @@ impl Parallel {
             plaintext: 0,
             folded: 0,
             next_chunk: 0,
-            in_flight: BTreeSet::new(),
-            done: BTreeMap::new(),
+            speculating: BTreeSet::new(),
+            chain: Chain::new(chunk_bytes.get(), file_len),
             window: Box::new([0; WINDOW_SIZE]),
             window_len: 0,
             taken: 0,
         }
     }
 
-    /// The next chunk ahead of the frontier to speculate on, `None` past the
-    /// file's last.
-    pub fn speculate(&mut self) -> Option<Speculation> {
+    /// The next task: a decode the chain has a window for, in chunk order,
+    /// or else a speculation on the next chunk ahead of the frontier; `None`
+    /// past the file's last chunk.
+    pub fn task(&mut self) -> Option<ChunkTask> {
+        if let Some(decode) = self.chain.next_task() {
+            return Some(ChunkTask::decode(decode));
+        }
         let frontier = self.at / (8 * self.chunk_bytes);
         let chunk = self.next_chunk.max(frontier + 1);
         if chunk.checked_mul(self.chunk_bytes)? >= self.file_len {
             return None;
         }
         self.next_chunk = chunk + 1;
-        self.in_flight.insert(chunk);
-        Some(Speculation::new(chunk, self.chunk_bytes, self.limit, self.file_len))
+        self.speculating.insert(chunk);
+        let task = Speculation::new(chunk, self.chunk_bytes, self.limit, self.file_len);
+        Some(ChunkTask::speculation(task))
     }
 
-    /// A speculation's result, kept until the frontier takes it or passes
-    /// where it begins.
-    pub fn speculated(&mut self, result: Speculated) {
-        self.in_flight.remove(&result.chunk);
-        if let Some(chunk) = result.found
-            && !behind(&chunk, self.at)
-        {
-            self.done.insert(result.chunk, chunk);
+    /// A task's result, kept until the frontier uses it or passes where it
+    /// begins.
+    pub fn done(&mut self, done: ChunkDone) {
+        match done.0 {
+            Finished::Speculated(result) => {
+                self.speculating.remove(&result.chunk);
+                if let Some(guess) = result.found {
+                    self.chain.guessed(result.chunk, guess, self.at);
+                }
+            }
+            Finished::Decoded(result) => self.chain.decoded(result, self.at),
         }
     }
 
-    /// How many speculations are handed out or held: what the caller's
-    /// memory holds for them is at most this many chunks' plaintext limits,
-    /// twice over for one still writing markers, beside each running one's
-    /// input.
+    /// Whether a task handed out is still of use: a decode resting on a window
+    /// the pass has since dropped, or a speculation on a chunk the frontier
+    /// has passed, need not be run, and its result is dropped.
+    pub fn wants(&self, id: TaskId) -> bool {
+        match id.generation() {
+            None => {
+                self.speculating.contains(&id.chunk())
+                    && (id.chunk() + 1) * self.chunk_bytes * 8 > self.at
+            }
+            Some(generation) => self.chain.wants(id.chunk(), generation),
+        }
+    }
+
+    /// How many tasks are handed out or results held: what the caller's
+    /// memory holds for them is each running task's ([`ChunkTask`]) and
+    /// [`Parallel::held`].
     pub fn pending(&self) -> usize {
-        self.in_flight.len() + self.done.len()
+        self.speculating.len() + self.chain.pending()
     }
 
-    /// The bytes the chunks held for the frontier hold.
+    /// The bytes the results held for the frontier hold.
     pub fn held(&self) -> usize {
-        self.done.values().map(Chunk::held).sum()
+        self.chain.held()
     }
 
-    /// How many chunks the frontier has taken as decoded.
+    /// How many chunks' decodes the frontier has taken.
     pub fn taken(&self) -> u64 {
         self.taken
     }
@@ -517,7 +549,7 @@ impl Parallel {
         serving: &mut Serving,
         out: &mut [u8],
     ) -> (usize, Option<Checkpoint>) {
-        while let Some(&(from, to, crc)) = serving.pieces.get(serving.piece)
+        while let Some(&(from, to, crc)) = serving.chunk.pieces.get(serving.piece)
             && to <= serving.cursor
         {
             self.unit.extend(crc, to - from);
@@ -544,9 +576,9 @@ impl Parallel {
         }
         let next =
             serving.chunk.events.get(serving.event).map_or(serving.chunk.len(), |&(at, _)| at);
-        let next = serving.pieces.get(serving.piece).map_or(next, |&(_, to, _)| to.min(next));
+        let next = serving.chunk.pieces.get(serving.piece).map_or(next, |&(_, to, _)| to.min(next));
         let n = usize::try_from(next - serving.cursor).unwrap_or(usize::MAX).min(out.len());
-        let bytes = &serving.bytes(serving.cursor)[..n];
+        let bytes = &serving.chunk.plain[serving.cursor as usize..][..n];
         out[..n].copy_from_slice(bytes);
         self.history.push(bytes);
         self.plaintext += n as u64;
@@ -566,30 +598,30 @@ impl Parallel {
         }
     }
 
-    /// Standing at `point`: take a chunk beginning there, or answer one to
-    /// wait for, or go on decoding — with a new engine where none stands
+    /// Standing at `point`: take a decode beginning there, or answer a task
+    /// to wait for, or go on decoding — with a new engine where none stands
     /// there.
-    fn look(&mut self, point: Point) -> Result<Option<u64>> {
-        let bit = match point {
-            Point::Block(bit) | Point::Member(bit) => bit,
-            Point::End => unreachable!("nothing stands at the end"),
-        };
+    fn look(&mut self, point: Point) -> Result<Option<TaskId>> {
+        let bit = start_bit(point);
         self.at = bit;
-        self.done.retain(|_, chunk| !behind(chunk, bit));
-        let chunk = bit / (8 * self.chunk_bytes);
-        let candidates = [chunk.checked_sub(1), Some(chunk)];
-        for k in candidates.into_iter().flatten() {
-            if self.done.get(&k).is_some_and(|c| c.begins_at(point)) {
-                let found = self.done.remove(&k).expect("a held chunk");
-                if let Some(serving) = self.take(found) {
+        self.chain.pass(bit);
+        let history = &self.history;
+        match self.chain.at(point, || history.to_vec()) {
+            Here::Decoded(decoded) => {
+                if let Some(serving) = self.take(decoded) {
                     self.taken += 1;
                     self.frontier = Frontier::Serving(Box::new(serving));
                     return Ok(None);
                 }
             }
-        }
-        if chunk > 0 && self.in_flight.contains(&chunk) {
-            return Ok(Some(chunk));
+            Here::Running(id) => return Ok(Some(id)),
+            Here::Frontier => {}
+            Here::Nothing => {
+                let chunk = bit / (8 * self.chunk_bytes);
+                if chunk > 0 && self.speculating.contains(&chunk) {
+                    return Ok(Some(TaskId::speculation(chunk)));
+                }
+            }
         }
         if let Frontier::Idle = self.frontier {
             self.frontier = self.engine_at(point)?;
@@ -602,11 +634,10 @@ impl Parallel {
         self.folded = self.plaintext;
         Ok(match point {
             Point::Block(bit) => {
-                let mut window = [0u8; WINDOW_SIZE];
-                let len = self.history.copy_to(&mut window);
+                let window = self.history.to_vec();
                 let (offset, start) = self.member_at;
                 let member = Member::resumed(offset, start, Some(self.member.crc), self.plaintext);
-                let engine = Engine::at_block(bit, self.plaintext, &window[..len], member)?;
+                let engine = Engine::at_block(bit, self.plaintext, &window, member)?;
                 Frontier::Engine { engine: Box::new(engine), skip_start: false }
             }
             Point::Member(bit) => {
@@ -617,37 +648,23 @@ impl Parallel {
         })
     }
 
-    /// A chunk beginning where the frontier stands, ready to hand out: `None`
-    /// where its markers reach before the member's history or a trailer it
-    /// holds does not match, its bytes then left to the engine.
-    fn take(&self, chunk: Chunk) -> Option<Serving> {
-        let mut window = [0u8; WINDOW_SIZE];
-        let len = self.history.copy_to(&mut window);
-        let window = &window[..len];
-        let unknown = WINDOW_SIZE - len;
-        let mut resolved = Vec::with_capacity(chunk.marked.len());
-        for &value in &chunk.marked {
-            match value.checked_sub(MARKER) {
-                None => resolved.push(value as u8),
-                Some(j) => resolved.push(*window.get(usize::from(j).checked_sub(unknown)?)?),
-            }
+    /// A decode beginning where the frontier stands, ready to hand out:
+    /// `None` where the engine refused its bytes, where a trailer it holds
+    /// does not match, or where it was begun with another history than the
+    /// frontier's — every decode after it resting on that one's, the chain is
+    /// dropped — its bytes then left to the frontier.
+    fn take(&mut self, decoded: ChunkDecoded) -> Option<Serving> {
+        let chunk = decoded.found?;
+        if !self.history.is(&decoded.window) {
+            self.chain.reset();
+            return None;
         }
-        let marked = resolved.len() as u64;
-        let mut pieces = Vec::new();
-        for cut in chunk.cuts(0, marked).windows(2) {
-            let crc = zlib::crc32(0, &resolved[cut[0] as usize..cut[1] as usize]);
-            pieces.push((cut[0], cut[1], crc));
-        }
-        for (cut, &crc) in chunk.cuts(marked, chunk.len()).windows(2).zip(&chunk.plain_crcs) {
-            pieces.push((cut[0], cut[1], crc));
-        }
-        pieces.retain(|&(from, to, _)| to > from);
-        // Every trailer the chunk holds, checked before a byte of it is
+        // Every trailer the decode holds, checked before a byte of it is
         // handed out.
         let mut member = self.member;
         let mut piece = 0;
         for &(at, event) in &chunk.events {
-            while let Some(&(from, to, crc)) = pieces.get(piece)
+            while let Some(&(from, to, crc)) = chunk.pieces.get(piece)
                 && to <= at
             {
                 member.extend(crc, to - from);
@@ -663,7 +680,7 @@ impl Parallel {
                 _ => {}
             }
         }
-        Some(Serving { chunk, resolved, pieces, cursor: 0, event: 0, piece: 0 })
+        Some(Serving { chunk, cursor: 0, event: 0, piece: 0 })
     }
 
     /// Fold the engine's run since the last fold, CRC-32 `crc`, into the
@@ -715,15 +732,6 @@ impl Parallel {
             Point::Block(bit) | Point::Member(bit) => bit / 8,
             Point::End => self.file_len,
         }
-    }
-}
-
-/// Whether a decode at `bit` is past every place `chunk` begins.
-fn behind(chunk: &Chunk, bit: u64) -> bool {
-    match (chunk.start, chunk.stored) {
-        (_, Some(len)) => bit + 3 > len,
-        (Point::Block(start) | Point::Member(start), None) => start < bit,
-        (Point::End, None) => true,
     }
 }
 

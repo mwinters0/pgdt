@@ -4,6 +4,10 @@
 use std::io::Write;
 use std::num::NonZeroU64;
 
+use crate::engine::{Engine, Event as EngineEvent};
+use crate::member::Trailer;
+use crate::speculate::{Event, Point};
+use crate::zlib::WINDOW_SIZE;
 use crate::{Forward, Index, Result};
 
 pub(crate) fn spacing(n: u64) -> NonZeroU64 {
@@ -126,4 +130,70 @@ pub(crate) fn drive(
 /// The bytes of `file` in `range`.
 pub(crate) fn slice(file: &[u8], range: std::ops::Range<u64>) -> &[u8] {
     &file[range.start as usize..range.end as usize]
+}
+
+/// The file as the engine reads it: its plaintext, and each place a decode
+/// may resume at with its plaintext offset and the event standing there, and
+/// every other event, all in order.
+pub(crate) struct Truth {
+    pub(crate) plaintext: Vec<u8>,
+    /// Each event, at its plaintext offset.
+    pub(crate) events: Vec<(u64, Event)>,
+    /// The plaintext offset each member begins at, by its bit.
+    pub(crate) members: Vec<(u64, u64)>,
+}
+
+pub(crate) fn truth(file: &[u8]) -> Truth {
+    let mut engine = Engine::at_member(0, 0).unwrap();
+    let (mut plaintext, mut events, mut members) = (Vec::new(), Vec::new(), Vec::new());
+    let mut out = vec![0u8; 1 << 16];
+    let mut trailer_at = 0;
+    loop {
+        let at = engine.compressed_position() as usize;
+        let step = engine.step(&file[at..], &mut out).unwrap();
+        plaintext.extend_from_slice(&out[..step.produced]);
+        let here = plaintext.len() as u64;
+        match step.event {
+            Some(EngineEvent::Block { bit }) => events.push((here, Event::Block { bit })),
+            Some(EngineEvent::MemberStart) => {
+                let offset = engine.member().offset;
+                members.push((8 * offset, here));
+                events.push((here, Event::MemberStart { offset }));
+            }
+            Some(EngineEvent::Header { bgzf }) => events.push((here, Event::Header { bgzf })),
+            Some(EngineEvent::MemberEnd) => {
+                let t = &file[trailer_at..trailer_at + 8];
+                let trailer = Trailer::parse(t.try_into().unwrap());
+                events.push((here, Event::MemberEnd { crc: trailer.crc, isize: trailer.isize }));
+            }
+            None => {}
+        }
+        if step.progressed() {
+            // Where the next trailer would begin, were the stream to end here.
+            trailer_at = engine.compressed_position() as usize;
+        } else {
+            break;
+        }
+    }
+    Truth { plaintext, events, members }
+}
+
+impl Truth {
+    /// The plaintext offset of the place `point`, if a decode resumes there.
+    pub(crate) fn offset_of(&self, point: Point) -> Option<u64> {
+        match point {
+            Point::Block(bit) => {
+                self.events.iter().find(|(_, e)| *e == Event::Block { bit }).map(|&(p, _)| p)
+            }
+            Point::Member(bit) => self.members.iter().find(|&&(b, _)| b == bit).map(|&(_, p)| p),
+            Point::End => Some(self.plaintext.len() as u64),
+        }
+    }
+
+    /// The window before plaintext offset `at`: the last 32 KiB of its member.
+    pub(crate) fn window(&self, at: u64) -> &[u8] {
+        let member = self.members.iter().rev().find(|&&(_, p)| p <= at).map_or(0, |&(_, p)| p);
+        let from = at.saturating_sub(WINDOW_SIZE as u64).max(member);
+        &self.plaintext[from as usize..at as usize]
+    }
 }

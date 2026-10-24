@@ -31,7 +31,8 @@ pub(crate) enum Event {
     /// begins at compressed bit `bit`.
     Block { bit: u64 },
     /// A member's trailer was read and matched: its `ISIZE` always, its CRC-32
-    /// where the decode knows the CRC of the member's plaintext before it began.
+    /// where the decode knows the CRC of the member's plaintext before it began
+    /// — or, by an [`Engine::unchecked`] engine, only read.
     MemberEnd,
 }
 
@@ -105,6 +106,11 @@ pub(crate) struct Engine {
     member: Member,
     /// The last block boundary reported, so none is reported twice.
     last_boundary: Option<u64>,
+    /// Whether a trailer is compared, or only read for whoever knows what
+    /// the member held before the decode began.
+    checks_trailers: bool,
+    /// The last trailer read.
+    trailer: Option<Trailer>,
 }
 
 impl Engine {
@@ -119,6 +125,8 @@ impl Engine {
             plaintext,
             member: Member::fresh(offset, plaintext),
             last_boundary: None,
+            checks_trailers: true,
+            trailer: None,
         })
     }
 
@@ -141,7 +149,22 @@ impl Engine {
             plaintext,
             member,
             last_boundary: Some(bit),
+            checks_trailers: true,
+            trailer: None,
         })
+    }
+
+    /// The same engine comparing no trailer: each is read and kept at
+    /// [`Engine::last_trailer`], for a caller that knows the member's plaintext
+    /// before this decode began to compare.
+    pub(crate) fn unchecked(mut self) -> Engine {
+        self.checks_trailers = false;
+        self
+    }
+
+    /// The last trailer read.
+    pub(crate) fn last_trailer(&self) -> Option<Trailer> {
+        self.trailer
     }
 
     /// The plaintext offset of the next byte produced.
@@ -290,6 +313,10 @@ impl Engine {
         }
         let trailer = Trailer::parse(bytes);
         self.phase = Phase::Between;
+        self.trailer = Some(trailer);
+        if !self.checks_trailers {
+            return Ok(Stepped { consumed, produced: 0, event: Some(Event::MemberEnd) });
+        }
         let member = self.member;
         let len = self.plaintext - member.plaintext;
         if trailer.isize != len as u32 {

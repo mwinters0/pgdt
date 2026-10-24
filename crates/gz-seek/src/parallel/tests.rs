@@ -1,15 +1,17 @@
+use std::collections::BTreeMap;
 use std::sync::mpsc;
 
 use super::*;
 use crate::Forward;
 use crate::test_support::{Pass, bgzf, drive, forward, gzip, gzip_members, payload, spacing};
 
-/// How a test runs the speculations a pass hands out.
+/// How a test runs the tasks a pass hands out.
 #[derive(Debug, Clone, Copy)]
 enum Driver {
     /// None at all: the serial pass.
     Serial,
-    /// Every one, run to its end before the pass reads a byte.
+    /// Every one, run to its end as soon as the pass hands it out, before the
+    /// pass reads on.
     Ahead,
     /// At most `n` handed out at once, each run only once the pass waits for
     /// it.
@@ -19,7 +21,7 @@ enum Driver {
 }
 
 /// Run `task` over `file`, fed `feed` bytes at a time.
-fn run(mut task: Speculation, file: &[u8], feed: usize) -> Speculated {
+fn run(mut task: ChunkTask, file: &[u8], feed: usize) -> ChunkDone {
     while let Some(at) = task.wants() {
         let at = at as usize;
         task.supply(&file[at..(at + feed).min(file.len())]);
@@ -27,9 +29,12 @@ fn run(mut task: Speculation, file: &[u8], feed: usize) -> Speculated {
     task.finish()
 }
 
+/// What a test does to each result before the pass is handed it.
+type Tamper<'a> = &'a (dyn Fn(&mut ChunkDone) + Sync);
+
 /// A parallel pass over `file`, its chunks `chunk` bytes, run by `driver`,
 /// fed at most `input` bytes and given at most `out` bytes of room a step:
-/// what it handed out, and how many chunks it took.
+/// what it handed out, and how many decodes it took.
 fn parallel(
     file: &[u8],
     spacing: u64,
@@ -40,7 +45,7 @@ fn parallel(
 ) -> Result<(Pass, u64)> {
     let chunk = NonZeroU64::new(chunk).unwrap();
     let pass = Parallel::new(self::spacing(spacing), chunk, limit, file.len() as u64)?;
-    drive_parallel(pass, file, driver, (input, out), Vec::new())
+    drive_parallel(pass, file, driver, (input, out), Vec::new(), &|_| {})
 }
 
 fn drive_parallel(
@@ -49,20 +54,21 @@ fn drive_parallel(
     driver: Driver,
     (input, out): (usize, usize),
     mut windows: Vec<Vec<u8>>,
+    tamper: Tamper,
 ) -> Result<(Pass, u64)> {
     let mut buf = vec![0u8; out];
     let mut plaintext = Vec::new();
-    let mut handed: BTreeMap<u64, Speculation> = BTreeMap::new();
-    if let Driver::Ahead = driver {
-        while let Some(task) = pass.speculate() {
-            pass.speculated(run(task, file, 1 << 20));
-        }
-    }
+    let mut handed: BTreeMap<TaskId, ChunkTask> = BTreeMap::new();
+    let finish = |task, feed| {
+        let mut done = run(task, file, feed);
+        tamper(&mut done);
+        done
+    };
     std::thread::scope(|scope| {
         let (tasks, results) = match driver {
             Driver::Threads(n) => {
-                let (to_worker, from_main) = mpsc::channel::<Speculation>();
-                let (to_main, from_worker) = mpsc::channel::<Speculated>();
+                let (to_worker, from_main) = mpsc::channel::<ChunkTask>();
+                let (to_main, from_worker) = mpsc::channel::<ChunkDone>();
                 let from_main = std::sync::Arc::new(std::sync::Mutex::new(from_main));
                 for _ in 0..n {
                     let (from_main, to_main) = (from_main.clone(), to_main.clone());
@@ -70,7 +76,7 @@ fn drive_parallel(
                         loop {
                             let task = from_main.lock().unwrap().recv();
                             let Ok(task) = task else { break };
-                            if to_main.send(run(task, file, 7000)).is_err() {
+                            if to_main.send(finish(task, 7000)).is_err() {
                                 break;
                             }
                         }
@@ -83,28 +89,34 @@ fn drive_parallel(
         let mut in_flight = 0;
         let result = loop {
             match driver {
+                Driver::Ahead => {
+                    while let Some(task) = pass.task() {
+                        pass.done(finish(task, 1 << 20));
+                    }
+                }
                 Driver::Lazily(n) => {
+                    handed.retain(|&id, _| pass.wants(id));
                     while handed.len() < n
-                        && let Some(task) = pass.speculate()
+                        && let Some(task) = pass.task()
                     {
-                        handed.insert(task.chunk(), task);
+                        handed.insert(task.id(), task);
                     }
                 }
                 Driver::Threads(n) => {
                     if let Some(results) = &results {
                         while let Ok(result) = results.try_recv() {
                             in_flight -= 1;
-                            pass.speculated(result);
+                            pass.done(result);
                         }
                     }
                     while in_flight < 2 * n
-                        && let Some(task) = pass.speculate()
+                        && let Some(task) = pass.task()
                     {
                         tasks.as_ref().unwrap().send(task).unwrap();
                         in_flight += 1;
                     }
                 }
-                _ => {}
+                Driver::Serial => {}
             }
             let at = pass.compressed_position() as usize;
             let supply = &file[at.min(file.len())..(at + input).min(file.len())];
@@ -116,18 +128,18 @@ fn drive_parallel(
             if step.checkpoint.is_some() {
                 windows.push(pass.window().to_vec());
             }
-            if let Some(chunk) = step.wait {
+            if let Some(id) = step.wait {
                 match driver {
                     Driver::Lazily(_) => {
-                        let task = handed.remove(&chunk).expect("a handed-out chunk");
-                        pass.speculated(run(task, file, 5000));
+                        let task = handed.remove(&id).expect("a handed-out task");
+                        pass.done(finish(task, 5000));
                     }
                     Driver::Threads(_) => {
                         let result = results.as_ref().unwrap().recv().unwrap();
                         in_flight -= 1;
-                        pass.speculated(result);
+                        pass.done(result);
                     }
-                    _ => unreachable!("{driver:?} leaves no speculation in flight"),
+                    _ => unreachable!("{driver:?} leaves no task in flight"),
                 }
                 continue;
             }
@@ -189,7 +201,7 @@ fn the_index_is_the_serial_pass_s_at_every_worker_count() {
     }
 }
 
-/// **Chunks are taken** where the speculations are run: most of a file's,
+/// **Decodes are taken** where the tasks are run: most of a file's chunks,
 /// wherever its writer ends blocks more often than a chunk is long.
 #[test]
 fn a_pass_takes_the_chunks_it_is_handed() {
@@ -205,6 +217,39 @@ fn a_pass_takes_the_chunks_it_is_handed() {
             assert!(taken * 4 >= chunks * 3, "{name}: {taken} of {chunks} chunks taken");
         }
     }
+}
+
+/// **A decode begun with a history the frontier contradicts is never taken**:
+/// a guess whose history at its stop is wrong gives the next chunk's decode a
+/// wrong window, and the plaintext it decodes from there is dropped, those
+/// bytes decoded again by the engine from the frontier's own.
+#[test]
+fn a_decode_the_frontier_contradicts_is_decoded_again() {
+    let file = gzip(&payload(1_500_000, 19), 6);
+    let serial = forward(&file, 64 * 1024, 1 << 16, 1 << 16).unwrap();
+    let pass = |tamper: Tamper| {
+        let chunk = NonZeroU64::new(16 * 1024).unwrap();
+        let pass = Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64)?;
+        drive_parallel(pass, &file, Driver::Ahead, (1 << 16, 1 << 16), Vec::new(), tamper)
+    };
+    let (_, whole) = pass(&|_| {}).unwrap();
+    let tampered = std::sync::atomic::AtomicU64::new(0);
+    let wrong = |done: &mut ChunkDone| {
+        if let Finished::Speculated(result) = &mut done.0
+            && result.chunk % 3 == 1
+            && let Some(guess) = &mut result.found
+            && let Some(byte) = guess.end.iter_mut().rev().find(|v| **v < 256)
+        {
+            *byte ^= 1;
+            tampered.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    };
+    let (contradicted, taken) = pass(&wrong).unwrap();
+    assert!(tampered.into_inner() > 0);
+    assert_eq!(contradicted.index, serial.index);
+    assert_eq!(contradicted.windows, serial.windows);
+    assert!(contradicted.plaintext == serial.plaintext);
+    assert!(taken > 0 && taken < whole, "{taken} taken, {whole} untampered");
 }
 
 /// The buffers a pass is fed and given are its caller's to choose.
@@ -255,7 +300,8 @@ fn a_resumed_pass_builds_the_uninterrupted_index() {
                 windows.pop();
             }
             let (rest, _) =
-                drive_parallel(resumed, &file, Driver::Lazily(4), (3000, 9000), windows).unwrap();
+                drive_parallel(resumed, &file, Driver::Lazily(4), (3000, 9000), windows, &|_| {})
+                    .unwrap();
             assert_eq!(rest.index, whole.index, "{name}, stopped after checkpoint {stop}");
             assert_eq!(rest.windows, whole.windows, "{name}, stopped after checkpoint {stop}");
             assert!(rest.plaintext == whole.plaintext[at.plaintext as usize..], "{name}");
@@ -264,8 +310,8 @@ fn a_resumed_pass_builds_the_uninterrupted_index() {
 }
 
 /// **A damaged file is refused as the serial pass refuses it**: a trailer a
-/// chunk holds is checked before the chunk is taken, so the engine meets the
-/// damage and names it.
+/// decode holds is checked before the decode is taken, so the frontier's
+/// engine meets the damage and names it.
 #[test]
 fn damage_is_refused_as_the_serial_pass_refuses_it() {
     let plaintext = payload(800_000, 11);

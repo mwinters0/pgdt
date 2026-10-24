@@ -4,8 +4,9 @@
 //!
 //! A guess, never a finding. Any bit can begin something that reads as a
 //! header, so what this answers is a place worth decoding from, and the
-//! parallel pass ([`Parallel`](crate::Parallel)) trusts a decode from it only
-//! where the decode before it ends there exactly. A fixed block, and a block
+//! parallel pass ([`Parallel`](crate::Parallel)) takes a decode from it only
+//! where the engine's decode before it ends there exactly, with the history
+//! that decode began with. A fixed block, and a block
 //! marked last, are not looked for: their headers are three bits with nothing
 //! to check, so they would be found everywhere, and the decode before reaches
 //! past them instead. What is checked, cheapest first: a dynamic header's
@@ -75,6 +76,12 @@ pub(crate) fn find(input: &Input, from: u64, until: u64, inflater: &mut Inflater
     if until > end && !complete { Found::Input(end.max(from)) } else { Found::Nothing }
 }
 
+/// Whether a block whose header's first bits are `bits` is one a search
+/// looks for: dynamic or stored, and not the stream's last.
+pub(crate) fn is_searched_for(bits: u64) -> bool {
+    matches!(bits & 7, 0b100 | 0b000)
+}
+
 /// gzip's magic, deflate's method and no reserved flag at byte `offset`.
 fn is_member_header(input: &Input, offset: u64) -> bool {
     let magic =
@@ -109,7 +116,7 @@ fn dynamic_is_plausible(input: &Input, bit: u64, bits: u64) -> bool {
 /// up to the boundary are also zero — the high bit of an ASCII byte before
 /// it, say — reads the same length at the same boundary, and decodes the
 /// same block. The search answers the first; a pass at any later one of them
-/// stands at that block (`Chunk::begins_at`).
+/// stands at that block (`Guess::begins_at`).
 pub(crate) fn stored_length_at(bit: u64) -> u64 {
     (bit + 3).div_ceil(8) * 8
 }

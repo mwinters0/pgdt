@@ -12,16 +12,14 @@ split: `gz-seek`'s parallel pass, and the first pass over it").
   the events either decode reports — member start, header, block boundary,
   member end — and the CRC-32s are the decode's to supply.
 - **The frontier is a forward pass on the engine.** At each block boundary or
-  member start it reaches it looks for a chunk beginning exactly there; one
-  whose markers resolve against the frontier's history and whose trailers all
-  match is handed out, and the frontier stands at its stop. A chunk beginning
-  with a stored block begins at any of that header's aliases (`find.rs`,
-  `stored_length_at`).
+  member start it reaches it looks for a chunk beginning exactly there, and
+  stands at its stop once it has handed it out. A chunk beginning with a
+  stored block begins at any of that header's aliases (`find.rs`,
+  `stored_length_at`). What it hands out is 15.15's
+  ([notes](roadmap-P15.15-engine-notes.md)).
 - **A speculation** (`speculate.rs`) searches its chunk for a dynamic or stored
-  block's start or a member's header (`find.rs`), decodes from it with the
-  crate's own decoder (`native/`) to the first boundary or member start at or
-  past the chunk's end, and records every event with its plaintext offset and
-  each bytes piece's CRC-32. A refused candidate is searched past, up to
+  block's start or a member's header (`find.rs`) and decodes from it with the
+  crate's own decoder (`native/`). A refused candidate is searched past, up to
   `REFUSALS_PAST_A_BOUNDARY` refused only after a boundary; a limit, or a
   refusal past those, ends the chunk at its last boundary.
 - **The native decoder refuses what zlib's `inflate_table` and `inflate`
@@ -34,18 +32,11 @@ split: `gz-seek`'s parallel pass, and the first pass over it").
   threads), `a_pass_takes_the_chunks_it_is_handed`,
   `a_resumed_pass_builds_the_uninterrupted_index` (from a serial pass's
   partial index), `damage_is_refused_as_the_serial_pass_refuses_it`, and
-  `a_speculation_over_any_bytes_hands_back_a_chunk_or_nothing`.
+  `a_speculation_over_any_bytes_hands_back_a_guess_or_nothing`.
 
 ## What 15.8.1 inherits
 
-- **The contract.** `read` as `Forward::read`, supplying from
-  `compressed_position`, which jumps past a chunk taken, until a step
-  `needs_input`; a step whose `wait` names a chunk stands where it may begin,
-  and the next read waits for `speculated` to be handed that chunk's result.
-  `speculate` hands out chunks in order ahead of the frontier; `pending` and
-  `held` are what the caller bills. A speculation holds about a chunk of
-  compressed bytes and at most the limit of plaintext, twice over while it
-  writes markers; nothing of it is charged anywhere yet.
+- **The contract** is 15.15's ([notes](roadmap-P15.15-engine-notes.md)).
 - **The chunk length and the plaintext limit are the caller's** and no
   figure has chosen either; `CHECKPOINT_SPACING` is not one of them, a chunk
   being compressed bytes and a unit plaintext.

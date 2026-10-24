@@ -31,13 +31,16 @@ the compressed file pulled or fetched, the remote object
   pass that builds any other's, the source a file no cache has indexed is read
   through until it hands over to the arms, and the file it spills its
   windows to, in the directory `open`'s caller names.
-- **gz-seek** — `index.rs`, `forward.rs`, `placement.rs`, `parallel.rs`,
-  `speculate.rs`, `find.rs`, `native/`, `unit.rs`, `bgzf.rs`, `engine.rs`,
-  `member.rs`, `zlib.rs`, `error.rs`: a gzip file's positioned read — its
-  index of checkpoints, the forward pass that builds one and the parallel pass
-  that builds the same one, the placement rule both apply, the speculations
-  ahead of the parallel pass, the search for where one may begin and the
-  crate's own deflate decoder they run, a unit decoded from
+- **gz-seek** — `index.rs`, `forward.rs`, `placement.rs`, `parallel/`,
+  `speculate.rs`, `find.rs`, `native/`, `chunk.rs`, `unit.rs`, `bgzf.rs`,
+  `engine.rs`, `member.rs`, `zlib.rs`, `error.rs`: a gzip file's positioned
+  read — its index of checkpoints, the forward pass that builds one and the
+  parallel pass that builds the same one, the placement rule both apply, the
+  tasks the parallel pass hands its caller and the chain resolving each
+  chunk's window in order, the speculations guessing where a chunk begins and
+  the history it ends with, the search for where one may begin and the
+  crate's own deflate decoder they run, a chunk decoded by the engine from
+  its window, a unit decoded from
   its checkpoint, the BGZF walk, the decode under them, gzip's framing, and
   the inflater over the zlib API, whichever engine a feature names — a leaf beneath io naming no `pg_dump`, as `xz-seek` is the
   `.xz` one's outside the workspace, so the source over it is io's and the

@@ -12,9 +12,9 @@
 //! that pass, placing a checkpoint at the first block boundary at or after each
 //! multiple of a spacing the caller chooses, and at every member start, and
 //! handing each checkpoint's window out as it goes. [`Parallel`] is the same
-//! pass with chunks of the file ahead of it decoded speculatively, on whatever
-//! threads the caller runs its [`Speculation`]s on, and it builds the same
-//! index whatever ran. A **BGZF** file states every
+//! pass with chunks of the file ahead of it found speculatively and decoded,
+//! on whatever threads the caller runs its [`ChunkTask`]s on, and it builds
+//! the same index whatever ran. A **BGZF** file states every
 //! member's length in its header, so [`Walk`] reads its index off the headers
 //! and trailers without decoding a byte, coalescing members into units of at
 //! least the spacing — and a forward pass over one coalesces them alike,
@@ -23,7 +23,7 @@
 //!
 //! **Nothing here reads a file.** Every type is driven by bytes the caller
 //! supplies — [`Forward::read`], [`Parallel::read`] and [`UnitRead::read`]
-//! take the next compressed bytes and space for plaintext, a [`Speculation`]
+//! take the next compressed bytes and space for plaintext, a [`ChunkTask`]
 //! and a [`Walk`] say where they need bytes from and take them back — and
 //! none starts a thread, holds a borrow across calls, or has a lifetime, so a
 //! caller decodes on whatever thread and over whatever transport it has.
@@ -79,14 +79,15 @@
 //! otherwise (`docs/design/decisions.md`, "D112") — and [`engine`] names the
 //! one a build links. A speculation decodes with a deflate decoder of the
 //! crate's own, the one decode the zlib API cannot make — from a block found
-//! mid-member, its history unknown — and its plaintext is handed out only
-//! where it checks out against the engine's pass (`docs/design/decisions.md`,
-//! "D117").
+//! mid-member, its history unknown — but only to find where a chunk begins and
+//! what history it ends with: every byte of plaintext the crate hands out is
+//! the engine's (`docs/design/decisions.md`, "D117").
 // upstream: UF4
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 mod bgzf;
+mod chunk;
 mod engine;
 mod error;
 mod find;
@@ -107,7 +108,6 @@ pub use error::{Error, Result};
 pub use forward::{Forward, ForwardStep};
 pub use index::{Checkpoint, End, Index, Size, Start, UnitTask};
 pub use member::GZIP_MAGIC;
-pub use parallel::{Parallel, ParallelStep};
-pub use speculate::{Speculated, Speculation};
+pub use parallel::{ChunkDone, ChunkTask, Parallel, ParallelStep, TaskId};
 pub use unit::{Progress, UnitRead};
 pub use zlib::{DECODER_BYTES, WINDOW_SIZE, engine};

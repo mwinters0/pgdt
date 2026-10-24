@@ -10,17 +10,17 @@
 //! value naming which byte of that history it copies — and the markers are
 //! resolved once the history is known. Once 32 KiB have been written with no
 //! marker among them nothing later can reach one, and the decode goes on in
-//! bytes. A chunk whose guess was wrong, or whose decode or resolution fails
-//! anywhere, is discarded and its bytes are decoded through the zlib API, so
-//! every refusal a caller sees is the engine's.
+//! bytes.
+//!
+//! **Its plaintext is never handed out.** What a speculation keeps is where
+//! its chunk begins and stops and the history at the stop, still marked; the
+//! pass resolves that into the window the next chunk begins with, and the
+//! engine decodes every chunk from it, so a fault here costs a chunk's
+//! parallelism, never a byte (`docs/design/decisions.md`, "D117").
 //!
 //! **It refuses what zlib refuses**: the same over-subscribed and incomplete
 //! codes, the same missing end-of-block code, the same invalid symbols and
-//! distances, so a guess it accepts is a stream the engine accepts. A chunk
-//! taken hands out its plaintext as decoded here, checked before it is taken
-//! only by the member trailers it holds — a member longer than a chunk by its
-//! own trailer once the pass reaches it — and each unit's CRC-32 is recorded
-//! from it (`docs/design/decisions.md`, "D117").
+//! distances, so a guess it accepts is a stream the engine accepts.
 
 mod huffman;
 mod inflate;
