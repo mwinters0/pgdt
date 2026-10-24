@@ -5,7 +5,7 @@ use std::io::Read;
 use std::path::Path;
 
 mod common;
-use common::{VERSIONS, gzip_fixture, run_ok};
+use common::{VERSIONS, gzip_fixture, run, run_ok, stderr_of};
 
 /// `gz` decompressed beside itself as `<name>.sql`, by an encoder not ours.
 fn plaintext_beside(gz: &Path) -> std::path::PathBuf {
@@ -114,4 +114,90 @@ fn a_gzip_dump_its_writer_ended_no_block_in_is_warned() {
     assert!(largest > 2 * spacing, "{warning}");
     assert_eq!(warning["block_count"], info["compression"]["blocks"], "{warning}");
     assert_eq!(largest, info["compression"]["max_block_uncompressed"].as_u64().unwrap());
+}
+
+/// The status lines naming a gzip first pass in `stderr`: those saying it
+/// started, and those saying it completed.
+fn first_pass_lines(stderr: &str) -> (Vec<&str>, Vec<&str>) {
+    let lines = |what: &str| stderr.lines().filter(|l| l.contains(what)).collect::<Vec<_>>();
+    (lines("first pass started"), lines("first pass complete"))
+}
+
+/// `args` run to success, and what it wrote to stderr.
+fn stderr_ok(args: &[&str]) -> String {
+    let output = run(args);
+    let stderr = stderr_of(&output);
+    assert!(output.status.success(), "{args:?}: {stderr}");
+    stderr
+}
+
+/// **A gzip first pass says it ran, once, and why the run is serial**, as the
+/// `.xz` walk does (`docs/design/decisions.md`, "D64"): a cold `parse` says it
+/// started, naming the codec and that it reads serially while it builds the
+/// index, and that it completed, naming the units and members the index
+/// holds; a `parse` and an `info` over the complete cache it saved say
+/// nothing of it.
+#[test]
+fn a_gzip_first_pass_is_announced_once_started_and_complete() {
+    let dir = tempfile::tempdir().unwrap();
+    let gz = dir.path().join("dump.sql.gz");
+    std::fs::copy(gzip_fixture(16, "edge_cases", "compress"), &gz).unwrap();
+    let gz_arg = gz.to_str().unwrap();
+
+    let stderr = stderr_ok(&["parse", "--source", gz_arg]);
+    let (started, complete) = first_pass_lines(&stderr);
+    assert_eq!((started.len(), complete.len()), (1, 1), "{stderr}");
+    assert!(started[0].contains("codec=gzip"), "{stderr}");
+    assert!(started[0].contains("reading serially while it builds the index"), "{stderr}");
+    assert!(!started[0].contains("resum"), "a fresh pass resumes nothing: {stderr}");
+    assert!(complete[0].contains("units=1 members=1"), "{stderr}");
+    assert!(stderr.find("first pass started") < stderr.find("first pass complete"), "{stderr}");
+
+    for args in [["parse", "--source", gz_arg], ["info", "--source", gz_arg]] {
+        let stderr = stderr_ok(&args);
+        assert!(!stderr.contains("first pass"), "{args:?}: {stderr}");
+    }
+}
+
+/// **A resumed first pass names the checkpoint it resumes from**: a cold
+/// `query` stopped at a small table ahead of a large one saves an index
+/// reaching only as far as its pass got, saying it started and not that it
+/// completed, and the `parse` that resumes it says from which checkpoint,
+/// then that it completed.
+#[test]
+fn a_resumed_gzip_first_pass_names_its_checkpoint() {
+    use std::io::Write as _;
+    let dir = tempfile::tempdir().unwrap();
+    let mut plain = String::from("SET client_encoding = 'UTF8';\n\n");
+    for (table, rows) in [("small", 50u64), ("large", 200_000)] {
+        plain.push_str(&format!(
+            "CREATE TABLE public.{table} (\n    id integer,\n    name text\n);\n\n\
+             COPY public.{table} (id, name) FROM stdin;\n"
+        ));
+        for id in 1..=rows {
+            plain.push_str(&format!(
+                "{id}\trow {id} of {table}, {}\n",
+                id.wrapping_mul(7919) % 10_007
+            ));
+        }
+        plain.push_str("\\.\n\n");
+    }
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(plain.as_bytes()).unwrap();
+    let gz = dir.path().join("dump.sql.gz");
+    std::fs::write(&gz, encoder.finish().unwrap()).unwrap();
+    let gz_arg = gz.to_str().unwrap();
+
+    let output = run(&["query", "--source", gz_arg, "--table", "public.small"]);
+    let stderr = stderr_of(&output);
+    assert!(output.status.success(), "{stderr}");
+    let (started, complete) = first_pass_lines(&stderr);
+    assert_eq!((started.len(), complete.len()), (1, 0), "stopped short of the end: {stderr}");
+
+    let stderr = stderr_ok(&["parse", "--source", gz_arg]);
+    let (started, complete) = first_pass_lines(&stderr);
+    assert_eq!((started.len(), complete.len()), (1, 1), "{stderr}");
+    assert!(started[0].contains("resuming from a saved checkpoint"), "{stderr}");
+    assert!(started[0].contains("checkpoint=0 plaintext=0"), "{stderr}");
+    assert!(complete[0].contains("members=1"), "{stderr}");
 }

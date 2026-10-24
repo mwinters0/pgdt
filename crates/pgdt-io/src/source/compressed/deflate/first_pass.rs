@@ -17,6 +17,10 @@
 //! ([`CompressedFileSource`], [`FetchedCompressedSource`]), and every read,
 //! partitioning and worker recommendation is that source's from then on — so a
 //! cold `query`'s replay reads units.
+//!
+//! **Announced where it opens and where it completes**, on the status channel
+//! as the `.xz` walk is: the source says why its run is serial, the
+//! arrangement reading only its advice (`docs/design/decisions.md`, "D64").
 
 use std::future::Future;
 use std::num::NonZeroU64;
@@ -38,7 +42,7 @@ use crate::source::{ByteRangeSource, Extent, RemoteIdentity, WaitPolicy};
 
 use super::super::short_read;
 use super::super::{CompressedFileSource, CompressionIndex, FetchedCompressedSource};
-use super::{CHECKPOINT_SPACING, GzipIndex, INPUT_CHUNK, WindowProvider, gzip_error};
+use super::{CHECKPOINT_SPACING, GZIP, GzipIndex, INPUT_CHUNK, WindowProvider, gzip_error};
 
 mod pass;
 
@@ -77,6 +81,9 @@ const DECODE_BYTES: u64 = gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64 +
 // placed to an unnamed file the run alone holds.
 pub(crate) struct FirstPass {
     feed: Feed,
+    /// What the pass's status lines name the file by: its origin as a message
+    /// to the user names it.
+    named: String,
     /// The compressed file's length, as the open's probe found it.
     stored_size: u64,
     /// The forward decodes and the index as far as they have got, locked for
@@ -115,28 +122,47 @@ impl Feed {
 
 impl FirstPass {
     /// A pass from the file's first byte, placing checkpoints at
-    /// [`CHECKPOINT_SPACING`].
-    pub(crate) fn fresh(feed: Feed, stored_size: u64) -> Result<FirstPass> {
-        Self::spaced(feed, stored_size, CHECKPOINT_SPACING)
+    /// [`CHECKPOINT_SPACING`], its status lines naming the file `named` — its
+    /// origin as a message to the user names it.
+    pub(crate) fn fresh(named: String, feed: Feed, stored_size: u64) -> Result<FirstPass> {
+        Self::spaced(named, feed, stored_size, CHECKPOINT_SPACING)
     }
 
-    /// A pass from the file's first byte, placing checkpoints at `spacing`.
-    pub(crate) fn spaced(feed: Feed, stored_size: u64, spacing: NonZeroU64) -> Result<FirstPass> {
+    /// A pass named `named` from the file's first byte, placing checkpoints
+    /// at `spacing`, saying it has started.
+    pub(crate) fn spaced(
+        named: String,
+        feed: Feed,
+        stored_size: u64,
+        spacing: NonZeroU64,
+    ) -> Result<FirstPass> {
         let forward = gz_seek::Forward::new(spacing).map_err(gzip_error)?;
         let windows = PassWindows::fresh();
-        Ok(Self::over(feed, stored_size, Inflating::new(forward), 0, None, windows))
+        let pass = Self::over(named, feed, stored_size, Inflating::new(forward), 0, None, windows);
+        tracing::info!(
+            source = %pass.named,
+            codec = %GZIP,
+            "first pass started, reading serially while it builds the index",
+        );
+        Ok(pass)
     }
 
-    /// A pass resumed at the last checkpoint of `index`, an incomplete index a
-    /// previous pass over the *same* file saved, its windows read through the
-    /// provider riding on it.
+    /// A pass named `named` resumed at the last checkpoint of `index`, an
+    /// incomplete index a previous pass over the *same* file saved, its
+    /// windows read through the provider riding on it, saying it has started
+    /// and from which checkpoint.
     ///
     /// **Checked against the file, reading no bytes of it**: an index whose
     /// last checkpoint lies at or past the file's end, or that `gz_seek`
     /// cannot resume, does not describe this file, which
     /// [`open`](crate::open) turns into
     /// [`Recognized::Mismatch`](crate::Recognized::Mismatch).
-    pub(crate) fn resumed(feed: Feed, stored_size: u64, index: GzipIndex) -> Result<FirstPass> {
+    pub(crate) fn resumed(
+        named: String,
+        feed: Feed,
+        stored_size: u64,
+        index: GzipIndex,
+    ) -> Result<FirstPass> {
         let GzipIndex { index, windows } = index;
         let checkpoints = index.checkpoints();
         let last = *checkpoints.last().expect("an index holds its first checkpoint");
@@ -161,10 +187,21 @@ impl FirstPass {
         let base = checkpoints.len();
         let pass_windows = PassWindows::after(windows, base);
         let inflating = Inflating::new(forward);
-        Ok(Self::over(feed, stored_size, inflating, placed, Some(index), pass_windows))
+        let pass =
+            Self::over(named, feed, stored_size, inflating, placed, Some(index), pass_windows);
+        tracing::info!(
+            source = %pass.named,
+            codec = %GZIP,
+            checkpoint = base - 1,
+            plaintext = last.plaintext,
+            "first pass started, resuming from a saved checkpoint and reading serially while \
+             it builds the index",
+        );
+        Ok(pass)
     }
 
     fn over(
+        named: String,
         feed: Feed,
         stored_size: u64,
         frontier: Inflating,
@@ -175,6 +212,7 @@ impl FirstPass {
         let pass = Pass::new(frontier, placed, resumed_over);
         FirstPass {
             feed,
+            named,
             stored_size,
             inner: Arc::new(Mutex::new(pass)),
             turn: tokio::sync::Mutex::new(()),
@@ -307,11 +345,13 @@ impl FirstPass {
 
     /// The pass has reached the end: the indexed source over the complete
     /// index, which every call is from now on, with what callers announced
-    /// replayed on it.
+    /// replayed on it, saying what the index holds.
     fn hand_over(&self) -> Result<()> {
         let index = self.lock().ended.clone().expect("the frontier reached the end");
         let windows = Arc::clone(&self.windows) as Arc<dyn WindowProvider>;
-        let index = CompressionIndex::Gzip(GzipIndex { index, windows: Some(windows) });
+        let index = GzipIndex { index, windows: Some(windows) };
+        let (units, members) = (index.unit_count(), index.member_count());
+        let index = CompressionIndex::Gzip(index);
         let done: Arc<dyn ByteRangeSource> = match &self.feed {
             Feed::File { path, .. } => Arc::new(CompressedFileSource::with_index(path, index)?),
             Feed::Fetched(raw) => Arc::new(FetchedCompressedSource::with_index(
@@ -320,6 +360,13 @@ impl FirstPass {
                 index,
             )?),
         };
+        tracing::info!(
+            source = %self.named,
+            codec = %GZIP,
+            units,
+            members,
+            "first pass complete, the index built",
+        );
         let hints = self.hints.lock().unwrap_or_else(|e| e.into_inner());
         hints.replay(&*done);
         // Set under the hints' lock, so a hint arriving now is replayed or

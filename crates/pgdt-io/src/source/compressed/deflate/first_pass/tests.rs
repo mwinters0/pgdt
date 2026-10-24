@@ -25,6 +25,11 @@ fn feed(name: &str, path: &std::path::Path) -> Feed {
     }
 }
 
+/// What a pass over `path` names it by.
+fn named(path: &std::path::Path) -> String {
+    Origin::local(path).to_string()
+}
+
 /// `source` read forward from `from` to its end in `chunk`-byte reads, as a
 /// scan to an open end reads.
 async fn scanned(source: &dyn ByteRangeSource, from: u64, chunk: usize) -> Vec<u8> {
@@ -68,7 +73,13 @@ async fn a_first_pass_reads_the_file_and_builds_its_index() {
     let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
     for feed_name in FEEDS {
-        let pass = FirstPass::spaced(feed(feed_name, compressed.path()), stored, SPACING).unwrap();
+        let pass = FirstPass::spaced(
+            named(compressed.path()),
+            feed(feed_name, compressed.path()),
+            stored,
+            SPACING,
+        )
+        .unwrap();
         assert_eq!(pass.extent().await.unwrap(), Extent::Open { at_least: 0 }, "{feed_name}");
         assert_eq!(pass.default_workers(), 1, "{feed_name}");
         let half = pass.read_range(0, payload.len() / 2).await.unwrap();
@@ -99,7 +110,13 @@ async fn a_finished_pass_reads_as_the_indexed_source() {
     let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
     for feed_name in FEEDS {
-        let pass = FirstPass::spaced(feed(feed_name, compressed.path()), stored, SPACING).unwrap();
+        let pass = FirstPass::spaced(
+            named(compressed.path()),
+            feed(feed_name, compressed.path()),
+            stored,
+            SPACING,
+        )
+        .unwrap();
         pass.hint_parallelism(crate::Parallelism::workers(4, 1 << 30));
         let advice = pass.partitions(0..payload.len() as u64);
         assert_eq!(advice.max_partitions(), Some(1), "{feed_name}: {advice:?}");
@@ -130,7 +147,13 @@ async fn a_read_behind_the_frontier_reads_from_its_checkpoint() {
     let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
     for feed_name in FEEDS {
-        let pass = FirstPass::spaced(feed(feed_name, compressed.path()), stored, SPACING).unwrap();
+        let pass = FirstPass::spaced(
+            named(compressed.path()),
+            feed(feed_name, compressed.path()),
+            stored,
+            SPACING,
+        )
+        .unwrap();
         let ahead = payload.len() * 2 / 3;
         pass.read_range(0, ahead).await.unwrap();
         let open_unit = gzip_index_of(&pass).unit_ranges().last().unwrap().end;
@@ -160,16 +183,25 @@ async fn a_resumed_pass_builds_the_uninterrupted_index() {
     let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
     for stop in [payload.len() / 2, 100] {
-        let interrupted =
-            FirstPass::spaced(Feed::file(compressed.path()).unwrap(), stored, SPACING).unwrap();
+        let interrupted = FirstPass::spaced(
+            named(compressed.path()),
+            Feed::file(compressed.path()).unwrap(),
+            stored,
+            SPACING,
+        )
+        .unwrap();
         interrupted.read_range(0, stop).await.unwrap();
         let saved = gzip_index_of(&interrupted);
         let last = saved.unit_ranges().last().map_or(0, |unit| unit.end);
         for feed_name in FEEDS {
             for from in [last.saturating_sub(50), last + 3] {
-                let resumed =
-                    FirstPass::resumed(feed(feed_name, compressed.path()), stored, saved.clone())
-                        .unwrap();
+                let resumed = FirstPass::resumed(
+                    named(compressed.path()),
+                    feed(feed_name, compressed.path()),
+                    stored,
+                    saved.clone(),
+                )
+                .unwrap();
                 assert_eq!(gzip_index_of(&resumed), saved, "{feed_name} from {from}");
                 assert_eq!(windows_of(&gzip_index_of(&resumed)), windows_of(&saved));
                 let rest = scanned(&resumed, from, 5003).await;
@@ -191,16 +223,26 @@ async fn a_saved_index_past_the_files_end_is_a_mismatch() {
     let payload = gzip_test_payload();
     let (compressed, _) = gzip_indexed(&payload, SPACING.get());
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
-    let pass = FirstPass::spaced(Feed::file(compressed.path()).unwrap(), stored, SPACING).unwrap();
+    let pass = FirstPass::spaced(
+        named(compressed.path()),
+        Feed::file(compressed.path()).unwrap(),
+        stored,
+        SPACING,
+    )
+    .unwrap();
     pass.read_range(0, payload.len() - 1).await.unwrap();
     let saved = gzip_index_of(&pass);
 
     let (shorter, _) = gzip_indexed(&payload[..payload.len() / 4], SPACING.get());
     let short_size = std::fs::metadata(shorter.path()).unwrap().len();
-    let refused =
-        FirstPass::resumed(Feed::file(shorter.path()).unwrap(), short_size, saved.clone())
-            .err()
-            .expect("refused");
+    let refused = FirstPass::resumed(
+        named(shorter.path()),
+        Feed::file(shorter.path()).unwrap(),
+        short_size,
+        saved.clone(),
+    )
+    .err()
+    .expect("refused");
     assert!(index_refused(&refused), "{refused}");
     let known = KnownCompression::Compressed(CompressionIndex::Gzip(saved.clone()));
     let origin = Origin::local(shorter.path());
@@ -231,7 +273,13 @@ async fn a_damaged_file_is_refused_where_the_pass_meets_it() {
     {
         let (file, _source) = source_of(&damaged);
         let stored = damaged.len() as u64;
-        let pass = FirstPass::spaced(Feed::file(file.path()).unwrap(), stored, SPACING).unwrap();
+        let pass = FirstPass::spaced(
+            named(file.path()),
+            Feed::file(file.path()).unwrap(),
+            stored,
+            SPACING,
+        )
+        .unwrap();
         let read = pass.read_at_most(0, payload.len() + 1).await;
         assert!(read.is_err(), "{what}: {read:?}");
         assert!(pass.read_at_most(0, 10).await.is_err(), "{what}: the pass stopped there");

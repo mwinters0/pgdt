@@ -387,15 +387,16 @@ pub(crate) async fn open_local(origin: &Origin, known: KnownCompression) -> Resu
     match Verdict::of(probe.leading(), known) {
         // A gzip index a first pass stopped short of the end saved: the pass
         // resumes from its last checkpoint rather than from the file's start.
-        Verdict::Known(CompressionIndex::Gzip(index)) if !index.is_complete() => {
-            over_known_index(FirstPass::resumed(Feed::file(path)?, probe.stored_size(), index))
-        }
+        Verdict::Known(CompressionIndex::Gzip(index)) if !index.is_complete() => over_known_index(
+            FirstPass::resumed(origin.to_string(), Feed::file(path)?, probe.stored_size(), index),
+        ),
         // The saving: an index from a previous build over this file, validated
         // against the file's length and its own internal consistency without
         // reading a byte, and never rebuilt.
         Verdict::Known(index) => over_known_index(CompressedFileSource::with_index(path, index)),
         // A gzip file's index is its first full pass's by-product.
         Verdict::Unknown(Format::Gzip) => Ok(Recognized::Source(Arc::new(FirstPass::fresh(
+            origin.to_string(),
             Feed::file(path)?,
             probe.stored_size(),
         )?))),

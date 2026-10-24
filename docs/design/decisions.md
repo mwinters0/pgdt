@@ -629,6 +629,7 @@ Absence recommends, a stated count is never lowered, zero is refused. The arrang
 in two lines, before and after the open, because a fresh `.xz` walks footers first; the limit is
 read once, every pass carving from that reading. Whether a number was typed or discovered never enters `Parallelism`.
 Logged durations are diagnostics, never figures: one stderr subscriber, no terminal detection.
+A gzip first pass is announced by its source, started — naming the checkpoint it resumes from — and complete, so a `parse` says why it is serial; rejected: the reason in the arrangement's lines, which would put codec knowledge in the arrangement.
 
 ### D66 Output of what `pg_dump` writes is byte-identical whether typing is on or off, but for a value its type cannot hold or an `escape` `bytea`
 Every value renders back to its `*_out` text, which is what `pg_dump` wrote — a hand-written spelling `*_out` never writes rendering as `*_out` would — but one its type cannot hold, NULL in the null mode (D98), and an `escape` `bytea`, `hex` (I56), which `byteain` reads alike.
