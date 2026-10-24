@@ -13,15 +13,17 @@
 //! multiple; what the spacing moves is how many windows are copied, never how
 //! often the decoder stops.
 //!
-//! **Over a run of BGZF members the pass places what a [`Walk`](crate::Walk)
-//! places.** While every member's header so far has been a BGZF member's, a
-//! member start is a checkpoint only where it is the file's first or the unit
-//! since the last checkpoint holds the spacing, no block boundary is one, and
-//! each unit of whole members records no CRC-32, its trailers checking it: so
-//! the pass over a BGZF file builds the index its walk reads off the headers.
-//! From the first member whose header is not BGZF's, the rule above governs.
-//! Only a header ends the run, which a pass resumed at a member start reads
-//! again (`docs/design/decisions.md`, "D116").
+//! **BGZF members are coalesced as a [`Walk`](crate::Walk) coalesces them.** A
+//! member start whose own header is a BGZF member's joins the unit before it
+//! where that unit began at a BGZF member start and is short of the spacing; no
+//! block boundary inside a BGZF member is a checkpoint; and a unit of whole
+//! BGZF members records no CRC-32, its trailers checking it. So the pass over
+//! a BGZF file builds the index its walk reads off the headers, and any run of
+//! BGZF members in another gzip file is coalesced alike, while a member whose
+//! header is not BGZF's begins a unit and takes the rule above. Each member is
+//! decided by its own header and the unit it would join, so a pass resumed at
+//! a member start reads the rule off that header alone
+//! (`docs/design/decisions.md`, "D116").
 //!
 //! # What a step hands out
 //!
@@ -56,9 +58,12 @@ pub struct Forward {
     /// The next multiple of the spacing a checkpoint is owed at.
     next_mark: u64,
     checkpoints: Vec<Checkpoint>,
-    /// Whether every member's header so far has been a BGZF member's: while
-    /// it holds, members are coalesced into units as a walk coalesces them.
-    coalescing: bool,
+    /// Whether the member being read has a BGZF member's header: no block
+    /// boundary inside one is a checkpoint, and its unit records no CRC-32.
+    member_bgzf: bool,
+    /// Whether the unit since the last checkpoint began at a BGZF member's
+    /// start, so that a later BGZF member may join it.
+    unit_bgzf: bool,
     /// A member start the spacing does not owe, placed only if its header
     /// proves not to be a BGZF member's.
     deferred: Option<Checkpoint>,
@@ -83,7 +88,8 @@ impl Forward {
             spacing,
             next_mark: 0,
             checkpoints: Vec::new(),
-            coalescing: true,
+            member_bgzf: false,
+            unit_bgzf: false,
             deferred: None,
             members: 0,
             members_at_last: 0,
@@ -134,7 +140,10 @@ impl Forward {
             spacing: index.spacing(),
             next_mark: 0,
             checkpoints,
-            coalescing: false,
+            // A checkpoint inside a member is one only a plain member has; a
+            // member start is placed again, its header read again.
+            member_bgzf: false,
+            unit_bgzf: false,
             deferred: None,
             members,
             members_at_last: members,
@@ -148,10 +157,6 @@ impl Forward {
             forward.checkpoints.pop();
             forward.members -= 1;
             forward.replacing = Some((last, members));
-            // A run of BGZF members leaves its units with no CRC-32, and only
-            // such a run does: the unit before the member says whether the
-            // run reached it, and the member's own header is read again.
-            forward.coalescing = forward.checkpoints.last().is_none_or(|unit| unit.crc.is_none());
         } else {
             forward.checkpoints[at].crc = None;
             forward.placed(last.plaintext);
@@ -230,6 +235,7 @@ impl Forward {
             Some(Event::MemberStart) => {
                 self.members += 1;
                 self.window_len = 0;
+                self.member_bgzf = false;
                 let start = Checkpoint::member(plaintext, self.engine.member().offset);
                 if self.owes_member(plaintext) {
                     Some(start)
@@ -238,17 +244,14 @@ impl Forward {
                     None
                 }
             }
-            // deficiency: KD135 — the run ends for good: from the first header
-            // that is not BGZF's, every later BGZF member begins a unit of its
-            // own, so a file opening with a plain member, or a BGZF file with
-            // one inside it, has an index of 64 KiB units from there to its
-            // end. The fix decides per member: a member start joins the unit
-            // only where its own header is BGZF's and the unit began at a BGZF
-            // member start, which a resume reads off the member's header alone.
+            // A start is deferred only into a unit a BGZF member began, so the
+            // unit this member is in now began at one exactly where its own
+            // header is BGZF's: joined to it, or placed at its own start.
             Some(Event::Header { bgzf }) => {
-                self.coalescing &= bgzf;
+                self.member_bgzf = bgzf;
+                self.unit_bgzf = bgzf;
                 let deferred = self.deferred.take();
-                if self.coalescing { None } else { deferred }
+                if bgzf { None } else { deferred }
             }
             // deficiency: KD129 — a checkpoint is a block boundary, so a
             // member whose writer ends a block only at `Z_FINISH`, before its
@@ -260,7 +263,7 @@ impl Forward {
             // of the byte's remaining bits; what is missing is a stop there,
             // which no inflater gives, so placing one means walking the static
             // codes here.
-            Some(Event::Block { bit }) if !self.coalescing && plaintext >= self.next_mark => {
+            Some(Event::Block { bit }) if !self.member_bgzf && plaintext >= self.next_mark => {
                 self.close_unit();
                 self.window_len = self.engine.dictionary(&mut self.window);
                 Some(Checkpoint {
@@ -273,7 +276,7 @@ impl Forward {
                 })
             }
             // A unit of whole BGZF members is checked by their trailers.
-            Some(Event::MemberEnd) if !self.coalescing => {
+            Some(Event::MemberEnd) if !self.member_bgzf => {
                 let crc = self.engine.run_crc();
                 self.checkpoints.last_mut().expect("a member began").crc = Some(crc);
                 None
@@ -308,10 +311,10 @@ impl Forward {
     }
 
     /// Whether a member beginning at `plaintext` begins a unit before its
-    /// header is read: always, unless members are being coalesced and the
-    /// unit since the last checkpoint is short of the spacing.
+    /// header is read: always, unless the unit since the last checkpoint
+    /// began at a BGZF member's start and is short of the spacing.
     fn owes_member(&self, plaintext: u64) -> bool {
-        !self.coalescing
+        !self.unit_bgzf
             || self
                 .checkpoints
                 .last()

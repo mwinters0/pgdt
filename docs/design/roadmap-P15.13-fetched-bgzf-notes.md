@@ -4,17 +4,16 @@ An uncached BGZF file over HTTP is read by the first pass any other gzip file
 is read by, once, and the index it builds is the one a local walk reads off
 the same file's headers (D116). The local arm still walks.
 
-- **`gz_seek::Forward` coalesces a run of BGZF members**: while every
-  member's header so far has been BGZF's, a member start is a checkpoint only
-  at the file's start or where the unit since the last one holds the spacing,
-  no block boundary is one, and a unit records no CRC-32. A member start the
-  spacing does not owe waits for its header (the engine's new
-  `Event::Header`), and is placed where that header is not BGZF's, which ends
-  the run; from there the block rule governs. The rule is intrinsic to the
-  pass, so it applies on both arms: **a local file whose walk finds its chain
-  broken is now read by a pass coalescing up to the first header that is not
-  BGZF's**, where before it placed every member start — the index differs, the
-  plaintext and its checks do not.
+- **`gz_seek::Forward` coalesces BGZF members**: a member start is a
+  checkpoint only at the file's start or where the unit since the last one
+  holds the spacing, no block boundary is one, and a unit records no CRC-32.
+  A member start the spacing does not owe waits for its header (the engine's
+  new `Event::Header`), and is placed where that header is not BGZF's; this
+  slice ended the run there for good, and 15.14 decides each member by its
+  own header. The rule is intrinsic to the pass, so it applies on both arms:
+  **a local file whose walk finds its chain broken is now read by a pass
+  coalescing its BGZF members**, where before it placed every member start —
+  the index differs, the plaintext and its checks do not.
 - **The member count moved from `gz_seek::End` into the index**:
   `from_parts(spacing, checkpoints, members, end)`, `End` now plaintext and
   compressed only, and an incomplete index counts each member beginning at or
@@ -22,18 +21,17 @@ the same file's headers (D116). The local arm still walks.
   begins, so a pass resumed from a saved index could not otherwise end with
   the walk's count. The persisted gzip parts carry it (`CACHE_FORMAT_VERSION`
   77; plain and `.xz` caches encode as at 76).
-- **A resumed pass reads where the run stood off the index**: at a member
-  start, the unit before it closed with no CRC-32 only if the run reached it,
-  and the member's header is read again; at a block boundary the run had
-  ended. `Forward::index` answers the index a pass was resumed over until it
-  places that member start again.
+- **A resumed pass reads the member's header again** at a member start (from
+  15.14 the rule's only input there). `Forward::index` answers the index a
+  pass was resumed over until it places that member start again.
 - **`open_remote` hands every uncached gzip file to `FirstPass::fresh`**;
   `walk_fetched` and the walk's `fetches` field are gone. The first pass's
   started and complete lines are its announcement, at `info`; D64 now states
   the level by whether a build's cost is the scan's own.
 - **The evidence**: `gz-seek`'s `a_forward_pass_over_bgzf_builds_the_walk_s_index`
   (equal indexes at four spacings),
-  `a_run_of_bgzf_members_is_coalesced_until_a_header_is_not_bgzf_s`, and
+  `bgzf_members_are_coalesced_on_both_sides_of_a_plain_member` (as 15.14
+  rewrote it), and
   `a_resumed_pass_builds_the_uninterrupted_index` resumed from every checkpoint
   of a BGZF file and of one whose run ends mid-file; `pgdt-io`'s
   `a_first_pass_over_a_bgzf_file_builds_the_walk_s_index` (both feeds, and

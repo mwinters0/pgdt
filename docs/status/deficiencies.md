@@ -25,7 +25,7 @@ only by naming one.
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
 rather than being deleted. <!-- deficiency-watermark: KD135 -->
-**`KD1`–`KD134` are allocated, and nothing at or below `KD134` is reused** — a
+**`KD1`–`KD135` are allocated, and nothing at or below `KD135` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -497,9 +497,3 @@ than reading as a phase nobody has sliced.
   serial scanner stops at `\.`, so a cold `query` at `--jobs` above one can
   refuse a table it answers serially. **(c) unowned**; promoted by such a
   refusal reaching a user. Detail: `crates/pgdt-mapping/src/interior.rs`.
-
-- **KD135** — a forward pass's run of coalesced BGZF members ends for good at
-  the first header that is not BGZF's, so every later BGZF member is a unit of
-  its own: a file opening with a plain member, or carrying one among BGZF
-  members, has 64 KiB units to its end. **(b) owned by P15**, its slice 15.14
-  deciding per member. Detail: `crates/gz-seek/src/forward.rs`.

@@ -159,6 +159,7 @@ fn a_resumed_pass_builds_the_uninterrupted_index() {
         gzip_members(&[&plaintext, &tail, &tail], 6),
         bgzf(&plaintext),
         [bgzf(&plaintext), gzip(&tail, 6), bgzf(&tail)].concat(),
+        [gzip(&tail, 6), bgzf(&plaintext)].concat(),
     ] {
         let whole = forward(&file, 32 * 1024, 1 << 20, 1 << 20).unwrap();
         for stop in 1..whole.index.checkpoints().len() {
@@ -207,27 +208,62 @@ fn an_empty_member_and_an_empty_file() {
     assert_eq!(forward(b"", SPACING, 4096, 4096).err(), Some(Error::Truncated { offset: 0 }));
 }
 
-/// **A run of BGZF members ends at the first header that is not BGZF's**:
-/// before it, member starts a unit of the spacing apart, as a walk places
-/// them, with no CRC-32; from it, every member start and the block boundaries
-/// the spacing owes, each unit's CRC-32 recorded.
+/// The checkpoints a pass places over `part` read as a file of its own, moved
+/// to where it sits in a larger one: `plaintext` and `compressed` bytes in.
+fn moved(part: &[u8], plaintext: usize, compressed: usize) -> Vec<Checkpoint> {
+    let index = forward(part, SPACING, 1 << 20, 1 << 20).unwrap().index;
+    let (plaintext, bits) = (plaintext as u64, 8 * compressed as u64);
+    index
+        .checkpoints()
+        .iter()
+        .map(|c| Checkpoint { plaintext: c.plaintext + plaintext, bit: c.bit + bits, ..*c })
+        .collect()
+}
+
+/// **BGZF members are coalesced wherever a unit begins at one**: the run
+/// before a plain member and the run after it each as a walk of the run alone
+/// places them, with no CRC-32; the plain member a unit of its own at its
+/// start, with the block boundaries the spacing owes, each unit's CRC-32
+/// recorded.
 #[test]
-fn a_run_of_bgzf_members_is_coalesced_until_a_header_is_not_bgzf_s() {
+fn bgzf_members_are_coalesced_on_both_sides_of_a_plain_member() {
     let (a, b) = (payload(400_000, 43), payload(300_000, 47));
-    let run = bgzf(&a);
-    let file = [run.clone(), gzip(&b, 6), bgzf(&b)].concat();
+    let (before, plain, after) = (bgzf(&a), gzip(&b, 6), bgzf(&b));
+    let file = [&before[..], &plain, &after].concat();
     let pass = forward(&file, SPACING, 1 << 20, 1 << 20).unwrap();
     assert_eq!(pass.plaintext, [&a[..], &b, &b].concat());
     let checkpoints = pass.index.checkpoints();
-    let walked = forward(&run, SPACING, 1 << 20, 1 << 20).unwrap().index;
-    let breaks = checkpoints.iter().position(|c| c.bit == run.len() as u64 * 8).unwrap();
-    assert_eq!(checkpoints[..breaks], walked.checkpoints()[..], "the run, as its own file");
-    assert_eq!(checkpoints[breaks].start, Start::Member);
-    assert!(checkpoints[breaks..].iter().any(|c| matches!(c.start, Start::Block { .. })));
-    assert!(checkpoints[breaks..].iter().all(|c| c.crc.is_some()));
-    let after = bgzf(&b);
-    let members_after = forward(&after, 1, 1 << 20, 1 << 20).unwrap().index.member_count();
-    let starts = checkpoints[breaks + 1..].iter().filter(|c| c.start == Start::Member).count();
-    assert_eq!(starts as u64, members_after, "every member start once the run has ended");
-    assert_eq!(pass.index.member_count(), walked.member_count() + 1 + members_after);
+    let head = moved(&before, 0, 0);
+    let tail = moved(&after, a.len() + b.len(), before.len() + plain.len());
+    assert!(tail.len() > 1 && tail.iter().all(|c| c.crc.is_none()), "{tail:?}");
+    assert_eq!(checkpoints[..head.len()], head[..], "the run before, as its own file");
+    assert_eq!(checkpoints[checkpoints.len() - tail.len()..], tail[..], "the run after");
+    let middle = &checkpoints[head.len()..checkpoints.len() - tail.len()];
+    assert_eq!(
+        middle[0],
+        Checkpoint {
+            crc: middle[0].crc,
+            ..Checkpoint::member(a.len() as u64, before.len() as u64)
+        }
+    );
+    assert!(middle[1..].iter().all(|c| matches!(c.start, Start::Block { .. })), "{middle:?}");
+    assert!(middle.len() > 1 && middle.iter().all(|c| c.crc.is_some()), "{middle:?}");
+    let count =
+        |part: &[u8]| forward(part, SPACING, 1 << 20, 1 << 20).unwrap().index.member_count();
+    assert_eq!(pass.index.member_count(), count(&before) + 1 + count(&after));
+}
+
+/// **A file opening with a plain member coalesces the BGZF members after
+/// it**: its index is the plain member's as a file of its own, then the
+/// BGZF run's as a walk of it places them.
+#[test]
+fn a_file_opening_with_a_plain_member_coalesces_the_bgzf_members_after_it() {
+    let (a, b) = (payload(200_000, 53), payload(500_000, 59));
+    let (plain, run) = (gzip(&a, 6), bgzf(&b));
+    let pass = forward(&[&plain[..], &run].concat(), SPACING, 1 << 20, 1 << 20).unwrap();
+    assert_eq!(pass.plaintext, [&a[..], &b].concat());
+    let tail = moved(&run, a.len(), plain.len());
+    let members = forward(&run, SPACING, 1 << 20, 1 << 20).unwrap().index.member_count();
+    assert!((tail.len() as u64) < members, "the run's members coalesced: {tail:?}");
+    assert_eq!(pass.index.checkpoints(), &[moved(&plain, 0, 0), tail].concat()[..]);
 }
