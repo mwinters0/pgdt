@@ -225,7 +225,15 @@ a second copy of the xz source.
   complete index raises no `NonSeekableCompressedSource`: the first pass makes
   it seekable and nothing the user does would help, so by D19's line it is a
   property of the run — a note that this run is serial, building the index,
-  and later reads are parallel. `NonSeekableCompressedSource` stays the
+  and later reads are parallel. **The gzip source also announces it**, as the
+  `.xz` walk is (D64), so a `parse`, which plans nothing, says it too: a
+  started line wherever a pass opens over an incomplete index, naming the
+  codec, the checkpoint it resumes from if any, and that the pass is serial
+  while it builds the index; a complete line with its units and members when
+  the index completes. The source emits it, not the arrangement, which reads
+  only the source's advice
+  ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
+  "A `parse` over a gzip first pass, reviewed"). `NonSeekableCompressedSource` stays the
   one-block `.xz`'s, its text taken from the codec rather than saying `.xz`,
   and is a gzip file's whose complete index has a unit wider than twice its
   spacing, its writer having gone a whole spacing without ending a deflate
@@ -346,7 +354,9 @@ shipped constant ([`../status/history/2026-10-22.md`](../status/history/2026-10-
    section; the first pass's `PlanNote`; the determinism and resume
    assertions; over HTTP.
 6. **BGZF.** `pgdt-io`'s side, over the crate's walk: the walk run at open,
-   recognition at 18 bytes, coalescing members into units.
+   recognition at 18 bytes, coalescing members into units; the walk announced
+   started and complete, as the `.xz` walk is (D64), being the same silent
+   wait before any scan.
 7. **Readings and the record.** Resident readings at two or more reader counts
    against the unpooled bound, the gzip throughput figures, the manual and
    [`pg-dump-compatibility.md`](pg-dump-compatibility.md).
@@ -371,7 +381,8 @@ is of the order of a serial inflate's (`parallel-scan-throughput`). Whether the
 first pass's scan is partitioned too, over units whose plaintext offsets
 become known as the pass goes, is slice 8's own question, asked against the
 arms 2, 3 and 5 leave. Rejected: deferring it to a later phase or out-of-band,
-which moves only the wrap.
+which moves only the wrap. Slice 8 rewrites the first pass's started line
+where the pass is no longer serial.
 
 **The backend figure, slice 9, precedes the spacing figure**, so that the
 spacing is read on the engine that ships
@@ -394,6 +405,13 @@ the resume primes a synthetic static-block header ahead of the byte's
 remaining bits. It reads 8's native decoding first rather than writing a
 second. A walker producing no output is not the inflater of our own the
 backend's rejection names.
+
+**The first pass announced, slice 12, follows 5's `PlanNote` and precedes
+the first pass's windows spilled** ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
+"A `parse` over a gzip first pass, reviewed"): the gzip source's started and
+complete lines ("A first pass is a `PlanNote`, not a diagnostic", above),
+landed while the first pass's surface is fresh, so 6 and 8 build on a line
+that exists, and before 7 writes the manual.
 
 The split is a row only if `gz-seek` is functional by the wrap; otherwise it
 is out-of-band work.

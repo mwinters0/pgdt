@@ -51,3 +51,11 @@ first pass's plan note, and the decline and `info` line in gzip's words.
 - **A partial index's size is its last checkpoint's offset**, zero for a
   fresh pass under the spacing, so the first-pass note names no number: how
   far the pass has decoded is the source's open extent, not the index's.
+- **The level-1 tests' writer is `flate2`, not `libz-rs-sys`**: one zlib-rs
+  0.6.8 in the lock, which both wrap, and no member enabling a `flate2`
+  C-zlib feature, the only thing that outranks it. `libz-rs-sys`'s C ABI
+  would put `unsafe` and a second test writer in two suites for the same
+  engine; a committed level-1 fixture would hide which writer made it, and
+  the 52 MiB one is too large to commit. No check pins the backend: the tests
+  that rely on the block layout assert it (`../status/history/2026-10-24.md`,
+  "15.5.3's test writer, reviewed").

@@ -95,11 +95,12 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.5** Single-member gzip, the codec: the `deflate` adapter over `gz-seek` on both arms, over a complete index handed in — unit CRCs compared, each unit's window read through the provider the index carries (`WindowProvider`), `CompressionIndex::Gzip` persisted by its parts (cache bump), gzip recognised by its magic and an uncached file refused by name, `gz-seek`'s decoder charge stated (`DECODER_BYTES`) — [notes](../design/roadmap-P15.5-codec-notes.md)
 - [x] **15.5.1** Single-member gzip, the window section: the cache's window section and the provider `pgdt-dump` implements over it, every save writing it through the saved index's provider (cache bump) — [notes](../design/roadmap-P15.5.1-window-section-notes.md)
 - [x] **15.5.2** Single-member gzip, the first pass: the index built as the first full pass's by-product, checkpoints by the placement rule at `CHECKPOINT_SPACING`, its windows held in memory (`KD130`), an interrupted pass saving to its watermark and resuming from its last checkpoint, determinism and resume assertions, and the first pass over HTTP — [notes](../design/roadmap-P15.5.2-first-pass-notes.md)
-- [x] **15.5.3** Single-member gzip, the first pass in gzip's words: the first pass's `PlanNote`, a complete index with a unit wider than twice its spacing warned as `NonSeekableCompressedSource` in gzip's words, the kind gaining `largest_unit` on both codecs and gzip's text naming `gzip` or a level above 1, gzip's `is_seekable` that rule and D19 gaining its clause, a file under the spacing never warned, tested on one `libz-rs-sys`'s level 1 writes, the declined-block-path note and `info`'s compression line in gzip's words — [notes](../design/roadmap-P15.5.3-words-notes.md)
+- [x] **15.5.3** Single-member gzip, the first pass in gzip's words: the first pass's `PlanNote`, a complete index with a unit wider than twice its spacing warned as `NonSeekableCompressedSource` in gzip's words, the kind gaining `largest_unit` on both codecs and gzip's text naming `gzip` or a level above 1, gzip's `is_seekable` that rule and D19 gaining its clause, a file under the spacing never warned, tested on zlib-rs's level 1 writes through `flate2`'s backend the workspace names, the declined-block-path note and `info`'s compression line in gzip's words — [notes](../design/roadmap-P15.5.3-words-notes.md)
+- [ ] **15.12** Single-member gzip, the first pass announced: the gzip source's started line wherever a pass opens over an incomplete index, naming the codec, the checkpoint it resumes from if any, and that the pass is serial while it builds the index, and its complete line with units and members when the index completes, as the `.xz` walk is (D64); exactly one pair on a cold `parse`, none over a complete cache, the resume named on a resumed one
 - [ ] **15.5.4** Single-member gzip, the first pass's windows spilled: each window written as it is placed to an unnamed file the run alone holds, in the enabled cache's directory or else the OS temp directory as `open`'s caller names it, read positionally as a loaded section is and copied from by each save, a file that cannot be made refused by name; nothing of the pass's windows resident (`KD130`), and the pass's skip scratch charged
 - [ ] **15.11** Single-member gzip, a read behind the first pass's frontier checked: one inside a closed unit decoded and checked against the CRC-32 that unit recorded, as the indexed source checks a unit, one inside the open unit left to the frontier's (`KD132`)
-- [ ] **15.6** BGZF, `pgdt-io`'s side over the crate's walk: the walk run at open, recognition at 18 bytes, members coalesced into units, the member count read off the walk rather than its checkpoints
-- [ ] **15.8** A parallel first pass, earned by 15.1.1's reading: `gz-seek` finds a single member's units speculatively — rapidgzip's technique, implemented natively and run on the caller's pool (D1, D12) — replacing only how the first pass finds them, never the index, the codec trait or the arms; checkpoints by the placement rule, so the index is the serial pass's at every worker count; it lifts the inflate, the first pass's scan staying one partition unless its own spec partitions it (the spec's "Slice order")
+- [ ] **15.6** BGZF, `pgdt-io`'s side over the crate's walk: the walk run at open, recognition at 18 bytes, members coalesced into units, the member count read off the walk rather than its checkpoints, the walk announced started and complete as the `.xz` walk is (D64)
+- [ ] **15.8** A parallel first pass, earned by 15.1.1's reading: `gz-seek` finds a single member's units speculatively — rapidgzip's technique, implemented natively and run on the caller's pool (D1, D12) — replacing only how the first pass finds them, never the index, the codec trait or the arms; checkpoints by the placement rule, so the index is the serial pass's at every worker count; it lifts the inflate, the first pass's scan staying one partition unless its own spec partitions it (the spec's "Slice order"); the first pass's started line no longer saying serial where it is not
 - [ ] **15.10** Checkpoints inside a static block: the forward pass walks a static block's codes itself to place a checkpoint at the first symbol boundary at or after each multiple, the resume priming a synthetic static-block header; after 15.8, reading its native decoding first (`KD129`)
 - [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the manual and `pg-dump-compatibility.md`
 
@@ -133,21 +134,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **15.5.3's level-1 tests write through `flate2`, not `libz-rs-sys`.** The
-  row asks the warning be tested on `libz-rs-sys`'s level 1 writes, the
-  review behind it having ruled out `flate2`'s as feature unification's
-  ([`history/2026-10-23.md`](history/2026-10-23.md), "A writer that ends no
-  block, reviewed"). Since `040c93a4` the workspace names `flate2`'s zlib-rs
-  backend in every build, the engine `libz-rs-sys` exports, so the tests
-  write through it in `pg_dump`'s call shape and assert the wide unit before
-  the warning (`crates/pgdt-dump/src/map/tests.rs`,
-  `crates/pgdt/tests/gzip_source.rs`). Reconsidering it makes `zlib-rs`, or
-  `libz-rs-sys`'s C ABI under `unsafe`, a dev-dependency of `pgdt-dump` and
-  `pgdt`: a second test writer.
-- **A `parse` does not announce a gzip first pass.** The pass's note is a
-  `PlanNote` (`PlanNoteKind::CompressedFirstPass`), so it reaches a query
-  planned while the pass is under way and nothing else; a `parse`, the usual
-  first pass, plans no query and says only `scan arrangement`'s
-  `bound_by=source` above one `--jobs`, where a cold `.xz` walk prints `seek
-  table build started`. Reconsidering it adds a status line where the
-  mapping pass starts over an incomplete index (`pgdt_mapping::forward`).
