@@ -13,7 +13,7 @@ Run `cd scripts && uv run repoint.py`. Keep the meter's two numbers and every
 red line. Read the stamp in `docs/status/STATUS.md`; the scope is what the
 record touched since it: `git diff --stat <stamp> -- '*.rs' docs/`, grouped by
 module. A wrap's repoint takes the phase's modules whether or not they are in
-that diff. A red on a *cap* is fixed in step 4; the blind read is steps 2–3.
+that diff. A red on a *cap* is fixed in step 5; the reads are steps 2–4.
 
 ## 2. Read blind, one reader per module group
 
@@ -34,12 +34,41 @@ one exactly this and nothing else:
 > sentence in those lines, and for every comment in the source that asserts a
 > property, decide whether the code bears it out. Report each one it does not
 > as: the record's file and line, the claim quoted, the code's file and line
-> that contradicts it, and what is true. Mark a claim the code alone cannot
-> decide as *untestable*. Report nothing else — no praise, no proposals, no
-> edits — and read nothing else: not `docs/status/history/`, not `git log`,
-> not the rest of the docs.
+> that contradicts it, and what is true. Mark a claim the code you were given
+> cannot decide as *untestable*, naming what would decide it: another module,
+> a dependency's source, a file outside the code, a run. Report nothing else
+> — no praise, no proposals, no edits — and read nothing else: not
+> `docs/status/history/`, not `git log`, not the rest of the docs.
 
-## 3. Verify, then correct or strike
+## 3. Read across, one reader per place the deciding code lives
+
+A first reader's *untestable* is most often a claim whose decider sits past
+its files: a module another reader held or nobody did, a dependency's source,
+the release files. Those are read again, by a second round, before anything
+is corrected. Collect every such claim from every first report, and **group
+them by where the deciding code lives**, not by which reader raised them — a
+module tree, the upstream engines (their source under `~/.cargo/registry/src/`
+at `Cargo.lock`'s versions, or the checkouts `CLAUDE.local.md` names), the
+manual against the codec, the release environment.
+
+Dispatch fresh `general-purpose` subagents again, in parallel, never forks.
+Give each its claims by file and line, each quoted or found by its sentence,
+and where the deciding code lives — **never the first reader's reasoning or
+its guess at the answer**: a reader handed a hypothesis returns it confirmed.
+
+> Read each claim, then the code or source that decides it, wherever it is.
+> Read-only: modify nothing, build nothing, run no tests. For each, report
+> HOLDS, citing the file and line that shows it; FALSE, quoting the claim,
+> citing the line, saying what is true, with a concrete input where behaviour
+> is at stake; or UNDECIDABLE without a run, saying exactly what would decide
+> it. Report nothing else.
+
+Their findings go through step 4 as the first round's do. One undecidable
+without a run, a measurement or an outside service is listed in today's
+dated entry with the command that would decide it, never chased here; one
+decided by nothing but an absent test stays *untestable* for step 4.
+
+## 4. Verify, then correct or strike
 
 Every finding is a claim until you have opened both lines yourself. Then, per
 `docs/process.md`, "Repointing", step 2 and "Where does this fact go?":
@@ -58,7 +87,7 @@ A dated entry is never rewritten; a keystone's deletions are not undone. A
 `README.md` finding is corrected by the smallest edit that makes it true, never
 trimmed or struck (`docs/process.md`, "Where does this fact go?").
 
-## 4. Trim, check, stamp, commit
+## 5. Trim, check, stamp, commit
 
 Trim whatever `repoint.py` names to its cap — striking, never raising the
 cap. Run `uv run repoint.py`, `uv run citations.py`, `uv run deficiencies.py`,
