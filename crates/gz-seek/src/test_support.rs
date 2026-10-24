@@ -54,9 +54,9 @@ pub(crate) fn payload(len: usize, seed: u64) -> Vec<u8> {
     out
 }
 
-/// `bytes` as one gzip member, written by `flate2` at `level`. Which backend
-/// writes it is whichever the workspace's feature unification picks, so no
-/// test may assume where its blocks end.
+/// `bytes` as one gzip member, written by `flate2` at `level` over zlib-rs
+/// whatever a build selects (the workspace's `Cargo.toml`). Still no test assumes where
+/// its blocks end, which is the encoder's to choose.
 pub(crate) fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(level));
     encoder.write_all(bytes).unwrap();

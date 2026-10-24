@@ -45,7 +45,10 @@ chrono = { version = "0.4.45", default-features = false }
 clap = "4.6.6"
 criterion = "0.8.2"
 datafusion = { version = "55.1.0", default-features = false }
-flate2 = "1.1.10"
+# Every member's tests write gzip with it, so its zlib-rs backend is named
+# here: one encoder whether a crate is built alone or with `parquet`, which
+# names it too.
+flate2 = { version = "1.1.10", features = ["zlib-rs"] }
 futures = "0.3.34"
 insta = "1.48.0"
 libc = "0.2.189"

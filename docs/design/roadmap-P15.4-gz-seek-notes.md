@@ -76,8 +76,8 @@ the overview; what follows is what the next slices inherit.
   ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
   "15.5.3's warning, reviewed") and 15.10 places checkpoints
   inside its block ([`../status/deficiencies.md`](../status/deficiencies.md)). A gzip test assumes
-  nothing of where blocks end: the suite's `flate2` backend is whichever
-  feature unification picks.
+  nothing of where blocks end, though the suite's `flate2` writes over
+  zlib-rs in every build, the workspace naming that backend.
 
 ## Negative results
 
