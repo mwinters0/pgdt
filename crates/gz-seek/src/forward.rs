@@ -238,6 +238,13 @@ impl Forward {
                     None
                 }
             }
+            // deficiency: KD135 — the run ends for good: from the first header
+            // that is not BGZF's, every later BGZF member begins a unit of its
+            // own, so a file opening with a plain member, or a BGZF file with
+            // one inside it, has an index of 64 KiB units from there to its
+            // end. The fix decides per member: a member start joins the unit
+            // only where its own header is BGZF's and the unit began at a BGZF
+            // member start, which a resume reads off the member's header alone.
             Some(Event::Header { bgzf }) => {
                 self.coalescing &= bgzf;
                 let deferred = self.deferred.take();

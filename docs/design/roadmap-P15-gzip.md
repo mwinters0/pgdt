@@ -186,9 +186,14 @@ a second copy of the xz source.
   value and held a second copy until its API was widened (inbox, D4).
 - **A checkpoint's place is a function of the file alone**: the first deflate
   block boundary at or after each multiple of the spacing in plaintext, and
-  every member start — independent of `--jobs`, the chunk size and where an
-  interrupt fell, so a resumed parse writes the cache an uninterrupted one
-  does. **`crates/pgdt/tests/determinism.rs` grows compressed inputs**: `.xz`
+  every member start, except that BGZF members are coalesced as the walk
+  coalesces them — a member start whose own header is BGZF's joins a unit
+  begun at a BGZF member start until it holds the spacing, and no block
+  boundary inside a BGZF member is one
+  ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md), "The
+  broken BGZF chain, reviewed") — independent of `--jobs`, the chunk size
+  and where an interrupt fell, so a resumed parse writes the cache an
+  uninterrupted one does. **`crates/pgdt/tests/determinism.rs` grows compressed inputs**: `.xz`
   in the cut slice, gzip single-member and BGZF in the gzip slices, with a
   resume-equals-uninterrupted assertion for gzip. Why (drained from the inbox):
   the sweep's whole input tree was plain `.sql`, so "a compressed parse at two
@@ -404,6 +409,12 @@ so its first run inflates in parallel over one download.
 "The fetched BGZF walk, reviewed"): the fetched arm hands an uncached BGZF
 file to a first pass, the local arm still walking, and D64 states its
 announcements by arm, so 8 widens a pass that already reads BGZF.
+
+**BGZF members coalesced per member, slice 14, precedes 8**
+([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
+"The broken BGZF chain, reviewed"): 13's pass ends its run of coalesced
+members for good at the first header not BGZF's, and 8 inherits whichever
+rule the pass has.
 
 **The backend figure, slice 9, precedes the spacing figure**, so that the
 spacing is read on the engine that ships
