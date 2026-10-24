@@ -25,14 +25,17 @@ use crate::stream::note::PlanNote;
 /// ([`pgdt_io::ByteRangeSource::block_decode_bytes`]). **Asked over the
 /// whole file**, since a query whose rows all sit inside one compressed block
 /// would be advised one partition on the block path too. `None` for every
-/// plain source and for a file with no more than one block, which is already
-/// `DiagnosticKind::NonSeekableCompressedSource`.
+/// plain source, for a file with no more than one unit, for one with no seek
+/// structure by its codec's rule (`pgdt_io::CompressionIndex::is_seekable`),
+/// which is already `DiagnosticKind::NonSeekableCompressedSource`, so the two
+/// never fire together, and for an incomplete index, whose source is a first
+/// pass advising one partition whatever the budget ([`compressed_first_pass`]).
 fn compressed_block_path_declined(
     source: &dyn ByteRangeSource,
     parallelism: Parallelism,
 ) -> Option<PlanNote> {
     let index = source.compression_index()?;
-    if !index.is_seekable() {
+    if !index.is_complete() || !index.is_seekable() || index.unit_count() < 2 {
         return None;
     }
     if source.partitions(0..index.uncompressed_size()).max_partitions() != Some(1) {
@@ -43,6 +46,7 @@ fn compressed_block_path_declined(
     // this one.
     let memory_bytes = parallelism.budget_bytes();
     Some(PlanNote::compressed_block_path_declined(
+        index.codec(),
         index.unit_count(),
         index.largest_unit(),
         // What a reader of this file would have held on the path it declined.
@@ -52,6 +56,17 @@ fn compressed_block_path_declined(
         memory_bytes,
         Parallelism::allowance_raises_budget(source.default_worker_memory(), memory_bytes),
     ))
+}
+
+/// Whether this source is a compressed one still building its index — a gzip
+/// first pass, its index stopping short of the file's end — and so read
+/// serially until a read reaches it, whatever the budget
+/// (`PlanNoteKind::CompressedFirstPass`). Read off the index the source
+/// answers when the plan is made, so a cold query whose mapping pass reached
+/// the end, the pass having handed over to the indexed source, says nothing.
+fn compressed_first_pass(source: &dyn ByteRangeSource) -> Option<PlanNote> {
+    let index = source.compression_index()?;
+    (!index.is_complete()).then(|| PlanNote::compressed_first_pass(index.codec()))
 }
 
 /// Split `matches` into the pieces `parallelism` and the source between them
@@ -98,7 +113,8 @@ fn compressed_block_path_declined(
 ///
 /// **The second return value is the plan's own notes: at most one naming why
 /// `workers` came up short of `parallelism.jobs()`, at most one naming a
-/// compressed source that declined the block-decode path under this budget
+/// compressed source still building its index ([`compressed_first_pass`]) or
+/// else one that declined the block-decode path under this budget
 /// ([`compressed_block_path_declined`]), at most one naming a budget that
 /// affords less than a single reader ([`PlanNoteKind::AllocationBelowFloor`](crate::stream::note::PlanNoteKind::AllocationBelowFloor)),
 /// and at most one naming a batch span narrowed below what the caller stated
@@ -190,10 +206,13 @@ pub(super) fn plan_partitions(
     };
     let workers = worker_count(parallelism, charge).max(1);
     let requested = parallelism.jobs();
-    // The decline comes first because it is the wider fact: how every read of
-    // this file is served, where the count below is how many readers there are.
-    let mut notes: Vec<PlanNote> =
-        compressed_block_path_declined(source, parallelism).into_iter().collect();
+    // A first pass, or else the decline, comes first because it is the wider
+    // fact: how every read of this file is served, where the count below is
+    // how many readers there are. The two never fire together.
+    let mut notes: Vec<PlanNote> = compressed_first_pass(source)
+        .or_else(|| compressed_block_path_declined(source, parallelism))
+        .into_iter()
+        .collect();
     // **Below one reader's worth the floors decide, and they are silent**, the
     // count note below firing only where `requested` exceeds what was planned.
     // Charged against the footprint alone rather than the whole charge: the

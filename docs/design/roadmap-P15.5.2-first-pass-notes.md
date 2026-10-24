@@ -60,16 +60,8 @@ split: the first pass, and its words").
 
 ## What 15.5.3 and later slices inherit
 
-- **Three messages still speak `.xz`** where a gzip source reaches them, and
-  now every one is reachable from the CLI: `NonSeekableCompressedSource` on
-  every complete one-unit index — every gzip file under the spacing, whatever
-  its writer — `CompressedBlockPathDeclined` and `info`'s compression line.
-  15.5.3 warns only a unit wider than twice the spacing, one unit under it
-  being the file's size, not its writer's
-  ([`../status/history/2026-10-23.md`](../status/history/2026-10-23.md),
-  "15.5.3's warning, reviewed").
-- **No status line announces the pass**, as `seek table build started` does a
-  cold `.xz` walk; the `PlanNote` 15.5.3 adds is the place.
+- **What the pass and a gzip index say, and in which words**, is 15.5.3's
+  ([`roadmap-P15.5.3-words-notes.md`](roadmap-P15.5.3-words-notes.md)).
 - **15.8 replaces the frontier**, nothing else: `Pass::serve`'s frontier arm
   is where units found speculatively would land.
 - **15.5.4 closes `KD130`**, spilling the windows to a file the run alone

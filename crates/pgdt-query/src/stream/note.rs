@@ -94,30 +94,47 @@ pub enum PlanNoteKind {
         max_source_span: Option<u64>,
         memory_bytes: u64,
     },
-    /// The `.xz` source this query reads declined the block-decode path: the
-    /// memory budget in force does not afford one block-decoding reader, so it
-    /// reads each block **in pieces** — the *streaming decoder* this note and
-    /// the manual name, one live `xz_seek::BlockRead` behind a mutex — and
-    /// every **backward** read decodes forward from its block's start
-    /// (`docs/design/decisions.md`, "D15").
+    /// The compressed source this query reads declined the block-decode
+    /// path: the memory budget in force does not afford one block-decoding
+    /// reader, so it reads each unit — an `.xz` block, the span from one gzip
+    /// checkpoint to the next — **in pieces**, through the *streaming
+    /// decoder* this note and the manual name, one live forward decode behind
+    /// a mutex, and every **backward** read decodes forward from its unit's
+    /// start (`docs/design/decisions.md`, "D15").
     /// Never a reason to refuse the query, though the forward mapping pass
     /// pays too: a declined source advises a single partition and so reads
     /// serially whatever `--jobs` says.
     ///
-    /// `max_block_uncompressed` is the file's largest block, `block_count`
-    /// says how much seeking the file would otherwise offer, and
-    /// `reader_bytes` is what the budget was compared against — stated by the
-    /// source rather than derived here
+    /// `codec` names the container (`pgdt_io::CompressionIndex::codec`), whose
+    /// words the sentence speaks; `max_block_uncompressed` is the file's
+    /// largest unit, `block_count` says how much seeking the file would
+    /// otherwise offer, and `reader_bytes` is what the budget was compared
+    /// against — stated by the source rather than derived here
     /// ([`pgdt_io::ByteRangeSource::block_decode_bytes`]).
     ///
     /// **Not a [`pgdt_model::DiagnosticKind`]**, for the reason its
     /// sibling above is not one (`docs/design/decisions.md`, "D19").
     CompressedBlockPathDeclined {
+        codec: &'static str,
         block_count: usize,
         max_block_uncompressed: u64,
         reader_bytes: u64,
         memory_bytes: u64,
     },
+    /// The compressed source this query reads has no complete index yet —
+    /// a gzip file whose first pass is still under way, building the index
+    /// as it reads — so it is read **serially**, one forward decode, whatever
+    /// `--jobs` says, until a read reaches the file's end; from then on the
+    /// index it built cuts its reads at checkpoints, as does every later run
+    /// over the cache a save of it writes.
+    ///
+    /// `codec` names the container.
+    ///
+    /// **A note, not a [`pgdt_model::DiagnosticKind`]** (`docs/design/decisions.md`,
+    /// "D19"): it is a property of this run, the pass making the file
+    /// seekable and nothing the caller does making it so sooner, so it names
+    /// no lever and no budget.
+    CompressedFirstPass { codec: &'static str },
     /// The budget in force affords less than a **single** reader of this
     /// source, so the plan runs at the one-slot floors already inside the
     /// mechanism (`pgdt_io::WorkerMemory::affords`' one-worker floor,
@@ -247,7 +264,12 @@ pub struct EarlyStop {
 }
 
 impl PlanNote {
+    pub(super) fn compressed_first_pass(codec: &'static str) -> Self {
+        Self { kind: PlanNoteKind::CompressedFirstPass { codec }, levers: Vec::new() }
+    }
+
     pub(super) fn compressed_block_path_declined(
+        codec: &'static str,
         block_count: usize,
         max_block_uncompressed: u64,
         reader_bytes: u64,
@@ -256,6 +278,7 @@ impl PlanNote {
     ) -> Self {
         Self {
             kind: PlanNoteKind::CompressedBlockPathDeclined {
+                codec,
                 block_count,
                 max_block_uncompressed,
                 reader_bytes,
@@ -319,8 +342,9 @@ impl PlanNote {
 
     /// The read-buffer budget this note's [`PlanNote::message`] quotes, where
     /// it quotes one — every kind but [`PlanNoteKind::StatisticsPruned`] and
-    /// [`PlanNoteKind::ReadAsNull`], whose facts are about what the map holds
-    /// and name no budget at all.
+    /// [`PlanNoteKind::ReadAsNull`], whose facts are about what the map holds,
+    /// and [`PlanNoteKind::CompressedFirstPass`], about whether the source's
+    /// index is complete, which name no budget at all.
     ///
     /// **It exists so a caller can say where that number came from.**
     /// Provenance is the caller's fact and never the library's
@@ -335,7 +359,9 @@ impl PlanNote {
             | PlanNoteKind::CompressedBlockPathDeclined { memory_bytes, .. }
             | PlanNoteKind::AllocationBelowFloor { memory_bytes, .. }
             | PlanNoteKind::BatchSpanNarrowed { memory_bytes, .. } => Some(*memory_bytes),
-            PlanNoteKind::StatisticsPruned { .. } | PlanNoteKind::ReadAsNull { .. } => None,
+            PlanNoteKind::StatisticsPruned { .. }
+            | PlanNoteKind::ReadAsNull { .. }
+            | PlanNoteKind::CompressedFirstPass { .. } => None,
         }
     }
 
@@ -352,18 +378,19 @@ impl PlanNote {
 }
 
 impl Finding for PlanNote {
-    /// `Info` for a fact that is no fault — a skip, and a span the plan
-    /// narrowed to seat the readers asked for (`docs/design/decisions.md`,
-    /// "D84"), where the `Warning` beside it is what says a count still came
-    /// up short — and `Warning` for every note saying the budget in force
-    /// declined something asked of it, and for values read as NULL. Derived from the kind, as
+    /// `Info` for a fact that is no fault — a skip, a span the plan narrowed
+    /// to seat the readers asked for (`docs/design/decisions.md`, "D84"),
+    /// where the `Warning` beside it is what says a count still came up short,
+    /// and a first pass indexing its source — and `Warning` for every note
+    /// saying the budget in force declined something asked of it, and for
+    /// values read as NULL. Derived from the kind, as
     /// a `ResolvedColumn`'s is from its resolution, so a caller printing it and one
     /// draining it into a sink cannot disagree.
     fn severity(&self) -> Severity {
         match self.kind {
-            PlanNoteKind::StatisticsPruned { .. } | PlanNoteKind::BatchSpanNarrowed { .. } => {
-                Severity::Info
-            }
+            PlanNoteKind::StatisticsPruned { .. }
+            | PlanNoteKind::BatchSpanNarrowed { .. }
+            | PlanNoteKind::CompressedFirstPass { .. } => Severity::Info,
             PlanNoteKind::ParallelismBudgetLimited { .. }
             | PlanNoteKind::CompressedBlockPathDeclined { .. }
             | PlanNoteKind::AllocationBelowFloor { .. }
@@ -409,17 +436,31 @@ impl Finding for PlanNote {
                 ),
             },
             PlanNoteKind::CompressedBlockPathDeclined {
+                codec,
                 block_count,
                 max_block_uncompressed,
                 reader_bytes,
                 memory_bytes,
-            } => format!(
-                "this .xz source has {block_count} block(s) to seek by, but its largest is \
-                 {max_block_uncompressed} byte(s) and a memory budget of {memory_bytes} byte(s) \
-                 leaves no room for one reader of it — so it is read through the streaming \
-                 decoder and every backward read decodes forward from its block's start; raise \
-                 the memory budget to {reader_bytes} byte(s) or more to read it a block at a time"
-            ),
+            } => {
+                let (source, unit) = container_words(codec);
+                format!(
+                    "this {source} has {block_count} {unit}(s) to seek by, but its largest is \
+                     {max_block_uncompressed} byte(s) and a memory budget of {memory_bytes} \
+                     byte(s) leaves no room for one reader of it — so it is read through the \
+                     streaming decoder and every backward read decodes forward from its {unit}'s \
+                     start; raise the memory budget to {reader_bytes} byte(s) or more to read it \
+                     a {unit} at a time"
+                )
+            }
+            PlanNoteKind::CompressedFirstPass { codec } => {
+                let (source, _) = container_words(codec);
+                format!(
+                    "this {source} has no complete index yet, so it is read with one reader, \
+                     through the first pass that places its checkpoints as it goes; once a read \
+                     reaches its end, its reads are cut at those checkpoints, and so are a later \
+                     run's through any cache this run saves"
+                )
+            }
             PlanNoteKind::AllocationBelowFloor { unit_bytes, memory_bytes } => {
                 let chunk = self.chunk_clause();
                 format!(
@@ -470,6 +511,18 @@ impl Finding for PlanNote {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+}
+
+/// How a sentence names a compressed source of `codec`
+/// (`pgdt_io::CompressionIndex::codec`), and what it calls the unit a reader
+/// decodes whole: an `.xz` file's block, the span between two of a gzip
+/// file's checkpoints.
+fn container_words(codec: &str) -> (&'static str, &'static str) {
+    match codec {
+        "gzip" => ("gzip source", "unit"),
+        "xz" => (".xz source", "block"),
+        _ => ("compressed source", "unit"),
     }
 }
 

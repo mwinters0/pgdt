@@ -174,15 +174,39 @@ pub enum DiagnosticKind {
     /// [`pgdt_dump::cache::OfflineCache::load`] on every successful
     /// cache-only load, an incomplete one included.
     CacheOffline,
-    /// A `.xz` source has no usable seek structure — one stream, one block —
-    /// so a read anywhere is reached by decoding from byte zero — once for a
+    /// A compressed source has no usable seek structure, so a read inside its
+    /// widest unit is reached by decoding from that unit's start — once for a
     /// forward scan, and again for each read behind where it stands. Never a
-    /// reason to refuse the file (`docs/design/decisions.md`, "D19").
-    /// `block_count` is `CompressionIndex::unit_count()` — 0 or 1 for a
-    /// non-seekable index — pushed once per index, by
-    /// `pgdt_dump`'s `derived_diagnostics` wherever a whole map is finished or
-    /// loaded, and by `pgdt_dump::preamble_only` for a preamble alone.
-    NonSeekableCompressedSource { block_count: usize },
+    /// reason to refuse the file (`docs/design/decisions.md`, "D19"). What
+    /// counts as none is the container's rule ([`CompressedContainer`]): one
+    /// `.xz` block, or a gzip unit wider than twice its checkpoint spacing.
+    ///
+    /// `block_count` is `CompressionIndex::unit_count()` and `largest_unit`
+    /// `CompressionIndex::largest_unit()`, plaintext bytes — the number a gzip
+    /// warning is raised on, and an `.xz` file's one block. Pushed once per
+    /// complete index, by `pgdt_dump`'s `derived_diagnostics` wherever a whole
+    /// map is finished or loaded, and by `pgdt_dump::preamble_only` for a
+    /// preamble alone.
+    NonSeekableCompressedSource {
+        container: CompressedContainer,
+        block_count: usize,
+        largest_unit: u64,
+    },
+}
+
+/// The compressed container a [`DiagnosticKind::NonSeekableCompressedSource`]
+/// is about, with what its rule and its remedy read: the model's word for it,
+/// the index being `pgdt_io`'s, which this crate sits beneath.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum CompressedContainer {
+    /// `.xz`, whose blocks are its writer's: one block is no seek structure
+    /// whatever its size.
+    Xz,
+    /// gzip, whose units are the spans between checkpoints a reader placed at
+    /// `spacing` plaintext bytes, each at the first deflate block boundary
+    /// past it: a unit wider than twice the spacing is a writer that went a
+    /// whole spacing without ending a block.
+    Gzip { spacing: u64 },
 }
 
 /// One thing worth telling the caller about a file, with no `Result` to carry
@@ -219,10 +243,25 @@ impl Finding for Diagnostic {
             DiagnosticKind::CacheOffline => "answering from a cache with no source dump file to \
                 check it against — unverified, historical as of whenever the cache was last saved"
                 .to_string(),
-            DiagnosticKind::NonSeekableCompressedSource { block_count } => format!(
+            DiagnosticKind::NonSeekableCompressedSource {
+                container: CompressedContainer::Xz,
+                block_count,
+                ..
+            } => format!(
                 "this .xz source has no seek structure ({block_count} block(s), one stream) — \
                  every read decodes the file from byte 0; recompress with `xz -T0` or \
                  `--block-size=<size>` for random access"
+            ),
+            DiagnosticKind::NonSeekableCompressedSource {
+                container: CompressedContainer::Gzip { spacing },
+                block_count,
+                largest_unit,
+            } => format!(
+                "this gzip source has no seek structure: its largest unit holds {largest_unit} \
+                 byte(s) of plaintext, more than twice the {spacing}-byte spacing its \
+                 checkpoints are placed at, its writer having ended no deflate block across \
+                 them ({block_count} unit(s)) — every read inside that unit decodes it from its \
+                 start; recompress with `gzip`, or write it at a level above 1, for random access"
             ),
         }
     }
@@ -291,7 +330,11 @@ pub trait DiagnosticExt {
     fn tiling_broken(issues: Vec<TilingIssue>) -> Self;
     fn toc_coverage(attributed: usize, spans: usize) -> Self;
     fn cache_offline() -> Self;
-    fn non_seekable_compressed_source(block_count: usize) -> Self;
+    fn non_seekable_compressed_source(
+        container: CompressedContainer,
+        block_count: usize,
+        largest_unit: u64,
+    ) -> Self;
     fn cache_mtime_changed() -> Self;
     fn cache_entity_tag_changed() -> Self;
     fn cache_origin_changed() -> Self;
@@ -311,10 +354,18 @@ impl DiagnosticExt for Diagnostic {
     }
 
     /// D19's warning: usable as-is, so `Warning` rather than `Error`.
-    fn non_seekable_compressed_source(block_count: usize) -> Self {
+    fn non_seekable_compressed_source(
+        container: CompressedContainer,
+        block_count: usize,
+        largest_unit: u64,
+    ) -> Self {
         Self {
             severity: Severity::Warning,
-            kind: DiagnosticKind::NonSeekableCompressedSource { block_count },
+            kind: DiagnosticKind::NonSeekableCompressedSource {
+                container,
+                block_count,
+                largest_unit,
+            },
         }
     }
 

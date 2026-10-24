@@ -46,7 +46,9 @@ fn the_count_note_names_a_lever_a_plain_source_has() {
 fn a_note_quoting_a_budget_is_the_one_that_reports_it() {
     let memory_bytes = 64 << 20;
     let notes = [
-        PlanNote::compressed_block_path_declined(9, 1 << 20, 2 << 20, memory_bytes, true),
+        PlanNote::compressed_block_path_declined("xz", 9, 1 << 20, 2 << 20, memory_bytes, true),
+        PlanNote::compressed_block_path_declined("gzip", 9, 1 << 20, 2 << 20, memory_bytes, true),
+        PlanNote::compressed_first_pass("gzip"),
         PlanNote::allocation_below_floor(8 << 20, memory_bytes, false, true),
         PlanNote::batch_span_narrowed(64 << 20, 1 << 20, 7, memory_bytes, false, true),
         PlanNote::parallelism_budget_limited(
@@ -76,13 +78,17 @@ fn a_note_quoting_a_budget_is_the_one_that_reports_it() {
 }
 
 /// **A budget's note is a `Warning` exactly where it declined something
-/// asked of it**: a skip and a narrowed span are `Info`, as `pgdt` has
-/// always printed them `note:`. A sink recovers the note itself.
+/// asked of it**: a skip, a narrowed span and a first pass are `Info`, as
+/// `pgdt` has always printed a skip and a span `note:`. A sink recovers the note itself.
 #[test]
 fn a_plan_note_warns_where_the_budget_declined_what_was_asked() {
     let memory_bytes = 64 << 20;
     let cases = [
-        (PlanNote::compressed_block_path_declined(9, 1, 2, memory_bytes, true), Severity::Warning),
+        (
+            PlanNote::compressed_block_path_declined("gzip", 9, 1, 2, memory_bytes, true),
+            Severity::Warning,
+        ),
+        (PlanNote::compressed_first_pass("gzip"), Severity::Info),
         (PlanNote::allocation_below_floor(8 << 20, memory_bytes, false, true), Severity::Warning),
         (
             PlanNote::parallelism_budget_limited(8, 7, 1, None, memory_bytes, false, true),
@@ -110,6 +116,22 @@ fn a_plan_note_warns_where_the_budget_declined_what_was_asked() {
         assert_eq!(finding.severity(), severity, "{}", finding.message());
         assert_eq!(finding.as_any().downcast_ref::<PlanNote>(), Some(&note));
     }
+}
+
+/// **A compressed source's notes speak its container's words**: an `.xz`
+/// file's blocks, a gzip file's units between checkpoints — the `.xz`
+/// sentence the manual quotes left as it is.
+#[test]
+fn a_compressed_note_names_its_container_and_its_unit() {
+    let xz = PlanNote::compressed_block_path_declined("xz", 9, 1, 2, 3, true).message();
+    assert!(xz.starts_with("this .xz source has 9 block(s) to seek by"), "{xz}");
+    assert!(xz.ends_with("to read it a block at a time"), "{xz}");
+    let gzip = PlanNote::compressed_block_path_declined("gzip", 9, 1, 2, 3, true).message();
+    assert!(gzip.starts_with("this gzip source has 9 unit(s) to seek by"), "{gzip}");
+    assert!(gzip.contains("from its unit's start") && !gzip.contains("block"), "{gzip}");
+    let pass = PlanNote::compressed_first_pass("gzip");
+    assert!(pass.message().starts_with("this gzip source has no complete index yet"));
+    assert!(pass.levers.is_empty() && pass.budget_bytes().is_none());
 }
 
 /// A resumed stream keeps a segment while it owns a row at or past the

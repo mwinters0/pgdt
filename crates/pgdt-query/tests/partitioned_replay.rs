@@ -707,11 +707,14 @@ async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
         .iter()
         .find_map(|n| match &n.kind {
             PlanNoteKind::CompressedBlockPathDeclined {
+                codec,
                 block_count,
                 max_block_uncompressed,
                 reader_bytes,
                 memory_bytes,
-            } => Some((*block_count, *max_block_uncompressed, *reader_bytes, *memory_bytes)),
+            } => {
+                Some((*codec, *block_count, *max_block_uncompressed, *reader_bytes, *memory_bytes))
+            }
             _ => None,
         })
         .unwrap_or_else(|| panic!("{notes:?}"));
@@ -731,7 +734,7 @@ async fn a_budget_declined_block_path_announces_the_block_to_budget_for() {
         reader > 2 * index.largest_unit(),
         "the chunk and the decoder are inside it too, not just the two blocks: {reader}"
     );
-    assert_eq!(declined, (index.unit_count(), index.largest_unit(), reader, budget));
+    assert_eq!(declined, ("xz", index.unit_count(), index.largest_unit(), reader, budget));
 
     // The rows are unaffected — the fallback is slower on a backward read,
     // never a different answer.
@@ -769,6 +772,125 @@ async fn a_block_path_that_was_taken_is_silent() {
     let options = QueryOptions { parallelism: Parallelism::workers(4, 64), ..Default::default() };
     let plan = plan_of(xz, "public.widgets", ScanOptions::default(), options).await;
     assert!(!declines(plan.plan_notes()), "{:?}", plan.plan_notes());
+}
+
+/// A dump of a small table ahead of a large one, written beside its gzip
+/// member by `flate2` at the default level, flushed every `flush` bytes so
+/// its deflate blocks end there: the plaintext file and the `.gz` one.
+fn gzip_dump(dir: &Path, flush: usize) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::io::Write as _;
+    let mut plain = String::from("SET client_encoding = 'UTF8';\n\n");
+    for (table, rows) in [("small", 50u64), ("large", 120_000)] {
+        plain.push_str(&format!(
+            "CREATE TABLE public.{table} (\n    id integer,\n    name text\n);\n\n\
+             COPY public.{table} (id, name) FROM stdin;\n"
+        ));
+        for id in 1..=rows {
+            plain.push_str(&format!(
+                "{id}\trow {id} of {table}, {}\n",
+                id.wrapping_mul(7919) % 10_007
+            ));
+        }
+        plain.push_str("\\.\n\n");
+    }
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    for piece in plain.as_bytes().chunks(flush) {
+        encoder.write_all(piece).unwrap();
+        encoder.flush().unwrap();
+    }
+    let (plain_path, gz) = (dir.join("dump.sql"), dir.join("dump.sql.gz"));
+    std::fs::write(&plain_path, &plain).unwrap();
+    std::fs::write(&gz, encoder.finish().unwrap()).unwrap();
+    (plain_path, gz)
+}
+
+/// **A gzip file's first pass says it reads serially**: a cold plan over a
+/// file no cache indexed, its mapping pass stopped at a table well before the
+/// end, has an index reaching only as far as the pass has decoded, so the
+/// plan is one sub-stream whatever `--jobs` says, and its note says why and
+/// what ends it — never the decline, which is about a budget. Once a read
+/// has reached the end, the indexed source answers, and the same plan says
+/// nothing of either.
+#[tokio::test]
+async fn a_gzip_first_pass_plan_says_it_reads_serially_until_the_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let (plain, gz) = gzip_dump(dir.path(), 256 * 1024);
+    let expected = serial_rows(local(&plain), "public.small", QueryOptions::default()).await;
+    let opened = || async {
+        let origin = pgdt_io::Origin::local(&gz);
+        match pgdt_io::open(&origin, pgdt_io::KnownCompression::Unknown).await.unwrap() {
+            pgdt_io::Recognized::Source(source) => source,
+            pgdt_io::Recognized::Mismatch => unreachable!("claiming nothing is never a mismatch"),
+        }
+    };
+    let options =
+        QueryOptions { parallelism: Parallelism::workers(4, 1 << 30), ..Default::default() };
+    let first_pass = |notes: &[pgdt_query::PlanNote]| {
+        notes.iter().find_map(|n| match &n.kind {
+            PlanNoteKind::CompressedFirstPass { codec } => {
+                Some((*codec, n.severity(), n.message()))
+            }
+            _ => None,
+        })
+    };
+
+    let source = opened().await;
+    let plan =
+        plan_of(Arc::clone(&source), "public.small", ScanOptions::default(), options.clone()).await;
+    let notes = plan.plan_notes();
+    let (codec, severity, message) = first_pass(notes).unwrap_or_else(|| panic!("{notes:?}"));
+    assert_eq!(codec, "gzip");
+    assert_eq!(severity, pgdt_model::Severity::Info);
+    assert!(message.starts_with("this gzip source has no complete index yet"), "{message}");
+    assert!(
+        !notes.iter().any(|n| matches!(n.kind, PlanNoteKind::CompressedBlockPathDeclined { .. })),
+        "{notes:?}"
+    );
+    assert_eq!(plan.len(), 1, "a first pass is one sub-stream");
+    assert_eq!(drained(&plan, 8192).await, expected);
+
+    // Read to the end, which hands the pass over to the indexed source.
+    let mut offset = 0u64;
+    loop {
+        let read = source.read_at_most(offset, 1 << 20).await.unwrap();
+        if read.is_empty() {
+            break;
+        }
+        offset += read.len() as u64;
+    }
+    assert!(source.compression_index().unwrap().is_complete());
+    let plan = plan_of(source, "public.small", ScanOptions::default(), options).await;
+    assert!(first_pass(plan.plan_notes()).is_none(), "{:?}", plan.plan_notes());
+    assert_eq!(drained(&plan, 8192).await, expected);
+}
+
+/// **A gzip decline speaks gzip's words**: a file indexed at a spacing its
+/// blocks end within, so every unit is seekable, read under a budget below
+/// one unit, is declined as an `.xz` file is, naming its units rather than
+/// blocks.
+#[tokio::test]
+async fn a_gzip_decline_names_its_units() {
+    let dir = tempfile::tempdir().unwrap();
+    let (plain, gz) = gzip_dump(dir.path(), 64 * 1024);
+    let index = pgdt_io::internal::gzip_indexed_in_memory(&std::fs::read(&gz).unwrap(), 128 << 10);
+    assert!(index.unit_count() > 2 && index.is_seekable(), "{} units", index.unit_count());
+    let budget = index.largest_unit() - 1;
+    let source = Arc::new(
+        CompressedFileSource::with_index(&gz, pgdt_io::CompressionIndex::Gzip(index)).unwrap(),
+    );
+    let options =
+        QueryOptions { parallelism: Parallelism::workers(4, budget), ..Default::default() };
+    let plan = plan_of(source, "public.large", ScanOptions::default(), options).await;
+    let notes = plan.plan_notes();
+    let declined = notes
+        .iter()
+        .find(|n| matches!(n.kind, PlanNoteKind::CompressedBlockPathDeclined { codec: "gzip", .. }))
+        .unwrap_or_else(|| panic!("{notes:?}"));
+    let message = declined.message();
+    assert!(message.starts_with("this gzip source has"), "{message}");
+    assert!(message.ends_with("to read it a unit at a time"), "{message}");
+    let expected = serial_rows(local(&plain), "public.large", QueryOptions::default()).await;
+    assert_eq!(drained(&plan, 8192).await, expected);
 }
 
 /// A stated byte budget caps the sub-stream count below the stated `--jobs`,

@@ -52,5 +52,66 @@ fn a_gzip_dump_reads_as_its_plaintext() {
             (info["metadata"].clone(), info["scanned_through"].clone())
         };
         assert_eq!(described(gz_arg), described(plain_arg), "{version}: what info describes");
+
+        // Under the spacing, so one unit by the reader's choice: never warned,
+        // and described in gzip's words.
+        let info: serde_json::Value =
+            serde_json::from_str(&run_ok(&["info", "--source", gz_arg, "--json"])).unwrap();
+        assert!(non_seekable_warning(&info).is_none(), "{version}: {}", info["diagnostics"]);
+        let detail = run_ok(&["info", "--source", gz_arg, "--detail"]);
+        assert!(
+            detail.contains("compression: gzip — 1 unit(s) in 1 member(s), largest unit "),
+            "{version}: {detail}"
+        );
     }
+}
+
+/// The non-seekable warning an `info --json` document's `diagnostics` carry,
+/// if any (`docs/design/decisions.md`, "D19").
+fn non_seekable_warning(info: &serde_json::Value) -> Option<serde_json::Value> {
+    let diagnostics = info["diagnostics"].as_array().expect("diagnostics is always an array");
+    diagnostics.iter().find_map(|d| d["kind"].get("NonSeekableCompressedSource").cloned())
+}
+
+/// **A member whose writer ended no deflate block across twice the shipped
+/// spacing is warned, in gzip's words**: written as `pg_dump`'s `gzwrite`
+/// drives zlib — 8 KiB calls with `Z_NO_FLUSH`, `Z_FINISH` on the last — at
+/// level 1 by `flate2` over zlib-rs, the engine `libz-rs-sys` exports, in
+/// every build (the workspace's `Cargo.toml`). That level ends no block
+/// before the final one, which it opens over its lookahead at `Z_FINISH`, so
+/// the member is two units, the first all but its last few hundred bytes. The
+/// warning names that unit against the spacing and the remedy.
+#[test]
+fn a_gzip_dump_its_writer_ended_no_block_in_is_warned() {
+    use std::io::Write as _;
+    let dir = tempfile::tempdir().unwrap();
+    let mut plain = String::from("SET client_encoding = 'UTF8';\n\n");
+    plain.push_str(
+        "CREATE TABLE public.t (\n    id integer,\n    name text\n);\n\n\
+         COPY public.t (id, name) FROM stdin;\n",
+    );
+    let mut id: u64 = 0;
+    while plain.len() < 52 << 20 {
+        id += 1;
+        plain.push_str(&format!("{id}\trow {id}, {}\n", id.wrapping_mul(7919) % 10_007));
+    }
+    plain.push_str("\\.\n\n");
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(1));
+    for piece in plain.as_bytes().chunks(8192) {
+        encoder.write_all(piece).unwrap();
+    }
+    let gz = dir.path().join("level1.sql.gz");
+    std::fs::write(&gz, encoder.finish().unwrap()).unwrap();
+    let gz_arg = gz.to_str().unwrap();
+
+    let parsed = run_ok(&["parse", "--source", gz_arg]);
+    assert!(parsed.contains("[warning] this gzip source has no seek structure"), "{parsed}");
+    let info: serde_json::Value =
+        serde_json::from_str(&run_ok(&["info", "--source", gz_arg, "--json"])).unwrap();
+    let warning = non_seekable_warning(&info).unwrap_or_else(|| panic!("{}", info["diagnostics"]));
+    let spacing = warning["container"]["Gzip"]["spacing"].as_u64().expect("gzip's container");
+    let largest = warning["largest_unit"].as_u64().unwrap();
+    assert!(largest > 2 * spacing, "{warning}");
+    assert_eq!(warning["block_count"], info["compression"]["blocks"], "{warning}");
+    assert_eq!(largest, info["compression"]["max_block_uncompressed"].as_u64().unwrap());
 }

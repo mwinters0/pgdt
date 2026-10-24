@@ -34,9 +34,12 @@ impl CompressionIndex {
         self.format().name()
     }
 
-    /// Whether seeking buys anything: more than one unit. A one-unit file is
-    /// read correctly, necessarily by decoding from its start
-    /// (`docs/design/decisions.md`, "D19").
+    /// Whether the file has seek structure, by its codec's rule
+    /// (`docs/design/decisions.md`, "D19"): an `.xz` file more than one
+    /// block, its blocks being its writer's; a gzip file no unit wider than
+    /// twice its checkpoint spacing ([`GzipIndex::is_seekable`]). A file
+    /// without it is read correctly, a read inside its widest unit decoding
+    /// from that unit's start.
     pub fn is_seekable(&self) -> bool {
         match self {
             Self::Xz(table) => table.is_seekable(),

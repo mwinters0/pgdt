@@ -126,11 +126,11 @@ and condemns the span index too, both having come from one save of one file.
 
 ### D19 A budget decline is a `PlanNote`; a non-seekable file is warned, not refused
 A decline is a property of the file *and this run's budget*, and a `Diagnostic` is a finding about the file.
-A one-block file opens and raises `NonSeekableCompressedSource` naming `xz -T0`: only the user
-can judge one decode-from-zero. A statistics skip is a note too, stated at zero wherever statistics were consulted,
+A one-block `.xz` file opens and raises `NonSeekableCompressedSource` naming `xz -T0`: only the user
+can judge one decode-from-zero. A gzip file raises it where a complete index has a unit wider than twice its spacing, its writer having gone a spacing without ending a block, never where it is one unit for being under the spacing; its `is_seekable` is that rule, so the decline note never fires beside it, and a first pass is a note, the pass making the file seekable. A statistics skip is a note too, stated at zero wherever statistics were consulted,
 and a narrowed span (D84) one wherever the plan charged less than stated; the ordinary case is the
 invisible one. Rejected: omitting a zero; counting only believed filtered columns; announcing a narrowing
-only where the count fell short too, which `ParallelismBudgetLimited` names. Reopens: a puzzling zero,
+only where the count fell short too, which `ParallelismBudgetLimited` names; for gzip, warning by unit count, which says nothing of the writer, a persisted mark on the checkpoint opening a member's final block, keyed to one encoder's ending, and a gzip-only kind. Reopens: a puzzling zero,
 which naming the columns lacking a statistic would answer.
 
 ### D112 `gz-seek` inflates through zlib-rs, by `libz-rs-sys`'s zlib C API

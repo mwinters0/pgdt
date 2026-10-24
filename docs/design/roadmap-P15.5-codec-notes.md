@@ -59,10 +59,10 @@ split: the codec, the window section, the first pass").
   `gz_seek::Forward::resume` with its last checkpoint's window.
   `CompressionIndex::uncompressed_size` answers the last checkpoint's offset
   for one, which `compressed_block_path_declined` reads as the whole file.
-- **Three messages still speak `.xz`** where a gzip source reaches them:
-  `NonSeekableCompressedSource`, `CompressedBlockPathDeclined` ("this .xz
-  source has … block(s)") and `pgdt info`'s compression line ("block(s) in …
-  stream(s)"). None is reachable from the CLI until a first pass is.
+- **The three messages a gzip source reaches speak gzip's words**:
+  `NonSeekableCompressedSource`, `CompressedBlockPathDeclined` and `pgdt
+  info`'s compression line
+  ([`roadmap-P15.5.3-words-notes.md`](roadmap-P15.5.3-words-notes.md)).
 - **`deflate::unindexed`, the manual's sentence on refusing gzip and
   `gzip_source.rs`'s test go when the first pass lands**, as does
   `CHECKPOINT_SPACING`'s `dead_code` expectation.

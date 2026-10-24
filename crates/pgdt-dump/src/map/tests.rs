@@ -1,7 +1,8 @@
 use super::*;
 use pgdt_core::CopyHeader;
 use pgdt_model::{
-    DataBlock, Span, SpanBody, TocHeader, TypeKind, UnrepresentableTier, internal::FieldCount,
+    CompressedContainer, DataBlock, DiagnosticKind, Finding, Span, SpanBody, TocHeader, TypeKind,
+    UnrepresentableTier, internal::FieldCount,
 };
 
 /// A block's count where no column is tested: what a `COPY` with no DDL
@@ -765,4 +766,82 @@ fn snapshot_agrees_with_finish_at_the_same_watermark() {
     let via_finish = builder.finish(offset);
 
     assert_eq!(via_snapshot, via_finish);
+}
+
+/// The spacing the gzip warning tests index at: small enough that a payload
+/// of a few MiB spans many spacings, as a dump spans the shipped one.
+const GZIP_SPACING: u64 = 256 * 1024;
+
+/// A few MiB of `COPY`-like lines, gzipped by `flate2` — over zlib-rs, the
+/// engine `libz-rs-sys` exports, in every build (the workspace's
+/// `Cargo.toml`) — at `level`, written 8 KiB a call with `Z_NO_FLUSH` and
+/// finished with `Z_FINISH`, the calls `pg_dump`'s `gzwrite` makes: indexed
+/// in memory at [`GZIP_SPACING`].
+fn gzip_indexed(len: usize, level: u32) -> pgdt_io::CompressionIndex {
+    use std::io::Write as _;
+    let mut plain = Vec::with_capacity(len + 64);
+    let mut id = 0u64;
+    while plain.len() < len {
+        id += 1;
+        plain.extend(format!("{id}\trow {id}\t{}\n", id.wrapping_mul(7919) % 10_007).as_bytes());
+    }
+    plain.truncate(len);
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(level));
+    for piece in plain.chunks(8192) {
+        encoder.write_all(piece).unwrap();
+    }
+    let member = encoder.finish().unwrap();
+    pgdt_io::CompressionIndex::Gzip(pgdt_io::internal::gzip_indexed_in_memory(
+        &member,
+        GZIP_SPACING,
+    ))
+}
+
+/// **D19's gzip rule**: a member whose writer ended no deflate block across
+/// more than twice the spacing has no seek structure, and is warned in
+/// gzip's words, naming the unit against the spacing and the remedy. Level 1
+/// over zlib-rs ends no block before the final one, which it opens over its
+/// lookahead at `Z_FINISH`, so such a member is two units, the first all but
+/// its last few hundred bytes — and the count says nothing of the writer.
+#[test]
+fn a_gzip_unit_wider_than_twice_its_spacing_is_warned_in_gzip_words() {
+    let index = gzip_indexed(4 << 20, 1);
+    assert!(
+        index.largest_unit() > 2 * GZIP_SPACING,
+        "the writer must end no block for a spacing for this to mean anything: {} unit(s), the \
+         largest {}",
+        index.unit_count(),
+        index.largest_unit()
+    );
+    assert!(!index.is_seekable());
+    let warned = non_seekable_compression_diagnostic(Some(&index)).expect("warned");
+    let DiagnosticKind::NonSeekableCompressedSource { container, block_count, largest_unit } =
+        warned.kind()
+    else {
+        panic!("{warned:?}");
+    };
+    assert_eq!(*container, CompressedContainer::Gzip { spacing: GZIP_SPACING });
+    assert_eq!((*block_count, *largest_unit), (index.unit_count(), index.largest_unit()));
+    let message = warned.message();
+    assert!(message.starts_with("this gzip source has no seek structure"), "{message}");
+    assert!(message.contains(&format!("{largest_unit} byte(s)")), "{message}");
+    assert!(message.contains(&format!("{GZIP_SPACING}-byte spacing")), "{message}");
+    assert!(message.contains("`gzip`") && message.contains("a level above 1"), "{message}");
+    assert!(!message.contains(".xz"), "{message}");
+}
+
+/// **Where a gzip file is not warned**: under the spacing, one unit by the
+/// reader's choice, whatever its writer; and written at the default level,
+/// which ends a block every few tens of KB, its units at most a spacing and
+/// a block wide.
+#[test]
+fn a_gzip_file_under_the_spacing_or_ending_its_blocks_is_not_warned() {
+    let short = gzip_indexed(GZIP_SPACING as usize / 2, 1);
+    assert_eq!(short.unit_count(), 1);
+    assert!(short.is_seekable());
+    assert_eq!(non_seekable_compression_diagnostic(Some(&short)), None);
+
+    let ended = gzip_indexed(4 << 20, 6);
+    assert!(ended.unit_count() > 2 && ended.is_seekable(), "{}", ended.largest_unit());
+    assert_eq!(non_seekable_compression_diagnostic(Some(&ended)), None);
 }

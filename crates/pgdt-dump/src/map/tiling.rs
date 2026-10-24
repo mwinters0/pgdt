@@ -7,7 +7,10 @@
 use pgdt_core::Result;
 use pgdt_io::ByteRangeSource;
 use pgdt_model::internal::DiagnosticExt;
-use pgdt_model::{Diagnostic, SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody, SpanText, TilingIssue};
+use pgdt_model::{
+    CompressedContainer, Diagnostic, SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody, SpanText,
+    TilingIssue,
+};
 
 /// Whether a span of this kind stores its text at all. `Data` spans never do
 /// (`docs/design/decisions.md`, "D30"); `Unscanned` covers bytes by
@@ -151,12 +154,13 @@ pub fn derived_diagnostics(
     diagnostics
 }
 
-/// D19's warning for a compressed source with no usable seek structure —
-/// `None` when there is no compression layer at all (`index` is `None`), the
-/// index already has more than one unit, or it is a gzip first pass's that
-/// has not reached the end, which says nothing yet of how many units the file
-/// holds. A whole map's is [`derived_diagnostics`]'s;
-/// a preamble's alone is [`preamble_only`](crate::preamble::preamble_only)'s.
+/// D19's warning for a compressed source with no usable seek structure, by
+/// its codec's rule (`pgdt_io::CompressionIndex::is_seekable`) — `None` when
+/// there is no compression layer at all (`index` is `None`), the index has
+/// seek structure, or it is a gzip first pass's that has not reached the end,
+/// which says nothing yet of how wide its last unit is. A whole map's is
+/// [`derived_diagnostics`]'s; a preamble's alone is
+/// [`preamble_only`](crate::preamble::preamble_only)'s.
 pub fn non_seekable_compression_diagnostic(
     index: Option<&pgdt_io::CompressionIndex>,
 ) -> Option<Diagnostic> {
@@ -164,5 +168,15 @@ pub fn non_seekable_compression_diagnostic(
     if index.is_seekable() || !index.is_complete() {
         return None;
     }
-    Some(Diagnostic::non_seekable_compressed_source(index.unit_count()))
+    let container = match index {
+        pgdt_io::CompressionIndex::Xz(_) => CompressedContainer::Xz,
+        pgdt_io::CompressionIndex::Gzip(gzip) => {
+            CompressedContainer::Gzip { spacing: gzip.spacing() }
+        }
+    };
+    Some(Diagnostic::non_seekable_compressed_source(
+        container,
+        index.unit_count(),
+        index.largest_unit(),
+    ))
 }

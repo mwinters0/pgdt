@@ -30,8 +30,8 @@ preserved; gzip arrives on top of it from 15.4
   `CompressedFileSource::opened`, `open_remote`'s unknown-format arm,
   `CompressionShape::of`, and `CompressionIndex`'s own methods. `index_refused`
   asks the xz adapter alone, and grows an arm per codec.
-  `NonSeekableCompressedSource` still names `xz -T0`; 15.5.2 takes its text
-  from the codec.
+  `NonSeekableCompressedSource` speaks its container's words
+  (`pgdt_model::CompressedContainer`).
 - **The public surface moved with it.** `XzSource` and `FetchedXzSource` are
   `CompressedFileSource` (`open`, recognising the format itself, and
   `with_index`) and `FetchedCompressedSource` (`with_index`);

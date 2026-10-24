@@ -65,11 +65,13 @@ impl GzipIndex {
         self.index.is_complete()
     }
 
-    /// Whether seeking buys anything: more than one unit. A one-unit file is
-    /// read correctly, necessarily by decoding from its start
-    /// (`docs/design/decisions.md`, "D19").
+    /// Whether the file has seek structure: no unit wider than twice the
+    /// spacing (`docs/design/decisions.md`, "D19"). Only a writer that went a
+    /// whole spacing without ending a deflate block leaves a wider one, so a
+    /// file under the spacing — one unit by the reader's choice — has it. A
+    /// unit is read correctly either way, by decoding from its start.
     pub fn is_seekable(&self) -> bool {
-        self.unit_count() > 1
+        self.largest_unit() <= self.spacing().saturating_mul(2)
     }
 
     /// How many units can be decoded: every checkpoint's, but the last's while

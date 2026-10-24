@@ -22,7 +22,8 @@ pub use catalog::{
     PartitionOf, TableDef, TableReference, TypeDef, TypeKind,
 };
 pub use diagnostic::{
-    Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity, TilingIssue, drain,
+    CompressedContainer, Diagnostic, DiagnosticKind, DiagnosticSink, Finding, Severity,
+    TilingIssue, drain,
 };
 pub use span::{
     CopyBlock, DataBlock, DumpIndex, InsertRun, LargeObjectRegion, SPAN_STORED_TEXT_MAX_BYTES,

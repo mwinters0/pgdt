@@ -77,7 +77,9 @@ the overview; what follows is what the next slices inherit.
   "15.5.3's warning, reviewed") and 15.10 places checkpoints
   inside its block ([`../status/deficiencies.md`](../status/deficiencies.md)). A gzip test assumes
   nothing of where blocks end, though the suite's `flate2` writes over
-  zlib-rs in every build, the workspace naming that backend.
+  zlib-rs in every build, the workspace naming that backend — but 15.5.3's
+  warning tests, which read that level 1 ending and assert the wide unit
+  before the warning.
 
 ## Negative results
 

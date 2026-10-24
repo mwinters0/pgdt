@@ -101,9 +101,16 @@ pub(crate) fn print_metadata(metadata: &DumpMetadata, detail: bool) {
 /// file a block at a time — **four times over**, one reader's block beside the further
 /// blocks the pool keeps however few readers run, plus a read buffer and the
 /// decompressor's own working memory (`docs/design/decisions.md`, "D15").
+///
+/// **In the container's own words**: a gzip file's units are the spans
+/// between its checkpoints, and its streams its members.
 fn compression_line(shape: &CompressionShape) -> String {
+    let (unit, stream) = match shape.container {
+        "gzip" => ("unit", "member"),
+        _ => ("block", "stream"),
+    };
     format!(
-        "compression: {} — {} block(s) in {} stream(s), largest block {} bytes uncompressed",
+        "compression: {} — {} {unit}(s) in {} {stream}(s), largest {unit} {} bytes uncompressed",
         shape.container, shape.blocks, shape.streams, shape.max_block_uncompressed
     )
 }
