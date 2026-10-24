@@ -6,8 +6,8 @@ publication's refusals are held here against stand-ins for `gh` and the containe
 and `Workflows` holds the two committed workflow files to what
 `release_ci.py`'s docstring commits them to: no step but a `release.py` or
 `release_ci.py` line the parsers accept, no input interpolated into a shell,
-every action pinned, each job declaring its permissions, and `contents`,
-`attestations` and `id-token` write held only by the jobs that use them. The files are read by line, not
+every action pinned, each job holding exactly the permissions it uses. The
+files are read by line, not
 parsed as YAML: the standard library has no parser, and the scripts'
 environment pins its two dependencies for the bytes they decide.
 """
@@ -722,22 +722,35 @@ class Workflows(unittest.TestCase):
         self.assertRegex(publish, r'(?m)^on:\n  push:\n    tags:\n      - "v\*"\n\n')
         self.assertNotIn("workflow_dispatch", publish)
 
-    def test_nothing_is_granted_by_default_and_each_job_declares_what_it_uses(self):
+    #: Each job's permissions, exactly: the draft's three are what attesting
+    #: a file by `subject-path` uses, `artifact-metadata` being for a
+    #: registry's storage records, which nothing here pushes.
+    PERMISSIONS = {
+        "release-build.yml": {
+            "preflight": {"contents": "write"},
+            "x86-64-release": {"contents": "read"},
+            "x86-64-suite": {"contents": "read"},
+            "arm64-suite": {"contents": "read"},
+            "draft": {"contents": "write", "id-token": "write", "attestations": "write"},
+        },
+        "release-publish.yml": {
+            "fetch": {"contents": "write"},
+            "arm64-smoke": {"contents": "read"},
+            "publish": {"contents": "write"},
+        },
+    }
+
+    def test_nothing_is_granted_by_default_and_each_job_holds_exactly_its_permissions(self):
+        self.assertEqual(sorted(self.PERMISSIONS), sorted(self.names))
         for name in self.names:
             self.assertIn("\npermissions: {}\n", "\n".join(lines_of(name)), name)
+            held = {}
             for job, body in jobs_of(name).items():
                 text = "\n".join(body)
-                self.assertRegex(text, r"(?m)^    permissions:\n(      [a-z-]+: (read|write)\n?)+", f"{name} {job}")
-        build = jobs_of("release-build.yml")
-        for job, body in build.items():
-            text = "\n".join(body)
-            writes = "contents: write" in text
-            self.assertEqual(writes, job in ("preflight", "draft"), job)
-            self.assertEqual("attestations: write" in text or "id-token: write" in text, job == "draft", job)
-        for job, body in jobs_of("release-publish.yml").items():
-            text = "\n".join(body)
-            self.assertEqual("contents: write" in text, job in ("fetch", "publish"), job)
-            self.assertNotIn("id-token", text, job)
+                block = re.search(r"(?m)^    permissions:\n((?:      [a-z-]+: (?:read|write)\n?)+)", text)
+                self.assertIsNotNone(block, f"{name} {job} declares no permissions")
+                held[job] = dict(re.findall(r"(?m)^      ([a-z-]+): (read|write)$", block.group(1)))
+            self.assertEqual(held, self.PERMISSIONS[name], name)
 
     def test_the_build_workflow_uses_the_image_runtime_and_the_ref_through_the_environment(self):
         text = "\n".join(lines_of("release-build.yml"))
