@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """The per-round checks, each run once, logged whole, summarized short.
 
-A round of work ends on the same eight commands every time -- `cargo fmt
---check`, `cargo clippy`, the suite under `cargo nextest`, the doctests,
-`module_graph.py`, the scripts' own `unittest`, `repoint.py` and
-`file_limits.py` -- and a session reading their raw
+A round of work ends on the same nine commands every time -- `cargo fmt
+--check`, `cargo clippy`, each library linted alone, the suite under `cargo
+nextest`, the doctests, `module_graph.py`, the scripts' own `unittest`,
+`repoint.py` and `file_limits.py` -- and a session reading their raw
 output pipes it through `grep` and `head` to find the lines that matter, then
 re-runs the suite when the pipe cut what it needed. This runs each command
 once, writes its whole output to a log under `runs/check/`, and prints a
@@ -45,10 +45,18 @@ fails.
 **Clippy passes only with no diagnostic**: its exit status is zero over
 warnings, and a warning left for the next round is one nobody fixes.
 
+**Each library is linted alone too** (`--alone`, `run_alone`): one cargo run
+per member holding a library, read off `cargo metadata`, as an embedder builds
+it and then with every target. One workspace build unifies features across
+members -- `pgdt` turns on `pgdt-io`'s `http`, a dev-dependency a crate's
+`test-support` -- so code only a feature reaches is reachable there, and dead in
+the library an embedder builds without it; a warning only a build alone meets
+is fixed by gating that code on the feature reaching it.
+
 **The cargo checks run in the release image** (`release.py run`), as the
 invoking user under its memory limit and on every CPU but one physical core's
-(`release.py`, `RESERVE_CORES`): fmt, clippy, the suite, the doctests and
-the module graph, whose rust-analyzer builds and runs the workspace's build
+(`release.py`, `RESERVE_CORES`): fmt, clippy, the libraries alone, the
+suite, the doctests and the module graph, whose rust-analyzer builds and runs the workspace's build
 scripts. A whole-workspace test build compiles and links dozens of binaries at
 once, and on a host without swap one outgrowing memory stalls the whole machine
 rather than failing; under the limit the kernel kills a compiler or a linker
@@ -81,14 +89,16 @@ first of the other three rules it meets gives it:
   target of each package depending on it, any of which may call what reads.
 - **Inside a workspace member** runs that package whole; outside its
   `tests/`, `benches/` and `examples/` it runs every member depending on it,
-  transitively, too. Those packages are the ones formatted and linted, and
-  doc-tested where they have a library, as is a library whose own tests read
-  a changed path; and the module graph runs, whole, since its index is.
+  transitively, too. Those packages are the ones formatted and linted, each
+  library among them alone too, and doc-tested where they have a library, as
+  is a library whose own tests read a changed path; and the module graph runs,
+  whole, since its index is.
 - **A comment, inside a workspace member** -- a `.rs` file in both trees
   whose `code_of` is unchanged, a doc comment's fenced doctest counting as
-  code -- formats and lints that package alone and runs none of its tests,
-  doctests or dependents: clippy reads doc comments, and no build reads the
-  rest. A target reading the file still runs, by the first rule.
+  code -- formats and lints that package by itself, and alone if a library,
+  and runs none of its tests, doctests or dependents: clippy reads doc
+  comments, and no build reads the rest. A target reading the file still
+  runs, by the first rule.
 - **`docs/`, `.claude/` or a Markdown file** runs nothing. No Rust target
   names such a path or reads `docs/` or `.claude/` whole, a Markdown file in
   a data directory documenting it; the one Rust test reaching one does so
@@ -105,6 +115,7 @@ Usage:
 
     mise run check [--affected] [--verify]
     cd scripts && uv run check.py [--affected] [--verify]
+    cd scripts && uv run check.py --alone [LIBRARY ...]   # the alone check by itself; cargo on the host
     cd scripts && uv run python -m unittest test_check
 """
 
@@ -114,6 +125,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -197,28 +209,68 @@ CLIPPY_TALLY_RE = re.compile(
 CLIPPY_LOCATION_RE = re.compile(r"^\s*--> (\S+)")
 
 
-def summarize_clippy(text: str, exit_code: int) -> Outcome:
-    lines = text.splitlines()
-    warnings = errors = 0
-    details: list[str] = []
+def _diagnostics(lines: Sequence[str]) -> list[tuple[int, str, str | None]]:
+    """Each diagnostic clippy printed: its line's index, the line, and the
+    location beneath it, if any; a tally line is none."""
+    out = []
     for i, line in enumerate(lines):
         if not CLIPPY_DIAGNOSTIC_RE.match(line) or CLIPPY_TALLY_RE.match(line):
             continue
-        if line.startswith("warning"):
-            warnings += 1
-        else:
-            errors += 1
         where = next(
             (m.group(1) for nxt in lines[i + 1 : i + 4] if (m := CLIPPY_LOCATION_RE.match(nxt))),
             None,
         )
-        detail = f"{line.strip()}  ({where})" if where else line.strip()
+        out.append((i, line.strip(), where))
+    return out
+
+
+def summarize_clippy(text: str, exit_code: int) -> Outcome:
+    found = _diagnostics(text.splitlines())
+    warnings = sum(1 for _, line, _ in found if line.startswith("warning"))
+    errors = len(found) - warnings
+    details: list[str] = []
+    for _, line, where in found:
+        detail = f"{line}  ({where})" if where else line
         if detail not in details:
             details.append(detail)
     headline = f"{warnings} warnings, {errors} errors"
     if exit_code == 0 and warnings == 0 and errors == 0:
         return Outcome("ok", headline)
     return Outcome("FAILED", headline, tuple(details) or _tail(text))
+
+
+#: The line `run_alone` opens each build with, naming the library, and the one
+#: it ends on.
+ALONE_BUILD_RE = re.compile(r"^alone: ([\w-]+): cargo ")
+ALONE_DONE_RE = re.compile(r"^alone: (\d+) librar(?:y|ies), (\d+) builds?(?:; |$)")
+
+
+def summarize_alone(text: str, exit_code: int) -> Outcome:
+    """Clippy's reading over every build `run_alone` ran: each diagnostic
+    counted and listed once, however many builds met it, naming the first
+    library whose build did."""
+    lines = text.splitlines()
+    done = next((m for line in reversed(lines) if (m := ALONE_DONE_RE.match(line))), None)
+    if done is None:
+        return Outcome("FAILED", "check.py --alone printed no result", _tail(text))
+    starts = [(i, m.group(1)) for i, line in enumerate(lines) if (m := ALONE_BUILD_RE.match(line))]
+    seen: dict[tuple[str, str | None], str] = {}
+    for i, line, where in _diagnostics(lines):
+        library = next((name for at, name in reversed(starts) if at < i), "?")
+        seen.setdefault((line, where), library)
+    warnings = sum(1 for line, _ in seen if line.startswith("warning"))
+    errors = len(seen) - warnings
+    headline = (
+        f"{done.group(1)} libraries alone, {done.group(2)} builds: "
+        f"{warnings} warnings, {errors} errors"
+    )
+    if exit_code == 0 and not seen:
+        return Outcome("ok", headline)
+    details = tuple(
+        f"{line}  ({where}; alone: {library})" if where else f"{line}  (alone: {library})"
+        for (line, where), library in seen.items()
+    )
+    return Outcome("FAILED", headline, details or _tail(text))
 
 
 NEXTEST_SUMMARY_RE = re.compile(r"^\s*Summary \[")
@@ -329,7 +381,7 @@ def summarize_file_limits(text: str, exit_code: int) -> Outcome:
     return Outcome("FAILED", headline, problems or _tail(text))
 
 
-#: The round's eight commands. `every_check` is what a run without
+#: The round's nine commands. `every_check` is what a run without
 #: `--affected` runs: these, the doctests narrowed to the libraries holding one.
 CHECKS: tuple[Check, ...] = (
     Check("fmt", ("cargo", "fmt", "--check"), ".", summarize_fmt, image=True),
@@ -340,6 +392,7 @@ CHECKS: tuple[Check, ...] = (
         summarize_clippy,
         image=True,
     ),
+    Check("alone", ("uv", "run", "check.py", "--alone"), "scripts", summarize_alone, image=True),
     Check(
         "nextest",
         ("cargo", "nextest", "run", "--workspace", "--no-fail-fast"),
@@ -780,6 +833,54 @@ def doctest_check(pkgs: Collection[str]) -> Check:
     return Check("doctest", argv, ".", summarize_doctest, image=True)
 
 
+#: How `run_alone` builds one library, `-p <name>` appended: its library and
+#: binaries as an embedder builds them, then every target, which adds what its
+#: dev-dependencies turn on, resolver 2 unifying their features only then.
+ALONE_BUILDS: tuple[tuple[str, ...], ...] = (
+    ("cargo", "clippy"),
+    ("cargo", "clippy", "--all-targets"),
+)
+
+
+def alone_builds(
+    packages: Sequence[Package], names: Collection[str] = ()
+) -> list[tuple[str, tuple[str, ...]]]:
+    """Each build `run_alone` runs, with the library it builds: of `names`, or
+    of every member holding a library. A name that is not one is refused."""
+    libraries = sorted(p.name for p in packages if p.has_lib)
+    if unknown := sorted(set(names) - set(libraries)):
+        raise ValueError(f"not a workspace library: {', '.join(unknown)}")
+    return [(n, (*b, "-p", n)) for n in sorted(names or libraries) for b in ALONE_BUILDS]
+
+
+def run_alone(
+    repo: Path, names: Collection[str] = (), load: Callable[[Path], list[Package]] = workspace
+) -> int:
+    """Lint each library alone (`ALONE_BUILDS`), one cargo run each, so its
+    features are its own rather than what the workspace unifies on; every
+    build runs though one fails. The output is the cargo runs', each opened by
+    a line naming its library, then a count: `summarize_alone` reads it."""
+    builds = alone_builds(load(repo), names)
+    failed: list[str] = []
+    for name, argv in builds:
+        print(f"alone: {name}: {shlex.join(argv)}", flush=True)
+        code = subprocess.run(
+            argv, cwd=repo, stdin=subprocess.DEVNULL, stderr=subprocess.STDOUT
+        ).returncode
+        sys.stdout.flush()
+        if code != 0:
+            failed.append(f"{shlex.join(argv)} exited {code}")
+    libraries = len({name for name, _ in builds})
+    tail = f"; {len(failed)} failed: {', '.join(failed)}" if failed else ""
+    print(f"alone: {libraries} libraries, {len(builds)} builds{tail}", flush=True)
+    return 1 if failed else 0
+
+
+def alone_check(names: Collection[str]) -> Check:
+    argv = ("uv", "run", "check.py", "--alone", *sorted(names))
+    return Check("alone", argv, "scripts", summarize_alone, image=True)
+
+
 def every_check(repo: Path, load: Callable[[Path], list[Package]] = workspace) -> tuple[Check, ...]:
     """`CHECKS`, the doctests run for the libraries holding one, or not at all."""
     docs = doctest_packages(repo, load(repo))
@@ -876,6 +977,8 @@ def plan_changes(
         checks.append(Check("fmt", fmt, ".", summarize_fmt, image=True))
         clippy = ("cargo", "clippy", "--all-targets", *p_args)
         checks.append(Check("clippy", clippy, ".", summarize_clippy, image=True))
+        if libraries := [n for n in {*whole_pkgs, *lint_only} if by_name[n].has_lib]:
+            checks.append(alone_check(libraries))
     if whole_pkgs or binaries:
         run_pkgs = sorted(set(whole_pkgs) | {pkg for pkg, _ in binaries})
         argv = ["cargo", "nextest", "run", "--no-fail-fast"]
@@ -1084,7 +1187,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="run only the cargo checks the change since HEAD can reach",
     )
+    parser.add_argument(
+        "--alone",
+        nargs="*",
+        metavar="LIBRARY",
+        help="lint each library named, or every one, alone under its own features: the alone check",
+    )
     args = parser.parse_args(argv)
+    if args.alone is not None:
+        if args.affected or args.verify:
+            parser.error("--alone is one check, run by the others")
+        return run_alone(REPO, args.alone)
     every = every_check(REPO)
     if not args.affected:
         return (verify if args.verify else run)(REPO, every)

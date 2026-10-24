@@ -6,7 +6,7 @@
 use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::mem::{self, size_of};
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 use std::sync::Arc;
 
 use pgdt_codec::compare::CompareKind;
@@ -25,7 +25,7 @@ use super::charge::{push_charged, reserve_charged};
 use super::clip::{CLIP_BYTES, Clipped, text_prefix};
 use super::order::ViewOrders;
 use crate::statistics::account::Charge;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 use crate::statistics::account::Term;
 
 /// A field PostgreSQL refuses — one its type's `*_in` refuses, met while
@@ -605,9 +605,9 @@ fn tiers_heap(tiers: &Option<Box<ClosedTiers>>) -> u64 {
 }
 
 /// The bounds one group of `values` is stored with under `kind`'s order, or
-/// `None` where it keeps none — for a test outside this module that holds
-/// stored bounds against another order.
-#[cfg(any(test, feature = "test-support"))]
+/// `None` where it keeps none — for a test above this crate that holds
+/// stored bounds against another order, which `test-support` serves.
+#[cfg(feature = "test-support")]
 pub fn one_group_bounds(kind: CompareKind, values: &[&str]) -> Option<Bounds> {
     let mut gatherer = BoundsGatherer::new(kind);
     let mut group = gatherer.fresh_group();

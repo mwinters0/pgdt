@@ -145,3 +145,14 @@ beside the mechanism it governs first. Full rules:
   chunk is all the walk can save; no figure prices a GET's size. Reconsidering
   would warn on the fetched arm, naming the cache, and might fetch more a GET.
 
+- **A library is linted alone at its own features only, never across its
+  feature combinations** (`M247`). The `alone` check builds each library as an
+  embedder's default build has it and then with every target
+  (`ALONE_BUILDS`, `scripts/check.py`); code reached only under a set between
+  that and the workspace's — `pgdt-io` with `http` but not `test-support`, a
+  `gz-seek` backend — is linted by neither, nor is a binary alone, whose own
+  code no library's feature gates. Why: those are the two builds anyone makes
+  of a library today, and each added set is another resolve of DataFusion's
+  graph in the round. Reconsidering would add `cargo-hack`'s
+  `--each-feature` (a `mise.toml` pin) or name the sets an embedder is
+  promised.

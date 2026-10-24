@@ -72,7 +72,7 @@ mod gatherer;
 mod order;
 pub(crate) mod strict;
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(feature = "test-support")]
 pub use self::bounds::one_group_bounds;
 
 /// The observer for one block, charging what it holds to `account`, or

@@ -104,6 +104,32 @@ warning: `pgdump_query` (lib test) generated 1 warning (1 duplicate)
     Finished `dev` profile [optimized + debuginfo] target(s) in 3.10s
 """
 
+# Two libraries' builds meeting one warning of the first's, and a done line.
+ALONE_WARNS = """\
+alone: base: cargo clippy -p base
+    Checking base v0.1.0
+warning: variant `Fetched` is never constructed
+ --> base/src/feed.rs:5:5
+warning: `base` (lib) generated 1 warning
+alone: base: cargo clippy --all-targets -p base
+warning: variant `Fetched` is never constructed
+ --> base/src/feed.rs:5:5
+alone: app: cargo clippy -p app
+warning: variant `Fetched` is never constructed
+ --> base/src/feed.rs:5:5
+warning: unused import: `self::walk`
+ --> app/src/lib.rs:2:5
+alone: 2 libraries, 3 builds
+"""
+
+ALONE_CLEAN = """\
+alone: base: cargo clippy -p base
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.10s
+alone: base: cargo clippy --all-targets -p base
+    Finished `dev` profile [optimized + debuginfo] target(s) in 0.10s
+alone: 1 libraries, 2 builds
+"""
+
 FMT_DIFF = """\
 Diff in /repo/pgdump_query/src/lib.rs:12:
 -    let  x = 1;
@@ -182,6 +208,32 @@ class Summaries(unittest.TestCase):
         self.assertEqual(
             o.details, ("warning: unused variable: `x`  (pgdump_query/src/lib.rs:3:9)",)
         )
+
+    def test_clean_alone_builds_pass(self):
+        o = check.summarize_alone(ALONE_CLEAN, 0)
+        self.assertEqual(
+            (o.status, o.headline), ("ok", "1 libraries alone, 2 builds: 0 warnings, 0 errors")
+        )
+
+    def test_an_alone_warning_is_counted_once_naming_the_first_library_meeting_it(self):
+        o = check.summarize_alone(ALONE_WARNS, 0)
+        self.assertEqual(o.status, "FAILED")
+        self.assertEqual(o.headline, "2 libraries alone, 3 builds: 2 warnings, 0 errors")
+        self.assertEqual(
+            o.details,
+            (
+                "warning: variant `Fetched` is never constructed  (base/src/feed.rs:5:5; alone: base)",
+                "warning: unused import: `self::walk`  (app/src/lib.rs:2:5; alone: app)",
+            ),
+        )
+
+    def test_a_failed_alone_build_fails_and_one_that_never_finished_says_so(self):
+        failed = ALONE_CLEAN.replace("2 builds\n", "2 builds; 1 failed: cargo clippy -p base exited 101\n")
+        o = check.summarize_alone(failed, 1)
+        self.assertEqual(o.status, "FAILED")
+        self.assertTrue(o.headline.startswith("1 libraries alone, 2 builds"))
+        cut = check.summarize_alone(ALONE_CLEAN.rsplit("alone: 1", 1)[0], 1)
+        self.assertEqual((cut.status, cut.headline), ("FAILED", "check.py --alone printed no result"))
 
     def test_fmt_lists_each_file_once(self):
         o = check.summarize_fmt(FMT_DIFF, 1)
@@ -420,11 +472,14 @@ class RunAndVerify(unittest.TestCase):
             check.verify(repo, edits, before)
             self.assertIn("did not pass; running the checks", before.getvalue())
 
-    def test_the_real_checks_are_the_rounds_eight_commands(self):
+    def test_the_real_checks_are_the_rounds_nine_commands(self):
         self.assertEqual(
             [c.name for c in check.CHECKS],
-            ["fmt", "clippy", "nextest", "doctest", "graph", "unittest", "repoint", "seams"],
+            ["fmt", "clippy", "alone", "nextest", "doctest", "graph", "unittest", "repoint", "seams"],
         )
+        alone = next(c for c in check.CHECKS if c.name == "alone")
+        self.assertEqual(alone.argv, check.alone_check(()).argv)
+        self.assertTrue((check.REPO / alone.cwd / alone.argv[2]).is_file())
         for c in check.CHECKS:
             self.assertTrue((check.REPO / c.cwd).is_dir(), c.cwd)
 
@@ -636,7 +691,9 @@ class Affected(unittest.TestCase):
     def test_an_affected_run_builds_in_the_image_as_a_whole_one_does(self):
         plan = self.plan("base/src/lib.rs")
         built = [c for c in plan.checks if c.name not in check.ALWAYS]
-        self.assertEqual([c.name for c in built], ["fmt", "clippy", "nextest", "doctest", "graph"])
+        self.assertEqual(
+            [c.name for c in built], ["fmt", "clippy", "alone", "nextest", "doctest", "graph"]
+        )
         self.assertTrue(all(c.image for c in built))
 
     def test_a_markdown_file_is_read_only_by_a_literal_naming_it(self):
@@ -659,6 +716,39 @@ class Affected(unittest.TestCase):
         # `app` has no library, so no doctests.
         self.assertEqual(argv["doctest"], ["cargo", "test", "--doc", "--no-fail-fast", "-p", "base"])
         self.assertEqual(argv["graph"], ["uv", "run", "module_graph.py"])
+        # `app` has no library, so `base` alone is linted alone.
+        self.assertEqual(argv["alone"], ["uv", "run", "check.py", "--alone", "base"])
+
+    def test_a_change_reaching_no_library_lints_none_alone(self):
+        plan = self.plan("app/src/main.rs")
+        self.assertIn("clippy", argv_of(plan))
+        self.assertNotIn("alone", argv_of(plan))
+
+    def test_each_library_is_built_alone_twice_and_a_binary_never(self):
+        self.assertEqual(
+            check.alone_builds(self.packages),
+            [
+                ("base", ("cargo", "clippy", "-p", "base")),
+                ("base", ("cargo", "clippy", "--all-targets", "-p", "base")),
+            ],
+        )
+        self.assertEqual(check.alone_builds(self.packages, ["base"]), check.alone_builds(self.packages))
+        with self.assertRaisesRegex(ValueError, "not a workspace library: app"):
+            check.alone_builds(self.packages, ["app"])
+
+    def test_every_alone_build_runs_though_one_fails_and_the_count_closes_it(self):
+        two = [replace(p, name=n) for p in self.packages if p.name == "base" for n in ("one", "two")]
+        builds = ((sys.executable, "-c", "import sys; sys.exit(sys.argv[-1] == 'one')"),)
+        out = io.StringIO()
+        with unittest.mock.patch.object(check, "ALONE_BUILDS", builds), \
+                unittest.mock.patch.object(check.sys, "stdout", out):
+            code = check.run_alone(self.repo, (), lambda _: two)
+        self.assertEqual(code, 1)
+        lines = out.getvalue().splitlines()
+        self.assertEqual([line.split(": ")[1] for line in lines[:2]], ["one", "two"])
+        self.assertTrue(lines[-1].startswith("alone: 2 libraries, 2 builds; 1 failed: "))
+        o = check.summarize_alone(out.getvalue(), code)
+        self.assertEqual(o.status, "FAILED")
 
     def test_a_library_holding_no_doctest_runs_none(self):
         plain = [
@@ -676,8 +766,11 @@ class Affected(unittest.TestCase):
         plan = check.plan_changes(
             self.repo, ["base/src/lib.rs"], lambda _: self.packages, {"base/src/lib.rs"}
         )
-        self.assertEqual([c.name for c in plan.checks], ["fmt", "clippy", "unittest", "repoint", "seams"])
+        self.assertEqual(
+            [c.name for c in plan.checks], ["fmt", "clippy", "alone", "unittest", "repoint", "seams"]
+        )
         self.assertEqual(argv_of(plan)["clippy"][-2:], ["-p", "base"])
+        self.assertEqual(argv_of(plan)["alone"][-1], "base")
         self.assertIn("linted only, their changes being comments, base", plan.note)
 
     def test_a_comment_only_change_still_runs_a_target_reading_it(self):
@@ -852,6 +945,13 @@ class RealWorkspace(unittest.TestCase):
         )
         self.assertNotIn("nextest", argv_of(plan))
         self.assertNotIn("doctest", argv_of(plan))
+
+    def test_every_member_holding_a_library_is_linted_alone(self):
+        alone = {name for name, _ in check.alone_builds(self.packages)}
+        self.assertEqual(alone, {p.name for p in self.packages if p.has_lib})
+        # The two a feature the workspace unifies on once hid dead code in.
+        self.assertLessEqual({"pgdt-io", "pgdt-mapping"}, alone)
+        self.assertNotIn("pgdt", alone)
 
     def test_the_commit_editing_only_doc_comments_runs_no_test(self):
         # 5c835d4b filed two deficiencies by marker comments in two library

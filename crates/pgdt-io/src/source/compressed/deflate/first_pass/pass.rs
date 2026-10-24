@@ -323,6 +323,7 @@ impl Pass {
     }
 
     /// The routed decode's input, `bytes` fetched from `at`.
+    #[cfg(any(feature = "http", test))]
     pub(super) fn supply(&mut self, route: Route, at: u64, bytes: &[u8]) {
         match route {
             Route::Frontier => self.frontier_input().supply(at, bytes),
@@ -473,6 +474,7 @@ impl<D> Inflating<D> {
     }
 
     /// Replace the input with `bytes`, fetched from `at`.
+    #[cfg(any(feature = "http", test))]
     fn supply(&mut self, at: u64, bytes: &[u8]) {
         self.input.clear();
         self.input.extend_from_slice(bytes);

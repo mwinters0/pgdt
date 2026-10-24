@@ -14,9 +14,10 @@
 //! a read meets the file's end, so nothing cuts the file and one forward
 //! decode serves the scan; at the end the complete index, its windows in the
 //! pass's spill file, opens the source a later run opens from its cache
-//! ([`CompressedFileSource`], [`FetchedCompressedSource`]), and every read,
-//! partitioning and worker recommendation is that source's from then on — so a
-//! cold `query`'s replay reads units.
+//! ([`CompressedFileSource`],
+//! [`FetchedCompressedSource`](crate::FetchedCompressedSource)), and every
+//! read, partitioning and worker recommendation is that source's from then on
+//! — so a cold `query`'s replay reads units.
 //!
 //! **No window is resident**: each is written as it is placed to a file the
 //! run alone holds, in the directory `open`'s caller names
@@ -44,8 +45,9 @@ use crate::partition::Partitioning;
 use crate::source::pool::{BufferPool, POOL_DEPTH, PooledBuffer, budget_bytes};
 use crate::source::{ByteRangeSource, Extent, RemoteIdentity, WaitPolicy};
 
-use super::super::short_read;
-use super::super::{CompressedFileSource, CompressionIndex, FetchedCompressedSource};
+#[cfg(any(feature = "http", test))]
+use super::super::FetchedCompressedSource;
+use super::super::{CompressedFileSource, CompressionIndex, short_read};
 use super::{CHECKPOINT_SPACING, GZIP, GzipIndex, INPUT_CHUNK, WindowProvider, gzip_error};
 
 mod pass;
@@ -112,9 +114,14 @@ pub(crate) struct FirstPass {
 
 /// Where the compressed bytes come from: a local file, pulled inside the
 /// blocking task the decode runs in, or a transport fetched through between
-/// decode steps (`docs/design/decisions.md`, "D15").
+/// decode steps (`docs/design/decisions.md`, "D15"), which only the remote
+/// source and the tests construct, so `http` or a test build carries it.
 pub(crate) enum Feed {
-    File { path: PathBuf, file: Arc<std::fs::File> },
+    File {
+        path: PathBuf,
+        file: Arc<std::fs::File>,
+    },
+    #[cfg(any(feature = "http", test))]
     Fetched(Arc<dyn ByteRangeSource>),
 }
 
@@ -275,6 +282,7 @@ impl FirstPass {
     async fn run(&self, job: Job) -> Result<(Option<PooledBuffer>, usize, bool)> {
         match &self.feed {
             Feed::File { file, .. } => self.run_pulled(Arc::clone(file), job).await,
+            #[cfg(any(feature = "http", test))]
             Feed::Fetched(raw) => self.run_fetched(Arc::clone(raw), job).await,
         }
     }
@@ -317,6 +325,7 @@ impl FirstPass {
 
     /// `job`, its decode fed bytes fetched through the transport, back on
     /// the runtime for each fetch.
+    #[cfg(any(feature = "http", test))]
     async fn run_fetched(
         &self,
         raw: Arc<dyn ByteRangeSource>,
@@ -392,6 +401,7 @@ impl FirstPass {
         let index = CompressionIndex::Gzip(index);
         let done: Arc<dyn ByteRangeSource> = match &self.feed {
             Feed::File { path, .. } => Arc::new(CompressedFileSource::with_index(path, index)?),
+            #[cfg(any(feature = "http", test))]
             Feed::Fetched(raw) => Arc::new(FetchedCompressedSource::with_index(
                 Arc::clone(raw),
                 self.stored_size,
@@ -416,6 +426,7 @@ impl FirstPass {
     /// The raw transport, for what this source answers by it.
     fn fetched(&self) -> Option<&Arc<dyn ByteRangeSource>> {
         match &self.feed {
+            #[cfg(any(feature = "http", test))]
             Feed::Fetched(raw) => Some(raw),
             Feed::File { .. } => None,
         }
@@ -562,6 +573,7 @@ impl ByteRangeSource for FirstPass {
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
         Box::pin(async move {
             match &self.feed {
+                #[cfg(any(feature = "http", test))]
                 Feed::Fetched(raw) => raw.modified().await,
                 Feed::File { file, .. } => {
                     let file = Arc::clone(file);
@@ -582,6 +594,7 @@ impl ByteRangeSource for FirstPass {
     fn stored_size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
         Box::pin(async move {
             match &self.feed {
+                #[cfg(any(feature = "http", test))]
                 Feed::Fetched(raw) => raw.stored_size().await,
                 Feed::File { file, .. } => {
                     let file = Arc::clone(file);

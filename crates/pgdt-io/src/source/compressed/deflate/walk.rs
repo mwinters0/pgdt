@@ -78,7 +78,7 @@ fn walk_file_spaced(
 /// # Errors
 ///
 /// A fetch failing.
-#[cfg(any(feature = "http", test))]
+#[cfg(feature = "http")]
 pub(crate) async fn walk_fetched(
     named: &str,
     source: &dyn ByteRangeSource,
