@@ -58,9 +58,11 @@ source's, parallel at units of whole members.
 
 ## What later slices inherit
 
-- **15.8 is a single member's**: a BGZF file's units are known at open, so
-  nothing of a parallel first pass touches it; a broken chain's first pass
-  is 15.8's like any other.
+- **15.8 is a single member's, and a fetched BGZF file's**: a local BGZF
+  file's units are known at open, so nothing of a parallel first pass touches
+  it; a fetched one is a first pass's from 15.13 on, its units taken from its
+  members' headers in 15.8; a broken chain's first pass is 15.8's like any
+  other.
 - **15.7's manual** writes the walk's two lines into `dump-inspection.md`'s
   "Status on stderr" beside the `.xz` walk's; this slice corrected only the
   sentence saying a gzip file names no place a read could begin.

@@ -100,7 +100,8 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.5.4** Single-member gzip, the first pass's windows spilled: each window written as it is placed to an unnamed file the run alone holds, in the enabled cache's directory or else the OS temp directory as `open`'s caller names it, read positionally as a loaded section is and copied from by each save, a file that cannot be made refused by name; nothing of the pass's windows resident (`KD130`), and the pass's skip scratch charged — [notes](../design/roadmap-P15.5.4-spilled-notes.md)
 - [x] **15.11** Single-member gzip, a read behind the first pass's frontier checked: one inside a closed unit decoded and checked against the CRC-32 that unit recorded, as the indexed source checks a unit, one inside the open unit left to the frontier's (`KD132`) — [notes](../design/roadmap-P15.11-checked-notes.md)
 - [x] **15.6** BGZF, `pgdt-io`'s side over the crate's walk: the walk run at open, recognition at 18 bytes, members coalesced into units, the member count read off the walk rather than its checkpoints, the walk announced started and complete as the `.xz` walk is (D64) — [notes](../design/roadmap-P15.6-bgzf-notes.md)
-- [ ] **15.8** A parallel first pass, earned by 15.1.1's reading: `gz-seek` finds a single member's units speculatively — rapidgzip's technique, implemented natively and run on the caller's pool (D1, D12) — replacing only how the first pass finds them, never the index, the codec trait or the arms; checkpoints by the placement rule, so the index is the serial pass's at every worker count; it lifts the inflate, the first pass's scan staying one partition unless its own spec partitions it (the spec's "Slice order"); the first pass's started line no longer saying serial where it is not
+- [ ] **15.13** A fetched BGZF file read by a first pass: the fetched arm hands an uncached BGZF file to a first pass, which reads the object once and builds the index the walk builds, the local arm still walking; D64's announcements stated by arm, `info` where the cost is the scan's own and `warn` where it goes beyond it
+- [ ] **15.8** A parallel first pass, earned by 15.1.1's reading: `gz-seek` finds a single member's units speculatively — rapidgzip's technique, implemented natively and run on the caller's pool (D1, D12) — replacing only how the first pass finds them, never the index, the codec trait or the arms; checkpoints by the placement rule, so the index is the serial pass's at every worker count; it lifts the inflate, the first pass's scan staying one partition unless its own spec partitions it (the spec's "Slice order"); the first pass's started line no longer saying serial where it is not; a fetched BGZF file's first pass taking its units from its members' headers rather than speculatively
 - [ ] **15.10** Checkpoints inside a static block: the forward pass walks a static block's codes itself to place a checkpoint at the first symbol boundary at or after each multiple, the resume priming a synthetic static-block header; after 15.8, reading its native decoding first (`KD129`)
 - [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the manual and `pg-dump-compatibility.md`
 
@@ -133,26 +134,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A BGZF walk reads the whole file before its scan, and a fetched one says
-  so at `info`, not as a warning** (15.6). A member is at most 64 KiB, so the
-  walk at open reads every part of the file, a megabyte a read or a GET
-  (`WALK_CHUNK`, `crates/pgdt-io/src/source/compressed/deflate/walk.rs`), and
-  the scan reads it again; both arms announce it at `info`, as the gzip first
-  pass is, where the fetched `.xz` walk warns of its round trips and names
-  keeping the cache as the way out (`announce_remote_walk`, `remote.rs`). Why:
-  the line's job is the local walk's, saying the wait is a walk, and a read a
-  chunk is all the walk can save; no figure prices a GET's size. Reconsidering
-  would warn on the fetched arm, naming the cache, and might fetch more a GET.
-
-- **A library is linted alone at its own features only, never across its
-  feature combinations** (`M247`). The `alone` check builds each library as an
-  embedder's default build has it and then with every target
-  (`ALONE_BUILDS`, `scripts/check.py`); code reached only under a set between
-  that and the workspace's — `pgdt-io` with `http` but not `test-support`, a
-  `gz-seek` backend — is linted by neither, nor is a binary alone, whose own
-  code no library's feature gates. Why: those are the two builds anyone makes
-  of a library today, and each added set is another resolve of DataFusion's
-  graph in the round. Reconsidering would add `cargo-hack`'s
-  `--each-feature` (a `mise.toml` pin) or name the sets an embedder is
-  promised.

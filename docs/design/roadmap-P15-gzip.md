@@ -273,6 +273,19 @@ a second copy of the xz source.
   forgoing what its headers state; reading a `.gzi` sidecar, which the
   persisted walk makes redundant and whose second file would need its own
   identity check.
+- **A fetched BGZF file is read by a first pass, not walked**
+  ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
+  "The fetched BGZF walk, reviewed"). The walk reads every part of the file,
+  a member being at most 64 KiB, and the scan reads it again; locally that
+  buys a parallel scan by default, but a fetched source recommends one reader
+  (D2), so a walk there downloads the object twice for parallelism the run
+  does not take. A first pass reads it once, its checkpoints the member starts
+  the headers state, its index the walk's. A walk's or a pass's cost is
+  announced at `info` where it is the scan's own, locally and for any first
+  pass, and at `warn`, before it is paid, where it goes beyond the scan, as
+  the fetched `.xz` walk's does. Rejected: walking on both arms, a second
+  download per cold run; walking only under a stated `--jobs` above one,
+  which needs the count at open where D64 resolves it after.
 - **`gz-seek`, provisionally, is built in this workspace as `crates/gz-seek/`,
   and split off once functional.** A leaf: it depends on no workspace crate
   and names nothing of `pg_dump`, so the split is a move rather than a
@@ -382,7 +395,15 @@ first pass's scan is partitioned too, over units whose plaintext offsets
 become known as the pass goes, is slice 8's own question, asked against the
 arms 2, 3 and 5 leave. Rejected: deferring it to a later phase or out-of-band,
 which moves only the wrap. Slice 8 rewrites the first pass's started line
-where the pass is no longer serial.
+where the pass is no longer serial. **A fetched BGZF file's first pass takes
+its units from its members' headers** rather than finding them speculatively,
+so its first run inflates in parallel over one download.
+
+**A fetched BGZF file read by a first pass, slice 13, precedes 8**
+([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
+"The fetched BGZF walk, reviewed"): the fetched arm hands an uncached BGZF
+file to a first pass, the local arm still walking, and D64 states its
+announcements by arm, so 8 widens a pass that already reads BGZF.
 
 **The backend figure, slice 9, precedes the spacing figure**, so that the
 spacing is read on the engine that ships
