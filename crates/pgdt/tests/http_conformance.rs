@@ -90,7 +90,7 @@ fn conformance_xz_url() -> Option<String> {
 /// The source `url` names, opened as a run opens it: probe, then recognition.
 async fn source_of(url: &str) -> Arc<dyn ByteRangeSource> {
     let origin = Origin::resolve(url).expect("the URL resolves");
-    match open(&origin, KnownCompression::Unknown).await {
+    match open(&origin, KnownCompression::Unknown, &std::env::temp_dir()).await {
         Ok(Recognized::Source(source)) => source,
         Ok(Recognized::Mismatch) => panic!("nothing was claimed, so nothing can be contradicted"),
         Err(e) => panic!("{url} did not open: {e}"),

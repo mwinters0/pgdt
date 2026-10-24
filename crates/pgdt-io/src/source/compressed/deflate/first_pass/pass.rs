@@ -1,17 +1,17 @@
 //! The pass's forward decodes — the one at the frontier placing checkpoints,
-//! one behind it reading what the frontier has passed — the compressed input
-//! each is fed from, and the windows the pass has placed.
-
-use std::sync::{Arc, RwLock};
+//! one behind it reading what the frontier has passed — and the compressed
+//! input each is fed from.
 
 use pgdt_core::{Error, Result};
 
 use super::super::super::{Positioned, short_read};
 use super::super::{INPUT_CHUNK, WindowProvider, gzip_error};
+use super::spill::PassWindows;
 
 /// How many plaintext bytes a read skipping forward to its first wanted byte
-/// throws away per decoder call.
-const SKIP_CHUNK: usize = 64 * 1024;
+/// throws away per decoder call: the pass's one scratch buffer, which its
+/// charge names.
+pub(super) const SKIP_SCRATCH: usize = 64 * 1024;
 
 /// The forward decodes and what the pass has learnt.
 pub(super) struct Pass {
@@ -67,7 +67,7 @@ impl Pass {
             placed,
             resumed_over,
             behind: None,
-            scratch: vec![0u8; SKIP_CHUNK],
+            scratch: vec![0u8; SKIP_SCRATCH],
         }
     }
 
@@ -148,9 +148,10 @@ impl Pass {
             Route::Frontier => {
                 let decode = frontier.as_mut().expect("a frontier read has its decode");
                 let served = decode.fill(offset, out, filled, stored_size, scratch, |forward| {
-                    windows.place(*placed, forward.window());
+                    windows.place(*placed, forward.window())?;
                     *placed += 1;
                     *resumed_over = None;
+                    Ok(())
                 });
                 match served {
                     Ok(Served::Ended) => {
@@ -178,7 +179,7 @@ impl Pass {
             }
             Route::Behind => {
                 let (decode, _) = behind.as_mut().expect("a read behind has its decode");
-                let served = decode.fill(offset, out, filled, stored_size, scratch, |_| {});
+                let served = decode.fill(offset, out, filled, stored_size, scratch, |_| Ok(()));
                 if served.is_err() {
                     *behind = None;
                 }
@@ -229,7 +230,7 @@ impl Inflating {
 
     /// Decode on into `out[filled..]`, skipping the plaintext before
     /// `offset` through `scratch`, `placed` told of each checkpoint the pass
-    /// places.
+    /// places, and failing the read where it fails.
     fn fill(
         &mut self,
         offset: u64,
@@ -237,7 +238,7 @@ impl Inflating {
         filled: &mut usize,
         stored_size: u64,
         scratch: &mut [u8],
-        mut placed: impl FnMut(&gz_seek::Forward),
+        mut placed: impl FnMut(&gz_seek::Forward) -> Result<()>,
     ) -> Result<Served> {
         loop {
             let position = self.forward.position();
@@ -268,7 +269,7 @@ impl Inflating {
                 *filled += step.progress.produced;
             }
             if step.checkpoint.is_some() {
-                placed(&self.forward);
+                placed(&self.forward)?;
             }
             if step.progress == gz_seek::Progress::default() && step.checkpoint.is_none() {
                 if reaches_end {
@@ -303,65 +304,6 @@ impl Inflating {
             )));
         }
         self.input_at = at;
-        Ok(())
-    }
-}
-
-/// Every window the pass has placed, held in memory for as long as an index
-/// carrying it lives — the one the pass hands over included — and
-/// before them those of the index it was resumed over, read through that
-/// index's own provider: what a saved index's windows are read through.
-pub(super) struct PassWindows {
-    /// The resumed index's provider, for the checkpoints before `base`.
-    earlier: Option<Arc<dyn WindowProvider>>,
-    /// The first checkpoint whose window is held here.
-    base: usize,
-    held: RwLock<Vec<Box<[u8]>>>,
-}
-
-impl PassWindows {
-    /// The windows of a pass from the file's start: none yet.
-    pub(super) fn fresh() -> PassWindows {
-        PassWindows { earlier: None, base: 0, held: RwLock::default() }
-    }
-
-    /// The windows of a pass resumed over an index of `base` checkpoints,
-    /// whose own are read through `earlier`.
-    pub(super) fn after(earlier: Option<Arc<dyn WindowProvider>>, base: usize) -> PassWindows {
-        PassWindows { earlier, base, held: RwLock::default() }
-    }
-
-    /// Checkpoint `checkpoint` was placed with `window`: held, unless it is
-    /// one the resumed index already held — a member start placed again.
-    pub(super) fn place(&self, checkpoint: usize, window: &[u8]) {
-        if checkpoint < self.base {
-            return;
-        }
-        let mut held = self.held.write().unwrap_or_else(|e| e.into_inner());
-        debug_assert_eq!(checkpoint, self.base + held.len(), "checkpoints are placed in order");
-        held.push(window.into());
-    }
-}
-
-impl WindowProvider for PassWindows {
-    fn read_window(&self, checkpoint: usize, out: &mut [u8]) -> std::io::Result<()> {
-        if checkpoint < self.base {
-            let earlier = self.earlier.as_ref().ok_or_else(|| {
-                std::io::Error::other("a resumed gzip index's window has no provider")
-            })?;
-            return earlier.read_window(checkpoint, out);
-        }
-        let held = self.held.read().unwrap_or_else(|e| e.into_inner());
-        let window = held
-            .get(checkpoint - self.base)
-            .ok_or_else(|| std::io::Error::other("a gzip checkpoint the pass has not placed"))?;
-        if window.len() != out.len() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "a window is read whole, into a buffer of its length",
-            ));
-        }
-        out.copy_from_slice(window);
         Ok(())
     }
 }

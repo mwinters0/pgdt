@@ -13,10 +13,10 @@ surfaces as a process that sized itself wrongly rather than as an error — an O
 kill under an orchestrator, or a scan that took a fifth of the machine it was
 given. The trigger to walk this file is therefore an upgrade of any of these, each
 with its own entries: a **kernel major**, a **container-runtime upgrade**, a **Rust
-toolchain bump** (`RT7`, `RT11` and `RT12`, whose behaviour is `std`'s), a **glibc
+toolchain bump** (`RT7`, `RT11`, `RT12` and `RT24`'s `temp_dir`, whose behaviour is `std`'s), a **glibc
 release** — the host's or the figures' image's (`RT10` only) — a **bash
 release** (`RT20`), an **arrow or DataFusion upgrade** (`RT21`, `RT22`), a
-**zlib-rs upgrade** (`RT23`), and an
+**zlib-rs upgrade** (`RT23`), a **tempfile upgrade** (`RT24`), and an
 **`object_store` upgrade** (`RT13`–`RT17`, whose behaviour is that crate's and
 whose re-verification is a test run against the oracle rather than a container;
 `crates/pgdt/tests/http_conformance.rs` reads the same claims against a real origin
@@ -1202,3 +1202,42 @@ cargo nextest run -p gz-seek
 
 The suite passes only while every buffer size gives one index and every unit
 decodes alone to the forward pass's plaintext.
+
+## RT24 — a file `tempfile::tempfile_in` makes has no name, and is reclaimed when its last descriptor closes
+
+**Claim.** On Linux, `tempfile::tempfile_in(dir)` returns a file that no
+name in `dir` reaches once it returns — opened `O_TMPFILE`, or, where the
+filesystem refuses that, created under a random name and unlinked before it
+returns — so its storage is freed when the process's last descriptor on it
+closes, a kill included, and no other process opens it by path; and
+`std::env::temp_dir()` is `TMPDIR` where it is set, and `/tmp` otherwise.
+
+**Proof.** tempfile 3.27.0, `src/file/imp/unix.rs`: `create` opens `dir`
+with `O_TMPFILE`, falling back on `EOPNOTSUPP`, `EISDIR` or `ENOENT` to
+`create_unix`, whose `create_unlinked` opens `O_CREAT | O_EXCL` at mode
+`0600` and removes the path; `open(2)`'s `O_TMPFILE` and `unlink(2)` state
+the reclamation. Rust 1.98.0, `library/std/src/sys/paths/unix.rs`'s
+`temp_dir`. Observed by `a_first_pass_spills_its_windows_where_it_is_told`
+(`crates/pgdt-io/src/source/compressed/deflate/first_pass/tests.rs`), which
+finds its spill directory empty while the pass reads its windows back.
+
+**Scope limit.** The fallback leaves a name between its create and its
+unlink, so a kill inside that window can leave a `.tmp` file behind on a
+filesystem without `O_TMPFILE`; nothing reads one.
+
+**Verified against:** tempfile 3.27.0, Rust 1.98.0, Linux 7.2.
+
+**Relied on by:** [`decisions.md`](decisions.md), "D115" — a gzip first
+pass's spill file, which orphans nothing and has no name for the cache's
+identity checks to cover.
+
+**Re-verify:**
+
+```sh
+cargo nextest run -p pgdt-io --features http,test-support first_pass
+rg -n "O_TMPFILE|TMPFILE|fn create_unlinked" "$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "tempfile") | .manifest_path' | xargs dirname)/src/file/imp/unix.rs"
+```
+
+The test passes only while the pass's spill directory stays empty; the
+search shows `create` still opening `O_TMPFILE` first and unlinking in its
+fallback.

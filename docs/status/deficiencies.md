@@ -479,15 +479,6 @@ than reading as a phase nobody has sliced.
   P15**, its slice 15.10 placing checkpoints inside a static block. Detail:
   `crates/gz-seek/src/forward.rs`.
 
-- **KD130** — a gzip first pass holds every window it places in memory for
-  the rest of the run, the index it hands over keeping them, a checkpoint's
-  window per `CHECKPOINT_SPACING` of plaintext, and no charge bills them: about
-  a gigabyte over a koji-scale member (arithmetic), growing with the file
-  rather than the count, as `KD26`'s index does but past the size that entry's
-  argument is sound at. **(b) owned by P15**, its slice 15.5.4 spilling them to
-  a file the run alone holds. Detail:
-  `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.
-
 - **KD131** — a complete map is saved before the reads that built it are
   completed: the forward pass's end-of-file save and the back-fill's run
   `SourceWatch::check` alone, so a block a source's `complete_reads` would

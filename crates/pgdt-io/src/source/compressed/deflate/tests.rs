@@ -262,7 +262,9 @@ async fn recognition_reads_gzip_through_an_index_or_its_first_pass() {
     let origin = Origin::local(compressed.path());
 
     let known = KnownCompression::Compressed(CompressionIndex::Gzip(layout));
-    let Recognized::Source(source) = crate::open(&origin, known).await.unwrap() else {
+    let Recognized::Source(source) =
+        crate::open(&origin, known, &std::env::temp_dir()).await.unwrap()
+    else {
         panic!("a gzip file opens over its own index");
     };
     assert_eq!(&source.read_range(0, 64).await.unwrap()[..], &payload[..64]);
@@ -270,13 +272,17 @@ async fn recognition_reads_gzip_through_an_index_or_its_first_pass() {
     let (other, other_layout) = gzip_indexed(&payload[..payload.len() / 2], SPACING);
     drop(other);
     let foreign = KnownCompression::Compressed(CompressionIndex::Gzip(other_layout));
-    assert!(matches!(crate::open(&origin, foreign).await.unwrap(), Recognized::Mismatch));
     assert!(matches!(
-        crate::open(&origin, KnownCompression::Plain).await.unwrap(),
+        crate::open(&origin, foreign, &std::env::temp_dir()).await.unwrap(),
+        Recognized::Mismatch
+    ));
+    assert!(matches!(
+        crate::open(&origin, KnownCompression::Plain, &std::env::temp_dir()).await.unwrap(),
         Recognized::Mismatch
     ));
 
-    let Recognized::Source(first) = crate::open(&origin, KnownCompression::Unknown).await.unwrap()
+    let Recognized::Source(first) =
+        crate::open(&origin, KnownCompression::Unknown, &std::env::temp_dir()).await.unwrap()
     else {
         panic!("claiming nothing is never a mismatch");
     };

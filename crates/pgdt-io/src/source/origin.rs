@@ -332,11 +332,18 @@ pub enum Recognized {
 /// other, so dispatching here is what keeps a caller from having to know which
 /// it has. Every argument and every answer is the same whichever it dispatches
 /// to, both acting on one verdict over the probe's first bytes.
-pub async fn open(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
+///
+/// **`spill` is the directory a gzip file's first pass writes the windows it
+/// places to**, in a file of its own with no name, made at the first window
+/// and refused naming `spill` where it cannot be: the caller's to choose,
+/// since this crate names no cache — `pgdt_dump`'s open names the enabled
+/// cache's directory, or else the OS temp directory
+/// (`docs/design/decisions.md`, "D115"). Nothing else reads it.
+pub async fn open(origin: &Origin, known: KnownCompression, spill: &Path) -> Result<Recognized> {
     match &origin.location {
-        Location::LocalFile(_) => open_local(origin, known).await,
+        Location::LocalFile(_) => open_local(origin, known, spill).await,
         #[cfg(feature = "http")]
-        Location::Remote(_) => open_remote(origin, known).await,
+        Location::Remote(_) => open_remote(origin, known, spill).await,
     }
 }
 
@@ -367,7 +374,11 @@ pub async fn open(origin: &Origin, known: KnownCompression) -> Result<Recognized
 /// the wait does not read as a hang. An embedder opening one inside a busy
 /// runtime would want it on a blocking thread; the DataFusion provider never
 /// builds one, reading the index its complete cache holds.
-pub(crate) async fn open_local(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
+pub(crate) async fn open_local(
+    origin: &Origin,
+    known: KnownCompression,
+    spill: &Path,
+) -> Result<Recognized> {
     // The kind is settled before the probe, so an origin this cannot open is
     // refused without a round trip being spent on it. The match has a second
     // arm only where the remote source is compiled in; without it there is one
@@ -387,9 +398,15 @@ pub(crate) async fn open_local(origin: &Origin, known: KnownCompression) -> Resu
     match Verdict::of(probe.leading(), known) {
         // A gzip index a first pass stopped short of the end saved: the pass
         // resumes from its last checkpoint rather than from the file's start.
-        Verdict::Known(CompressionIndex::Gzip(index)) if !index.is_complete() => over_known_index(
-            FirstPass::resumed(origin.to_string(), Feed::file(path)?, probe.stored_size(), index),
-        ),
+        Verdict::Known(CompressionIndex::Gzip(index)) if !index.is_complete() => {
+            over_known_index(FirstPass::resumed(
+                origin.to_string(),
+                Feed::file(path)?,
+                probe.stored_size(),
+                index,
+                spill,
+            ))
+        }
         // The saving: an index from a previous build over this file, validated
         // against the file's length and its own internal consistency without
         // reading a byte, and never rebuilt.
@@ -399,6 +416,7 @@ pub(crate) async fn open_local(origin: &Origin, known: KnownCompression) -> Resu
             origin.to_string(),
             Feed::file(path)?,
             probe.stored_size(),
+            spill,
         )?))),
         Verdict::Unknown(format) => {
             Ok(Recognized::Source(Arc::new(CompressedFileSource::walked(path, format)?)))

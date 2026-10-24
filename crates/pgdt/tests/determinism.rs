@@ -466,7 +466,7 @@ impl ByteRangeSource for StopAfter {
 async fn interrupted_at(dump: &Path, cache: &Path, after: u64) -> pgdt_io::GzipIndex {
     let origin = Origin::local(dump);
     let Recognized::Source(source) =
-        pgdt_io::open(&origin, KnownCompression::Unknown).await.unwrap()
+        pgdt_io::open(&origin, KnownCompression::Unknown, &std::env::temp_dir()).await.unwrap()
     else {
         unreachable!("claiming nothing is never a mismatch");
     };

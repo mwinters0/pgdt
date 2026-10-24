@@ -78,6 +78,7 @@ async fn a_first_pass_reads_the_file_and_builds_its_index() {
             feed(feed_name, compressed.path()),
             stored,
             SPACING,
+            &std::env::temp_dir(),
         )
         .unwrap();
         assert_eq!(pass.extent().await.unwrap(), Extent::Open { at_least: 0 }, "{feed_name}");
@@ -100,6 +101,71 @@ async fn a_first_pass_reads_the_file_and_builds_its_index() {
     }
 }
 
+/// **The pass holds its windows in a file with no name, made where it is
+/// told**: a pass spilling into a directory of its own leaves nothing there,
+/// halfway or at its end, while every window reads back as `gz_seek`'s own
+/// pass placed it. One told a directory that does not exist reads a file under
+/// the spacing whole, placing no window holding bytes, and refuses the read
+/// that would place one, naming the directory, rather than holding the window
+/// in memory.
+#[tokio::test]
+async fn a_first_pass_spills_its_windows_where_it_is_told() {
+    let payload = gzip_test_payload();
+    let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
+    let stored = std::fs::metadata(compressed.path()).unwrap().len();
+    let dir = tempfile::tempdir().unwrap();
+    let left_in = |dir: &std::path::Path| std::fs::read_dir(dir).unwrap().count();
+    for feed_name in FEEDS {
+        let pass = FirstPass::spaced(
+            named(compressed.path()),
+            feed(feed_name, compressed.path()),
+            stored,
+            SPACING,
+            dir.path(),
+        )
+        .unwrap();
+        let half = pass.read_range(0, payload.len() / 2).await.unwrap();
+        let partial = gzip_index_of(&pass);
+        assert!(partial.checkpoint_count() > 1, "{feed_name}: windows were placed");
+        assert_eq!(windows_of(&partial), windows_of(&expected)[..partial.checkpoint_count()]);
+        assert_eq!(left_in(dir.path()), 0, "{feed_name}: the spill file has no name");
+        scanned(&pass, half.len() as u64, 1 << 20).await;
+        assert_eq!(windows_of(&gzip_index_of(&pass)), windows_of(&expected), "{feed_name}");
+        assert_eq!(left_in(dir.path()), 0, "{feed_name}: the spill file has no name");
+    }
+
+    let missing = dir.path().join("absent");
+    let small = &payload[..SPACING.get() as usize / 2];
+    let (small_compressed, _) = gzip_indexed(small, SPACING.get());
+    let small_stored = std::fs::metadata(small_compressed.path()).unwrap().len();
+    for feed_name in FEEDS {
+        let pass = FirstPass::spaced(
+            named(small_compressed.path()),
+            feed(feed_name, small_compressed.path()),
+            small_stored,
+            SPACING,
+            &missing,
+        )
+        .unwrap();
+        assert_eq!(scanned(&pass, 0, 4096).await, small, "{feed_name}");
+
+        let pass = FirstPass::spaced(
+            named(compressed.path()),
+            feed(feed_name, compressed.path()),
+            stored,
+            SPACING,
+            &missing,
+        )
+        .unwrap();
+        let refused = pass.read_range(0, payload.len() / 2).await.unwrap_err().to_string();
+        assert!(
+            refused.contains(&missing.display().to_string()) && refused.contains("windows"),
+            "{feed_name}: {refused}"
+        );
+    }
+    assert!(!missing.exists());
+}
+
 /// **The pass hands over to the indexed source at the end**: its reads and
 /// partitioning are then the indexed source's, so a range is cut at unit
 /// starts, a read anywhere answers the payload's bytes, and a read past the
@@ -115,6 +181,7 @@ async fn a_finished_pass_reads_as_the_indexed_source() {
             feed(feed_name, compressed.path()),
             stored,
             SPACING,
+            &std::env::temp_dir(),
         )
         .unwrap();
         pass.hint_parallelism(crate::Parallelism::workers(4, 1 << 30));
@@ -152,6 +219,7 @@ async fn a_read_behind_the_frontier_reads_from_its_checkpoint() {
             feed(feed_name, compressed.path()),
             stored,
             SPACING,
+            &std::env::temp_dir(),
         )
         .unwrap();
         let ahead = payload.len() * 2 / 3;
@@ -188,6 +256,7 @@ async fn a_resumed_pass_builds_the_uninterrupted_index() {
             Feed::file(compressed.path()).unwrap(),
             stored,
             SPACING,
+            &std::env::temp_dir(),
         )
         .unwrap();
         interrupted.read_range(0, stop).await.unwrap();
@@ -200,6 +269,7 @@ async fn a_resumed_pass_builds_the_uninterrupted_index() {
                     feed(feed_name, compressed.path()),
                     stored,
                     saved.clone(),
+                    &std::env::temp_dir(),
                 )
                 .unwrap();
                 assert_eq!(gzip_index_of(&resumed), saved, "{feed_name} from {from}");
@@ -228,6 +298,7 @@ async fn a_saved_index_past_the_files_end_is_a_mismatch() {
         Feed::file(compressed.path()).unwrap(),
         stored,
         SPACING,
+        &std::env::temp_dir(),
     )
     .unwrap();
     pass.read_range(0, payload.len() - 1).await.unwrap();
@@ -240,17 +311,21 @@ async fn a_saved_index_past_the_files_end_is_a_mismatch() {
         Feed::file(shorter.path()).unwrap(),
         short_size,
         saved.clone(),
+        &std::env::temp_dir(),
     )
     .err()
     .expect("refused");
     assert!(index_refused(&refused), "{refused}");
     let known = KnownCompression::Compressed(CompressionIndex::Gzip(saved.clone()));
     let origin = Origin::local(shorter.path());
-    assert!(matches!(crate::open(&origin, known).await.unwrap(), Recognized::Mismatch));
+    assert!(matches!(
+        crate::open(&origin, known, &std::env::temp_dir()).await.unwrap(),
+        Recognized::Mismatch
+    ));
 
     let known = KnownCompression::Compressed(CompressionIndex::Gzip(saved));
     let Recognized::Source(resumed) =
-        crate::open(&Origin::local(compressed.path()), known).await.unwrap()
+        crate::open(&Origin::local(compressed.path()), known, &std::env::temp_dir()).await.unwrap()
     else {
         panic!("the file the index was saved from resumes over it");
     };
@@ -278,6 +353,7 @@ async fn a_damaged_file_is_refused_where_the_pass_meets_it() {
             Feed::file(file.path()).unwrap(),
             stored,
             SPACING,
+            &std::env::temp_dir(),
         )
         .unwrap();
         let read = pass.read_at_most(0, payload.len() + 1).await;

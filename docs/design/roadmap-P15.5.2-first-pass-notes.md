@@ -27,10 +27,11 @@ split: the first pass, and its words").
   replay cuts at units. Until then the extent is open, one partition is
   advised, one worker is recommended (D2) and two forward decodes are
   charged.
-- **Windows are held in memory for the rest of the run** (`KD130`), the
-  index the hand-over builds keeping them as its provider, each save
-  writing the section through the pass's provider (D114); a resumed pass reads
-  the earlier ones through the loaded cache's own.
+- **The windows the pass places are its provider's**, the index the
+  hand-over builds keeping it, each save writing the section through it
+  (D114); a resumed pass reads the earlier ones through the loaded cache's
+  own. Where that provider keeps them is 15.5.4's
+  ([`roadmap-P15.5.4-spilled-notes.md`](roadmap-P15.5.4-spilled-notes.md)).
 - **The mapping pass asks the extent again after each chunk**
   (`pgdt_mapping::forward`), and both preamble prepasses after their scan: a
   source whose end was open at the start can meet it in a read, and a map

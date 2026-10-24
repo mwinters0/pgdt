@@ -6,7 +6,7 @@ code works (the named module does) or quotes a number (`measurements.md` does, b
 invariant registers do by `I<n>`/`RT<n>`). Cite as `docs/design/decisions.md`, "D12"; the rest of the
 rules, the line cap included, are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D113 -->
+<!-- decision-watermark: D115 -->
 
 ## I/O, memory and parallelism
 ### D1 The library never spawns threads by surprise
@@ -152,6 +152,15 @@ reading them positionally through a handle of its own, so a load that decodes th
 index carries — a loaded cache's reading the previous file, which the rename over its name (D78) leaves open — so the section is rewritten whole, under D62's ratio, never patched. Rejected: windows
 inside the envelope, resident at open before any budget exists; a file beside the cache, which D20's and D21's identity checks do not cover, as D78 refused one for statistics; appending in place,
 which leaves a killed save no whole previous cache. Reopens: a save's copy of the section, not the index's, setting a save's duration. Code: `pgdt_dump::cache::file::windows`. Evidence: `a_cache_saved_over_itself_keeps_its_windows_and_reads_its_file`.
+
+### D115 A gzip first pass spills its windows to a file with no name, beside the cache or in the temp directory
+Each window is written as it is placed to a file made with no name, read positionally as D114's section is, and each save copies the section out of it, so no window is resident in any cache mode and nothing outlives
+the run (RT24); D114's objection to a file beside the cache does not reach it, there being no name for D20's and D21's checks to cover. It is made at the first window holding bytes, in the enabled cache's
+directory, which a save renames into, or else the OS temp directory, `open`'s caller naming it so `pgdt-io` names no cache; one that cannot be made is refused naming its directory, never answered from memory.
+Rejected: the windows held in memory, unbilled; billed through a per-source `WorkerMemory` term, naming an unbounded term without bounding it; re-based onto each saved cache, holding the windows since the last
+save and covering no disabled cache; the temp directory always, a tmpfs on common distributions' defaults whose pages the run's memory cgroup is charged; the directory a disabled cache would have had, beside a dump often
+on a read-only mount. Reopens: a spill directory a user needs to name apart from the cache's. Code: `first_pass/spill.rs` (`PassWindows`), `CacheMode::open`. Evidence: `a_first_pass_spills_its_windows_where_it_is_told`,
+`a_first_pass_spills_beside_its_cache_or_in_the_temp_directory`.
 
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source

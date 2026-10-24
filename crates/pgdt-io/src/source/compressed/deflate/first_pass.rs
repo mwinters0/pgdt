@@ -12,11 +12,15 @@
 //!
 //! **Serial until the end, then the indexed source.** The extent is open until
 //! a read meets the file's end, so nothing cuts the file and one forward
-//! decode serves the scan; at the end the complete index, its windows held
-//! beside it, opens the source a later run opens from its cache
+//! decode serves the scan; at the end the complete index, its windows in the
+//! pass's spill file, opens the source a later run opens from its cache
 //! ([`CompressedFileSource`], [`FetchedCompressedSource`]), and every read,
 //! partitioning and worker recommendation is that source's from then on — so a
 //! cold `query`'s replay reads units.
+//!
+//! **No window is resident**: each is written as it is placed to a file the
+//! run alone holds, in the directory `open`'s caller names
+//! (`docs/design/decisions.md`, "D115").
 //!
 //! **Announced where it opens and where it completes**, on the status channel
 //! as the `.xz` walk is: the source says why its run is serial, the
@@ -25,7 +29,7 @@
 use std::future::Future;
 use std::num::NonZeroU64;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
@@ -45,13 +49,20 @@ use super::super::{CompressedFileSource, CompressionIndex, FetchedCompressedSour
 use super::{CHECKPOINT_SPACING, GZIP, GzipIndex, INPUT_CHUNK, WindowProvider, gzip_error};
 
 mod pass;
+mod spill;
 
-use self::pass::{Inflating, Pass, PassWindows, Route, Served};
+use self::pass::{Inflating, Pass, Route, SKIP_SCRATCH, Served};
+use self::spill::PassWindows;
 
 /// What one forward decode of the pass holds besides the plaintext it hands
 /// out: the inflater and its window, the window copy a checkpoint is read out
 /// of, and the compressed input chunk.
 const DECODE_BYTES: u64 = gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64 + INPUT_CHUNK;
+
+/// What the pass holds besides the plaintext it hands out: its two forward
+/// decodes — the frontier and one behind it — and the scratch a read skipping
+/// to its first wanted byte decodes into.
+const PASS_BYTES: u64 = 2 * DECODE_BYTES + SKIP_SCRATCH as u64;
 
 /// A gzip file read by its first pass ([`open`](crate::open)'s source for one
 /// no cache has indexed), building its index as a forward decode reaches each
@@ -70,15 +81,6 @@ const DECODE_BYTES: u64 = gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64 +
 /// from its index compares the member's trailer against those recorded values
 /// combined, so a corrupted prefix is still refused at the end. A read behind
 /// the frontier is compared with nothing (`KD132`).
-// deficiency: KD130 — every window the pass places is held in memory, one
-// checkpoint's 32 KiB per `CHECKPOINT_SPACING` of plaintext, because each save
-// writes the whole window section out of the saved index's provider
-// (`docs/design/decisions.md`, "D114") and nothing else holds them yet; the
-// index `hand_over` builds keeps them as its provider, so they stay resident
-// for the rest of the run. They grow with the file rather than with the worker
-// count and no charge names them, so a large member holds windows no budget
-// was told of. **(b) owned by P15**, its slice 15.5.4 writing each one as it is
-// placed to an unnamed file the run alone holds.
 pub(crate) struct FirstPass {
     feed: Feed,
     /// What the pass's status lines name the file by: its origin as a message
@@ -93,8 +95,8 @@ pub(crate) struct FirstPass {
     /// Serialises reads: the frontier goes forward only, and a fetched feed
     /// releases `inner` while it waits for bytes.
     turn: tokio::sync::Mutex<()>,
-    /// Every window the pass has placed, and the provider a saved index reads
-    /// them through.
+    /// Every window the pass has placed, in its spill file, and the provider a
+    /// saved index reads them through.
     windows: Arc<PassWindows>,
     /// The plaintext buffers a read is answered in.
     pool: Arc<BufferPool>,
@@ -122,22 +124,30 @@ impl Feed {
 
 impl FirstPass {
     /// A pass from the file's first byte, placing checkpoints at
-    /// [`CHECKPOINT_SPACING`], its status lines naming the file `named` — its
-    /// origin as a message to the user names it.
-    pub(crate) fn fresh(named: String, feed: Feed, stored_size: u64) -> Result<FirstPass> {
-        Self::spaced(named, feed, stored_size, CHECKPOINT_SPACING)
+    /// [`CHECKPOINT_SPACING`] and spilling their windows into `spill`, its
+    /// status lines naming the file `named` — its origin as a message to the
+    /// user names it.
+    pub(crate) fn fresh(
+        named: String,
+        feed: Feed,
+        stored_size: u64,
+        spill: &Path,
+    ) -> Result<FirstPass> {
+        Self::spaced(named, feed, stored_size, CHECKPOINT_SPACING, spill)
     }
 
     /// A pass named `named` from the file's first byte, placing checkpoints
-    /// at `spacing`, saying it has started.
+    /// at `spacing` and spilling their windows into `spill`, saying it has
+    /// started.
     pub(crate) fn spaced(
         named: String,
         feed: Feed,
         stored_size: u64,
         spacing: NonZeroU64,
+        spill: &Path,
     ) -> Result<FirstPass> {
         let forward = gz_seek::Forward::new(spacing).map_err(gzip_error)?;
-        let windows = PassWindows::fresh();
+        let windows = PassWindows::fresh(spill);
         let pass = Self::over(named, feed, stored_size, Inflating::new(forward), 0, None, windows);
         tracing::info!(
             source = %pass.named,
@@ -149,8 +159,8 @@ impl FirstPass {
 
     /// A pass named `named` resumed at the last checkpoint of `index`, an
     /// incomplete index a previous pass over the *same* file saved, its
-    /// windows read through the provider riding on it, saying it has started
-    /// and from which checkpoint.
+    /// windows read through the provider riding on it and those it places
+    /// spilled into `spill`, saying it has started and from which checkpoint.
     ///
     /// **Checked against the file, reading no bytes of it**: an index whose
     /// last checkpoint lies at or past the file's end, or that `gz_seek`
@@ -162,6 +172,7 @@ impl FirstPass {
         feed: Feed,
         stored_size: u64,
         index: GzipIndex,
+        spill: &Path,
     ) -> Result<FirstPass> {
         let GzipIndex { index, windows } = index;
         let checkpoints = index.checkpoints();
@@ -185,7 +196,7 @@ impl FirstPass {
         // A pass resumed at a member start places that checkpoint again.
         let placed = checkpoints.len() - usize::from(last.start == gz_seek::Start::Member);
         let base = checkpoints.len();
-        let pass_windows = PassWindows::after(windows, base);
+        let pass_windows = PassWindows::after(windows, base, spill);
         let inflating = Inflating::new(forward);
         let pass =
             Self::over(named, feed, stored_size, inflating, placed, Some(index), pass_windows);
@@ -344,8 +355,9 @@ impl FirstPass {
     }
 
     /// The pass has reached the end: the indexed source over the complete
-    /// index, which every call is from now on, with what callers announced
-    /// replayed on it, saying what the index holds.
+    /// index, its windows still read out of the spill file, which every call
+    /// is from now on, with what callers announced replayed on it, saying
+    /// what the index holds.
     fn hand_over(&self) -> Result<()> {
         let index = self.lock().ended.clone().expect("the frontier reached the end");
         let windows = Arc::clone(&self.windows) as Arc<dyn WindowProvider>;
@@ -568,12 +580,12 @@ impl ByteRangeSource for FirstPass {
         }
     }
 
-    /// One partition until the end, a forward decode costing what it holds:
-    /// nothing cuts a file whose extent is open.
+    /// One partition until the end, a forward decode and the skip scratch
+    /// costing what they hold: nothing cuts a file whose extent is open.
     fn partitions(&self, range: Range<u64>) -> Partitioning {
         match self.done.get() {
             Some(done) => done.partitions(range),
-            None => Partitioning::single(DECODE_BYTES),
+            None => Partitioning::single(DECODE_BYTES + SKIP_SCRATCH as u64),
         }
     }
 
@@ -587,11 +599,12 @@ impl ByteRangeSource for FirstPass {
         self.done.get().map_or(1, |done| done.default_workers())
     }
 
-    /// Two forward decodes — the frontier and one behind it.
+    /// The whole pass: two forward decodes — the frontier and one behind it
+    /// — and the skip scratch, its windows being on disk.
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
         match self.done.get() {
             Some(done) => done.default_worker_memory(),
-            None => Some(WorkerMemory::per_worker(2 * DECODE_BYTES)),
+            None => Some(WorkerMemory::per_worker(PASS_BYTES)),
         }
     }
 

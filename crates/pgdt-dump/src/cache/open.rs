@@ -4,6 +4,7 @@
 //! [`Held`]). A source already in hand is opened the same way, short of the
 //! step that builds it ([`CacheMode::open_source`]).
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::file::{CacheFile, CacheStatus, LoadedCache, read_cache_file};
@@ -108,7 +109,12 @@ impl CacheMode {
     /// being `CacheMode::refusal`'s, and a mode that may replace the cache
     /// opens the source claiming nothing and answers [`Held::Replacing`]
     /// instead (`docs/design/decisions.md`, "D20").
+    ///
+    /// **A gzip first pass the open builds writes its windows** to a file
+    /// with no name in the enabled cache's directory, or else the OS temp
+    /// directory (`docs/design/decisions.md`, "D115").
     pub async fn open(&self, origin: &Origin) -> Result<Opened> {
+        let spill = self.spill_dir();
         let claimed = match self.path() {
             None => Claimed::Nothing(Held::Disabled),
             Some(path) => match read_cache_file(path)? {
@@ -124,15 +130,15 @@ impl CacheMode {
             },
         };
         let (source, file) = match claimed {
-            Claimed::File(file, known) => match pgdt_io::open(origin, known).await? {
+            Claimed::File(file, known) => match pgdt_io::open(origin, known, &spill).await? {
                 Recognized::Source(source) => (source, Ok(file)),
                 Recognized::Mismatch => {
                     drop_attributed(file.index);
                     let held = self.replacing(Unusable::CompressionContradicted)?;
-                    (open_claiming_nothing(origin).await?, Err(held))
+                    (open_claiming_nothing(origin, &spill).await?, Err(held))
                 }
             },
-            Claimed::Nothing(held) => (open_claiming_nothing(origin).await?, Err(held)),
+            Claimed::Nothing(held) => (open_claiming_nothing(origin, &spill).await?, Err(held)),
         };
         let watch = SourceWatch::open(source.as_ref(), self.strict_identity()).await?;
         let file = match file {
@@ -149,7 +155,7 @@ impl CacheMode {
             // opened again on none.
             CacheStatus::Unusable(why) => {
                 let cache = self.replacing(why)?;
-                let source = open_claiming_nothing(origin).await?;
+                let source = open_claiming_nothing(origin, &spill).await?;
                 let watch = SourceWatch::open(source.as_ref(), self.strict_identity()).await?;
                 Ok(self.opened(source, watch, cache))
             }
@@ -187,6 +193,18 @@ impl CacheMode {
         Ok(self.opened(source, watch, cache))
     }
 
+    /// Where a gzip file's first pass, opened under this mode, writes the
+    /// windows it places: the enabled cache's directory, which a save renames
+    /// into, or the OS temp directory where the cache is disabled
+    /// (`docs/design/decisions.md`, "D115").
+    fn spill_dir(&self) -> PathBuf {
+        match self.path().map(Path::parent) {
+            Some(Some(dir)) if !dir.as_os_str().is_empty() => dir.to_path_buf(),
+            Some(_) => PathBuf::from("."),
+            None => std::env::temp_dir(),
+        }
+    }
+
     /// What an open hands back, under this mode.
     fn opened(&self, source: Arc<dyn ByteRangeSource>, watch: SourceWatch, cache: Held) -> Opened {
         Opened { source, watch, cache, mode: self.clone() }
@@ -211,10 +229,14 @@ enum Claimed {
 }
 
 /// Open `origin` with nothing claimed about its compression layer, which
-/// recognition then cannot be contradicted on.
-async fn open_claiming_nothing(origin: &Origin) -> Result<Arc<dyn ByteRangeSource>> {
-    match pgdt_io::open(origin, KnownCompression::Unknown).await? {
+/// recognition then cannot be contradicted on, a first pass spilling into
+/// `spill`.
+async fn open_claiming_nothing(origin: &Origin, spill: &Path) -> Result<Arc<dyn ByteRangeSource>> {
+    match pgdt_io::open(origin, KnownCompression::Unknown, spill).await? {
         Recognized::Source(source) => Ok(source),
         Recognized::Mismatch => unreachable!("`Unknown` claims nothing to contradict"),
     }
 }
+
+#[cfg(test)]
+mod tests;

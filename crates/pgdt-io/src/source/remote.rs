@@ -4,6 +4,7 @@
 //! before it starts. Everything here is behind the `http` feature.
 
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -417,7 +418,11 @@ impl ByteRangeSource for RemoteSource {
 /// strictness passed to every open for the sake of one pairing — an uncached
 /// `.xz` from a server stating no usable validator. **(c) unowned**; promoted
 /// by a user who meets it on a dump of many streams.
-pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Result<Recognized> {
+pub(crate) async fn open_remote(
+    origin: &Origin,
+    known: KnownCompression,
+    spill: &Path,
+) -> Result<Recognized> {
     let Location::Remote(object) = &origin.location else {
         return Err(Error::SourceNotReadable {
             origin: origin.to_string(),
@@ -436,6 +441,7 @@ pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Res
                 Feed::Fetched(fetched()),
                 probe.stored_size(),
                 index,
+                spill,
             ))
         }
         // The saving, and the reason the cold walk below is worth announcing
@@ -471,6 +477,7 @@ pub(crate) async fn open_remote(origin: &Origin, known: KnownCompression) -> Res
             origin.to_string(),
             Feed::Fetched(fetched()),
             probe.stored_size(),
+            spill,
         )?))),
         Verdict::Mismatch => Ok(Recognized::Mismatch),
         Verdict::Plain => Ok(Recognized::Source(fetched())),

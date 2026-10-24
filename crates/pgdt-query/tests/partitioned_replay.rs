@@ -818,7 +818,10 @@ async fn a_gzip_first_pass_plan_says_it_reads_serially_until_the_end() {
     let expected = serial_rows(local(&plain), "public.small", QueryOptions::default()).await;
     let opened = || async {
         let origin = pgdt_io::Origin::local(&gz);
-        match pgdt_io::open(&origin, pgdt_io::KnownCompression::Unknown).await.unwrap() {
+        match pgdt_io::open(&origin, pgdt_io::KnownCompression::Unknown, &std::env::temp_dir())
+            .await
+            .unwrap()
+        {
             pgdt_io::Recognized::Source(source) => source,
             pgdt_io::Recognized::Mismatch => unreachable!("claiming nothing is never a mismatch"),
         }

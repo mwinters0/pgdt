@@ -42,6 +42,11 @@ object_store = { version = "0.14.2", optional = true, default-features = false, 
 ] }
 pgdt-core = { path = "../pgdt-core" }
 serde = { workspace = true, optional = true, features = ["derive"] }
+# The file a gzip first pass writes its windows to, made with no name
+# (`O_TMPFILE`, or created and unlinked) so nothing outlives the run
+# (`docs/design/decisions.md`, "D115"; RT24). Already in the shipped closure,
+# through DataFusion's spill files.
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync"] }
 # The token a source races a request in flight against
 # (`ByteRangeSource::hint_cancellation`).
@@ -71,5 +76,4 @@ flate2 = { workspace = true }
 noodles-bgzf = { workspace = true }
 # Where `pg_dump`'s own compressed fixtures are.
 pgdt-fixtures = { path = "../pgdt-fixtures" }
-tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

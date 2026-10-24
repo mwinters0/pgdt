@@ -71,7 +71,10 @@ async fn an_origin_displays_as_its_path() {
 /// Recognition with nothing claimed, unwrapped: `KnownCompression::Unknown`
 /// claims nothing recognition could contradict.
 async fn recognize(path: &Path) -> Arc<dyn ByteRangeSource> {
-    match open_local(&Origin::local(path), KnownCompression::Unknown).await.unwrap() {
+    match open_local(&Origin::local(path), KnownCompression::Unknown, &std::env::temp_dir())
+        .await
+        .unwrap()
+    {
         Recognized::Source(source) => source,
         Recognized::Mismatch => panic!("`Unknown` claims nothing to contradict"),
     }
@@ -131,6 +134,7 @@ async fn open_local_builds_an_xz_source_from_a_handed_back_table() {
     let source = match open_local(
         &Origin::local(compressed.path()),
         KnownCompression::Compressed(CompressionIndex::Xz(table.clone())),
+        &std::env::temp_dir(),
     )
     .await
     .unwrap()
@@ -165,6 +169,7 @@ async fn a_handed_back_table_is_used_rather_than_re_walked() {
     let source = match open_local(
         &Origin::local(compressed.path()),
         KnownCompression::Compressed(CompressionIndex::Xz(table)),
+        &std::env::temp_dir(),
     )
     .await
     .unwrap()
@@ -193,7 +198,8 @@ async fn open_local_reports_a_table_that_does_not_describe_the_file() {
     assert!(matches!(
         open_local(
             &Origin::local(compressed.path()),
-            KnownCompression::Compressed(CompressionIndex::Xz(other_table))
+            KnownCompression::Compressed(CompressionIndex::Xz(other_table)),
+            &std::env::temp_dir()
         )
         .await
         .unwrap(),
@@ -214,14 +220,21 @@ async fn open_local_reports_a_compression_claim_the_file_contradicts() {
     assert!(matches!(
         open_local(
             &Origin::local(plain_file.path()),
-            KnownCompression::Compressed(CompressionIndex::Xz(table))
+            KnownCompression::Compressed(CompressionIndex::Xz(table)),
+            &std::env::temp_dir()
         )
         .await
         .unwrap(),
         Recognized::Mismatch
     ));
     assert!(matches!(
-        open_local(&Origin::local(compressed.path()), KnownCompression::Plain).await.unwrap(),
+        open_local(
+            &Origin::local(compressed.path()),
+            KnownCompression::Plain,
+            &std::env::temp_dir()
+        )
+        .await
+        .unwrap(),
         Recognized::Mismatch
     ));
 }
@@ -230,11 +243,17 @@ async fn open_local_reports_a_compression_claim_the_file_contradicts() {
 #[tokio::test]
 async fn open_local_accepts_a_plain_claim_about_a_plain_file() {
     let (file, _plain) = source_of(b"0123456789abcdef");
-    let source =
-        match open_local(&Origin::local(file.path()), KnownCompression::Plain).await.unwrap() {
-            Recognized::Source(source) => source,
-            Recognized::Mismatch => panic!("a plain file is what the claim said"),
-        };
+    let source = match open_local(
+        &Origin::local(file.path()),
+        KnownCompression::Plain,
+        &std::env::temp_dir(),
+    )
+    .await
+    .unwrap()
+    {
+        Recognized::Source(source) => source,
+        Recognized::Mismatch => panic!("a plain file is what the claim said"),
+    };
     assert!(source.compression_index().is_none());
     assert_eq!(source.extent().await.unwrap().exact().unwrap(), 16);
 }
@@ -243,7 +262,8 @@ async fn open_local_accepts_a_plain_claim_about_a_plain_file() {
 #[tokio::test]
 async fn open_local_refuses_a_remote_origin_rather_than_asserting_it_is_local() {
     let origin = Origin::resolve("http://example.com/koji.dump").unwrap();
-    let Err(err) = open_local(&origin, KnownCompression::Unknown).await else {
+    let Err(err) = open_local(&origin, KnownCompression::Unknown, &std::env::temp_dir()).await
+    else {
         panic!("`open_local` answered for a URL");
     };
     let err = err.to_string();

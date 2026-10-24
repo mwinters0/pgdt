@@ -44,7 +44,10 @@ fn serving_dump() -> Oracle {
 /// The source `url` names, opened as a run opens it: probe, then recognition.
 async fn source_of(url: &str) -> Arc<dyn ByteRangeSource> {
     let origin = Origin::resolve(url).expect("the URL resolves");
-    match open(&origin, KnownCompression::Unknown).await.expect("the origin opens") {
+    match open(&origin, KnownCompression::Unknown, &std::env::temp_dir())
+        .await
+        .expect("the origin opens")
+    {
         Recognized::Source(source) => source,
         Recognized::Mismatch => panic!("nothing was claimed, so nothing can be contradicted"),
     }
@@ -287,10 +290,11 @@ async fn a_stalled_request_is_abandoned_and_retried_rather_than_waited_out() {
     // the crate's three-minute deadline.
     let oracle = Oracle::serving(dump_bytes()).stalling_request(FIRST_READ, STALL).start();
     let origin = Origin::remote_with_read_timeout(&oracle.url().parse().unwrap(), ms(150)).unwrap();
-    let source = match open(&origin, KnownCompression::Unknown).await.unwrap() {
-        Recognized::Source(source) => source,
-        Recognized::Mismatch => unreachable!(),
-    };
+    let source =
+        match open(&origin, KnownCompression::Unknown, &std::env::temp_dir()).await.unwrap() {
+            Recognized::Source(source) => source,
+            Recognized::Mismatch => unreachable!(),
+        };
 
     let started = Instant::now();
     let read = source.read_range(0, 32).await;
@@ -982,7 +986,10 @@ async fn open_remote_reports_a_compression_claim_the_object_contradicts() {
     let compressed = serving_xz_dump();
     let origin = Origin::resolve(&xz_url(&compressed)).unwrap();
     assert!(
-        matches!(open(&origin, KnownCompression::Plain).await.unwrap(), Recognized::Mismatch),
+        matches!(
+            open(&origin, KnownCompression::Plain, &std::env::temp_dir()).await.unwrap(),
+            Recognized::Mismatch
+        ),
         "a plain claim over `.xz` bytes",
     );
 
@@ -995,7 +1002,9 @@ async fn open_remote_reports_a_compression_claim_the_object_contradicts() {
     let origin = Origin::resolve(&plain.url()).unwrap();
     assert!(
         matches!(
-            open(&origin, KnownCompression::Compressed(index.unwrap())).await.unwrap(),
+            open(&origin, KnownCompression::Compressed(index.unwrap()), &std::env::temp_dir())
+                .await
+                .unwrap(),
             Recognized::Mismatch
         ),
         "a compression index over plain bytes",
