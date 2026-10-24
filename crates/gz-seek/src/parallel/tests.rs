@@ -219,6 +219,24 @@ fn a_pass_takes_the_chunks_it_is_handed() {
     }
 }
 
+/// **A speculation is handed out no further ahead than its caller bounds
+/// it**: `task_through` hands out each chunk up to its bound and then nothing,
+/// and the first chunk past the bound is the first a wider one hands out.
+#[test]
+fn a_speculation_is_handed_out_no_further_than_its_bound() {
+    let file = gzip(&payload(1_200_000, 3), 6);
+    let chunk = NonZeroU64::new(8 * 1024).unwrap();
+    assert!(file.len() as u64 > 6 * chunk.get(), "{} bytes", file.len());
+    let mut pass =
+        Parallel::new(self::spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+    let mut through = |last| {
+        std::iter::from_fn(|| pass.task_through(last)).map(|t| t.id().chunk()).collect::<Vec<_>>()
+    };
+    assert_eq!(through(3), [1, 2, 3]);
+    assert_eq!(through(3), Vec::<u64>::new());
+    assert_eq!(through(5), [4, 5]);
+}
+
 /// **A decode begun with a history the frontier contradicts is never taken**:
 /// a guess whose history at its stop is wrong gives the next chunk's decode a
 /// wrong window, and the plaintext it decodes from there is dropped, those

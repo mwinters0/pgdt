@@ -1,4 +1,9 @@
-use std::sync::Arc;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
+
+use bytes::Bytes;
 
 use crate::source::compressed::index_refused;
 use crate::test_support::*;
@@ -467,18 +472,17 @@ fn taken(pass: &FirstPass) -> u64 {
     pass.lock().frontier.as_ref().map_or(0, |frontier| frontier.decode.taken())
 }
 
-/// **A pulled pass inflates ahead on the workers its parallelism affords and
-/// builds the serial pass's index**: under each count the plaintext whole and
-/// the index and windows `gz_seek`'s forward pass builds, the frontier
-/// taking chunks the tasks decoded wherever more than one worker runs, and
-/// none where one does; a fetched pass runs nothing ahead at any count. Each
-/// recommends what it can use.
+/// **A pass inflates ahead on the workers its parallelism affords and builds
+/// the serial pass's index, on either feed**: under each count the plaintext
+/// whole and the index and windows `gz_seek`'s forward pass builds. Each
+/// recommends what it can use, a fetched pass as a pulled one.
 #[tokio::test]
-async fn a_pulled_pass_inflates_ahead_and_builds_the_serial_index() {
+async fn a_pass_inflates_ahead_on_either_feed_and_builds_the_serial_index() {
     let payload = gzip_test_payload();
     let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
     assert!(CHUNKING.chunks(stored) > 8, "{stored} bytes");
+    let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
     for feed_name in FEEDS {
         for jobs in [1, 2, 4, 8] {
             let what = format!("{feed_name} at {jobs}");
@@ -491,16 +495,9 @@ async fn a_pulled_pass_inflates_ahead_and_builds_the_serial_index() {
                 &std::env::temp_dir(),
             )
             .unwrap();
-            let recommended = if feed_name == "pulled" {
-                let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-                cores.min(CHUNKING.chunks(stored) as usize)
-            } else {
-                1
-            };
-            assert_eq!(pass.default_workers(), recommended, "{what}");
+            assert_eq!(pass.default_workers(), cores.min(CHUNKING.chunks(stored) as usize));
             pass.hint_parallelism(lifted(jobs));
-            let ahead = if feed_name == "pulled" { jobs - 1 } else { 0 };
-            assert_eq!(pass.ahead_tasks(), ahead, "{what}");
+            assert_eq!(pass.ahead_tasks(), jobs - 1, "{what}");
 
             let most = scanned(&pass, 0, 7919).await;
             assert_eq!(most, payload, "{what}");
@@ -509,6 +506,89 @@ async fn a_pulled_pass_inflates_ahead_and_builds_the_serial_index() {
             assert_eq!(windows_of(&built), windows_of(&expected), "{what}");
         }
     }
+}
+
+/// `path` read through a transport recording every range asked of it.
+struct Recording {
+    inner: LocalFileSource,
+    asked: Mutex<Vec<(u64, usize)>>,
+}
+
+impl Recording {
+    fn over(path: &std::path::Path) -> Arc<Recording> {
+        let inner = LocalFileSource::open(path).unwrap();
+        Arc::new(Recording { inner, asked: Mutex::new(Vec::new()) })
+    }
+
+    /// Every range asked for, in file order.
+    fn asked(&self) -> Vec<(u64, usize)> {
+        let mut asked = self.asked.lock().unwrap().clone();
+        asked.sort_unstable();
+        asked
+    }
+}
+
+impl ByteRangeSource for Recording {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        self.asked.lock().unwrap().push((offset, len));
+        self.inner.read_range(offset, len)
+    }
+
+    fn extent(&self) -> Pin<Box<dyn Future<Output = Result<Extent>> + Send + '_>> {
+        self.inner.extent()
+    }
+
+    fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+        self.inner.modified()
+    }
+}
+
+/// **A fetched pass downloads the object once, whatever runs ahead**: at
+/// each count every compressed byte is asked of the transport exactly once,
+/// the ranges tiling the object, while the frontier takes chunks its tasks
+/// decoded at four workers or eight.
+#[tokio::test]
+async fn a_fetched_pass_downloads_the_object_once_with_tasks_ahead() {
+    let payload = gzip_test_payload();
+    let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
+    let stored = std::fs::metadata(compressed.path()).unwrap().len();
+    let mut taken_ahead = Vec::new();
+    for jobs in [1, 2, 4, 8] {
+        let raw = Recording::over(compressed.path());
+        let pass = FirstPass::chunked(
+            named(compressed.path()),
+            Feed::Fetched(Arc::clone(&raw) as Arc<dyn ByteRangeSource>),
+            stored,
+            SPACING,
+            CHUNKING,
+            &std::env::temp_dir(),
+        )
+        .unwrap();
+        pass.hint_parallelism(lifted(jobs));
+        let most = payload.len() * 3 / 4;
+        let mut got = pass.read_range(0, most).await.unwrap().to_vec();
+        if jobs >= 4 {
+            taken_ahead.push(taken(&pass));
+        }
+        got.extend_from_slice(&scanned(&pass, most as u64, 7919).await);
+        assert_eq!(got, payload, "at {jobs}");
+        assert_eq!(gzip_index_of(&pass), expected, "at {jobs}");
+
+        let mut next = 0;
+        for (offset, len) in raw.asked() {
+            assert_eq!(offset, next, "at {jobs}: {:?}", raw.asked());
+            next += len as u64;
+        }
+        assert_eq!(next, stored, "at {jobs}: the object, once");
+    }
+    // Whether a chunk's decode lands before the frontier reaches it is a
+    // race the runtime's scheduling decides, so one count of the two taking
+    // is the evidence the lift reaches a fetched pass.
+    assert!(taken_ahead.iter().any(|&n| n > 0), "every chunk decoded by the frontier");
 }
 
 /// **Chunks are taken from the tasks before the end**: a pulled pass at four
@@ -544,46 +624,49 @@ async fn a_lifted_frontier_takes_the_chunks_its_tasks_decoded() {
 
 /// **A pass resumed with tasks ahead builds the uninterrupted index**, from
 /// the index a pass interrupted with tasks ahead saved, inside the member and
-/// at its start.
+/// at its start, on either feed.
 #[tokio::test]
 async fn a_lifted_pass_resumes_into_the_uninterrupted_index() {
     let payload = gzip_test_payload();
     let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
-    for stop in [payload.len() / 2, 100] {
-        let interrupted = FirstPass::chunked(
-            named(compressed.path()),
-            Feed::file(compressed.path()).unwrap(),
-            stored,
-            SPACING,
-            CHUNKING,
-            &std::env::temp_dir(),
-        )
-        .unwrap();
-        interrupted.hint_parallelism(lifted(4));
-        interrupted.read_range(0, stop).await.unwrap();
-        let saved = gzip_index_of(&interrupted);
-        let resumed = FirstPass::resumed_chunked(
-            named(compressed.path()),
-            Feed::file(compressed.path()).unwrap(),
-            stored,
-            saved,
-            CHUNKING,
-            &std::env::temp_dir(),
-        )
-        .unwrap();
-        resumed.hint_parallelism(lifted(4));
-        let rest = scanned(&resumed, 0, 6007).await;
-        assert_eq!(rest, payload, "stopped at {stop}");
-        let built = gzip_index_of(&resumed);
-        assert_eq!(built, expected, "stopped at {stop}");
-        assert_eq!(windows_of(&built), windows_of(&expected), "stopped at {stop}");
+    for feed_name in FEEDS {
+        for stop in [payload.len() / 2, 100] {
+            let what = format!("{feed_name}, stopped at {stop}");
+            let interrupted = FirstPass::chunked(
+                named(compressed.path()),
+                feed(feed_name, compressed.path()),
+                stored,
+                SPACING,
+                CHUNKING,
+                &std::env::temp_dir(),
+            )
+            .unwrap();
+            interrupted.hint_parallelism(lifted(4));
+            interrupted.read_range(0, stop).await.unwrap();
+            let saved = gzip_index_of(&interrupted);
+            let resumed = FirstPass::resumed_chunked(
+                named(compressed.path()),
+                feed(feed_name, compressed.path()),
+                stored,
+                saved,
+                CHUNKING,
+                &std::env::temp_dir(),
+            )
+            .unwrap();
+            resumed.hint_parallelism(lifted(4));
+            let rest = scanned(&resumed, 0, 6007).await;
+            assert_eq!(rest, payload, "{what}");
+            let built = gzip_index_of(&resumed);
+            assert_eq!(built, expected, "{what}");
+            assert_eq!(windows_of(&built), windows_of(&expected), "{what}");
+        }
     }
 }
 
 /// **Damage is refused with tasks ahead as without**: a file cut short
 /// inside its member fails the read that meets the cut, whichever decoded
-/// the chunks before it.
+/// the chunks before it, on either feed.
 #[tokio::test]
 async fn a_damaged_file_is_refused_with_tasks_ahead() {
     let payload = gzip_test_payload();
@@ -591,42 +674,47 @@ async fn a_damaged_file_is_refused_with_tasks_ahead() {
     let bytes = std::fs::read(compressed.path()).unwrap();
     let damaged = bytes[..bytes.len() - 20].to_vec();
     let (file, _source) = source_of(&damaged);
-    let pass = FirstPass::chunked(
-        named(file.path()),
-        Feed::file(file.path()).unwrap(),
-        damaged.len() as u64,
-        SPACING,
-        CHUNKING,
-        &std::env::temp_dir(),
-    )
-    .unwrap();
-    pass.hint_parallelism(lifted(4));
-    assert!(pass.read_at_most(0, payload.len() + 1).await.is_err());
-}
-
-/// **A wait never rests on a thread the runtime has yet to give**: on a
-/// runtime of one blocking thread, which the frontier's read holds, every
-/// task queues behind it, and the frontier runs each it waits for itself —
-/// the pass reaching the end with the serial pass's index.
-#[test]
-fn a_frontier_runs_a_task_it_waits_for_that_nothing_has_started() {
-    let runtime =
-        tokio::runtime::Builder::new_current_thread().max_blocking_threads(1).build().unwrap();
-    let payload = gzip_test_payload();
-    let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
-    let stored = std::fs::metadata(compressed.path()).unwrap().len();
-    runtime.block_on(async {
+    for feed_name in FEEDS {
         let pass = FirstPass::chunked(
-            named(compressed.path()),
-            Feed::file(compressed.path()).unwrap(),
-            stored,
+            named(file.path()),
+            feed(feed_name, file.path()),
+            damaged.len() as u64,
             SPACING,
             CHUNKING,
             &std::env::temp_dir(),
         )
         .unwrap();
         pass.hint_parallelism(lifted(4));
-        assert_eq!(scanned(&pass, 0, 1 << 20).await, payload);
-        assert_eq!(gzip_index_of(&pass), expected);
-    });
+        assert!(pass.read_at_most(0, payload.len() + 1).await.is_err(), "{feed_name}");
+    }
+}
+
+/// **A wait never rests on a thread the runtime has yet to give**: on a
+/// runtime of one blocking thread, which the frontier's step holds, every
+/// task queues behind it — a pulled frontier running each it waits for
+/// itself, a fetched one awaiting each on the runtime — the pass reaching the
+/// end with the serial pass's index.
+#[test]
+fn a_frontier_waits_for_a_task_that_nothing_has_started_on_either_feed() {
+    let runtime =
+        tokio::runtime::Builder::new_current_thread().max_blocking_threads(1).build().unwrap();
+    let payload = gzip_test_payload();
+    let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
+    let stored = std::fs::metadata(compressed.path()).unwrap().len();
+    for feed_name in FEEDS {
+        runtime.block_on(async {
+            let pass = FirstPass::chunked(
+                named(compressed.path()),
+                feed(feed_name, compressed.path()),
+                stored,
+                SPACING,
+                CHUNKING,
+                &std::env::temp_dir(),
+            )
+            .unwrap();
+            pass.hint_parallelism(lifted(4));
+            assert_eq!(scanned(&pass, 0, 1 << 20).await, payload, "{feed_name}");
+            assert_eq!(gzip_index_of(&pass), expected, "{feed_name}");
+        });
+    }
 }

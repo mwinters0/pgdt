@@ -69,6 +69,9 @@ pub(super) enum Served {
     Needs(u64),
     /// The decode reached the file's end, the read holding what there was.
     Ended,
+    /// The frontier stands waiting for a task ahead, whose landing the read
+    /// awaits before serving on: a fetched feed's.
+    Waits,
 }
 
 /// A decode behind the frontier.
@@ -229,6 +232,7 @@ impl Pass {
             }
             Ok(Filled::Full) => Ok(Served::Full),
             Ok(Filled::Needs(at)) => Ok(Served::Needs(at)),
+            Ok(Filled::Waits) => Ok(Served::Waits),
             Ok(Filled::UnitEnded) => unreachable!("the frontier is a forward pass"),
             Err(e) => {
                 let decode = frontier.take().expect("the frontier was decoding");
@@ -264,7 +268,7 @@ impl Pass {
                     )? {
                         Filled::UnitEnded => {}
                         Filled::Needs(at) => return Ok(Served::Needs(at)),
-                        Filled::Full | Filled::Ended => {
+                        Filled::Full | Filled::Ended | Filled::Waits => {
                             return Err(Error::Io(std::io::Error::other(
                                 "a gzip unit's decode stopped short of its check",
                             )));
@@ -286,6 +290,7 @@ impl Pass {
                 Filled::Full => return Ok(Served::Full),
                 Filled::Needs(at) => return Ok(Served::Needs(at)),
                 Filled::Ended => return Ok(Served::Ended),
+                Filled::Waits => unreachable!("only the frontier waits for a task"),
                 Filled::UnitEnded => {
                     let Behind::Closed(read) = &decode.decode else {
                         unreachable!("only a closed unit's decode ends at its unit's end")
@@ -433,7 +438,7 @@ impl Decode for Behind {
             Behind::Closed(read) => {
                 let progress = read.read(input, out).map_err(gzip_error)?;
                 let needs_input = progress == gz_seek::Progress::default();
-                Ok(Step { progress, checkpoint: false, needs_input })
+                Ok(Step { progress, checkpoint: false, needs_input, waits: false })
             }
             Behind::Open(forward) => Decode::step(forward, input, out),
         }

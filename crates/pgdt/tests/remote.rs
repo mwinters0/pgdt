@@ -1180,3 +1180,108 @@ fn parse_over_a_remote_bgzf_file_announces_its_first_pass_and_no_walk() {
     assert!(started[0].contains("INFO") && complete[0].contains("INFO"), "{said}");
     assert!(!said.contains("BGZF member walk"), "{said}");
 }
+
+// ---------------------------------------------------------------------------
+// A remote gzip member inflated ahead of its first pass (D2, D117)
+// ---------------------------------------------------------------------------
+
+/// A dump of `tables` tables of about `table_bytes` each, its rows' values
+/// scattered so the member compresses to several of the pass's chunks,
+/// compressed as one gzip member flushed every 256 KiB, so its deflate blocks
+/// end whatever backend `flate2` is built over.
+fn scattered_gzip_dump(tables: usize, table_bytes: usize) -> Vec<u8> {
+    use std::io::Write as _;
+    let mut plain = String::from("SET client_encoding = 'UTF8';\n\n");
+    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+    for t in 0..tables {
+        plain.push_str(&format!(
+            "CREATE TABLE public.t{t} (\n    id integer,\n    name text\n);\n\n\
+             COPY public.t{t} (id, name) FROM stdin;\n"
+        ));
+        let start = plain.len();
+        let mut id: u64 = 1;
+        while plain.len() - start < table_bytes {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            plain.push_str(&format!("{id}\t{state:016x}\n"));
+            id += 1;
+        }
+        plain.push_str("\\.\n\n");
+    }
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    for piece in plain.as_bytes().chunks(256 * 1024) {
+        encoder.write_all(piece).unwrap();
+        encoder.flush().unwrap();
+    }
+    encoder.finish().unwrap()
+}
+
+/// Every range the ranged GETs after the probe asked for, in object order.
+fn ranges_after_the_probe(oracle: &Oracle) -> Vec<(u64, u64)> {
+    let mut ranges: Vec<(u64, u64)> = oracle.requests()[1..]
+        .iter()
+        .map(|request| {
+            let range = request.range().expect("every read after the probe is ranged");
+            let (from, to) = range.trim_start_matches("bytes=").split_once('-').unwrap();
+            (from.parse().unwrap(), to.parse::<u64>().unwrap() + 1)
+        })
+        .collect();
+    ranges.sort_unstable();
+    ranges
+}
+
+#[tokio::test]
+async fn a_remote_gzip_member_is_downloaded_once_by_a_first_pass_inflating_ahead() {
+    // A fetched first pass runs chunks of the member ahead of its frontier on
+    // the workers its parallelism affords, every one of them and the frontier
+    // reading one download, so the ranged GETs after the probe tile the
+    // object once, and recommends the cores a local file's pass does.
+    let bytes = scattered_gzip_dump(3, 4 << 20);
+    assert!(bytes.len() > 4 << 20, "{} bytes, a few of the pass's chunks", bytes.len());
+    let oracle = Oracle::serving(bytes.clone()).start();
+    let source = source_of(&oracle.url_for("dump.sql.gz")).await;
+    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+    assert_eq!(source.default_workers(), cores.min(bytes.len().div_ceil(1 << 20)));
+    source.hint_parallelism(Parallelism::workers(4, 4 << 30));
+    let mut plaintext = 0;
+    loop {
+        let read = source.read_at_most(plaintext, 1 << 20).await.unwrap();
+        plaintext += read.len() as u64;
+        if read.len() < 1 << 20 {
+            break;
+        }
+    }
+    assert_eq!(source.extent().await.unwrap(), Extent::Exact(plaintext));
+    let mut next = 0;
+    for (from, to) in ranges_after_the_probe(&oracle) {
+        assert_eq!(from, next, "{:?}", ranges_after_the_probe(&oracle));
+        next = to;
+    }
+    assert_eq!(next, bytes.len() as u64, "the object, once");
+}
+
+#[test]
+fn parse_and_query_over_a_remote_gzip_member_inflate_ahead_and_answer_what_the_local_file_does() {
+    // A `parse` stating its workers says its first pass inflates ahead on
+    // them, and a cold `query`, at the count the pass recommends, answers what
+    // the local file answers.
+    let bytes = scattered_gzip_dump(3, 4 << 20);
+    let oracle = Oracle::serving(bytes.clone()).start();
+    let url = oracle.url_for("dump.sql.gz");
+    let dir = tempfile::tempdir().unwrap();
+    let out = run_in(&dir, &["parse", "--source", &url, "--jobs", "4"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let said = stderr_of(&out);
+    let started: Vec<_> = said.lines().filter(|line| line.contains("first pass started")).collect();
+    assert_eq!(started.len(), 1, "{said}");
+    assert!(started[0].contains("inflating in parallel") && started[0].contains("workers=4"));
+
+    let local_dir = tempfile::tempdir().unwrap();
+    let local = local_dir.path().join("dump.sql.gz");
+    std::fs::write(&local, &bytes).unwrap();
+    let query = |source: &str| {
+        run_ok(&["query", "--source", source, "--table", "public.t1", "--dtcache", "none"])
+    };
+    assert_eq!(query(&url), query(local.to_str().unwrap()));
+}

@@ -320,12 +320,21 @@ impl Parallel {
     /// or else a speculation on the next chunk ahead of the frontier; `None`
     /// past the file's last chunk.
     pub fn task(&mut self) -> Option<ChunkTask> {
+        self.task_through(u64::MAX)
+    }
+
+    /// [`Parallel::task`], handing out a speculation only on a chunk at or
+    /// before `last`: a caller holding the bytes its tasks read bounds how far
+    /// ahead of the frontier they reach, a decode the chain has a window for
+    /// lying behind a speculation already handed out. A chunk passed over here
+    /// is the next one a speculation is handed out on.
+    pub fn task_through(&mut self, last: u64) -> Option<ChunkTask> {
         if let Some(decode) = self.chain.next_task() {
             return Some(ChunkTask::decode(decode));
         }
         let frontier = self.at / (8 * self.chunk_bytes);
         let chunk = self.next_chunk.max(frontier + 1);
-        if chunk.checked_mul(self.chunk_bytes)? >= self.file_len {
+        if chunk > last || chunk.checked_mul(self.chunk_bytes)? >= self.file_len {
             return None;
         }
         self.next_chunk = chunk + 1;

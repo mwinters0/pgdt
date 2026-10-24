@@ -14,10 +14,11 @@
 //!
 //! **One partition until the end, then the indexed source.** The extent is
 //! open until a read meets the file's end, so nothing cuts the file and one
-//! forward pass serves the scan — `gz_seek`'s parallel pass, which on a local
-//! file runs chunks of the file ahead of it on as many of the caller's
-//! threads as its parallelism allows, lifting the inflate but not the scan
-//! (`ahead.rs`); at the end the complete index, its windows in the
+//! forward pass serves the scan — `gz_seek`'s parallel pass, which runs chunks
+//! of the file ahead of it on as many of the caller's threads as its
+//! parallelism allows, lifting the inflate but not the scan (`ahead.rs`), a
+//! fetched file's tasks and frontier reading one download of it
+//! (`download.rs`); at the end the complete index, its windows in the
 //! pass's spill file, opens the source a later run opens from its cache
 //! ([`CompressedFileSource`],
 //! [`FetchedCompressedSource`](crate::FetchedCompressedSource)), and every
@@ -42,6 +43,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 
 use bytes::Bytes;
+use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use pgdt_core::{Error, Result};
@@ -57,11 +59,15 @@ use super::super::{CompressedFileSource, CompressionIndex, short_read};
 use super::{CHECKPOINT_SPACING, GZIP, GzipIndex, INPUT_CHUNK, WindowProvider, gzip_error};
 
 mod ahead;
+#[cfg(any(feature = "http", test))]
+mod download;
 mod inflating;
 mod pass;
 mod spill;
 
-use self::ahead::{Chunking, Frontier, Lift};
+use self::ahead::{Chunking, Frontier, Lift, Reads};
+#[cfg(any(feature = "http", test))]
+use self::download::Download;
 use self::inflating::Inflating;
 use self::pass::{Job, Pass, Route, SKIP_SCRATCH, Served};
 use self::spill::PassWindows;
@@ -127,6 +133,11 @@ pub(crate) struct FirstPass {
     /// The started line, said by the first read, once the parallelism it
     /// runs under is announced.
     started: Mutex<Option<Started>>,
+    /// The one download a fetched feed's frontier and tasks read.
+    #[cfg(any(feature = "http", test))]
+    download: Option<Arc<Download>>,
+    /// Told each time a task ahead lands, for a fetched read awaiting one.
+    landed: Arc<Notify>,
 }
 
 /// Where a pass started, for its started line.
@@ -285,6 +296,13 @@ impl FirstPass {
         started: Started,
     ) -> FirstPass {
         let pass = Pass::new(frontier, placed, resumed_over);
+        #[cfg(any(feature = "http", test))]
+        let download = match &feed {
+            Feed::File { .. } => None,
+            Feed::Fetched(raw) => {
+                Some(Arc::new(Download::new(Arc::clone(raw), chunking.bytes, stored_size)))
+            }
+        };
         FirstPass {
             feed,
             named,
@@ -297,22 +315,33 @@ impl FirstPass {
             hints: Mutex::new(Hints::default()),
             chunking,
             started: Mutex::new(Some(started)),
+            #[cfg(any(feature = "http", test))]
+            download,
+            landed: Arc::new(Notify::new()),
         }
     }
 
-    /// How many tasks may run ahead of the frontier: on a pulled feed, every
-    /// worker the announced parallelism affords at a task's charge but the
-    /// one the frontier is, none before any is announced, and no more than
-    /// there are chunks past the first; on a fetched one, none (`ahead.rs`).
+    /// How many tasks may run ahead of the frontier: every worker the
+    /// announced parallelism affords at a task's charge but the one the
+    /// frontier is, none before any is announced, and no more than there are
+    /// chunks past the first (`ahead.rs`).
     fn ahead_tasks(&self) -> usize {
-        if !matches!(self.feed, Feed::File { .. }) {
-            return 0;
-        }
         let parallelism = self.hints.lock().unwrap_or_else(|e| e.into_inner()).parallelism;
-        let task = WorkerMemory::per_worker(self.chunking.task_bytes());
+        let task = WorkerMemory::per_worker(self.charges().1);
         let ahead = self.chunking.chunks(self.stored_size) - 1;
         let afforded = worker_count(parallelism.unwrap_or_default(), task).saturating_sub(1);
         afforded.min(usize::try_from(ahead).unwrap_or(usize::MAX))
+    }
+
+    /// What the pass holds besides its tasks, and what a task ahead holds: a
+    /// fetched file's download adds its pieces to each
+    /// (`Chunking::download_bytes`), a local file's nothing.
+    fn charges(&self) -> (u64, u64) {
+        #[cfg(any(feature = "http", test))]
+        let download = if self.download.is_some() { self.chunking.download_bytes() } else { 0 };
+        #[cfg(not(any(feature = "http", test)))]
+        let download = 0;
+        (PASS_BYTES + download, self.chunking.task_bytes() + download)
     }
 
     /// Say the pass has started, once, at its first read: the codec, where it
@@ -399,7 +428,7 @@ impl FirstPass {
         match &self.feed {
             Feed::File { file, .. } => self.run_pulled(Arc::clone(file), job, tasks).await,
             #[cfg(any(feature = "http", test))]
-            Feed::Fetched(raw) => self.run_fetched(Arc::clone(raw), job).await,
+            Feed::Fetched(raw) => self.run_fetched(Arc::clone(raw), job, tasks).await,
         }
     }
 
@@ -416,10 +445,11 @@ impl FirstPass {
             (Arc::clone(&self.inner), Arc::clone(&self.windows), Arc::clone(&self.pool));
         let stored_size = self.stored_size;
         let lift = Lift {
-            file: Arc::clone(&file),
+            reads: Reads::File(Arc::clone(&file)),
             stored_size,
             runtime: tokio::runtime::Handle::current(),
             tasks,
+            landed: Arc::clone(&self.landed),
         };
         tokio::task::spawn_blocking(move || {
             let mut out = job.obtain(&pool);
@@ -441,6 +471,7 @@ impl FirstPass {
                     Served::Full => return Ok((out, filled, false)),
                     Served::Ended => return Ok((out, filled, matches!(route, Route::Frontier))),
                     Served::Needs(at) => pass.refill_from_file(route, &file, at, stored_size)?,
+                    Served::Waits => unreachable!("a pulled frontier waits where it stands"),
                 }
             }
         })
@@ -449,14 +480,26 @@ impl FirstPass {
     }
 
     /// `job`, its decode fed bytes fetched through the transport, back on
-    /// the runtime for each fetch.
+    /// the runtime for each fetch and each wait for a task ahead: the
+    /// frontier's out of the download its tasks read, a read behind it
+    /// straight from the transport, the download holding nothing it has
+    /// passed.
     #[cfg(any(feature = "http", test))]
     async fn run_fetched(
         &self,
         raw: Arc<dyn ByteRangeSource>,
         job: Job,
+        tasks: usize,
     ) -> Result<(Option<PooledBuffer>, usize, bool)> {
         let stored_size = self.stored_size;
+        let download = Arc::clone(self.download.as_ref().expect("a fetched feed has its download"));
+        let lift = Arc::new(Lift {
+            reads: Reads::Fetched(Arc::clone(&download)),
+            stored_size,
+            runtime: tokio::runtime::Handle::current(),
+            tasks,
+            landed: Arc::clone(&self.landed),
+        });
         let mut state: Option<(Option<PooledBuffer>, usize, Route)> = None;
         let mut supply: Option<(u64, Bytes)> = None;
         loop {
@@ -464,8 +507,10 @@ impl FirstPass {
                 (Arc::clone(&self.inner), Arc::clone(&self.windows), Arc::clone(&self.pool));
             let given = supply.take();
             let carried = state.take();
+            let lift = Arc::clone(&lift);
             let stepped = tokio::task::spawn_blocking(move || {
                 let mut pass = inner.lock().unwrap_or_else(|e| e.into_inner());
+                pass.lift(&lift);
                 let (mut out, mut filled, route) = match carried {
                     Some(carried) => carried,
                     None => {
@@ -498,9 +543,18 @@ impl FirstPass {
                 Served::Full => return Ok((out, filled, false)),
                 Served::Ended => return Ok((out, filled, matches!(route, Route::Frontier))),
                 Served::Needs(at) => {
-                    let want = INPUT_CHUNK.min(stored_size.saturating_sub(at)) as usize;
-                    let bytes = raw.read_range(at, want).await?;
+                    let bytes = match route {
+                        Route::Frontier => download.read_frontier(at).await?,
+                        Route::Behind => {
+                            let want = INPUT_CHUNK.min(stored_size.saturating_sub(at)) as usize;
+                            raw.read_range(at, want).await?
+                        }
+                    };
                     supply = Some((at, bytes));
+                    state = Some((out, filled, route));
+                }
+                Served::Waits => {
+                    self.landed.notified().await;
                     state = Some((out, filled, route));
                 }
             }
@@ -520,6 +574,10 @@ impl FirstPass {
     /// what the index holds.
     fn hand_over(&self) -> Result<()> {
         let index = self.lock().ended.clone().expect("the frontier reached the end");
+        #[cfg(any(feature = "http", test))]
+        if let Some(download) = &self.download {
+            download.clear();
+        }
         let windows = Arc::clone(&self.windows) as Arc<dyn WindowProvider>;
         let index = GzipIndex { index, windows: Some(windows) };
         let (units, members) = (index.unit_count(), index.member_count());
@@ -759,40 +817,34 @@ impl ByteRangeSource for FirstPass {
         self.done.get().and_then(|done| done.block_decode_bytes())
     }
 
-    /// On a local file, the machine's cores capped at the file's chunk count:
-    /// the scan is one partition whatever this says, and every worker past
-    /// the frontier runs a chunk ahead of it (`docs/design/decisions.md`,
-    /// "D2"). A fetched one, one: its pass runs nothing ahead (`ahead.rs`).
-    /// The indexed source's, once the pass has handed over to it.
+    /// The machine's cores capped at the file's chunk count, fetched or
+    /// local: the scan is one partition whatever this says, and every worker
+    /// past the frontier runs a chunk ahead of it, a fetched file's reading
+    /// the one download its frontier reads (`docs/design/decisions.md`,
+    /// "D2"). The indexed source's, once the pass has handed over to it.
     fn default_workers(&self) -> usize {
         if let Some(done) = self.done.get() {
             return done.default_workers();
         }
-        match &self.feed {
-            Feed::File { .. } => {
-                let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-                let chunks = self.chunking.chunks(self.stored_size);
-                cores.min(usize::try_from(chunks).unwrap_or(usize::MAX))
-            }
-            #[cfg(any(feature = "http", test))]
-            Feed::Fetched(_) => 1,
-        }
+        let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+        let chunks = self.chunking.chunks(self.stored_size);
+        cores.min(usize::try_from(chunks).unwrap_or(usize::MAX))
     }
 
     /// The whole pass at one worker: two decodes, each charged a forward
     /// one's — the frontier and one behind it — and the skip scratch, its
     /// windows being on disk. Past one, a task ahead a worker, each charged
     /// what one holds running and waiting for the frontier, the pass's own
-    /// charge inside the first's — on a local file of more than one chunk,
-    /// where a task can run at all.
+    /// charge inside the first's — on a file of more than one chunk, where a
+    /// task can run at all. A fetched file's download adds its pieces to
+    /// every worker (`Chunking::download_bytes`).
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
         if let Some(done) = self.done.get() {
             return done.default_worker_memory();
         }
-        let ahead =
-            matches!(self.feed, Feed::File { .. }) && self.chunking.chunks(self.stored_size) > 1;
-        let per_worker =
-            if ahead { PASS_BYTES.max(self.chunking.task_bytes()) } else { PASS_BYTES };
+        let (pass, task) = self.charges();
+        let ahead = self.chunking.chunks(self.stored_size) > 1;
+        let per_worker = if ahead { pass.max(task) } else { pass };
         Some(WorkerMemory::per_worker(per_worker))
     }
 

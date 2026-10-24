@@ -15,6 +15,7 @@ pub(super) enum Filled {
     Needs(u64),
     Ended,
     UnitEnded,
+    Waits,
 }
 
 /// One step of a decode, as [`Inflating::fill`] drives either kind.
@@ -25,6 +26,9 @@ pub(super) struct Step {
     /// Whether the decode needs more input than it was given to go on: a step
     /// that did nothing else, or none at all.
     pub(super) needs_input: bool,
+    /// Whether a fetched frontier stands waiting for a task ahead, which its
+    /// read awaits before stepping again.
+    pub(super) waits: bool,
 }
 
 /// A decode [`Inflating`] feeds: the frontier, or the decode behind it.
@@ -60,7 +64,8 @@ impl Decode for gz_seek::Forward {
         let step = self.read(input, out).map_err(gzip_error)?;
         let needs_input =
             step.progress == gz_seek::Progress::default() && step.checkpoint.is_none();
-        Ok(Step { progress: step.progress, checkpoint: step.checkpoint.is_some(), needs_input })
+        let checkpoint = step.checkpoint.is_some();
+        Ok(Step { progress: step.progress, checkpoint, needs_input, waits: false })
     }
 
     fn unit_ended(&self) -> bool {
@@ -81,12 +86,13 @@ impl Decode for Frontier {
         stored_size
     }
 
-    /// A step standing waiting for a task has waited for it, so it needs no
-    /// input to go on.
+    /// A step standing waiting for a task has waited for it, or says which
+    /// its read is to await, so it needs no input to go on.
     fn step(&mut self, input: &[u8], out: &mut [u8]) -> Result<Step> {
-        let step = self.read(input, out)?;
+        let (step, waits) = self.read(input, out)?;
         let needs_input = step.needs_input();
-        Ok(Step { progress: step.progress, checkpoint: step.checkpoint.is_some(), needs_input })
+        let checkpoint = step.checkpoint.is_some();
+        Ok(Step { progress: step.progress, checkpoint, needs_input, waits: waits.is_some() })
     }
 
     fn unit_ended(&self) -> bool {
@@ -194,6 +200,9 @@ impl<D: Decode> Inflating<D> {
             }
             if step.checkpoint {
                 placed(&self.decode)?;
+            }
+            if step.waits {
+                return Ok(Filled::Waits);
             }
             if step.needs_input {
                 if self.decode.unit_ended() {

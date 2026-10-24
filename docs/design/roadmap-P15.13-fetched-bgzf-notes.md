@@ -61,5 +61,3 @@ the same file's headers (D116). The local arm still walks.
 - **The fetched arm was not given a caller-chosen mode** (`Forward::bgzf`):
   the mode would have had to be persisted for a resume, and a broken chain
   would have had a different index on each arm.
-</content>
-</invoke>

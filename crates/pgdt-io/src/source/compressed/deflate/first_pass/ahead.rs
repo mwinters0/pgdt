@@ -4,25 +4,37 @@
 //! **The frontier is [`gz_seek::Parallel`] whatever runs beside it**: with no
 //! task run it is the serial pass, and with tasks run it builds the same index
 //! (`docs/design/decisions.md`, "D117"), so lifting the inflate changes who
-//! decoded the bytes, never what the pass records. Each task is a
-//! `spawn_blocking` of its own reading the file positionally, as a unit read
-//! is (`docs/design/decisions.md`, "D12"); nothing here starts a thread of its
-//! own or runs a task the caller's [`Parallelism`](crate::Parallelism) did not
-//! allow (`docs/design/decisions.md`, "D1").
+//! decoded the bytes, never what the pass records. Nothing here starts a
+//! thread of its own or runs a task the caller's
+//! [`Parallelism`](crate::Parallelism) did not allow
+//! (`docs/design/decisions.md`, "D1").
 //!
-//! **Only a pulled feed runs tasks.** Each task reads its chunk itself, and the
-//! engine's decode of it reads it again, so over a transport every task would
-//! download what the frontier then jumps past; a fetched pass is the serial
-//! pass until its feed holds what it fetched for the tasks to read.
+//! **A task reads what the frontier's feed reads.** On a local file each task
+//! is a `spawn_blocking` of its own reading the file positionally, as a unit
+//! read is (`docs/design/decisions.md`, "D12"). On a fetched one it reads the
+//! pass's one download (`download.rs`), each piece fetched on the runtime and
+//! decoded on a `spawn_blocking`, as the fetched arm goes back to the runtime
+//! between units (`docs/design/decisions.md`, "D15"), and its speculations are
+//! handed out no further ahead than the download holds.
+//!
+//! **A wait never rests on a thread the runtime has yet to give.** A pulled
+//! frontier, stepping on a blocking thread, waits there, running itself a task
+//! no blocking thread has started; a fetched one hands the wait back to its
+//! read, which awaits the task's landing on the runtime, where a fetch it
+//! needs can run.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex, mpsc};
 
+use tokio::sync::Notify;
+
 use pgdt_core::{Error, Result};
 
 use super::super::super::Positioned;
 use super::super::{INPUT_CHUNK, gzip_error};
+#[cfg(any(feature = "http", test))]
+use super::download::Download;
 
 /// How many compressed bytes a chunk of the file is, which a speculation
 /// guesses the start of and the engine then decodes: the input chunk every
@@ -68,34 +80,64 @@ impl Chunking {
         let guess = 2 * gz_seek::WINDOW_SIZE as u64;
         self.bytes.get() + limit + 2 * limit + limit + 2 * guess + INPUT_CHUNK
     }
+
+    /// How many pieces a fetched pass's download may hold with `tasks` run
+    /// ahead, two a worker: the piece the frontier stands in, twice as many
+    /// chunks ahead of it as tasks run — the pass holding that many handed out
+    /// or waiting (`Ahead::top_up`) — and the piece after the last, where its
+    /// speculation stops (`Download::last_chunk`).
+    #[cfg(any(feature = "http", test))]
+    pub(super) const fn download_pieces(tasks: usize) -> u64 {
+        2 * (tasks as u64 + 1)
+    }
+
+    /// What a fetched pass's download holds a worker: two pieces of a chunk
+    /// each ([`Chunking::download_pieces`]).
+    #[cfg(any(feature = "http", test))]
+    pub(super) const fn download_bytes(self) -> u64 {
+        2 * self.bytes.get()
+    }
 }
 
-/// The frontier's decode: the parallel pass, and the tasks running ahead of
-/// it where a pulled feed runs any.
+/// The frontier's decode: the parallel pass, the tasks running ahead of it
+/// where its feed runs any, and the download a fetched one reads.
 pub(super) struct Frontier {
     pub(super) pass: gz_seek::Parallel,
     ahead: Option<Ahead>,
+    #[cfg(any(feature = "http", test))]
+    download: Option<Arc<Download>>,
 }
 
 impl Frontier {
     pub(super) fn new(pass: gz_seek::Parallel) -> Frontier {
-        Frontier { pass, ahead: None }
+        Frontier {
+            pass,
+            ahead: None,
+            #[cfg(any(feature = "http", test))]
+            download: None,
+        }
     }
 
-    /// Let `tasks` run ahead at once, each pulling its bytes from `file`, of
-    /// `stored_size` bytes, on `runtime`'s blocking threads: set at each read,
-    /// so the count follows the parallelism announced last. None is the
-    /// serial pass.
+    /// Let `tasks` run ahead at once, each reading what `lift` reads, of
+    /// `stored_size` bytes, on `runtime`: set at each read, so the count
+    /// follows the parallelism announced last, a fetched download's room
+    /// with it. None is the serial pass.
     pub(super) fn lift(&mut self, lift: &Lift) {
+        #[cfg(any(feature = "http", test))]
+        if let Reads::Fetched(download) = &lift.reads {
+            download.set_room(Chunking::download_pieces(lift.tasks));
+            self.download = Some(Arc::clone(download));
+        }
         if lift.tasks == 0 && self.ahead.is_none() {
             return;
         }
         let ahead = self.ahead.get_or_insert_with(|| {
             let (landing, landed) = mpsc::channel();
             Ahead {
-                file: Arc::clone(&lift.file),
+                reads: lift.reads.clone(),
                 stored_size: lift.stored_size,
                 runtime: lift.runtime.clone(),
+                notify: Arc::clone(&lift.landed),
                 tasks: 0,
                 running: 0,
                 landing,
@@ -108,21 +150,52 @@ impl Frontier {
     }
 
     /// A step of the pass, the tasks' results it can use handed to it first
-    /// and the tasks it has room for handed out; where it stands waiting for
-    /// one, the step waits for it, so the next goes on with its result.
-    pub(super) fn read(&mut self, input: &[u8], out: &mut [u8]) -> Result<gz_seek::ParallelStep> {
+    /// and the tasks it has room for handed out, and the task it stands
+    /// waiting for where its read is to await it: a pulled frontier waits
+    /// here, so its next step goes on with the result.
+    pub(super) fn read(
+        &mut self,
+        input: &[u8],
+        out: &mut [u8],
+    ) -> Result<(gz_seek::ParallelStep, Option<gz_seek::TaskId>)> {
+        self.release();
+        let last = self.last_chunk();
         if let Some(ahead) = &mut self.ahead {
             ahead.reap(&mut self.pass);
-            ahead.top_up(&mut self.pass);
+            ahead.top_up(&mut self.pass, last);
         }
         let step = self.pass.read(input, out).map_err(gzip_error)?;
-        if let Some(id) = step.wait {
-            match &mut self.ahead {
-                Some(ahead) => ahead.wait_for(id, &mut self.pass)?,
-                None => return Err(unrun(id)),
+        self.release();
+        let Some(id) = step.wait else { return Ok((step, None)) };
+        match &mut self.ahead {
+            Some(ahead) if ahead.pulls() => {
+                ahead.wait_for(id, &mut self.pass)?;
+                Ok((step, None))
             }
+            Some(ahead) => {
+                ahead.awaitable(id)?;
+                Ok((step, Some(id)))
+            }
+            None => Err(unrun(id)),
         }
-        Ok(step)
+    }
+
+    /// Drop what the download holds behind where the frontier now stands.
+    fn release(&self) {
+        #[cfg(any(feature = "http", test))]
+        if let Some(download) = &self.download {
+            download.release_before(self.pass.compressed_position());
+        }
+    }
+
+    /// The last chunk a speculation may be handed out on: any on a local
+    /// file, one the download's room reaches on a fetched one.
+    fn last_chunk(&self) -> u64 {
+        #[cfg(any(feature = "http", test))]
+        if let Some(download) = &self.download {
+            return download.last_chunk();
+        }
+        u64::MAX
     }
 
     /// How many chunks' decodes the frontier has taken from a task.
@@ -132,20 +205,32 @@ impl Frontier {
     }
 }
 
-/// What a pulled read lets run ahead of the frontier ([`Frontier::lift`]).
+/// What a task reads its chunk from: the file a pulled feed reads, or the
+/// download a fetched one reads.
+#[derive(Clone)]
+pub(super) enum Reads {
+    File(Arc<std::fs::File>),
+    #[cfg(any(feature = "http", test))]
+    Fetched(Arc<Download>),
+}
+
+/// What a read lets run ahead of the frontier ([`Frontier::lift`]).
 pub(super) struct Lift {
-    pub(super) file: Arc<std::fs::File>,
+    pub(super) reads: Reads,
     pub(super) stored_size: u64,
     pub(super) runtime: tokio::runtime::Handle,
     pub(super) tasks: usize,
+    /// Told each time a task lands, for a read awaiting one.
+    pub(super) landed: Arc<Notify>,
 }
 
 /// The tasks running ahead of the frontier, and the channel their results
 /// come back on.
 struct Ahead {
-    file: Arc<std::fs::File>,
+    reads: Reads,
     stored_size: u64,
     runtime: tokio::runtime::Handle,
+    notify: Arc<Notify>,
     /// How many may run at once.
     tasks: usize,
     running: usize,
@@ -168,6 +253,11 @@ enum Landed {
 }
 
 impl Ahead {
+    /// Whether the tasks read a local file, so a wait is made here.
+    fn pulls(&self) -> bool {
+        matches!(self.reads, Reads::File(_))
+    }
+
     /// Hand the pass every result that has come back.
     fn reap(&mut self, pass: &mut gz_seek::Parallel) {
         while let Ok(landed) = self.landed.try_recv() {
@@ -178,10 +268,11 @@ impl Ahead {
     /// Hand out tasks while fewer than `tasks` run and the pass holds fewer
     /// than twice that many handed out or waiting for it — a chunk's guess and
     /// its decode each counting — so what waits for the frontier is at most
-    /// one decode a task ([`Chunking::task_bytes`]).
-    fn top_up(&mut self, pass: &mut gz_seek::Parallel) {
+    /// one decode a task ([`Chunking::task_bytes`]), and a speculation only
+    /// on a chunk at or before `last`.
+    fn top_up(&mut self, pass: &mut gz_seek::Parallel, last: u64) {
         while self.running < self.tasks && pass.pending() < 2 * self.tasks {
-            let Some(task) = pass.task() else { return };
+            let Some(task) = pass.task_through(last) else { return };
             self.spawn(task);
         }
     }
@@ -196,8 +287,13 @@ impl Ahead {
             self.outcome(id)?;
             return Err(unrun(id));
         };
+        let file = match &self.reads {
+            Reads::File(file) => Arc::clone(file),
+            #[cfg(any(feature = "http", test))]
+            Reads::Fetched(_) => unreachable!("only a pulled frontier waits where it stands"),
+        };
         if let Some(task) = take(slot) {
-            let landed = run_caught(task, &self.file, self.stored_size);
+            let landed = run_caught(task, &file, self.stored_size);
             self.land(landed, pass);
             return self.outcome(id);
         }
@@ -207,6 +303,17 @@ impl Ahead {
                 return self.outcome(id);
             }
         }
+    }
+
+    /// Whether a read may await task `id`: one handed out and not yet
+    /// landed, its result then coming back on the channel. A landed one the
+    /// pass still waits for failed.
+    fn awaitable(&self, id: gz_seek::TaskId) -> Result<()> {
+        if self.unstarted.contains_key(&id) {
+            return Ok(());
+        }
+        self.outcome(id)?;
+        Err(unrun(id))
     }
 
     /// What task `id`, landed, came to: its failure where it panicked.
@@ -237,11 +344,13 @@ impl Ahead {
         id
     }
 
-    /// Run `task` on a blocking thread of its own, its result sent back,
-    /// unless the frontier has taken it to run first.
+    /// Run `task` where its feed's tasks run, its result sent back: on a
+    /// blocking thread of its own unless the frontier has taken it to run
+    /// first, or on the runtime over the download, each piece decoded on a
+    /// blocking thread.
     fn spawn(&mut self, task: gz_seek::ChunkTask) {
-        let (file, stored_size, landing) =
-            (Arc::clone(&self.file), self.stored_size, self.landing.clone());
+        let (stored_size, landing, notify) =
+            (self.stored_size, self.landing.clone(), Arc::clone(&self.notify));
         let id = task.id();
         let slot: Slot = Arc::new(Mutex::new(Some(task)));
         let ours = Arc::clone(&slot);
@@ -249,17 +358,62 @@ impl Ahead {
         self.running += 1;
         // Detached: a result nobody waits for any more lands in a channel
         // whose receiver may be gone, and is dropped.
-        drop(self.runtime.spawn_blocking(move || {
-            if let Some(task) = take(&ours) {
-                let _ = landing.send(run_caught(task, &file, stored_size));
+        match &self.reads {
+            Reads::File(file) => {
+                let file = Arc::clone(file);
+                drop(self.runtime.spawn_blocking(move || {
+                    if let Some(task) = take(&ours) {
+                        let _ = landing.send(run_caught(task, &file, stored_size));
+                        notify.notify_one();
+                    }
+                }));
             }
-        }));
+            #[cfg(any(feature = "http", test))]
+            Reads::Fetched(download) => {
+                let download = Arc::clone(download);
+                drop(self.runtime.spawn(async move {
+                    if let Some(task) = take(&ours) {
+                        let _ = landing.send(run_downloaded(task, &download).await);
+                        notify.notify_one();
+                    }
+                }));
+            }
+        }
     }
 }
 
 /// The task in `slot`, where nothing has taken it yet.
 fn take(slot: &Slot) -> Option<gz_seek::ChunkTask> {
     slot.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
+/// `task` fed from the download until it is done, each piece it is handed
+/// decoded on a blocking thread, a panic landing as its failure. A piece the
+/// download refuses or fails to fetch leaves it unfinished, so it hands back
+/// nothing and the frontier meets those bytes, and the failure, itself.
+#[cfg(any(feature = "http", test))]
+async fn run_downloaded(mut task: gz_seek::ChunkTask, download: &Download) -> Landed {
+    let id = task.id();
+    while let Some(at) = task.wants() {
+        let Ok(Some(bytes)) = download.read(at).await else { break };
+        let ended = bytes.is_empty();
+        match tokio::task::spawn_blocking(move || {
+            task.supply(&bytes);
+            task
+        })
+        .await
+        {
+            Ok(supplied) => task = supplied,
+            Err(_) => return Landed::Failed(id),
+        }
+        if ended && task.wants() == Some(at) {
+            break;
+        }
+    }
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| task.finish())) {
+        Ok(done) => Landed::Done(done),
+        Err(_) => Landed::Failed(id),
+    }
 }
 
 /// `task` run to its result, a panic landing as its failure.

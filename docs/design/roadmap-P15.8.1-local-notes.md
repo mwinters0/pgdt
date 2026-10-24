@@ -3,11 +3,13 @@
 `pgdt-io`'s first pass drives `gz_seek::Parallel` in place of
 `gz_seek::Forward` on both feeds; a pulled feed runs the tasks it hands out
 ahead of the frontier, each a `spawn_blocking` of its own reading the file
-positionally (`first_pass/ahead.rs`). A fetched feed runs none, so its pass
-is the serial one: the fetched arm, and a fetched BGZF file's units from its
-headers, are 15.8.2's
+positionally (`first_pass/ahead.rs`). Here a fetched feed ran none: its
+tasks over one download are 15.8.2's ([notes](roadmap-P15.8.2-fetched-notes.md)),
+and a fetched BGZF file's units from its headers 15.8.3's
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
-"15.8.1 split: the local arm, and the fetched arm over one download").
+"15.8.1 split: the local arm, and the fetched arm over one download", and
+"15.8.2 split: the fetched feed's tasks, and a BGZF file's units from its
+headers").
 
 - **How many tasks run**: every worker the announced `Parallelism` affords at
   a task's charge but the one the frontier is, and no more than the file has
