@@ -18,6 +18,10 @@
 //! engine decodes every chunk from it, so a fault here costs a chunk's
 //! parallelism, never a byte (`docs/design/decisions.md`, "D117").
 //!
+//! **It also walks a fixed block** without producing a byte, to find where a
+//! decode may resume inside one ([`Walk`]): what a checkpoint inside a fixed
+//! block is placed by.
+//!
 //! **It refuses what zlib refuses**: the same over-subscribed and incomplete
 //! codes, the same missing end-of-block code, the same invalid symbols and
 //! distances, so a guess it accepts is a stream the engine accepts.
@@ -26,10 +30,12 @@ mod huffman;
 mod inflate;
 mod input;
 mod sink;
+mod walk;
 
 pub(crate) use self::inflate::{Inflater, Stop};
 pub(crate) use self::input::Input;
 pub(crate) use self::sink::{MARKER, Marked, Plain, Sink};
+pub(crate) use self::walk::{Walk, Walked};
 
 #[cfg(test)]
 mod tests;

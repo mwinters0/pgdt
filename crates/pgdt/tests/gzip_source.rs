@@ -73,35 +73,108 @@ fn non_seekable_warning(info: &serde_json::Value) -> Option<serde_json::Value> {
     diagnostics.iter().find_map(|d| d["kind"].get("NonSeekableCompressedSource").cloned())
 }
 
-/// **A member whose writer ended no deflate block across twice the shipped
-/// spacing is warned, in gzip's words**: written as `pg_dump`'s `gzwrite`
-/// drives zlib — 8 KiB calls with `Z_NO_FLUSH`, `Z_FINISH` on the last — at
-/// level 1 by `flate2` over zlib-rs, the engine `libz-rs-sys` exports, in
-/// every build (the workspace's `Cargo.toml`). That level ends no block
-/// before the final one, which it opens over its lookahead at `Z_FINISH`, so
-/// the member is two units, the first all but its last few hundred bytes. The
-/// warning names that unit against the spacing and the remedy.
+/// `plain` as one gzip member holding one dynamic deflate block, as no zlib
+/// level writes across this much and another encoder may: each byte a
+/// literal but where the next 258 repeat those a 32-byte row back, which is
+/// one match of deflate's longest at that distance.
+fn one_dynamic_block(plain: &[u8]) -> Vec<u8> {
+    struct Bits {
+        out: Vec<u8>,
+        acc: u64,
+        n: u32,
+    }
+    impl Bits {
+        /// `bits` low bits of `value`, low bit first, as deflate's fields are.
+        fn put(&mut self, value: u32, bits: u32) {
+            self.acc |= u64::from(value) << self.n;
+            self.n += bits;
+            while self.n >= 8 {
+                self.out.push(self.acc as u8);
+                self.acc >>= 8;
+                self.n -= 8;
+            }
+        }
+        /// A Huffman code, its high bit first.
+        fn code(&mut self, code: u32, len: u32) {
+            self.put(code.reverse_bits() >> (32 - len), len);
+        }
+    }
+    const ROW: usize = 32;
+    // The literal/length code: literals 0–253 of eight bits, and 254, 255,
+    // the end of the block and length 258 (symbol 285) of nine — complete,
+    // so canonical codes 0–253 and 508–511.
+    let nine = [254, 255, 256, 285];
+    let symbol = |s: usize| match nine.iter().position(|&n| n == s) {
+        Some(i) => (508 + i as u32, 9),
+        None => (s as u32, 8),
+    };
+    let mut lengths = vec![8u8; 254];
+    lengths.extend([9, 9, 9]);
+    lengths.extend([0; 28]);
+    lengths.push(9);
+    // The distance code: symbol 9 (25–32, three extra bits) alone, one bit.
+    lengths.extend([0; 9]);
+    lengths.push(1);
+    let mut bits = Bits { out: vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff], acc: 0, n: 0 };
+    bits.put(1, 1); // the final block
+    bits.put(2, 2); // dynamic
+    bits.put(286 - 257, 5);
+    bits.put(10 - 1, 5);
+    bits.put(18 - 4, 4);
+    // The code-length code: 0, 1, 8 and 9, each two bits — 00, 01, 10, 11.
+    for s in [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1] {
+        bits.put(if [0, 1, 8, 9].contains(&s) { 2 } else { 0 }, 3);
+    }
+    for &len in &lengths {
+        bits.code([0, 1, 8, 9].iter().position(|&l| l == len).unwrap() as u32, 2);
+    }
+    let mut i = 0;
+    while i < plain.len() {
+        if i >= ROW && i + 258 <= plain.len() && plain[i..i + 258] == plain[i - ROW..i + 258 - ROW]
+        {
+            let (code, len) = symbol(285);
+            bits.code(code, len);
+            bits.code(0, 1);
+            bits.put((ROW - 25) as u32, 3);
+            i += 258;
+        } else {
+            let (code, len) = symbol(usize::from(plain[i]));
+            bits.code(code, len);
+            i += 1;
+        }
+    }
+    let (code, len) = symbol(256);
+    bits.code(code, len);
+    bits.put(0, 7);
+    let mut crc = flate2::Crc::new();
+    crc.update(plain);
+    let mut member = bits.out;
+    member.extend(crc.sum().to_le_bytes());
+    member.extend((plain.len() as u32).to_le_bytes());
+    member
+}
+
+/// **A member whose writer coded twice the shipped spacing in one dynamic
+/// block is warned, in gzip's words**: the warning names that unit against
+/// the spacing and the remedy.
 #[test]
 fn a_gzip_dump_its_writer_ended_no_block_in_is_warned() {
-    use std::io::Write as _;
     let dir = tempfile::tempdir().unwrap();
     let mut plain = String::from("SET client_encoding = 'UTF8';\n\n");
     plain.push_str(
         "CREATE TABLE public.t (\n    id integer,\n    name text\n);\n\n\
          COPY public.t (id, name) FROM stdin;\n",
     );
-    let mut id: u64 = 0;
-    while plain.len() < 52 << 20 {
-        id += 1;
-        plain.push_str(&format!("{id}\trow {id}, {}\n", id.wrapping_mul(7919) % 10_007));
-    }
+    let row = "7\tthe same row, over and over!!\n";
+    assert_eq!(row.len(), 32);
+    plain.push_str(&row.repeat((52 << 20) / row.len()));
     plain.push_str("\\.\n\n");
-    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(1));
-    for piece in plain.as_bytes().chunks(8192) {
-        encoder.write_all(piece).unwrap();
-    }
-    let gz = dir.path().join("level1.sql.gz");
-    std::fs::write(&gz, encoder.finish().unwrap()).unwrap();
+    let mut check = Vec::new();
+    let member = one_dynamic_block(plain.as_bytes());
+    flate2::read::GzDecoder::new(&member[..]).read_to_end(&mut check).unwrap();
+    assert!(check == plain.as_bytes(), "the member decodes, by an inflater not ours");
+    let gz = dir.path().join("one-block.sql.gz");
+    std::fs::write(&gz, member).unwrap();
     let gz_arg = gz.to_str().unwrap();
 
     let parsed = run_ok(&["parse", "--source", gz_arg]);

@@ -1,11 +1,16 @@
 //! One unit decoded from its checkpoint: whole, or forward in pieces.
 //!
 //! A unit is decoded with no other unit's help: from a member start with no
-//! history, or from inside a member with the window its checkpoint states. It
+//! history, or from inside a member with the window its checkpoint states —
+//! inside a static block, a static block's header primed ahead of its bit. It
 //! is checked before the decode reports it finished — by the CRC-32 its index
 //! recorded, and by the trailer of every member it holds whole — and it must
-//! end exactly where its index says, in plaintext and in the compressed file
-//! alike, or the decode is refused as disagreeing with the index.
+//! end exactly where its index says, in plaintext and, at a block boundary or
+//! a member's end, in the compressed file alike, or the decode is refused as
+//! disagreeing with the index. One ending before a static block's symbol is
+//! held to its plaintext length and its CRC-32: the inflater, stopped there by
+//! its output, may have read on into the next symbol, so where it stands in
+//! the compressed file says nothing.
 
 use crate::engine::{Engine, Event, Member};
 use crate::error::{Error, Result};
@@ -57,14 +62,19 @@ impl UnitTask {
         }
         let engine = match start.start {
             Start::Member => Engine::at_member(start.bit / 8, start.plaintext)?,
-            Start::Block { .. } => {
+            Start::Block { .. } | Start::Symbol { .. } => {
                 let member = Member::resumed(
                     self.member_offset,
                     self.member_plaintext,
                     None,
                     start.plaintext,
                 );
-                Engine::at_block(start.bit, start.plaintext, window, member)?
+                match start.start {
+                    Start::Symbol { last, .. } => {
+                        Engine::at_symbol(start.bit, last, start.plaintext, window, member)?
+                    }
+                    _ => Engine::at_block(start.bit, start.plaintext, window, member)?,
+                }
             }
         };
         let mut read = UnitRead { task: *self, engine, finished: false };
@@ -136,6 +146,10 @@ impl UnitRead {
             )?;
             progress.consumed += step.consumed;
             progress.produced += step.produced;
+            if self.task.ends_at_symbol && self.engine.plaintext() == self.task.end_plaintext {
+                self.finish()?;
+                break;
+            }
             if let Some(Event::Block { bit }) = step.event
                 && !self.task.ends_at_member
             {

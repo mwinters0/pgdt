@@ -1,6 +1,8 @@
 use super::*;
 use crate::index::Start;
-use crate::test_support::{bgzf, drive, forward, gzip, gzip_members, payload, spacing};
+use crate::test_support::{
+    bgzf, drive, forward, gzip, gzip_levels, gzip_members, payload, slice, spacing, truth,
+};
 
 const SPACING: u64 = 64 * 1024;
 
@@ -15,8 +17,8 @@ fn a_pass_yields_the_plaintext_and_checks_each_unit() {
         let pass = forward(&gzip(&plaintext, level), SPACING, 1 << 20, 1 << 20).unwrap();
         assert_eq!(pass.plaintext, plaintext, "level {level}");
         assert_eq!(pass.index.size(), Size::Exact(plaintext.len() as u64));
-        // Not more: zlib-rs's level 1 writes one block nearly to the end.
-        assert!(pass.index.checkpoints().len() >= 2, "level {level} placed too few checkpoints");
+        let marks = plaintext.len() as u64 / SPACING;
+        assert!(pass.index.unit_count() as u64 > marks, "level {level} placed too few checkpoints");
         for unit in 0..pass.index.unit_count() {
             let task = pass.index.unit(unit).unwrap();
             let range = task.plaintext_range();
@@ -42,7 +44,13 @@ fn every_checkpoint_follows_the_placement_rule_and_holds_its_window() {
         for pair in checkpoints.windows(2) {
             let mark = (pair[0].plaintext / SPACING + 1) * SPACING;
             assert!(pair[1].plaintext >= mark, "level {level}: {pair:?} placed before its mark");
-            assert!(matches!(pair[1].start, Start::Block { .. }), "level {level}: one member");
+            match pair[1].start {
+                Start::Block { .. } => {}
+                // The first symbol at or past the mark: no symbol is longer
+                // than 258 bytes.
+                Start::Symbol { .. } => assert!(pair[1].plaintext - mark < 258, "{pair:?}"),
+                Start::Member => panic!("level {level}: one member"),
+            }
         }
         for (checkpoint, window) in checkpoints.iter().zip(&pass.windows) {
             let at = checkpoint.plaintext as usize;
@@ -267,4 +275,101 @@ fn a_file_opening_with_a_plain_member_coalesces_the_bgzf_members_after_it() {
     let members = forward(&run, SPACING, 1 << 20, 1 << 20).unwrap().index.member_count();
     assert!((tail.len() as u64) < members, "the run's members coalesced: {tail:?}");
     assert_eq!(pass.index.checkpoints(), &[moved(&plain, 0, 0), tail].concat()[..]);
+}
+
+/// **A static block is checkpointed at the spacing**: zlib-rs's level 1
+/// writes one static block across nearly the whole member, and the pass stops
+/// inside it before the first symbol at or past each multiple — the final
+/// block's too, at a spacing finer than it — each checkpoint's unit decoding
+/// alone, and a pass resumed at each building the uninterrupted index.
+#[test]
+fn a_static_block_is_checkpointed_at_the_spacing() {
+    // Ending in literals, which the final block, opened over the lookahead,
+    // holds.
+    let mut plaintext = payload(300_000, 61);
+    plaintext.extend((0..60).flat_map(|i| format!("{}\n", i * 7919 % 10_007).into_bytes()));
+    let file = gzip(&plaintext, 1);
+    let blocks = truth(&file).events.iter().filter(|(_, e)| e.point().is_some()).count();
+    assert!(blocks <= 2, "level 1 ends no block before the final one: {blocks} places");
+    for spacing in [SPACING, 100] {
+        let pass = forward(&file, spacing, 1 << 20, 1 << 20).unwrap();
+        assert_eq!(pass.plaintext, plaintext);
+        let checkpoints = pass.index.checkpoints();
+        let symbols = |last| {
+            checkpoints
+                .iter()
+                .filter(|c| c.start == Start::Symbol { last, window: c.window_len() as u16 })
+                .count()
+        };
+        assert!(symbols(false) > 0, "spacing {spacing}");
+        if spacing == 100 {
+            assert!(symbols(true) > 0, "the final block, a static one, checkpointed too");
+        }
+        // The first symbol at or past each mark: no symbol is longer than
+        // 258 bytes.
+        let widest = (0..pass.index.unit_count())
+            .map(|unit| {
+                let range = pass.index.unit(unit).unwrap().plaintext_range();
+                range.end - range.start
+            })
+            .max();
+        assert!(widest < Some(spacing + 258), "spacing {spacing}: {widest:?}");
+        for unit in 0..pass.index.unit_count() {
+            let task = pass.index.unit(unit).unwrap();
+            let range = task.plaintext_range();
+            let mut out = vec![0u8; (range.end - range.start) as usize];
+            task.decode(&pass.windows[unit], slice(&file, task.compressed_range()), &mut out)
+                .unwrap_or_else(|e| panic!("spacing {spacing}, unit {unit}: {e}"));
+            assert!(out == slice(&plaintext, range), "spacing {spacing}, unit {unit}");
+        }
+        let stops = if spacing == SPACING { 1..checkpoints.len() } else { 1..40 };
+        for stop in stops.chain([checkpoints.len() - 2, checkpoints.len() - 1]) {
+            let first = drive(
+                Forward::new(self::spacing(spacing)).unwrap(),
+                &file,
+                777,
+                5000,
+                Vec::new(),
+                Some(stop),
+            )
+            .unwrap();
+            let last = first.index.checkpoints().len() - 1;
+            let resumed = Forward::resume(&first.index, &first.windows[last]).unwrap();
+            let mut windows = first.windows.clone();
+            if first.index.checkpoints()[last].start == Start::Member {
+                windows.pop();
+            }
+            let rest = drive(resumed, &file, 1000, 3000, windows, None).unwrap();
+            assert_eq!(rest.index, pass.index, "spacing {spacing}, stopped after {stop}");
+            assert_eq!(rest.windows, pass.windows, "spacing {spacing}, stopped after {stop}");
+        }
+    }
+}
+
+/// **A static block between dynamic ones is checkpointed inside it**, and the
+/// blocks around it at their boundaries: one member written at level 6, then
+/// 1, then 6.
+#[test]
+fn a_static_block_between_dynamic_ones_is_checkpointed_inside_it() {
+    let (a, b, c) = (payload(200_000, 67), payload(300_000, 71), payload(200_000, 73));
+    let file = gzip_levels(&[(&a, 6), (&b, 1), (&c, 6)]);
+    let pass = forward(&file, 32 * 1024, 1 << 20, 1 << 20).unwrap();
+    assert!(pass.plaintext == [&a[..], &b, &c].concat());
+    let at = |range: std::ops::Range<usize>, symbol: bool| {
+        pass.index.checkpoints().iter().any(|c| {
+            range.contains(&(c.plaintext as usize))
+                && matches!(c.start, Start::Symbol { .. }) == symbol
+        })
+    };
+    let (ab, bc) = (a.len(), a.len() + b.len());
+    assert!(at(0..ab, false) && !at(0..ab, true), "level 6 ends blocks");
+    assert!(at(ab + 1000..bc - 1000, true), "level 1's one static block, checkpointed inside");
+    assert!(at(bc + 1000..bc + c.len(), false), "level 6 again");
+    for unit in 0..pass.index.unit_count() {
+        let task = pass.index.unit(unit).unwrap();
+        let range = task.plaintext_range();
+        let mut out = vec![0u8; (range.end - range.start) as usize];
+        task.decode(&pass.windows[unit], slice(&file, task.compressed_range()), &mut out).unwrap();
+        assert!(out == slice(&pass.plaintext, range), "unit {unit}");
+    }
 }

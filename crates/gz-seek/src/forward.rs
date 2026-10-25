@@ -1,6 +1,7 @@
 //! The forward pass: a whole gzip file decoded in order, its index built as a
 //! by-product, its checkpoints where the placement rule puts them
-//! (`placement.rs`).
+//! (`placement.rs`) — at a block boundary, or before a static block's symbol,
+//! the engine walking the block to stop there.
 //!
 //! # What a step hands out
 //!
@@ -65,6 +66,9 @@ impl Forward {
             Resumed::Block { bit, plaintext, member } => {
                 Engine::at_block(bit, plaintext, window, member)?
             }
+            Resumed::Symbol { bit, last, plaintext, member } => {
+                Engine::at_symbol(bit, last, plaintext, window, member)?
+            }
         };
         Ok(Forward { engine, placement, window: Box::new([0; WINDOW_SIZE]), window_len: 0 })
     }
@@ -121,6 +125,7 @@ impl Forward {
     /// One engine step, and whether it did anything: a block boundary short
     /// of the next mark ends one with nothing consumed or produced.
     fn step(&mut self, input: &[u8], out: &mut [u8]) -> Result<(ForwardStep, bool)> {
+        self.engine.set_mark(self.placement.mark());
         let stepped = self.engine.step(input, out)?;
         let Stepped { consumed, produced, event } = stepped;
         let progress = Progress { consumed, produced };
@@ -131,20 +136,17 @@ impl Forward {
                 self.placement.member_start(plaintext, self.engine.member().offset)
             }
             Some(Event::Header { bgzf }) => self.placement.header(bgzf),
-            // deficiency: KD129 — a checkpoint is a block boundary, so a
-            // member whose writer ends a block only at `Z_FINISH`, before its
-            // final one (`deflate_quick`, level 1 under zlib-ng's default build and
-            // zlib-rs, which opens that block over its lookahead at
-            // `Z_FINISH`) is one unit, or two the last that block, however
-            // small the spacing, and every read of it decodes from its start. A static block resumes at any
-            // symbol boundary given a synthetic three-bit header primed ahead
-            // of the byte's remaining bits; what is missing is a stop there,
-            // which no inflater gives, so placing one means walking the static
-            // codes here.
             Some(Event::Block { bit }) if self.placement.owes_block(plaintext) => {
                 self.placement.close(self.engine.cut());
                 self.window_len = self.engine.dictionary(&mut self.window);
                 Some(Checkpoint::block(plaintext, bit, self.window_len))
+            }
+            // A static block resumes before any of its symbols, so the walk's
+            // stop is a checkpoint wherever no block boundary came first.
+            Some(Event::Symbol { bit, last }) if self.placement.owes_block(plaintext) => {
+                self.placement.close(self.engine.cut());
+                self.window_len = self.engine.dictionary(&mut self.window);
+                Some(Checkpoint::symbol(plaintext, bit, self.window_len, last))
             }
             // A unit of whole BGZF members is checked by their trailers.
             Some(Event::MemberEnd) if self.placement.member_end_records_crc() => {

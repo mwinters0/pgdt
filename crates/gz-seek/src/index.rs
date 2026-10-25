@@ -4,7 +4,8 @@
 //! decode can begin: a plaintext offset, the compressed bit the deflate data
 //! resumes at, and the window of history a back-reference there may reach —
 //! none at a member's start, which begins with no history. A single member's
-//! checkpoints are block boundaries a forward pass chose; a BGZF file's are
+//! checkpoints are block boundaries a forward pass chose, or places inside a
+//! static block, before one of its symbols; a BGZF file's are
 //! member starts, chosen alike by its walk and by a forward pass; a file of
 //! several members has both. The span
 //! from one checkpoint to the next is a **unit**, the thing a caller decodes
@@ -38,6 +39,16 @@ pub enum Start {
         /// The window's length.
         window: u16,
     },
+    /// Inside a member's static block, before one of its symbols, with the
+    /// member's last `window` bytes of plaintext as history: a decode primes
+    /// a static block's header ahead of the bit.
+    Symbol {
+        /// The window's length.
+        window: u16,
+        /// Whether the block is its member's final one, which the header a
+        /// decode primes says.
+        last: bool,
+    },
 }
 
 /// A place a decode can begin.
@@ -61,7 +72,7 @@ impl Checkpoint {
     pub fn window_len(&self) -> usize {
         match self.start {
             Start::Member => 0,
-            Start::Block { window } => usize::from(window),
+            Start::Block { window } | Start::Symbol { window, .. } => usize::from(window),
         }
     }
 }
@@ -144,7 +155,7 @@ impl Index {
                     }
                     member = i;
                 }
-                Start::Block { window } => {
+                Start::Block { window } | Start::Symbol { window, .. } => {
                     let history = c.plaintext - checkpoints[member].plaintext;
                     if u64::from(window) != history.min(WINDOW_SIZE as u64) {
                         return Err(invalid("a window that is not its member's last 32 KiB"));
@@ -266,19 +277,26 @@ impl Index {
         let checkpoints = &self.inner.checkpoints;
         let start = checkpoints[unit];
         let member = checkpoints[self.inner.member_of[unit] as usize];
-        let (end_plaintext, end_bit, ends_at_member) = match checkpoints.get(unit + 1) {
-            Some(next) => (next.plaintext, next.bit, next.start == Start::Member),
-            None => {
-                let end = self.inner.end.expect("the last unit of a complete index");
-                (end.plaintext, end.compressed * 8, true)
-            }
-        };
+        let (end_plaintext, end_bit, ends_at_member, ends_at_symbol) =
+            match checkpoints.get(unit + 1) {
+                Some(next) => (
+                    next.plaintext,
+                    next.bit,
+                    next.start == Start::Member,
+                    matches!(next.start, Start::Symbol { .. }),
+                ),
+                None => {
+                    let end = self.inner.end.expect("the last unit of a complete index");
+                    (end.plaintext, end.compressed * 8, true, false)
+                }
+            };
         Some(UnitTask {
             unit,
             start,
             end_plaintext,
             end_bit,
             ends_at_member,
+            ends_at_symbol,
             member_plaintext: member.plaintext,
             member_offset: member.bit / 8,
         })
@@ -311,6 +329,14 @@ impl Checkpoint {
         let window = u16::try_from(window).expect("a window is at most 32 KiB");
         Checkpoint { plaintext, bit, start: Start::Block { window }, crc: None }
     }
+
+    /// A static block's symbol at compressed `bit`, `window` bytes of its
+    /// member's history before it, `last` whether the block is its member's
+    /// final one.
+    pub(crate) fn symbol(plaintext: u64, bit: u64, window: usize, last: bool) -> Checkpoint {
+        let window = u16::try_from(window).expect("a window is at most 32 KiB");
+        Checkpoint { plaintext, bit, start: Start::Symbol { window, last }, crc: None }
+    }
 }
 
 /// One unit, as one decode takes it: `Copy` and `Send`, holding no index.
@@ -323,6 +349,8 @@ pub struct UnitTask {
     /// The unit ends where a member does: at the next member's header, or at
     /// the file's end.
     pub(crate) ends_at_member: bool,
+    /// The unit ends inside a static block, before a symbol.
+    pub(crate) ends_at_symbol: bool,
     pub(crate) member_plaintext: u64,
     pub(crate) member_offset: u64,
 }

@@ -772,13 +772,8 @@ fn snapshot_agrees_with_finish_at_the_same_watermark() {
 /// of a few MiB spans many spacings, as a dump spans the shipped one.
 const GZIP_SPACING: u64 = 256 * 1024;
 
-/// A few MiB of `COPY`-like lines, gzipped by `flate2` — over zlib-rs, the
-/// engine `libz-rs-sys` exports, in every build (the workspace's
-/// `Cargo.toml`) — at `level`, written 8 KiB a call with `Z_NO_FLUSH` and
-/// finished with `Z_FINISH`, the calls `pg_dump`'s `gzwrite` makes: indexed
-/// in memory at [`GZIP_SPACING`].
-fn gzip_indexed(len: usize, level: u32) -> pgdt_io::CompressionIndex {
-    use std::io::Write as _;
+/// `len` bytes of `COPY`-like lines, each another row.
+fn copy_lines(len: usize) -> Vec<u8> {
     let mut plain = Vec::with_capacity(len + 64);
     let mut id = 0u64;
     while plain.len() < len {
@@ -786,6 +781,21 @@ fn gzip_indexed(len: usize, level: u32) -> pgdt_io::CompressionIndex {
         plain.extend(format!("{id}\trow {id}\t{}\n", id.wrapping_mul(7919) % 10_007).as_bytes());
     }
     plain.truncate(len);
+    plain
+}
+
+/// `len` bytes of one row repeated: what zlib codes as a match of its
+/// longest a symbol, ending a block only when its symbol buffer fills.
+fn one_row(len: usize) -> Vec<u8> {
+    b"7\n".repeat(len / 2)
+}
+
+/// `plain` gzipped by `flate2` — over zlib-rs, the engine `libz-rs-sys`
+/// exports, in every build (the workspace's `Cargo.toml`) — at `level`,
+/// written 8 KiB a call with `Z_NO_FLUSH` and finished with `Z_FINISH`, the
+/// calls `pg_dump`'s `gzwrite` makes: indexed in memory at [`GZIP_SPACING`].
+fn gzip_indexed(plain: &[u8], level: u32) -> pgdt_io::CompressionIndex {
+    use std::io::Write as _;
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(level));
     for piece in plain.chunks(8192) {
         encoder.write_all(piece).unwrap();
@@ -797,15 +807,15 @@ fn gzip_indexed(len: usize, level: u32) -> pgdt_io::CompressionIndex {
     ))
 }
 
-/// **D19's gzip rule**: a member whose writer ended no deflate block across
-/// more than twice the spacing has no seek structure, and is warned in
-/// gzip's words, naming the unit against the spacing and the remedy. Level 1
-/// over zlib-rs ends no block before the final one, which it opens over its
-/// lookahead at `Z_FINISH`, so such a member is two units, the first all but
-/// its last few hundred bytes — and the count says nothing of the writer.
+/// **D19's gzip rule**: a member whose writer wrote a block of codes not
+/// static across more than twice the spacing has no seek structure, and is
+/// warned in gzip's words, naming the unit against the spacing and the
+/// remedy. One row repeated is a dynamic block of a few MiB from zlib, its
+/// longest match a symbol, more than twice this spacing — and the count
+/// says nothing of the writer.
 #[test]
 fn a_gzip_unit_wider_than_twice_its_spacing_is_warned_in_gzip_words() {
-    let index = gzip_indexed(4 << 20, 1);
+    let index = gzip_indexed(&one_row(16 << 20), 6);
     assert!(
         index.largest_unit() > 2 * GZIP_SPACING,
         "the writer must end no block for a spacing for this to mean anything: {} unit(s), the \
@@ -826,25 +836,25 @@ fn a_gzip_unit_wider_than_twice_its_spacing_is_warned_in_gzip_words() {
     assert!(message.starts_with("this gzip source has no seek structure"), "{message}");
     assert!(message.contains(&format!("{largest_unit} byte(s)")), "{message}");
     assert!(message.contains(&format!("{GZIP_SPACING}-byte spacing")), "{message}");
-    assert!(
-        message.contains("`bgzip` or `gzip`") && message.contains("a level above 1"),
-        "{message}"
-    );
+    assert!(message.contains("`bgzip` or `gzip`"), "{message}");
     assert!(!message.contains(".xz"), "{message}");
 }
 
 /// **Where a gzip file is not warned**: under the spacing, one unit by the
-/// reader's choice, whatever its writer; and written at the default level,
-/// which ends a block every few tens of KB, its units at most a spacing and
-/// a block wide.
+/// reader's choice, whatever its writer; written at the default level, which
+/// ends a block every few tens of KB, its units at most a spacing and a block
+/// wide; and at level 1 over zlib-rs, which ends no block before the final
+/// one, its one static block checkpointed inside.
 #[test]
 fn a_gzip_file_under_the_spacing_or_ending_its_blocks_is_not_warned() {
-    let short = gzip_indexed(GZIP_SPACING as usize / 2, 1);
+    let short = gzip_indexed(&copy_lines(GZIP_SPACING as usize / 2), 1);
     assert_eq!(short.unit_count(), 1);
     assert!(short.is_seekable());
     assert_eq!(non_seekable_compression_diagnostic(Some(&short)), None);
 
-    let ended = gzip_indexed(4 << 20, 6);
-    assert!(ended.unit_count() > 2 && ended.is_seekable(), "{}", ended.largest_unit());
-    assert_eq!(non_seekable_compression_diagnostic(Some(&ended)), None);
+    for level in [6, 1] {
+        let ended = gzip_indexed(&copy_lines(4 << 20), level);
+        assert!(ended.unit_count() > 2 && ended.is_seekable(), "{}", ended.largest_unit());
+        assert_eq!(non_seekable_compression_diagnostic(Some(&ended)), None);
+    }
 }

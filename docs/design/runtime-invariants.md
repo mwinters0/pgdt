@@ -1156,7 +1156,7 @@ cargo nextest run -p datafusion-pgdump --test unrepresentable unrepresentable_fu
 Both tests pass only while the function is planned where a scan answers it
 and refused wherever another node holds it.
 
-## RT23 — zlib-rs's raw inflate stops at every block's end, saying where, and takes no byte past a stream's end
+## RT23 — zlib-rs's raw inflate stops at every block's end, saying where, takes no byte past a stream's end, and resumes before any static block's symbol
 
 **Claim.** `inflate(Z_BLOCK)` through `libz-rs-sys`, over a raw deflate
 stream, returns at the end of every block exactly once, `data_type` then
@@ -1165,7 +1165,11 @@ bits the reader's unused bits; it returns `Z_STREAM_END` holding no unused
 bit, so the stream's next byte is the first it did not consume; and a stream
 reset, primed with the bits of a byte past a bit offset (`inflatePrime`) and
 given the preceding plaintext (`inflateSetDictionary`), decodes on from that
-offset as the uninterrupted stream did.
+offset as the uninterrupted stream did — at a block's start, or before a
+static block's symbol, a static block's three header bits primed ahead of the
+byte's remaining ones, ten bits at most in one `inflatePrime`; and a decode
+its output stops mid-block hands back, through `inflateGetDictionary`, the
+plaintext it wrote, and goes on as the uninterrupted one does.
 
 **Proof.** zlib-rs 0.6.8, `src/inflate.rs`: the `Mode::Type` arm leaves under
 `Block`; `decoding_state` is the reader's bits plus `64` for
@@ -1175,24 +1179,34 @@ block calls `next_byte_boundary`; the slow path takes input a byte at a time
 bytes on exit (`return_unused_bytes`), so fewer than eight bits are held at
 a block-end stop — a stop inside a `need_bits!` may hold more, as `zlib.h`
 allows; `prime` and `set_dictionary` are what `inflatePrime` and
-`inflateSetDictionary` call. zlib's own `zlib.h` states the same `data_type`
+`inflateSetDictionary` call, `prime` taking up to 16 bits while the reader
+holds at most 32; a fixed block's codes are its tables'
+(`inffixed_tbl`), whoever read its header; and the window is updated from
+whatever a call wrote, a stop for want of output included. zlib's own `zlib.h` states the same `data_type`
 contract. Observed by `the_index_is_one_whatever_the_buffers`
 (`crates/gz-seek/src/forward/tests.rs`), every unit decoding alone in
 `crates/gz-seek/src/unit/tests.rs`, and
 `a_member_s_end_is_found_at_every_place_in_a_supply`
 (`crates/gz-seek/src/engine/tests.rs`), whose decode panics where a stream
-ends holding a bit.
+ends holding a bit; and `a_static_block_is_checkpointed_at_the_spacing` and
+`a_static_block_between_dynamic_ones_is_checkpointed_inside_it`
+(`crates/gz-seek/src/forward/tests.rs`), every unit beginning or ending
+before a static block's symbol decoding alone to the pass's plaintext.
 
 **Scope limit.** Raw deflate (`windowBits` −15) alone; the gzip and zlib
-modes and `Z_TREES` are not claimed. A block boundary's offset is computed
-from all six bits, so fewer than eight there is not relied on.
+modes and `Z_TREES` are not claimed — zlib-rs 0.6.8 under `Z_TREES` reads a
+stored block's lengths again after its header stop (observed, `invalid stored
+block lengths`), so the engine reads a block's type itself. A block
+boundary's offset is computed from all six bits, so fewer than eight there is
+not relied on.
 
 **Verified against:** zlib-rs 0.6.8, `libz-rs-sys` 0.6.8.
 
 **Relied on by:** [`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Settled in
 the grilling" — a checkpoint's place a function of the file alone, and a unit
 resumed from its checkpoint and window; `crates/gz-seek/src/engine.rs`, which
-reads a member's trailer from the byte after its deflate data.
+reads a member's trailer from the byte after its deflate data and a block's
+type from the bytes a stop's unused bits came from; D118.
 
 **Re-verify:**
 

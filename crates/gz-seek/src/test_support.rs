@@ -67,6 +67,30 @@ pub(crate) fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
     encoder.finish().unwrap()
 }
 
+/// One member, each of `parts` compressed at its own level by `flate2` over
+/// zlib-rs — level 1 writing a static block across its part, the others
+/// dynamic ones — each but the last ended by a sync flush, so its blocks are
+/// not final and it ends on a byte, and the deflate streams concatenated are
+/// one: no back-reference reaches before its part.
+pub(crate) fn gzip_levels(parts: &[(&[u8], u32)]) -> Vec<u8> {
+    use flate2::{Compress, Compression, FlushCompress, Status};
+    let mut member = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];
+    let mut crc = flate2::Crc::new();
+    for (i, &(part, level)) in parts.iter().enumerate() {
+        crc.update(part);
+        let flush = if i + 1 == parts.len() { FlushCompress::Finish } else { FlushCompress::Sync };
+        let mut deflate = Compress::new(Compression::new(level), false);
+        let mut body = Vec::with_capacity(part.len() + 1024);
+        let status = deflate.compress_vec(part, &mut body, flush).unwrap();
+        assert!(deflate.total_in() == part.len() as u64 && body.len() < body.capacity());
+        assert!(flush == FlushCompress::Sync || status == Status::StreamEnd);
+        member.extend_from_slice(&body);
+    }
+    member.extend_from_slice(&crc.sum().to_le_bytes());
+    member.extend_from_slice(&crc.amount().to_le_bytes());
+    member
+}
+
 /// Each of `parts` as a member of its own, concatenated.
 pub(crate) fn gzip_members(parts: &[&[u8]], level: u32) -> Vec<u8> {
     parts.iter().flat_map(|part| gzip(part, level)).collect()
@@ -161,6 +185,9 @@ pub(crate) fn truth(file: &[u8]) -> Truth {
                 events.push((here, Event::MemberStart { offset }));
             }
             Some(EngineEvent::Header { bgzf }) => events.push((here, Event::Header { bgzf })),
+            Some(EngineEvent::Static { bit }) => events.push((here, Event::Static { bit })),
+            // No mark is set, so no static block is walked.
+            Some(EngineEvent::Symbol { .. }) => {}
             Some(EngineEvent::MemberEnd) => {
                 let t = &file[trailer_at..trailer_at + 8];
                 let trailer = Trailer::parse(t.try_into().unwrap());

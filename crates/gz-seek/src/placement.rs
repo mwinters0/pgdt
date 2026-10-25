@@ -4,15 +4,22 @@
 //!
 //! # Where a checkpoint goes is a function of the file alone
 //!
-//! A checkpoint is placed at **every member start**, and at **the first deflate
-//! block boundary at or after each multiple of the spacing** in plaintext — a
-//! member start counting as a boundary — so the same file and spacing give the
+//! A checkpoint is placed at **every member start**, and at **the first place
+//! a decode can resume at or after each multiple of the spacing** in
+//! plaintext: a deflate block boundary, a member start counting as one, or
+//! inside a static block, before any symbol but its end-of-block code — so the same file and spacing give the
 //! same index however the caller cuts its buffers, wherever an earlier pass was
 //! interrupted, and whichever decode, on whichever thread, read each piece
 //! (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling"). A decode
 //! reports every block's end, and the rule checks each against the next
-//! multiple; what the spacing moves is how many windows are copied, never how
-//! often a decode stops.
+//! multiple; inside a static block the decode walks to the mark
+//! ([`Placement::mark`]) and stops at the first symbol there, so a writer
+//! that ends no block across a spacing — `deflate_quick` writes one static
+//! block — is checkpointed as any other. At a plaintext offset holding both, a
+//! block boundary comes first, an end-of-block code being no symbol a
+//! checkpoint precedes, so no unit is empty
+//! (`docs/design/decisions.md`, "D118"). What the spacing moves is how many
+//! windows are copied, never how often a decode stops at a boundary.
 //!
 //! **BGZF members are coalesced as a [`Walk`](crate::Walk) coalesces them.** A
 //! member start whose own header is a BGZF member's joins the unit before it
@@ -68,6 +75,9 @@ pub(crate) enum Resumed {
     Member { offset: u64, plaintext: u64 },
     /// Inside `member`'s deflate data, at a block's start.
     Block { bit: u64, plaintext: u64, member: Member },
+    /// Inside `member`'s static block, before a symbol; `last` whether the
+    /// block is the member's final one.
+    Symbol { bit: u64, last: bool, plaintext: u64, member: Member },
 }
 
 impl Placement {
@@ -106,7 +116,7 @@ impl Placement {
         }
         let resumed = match last.start {
             Start::Member => Resumed::Member { offset: last.bit / 8, plaintext: last.plaintext },
-            Start::Block { .. } => {
+            Start::Block { .. } | Start::Symbol { .. } => {
                 let prefix = index.member_prefix(at).ok_or(Error::InvalidIndex {
                     reason: "a unit before the resume point carries no CRC-32",
                 })?;
@@ -117,7 +127,11 @@ impl Placement {
                 let member = checkpoints[member_at];
                 let member =
                     Member::resumed(member.bit / 8, member.plaintext, Some(prefix), last.plaintext);
-                Resumed::Block { bit: last.bit, plaintext: last.plaintext, member }
+                let (bit, plaintext) = (last.bit, last.plaintext);
+                match last.start {
+                    Start::Symbol { last, .. } => Resumed::Symbol { bit, last, plaintext, member },
+                    _ => Resumed::Block { bit, plaintext, member },
+                }
             }
         };
         let members = index.member_count();
@@ -174,7 +188,20 @@ impl Placement {
         if bgzf { None } else { deferred }
     }
 
-    /// Whether a block boundary at `plaintext` is a checkpoint.
+    /// The plaintext spacing checkpoints are placed at.
+    pub(crate) fn spacing(&self) -> NonZeroU64 {
+        self.spacing
+    }
+
+    /// The plaintext offset a static block's walk stops at the first symbol
+    /// at or past: the next multiple owed, `None` inside a BGZF member, where
+    /// no place but a member start is a checkpoint.
+    pub(crate) fn mark(&self) -> Option<u64> {
+        (!self.member_bgzf).then_some(self.next_mark)
+    }
+
+    /// Whether a block boundary, or a static block's symbol, at `plaintext`
+    /// is a checkpoint.
     pub(crate) fn owes_block(&self, plaintext: u64) -> bool {
         !self.member_bgzf && plaintext >= self.next_mark
     }

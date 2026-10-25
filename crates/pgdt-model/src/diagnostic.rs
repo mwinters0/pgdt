@@ -203,9 +203,10 @@ pub enum CompressedContainer {
     /// whatever its size.
     Xz,
     /// gzip, whose units are the spans between checkpoints a reader placed at
-    /// `spacing` plaintext bytes, each at the first deflate block boundary
-    /// past it: a unit wider than twice the spacing is a writer that went a
-    /// whole spacing without ending a block.
+    /// `spacing` plaintext bytes, each at the first place past it a decode
+    /// resumes at — a deflate block boundary, or a static block's symbol: a
+    /// unit wider than twice the spacing is a writer that coded a whole
+    /// spacing in one dynamic block.
     Gzip { spacing: u64 },
 }
 
@@ -259,10 +260,9 @@ impl Finding for Diagnostic {
             } => format!(
                 "this gzip source has no seek structure: its largest unit holds {largest_unit} \
                  byte(s) of plaintext, more than twice the {spacing}-byte spacing its \
-                 checkpoints are placed at, its writer having ended no deflate block across \
-                 them ({block_count} unit(s)) — every read inside that unit decodes it from its \
-                 start; recompress with `bgzip` or `gzip`, or write it at a level above 1, for \
-                 random access"
+                 checkpoints are placed at, its writer having coded them in one dynamic deflate \
+                 block ({block_count} unit(s)) — every read inside that unit decodes it from its \
+                 start; recompress with `bgzip` or `gzip` for random access"
             ),
         }
     }

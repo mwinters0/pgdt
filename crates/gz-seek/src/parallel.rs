@@ -16,7 +16,8 @@
 //! history the frontier holds there; finding one whose every member trailer
 //! matches, it hands out that decode's plaintext and stands where it stopped.
 //! Wherever none does, it decodes on itself (`docs/design/decisions.md`,
-//! "D117").
+//! "D117") — and through any static block a checkpoint may be owed inside,
+//! a decode it takes being cut at that block's start.
 //!
 //! **So every byte handed out is the engine's, and the index is the serial
 //! pass's at every worker count.** A decode is taken only where its start and
@@ -97,6 +98,7 @@ enum PassEvent {
     MemberStart { offset: u64 },
     Header { bgzf: bool },
     Block { bit: u64 },
+    Symbol { bit: u64, last: bool },
     MemberEnd,
 }
 
@@ -276,13 +278,16 @@ impl Parallel {
             Resumed::Block { bit, plaintext, member } => {
                 (Engine::at_block(bit, plaintext, window, member)?, bit, plaintext)
             }
+            Resumed::Symbol { bit, last, plaintext, member } => {
+                (Engine::at_symbol(bit, last, plaintext, window, member)?, bit, plaintext)
+            }
         };
         let frontier = Frontier::Engine { engine: Box::new(engine), skip_start: false };
         let mut pass = Parallel::over(placement, frontier, chunk_bytes, limit, file_len);
         pass.at = at;
         pass.plaintext = plaintext;
         pass.folded = plaintext;
-        if let Resumed::Block { member, .. } = resumed {
+        if let Resumed::Block { member, .. } | Resumed::Symbol { member, .. } = resumed {
             pass.history.push(window);
             pass.member_at = (member.offset, member.plaintext);
             let prefix = member.prefix.expect("a resumed member's prefix");
@@ -552,6 +557,7 @@ impl Parallel {
         input: &[u8],
         out: &mut [u8],
     ) -> Result<EngineStep> {
+        engine.set_mark(self.placement.mark());
         let stepped = engine.step(input, out)?;
         let progress = Progress { consumed: stepped.consumed, produced: stepped.produced };
         self.history.push(&out[..stepped.produced]);
@@ -575,11 +581,15 @@ impl Parallel {
                 self.standing = Some(Point::Block(bit));
                 placed
             }
+            Some(EngineEvent::Symbol { bit, last }) => {
+                self.fold(engine.cut());
+                self.event(PassEvent::Symbol { bit, last })
+            }
             Some(EngineEvent::MemberEnd) => {
                 self.fold(engine.cut());
                 self.event(PassEvent::MemberEnd)
             }
-            None => None,
+            Some(EngineEvent::Static { .. }) | None => None,
         };
         Ok(EngineStep { progress, checkpoint, progressed: stepped.progressed(), skip_start: skip })
     }
@@ -603,12 +613,15 @@ impl Parallel {
             && at == serving.cursor
         {
             serving.event += 1;
-            let placed = self.event(match event {
-                ChunkEvent::Block { bit } => PassEvent::Block { bit },
-                ChunkEvent::MemberEnd { .. } => PassEvent::MemberEnd,
-                ChunkEvent::MemberStart { offset } => PassEvent::MemberStart { offset },
-                ChunkEvent::Header { bgzf } => PassEvent::Header { bgzf },
-            });
+            let placed = match event {
+                ChunkEvent::Block { bit } => self.event(PassEvent::Block { bit }),
+                ChunkEvent::MemberEnd { .. } => self.event(PassEvent::MemberEnd),
+                ChunkEvent::MemberStart { offset } => self.event(PassEvent::MemberStart { offset }),
+                ChunkEvent::Header { bgzf } => self.event(PassEvent::Header { bgzf }),
+                // No checkpoint is owed inside it, or the chunk would have
+                // been cut here (`Parallel::cut_at_static`).
+                ChunkEvent::Static { .. } => None,
+            };
             match event {
                 ChunkEvent::Block { bit } => self.at = bit,
                 ChunkEvent::MemberStart { offset } => self.at = 8 * offset,
@@ -627,6 +640,45 @@ impl Parallel {
         self.folded = self.plaintext;
         serving.cursor += n as u64;
         (n, None)
+    }
+
+    /// Cut `chunk`, about to be handed out from where the frontier stands,
+    /// at the first static block a checkpoint may be owed inside, its stop
+    /// that block's start: a chunk's decode walks no block, so the frontier
+    /// decodes it itself and stops where the serial pass does.
+    ///
+    /// The mark a static block is walked to is the first multiple of the
+    /// spacing past its start, a boundary there at or past the mark having
+    /// been a checkpoint, so one may be owed inside wherever that multiple
+    /// falls before the block's end — a mark past its last symbol leaving the
+    /// checkpoint to what follows the block, as the serial pass does. No
+    /// static block inside a BGZF member is cut at, no place in one but a
+    /// member start being a checkpoint (`docs/design/decisions.md`, "D118").
+    fn cut_at_static(&self, chunk: &mut Decoded) {
+        let spacing = self.placement.spacing().get();
+        let mut bgzf = self.placement.mark().is_none();
+        for (i, &(at, event)) in chunk.events.iter().enumerate() {
+            match event {
+                ChunkEvent::Header { bgzf: header } => bgzf = header,
+                ChunkEvent::Static { bit } if !bgzf => {
+                    let end = chunk.events[i..]
+                        .iter()
+                        .find(|(_, e)| {
+                            matches!(e, ChunkEvent::Block { .. } | ChunkEvent::MemberEnd { .. })
+                        })
+                        .map_or(chunk.len(), |&(end, _)| end);
+                    let start = self.plaintext + at;
+                    if (start / spacing + 1) * spacing < self.plaintext + end {
+                        chunk.stop = Point::Block(bit);
+                        chunk.plain.truncate(at as usize);
+                        chunk.events.truncate(i);
+                        chunk.pieces.retain(|&(_, to, _)| to <= at);
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 
     /// The frontier has reached `point`, a chunk's stop, with nothing decoding.
@@ -704,9 +756,13 @@ impl Parallel {
     /// frontier's — every decode after it resting on that one's, the chain is
     /// dropped — its bytes then left to the frontier.
     fn take(&mut self, decoded: ChunkDecoded) -> Option<Serving> {
-        let chunk = decoded.found?;
+        let mut chunk = decoded.found?;
         if !self.history.is(&decoded.window) {
             self.chain.reset();
+            return None;
+        }
+        self.cut_at_static(&mut chunk);
+        if chunk.plain.is_empty() && chunk.events.is_empty() {
             return None;
         }
         // Every trailer the decode holds, checked before a byte of it is
@@ -759,6 +815,11 @@ impl Parallel {
                 self.placement.close(self.unit.crc);
                 self.window_len = self.history.copy_to(&mut self.window);
                 Some(Checkpoint::block(plaintext, bit, self.window_len))
+            }
+            PassEvent::Symbol { bit, last } if self.placement.owes_block(plaintext) => {
+                self.placement.close(self.unit.crc);
+                self.window_len = self.history.copy_to(&mut self.window);
+                Some(Checkpoint::symbol(plaintext, bit, self.window_len, last))
             }
             PassEvent::MemberEnd if self.placement.member_end_records_crc() => {
                 self.placement.close(self.unit.crc);

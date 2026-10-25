@@ -67,6 +67,17 @@ impl Input {
         self.len -= drop;
     }
 
+    /// Stop holding the bytes before file offset `offset`, whatever is left.
+    pub(crate) fn release_all_before(&mut self, offset: u64) {
+        let drop = usize::try_from(offset.saturating_sub(self.base)).unwrap_or(usize::MAX);
+        let drop = drop.min(self.len);
+        if drop > 0 {
+            self.bytes.drain(..drop);
+            self.base += drop as u64;
+            self.len -= drop;
+        }
+    }
+
     /// The held byte at file offset `offset`, if held.
     pub(crate) fn byte(&self, offset: u64) -> Option<u8> {
         let i = usize::try_from(offset.checked_sub(self.base)?).ok()?;

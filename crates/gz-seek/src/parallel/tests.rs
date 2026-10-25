@@ -3,7 +3,9 @@ use std::sync::mpsc;
 
 use super::*;
 use crate::Forward;
-use crate::test_support::{Pass, bgzf, drive, forward, gzip, gzip_members, payload, spacing};
+use crate::test_support::{
+    Pass, bgzf, drive, forward, gzip, gzip_levels, gzip_members, payload, spacing,
+};
 
 /// How a test runs the tasks a pass hands out.
 #[derive(Debug, Clone, Copy)]
@@ -160,8 +162,9 @@ fn drive_parallel(
     Ok((Pass { index: pass.finish()?, plaintext, windows }, taken))
 }
 
-/// The files the tests read: one member at each level, several members, BGZF
-/// and BGZF mixed with plain members.
+/// The files the tests read: one member at each level, one changing level
+/// across a static block, several members, BGZF and BGZF mixed with plain
+/// members.
 fn files() -> Vec<(&'static str, Vec<u8>)> {
     let (a, b) = (payload(1_200_000, 3), payload(300_000, 5));
     vec![
@@ -169,6 +172,7 @@ fn files() -> Vec<(&'static str, Vec<u8>)> {
         ("level 1", gzip(&a, 1)),
         ("level 6", gzip(&a, 6)),
         ("level 9", gzip(&a, 9)),
+        ("levels", gzip_levels(&[(&b, 6), (&a[..400_000], 1), (&b, 6)])),
         ("members", gzip_members(&[&a, b"", &b, &a[..100]], 6)),
         ("bgzf", bgzf(&a)),
         ("mixed", [bgzf(&b), gzip(&a, 6), bgzf(&b)].concat()),
@@ -221,9 +225,9 @@ fn a_pass_takes_the_chunks_it_is_handed() {
         let (_, taken) =
             parallel(&file, 64 * 1024, chunk, usize::MAX, Driver::Ahead, (1 << 16, 1 << 16))
                 .unwrap();
-        // zlib-rs's level 1 ends no block before the last (KD129), and level
-        // 0's stored blocks are each a chunk or more long.
-        if name != "level 1" {
+        // zlib-rs's level 1 ends no block before the last, and level 0's
+        // stored blocks are each a chunk or more long.
+        if name != "level 1" && name != "levels" {
             assert!(taken * 4 >= chunks * 3, "{name}: {taken} of {chunks} chunks taken");
         }
     }
@@ -300,8 +304,9 @@ fn run_ahead(file: &[u8], chunk: u64, limit: usize) -> (Pass, u64, u64) {
 #[test]
 fn a_limit_never_ends_the_chain() {
     for (name, file) in files() {
-        // zlib-rs's level 1 ends no block before the last (KD129).
-        if name == "level 1" {
+        // zlib-rs's level 1 ends no block before the last, which no chunk
+        // holds under a limit.
+        if name == "level 1" || name == "levels" {
             continue;
         }
         let serial = forward(&file, 64 * 1024, 1 << 16, 1 << 16).unwrap();

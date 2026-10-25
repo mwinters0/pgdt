@@ -6,9 +6,10 @@
 //! (`docs/design/decisions.md`, "D117"): the decode a unit is resumed with
 //! (D112), begun from a window the pass supplies rather than one an index
 //! recorded, and run on whatever thread the caller has. It records the events
-//! an index is made of and each piece's CRC-32, and reads each trailer without
-//! comparing it, the member's plaintext before the chunk being the pass's to
-//! know. Whether its start and window were right is settled where the pass
+//! an index is made of — each static block's start among them, where a
+//! checkpoint the pass owes may fall inside it — and each piece's CRC-32, and
+//! reads each trailer without comparing it, the member's plaintext before the
+//! chunk being the pass's to know. Whether its start and window were right is settled where the pass
 //! takes it: only standing at its start, with the very history it began with,
 //! so by the engine's own decode of everything before it.
 //!
@@ -275,6 +276,12 @@ impl Running {
                 self.events.push((at, Event::Block { bit }));
                 (bit >= until).then_some(Point::Block(bit))
             }
+            EngineEvent::Static { bit } => {
+                self.events.push((at, Event::Static { bit }));
+                None
+            }
+            // No mark is set, so no static block is walked.
+            EngineEvent::Symbol { .. } => None,
             EngineEvent::MemberEnd => {
                 self.cut();
                 let trailer = self.engine.last_trailer().expect("a member's end reads its trailer");

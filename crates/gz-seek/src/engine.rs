@@ -9,6 +9,14 @@
 //! position is the engine's own and never depends on how the caller cut its
 //! buffers.
 //!
+//! **A static block is walked beside the inflater** where the caller has set
+//! a mark ([`Engine::set_mark`]): a static block's codes are deflate's own, so
+//! a decode can resume before any of its symbols, and the engine walks them
+//! (`native::Walk`), capping the inflater's output at the first symbol at or
+//! past the mark and stopping there with [`Event::Symbol`]. Every byte is
+//! still the inflater's; the walk only says where to stop it
+//! (`docs/design/decisions.md`, "D118").
+//!
 //! **The inflater stops at a deflate stream's end having taken no byte of the
 //! trailer**: its reader holds no unused bit where a stream ends, which the
 //! engine asserts, and the stream ends on a byte boundary, so the next byte is
@@ -18,6 +26,7 @@
 use crate::bgzf::bgzf_member_len;
 use crate::error::{Error, Result};
 use crate::member::{Header, Trailer};
+use crate::native::{Walk, Walked};
 use crate::zlib::{Raw, WINDOW_SIZE};
 
 /// What a step stopped at.
@@ -30,6 +39,12 @@ pub(crate) enum Event {
     /// A deflate block that is not its member's last has ended; the next one
     /// begins at compressed bit `bit`.
     Block { bit: u64 },
+    /// A static block's header begins at compressed bit `bit`.
+    Static { bit: u64 },
+    /// The next symbol of a static block begins at compressed bit `bit`, and
+    /// is the first at or past the mark that is not the block's end; `last`
+    /// says whether the block is its member's final one.
+    Symbol { bit: u64, last: bool },
     /// A member's trailer was read and matched: its `ISIZE` always, its CRC-32
     /// where the decode knows the CRC of the member's plaintext before it began
     /// — or, by an [`Engine::unchecked`] engine, only read.
@@ -95,13 +110,59 @@ impl Member {
     }
 }
 
+/// The most compressed bytes a static block's walk is handed at once: what it
+/// holds besides the symbol it stands at.
+const WALK_PUSH: usize = 4 * 1024;
+
+/// What a resume primes the inflater with ahead of its first input.
+#[derive(Debug, Clone, Copy)]
+struct Prime {
+    /// A static block's three header bits, for a resume inside one.
+    header: Option<u8>,
+    /// The bits of the first input byte the resume point is past.
+    skip: u8,
+}
+
+/// What the engine reads of the stream itself before the inflater goes on.
+#[derive(Debug, Clone, Copy)]
+enum Pending {
+    /// A block's header begins at this bit: its type is read, a static
+    /// block's reported.
+    Header(u64),
+    /// A static block's first symbol begins at `bit`: walked where a mark is
+    /// set.
+    Body { bit: u64, last: bool },
+}
+
+/// A static block being walked: where its next symbol is, and where the walk
+/// stopped short of the mark.
+struct Walking {
+    walk: Box<Walk>,
+    /// The block is its member's final one.
+    last: bool,
+    /// The symbol at or past the mark, by bit and plaintext offset, once the
+    /// walk has reached it.
+    found: Option<(u64, u64)>,
+}
+
 pub(crate) struct Engine {
     raw: Raw,
     phase: Phase,
     /// Compressed offset of the next byte the caller supplies.
     fed: u64,
-    /// The bits of the next input byte a resume has already passed.
-    skip_bits: Option<u8>,
+    /// What the inflater is primed with before its first input.
+    prime: Option<Prime>,
+    /// The last eight bytes the inflater took, newest in the low byte, and
+    /// how many it has taken, up to eight: the bytes a stop's unused bits are
+    /// from.
+    tail: u64,
+    tail_len: u8,
+    /// What is to be read of the stream before the inflater goes on.
+    pending: Option<Pending>,
+    /// The plaintext offset a static block's walk stops at the first symbol
+    /// at or past.
+    mark: Option<u64>,
+    walking: Option<Walking>,
     plaintext: u64,
     member: Member,
     /// The last block boundary reported, so none is reported twice.
@@ -121,7 +182,12 @@ impl Engine {
             raw: Raw::new()?,
             phase: Phase::Between,
             fed: offset,
-            skip_bits: None,
+            prime: None,
+            tail: 0,
+            tail_len: 0,
+            pending: None,
+            mark: None,
+            walking: None,
             plaintext,
             member: Member::fresh(offset, plaintext),
             last_boundary: None,
@@ -138,6 +204,31 @@ impl Engine {
         window: &[u8],
         member: Member,
     ) -> Result<Engine> {
+        Engine::resumed(bit, None, plaintext, window, member)
+    }
+
+    /// An engine resumed inside `member`'s static block at compressed `bit`,
+    /// before a symbol, and `plaintext`, the history before it `window`;
+    /// `last` says whether the block is the member's final one.
+    pub(crate) fn at_symbol(
+        bit: u64,
+        last: bool,
+        plaintext: u64,
+        window: &[u8],
+        member: Member,
+    ) -> Result<Engine> {
+        // A static block's header: its final-block bit, then type 01.
+        let header = u8::from(last) | 0b01 << 1;
+        Engine::resumed(bit, Some(header), plaintext, window, member)
+    }
+
+    fn resumed(
+        bit: u64,
+        header: Option<u8>,
+        plaintext: u64,
+        window: &[u8],
+        member: Member,
+    ) -> Result<Engine> {
         let mut raw = Raw::new()?;
         raw.set_dictionary(window)?;
         let skip = (bit % 8) as u8;
@@ -145,13 +236,29 @@ impl Engine {
             raw,
             phase: Phase::Deflate,
             fed: bit / 8,
-            skip_bits: (skip != 0).then_some(skip),
+            prime: (skip != 0 || header.is_some()).then_some(Prime { header, skip }),
+            tail: 0,
+            tail_len: 0,
+            pending: Some(match header {
+                Some(header) => Pending::Body { bit, last: header & 1 != 0 },
+                None => Pending::Header(bit),
+            }),
+            mark: None,
+            walking: None,
             plaintext,
             member,
-            last_boundary: Some(bit),
+            last_boundary: header.is_none().then_some(bit),
             checks_trailers: true,
             trailer: None,
         })
+    }
+
+    /// Walk each static block from its header on, stopping at the first
+    /// symbol at or past plaintext `mark` with [`Event::Symbol`]; `None`
+    /// walks none. A block whose header was read with no mark set is not
+    /// walked.
+    pub(crate) fn set_mark(&mut self, mark: Option<u64>) {
+        self.mark = mark;
     }
 
     /// The same engine comparing no trailer: each is read and kept at
@@ -241,6 +348,8 @@ impl Engine {
             event = Some(Event::Header { bgzf: bgzf_member_len(header.bytes()).is_some() });
             self.raw.reset()?;
             self.last_boundary = None;
+            self.pending = Some(Pending::Header(8 * self.fed));
+            self.walking = None;
             self.phase = Phase::Deflate;
         }
         Ok(Stepped { consumed, event, ..Stepped::default() })
@@ -248,17 +357,62 @@ impl Engine {
 
     fn inflate(&mut self, input: &[u8], out: &mut [u8]) -> Result<Stepped> {
         let mut input = input;
-        let mut primed = 0;
-        if let Some(skip) = self.skip_bits {
-            let Some(&first) = input.first() else {
-                return Ok(Stepped::default());
-            };
-            self.raw.prime(8 - skip, u32::from(first >> skip))?;
-            self.skip_bits = None;
-            self.fed += 1;
-            input = &input[1..];
-            primed = 1;
+        let mut consumed = 0;
+        if let Some(Prime { header, skip }) = self.prime {
+            let (mut bits, mut value) = (0u8, 0u32);
+            if skip != 0 {
+                let Some(&first) = input.first() else {
+                    return Ok(Stepped::default());
+                };
+                (bits, value) = (8 - skip, u32::from(first >> skip));
+                self.remember(&input[..1]);
+                self.fed += 1;
+                input = &input[1..];
+                consumed = 1;
+            }
+            if let Some(header) = header {
+                (bits, value) = (bits + 3, u32::from(header) | value << 3);
+            }
+            self.raw.prime(bits, value)?;
+            self.prime = None;
         }
+        match self.pending {
+            Some(Pending::Header(bit)) => {
+                let Some(header) = self.peek(bit, 3, input) else {
+                    return Ok(Stepped { consumed, ..Stepped::default() });
+                };
+                self.pending = None;
+                // Type 01: a static block, whose first symbol follows its
+                // three header bits.
+                if header >> 1 == 0b01 {
+                    self.pending = Some(Pending::Body { bit: bit + 3, last: header & 1 != 0 });
+                    return Ok(Stepped {
+                        consumed,
+                        produced: 0,
+                        event: Some(Event::Static { bit }),
+                    });
+                }
+            }
+            Some(Pending::Body { bit, last }) => {
+                self.pending = None;
+                if self.mark.is_some() {
+                    let held = self.taken_from(bit);
+                    self.walking = Some(Walking {
+                        walk: Box::new(Walk::new(bit, self.plaintext, &held)),
+                        last,
+                        found: None,
+                    });
+                }
+            }
+            None => {}
+        }
+        let (event, held) = self.walk_on(input);
+        if let Some(event) = event {
+            return Ok(Stepped { consumed, produced: 0, event: Some(event) });
+        }
+        let input = &input[..held];
+        let room = self.room(out.len());
+        let out = &mut out[..room];
         let at = self.fed;
         let located = |e| match e {
             Error::Deflate { message, .. } => Error::Deflate { offset: at, message },
@@ -274,11 +428,8 @@ impl Engine {
                 .map_err(located)?;
             inflated = more.after(inflated);
         }
-        self.fed += inflated.consumed as u64;
-        let produced = inflated.produced;
-        self.member.run_crc = crate::zlib::crc32(self.member.run_crc, &out[..produced]);
-        self.plaintext += produced as u64;
-        let consumed = primed + inflated.consumed;
+        self.took(&input[..inflated.consumed], &out[..inflated.produced]);
+        let (consumed, produced) = (consumed + inflated.consumed, inflated.produced);
         if inflated.stream_end {
             assert_eq!(
                 inflated.unused_bits(),
@@ -286,18 +437,114 @@ impl Engine {
                 "gz-seek: the inflater ended a stream holding unused bits, which zlib's \
                  contract rules out (docs/design/runtime-invariants.md, RT23)"
             );
+            self.walking = None;
             self.phase = Phase::Trailer { bytes: [0; Trailer::LEN], have: 0 };
             return Ok(Stepped { consumed, produced, event: None });
         }
-        let mut event = None;
+        let mut event = self.symbol_reached();
         if inflated.at_block_boundary() {
             let bit = 8 * self.fed - inflated.unused_bits();
             if self.last_boundary != Some(bit) {
                 self.last_boundary = Some(bit);
+                self.walking = None;
+                self.pending = Some(Pending::Header(bit));
                 event = Some(Event::Block { bit });
             }
         }
         Ok(Stepped { consumed, produced, event })
+    }
+
+    /// The inflater took `input` and wrote `out`.
+    fn took(&mut self, input: &[u8], out: &[u8]) {
+        self.remember(input);
+        self.fed += input.len() as u64;
+        self.member.run_crc = crate::zlib::crc32(self.member.run_crc, out);
+        self.plaintext += out.len() as u64;
+    }
+
+    /// Keep the last of `bytes` the inflater took in [`Engine::tail`].
+    fn remember(&mut self, bytes: &[u8]) {
+        for &byte in &bytes[bytes.len().saturating_sub(8)..] {
+            self.tail = self.tail << 8 | u64::from(byte);
+        }
+        self.tail_len = self.tail_len.saturating_add(bytes.len().min(8) as u8).min(8);
+    }
+
+    /// The bytes from the one compressed `bit` is in to the next untaken
+    /// one: among the last eight the inflater took, a stop holding fewer
+    /// than 64 bits unused (`docs/design/runtime-invariants.md`, "RT23").
+    fn taken_from(&self, bit: u64) -> Vec<u8> {
+        let held = usize::try_from(self.fed.saturating_sub(bit / 8)).unwrap_or(usize::MAX);
+        assert!(
+            held <= usize::from(self.tail_len),
+            "gz-seek: a stop held more unused bits than the bytes it took"
+        );
+        (0..held).rev().map(|i| (self.tail >> (8 * i)) as u8).collect()
+    }
+
+    /// The `n` bits from compressed `bit` on, read from the bytes the
+    /// inflater took and then `input`, the bytes from the next untaken one:
+    /// `None` where `input` does not reach them.
+    fn peek(&self, bit: u64, n: u32, input: &[u8]) -> Option<u32> {
+        let mut bytes = self.taken_from(bit);
+        let wanted = usize::try_from((bit + u64::from(n)).div_ceil(8) - bit / 8).ok()?;
+        let more = wanted.saturating_sub(bytes.len());
+        bytes.extend_from_slice(input.get(..more)?);
+        let word = bytes.iter().rev().fold(0u64, |word, &byte| word << 8 | u64::from(byte));
+        Some((word >> (bit % 8)) as u32 & ((1 << n) - 1))
+    }
+
+    /// Walk the static block on over `input`, the bytes from the next untaken
+    /// one, handing the walk a few KiB at a time: [`Event::Symbol`] where the
+    /// walk's stop is reached already, and how much of `input` the inflater
+    /// may take — no more than the walk holds, so it holds every byte the
+    /// inflater took and only a few KiB besides.
+    fn walk_on(&mut self, input: &[u8]) -> (Option<Event>, usize) {
+        let Some(walking) = &mut self.walking else { return (None, input.len()) };
+        let walk = &mut walking.walk;
+        loop {
+            if walking.found.is_none() {
+                match walk.run(self.mark.unwrap_or(u64::MAX)) {
+                    Ok(Walked::Mark { bit, plaintext }) => walking.found = Some((bit, plaintext)),
+                    Ok(Walked::Input) => {}
+                    // Past the block's end the inflater stops at it; a symbol
+                    // the walk refuses, the inflater refuses too, at that
+                    // symbol.
+                    Ok(Walked::End) | Err(_) => {
+                        self.walking = None;
+                        return (None, input.len());
+                    }
+                }
+            }
+            walk.release();
+            let from = usize::try_from(walk.end() - self.fed).unwrap_or(usize::MAX);
+            if walking.found.is_some() || from >= input.len() {
+                break;
+            }
+            walk.push(&input[from..input.len().min(from + WALK_PUSH)]);
+        }
+        let held = usize::try_from(walk.end() - self.fed).unwrap_or(usize::MAX);
+        (self.symbol_reached(), held.min(input.len()))
+    }
+
+    /// [`Event::Symbol`], where the inflater stands at the walk's stop.
+    fn symbol_reached(&mut self) -> Option<Event> {
+        let walking = self.walking.as_mut()?;
+        let (bit, plaintext) = walking.found?;
+        if plaintext != self.plaintext {
+            return None;
+        }
+        walking.found = None;
+        self.mark = None;
+        Some(Event::Symbol { bit, last: walking.last })
+    }
+
+    /// How much of `room` the inflater may fill: in a static block being
+    /// walked, no further than the walk has reached, or its stop.
+    fn room(&self, room: usize) -> usize {
+        let Some(walking) = &self.walking else { return room };
+        let cap = walking.found.map_or(walking.walk.plaintext(), |(_, plaintext)| plaintext);
+        usize::try_from(cap - self.plaintext).unwrap_or(usize::MAX).min(room)
     }
 
     fn trailer(&mut self, input: &[u8]) -> Result<Stepped> {

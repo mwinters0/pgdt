@@ -1,5 +1,6 @@
 //! **What one decode holds is under [`gz_seek::DECODER_BYTES`]**, counted on
-//! the engine whose allocations the Rust allocator sees.
+//! the engine whose allocations the Rust allocator sees — and a forward pass,
+//! a static block's walk included, under that and the window it copies out.
 //!
 //! A test binary of its own because it installs a counting global allocator:
 //! zlib-rs, built with its default `rust-allocator`, takes its inflate state
@@ -94,4 +95,36 @@ fn one_decode_holds_no_more_than_the_stated_charge() {
     assert_eq!(decoded, plaintext[plain.start as usize..plain.end as usize]);
     assert!(held > WINDOW_SIZE, "the count sees the engine's own window: {held} bytes");
     assert!(held as u64 <= DECODER_BYTES, "one decode held {held} bytes");
+}
+
+/// **A forward pass holds its decode and the window it copies out**, a
+/// static block's walk among what the decode holds: over a member level 1
+/// writes as one static block, walked to every mark.
+#[test]
+fn a_forward_pass_walking_a_static_block_holds_no_more_than_its_charge() {
+    let plaintext = payload();
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(1));
+    encoder.write_all(&plaintext).unwrap();
+    let file = encoder.finish().unwrap();
+    let mut out = vec![0u8; 64 * 1024];
+
+    let before = LIVE.load(Ordering::SeqCst);
+    PEAK.store(before, Ordering::SeqCst);
+    let mut pass = Forward::new(NonZeroU64::new(256 * 1024).unwrap()).unwrap();
+    let (mut taken, mut symbols) = (0, 0);
+    loop {
+        let step = pass.read(&file[taken..], &mut out).unwrap();
+        taken += step.progress.consumed;
+        symbols +=
+            usize::from(matches!(step.checkpoint.map(|c| c.start), Some(Start::Symbol { .. })));
+        if step.progress == Default::default() && step.checkpoint.is_none() {
+            break;
+        }
+    }
+    let held = PEAK.load(Ordering::SeqCst) - before;
+    drop(pass);
+
+    assert!(symbols > 2, "the member's one static block checkpointed inside: {symbols}");
+    let charge = DECODER_BYTES + WINDOW_SIZE as u64;
+    assert!(held as u64 <= charge, "a forward pass held {held} bytes against {charge}");
 }

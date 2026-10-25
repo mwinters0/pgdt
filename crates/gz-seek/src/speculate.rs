@@ -90,6 +90,10 @@ pub(crate) enum Event {
     MemberStart { offset: u64 },
     /// The member's header has been read, and is a BGZF member's or not.
     Header { bgzf: bool },
+    /// A static block's header, beginning at compressed `bit`, has been read:
+    /// recorded by a chunk's decode, never a speculation's, for the pass to
+    /// see where a checkpoint inside one may fall.
+    Static { bit: u64 },
 }
 
 impl Event {

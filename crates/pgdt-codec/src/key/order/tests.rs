@@ -753,7 +753,7 @@ mod oracle {
 
     /// The persisted format version and the ordering digest it was pinned
     /// beside, re-pinned together (`golden_order_is_pinned_to_the_format_version`).
-    const GOLDEN_ORDER: (u32, u64) = (78, 18_361_034_400_210_632_537);
+    const GOLDEN_ORDER: (u32, u64) = (79, 18_361_034_400_210_632_537);
 
     /// **Every committed oracle value, sorted under its declared type's
     /// comparison kind and under each kind a set of its bounds is stored

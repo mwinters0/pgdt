@@ -42,7 +42,8 @@ the compressed file pulled or fetched, the remote object
   chunk's window in order, the speculations guessing where a chunk begins and
   the history it ends with or reading a BGZF chunk's guess off its members'
   headers, the search for where one may begin and the
-  crate's own deflate decoder they run, a chunk decoded by the engine from
+  crate's own deflate decoder they run, which also walks a static block for
+  where a checkpoint inside it goes, a chunk decoded by the engine from
   its window, a unit decoded from
   its checkpoint, the BGZF walk, the decode under them, gzip's framing, and
   the inflater over the zlib API, whichever engine a feature names — a leaf beneath io naming no `pg_dump`, as `xz-seek` is the

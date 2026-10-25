@@ -472,13 +472,6 @@ than reading as a phase nobody has sliced.
   by the maintainer deciding whether the shell departs from upstream's `main`
   there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
 
-- **KD129** — a single gzip member whose writer ends a deflate block only at
-  `Z_FINISH`, before the final one, `pg_dump -Z 1` linked against a default-built zlib-ng or
-  zlib-rs among them, indexes as one unit, or two the last that block, so
-  every read of it decodes from its start, serially. **(b) owned by
-  P15**, its slice 15.10 placing checkpoints inside a static block. Detail:
-  `crates/gz-seek/src/forward.rs`.
-
 - **KD131** — a complete map is saved before the reads that built it are
   completed: the forward pass's end-of-file save and the back-fill's run
   `SourceWatch::check` alone, so a block a source's `complete_reads` would

@@ -9,9 +9,10 @@
 //!
 //! **Two ways to an index.** A single member states nothing about its own
 //! interior, so its index is a by-product of decoding it once: [`Forward`] is
-//! that pass, placing a checkpoint at the first block boundary at or after each
-//! multiple of a spacing the caller chooses, and at every member start, and
-//! handing each checkpoint's window out as it goes. [`Parallel`] is the same
+//! that pass, placing a checkpoint at the first place a decode resumes at or
+//! after each multiple of a spacing the caller chooses — a block boundary, or
+//! inside a static block before one of its symbols — and at every member
+//! start, and handing each checkpoint's window out as it goes. [`Parallel`] is the same
 //! pass with chunks of the file ahead of it found speculatively — a BGZF
 //! file's read off its members' headers — and decoded,
 //! on whatever threads the caller runs its [`ChunkTask`]s on, and it builds
@@ -33,7 +34,8 @@
 //! member's CRC-32 and `ISIZE` and records each unit's own CRC-32 as it goes; a
 //! unit decode compares the CRC-32 its index recorded, and the trailer of every
 //! member it holds whole, before it reports itself finished; and a unit that
-//! ends anywhere but where its index says is refused.
+//! ends anywhere but where its index says is refused — inside a static block,
+//! by its plaintext length, the inflater's place in the file there unknown.
 //!
 //! **The plaintext's size is open until a pass reaches the end** ([`Size`]): a
 //! single member's length modulo 2³² is all its trailer says, so only a decode

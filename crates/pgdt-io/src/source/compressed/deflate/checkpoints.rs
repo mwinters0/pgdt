@@ -67,9 +67,10 @@ impl GzipIndex {
     }
 
     /// Whether the file has seek structure: no unit wider than twice the
-    /// spacing (`docs/design/decisions.md`, "D19"). Only a writer that went a
-    /// whole spacing without ending a deflate block leaves a wider one, so a
-    /// file under the spacing — one unit by the reader's choice — has it. A
+    /// spacing (`docs/design/decisions.md`, "D19"). Only a writer that coded a
+    /// whole spacing in one dynamic block leaves a wider one, a static block
+    /// being checkpointed inside, so a file under the spacing — one unit by
+    /// the reader's choice — has it. A
     /// unit is read correctly either way, by decoding from its start.
     pub fn is_seekable(&self) -> bool {
         self.largest_unit() <= self.spacing().saturating_mul(2)
@@ -202,12 +203,15 @@ mod persisted {
     }
 
     /// A checkpoint: `window` is its length inside a member, `None` at a
-    /// member's start.
+    /// member's start; `symbol`, inside a static block before a symbol,
+    /// whether that block is its member's final one, `None` at a block's or
+    /// a member's start.
     #[derive(Serialize, Deserialize)]
     struct Point {
         plaintext: u64,
         bit: u64,
         window: Option<u16>,
+        symbol: Option<bool>,
         crc: Option<u32>,
     }
 
@@ -223,14 +227,13 @@ mod persisted {
             let checkpoints = index
                 .checkpoints()
                 .iter()
-                .map(|c| Point {
-                    plaintext: c.plaintext,
-                    bit: c.bit,
-                    window: match c.start {
-                        gz_seek::Start::Member => None,
-                        gz_seek::Start::Block { window } => Some(window),
-                    },
-                    crc: c.crc,
+                .map(|c| {
+                    let (window, symbol) = match c.start {
+                        gz_seek::Start::Member => (None, None),
+                        gz_seek::Start::Block { window } => (Some(window), None),
+                        gz_seek::Start::Symbol { window, last } => (Some(window), Some(last)),
+                    };
+                    Point { plaintext: c.plaintext, bit: c.bit, window, symbol, crc: c.crc }
                 })
                 .collect();
             let end = index.end().map(|e| End { plaintext: e.plaintext, compressed: e.compressed });
@@ -245,16 +248,25 @@ mod persisted {
             let checkpoints = parts
                 .checkpoints
                 .into_iter()
-                .map(|p| gz_seek::Checkpoint {
-                    plaintext: p.plaintext,
-                    bit: p.bit,
-                    start: match p.window {
-                        None => gz_seek::Start::Member,
-                        Some(window) => gz_seek::Start::Block { window },
-                    },
-                    crc: p.crc,
+                .map(|p| {
+                    let start = match (p.window, p.symbol) {
+                        (None, None) => gz_seek::Start::Member,
+                        (Some(window), None) => gz_seek::Start::Block { window },
+                        (Some(window), Some(last)) => gz_seek::Start::Symbol { window, last },
+                        (None, Some(_)) => {
+                            return Err(serde::de::Error::custom(
+                                "a gzip checkpoint at a member's start inside a static block",
+                            ));
+                        }
+                    };
+                    Ok(gz_seek::Checkpoint {
+                        plaintext: p.plaintext,
+                        bit: p.bit,
+                        start,
+                        crc: p.crc,
+                    })
                 })
-                .collect();
+                .collect::<Result<_, D::Error>>()?;
             let end = parts
                 .end
                 .map(|e| gz_seek::End { plaintext: e.plaintext, compressed: e.compressed });
