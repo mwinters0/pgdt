@@ -219,7 +219,7 @@ enum State {
 /// chunk of them, and the bytes of the block or member it stops in — and at
 /// most the plaintext limit, twice over while it is still writing markers,
 /// beside a few kilobytes of code tables; reading a BGZF chunk's members, the
-/// chunk's bytes and the member it stops in alone.
+/// chunk's bytes, the member it stops in and the header after that alone.
 pub(crate) struct Speculation {
     chunk: u64,
     /// Where the chunk's search ends, and its decode may stop: the next

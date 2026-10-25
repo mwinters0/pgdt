@@ -250,7 +250,8 @@ fn a_bgzf_chunk_is_read_off_its_members_headers() {
 /// **A BGZF chunk's chain is cut where it cannot be read on**: at the limit,
 /// at the last member start before the plaintext would pass it, nothing where
 /// the first member alone does; and at a member whose stated length leads
-/// to no member, at that member's start.
+/// to no member, at that member's start — inside the chunk, and the member
+/// reaching past its end, whose length no stop before it bears out.
 #[test]
 fn a_bgzf_chunk_s_chain_is_cut_where_it_cannot_be_read_on() {
     let file = bgzf(&payload(1_200_000, 31));
@@ -266,14 +267,60 @@ fn a_bgzf_chunk_s_chain_is_cut_where_it_cannot_be_read_on() {
     assert_is_the_file(&truth, &short, 8 * bytes, 16 * bytes, "limited");
     assert!(speculate(&file, 1, bytes, 10, 1 << 20).is_none(), "nothing short of a member");
 
-    // The third member of the chunk states a length one byte too long.
+    // The third member of the chunk, and the member reaching past its end,
+    // each state a length landing inside the member after it, on an `ISIZE`
+    // BGZF allows.
     let Point::Member(first) = whole.start else { panic!("{:?}", whole.start) };
-    let i = starts.iter().position(|&(at, _)| 8 * at == first).unwrap() + 2;
-    let at = starts[i].0 as usize;
-    let mut lying = file.clone();
-    let bsize = u16::from_le_bytes([file[at + 16], file[at + 17]]) + 1;
-    lying[at + 16..at + 18].copy_from_slice(&bsize.to_le_bytes());
-    let cut = speculate(&lying, 1, bytes, usize::MAX, 5000).unwrap();
-    assert_eq!((cut.start, cut.stop), (whole.start, Point::Member(8 * at as u64)));
-    assert_is_the_file(&truth, &cut, 8 * bytes, 16 * bytes, "cut at a lying length");
+    let Point::Member(stop) = whole.stop else { panic!("{:?}", whole.stop) };
+    let i = starts.iter().position(|&(at, _)| 8 * at == first).unwrap();
+    let reaching = starts.iter().position(|&(at, _)| 8 * at == stop).unwrap() - 1;
+    assert!(reaching > i + 2, "the chunk holds {} members", reaching - i + 1);
+    for (j, what) in [(i + 2, "inside the chunk"), (reaching, "reaching past its end")] {
+        let at = starts[j].0 as usize;
+        let mut lying = file.clone();
+        let bsize = u16::from_le_bytes([file[at + 16], file[at + 17]]).checked_add(200).unwrap();
+        lying[at + 16..at + 18].copy_from_slice(&bsize.to_le_bytes());
+        let next = at + usize::from(bsize) + 1;
+        assert!(next > starts[j + 1].0 as usize + 18 && next < starts[j + 2].0 as usize);
+        lying[next - 4..next].copy_from_slice(&1000u32.to_le_bytes());
+        assert!(!lying[next..].starts_with(&crate::member::GZIP_MAGIC));
+        for feed in [5000, 1 << 20] {
+            let cut = speculate(&lying, 1, bytes, usize::MAX, feed).unwrap();
+            let seen = (cut.start, cut.stop);
+            assert_eq!(seen, (whole.start, Point::Member(8 * at as u64)), "{what}, feed {feed}");
+            let what = format!("cut at a lying length {what}");
+            assert_is_the_file(&truth, &cut, 8 * bytes, 16 * bytes, &what);
+        }
+    }
+}
+
+/// **A lone BGZF header the bytes do not bear out is searched past**: one
+/// near a chunk's end, its stated length reaching past it onto no member and
+/// its `ISIZE` one BGZF allows, written as a stored block's plaintext so the
+/// file is sound, is no chain's start, and the chunk is searched as any
+/// file's is.
+#[test]
+fn a_lone_bgzf_header_nothing_bears_out_is_searched_past() {
+    let (bsize, isize) = (1000u16, 4000u32);
+    let mut header = bgzf(b"lone")[..crate::bgzf::BGZF_HEADER_LEN].to_vec();
+    header[16..18].copy_from_slice(&(bsize - 1).to_le_bytes());
+    let mut plaintext = payload(600_000, 37);
+    let at = 300_000;
+    plaintext[at..at + header.len()].copy_from_slice(&header);
+    let trailer = at + usize::from(bsize) - 4;
+    plaintext[trailer..trailer + 4].copy_from_slice(&isize.to_le_bytes());
+    let file = gzip(&plaintext, 0);
+    let truth = truth(&file);
+    let lone = file.windows(header.len()).position(|w| w == header).unwrap() as u64;
+    let next = (lone + u64::from(bsize)) as usize;
+    assert!(!file[next..].starts_with(&crate::member::GZIP_MAGIC), "a member follows it");
+    // Chunk 1 ends within the header's stated length past it.
+    let bytes = (lone + 101) / 2;
+    assert!(lone >= bytes && 2 * bytes < lone + u64::from(bsize), "{lone} in chunk 1 of {bytes}");
+    for feed in [5000, 1 << 20] {
+        let what = format!("feed {feed}");
+        let guess = speculate(&file, 1, bytes, usize::MAX, feed).expect("a stored block found");
+        assert_ne!(guess.start, Point::Member(8 * lone), "{what}: the lone header taken");
+        assert_is_the_file(&truth, &guess, 8 * bytes, 16 * bytes, &what);
+    }
 }

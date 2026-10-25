@@ -14,14 +14,15 @@
 //! **Each member is read by its own header**, as the placement rule decides
 //! each by its own (`docs/design/decisions.md`, "D116"): the chain ends at a
 //! member start whose header is a plain gzip member's, which states no
-//! length, and is cut at the last member start it reached wherever the bytes there
-//! begin no member, an `ISIZE` passes BGZF's most, a member runs past the
-//! file's end, or the plaintext would pass the limit. A first header whose
-//! stated length lands inside the chunk on no member start was no header, and
-//! the search goes on past it; the length of the member reaching the chunk's
-//! end, the first's included, is taken as stated, the bytes after it unread. A
-//! chunk holding no BGZF header is searched as any file's chunk is, once the
-//! scan for one has read it to its end.
+//! length. **Every stated length is borne out**, the member reaching the
+//! chunk's end included: one is taken only where a BGZF header, a plain
+//! member's magic or the file's end follows it. The chain is cut at the last
+//! member start it reached wherever the bytes after a member begin no member,
+//! an `ISIZE` passes BGZF's most, a member runs past the file's end, or the
+//! plaintext would pass the limit; where that start is its first, it was no
+//! header, and the search goes on past it, so a lone header the bytes do not
+//! bear out hands back no guess. A chunk holding no BGZF header is searched as
+//! any file's chunk is, once the scan for one has read it to its end.
 
 use crate::bgzf::{BGZF_HEADER_LEN, BGZF_MAX_PLAINTEXT, MIN_MEMBER, bgzf_member_len};
 use crate::member::GZIP_MAGIC;
@@ -66,6 +67,16 @@ enum Found {
     Nothing,
 }
 
+/// What follows a member, bearing its stated length out.
+enum Follows {
+    /// A BGZF member, stating this length.
+    Bgzf(u64),
+    /// A plain gzip member, stating none.
+    Plain,
+    /// The file's end.
+    End,
+}
+
 /// The chain from its first member to a member start reached.
 #[derive(Clone, Copy)]
 struct Chain {
@@ -104,10 +115,24 @@ impl Members {
                 }
             }
             // The member's `ISIZE`, and the header after it, inside the input.
-            let wanted = if 8 * next >= until { next } else { next + BGZF_HEADER_LEN as u64 };
-            if input.end() < wanted.min(file_len) {
+            if input.end() < (next + BGZF_HEADER_LEN as u64).min(file_len) {
                 return Read::Input;
             }
+            // Its stated length is borne out only where a member, or the
+            // file's end, follows it.
+            let follows = if next == file_len {
+                Follows::End
+            } else {
+                let bytes = input.from(next);
+                match member_len(bytes) {
+                    Some(len) => Follows::Bgzf(len),
+                    None if bytes.starts_with(&GZIP_MAGIC) => Follows::Plain,
+                    None => match self.cut(chain) {
+                        Some(read) => return read,
+                        None => continue,
+                    },
+                }
+            };
             let trailer = input.from(next - 4);
             let isize = u32::from_le_bytes(trailer[..4].try_into().expect("four bytes"));
             let plaintext = chain.plaintext + u64::from(isize);
@@ -121,22 +146,15 @@ impl Members {
                 }
             }
             let reached = Chain { at: next, plaintext, ..chain };
-            if next == file_len {
-                return Read::Done(Some(walked(reached, None)));
-            }
-            if 8 * next >= until {
-                return Read::Done(Some(walked(reached, Some(next))));
-            }
-            let bytes = input.from(next);
-            if let Some(len) = member_len(bytes) {
-                self.chain = Some(Chain { len, ..reached });
-            } else if bytes.starts_with(&GZIP_MAGIC) {
-                // A plain member states no length: the chain ends at its start.
-                return Read::Done(Some(walked(reached, Some(next))));
-            } else {
-                match self.cut(chain) {
-                    Some(read) => return read,
-                    None => continue,
+            match follows {
+                Follows::End => return Read::Done(Some(walked(reached, None))),
+                Follows::Bgzf(len) if 8 * next < until => {
+                    self.chain = Some(Chain { len, ..reached });
+                }
+                // A plain member states no length: the chain ends at its
+                // start, as it does at the first member start past the chunk.
+                Follows::Bgzf(_) | Follows::Plain => {
+                    return Read::Done(Some(walked(reached, Some(next))));
                 }
             }
         }
