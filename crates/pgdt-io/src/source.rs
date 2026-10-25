@@ -337,13 +337,6 @@ impl Extent {
         }
     }
 
-    /// How many bytes are known to exist: the exact length, or the bound.
-    pub fn known(self) -> u64 {
-        match self {
-            Self::Exact(len) | Self::Open { at_least: len } => len,
-        }
-    }
-
     /// Whether a scan that has read through `through` has read everything:
     /// never while the end is not known.
     pub fn reached_by(self, through: u64) -> bool {

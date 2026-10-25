@@ -179,12 +179,11 @@ than reading as a phase nobody has sliced.
 - **KD32** — `max_source_span` is solved against the read-buffer budget, which
   D83 leaves at `DEFAULT_MEMORY_BUDGET` (capped by the allowance less
   `MEMORY_RESERVE` and what is drawn, less what is held the margin cannot
-  absorb) on a plain source whatever `--memory` states, so a plain
-  `query`'s sub-stream count and batch size are fixed at the number D3 picked
-  to decline block decode on an ordinary `.xz`: a stated allowance raises
-  neither, and `--chunk-size` moves them only as far as `KD41` lets it.
-  **(c) unowned**; promoted with `KD25` by a reading of a parallel plain scan
-  on a real device. Detail: `crates/pgdt-query/src/stream/replay/partition.rs`.
+  absorb) on a plain source whatever `--memory` states, so `query`'s sub-stream
+  count and batch size are fixed at the number D3 picked to decline block decode
+  on an ordinary `.xz`, and `--chunk-size` moves them only as far as `KD41` lets
+  it. **(c) unowned**; promoted with `KD25` by a parallel plain scan read on a
+  real device. Detail: `crates/pgdt-query/src/stream/replay/partition.rs`.
 
 - **KD14** — peak resident set is flat in dump bytes but grows several
   kilobytes per table, about a fifth of it live structure the preamble alone

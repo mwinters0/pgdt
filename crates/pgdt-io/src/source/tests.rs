@@ -60,7 +60,6 @@ fn an_open_extent_is_never_reached() {
     assert!(Extent::Exact(10).reached_by(10));
     assert!(!Extent::Exact(10).reached_by(9));
     assert!(!Extent::Open { at_least: 10 }.reached_by(u64::MAX));
-    assert_eq!(Extent::Open { at_least: 10 }.known(), 10);
     assert_eq!(Extent::Open { at_least: 10 }.exact(), None);
     assert_eq!(Extent::Exact(10).to_string(), "10");
     assert_eq!(Extent::Open { at_least: 10 }.to_string(), "at least 10");
