@@ -142,19 +142,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **15.10: a unit ending inside a static block is held to its plaintext
-  length and CRC-32, not to its compressed end.** The call: `UnitRead`
-  finishes such a unit the moment its plaintext reaches the checkpoint,
-  comparing the unit's recorded CRC-32. Every other unit end is also checked
-  against the compressed bit the index names, and that check is skipped here.
-  Why: the inflater stops there because its output is full, having read on
-  into the next symbol, so its place in the file says nothing. Holding the
-  bit would mean walking the static block's codes in every unit decode, as
-  the first pass does, which adds a second decode's cost to each read of
-  such a unit (D118's Rejected). The CRC-32 still refuses damage. What the
-  bit check would add is refusing an index whose checkpoint was placed
-  elsewhere with the same plaintext length and CRC. Reconsidering means
-  setting the walk's mark in `UnitTask::begin` for a unit with
-  `ends_at_symbol`, and finishing on `Event::Symbol` at `end_bit` the way a
-  block end finishes, priced by a profile of a level-1 file's unit decodes.

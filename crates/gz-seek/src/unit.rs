@@ -146,6 +146,8 @@ impl UnitRead {
             )?;
             progress.consumed += step.consumed;
             progress.produced += step.produced;
+            // Held to its plaintext and CRC-32 alone, not to its compressed
+            // end (`docs/design/decisions.md`, "D118").
             if self.task.ends_at_symbol && self.engine.plaintext() == self.task.end_plaintext {
                 self.finish()?;
                 break;
