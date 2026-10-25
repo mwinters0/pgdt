@@ -524,6 +524,6 @@ than reading as a phase nobody has sliced.
 
 - **KD141** — a gzip first pass's task ahead is charged a limit's worth of
   compressed bytes past its chunk, where a speculation can hold more. **(c)
-  unowned**; promoted by 15.7's readings putting a task's remainder over its
-  charge. Detail:
+  unowned**; promoted by a resident reading putting a task's remainder over
+  its charge. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.

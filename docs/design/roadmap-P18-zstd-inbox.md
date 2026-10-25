@@ -85,8 +85,10 @@ count's resident with) were both read off `.xz` inputs alone, at 24 MiB and
 128 MiB block sizes ([`decisions.md`](decisions.md), "I/O, memory and parallelism"). The second bounds what a scan holds *outside* what
 `WorkerMemory::at` bills: its worst over the 400-run grid the reserve was read
 off is 238.6 MiB at 24 MiB blocks and 142.0 MiB at 128, and the published
-`reserve` sitting's `Unnamed` column ([`measurements.md`](measurements.md), "What a scan holds above the budget it was given") is one codec at two decode units, and no
-reading on any other.
+`reserve` sitting's `Unnamed` column ([`measurements.md`](measurements.md), "What a scan holds above the budget it was given") is one codec at two decode units. The
+only reading on another codec is `gzip-resident`'s ([`measurements.md`](measurements.md),
+"What a gzip scan holds against its charge"): gzip's block path and its first
+pass, each under its own charge, inside the bound at three reader counts.
 
 **Why this phase cares.** A new decompressing source states its own
 `default_worker_memory`, which is the per-worker term — and nothing obliges it

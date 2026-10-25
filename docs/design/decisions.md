@@ -142,7 +142,7 @@ so it is set by what a unit shares with xz: the bytes a reader holds, the partit
 Its unit is the finer of the two `.xz` block sizes the resident bounds were read at, where a gzip reader, its inflater lighter than xz's decoder, is billed no term above an `.xz` one's, and a koji-scale member's index has the entry count of the seek table `KD26` is argued over.
 Rejected: a finer spacing, more window section and index for nothing on gzip's side, the power of two below refused at D3's line only for the chunk and anything finer under it; a coarser one, its retention list past any leg the bounds were read at, toward the block size whose legs overran `MEMORY_RESERVE`;
 a power of two for its own sake, a unit running past each multiple to a block boundary and so never one; a row of `gzseek-spacing` at it, gzip's costs flat across the rows either side and the window section arithmetic.
-Reopens: a resume's fixed cost resolved and not small at it; a gzip resident reading overrunning `MEMORY_UNPOOLED_BOUND`. Code: `CHECKPOINT_SPACING`, `source/compressed/deflate.rs`. Evidence: `gzseek-spacing`, `parallel-peak-rss`, `reserve`.
+Reopens: a resume's fixed cost resolved and not small at it; a gzip resident reading overrunning `MEMORY_UNPOOLED_BOUND`. Code: `CHECKPOINT_SPACING`, `source/compressed/deflate.rs`. Evidence: `gzseek-spacing`, `gzip-resident`, `parallel-peak-rss`, `reserve`.
 
 ### D114 A gzip cache's windows follow its encoded file, and every save writes them all
 Each checkpoint's window, in checkpoint order, after the encoded `CacheFile`, placed by the window lengths' running sum, the file whole only where it ends with the last; a load attaches a provider

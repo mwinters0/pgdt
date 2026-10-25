@@ -5127,11 +5127,13 @@ class GzipResident(unittest.TestCase):
     #: past its first.
     GZ_SIZE = 791_308_108
 
-    def test_it_is_untaken_and_borrows_nothing(self):
-        # Built ahead of the commit its readings are taken at, so it waits in
-        # `UNTAKEN`; standing in no sharing edge lets it publish alone.
+    def test_it_is_taken_and_borrows_nothing(self):
+        # Standing in no sharing edge is what lets it publish from its own
+        # commit, outside a sweep; taken, it is in `FIGURES`, where the
+        # doc-side checks apply.
         fig = measure.SELECTABLE_BY_ID[self.FIGURE]
-        self.assertIn(fig, measure.UNTAKEN)
+        self.assertIn(fig, measure.FIGURES)
+        self.assertNotIn(fig, measure.UNTAKEN)
         self.assertEqual(fig.shares, ())
         self.assertEqual(fig.subtracts, ())
         self.assertEqual(fig.stage, "warm-parallel")

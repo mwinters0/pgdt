@@ -76,8 +76,8 @@ impl Chunking {
     /// fixed-code block spends nine bits on a literal, so past the chunk a
     /// speculation holds up to nine eighths of the limit, and the last input
     /// chunk fed it up to `INPUT_CHUNK` more, the speculation releasing
-    /// nothing after its decode's start. **(c) unowned**; promoted by 15.7's
-    /// readings putting a task's remainder over its charge.
+    /// nothing after its decode's start. **(c) unowned**; promoted by a
+    /// resident reading putting a task's remainder over its charge.
     pub(super) const fn task_bytes(self) -> u64 {
         let limit = self.limit as u64;
         let guess = 2 * gz_seek::WINDOW_SIZE as u64;
