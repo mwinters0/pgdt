@@ -111,3 +111,15 @@ ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
 
 # The suite's `uv` uses the image's Python, never one it downloads.
 ENV UV_PYTHON_DOWNLOADS=never
+
+# **The readings' instruments.** Every run of a built binary a reading takes is
+# made in this image under a memory limit (`scripts/contained.py`;
+# `docs/design/measurements.md`, "The apparatus"), so the profiler, the
+# allocation recorder and the tracer are here, beside binaries held to this
+# image's glibc, and `libc6-dbg` names that glibc's frames in a profile. No
+# release artifact links any of them. Last, so a change here rebuilds nothing
+# above it. Rejected: an image derived from this one, for the jemalloc leg's
+# reason above.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends heaptrack libc6-dbg linux-perf strace \
+    && rm -rf /var/lib/apt/lists/*

@@ -75,6 +75,10 @@ in, clear its Blocks column, and write that entry.
 - **Tick a box only when the whole spec row is delivered**; anything else leaves
   it empty with an honest entry beside it. An out-of-band round ticks nothing.
 - **No `git commit`.** Leave the work in the tree for review.
+- **Every reading runs in a memory-limited container** — a hand probe, a
+  profile, a recording: `python3 scripts/contained.py [--memory <limit>] --
+  <command>`, binaries built in the image by `release.py build`
+  (`docs/design/measurements.md`, "The apparatus"). The hook refuses one outside.
 - **Long-running jobs follow `CLAUDE.md`'s protocol**: detached, logging to
   `runs/`, watched to the first timed reading and no further, the log path
   recorded for a later session.

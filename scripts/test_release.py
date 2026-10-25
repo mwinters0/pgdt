@@ -698,6 +698,7 @@ class ThisRepo(unittest.TestCase):
         for build in (
             release.Build(features=("introspect",)),
             release.Build(profile="release-thin"),
+            release.Build(profile="profiling", rustflags="-C force-frame-pointers=yes"),
         ):
             with self.subTest(build=build):
                 step = release.build_step([build])
@@ -706,6 +707,30 @@ class ThisRepo(unittest.TestCase):
                         unittest.mock.patch.object(release, "step_build", lambda b: seen.extend(b) or 0):
                     self.assertEqual(release.main([*step, "--inside"]), 0)
                 self.assertEqual(seen, [build])
+
+    def test_rustflags_reach_cargo_alone_and_only_beside_a_target_dir_of_their_own(self):
+        # The flags fingerprint every crate, so in the release state's target
+        # directory they would rebuild the shipped binary under other flags.
+        build = release.Build(profile="profiling", rustflags="-C force-frame-pointers=yes")
+        self.assertEqual(build.cargo_argv(), release.Build(profile="profiling").cargo_argv())
+        seen = {}
+
+        def fake(argv, **kw):
+            seen.update(kw.get("env") or {})
+            return subprocess.CompletedProcess(argv, 0, stdout="")
+
+        with unittest.mock.patch.object(release.subprocess, "run", fake), \
+                unittest.mock.patch.object(release, "shipped_tree", lambda *a, **k: set()), \
+                unittest.mock.patch.object(release, "readelf_of", lambda b: ""), \
+                unittest.mock.patch.object(release, "image_floor", lambda t: (2, 41)), \
+                unittest.mock.patch.object(release, "check_floor", lambda *a: (True, [])), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(release.step_build([build]), 0)
+        self.assertEqual(seen.get("RUSTFLAGS"), "-C force-frame-pointers=yes")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            code = release.main(["build", "--profile=profiling", "--rustflags=-C force-frame-pointers=yes"])
+        self.assertEqual(code, 2)
+        self.assertIn("--target-dir", err.getvalue())
 
     def test_one_step_runs_one_build_per_target(self):
         both = [release.Build(t) for t in release.TARGETS]

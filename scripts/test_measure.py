@@ -31,6 +31,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+import contained
 import generate_xz_input
 import measure
 import release
@@ -7293,6 +7294,43 @@ class KojiRecipe(unittest.TestCase):
                         self.assertTrue(line.rstrip().endswith("\\"), line)
 
 
+def recipe_uncontained(recipe: str) -> list[str]:
+    """Each command of a printed recipe, continuations joined and comments
+    dropped, that runs a reading outside a container, by the hook's own
+    classifier (`contained.uncontained`)."""
+    joined = re.sub(r"\\\n", " ", recipe)
+    found = []
+    for line in joined.splitlines():
+        if line.strip() and not line.lstrip().startswith("#"):
+            refused = contained.uncontained(line)
+            if refused is not None:
+                found.append(refused)
+    return found
+
+
+class ReadingsContained(unittest.TestCase):
+    """Every run of a built binary the harness makes or prints is in a
+    memory-limited container: its figures' own containers, `contained.argv`
+    for what it starts besides, and every printed recipe line, held to the
+    classifier the hook refuses by."""
+
+    def test_every_recipe_runs_its_binaries_contained(self):
+        cfg = measure.Config()
+        recipes = {
+            "profile": measure.profile_recipe(cfg),
+            "heaptrack": measure.heaptrack_recipe(cfg),
+            **{f"koji wrap={w}": measure.koji_recipe(cfg, "pgdt-koji", w, 8) for w in (False, True)},
+        }
+        for name, recipe in recipes.items():
+            with self.subTest(recipe=name):
+                self.assertEqual(recipe_uncontained(recipe), [])
+
+    def test_the_untimed_runs_go_through_contained(self):
+        for function in (measure.Stager.profile, measure.count_saves):
+            with self.subTest(function=function.__name__):
+                self.assertIn("contained.argv(", inspect.getsource(function))
+
+
 class ProfileRecipe(unittest.TestCase):
     """The sampling profile is printed here for the same reason koji's scan is,
     but its failure mode is the opposite one. koji's mistakes lose a run
@@ -7302,20 +7340,28 @@ class ProfileRecipe(unittest.TestCase):
     def _recipe(self) -> str:
         return measure.profile_recipe(measure.Config())
 
+    @staticmethod
+    def _binary(cfg: measure.Config) -> Path:
+        return measure.PROFILE_BUILD.binary(measure.image_target_dir(cfg, "profiling"))
+
     def test_the_profiling_binary_is_the_one_profiled(self):
         # `release` carries no line tables and no frame pointers, so a profile
         # of it is a flat list of unnameable addresses. The published figures
         # stay on `release`, which is why this is a second binary.
-        recipe = self._recipe()
-        self.assertIn("target/profiling/pgdt", recipe)
+        cfg = measure.Config()
+        recipe = measure.profile_recipe(cfg)
+        self.assertEqual(self._binary(cfg).parent.name, "profiling")
+        self.assertIn(f"{self._binary(cfg)} parse", recipe)
         self.assertNotIn("target/release/pgdt", recipe)
 
     def test_frame_pointers_come_from_the_build_line(self):
         # Cargo has no profile key for them, so `[profile.profiling]` alone
         # gives line tables and a call graph that stops at the leaf.
         recipe = self._recipe()
-        self.assertIn("-C force-frame-pointers=yes", recipe)
-        self.assertIn("--profile profiling", recipe)
+        self.assertIn("'--rustflags=-C force-frame-pointers=yes'", recipe)
+        self.assertIn("--profile=profiling", recipe)
+        self.assertIn("uv run release.py build", recipe)
+        self.assertNotIn("cargo build", recipe)
 
     def test_the_unwinder_matches_the_build(self):
         # `dwarf` needs debug info this profile does not carry, and its 8 KiB
@@ -7337,58 +7383,22 @@ class ProfileRecipe(unittest.TestCase):
                 with self.subTest(line=line):
                     self.assertTrue(line.startswith("cp "), line)
 
-    def test_the_libc_frames_are_named_before_anything_is_recorded(self):
+    def test_the_image_names_libc_s_frames(self):
         # Without symbols, ~48% of a warm `parse` profile is bare addresses in
         # libc.so.6 — and they are memmove and memset, which is the half of a
-        # zero-copy phase's answer. The step must precede the first `perf
-        # record`, or the first profile is the unreadable one.
+        # zero-copy phase's answer. The image's `libc6-dbg` is held to its
+        # `libc6` by apt, and every recording and report runs there.
+        dockerfile = (measure.REPO / "release/Dockerfile").read_text()
+        for package in ("libc6-dbg", "linux-perf", "heaptrack", "strace"):
+            with self.subTest(package=package):
+                self.assertIn(f" {package}", dockerfile)
         recipe = self._recipe()
-        self.assertIn(measure.DEBUGINFOD, recipe)
-        self.assertLess(recipe.index("buildid-cache"), recipe.index("perf record"))
-
-    def test_an_installed_package_is_preferred_over_the_fetch(self):
-        # The package is kept in lockstep with libc by the package manager and
-        # needs no network; the fetch is neither. So the recipe looks under
-        # /usr/lib/debug first and only a miss there reaches debuginfod — and
-        # it looks by *build ID*, which is the only thing that separates
-        # symbols that match from symbols that merely have the right filename.
-        recipe = self._recipe()
-        self.assertIn("/usr/lib/debug/.build-id/", recipe)
-        self.assertIn('BID=$(readelf -n "$LIBC"', recipe)
-        self.assertLess(
-            recipe.index("/usr/lib/debug/.build-id/"), recipe.index("--debuginfod")
-        )
-
-    def test_the_fetch_is_perfs_own_and_not_a_hand_rolled_one(self):
-        # A `curl` into ~/.debug re-derives perf's cache layout from outside,
-        # and a path construction that drifts fails silently: the `debug` file
-        # lands where perf does not read it and the profile is bare addresses
-        # with no error. `perf buildid-cache --debuginfod` is perf writing its
-        # own cache. The flag lives on that subcommand alone.
-        recipe = self._recipe()
-        self.assertIn(f"{measure.PERF} buildid-cache --debuginfod=", recipe)
-        self.assertNotIn("curl", recipe)
-
-    def test_the_step_says_which_source_the_symbols_came_from(self):
-        # Both ways of getting this wrong — a skewed package, a fetch that
-        # failed — return a profile that looks entirely plausible, so the one
-        # cheap defence is that the recipe says out loud which source the
-        # `perf record`s below are reading.
-        echoes = [
-            ln for ln in self._recipe().splitlines() if ln.strip().startswith("echo ")
-        ]
-        self.assertTrue(echoes)
-        for line in echoes:
-            with self.subTest(line=line):
-                self.assertIn("libc symbols:", line)
-
-    def test_the_step_numbering_has_no_hole_without_debuginfod(self):
-        # The step is optional — right on a machine whose libc carries symbols.
-        with unittest.mock.patch.object(measure, "DEBUGINFOD", ""):
-            recipe = measure.profile_recipe(measure.Config())
         self.assertNotIn("debuginfod", recipe)
+        self.assertNotIn("ldd ", recipe)
+
+    def test_the_step_numbering_has_no_hole(self):
         numbered = [
-            int(ln.split(".")[0][2:]) for ln in recipe.splitlines()
+            int(ln.split(".")[0][2:]) for ln in self._recipe().splitlines()
             if re.match(r"^# \d+\. ", ln)
         ]
         self.assertEqual(numbered, list(range(len(numbered))))
@@ -7417,11 +7427,17 @@ class ProfileRecipe(unittest.TestCase):
                     line,
                 )
 
-    def test_no_container_is_involved(self):
-        # A profile is about proportions, and the 512 MB cgroup adds capability
-        # plumbing without changing them.
-        self.assertNotIn("nerdctl", self._recipe())
-        self.assertNotIn("--memory-swap", self._recipe())
+    def test_every_binary_runs_in_a_container(self):
+        # Every run of a built binary is a reading in a memory-limited
+        # container (`contained.py`), a profile's included: the limit guards
+        # the machine and leaves the proportions as they were.
+        cfg = measure.Config()
+        prefix = measure.contained_prefix(cfg, measure.PROFILE_MEMORY)
+        self.assertIn(f"--memory {measure.PROFILE_MEMORY} ", prefix)
+        self.assertEqual(recipe_uncontained(measure.profile_recipe(cfg)), [])
+        for line in measure.profile_recipe(cfg).splitlines():
+            if line.startswith(("perf ", str(self._binary(cfg)))):
+                self.fail(line)
 
     def test_every_shape_is_profiled_over_every_input(self):
         recipe = self._recipe()
@@ -7461,7 +7477,8 @@ class ProfileRecipe(unittest.TestCase):
         record`, and never recorded itself."""
         cfg = measure.Config()
         lines = measure.profile_recipe(cfg).splitlines()
-        binary = measure.REPO / "target/profiling/pgdt"
+        binary = self._binary(cfg)
+        c = measure.contained_prefix(cfg, measure.PROFILE_MEMORY)
         for shape in measure.PROFILE_SHAPES:
             builder = measure.profile_builder_argv(shape, "/dump.sql", "/tmp/x.dtcache")
             with self.subTest(shape=shape):
@@ -7476,10 +7493,10 @@ class ProfileRecipe(unittest.TestCase):
                     built = measure.profile_builder_argv(shape, source, cfg.warm_dir / "profile.dtcache")
                     record = next(
                         i for i, ln in enumerate(lines)
-                        if ln.startswith(f"{measure.PERF} record")
+                        if ln.startswith(f"{c} {measure.PERF} record")
                         and f"profile-{shape}-{name}.data" in ln
                     )
-                    self.assertEqual(lines[record - 1], f"{binary} {' '.join(built)} >/dev/null")
+                    self.assertEqual(lines[record - 1], f"{c} {binary} {' '.join(built)} >/dev/null")
                     self.assertTrue(lines[record - 2].startswith("rm -f "), lines[record - 2])
 
     def test_the_sql_pair_and_its_reading_run_the_timed_legs(self):
@@ -7497,8 +7514,10 @@ class ProfileRecipe(unittest.TestCase):
             f"{measure.GATHER_STATISTICS} >/dev/null",
             recipe,
         )
-        profiled = f"{measure.REPO / 'target/profiling/pgdt'} sql"
-        introspected = f"{cfg.alloc_build_root / 'dfcli-introspect/release/pgdt'} sql"
+        profiled = f"{self._binary(cfg)} sql"
+        introspect_target = measure.image_target_dir(cfg, "dfcli-introspect")
+        introspected = f"{measure.DFCLI_INTROSPECT_BUILD.binary(introspect_target)} sql"
+        c = measure.contained_prefix(cfg, measure.PROFILE_MEMORY)
         # The default leg against the rows leg: the setting alone apart, the
         # comparison "D93" reads.
         self.assertEqual(measure.DFCLI_ACCOUNT_LEGS, ("on", measure.DYNFILTER_ROWS_LEG))
@@ -7509,7 +7528,7 @@ class ProfileRecipe(unittest.TestCase):
                 run = timed.split(" && time ", 1)[1].split(" >/tmp/result.csv", 1)[0]
                 env, _, rest = run.partition(f"{measure.SQL_SHELL} ")
                 rest = rest.replace("=/dump.sql ", f"={dump} ")
-                self.assertIn(f"{env}{measure.PERF} record", recipe)
+                self.assertIn(f"{c} {'env ' + env if env else ''}{measure.PERF} record", recipe)
                 self.assertIn(f"  -- {profiled} {rest} >/dev/null", recipe)
                 for rep in range(1, measure.DFCLI_INTROSPECT_REPS + 1):
                     report = cfg.out_dir / f"introspect-dfcli-{figure}-{query}-{leg}-{rep}.txt"
@@ -7518,8 +7537,8 @@ class ProfileRecipe(unittest.TestCase):
                         ">/dev/null",
                         recipe,
                     )
-        self.assertIn("cargo build --release -p pgdt --features introspect", recipe)
-        self.assertIn(f"--target-dir {cfg.alloc_build_root / 'dfcli-introspect'}", recipe)
+        self.assertIn("uv run release.py build --target x86_64-unknown-linux-gnu --features=introspect", recipe)
+        self.assertIn(f"--target-dir {introspect_target})", recipe)
         self.assertIn(f"{dump}.dtcache", recipe.splitlines()[-1])
 
     def test_the_differential_runs_each_shape_as_the_figure_times_it(self):
@@ -7552,6 +7571,7 @@ class ProfileRecipe(unittest.TestCase):
         the legs carrying no frame pointers."""
         cfg = measure.Config()
         lines = measure.profile_recipe(cfg).splitlines()
+        c = measure.contained_prefix(cfg, measure.PROFILE_MEMORY)
         self.assertEqual(
             measure.RELEASE_DIFF_LEGS,
             (measure.SHIPPED_PROFILE_LEG, measure.PROFILE_LEGS[0][0]),
@@ -7565,7 +7585,7 @@ class ProfileRecipe(unittest.TestCase):
                 self.assertEqual(binary, cfg.out_dir / f"pgdt-{leg}")
                 asked = next(
                     i for i, ln in enumerate(lines)
-                    if ln.startswith(f"{binary} --version")
+                    if ln.startswith(f"{c} {binary} --version")
                 )
                 self.assertIn(f"'(profile: {leg})'", lines[asked])
                 self.assertLess(asked, first_record)
@@ -7578,7 +7598,7 @@ class ProfileRecipe(unittest.TestCase):
                     line = lines[i]
                     self.assertNotIn("--call-graph", line)
                     self.assertTrue(lines[i + 1].startswith(f"  -- {binary} "), lines[i + 1])
-                    if lines[i - 1].startswith(f"{binary} parse "):
+                    if lines[i - 1].startswith(f"{c} {binary} parse "):
                         self.assertTrue(lines[i - 2].startswith("rm -f "), lines[i - 2])
                     else:
                         self.assertTrue(lines[i - 1].startswith("rm -f "), lines[i - 1])
@@ -7593,7 +7613,7 @@ class ProfileRecipe(unittest.TestCase):
         for command, _ in measure.RELEASE_PROFILE_SHAPES:
             with self.subTest(shape=command):
                 self.assertIn(
-                    f"{measure.PERF} diff --sort symbol "
+                    f"{measure.contained_prefix(cfg, measure.PROFILE_MEMORY)} {measure.PERF} diff --sort symbol "
                     f"{cfg.out_dir / f'release-diff-{command}-{shipped}.data'} "
                     f"{cfg.out_dir / f'release-diff-{command}-{default}.data'} > "
                     f"{cfg.out_dir / f'release-diff-{command}.txt'}",
@@ -7640,13 +7660,13 @@ class HeaptrackRecipe(unittest.TestCase):
     def _records(self) -> list[str]:
         return [
             ln for ln in self._recipe().splitlines()
-            if ln.strip().startswith(f"{measure.HEAPTRACK} --record-only")
+            if f" {measure.HEAPTRACK} --record-only" in ln and not ln.startswith("#")
         ]
 
     def _reports(self) -> list[str]:
         return [
             ln for ln in self._recipe().splitlines()
-            if ln.strip().startswith(f"{measure.HEAPTRACK}_print")
+            if f" {measure.HEAPTRACK}_print" in ln and not ln.startswith("#")
         ]
 
     def test_the_profiling_binary_is_the_one_recorded(self):
@@ -7657,7 +7677,7 @@ class HeaptrackRecipe(unittest.TestCase):
         recipe = self._recipe()
         self.assertIn("/profiling/pgdt ", recipe)
         self.assertNotIn("/release/pgdt", recipe)
-        self.assertIn("--profile profiling", recipe)
+        self.assertIn("--profile=profiling", recipe)
 
     def test_the_recorded_build_links_the_system_allocator(self):
         # heaptrack counts requests at `malloc`, and the shipped build's
@@ -7668,12 +7688,13 @@ class HeaptrackRecipe(unittest.TestCase):
         self.assertEqual(measure.HEAPTRACK_LEG, "system")
         self.assertIn(measure.HEAPTRACK_LEG, measure.ALLOCATOR_LEGS)
         self.assertIn(
-            f"--no-default-features --features {measure.HEAPTRACK_LEG}", recipe
+            f"--no-default-features --features={measure.HEAPTRACK_LEG}", recipe
         )
         self.assertIn(f"(allocator: {measure.HEAPTRACK_LEG})", recipe)
-        target = cfg.alloc_build_root / f"heaptrack-{measure.HEAPTRACK_LEG}"
-        binary = target / "profiling/pgdt"
-        self.assertIn(f"{binary} --version", recipe.splitlines())
+        target = measure.image_target_dir(cfg, f"heaptrack-{measure.HEAPTRACK_LEG}")
+        binary = measure.HEAPTRACK_BUILD.binary(target)
+        c = measure.contained_prefix(cfg, measure.HEAPTRACK_MEMORY)
+        self.assertIn(f"{c} {binary} --version", recipe.splitlines())
         recorded = [
             ln for ln in recipe.splitlines() if ln.strip().startswith(f"{binary} parse")
         ]
@@ -7686,8 +7707,8 @@ class HeaptrackRecipe(unittest.TestCase):
         # may be shared either, a sweep building one while this one builds.
         cfg = measure.Config()
         recipe = measure.heaptrack_recipe(cfg)
-        target = cfg.alloc_build_root / f"heaptrack-{measure.HEAPTRACK_LEG}"
-        self.assertIn(f"--target-dir {target}", recipe)
+        target = measure.image_target_dir(cfg, f"heaptrack-{measure.HEAPTRACK_LEG}")
+        self.assertIn(f"--target-dir {target})", recipe)
         self.assertNotIn(str(measure.REPO / "target"), recipe)
         others = {*measure.ALLOCATOR_LEGS, "introspect", "dfcli-introspect"}
         self.assertNotIn(target.name, others)
@@ -7702,8 +7723,8 @@ class HeaptrackRecipe(unittest.TestCase):
         for line in commands:
             with self.subTest(line=line):
                 self.assertNotIn("force-frame-pointers", line)
-                self.assertNotIn("RUSTFLAGS", line)
-        self.assertTrue(any("--profile profiling" in ln for ln in commands))
+                self.assertNotIn("--rustflags", line)
+        self.assertTrue(any("--profile=profiling" in ln for ln in commands))
 
     def test_the_gui_is_never_launched(self):
         # Without `--record-only` heaptrack hands the finished file to
@@ -7733,19 +7754,19 @@ class HeaptrackRecipe(unittest.TestCase):
         # `rustc_demangle`. Without the pipe the C frames read fine and the
         # Rust frames above them are noise.
         recipe = self._recipe()
-        self.assertIn(measure.HEAPTRACK_DEMANGLE, recipe)
+        c = measure.contained_prefix(measure.Config(), measure.HEAPTRACK_MEMORY)
         piped = [ln for ln in recipe.splitlines() if ".txt" in ln]
         self.assertEqual(len(piped), len(measure.HEAPTRACK_AXIS) + 1)
         for line in piped:
             with self.subTest(line=line):
-                self.assertIn(f"| {measure.HEAPTRACK_DEMANGLE} >", line)
+                self.assertIn(f"| {c} {measure.HEAPTRACK_DEMANGLE} >", line)
 
     def test_each_recording_starts_from_no_cache(self):
         # `parse` resumes from a cache, so a pair sharing one would record a
         # full scan and then a no-op — two recordings whose difference is the
         # whole workload rather than the one byte of budget between them.
         lines = self._recipe().splitlines()
-        starts = [i for i, ln in enumerate(lines) if ln.startswith(f"{measure.HEAPTRACK} --record-only")]
+        starts = [i for i, ln in enumerate(lines) if f" {measure.HEAPTRACK} --record-only" in ln]
         self.assertEqual(len(starts), len(measure.HEAPTRACK_AXIS))
         for i in starts:
             with self.subTest(line=lines[i]):
@@ -7822,13 +7843,15 @@ class HeaptrackRecipe(unittest.TestCase):
                 self.assertIn(f"--source {staged}", recipe)
                 self.assertIn(str(staged), recipe.splitlines()[-1])
 
-    def test_no_container_is_involved(self):
-        # heaptrack multiplies allocation cost and resident set by its own
-        # bookkeeping, so a recording under a cgroup would be a recording of
-        # heaptrack meeting the limit. The cgroup belongs to the gate.
-        recipe = self._recipe()
-        self.assertNotIn("nerdctl", recipe)
-        self.assertNotIn("--memory-swap", recipe)
+    def test_every_binary_runs_in_a_container_no_recording_meets(self):
+        # Every run of a built binary is a reading in a memory-limited
+        # container (`contained.py`). heaptrack's bookkeeping is charged to
+        # it, so the limit is several times what a recorded run is allowed.
+        self.assertEqual(recipe_uncontained(self._recipe()), [])
+        allowed = max(
+            int(measure.heaptrack_argv(shape, "/d", "/c")[-3]) for shape, _ in measure.HEAPTRACK_AXIS
+        )
+        self.assertGreaterEqual(contained.size_bytes(measure.HEAPTRACK_MEMORY), 8 * allowed)
 
     def test_the_step_numbering_has_no_hole(self):
         numbered = [

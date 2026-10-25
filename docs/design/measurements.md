@@ -480,6 +480,25 @@ on the machine while a sweep does — a `cargo` job across 24 cores moves the
 numbers being taken, which is "a koji figure taken while local work ran is not
 a figure" one scale down.
 
+**Every run of a built binary a reading takes is in a memory-limited
+container**, the figure's own or `scripts/contained.py`'s: a figure's legs and
+untimed builders, the row counts and the traced save count taken beside them,
+every line of the profile, heaptrack and koji recipes, and any probe a session
+runs by hand, `cargo run` and `cargo bench` included. An unlimited run takes
+from the machine rather than from the reading, and glibc's per-thread arenas
+grow with the cores. `contained.py` runs the command in the release image,
+whose glibc binaries built there are held to and which carries `perf`,
+`heaptrack`, `strace` and libc's debug symbols, each path it names mounted at
+its own path. Its limit guards the machine and is no figure's budget, so a
+shape stating no allowance discovers it; one past half the machine is refused.
+**The rule is checked, not remembered**: a `PreToolUse` hook
+(`.claude/settings.json`) refuses a Bash command running a built binary, `cargo
+run`, `cargo bench` or a profiler outside a container, and `test_measure.py`'s
+`ReadingsContained` holds every printed recipe line to that classifier.
+*Rejected:* a profile on the host, the cgroup changing no proportion it reads;
+a heaptrack recording on the host, its bookkeeping meeting the limit, which a
+limit several times the recording's own allowance does not.
+
 **That binary is built by the harness, in the first second, and not looked up.**
 The built binary survives between sessions, so a preflight that asks only
 whether the file exists times whatever the last build left there while the
@@ -1197,7 +1216,7 @@ and every one of them fails by returning a plausible report of something else,
 so `scripts/test_measure.py` asserts them rather than leaving them to be
 remembered: the **`system` build**, without which the report reads as though
 Rust allocated nothing, **in a target directory of its own**, without which it
-overwrites the profile recipe's `target/profiling/pgdt`; the **`profiling`
+overwrites the profile recipe's binary; the **`profiling`
 build**, without which a report carries no `.rs:` reference anywhere in it
 (3,627 against 0, on the same recording); **no frame
 pointers**, which heaptrack does not need because it unwinds `.eh_frame`;
@@ -4358,7 +4377,7 @@ The orchestrator compares the two caches itself — `cmp`, with the verdict in
 the log — which is the one place this run is stricter than the wrap script
 above. It still only prints the expected counts beside each leg's tail, and it
 does not read the byte total back at all; that is `pgdt info --dtcache <cache>
---detail` afterwards on the host.
+--detail` afterwards, in a container as every run of a built binary is.
 
 ## The preamble prepass is bounded by the schema, not by the dump
 
@@ -4544,8 +4563,8 @@ path (a save opens once, the file it writes beside the cache and renames over
 it, whose path begins with the cache's; the first open is the load's miss).
 **Trace both calls**, not `openat` alone: glibc uses `openat` and musl uses
 `open`, so tracing one of them silently reports zero saves against the other
-libc. The counting stage runs on the host and is untimed, so `strace`'s
-overhead reaches no figure.
+libc. The counting stage is untimed, so `strace`'s overhead reaches no figure,
+and runs in a container as every run of a built binary does.
 
 ## Decoder and whole-file benchmarks
 

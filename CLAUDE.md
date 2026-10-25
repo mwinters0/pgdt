@@ -14,9 +14,8 @@ cargo check --workspace
 cargo nextest run -p <crate> [--test <target>] [<filter>]   # part of the suite; nextest pinned in mise.toml
 cargo fmt                                         # config: rustfmt.toml
 INSTA_UPDATE=always cargo test -p <crate> --test <target>   # accept snapshots (no cargo-insta here)
-cargo run -p pgdt -- parse --source <file>      # binary is `pgdt`; scans ahead, resumes
-cargo run -p pgdt -- info --source <file> [--detail]   # never scans; reads the cache
-cargo build --release -p pgdt --features introspect --target-dir <own>  # the instrument; never timed
+python3 scripts/contained.py [--memory 4g] -- <binary> <args>   # any built binary, perf, heaptrack: the image, a limit
+(cd scripts && uv run release.py build --features introspect --target-dir <own>)  # the instrument; never timed
 
 cd scripts && uv run generate_fixtures.py [--version 13|16|18] [--skip-dumps] [--skip-oracle]
 cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--render <run-dir>|--count-pair <parent>
@@ -123,7 +122,8 @@ Run it after rewriting a heading.
   shims, no migration caveats.
 - **The library never replaces cache data automatically** — see
   `decisions.md`'s cache entry before touching a cache path.
-- **A build carrying `introspect` is never timed.**
+- **Every reading runs in a memory-limited container** (`scripts/contained.py`,
+  whose hook refuses one outside), and none on an `introspect` build is timed.
 - **Find code with `graft`, not `grep`** — `graft ask "<q>" --source`;
   [`.claude/skills/graft/SKILL.md`](.claude/skills/graft/SKILL.md) has the rest.
 - **Document what _is_, not what _was_**, inside `docs/status/history/` too. A

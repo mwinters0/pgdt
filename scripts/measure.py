@@ -145,6 +145,7 @@ from generate_gzip_input import BGZF_BLOCK
 # `build_in_image`), and which runs a figure's `cargo bench` itself
 # (`bench_in_image`).
 # Import-safe on the same terms.
+import contained
 import release
 
 REPO = Path(__file__).resolve().parent.parent
@@ -2126,8 +2127,9 @@ class Stager:
     def profile(self, name: str) -> dict:
         """Row and column counts for an input, off `pgdt info --json`.
 
-        Not a figure: it runs on the host, untimed, once per input, and only
-        the tables that quote a per-row cost need it."""
+        Not a figure: it runs untimed, once per input, and only the tables
+        that quote a per-row cost need it — in a container under the sweep's
+        limit, as every run of a built binary is (`contained.py`)."""
         if name in self._profiles:
             return self._profiles[name]
         cache = self.cfg.cache_dir / f"{name}.profile.json"
@@ -2150,7 +2152,7 @@ class Stager:
                 "bytes": nominal,
                 "row_bytes": 4000,
             }
-        self.log(f"  profiling {name} (host, untimed)")
+        self.log(f"  profiling {name} (untimed)")
         path = self.warm_path(name) if name in self._staged else self.cold_path(name)
         tmp = self.cfg.cache_dir / f"{name}.profile.dtcache"
         tmp.unlink(missing_ok=True)
@@ -2158,18 +2160,23 @@ class Stager:
         # returns are the divisor under every per-row number in the document,
         # and no invocation this harness makes inherits a CLI default that
         # moves underneath it (`SWEEP_JOBS`).
+        def inside(argv: list[str]) -> list[str]:
+            return contained.argv(
+                argv, self.cfg.memory, container=self.cfg.container_argv()
+            )
+
         run(
-            [
+            inside([
                 str(self.cfg.bin_pgdt), "parse",
                 "--source", str(path),
                 "--dtcache", str(tmp),
                 "--jobs", str(SWEEP_JOBS),
                 *NO_STATISTICS.split(),
-            ],
+            ]),
             quiet=True,
-        )
+        )  # fmt: skip
         out = run(
-            [str(self.cfg.bin_pgdt), "info", "--dtcache", str(tmp), "--json"], capture=True
+            inside([str(self.cfg.bin_pgdt), "info", "--dtcache", str(tmp), "--json"]), capture=True
         )
         tmp.unlink(missing_ok=True)
         index = json.loads(out)
@@ -6633,7 +6640,9 @@ def count_saves(
 ) -> tuple[int, int]:
     """Cache writes during one `parse`, from `strace`.
 
-    Traced on the host and untimed, so strace's overhead reaches no figure.
+    Traced untimed, so strace's overhead reaches no figure, in a container
+    under the sweep's limit, as every run of a built binary is
+    (`contained.py`).
     **Both** `open` and `openat`: glibc uses one and musl the other, and
     tracing a single call silently reports zero saves against the other libc.
     A save opens once, the file it writes beside the cache and renames over it,
@@ -6647,11 +6656,15 @@ def count_saves(
     if cfg.dry_run:
         return (0, 0)
     proc = subprocess.run(
-        [
-            "strace", "-f", "-e", "trace=open,openat",
-            str(binary), "parse", "--source", str(dump), "--dtcache", str(cache),
-            "--jobs", str(SWEEP_JOBS), *NO_STATISTICS.split(),
-        ],
+        contained.argv(
+            [
+                "strace", "-f", "-e", "trace=open,openat",
+                str(binary), "parse", "--source", str(dump), "--dtcache", str(cache),
+                "--jobs", str(SWEEP_JOBS), *NO_STATISTICS.split(),
+            ],
+            cfg.memory,
+            container=cfg.container_argv(),
+        ),
         text=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -7642,7 +7655,7 @@ def run_per_block_quadratic(session: Session) -> str:
         else f"runs {min(save_counts)}–{max(save_counts)}"
     )
     note = (
-        "\n\nSave counts are `strace -f -e trace=open,openat` on the host, untimed. Across a "
+        "\n\nSave counts are `strace -f -e trace=open,openat` in a container, untimed. Across a "
         f"block count multiplying by {counts[-1] // counts[0]:,}× from the control, "
         f"the save count {span} — the throttle is a ratio against elapsed time, not a count of "
         "watermarks.\n"
@@ -14580,39 +14593,52 @@ def cmd_koji(wrap: bool, jobs: int) -> int:
 # wrong thing.
 # --------------------------------------------------------------------------
 
-#: The profiler. `perf` needs no change to this machine's
-#: `perf_event_paranoid = 2`, which permits user-space sampling of one's own
-#: processes -- and user space is what this phase is about. `samply` is the
-#: alternative if a richer reader is wanted, and costs a sysctl.
-PERF = _env("PGDT_PROFILE_PERF", "perf")
+#: The profiler: the release image's `perf`, run as the invoking user in a
+#: container whose seccomp lets `perf_event_open` reach the kernel, where this
+#: machine's `perf_event_paranoid = 2` permits user-space sampling of one's own
+#: processes (`contained.py`) -- and user space is what this phase is about.
+#:
+#: **libc's frames are named by the image's `libc6-dbg`**, which apt holds to
+#: its `libc6`'s version, so the symbols match the libc every profiled binary
+#: runs on by construction. This is not a nicety: a stripped libc puts ~48% of a
+#: warm `parse` profile into bare addresses in `libc.so.6` -- and those
+#: addresses are `__memmove_avx_unaligned_erms` and
+#: `__memset_avx2_unaligned_erms`, the two functions a phase about zero-copy most
+#: needs to see.
+PERF = "perf"
 
-#: Where libc's detached debug symbols come from when the machine has none.
-#: **This is not a nicety.** A stripped libc puts ~48% of a warm `parse` profile
-#: into bare addresses in `libc.so.6` -- and those addresses are
-#: `__memmove_avx_unaligned_erms` and `__memset_avx2_unaligned_erms`, which are
-#: the two functions a phase about zero-copy most needs to see.
-#:
-#: **A distribution's detached-symbol package is the better source and this is
-#: the fallback**: installed under `/usr/lib/debug`, symbols are found through
-#: the `.gnu_debuglink` with no network, no environment and no cache, and the
-#: package manager keeps them in lockstep with libc. So the recipe looks for an
-#: installed package first — under `/usr/lib/debug/.build-id/`, because that is
-#: the copy of the same file whose *name* proves it matches this libc, where
-#: `.gnu_debuglink`'s does not — and fetches only when there is none, and prints
-#: which of the two it took, because the failure this whole constant exists
-#: against is a profile that came back looking fine off the wrong symbols. The
-#: fetch covers the machine that has not installed one and the DSO no package
-#: offers. Empty disables the step whole, which is right on a machine whose
-#: libc already carries symbols — there the package lookup would report a miss
-#: it has no fetch to answer — and wrong on one that silently does not.
-#:
-#: **The fetch is `perf buildid-cache --debuginfod[=URLs] -a <dso>`**, `perf`'s
-#: own interface to its own cache, rather than a `curl` re-deriving that cache's
-#: layout from outside — a path construction that fails silently, writing the
-#: `debug` file somewhere `perf` does not read and yielding bare addresses with
-#: no error. The flag lives on `buildid-cache` alone, with `perf` top-level and
-#: `perf report` rejecting it, which is what once read as `perf` not having one.
-DEBUGINFOD = _env("PGDT_PROFILE_DEBUGINFOD", "https://debuginfod.archlinux.org")
+#: The limit each profiled run's container is given (`contained.py`): a guard
+#: on the machine, not a figure's budget. A shape stating no allowance
+#: discovers this one rather than its figure's container's -- a different
+#: budget, under which it runs the same code -- and `perf` is charged to it.
+PROFILE_MEMORY = "4g"
+
+#: The profiled build: `profiling`'s line tables, and the frame pointers no
+#: Cargo profile key states, as `RUSTFLAGS` for this build alone.
+PROFILE_BUILD = release.Build(profile="profiling", rustflags="-C force-frame-pointers=yes")
+
+#: The introspection build the `pgdt sql` pair's reading runs, never timed.
+DFCLI_INTROSPECT_BUILD = release.Build(features=("introspect",))
+
+
+def contained_prefix(cfg: Config, memory: str) -> str:
+    """The head of a printed recipe line run in a container under `memory`
+    (`contained.py`), `Config.alloc_build_root` mounted for the binaries built
+    there, which a report reads without its command naming them."""
+    return (
+        f"python3 {REPO / 'scripts/contained.py'} --memory {memory} "
+        f"--mount {cfg.alloc_build_root} --"
+    )
+
+
+def recipe_build_line(build: release.Build, target_dir: Path) -> str:
+    """A printed recipe's build of `build` in the release image, held to its
+    glibc there (`release.py build`), into `target_dir`."""
+    opts = " ".join(shlex.quote(o) for o in build.options() if o != "--package=pgdt")
+    return (
+        f"(cd scripts && uv run release.py build --target {build.target} {opts} \\\n"
+        f"  --target-dir {target_dir})"
+    )
 
 #: Sampling frequency, in Hz. Prime, so it cannot fall into lockstep with a
 #: periodic phase of the thing being sampled.
@@ -14785,16 +14811,17 @@ def profile_recipe(cfg: Config) -> str:
     be, and each fails *silently* -- a profile comes back, it just describes
     something else. `test_measure.py` asserts all six:
 
-    * **the `profiling` binary, never `target/release/pgdt`.** `release`
+    * **the `profiling` binary, never a `release` one.** `release`
       keeps its symbol table, so a flat profile of it names functions, but it
       carries no line tables and no frame pointers: no source lines for
       `perf annotate`, and every call chain the reports below print stops at
       the leaf. The published figures stay on `release`, which is why this
-      is a second binary rather than a change to the one they use.
+      is a second binary rather than a change to the one they use, built in
+      the image (`PROFILE_BUILD`) in a target directory of its own.
     * **`-C force-frame-pointers=yes` on the build line.** Cargo has no profile
       key for frame pointers, so `[profile.profiling]` alone gives line tables
-      and a call graph that stops at the leaf. `RUSTFLAGS` fingerprints
-      separately, so this build does not evict `target/release/`.
+      and a call graph that stops at the leaf; `release.py build --rustflags`
+      states them for this build alone.
     * **`--call-graph fp`, matching that build.** `dwarf` would need full debug
       info this profile does not carry, and its 8 KiB stack copies per sample
       would change the thing being measured.
@@ -14803,15 +14830,10 @@ def profile_recipe(cfg: Config) -> str:
       proportions. Staging is a host copy for the same reason the sweep's is --
       writing 3 GiB of tmpfs from inside the 512 MB container charges those
       pages to its cgroup.
-    * **libc's symbols, resolved before the first `perf record`.** Without them
-      ~48% of a warm `parse` profile is bare addresses, and they are the
-      `memmove` and `memset` a phase about zero-copy exists to see. The step
-      keys on libc's build ID, which is the only thing that distinguishes
-      symbols that match from symbols that merely have the right filename: an
-      installed package answers at `/usr/lib/debug/.build-id/`, and only a miss
-      there reaches the `debuginfod` fetch. It prints which of the two it took,
-      because both a skew and a failed fetch otherwise surface as a profile
-      that looks entirely plausible -- see `DEBUGINFOD` above.
+    * **every recording and report in the image**, whose `libc6-dbg` names
+      libc's frames (`PERF`): a report read where the recording's libc is not
+      resolves none of them, and ~48% of a warm `parse` profile is then bare
+      addresses.
     * **the worker count, stated rather than inherited.** `profile_argv` states
       one for the same reason `_script` does, and here the consequence is
       sharper than a moved number: a sampling profile's buckets are per
@@ -14822,9 +14844,9 @@ def profile_recipe(cfg: Config) -> str:
       is what holds this function and `_script` together, and it compares two
       shapes that each pin a count rather than two that each inherit one.
 
-    And one thing that is not a mistake but reads like one: **no container.**
-    A profile is about proportions, and the cgroup adds capability plumbing
-    without changing them.
+    **Every line running a binary runs it in a container** under
+    `PROFILE_MEMORY` (`contained.py`), as every run of a built binary is: the
+    limit guards the machine and leaves a profile's proportions as they were.
 
     **`DFCLI_ACCOUNT`'s pair runs `pgdt sql`**, off the same
     profiling build, over a cache the figure's own `pgdt parse` writes beside
@@ -14848,15 +14870,16 @@ def profile_recipe(cfg: Config) -> str:
     keep `.symtab` and carry no frame pointers, and `#[inline]` goes on the
     callee, whose name is the remedy's whole input. **It is read for names,
     never for a time** -- what the default leg alone leaves out of line --
-    as any profile is read for proportions. Like every profile here it runs
-    on the host, so a shape stating no allowance discovers the host's memory
-    rather than the figure container's: a different budget, under which each
-    leg runs the same code."""
+    as any profile is read for proportions. Like every profile here a shape
+    stating no allowance discovers `PROFILE_MEMORY` rather than the figure
+    container's: a different budget, under which each leg runs the same code."""
     warm = cfg.warm_dir
-    binary = REPO / "target/profiling/pgdt"
+    profile_target = image_target_dir(cfg, "profiling")
+    binary = PROFILE_BUILD.binary(profile_target)
     sql = f"{binary} sql"
-    introspect_target = cfg.alloc_build_root / "dfcli-introspect"
-    introspect = f"{introspect_target / 'release/pgdt'} sql"
+    introspect_target = image_target_dir(cfg, "dfcli-introspect")
+    introspect = f"{DFCLI_INTROSPECT_BUILD.binary(introspect_target)} sql"
+    c = contained_prefix(cfg, PROFILE_MEMORY)
     cache = warm / "profile.dtcache"
     out = cfg.out_dir
     figure, query = DFCLI_ACCOUNT
@@ -14868,63 +14891,32 @@ def profile_recipe(cfg: Config) -> str:
     step = 0
 
     def head(*text: str) -> None:
-        """A numbered step. Numbered as emitted rather than by literal, so the
-        optional debuginfod step does not leave a hole in the sequence on a
-        machine whose libc already carries symbols."""
+        """A numbered step, numbered as emitted rather than by literal."""
         nonlocal step
         lines.extend([f"# {step}. {text[0]}", *(f"#    {t}" for t in text[1:])])
         step += 1
 
     head(
-        "The tool. `perf_event_paranoid = 2` already permits user-space",
-        "sampling of one's own processes, so nothing here needs a sysctl.",
+        "The tool: the release image's, run in a container as every line",
+        "below that runs a binary is (scripts/contained.py), under a limit",
+        "that guards the machine. `perf_event_paranoid = 2` already permits",
+        "user-space sampling of one's own processes, so nothing needs a sysctl;",
+        "the image's libc6-dbg names libc's frames.",
     )
-    lines += [f"{PERF} --version", ""]
+    lines += [f"{c} {PERF} --version", ""]
 
     head(
-        "The profiling build. Frame pointers are not a Cargo profile key,",
-        "so they come from RUSTFLAGS; `release` is untouched either way.",
+        "The profiling build, in the release image and a target directory of",
+        "its own. Frame pointers are not a Cargo profile key, so they come",
+        "from --rustflags; no timed binary is rebuilt.",
     )
-    lines += [
-        'RUSTFLAGS="-C force-frame-pointers=yes" \\',
-        "  cargo build --profile profiling -p pgdt",
-        "",
-    ]
+    lines += [recipe_build_line(PROFILE_BUILD, profile_target), ""]
 
     head(
         "The introspection build, whose `sql` the pair runs, in a target directory",
         "of its own: no timed binary is overwritten, and it is never timed.",
     )
-    lines += [
-        "cargo build --release -p pgdt --features introspect \\",
-        f"  --target-dir {introspect_target}",
-        "",
-    ]
-
-    if DEBUGINFOD:
-        head(
-            "Name the libc frames. Without them ~48% of a warm `parse` profile",
-            "is bare addresses in libc.so.6 -- and they are the memmove and",
-            "memset a zero-copy phase exists to see. An installed detached-symbol",
-            "package is the better source and is preferred here: no network, and",
-            "kept in lockstep with libc by the package manager. See",
-            "CONTRIBUTING.md, 'Profiling'. The fetch is the fallback, and it is",
-            "perf's own, into perf's own build-id cache. Both branches say which",
-            "source the profiles below will be reading.",
-        )
-        lines += [
-            f"LIBC=$(ldd {binary} | awk '/libc\\.so/{{print $3}}')",
-            'BID=$(readelf -n "$LIBC" | awk \'/Build ID/{print $NF}\')',
-            'DBG=/usr/lib/debug/.build-id/$(printf %.2s "$BID")'
-            '/$(printf %s "$BID" | cut -c3-).debug',
-            'if [ -e "$DBG" ]; then',
-            '  echo "libc symbols: installed package, $DBG"',
-            "else",
-            '  echo "libc symbols: no package for build ID $BID; fetching"',
-            f'  {PERF} buildid-cache --debuginfod={DEBUGINFOD} -a "$LIBC"',
-            "fi",
-            "",
-        ]
+    lines += [recipe_build_line(DFCLI_INTROSPECT_BUILD, introspect_target), ""]
 
     # Every input any profile below reads, in declaration order and without
     # repetition: the cross product's, then the `pgdt sql` pair's.
@@ -14950,11 +14942,11 @@ def profile_recipe(cfg: Config) -> str:
             [
                 "",
                 f"rm -f {cache}",
-                *([f"{binary} {' '.join(builder)} >/dev/null"] if builder else []),
-                f"{PERF} record -F {PERF_FREQ} --call-graph fp "
+                *([f"{c} {binary} {' '.join(builder)} >/dev/null"] if builder else []),
+                f"{c} {PERF} record -F {PERF_FREQ} --call-graph fp "
                 f"-o {out / (stem + '.data')} \\",
                 f"  -- {binary} {argv} >/dev/null",
-                f"{PERF} report -i {out / (stem + '.data')} --stdio --no-children \\",
+                f"{c} {PERF} report -i {out / (stem + '.data')} --stdio --no-children \\",
                 f"  --percent-limit 0.5 > {out / (stem + '.txt')}",
             ]
         )
@@ -14972,7 +14964,7 @@ def profile_recipe(cfg: Config) -> str:
     )
     lines += [
         f"rm -f {account_cache}",
-        f"{binary} parse --source {account_dump} --dtcache {account_cache} "
+        f"{c} {binary} parse --source {account_dump} --dtcache {account_cache} "
         f"--jobs {SWEEP_JOBS} {GATHER_STATISTICS} >/dev/null",
     ]
     for leg in DFCLI_ACCOUNT_LEGS:
@@ -14981,10 +14973,10 @@ def profile_recipe(cfg: Config) -> str:
         lines.extend(
             [
                 "",
-                f"{' '.join(env)} {PERF} record -F {PERF_FREQ} --call-graph fp "
-                f"-o {out / (stem + '.data')} \\",
+                f"{c} {' '.join(['env', *env]) + ' ' if env else ''}{PERF} record "
+                f"-F {PERF_FREQ} --call-graph fp -o {out / (stem + '.data')} \\",
                 f"  -- {dfcli_shell([], sql, argv).lstrip()} >/dev/null",
-                f"{PERF} report -i {out / (stem + '.data')} --stdio --no-children \\",
+                f"{c} {PERF} report -i {out / (stem + '.data')} --stdio --no-children \\",
                 f"  --percent-limit 0.5 > {out / (stem + '.txt')}",
             ]
         )
@@ -14999,8 +14991,8 @@ def profile_recipe(cfg: Config) -> str:
         for rep in range(1, DFCLI_INTROSPECT_REPS + 1):
             report = out / f"introspect-dfcli-{figure}-{query}-{leg}-{rep}.txt"
             lines.append(
-                f"{INSTRUMENT_OUT_VAR}={report} {dfcli_shell(env, introspect, argv)} "
-                ">/dev/null"
+                f"{c} env {INSTRUMENT_OUT_VAR}={report} "
+                f"{dfcli_shell(env, introspect, argv).lstrip()} >/dev/null"
             )
     lines.append("")
     head(
@@ -15016,7 +15008,7 @@ def profile_recipe(cfg: Config) -> str:
     for leg in RELEASE_DIFF_LEGS:
         leg_binary = profile_leg_binary(cfg, leg)
         lines.append(
-            f"{leg_binary} --version | grep -qF '(profile: {leg})' "
+            f"{c} {leg_binary} --version | grep -qF '(profile: {leg})' "
             f"|| echo '{leg_binary} is not the {leg} leg: stop' >&2"
         )
     for command, label in RELEASE_PROFILE_SHAPES:
@@ -15028,13 +15020,15 @@ def profile_recipe(cfg: Config) -> str:
             data = out / f"release-diff-{command}-{leg}.data"
             lines += [
                 f"rm -f {written}",
-                *([f"{leg_binary} {' '.join(builder)} >/dev/null"] if builder else []),
-                f"{' '.join([*env, PERF])} record -F {PERF_FREQ} -o {data} \\",
+                *([f"{c} {leg_binary} {' '.join(builder)} >/dev/null"] if builder else []),
+                f"{c} {' '.join(['env', *env]) + ' ' if env else ''}{PERF} record "
+                f"-F {PERF_FREQ} -o {data} \\",
                 f"  -- {dfcli_shell([], str(leg_binary), argv).lstrip()} >/dev/null",
             ]
         baseline, read = (out / f"release-diff-{command}-{leg}.data" for leg in RELEASE_DIFF_LEGS)
         lines.append(
-            f"{PERF} diff --sort symbol {baseline} {read} > {out / f'release-diff-{command}.txt'}"
+            f"{c} {PERF} diff --sort symbol {baseline} {read} "
+            f"> {out / f'release-diff-{command}.txt'}"
         )
     lines.append("")
     head("Tear down: tmpfs is 16 G and these inputs do not fit beside a sweep's.")
@@ -15079,11 +15073,17 @@ def cmd_profile() -> int:
 # produce.
 # --------------------------------------------------------------------------
 
-#: The recorder. `heaptrack_print` is derived from it rather than configured
-#: beside it: the two ship in one package, so a machine that has moved one has
-#: moved both, and two knobs would let a session analyse with a printer that
-#: does not match the recorder's file format.
-HEAPTRACK = _env("PGDT_HEAPTRACK", "heaptrack")
+#: The recorder: the release image's, run in a container (`contained.py`).
+#: `heaptrack_print` is derived from it rather than named beside it: the two
+#: ship in one package, so a printer never reads another version's format.
+HEAPTRACK = "heaptrack"
+
+#: The limit each recording's container is given: a guard on the machine, not a
+#: figure's budget. **Several times what the recorded run holds**, since
+#: heaptrack's own bookkeeping is charged to it: a recording that met the limit
+#: would be one of heaptrack being reclaimed. Every recorded shape states its
+#: allowance (`heaptrack_argv`), so the limit moves no budget the run plans by.
+HEAPTRACK_MEMORY = "8g"
 
 #: The demangler the report is piped through.
 #:
@@ -15095,7 +15095,7 @@ HEAPTRACK = _env("PGDT_HEAPTRACK", "heaptrack")
 #: natively, so one pipe buys back every Rust frame in the report; without it
 #: the C frames read fine and the Rust ones above them are noise, which is a
 #: report that looks half-broken rather than one that looks wrong.
-HEAPTRACK_DEMANGLE = _env("PGDT_HEAPTRACK_DEMANGLE", "c++filt")
+HEAPTRACK_DEMANGLE = "c++filt"
 
 #: The allocator the recorded build links, and its target directory's name
 #: under `Config.alloc_build_root`.
@@ -15107,9 +15107,13 @@ HEAPTRACK_DEMANGLE = _env("PGDT_HEAPTRACK_DEMANGLE", "c++filt")
 #: leaves the block slot and the chunk buffer unnamed. The two builds run the
 #: same code, so a `system` recording holds every request a default one does
 #: plus Rust's. **Its own target directory**, because a `--features` build
-#: under `--profile profiling` in the default one overwrites the
-#: `target/profiling/pgdt` the profile recipe records.
+#: under `--profile profiling` in another overwrites that one's binary.
 HEAPTRACK_LEG = "system"
+
+#: The recorded build: `HEAPTRACK_LEG`'s allocator, `profiling`'s line tables.
+HEAPTRACK_BUILD = release.Build(
+    profile="profiling", features=(HEAPTRACK_LEG,), default_features=False
+)
 
 #: The two shapes recorded, and they are a **pair** rather than a survey.
 #:
@@ -15123,10 +15127,9 @@ HEAPTRACK_LEG = "system"
 #: no single recording gives.
 #:
 #: **Why this pair and not the flagless family.** Every other `reserve` leg
-#: differs from its neighbour by a container limit, and a container is what this
-#: recipe deliberately does not use; the step is the one axis that lives
-#: entirely in the argv, so it is the one a host recording can reproduce
-#: exactly. The input is `RESERVE_MECHANISM_INPUT` for the same reason that
+#: differs from its neighbour by a container limit, which a recording under
+#: `HEAPTRACK_MEMORY` does not reproduce; the step is the one axis that lives
+#: entirely in the argv, so it is the one a recording can reproduce exactly. The input is `RESERVE_MECHANISM_INPUT` for the same reason that
 #: figure's mechanism legs use it — the budgets are computed from its block
 #: size, so a second input would price a step nobody measured.
 HEAPTRACK_AXIS: tuple[tuple[str, str], ...] = tuple(
@@ -15168,8 +15171,8 @@ def heaptrack_recipe(cfg: Config) -> str:
 
     * **a `HEAPTRACK_LEG` build, in a target directory of its own.** The
       default build's Rust heap never reaches `malloc`, so its recording names
-      C's allocations and reads as though Rust made none; and the default
-      directory's `target/profiling/pgdt` is the profile recipe's binary.
+      C's allocations and reads as though Rust made none; and another
+      directory's `profiling/pgdt` is the profile recipe's binary.
     * **the `profiling` binary, never a `release` one.** heaptrack
       resolves symbols from either, but `release` carries no line tables, so a
       report off it has no `.rs:` reference anywhere in it — 3,627 of them
@@ -15183,11 +15186,9 @@ def heaptrack_recipe(cfg: Config) -> str:
       the decoder stack whole. Writing it anyway would fingerprint a second
       build of the same source for no reading.
     * **`--record-only`.** heaptrack otherwise hands the finished file to
-      `heaptrack_gui`, which is not installed everywhere and, where it is,
-      may not start — Arch ships it in the same package as the CLI tools, and
-      it fails on missing KF6 libraries on a machine with no such desktop. That
-      failure is cosmetic, the `.zst` being already written, but a recipe that
-      ends in an error message is a recipe a session stops trusting.
+      `heaptrack_gui`, which the image does not carry. That failure is
+      cosmetic, the `.zst` being already written, but a recipe that ends in an
+      error message is a recipe a session stops trusting.
     * **`--merge-backtraces=0` on the report.** `heaptrack_print` merges by
       default and its own `--help` says the merged peak consumption is not
       correct: a merged frame states the *summed* peak of every backtrace under
@@ -15197,14 +15198,14 @@ def heaptrack_recipe(cfg: Config) -> str:
     * **`c++filt`.** See `HEAPTRACK_DEMANGLE`: the Rust frames arrive v0-mangled
       and this build of heaptrack cannot demangle them.
 
-    And one thing that is not a mistake but reads like one: **no container.**
-    heaptrack multiplies allocation cost and RSS by its own bookkeeping, so a
-    recording made under a cgroup would be a recording of heaptrack meeting the
-    limit. The gate is where a cgroup belongs (`roadmap.md`, "Attribution is
-    introspective; only the gate is blind"); this is the other half."""
+    **Every line running a binary runs it in a container** under
+    `HEAPTRACK_MEMORY` (`contained.py`), as every run of a built binary is: a
+    limit guarding the machine, several times what a recording holds, so no
+    recording meets it."""
     warm = cfg.warm_dir
-    target = cfg.alloc_build_root / f"heaptrack-{HEAPTRACK_LEG}"
-    binary = target / "profiling/pgdt"
+    target = image_target_dir(cfg, f"heaptrack-{HEAPTRACK_LEG}")
+    binary = HEAPTRACK_BUILD.binary(target)
+    c = contained_prefix(cfg, HEAPTRACK_MEMORY)
     cache = warm / "heaptrack.dtcache"
     out = cfg.out_dir
     printer = f"{HEAPTRACK}_print"
@@ -15218,29 +15219,26 @@ def heaptrack_recipe(cfg: Config) -> str:
         step += 1
 
     head(
-        "The tool. It hooks malloc through LD_PRELOAD, so it sees liblzma's",
-        "dictionary -- which is the whole reason for it: the counting global",
-        "allocator sees only Rust's allocations. On the build below, whose Rust",
-        "heap is the system one, it sees C and Rust alike; the shipped heap is",
-        "mimalloc's, which never reaches malloc (KD109).",
+        "The tool: the release image's, run in a container as every line",
+        "below that runs a binary is (scripts/contained.py), under a limit",
+        "that guards the machine and that no recording meets. It hooks malloc",
+        "through LD_PRELOAD, so it sees liblzma's dictionary -- which is the",
+        "whole reason for it: the counting global allocator sees only Rust's",
+        "allocations. On the build below, whose Rust heap is the system one, it",
+        "sees C and Rust alike; the shipped heap is mimalloc's, which never",
+        "reaches malloc (KD109).",
     )
-    lines += [f"{HEAPTRACK} --version", ""]
+    lines += [f"{c} {HEAPTRACK} --version", ""]
 
     head(
-        "The build: the system allocator, so Rust's requests reach malloc, in",
-        "a target directory of its own, so the profile recipe's",
-        "target/profiling/pgdt is not overwritten; --version must say",
-        f"(allocator: {HEAPTRACK_LEG}). No RUSTFLAGS: heaptrack unwinds .eh_frame,",
+        "The build, in the release image: the system allocator, so Rust's",
+        "requests reach malloc, in a target directory of its own, so the",
+        "profile recipe's binary is not overwritten; --version must say",
+        f"(allocator: {HEAPTRACK_LEG}). No --rustflags: heaptrack unwinds .eh_frame,",
         "so frame pointers buy nothing and would fingerprint a second build.",
         "The `profiling` profile is what buys source lines; release has none.",
     )
-    lines += [
-        "cargo build --profile profiling -p pgdt \\",
-        f"  --no-default-features --features {HEAPTRACK_LEG} \\",
-        f"  --target-dir {target}",
-        f"{binary} --version",
-        "",
-    ]
+    lines += [recipe_build_line(HEAPTRACK_BUILD, target), f"{c} {binary} --version", ""]
 
     staged = sorted({name for _, name in HEAPTRACK_AXIS})
     head(
@@ -15268,7 +15266,7 @@ def heaptrack_recipe(cfg: Config) -> str:
         lines += [
             "",
             f"rm -f {cache} {out / (stem(shape, name) + '.zst')}",
-            f"{HEAPTRACK} --record-only -o {out / stem(shape, name)} \\",
+            f"{c} {HEAPTRACK} --record-only -o {out / stem(shape, name)} \\",
             f"  {binary} {argv} >/dev/null",
         ]
     lines.append("")
@@ -15277,13 +15275,14 @@ def heaptrack_recipe(cfg: Config) -> str:
         "The reports. --merge-backtraces=0, because a merged frame's peak is",
         "the sum over the backtraces merged into it and heaptrack_print's own",
         "--help says it is not correct; c++filt, because the Rust frames are",
-        "v0-mangled and this heaptrack cannot demangle them.",
+        "v0-mangled and this heaptrack cannot demangle them. Both are the",
+        "image's, so the printer reads its recorder's format.",
     )
     for shape, name in HEAPTRACK_AXIS:
         lines.append(
-            f"{printer} --merge-backtraces=0 {out / (stem(shape, name) + '.zst')} \\"
+            f"{c} {printer} --merge-backtraces=0 {out / (stem(shape, name) + '.zst')} \\"
         )
-        lines.append(f"  | {HEAPTRACK_DEMANGLE} > {out / (stem(shape, name) + '.txt')}")
+        lines.append(f"  | {c} {HEAPTRACK_DEMANGLE} > {out / (stem(shape, name) + '.txt')}")
     lines.append("")
 
     (first, first_input), (second, second_input) = HEAPTRACK_AXIS
@@ -15294,9 +15293,9 @@ def heaptrack_recipe(cfg: Config) -> str:
         "subtraction between sittings and no spread to carry.",
     )
     lines += [
-        f"{printer} --merge-backtraces=0 {out / (stem(first, first_input) + '.zst')} \\",
+        f"{c} {printer} --merge-backtraces=0 {out / (stem(first, first_input) + '.zst')} \\",
         f"  --diff {out / (stem(second, second_input) + '.zst')} \\",
-        f"  | {HEAPTRACK_DEMANGLE} > {out / 'heaptrack-step-diff.txt'}",
+        f"  | {c} {HEAPTRACK_DEMANGLE} > {out / 'heaptrack-step-diff.txt'}",
         "",
     ]
 

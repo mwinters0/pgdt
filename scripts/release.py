@@ -525,6 +525,10 @@ class Build:
     #: name: a `release-profile` figure leg (`scripts/measure.py`,
     #: `PROFILE_LEGS`).
     profile: str = "release"
+    #: `RUSTFLAGS` for this build alone, in a target directory of its own: the
+    #: profile recipe's frame pointers, which no Cargo profile key states
+    #: (`scripts/measure.py`, `profile_recipe`).
+    rustflags: str = ""
 
     def cargo_argv(self) -> list[str]:
         profile = ["--release"] if self.profile == "release" else ["--profile", self.profile]
@@ -553,6 +557,8 @@ class Build:
             opts.append(f"--features={','.join(self.features)}")
         if self.profile != "release":
             opts.append(f"--profile={self.profile}")
+        if self.rustflags:
+            opts.append(f"--rustflags={self.rustflags}")
         return opts
 
 
@@ -673,9 +679,11 @@ def step_build(builds: Sequence[Build]) -> int:
     failed = 0
     for build in builds:
         argv = [*build.cargo_argv(), "--message-format=json-render-diagnostics"]
-        print(f"$ {shlex.join(argv)}", file=sys.stderr, flush=True)
+        env = {**os.environ, "RUSTFLAGS": build.rustflags} if build.rustflags else None
+        shown = f"RUSTFLAGS={shlex.quote(build.rustflags)} " if build.rustflags else ""
+        print(f"$ {shown}{shlex.join(argv)}", file=sys.stderr, flush=True)
         messages = subprocess.run(
-            argv, cwd=REPO, check=True, stdout=subprocess.PIPE, text=True
+            argv, cwd=REPO, check=True, stdout=subprocess.PIPE, text=True, env=env
         ).stdout
         closure = shipped_tree(build.target, "normal", offline=False)
         for crate, cache in cmake_caches(messages, closure):
@@ -1083,6 +1091,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="a Cargo profile inheriting release, in its place (default: release)",
     )  # fmt: skip
     b.add_argument(
+        "--rustflags", default="",
+        help="RUSTFLAGS for this build alone; give it a --target-dir of its own",
+    )  # fmt: skip
+    b.add_argument(
         "--target-dir", type=Path,
         help="a host cargo target directory of its own, in place of the release state's",
     )  # fmt: skip
@@ -1136,11 +1148,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             features = tuple(f for f in args.features.split(",") if f)
             builds = [
                 Build(
-                    t, args.package, args.example, features, not args.no_default_features, args.profile
+                    t, args.package, args.example, features, not args.no_default_features,
+                    args.profile, args.rustflags,
                 )
                 for t in (args.target or TARGETS)
             ]
             target = args.target_dir
+            if args.rustflags and target is None and not args.inside:
+                raise ReleaseError("--rustflags rebuilds the release state's binaries; give it a --target-dir")
             if args.inside and target is not None:
                 raise ReleaseError("--target-dir is the host's; inside, CARGO_TARGET_DIR names it")
             if args.inside and args.release:
