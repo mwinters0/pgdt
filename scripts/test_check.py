@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
 import unittest.mock
 from dataclasses import replace
 from pathlib import Path
+from typing import Collection, Sequence
 
 import check
 import repoint
@@ -104,7 +106,8 @@ warning: `pgdump_query` (lib test) generated 1 warning (1 duplicate)
     Finished `dev` profile [optimized + debuginfo] target(s) in 3.10s
 """
 
-# Two libraries' builds meeting one warning of the first's, and a done line.
+# Two libraries' builds and a feature set's meeting one warning of the first's,
+# and a done line.
 ALONE_WARNS = """\
 alone: base: cargo clippy -p base
     Checking base v0.1.0
@@ -119,7 +122,10 @@ warning: variant `Fetched` is never constructed
  --> base/src/feed.rs:5:5
 warning: unused import: `self::walk`
  --> app/src/lib.rs:2:5
-alone: 2 libraries, 3 builds
+alone: base/http: cargo clippy -p base --features http
+warning: unused variable: `url`
+ --> base/src/remote.rs:9:9
+alone: 2 libraries, 1 feature sets, 4 builds
 """
 
 ALONE_CLEAN = """\
@@ -127,7 +133,7 @@ alone: base: cargo clippy -p base
     Finished `dev` profile [optimized + debuginfo] target(s) in 0.10s
 alone: base: cargo clippy --all-targets -p base
     Finished `dev` profile [optimized + debuginfo] target(s) in 0.10s
-alone: 1 libraries, 2 builds
+alone: 1 libraries, 0 feature sets, 2 builds
 """
 
 FMT_DIFF = """\
@@ -212,18 +218,22 @@ class Summaries(unittest.TestCase):
     def test_clean_alone_builds_pass(self):
         o = check.summarize_alone(ALONE_CLEAN, 0)
         self.assertEqual(
-            (o.status, o.headline), ("ok", "1 libraries alone, 2 builds: 0 warnings, 0 errors")
+            (o.status, o.headline),
+            ("ok", "1 libraries alone, 0 feature sets, 2 builds: 0 warnings, 0 errors"),
         )
 
     def test_an_alone_warning_is_counted_once_naming_the_first_library_meeting_it(self):
         o = check.summarize_alone(ALONE_WARNS, 0)
         self.assertEqual(o.status, "FAILED")
-        self.assertEqual(o.headline, "2 libraries alone, 3 builds: 2 warnings, 0 errors")
+        self.assertEqual(
+            o.headline, "2 libraries alone, 1 feature sets, 4 builds: 3 warnings, 0 errors"
+        )
         self.assertEqual(
             o.details,
             (
                 "warning: variant `Fetched` is never constructed  (base/src/feed.rs:5:5; alone: base)",
                 "warning: unused import: `self::walk`  (app/src/lib.rs:2:5; alone: app)",
+                "warning: unused variable: `url`  (base/src/remote.rs:9:9; alone: base/http)",
             ),
         )
 
@@ -231,7 +241,7 @@ class Summaries(unittest.TestCase):
         failed = ALONE_CLEAN.replace("2 builds\n", "2 builds; 1 failed: cargo clippy -p base exited 101\n")
         o = check.summarize_alone(failed, 1)
         self.assertEqual(o.status, "FAILED")
-        self.assertTrue(o.headline.startswith("1 libraries alone, 2 builds"))
+        self.assertTrue(o.headline.startswith("1 libraries alone, 0 feature sets, 2 builds"))
         cut = check.summarize_alone(ALONE_CLEAN.rsplit("alone: 1", 1)[0], 1)
         self.assertEqual((cut.status, cut.headline), ("FAILED", "check.py --alone printed no result"))
 
@@ -733,7 +743,7 @@ class Affected(unittest.TestCase):
             ],
         )
         self.assertEqual(check.alone_builds(self.packages, ["base"]), check.alone_builds(self.packages))
-        with self.assertRaisesRegex(ValueError, "not a workspace library: app"):
+        with self.assertRaisesRegex(ValueError, "not a workspace library or feature set: app"):
             check.alone_builds(self.packages, ["app"])
 
     def test_every_alone_build_runs_though_one_fails_and_the_count_closes_it(self):
@@ -746,7 +756,9 @@ class Affected(unittest.TestCase):
         self.assertEqual(code, 1)
         lines = out.getvalue().splitlines()
         self.assertEqual([line.split(": ")[1] for line in lines[:2]], ["one", "two"])
-        self.assertTrue(lines[-1].startswith("alone: 2 libraries, 2 builds; 1 failed: "))
+        self.assertTrue(
+            lines[-1].startswith("alone: 2 libraries, 0 feature sets, 2 builds; 1 failed: ")
+        )
         o = check.summarize_alone(out.getvalue(), code)
         self.assertEqual(o.status, "FAILED")
 
@@ -772,6 +784,59 @@ class Affected(unittest.TestCase):
         self.assertEqual(argv_of(plan)["clippy"][-2:], ["-p", "base"])
         self.assertEqual(argv_of(plan)["alone"][-1], "base")
         self.assertIn("linted only, their changes being comments, base", plan.note)
+
+    def test_a_feature_set_is_linted_at_both_builds_beside_the_libraries(self):
+        sets = (
+            check.FeatureBuild("app", ("x",), default_features=False),
+            check.FeatureBuild("base", ("y",), workspace=True),
+            check.FeatureBuild("elsewhere", ("z",)),
+        )
+        with unittest.mock.patch.object(check, "FEATURE_BUILDS", sets):
+            self.assertEqual(
+                check.alone_builds(self.packages)[2:],
+                [
+                    (name, (*build, *args))
+                    for name, args in (
+                        ("app/x", ("-p", "app", "--no-default-features", "--features", "x")),
+                        ("base/y", ("--workspace", "--features", "base/y")),
+                    )
+                    for build in check.ALONE_BUILDS
+                ],
+            )
+            self.assertEqual(
+                [n for n, _ in check.alone_builds(self.packages, ["app/x"])], ["app/x", "app/x"]
+            )
+            # A set of a package the workspace does not hold is no set of it.
+            with self.assertRaisesRegex(ValueError, "feature set: elsewhere/z"):
+                check.alone_builds(self.packages, ["elsewhere/z"])
+            out = io.StringIO()
+            builds = ((sys.executable, "-c", "pass"),)
+            with unittest.mock.patch.object(check, "ALONE_BUILDS", builds), \
+                    unittest.mock.patch.object(check.sys, "stdout", out):
+                code = check.run_alone(self.repo, (), lambda _: self.packages)
+            self.assertEqual(code, 0)
+            done = out.getvalue().splitlines()[-1]
+            self.assertEqual(done, "alone: 1 libraries, 2 feature sets, 3 builds")
+            self.assertEqual(check.summarize_alone(out.getvalue(), code).status, "ok")
+
+    def test_a_feature_set_runs_where_the_change_reaches_its_package(self):
+        sets = (
+            check.FeatureBuild("app", ("x",), default_features=False),
+            check.FeatureBuild("base", ("y",), workspace=True),
+        )
+        with unittest.mock.patch.object(check, "FEATURE_BUILDS", sets):
+            # A binary's change lints no library alone, but its package's sets.
+            argv = argv_of(self.plan("app/src/main.rs"))
+            self.assertEqual(argv["alone"][3:], ["--alone", "app/x", "base/y"])
+            argv = argv_of(self.plan("base/src/lib.rs"))
+            self.assertEqual(argv["alone"][3:], ["--alone", "app/x", "base", "base/y"])
+            # A comment reaches its package alone, a workspace-wide set every one.
+            plan = check.plan_changes(
+                self.repo, ["base/src/lib.rs"], lambda _: self.packages, {"base/src/lib.rs"}
+            )
+            self.assertEqual(argv_of(plan)["alone"][3:], ["--alone", "base", "base/y"])
+            plan = self.plan("docs/d.md")
+            self.assertNotIn("alone", argv_of(plan))
 
     def test_a_comment_only_change_still_runs_a_target_reading_it(self):
         changed = ["base/tests/data/x.sql", "app/src/main.rs"]
@@ -882,6 +947,212 @@ class Support(unittest.TestCase):
             )
 
 
+Roots = list[tuple[str, frozenset[str], bool]]
+
+
+def build_of(argv: Sequence[str], members: Collection[str]) -> tuple[Roots, bool]:
+    """What a `cargo clippy` argv builds, as `features_on` takes it: each
+    selected package with the features asked of it and whether it keeps its
+    defaults, and whether every target is built. Only the flags the round's
+    builds pass are read; any other is refused."""
+    selected: list[str] = []
+    asked: list[str] = []
+    default, all_targets, i = True, False, 2
+    while i < len(argv):
+        a = argv[i]
+        if a == "--workspace":
+            selected = sorted(members)
+        elif a == "-p":
+            i += 1
+            selected.append(argv[i])
+        elif a == "--features":
+            i += 1
+            asked += argv[i].split(",")
+        elif a == "--no-default-features":
+            default = False
+        elif a == "--all-targets":
+            all_targets = True
+        else:
+            raise ValueError(f"a flag this reading does not know: {a}")
+        i += 1
+    per: dict[str, set[str]] = {name: set() for name in selected}
+    for f in asked:
+        pkg, _, feat = f.rpartition("/")
+        if not pkg:
+            (pkg,) = selected
+        if pkg not in per:
+            raise ValueError(f"a feature of a package the build does not select: {f}")
+        per[pkg].add(feat)
+    return [(n, frozenset(fs), default) for n, fs in per.items()], all_targets
+
+
+def features_on(
+    meta: dict, roots: Sequence[tuple[str, Collection[str], bool]], all_targets: bool
+) -> set[str]:
+    """The `package/feature`s of the workspace's members one build turns on,
+    read off `cargo metadata --no-deps` as resolver 2 unifies them within a
+    build: each root under the features asked and, if it keeps them, its
+    defaults; a member dependency under its declaration's; `dep:`, `x/f` and
+    `x?/f` as cargo reads them; a dev-dependency only of a root, and only
+    with every target built."""
+    members = set(meta["workspace_members"])
+    pkgs = {p["name"]: p for p in meta["packages"] if p["id"] in members}
+    by_dir = {Path(p["manifest_path"]).parent.resolve(): n for n, p in pkgs.items()}
+    root_names = {r for r, _, _ in roots}
+    on: set[tuple[str, str]] = set()
+    active: set[str] = set()
+    active_deps: set[tuple[str, str]] = set()
+    weak: set[tuple[str, str, str]] = set()
+
+    def alias(d):
+        return d.get("rename") or d["name"]
+
+    def decls(name):
+        for d in pkgs[name]["dependencies"]:
+            if d.get("kind") != "dev" or (all_targets and name in root_names):
+                yield d
+
+    def member(d):
+        return by_dir.get(Path(d["path"]).resolve()) if d.get("path") else None
+
+    def enable(name, d):
+        active_deps.add((name, alias(d)))
+        if (m := member(d)) is not None:
+            activate(m)
+            if d["uses_default_features"]:
+                feature(m, "default")
+            for f in d["features"]:
+                apply(m, f)
+
+    def activate(name):
+        if name not in active:
+            active.add(name)
+            for d in decls(name):
+                if not d["optional"]:
+                    enable(name, d)
+
+    def optional(name, a):
+        for d in decls(name):
+            if d["optional"] and alias(d) == a:
+                enable(name, d)
+
+    def feature(name, f):
+        if (name, f) in on:
+            return
+        activate(name)
+        declared = pkgs[name]["features"]
+        if f in declared:
+            on.add((name, f))
+            for entry in declared[f]:
+                apply(name, entry)
+        else:
+            optional(name, f)  # an optional dependency's implicit feature
+
+    def through(name, a, f):
+        for d in decls(name):
+            if alias(d) == a and (m := member(d)) is not None:
+                feature(m, f)
+
+    def apply(name, entry):
+        if entry.startswith("dep:"):
+            optional(name, entry[4:])
+        elif "/" in entry:
+            a, f = entry.split("/", 1)
+            if a.endswith("?"):
+                weak.add((name, a[:-1], f))
+            else:
+                optional(name, a)
+                through(name, a, f)
+        else:
+            feature(name, entry)
+
+    for name, asked, default in roots:
+        activate(name)
+        if default:
+            feature(name, "default")
+        for f in asked:
+            feature(name, f)
+    done: set[tuple[str, str, str]] = set()
+    while pending := {w for w in weak - done if w[:2] in active_deps}:
+        for name, a, f in pending:
+            through(name, a, f)
+        done |= pending
+    return {f"{n}/{f}" for n, f in on if f != "default"}
+
+
+def synthetic_meta() -> dict:
+    """A three-member workspace `features_on` is read against, by hand."""
+    def pkg(name, features, deps):
+        return {
+            "id": name, "name": name, "manifest_path": f"/w/{name}/Cargo.toml",
+            "features": features, "dependencies": deps,
+        }
+
+    def dep(name, *, kind=None, optional=False, default=True, features=(), path=True):
+        return {
+            "name": name, "rename": None, "kind": kind, "optional": optional,
+            "uses_default_features": default, "features": list(features),
+            "path": f"/w/{name}" if path else None,
+        }
+
+    return {
+        "workspace_members": ["core", "io", "app"],
+        "packages": [
+            pkg("core", {"default": ["fast"], "fast": [], "trace": [], "test-support": []}, []),
+            pkg(
+                "io",
+                {"http": ["dep:remote"], "trace": ["core/trace"], "weak": ["core?/test-support"]},
+                [dep("core"), dep("remote", optional=True, path=False),
+                 dep("core", kind="dev", features=["test-support"])],
+            ),
+            pkg(
+                "app",
+                {"default": ["io/http"], "lean": [], "deep": ["io/trace", "io/weak"]},
+                [dep("io", default=False)],
+            ),
+        ],
+    }
+
+
+class FeatureResolution(unittest.TestCase):
+    """`features_on`, which the coverage assertion stands on, read against a
+    workspace whose answers are worked by hand."""
+
+    def test_defaults_declarations_and_forwarded_features(self):
+        meta = synthetic_meta()
+        self.assertEqual(features_on(meta, [("app", (), True)], False), {"io/http", "core/fast"})
+        self.assertEqual(features_on(meta, [("app", (), False)], False), {"core/fast"})
+        self.assertEqual(
+            features_on(meta, [("app", ("deep",), False)], False),
+            {"app/deep", "io/trace", "io/weak", "core/trace", "core/test-support", "core/fast"},
+        )
+
+    def test_a_dev_dependency_is_built_only_for_a_root_with_every_target(self):
+        meta = synthetic_meta()
+        self.assertNotIn("core/test-support", features_on(meta, [("io", (), True)], False))
+        self.assertIn("core/test-support", features_on(meta, [("io", (), True)], True))
+        # `io`'s dev-dependency is not built for `app`'s tests.
+        self.assertNotIn("core/test-support", features_on(meta, [("app", (), True)], True))
+
+    def test_an_argv_reads_as_the_build_cargo_makes(self):
+        members = ("app", "core", "io")
+        self.assertEqual(
+            build_of(("cargo", "clippy", "--all-targets", "-p", "io"), members),
+            ([("io", frozenset(), True)], True),
+        )
+        lean = ("cargo", "clippy", "-p", "app", "--no-default-features", "--features", "deep")
+        self.assertEqual(build_of(lean, members), ([("app", frozenset({"deep"}), False)], False))
+        roots, _ = build_of(("cargo", "clippy", "--workspace", "--features", "io/trace"), members)
+        self.assertEqual(
+            sorted(roots),
+            [("app", frozenset(), True), ("core", frozenset(), True), ("io", frozenset({"trace"}), True)],
+        )
+        with self.assertRaisesRegex(ValueError, "--release"):
+            build_of(("cargo", "clippy", "--release"), members)
+        with self.assertRaisesRegex(ValueError, "does not select: core/trace"):
+            build_of(("cargo", "clippy", "-p", "io", "--features", "core/trace"), members)
+
+
 class RealWorkspace(unittest.TestCase):
     """The classification holds of this repository's own tests."""
 
@@ -947,11 +1218,53 @@ class RealWorkspace(unittest.TestCase):
         self.assertNotIn("doctest", argv_of(plan))
 
     def test_every_member_holding_a_library_is_linted_alone(self):
-        alone = {name for name, _ in check.alone_builds(self.packages)}
+        sets = {s.name for s in check.FEATURE_BUILDS}
+        alone = {name for name, _ in check.alone_builds(self.packages)} - sets
         self.assertEqual(alone, {p.name for p in self.packages if p.has_lib})
         # The two a feature the workspace unifies on once hid dead code in.
         self.assertLessEqual({"pgdt-io", "pgdt-mapping"}, alone)
         self.assertNotIn("pgdt", alone)
+
+    def test_every_declared_feature_is_turned_on_by_a_linted_build_or_exempt(self):
+        meta = json.loads(
+            subprocess.run(
+                ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+                cwd=check.REPO, check=True, capture_output=True, text=True,
+            ).stdout
+        )
+        members = [p["name"] for p in meta["packages"] if p["id"] in meta["workspace_members"]]
+        declared = {
+            f"{p['name']}/{f}"
+            for p in meta["packages"]
+            if p["id"] in meta["workspace_members"]
+            for f in p["features"]
+            if f != "default"
+        }
+        clippy = next(c for c in check.CHECKS if c.name == "clippy")
+
+        def linted(builds):
+            out: set[str] = set()
+            for argv in builds:
+                out |= features_on(meta, *build_of(argv, members))
+            return out
+
+        libraries = [argv for name, argv in check.alone_builds(self.packages) if "/" not in name]
+        everything = linted([clippy.argv, *(argv for _, argv in check.alone_builds(self.packages))])
+        self.assertEqual(sorted(declared - everything - set(check.UNLINTED_FEATURES)), [])
+        # An exemption names a declared feature nothing lints, and says why.
+        self.assertLessEqual(set(check.UNLINTED_FEATURES), declared)
+        self.assertEqual(sorted(set(check.UNLINTED_FEATURES) & everything), [])
+        self.assertTrue(all(why.strip() for why in check.UNLINTED_FEATURES.values()))
+        # Each set is this workspace's, and the reason its features are linted.
+        self.assertEqual(check.feature_sets(self.packages), list(check.FEATURE_BUILDS))
+        without = linted([clippy.argv, *libraries])
+        for s in check.FEATURE_BUILDS:
+            self.assertLessEqual({f"{s.package}/{f}" for f in s.features}, declared, s.name)
+        self.assertLessEqual(
+            {"pgdt/introspect", "pgdt-core/introspect", "pgdt/jemalloc", "gz-seek/zlib-ng"},
+            declared - without,
+        )
+        self.assertLessEqual({"pgdt-io/http", "pgdt-io/test-support", "gz-seek/zlib-rs"}, without)
 
     def test_the_commit_editing_only_doc_comments_runs_no_test(self):
         # 5c835d4b filed two deficiencies by marker comments in two library

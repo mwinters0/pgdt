@@ -84,7 +84,6 @@ async fn read(
     let request = StatisticsRequest {
         selection: StatisticsSelection::DATA,
         sizing: StatisticsSizing::Stated(NonZeroU64::new(1024).unwrap()),
-        ..StatisticsRequest::DATA
     };
     let cache = CacheMode::enabled(cache::colocated_path(&dump));
     let run = map_file(

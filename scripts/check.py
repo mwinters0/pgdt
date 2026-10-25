@@ -53,6 +53,18 @@ members -- `pgdt` turns on `pgdt-io`'s `http`, a dev-dependency a crate's
 the library an embedder builds without it; a warning only a build alone meets
 is fixed by gating that code on the feature reaching it.
 
+**So is every other build the project makes or names to an embedder**
+(`FEATURE_BUILDS`), each a named feature set linted at both of a library's
+builds: the instrument over the workspace, `pgdt`'s allocator legs, `gz-seek`'s
+engine legs, `datafusion-pgdump` with `http`. A feature no linted build turns
+on compiles nowhere a warning would surface, so `test_check` asserts off
+`cargo metadata` that every feature a member declares is turned on by one --
+the workspace's, a library's alone or a set -- or is exempted in
+`UNLINTED_FEATURES` with its reason. The sets are named rather than generated
+(`cargo hack --each-feature`), which refuses the two exclusive choices
+(`gz-seek`'s inflater, `pgdt`'s allocator) until told them in its own syntax
+and then lints combinations nobody builds.
+
 **The cargo checks run in the release image** (`release.py run`), as the
 invoking user under its memory limit and on every CPU but one physical core's
 (`release.py`, `RESERVE_CORES`): fmt, clippy, the libraries alone, the
@@ -90,13 +102,15 @@ first of the other three rules it meets gives it:
 - **Inside a workspace member** runs that package whole; outside its
   `tests/`, `benches/` and `examples/` it runs every member depending on it,
   transitively, too. Those packages are the ones formatted and linted, each
-  library among them alone too, and doc-tested where they have a library, as
+  library among them alone too and each feature set of theirs -- every set
+  of a workspace-wide build being every package's -- and doc-tested where
+  they have a library, as
   is a library whose own tests read a changed path; and the module graph runs,
   whole, since its index is.
 - **A comment, inside a workspace member** -- a `.rs` file in both trees
   whose `code_of` is unchanged, a doc comment's fenced doctest counting as
-  code -- formats and lints that package by itself, and alone if a library,
-  and runs none of its tests, doctests or dependents: clippy reads doc
+  code -- formats and lints that package by itself, alone if a library and
+  under its feature sets, and runs none of its tests, doctests or dependents: clippy reads doc
   comments, and no build reads the rest. A target reading the file still
   runs, by the first rule.
 - **`docs/`, `.claude/` or a Markdown file** runs nothing. No Rust target
@@ -115,7 +129,7 @@ Usage:
 
     mise run check [--affected] [--verify]
     cd scripts && uv run check.py [--affected] [--verify]
-    cd scripts && uv run check.py --alone [LIBRARY ...]   # the alone check by itself; cargo on the host
+    cd scripts && uv run check.py --alone [LIBRARY|SET ...]   # the alone check by itself; cargo on the host
     cd scripts && uv run python -m unittest test_check
 """
 
@@ -239,16 +253,18 @@ def summarize_clippy(text: str, exit_code: int) -> Outcome:
     return Outcome("FAILED", headline, tuple(details) or _tail(text))
 
 
-#: The line `run_alone` opens each build with, naming the library, and the one
-#: it ends on.
-ALONE_BUILD_RE = re.compile(r"^alone: ([\w-]+): cargo ")
-ALONE_DONE_RE = re.compile(r"^alone: (\d+) librar(?:y|ies), (\d+) builds?(?:; |$)")
+#: The line `run_alone` opens each build with, naming the library or the
+#: feature set, and the one it ends on.
+ALONE_BUILD_RE = re.compile(r"^alone: ([\w/,-]+): cargo ")
+ALONE_DONE_RE = re.compile(
+    r"^alone: (\d+) librar(?:y|ies), (\d+) feature sets?, (\d+) builds?(?:; |$)"
+)
 
 
 def summarize_alone(text: str, exit_code: int) -> Outcome:
     """Clippy's reading over every build `run_alone` ran: each diagnostic
     counted and listed once, however many builds met it, naming the first
-    library whose build did."""
+    library or feature set whose build did."""
     lines = text.splitlines()
     done = next((m for line in reversed(lines) if (m := ALONE_DONE_RE.match(line))), None)
     if done is None:
@@ -261,8 +277,8 @@ def summarize_alone(text: str, exit_code: int) -> Outcome:
     warnings = sum(1 for line, _ in seen if line.startswith("warning"))
     errors = len(seen) - warnings
     headline = (
-        f"{done.group(1)} libraries alone, {done.group(2)} builds: "
-        f"{warnings} warnings, {errors} errors"
+        f"{done.group(1)} libraries alone, {done.group(2)} feature sets, "
+        f"{done.group(3)} builds: {warnings} warnings, {errors} errors"
     )
     if exit_code == 0 and not seen:
         return Outcome("ok", headline)
@@ -842,25 +858,87 @@ ALONE_BUILDS: tuple[tuple[str, ...], ...] = (
 )
 
 
+@dataclass(frozen=True)
+class FeatureBuild:
+    """A build the project makes or names to an embedder that no library's own
+    build is: `package` under `features`, alone, or over the whole workspace
+    where `workspace` -- as the instrument is built, every member's
+    `introspect` turned on through `pgdt`'s."""
+
+    package: str
+    features: tuple[str, ...]
+    default_features: bool = True
+    workspace: bool = False
+
+    @property
+    def name(self) -> str:
+        return f"{self.package}/{','.join(self.features)}"
+
+    @property
+    def args(self) -> tuple[str, ...]:
+        if self.workspace:
+            features = ",".join(f"{self.package}/{f}" for f in self.features)
+            return ("--workspace", "--features", features)
+        default = () if self.default_features else ("--no-default-features",)
+        return ("-p", self.package, *default, "--features", ",".join(self.features))
+
+    def reached(self, linted: Collection[str]) -> bool:
+        """Whether a change linting the packages `linted` reaches this set."""
+        return bool(linted) if self.workspace else self.package in linted
+
+
+#: The builds `run_alone` lints beside each library's, each at both
+#: `ALONE_BUILDS`. An exclusive choice is built with `--no-default-features`,
+#: as `measure.py` builds its legs.
+FEATURE_BUILDS: tuple[FeatureBuild, ...] = (
+    FeatureBuild("pgdt", ("introspect",), workspace=True),
+    FeatureBuild("pgdt", ("jemalloc",), default_features=False),
+    FeatureBuild("pgdt", ("system",), default_features=False),
+    FeatureBuild("gz-seek", ("zlib-ng",), default_features=False),
+    FeatureBuild("gz-seek", ("zlib",), default_features=False),
+    FeatureBuild("datafusion-pgdump", ("http",)),
+)
+
+#: `package/feature` -> why no linted build turns it on. `test_check` holds
+#: every declared feature to a linted build or an entry here, and every entry
+#: to a feature declared and linted by nothing.
+UNLINTED_FEATURES: dict[str, str] = {}
+
+
+def feature_sets(packages: Sequence[Package]) -> list[FeatureBuild]:
+    """`FEATURE_BUILDS` whose package is a member: `test_check` holds every one
+    of this workspace's to its members."""
+    members = {p.name for p in packages}
+    return [s for s in FEATURE_BUILDS if s.package in members]
+
+
 def alone_builds(
     packages: Sequence[Package], names: Collection[str] = ()
 ) -> list[tuple[str, tuple[str, ...]]]:
-    """Each build `run_alone` runs, with the library it builds: of `names`, or
-    of every member holding a library. A name that is not one is refused."""
+    """Each build `run_alone` runs, with the library or feature set it builds:
+    of `names`, or of every member holding a library and every feature set. A
+    name that is neither is refused."""
     libraries = sorted(p.name for p in packages if p.has_lib)
-    if unknown := sorted(set(names) - set(libraries)):
-        raise ValueError(f"not a workspace library: {', '.join(unknown)}")
-    return [(n, (*b, "-p", n)) for n in sorted(names or libraries) for b in ALONE_BUILDS]
+    sets = {s.name: s for s in feature_sets(packages)}
+    if unknown := sorted(set(names) - set(libraries) - set(sets)):
+        raise ValueError(f"not a workspace library or feature set: {', '.join(unknown)}")
+    chosen = set(names) if names else {*libraries, *sets}
+    return [
+        *((n, (*b, "-p", n)) for n in libraries if n in chosen for b in ALONE_BUILDS),
+        *((n, (*b, *s.args)) for n, s in sets.items() if n in chosen for b in ALONE_BUILDS),
+    ]
 
 
 def run_alone(
     repo: Path, names: Collection[str] = (), load: Callable[[Path], list[Package]] = workspace
 ) -> int:
     """Lint each library alone (`ALONE_BUILDS`), one cargo run each, so its
-    features are its own rather than what the workspace unifies on; every
-    build runs though one fails. The output is the cargo runs', each opened by
-    a line naming its library, then a count: `summarize_alone` reads it."""
-    builds = alone_builds(load(repo), names)
+    features are its own rather than what the workspace unifies on, and each
+    feature set (`FEATURE_BUILDS`) the same way; every build runs though one
+    fails. The output is the cargo runs', each opened by a line naming its
+    library or set, then a count: `summarize_alone` reads it."""
+    packages = load(repo)
+    builds = alone_builds(packages, names)
     failed: list[str] = []
     for name, argv in builds:
         print(f"alone: {name}: {shlex.join(argv)}", flush=True)
@@ -870,9 +948,14 @@ def run_alone(
         sys.stdout.flush()
         if code != 0:
             failed.append(f"{shlex.join(argv)} exited {code}")
-    libraries = len({name for name, _ in builds})
+    set_names = {s.name for s in feature_sets(packages)}
+    built = {name for name, _ in builds}
+    libraries, sets = len(built - set_names), len(built & set_names)
     tail = f"; {len(failed)} failed: {', '.join(failed)}" if failed else ""
-    print(f"alone: {libraries} libraries, {len(builds)} builds{tail}", flush=True)
+    print(
+        f"alone: {libraries} libraries, {sets} feature sets, {len(builds)} builds{tail}",
+        flush=True,
+    )
     return 1 if failed else 0
 
 
@@ -977,8 +1060,11 @@ def plan_changes(
         checks.append(Check("fmt", fmt, ".", summarize_fmt, image=True))
         clippy = ("cargo", "clippy", "--all-targets", *p_args)
         checks.append(Check("clippy", clippy, ".", summarize_clippy, image=True))
-        if libraries := [n for n in {*whole_pkgs, *lint_only} if by_name[n].has_lib]:
-            checks.append(alone_check(libraries))
+        linted_pkgs = {*whole_pkgs, *lint_only}
+        libraries = [n for n in linted_pkgs if by_name[n].has_lib]
+        sets = [s.name for s in feature_sets(packages) if s.reached(linted_pkgs)]
+        if libraries or sets:
+            checks.append(alone_check([*libraries, *sets]))
     if whole_pkgs or binaries:
         run_pkgs = sorted(set(whole_pkgs) | {pkg for pkg, _ in binaries})
         argv = ["cargo", "nextest", "run", "--no-fail-fast"]
@@ -1190,8 +1276,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--alone",
         nargs="*",
-        metavar="LIBRARY",
-        help="lint each library named, or every one, alone under its own features: the alone check",
+        metavar="NAME",
+        help="lint each library or feature set named, or every one, alone: the alone check",
     )
     args = parser.parse_args(argv)
     if args.alone is not None:
