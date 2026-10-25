@@ -22,8 +22,9 @@ first pass it comes out of the one download (15.8.2).
   length lands inside the chunk on no member start is taken for no header, and
   the search goes past it. The member reaching the chunk's end is borne out
   too, by the header after it (15.8.5).
-  A first member alone past the limit hands back nothing. Each cut breaks the
-  chain of windows, as a cut speculation does, and the frontier decodes on.
+  A first member alone past the limit hands back nothing. A cut at the limit
+  is continued from its stop, as a cut speculation is (15.16); any other
+  breaks the chain of windows, and the frontier decodes on.
 - **Nothing in `pgdt-io` changed.** A task reading a chain holds less than a
   speculation's charge (`Chunking::task_bytes`), and stops no further into
   the next piece than a decoded speculation does, so the download's room is
@@ -44,8 +45,8 @@ first pass it comes out of the one download (15.8.2).
 
 - **15.7's readings** read a BGZF first pass whose tasks decode each byte once,
   through the engine; a single member's are still decoded natively first.
-- **15.16** continues a limit-cut speculation; a chain cut at the limit is
-  the same break, and could continue from its stop the same way.
+- **15.16** continues a limit-cut speculation, and a chain cut at the limit
+  from its stop, read off the headers there.
 
 ## Negative results
 

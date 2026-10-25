@@ -62,7 +62,7 @@ start with the very history it began with, every trailer it holds matching.
 
 ## Negative results
 
-- **A chain still breaks** where a guess was cut short by its limit or by
-  refusals past a boundary, or began at a false start: the next guess does
-  not begin at its stop. The frontier decodes on and anchors at the next
+- **A chain still breaks** where a guess was cut short by refusals past a
+  boundary, or began at a false start: the next guess does not begin at its
+  stop. One cut by its limit is continued from its stop since 15.16. The frontier decodes on and anchors at the next
   guess's start, so what it costs is that stretch decoded serially.

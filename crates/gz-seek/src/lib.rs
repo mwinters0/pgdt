@@ -110,5 +110,6 @@ pub use forward::{Forward, ForwardStep};
 pub use index::{Checkpoint, End, Index, Size, Start, UnitTask};
 pub use member::GZIP_MAGIC;
 pub use parallel::{ChunkDone, ChunkTask, Parallel, ParallelStep, TaskId};
+pub use speculate::SPECULATION_LIMIT;
 pub use unit::{Progress, UnitRead};
 pub use zlib::{DECODER_BYTES, WINDOW_SIZE, engine};

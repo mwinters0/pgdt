@@ -3,12 +3,48 @@ use crate::test_support::{Truth, bgzf, gzip, gzip_members, payload, truth};
 
 /// Run chunk `chunk`'s speculation over `file`, fed `feed` bytes at a time.
 fn speculate(file: &[u8], chunk: u64, bytes: u64, limit: usize, feed: usize) -> Option<Guess> {
-    let mut task = Speculation::new(chunk, bytes, limit, file.len() as u64);
+    fed(Speculation::new(chunk, bytes, limit, file.len() as u64), file, feed)
+}
+
+/// Run `task` over `file`, fed `feed` bytes at a time.
+fn fed(mut task: Speculation, file: &[u8], feed: usize) -> Option<Guess> {
     while let Some(at) = task.wants() {
         let at = at as usize;
         task.supply(&file[at..(at + feed).min(file.len())]);
     }
     task.finish().found
+}
+
+/// Chunk `chunk`'s guess over `file` under `limit`, and each continuing the
+/// one before from its stop while the limit cuts it: every piece the file's,
+/// each beginning where the one before stops.
+fn pieces(file: &[u8], chunk: u64, bytes: u64, limit: usize, feed: usize) -> Vec<Guess> {
+    let truth = truth(file);
+    let mut pieces = vec![speculate(file, chunk, bytes, limit, feed).expect("a first piece")];
+    while let Some(last) = pieces.last().filter(|guess| guess.cut) {
+        let what = format!("piece {} of chunk {chunk}, feed {feed}", pieces.len());
+        let task = Speculation::continuing(chunk, last.stop, bytes, limit, file.len() as u64);
+        let next = fed(task, file, feed).unwrap_or_else(|| panic!("{what}: nothing"));
+        assert_eq!(next.start, last.stop, "{what}");
+        assert!(next.len <= limit as u64 && next.len > 0, "{what}: {} of {limit}", next.len);
+        assert_is_the_file(&truth, &next, 8 * chunk * bytes, u64::MAX, &what);
+        pieces.push(next);
+    }
+    pieces
+}
+
+/// Assert the pieces a limit cut a guess into are `whole`: from its start to
+/// its stop, its length between, and the history at its stop.
+fn assert_pieces_are(file: &[u8], pieces: &[Guess], whole: &Guess, what: &str) {
+    assert!(pieces.len() > 1, "{what}: nothing cut");
+    assert!(!whole.cut && pieces.iter().rev().skip(1).all(|g| g.cut), "{what}: the cuts");
+    let last = pieces.last().unwrap();
+    assert_eq!((pieces[0].start, last.stop, last.cut), (whole.start, whole.stop, false), "{what}");
+    assert_eq!(pieces.iter().map(|g| g.len).sum::<u64>(), whole.len, "{what}: length");
+    let truth = truth(file);
+    let window = truth.window(truth.offset_of(whole.start).unwrap()).to_vec();
+    let history = pieces.iter().try_fold(window.clone(), |w, g| g.history_at_stop(&w));
+    assert_eq!(history, whole.history_at_stop(&window), "{what}: the history at the stop");
 }
 
 /// Assert `guess`, speculated over `file` from chunk boundary `from` to
@@ -107,10 +143,12 @@ fn a_chunk_crosses_members_and_begins_at_headers() {
     }
 }
 
-/// **A limit ends a chunk at its last boundary short of it**, the rest left
-/// to the pass.
+/// **A limit cuts a chunk at its last boundary short of it, and a guess
+/// continued from there reaches the chunk's stop**: the pieces chain, and
+/// make up the uncut guess, its history at the stop included; a piece
+/// reaching no boundary under the limit is nothing.
 #[test]
-fn a_limit_ends_a_chunk_at_its_last_boundary() {
+fn a_limit_cuts_a_guess_continued_from_its_stop() {
     let plaintext = payload(1_000_000, 11);
     let file = gzip(&plaintext, 6);
     let truth = truth(&file);
@@ -119,10 +157,29 @@ fn a_limit_ends_a_chunk_at_its_last_boundary() {
     let limit = whole.len as usize / 2;
     let short = speculate(&file, 1, bytes, limit, 1 << 20).unwrap();
     assert_eq!(short.start, whole.start);
+    assert!(short.cut, "a guess the limit stopped");
     assert!(short.len <= limit as u64 && short.len > 0, "{} of {limit}", short.len);
     assert!(matches!(short.stop, Point::Block(_)));
     assert_is_the_file(&truth, &short, 8 * bytes, 16 * bytes, "limited");
     assert!(speculate(&file, 1, bytes, 10, 1 << 20).is_none(), "nothing short of a boundary");
+    for feed in [3000, 1 << 20] {
+        let pieces = pieces(&file, 1, bytes, limit, feed);
+        assert_pieces_are(&file, &pieces, &whole, &format!("feed {feed}"));
+    }
+    let task = Speculation::continuing(1, short.stop, bytes, 10, file.len() as u64);
+    assert!(fed(task, &file, 1 << 20).is_none(), "a continuation short of a boundary");
+
+    // Members each a block long: every cut is at a plain member's start, and
+    // a continuation decodes from that member's header.
+    let parts = plaintext.chunks(20_000).take(40).collect::<Vec<_>>();
+    let file = gzip_members(&parts, 6);
+    let whole = speculate(&file, 1, bytes, usize::MAX, 1 << 20).unwrap();
+    let limit = whole.len as usize / 3;
+    for feed in [3000, 1 << 20] {
+        let pieces = pieces(&file, 1, bytes, limit, feed);
+        assert!(pieces[1..].iter().all(|g| matches!(g.start, Point::Member(_))), "feed {feed}");
+        assert_pieces_are(&file, &pieces, &whole, &format!("members, feed {feed}"));
+    }
 }
 
 /// **A chunk past the last member's start reaches the file's end.**
@@ -248,8 +305,10 @@ fn a_bgzf_chunk_is_read_off_its_members_headers() {
 }
 
 /// **A BGZF chunk's chain is cut where it cannot be read on**: at the limit,
-/// at the last member start before the plaintext would pass it, nothing where
-/// the first member alone does; and at a member whose stated length leads
+/// at the last member start before the plaintext would pass it, a guess
+/// continued from there being read off the headers on to the chunk's stop,
+/// nothing where the first member alone does; and at a member whose stated
+/// length leads
 /// to no member, at that member's start — inside the chunk, and the member
 /// reaching past its end, whose length no stop before it bears out.
 #[test]
@@ -262,10 +321,17 @@ fn a_bgzf_chunk_s_chain_is_cut_where_it_cannot_be_read_on() {
     let limit = whole.len as usize / 2;
     let short = speculate(&file, 1, bytes, limit, 1 << 20).unwrap();
     assert_eq!(short.start, whole.start);
+    assert!(short.cut, "a chain the limit stopped");
     assert!(short.len <= limit as u64 && short.len > 0, "{} of {limit}", short.len);
     assert!(matches!(short.stop, Point::Member(_)), "{:?}", short.stop);
     assert_is_the_file(&truth, &short, 8 * bytes, 16 * bytes, "limited");
     assert!(speculate(&file, 1, bytes, 10, 1 << 20).is_none(), "nothing short of a member");
+    // Continued from its stop, read off the headers there, to the chunk's.
+    for feed in [5000, 1 << 20] {
+        let pieces = pieces(&file, 1, bytes, limit, feed);
+        assert!(pieces.iter().all(|g| g.end.is_empty()), "feed {feed}: a decoded piece");
+        assert_pieces_are(&file, &pieces, &whole, &format!("bgzf, feed {feed}"));
+    }
 
     // The third member of the chunk, and the member reaching past its end,
     // each state a length landing inside the member after it, on an `ISIZE`

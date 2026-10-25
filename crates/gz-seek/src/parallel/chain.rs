@@ -9,10 +9,15 @@
 //! and the engine's decode of each can begin at once, on whatever thread the
 //! caller has. Each window rests on every guess before it; the frontier proves
 //! one only by standing at that decode's start with that very history, which
-//! nothing but the engine's decode of everything before it gives it. **A guess
-//! stopping short of where the next begins ends the chain**, a limit or a
-//! refusal having cut it: the frontier decodes on to the next guess, anchors
-//! there, and decodes that chunk itself.
+//! nothing but the engine's decode of everything before it gives it. A guess
+//! the limit cut is followed by the one continuing it from its stop, so a
+//! limit only lengthens the chain by a link. **A guess stopping short of
+//! where the next begins ends the chain**, refusals or a false start having
+//! cut it: the frontier decodes on to the next guess, anchors there, and
+//! decodes that chunk itself.
+//!
+//! Guesses and decodes are held by the bit they begin at, a chunk holding as
+//! many as its guess was cut into.
 //!
 //! **A generation is one anchor's chain**: anchoring again, or a window the
 //! frontier contradicts, drops every decode of the last — queued, running or
@@ -40,26 +45,25 @@ pub(super) enum Here {
 }
 
 pub(super) struct Chain {
-    chunk_bytes: u64,
     file_len: u64,
     generation: u64,
-    /// What each speculation guessed, by chunk, until the frontier passes it.
-    guesses: BTreeMap<u64, Guess>,
+    /// What each speculation guessed, with its chunk, by the bit it begins
+    /// at, until the frontier passes it.
+    guesses: BTreeMap<u64, (u64, Guess)>,
     /// Where the last chunk given a decode stops, and the history there as
     /// resolved: `None` where no more can be resolved until the frontier
     /// anchors again.
     end: Option<(Point, Vec<u8>)>,
     queued: VecDeque<ChunkDecode>,
-    /// Each of this generation's decodes handed out, by chunk, with where it
-    /// begins.
-    running: BTreeMap<u64, Point>,
+    /// Each of this generation's decodes handed out, by the bit it begins
+    /// at, with its chunk and where it begins.
+    running: BTreeMap<u64, (u64, Point)>,
     decoded: BTreeMap<u64, ChunkDecoded>,
 }
 
 impl Chain {
-    pub(super) fn new(chunk_bytes: u64, file_len: u64) -> Chain {
+    pub(super) fn new(file_len: u64) -> Chain {
         Chain {
-            chunk_bytes,
             file_len,
             generation: 0,
             guesses: BTreeMap::new(),
@@ -73,38 +77,39 @@ impl Chain {
     /// Chunk `chunk`'s guess, with the frontier at `bit`.
     pub(super) fn guessed(&mut self, chunk: u64, guess: Guess, bit: u64) {
         if !behind(&guess, bit) {
-            self.guesses.insert(chunk, guess);
+            self.guesses.insert(guess.start.bit(), (chunk, guess));
             self.extend();
         }
     }
 
     /// A decode's result, with the frontier at `bit`.
     pub(super) fn decoded(&mut self, decoded: ChunkDecoded, bit: u64) {
+        let start = decoded.start.bit();
         let current =
-            decoded.generation == self.generation && self.running.remove(&decoded.chunk).is_some();
-        if current && start_bit(decoded.start) >= bit {
-            self.decoded.insert(decoded.chunk, decoded);
+            decoded.generation == self.generation && self.running.remove(&start).is_some();
+        if current && start >= bit {
+            self.decoded.insert(start, decoded);
         }
     }
 
     /// The next decode to hand out, in chunk order.
     pub(super) fn next_task(&mut self) -> Option<ChunkDecode> {
         let task = self.queued.pop_front()?;
-        self.running.insert(task.chunk(), task.start());
+        self.running.insert(task.start().bit(), (task.chunk(), task.start()));
         Some(task)
     }
 
-    /// Whether a decode handed out is still wanted.
-    pub(super) fn wants(&self, chunk: u64, generation: u64) -> bool {
-        generation == self.generation && self.running.contains_key(&chunk)
+    /// Whether the decode handed out from bit `start` is still wanted.
+    pub(super) fn wants(&self, start: u64, generation: u64) -> bool {
+        generation == self.generation && self.running.contains_key(&start)
     }
 
     /// Drop what the frontier, standing at `bit`, has passed.
     pub(super) fn pass(&mut self, bit: u64) {
-        self.guesses.retain(|_, guess| !behind(guess, bit));
-        self.decoded.retain(|_, decoded| start_bit(decoded.start) >= bit);
-        self.queued.retain(|task| start_bit(task.start()) >= bit);
-        if self.end.as_ref().is_some_and(|(point, _)| start_bit(*point) < bit) {
+        self.guesses.retain(|_, (_, guess)| !behind(guess, bit));
+        self.decoded.retain(|&start, _| start >= bit);
+        self.queued.retain(|task| task.start().bit() >= bit);
+        if self.end.as_ref().is_some_and(|(point, _)| point.bit() < bit) {
             self.end = None;
         }
     }
@@ -112,11 +117,14 @@ impl Chain {
     /// What begins at `point`, where the frontier stands with `history`
     /// before it: a guess beginning there and nothing else anchors the chain.
     pub(super) fn at(&mut self, point: Point, history: impl FnOnce() -> Vec<u8>) -> Here {
-        if let Some(chunk) = self.decoded.iter().find(|(_, d)| d.start == point).map(|(&k, _)| k) {
-            return Here::Decoded(self.decoded.remove(&chunk).expect("a decoded chunk"));
+        let bit = point.bit();
+        if self.decoded.get(&bit).is_some_and(|d| d.start == point) {
+            return Here::Decoded(self.decoded.remove(&bit).expect("a decoded chunk"));
         }
-        if let Some((&chunk, _)) = self.running.iter().find(|&(_, &start)| start == point) {
-            return Here::Running(TaskId::decode(chunk, self.generation));
+        if let Some(&(chunk, start)) = self.running.get(&bit)
+            && start == point
+        {
+            return Here::Running(TaskId::decode(chunk, bit, self.generation));
         }
         if let Some(i) = self.queued.iter().position(|task| task.start() == point) {
             self.queued.remove(i);
@@ -152,7 +160,7 @@ impl Chain {
     /// The bytes the chain holds: the guesses, the decodes done, and the
     /// windows of those queued and of its end.
     pub(super) fn held(&self) -> usize {
-        self.guesses.values().map(Guess::held).sum::<usize>()
+        self.guesses.values().map(|(_, guess)| guess.held()).sum::<usize>()
             + self.decoded.values().map(ChunkDecoded::held).sum::<usize>()
             + self.queued.iter().map(ChunkDecode::held).sum::<usize>()
             + self.end.as_ref().map_or(0, |(_, window)| window.capacity())
@@ -173,14 +181,23 @@ impl Chain {
         }
     }
 
-    /// The guess beginning at `point`, and its chunk.
+    /// The guess beginning at `point`, and its chunk: one found there, or at
+    /// an alias of a stored header there, every one of which lies within the
+    /// byte before the length it reads
+    /// ([`stored_length_at`](crate::find::stored_length_at)).
     fn guess_at(&self, point: Point) -> Option<(u64, &Guess)> {
-        let chunk = start_bit(point).checked_div(8 * self.chunk_bytes)?;
-        [chunk.checked_sub(1), Some(chunk)]
-            .into_iter()
-            .flatten()
-            .filter_map(|k| self.guesses.get(&k).map(|guess| (k, guess)))
+        let bit = point.bit();
+        self.guesses
+            .range(bit.saturating_sub(8)..=bit)
+            .rev()
+            .map(|(_, (chunk, guess))| (*chunk, guess))
             .find(|(_, guess)| guess.begins_at(point))
+    }
+
+    /// How many times the chain was anchored or dropped.
+    #[cfg(test)]
+    pub(super) fn generation(&self) -> u64 {
+        self.generation
     }
 }
 
@@ -194,19 +211,10 @@ fn resolved(guess: &Guess, window: &[u8]) -> Option<(Point, Vec<u8>)> {
     }
 }
 
-/// The bit a decode standing at `point` takes next, the end's being past
-/// every bit.
-pub(super) fn start_bit(point: Point) -> u64 {
-    match point {
-        Point::Block(bit) | Point::Member(bit) => bit,
-        Point::End => u64::MAX,
-    }
-}
-
 /// Whether a decode at `bit` is past every place `guess` begins.
 fn behind(guess: &Guess, bit: u64) -> bool {
     match guess.stored {
         Some(len) => bit + 3 > len,
-        None => start_bit(guess.start) < bit,
+        None => guess.start.bit() < bit,
     }
 }

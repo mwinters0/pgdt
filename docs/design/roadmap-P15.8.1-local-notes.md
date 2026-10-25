@@ -46,9 +46,9 @@ headers").
   engine's decode of it reads it again, so a fetched pass running them
   as built here would download the object more than once.
 - **The chunk length and the plaintext limit** (`Chunking::SHIPPED`) are set
-  without a figure. A chunk cut at the limit ends the chain of windows, so the
-  frontier decodes alone to the next chunk's start and through that chunk;
-  15.16 continues the cut, and 15.7 prices the chunk length
+  without a figure. 15.16 continues a chunk cut at the limit from its stop, so
+  the cut no longer ends the chain of windows, and makes the limit
+  `gz_seek::SPECULATION_LIMIT`; 15.7 prices the chunk length
   ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
   "15.8.1's chunking, reviewed").
 - **15.7's resident readings** read a pass now holding its tasks too; the

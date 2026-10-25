@@ -19,13 +19,22 @@
 //! start is known, and the engine decodes the chunk from it
 //! (`docs/design/decisions.md`, "D117").
 //!
+//! **A limit cuts a guess, never the chain.** Plaintext that would pass the
+//! limit ends the guess at the last boundary it reached, marked
+//! [`cut`](Guess::cut), and the pass speculates on from that stop
+//! ([`Speculation::continuing`]) — a start no search need find — to where the
+//! chunk's guess would have stopped, so guesses still chain where each piece
+//! reaches a boundary under the limit, which [`SPECULATION_LIMIT`] is chosen
+//! for.
+//!
 //! **A speculation never fails.** A candidate whose decode is refused was not
 //! a block's start, and the search goes on past it — up to a few refused only
 //! after passing a boundary, past which the bytes are more likely damaged than
-//! the guess wrong; then a refusal, or plaintext that would pass the limit,
-//! ends the chunk at the last boundary it reached, the rest left to the pass's
-//! own decode, which meets whatever the file holds there and refuses it as the
-//! engine does. A chunk in which nothing is found hands back nothing.
+//! the guess wrong; then a refusal ends the chunk at the last boundary it
+//! reached, the rest left to the pass's own decode, which meets whatever the
+//! file holds there and refuses it as the engine does. A chunk in which
+//! nothing is found, or a piece reaching no boundary under the limit, hands
+//! back nothing.
 //!
 //! **Nothing here reads a file**: the caller feeds the bytes from
 //! [`Speculation::wants`] on, as many at a time as it has, on whatever thread.
@@ -39,6 +48,15 @@ use self::members::{Members, Read, Walked};
 
 mod members;
 
+/// The plaintext limit to pass [`Parallel`](crate::Parallel), the most a
+/// speculation decodes and so a chunk's decode holds: twice the largest block
+/// zlib ends, `lit_bufsize - 1` symbols of at most 258 bytes at
+/// its largest `memLevel` (`deflate.c`), so a piece begun at a boundary
+/// reaches the next under it, a limit cutting the guess there rather than
+/// ending the chain of windows. A writer ending blocks more seldom gives a
+/// piece nothing to stop at, and the frontier decodes those bytes itself.
+pub const SPECULATION_LIMIT: usize = 2 * ((1 << (9 + 6)) - 1) * 258;
+
 /// A place a decode stands between two steps: where a chunk begins or ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Point {
@@ -48,6 +66,17 @@ pub(crate) enum Point {
     Member(u64),
     /// The file's end, after the last member's trailer.
     End,
+}
+
+impl Point {
+    /// The bit a decode standing here takes next, the end's being past every
+    /// bit.
+    pub(crate) fn bit(self) -> u64 {
+        match self {
+            Point::Block(bit) | Point::Member(bit) => bit,
+            Point::End => u64::MAX,
+        }
+    }
 }
 
 /// An event inside a chunk, at a plaintext offset from the chunk's start.
@@ -92,6 +121,9 @@ pub(crate) struct Guess {
     /// inside the chunk or at its start; otherwise the history before the
     /// start makes up the rest.
     pub(crate) fresh: bool,
+    /// Whether the limit stopped it short of where its chunk's guess stops,
+    /// so the pass speculates on from its stop.
+    pub(crate) cut: bool,
 }
 
 impl Guess {
@@ -134,6 +166,8 @@ impl Guess {
 /// What a speculation came to: its guess, if it found a start.
 pub(crate) struct Speculated {
     pub(crate) chunk: u64,
+    /// The bit a continuation began at.
+    pub(crate) from: Option<u64>,
     pub(crate) found: Option<Guess>,
 }
 
@@ -167,6 +201,28 @@ struct Decode {
 }
 
 impl Decode {
+    /// A decode from `start`, its next bit `bit`: past a block's header the
+    /// search read into the inflater, or at the header itself — a member's,
+    /// or a block's a continuation's fresh inflater reads.
+    fn new(start: Point, stored: Option<u64>, bit: u64) -> Decode {
+        let (phase, marked) = match start {
+            Point::Member(_) => (Phase::Header(Header::new(bit / 8)), None),
+            _ => (Phase::Deflate, Some(Marked::new())),
+        };
+        Decode {
+            start,
+            stored,
+            phase,
+            bit,
+            bytes: marked.is_none(),
+            marked,
+            plain: Plain::new(),
+            events: Vec::new(),
+            last_point: None,
+            boundary: None,
+        }
+    }
+
     fn produced(&self) -> usize {
         self.marked.as_ref().map_or(0, |m| m.out.len()) + self.plain.produced()
     }
@@ -222,6 +278,8 @@ enum State {
 /// chunk's bytes, the member it stops in and the header after that alone.
 pub(crate) struct Speculation {
     chunk: u64,
+    /// The bit a continuation of a cut guess begins at.
+    from: Option<u64>,
     /// Where the chunk's search ends, and its decode may stop: the next
     /// chunk's first bit.
     until: u64,
@@ -245,6 +303,7 @@ impl Speculation {
         let from = chunk * chunk_bytes;
         Speculation {
             chunk,
+            from: None,
             until: 8 * (from + chunk_bytes),
             limit,
             input: Input::new(from, file_len),
@@ -254,9 +313,40 @@ impl Speculation {
         }
     }
 
+    /// Chunk `chunk`'s speculation continued from `from`, the stop of a guess
+    /// the limit cut, to where the chunk's guess would have stopped: a BGZF
+    /// member there read off its chain, any other place decoded from, nothing
+    /// searched for first.
+    pub(crate) fn continuing(
+        chunk: u64,
+        from: Point,
+        chunk_bytes: u64,
+        limit: usize,
+        file_len: u64,
+    ) -> Speculation {
+        let bit = match from {
+            Point::Block(bit) | Point::Member(bit) => bit,
+            Point::End => 8 * file_len,
+        };
+        let mut task = Speculation::new(chunk, chunk_bytes, limit, file_len);
+        task.from = Some(bit);
+        task.input = Input::new(bit / 8, file_len);
+        task.state = match from {
+            Point::Block(bit) => State::Decoding(Decode::new(Point::Block(bit), None, bit)),
+            Point::Member(bit) => State::Members(Members::at(bit / 8)),
+            Point::End => State::Done(None),
+        };
+        task
+    }
+
     /// Which chunk of the file this is.
     pub(crate) fn chunk(&self) -> u64 {
         self.chunk
+    }
+
+    /// The bit a continuation begins at; `None` for a chunk's own.
+    pub(crate) fn from(&self) -> Option<u64> {
+        self.from
     }
 
     /// The compressed offset of the next byte the speculation wants, `None`
@@ -284,7 +374,7 @@ impl Speculation {
             State::Done(found) => found,
             _ => None,
         };
-        Speculated { chunk: self.chunk, found }
+        Speculated { chunk: self.chunk, from: self.from, found }
     }
 
     fn advance(&mut self) {
@@ -322,17 +412,19 @@ impl Speculation {
                         self.state = State::Decoding(decode);
                         return;
                     }
+                    // A limit cuts the guess at the last boundary reached, the
+                    // pass speculating on from there.
+                    Err(Halt::Limit) => match decode.last_point {
+                        Some(i) => State::Done(Some(truncated(&decode, i, true))),
+                        None => State::Done(None),
+                    },
                     // A refused candidate was most likely no place a decode
                     // resumes, even one whose garbage passed a boundary; past
                     // a few of those the bytes are more likely damaged, and
                     // the chunk ends at the last boundary reached.
-                    Err(Halt::Limit) => match decode.last_point {
-                        Some(i) => State::Done(Some(truncated(&decode, i))),
-                        None => State::Done(None),
-                    },
                     Err(Halt::Refused) => match decode.last_point {
                         Some(i) if self.refused_past_a_boundary >= REFUSALS_PAST_A_BOUNDARY => {
-                            State::Done(Some(truncated(&decode, i)))
+                            State::Done(Some(truncated(&decode, i, false)))
                         }
                         last => {
                             self.refused_past_a_boundary += u32::from(last.is_some());
@@ -353,31 +445,13 @@ impl Speculation {
         }
     }
 
-    /// A decode from `candidate`.
+    /// A decode from `candidate`, whose block header the search has read.
     fn begin(&mut self, candidate: Candidate) -> Decode {
-        let (start, stored, phase, bit, marked) = match candidate {
-            Candidate::Block { bit, body, stored } => {
-                (Point::Block(bit), stored, Phase::Deflate, body, Some(Marked::new()))
-            }
+        match candidate {
+            Candidate::Block { bit, body, stored } => Decode::new(Point::Block(bit), stored, body),
             Candidate::Member { offset } => {
-                let header = Phase::Header(Header::new(offset));
-                (Point::Member(8 * offset), None, header, 8 * offset, None)
+                Decode::new(Point::Member(8 * offset), None, 8 * offset)
             }
-        };
-        let bytes = marked.is_none();
-        let plain = Plain::new();
-        let events = Vec::new();
-        Decode {
-            start,
-            stored,
-            phase,
-            bit,
-            marked,
-            bytes,
-            plain,
-            events,
-            last_point: None,
-            boundary: None,
         }
     }
 
@@ -492,14 +566,15 @@ fn read_off(walked: Walked) -> Guess {
         len: walked.plaintext,
         end: Vec::new(),
         fresh: true,
+        cut: walked.cut,
     }
 }
 
 /// The guess the decode makes, cut at its event `i`, the last place it
-/// reached that a decode may resume at.
-fn truncated(decode: &Decode, i: usize) -> Guess {
+/// reached that a decode may resume at — by the limit where `cut`.
+fn truncated(decode: &Decode, i: usize, cut: bool) -> Guess {
     let (at, event) = decode.events[i];
-    guess(decode, i + 1, event.point().expect("a point"), at)
+    Guess { cut, ..guess(decode, i + 1, event.point().expect("a point"), at) }
 }
 
 /// The guess a decode makes standing at `stop`, plaintext offset `at`, its
@@ -520,7 +595,7 @@ fn guess(decode: &Decode, events: usize, stop: Point, at: u64) -> Guess {
         Point::Member(_) | Point::End => Vec::new(),
     };
     let fresh = floor.is_some() || !matches!(stop, Point::Block(_));
-    Guess { start: decode.start, stored: decode.stored, stop, len: at, end, fresh }
+    Guess { start: decode.start, stored: decode.stored, stop, len: at, end, fresh, cut: false }
 }
 
 #[cfg(test)]

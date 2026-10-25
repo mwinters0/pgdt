@@ -18,11 +18,13 @@
 //! chunk's end included: one is taken only where a BGZF header, a plain
 //! member's magic or the file's end follows it. The chain is cut at the last
 //! member start it reached wherever the bytes after a member begin no member,
-//! an `ISIZE` passes BGZF's most, a member runs past the file's end, or the
-//! plaintext would pass the limit; where that start is its first, it was no
-//! header, and the search goes on past it, so a lone header the bytes do not
-//! bear out hands back no guess. A chunk holding no BGZF header is searched as
-//! any file's chunk is, once the scan for one has read it to its end.
+//! an `ISIZE` passes BGZF's most, or a member runs past the file's end; where
+//! that start is its first, it was no header, and the search goes on past it,
+//! so a lone header the bytes do not bear out hands back no guess. Plaintext
+//! that would pass the limit cuts the chain there too, the guess marked cut
+//! for the pass to read on from (`super`). A chunk holding no BGZF header is
+//! searched as any file's chunk is, once the scan for one has read it to its
+//! end; a continuation looks for one only where it begins.
 
 use crate::bgzf::{BGZF_HEADER_LEN, BGZF_MAX_PLAINTEXT, MIN_MEMBER, bgzf_member_len};
 use crate::member::GZIP_MAGIC;
@@ -46,6 +48,8 @@ pub(super) struct Members {
     pub(super) from: u64,
     /// The next byte searched for a BGZF header, while no chain is begun.
     search: u64,
+    /// Whether a chain may begin only at `from`, a continuation's start.
+    pinned: bool,
     chain: Option<Chain>,
 }
 
@@ -57,6 +61,8 @@ pub(super) struct Walked {
     pub(super) first: u64,
     pub(super) stop: Option<u64>,
     pub(super) plaintext: u64,
+    /// Whether the limit cut it.
+    pub(super) cut: bool,
 }
 
 /// What a search for the chain's first header came to.
@@ -90,7 +96,14 @@ struct Chain {
 
 impl Members {
     pub(super) fn new(from: u64) -> Members {
-        Members { from, search: from, chain: None }
+        Members { from, search: from, pinned: false, chain: None }
+    }
+
+    /// A read of the chain beginning at byte `at` and nowhere else: a
+    /// continuation's, which searches its chunk as any file's from `at`
+    /// where no BGZF header begins there.
+    pub(super) fn at(at: u64) -> Members {
+        Members { pinned: true, ..Members::new(at) }
     }
 
     /// Read on through `input`, held from the chunk's first byte, to `until`,
@@ -136,14 +149,17 @@ impl Members {
             let trailer = input.from(next - 4);
             let isize = u32::from_le_bytes(trailer[..4].try_into().expect("four bytes"));
             let plaintext = chain.plaintext + u64::from(isize);
-            if isize > BGZF_MAX_PLAINTEXT || plaintext > limit as u64 {
-                if chain.at == chain.first && isize <= BGZF_MAX_PLAINTEXT {
-                    return Read::Done(None);
-                }
+            if isize > BGZF_MAX_PLAINTEXT {
                 match self.cut(chain) {
                     Some(read) => return read,
                     None => continue,
                 }
+            }
+            if plaintext > limit as u64 {
+                if chain.at == chain.first {
+                    return Read::Done(None);
+                }
+                return Read::Done(Some(Walked { cut: true, ..walked(chain, Some(chain.at)) }));
             }
             let reached = Chain { at: next, plaintext, ..chain };
             match follows {
@@ -160,8 +176,10 @@ impl Members {
         }
     }
 
-    /// The first BGZF header from the search on, before byte `until`.
+    /// The first BGZF header from the search on, before byte `until`, or
+    /// only at `from` where the read is pinned there.
     fn find(&mut self, input: &Input, until: u64) -> Found {
+        let until = if self.pinned { until.min(self.from + 1) } else { until };
         while self.search < until {
             let held = input.from(self.search);
             let room = usize::try_from(until - self.search).unwrap_or(usize::MAX);
@@ -207,5 +225,5 @@ fn member_len(bytes: &[u8]) -> Option<u64> {
 
 /// The chain from its first member to `stop`, the member start it reached.
 fn walked(chain: Chain, stop: Option<u64>) -> Walked {
-    Walked { first: chain.first, stop, plaintext: chain.plaintext }
+    Walked { first: chain.first, stop, plaintext: chain.plaintext, cut: false }
 }
