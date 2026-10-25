@@ -777,3 +777,58 @@ fn a_frontier_waits_for_a_task_that_nothing_has_started_on_either_feed() {
         });
     }
 }
+
+/// Chunks a few BGZF members long, as the shipped chunk is many: the frontier
+/// then stands at a member start within each chunk, passing the guesses it
+/// holds as it goes, where in a chunk shorter than a member it holds them for
+/// chunks at a time.
+const BGZF_CHUNKING: Chunking =
+    Chunking { bytes: NonZeroU64::new(64 * 1024).unwrap(), limit: 1024 * 1024 };
+
+/// **A fetched BGZF file inflates ahead over one download**, each chunk ahead
+/// of the frontier read off its members' headers (`gz_seek`'s
+/// `a_bgzf_chunk_is_read_off_its_members_headers`): at every count above one the frontier takes a chunk its tasks decoded —
+/// sequenced as [`a_lifted_frontier_takes_the_chunks_its_tasks_decoded`] is —
+/// the pass builds the index a forward pass builds, which is the walk's
+/// (`docs/design/decisions.md`, "D116"), and every compressed byte is asked of
+/// the transport exactly once.
+#[tokio::test]
+async fn a_fetched_bgzf_file_inflates_ahead_over_one_download() {
+    let payload = gzip_test_payload().repeat(12);
+    let file = bgzf_compress(&payload);
+    let bytes = std::fs::read(file.path()).unwrap();
+    let expected = crate::source::gzip_indexed_in_memory(&bytes, SPACING.get());
+    let stored = bytes.len() as u64;
+    assert!(BGZF_CHUNKING.chunks(stored) > 8, "{stored} bytes");
+    for jobs in [2, 4, 8] {
+        let raw = Recording::over(file.path());
+        let pass = FirstPass::chunked(
+            named(file.path()),
+            Feed::Fetched(Arc::clone(&raw) as Arc<dyn ByteRangeSource>),
+            stored,
+            SPACING,
+            BGZF_CHUNKING,
+            &std::env::temp_dir(),
+        )
+        .unwrap();
+        pass.hint_parallelism(Parallelism::workers(jobs, 64 * BGZF_CHUNKING.task_bytes()));
+        let (mut got, most) = (Vec::new(), payload.len() * 3 / 4);
+        let ready = read_until_a_decode_is_ready(&pass, &mut got, most).await;
+        assert!(ready, "at {jobs}: no decode landed ahead of the frontier");
+        while got.len() < most {
+            let len = 4099.min(most - got.len());
+            got.extend_from_slice(&pass.read_range(got.len() as u64, len).await.unwrap());
+        }
+        assert!(taken(&pass) > 0, "at {jobs}: every chunk decoded by the frontier");
+        got.extend_from_slice(&scanned(&pass, most as u64, 4099).await);
+        assert!(got == payload, "at {jobs}");
+        assert_eq!(gzip_index_of(&pass), expected, "at {jobs}");
+
+        let mut next = 0;
+        for (offset, len) in raw.asked() {
+            assert_eq!(offset, next, "at {jobs}: {:?}", raw.asked());
+            next += len as u64;
+        }
+        assert_eq!(next, stored, "at {jobs}: the object, once");
+    }
+}

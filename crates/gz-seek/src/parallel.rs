@@ -6,7 +6,8 @@
 //! caller takes [`ChunkTask`]s, runs each wherever it likes, and hands each
 //! result back. A **speculation** guesses where its chunk — the file's
 //! compressed bytes from `k` chunk lengths in to `k + 1` — begins and stops,
-//! and the history at its stop, still marked; resolving those histories in
+//! and the history at its stop, still marked, or in a BGZF file reads all
+//! three off its members' headers; resolving those histories in
 //! order from a place the frontier stands at gives each chunk ahead a window,
 //! and a **decode** decodes the chunk through the engine from its start with
 //! it (`chain.rs`). Each block boundary or member start the frontier reaches,

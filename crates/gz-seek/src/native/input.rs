@@ -28,6 +28,11 @@ impl Input {
         self.base + self.len as u64
     }
 
+    /// The file's length, where the input ends.
+    pub(crate) fn file_len(&self) -> u64 {
+        self.file_len
+    }
+
     /// The bit past the last held one.
     pub(crate) fn end_bit(&self) -> u64 {
         8 * self.end()

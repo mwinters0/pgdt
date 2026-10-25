@@ -39,7 +39,7 @@ pub const BGZF_HEADER_LEN: usize = 18;
 pub const BGZF_MAX_PLAINTEXT: u32 = 64 * 1024;
 
 /// A member's trailer and the smallest header: no BGZF member is shorter.
-const MIN_MEMBER: u64 = BGZF_HEADER_LEN as u64 + 8;
+pub(crate) const MIN_MEMBER: u64 = BGZF_HEADER_LEN as u64 + 8;
 
 /// The length of the BGZF member whose header begins `header`, `None` where
 /// the bytes are not a BGZF header: gzip's magic, `FEXTRA` set, and a `BC`

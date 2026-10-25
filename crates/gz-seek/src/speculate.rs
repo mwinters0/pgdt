@@ -1,11 +1,14 @@
 //! A speculation: one chunk of a gzip file decoded from a place found in it,
 //! before anything ahead of it is decoded, to guess where the chunk begins
-//! and stops and what history it stops with.
+//! and stops and what history it stops with — or, in a BGZF file, that guess
+//! read off its members' headers and trailers with nothing decoded
+//! ([`members`]).
 //!
 //! The file is cut into chunks of a fixed compressed length, chunk `k`
-//! covering the bits from `k` chunks in to `k + 1`. A speculation searches its
-//! chunk for the first place a decode may resume ([`find`](crate::find)), and
-//! decodes from there — markers for the unknown history, as the
+//! covering the bits from `k` chunks in to `k + 1`. A chunk holding a BGZF
+//! header is read off its member chain from there; any other speculation
+//! searches its chunk for the first place a decode may resume
+//! ([`find`](crate::find)), and decodes from there — markers for the unknown history, as the
 //! [`native`](crate::native) decoder writes them — until the first member
 //! start at or past the chunk's end, or block boundary there that the next
 //! chunk's search would begin at, so that a guess stops where the next one
@@ -31,6 +34,10 @@ use crate::find::{Candidate, Found, find, is_searched_for, stored_length_at};
 use crate::member::{Header, Trailer};
 use crate::native::{Inflater, Input, MARKER, Marked, Plain, Sink, Stop};
 use crate::zlib::WINDOW_SIZE;
+
+use self::members::{Members, Read, Walked};
+
+mod members;
 
 /// A place a decode stands between two steps: where a chunk begins or ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -196,6 +203,9 @@ enum Halt {
 }
 
 enum State {
+    /// Reading a BGZF member chain, the chunk searched as any other's where
+    /// it holds none.
+    Members(Members),
     /// Searching from this bit.
     Finding(u64),
     Decoding(Decode),
@@ -206,9 +216,10 @@ enum State {
 /// it runs on whatever thread the caller has.
 ///
 /// It holds the file's bytes from the place its decode began on — about a
-/// chunk of them, and the bytes of the block it stops in — and at most the
-/// plaintext limit, twice over while it is still writing markers, beside a
-/// few kilobytes of code tables.
+/// chunk of them, and the bytes of the block or member it stops in — and at
+/// most the plaintext limit, twice over while it is still writing markers,
+/// beside a few kilobytes of code tables; reading a BGZF chunk's members, the
+/// chunk's bytes and the member it stops in alone.
 pub(crate) struct Speculation {
     chunk: u64,
     /// Where the chunk's search ends, and its decode may stop: the next
@@ -238,7 +249,7 @@ impl Speculation {
             limit,
             input: Input::new(from, file_len),
             inflater: Inflater::new(),
-            state: State::Finding(8 * from),
+            state: State::Members(Members::new(from)),
             refused_past_a_boundary: 0,
         }
     }
@@ -281,6 +292,16 @@ impl Speculation {
             let state = std::mem::replace(&mut self.state, State::Done(None));
             self.state = match state {
                 State::Done(found) => State::Done(found),
+                State::Members(mut members) => {
+                    match members.read(&self.input, self.until, self.limit) {
+                        Read::Input => {
+                            self.state = State::Members(members);
+                            return;
+                        }
+                        Read::Done(found) => State::Done(found.map(read_off)),
+                        Read::Search => State::Finding(8 * members.from),
+                    }
+                }
                 State::Finding(from) => {
                     match find(&self.input, from, self.until, &mut self.inflater) {
                         Found::At(candidate) => State::Decoding(self.begin(candidate)),
@@ -458,6 +479,19 @@ impl Speculation {
                 }
             }
         }
+    }
+}
+
+/// The guess a BGZF chunk's chain is read as: from its first member to its
+/// stop, with no history.
+fn read_off(walked: Walked) -> Guess {
+    Guess {
+        start: Point::Member(8 * walked.first),
+        stored: None,
+        stop: walked.stop.map_or(Point::End, |at| Point::Member(8 * at)),
+        len: walked.plaintext,
+        end: Vec::new(),
+        fresh: true,
     }
 }
 

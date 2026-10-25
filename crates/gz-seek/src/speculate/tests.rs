@@ -165,3 +165,115 @@ fn a_speculation_over_any_bytes_hands_back_a_guess_or_nothing() {
         }
     }
 }
+
+/// Each member start of `file`, in bytes, and whether its header is BGZF's.
+fn member_starts(truth: &Truth, file: &[u8]) -> Vec<(u64, bool)> {
+    let bgzf = |at: u64| crate::bgzf::bgzf_member_len(&file[at as usize..]).is_some();
+    truth.members.iter().map(|&(bit, _)| (bit / 8, bgzf(bit / 8))).collect()
+}
+
+/// The guess a chunk from byte `from` to `until` holding a BGZF member start
+/// is read as: from the first at or past `from` to the first member start
+/// after it at or past `until`, or whose header is not BGZF's, or the end.
+fn read_off_headers(starts: &[(u64, bool)], from: u64, until: u64) -> Option<(Point, Point)> {
+    let &(start, _) = starts.iter().find(|&&(at, bgzf)| bgzf && at >= from && at < until)?;
+    let stop = starts
+        .iter()
+        .find(|&&(at, bgzf)| at > start && (at >= until || !bgzf))
+        .map_or(Point::End, |&(at, _)| Point::Member(8 * at));
+    Some((Point::Member(8 * start), stop))
+}
+
+/// `file` with every BGZF member's deflate data overwritten, its headers and
+/// trailers kept: bytes no decode reads.
+fn garbled(file: &[u8], starts: &[(u64, bool)]) -> Vec<u8> {
+    let mut garbled = file.to_vec();
+    for &(at, bgzf) in starts {
+        if bgzf {
+            let at = at as usize;
+            let len = crate::bgzf::bgzf_member_len(&file[at..]).unwrap() as usize;
+            garbled[at + crate::bgzf::BGZF_HEADER_LEN..at + len - 8].fill(0xff);
+        }
+    }
+    garbled
+}
+
+/// **A BGZF chunk's guess is read off its members' headers**, nothing
+/// decoded: from the first BGZF member at or past the chunk's first byte to
+/// the first member start at or past its end — or, after it, a plain
+/// member's — or the file's end, the plaintext's length between them, and no
+/// history; the same with every member's deflate data overwritten, which no
+/// decode could read; and each guess beginning where the one before stops.
+#[test]
+fn a_bgzf_chunk_is_read_off_its_members_headers() {
+    let (a, b) = (payload(1_200_000, 23), payload(300_000, 29));
+    for (name, file) in [("bgzf", bgzf(&a)), ("mixed", [bgzf(&a), gzip(&b, 6), bgzf(&b)].concat())]
+    {
+        let truth = truth(&file);
+        let starts = member_starts(&truth, &file);
+        let garbled = garbled(&file, &starts);
+        for bytes in [64 * 1024, 150 * 1024] {
+            let (chunks, mut read) = (file.len() as u64 / bytes, 0);
+            let mut last: Option<(u64, Guess)> = None;
+            for k in 1..=chunks {
+                let (from, until) = (k * bytes, (k + 1) * bytes);
+                let Some((start, stop)) = read_off_headers(&starts, from, until) else { continue };
+                for feed in [5000, 1 << 20] {
+                    let what = format!("{name}, chunk {k} of {bytes}, feed {feed}");
+                    let guess = speculate(&file, k, bytes, usize::MAX, feed).unwrap();
+                    assert_eq!((guess.start, guess.stop), (start, stop), "{what}");
+                    assert!(guess.fresh && guess.end.is_empty(), "{what}: a history");
+                    assert_is_the_file(&truth, &guess, 8 * from, 8 * until, &what);
+                    let blind = speculate(&garbled, k, bytes, usize::MAX, feed).unwrap();
+                    let seen = (blind.start, blind.stop, blind.len);
+                    assert_eq!(seen, (start, stop, guess.len), "{what}: decoded");
+                }
+                let guess = speculate(&file, k, bytes, usize::MAX, 7000).unwrap();
+                // Where the guess before was not cut short of this chunk, at a
+                // plain member, this one begins at its stop.
+                let reaches = |stop: Point| matches!(stop, Point::Member(bit) if bit >= 8 * from);
+                if let Some((_, before)) =
+                    last.take().filter(|(j, g)| j + 1 == k && reaches(g.stop))
+                {
+                    assert!(guess.begins_at(before.stop), "{name}, chunk {k}: past the stop");
+                }
+                last = Some((k, guess));
+                read += 1;
+            }
+            // A chunk at least a member long holds a member start.
+            let all = if name == "bgzf" { chunks } else { 2 };
+            assert!(read >= all, "{name} at {bytes}: {read} of {chunks} chunks read off headers");
+        }
+    }
+}
+
+/// **A BGZF chunk's chain is cut where it cannot be read on**: at the limit,
+/// at the last member start before the plaintext would pass it, nothing where
+/// the first member alone does; and at a member whose stated length leads
+/// to no member, at that member's start.
+#[test]
+fn a_bgzf_chunk_s_chain_is_cut_where_it_cannot_be_read_on() {
+    let file = bgzf(&payload(1_200_000, 31));
+    let truth = truth(&file);
+    let starts = member_starts(&truth, &file);
+    let bytes = 200 * 1024;
+    let whole = speculate(&file, 1, bytes, usize::MAX, 1 << 20).unwrap();
+    let limit = whole.len as usize / 2;
+    let short = speculate(&file, 1, bytes, limit, 1 << 20).unwrap();
+    assert_eq!(short.start, whole.start);
+    assert!(short.len <= limit as u64 && short.len > 0, "{} of {limit}", short.len);
+    assert!(matches!(short.stop, Point::Member(_)), "{:?}", short.stop);
+    assert_is_the_file(&truth, &short, 8 * bytes, 16 * bytes, "limited");
+    assert!(speculate(&file, 1, bytes, 10, 1 << 20).is_none(), "nothing short of a member");
+
+    // The third member of the chunk states a length one byte too long.
+    let Point::Member(first) = whole.start else { panic!("{:?}", whole.start) };
+    let i = starts.iter().position(|&(at, _)| 8 * at == first).unwrap() + 2;
+    let at = starts[i].0 as usize;
+    let mut lying = file.clone();
+    let bsize = u16::from_le_bytes([file[at + 16], file[at + 17]]) + 1;
+    lying[at + 16..at + 18].copy_from_slice(&bsize.to_le_bytes());
+    let cut = speculate(&lying, 1, bytes, usize::MAX, 5000).unwrap();
+    assert_eq!((cut.start, cut.stop), (whole.start, Point::Member(8 * at as u64)));
+    assert_is_the_file(&truth, &cut, 8 * bytes, 16 * bytes, "cut at a lying length");
+}

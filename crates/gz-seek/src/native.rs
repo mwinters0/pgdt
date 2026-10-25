@@ -5,7 +5,7 @@
 //! **What it is for is speculation.** A
 //! parallel first pass ([`Parallel`](crate::Parallel)) decodes each chunk of
 //! the file from a block boundary it guessed, before the chunk ahead of it is
-//! decoded, so a back-reference into the history before the boundary cannot
+//! decoded — a BGZF chunk, read off its members' headers, excepted — so a back-reference into the history before the boundary cannot
 //! be resolved yet: this decoder writes a **marker** in its place — a 16-bit
 //! value naming which byte of that history it copies — and the markers are
 //! resolved once the history is known. Once 32 KiB have been written with no

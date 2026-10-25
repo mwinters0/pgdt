@@ -45,7 +45,9 @@ impl TaskId {
 ///
 /// A **speculation** finds where its chunk may begin and decodes it with the
 /// crate's own decoder, holding about a chunk of compressed bytes and at most
-/// the pass's plaintext limit, twice over while it writes markers. A
+/// the pass's plaintext limit, twice over while it writes markers — or, over a
+/// chunk holding a BGZF header, reads its guess off the member chain, holding
+/// the compressed bytes alone. A
 /// **decode** decodes a chunk through the engine from where a speculation
 /// found it begins, holding its 32 KiB window, an engine
 /// ([`DECODER_BYTES`](crate::DECODER_BYTES)) and room for at most that

@@ -34,13 +34,14 @@ the compressed file pulled or fetched, the remote object
   frontier and tasks read, and the file it spills its windows to, in the
   directory `open`'s caller names.
 - **gz-seek** — `index.rs`, `forward.rs`, `placement.rs`, `parallel/`,
-  `speculate.rs`, `find.rs`, `native/`, `chunk.rs`, `unit.rs`, `bgzf.rs`,
+  `speculate/`, `find.rs`, `native/`, `chunk.rs`, `unit.rs`, `bgzf.rs`,
   `engine.rs`, `member.rs`, `zlib.rs`, `error.rs`: a gzip file's positioned
   read — its index of checkpoints, the forward pass that builds one and the
   parallel pass that builds the same one, the placement rule both apply, the
   tasks the parallel pass hands its caller and the chain resolving each
   chunk's window in order, the speculations guessing where a chunk begins and
-  the history it ends with, the search for where one may begin and the
+  the history it ends with or reading a BGZF chunk's guess off its members'
+  headers, the search for where one may begin and the
   crate's own deflate decoder they run, a chunk decoded by the engine from
   its window, a unit decoded from
   its checkpoint, the BGZF walk, the decode under them, gzip's framing, and

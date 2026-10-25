@@ -12,7 +12,8 @@
 //! that pass, placing a checkpoint at the first block boundary at or after each
 //! multiple of a spacing the caller chooses, and at every member start, and
 //! handing each checkpoint's window out as it goes. [`Parallel`] is the same
-//! pass with chunks of the file ahead of it found speculatively and decoded,
+//! pass with chunks of the file ahead of it found speculatively — a BGZF
+//! file's read off its members' headers — and decoded,
 //! on whatever threads the caller runs its [`ChunkTask`]s on, and it builds
 //! the same index whatever ran. A **BGZF** file states every
 //! member's length in its header, so [`Walk`] reads its index off the headers

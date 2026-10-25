@@ -202,12 +202,22 @@ fn the_index_is_the_serial_pass_s_at_every_worker_count() {
 }
 
 /// **Decodes are taken** where the tasks are run: most of a file's chunks,
-/// wherever its writer ends blocks more often than a chunk is long.
+/// wherever its writer ends blocks more often than a chunk is long — or, in a
+/// BGZF file, of its chunks holding a member start, a chunk read off its
+/// members' headers stopping at the first at or past its end.
 #[test]
 fn a_pass_takes_the_chunks_it_is_handed() {
     for (name, file) in files() {
         let chunk = 32 * 1024;
-        let chunks = file.len() as u64 / chunk;
+        let mut chunks = file.len() as u64 / chunk;
+        if name == "bgzf" {
+            let (mut starts, mut at) = (std::collections::BTreeSet::new(), 0);
+            while let Some(len) = crate::bgzf::bgzf_member_len(&file[at..]) {
+                starts.insert(at as u64 / chunk);
+                at += len as usize;
+            }
+            chunks = starts.range(1..chunks).count() as u64;
+        }
         let (_, taken) =
             parallel(&file, 64 * 1024, chunk, usize::MAX, Driver::Ahead, (1 << 16, 1 << 16))
                 .unwrap();
@@ -400,6 +410,47 @@ fn damage_is_refused_as_the_serial_pass_refuses_it() {
         let result =
             parallel(&file[..cut], 64 * 1024, 16 * 1024, usize::MAX, Driver::Ahead, (4096, 4096));
         assert!(matches!(result, Err(Error::Truncated { .. })), "cut at {cut}");
+    }
+}
+
+/// **A BGZF file's damage is refused as the serial pass refuses it**, its
+/// chunks read off their members' headers: a member's CRC-32 or `ISIZE` wrong
+/// or its deflate data damaged is refused by the same error, and one stating
+/// its own length wrong, which no decode reads, builds the same index.
+#[test]
+fn bgzf_damage_is_refused_as_the_serial_pass_refuses_it() {
+    let file = bgzf(&payload(800_000, 37));
+    let mut members = Vec::new();
+    while let Some(len) = crate::bgzf::bgzf_member_len(&file[members.iter().sum::<usize>()..]) {
+        members.push(len as usize);
+    }
+    let i = members.len() / 2;
+    let (at, len) = (members[..i].iter().sum::<usize>(), members[i]);
+    let damage = [("crc", at + len - 8, 1), ("isize", at + len - 4, 1), ("length", at + 16, 1)];
+    let damage = damage.into_iter().chain([("deflate", at + 40, 0x10)]);
+    for (what, byte, bit) in damage {
+        let mut damaged = file.clone();
+        damaged[byte] ^= bit;
+        let serial = forward(&damaged, 64 * 1024, 4096, 4096);
+        assert_eq!(serial.is_ok(), what == "length", "{what}: {:?}", serial.as_ref().err());
+        for chunk in [16 * 1024, 64 * 1024] {
+            for driver in [Driver::Ahead, Driver::Threads(3)] {
+                let what = format!("{what}, chunk {chunk}, {driver:?}");
+                let result = parallel(&damaged, 64 * 1024, chunk, usize::MAX, driver, (4096, 4096));
+                match (&serial, result) {
+                    (Err(serial), Err(parallel)) => assert_eq!(&parallel, serial, "{what}"),
+                    (Ok(serial), Ok((parallel, _))) => {
+                        assert_eq!(parallel.index, serial.index, "{what}");
+                        assert!(parallel.plaintext == serial.plaintext, "{what}");
+                    }
+                    (serial, parallel) => panic!(
+                        "{what}: the serial pass {:?}, the parallel {:?}",
+                        serial.as_ref().err(),
+                        parallel.err()
+                    ),
+                }
+            }
+        }
     }
 }
 
