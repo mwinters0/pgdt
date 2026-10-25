@@ -281,6 +281,17 @@ enum State {
 /// most the plaintext limit, twice over while it is still writing markers,
 /// beside a few kilobytes of code tables; reading a BGZF chunk's members, the
 /// chunk's bytes, the member it stops in and the header after that alone.
+///
+/// Deficiency register: `deficiency: KD143` — on `pg_dump`'s level-6 text a
+/// speculation's decode rarely goes clean, so it writes nearly its whole
+/// chunk through the marked sink, a value at a time into a buffer grown as it
+/// goes, and costs several of the engine's inflates of the same bytes. Below
+/// the worker count at which consecutive guesses land ahead of the frontier
+/// the tasks give it few chunks, and beside it the frontier's inflate, its
+/// serving and the scan each slow as tasks are added, the cause among the
+/// cores' clock, shared caches and memory bandwidth unseparated: a four-job
+/// first pass is slower than the serial one, and a 24-job pass taking almost
+/// every chunk is no faster. **(b) owned by 15.17.1**.
 pub(crate) struct Speculation {
     chunk: u64,
     /// The bit a continuation of a cut guess begins at.

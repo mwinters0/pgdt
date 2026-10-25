@@ -31,8 +31,16 @@
 //! placement rule turns them into checkpoints (`placement.rs`). A guess
 //! that was wrong, or a decode a window the frontier holds contradicts,
 //! leaves the frontier to decode those bytes itself, so a pass handing out no
-//! task is the serial pass; a task handed out is waited for where its result
-//! may be used, so the caller runs every one it takes.
+//! task is the serial pass.
+//!
+//! **The frontier waits only for a decode, never for a speculation**: standing
+//! where a decode handed out begins, it waits for that decode — which, begun
+//! from the same bytes, costs at most what decoding them on would — and
+//! anywhere else it decodes on, a speculation landing behind it being dropped.
+//! So no task's cost can make the pass slower than the serial one, and a
+//! speculation is handed out on a chunk far enough ahead of the frontier to
+//! land before it gets there: as many chunks past it as it crossed while the
+//! last speculation ran.
 //!
 //! **Every byte handed out is checked as a forward pass checks it**: each
 //! unit's CRC-32 is recorded from the plaintext, and each member's trailer is
@@ -46,11 +54,13 @@
 //! from [`Parallel::compressed_position`], which jumps forward past a decode
 //! taken. Take [`Parallel::task`]s while it has memory and threads for them,
 //! feed each from its [`ChunkTask::wants`], and hand each result to
-//! [`Parallel::done`]. A step whose `wait` names a task stands where that
-//! task's result may be used: the next read waits for it rather than decoding
-//! those bytes a second time.
+//! [`Parallel::done`]. A step whose `wait` names a decode stands where that
+//! decode's result may be used: the next read waits for it rather than
+//! decoding those bytes a second time, so the caller runs every decode it
+//! takes. A speculation it takes it may run late or never, the pass not
+//! waiting for one.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::num::NonZeroU64;
 
 use crate::chunk::{ChunkDecoded, Decoded};
@@ -78,7 +88,7 @@ pub struct ParallelStep {
     pub progress: Progress,
     /// The checkpoint this step placed, its window at [`Parallel::window`].
     pub checkpoint: Option<Checkpoint>,
-    /// The task whose result the pass stands waiting for: hand it to
+    /// The decode whose result the pass stands waiting for: hand it to
     /// [`Parallel::done`] before reading on.
     pub wait: Option<TaskId>,
     /// The pass moved past a chunk to where the input given does not reach.
@@ -233,8 +243,14 @@ pub struct Parallel {
     plaintext: u64,
     folded: u64,
     next_chunk: u64,
-    /// The speculations handed out.
-    speculating: BTreeSet<TaskId>,
+    /// The speculations handed out, each with the chunk the frontier stood
+    /// in when it was.
+    speculating: BTreeMap<TaskId, u64>,
+    /// How many chunks the frontier crossed while the last speculation on a
+    /// chunk's own start ran: the next is handed out at least this many
+    /// chunks past the one after the frontier's, to land before the frontier
+    /// gets there, a continuation's being shorter and not counted.
+    lag: u64,
     /// Each guess the limit cut, its continuation yet to be handed out: its
     /// chunk and stop, by the stop's bit.
     to_continue: BTreeMap<u64, (u64, Point)>,
@@ -324,7 +340,8 @@ impl Parallel {
             plaintext: 0,
             folded: 0,
             next_chunk: 0,
-            speculating: BTreeSet::new(),
+            speculating: BTreeMap::new(),
+            lag: 0,
             to_continue: BTreeMap::new(),
             chain: Chain::new(file_len),
             window: Box::new([0; WINDOW_SIZE]),
@@ -335,8 +352,8 @@ impl Parallel {
 
     /// The next task: a decode the chain has a window for, in chunk order,
     /// or else a speculation continuing a guess the limit cut, from its stop,
-    /// or else one on the next chunk ahead of the frontier; `None` past the
-    /// file's last chunk.
+    /// or else one on the next chunk ahead of the frontier it may land before
+    /// the frontier reaches; `None` past the file's last chunk.
     pub fn task(&mut self) -> Option<ChunkTask> {
         self.task_through(u64::MAX)
     }
@@ -359,16 +376,17 @@ impl Parallel {
             let (chunk, from) = entry.remove();
             let task =
                 Speculation::continuing(chunk, from, self.chunk_bytes, self.limit, self.file_len);
-            self.speculating.insert(TaskId::speculation(chunk, task.from()));
+            self.speculating.insert(TaskId::speculation(chunk, task.from()), self.frontier_chunk());
             return Some(ChunkTask::speculation(task));
         }
-        let frontier = self.at / (8 * self.chunk_bytes);
-        let chunk = self.next_chunk.max(frontier + 1);
+        let frontier = self.frontier_chunk();
+        // One the frontier reaches before it lands is of no use.
+        let chunk = self.next_chunk.max(frontier + 1 + self.lag);
         if chunk > last || chunk.checked_mul(self.chunk_bytes)? >= self.file_len {
             return None;
         }
         self.next_chunk = chunk + 1;
-        self.speculating.insert(TaskId::speculation(chunk, None));
+        self.speculating.insert(TaskId::speculation(chunk, None), frontier);
         let task = Speculation::new(chunk, self.chunk_bytes, self.limit, self.file_len);
         Some(ChunkTask::speculation(task))
     }
@@ -379,7 +397,12 @@ impl Parallel {
     pub fn done(&mut self, done: ChunkDone) {
         match done.0 {
             Finished::Speculated(result) => {
-                self.speculating.remove(&TaskId::speculation(result.chunk, result.from));
+                let id = TaskId::speculation(result.chunk, result.from);
+                if let Some(handed) = self.speculating.remove(&id)
+                    && result.from.is_none()
+                {
+                    self.lag = self.frontier_chunk().saturating_sub(handed);
+                }
                 if let Some(guess) = result.found {
                     let stop = guess.stop.bit();
                     if guess.cut && stop >= self.at {
@@ -403,7 +426,7 @@ impl Parallel {
                     Some(from) => from >= self.at,
                     None => (id.chunk() + 1) * self.chunk_bytes * 8 > self.at,
                 };
-                self.speculating.contains(&id) && ahead
+                self.speculating.contains_key(&id) && ahead
             }
             Some((start, generation)) => self.chain.wants(start, generation),
         }
@@ -424,6 +447,11 @@ impl Parallel {
     /// How many chunks' decodes the frontier has taken.
     pub fn taken(&self) -> u64 {
         self.taken
+    }
+
+    /// The chunk the frontier stands in.
+    fn frontier_chunk(&self) -> u64 {
+        self.at / (8 * self.chunk_bytes)
     }
 
     /// How many chunks' decodes are held ahead of the frontier, each taken
@@ -699,15 +727,11 @@ impl Parallel {
         }
     }
 
-    /// Standing at `point`: take a decode beginning there, or answer a task
-    /// to wait for, or go on decoding — with a new engine where none stands
-    /// there.
-    ///
-    /// Deficiency register: `deficiency: KD142` — a speculation that may begin
-    /// here is waited for, and then the decode it lets the chain hand out, so
-    /// a chunk the tasks have not finished costs the frontier both tasks' time
-    /// where decoding it on would cost one inflate; with one task ahead every
-    /// chunk does. **(b) owned by 15.17**.
+    /// Standing at `point`: take a decode beginning there, or answer the
+    /// decode running from there to wait for, or go on decoding — with a new
+    /// engine where none stands there. A speculation that may begin here is
+    /// never waited for: decoding on costs one inflate, and waiting for it
+    /// that speculation's remaining time and then its chunk's decode.
     fn look(&mut self, point: Point) -> Result<Option<TaskId>> {
         let bit = point.bit();
         self.at = bit;
@@ -722,21 +746,7 @@ impl Parallel {
                 }
             }
             Here::Running(id) => return Ok(Some(id)),
-            Here::Frontier => {}
-            // A speculation that may begin here is waited for: the chunk's
-            // own, or one continuing a cut guess from here.
-            Here::Nothing => {
-                let chunk = bit / (8 * self.chunk_bytes);
-                let own = TaskId::speculation(chunk, None);
-                if chunk > 0 && self.speculating.contains(&own) {
-                    return Ok(Some(own));
-                }
-                if let Some(&id) =
-                    self.speculating.iter().find(|id| id.continues_from() == Some(bit))
-                {
-                    return Ok(Some(id));
-                }
-            }
+            Here::Frontier | Here::Nothing => {}
         }
         if let Frontier::Idle = self.frontier {
             self.frontier = self.engine_at(point)?;

@@ -22,8 +22,8 @@ change outside `gz-seek`.
 - **A continuation from a member start reads BGZF headers only there**
   (`Members::at`). A plain member there is decoded from its header, and a
   lone BGZF header falls back to the search, as on a chunk's own speculation.
-- **The frontier waits for a running continuation that begins where it
-  stands**, as it waits for a chunk's own speculation.
+- **The frontier never waits for a continuation**, as for no speculation
+  (15.17's notes): it decodes on, and one landing behind it is dropped.
 - **The evidence**: `a_limit_never_ends_the_chain` runs every task ahead,
   with chunks holding more plaintext than twice the largest block. The
   frontier is anchored no more often than with no limit, it takes more

@@ -4054,12 +4054,13 @@ faster. Its CPU time stays near six serial inflates whatever the count, so wall
 clock falls as that work divides over the workers past the frontier. At two
 it ran one core
 (`runs/gzip-resident-20261025-1721/jobs-probe/times.txt`, with each run's
-`time` in the logs beside it). The frontier waits at each chunk for that
-chunk's speculation and then its decode, never decoding on itself (`KD142`),
-so at two jobs a chunk costs both tasks in turn while the frontier is idle.
-Why a speculation costs several inflates is unattributed, and a profile of a
-two-job first pass would name it. These are not this figure's readings, which are resident. They are
-throughput, which a throughput figure is to read.
+`time` in the logs beside it). The pass this sitting read waited at each
+chunk for that chunk's speculation and then its decode, never decoding on
+itself (`KD142`, struck by 15.17), so at two jobs a chunk cost both tasks in
+turn while the frontier was idle. What a speculation costs is attributed in
+[`roadmap-P15.17-frontier-notes.md`](roadmap-P15.17-frontier-notes.md), "What
+the probe and the profile found". These are not this figure's readings, which
+are resident. They are throughput, which a throughput figure is to read.
 
 ## koji full scan — the regression check
 

@@ -15,9 +15,11 @@ enum Driver {
     /// Every one, run to its end as soon as the pass hands it out, before the
     /// pass reads on.
     Ahead,
-    /// At most `n` handed out at once, each run only once the pass waits for
-    /// it.
+    /// At most `n` handed out at once, a speculation run as soon as it is
+    /// handed out and a decode only once the pass waits for it.
     Lazily(usize),
+    /// Every one taken and none ever run.
+    Hoarding,
     /// On `n` threads, each result handed back as it comes.
     Threads(usize),
 }
@@ -101,6 +103,14 @@ fn drive_parallel(
                     while handed.len() < n
                         && let Some(task) = pass.task()
                     {
+                        match task.id().decode_of() {
+                            None => pass.done(finish(task, 5000)),
+                            Some(_) => drop(handed.insert(task.id(), task)),
+                        }
+                    }
+                }
+                Driver::Hoarding => {
+                    while let Some(task) = pass.task() {
                         handed.insert(task.id(), task);
                     }
                 }
@@ -187,7 +197,14 @@ fn the_index_is_the_serial_pass_s_at_every_worker_count() {
     for (name, file) in files() {
         let serial = forward(&file, 64 * 1024, 1 << 16, 1 << 16).unwrap();
         for chunk in [8 * 1024, 40 * 1024, 200 * 1024] {
-            for driver in [Driver::Serial, Driver::Ahead, Driver::Lazily(3), Driver::Threads(4)] {
+            let drivers = [
+                Driver::Serial,
+                Driver::Ahead,
+                Driver::Lazily(3),
+                Driver::Threads(4),
+                Driver::Hoarding,
+            ];
+            for driver in drivers {
                 for limit in [usize::MAX, 100_000] {
                     let what = format!("{name}, chunk {chunk}, {driver:?}, limit {limit}");
                     let (pass, taken) =
@@ -196,7 +213,7 @@ fn the_index_is_the_serial_pass_s_at_every_worker_count() {
                     assert_eq!(pass.index, serial.index, "{what}");
                     assert_eq!(pass.windows, serial.windows, "{what}");
                     assert!(pass.plaintext == serial.plaintext, "{what}");
-                    if let Driver::Serial = driver {
+                    if let Driver::Serial | Driver::Hoarding = driver {
                         assert_eq!(taken, 0, "{what}");
                     }
                 }
@@ -256,6 +273,70 @@ fn a_decode_run_ahead_is_ready_before_the_frontier_takes_it() {
     }
     assert!(ready_before_a_take);
     assert!(pass.taken() > 0);
+}
+
+/// **The frontier never waits for a speculation**: with every task taken
+/// and none run, it decodes the whole file itself, the serial pass, no step
+/// naming a task to wait for.
+#[test]
+fn the_frontier_never_waits_for_a_speculation() {
+    for (name, file) in files() {
+        let serial = forward(&file, 64 * 1024, 1 << 16, 1 << 16).unwrap();
+        let chunk = NonZeroU64::new(16 * 1024).unwrap();
+        let mut pass =
+            Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+        let (mut buf, mut plaintext, mut hoarded) = (vec![0u8; 4096], Vec::new(), 0);
+        loop {
+            while let Some(task) = pass.task() {
+                assert_eq!(task.id().decode_of(), None, "{name}: a decode with no guess run");
+                hoarded += 1;
+            }
+            let at = (pass.compressed_position() as usize).min(file.len());
+            let step = pass.read(&file[at..], &mut buf).unwrap();
+            assert_eq!(step.wait, None, "{name}: the frontier waits for a speculation");
+            plaintext.extend_from_slice(&buf[..step.progress.produced]);
+            if step.needs_input() {
+                break;
+            }
+        }
+        assert!(hoarded > 1, "{name}: {hoarded} speculations handed out");
+        assert!(plaintext == serial.plaintext, "{name}");
+        assert_eq!(pass.finish().unwrap(), serial.index, "{name}");
+    }
+}
+
+/// **A speculation is handed out past where the frontier will be when it
+/// lands**: one that lands with the frontier some chunks on from where it was
+/// handed out has the next handed out at least that many chunks past the one
+/// after the frontier's, and one landing with the frontier where it was lets
+/// the next be the one after.
+#[test]
+fn a_speculation_is_handed_out_as_far_ahead_as_the_last_one_lagged() {
+    let file = gzip(&payload(1_200_000, 3), 6);
+    let chunk = NonZeroU64::new(8 * 1024).unwrap();
+    let chunk_bits = 8 * chunk.get();
+    let mut pass = Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+    let first = pass.task().unwrap();
+    assert_eq!(first.id().chunk(), 1);
+    let mut buf = vec![0u8; 1024];
+    while pass.at / chunk_bits < 4 {
+        let at = (pass.compressed_position() as usize).min(file.len());
+        assert_eq!(pass.read(&file[at..], &mut buf).unwrap().wait, None);
+    }
+    let crossed = pass.at / chunk_bits;
+    pass.done(run(first, &file, 1 << 20));
+    assert_eq!(pass.lag, crossed);
+    let next = pass.task().unwrap();
+    assert!(
+        next.id().chunk() > 2 * crossed,
+        "chunk {} handed out with the frontier in {crossed}, {crossed} crossed",
+        next.id().chunk()
+    );
+    let frontier = pass.at / chunk_bits;
+    pass.done(run(next, &file, 1 << 20));
+    assert_eq!(pass.lag, 0);
+    let after = pass.task().unwrap();
+    assert_eq!(after.id().chunk(), (frontier + 1).max(2 * crossed + 2));
 }
 
 /// Twice the most plaintext between two places a decode of `file` may resume

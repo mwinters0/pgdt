@@ -750,13 +750,22 @@ async fn a_damaged_file_is_refused_with_tasks_ahead() {
 
 /// **A wait never rests on a thread the runtime has yet to give**: on a
 /// runtime of one blocking thread, which the frontier's step holds, every
-/// task queues behind it — a pulled frontier running each it waits for
-/// itself, a fetched one awaiting each on the runtime — the pass reaching the
-/// end with the serial pass's index.
+/// task handed out during a read queues behind it. So one read, a step into
+/// the first chunk, is let land its speculations, nothing anchored behind
+/// them; the next, wider than the chunks they guessed, anchors at the first
+/// guess and reaches the decodes it then hands out with none started, a
+/// pulled frontier running each it waits for itself. Both feeds reach the
+/// end with the serial pass's index. **A fetched frontier's wait is not
+/// reached here, and no test reaches it**: it steps a piece at a time, going
+/// back to the runtime for each, where the decode's own pieces run first, so
+/// only a race between threads makes it stand at a decode still running.
 #[test]
 fn a_frontier_waits_for_a_task_that_nothing_has_started_on_either_feed() {
-    let runtime =
-        tokio::runtime::Builder::new_current_thread().max_blocking_threads(1).build().unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .max_blocking_threads(1)
+        .enable_time()
+        .build()
+        .unwrap();
     let payload = gzip_test_payload();
     let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
@@ -772,7 +781,30 @@ fn a_frontier_waits_for_a_task_that_nothing_has_started_on_either_feed() {
             )
             .unwrap();
             pass.hint_parallelism(lifted(4));
-            assert_eq!(scanned(&pass, 0, 1 << 20).await, payload, "{feed_name}");
+            let mut got = pass.read_range(0, STEP).await.unwrap().to_vec();
+            loop {
+                let (ready, running) = pass
+                    .lock()
+                    .frontier
+                    .as_mut()
+                    .map_or((0, 0), |frontier| frontier.decode.settle());
+                assert_eq!(ready, 0, "{feed_name}: a decode before the frontier anchored");
+                if running == 0 {
+                    break;
+                }
+                tokio::time::timeout(LANDING_BOUND, pass.landed.notified())
+                    .await
+                    .expect("a task ahead lands within the bound");
+            }
+            let wide = payload.len() / 2;
+            got.extend_from_slice(&pass.read_range(STEP as u64, wide).await.unwrap());
+            let (waits, ran_here) = pass.lock().frontier.as_ref().unwrap().decode.waits();
+            if feed_name == "pulled" {
+                assert!(waits > 0, "{feed_name}: the frontier waited for no decode");
+                assert_eq!(ran_here, waits, "{feed_name}: a wait for a decode started");
+            }
+            got.extend_from_slice(&scanned(&pass, got.len() as u64, 1 << 20).await);
+            assert!(got == payload, "{feed_name}");
             assert_eq!(gzip_index_of(&pass), expected, "{feed_name}");
         });
     }

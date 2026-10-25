@@ -108,6 +108,10 @@ pub(super) struct Frontier {
     ahead: Option<Ahead>,
     #[cfg(any(feature = "http", test))]
     download: Option<Arc<Download>>,
+    /// How many steps stood waiting for a decode, and of those, how many the
+    /// frontier ran itself, no blocking thread having started it.
+    #[cfg(test)]
+    waits: (usize, usize),
 }
 
 impl Frontier {
@@ -117,6 +121,8 @@ impl Frontier {
             ahead: None,
             #[cfg(any(feature = "http", test))]
             download: None,
+            #[cfg(test)]
+            waits: (0, 0),
         }
     }
 
@@ -169,9 +175,17 @@ impl Frontier {
         let step = self.pass.read(input, out).map_err(gzip_error)?;
         self.release();
         let Some(id) = step.wait else { return Ok((step, None)) };
+        #[cfg(test)]
+        {
+            self.waits.0 += 1;
+        }
         match &mut self.ahead {
             Some(ahead) if ahead.pulls() => {
-                ahead.wait_for(id, &mut self.pass)?;
+                let _ran_here = ahead.wait_for(id, &mut self.pass)?;
+                #[cfg(test)]
+                {
+                    self.waits.1 += usize::from(_ran_here);
+                }
                 Ok((step, None))
             }
             Some(ahead) => {
@@ -204,6 +218,13 @@ impl Frontier {
     #[cfg(test)]
     pub(super) fn taken(&self) -> u64 {
         self.pass.taken()
+    }
+
+    /// How many steps stood waiting for a decode, and how many of those
+    /// decodes the frontier ran itself.
+    #[cfg(test)]
+    pub(super) fn waits(&self) -> (usize, usize) {
+        self.waits
     }
 
     /// What a read does before it steps, with no step: every result that has
@@ -296,8 +317,9 @@ impl Ahead {
 
     /// Wait for task `id`'s result, handing the pass every result that comes
     /// back meanwhile — or run it here where no blocking thread has started
-    /// it, so a wait never rests on a thread the runtime has yet to give.
-    fn wait_for(&mut self, id: gz_seek::TaskId, pass: &mut gz_seek::Parallel) -> Result<()> {
+    /// it, so a wait never rests on a thread the runtime has yet to give:
+    /// answers whether it ran here.
+    fn wait_for(&mut self, id: gz_seek::TaskId, pass: &mut gz_seek::Parallel) -> Result<bool> {
         let Some(slot) = self.unstarted.get(&id) else {
             // Not handed out, or landed: the pass waits for a landed task
             // only where it failed, its result never handed over.
@@ -312,12 +334,12 @@ impl Ahead {
         if let Some(task) = take(slot) {
             let landed = run_caught(task, &file, self.stored_size);
             self.land(landed, pass);
-            return self.outcome(id);
+            return self.outcome(id).map(|()| true);
         }
         loop {
             let landed = self.landed.recv().map_err(|_| unrun(id))?;
             if self.land(landed, pass) == id {
-                return self.outcome(id);
+                return self.outcome(id).map(|()| false);
             }
         }
     }

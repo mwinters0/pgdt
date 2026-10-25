@@ -112,9 +112,10 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.16** A chunk cut at its plaintext limit continued, in `gz-seek`: a speculation stopped by the limit hands back its guess and the pass speculates on from its stop to where the next chunk's guess begins, so a limit never ends the chain of windows, the limit restated as a constant of its own, twice the largest block zlib ends; before 15.7, which reads the arm (the spec's "Slice order") — [notes](../design/roadmap-P15.16-continued-notes.md)
 - [x] **15.10** Checkpoints inside a static block: the forward pass walks a static block's codes itself to place a checkpoint at the first symbol boundary at or after each multiple, the resume priming a synthetic static-block header; after 15.8, reading its native decoding first (`KD129`) — [notes](../design/roadmap-P15.10-static-notes.md)
 - [x] **15.7** Readings, the resident: `gzip-resident`, `pgdt parse`'s peak resident over a single member's first pass and a BGZF file's block path at three worker counts, each cell's remainder over its charge read against `MEMORY_UNPOOLED_BOUND` and `MEMORY_RESERVE` by `charge_model_problem`'s lines, the speculation limit priced against a task's charge; taken at `511ca16b`, the bound holding on both legs and the first pass over-billed at every count — [notes](../design/roadmap-P15.7-resident-notes.md)
-- [ ] **15.17** A parallel first pass no slower than serial, earned by 15.7's review, in `gz-seek` with `pgdt-io`'s `first_pass/ahead.rs` as it needs: the frontier waits for a decode, in flight or unstarted, and never for a speculation, decoding on itself where no decode has been handed out; speculations handed out far enough ahead to land before it reaches them; done when a two- and a four-job first pass on `control_gz` are no slower than serial and a 24-job one falls toward its scan's floor; a profile of a two-job pass attributing what a speculation costs; before 15.7.1 (`KD142`)
+- [x] **15.17** A parallel first pass whose frontier never waits for a speculation, earned by 15.7's review, in `gz-seek`: the frontier waits for a decode, in flight or unstarted, and never for a speculation, decoding on itself where no decode has been handed out; speculations handed out far enough ahead to land before it reaches them; a profile of a two-job pass attributing what a speculation costs; the row's gate moved to 15.17.1 by its split (`KD142`) — [notes](../design/roadmap-P15.17-frontier-notes.md)
+- [ ] **15.17.1** A parallel first pass no slower than serial, earned by 15.17's split, in `gz-seek` with `pgdt-io`'s `first_pass/ahead.rs` as it needs: done when a two- and a four-job first pass on `control_gz` are no slower than serial and a 24-job one falls toward its scan's floor, over speculations 15.17's profile finds decoding nearly every chunk through the marked sink and a pass whose every part slows as tasks are added; before 15.7.1 (`KD143`)
 - [ ] **15.7.1** Readings, the throughput, earned by 15.7's split: the gzip throughput figures, the parallel first pass's on more than one writer's files and at two chunk lengths
-- [ ] **15.18** Readings, the resident again, earned by 15.7's review, after 15.17: `gzip-resident` re-taken over the repaired pass with a leg on a file whose chunks reach `SPECULATION_LIMIT`, the falsifier for an under-bill, and a heaptrack recording of a many-job first pass attributing a worker's remainder; it settles `Chunking::task_bytes` in whichever direction the reading falls; 15.7.1 does not wait on it, 15.7.2 does (`KD141`)
+- [ ] **15.18** Readings, the resident again, earned by 15.7's review, after 15.17.1: `gzip-resident` re-taken over the repaired pass with a leg on a file whose chunks reach `SPECULATION_LIMIT`, the falsifier for an under-bill, and a heaptrack recording of a many-job first pass attributing a worker's remainder; it settles `Chunking::task_bytes` in whichever direction the reading falls; 15.7.1 does not wait on it, 15.7.2 does (`KD141`)
 - [ ] **15.7.2** The record, earned by 15.7's split, after 15.7.1, whose readings it writes from: the manual and `pg-dump-compatibility.md`
 
 ## Not started
@@ -146,3 +147,23 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **15.17: the row split, its gate moved to 15.17.1, and 15.18 moved after
+  it.** The call: 15.17 is ticked for the frontier it landed, which never
+  waits for a speculation (D117), and its gate — no slower than serial at
+  two and four jobs, falling toward the floor at 24 — is 15.17.1's. 15.18
+  now follows 15.17.1 rather than 15.17. Why: the probe holds two jobs level
+  with serial but four still slower and 24 no faster, and the account puts
+  the remainder in the speculation, not in the frontier's waits
+  ([`../design/roadmap-P15.17-frontier-notes.md`](../design/roadmap-P15.17-frontier-notes.md),
+  "What the probe and the profile found"; `KD143`). Reworking the
+  speculation is an already-tested core path. Bundling it with the frontier
+  would have the review accept both at one confidence. 15.18 prices what a
+  task holds, which a speculation rework changes. Reconsidering changes what
+  15.17.1 is. Three directions follow from the account, and none is chosen.
+  A marked sink that copies in bulk. A speculation that keeps only the
+  history its guess needs rather than its whole plaintext. Or speculations
+  handed out in runs a chain can use, which only changes how few chunks
+  small counts buy. A gate that holds four jobs to "no slower" may also need
+  the slowdown beside the tasks separated first: a clock, cache or bandwidth
+  cost is not one any of the three removes.
