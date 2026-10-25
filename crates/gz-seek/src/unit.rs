@@ -28,12 +28,14 @@ pub struct Progress {
 impl UnitTask {
     /// Decode the whole unit into `out`, exactly its plaintext long, from
     /// `compressed`, its [`UnitTask::compressed_range`]'s bytes (more after
-    /// them are left unread), with `window` its checkpoint's history.
+    /// them are left unread but where the unit ends before a static block's
+    /// symbol, the inflater then reading on into it), with `window` its
+    /// checkpoint's history.
     ///
     /// # Errors
     ///
-    /// [`Error::BufferSize`] for an `out` of another length; then anything
-    /// [`UnitRead::read`] refuses.
+    /// [`Error::BufferSize`] for an `out` of another length; then what
+    /// [`UnitTask::begin`] and [`UnitRead::read`] refuse.
     pub fn decode(&self, window: &[u8], compressed: &[u8], out: &mut [u8]) -> Result<()> {
         let len = self.plaintext_range().end - self.plaintext_range().start;
         if out.len() as u64 != len {

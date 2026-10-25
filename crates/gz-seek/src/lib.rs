@@ -12,7 +12,8 @@
 //! that pass, placing a checkpoint at the first place a decode resumes at or
 //! after each multiple of a spacing the caller chooses — a block boundary, or
 //! inside a static block before one of its symbols — and at every member
-//! start, and handing each checkpoint's window out as it goes. [`Parallel`] is the same
+//! start but a BGZF member's joining a unit (below), and handing each
+//! checkpoint's window out as it goes. [`Parallel`] is the same
 //! pass with chunks of the file ahead of it found speculatively — a BGZF
 //! file's read off its members' headers — and decoded,
 //! on whatever threads the caller runs its [`ChunkTask`]s on, and it builds
@@ -31,11 +32,13 @@
 //! caller decodes on whatever thread and over whatever transport it has.
 //!
 //! **Every byte handed out is checked.** The forward pass compares each
-//! member's CRC-32 and `ISIZE` and records each unit's own CRC-32 as it goes; a
-//! unit decode compares the CRC-32 its index recorded, and the trailer of every
+//! member's CRC-32 and `ISIZE` and records each unit's own CRC-32 as it goes,
+//! but a unit of whole BGZF members', which their trailers check; a unit
+//! decode compares the CRC-32 its index recorded, and the trailer of every
 //! member it holds whole, before it reports itself finished; and a unit that
-//! ends anywhere but where its index says is refused — inside a static block,
-//! by its plaintext length, the inflater's place in the file there unknown.
+//! ends anywhere but where its index says is refused — but inside a static
+//! block, where it is held to its plaintext length and CRC-32, the inflater's
+//! place in the file there unknown.
 //!
 //! **The plaintext's size is open until a pass reaches the end** ([`Size`]): a
 //! single member's length modulo 2³² is all its trailer says, so only a decode

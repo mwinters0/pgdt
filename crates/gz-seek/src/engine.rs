@@ -253,10 +253,9 @@ impl Engine {
         })
     }
 
-    /// Walk each static block from its header on, stopping at the first
-    /// symbol at or past plaintext `mark` with [`Event::Symbol`]; `None`
-    /// walks none. A block whose header was read with no mark set is not
-    /// walked.
+    /// Walk the static block whose body is entered with a mark set, stopping
+    /// at the first symbol at or past plaintext `mark` with [`Event::Symbol`],
+    /// which clears the mark; `None` walks none.
     pub(crate) fn set_mark(&mut self, mark: Option<u64>) {
         self.mark = mark;
     }
@@ -497,8 +496,8 @@ impl Engine {
     /// Walk the static block on over `input`, the bytes from the next untaken
     /// one, handing the walk a few KiB at a time: [`Event::Symbol`] where the
     /// walk's stop is reached already, and how much of `input` the inflater
-    /// may take — no more than the walk holds, so it holds every byte the
-    /// inflater took and only a few KiB besides.
+    /// may take — no more than the walk has been handed, so the walk has read
+    /// every byte the inflater took, holding a few KiB of them.
     fn walk_on(&mut self, input: &[u8]) -> (Option<Event>, usize) {
         let Some(walking) = &mut self.walking else { return (None, input.len()) };
         let walk = &mut walking.walk;

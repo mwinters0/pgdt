@@ -17,8 +17,8 @@ pub(crate) trait Sink {
     /// before the history a back-reference may use.
     fn copy(&mut self, distance: usize, length: usize) -> bool;
     fn bytes(&mut self, bytes: &[u8]);
-    /// Whether the last 32 KiB written hold no marker, so the decode can go on
-    /// in bytes.
+    /// Whether a marked sink's last 32 KiB hold no marker, so the decode can go
+    /// on in bytes; a sink holding no markers answers false, never stopping.
     fn is_clean(&self) -> bool {
         false
     }
@@ -87,8 +87,8 @@ pub(crate) struct Plain {
     pub(crate) out: Vec<u8>,
     /// How many of `out`'s first bytes are history, not output.
     pub(crate) history: usize,
-    /// Where the member being decoded began in `out`: a back-reference
-    /// reaches no further.
+    /// The earliest position in `out` a back-reference may reach: the
+    /// member's start where it began in `out`, else `out`'s first byte.
     floor: usize,
 }
 

@@ -39,7 +39,8 @@ fn stores_text(body: &SpanBody) -> bool {
 /// Deficiency register: `deficiency: KD136` — over a fetched compressed
 /// source each run's read is a fetch of the whole unit holding it, after the
 /// scan has already downloaded the object once: the object again where it is
-/// under one unit, the units holding its DDL where it is not. **(c)
+/// under one unit the block path no longer retains, the units holding its DDL
+/// where it is not. **(c)
 /// unowned**; promoted by a remote `parse` whose second download a user
 /// minds.
 pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Result<()> {

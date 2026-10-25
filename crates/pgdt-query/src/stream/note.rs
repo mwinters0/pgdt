@@ -6,7 +6,7 @@ use pgdt_model::{Finding, Severity};
 
 /// One fact about *this query's plan*, as opposed to a fact about the file
 /// ([`pgdt_model::DiagnosticKind`], the model), about one column
-/// (`pgdt_codec::ResolvedSchema::notes`, the codec) or about one predicate
+/// (`pgdt_codec::ResolvedSchema::columns`, the codec) or about one predicate
 /// term ([`ComparisonNote`](crate::predicate::ComparisonNote), query) — a fourth channel, deliberately not a widening of
 /// any of the other three (`docs/design/decisions.md`, "D19"), and a
 /// [`Finding`] like each of them, so one sink drains all four. See
@@ -145,8 +145,9 @@ pub enum PlanNoteKind {
     /// **It is the arrangement below the reserve, named rather than left to
     /// emerge** (`docs/design/decisions.md`, "D3"): a memory limit at or under
     /// `pgdt_io::internal::MEMORY_RESERVE` leaves the budget at zero, and
-    /// [`PlanNoteKind::ParallelismBudgetLimited`] fires only where `requested`
-    /// exceeds what was planned, which at one worker is never.
+    /// [`PlanNoteKind::ParallelismBudgetLimited`] fires beside it only where
+    /// `requested` exceeds the one worker planned, which where one was asked
+    /// for is never.
     ///
     /// `unit_bytes` is `pgdt_io::Partitioning::partition_bytes` and
     /// `memory_bytes` the budget it was compared against. The **span** term is

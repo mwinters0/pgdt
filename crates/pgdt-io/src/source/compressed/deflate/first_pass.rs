@@ -23,7 +23,8 @@
 //! ([`CompressedFileSource`],
 //! [`FetchedCompressedSource`](crate::FetchedCompressedSource)), and every
 //! read, partitioning and worker recommendation is that source's from then on
-//! — so a cold `query`'s replay reads units.
+//! — so a cold `query`'s replay planned once the pass has ended reads units,
+//! one planned before with one reader (`docs/design/decisions.md`, "D19").
 //!
 //! **No window is resident**: each is written as it is placed to a file the
 //! run alone holds, in the directory `open`'s caller names
@@ -563,6 +564,14 @@ impl FirstPass {
 
     /// Leave the decode behind the frontier where it sits inside a closed
     /// unit, decoding the unit to its end so its check is compared.
+    ///
+    /// Deficiency register: `deficiency: KD138` — run with no tasks, so on a
+    /// fetched pass its lift sets the download's room to two pieces, whatever
+    /// a read's lift last set, at every `complete_reads`, a save's included,
+    /// until the next read: a task handed out under the wider room is refused
+    /// the pieces past two and hands back nothing, the frontier decoding those
+    /// bytes itself. **(c) unowned**; promoted by a reading of a fetched pass
+    /// at a stated `--jobs` falling short of a local one's.
     async fn leave_behind(&self) -> Result<()> {
         let _turn = self.turn.lock().await;
         self.run(Job::Leave, 0).await.map(|_| ())

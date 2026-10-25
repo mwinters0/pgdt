@@ -64,7 +64,8 @@ preamble search at each `\connect`.
 
 **Verified against:** v13.0, v16.0, v18.6 — identical.
 **Relied on by:** `decisions.md` ("D30"); the mapping pass restating
-`DumpMetadata` at **each** `\connect`ed database's first `COPY` block
+`DumpMetadata` at **each** `\connect`ed database's first `COPY` block — the
+first after a change of name (`KD133`) —
 (`crates/pgdt-mapping/src/forward.rs`, `map_forward`), which the per-database scope limit licenses — each
 database's first `COPY` header closes that database's preamble;
 `ColumnResolution::MetadataNotScanned` (`decisions.md`, "D43"), which answers

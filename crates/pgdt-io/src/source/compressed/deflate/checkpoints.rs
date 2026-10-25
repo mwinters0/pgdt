@@ -18,7 +18,7 @@ pub(crate) use gz_seek::{BGZF_HEADER_LEN, GZIP_MAGIC};
 /// embedder reads is the file's shape, through the methods below; what it
 /// persists is the checkpoints whole, under the `serde` feature.
 ///
-/// **Only offsets, bit positions and CRCs are held.** A unit decode inside a
+/// **Only offsets, bit positions, CRCs and each checkpoint's kind are held.** A unit decode inside a
 /// member needs the plaintext before its checkpoint, which is read through the
 /// [`WindowProvider`] riding beside the checkpoints as that decode begins, so
 /// the index stays the size of its offsets. The provider is neither persisted
@@ -184,8 +184,9 @@ impl std::fmt::Debug for GzipIndex {
 }
 
 /// The persisted form: the parts `gz_seek::Index::from_parts` takes back,
-/// which validates them, so a damaged cache is refused as undecodable rather
-/// than handed out as an index.
+/// which validates their structure, so a cache damaged there is refused as
+/// undecodable rather than handed out as an index; a damaged CRC-32 is
+/// refused by its unit's decode.
 #[cfg(feature = "serde")]
 mod persisted {
     use std::num::NonZeroU64;

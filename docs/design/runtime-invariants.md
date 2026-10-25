@@ -17,7 +17,7 @@ toolchain bump** (`RT7`, `RT11`, `RT12` and `RT24`'s `temp_dir`, whose behaviour
 release** — the host's or the figures' image's (`RT10` only) — a **bash
 release** (`RT20`), an **arrow or DataFusion upgrade** (`RT21`, `RT22`), a
 **zlib-rs upgrade** (`RT23`), a **tempfile upgrade** (`RT24`), and an
-**`object_store` upgrade** (`RT13`–`RT17`, whose behaviour is that crate's and
+**`object_store` upgrade** (`RT13`–`RT18`, whose behaviour is that crate's and
 whose re-verification is a test run against the oracle rather than a container;
 `crates/pgdt/tests/http_conformance.rs` reads the same claims against a real origin
 wherever one is offered — [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md),
@@ -470,7 +470,10 @@ characters or spaces, since those would be escaped in procfs output and we don't
 unescape"*. Two more follow from the code: a v2 `cpu.max` of `max 100000` leaves
 the quota unbounded because `"max".parse::<usize>()` simply fails, and the
 result is a **quota**, not a share — `cpu.weight` and `cpuset.cpus.partition`
-are not read, though `cpuset.cpus` is, through the affinity mask.
+are not read, though `cpuset.cpus` is, through the affinity mask. And the
+walk starts at the path `/proc/self/cgroup` names, so inside a private cgroup
+namespace — a v2 container's default — a quota set above the namespace's
+root, a systemd slice's `CPUQuota=` or a pod's limit, is not seen.
 
 **Verified against:** Rust 1.98.0 (source and observed); Linux 7.1.4-arch1-1,
 nerdctl 2.3.5 / containerd v2.3.3.
@@ -1237,7 +1240,10 @@ finds its spill directory empty while the pass reads its windows back.
 
 **Scope limit.** The fallback leaves a name between its create and its
 unlink, so a kill inside that window can leave a `.tmp` file behind on a
-filesystem without `O_TMPFILE`; nothing reads one.
+filesystem without `O_TMPFILE`; nothing reads one. The fallback's unlink is
+best-effort (`let _ = fs::remove_file(path)`): where it fails, the file is
+returned still named — an NFS client renaming an open unlinked file to
+`.nfsXXXX` until its last descriptor closes being the kernel's own case.
 
 **Verified against:** tempfile 3.27.0, Rust 1.98.0, Linux 7.2.
 

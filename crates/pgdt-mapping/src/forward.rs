@@ -138,8 +138,9 @@ pub enum MapStop {
     /// EOF, or the queried table settled.
     Reached,
     /// The pass's cancellation fired, which is the only thing that answers
-    /// this. The index is consistent at the last spliced watermark and has
-    /// been persisted; everything past it is unscanned.
+    /// this. The index's spans are consistent at the last spliced watermark,
+    /// its metadata perhaps restated at a database's first block past it, and
+    /// it has been persisted; everything past the watermark is unscanned.
     Interrupted,
 }
 
@@ -247,9 +248,9 @@ pub async fn map_forward(
     let mut metadata_covers: Option<Option<String>> =
         index.metadata.as_ref().and_then(|m| m.databases.last()).map(|db| db.name.clone());
 
-    // **This loop grants no wait** (`docs/design/decisions.md`, "D5"): the
-    // leader's fused worker grants it for itself and restores this policy on
-    // the way out ([`scan_region`]).
+    // **This loop grants no wait** (`docs/design/decisions.md`, "D5"):
+    // [`scan_region`] grants it around an interior region's workers and
+    // restores this policy on the way out.
     announce_read_loop(source, scan_options.read, scan_options.parallelism);
     let mut chunked = ChunkedScanner::to_source_end(
         CopyScanner::resume(seg_start, None),
@@ -272,8 +273,9 @@ pub async fn map_forward(
     loop {
         // Once per chunk, the `CopyEnd` arm carrying the other check
         // (`docs/design/decisions.md`, "D63").
-        // `index` is consistent at the last *spliced* watermark whatever the
-        // buffer holds, so the save needs no snapshot logic of its own.
+        // `index`'s spans are consistent at the last *spliced* watermark
+        // whatever the buffer holds, so the save needs no snapshot logic of
+        // its own.
         if cancel.is_cancelled() {
             cache.save(watch, source, index).await?;
             return Ok(MapStop::Interrupted);

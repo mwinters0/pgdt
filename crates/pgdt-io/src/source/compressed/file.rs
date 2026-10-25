@@ -59,7 +59,8 @@ pub struct CompressedFileSource {
     /// share it.
     pub(super) file: Arc<std::fs::File>,
     /// The file's units and how to decode one — everything a decode needs
-    /// that is not bytes. It holds no source and needs no lock.
+    /// but the file's bytes, a gzip unit's window read through the provider
+    /// its index carries. It holds no source.
     pub(super) codec: Arc<dyn Codec>,
     /// The live piecewise decode, or `None` where no read has taken that arm
     /// yet, its last decode failed or `complete_reads` has left it. Behind a
@@ -147,8 +148,9 @@ impl CompressedFileSource {
     /// produced, **without building it again**
     /// (`docs/design/decisions.md`, "D18").
     ///
-    /// The codec validates the index for internal consistency and against
-    /// the file's own length before trusting it, reading **no bytes** — so an
+    /// The codec validates the index against the file's own length before
+    /// trusting it, and a seek table for internal consistency, reading **no
+    /// bytes** — so an
     /// index that does not describe this file costs nothing to reject, and a
     /// unit's own check is what catches one that survives validation. A
     /// rejected index is the error [`open`](crate::open) turns into
@@ -174,7 +176,8 @@ impl CompressedFileSource {
     ///
     /// **Nothing bills the index.** It is unbilled on an ordering rather than
     /// a size: the build that makes it runs inside
-    /// [`CompressedFileSource::open`], before any budget is announced
+    /// [`CompressedFileSource::open`], or before [`Self::with_index`] is
+    /// handed it, before any budget is announced
     /// (`docs/design/decisions.md`, "D4").
     // Deficiency register: `deficiency: KD26` — this index is the only term in
     // the memory account that grows with the *file* rather than with the
@@ -427,8 +430,8 @@ impl ByteRangeSource for CompressedFileSource {
     }
 
     /// **The cores this process was given** — `available_parallelism()`, which
-    /// is already the minimum of the affinity mask and every ancestor cgroup's
-    /// CPU quota, rounded down and floored at one
+    /// is already the minimum of the affinity mask and the CPU quota of every
+    /// ancestor cgroup it can see, rounded down and floored at one
     /// (`docs/design/runtime-invariants.md`, `RT7`). So a container told
     /// `--cpus=3.5` recommends three, and nothing here re-derives what `std`
     /// already reads.

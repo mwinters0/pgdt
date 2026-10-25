@@ -17,8 +17,9 @@ const SAVE_THROTTLE_K: u32 = 20;
 ///
 /// **The rule is self-tuning, not an interval**: skip a block's save unless at
 /// least [`SAVE_THROTTLE_K`] times the last save's own duration has elapsed
-/// since it. **Exits are exempt** — EOF, a settled target and an interrupt all
-/// save unconditionally, an interrupt before the first read included.
+/// since it. **The loop's exits are exempt** — EOF, a settled target and an
+/// interrupt all save unconditionally, an interrupt before the first read
+/// included; a target settled before the loop saves nothing.
 ///
 /// The gate also decides when the map is rebuilt (`close_copy_block`; the
 /// cost is [`splice`](super::splice)'s `KD5`).

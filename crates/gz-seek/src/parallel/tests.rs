@@ -225,8 +225,7 @@ fn a_pass_takes_the_chunks_it_is_handed() {
         let (_, taken) =
             parallel(&file, 64 * 1024, chunk, usize::MAX, Driver::Ahead, (1 << 16, 1 << 16))
                 .unwrap();
-        // zlib-rs's level 1 ends no block before the last, and level 0's
-        // stored blocks are each a chunk or more long.
+        // zlib-rs's level 1 ends a block only where its writer finishes.
         if name != "level 1" && name != "levels" {
             assert!(taken * 4 >= chunks * 3, "{name}: {taken} of {chunks} chunks taken");
         }
@@ -299,12 +298,11 @@ fn run_ahead(file: &[u8], chunk: u64, limit: usize) -> (Pass, u64, u64) {
 /// **A limit never ends the chain of windows**: with chunks holding more
 /// plaintext than the limit, each guess it cuts is continued from its stop,
 /// so the frontier is anchored no more often than with no limit at all, and
-/// takes a decode of every piece — more decodes than chunks — building the
-/// serial pass's index.
+/// takes more decodes than with none, building the serial pass's index.
 #[test]
 fn a_limit_never_ends_the_chain() {
     for (name, file) in files() {
-        // zlib-rs's level 1 ends no block before the last, which no chunk
+        // zlib-rs's level 1 ends a block only where its writer finishes, which no chunk
         // holds under a limit.
         if name == "level 1" || name == "levels" {
             continue;

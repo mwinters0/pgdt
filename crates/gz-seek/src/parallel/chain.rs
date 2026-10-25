@@ -104,7 +104,9 @@ impl Chain {
         generation == self.generation && self.running.contains_key(&start)
     }
 
-    /// Drop what the frontier, standing at `bit`, has passed.
+    /// Drop the guesses, decodes done and decodes queued the frontier,
+    /// standing at `bit`, has passed; a running decode is dropped when its
+    /// result comes back.
     pub(super) fn pass(&mut self, bit: u64) {
         self.guesses.retain(|_, (_, guess)| !behind(guess, bit));
         self.decoded.retain(|&start, _| start >= bit);
@@ -182,8 +184,8 @@ impl Chain {
     }
 
     /// The guess beginning at `point`, and its chunk: one found there, or at
-    /// an alias of a stored header there, every one of which lies within the
-    /// byte before the length it reads
+    /// an alias of a stored header there, every one of which lies within
+    /// seven bits of the next
     /// ([`stored_length_at`](crate::find::stored_length_at)).
     fn guess_at(&self, point: Point) -> Option<(u64, &Guess)> {
         let bit = point.bit();

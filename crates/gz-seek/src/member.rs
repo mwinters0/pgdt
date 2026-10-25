@@ -33,7 +33,8 @@ enum Field {
 pub(crate) struct Header {
     /// The member's compressed offset, for the errors.
     offset: u64,
-    /// Every byte read so far: the header CRC covers all of them.
+    /// Every byte read so far: the header CRC covers all of them before its
+    /// own two.
     bytes: Vec<u8>,
     field: Field,
     /// Where the header CRC begins, once the flags say there is one.

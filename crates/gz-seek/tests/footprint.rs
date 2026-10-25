@@ -3,7 +3,7 @@
 //! a static block's walk included, under that and the window it copies out.
 //!
 //! A test binary of its own because it installs a counting global allocator:
-//! zlib-rs, built with its default `rust-allocator`, takes its inflate state
+//! zlib-rs, built with `libz-rs-sys`'s default `rust-allocator`, takes its inflate state
 //! and window from Rust's allocator, so every byte one decode holds passes
 //! through [`Counting`]. The C engines allocate through `calloc`, which this
 //! cannot see, so the count is asserted on zlib-rs alone.

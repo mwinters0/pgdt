@@ -22,9 +22,12 @@
 //! decode may resume inside one ([`Walk`]): what a checkpoint inside a fixed
 //! block is placed by.
 //!
-//! **It refuses what zlib refuses**: the same over-subscribed and incomplete
-//! codes, the same missing end-of-block code, the same invalid symbols and
-//! distances, so a guess it accepts is a stream the engine accepts.
+//! **It refuses what zlib refuses**, by zlib's message but where a
+//! code-length code holds no code (`huffman.rs`): the same over-subscribed
+//! and incomplete codes, the same missing end-of-block code, the same invalid symbols and
+//! distances — but a back-reference reaching before a speculation's start,
+//! which a marker stands for whatever the member's real history, and only the
+//! engine's resume with that history refuses.
 
 mod huffman;
 mod inflate;

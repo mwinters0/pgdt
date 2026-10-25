@@ -11,8 +11,9 @@
 //! continued by a speculation from its stop; resolving those histories in
 //! order from a place the frontier stands at gives each chunk ahead a window,
 //! and a **decode** decodes the chunk through the engine from its start with
-//! it (`chain.rs`). Each block boundary or member start the frontier reaches,
-//! it looks for a decode beginning exactly there and begun with the very
+//! it (`chain.rs`). At each block boundary or member start its own decode
+//! reaches, and at each taken decode's stop, the frontier looks for a decode
+//! beginning exactly there and begun with the very
 //! history the frontier holds there; finding one whose every member trailer
 //! matches, it hands out that decode's plaintext and stands where it stopped.
 //! Wherever none does, it decodes on itself (`docs/design/decisions.md`,
@@ -24,11 +25,14 @@
 //! window are those the engine's decode of everything before it ends with —
 //! by induction from the file's start, whoever decoded each piece — so a guess
 //! changes only who decoded the bytes, never what they are. Both kinds of
-//! decode report the same events at the same bits and plaintext offsets, and
-//! one placement rule turns them into checkpoints (`placement.rs`). A task the
-//! caller never runs, a guess that was wrong, or a decode a window the
-//! frontier holds contradicts, leaves the frontier to decode those bytes
-//! itself, so a pass with no task run at all is the serial pass.
+//! decode report the same events at the same bits and plaintext offsets — but
+//! the symbol a static block is walked to, which only the frontier's decode
+//! sets a mark for, a chunk being cut where one may be owed — and one
+//! placement rule turns them into checkpoints (`placement.rs`). A guess
+//! that was wrong, or a decode a window the frontier holds contradicts,
+//! leaves the frontier to decode those bytes itself, so a pass handing out no
+//! task is the serial pass; a task handed out is waited for where its result
+//! may be used, so the caller runs every one it takes.
 //!
 //! **Every byte handed out is checked as a forward pass checks it**: each
 //! unit's CRC-32 is recorded from the plaintext, and each member's trailer is
@@ -69,7 +73,8 @@ mod task;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParallelStep {
     /// Compressed bytes taken from the input given, and plaintext bytes
-    /// written; a step handing out a chunk's plaintext takes no input.
+    /// written; only the frontier's own decode takes input, so a step may
+    /// write a taken chunk's plaintext after the engine's.
     pub progress: Progress,
     /// The checkpoint this step placed, its window at [`Parallel::window`].
     pub checkpoint: Option<Checkpoint>,
@@ -243,8 +248,9 @@ pub struct Parallel {
 impl Parallel {
     /// A pass from the file's first byte, placing checkpoints `spacing`
     /// plaintext bytes apart, over a file `file_len` bytes long cut into
-    /// chunks of `chunk_bytes`, a speculation decoding at most `limit` bytes
-    /// of plaintext ([`SPECULATION_LIMIT`](crate::SPECULATION_LIMIT)).
+    /// chunks of `chunk_bytes`, a speculation stopping its decode at `limit`
+    /// bytes of plaintext, a match's few hundred past it aside
+    /// ([`SPECULATION_LIMIT`](crate::SPECULATION_LIMIT)).
     pub fn new(
         spacing: NonZeroU64,
         chunk_bytes: NonZeroU64,
@@ -368,7 +374,8 @@ impl Parallel {
     }
 
     /// A task's result, kept until the frontier uses it or passes where it
-    /// begins.
+    /// begins — a decode only where it is still wanted ([`Parallel::wants`]),
+    /// a speculation only where it found a guess.
     pub fn done(&mut self, done: ChunkDone) {
         match done.0 {
             Finished::Speculated(result) => {

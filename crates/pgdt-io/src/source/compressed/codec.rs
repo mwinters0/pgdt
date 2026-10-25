@@ -12,12 +12,12 @@ use super::CompressionIndex;
 /// What a unit decode reads its compressed bytes through: a file pulled from,
 /// or a window of bytes already fetched, in the file's own coordinates.
 ///
-/// **Fill-or-end**, as every codec's own source contract is: a
-/// [`Positioned::read_at`] shorter than its buffer means the file ended there
-/// and nothing else, and [`Positioned::slice_at`] lends a range only where it
-/// holds every byte of it, declining being always correct. A codec's adapter
-/// bridges this to its crate's own source trait, so the arms name no codec's
-/// crate.
+/// **Fill-or-end**: a [`Positioned::read_at`] shorter than its buffer means
+/// the file ended there and nothing else, and [`Positioned::slice_at`] lends a
+/// range only where it holds every byte of it, declining being always
+/// correct. A codec's adapter turns this into what its crate reads through —
+/// `xz_seek`'s source trait, or the bytes a `gz_seek` decode is fed — so the
+/// arms name no codec's crate.
 pub(crate) trait Positioned: Send + Sync {
     /// Fill `buf` with the bytes at `offset`, answering how many were written.
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize>;
@@ -115,16 +115,17 @@ pub(crate) trait UnitRead: Send {
     fn is_finished(&self) -> bool;
     /// Decode forward to plaintext offset `to`, discarding what lies before it.
     fn advance_to(&mut self, source: &dyn Positioned, to: u64) -> Result<()>;
-    /// What one decoder call produced into `out`, zero at the unit's end.
+    /// What the decoder produced into `out`, as soon as it produced any, zero
+    /// at the unit's end.
     fn read(&mut self, source: &dyn Positioned, out: &mut [u8]) -> Result<usize>;
     /// Leave the unit, comparing its check — decoding its remainder where it
     /// carries one.
     fn complete(self: Box<Self>, source: &dyn Positioned) -> Result<()>;
 }
 
-/// The error a read past the end of the plaintext is — the same
-/// `UnexpectedEof` a short `read_exact_at` raises on the plain source, so
-/// every source reports a caller/source disagreement identically.
+/// The error a read past the end of the plaintext is — of the kind a short
+/// `read_exact_at` raises on the plain source, `UnexpectedEof`, in words of
+/// its own.
 pub(crate) fn short_read() -> Error {
     Error::Io(std::io::Error::new(
         std::io::ErrorKind::UnexpectedEof,

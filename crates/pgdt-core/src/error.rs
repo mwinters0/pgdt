@@ -97,7 +97,8 @@ pub enum Error {
     /// `pgdt_dump::cache::CacheMode::refusal`, which answers none where the
     /// mode may overwrite the cache instead; and by
     /// `pgdt_dump::cache::CacheMode::open_source`, over the source its caller
-    /// built.
+    /// built — and by `pgdt info`'s cache-only read, over a cache it cannot
+    /// use.
     #[error("{}", cache_unusable(path, unusable))]
     CacheUnusable { path: PathBuf, unusable: Unusable },
     /// The source changed while this run was reading it, so every byte the
@@ -125,7 +126,8 @@ pub enum Error {
     /// nor a `Last-Modified`, so no read can be pinned and the source's size
     /// and modification time are the probe's. Raised by
     /// `pgdt_dump::cache::SourceWatch::require_checkable` where a read begins,
-    /// before anything is read, since the
+    /// or where the DataFusion provider registers the dump, before anything is
+    /// read, since the
     /// promise [`Error::SourceChangedWhileRead`] makes would otherwise be
     /// stated and not kept (`docs/design/decisions.md`, "D21"). `why` is the
     /// source's own sentence ([`pgdt_io::ByteRangeSource::in_flight_unchecked`]).
@@ -260,7 +262,8 @@ pub enum Error {
     /// no schema can be settled for it (`docs/design/decisions.md`, "D35").
     /// Raised by `pgdt_query::Table`'s `plan`, `schema`, `summary` and
     /// `divergences` before a byte is read; a query that maps for itself
-    /// reads the rows again instead, and so never raises it.
+    /// under the typed schema mode reads the rows again instead, one settled
+    /// under the strings mode and planned typed raising it.
     #[error(
         "table `{table}` is mapped at the metadata level, which records nothing drawn from its rows, and a typed query over a map it does not build needs the data level's census — map it again at the data level, or read it in the strings schema mode"
     )]
@@ -337,7 +340,9 @@ pub enum Error {
     )]
     FieldRefusedRecorded { refused: Box<Error>, cache: Box<std::path::Path> },
     /// A column the query materializes holds values PostgreSQL accepts for
-    /// its declared type and its Arrow type cannot hold, and the query is
+    /// its declared type and the query's front end cannot hold — past its
+    /// Arrow type or, where the front end counts it, the calendar DataFusion
+    /// displays — and the query is
     /// under [`pgdt_codec::UnrepresentableMode::Refuse`]: refused at planning,
     /// before a row is read, wherever the map counts one in the table, not
     /// only in the groups a filter keeps. `values` is the map's count in the

@@ -145,6 +145,14 @@ impl Pass {
     /// a decode behind it otherwise — the one kept from an earlier read where
     /// it can continue there, or one begun at the last checkpoint at or
     /// before `offset` once the kept one has been left.
+    ///
+    /// Deficiency register: `deficiency: KD137` — a kept decode is continued
+    /// whatever kind it is, so one begun in the open unit, a forward decode,
+    /// goes on serving after the frontier has closed that unit, handing out
+    /// its bytes, and every closed unit's after it, compared against no
+    /// CRC-32 a unit recorded, the member's trailer checking them only where a
+    /// read reaches it. **(c) unowned**; promoted by P15 scheduling the fix,
+    /// leaving a kept `Behind::Open` decode once its unit has closed.
     pub(super) fn route(&mut self, offset: u64) -> Result<Route> {
         if offset >= self.frontier_position()? {
             return Ok(Route::Frontier);

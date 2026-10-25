@@ -137,8 +137,9 @@ back. **`UF1`–`UF4` are allocated, and none is reused.**
   reader (the unused bits, and whether it is a non-final block's end), primes
   bits ahead of its input, and copies its window out, in a semver-stable API.
 - **Workaround.** `crates/gz-seek/src/zlib.rs` drives `libz-rs-sys` 0.6.8's
-  `inflateInit2_`, `inflate(Z_BLOCK)`, `inflatePrime`, `inflateSetDictionary`
-  and `inflateGetDictionary` behind a type whose methods are safe, and its
+  `inflateInit2_`, `inflate(Z_BLOCK)`, `inflatePrime`, `inflateSetDictionary`,
+  `inflateGetDictionary`, `inflateReset` and `inflateEnd`, and reads
+  `zlibVersion`, behind a type whose methods are safe, and its
   `crc32_z` and `crc32_combine` beside them, the crate denying `unsafe`
   everywhere else. Which engine is behind that API is
   [`../design/decisions.md`](../design/decisions.md), "D112". Rejected:

@@ -260,7 +260,8 @@ fn memory_hierarchy(cgroups: &str) -> MemoryHierarchy<'_> {
 ///
 /// **Mountinfo's `\040` escaping of spaces is not undone**, which is the same
 /// limit `std` states for its own reading of this file: a cgroup mounted under
-/// a path containing a space is not found, and the fallback applies.
+/// a path containing a space is looked for at its escaped path, where nothing
+/// is found, so no limit is discovered.
 fn v1_memory_mount(root: &Path) -> PathBuf {
     let conventional = root.join("sys/fs/cgroup/memory");
     let Ok(text) = std::fs::read_to_string(root.join("proc/self/mountinfo")) else {

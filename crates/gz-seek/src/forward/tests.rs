@@ -281,7 +281,8 @@ fn a_file_opening_with_a_plain_member_coalesces_the_bgzf_members_after_it() {
 /// writes one static block across nearly the whole member, and the pass stops
 /// inside it before the first symbol at or past each multiple — the final
 /// block's too, at a spacing finer than it — each checkpoint's unit decoding
-/// alone, and a pass resumed at each building the uninterrupted index.
+/// alone, and a pass resumed at each, or at a finer spacing at the first
+/// forty and the last two, building the uninterrupted index.
 #[test]
 fn a_static_block_is_checkpointed_at_the_spacing() {
     // Ending in literals, which the final block, opened over the lookahead,

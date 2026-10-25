@@ -292,8 +292,8 @@ fn fresh_stream() -> Box<z_stream> {
     })
 }
 
-/// The stream's `zalloc`, over the C allocator: what zlib's own default is,
-/// which `libz-sys`'s non-nullable field cannot ask for.
+/// The stream's `zalloc`, over the C allocator — zlib's own default being
+/// `malloc`, which `libz-sys`'s non-nullable field cannot ask for.
 #[cfg(not(feature = "zlib-rs"))]
 unsafe extern "C" fn c_alloc(
     _: *mut std::ffi::c_void,

@@ -39,8 +39,8 @@ pub struct Forward {
 }
 
 impl Forward {
-    /// A pass from the file's first byte, placing checkpoints `spacing`
-    /// plaintext bytes apart.
+    /// A pass from the file's first byte, placing checkpoints by the placement
+    /// rule at `spacing` (`placement.rs`).
     pub fn new(spacing: NonZeroU64) -> Result<Forward> {
         Ok(Forward {
             engine: Engine::at_member(0, 0)?,
@@ -102,8 +102,8 @@ impl Forward {
 
     /// Take compressed bytes from `input`, which begins at
     /// [`Forward::compressed_position`], and produce plaintext into `out`. A
-    /// step that makes no progress needs more input: the caller supplies it
-    /// or, having none, calls [`Forward::finish`].
+    /// step that makes no progress with room in `out` needs more input: the
+    /// caller supplies it or, having none, calls [`Forward::finish`].
     ///
     /// # Errors
     ///

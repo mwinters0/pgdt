@@ -222,8 +222,10 @@ impl ResolvedSchema {
 }
 
 impl ResolvedColumn {
-    /// The Arrow field the column's values are emitted as. Always nullable,
-    /// whatever [`Self::not_null`] says (`docs/design/decisions.md`, "D37").
+    /// The Arrow field the column's values are emitted as. Nullable wherever
+    /// the DDL was resolved, whatever [`Self::not_null`] says
+    /// (`docs/design/decisions.md`, "D37"); as given where a caller assembled
+    /// it ([`column_of`]).
     pub fn field(&self) -> &FieldRef {
         &self.field
     }

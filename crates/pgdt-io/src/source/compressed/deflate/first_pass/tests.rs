@@ -337,7 +337,7 @@ async fn a_read_behind_the_frontier_is_checked_against_its_units_crc() {
 /// **A pass resumed from the index an interrupted one saved builds the index
 /// an uninterrupted pass builds**: from a checkpoint inside the member and
 /// from the member's start, on both feeds, reading on from before its last
-/// checkpoint and from past it; and the resumed pass answers the saved index
+/// checkpoint, or from it where it is the member's start, and from past it; and the resumed pass answers the saved index
 /// until it places a checkpoint of its own, so a cache saved from it is
 /// judged against what it holds.
 #[tokio::test]

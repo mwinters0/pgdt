@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD136 -->
-**`KD1`–`KD136` are allocated, and nothing at or below `KD136` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD141 -->
+**`KD1`–`KD141` are allocated, and nothing at or below `KD141` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -178,7 +178,8 @@ than reading as a phase nobody has sliced.
 
 - **KD32** — `max_source_span` is solved against the read-buffer budget, which
   D83 leaves at `DEFAULT_MEMORY_BUDGET` (capped by the allowance less
-  `MEMORY_RESERVE`) on a plain source whatever `--memory` states, so a plain
+  `MEMORY_RESERVE` and what is drawn, less what is held the margin cannot
+  absorb) on a plain source whatever `--memory` states, so a plain
   `query`'s sub-stream count and batch size are fixed at the number D3 picked
   to decline block decode on an ordinary `.xz`: a stated allowance raises
   neither, and `--chunk-size` moves them only as far as `KD41` lets it.
@@ -494,6 +495,36 @@ than reading as a phase nobody has sliced.
 - **KD136** — a `parse` over a fetched compressed file reads each run of DDL
   back after its scan through the indexed source, which fetches the unit
   holding the run whole, so the object is downloaded again where it is under
-  one unit and the units holding its DDL where it is not. **(c) unowned**;
+  one unit no longer retained, and the units holding its DDL where it is not. **(c) unowned**;
   promoted by a remote `parse` whose second download a user minds. Detail:
   `crates/pgdt-dump/src/map/tiling.rs`.
+
+- **KD137** — a read behind a gzip first pass's frontier, continuing a decode
+  begun in the unit that was open, hands out that unit's bytes after the
+  frontier has closed it, and those of every closed unit after it, unchecked
+  against the CRC-32 each recorded. **(c) unowned**; promoted by P15
+  scheduling the fix. Detail:
+  `crates/pgdt-io/src/source/compressed/deflate/first_pass/pass.rs`.
+
+- **KD138** — a fetched gzip first pass's download room falls to two pieces
+  at each `complete_reads` until the next read, so a task ahead handed out
+  under the wider room is refused its pieces and its work is lost.
+  **(c) unowned**; promoted by a fetched pass at a stated `--jobs` read short
+  of a local one's. Detail:
+  `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.
+
+- **KD139** — a parallel first pass's guesses do not meet where a plain
+  member runs past a chunk's end into BGZF members, so the frontier decodes
+  the gap itself. **(c) unowned**; promoted by a profile showing that decode.
+  Detail: `crates/gz-seek/src/speculate.rs`.
+
+- **KD140** — the block search can pass over a true dynamic block whose
+  header's checks straddle an unfinished input's end, so a chunk's guess
+  begins late or not at all. **(c) unowned**; promoted by a speculation seen
+  to miss its chunk's first block. Detail: `crates/gz-seek/src/find.rs`.
+
+- **KD141** — a gzip first pass's task ahead is charged a limit's worth of
+  compressed bytes past its chunk, where a speculation can hold more. **(c)
+  unowned**; promoted by 15.7's readings putting a task's remainder over its
+  charge. Detail:
+  `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.

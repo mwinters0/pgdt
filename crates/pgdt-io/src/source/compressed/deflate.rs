@@ -28,7 +28,8 @@ pub(crate) use self::first_pass::{Feed, FirstPass};
 pub(crate) use self::walk::{is_bgzf, walk_file};
 
 /// The plaintext spacing a forward pass places a checkpoint at the first
-/// deflate block boundary at or after each multiple of, and `gz_seek`'s BGZF
+/// place a decode resumes at or after each multiple of — a deflate block
+/// boundary, or inside a static block before a symbol — and `gz_seek`'s BGZF
 /// walk coalesces members into units of at least, the last aside: **the block `xz -T0` writes at its
 /// default preset**, so a gzip unit is an ordinary `.xz` block's size for the
 /// block cache, the partition grain and the resident bounds read off `.xz`
@@ -42,7 +43,8 @@ pub(super) const CHECKPOINT_SPACING: NonZeroU64 = NonZeroU64::new(24 << 20).unwr
 const GZIP: &str = "gzip";
 
 /// How many compressed bytes a decode over a source that lends nothing pulls
-/// at a time, capped by the widest unit: `xz_seek`'s own input chunk, so a
+/// at a time, capped by its unit's compressed extent and charged as capped by
+/// the widest unit: `xz_seek`'s own input chunk, so a
 /// gzip reader is charged the input term an `.xz` one is, under the resident
 /// bounds read off `.xz` (`docs/design/decisions.md`, "D113").
 const INPUT_CHUNK: u64 = 1 << 20;
@@ -66,7 +68,7 @@ pub(super) fn refuses_index(error: &Error) -> bool {
 /// A gzip file's units as the compressed arms read them, each the span from
 /// one checkpoint to the next.
 ///
-/// **The index and its window provider, and nothing else**: a [`gz_seek::UnitTask`]
+/// **The index and its window provider, and what is read off them once**: a [`gz_seek::UnitTask`]
 /// is `Copy` and holds no index, so naming a unit takes no lock, and a unit's
 /// window is read as its decode begins and dropped once the inflater holds it.
 pub(super) struct DeflateCodec {

@@ -32,8 +32,10 @@ use super::{ByteRangeSource, Extent, RemoteIdentity, is_weak_tag};
 ///
 /// **It replaces `object_store`'s *total* request timeout**, which limits link
 /// speed rather than liveness: that one counts the response body, so a large
-/// ranged GET over a slow-but-working link fails while still progressing. A read timeout resets on every byte that arrives, so a slow
-/// transfer completes and only a dead connection fails.
+/// ranged GET over a slow-but-working link fails while still progressing. A read timeout resets as each piece of the body arrives, so a slow
+/// transfer completes and only a dead connection fails; before the response's
+/// headers it runs from the request's start, so a server taking longer than
+/// this to answer fails too.
 ///
 /// **Unmeasured, and chosen rather than tuned**: a link that has delivered
 /// nothing for this long is not a slow link. The phase that tunes the network
@@ -63,10 +65,11 @@ impl RemoteObject {
     /// Build the client for `url`, whose scheme [`Origin::remote`] has already
     /// accepted.
     pub(super) fn open(url: url::Url, read_timeout: Duration) -> Result<Self> {
-        // Four client settings, two of them the crate's own: the retry
-        // configuration and `http1_only` are left alone, `allow_http` follows
-        // the scheme the user typed — which is their statement that plaintext
-        // is acceptable — and the timeouts are ours.
+        // Five client settings, three of them the crate's own: the retry
+        // configuration, `http1_only` and the connect timeout are left alone,
+        // `allow_http` follows the scheme the user typed — which is their
+        // statement that plaintext is acceptable — and the request's timeouts
+        // are ours.
         let options = object_store::ClientOptions::new()
             .with_timeout_disabled()
             .with_read_timeout(read_timeout)
@@ -317,8 +320,9 @@ impl RemoteSource {
         // legal response and a different fault: `object_store` compares the
         // `Content-Range` it got against the one it asked for and refuses
         // before the body is read. What can reach here short is the end of the
-        // object, which a caller reading past it hears about in the words a
-        // local `read_exact_at` would use.
+        // object, or a body shorter than the range its headers state, which
+        // nothing checks; either is heard in the words a local
+        // `read_exact_at` would use.
         if bytes.len() != len {
             return Err(Error::Io(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
@@ -419,7 +423,7 @@ impl ByteRangeSource for RemoteSource {
 /// `pgdt_dump::cache::SourceWatch::require_checkable` will refuse for a server
 /// nothing can pin ([`ByteRangeSource::in_flight_unchecked`]) pays that walk
 /// first, the refusal coming only where a read of the source this returns
-/// begins. Refusing here would need the
+/// begins, or where the DataFusion provider registers it. Refusing here would need the
 /// strictness passed to every open for the sake of one pairing — an uncached
 /// `.xz` from a server stating no usable validator. **(c) unowned**; promoted
 /// by a user who meets it on a dump of many streams.
@@ -476,8 +480,8 @@ pub(crate) async fn open_remote(
             )?)))
         }
         // Any gzip file's index, a BGZF file's included, is its first full
-        // pass's by-product, a serial ranged read of the object, announced
-        // as it starts and completes.
+        // pass's by-product, read off one download of the object, serially
+        // but under a stated `--jobs`, announced as it starts and completes.
         Verdict::Unknown(Format::Gzip) => Ok(Recognized::Source(Arc::new(FirstPass::fresh(
             origin.to_string(),
             Feed::Fetched(fetched()),

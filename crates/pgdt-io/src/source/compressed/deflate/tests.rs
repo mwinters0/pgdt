@@ -18,8 +18,7 @@ const SPACING: u64 = 32 * 1024;
 /// default budget, as an ordinary `.xz` block is** (`docs/design/
 /// decisions.md`, "D3", "D113"): a library caller stating no budget
 /// reads a single member's units piecewise. Asserted with no decoder
-/// charged, so it holds whatever the inflater's footprint; every unit
-/// but a file's last is at least the spacing (D113).
+/// charged, so it holds whatever the inflater's footprint (D113).
 #[test]
 fn the_default_budget_declines_a_unit_of_the_spacing() {
     let cache = BlockCache::for_unit(CHECKPOINT_SPACING.get()).expect("a nonzero unit");
@@ -30,7 +29,7 @@ fn the_default_budget_declines_a_unit_of_the_spacing() {
 /// **The checkpoints are held at a stated cost per entry** — what is left of
 /// `KD26` for gzip, an index the size of its offsets
 /// (`docs/design/decisions.md`, "D4"): a checkpoint is its plaintext offset,
-/// its bit, its window's length and its unit's CRC-32, and a change to
+/// its bit, its kind with its window's length and its unit's CRC-32, and a change to
 /// `gz_seek` growing it fails here rather than silently moving the account.
 #[test]
 fn a_checkpoint_is_held_at_a_stated_cost() {

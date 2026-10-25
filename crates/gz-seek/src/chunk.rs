@@ -27,7 +27,8 @@ pub(crate) struct Decoded {
     /// Every event after the start, the stop's included, by plaintext offset
     /// from the start.
     pub(crate) events: Vec<(u64, Event)>,
-    /// Each piece's plaintext range and CRC-32, in order, cut at every event.
+    /// Each piece's plaintext range and CRC-32, in order, cut at every block's
+    /// end and member's end.
     pub(crate) pieces: Vec<(u64, u64, u32)>,
 }
 
@@ -63,8 +64,9 @@ impl ChunkDecoded {
 /// One chunk's decode through the engine, fed by its caller: `Send`, holding
 /// no borrow.
 ///
-/// It holds its window, and once fed an engine and room for at most the
-/// plaintext the speculation found from its start to its stop.
+/// It holds its window, and once fed an engine and room for the plaintext
+/// the speculation found from its start to its stop, and a byte to show a
+/// decode running past it.
 pub(crate) struct ChunkDecode {
     chunk: u64,
     generation: u64,

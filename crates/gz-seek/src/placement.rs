@@ -4,7 +4,8 @@
 //!
 //! # Where a checkpoint goes is a function of the file alone
 //!
-//! A checkpoint is placed at **every member start**, and at **the first place
+//! A checkpoint is placed at **every member start** but a BGZF member's
+//! joining a unit (below), and at **the first place
 //! a decode can resume at or after each multiple of the spacing** in
 //! plaintext: a deflate block boundary, a member start counting as one, or
 //! inside a static block, before any symbol but its end-of-block code — so the same file and spacing give the
@@ -17,7 +18,7 @@
 //! that ends no block across a spacing — `deflate_quick` writes one static
 //! block — is checkpointed as any other. At a plaintext offset holding both, a
 //! block boundary comes first, an end-of-block code being no symbol a
-//! checkpoint precedes, so no unit is empty
+//! checkpoint precedes, so a symbol's checkpoint never leaves a unit empty
 //! (`docs/design/decisions.md`, "D118"). What the spacing moves is how many
 //! windows are copied, never how often a decode stops at a boundary.
 //!

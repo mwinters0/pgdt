@@ -194,8 +194,10 @@ pub(super) fn plan_partitions(
     let charged_span =
         stated_span.map(|span| derived_source_span(charge, parallelism, span, chunk_size));
     // A span is on the chunk floor where it equals the chunk: the derived span
-    // is `min(stated, max(room, chunk))`, which is the chunk only where the
-    // room is at most the chunk and the stated span at least it, so a smaller
+    // is the stated one where the budget affords it, else
+    // `min(stated, max(room, chunk))`, which is the chunk only where the room
+    // is at most the chunk and the stated span at least it, or where the
+    // stated span is the chunk, so a smaller
     // chunk lowers it wherever the count note below fires, the room being
     // below the chunk there. A span stated below the chunk is charged as
     // stated, and a smaller chunk moves nothing of it.
@@ -213,8 +215,9 @@ pub(super) fn plan_partitions(
         .or_else(|| compressed_block_path_declined(source, parallelism))
         .into_iter()
         .collect();
-    // **Below one reader's worth the floors decide, and they are silent**, the
-    // count note below firing only where `requested` exceeds what was planned.
+    // **Below one reader's worth the floors decide**, and say so in this note,
+    // the count note below firing beside it only where `requested` exceeds the
+    // one reader planned.
     // Charged against the footprint alone rather than the whole charge: the
     // span term puts an ordinary plain `query` at the default budget over the
     // line (`docs/design/decisions.md`, "D3").

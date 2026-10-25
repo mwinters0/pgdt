@@ -312,7 +312,7 @@ fn a_resumed_gzip_first_pass_names_its_checkpoint() {
 }
 
 /// `plain` written as BGZF beside it, by `noodles-bgzf`'s writer — a member
-/// to each 64 KiB of plaintext and the empty member that ends the file.
+/// to each 65,495 bytes of plaintext and the empty member that ends the file.
 fn bgzf_beside(plain: &Path) -> std::path::PathBuf {
     use std::io::Write as _;
     let mut writer = noodles_bgzf::io::Writer::new(Vec::new());

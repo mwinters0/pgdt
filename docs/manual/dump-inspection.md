@@ -1496,7 +1496,8 @@ version; `container_kind`; `identity`, holding under `LocalFile` the dump's
 `stored_size` in bytes on disk and its `mtime` as `[seconds, nanoseconds]` when
 the cache was saved, which a dump is checked against before its cache is used;
 `compression_index`, holding under `Xz` an `.xz` dump's every stream and block
-with their offsets and sizes, or `null` for a plain dump; and `calendar_end`,
+with their offsets and sizes, under `Gzip` a gzip dump's checkpoints, or `null`
+for a plain dump; and `calendar_end`,
 the last day, as days from 1970, of the calendar its unrepresentable counts
 were taken against (below). On top of that it
 carries three things the text views state differently:

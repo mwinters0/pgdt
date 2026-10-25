@@ -315,7 +315,8 @@ pub enum Recognized {
     /// The [`KnownCompression`] handed in does not describe this file: its
     /// compression layer disagrees with the file's own first bytes, or its
     /// index was refused by the codec's validation. Nothing beyond the magic
-    /// was read and no source was built, so the caller still has both choices
+    /// was read — a transport built but no request made past the probe — so
+    /// the caller still has both choices
     /// — pay the build with [`KnownCompression::Unknown`], or report the
     /// cache it came from as unusable
     /// (`docs/design/decisions.md`, "D18").
@@ -337,7 +338,7 @@ pub enum Recognized {
 ///
 /// **`spill` is the directory a gzip file's first pass writes the windows it
 /// places to**, in a file of its own with no name, made at the first window
-/// and refused naming `spill` where it cannot be: the caller's to choose,
+/// holding any bytes and refused naming `spill` where it cannot be: the caller's to choose,
 /// since this crate names no cache — `pgdt_dump`'s open names the enabled
 /// cache's directory, or else the OS temp directory
 /// (`docs/design/decisions.md`, "D115"). Nothing else reads it.
@@ -451,9 +452,11 @@ pub(super) enum Verdict {
     Unknown(Format),
     /// No compression layer, claimed or found.
     Plain,
-    /// Every way "the cache describes a different file": a compression index
-    /// for a source whose bytes are plain or another format's, and a plain
-    /// cache for one whose bytes are compressed.
+    /// "The cache describes a different file", as the bytes alone show it: a
+    /// compression index for a source whose bytes are plain or another
+    /// format's, and a plain cache for one whose bytes are compressed. An index
+    /// of the right format the codec refuses is [`Verdict::Known`] here, and
+    /// [`Recognized::Mismatch`] once validated.
     Mismatch,
 }
 

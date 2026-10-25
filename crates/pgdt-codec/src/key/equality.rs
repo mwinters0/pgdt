@@ -63,8 +63,10 @@ pub enum Equality {
 /// **(c) unowned**; promoted by a user meeting it.
 ///
 /// `None` when the literal is not a value of the column's type at all — the
-/// same refusal an ordering operator's [`literal_key`] makes, on the same
-/// grammar (`docs/design/decisions.md`, "D55").
+/// refusal an ordering operator's [`literal_key`] makes, on the same
+/// grammar (`docs/design/decisions.md`, "D55"), but past `i256`, where a
+/// `numeric(p,s)` literal `literal_key` refuses is a key here matching
+/// nothing.
 pub fn literal_equality(
     kind: &CompareKind,
     text: &str,

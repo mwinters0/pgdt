@@ -118,8 +118,8 @@ fn a_chunk_is_the_file_from_its_start_to_its_stop() {
 }
 
 /// **A chunk crosses member boundaries**, its history at the stop reaching no
-/// further back than its member's start, and a BGZF file's chunks begin at
-/// members' headers.
+/// further back than its member's start, and some chunk of each file begins
+/// at or crosses a member start.
 #[test]
 fn a_chunk_crosses_members_and_begins_at_headers() {
     let (a, b) = (payload(300_000, 5), payload(200_000, 7));

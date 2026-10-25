@@ -6,10 +6,9 @@
 //! header, so what this answers is a place worth decoding from, and the
 //! parallel pass ([`Parallel`](crate::Parallel)) takes a decode from it only
 //! where the engine's decode before it ends there exactly, with the history
-//! that decode began with. A fixed block, and a block
-//! marked last, are not looked for: their headers are three bits with nothing
-//! to check, so they would be found everywhere, and the decode before reaches
-//! past them instead. What is checked, cheapest first: a dynamic header's
+//! that decode began with. A fixed block is not looked for: its header is
+//! three bits with nothing to check, so it would be found everywhere, and the
+//! decode before reaches past it instead; nor is a block marked last. What is checked, cheapest first: a dynamic header's
 //! fields in range and its code-length code complete, then the whole header as
 //! zlib reads it; a stored header's length beside its complement, and its
 //! padding zero, as every encoder writes it; a member's magic, method and
@@ -38,7 +37,15 @@ pub(crate) enum Found {
     Nothing,
 }
 
-/// The bits a block header's cheap checks read.
+/// The bits a search wants past a candidate before an unfinished input's end.
+///
+/// Deficiency register: `deficiency: KD140` — a dynamic header's cheap
+/// checks read up to 74 bits, its code-length code's included, so within
+/// that of an unfinished input's end they read zeros for the bytes not yet
+/// fed, and a true block whose check fails on them is passed over for good,
+/// the guess beginning at a later candidate or none and the frontier decoding
+/// the gap. **(c) unowned**; promoted by a speculation seen to miss its
+/// chunk's first block.
 const CHEAP_BITS: u64 = 64;
 
 /// Search `input` from bit `from` to bit `until` for the first candidate,
@@ -112,10 +119,11 @@ fn dynamic_is_plausible(input: &Input, bit: u64, bits: u64) -> bool {
 /// the byte boundary after its three header bits.
 ///
 /// **A stored header has aliases.** Its header is three zero bits and its
-/// padding is zeros, so a search reading it from any earlier bit whose bits
+/// padding is zeros, so a search reading it from an earlier bit whose bits
 /// up to the boundary are also zero — the high bit of an ASCII byte before
-/// it, say — reads the same length at the same boundary, and decodes the
-/// same block. The search answers the first; a pass at any later one of them
+/// it, say — and whose length falls at the same byte boundary, so at most
+/// seven bits before it, reads the same length there, and decodes the same
+/// block. The search answers the first; a pass at any later one of them
 /// stands at that block (`Guess::begins_at`).
 pub(crate) fn stored_length_at(bit: u64) -> u64 {
     (bit + 3).div_ceil(8) * 8

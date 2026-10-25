@@ -6,7 +6,8 @@
 //! and a cache mtime mismatch, too weak by default to invalidate on and with
 //! no column or schema to hang off. [`DiagnosticKind`] has grown past them —
 //! its variants are the list. All are collected on
-//! [`crate::DumpIndex`] and left for a caller to drain.
+//! [`crate::DumpIndex`] and left for a caller to drain, but
+//! `pgdt_dump::preamble_only`'s, which it returns beside the metadata.
 //!
 //! **This is not the library's only channel, and the division is by kind, not
 //! by necessity.** A `tracing` line carries cost and progress as a run meets
@@ -139,8 +140,8 @@ pub enum DiagnosticKind {
     /// invalidation by default (`docs/design/decisions.md`, "D21"); a caller
     /// that asked for `pgdt_dump::cache::StrictIdentity::time` is refused instead
     /// of being handed this. A *size* mismatch never reaches this channel: the
-    /// run is refused, the cache left as it is (`docs/design/decisions.md`,
-    /// "D20").
+    /// run is refused, the cache left as it is unless the mode may overwrite
+    /// an unusable one (`docs/design/decisions.md`, "D20").
     CacheMtimeChanged,
     /// The stronger half of the same signal: both sides carry a server's
     /// **entity tag** and the two differ, which is the server's own statement

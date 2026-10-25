@@ -54,7 +54,7 @@ async fn source_of(url: &str) -> Arc<dyn ByteRangeSource> {
 }
 
 // ---------------------------------------------------------------------------
-// What a `--source` argument names (D3, D17)
+// What a `--source` argument names
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -118,7 +118,7 @@ fn a_url_carrying_a_credential_is_refused_rather_than_stripped() {
 }
 
 // ---------------------------------------------------------------------------
-// The probe (D2) and what the source answers (D7)
+// The probe and what the source answers
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -268,7 +268,7 @@ async fn an_object_withdrawn_mid_scan_is_an_error_naming_the_url() {
 }
 
 // ---------------------------------------------------------------------------
-// The stalled origin: the deadline (D9) and the cancellation race (D16)
+// The stalled origin: the deadline and the cancellation race (D26)
 // ---------------------------------------------------------------------------
 
 /// How long a stalling oracle stays quiet where nothing interrupts it: long
@@ -282,7 +282,7 @@ const FIRST_READ: usize = 2;
 
 #[tokio::test]
 async fn a_stalled_request_is_abandoned_and_retried_rather_than_waited_out() {
-    // The shipped read timeout is minutes of wall clock to a test, so the
+    // The shipped read timeout is thirty seconds of wall clock to a test, so the
     // deadline is asserted through a stated one — the same setting, valued
     // where it can be produced. **Not `start_paused`**: the oracle is a
     // blocking server on real time, so a virtual-time client sees every real
@@ -413,7 +413,7 @@ fn query_over_a_url_streams_the_same_rows_a_local_query_streams() {
 }
 
 // ---------------------------------------------------------------------------
-// The derived cache path, and the origin it records (D4, D18, D19)
+// The derived cache path, and the origin it records (D87)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -482,7 +482,7 @@ fn a_cache_recorded_against_another_object_names_the_url_that_refused_it() {
 }
 
 // ---------------------------------------------------------------------------
-// The precondition on every ranged GET (D10, D11)
+// The precondition on every ranged GET (D21)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
@@ -653,7 +653,7 @@ fn strict_identity_none_stops_pinning_the_object() {
 
 #[test]
 fn an_interrupt_during_a_remote_read_is_answered_at_once_and_exits_by_signal() {
-    // The whole of D16 from the outside: a remote read's wait is the retry
+    // The whole of D26's cancellation from the outside: a remote read's wait is the retry
     // schedule, so a Ctrl-C that only set a flag would be answered minutes
     // later. The request is dropped instead, and `parse` reports what a local
     // interrupt reports.
@@ -766,7 +766,7 @@ fn a_scheme_this_build_does_not_read_is_refused_before_anything_is_fetched() {
 }
 
 // ---------------------------------------------------------------------------
-// A remote `.xz` (D1, D13, D20)
+// A remote `.xz`
 // ---------------------------------------------------------------------------
 
 /// One `.xz` stream over `bytes`, split into several blocks. `xz` is not
@@ -839,7 +839,7 @@ async fn a_remote_xz_source_reads_the_plain_bytes_the_file_holds() {
 async fn a_remote_xz_read_with_no_room_for_a_block_answers_the_same_bytes() {
     // The piecewise arm over a real transport: the budget holds no decoded
     // block, so each one is fetched, skipped into and completed through
-    // `xz_seek::BlockRead` (D20).
+    // `xz_seek::BlockRead` (D15).
     let oracle = serving_xz_dump();
     let source = source_of(&xz_url(&oracle)).await;
     source.hint_parallelism(Parallelism::Serial { memory_bytes: Some(1) });
@@ -853,8 +853,8 @@ async fn a_fetched_piecewise_scan_inside_one_block_fetches_it_once() {
     // and the handle decoding out of it — so a forward scan inside one block
     // costs one ranged GET rather than one per read; both are dropped when the
     // scan leaves the block, and nothing is cached behind them, so a read
-    // going back re-fetches (D21). That a block is decoded once as well as
-    // fetched once is counted in `source/compressed/fetched.rs` under `introspect`, this oracle
+    // going back re-fetches (D15). That a block is decoded once as well as
+    // fetched once is counted in `source/compressed/fetched/tests.rs` under `introspect`, this oracle
     // seeing only the request stream.
     let oracle = serving_xz_dump();
     let source = source_of(&xz_url(&oracle)).await;
@@ -895,8 +895,8 @@ async fn a_fetched_piecewise_scan_inside_one_block_fetches_it_once() {
 
 #[tokio::test]
 async fn every_fetch_a_footer_walk_makes_is_pinned_to_the_probes_version() {
-    // 14.6's precondition rides on the fetch, so the walk inherits it without
-    // knowing it exists (D10, D11).
+    // The precondition rides on the fetch, so the walk inherits it without
+    // knowing it exists (D21).
     let oracle = serving_xz_dump();
     let source = source_of(&xz_url(&oracle)).await;
     assert!(source.compression_index().is_some());

@@ -6,7 +6,8 @@
 //!
 //! The file is cut into chunks of a fixed compressed length, chunk `k`
 //! covering the bits from `k` chunks in to `k + 1`. A chunk holding a BGZF
-//! header is read off its member chain from there; any other speculation
+//! header the bytes after its member bear out is read off its member chain
+//! from there; any other speculation
 //! searches its chunk for the first place a decode may resume
 //! ([`find`](crate::find)), and decodes from there — markers for the unknown history, as the
 //! [`native`](crate::native) decoder writes them — until the first member
@@ -60,7 +61,7 @@ pub const SPECULATION_LIMIT: usize = 2 * ((1 << (9 + 6)) - 1) * 258;
 /// A place a decode stands between two steps: where a chunk begins or ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Point {
-    /// A block that is not its member's last begins at this bit.
+    /// A block begins at this bit, after one that was not its member's last.
     Block(u64),
     /// A member's header begins at this bit.
     Member(u64),
@@ -319,8 +320,9 @@ impl Speculation {
 
     /// Chunk `chunk`'s speculation continued from `from`, the stop of a guess
     /// the limit cut, to where the chunk's guess would have stopped: a BGZF
-    /// member there read off its chain, any other place decoded from, nothing
-    /// searched for first.
+    /// member there read off its chain, a block there decoded from with
+    /// nothing searched for first, a plain member's header found by a search
+    /// beginning at it.
     pub(crate) fn continuing(
         chunk: u64,
         from: Point,
@@ -461,6 +463,15 @@ impl Speculation {
 
     /// Decode as far as the input goes: `Some` with where the chunk stops once
     /// it does, `None` for more input, `Err` where it cannot go on.
+    ///
+    /// Deficiency register: `deficiency: KD139` — past the chunk's end a
+    /// decoded guess stops at the first block boundary the next chunk's
+    /// search would begin at, while the next chunk's guess begins at the
+    /// first BGZF header it holds where it holds one: a plain member running
+    /// past a chunk's end into BGZF members gives two guesses that never meet,
+    /// the frontier decoding from the one's stop to the other's start itself.
+    /// **(c) unowned**; promoted by a profile of a plain-then-BGZF file's pass
+    /// showing that decode.
     fn step(&mut self, decode: &mut Decode) -> Result<Option<Point>, Halt> {
         let complete = self.input.is_complete();
         // A refusal searches on from just past the candidate, so the bytes

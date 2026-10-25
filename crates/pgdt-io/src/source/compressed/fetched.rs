@@ -207,7 +207,7 @@ impl FetchedCompressedSource {
     /// completed.
     ///
     /// It is the local source's mechanism over a fetched window instead of a
-    /// file, which is the one asymmetry between the providers (D15). What it
+    /// file, the asymmetry D15 names between the providers. What it
     /// holds is the compressed window, the decoder and one chunk buffer —
     /// never the unit's plaintext, which is the point.
     ///
@@ -267,8 +267,8 @@ impl FetchedCompressedSource {
         if covered != len {
             return Err(short_read());
         }
-        // Past every way out, so a failed read retains nothing — `held` is
-        // dropped on the way out instead, rather than leaving state a later
+        // Past every way out of this read's own, so a read failing here retains
+        // nothing — `held` is dropped on the way out instead, rather than leaving state a later
         // read would have to reason about. The local arm clears its live handle
         // on a decode error and leaves it seated on a short read, that handle
         // being a position a later read may continue from where a window is not.
@@ -276,7 +276,8 @@ impl FetchedCompressedSource {
         // A concurrent read that began a unit of its own may have put it back
         // since, and whichever is displaced here is completed rather than
         // dropped: its bytes are already out, and it is the only place their
-        // check is left to be compared.
+        // check is left to be compared. Where that check fails, this read
+        // fails with its own unit kept.
         let displaced =
             std::mem::replace(&mut *self.held.lock().unwrap_or_else(|e| e.into_inner()), held);
         Self::leave(displaced).await?;
@@ -531,8 +532,8 @@ impl ByteRangeSource for FetchedCompressedSource {
     /// so a `WaitPolicy::MayWait` holder blocks a blocking-pool thread while a
     /// sibling releases. Here the fetch has to `await`, so the buffer is
     /// obtained on the runtime's own task — and `BufferPool::obtain` waits on a
-    /// `Condvar`, which on a `current_thread` runtime — `pgdt`'s own, the
-    /// library imposing no flavour (`docs/design/decisions.md`, "D12") — would block the very thread the
+    /// `Condvar`, which on a `current_thread` runtime — `pgdt parse`, `info`
+    /// and `query`'s own, the library imposing no flavour (`docs/design/decisions.md`, "D12") — would block the very thread the
     /// releasing sibling needs. A wait that should not have been permitted is a
     /// hang with nothing to measure ([`WaitPolicy::NeverWait`]), so it is
     /// refused here rather than granted and hoped for.
@@ -558,8 +559,8 @@ impl ByteRangeSource for FetchedCompressedSource {
     }
 
     /// Announced to the transport, which is what carries the precondition on
-    /// every fetch — so every window an index build or a unit decode asks for
-    /// is pinned to the version this run opened on, without either knowing
+    /// every fetch — so every window a unit decode asks for is pinned to the
+    /// version this run opened on, without it knowing
     /// (`docs/design/decisions.md`, "D21").
     fn hint_in_flight_identity(&self, binds: bool) {
         self.source.hint_in_flight_identity(binds);
@@ -589,8 +590,8 @@ impl ByteRangeSource for FetchedCompressedSource {
     /// **One**, where the local twin recommends `min(cores, unit_count)` over
     /// the same bytes
     /// ([`CompressedFileSource::default_workers`](crate::CompressedFileSource::default_workers))
-    /// — this is the one source whose recommendation differs from its local
-    /// twin's, and the file's unit count says what may be *cut*, not what a
+    /// — as a fetched gzip first pass's differs from a local one's, and the
+    /// file's unit count says what may be *cut*, not what a
     /// network should be asked for at once.
     ///
     /// **The reason is not that the network is untuned**, though it is

@@ -125,9 +125,10 @@ impl Index {
     ///
     /// [`Error::InvalidIndex`] where the parts break an invariant every index
     /// this crate builds holds: no checkpoint at the file's start, offsets running
-    /// backward, a window other than its member's last 32 KiB, a unit that no
-    /// check would cover, an end before the last checkpoint, or a count of
-    /// fewer members than the checkpoints begin.
+    /// backward, a member start inside a byte, a window other than its member's
+    /// last 32 KiB, more checkpoints than a `u32` counts, a unit that no check
+    /// would cover, an end before the last checkpoint, or a count of fewer
+    /// members than the checkpoints begin.
     pub fn from_parts(
         spacing: NonZeroU64,
         checkpoints: Vec<Checkpoint>,
