@@ -46,7 +46,7 @@ the same file's headers (D116). The local arm still walks.
 - **15.8** widens the fetched arm's pass, which already reads BGZF: its
   units can be taken from the headers ahead of the frontier, and the index it
   must build is the one this pass builds, coalescing included.
-- **15.7's manual** writes gzip, BGZF included, into "Reading a dump over
+- **15.7.2's manual** writes gzip, BGZF included, into "Reading a dump over
   HTTP"; this slice corrected only `dump-inspection.md`'s sentence saying a
   BGZF file is read as an `.xz` file is from the first command, now said of a
   local one.

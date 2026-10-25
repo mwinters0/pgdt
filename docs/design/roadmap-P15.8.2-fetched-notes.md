@@ -49,8 +49,8 @@ member header the search finds by magic.
 
 - **15.8.3** takes a fetched BGZF file's units from its members' headers; the
   download is what its header reads come out of.
-- **15.7's resident readings** read a fetched pass holding its download too,
-  against the charge above; nothing is timed, and no figure reads a remote
+- **No figure reads a fetched pass's resident** against the charge above:
+  15.7's legs are local files. Nothing is timed, and no figure reads a remote
   first pass.
 
 ## Negative results

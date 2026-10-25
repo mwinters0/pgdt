@@ -58,7 +58,7 @@ parallel at units of whole members. A fetched one's is a first pass's from
   it; a fetched one is a first pass's from 15.13 on, its units taken from its
   members' headers in 15.8; a broken chain's first pass is 15.8's like any
   other.
-- **15.7's manual** writes the walk's two lines into `dump-inspection.md`'s
+- **15.7.2's manual** writes the walk's two lines into `dump-inspection.md`'s
   "Status on stderr" beside the `.xz` walk's; this slice corrected only the
   sentence saying a gzip file names no place a read could begin.
 

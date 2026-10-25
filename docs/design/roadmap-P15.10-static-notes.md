@@ -60,13 +60,13 @@ Every byte handed out is still the engine's (D117).
 
 ## What later slices inherit
 
-- **15.7**: a level-1 file is seekable once indexed. Its first pass is
+- **15.7.1**: a level-1 file is seekable once indexed. Its first pass is
   still serial in practice: speculation looks for dynamic block headers
-  only, and a one-block file has none past its start. So 15.7's
+  only, and a one-block file has none past its start. So 15.7.1's
   parallel-first-pass figure on such a writer's file prices the frontier
   alone. No figure prices the walk. A profile showing it is D118's
   reopening condition.
-- **The manual** (15.7) can say that any zlib level is seekable once
+- **The manual** (15.7.2) can say that any zlib level is seekable once
   indexed. The warning now describes an encoder outside the zlib family.
 
 ## Negative results

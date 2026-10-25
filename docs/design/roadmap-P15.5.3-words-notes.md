@@ -44,7 +44,7 @@ first pass's plan note, and the decline and `info` line in gzip's words.
   a zlib-rs that ends blocks at level 1 fails them by name rather than
   silently. 15.10 is what stops the warning firing on that output.
 - **`bgzip` is not named as a remedy** until 15.6 reads BGZF.
-- **The manual** says nothing of the gzip warning or note yet; 15.7 writes it.
+- **The manual** says nothing of the gzip warning or note yet; 15.7.2 writes it.
 
 ## Negative results
 

@@ -4657,6 +4657,9 @@ class XzDecodeScaling(unittest.TestCase):
         # Its spec gives it a generous limit of its own, so that no kill
         # interrupts the phase while what statistics hold is unbounded (`KD28`).
         "statistics-gathering",
+        # `parallel-peak-rss`'s stated allowance over gzip, twenty-four first
+        # pass workers' charge being far past the recorded 512 MB.
+        "gzip-resident",
     }
 
     def test_every_other_figure_runs_under_the_recorded_memory(self):
@@ -5100,6 +5103,372 @@ class GzseekSpacing(unittest.TestCase):
         for key in ("engine", "delivered", "units", "windows", "started"):
             with self.subTest(key=key):
                 self.assertIn(f'"{key}=', source)
+
+
+class GzipResident(unittest.TestCase):
+    """gzip's resident against its charge: a single member's first pass and a
+    BGZF file's block path, each at three worker counts."""
+
+    FIGURE = "gzip-resident"
+
+    #: What each leg's run said it billed, read off `scan started` by hand from
+    #: trial runs of `pgdt parse --memory 2550136832` over `control_gz` and
+    #: `control_bgzf` on 2026-10-25, the gzip charge as built: the mirror is
+    #: held to these, the bills a run states, as well as to the source.
+    STATED_BILLS = {
+        ("control_gz", 1): 69_859_312,
+        ("control_gz", 4): 279_437_248,
+        ("control_gz", 24): 1_676_623_488,
+        ("control_bgzf", 1): 102_987_776,
+        ("control_bgzf", 4): 185_168_384,
+        ("control_bgzf", 24): 1_237_000_704,
+    }
+    #: `control_gz`'s stored size on those runs, which decides it has chunks
+    #: past its first.
+    GZ_SIZE = 791_308_108
+
+    def test_it_is_untaken_and_borrows_nothing(self):
+        # Built ahead of the commit its readings are taken at, so it waits in
+        # `UNTAKEN`; standing in no sharing edge lets it publish alone.
+        fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        self.assertIn(fig, measure.UNTAKEN)
+        self.assertEqual(fig.shares, ())
+        self.assertEqual(fig.subtracts, ())
+        self.assertEqual(fig.stage, "warm-parallel")
+        self.assertEqual(fig.warm_inputs, ("control_gz", "control_bgzf"))
+        self.assertEqual(fig.memory, measure.PARALLEL_MEMORY)
+
+    def test_what_can_move_it_is_declared_and_exists(self):
+        fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        for path in (
+            *measure.GZIP_READ,
+            *measure.READ,
+            *measure.RSS_INSTRUMENT,
+            "scripts/generate_gzip_input.py",
+            *measure.GEN_PERF,
+            "crates/pgdt/Cargo.toml",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, fig.depends)
+        for path in measure.GZIP_READ:
+            with self.subTest(path=path):
+                self.assertTrue((measure.REPO / path).exists(), path)
+
+    def test_the_bgzf_leg_is_a_compression_of_the_control(self):
+        spec = measure.INPUTS["control_bgzf"]
+        self.assertEqual(spec.derives_from, "control")
+        self.assertEqual(spec.generator, "generate_gzip_input.py")
+        self.assertIn("--bgzf", spec.args)
+        self.assertEqual(measure.input_file("control_bgzf"), "control_bgzf.gz")
+
+    def test_the_counts_are_parallel_rows_either_side_of_the_depth(self):
+        jobs = measure.GZIP_RSS_JOBS
+        self.assertEqual(list(jobs), sorted(set(jobs)))
+        self.assertTrue(set(jobs) <= set(measure.PARALLEL_JOBS))
+        # The serial path, a count below the pool's depth and one above it:
+        # the block leg's pool is constant on one side and grows on the other.
+        self.assertEqual(jobs[0], measure.PARALLEL_BASELINE)
+        self.assertLessEqual(jobs[1], measure.LIBRARY_POOL_DEPTH)
+        self.assertGreater(jobs[-1], measure.LIBRARY_POOL_DEPTH)
+
+    def test_every_leg_is_parallel_peak_rss_s_shape_over_gzip(self):
+        specs = measure._gzip_rss_specs()
+        self.assertEqual(len(specs), len(measure.GZIP_RSS_LEGS) * len(measure.GZIP_RSS_JOBS))
+        self.assertEqual({s.input for s in specs}, {"control_gz", "control_bgzf"})
+        self.assertEqual({s.regime for s in specs}, {"warm-parallel"})
+        self.assertEqual({s.binary for s in specs}, {"pgdt"})
+        for spec in specs:
+            with self.subTest(spec=spec.label):
+                script = measure._script(spec.command)
+                self.assertIn("/peak-rss /pgdt parse", script)
+                self.assertIn(
+                    f"--memory {measure.stated_allowance(measure.PARALLEL_BUDGET)}", script
+                )
+        self.assertEqual(len({s.label for s in specs}), len(specs))
+
+    def test_the_mirrored_constants_are_the_librarys_own(self):
+        # Hand-copied on `QUERY_SUBSTREAM_CAP`'s argument, so checked here:
+        # a term that moved in the library and not here bills a cell wrongly,
+        # which the run's own stated bill then refuses at the sitting.
+        repo = measure.REPO
+        deflate = (repo / "crates/pgdt-io/src/source/compressed/deflate.rs").read_text()
+        self.assertIn(
+            "const CHECKPOINT_SPACING: NonZeroU64 = NonZeroU64::new("
+            f"{measure.LIBRARY_GZIP_SPACING >> 20} << 20).unwrap();",
+            deflate,
+        )
+        self.assertIn(f"const INPUT_CHUNK: u64 = 1 << {measure.GZIP_INPUT_CHUNK.bit_length() - 1};",
+                      deflate)
+        self.assertIn("self.lending_footprint() + self.input_chunk()", deflate)
+        self.assertIn("gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64", deflate)
+        zlib = (repo / "crates/gz-seek/src/zlib.rs").read_text()
+        self.assertIn(f"pub const DECODER_BYTES: u64 = {measure.GZIP_DECODER_BYTES >> 10} * 1024;",
+                      zlib)
+        self.assertIn(f"pub const WINDOW_SIZE: usize = {measure.GZIP_WINDOW_BYTES >> 10} * 1024;",
+                      zlib)
+        speculate = (repo / "crates/gz-seek/src/speculate.rs").read_text()
+        self.assertIn("pub const SPECULATION_LIMIT: usize = 2 * ((1 << (9 + 6)) - 1) * 258;",
+                      speculate)
+        self.assertEqual(measure.GZIP_SPECULATION_LIMIT, 2 * ((1 << (9 + 6)) - 1) * 258)
+        first_pass = repo / "crates/pgdt-io/src/source/compressed/deflate/first_pass"
+        pass_rs = (first_pass / "pass.rs").read_text()
+        self.assertIn(
+            f"const SKIP_SCRATCH: usize = {measure.GZIP_SKIP_SCRATCH >> 10} * 1024;", pass_rs
+        )
+        first = (first_pass.parent / "first_pass.rs").read_text()
+        self.assertIn(
+            "const DECODE_BYTES: u64 = gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64 + "
+            "INPUT_CHUNK;",
+            first,
+        )
+        self.assertIn("const PASS_BYTES: u64 = 2 * DECODE_BYTES + SKIP_SCRATCH as u64;", first)
+        self.assertIn("let per_worker = if ahead { pass.max(task) } else { pass };", first)
+        ahead = (first_pass / "ahead.rs").read_text()
+        self.assertIn("NonZeroU64::new(INPUT_CHUNK).unwrap();", ahead)
+        self.assertIn("Chunking { bytes: CHUNK_BYTES, limit: gz_seek::SPECULATION_LIMIT };", ahead)
+        self.assertIn("let guess = 2 * gz_seek::WINDOW_SIZE as u64;", ahead)
+        self.assertIn(
+            "self.bytes.get() + limit + 2 * limit + limit + 2 * guess + INPUT_CHUNK", ahead
+        )
+
+    def test_the_charges_are_the_bills_a_run_stated(self):
+        sizes = {"control_gz": self.GZ_SIZE, "control_bgzf": 842_864_994}
+        kinds = {leg: kind for leg, _, kind in measure.GZIP_RSS_LEGS}
+        for (leg, jobs), stated in self.STATED_BILLS.items():
+            with self.subTest(leg=leg, jobs=jobs):
+                billed, pool = measure.gzip_leg_charge(kinds[leg], jobs, sizes[leg])
+                self.assertEqual(billed, stated)
+                # A first pass retains no block, so it bills no pool; the BGZF
+                # leg's pool is `pool_bytes` over its unit, at every count.
+                if kinds[leg] == "pass":
+                    self.assertEqual(pool, 0)
+                else:
+                    self.assertEqual(pool, measure.pool_bytes(measure.bgzf_unit(), jobs))
+
+    def test_a_first_pass_of_one_chunk_bills_the_pass_alone(self):
+        # No task can run on a file of one chunk, so none is charged.
+        self.assertEqual(
+            measure.gzip_first_pass_charge(4, measure.GZIP_INPUT_CHUNK),
+            4 * measure.gzip_pass_bytes(),
+        )
+        self.assertLess(measure.gzip_pass_bytes(), measure.gzip_task_bytes())
+
+    def test_a_bgzf_unit_is_the_fewest_members_reaching_the_spacing(self):
+        unit = measure.bgzf_unit()
+        self.assertEqual(unit % measure.BGZF_BLOCK, 0)
+        self.assertGreaterEqual(unit, measure.LIBRARY_GZIP_SPACING)
+        self.assertLess(unit - measure.BGZF_BLOCK, measure.LIBRARY_GZIP_SPACING)
+
+    def test_an_unknown_charge_is_an_error(self):
+        with self.assertRaises(ValueError):
+            measure.gzip_leg_charge("walk", 1, 1)
+
+    def test_the_bands_are_the_xz_checks_own(self):
+        # One set of lines for every source: `charge_model_problem` is
+        # `charge_fault` over `.xz`'s bill.
+        unit = 24 << 20
+        for held in (1.0, 400 * measure.MIB, 900 * measure.MIB, 2000 * measure.MIB):
+            with self.subTest(held=held):
+                billed, pool, _ = measure.charge_model(unit, 4, held)
+                self.assertEqual(
+                    measure.charge_model_problem(unit, 4, held),
+                    measure.charge_fault(billed, pool, 4, held),
+                )
+
+    # -- the renderer ------------------------------------------------------
+
+    def _raw(self, extra=None, reported=None):
+        """A sitting whose every cell holds its bill plus `extra` MiB (100 by
+        default), each run reporting the bill and count it ran under."""
+        sizes = {"control_gz": self.GZ_SIZE, "control_bgzf": 842_864_994}
+        rss, reports = {}, {}
+        for spec in measure._gzip_rss_specs():
+            jobs = int(spec.command.rpartition("-jobs-")[2])
+            key = spec.key(self.FIGURE)
+            held = self.STATED_BILLS[(spec.input, jobs)] + (extra or {}).get(
+                (spec.input, jobs), 100 * measure.MIB
+            )
+            rss[key] = [held / 1024 - 20, held / 1024 - 10, held / 1024]
+            report = {
+                "resolved_jobs": str(jobs),
+                "resolved_budget": str(self.STATED_BILLS[(spec.input, jobs)]),
+            }
+            if spec.input == "control_gz":
+                report["first_pass_workers"] = str(jobs)
+            report.update((reported or {}).get((spec.input, jobs), {}))
+            reports[key] = {k: v for k, v in report.items() if v is not None}
+        return {
+            "readings": {k: [1.0] * 3 for k in rss},
+            "rss": rss,
+            "killed": {},
+            "reported": reports,
+            "input_sizes": {**{name: 1 << 30 for name in measure.INPUTS}, **sizes},
+            "runs": [],
+        }
+
+    def _render(self, raw):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            return measure.run_gzip_resident(session)
+
+    def test_cells_inside_the_bound_meet_the_model(self):
+        body = self._render(self._raw())
+        self.assertIn("The model holds at every cell above", body)
+        labels = tuple(f"| {label}, `--jobs " for _, label, _ in measure.GZIP_RSS_LEGS)
+        rows = [ln for ln in body.splitlines() if ln.startswith(labels)]
+        self.assertEqual(len(rows), 6)
+        for row in rows:
+            self.assertIn("| met |", row)
+        # The first pass says how many workers it ran; the BGZF leg pools.
+        self.assertIn("| 24 · 24 ran |", body)
+        self.assertIn(
+            measure._fmt_budget_bytes(measure.pool_bytes(measure.bgzf_unit(), 24)), body
+        )
+
+    def test_a_cell_past_the_bound_is_a_finding_and_re_derives_it(self):
+        over = measure.LIBRARY_MEMORY_UNPOOLED_BOUND + measure.MIB
+        body = self._render(self._raw(extra={("control_gz", 24): over}))
+        self.assertNotIn("The model is refuted", body)
+        self.assertIn("a finding rather than a refutation", body)
+        self.assertIn(
+            "re-derive `MEMORY_UNPOOLED_BOUND` at "
+            f"**{measure._fmt_budget_bytes(measure.rederived_unpooled_bound(over))}**",
+            body,
+        )
+
+    def test_an_over_bill_refutes_and_names_the_leg(self):
+        body = self._render(self._raw(extra={("control_gz", 24): -measure.MIB}))
+        self.assertIn("The model is refuted, and by these cells:", body)
+        self.assertIn("**single member, first pass** at `--jobs 24`", body)
+        self.assertIn("over-billed", body)
+
+    def test_the_secant_is_what_each_added_worker_held_and_was_charged(self):
+        added = 10 * measure.MIB
+        extra = {("control_gz", 24): 100 * measure.MIB + 20 * added}
+        body = self._render(self._raw(extra=extra))
+        task = measure.gzip_task_bytes()
+        held_each = task + added
+        self.assertIn(
+            f"| single member, first pass | {measure._fmt_budget_bytes(held_each)} | "
+            f"{measure._fmt_budget_bytes(task)} |",
+            body,
+        )
+
+    def test_a_bill_the_mirror_does_not_charge_refuses_the_figure(self):
+        raw = self._raw(reported={("control_bgzf", 4): {"resolved_budget": "1"}})
+        with self.assertRaisesRegex(RuntimeError, "the mirror is not the library's charge"):
+            self._render(raw)
+
+    def test_a_count_other_than_the_row_s_refuses_the_figure(self):
+        raw = self._raw(reported={("control_gz", 24): {"resolved_jobs": "3"}})
+        with self.assertRaisesRegex(RuntimeError, "resolved 3 worker"):
+            self._render(raw)
+
+    def test_a_single_member_that_opened_no_first_pass_refuses_the_figure(self):
+        raw = self._raw(reported={("control_gz", 4): {"first_pass_workers": None}})
+        with self.assertRaisesRegex(RuntimeError, "opened no first pass"):
+            self._render(raw)
+
+    def test_a_bgzf_file_read_by_a_first_pass_refuses_the_figure(self):
+        raw = self._raw(reported={("control_bgzf", 1): {"first_pass_workers": "1"}})
+        with self.assertRaisesRegex(RuntimeError, "not walked"):
+            self._render(raw)
+
+    # -- the started line ---------------------------------------------------
+
+    def test_the_first_pass_line_gives_its_workers(self):
+        serial = (
+            "INFO first pass started, reading serially while it builds the index "
+            "source=/dump.sql codec=gzip"
+        )
+        parallel = (
+            "INFO first pass started, inflating in parallel while it builds the index, its "
+            "scan one reader source=/dump.sql codec=gzip workers=24"
+        )
+        resumed = (
+            "INFO first pass started, resuming from a saved checkpoint and inflating in "
+            "parallel while it builds the index, its scan one reader source=/dump.sql "
+            "codec=gzip checkpoint=3 plaintext=75497472 workers=4"
+        )
+        self.assertEqual(measure.parse_first_pass(serial), {"first_pass_workers": "1"})
+        self.assertEqual(measure.parse_first_pass(parallel), {"first_pass_workers": "24"})
+        self.assertEqual(measure.parse_first_pass(resumed), {"first_pass_workers": "4"})
+        # A `workers=` elsewhere in the log is not the pass's.
+        self.assertEqual(
+            measure.parse_first_pass("INFO scan arrangement workers=7\n" + serial),
+            {"first_pass_workers": "1"},
+        )
+        self.assertEqual(measure.parse_first_pass("INFO scan started jobs=4"), {})
+
+    def test_the_library_spells_the_line_the_harness_reads(self):
+        source = (
+            measure.REPO / "crates/pgdt-io/src/source/compressed/deflate/first_pass.rs"
+        ).read_text()
+        self.assertEqual(source.count('"first pass started, '), 4)
+        self.assertIn("reading serially", source)
+        self.assertIn("workers,\n", source)
+
+    # -- the generator ------------------------------------------------------
+
+    def _bgzf(self, plaintext: bytes) -> bytes:
+        import generate_gzip_input
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source, out = Path(tmp) / "plain.sql", Path(tmp) / "out.gz"
+            source.write_bytes(plaintext)
+            with unittest.mock.patch.object(
+                generate_gzip_input.zlib, "ZLIB_RUNTIME_VERSION", generate_gzip_input.ZLIB_VERSION
+            ):
+                generate_gzip_input.compress_bgzf(source, out)
+            self.assertFalse((Path(tmp) / "out.gz.partial").exists())
+            return out.read_bytes()
+
+    def test_it_writes_bgzf_members_holding_the_source(self):
+        import gzip
+        import struct
+
+        import generate_gzip_input
+
+        block = generate_gzip_input.BGZF_BLOCK
+        plaintext = b"COPY public.t (a) FROM stdin;\n1\n\\.\n" * 5000
+        data = self._bgzf(plaintext)
+        self.assertEqual(gzip.decompress(data), plaintext)
+        self.assertTrue(data.endswith(generate_gzip_input.BGZF_EOF))
+        # Walk the members by their own `BSIZE`, as `pgdt`'s walk does.
+        at, sizes = 0, []
+        while at < len(data):
+            header = data[at : at + len(generate_gzip_input.BGZF_HEADER)]
+            self.assertEqual(header, generate_gzip_input.BGZF_HEADER)
+            (bsize,) = struct.unpack_from("<H", data, at + len(header))
+            (isize,) = struct.unpack_from("<I", data, at + bsize + 1 - 4)
+            sizes.append(isize)
+            at += bsize + 1
+        self.assertEqual(at, len(data))
+        # Every member but the last two full; then the remainder, then EOF.
+        self.assertEqual(sizes[-1], 0)
+        self.assertEqual(sum(sizes), len(plaintext))
+        self.assertTrue(all(size == block for size in sizes[:-2]))
+        self.assertEqual(sizes[-2], len(plaintext) - block * (len(sizes) - 2))
+
+    def test_a_member_past_bsize_is_refused(self):
+        import random
+
+        import generate_gzip_input
+
+        noise = random.Random(7).randbytes(70_000)
+        with self.assertRaises(SystemExit):
+            generate_gzip_input.bgzf_member(noise)
+
+    def test_the_eof_member_is_bgzf_s_own(self):
+        import gzip
+
+        import generate_gzip_input
+
+        eof = generate_gzip_input.BGZF_EOF
+        self.assertEqual(len(eof), 28)
+        self.assertTrue(eof.startswith(generate_gzip_input.BGZF_HEADER))
+        self.assertEqual(gzip.decompress(eof), b"")
 
 
 class Reported(unittest.TestCase):

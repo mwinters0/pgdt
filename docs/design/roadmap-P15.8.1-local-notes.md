@@ -48,12 +48,12 @@ headers").
 - **The chunk length and the plaintext limit** (`Chunking::SHIPPED`) are set
   without a figure. 15.16 continues a chunk cut at the limit from its stop, so
   the cut no longer ends the chain of windows, and makes the limit
-  `gz_seek::SPECULATION_LIMIT`; 15.7 prices the chunk length
+  `gz_seek::SPECULATION_LIMIT`; 15.7.1 prices the chunk length
   ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
   "15.8.1's chunking, reviewed").
 - **15.7's resident readings** read a pass now holding its tasks too; the
   charge is the bound to compare them against.
-- **Nothing is timed**, as 15.8 left it: what the lift buys is 15.7's.
+- **Nothing is timed**, as 15.8 left it: what the lift buys is 15.7.1's.
 
 ## Negative results
 

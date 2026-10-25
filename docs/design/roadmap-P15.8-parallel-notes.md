@@ -47,7 +47,7 @@ split: `gz-seek`'s parallel pass, and the first pass over it").
   members' headers" for a fetched file, or the arm walks headers ahead of the
   frontier, is 15.8.1's call, as is whether the first pass's scan partitions.
 - **Nothing is timed.** How fast the native decode runs, and so what a pass
-  gains at a given count, is 15.7's reading of the arm 15.8.1 wires.
+  gains at a given count, is 15.7.1's reading of the arm 15.8.1 wires.
 
 ## Negative results
 

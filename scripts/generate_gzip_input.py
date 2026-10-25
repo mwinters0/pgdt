@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The `.gz` input the register's `inflate-throughput` figure is taken on.
+"""The `.gz` inputs the register's gzip figures are taken on.
 
 `--from-dump` compresses an input `scripts/measure.py` already generates (the
 brace-free `control`) into **one gzip member, the shape `pg_dump -Fp -Z`
@@ -24,16 +24,28 @@ stale.
 the same reason: it is what makes the file `pg_dump`'s shape rather than a
 gzip file that merely decodes to the same plaintext.
 
+**`--bgzf` writes BGZF instead**, the shape `bgzip` writes: one member a
+`BGZF_BLOCK` of plaintext, each deflated alone at the same level with no
+history from the one before, its header carrying the `BC` subfield that states
+the member's length (`BGZF_HEADER`), and the fixed empty member that marks the
+end (`BGZF_EOF`). It is what `gzip-resident`'s block-path legs read: `pgdt`
+walks a local BGZF file at open, so its first `parse` decodes whole units
+from the start where a single member's first pass cannot. Written here rather
+than by `bgzip`, which is neither installed nor pinned, through the same zlib
+the single member is, so the two files differ by their framing alone.
+
 Generated, never committed. `scripts/measure.py` owns the paths; this script
 owns the bytes.
 
     cd scripts
     uv run generate_gzip_input.py --from-dump control.sql out.gz
+    uv run generate_gzip_input.py --from-dump control.sql --bgzf out.gz
 """
 
 from __future__ import annotations
 
 import argparse
+import struct
 import sys
 import zlib
 from pathlib import Path
@@ -55,6 +67,20 @@ GZIP_WINDOW_BITS = 15 + 16
 #: The header every routine major's `-Z` output opens with: magic, deflate,
 #: no flags, `MTIME` 0, `XFL` 0, OS 3 (Unix).
 PG_DUMP_HEADER = bytes.fromhex("1f8b08000000000000" + "03")
+
+#: The plaintext one BGZF member holds: `htslib`'s `BGZF_BLOCK_SIZE`, which
+#: `bgzip` fills every member but the last to. Its compressed member must fit
+#: `BSIZE`'s 16 bits, which text at `LEVEL` does with room to spare, and a
+#: member that does not is refused rather than split (`bgzf_member`).
+BGZF_BLOCK = 0xFF00
+
+#: A BGZF member's header up to `BSIZE`: magic, deflate, `FEXTRA`, `MTIME` 0,
+#: `XFL` 0, OS 255 (unknown), `XLEN` 6, and the `BC` subfield of length 2 whose
+#: value follows — the member's total length less one. What `htslib` writes.
+BGZF_HEADER = bytes.fromhex("1f8b0804" "00000000" "00ff" "0600" "4243" "0200")
+
+#: The empty member every BGZF file ends with (SAM/BAM specification, §4.1.2).
+BGZF_EOF = bytes.fromhex("1f8b08040000000000ff0600424302001b0003000000000000000000")
 
 #: Plaintext read from the source at a time. Large enough that the call
 #: overhead is nothing, small enough that the generator holds nothing.
@@ -97,6 +123,37 @@ def compress(source: Path, out: Path) -> None:
     tmp.replace(out)
 
 
+def bgzf_member(plaintext: bytes) -> bytes:
+    """One BGZF member holding `plaintext`, deflated alone at `LEVEL`.
+
+    Refused where the member would not fit `BSIZE`: `bgzip` would split such a
+    block, and a generator that silently wrote another layout would hand the
+    figure a file whose units it never registered."""
+    deflater = zlib.compressobj(LEVEL, zlib.DEFLATED, -15)
+    body = deflater.compress(plaintext) + deflater.flush()
+    total = len(BGZF_HEADER) + 2 + len(body) + 8
+    if total > 1 << 16:
+        raise SystemExit(
+            f"a {len(plaintext)}-byte block deflates to a {total}-byte member, past BSIZE's "
+            "16 bits; bgzip would split it, and this generator writes one layout"
+        )
+    trailer = struct.pack("<II", zlib.crc32(plaintext), len(plaintext))
+    return BGZF_HEADER + struct.pack("<H", total - 1) + body + trailer
+
+
+def compress_bgzf(source: Path, out: Path) -> None:
+    """`source` written as BGZF at `out`: a member a `BGZF_BLOCK`, then
+    `BGZF_EOF`, beside it first and moved into place once whole."""
+    check_zlib(zlib.ZLIB_RUNTIME_VERSION)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_name(out.name + ".partial")
+    with source.open("rb") as src, tmp.open("wb") as dst:
+        while block := src.read(BGZF_BLOCK):
+            dst.write(bgzf_member(block))
+        dst.write(BGZF_EOF)
+    tmp.replace(out)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
@@ -106,9 +163,14 @@ def main(argv: list[str] | None = None) -> int:
         metavar="SOURCE",
         help="the plain dump to compress, one of the inputs measure.py generates",
     )
+    parser.add_argument(
+        "--bgzf",
+        action="store_true",
+        help="write BGZF, a member a 65,280-byte block, rather than pg_dump's one member",
+    )
     parser.add_argument("out", type=Path, help="where the .gz file goes")
     args = parser.parse_args(argv)
-    compress(args.from_dump, args.out)
+    (compress_bgzf if args.bgzf else compress)(args.from_dump, args.out)
     plain = args.from_dump.stat().st_size
     packed = args.out.stat().st_size
     print(f"{args.out}: {packed} bytes, {plain} of plaintext, {plain / packed:.2f}x")

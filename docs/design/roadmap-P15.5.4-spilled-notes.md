@@ -39,7 +39,7 @@ struck).
   which takes them in checkpoint order (`debug_assert`): a parallel pass
   placing out of order needs the offsets keyed by checkpoint rather than
   pushed.
-- **15.7's manual** says where a first pass writes, beside `--dtcache` and
+- **15.7.2's manual** says where a first pass writes, beside `--dtcache` and
   `TMPDIR`, in `dump-inspection.md`; nothing user-facing says it yet.
 - **15.7's resident readings** read a pass holding no window, so a first
   pass's resident is its decodes, its scratch and its buffer pool.

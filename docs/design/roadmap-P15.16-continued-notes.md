@@ -37,7 +37,7 @@ change outside `gz-seek`.
 
 ## What later slices inherit
 
-- **15.7** reads the pass at `SPECULATION_LIMIT`, held fixed across its
+- **15.7.1** reads the pass at `SPECULATION_LIMIT`, held fixed across its
   chunk-length legs. `Chunking::task_bytes` is unchanged: a continuation
   holds no more than a speculation. Queued continuations hold nothing and
   are not counted by `Parallel::pending`.

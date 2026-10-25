@@ -43,7 +43,7 @@ first pass it comes out of the one download (15.8.2).
 
 ## What later slices inherit
 
-- **15.7's readings** read a BGZF first pass whose tasks decode each byte once,
+- **15.7.1's readings** read a BGZF first pass whose tasks decode each byte once,
   through the engine; a single member's are still decoded natively first.
 - **15.16** continues a limit-cut speculation, and a chain cut at the limit
   from its stop, read off the headers there.

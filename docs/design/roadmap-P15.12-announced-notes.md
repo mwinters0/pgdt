@@ -29,7 +29,7 @@ What a gzip first pass says on stderr, and where it says it.
   no longer serial; the text is in `FirstPass::spaced` and `resumed`.
 - **15.6 announces the BGZF walk** at open, as the `.xz` walk is, which this
   slice does not touch: a BGZF file opened over its walk is not a first pass.
-- **The manual** says nothing of these lines yet; 15.7 writes them into
+- **The manual** says nothing of these lines yet; 15.7.2 writes them into
   `dump-inspection.md`'s "Status on stderr" beside the `.xz` walk's.
 
 ## Negative results

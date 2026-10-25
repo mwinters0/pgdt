@@ -31,7 +31,7 @@ Both are the review's
 
 ## What later slices inherit
 
-- **A take needs blocks shorter than a chunk**: see below. 15.16 and 15.7,
+- **A take needs blocks shorter than a chunk**: see below. 15.16 and 15.7.1,
   choosing files for a take, meet the same; the other lifted tests still read
   the unflushed member, so they hold the index and the refusals with tasks
   ahead, not the take path.

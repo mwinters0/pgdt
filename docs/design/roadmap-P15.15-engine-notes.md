@@ -57,7 +57,7 @@ start with the very history it began with, every trailer it holds matching.
   serial pass saves.
 - **Nothing is timed.** Each byte is now decoded twice, natively and by the
   engine, both on the caller's threads; whether that keeps the pass from
-  lifting the inflate at the counts a machine runs is 15.7's reading, which
+  lifting the inflate at the counts a machine runs is 15.7.1's reading, which
   D117 reopens on.
 
 ## Negative results

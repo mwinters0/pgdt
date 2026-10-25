@@ -134,6 +134,12 @@ import generate_perf_data as perf
 # against. Import-safe on the same terms.
 from generate_xz_input import KOJI_RATIO_MAX, KOJI_RATIO_MIN
 
+# The plaintext a BGZF member holds, for `gzip-resident`'s unit arithmetic: the
+# generator writes the members, so the count a unit coalesces is read off the
+# constant it writes them at rather than spelled twice. Import-safe on the same
+# terms.
+from generate_gzip_input import BGZF_BLOCK
+
 # The release build, whose image builds every binary a figure runs and whose
 # base is the image every built binary runs in (`register_image`,
 # `build_in_image`), and which runs a figure's `cargo bench` itself
@@ -1286,6 +1292,31 @@ def parse_resolution(text: str) -> dict[str, str]:
     return {"resolved_jobs": match.group(1), "resolved_budget": match.group(2)}
 
 
+#: A gzip first pass's started line (`first_pass.rs`, `announce`), and the
+#: worker count it names where its inflate runs ahead. A serial pass names
+#: none, saying `reading serially` instead.
+FIRST_PASS_STARTED_RE = re.compile(r"\bfirst pass started\b([^\n]*)")
+FIRST_PASS_WORKERS_RE = re.compile(r"\bworkers=(\d+)\b")
+
+
+def parse_first_pass(text: str) -> dict[str, str]:
+    """How many workers a gzip first pass inflated on — the frontier and the
+    tasks run ahead of it — read off its own started line: `workers=` where it
+    names one, one where it reads serially.
+
+    `{}` where the run opened no first pass, which is every source but a gzip
+    file no complete index covers. **The resolved count is not this number**:
+    `scan started` states what the arrangement afforded, and a pass runs no
+    more tasks ahead than its file has chunks past the first, so a leg whose
+    two disagree held fewer workers than it was billed for, and its table says
+    so rather than reading the bill as what ran."""
+    match = FIRST_PASS_STARTED_RE.search(text)
+    if not match:
+        return {}
+    workers = FIRST_PASS_WORKERS_RE.search(match.group(1))
+    return {"first_pass_workers": workers.group(1) if workers else "1"}
+
+
 #: What `pgdt query` says on stderr about the rows it did not read, and how many
 #: it returned: the pruning note (`PlanNoteKind::StatisticsPruned`), the early
 #: stop's note, and the closing count.
@@ -1576,6 +1607,25 @@ INPUTS["control_gz"] = InputSpec(
     derives_from="control",
     # gzip at level 6 packs text a shade under half as tightly as xz at
     # preset 6; a generous nominal, for `control_xz`'s reason.
+    nominal_bytes=1024 * MIB,
+)
+#: `gzip-resident`'s block-path leg: `control` written as BGZF
+#: (`generate_gzip_input.py --bgzf`), a member a `BGZF_BLOCK` of plaintext.
+#:
+#: **The gzip file a `parse` block-decodes from its first byte.** A local BGZF
+#: file is walked at open, so its index is complete before the scan and every
+#: reader decodes whole units through the block cache, as `control_xz`'s do;
+#: a single member's first `parse` is its first pass instead. A compression of
+#: `control`, so the plaintext is the other legs' exactly.
+INPUTS["control_bgzf"] = InputSpec(
+    "control_bgzf",
+    "generate_gzip_input.py",
+    ("--from-dump", "@SOURCE@", "--bgzf"),
+    scales=False,
+    suffix=".gz",
+    derives_from="control",
+    # Each member deflated with no history packs a little looser than one
+    # member; the single member's generous nominal holds it.
     nominal_bytes=1024 * MIB,
 )
 #: The koji download, and where in it the koji leg's streams are taken from.
@@ -2606,8 +2656,9 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 7}
 
 #: The worker count every `pgdt` invocation this harness makes states, and the
-#: one every registered figure is taken at **except the three whose axis it is**
-#: (`parallel-scan-throughput`, `parallel-peak-rss`, `xz-decode-scaling`) **and
+#: one every registered figure is taken at **except the four whose axis it is**
+#: (`parallel-scan-throughput`, `parallel-peak-rss`, `gzip-resident`,
+#: `xz-decode-scaling`) **and
 #: `reserve`**, whose stated legs hold `RESERVE_JOBS` and whose flagless legs
 #: state nothing.
 #:
@@ -3557,7 +3608,20 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> ChargeFault | Non
     fallback holds none of these terms, and a censored leg's reading is a bound
     rather than a number.
     """
-    billed, pool, unnamed = charge_model(unit, jobs, held)
+    billed, pool, _ = charge_model(unit, jobs, held)
+    return charge_fault(billed, pool, jobs, held)
+
+
+def charge_fault(billed: int, pool: int, jobs: int, held: float) -> ChargeFault | None:
+    """`charge_model_problem`'s three lines, asked of any charge: `billed` what
+    the rule charged `jobs` workers, `pool` the part of it a retention list
+    holds (zero where the source pools nothing), `held` the process's peak.
+
+    The lines are the library's, not a codec's — `MEMORY_RESERVE` and
+    `MEMORY_UNPOOLED_BOUND` bound whatever any source's `WorkerMemory` leaves
+    unbilled — so a figure whose charge is not `.xz`'s block path, as
+    `gzip-resident`'s first pass is not, asks this with its own bill."""
+    unnamed = held - billed
     if unnamed < 0:
         return ChargeFault(
             BAND_OVER_BILL,
@@ -3589,6 +3653,87 @@ def charge_model_problem(unit: int, jobs: int, held: float) -> ChargeFault | Non
             "wrong is the number the count is predicted against.",
         )
     return None
+
+
+def charge_verdict(
+    model_faults: Sequence[tuple[ChargeFault, str]],
+    model_unnamed: Sequence[float],
+    evaluated: int,
+    nowhere: str,
+) -> str:
+    """What a figure's cells say about the charge model, read off each faulting
+    cell's band (`BAND_STANCE`): the refuting cells and why their bands refute,
+    the cells inside the rule and the bound their remainders re-derive, or that
+    every cell met it — and `nowhere`, the figure's own words for a sitting
+    that evaluated no cell, which is not the same claim as one that met it.
+
+    `model_faults` pairs each fault with its cell's line, `model_unnamed` is
+    every evaluated cell's remainder, faulting or not, and `evaluated` is how
+    many cells there were. One function for every figure that runs the check
+    (`reserve`, `gzip-resident`), so a band's reading cannot differ by figure.
+    """
+    if model_faults:
+        refuting = [line for fault, line in model_faults if fault.refutes]
+        inside = [line for fault, line in model_faults if not fault.refutes]
+        bands = []
+        if refuting:
+            # One clause per band actually hit, rather than one sentence over
+            # the whole stanza: the bands refute for different reasons, and one
+            # sentence asserts a single band's reason over every cell in it.
+            hit = sorted({fault.band for fault, _ in model_faults if fault.refutes})
+            bands.append(
+                "**The model is refuted, and by these cells:**\n\n"
+                + "\n".join(refuting)
+                + f"\n\nThe `{BAND_BOUND}` band is the one a sitting discharges itself, and each "
+                "cell above is in a band it is not: "
+                + "; ".join(f"`{band}`, where {band_refutes(band)}" for band in hit)
+                + ". The table publishes all the same: a refutation is a reading of the library, "
+                "and only a killed leg keeps a figure out of the document."
+            )
+        if inside:
+            # The re-derivation runs over every evaluated cell rather than over
+            # the faulting ones — the bound is what covers the worst remainder
+            # the sitting saw, and the cells under it are as much evidence of
+            # that as the cells over it — but only where nothing bars.
+            #
+            # Withheld from the whole sitting wherever the model is refuted,
+            # rather than from the refuting family alone: a refuted cell
+            # describes an arrangement the rule did not keep inside its
+            # allocation, or a charge nothing holds, and a bound is a term of
+            # the model that sitting has just contradicted.
+            tail = ""
+            if any(fault.band == BAND_BOUND for fault, _ in model_faults):
+                if refuting:
+                    tail = (
+                        "\n\nNo bound is re-derived from this sitting: the model is refuted "
+                        "in it, so its worst remainder is not a reading a term of that model "
+                        "may be sized to."
+                    )
+                else:
+                    worst = max(model_unnamed)
+                    tail = (
+                        "\n\nThe worst remainder over the "
+                        f"{evaluated} evaluated cell(s) is {_fmt_budget_bytes(worst)}, so "
+                        "these readings re-derive `MEMORY_UNPOOLED_BOUND` at "
+                        f"**{_fmt_budget_bytes(rederived_unpooled_bound(worst))}** — the "
+                        f"smallest {_fmt_budget_bytes(UNPOOLED_BOUND_STEP)} step that covers "
+                        "it, which is the shipped bound's own arithmetic re-done over this "
+                        "sitting and not a re-take."
+                    )
+            bands.append(
+                "**Inside the rule, and so a finding rather than a refutation** — the "
+                f"`{BAND_BOUND}` band is the one a sitting discharges itself, and every cell "
+                "here is in it:\n\n"
+                + "\n".join(inside)
+                + tail
+            )
+        return "\n\n".join(bands)
+    if evaluated:
+        return (
+            "**The model holds at every cell above**: nothing here crosses any of its three "
+            "lines."
+        )
+    return nowhere
 
 
 #: The two compressed inputs the flagless axis is read over: the registered
@@ -5178,6 +5323,7 @@ class Session:
         self._last_stdout = {
             **parse_reported(proc.stdout),
             **parse_resolution(proc.stderr),
+            **parse_first_pass(proc.stderr),
             **parse_query_notes(proc.stderr),
         }
         if report_path is not None:
@@ -5959,8 +6105,8 @@ ALLOCATOR_LEGS: tuple[str, ...] = ("mimalloc", "system", "jemalloc")
 #: limit, each failing on a kill alone: `reserve`'s flagless legs, a kill
 #: being a censored reading (`KILL_TOLERANT`), the margin each leaves
 #: reported beside the verdict (`REPORTED_MARGIN_PERCENT`);
-#: `parallel-peak-rss`'s legs in `PARALLEL_MEMORY`, the library's own
-#: `budget + PARALLEL_HEADROOM`; and a kill anywhere else, which raises
+#: `parallel-peak-rss`'s and `gzip-resident`'s legs in `PARALLEL_MEMORY`, the
+#: library's own `budget + PARALLEL_HEADROOM`; and a kill anywhere else, which raises
 #: (`Session.time_run`). Each is read on this
 #: build too, at the same commit in the same sitting, so the two legs differ by
 #: the allocator alone, as the `allocator` figure's legs do for time — and the
@@ -5997,9 +6143,9 @@ SHIPPED_BINARIES: tuple[str, ...] = ("pgdt", "dfcli")
 #: shipped build alone is `KD34`'s, which re-sets the reserve under the
 #: shipped allocator.
 #:
-#: **`parallel-peak-rss` is absent**: its container, `budget +
-#: PARALLEL_HEADROOM`, *is* the contract under test, so the head its cells
-#: print is context. Overrunning `MEMORY_UNPOOLED_BOUND` fails nothing either,
+#: **`parallel-peak-rss` and `gzip-resident` are absent**: their container,
+#: `budget + PARALLEL_HEADROOM`, *is* the contract under test, so the head
+#: their cells print is context. Overrunning `MEMORY_UNPOOLED_BOUND` fails nothing either,
 #: by the same section: it is `charge_model_problem`'s finding about the bound.
 REPORTED_MARGIN_PERCENT: dict[str, int] = {"reserve": LIBRARY_MEMORY_MARGIN_PERCENT}
 
@@ -9965,75 +10111,15 @@ def run_reserve(session: Session) -> str:
         ],
         model_rows,
     )
-    if model_faults:
-        refuting = [line for fault, line in model_faults if fault.refutes]
-        inside = [line for fault, line in model_faults if not fault.refutes]
-        bands = []
-        if refuting:
-            # One clause per band actually hit, rather than one sentence over
-            # the whole stanza: the bands refute for different reasons, and one
-            # sentence asserts a single band's reason over every cell in it.
-            hit = sorted({fault.band for fault, _ in model_faults if fault.refutes})
-            bands.append(
-                "**The model is refuted, and by these cells:**\n\n"
-                + "\n".join(refuting)
-                + f"\n\nThe `{BAND_BOUND}` band is the one a sitting discharges itself, and each "
-                "cell above is in a band it is not: "
-                + "; ".join(f"`{band}`, where {band_refutes(band)}" for band in hit)
-                + ". The table publishes all the same: a refutation is a reading of the library, "
-                "and only a killed leg keeps a figure out of the document."
-            )
-        if inside:
-            # The re-derivation runs over every evaluated cell rather than over
-            # the faulting ones — the bound is what covers the worst remainder
-            # the sitting saw, and the cells under it are as much evidence of
-            # that as the cells over it — but only where nothing bars.
-            #
-            # Withheld from the whole sitting wherever the model is refuted,
-            # rather than from the refuting family alone: a refuted cell
-            # describes an arrangement the rule did not keep inside its
-            # allocation, or a charge nothing holds, and a bound is a term of
-            # the model that sitting has just contradicted.
-            tail = ""
-            if any(fault.band == BAND_BOUND for fault, _ in model_faults):
-                if refuting:
-                    tail = (
-                        "\n\nNo bound is re-derived from this sitting: the model is refuted "
-                        "in it, so its worst remainder is not a reading a term of that model "
-                        "may be sized to."
-                    )
-                else:
-                    worst = max(model_unnamed)
-                    tail = (
-                        "\n\nThe worst remainder over the "
-                        f"{len(model_rows)} evaluated cell(s) is {_fmt_budget_bytes(worst)}, so "
-                        "these readings re-derive `MEMORY_UNPOOLED_BOUND` at "
-                        f"**{_fmt_budget_bytes(rederived_unpooled_bound(worst))}** — the "
-                        f"smallest {_fmt_budget_bytes(UNPOOLED_BOUND_STEP)} step that covers "
-                        "it, which is the shipped bound's own arithmetic re-done over this "
-                        "sitting and not a re-take."
-                    )
-            bands.append(
-                "**Inside the rule, and so a finding rather than a refutation** — the "
-                f"`{BAND_BOUND}` band is the one a sitting discharges itself, and every cell "
-                "here is in it:\n\n"
-                + "\n".join(inside)
-                + tail
-            )
-        model_verdict = "\n\n".join(bands)
-    elif model_rows:
-        model_verdict = (
-            "**The model holds at every cell above**: nothing here crosses any of its three "
-            "lines."
-        )
-    else:
-        # Not the same claim as the one above, and the difference is the whole
-        # value of the check: every leg declined the block path or was censored,
-        # so the model was evaluated nowhere and says nothing about the charge.
-        model_verdict = (
+    model_verdict = charge_verdict(
+        model_faults,
+        model_unnamed,
+        len(model_rows),
+        nowhere=(
             "**The model was evaluated at no cell**: every flagless leg either declined the "
             "block path or was censored, so nothing here bears on the charge."
-        )
+        ),
+    )
 
     # -- the attribution: what the process says it held ---------------------
     #
@@ -10747,6 +10833,373 @@ def _per_rep(figure: str, session: Session, specs: Sequence[RunSpec]) -> str:
         f"- {spec.label}: {fmt_readings(session.get(figure, spec))}" for spec in specs
     ]
     return "Per-rep readings (s):\n" + "\n".join(lines) + "\n"
+
+
+# -- what a gzip scan holds against its charge ------------------------------
+
+#: `pgdt_io`'s gzip `CHECKPOINT_SPACING`, mirrored: the plaintext a checkpoint
+#: unit holds at least, and so what a BGZF file's members are coalesced to
+#: (`bgzf_unit`).
+LIBRARY_GZIP_SPACING = 24 << 20
+
+#: `gz_seek::DECODER_BYTES`, mirrored: the inflater's own state, which a gzip
+#: decode is charged whichever engine it runs on.
+GZIP_DECODER_BYTES = 64 * 1024
+
+#: `gz_seek::WINDOW_SIZE`, mirrored: deflate's 32 KiB history, read as a unit's
+#: decode begins and copied out at each checkpoint a first pass places.
+GZIP_WINDOW_BYTES = 32 * 1024
+
+#: The gzip adapter's `INPUT_CHUNK` (`source/compressed/deflate.rs`), mirrored:
+#: the compressed input a decode pulls through at a time, and a first pass's
+#: chunk length (`Chunking::SHIPPED`).
+#:
+#: **One value with two consumers**, which the library states as one constant:
+#: what a unit decode's input buffer holds, and how many compressed bytes a
+#: first pass cuts a chunk at. `gzip-resident` reads both through it; a change
+#: that splits them moves `gzip_task_bytes` and `gzip_block_reader_bytes` apart.
+GZIP_INPUT_CHUNK = 1 << 20
+
+#: `gz_seek::SPECULATION_LIMIT`, mirrored: twice the largest block zlib ends,
+#: `lit_bufsize - 1` symbols of at most 258 bytes at its largest `memLevel` —
+#: the most plaintext one speculation or decode ahead of the frontier holds,
+#: and most of what a task is charged (`gzip_task_bytes`).
+GZIP_SPECULATION_LIMIT = 2 * ((1 << (9 + 6)) - 1) * 258
+
+#: The first pass's `SKIP_SCRATCH` (`first_pass/pass.rs`), mirrored: what a
+#: read skipping to its first wanted byte decodes into.
+GZIP_SKIP_SCRATCH = 64 * 1024
+
+
+def gzip_pass_bytes() -> int:
+    """What a first pass holds besides its tasks: two forward decodes — the
+    frontier and one behind it — each its inflater, its window copy and its
+    input chunk, and the skip scratch. Its windows are on disk.
+
+    `PASS_BYTES` (`first_pass.rs`), mirrored."""
+    decode = GZIP_DECODER_BYTES + GZIP_WINDOW_BYTES + GZIP_INPUT_CHUNK
+    return 2 * decode + GZIP_SKIP_SCRATCH
+
+
+def gzip_task_bytes() -> int:
+    """What one task ahead of a first pass's frontier is charged: its chunk,
+    the limit's worth past it, its plaintext twice while it writes markers, a
+    decode's plaintext waiting for the frontier, two guesses' marked
+    histories, and its input buffer.
+
+    `Chunking::task_bytes` at `Chunking::SHIPPED` (`first_pass/ahead.rs`),
+    mirrored. **Four limits of its five large terms are the speculation
+    limit's**, which is why this figure is what prices that constant: no leg
+    varies it, and a first-pass cell's remainder is read against a charge it
+    dominates (`docs/design/roadmap-P15-gzip.md`, "Slice order")."""
+    limit = GZIP_SPECULATION_LIMIT
+    guess = 2 * GZIP_WINDOW_BYTES
+    return GZIP_INPUT_CHUNK + limit + 2 * limit + limit + 2 * guess + GZIP_INPUT_CHUNK
+
+
+def gzip_first_pass_charge(jobs: int, stored_size: int) -> int:
+    """What the budget rule charges `jobs` workers of a single member's first
+    pass over a `stored_size`-byte file: each the larger of the pass's own
+    charge and a task's, on a file of more than one chunk, where a task can
+    run at all, and the pass's alone otherwise. **No pool**: a first pass
+    retains no block, its index being the by-product.
+
+    `FirstPass::default_worker_memory`, mirrored — a local file, so no
+    download is added. Charged at one worker too, though a serial pass runs no
+    task: the charge is per worker whatever runs on it."""
+    chunks = max(1, -(-stored_size // GZIP_INPUT_CHUNK))
+    per_worker = max(gzip_pass_bytes(), gzip_task_bytes()) if chunks > 1 else gzip_pass_bytes()
+    return jobs * per_worker
+
+
+def gzip_block_reader_bytes(unit: int) -> int:
+    """What one block-decoding reader of a local gzip file with `unit`-sized
+    units holds: its block slot, the scan's chunk, and the decode's pulling
+    footprint — the inflater, the window read as the unit begins, and the
+    input chunk, every registered unit compressing past `GZIP_INPUT_CHUNK` so
+    the chunk saturates its cap, as `XZ_DECODE_FOOTPRINT`'s does.
+
+    `BlockCache::reader_bytes` over `DeflateCodec::pulling_footprint`,
+    mirrored — `reader_bytes` with gzip's decoder in place of liblzma's."""
+    return unit + LIBRARY_CHUNK_BYTES + GZIP_DECODER_BYTES + GZIP_WINDOW_BYTES + GZIP_INPUT_CHUNK
+
+
+def gzip_block_charge(unit: int, jobs: int) -> int:
+    """What the budget rule charges `jobs` block-decoding readers of a gzip
+    file with `unit`-sized units: the per-reader term times the count, plus
+    the retention list they share (`pool_bytes`), as `charge_bytes` is for
+    `.xz`."""
+    return jobs * gzip_block_reader_bytes(unit) + pool_bytes(unit, jobs)
+
+
+def bgzf_unit() -> int:
+    """The plaintext a unit of a BGZF file holds where every member is a full
+    `BGZF_BLOCK`: members join a unit until it holds the spacing, so a unit is
+    the fewest members reaching it (`gz_seek::Walk`, `placement.rs`). Every
+    unit of `control_bgzf` but its last is this size, the plaintext holding
+    many units, and the last is smaller, so it is the file's largest unit."""
+    members = -(-LIBRARY_GZIP_SPACING // BGZF_BLOCK)
+    return members * BGZF_BLOCK
+
+
+#: `gzip-resident`'s two legs: the registered input, what the table calls it,
+#: and which charge its `parse` runs under.
+#:
+#: **One leg a charge, because a gzip `parse` runs under two.** A single
+#: member's first `parse` is its first pass, charged per worker with no pool
+#: (`gzip_first_pass_charge`); a BGZF file is walked at open, so its first
+#: `parse` block-decodes as an `.xz` file's does (`gzip_block_charge`). Both are
+#: compressions of `control` at `pg_dump`'s level, so neither leg's plaintext
+#: or zlib differs from the other's.
+GZIP_RSS_LEGS: tuple[tuple[str, str, str], ...] = (
+    ("control_gz", "single member, first pass", "pass"),
+    ("control_bgzf", "BGZF, block path", "block"),
+)
+
+#: The worker counts each leg is read at: the serial path, `POOL_DEPTH`, and
+#: the machine's hardware threads. **Three, where the spec asks two**: the
+#: block leg's pool is a constant below `POOL_DEPTH` and grows a unit a reader
+#: above it, so a reading either side of the depth is what separates the two
+#: regimes, and the top count is where a first pass runs the most tasks
+#: ahead. Each is a `PARALLEL_JOBS` row, so the shape is
+#: `parallel-peak-rss`'s, over another file.
+GZIP_RSS_JOBS: tuple[int, ...] = (1, 4, 24)
+
+#: The read path a gzip `parse` adds to `READ`: the deflate adapter, its first
+#: pass and walk, and the crate beneath them. Kept apart from `READ` so a
+#: change here leaves the `.xz` and plain figures current.
+GZIP_READ = (
+    "crates/pgdt-io/src/source/compressed/deflate.rs",
+    "crates/pgdt-io/src/source/compressed/deflate/",
+    "crates/gz-seek/src/",
+    "crates/gz-seek/Cargo.toml",
+)
+
+
+def _gzip_rss_specs() -> list[RunSpec]:
+    return [
+        RunSpec("pgdt", leg, f"parse-rss-jobs-{jobs}", "warm-parallel", f"{label}, {jobs}j")
+        for leg, label, _ in GZIP_RSS_LEGS
+        for jobs in GZIP_RSS_JOBS
+    ]
+
+
+def gzip_leg_charge(kind: str, jobs: int, stored_size: int) -> tuple[int, int]:
+    """`(billed, pool)` for one `gzip-resident` leg: what the rule charges
+    `jobs` workers under the leg's charge, and the part of it a retention list
+    holds."""
+    if kind == "pass":
+        return gzip_first_pass_charge(jobs, stored_size), 0
+    if kind == "block":
+        unit = bgzf_unit()
+        return gzip_block_charge(unit, jobs), pool_bytes(unit, jobs)
+    raise ValueError(f"no gzip charge named {kind!r}")
+
+
+def run_gzip_resident(session: Session) -> str:
+    """Peak resident set of `pgdt parse` over gzip at three worker counts,
+    each cell's worst rep read against the charge the budget rule billed it.
+
+    **What is under test is `MEMORY_UNPOOLED_BOUND`, read off `.xz` alone**
+    (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling"). The bound
+    is what `margin_allowance` predicts a count's resident with above its
+    charge, so a gzip decoder or first pass holding more outside its charge
+    than liblzma's does gets a correct charge and an optimistic prediction —
+    a kill at a large limit rather than an error. Each cell is asked
+    `charge_fault`'s three lines with its own bill, so the verdict is
+    `reserve`'s, band for band (`charge_verdict`).
+
+    **What would falsify it**, written before any reading: a cell whose
+    unnamed remainder exceeds `MEMORY_UNPOOLED_BOUND` (the bound is wrong for
+    gzip, and the sitting re-derives it) or `MEMORY_RESERVE` (the rule does
+    not hold for gzip); or an over-bill — a cell holding less than it was
+    charged, which on the first-pass leg names the speculation limit, four of
+    the five large terms of a task's charge (`gzip_task_bytes`). The secant
+    between the two upper counts states what each added worker held against
+    what it was charged, which is that pricing; it is a secant over two
+    counts, not a fit.
+
+    **The bill is mirrored and then held to the run's own**: each leg's
+    `scan started` line states the budget its stated count spends, which at a
+    count the allowance affords is the charge, so a mirror that has drifted
+    from the library refuses the figure rather than reading a remainder off a
+    stale bill. A first-pass leg must say it opened a first pass, and a BGZF
+    leg must not — a BGZF file read by a first pass is a walk that did not run.
+
+    **Three reps**, as `parallel-peak-rss` takes: a peak is a maximum, steady
+    across reps, and the reps are there to catch an outlier.
+    """
+    figure = "gzip-resident"
+    specs = _gzip_rss_specs()
+    # Every leg's gate twin beside it, as `parallel-peak-rss` pairs them: this
+    # figure's resident against `PARALLEL_MEMORY` is a gate reading too.
+    gate = [gate_twin(spec) for spec in specs]
+    paired = [leg for pair in zip(specs, gate) for leg in pair]
+    to_sweep = [s for s in paired if not session.has(figure, s)]
+    session.build_before_sweep(to_sweep)
+    session.sweep(figure, to_sweep, session.cfg.reps(3))
+
+    kinds = {leg: kind for leg, _, kind in GZIP_RSS_LEGS}
+    labels = {leg: label for leg, label, _ in GZIP_RSS_LEGS}
+    stored = {
+        leg: file_size(session.cfg, session.input_path(leg, "warm-parallel"), leg)
+        for leg, _, _ in GZIP_RSS_LEGS
+    }
+    by_leg: dict[str, dict[int, list[float]]] = {}
+    held_worst: dict[tuple[str, int], float] = {}
+    bills: dict[tuple[str, int], tuple[int, int]] = {}
+    ran: dict[tuple[str, int], int] = {}
+    problems = []
+    for spec in specs:
+        jobs = int(spec.command.rpartition("-jobs-")[2])
+        readings = session.get_rss(figure, spec)
+        by_leg.setdefault(spec.input, {})[jobs] = readings
+        held_worst[(spec.input, jobs)] = max(readings) * 1024
+        billed, pool = gzip_leg_charge(kinds[spec.input], jobs, stored[spec.input])
+        bills[(spec.input, jobs)] = (billed, pool)
+        report = session.reported.get(spec.key(figure), {})
+        if report.get("resolved_jobs") != str(jobs):
+            problems.append(
+                f"{spec.label}: the run resolved {report.get('resolved_jobs', 'no')} worker(s) "
+                f"where the row states {jobs}"
+            )
+        if report.get("resolved_budget") != str(billed):
+            problems.append(
+                f"{spec.label}: the run billed {report.get('resolved_budget', 'nothing')} byte(s) "
+                f"where the mirror charges {billed}, so the mirror is not the library's charge"
+            )
+        workers = report.get("first_pass_workers")
+        if kinds[spec.input] == "pass":
+            if workers is None:
+                problems.append(f"{spec.label}: the run opened no first pass")
+            else:
+                ran[(spec.input, jobs)] = int(workers)
+        elif workers is not None:
+            problems.append(f"{spec.label}: a BGZF file was read by a first pass, not walked")
+    if problems:
+        raise RuntimeError(f"{figure} cannot read its legs: " + "; ".join(problems))
+
+    rows = []
+    for jobs in GZIP_RSS_JOBS:
+        cells = [str(jobs) + (" *(serial)*" if jobs == PARALLEL_BASELINE else "")]
+        for leg, _, _ in GZIP_RSS_LEGS:
+            values = by_leg[leg][jobs]
+            delta = median(values) - median(by_leg[leg][GZIP_RSS_JOBS[0]])
+            cells.append(
+                fmt_mib_median_spread(values)
+                + ("" if jobs == GZIP_RSS_JOBS[0] else f" · {fmt_rss_delta(delta)}")
+            )
+        rows.append(cells)
+    table = md_table(["`--jobs`", *(label for _, label, _ in GZIP_RSS_LEGS)], rows)
+
+    model_rows, model_faults, model_unnamed = [], [], []
+    for leg, label, kind in GZIP_RSS_LEGS:
+        for jobs in GZIP_RSS_JOBS:
+            billed, pool = bills[(leg, jobs)]
+            held = held_worst[(leg, jobs)]
+            fault = charge_fault(billed, pool, jobs, held)
+            model_unnamed.append(held - billed)
+            if fault:
+                model_faults.append((fault, f"- **{label}** at `--jobs {jobs}`: {fault.text}"))
+            workers = f"{jobs}" + (f" · {ran[(leg, jobs)]} ran" if kind == "pass" else "")
+            model_rows.append(
+                [
+                    f"{label}, `--jobs {jobs}`",
+                    workers,
+                    _fmt_budget_bytes(billed),
+                    _fmt_budget_bytes(pool) if pool else "—",
+                    fmt_mib(held / 1024),
+                    _fmt_budget_bytes(held - billed),
+                    "met" if fault is None else f"**{fault.band}**",
+                ]
+            )
+    model_table = md_table(
+        [
+            "Leg",
+            "Workers",
+            "Billed",
+            "of which pool list",
+            "Worst rep held",
+            "Unnamed",
+            "Criterion",
+        ],
+        model_rows,
+    )
+    verdict = charge_verdict(
+        model_faults,
+        model_unnamed,
+        len(model_rows),
+        nowhere="**The model was evaluated at no cell.**",
+    )
+
+    low, high = GZIP_RSS_JOBS[-2], GZIP_RSS_JOBS[-1]
+    secants = []
+    for leg, label, kind in GZIP_RSS_LEGS:
+        added = high - low
+        held_each = (held_worst[(leg, high)] - held_worst[(leg, low)]) / added
+        billed_each = (bills[(leg, high)][0] - bills[(leg, low)][0]) / added
+        secants.append(
+            [label, _fmt_budget_bytes(held_each), _fmt_budget_bytes(billed_each)]
+        )
+    secant_table = md_table(
+        ["Leg", f"Held a worker, `--jobs {low}` → `{high}`", "Charged a worker"], secants
+    )
+
+    sizes = "\n".join(
+        f"- {label}: `{leg}`, {_fmt_bytes(stored[leg])} compressed"
+        for leg, label, _ in GZIP_RSS_LEGS
+    )
+    return (
+        table
+        + "\n\nEach cell is peak resident set, and the change from that leg's own one-job row. "
+        f"Every row states `--memory {stated_allowance(PARALLEL_BUDGET)}`, as "
+        f"`parallel-peak-rss`'s do, in a {PARALLEL_MEMORY} container, and every count is one "
+        "the allowance affords, which each run's own `scan started` line confirms. **The "
+        "single member's `parse` is its first pass**: no cache precedes it, so it inflates "
+        "the file while it builds the index, its scan one reader and its inflate run ahead "
+        "on the workers the count affords at a task's charge. **The BGZF file's is a block "
+        "path**: walked at open, it is read in whole units by every reader, as an `.xz` file "
+        "is. Both are `control` at `pg_dump`'s level 6, through one zlib.\n\n"
+        + sizes
+        + "\n\n**The charge against what was held**, cell by cell, read against "
+        "`reserve`'s three lines: the unnamed remainder must be **non-negative** — a "
+        "negative one is an over-bill — and is read against "
+        f"**`MEMORY_UNPOOLED_BOUND`** ({_fmt_budget_bytes(LIBRARY_MEMORY_UNPOOLED_BOUND)}), "
+        "above which the **bound** is wrong for gzip, and "
+        f"**`MEMORY_RESERVE`** ({_fmt_budget_bytes(LIBRARY_MEMORY_RESERVE)}), above which the "
+        "**rule** is. The `Criterion` column names the band. **A first-pass cell is billed "
+        "per worker with no pool**: each worker the larger of the pass's two decodes and "
+        f"skip scratch ({_fmt_budget_bytes(gzip_pass_bytes())}) and a task's charge "
+        f"({_fmt_budget_bytes(gzip_task_bytes())}, four speculation limits of it), and its "
+        "`Workers` column says how many the pass ran — the frontier and the tasks ahead. "
+        "**A BGZF cell is billed as an `.xz` one is**, a reader its "
+        f"{_fmt_budget_bytes(bgzf_unit())} unit, the scan's chunk and gzip's pulling "
+        f"footprint ({_fmt_budget_bytes(gzip_block_reader_bytes(bgzf_unit()))} in all), and "
+        "the readers together the pool's retention list. Each bill is the one the run's own "
+        "`scan started` line states:\n\n"
+        + model_table
+        + "\n\n"
+        + verdict
+        + "\n\n**What each added worker held, against what it was charged**, the secant "
+        f"between `--jobs {low}` and `--jobs {high}` over the worst reps: two counts, so a "
+        "difference the axis measured and not a fit. On the first-pass leg it is what a task "
+        "ahead holds against `Chunking::task_bytes`, which prices the speculation limit no "
+        "leg varies; on the BGZF leg, a reader's charge and the unit its pool grows by above "
+        "`POOL_DEPTH`:\n\n"
+        + secant_table
+        + "\n\nPer-rep readings (peak RSS):\n"
+        + "\n".join(
+            f"- {spec.label}: "
+            + ", ".join(fmt_mib(v) for v in session.get_rss(figure, spec))
+            for spec in (*specs, *(g for g in gate if session.has(figure, g)))
+        )
+        + "\n\n"
+        + gate_section(
+            session,
+            figure,
+            [(spec.label, spec, PARALLEL_BUDGET + PARALLEL_HEADROOM) for spec in specs],
+        )
+    )
 
 
 # -- what the data level costs, and what its statistics buy ----------------
@@ -11812,7 +12265,35 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = []
+UNTAKEN: list[Figure] = [
+    # gzip's resident against its charge, at three worker counts over a single
+    # member's first pass and a BGZF file's block path. `depends` is
+    # `parallel-peak-rss`'s read path with gzip's in place of xz's, plus the
+    # map and the cache, where a per-block cost would read as remainder.
+    Figure(
+        id="gzip-resident",
+        section="What a gzip scan holds against its charge",
+        stage="warm-parallel",
+        depends=_declare(
+            *RSS_INSTRUMENT,
+            *SCAN,
+            *MAP,
+            *READ,
+            *GZIP_READ,
+            *CACHE,
+            *QUERY_CLI,
+            *INTERIOR,
+            "scripts/generate_gzip_input.py",
+            *GEN_PERF,
+            # The gate's twins are the `system` build, which these features
+            # select (`GATE_LEG`).
+            "crates/pgdt/Cargo.toml",
+        ),
+        warm_inputs=tuple(leg for leg, _, _ in GZIP_RSS_LEGS),
+        memory=PARALLEL_MEMORY,
+        run=run_gzip_resident,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
