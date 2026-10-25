@@ -33,6 +33,8 @@
 //! small, and the harness's preflight runs this around `/bin/true` in the
 //! pinned image, which bounds it: the floor any reading stands on.
 
+#![deny(unsafe_code)]
+
 use std::ffi::OsString;
 use std::io::{self, ErrorKind};
 use std::os::unix::process::ExitStatusExt;
@@ -66,6 +68,7 @@ fn main() -> ExitCode {
 }
 
 /// The largest resident set any waited-for child reached, in kibibytes.
+#[allow(unsafe_code)]
 fn children_maxrss_kib() -> io::Result<libc::c_long> {
     // SAFETY: `getrusage` writes one `struct rusage` through the pointer and
     // reads nothing from it; a zeroed `rusage` is a valid value of it.

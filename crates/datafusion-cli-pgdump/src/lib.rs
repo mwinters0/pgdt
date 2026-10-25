@@ -29,6 +29,9 @@
 // (`crates/datafusion-pgdump/tests/settings.rs`), and a nested column's
 // NULL-first, unnormalized-zero order (`tests/pushdown.rs`).
 
+// pgdump: this crate holds no `unsafe` (`docs/design/decisions.md`, "D27").
+#![forbid(unsafe_code)]
+
 // pgdump: the registrations, and what a caller composing the CLI reads of them.
 mod pgdump;
 mod spelling;

@@ -8,6 +8,8 @@
 //! **This is the cache's format**: an edit here is the edit that asks whether
 //! [`CACHE_FORMAT_VERSION`] bumps.
 
+#![forbid(unsafe_code)]
+
 mod block;
 mod catalog;
 mod diagnostic;

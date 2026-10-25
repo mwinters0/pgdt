@@ -32,7 +32,7 @@ cd scripts && uv run pg_refuses.py    # each `pg-refuses: I<n>` marker vs its in
 cd scripts && uv run major_differences.py  # the `VD<n>` register, and no `VD<n>` cited outside it
 cd scripts && uv run repoint.py       # the record's caps, and its growth since the last blind read; red means /repoint
 cd scripts && uv run file_limits.py   # every .rs against the size limits (`docs/process.md`, "Seams"); red means /seams
-cd scripts && uv run layering.py     # the crate graph (D68, D74) off `cargo metadata`, and what an embedder may name
+cd scripts && uv run layering.py     # the crate graph (D68, D74) off `cargo metadata`, what an embedder may name, each root on `unsafe` (D27)
 cd scripts && uv run module_graph.py [--design <doc>] [--docs]  # every module edge one-way, off rust-analyzer; a design's moves checked before a cut
 cd scripts && uv run concepts.py     # every production .rs claimed by one concept in `docs/design/concepts.md`
 cd scripts && uv run oracle_register.py && uv run floor_mapping.py && uv run oracle_differences.py

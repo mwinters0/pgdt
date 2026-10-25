@@ -8,6 +8,8 @@
 //! (`arrangement`), the arrangement and what a worker holds (`parallelism`),
 //! and where a range is cut (`partition`).
 
+#![forbid(unsafe_code)]
+
 mod arrangement;
 mod memory;
 mod parallelism;

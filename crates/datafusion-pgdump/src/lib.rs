@@ -57,6 +57,8 @@
 //! its text rendering included and, cold, a mapping pass, neither of which an
 //! embedder holding a cache pays.
 
+#![forbid(unsafe_code)]
+
 mod budget;
 mod catalog;
 mod dump;

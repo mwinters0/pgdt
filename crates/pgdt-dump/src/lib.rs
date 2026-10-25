@@ -2,6 +2,8 @@
 //! grammar, the map builder, the preamble's prepass, and persisting and
 //! reloading the model (`docs/design/decisions.md`, "D68"). No Arrow (D74).
 
+#![forbid(unsafe_code)]
+
 pub mod cache;
 mod ddl;
 mod lex;

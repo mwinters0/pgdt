@@ -20,6 +20,8 @@
 //! whose subject it is: those differ per test file in ways that matter, and
 //! merging them here would be the second mistake this crate exists to undo.
 
+#![forbid(unsafe_code)]
+
 use std::path::{Path, PathBuf};
 
 /// The **hand-written** dump beside this crate's manifest — not a `pg_dump`

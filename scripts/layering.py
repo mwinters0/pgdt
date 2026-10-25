@@ -2,7 +2,7 @@
 """The crate graph and each crate's boundary, read off `cargo metadata` and
 the members' sources.
 
-The rules are `docs/design/decisions.md`, "D68", "D74" and "D106". Cargo
+The rules are `docs/design/decisions.md`, "D27", "D68", "D74" and "D106". Cargo
 refuses a cycle but not an edge the graph does not draw, and nothing in Rust
 refuses a name a crate could reach but should not, so this holds:
 
@@ -32,7 +32,13 @@ refuses a name a crate could reach but should not, so this holds:
   `NAMESPACES` lists**, a namespace's own children included, so an item's
   only paths are its API one and `internal`'s;
 * **a namespaced API item is not also re-exported at its crate's root**: an
-  API item has one path.
+  API item has one path;
+* **every member's root declares itself on `unsafe`** -- each `lib` and
+  `bin` target's: `#![forbid(unsafe_code)]`, or `#![deny(unsafe_code)]` with
+  an `allow` at a site its production tree holds, or, for a crate whose sites
+  are all one feature's, `forbid` without that feature and `deny` with it
+  (`docs/design/decisions.md`, "D27"). A `deny` no site needs is refused, the
+  crate able to forbid; an `allow` under `forbid` is the compiler's to refuse.
 
 A library's production code is its module tree from `lib.rs`, every module a
 `#[cfg(test)]` declares left out and every `#[cfg(test)] mod {}` block
@@ -156,6 +162,16 @@ PUB_ITEM_RE = re.compile(
     r"(?:fn|struct|enum|trait|type|const|static|mod|union)\s+([A-Za-z_]\w*)"
 )
 PUB_USE_RE = re.compile(r"(?m)^pub\s+use\s+([^;]*);")
+UNSAFE_LEVEL_RE = re.compile(r"#!\[\s*(forbid|deny)\s*\(\s*unsafe_code\s*\)\s*\]")
+UNSAFE_CFG_RE = re.compile(
+    r"#!\[\s*cfg_attr\s*\(\s*(not\s*\(\s*)?feature\s*=\s*(\"[^\"]*\")\s*(?(1)\))\s*,"
+    r"\s*(forbid|deny)\s*\(\s*unsafe_code\s*\)\s*\)\s*\]"
+)
+UNSAFE_ALLOW_RE = re.compile(r"#!?\[\s*allow\s*\([^\]]*\bunsafe_code\b[^\]]*\)\s*\]")
+
+#: The target kinds whose root is a member's own: what it builds and ships,
+#: never a test, bench or example.
+ROOT_KINDS = frozenset({"lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro", "bin"})
 
 
 def metadata(repo: Path) -> dict:
@@ -176,6 +192,46 @@ def members(meta: dict) -> dict[str, Path]:
     return {
         p["name"]: Path(p["manifest_path"]).parent for p in meta["packages"] if p["id"] in ids
     }
+
+
+def roots(meta: dict) -> dict[str, list[Path]]:
+    """Each member's own crate roots: its `lib` and `bin` targets'."""
+    ids = set(meta["workspace_members"])
+    return {
+        p["name"]: [
+            Path(t["src_path"]) for t in p.get("targets", []) if ROOT_KINDS & set(t["kind"])
+        ]
+        for p in meta["packages"]
+        if p["id"] in ids
+    }
+
+
+def unsafe_declaration(root: Path) -> tuple[str | None, str | None]:
+    """What a crate root declares on `unsafe`: `forbid`, `deny`, or
+    `feature:<name>` for `forbid` without that feature and `deny` with it,
+    `None` for nothing; and why, where what it declares is not one of them."""
+    original = root.read_text(encoding="utf-8")
+    text = masked(original)
+    plain = [m.group(1) for m in UNSAFE_LEVEL_RE.finditer(text)]
+    gated = [
+        (bool(m.group(1)), original[m.start(2) : m.end(2)].strip('"'), m.group(3))
+        for m in UNSAFE_CFG_RE.finditer(text)
+    ]
+    if not plain and not gated:
+        return None, None
+    if len(plain) == 1 and not gated:
+        return plain[0], None
+    if not plain and len(gated) == 2:
+        features = {f for _, f, _ in gated}
+        if len(features) == 1 and set(gated) == {
+            (True, *features, "forbid"),
+            (False, *features, "deny"),
+        }:
+            return f"feature:{features.pop()}", None
+    return None, (
+        "declares more than one level on `unsafe`, or a `cfg_attr` pair other than"
+        " `forbid` without a feature and `deny` with it"
+    )
 
 
 def dependencies(meta: dict, name: str) -> list[str]:
@@ -404,6 +460,23 @@ def problems(meta: dict, repo: Path) -> list[str]:
                 found.append(f"{rel(file)}: `pub mod {child}` inside namespace `{namespace}`")
             for item in sorted(api & root_names):
                 found.append(f"{name}: `{item}` is at its root and in `{namespace}` (one path)")
+
+    # Every root declares itself on `unsafe` (D27).
+    for name, crate_roots in sorted(roots(meta).items()):
+        for root in crate_roots:
+            if not root.is_file():
+                continue
+            level, why = unsafe_declaration(root)
+            if why:
+                found.append(f"{rel(root)} {why} (D27)")
+            elif level is None:
+                found.append(f"{rel(root)} declares nothing on `unsafe` (D27)")
+            elif level != "forbid":
+                tree = module_tree(root.parent, root.name)
+                if not any(UNSAFE_ALLOW_RE.search(text) for text in tree.values()):
+                    found.append(
+                        f"{rel(root)} denies `unsafe` and allows it at no site: forbid it (D27)"
+                    )
 
     # What an embedder names.
     for name in EMBEDDERS:

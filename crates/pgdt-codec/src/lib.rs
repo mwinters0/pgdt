@@ -4,6 +4,8 @@
 //! tier, and column resolution (`docs/design/decisions.md`, "D68").
 //! Synchronous, no I/O, and Arrow's schema types only but `i256` (D74).
 
+#![forbid(unsafe_code)]
+
 pub mod compare;
 mod declared;
 pub mod decode;

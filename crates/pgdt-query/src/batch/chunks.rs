@@ -132,7 +132,10 @@ pub(super) fn push_utf8view_field(
                     // every shipped chunk and block size is by orders of
                     // magnitude; nothing clamps `ReadOptions::chunk_size_bytes` to
                     // enforce it.
-                    unsafe { builder.append_view_unchecked(block, local_offset, len) };
+                    #[allow(unsafe_code)]
+                    unsafe {
+                        builder.append_view_unchecked(block, local_offset, len)
+                    };
                 }
                 // The field's bytes straddle two read chunks (rare: at most
                 // one field per chunk boundary) or its chunk was already

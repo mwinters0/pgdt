@@ -59,6 +59,8 @@
 //! `pgdt-io`'s `xz_decode` example: `O(1)` a call rather than a byte, so the
 //! figure's content stays the volume inflated divided by a time.
 
+#![deny(unsafe_code)]
+
 use std::ffi::{c_int, c_uint, c_void};
 use std::fs::File;
 use std::hint::black_box;
@@ -203,12 +205,14 @@ fn stalled(offered: usize, total_out: u64) -> String {
 /// zlib-ng's `zalloc`, over the C allocator: the binding's `z_stream` types it
 /// as a function, so it cannot be left null for zlib-ng to fill in its own.
 /// Called once a stream, so `calloc`'s zeroing is not a cost the figure sees.
+#[allow(unsafe_code)]
 unsafe extern "C" fn zng_alloc(_: *mut c_void, items: c_uint, size: c_uint) -> *mut c_void {
     // SAFETY: `calloc` takes any counts and returns null where it cannot.
     unsafe { libc::calloc(items as usize, size as usize) }
 }
 
 /// zlib-ng's `zfree`, over what `zng_alloc` returned.
+#[allow(unsafe_code)]
 unsafe extern "C" fn zng_free(_: *mut c_void, address: *mut c_void) {
     // SAFETY: zlib-ng frees only what its `zalloc` returned.
     unsafe { libc::free(address) }
@@ -220,6 +224,7 @@ unsafe extern "C" fn zng_free(_: *mut c_void, address: *mut c_void) {
 /// at its stream and refuses a call through any other address.
 struct ZngInflate(Box<libz_ng_sys::z_stream>);
 
+#[allow(unsafe_code)]
 impl ZngInflate {
     fn new() -> Result<Self, String> {
         use libz_ng_sys::{Z_OK, z_stream, zng_inflateInit2};
@@ -259,6 +264,7 @@ impl ZngInflate {
     }
 }
 
+#[allow(unsafe_code)]
 impl Drop for ZngInflate {
     fn drop(&mut self) {
         // SAFETY: initialised by `new`, and ended once.
@@ -266,6 +272,7 @@ impl Drop for ZngInflate {
     }
 }
 
+#[allow(unsafe_code)]
 fn zlib_ng(input: &mut Input, out: &mut [u8]) -> Result<u64, String> {
     use libz_ng_sys::{Z_BUF_ERROR, Z_NO_FLUSH, Z_OK, Z_STREAM_END, inflate};
 

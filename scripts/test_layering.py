@@ -326,6 +326,94 @@ class OnePath(unittest.TestCase):
         self.assertEqual(la._use_names("x::Y"), ["Y"])
 
 
+def declared(files: dict[str, str], bins: tuple[str, ...] = ()) -> list[str]:
+    """`problems` over a workspace whose metadata names each member's
+    `lib.rs` as its root, and `bins`' `main.rs` too, the way `cargo` does --
+    the base workspace's roots forbidding `unsafe` unless `files` says
+    otherwise."""
+    forbid = {f"{name}/src/lib.rs": "#![forbid(unsafe_code)]\n" for name in la.GRAPH}
+    base = {r: f"#![forbid(unsafe_code)]\n{s}" for r, s in BASE.items() if r.endswith("lib.rs")}
+    ws = Workspace({**forbid, **base, **files}, {})
+    for package in ws.meta["packages"]:
+        crate = ws.root / "crates" / package["name"] / "src"
+        package["targets"] = [{"kind": ["lib"], "src_path": str(crate / "lib.rs")}]
+        if package["name"] in bins:
+            package["targets"].append({"kind": ["bin"], "src_path": str(crate / "main.rs")})
+        package["targets"].append({"kind": ["test"], "src_path": str(crate.parent / "tests" / "t.rs")})
+    return ws.problems()
+
+
+NOTHING = "declares nothing on `unsafe` (D27)"
+
+
+class Unsafe(unittest.TestCase):
+    """Every root's declaration on `unsafe` (D27)."""
+
+    def test_every_root_forbidding_holds(self):
+        self.assertEqual(declared({}), [])
+
+    def test_a_root_declaring_nothing_is_refused(self):
+        found = declared({"gz-seek/src/lib.rs": "mod zlib;\n"})
+        self.assertEqual(found, [f"crates/gz-seek/src/lib.rs {NOTHING}"])
+
+    def test_a_declaration_in_a_comment_is_none(self):
+        found = declared({"gz-seek/src/lib.rs": "// #![forbid(unsafe_code)]\n"})
+        self.assertEqual(len(found), 1)
+        self.assertIn("declares nothing", found[0])
+
+    def test_a_bin_root_is_read_and_a_test_root_is_not(self):
+        files = {"peak-rss/src/main.rs": "fn main() {}\n", "peak-rss/tests/t.rs": "fn t() {}\n"}
+        found = declared(files, bins=("peak-rss",))
+        self.assertEqual(found, [f"crates/peak-rss/src/main.rs {NOTHING}"])
+
+    def test_a_deny_with_an_allowed_site_holds(self):
+        files = {
+            "gz-seek/src/lib.rs": "#![deny(unsafe_code)]\nmod zlib;\n",
+            "gz-seek/src/zlib.rs": "#![allow(unsafe_code)]\n",
+        }
+        self.assertEqual(declared(files), [])
+        files["gz-seek/src/zlib.rs"] = "#[allow(dead_code, unsafe_code)]\nfn f() {}\n"
+        self.assertEqual(declared(files), [])
+
+    def test_a_deny_no_site_needs_is_refused(self):
+        files = {
+            "gz-seek/src/lib.rs": "#![deny(unsafe_code)]\nmod zlib;\n",
+            "gz-seek/src/zlib.rs": "",
+        }
+        self.assertEqual(
+            declared(files),
+            ["crates/gz-seek/src/lib.rs denies `unsafe` and allows it at no site: forbid it (D27)"],
+        )
+
+    def test_an_allow_only_a_test_module_holds_is_no_site(self):
+        files = {
+            "gz-seek/src/lib.rs": "#![deny(unsafe_code)]\n#[cfg(test)]\nmod tests;\n",
+            "gz-seek/src/tests.rs": "#![allow(unsafe_code)]\n",
+        }
+        self.assertEqual(len(declared(files)), 1)
+
+    def test_forbidding_without_a_feature_and_denying_with_it_holds(self):
+        root = (
+            '#![cfg_attr(not(feature = "introspect"), forbid(unsafe_code))]\n'
+            '#![cfg_attr(feature = "introspect", deny(unsafe_code))]\n'
+            "#[allow(unsafe_code)]\nfn ticks() {}\n"
+        )
+        self.assertEqual(declared({"gz-seek/src/lib.rs": root}), [])
+
+    def test_a_feature_pair_that_does_not_match_is_refused(self):
+        for root in (
+            '#![cfg_attr(not(feature = "a"), forbid(unsafe_code))]\n'
+            '#![cfg_attr(feature = "b", deny(unsafe_code))]\n',
+            '#![cfg_attr(feature = "a", forbid(unsafe_code))]\n'
+            '#![cfg_attr(not(feature = "a"), deny(unsafe_code))]\n',
+            '#![cfg_attr(not(feature = "a"), forbid(unsafe_code))]\n',
+            "#![forbid(unsafe_code)]\n#![deny(unsafe_code)]\n",
+        ):
+            found = declared({"gz-seek/src/lib.rs": f"{root}#[allow(unsafe_code)]\nfn f() {{}}\n"})
+            self.assertEqual(len(found), 1, root)
+            self.assertIn("declares more than one level", found[0])
+
+
 class ThisRepo(unittest.TestCase):
     """The workspace in the tree, held to every rule."""
 
@@ -338,6 +426,10 @@ class ThisRepo(unittest.TestCase):
         self.assertEqual(set(la.members(meta)), set(la.GRAPH))
         tree = la.module_tree(la.members(meta)["pgdt-codec"] / "src")
         self.assertIn("key.rs", {p.name for p in tree})
+        roots = la.roots(meta)
+        self.assertEqual(set(roots), set(la.GRAPH))
+        self.assertTrue(all(roots.values()), roots)
+        self.assertEqual([p.name for p in roots["pgdt"]], ["main.rs"])
 
 
 if __name__ == "__main__":

@@ -4,6 +4,8 @@
 //! statistics, and a strict parse's check — and what holding it costs. Names
 //! Arrow's `DataType` and builds no array (D74).
 
+#![forbid(unsafe_code)]
+
 mod backfill;
 mod forward;
 mod interior;

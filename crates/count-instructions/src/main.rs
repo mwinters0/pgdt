@@ -36,6 +36,8 @@
 //! profile refuses `perf_event_open` without `CAP_PERFMON`, which the harness
 //! grants the counted legs alone (`measure.COUNT_INSTRUCTIONS_CAPS`).
 
+#![deny(unsafe_code)]
+
 use std::ffi::OsString;
 use std::io::{self, ErrorKind};
 use std::os::unix::process::ExitStatusExt;
@@ -122,6 +124,7 @@ fn main() -> ExitCode {
 
 /// The counter, on this process and inherited by every task it clones,
 /// enabled at an inheriting task's `exec`.
+#[allow(unsafe_code)]
 fn open_counter() -> io::Result<libc::c_int> {
     let attr = PerfEventAttr {
         kind: PERF_TYPE_HARDWARE,
@@ -156,6 +159,7 @@ struct Reading {
     running: u64,
 }
 
+#[allow(unsafe_code)]
 fn read_counter(fd: libc::c_int) -> io::Result<Reading> {
     let mut words = [0u64; 3];
     // SAFETY: `words` is 24 writable bytes, which is what `READ_FORMAT`'s

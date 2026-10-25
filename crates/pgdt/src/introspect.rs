@@ -247,6 +247,7 @@ mod enabled {
 
     // SAFETY: every method forwards to `MiMalloc`, which satisfies the trait's
     // contract, and the counters are plain atomics that allocate nothing.
+    #[allow(unsafe_code)]
     unsafe impl GlobalAlloc for Counting {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             let ptr = unsafe { MiMalloc.alloc(layout) };
@@ -374,6 +375,7 @@ mod enabled {
     /// The buffer is mimalloc's own — allocated inside the call, not through
     /// the global allocator — so it is released with `mi_free` and never
     /// reaches [`Counting`]'s counters.
+    #[allow(unsafe_code)]
     fn mimalloc_stats_json() -> Option<String> {
         // SAFETY: a zero size and a null buffer ask mimalloc to allocate the
         // document itself, which it returns NUL-terminated or as null.
@@ -388,6 +390,7 @@ mod enabled {
     }
 
     #[cfg(target_env = "gnu")]
+    #[allow(unsafe_code)]
     fn push_glibc(out: &mut String) {
         // SAFETY: `mallinfo2` takes nothing, returns a plain struct of
         // `size_t`s, and is safe to call from any thread.
@@ -429,6 +432,7 @@ mod enabled {
     /// through the global allocator — so it must be released with `libc::free`
     /// and never reaches [`Counting`]'s counters.
     #[cfg(target_env = "gnu")]
+    #[allow(unsafe_code)]
     fn malloc_info_xml() -> Option<String> {
         let mut buf: *mut libc::c_char = std::ptr::null_mut();
         let mut len: libc::size_t = 0;

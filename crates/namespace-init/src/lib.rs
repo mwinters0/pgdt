@@ -12,6 +12,8 @@
 //! them, both depend on it; the `pgdt-*` libraries and `datafusion-pgdump` install no
 //! handler.
 
+#![forbid(unsafe_code)]
+
 use std::io;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;

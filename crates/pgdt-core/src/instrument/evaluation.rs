@@ -178,7 +178,7 @@ mod enabled {
     /// call around the same counter; `rdtscp` or a fence would price a span
     /// as if the pipeline held nothing else.
     #[inline(always)]
-    #[allow(unused_unsafe)]
+    #[allow(unused_unsafe, unsafe_code)]
     fn ticks() -> u64 {
         #[cfg(target_arch = "x86_64")]
         // SAFETY: `rdtsc` reads a counter every x86_64 processor has.

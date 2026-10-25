@@ -4,6 +4,9 @@
 //! (`docs/design/decisions.md`, "D68"). The error type names no dependency's
 //! error; a dependency's is a cause it carries opaquely (D74).
 
+#![cfg_attr(not(feature = "introspect"), forbid(unsafe_code))]
+#![cfg_attr(feature = "introspect", deny(unsafe_code))]
+
 mod copy;
 mod error;
 mod identifier;
