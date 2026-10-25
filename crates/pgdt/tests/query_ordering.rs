@@ -188,13 +188,13 @@ fn values_read_as_null_are_counted_on_stderr() {
     let stderr = stderr_of(&out);
     assert!(
         stderr.contains(
-            "warning: public.t_date.v_date holds 2 value(s) its type `date` cannot hold, read as \
-             NULL — `v_date IS UNREPRESENTABLE` tells them from the NULLs the dump holds"
+            "warning: public.t_date.v_date holds 2 `date` value(s) this query cannot represent, \
+             read as NULL — `v_date IS UNREPRESENTABLE` tells them from the NULLs the dump holds"
         ),
         "{stderr}"
     );
-    let refusal = "public.t_date.v_date holds 2 `date` value(s) the column's Arrow type cannot \
-                   hold, and this query refuses a column holding one";
+    let refusal = "public.t_date.v_date holds 2 `date` value(s) this query cannot represent, and \
+                   it refuses a column holding one";
     for filter in [&[][..], &["--filter", "v_date=0001-01-01"]] {
         let args = [&["--unrepresentable", "refuse"][..], filter].concat();
         let refused = query("public.t_date", "v_date", &args);

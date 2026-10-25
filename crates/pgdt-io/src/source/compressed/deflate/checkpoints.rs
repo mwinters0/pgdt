@@ -187,6 +187,10 @@ impl std::fmt::Debug for GzipIndex {
 /// which validates their structure, so a cache damaged there is refused as
 /// undecodable rather than handed out as an index; a damaged CRC-32 is
 /// refused by its unit's decode.
+/// The parts the cache persists, which the tests build damaged ones from.
+#[cfg(all(test, feature = "serde"))]
+pub(super) use persisted::{End, Parts, Point};
+
 #[cfg(feature = "serde")]
 mod persisted {
     use std::num::NonZeroU64;
@@ -196,11 +200,11 @@ mod persisted {
     use super::GzipIndex;
 
     #[derive(Serialize, Deserialize)]
-    struct Parts {
-        spacing: NonZeroU64,
-        checkpoints: Vec<Point>,
-        members: u64,
-        end: Option<End>,
+    pub(in crate::source::compressed::deflate) struct Parts {
+        pub(in crate::source::compressed::deflate) spacing: NonZeroU64,
+        pub(in crate::source::compressed::deflate) checkpoints: Vec<Point>,
+        pub(in crate::source::compressed::deflate) members: u64,
+        pub(in crate::source::compressed::deflate) end: Option<End>,
     }
 
     /// A checkpoint: `window` is its length inside a member, `None` at a
@@ -208,18 +212,18 @@ mod persisted {
     /// whether that block is its member's final one, `None` at a block's or
     /// a member's start.
     #[derive(Serialize, Deserialize)]
-    struct Point {
-        plaintext: u64,
-        bit: u64,
-        window: Option<u16>,
-        symbol: Option<bool>,
-        crc: Option<u32>,
+    pub(in crate::source::compressed::deflate) struct Point {
+        pub(in crate::source::compressed::deflate) plaintext: u64,
+        pub(in crate::source::compressed::deflate) bit: u64,
+        pub(in crate::source::compressed::deflate) window: Option<u16>,
+        pub(in crate::source::compressed::deflate) symbol: Option<bool>,
+        pub(in crate::source::compressed::deflate) crc: Option<u32>,
     }
 
     #[derive(Serialize, Deserialize)]
-    struct End {
-        plaintext: u64,
-        compressed: u64,
+    pub(in crate::source::compressed::deflate) struct End {
+        pub(in crate::source::compressed::deflate) plaintext: u64,
+        pub(in crate::source::compressed::deflate) compressed: u64,
     }
 
     impl Serialize for GzipIndex {

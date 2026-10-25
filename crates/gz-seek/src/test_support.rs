@@ -68,10 +68,10 @@ pub(crate) fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
 }
 
 /// One member, each of `parts` compressed at its own level by `flate2` over
-/// zlib-rs — level 1 writing a static block across its part, the others
-/// dynamic ones — each but the last ended by a sync flush, so its blocks are
-/// not final and it ends on a byte, and the deflate streams concatenated are
-/// one: no back-reference reaches before its part.
+/// zlib-rs — level 1 writing one static block across its part, the others
+/// whatever blocks zlib-rs chooses — each but the last ended by a sync flush,
+/// so its blocks are not final and it ends on a byte, and the deflate streams
+/// concatenated are one: no back-reference reaches before its part.
 pub(crate) fn gzip_levels(parts: &[(&[u8], u32)]) -> Vec<u8> {
     use flate2::{Compress, Compression, FlushCompress, Status};
     let mut member = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];

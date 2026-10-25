@@ -239,9 +239,9 @@ rows printed:
 
 ```sh
 pgdt query --source dump.sql --table public.t_date
-# warning: public.t_date.v_date holds 2 value(s) its type `date` cannot
-# hold, read as NULL — `v_date IS UNREPRESENTABLE` tells them from the NULLs
-# the dump holds
+# warning: public.t_date.v_date holds 2 `date` value(s) this query cannot
+# represent, read as NULL — `v_date IS UNREPRESENTABLE` tells them from the
+# NULLs the dump holds
 ```
 
 **`column IS UNREPRESENTABLE` finds them**, telling a NULL made of such a
@@ -267,10 +267,10 @@ selects the `-infinity` row:
 
 ```sh
 pgdt query --source dump.sql --table public.t_date --unrepresentable refuse
-# Error: public.t_date.v_date holds 2 `date` value(s) the column's Arrow type
-# cannot hold, and this query refuses a column holding one — read them in the
-# null mode, as NULL, or in the text mode, the column as its text, or leave
-# the column unmaterialized, read only by a filter the library answers
+# Error: public.t_date.v_date holds 2 `date` value(s) this query cannot
+# represent, and it refuses a column holding one — read them in the null mode,
+# as NULL, or in the text mode, the column as its text, or leave the column
+# unmaterialized, read only by a filter the library answers
 ```
 
 **`--unrepresentable text` prints such a column as its text**, the text the

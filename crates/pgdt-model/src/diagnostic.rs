@@ -251,8 +251,8 @@ impl Finding for Diagnostic {
                 ..
             } => format!(
                 "this .xz source has no seek structure ({block_count} block(s), one stream) — \
-                 every read decodes the file from byte 0; recompress with `xz -T0` or \
-                 `--block-size=<size>` for random access"
+                 a read behind another decodes it again from byte 0 unless its one block is \
+                 held; recompress with `xz -T0` or `--block-size=<size>` for random access"
             ),
             DiagnosticKind::NonSeekableCompressedSource {
                 container: CompressedContainer::Gzip { spacing },

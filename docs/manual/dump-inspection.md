@@ -165,7 +165,7 @@ reading anything but the start of it means decoding from the beginning:
 
 ```
 diagnostics:
-    [warning] this .xz source has no seek structure (1 block(s), one stream) — every read decodes the file from byte 0; recompress with `xz -T0` or `--block-size=<size>` for random access
+    [warning] this .xz source has no seek structure (1 block(s), one stream) — a read behind another decodes it again from byte 0 unless its one block is held; recompress with `xz -T0` or `--block-size=<size>` for random access
 ```
 
 `parse` pays it once: it reads forwards, and then once more from the start of

@@ -212,8 +212,8 @@ pub enum PlanNoteKind {
     /// counts under an operator they cannot answer.
     StatisticsPruned { skipped_groups: u64, groups: u64, skipped_bytes: u64, bytes: u64 },
     /// A column this query materializes holds `values` values PostgreSQL
-    /// accepts for its declared type and its type cannot hold, which the
-    /// query reads as NULL ([`pgdt_codec::UnrepresentableMode::Null`];
+    /// accepts for its declared type and the query cannot represent, which
+    /// it reads as NULL ([`pgdt_codec::UnrepresentableMode::Null`];
     /// `docs/design/decisions.md`, "D98"). One per such column.
     ///
     /// **A property of the table, never of the run**: `values` is the map's
@@ -504,8 +504,8 @@ impl Finding for PlanNote {
                     }
                 };
                 format!(
-                    "{table}.{column} holds {values} value(s) its type `{declared_type}` cannot \
-                     hold, read as NULL — {term} tells them from the NULLs the dump holds"
+                    "{table}.{column} holds {values} `{declared_type}` value(s) this query cannot \
+                     represent, read as NULL — {term} tells them from the NULLs the dump holds"
                 )
             }
         }

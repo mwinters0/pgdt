@@ -186,6 +186,14 @@ async fn a_gzip_file_read_through_its_index_is_its_plaintext_on_every_arm() {
     for budget in [None, Some(1)] {
         for source in arms(compressed.path(), &layout).await {
             source.hint_parallelism(Parallelism::Serial { memory_bytes: budget });
+            // The arm under test, asserted through the trait the planner
+            // reads, the piecewise arm advising one partition
+            // (`docs/design/decisions.md`, "D73").
+            let partitions = source.partitions(0..payload.len() as u64).max_partitions();
+            match budget {
+                None => assert!(partitions > Some(1), "whole units: {partitions:?}"),
+                Some(_) => assert_eq!(partitions, Some(1), "in pieces"),
+            }
             assert_eq!(source.extent().await.unwrap(), Extent::Exact(payload.len() as u64));
             assert_eq!(source.compression_index(), Some(CompressionIndex::Gzip(layout.clone())));
             assert_eq!(
@@ -319,20 +327,39 @@ fn an_index_reads_back_as_its_checkpoints_and_refuses_parts_gz_seek_would() {
     let CompressionIndex::Gzip(back) = back else { panic!("a gzip index") };
     assert!(!back.has_windows() && layout.has_windows());
 
-    // The persisted parts' shape, with a first checkpoint past the file's start.
-    #[derive(serde::Serialize)]
-    struct Parts {
-        spacing: NonZeroU64,
-        checkpoints: Vec<(u64, u64, Option<u16>, Option<u32>)>,
-        end: Option<(u64, u64)>,
-    }
-    let damaged = Parts {
-        spacing: NonZeroU64::new(SPACING).unwrap(),
-        checkpoints: vec![(1, 0, None, None)],
-        end: Some((10, 20)),
+    // The persisted parts, whole, with a first checkpoint past the file's
+    // start: well-formed input that only `from_parts` refuses.
+    let spacing = NonZeroU64::new(SPACING).unwrap();
+    let damaged = checkpoints::Parts {
+        spacing,
+        checkpoints: vec![checkpoints::Point {
+            plaintext: 1,
+            bit: 0,
+            window: None,
+            symbol: None,
+            crc: None,
+        }],
+        members: 1,
+        end: Some(checkpoints::End { plaintext: 10, compressed: 20 }),
     };
+    let refusal = gz_seek::Index::from_parts(
+        spacing,
+        vec![gz_seek::Checkpoint {
+            plaintext: 1,
+            bit: 0,
+            start: gz_seek::Start::Member,
+            crc: None,
+        }],
+        1,
+        Some(gz_seek::End { plaintext: 10, compressed: 20 }),
+    )
+    .expect_err("gz_seek refuses the parts")
+    .to_string();
     let bytes = bincode::serde::encode_to_vec(&damaged, config).unwrap();
-    assert!(bincode::serde::decode_from_slice::<GzipIndex, _>(&bytes, config).is_err());
+    let refused = bincode::serde::decode_from_slice::<GzipIndex, _>(&bytes, config)
+        .expect_err("undecodable")
+        .to_string();
+    assert!(refused.contains(&refusal), "{refused}");
 }
 
 /// **`pg_dump`'s own `-Z` output reads through its index** at every routine

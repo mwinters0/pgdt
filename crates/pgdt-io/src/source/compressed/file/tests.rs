@@ -120,6 +120,7 @@ async fn xz_source_seeks_backward_across_a_block_boundary() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
     let source = CompressedFileSource::open(compressed.path()).unwrap();
+    assert!(source.budget.block_path().is_some(), "4 KiB blocks fit the default budget");
 
     // Walk forward past several block boundaries first, exactly like the
     // multi-chunk test above.
@@ -442,6 +443,7 @@ async fn xz_source_reads_a_single_block_non_seekable_file() {
     let table = seek_table_of(&source);
     assert_eq!(table.block_count(), 1);
     assert!(!table.is_seekable());
+    assert!(source.budget.block_path().is_some(), "the one block fits the default budget");
 
     let forward = source.read_range(10_000, 5000).await.unwrap();
     assert_eq!(&forward[..], &payload[10_000..15_000]);

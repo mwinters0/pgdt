@@ -1271,7 +1271,7 @@ async fn the_null_mode_s_warning_names_the_function() {
     let heard = heard.lock().unwrap();
     assert!(
         heard.iter().any(|message| message.contains(
-            "holds 2 value(s) its type `date` cannot hold, read as NULL — \
+            "holds 2 `date` value(s) this query cannot represent, read as NULL — \
              `pgdump_unrepresentable(v_date)` tells them from the NULLs the dump holds"
         )),
         "{heard:?}"
