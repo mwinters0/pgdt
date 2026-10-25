@@ -147,6 +147,61 @@ fn a_unit_ending_elsewhere_than_its_index_says_is_refused() {
     }
 }
 
+/// **A checkpoint moved inside a static block is refused**: its plaintext by
+/// the unit ending there, held to its length and CRC-32; its bit by the unit
+/// it begins — by its inflater or its CRC-32 — the unit ending there handing
+/// out right plaintext (`docs/design/decisions.md`, "D118").
+#[test]
+fn a_checkpoint_moved_inside_a_static_block_is_refused() {
+    let (name, file, pass) = passes().remove(1);
+    assert_eq!(name, "level 1");
+    // A symbol checkpoint far enough into its member that a shifted one keeps
+    // a full window, with room either side to shift into.
+    let c = pass.index.checkpoints();
+    let k = (1..c.len() - 1)
+        .find(|&k| {
+            matches!(c[k].start, Start::Symbol { .. })
+                && c[k].plaintext > 40_000
+                && c[k].plaintext - c[k - 1].plaintext > 1
+                && c[k + 1].plaintext - c[k].plaintext > 1
+                && c[k].bit - c[k - 1].bit > 1
+                && c[k + 1].bit - c[k].bit > 1
+        })
+        .expect("level 1 checkpointed inside a static block");
+    let moved = |plaintext: i64, bit: i64| {
+        let mut checkpoints = c.to_vec();
+        checkpoints[k].plaintext = checkpoints[k].plaintext.wrapping_add_signed(plaintext);
+        checkpoints[k].bit = checkpoints[k].bit.wrapping_add_signed(bit);
+        Index::from_parts(
+            pass.index.spacing(),
+            checkpoints,
+            pass.index.member_count(),
+            pass.index.end(),
+        )
+        .unwrap()
+    };
+    let decode = |index: &Index, unit: usize| {
+        let task = index.unit(unit).unwrap();
+        let len = (task.plaintext_range().end - task.plaintext_range().start) as usize;
+        let mut out = vec![0u8; len];
+        // The rest of the file: a unit ending before a symbol may read on.
+        let from = task.compressed_range().start as usize;
+        task.decode(&pass.windows[unit], &file[from..], &mut out).map(|()| out)
+    };
+    for shift in [-1i64, 1] {
+        let index = moved(shift, 0);
+        let err = decode(&index, k - 1);
+        assert!(matches!(err, Err(Error::UnitCheck { .. })), "plaintext {shift}: {err:?}");
+
+        let index = moved(0, shift);
+        let before = index.unit(k - 1).unwrap();
+        let out = decode(&index, k - 1).unwrap_or_else(|e| panic!("bit {shift}: {e}"));
+        assert!(out == plaintext_of(&pass, &before), "bit {shift}: the unit ending there");
+        let err = decode(&index, k);
+        assert!(err.is_err(), "bit {shift}: the unit it begins decoded");
+    }
+}
+
 #[test]
 fn a_short_supply_is_truncated_and_a_wrong_window_length_refused() {
     let (_, file, pass) = passes().remove(4);
