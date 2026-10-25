@@ -131,7 +131,7 @@ impl RangeKey {
 /// (`parse_*`), which take `{a, b}` and `{ 1 , 2 }` (I44).
 ///
 /// The leaf grammar does not widen with it (`docs/design/decisions.md`,
-/// "D58"): a leaf is read by its type's own reader, which takes no space its
+/// "D55"): a leaf is read by its type's own reader, which takes no space its
 /// `*_out` form does not write, so `--filter 'p=( 1 , a )'` is refused.
 ///
 /// `None` is "not a value of this type", which is
@@ -245,8 +245,8 @@ fn position_refuses_null(position: &Position<NestedCompare>, side: Side) -> bool
 /// One range value, read through its bound's plan and then put into the form
 /// the server stores it in.
 ///
-/// Both sides go through [`make_range`], not only the literal
-/// (`docs/design/decisions.md`, "D58"): it is idempotent on a `range_out`
+/// Both sides go through [`make_range`], not only the literal: it is
+/// idempotent on a `range_out`
 /// field, the server having already applied it, so one code path serves both
 /// grammars.
 fn range_key(

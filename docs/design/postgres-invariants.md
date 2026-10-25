@@ -554,7 +554,7 @@ the PG13/PG14+ split in the `multirange_type_name` parameter's presence. No
 fixture carries a `canonical` parameter, so that third claim rests on the
 source at both ends of the supported range plus the 16.15 probe.
 **Relied on by:** `decisions.md` ("Type resolution and decoders" — the mapping
-table and "Ranges and multiranges", and "D58" for the `canonical` parameter);
+table and "Ranges and multiranges"); `compare/walk.rs`'s `unanswerable_range` for the `canonical` parameter;
 `declared.rs`'s companion lookup and `TypeKind::Range`'s
 `multirange_type_name` and `canonical` fields.
 **Re-verify:** `grep -n 'skip auto-generated array and multirange types' -A 4
@@ -812,7 +812,7 @@ crossing 15 is. Confirmed against a running `postgres:16-alpine`
 (`extra_float_digits = 3`) as well as the source above.
 
 **Relied on by:** `crates/pgdt-codec/src/value/float.rs`'s `render_f32`/`render_f64`
-(`docs/design/decisions.md`, "D44"), whose fixed/scientific decision uses
+(`docs/design/decisions.md`, "D45"), whose fixed/scientific decision uses
 `FLT_DIG`/`DBL_DIG` (6/15) as the threshold, and the round-trip test under
 `decisions.md`'s "D73".
 **Re-verify:** `grep -n 'exp >= -4' src/common/f2s.c src/common/d2s.c` —
@@ -1361,7 +1361,7 @@ output.
 **Verified against:** v13.23 and v18.6 (`heap.c`, same check and message),
 plus both rejections observed live on the local PostgreSQL 16 instance.
 
-**Relied on by:** `decisions.md`, "D41" — it is why the type walks of `pgtype.rs` and `compare/walk.rs`
+**Relied on by:** `declared.rs`'s domain walk — it is why the type walks of `pgtype.rs` and `compare/walk.rs`
 can be bounded by the number of definitions the file declares: a path that
 visits more has visited one twice, which only a file this does not hold for
 reaches, and it answers `Unknown` rather than recursing without end.
@@ -2101,7 +2101,7 @@ and adding a case is the only answer available (`comparison_oracle.py`'s
 one per major. And the text answers are **glibc's** — the Debian (`-trixie`)
 fixture containers, `datcollate` `en_US.utf8`, `collversion` 2.41 — so it does
 not speak for a musl deployment, which orders the same locale bytewise
-([`decisions.md`](decisions.md), "D70"). Each exempt narrowing is an exception
+([`decisions.md`](decisions.md), "D71"). Each exempt narrowing is an exception
 [`roadmap.md`](roadmap.md)'s "A literal is guaranteed in `*_out`'s form and
 never read past `*_in`'s" takes to the newest's semantics.
 
@@ -2114,10 +2114,10 @@ answering to a row of the manual's table, every row asked
 **Verified against.** 13.23, 14.24, 15.19, 16.15, 17.11, 18.6 — the versions
 `meta.tsv` records per major.
 
-**Relied on by.** [`decisions.md`](decisions.md), "D70", and every comparison there that implements one semantics for all
+**Relied on by.** [`decisions.md`](decisions.md), "D71", and every comparison there that implements one semantics for all
 majors — "D55" for `interval`'s and `numeric`'s
 infinities, "D45" for the four `*_in` transcriptions, and
-"D58" for the multirange types.
+`value/nested/key.rs` for the multirange types.
 
 **Re-verify.**
 
@@ -2870,7 +2870,7 @@ paragraph are asserted by `tests/preamble.rs`'s
 the flag-set claim exactly as written, and the version itself by six-way
 agreement without naming the value, so an image bump is a regeneration and a
 *split* between majors is a fault ([`decisions.md`](decisions.md),
-"D69" and "D70").
+"D69" and "D71").
 
 **Consequence.** Equality's divergence is knowable per column wherever the
 collation is user-defined and the dump says `deterministic = false`, and
@@ -3235,7 +3235,7 @@ the element's own question, one level down, and I32/I37/I43 are where it lives.
 observed in the committed oracle at all six, and the probe below run against
 16.15 and 18.6.
 
-**Relied on by:** [`decisions.md`](decisions.md), "D58" — `value/nested/key.rs`'s `compare_nested`, and `compare.rs`'s
+**Relied on by:** `value/nested/key.rs`'s `compare_nested`, and `compare.rs`'s
 `NestedCompare`, whose `Uncomparable` position is the inheritance rule.
 
 **Re-verify.** Read the functions:
@@ -3370,13 +3370,13 @@ probe below answers identically on `postgres:16.15-trixie` and
 **Scope limit.** Ranges and multiranges. Arrays and composites are I45. The
 *collation* a `text`-bounded range's comparison runs under is not covered here:
 a range type carries its own `collation` parameter, which this build does not
-read (see `decisions.md`, "D58").
+read.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 observed in the committed oracle at all six, and the probe below run against
 16.15 and 18.6, its out-of-range lines against 13.23 too.
 
-**Relied on by:** [`decisions.md`](decisions.md), "D58" — `value/nested/key.rs`'s `make_range`, `serialize_range`, `compare_range`,
+**Relied on by:** `value/nested/key.rs`'s `make_range`, `serialize_range`, `compare_range`,
 `compare_bounds` and `canonical_multirange`, and `compare.rs`'s
 `NestedCompare::Range`/`Multirange` and the `Discrete` value `pgtype.rs`'s
 `builtin_range_subtype` sets. The first claim is also what makes a
@@ -3527,7 +3527,7 @@ observed in the committed oracle and the `types` fixture at all six, and the
 probe below run against 16.15.
 
 **Relied on by:** [`decisions.md`](decisions.md), "Type resolution and decoders" (the
-`List<Int16>` mapping and `NestedPlan::Int2Vector`), "D44"
+`List<Int16>` mapping and `NestedPlan::Int2Vector`), "D45"
 (`value/nested/output.rs`'s `decode_int2vector`/`render_int2vector`, `value/nested/input.rs`'s `parse_int2vector`) and
 "D55" (`NestedCompare::Int2Vector`, and the
 constant `dims`/`lower_bounds` `nested_key` builds).

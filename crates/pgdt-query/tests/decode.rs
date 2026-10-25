@@ -467,7 +467,7 @@ async fn read_as_null_or_refused(table: &str, column: &str, declared: &str, valu
 
 /// `NaN` bypasses `numeric(p,s)`'s own precision/scale check and has no
 /// `Decimal128`/`Decimal256` representation (`docs/design/decisions.md`,
-/// "D42"); `public.t_numeric.v_small numeric(10,2)` carries it for exactly
+/// "D96"); `public.t_numeric.v_small numeric(10,2)` carries it for exactly
 /// this reason.
 #[tokio::test]
 async fn nan_numeric_is_read_as_null_or_refused_naming_its_context() {

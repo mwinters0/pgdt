@@ -26,8 +26,7 @@ use super::{ByteRangeSource, Extent, WaitPolicy};
 /// a chunk-sized tail read follows to finish the line ending at or past `end`,
 /// so those bytes are the next partition's body read a second time
 /// (`docs/design/decisions.md`, "D52"). The waste is `chunk / partition`, paid
-/// per partition, so this multiple caps it at the multiple's reciprocal
-/// (`docs/design/decisions.md`, "D9").
+/// per partition, so this multiple caps it at the multiple's reciprocal.
 ///
 /// **The product is capped at [`POOL_MAX_BYTES`].** Nothing allocates a
 /// partition-length buffer, so what the cap bounds is the **cut** — and,
@@ -159,7 +158,7 @@ impl ByteRangeSource for LocalFileSource {
     /// `read_range` and returned when its caller drops the bytes — so what the
     /// free list has to hold is the
     /// *replay* path's depth, which is what [`POOL_DEPTH`] is, and not a
-    /// worker count (`docs/design/decisions.md`, "D9").
+    /// worker count.
     ///
     /// Where the leader schedules concurrent readers over this source, a
     /// `parse` at `--jobs n` runs `n` fused workers against at most

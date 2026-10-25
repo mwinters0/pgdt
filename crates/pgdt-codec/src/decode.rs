@@ -1,5 +1,5 @@
 //! Per-type field decode and render-back (`docs/design/decisions.md`,
-//! "D44"): the namespace declaring each family's reader and renderer, which
+//! "D45"): the namespace declaring each family's reader and renderer, which
 //! sit with the rest of what PostgreSQL says about their type under
 //! `crate::value`, and the [`Unread`] every reader answers with.
 //!
@@ -14,7 +14,7 @@
 //! form [`decode_bytea`] read (`docs/design/decisions.md`, "D66") — and produces the same *decoded* text `pgdt_core::unescape_field`
 //! would have returned for a correctly-formed value — never the raw
 //! COPY-escaped bytes on disk. Converting between the two is
-//! `pgdt_core::escape_field`'s job (`docs/design/decisions.md`, "D68").
+//! `pgdt_core::escape_field`'s job (`docs/design/decisions.md`, "D74").
 //! pgdt-query's `tests/decode.rs` round-trip test compares against `SchemaMode::Strings`,
 //! which is also decoded text; the on-disk-byte leg is covered separately in
 //! `pgdt-mapping`'s `tests/scan.rs`.

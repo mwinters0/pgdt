@@ -86,8 +86,7 @@ impl AsRef<[u8]> for BlockView {
 /// **This is the second pool a source with two read units takes**, not a
 /// second unit announced into the chunk pool: [`BufferPool::hinted`] is one
 /// value driving both [`BufferPool::keeps`] and [`BufferPool::slot_bytes`], so
-/// one pool serving both units is wrong for one of them either way
-/// (`docs/design/decisions.md`, "D17").
+/// one pool serving both units is wrong for one of them either way.
 ///
 /// **Retention is what makes per-call block decode affordable**: a block
 /// decoded afresh per call would repeat the whole block's decode once per
@@ -100,8 +99,7 @@ impl AsRef<[u8]> for BlockView {
 /// evicted buffer is what the next decode reuses. **The retained list and the
 /// free list share one count** — this list reserves what it holds
 /// ([`BufferPool::reserve`]) — so one reader's ceiling is `slots * unit`, and
-/// `workers` readers decoding at once hold up to `slots − 1 + workers` units
-/// (`docs/design/decisions.md`, "D17").
+/// `workers` readers decoding at once hold up to `slots − 1 + workers` units.
 ///
 /// **A block is decoded once however many readers miss on it together**
 /// ([`BlockCache::claim`]): a fused worker's tail read lands in the block its
@@ -490,8 +488,7 @@ impl DecodeBudget {
     /// (`BufferPool::held_bytes`), its slot count at its slot size — up to
     /// [`POOL_DEPTH`] slots, fewer where the budget affords fewer. Chunks
     /// come first because that pool is the one every read path uses and the
-    /// one the pool-miss cost was measured through (`chunk-size`)
-    /// (`docs/design/decisions.md`, "D17").
+    /// one the pool-miss cost was measured through (`chunk-size`).
     ///
     /// Recomputed from `self.budget` on **both** announcements rather than
     /// composed incrementally, so [`DecodeBudget::hint_read_size`] and
@@ -511,7 +508,7 @@ impl DecodeBudget {
             // **`jobs` here is the count the caller *announced*, not the count
             // `worker_count` then delivers.** They agree under
             // discovery and diverge where a stated `--jobs` outruns a stated
-            // budget (`docs/design/decisions.md`, "D17").
+            // budget.
             //
             // Deficiency register: `deficiency: KD21` — the slot count is then
             // bounded by the pool's byte budget rather than by the delivered
@@ -624,7 +621,7 @@ impl DecodeBudget {
     /// takes its own ceiling and the block pool takes the rest, so the number
     /// a caller states bounds the source rather than each of its pools; the
     /// worker count is the block pool's depth, one retained block per
-    /// concurrent reader (`docs/design/decisions.md`, "D17").
+    /// concurrent reader.
     ///
     /// A budget too small for a whole block sends every read through the
     /// piecewise arm ([`BlockCache::affordable`]) — the budget is honoured

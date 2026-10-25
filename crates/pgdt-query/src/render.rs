@@ -1,6 +1,6 @@
 //! An Arrow value read back as PostgreSQL text, and one field's text read
 //! into the array a batch of its column would hold
-//! (`docs/design/decisions.md`, "D44", "D66").
+//! (`docs/design/decisions.md`, "D45", "D66").
 
 use arrow::array::{
     Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
@@ -30,7 +30,7 @@ use crate::batch::{append_typed, finish_column, new_column_builder};
 ///
 /// **The `Result` is for a value with no text form at all**, which is a third
 /// outcome and not a NULL: [`Error::FieldRender`] says which, and a value is
-/// never rounded into range (`docs/design/decisions.md`, "D44"). Nothing this
+/// never rounded into range (`docs/design/decisions.md`, "D45"). Nothing this
 /// crate builds can reach it, so it is a statement about arrays a caller
 /// assembled itself.
 ///
@@ -91,7 +91,7 @@ pub fn decode_field(column: &ResolvedColumn, text: &str) -> Option<ArrayRef> {
 /// It exists so that a consumer printing a whole row builds it in one buffer:
 /// a scalar column of an integer, a boolean, a text or a date/time type other
 /// than `interval` is written straight into that buffer and allocates nothing
-/// (`docs/design/decisions.md`, "D44").
+/// (`docs/design/decisions.md`, "D45").
 ///
 /// **An error may leave a partial value behind**, so the discipline this asks
 /// for is not to publish a buffer an error came out of.
@@ -277,7 +277,7 @@ pub(crate) fn render_plan_into(
 /// Each element is rendered where it will be read, and
 /// [`quote_array_element`] moves it aside only if the grammar wants
 /// it quoted, so an `integer[]` of fifty is fifty appends and no allocation
-/// (`docs/design/decisions.md`, "D44").
+/// (`docs/design/decisions.md`, "D45").
 ///
 /// Lower bounds are always 1, so no `[lb:ub]=` prefix is ever written: a
 /// decorated value is refused at append time (I21), and no column holds one to

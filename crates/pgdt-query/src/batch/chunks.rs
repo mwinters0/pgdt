@@ -67,7 +67,7 @@ impl RetainedChunks {
     /// **This is the one place a read chunk becomes an `arrow::Buffer`.** The
     /// `Bytes` is cloned rather than consumed because the caller still scans
     /// it; both refer to the same allocation, which the buffer pool reclaims
-    /// only when the last reference dies (`docs/design/decisions.md`, "D9").
+    /// only when the last reference dies.
     pub(crate) fn retain(&mut self, start: u64, bytes: &Bytes) {
         self.chunks.push_back(SourceChunk {
             start,

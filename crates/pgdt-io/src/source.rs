@@ -128,8 +128,7 @@ pub trait ByteRangeSource: Send + Sync {
     /// **Advisory, and it defaults to doing nothing.** One-off-ness is a
     /// property of the *caller* and nothing in a `read_range` call carries it,
     /// so a source that recycles buffers cannot otherwise tell a repeating
-    /// chunk read from `map::attach_text`'s one coalesced span read. See
-    /// `docs/design/decisions.md`, "D9".
+    /// chunk read from `map::attach_text`'s one coalesced span read.
     fn hint_read_size(&self, _len: usize) {}
     /// The compression index behind this source, for a caller building a
     /// cache envelope to persist alongside it. See
@@ -453,5 +452,5 @@ pub enum WaitPolicy {
 /// to [`crate::DEFAULT_MEMORY_BUDGET`]), whichever is fewer, and never fewer
 /// than one — the slot count
 /// falls out of that budget, so the cost levels off
-/// (`docs/design/decisions.md`, "D9").
+/// (`docs/design/decisions.md`, "D10").
 pub const SCAN_CHUNK_DEFAULT_SIZE_BYTES: usize = 1 << 20;

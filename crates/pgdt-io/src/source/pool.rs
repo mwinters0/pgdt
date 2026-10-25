@@ -20,7 +20,7 @@ use super::WaitPolicy;
 ///
 /// **It is a wish, not the bound** — the stated budget is the bound, and the
 /// two together are what make a slot able to hold a decoded xz block rather
-/// than only a read chunk (`docs/design/decisions.md`, "D9").
+/// than only a read chunk.
 ///
 /// **It is also the floor under a stated worker count**, not a second number
 /// beside it: a block pool of one makes eviction drain before every decode and
@@ -53,8 +53,7 @@ pub(crate) const POOL_DEPTH: usize = 4;
 /// [`ByteRangeSource::hint_read_size`](crate::ByteRangeSource::hint_read_size) names the length a read loop is about
 /// to repeat, and *becomes* the pool's slot size
 /// ([`BufferPool::slot_bytes`]), so a buffer of that length is kept however
-/// large it is and this constant governs only a pool nobody has announced to
-/// (`docs/design/decisions.md`, "D9").
+/// large it is and this constant governs only a pool nobody has announced to.
 pub(crate) const POOL_MAX_BYTES: usize = 8 << 20;
 
 /// Read buffers, reused rather than allocated per chunk.
@@ -131,8 +130,7 @@ pub(crate) struct BufferPool {
     /// **One value, so one pool describes one read unit.** It drives both
     /// [`BufferPool::keeps`] and [`BufferPool::slot_bytes`], and a pool asked
     /// to serve two units is wrong for one of them either way, so a source
-    /// with a second read unit takes a second pool rather than a second hint
-    /// (`docs/design/decisions.md`, "D17").
+    /// with a second read unit takes a second pool rather than a second hint.
     hinted: AtomicUsize,
     /// What the read loop currently reading through this pool permits, as
     /// [`WaitPolicy`] encodes it — [`WaitPolicy::NeverWait`] until one is
@@ -319,7 +317,7 @@ impl BufferPool {
     /// several decoding at once the retention list outgrows its share by up to
     /// their number ([`BlockCache::worker_memory`](crate::source::compressed::blocks::BlockCache::worker_memory)). This is what a source with
     /// **two** read units subtracts before handing the remainder to the second
-    /// pool (`docs/design/decisions.md`, "D17").
+    /// pool.
     ///
     /// **It bounds the two lists and not a buffer a caller is still holding.**
     /// A [`PooledBuffer`] taken by [`BufferPool::obtain`] is on neither list
@@ -349,8 +347,7 @@ impl BufferPool {
     /// drops that buffer instead of pooling it. The two-unit sources are the
     /// compressed ones, [`CompressedFileSource`](crate::CompressedFileSource) and
     /// [`FetchedCompressedSource`](crate::FetchedCompressedSource), whose `DecodeBudget` takes
-    /// a second pool rather than a second hint
-    /// (`docs/design/decisions.md`, "D17").
+    /// a second pool rather than a second hint.
     fn keeps(&self, len: usize) -> bool {
         len <= self.slot_bytes()
     }
@@ -358,8 +355,7 @@ impl BufferPool {
     /// State how many slots a holder outside the free list is accounting for.
     ///
     /// The only one is [`BlockCache`](crate::source::compressed::blocks::BlockCache)'s retained list, whose blocks hold
-    /// [`PooledBuffer`]s of this pool's own slot size
-    /// (`docs/design/decisions.md`, "D17").
+    /// [`PooledBuffer`]s of this pool's own slot size.
     ///
     /// `Relaxed` for the same reason [`BufferPool::hinted`] is: nothing is
     /// published through it, and a value that arrives a buffer late costs one

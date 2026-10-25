@@ -369,7 +369,7 @@ pub enum Error {
     /// [`Self::FieldDecode`]'s mirror, met on the way **out**: an Arrow array
     /// holds a value no PostgreSQL text form spells, so `render_field`
     /// refuses rather than writing something the file could not have held
-    /// (`docs/design/decisions.md`, "D44").
+    /// (`docs/design/decisions.md`, "D45").
     ///
     /// It names the Arrow value rather than a table, column and row offset
     /// because nothing a scan fills can reach it — every typed column a query

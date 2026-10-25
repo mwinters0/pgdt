@@ -291,7 +291,7 @@ pub(crate) fn companion_range<'a>(reference: &str, types: &'a [TypeDef]) -> Opti
 /// name-keyed list holds where the server's did not, a rename the preamble
 /// does not follow being enough. That walk answers `Unknown` — and a
 /// comparison `Refused` — rather than recursing until the stack is gone
-/// (`docs/design/decisions.md`, "D41").
+/// (I24).
 ///
 /// [`comparison_for`]: crate::compare::comparison_for
 #[derive(Debug, Clone, Copy)]
@@ -396,8 +396,7 @@ fn strip_array_keyword(declared: &str) -> Option<&str> {
 /// reader asking whether it is a `box` tests it with [`is_box`].
 ///
 /// `pgtype`'s `resolve_array` and the register's `array_comparison` test
-/// this terminal rather than the declared spelling (I22, I26; `docs/design/decisions.md`,
-/// "D41").
+/// this terminal rather than the declared spelling (I22, I26).
 ///
 /// The loop is bounded by the type list's length — a domain chain visits each
 /// `CREATE DOMAIN` at most once — which keeps a hand-edited file from

@@ -187,7 +187,7 @@ impl Default for ResolvedSchema {
 /// ([`pgdt_model::drain`] over [`ResolvedSchema::columns`]). The file-level
 /// exception channel is [`pgdt_model::Diagnostic`], kept a separate type
 /// because `DumpIndex` is the model's and [`ColumnResolution`] a codec
-/// conclusion (`docs/design/decisions.md`, "D68"). What they share is the
+/// conclusion (`docs/design/decisions.md`, "D74"). What they share is the
 /// [`Severity`] scale, so a caller reading both filters uniformly.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedColumn {

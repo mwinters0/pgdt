@@ -222,7 +222,7 @@ pub(super) fn without_credentials(url: &url::Url) -> String {
 }
 
 /// `object_store`'s wording, named against the URL it is about rather than
-/// surfaced raw (`docs/design/decisions.md`, "D62").
+/// surfaced raw.
 fn remote_failure(url: &url::Url, error: &object_store::Error) -> Error {
     Error::Remote { url: url.to_string(), message: error.to_string() }
 }

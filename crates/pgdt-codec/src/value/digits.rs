@@ -11,7 +11,7 @@
 /// pairs — two digits, a four-digit year two of them, a fraction three — so a
 /// pair becomes an indexed slice and a two-byte copy rather than a trip
 /// through `core::fmt`, a year past four digits alone taking the general path
-/// (`docs/design/decisions.md`, "D44").
+/// (`docs/design/decisions.md`, "D45").
 const DEC_PAIRS_BYTES: [u8; 200] = {
     let digits = *b"0123456789";
     let mut table = [0u8; 200];
@@ -43,7 +43,7 @@ static DEC_DIGITS: &str = "0123456789";
 /// exactly `i64::to_string`, which is what [`push_integer`] is.
 ///
 /// Three properties are load-bearing rather than stylistic
-/// (`docs/design/decisions.md`, "D44"):
+/// (`docs/design/decisions.md`, "D45"):
 ///
 /// - **The digits come out two at a time**, off [`DEC_PAIRS`], the algorithm
 ///   the standard library's own integer `Display` uses.
@@ -90,7 +90,7 @@ fn push_padded(out: &mut String, value: i64, width: usize) {
 ///
 /// `write!(out, "{value}")` reaches the same `Display` impl through
 /// `core::fmt::write`, which this path never uses
-/// (`docs/design/decisions.md`, "D44").
+/// (`docs/design/decisions.md`, "D45").
 #[inline]
 pub fn push_integer(out: &mut String, value: i64) {
     push_padded(out, value, 0);
@@ -168,7 +168,7 @@ const BAD_NIBBLE: u8 = 0xFF;
 /// the render direction. `render_bytea` and `render_uuid` loop per *byte* over a value
 /// of any length, and each knows its whole output length before it starts, so a
 /// byte becomes an indexed slice and a two-byte copy into a pre-sized `String`
-/// rather than a trip through `core::fmt` (`docs/design/decisions.md`, "D44").
+/// rather than a trip through `core::fmt` (`docs/design/decisions.md`, "D45").
 const HEX_PAIRS_BYTES: [u8; 512] = {
     let digits = *b"0123456789abcdef";
     let mut table = [0u8; 512];

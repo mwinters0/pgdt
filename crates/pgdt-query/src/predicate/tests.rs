@@ -2342,7 +2342,7 @@ fn a_multirange_is_sorted_coalesced_and_emptied_before_it_is_compared() {
 /// The comparison register against the committed comparison oracle:
 /// every cell of `fixtures/<13-18>/oracle/comparisons.tsv`, answered by
 /// the same `resolve_term`/`matches` path a `--filter` takes, and compared
-/// with what the server itself said (`docs/design/decisions.md`, "D70").
+/// with what the server itself said (`docs/design/decisions.md`, "D71").
 ///
 /// This is the check the oracle exists for: `oracle_register.py` and
 /// `oracle_differences.py` are about which rows exist, and nothing else

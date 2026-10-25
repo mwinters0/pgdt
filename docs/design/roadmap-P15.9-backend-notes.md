@@ -87,9 +87,7 @@ weighed for shipping are moot unless D112 reopens.
   linking `gz-seek` adds nothing CMake-built to `pgdt`'s closure. The zlib-ng
   leg's `CMakeCache.txt` stays in its own apparatus target dir.
 - **The sitting**: `runs/measure-20261023T180348/` (`tables.md`, `raw.json`)
-  and its log, `runs/p15.9-backend-readings/figure.log`. To make room for D112
-  under the register's cap, D17, D18, D87 and D22 were re-wrapped one line
-  shorter each, their text unchanged.
+  and its log, `runs/p15.9-backend-readings/figure.log`.
 
 ## Negative results
 

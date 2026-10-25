@@ -451,7 +451,7 @@ impl pgdt_io::ByteRangeSource for Recording {
 /// longer). It is **not** source-agnostic: the block-decoding path reads a
 /// piece whole, where the bound that binds is the source's own unit
 /// ([`no_read_a_worker_makes_exceeds_the_stated_unit`]) — evidence
-/// `parallel-peak-rss`, decision `docs/design/decisions.md`, "D9". The
+/// `parallel-peak-rss`. The
 /// assertion is on the reads the leader issued, not on the advice.
 #[tokio::test]
 async fn no_read_a_worker_makes_exceeds_the_chunk_size() {

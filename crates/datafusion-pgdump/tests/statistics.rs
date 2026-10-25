@@ -734,7 +734,7 @@ async fn a_distinct_count_is_exact_only_where_every_group_kept_a_dictionary_of_e
 }
 
 /// **A sum answers where every group of every block kept one, wrapped as
-/// DataFusion's `SUM` wraps** (`docs/design/decisions.md`, "D89"): over
+/// DataFusion's `SUM` wraps** (`docs/design/decisions.md`, "D91"): over
 /// `public.spans` read as three blocks, every integer, `oid` and typmodded
 /// `numeric` column answers — `big` wrapping the `Int64` every integer is
 /// summed as, `i2` and `i4` passing their own types, and `huge` wrapping

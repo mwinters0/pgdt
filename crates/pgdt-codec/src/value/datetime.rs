@@ -222,7 +222,7 @@ pub fn render_date32(days: i32) -> String {
 
 /// [`render_date32`] appending to a caller's buffer instead of returning one.
 /// The `_into` form is the one that does the work; the owned form above is a
-/// wrapper, so the two cannot drift (`docs/design/decisions.md`, "D44").
+/// wrapper, so the two cannot drift (`docs/design/decisions.md`, "D45").
 pub fn render_date32_into(days: i32, out: &mut String) {
     if push_civil_date(out, i64::from(days)) {
         out.push_str(" BC");
@@ -602,7 +602,7 @@ pub fn decode_interval(s: &str) -> Option<(i32, i32, i64)> {
 /// **`None` for a `nanos` that is not a whole number of microseconds.**
 /// PostgreSQL's time field counts microseconds, so no `interval` has such a
 /// value and there is no text to write; the value is refused rather than
-/// truncated (`docs/design/decisions.md`, "D44"). [`decode_interval`] cannot
+/// truncated (`docs/design/decisions.md`, "D45"). [`decode_interval`] cannot
 /// produce one — it multiplies microseconds by a thousand — so this is
 /// reachable only from an `Interval(MonthDayNano)` array a caller built.
 pub fn render_interval(months: i32, days: i32, nanos: i64) -> Option<String> {

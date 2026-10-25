@@ -246,7 +246,7 @@ fn with(filter: Expr, use_statistics: bool, jobs: usize) -> QueryOptions {
 /// The literals a column's terms compare against: its stored bounds and
 /// dictionary entries, a neighbour on each side of each, and the committed
 /// comparison oracle's values for its declared type
-/// (`docs/design/decisions.md`, "D70").
+/// (`docs/design/decisions.md`, "D71").
 fn literals(
     blocks: &[&CopyBlock],
     column: usize,

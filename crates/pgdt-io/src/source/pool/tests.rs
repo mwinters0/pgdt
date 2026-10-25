@@ -70,7 +70,7 @@ fn the_free_list_holds_no_more_than_it_reports() {
 
 /// **A reservation comes out of the free list's share, not beside it.**
 /// The one holder that takes slots without leaving them on the free list
-/// is `BlockCache`'s retained list (`docs/design/decisions.md`, "D17").
+/// is `BlockCache`'s retained list.
 #[test]
 fn a_reservation_takes_the_free_list_share() {
     let chunk = 1 << 20;

@@ -12,7 +12,7 @@ writes the output under fixtures/<major-version>/<schema>/<flag-set>.sql
 
 It also generates the **comparison oracle** -- what the server itself answers
 for a table of typed comparisons, written under
-fixtures/<major-version>/oracle/ (docs/design/decisions.md, "D70"). That pass lives here rather than in its own script because it runs
+fixtures/<major-version>/oracle/ (docs/design/decisions.md, "D71"). That pass lives here rather than in its own script because it runs
 against the `types` schema's own database, so it must see the same DDL, in the
 same container, as fixtures/<major-version>/types/*.sql. The case table and the
 SQL are scripts/comparison_oracle.py.

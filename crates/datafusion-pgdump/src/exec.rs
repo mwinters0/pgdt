@@ -3,7 +3,7 @@
 //!
 //! **It exists to answer `statistics_from_inputs`, and to carry the scan's
 //! own metrics.** DataFusion reads a source's statistics off the
-//! `ExecutionPlan` — `TableProvider` has no statistics method in 55 — and
+//! `ExecutionPlan` — `TableProvider::statistics` is read by nothing in DataFusion 55 — and
 //! `StreamingTableExec` answers `Statistics::new_unknown`. So the streaming
 //! exec stays, held as an implementation detail rather than as a child: this
 //! is a leaf, and nothing in a plan tree sees the node inside it. Its metrics

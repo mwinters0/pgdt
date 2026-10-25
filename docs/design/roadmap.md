@@ -414,7 +414,7 @@ ships names it — and an `interval` where no `IntervalStyle` does.
 supported majors is in the manual with the reading chosen for it**
 ([`../manual/type-handling.md`](../manual/type-handling.md), "Where
 PostgreSQL majors differ"), the comparison oracle asking each row at every
-major and failing a transition no row records (D70); walking the
+major and failing a transition no row records (D71); walking the
 invariants at a new major is what finds a new one. **The literal ceiling governs the PostgreSQL semantics only**:
 under DataFusion's a literal is DataFusion's value, compared as DataFusion
 compares the emitted column.
@@ -1235,7 +1235,7 @@ which is what makes the difference worth minding at the moment one is found.
   lossless for every array PostgreSQL can produce — any dimensionality, any
   lower bound, varying freely from row to row — where the `List<T>` that ships
   today covers only the uniform 1-D case and degrades the rest to `Utf8View`
-  ([`decisions.md`](decisions.md), "D34"). `List<T>` was chosen on koji-shaped evidence: short,
+  ([`decisions.md`](decisions.md), "D35"). `List<T>` was chosen on koji-shaped evidence: short,
   uniform, one-dimensional arrays, where the struct costs +16 bytes per row and
   the loss of `List` as the signal every generic Arrow consumer reads as "this
   is an array". **A schema of matrices or scientific data inverts that
@@ -1274,7 +1274,7 @@ which is what makes the difference worth minding at the moment one is found.
   optimistic path permanently: its shape has nowhere to be recorded, so a
   multi-dimensional or `[lb:ub]`-decorated value there stays a hard
   `FieldDecode` even after `pgdt parse`
-  ([`decisions.md`](decisions.md), "D34"). Keying the census by a *path* within the column
+  ([`decisions.md`](decisions.md), "D35"). Keying the census by a *path* within the column
   rather than by the column closes that, at the cost of a bigger cache record
   and a per-path walk. Deferred on frequency — a composite with a
   multi-dimensional array field is rare even by that phase's standards — and it

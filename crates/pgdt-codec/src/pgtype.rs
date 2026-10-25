@@ -51,8 +51,8 @@ pub enum TypeOutcome {
     /// C-level base type, or a shell type, through any chain of domains.
     ///
     /// Refused rather than mapped to `List<Utf8View>`: the array separator is
-    /// the *element type's* `typdelim` (I22) and `box`'s is `;`
-    /// (`docs/design/decisions.md`, "D41"). Held apart from
+    /// the *element type's* `typdelim` (I22) and `box`'s is `;`.
+    /// Held apart from
     /// [`Self::OpaqueBaseType`] so `pgdt info` can say which happened.
     OpaqueElementType,
     /// An array whose element type is *itself* an array, through any chain of
@@ -62,7 +62,7 @@ pub enum TypeOutcome {
     /// resolves like any other array.
     ///
     /// Refused for the same reason as [`Self::OpaqueElementType`]
-    /// (`docs/design/decisions.md`, "D41"): the element's own literal grammar
+    /// (I26): the element's own literal grammar
     /// is not what the outer split assumes. The value is written **one brace
     /// deep** — `{"{1,2}","{3}"}`, since `array_out` force-quotes any element
     /// whose text contains `{` (I25) — so the literal's leading brace run and
@@ -101,7 +101,7 @@ pub enum TypeOutcome {
 /// `pgdt info --json` can export a resolved schema's plans structurally
 /// (`docs/design/decisions.md`, "D67"); **not `Deserialize`, and never
 /// persisted** — the cache holds what the dump said, never what we concluded
-/// (`docs/design/decisions.md`, "D68").
+/// (`docs/design/decisions.md`, "D74").
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub enum NestedPlan {
     /// Filled by `crate::decode`'s per-type decoders, or held as text.
@@ -674,7 +674,7 @@ fn range_bound(
 /// [`NestedPlan::Array`] that fills it.
 ///
 /// **Both refusals test the terminal of one domain walk, not the declared
-/// spelling** (I22, I26; `docs/design/decisions.md`, "D41"): a domain records
+/// spelling** (I22, I26): a domain records
 /// neither the `typdelim` it inherited nor the array-ness of its base.
 ///
 /// The order between them decides a label, never a type — both answer

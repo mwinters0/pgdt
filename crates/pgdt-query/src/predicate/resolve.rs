@@ -32,8 +32,8 @@ pub(super) enum Comparison {
     /// comparison, its own text as the one spelling.
     Equal(Equality),
     /// A nested column, under **any** comparing operator: both sides read
-    /// into a [`NestedKey`] and compared structurally
-    /// (`docs/design/decisions.md`, "D58"). One variant for both operator
+    /// into a [`NestedKey`] and compared structurally.
+    /// One variant for both operator
     /// families, where a scalar has one for each and its equality three
     /// forms, because a nested value's `=` is byte-comparable only when
     /// *every* leaf beneath it canonicalizes.

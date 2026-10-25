@@ -15,7 +15,7 @@ fn agrees(kind: CompareKind) -> ComparisonPlan {
 /// (`docs/design/decisions.md`, "D40").
 ///
 /// **Every arm of [`builtin_scalar`] appears here** but `int2vector`'s,
-/// which maps to a list and compares as a nested column (D58): a type
+/// which maps to a list and compares as a nested column: a type
 /// added to that table without a row here is one nothing states the
 /// comparison of.
 #[test]

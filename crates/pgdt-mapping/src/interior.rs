@@ -457,7 +457,7 @@ async fn run_region(
 /// limit.
 ///
 /// **How the piece is read is the source's own statement**
-/// ([`pgdt_io::PartitionRead`], and `docs/design/decisions.md`, "D9"). A
+/// ([`pgdt_io::PartitionRead`]). A
 /// plain file is read [`pgdt_io::PartitionRead::Chunked`], so
 /// `pgdt_io`'s `BufferPool` pools every chunk-long buffer a worker takes — a
 /// read grown past a chunk to finish a longer line is not pooled; a

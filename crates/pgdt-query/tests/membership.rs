@@ -178,7 +178,7 @@ async fn gathered(dump: &Path) -> (tempfile::TempDir, PathBuf, DumpIndex) {
 /// The values a column's lists draw from: its stored bounds and dictionary
 /// entries, each also spelled with a trailing `0` — the same number for a
 /// fraction, the next text or a refusal elsewhere — and the committed
-/// oracle's values for its declared type (`docs/design/decisions.md`, "D70").
+/// oracle's values for its declared type (`docs/design/decisions.md`, "D71").
 fn pool(
     blocks: &[&CopyBlock],
     column: usize,
