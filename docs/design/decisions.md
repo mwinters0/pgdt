@@ -16,7 +16,7 @@ provider's `ScanBudget` where no allowance is stated. Rejected: `default_workers
 ### D2 A plain file recommends one worker; a local compressed one the machine's cores
 A serial plain `parse` is device-bound on every real device wherever a split reaches, a `COPY` block's interior, an `INSERT` run admitting none (`KD9`); `query`'s typed scan,
 which on the NVMe is not, is held flat by `KD57`'s merge; each partition's tail past itself adds device bytes. `CompressedFileSource` answers `available_parallelism()` capped at its unit count
-(`RT7`); a fetched one answers one, the errors being asymmetric; a gzip first pass, its extent open and its scan one partition whatever it answers, answers its cores capped at its chunk count, local or fetched, each worker past the frontier inflating a chunk ahead (D117), a fetched file's reading the one download its frontier reads, until it hands over to the arms (`FirstPass`). Rejected: a plain split once a typed one outran one worker on the NVMe (`parallel-scan-throughput`'s cold-NVMe column), the provider delivering it from `target_partitions`, never from this; a first pass running a task for every worker afforded, its frontier beside them, oversubscribing the cores `Serial` counts as one (D1).
+(`RT7`); a fetched one answers one, the errors being asymmetric; a gzip first pass, its extent open and its scan one partition whatever it answers, answers a local file's cores capped at its chunk count, each worker past the frontier inflating a chunk ahead (D117), and one fetched, as the fetched source does, its tasks ahead running only under a stated `--jobs`, each reading the one download its frontier reads, until it hands over to the arms (`FirstPass`). Rejected: a plain split once a typed one outran one worker on the NVMe (`parallel-scan-throughput`'s cold-NVMe column), the provider delivering it from `target_partitions`, never from this; a first pass running a task for every worker afforded, its frontier beside them, oversubscribing the cores `Serial` counts as one (D1); a fetched first pass recommending its cores because its tasks fetch no byte the serial pass would not, which answers bytes where the fetched clause weighs connections opened to a third party's server unasked, and decoding ahead over one request in flight, which on a link bound by round trips lifts nothing (`docs/status/history/2026-10-24.md`, "15.8.2's fetched default and the take tests, reviewed").
 Reopens: `KD57` closing, which asks the plain answer per kind of work (`D7`): `query`'s replay is extraction, `parse` and the mapping pass discovery, and one `default_workers()` per source cannot tell them apart. Evidence: `scan-throughput-*`, `parallel-scan-throughput`.
 
 ### D3 The memory constants, and what each one is
@@ -729,8 +729,9 @@ readers grew (`READS` holds them together); a cross product of session settings,
 ### D73 Round trips, asserted shapes, and a hand-verified signal path
 `Typed` against `Strings` over a fixture and `encode(decode(raw))` against on-disk bytes; boundary
 values are unit tests; blind at `v_box_domain_array` (I22), pinned directly. A shape under test is
-asserted (`is_seekable()`, a stated `--jobs`), never assumed. No test races a signal: `CancelsPast`
-trips the flag at an offset, and koji covers the real scale. The round trip holds that render inverts
+asserted (`is_seekable()`, a stated `--jobs`), never assumed. No test races a signal or a scheduler:
+`CancelsPast` trips the flag at an offset, `a_lifted_frontier_takes_the_chunks_its_tasks_decoded` lets a
+decode land before reading on, and koji covers the real scale. The round trip holds that render inverts
 decode; that decode is right is the value oracle's (`oracle/values.tsv`): each typed node as the server
 reads it, by send function or arithmetic, over every `types` flag set with DDL (`value_oracle.rs`).
 

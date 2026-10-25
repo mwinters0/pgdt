@@ -76,4 +76,5 @@ flate2 = { workspace = true }
 noodles-bgzf = { workspace = true }
 # Where `pg_dump`'s own compressed fixtures are.
 pgdt-fixtures = { path = "../pgdt-fixtures" }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+# `time` bounds a test's wait for a first pass's task to land.
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

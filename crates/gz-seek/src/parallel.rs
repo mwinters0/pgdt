@@ -387,6 +387,12 @@ impl Parallel {
         self.taken
     }
 
+    /// How many chunks' decodes are held ahead of the frontier, each taken
+    /// where the frontier reaches its start with the history it began with.
+    pub fn ready(&self) -> usize {
+        self.chain.ready()
+    }
+
     /// The plaintext offset of the next byte produced.
     pub fn position(&self) -> u64 {
         self.plaintext

@@ -457,8 +457,9 @@ async fn a_damaged_file_is_refused_where_the_pass_meets_it() {
     }
 }
 
-/// Chunks small enough that the test payload is a dozen of them, each past
-/// several deflate blocks.
+/// Chunks small enough that the test payload is a dozen of them. Its member
+/// as [`gzip_compress`] writes it ends a deflate block only every few chunks;
+/// [`flushed_indexed`]'s ends several in each.
 const CHUNKING: Chunking =
     Chunking { bytes: NonZeroU64::new(8 * 1024).unwrap(), limit: 256 * 1024 };
 
@@ -474,8 +475,9 @@ fn taken(pass: &FirstPass) -> u64 {
 
 /// **A pass inflates ahead on the workers its parallelism affords and builds
 /// the serial pass's index, on either feed**: under each count the plaintext
-/// whole and the index and windows `gz_seek`'s forward pass builds. Each
-/// recommends what it can use, a fetched pass as a pulled one.
+/// whole and the index and windows `gz_seek`'s forward pass builds. A pulled
+/// pass recommends what it can use, a fetched one one worker, its tasks
+/// running only under a count stated for it.
 #[tokio::test]
 async fn a_pass_inflates_ahead_on_either_feed_and_builds_the_serial_index() {
     let payload = gzip_test_payload();
@@ -495,7 +497,11 @@ async fn a_pass_inflates_ahead_on_either_feed_and_builds_the_serial_index() {
                 &std::env::temp_dir(),
             )
             .unwrap();
-            assert_eq!(pass.default_workers(), cores.min(CHUNKING.chunks(stored) as usize));
+            let recommended = match feed_name {
+                "pulled" => cores.min(CHUNKING.chunks(stored) as usize),
+                _ => 1,
+            };
+            assert_eq!(pass.default_workers(), recommended, "{what}");
             pass.hint_parallelism(lifted(jobs));
             assert_eq!(pass.ahead_tasks(), jobs - 1, "{what}");
 
@@ -549,14 +555,12 @@ impl ByteRangeSource for Recording {
 
 /// **A fetched pass downloads the object once, whatever runs ahead**: at
 /// each count every compressed byte is asked of the transport exactly once,
-/// the ranges tiling the object, while the frontier takes chunks its tasks
-/// decoded at four workers or eight.
+/// the ranges tiling the object.
 #[tokio::test]
 async fn a_fetched_pass_downloads_the_object_once_with_tasks_ahead() {
     let payload = gzip_test_payload();
     let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
-    let mut taken_ahead = Vec::new();
     for jobs in [1, 2, 4, 8] {
         let raw = Recording::over(compressed.path());
         let pass = FirstPass::chunked(
@@ -571,9 +575,6 @@ async fn a_fetched_pass_downloads_the_object_once_with_tasks_ahead() {
         pass.hint_parallelism(lifted(jobs));
         let most = payload.len() * 3 / 4;
         let mut got = pass.read_range(0, most).await.unwrap().to_vec();
-        if jobs >= 4 {
-            taken_ahead.push(taken(&pass));
-        }
         got.extend_from_slice(&scanned(&pass, most as u64, 7919).await);
         assert_eq!(got, payload, "at {jobs}");
         assert_eq!(gzip_index_of(&pass), expected, "at {jobs}");
@@ -585,40 +586,98 @@ async fn a_fetched_pass_downloads_the_object_once_with_tasks_ahead() {
         }
         assert_eq!(next, stored, "at {jobs}: the object, once");
     }
-    // Whether a chunk's decode lands before the frontier reaches it is a
-    // race the runtime's scheduling decides, so one count of the two taking
-    // is the evidence the lift reaches a fetched pass.
-    assert!(taken_ahead.iter().any(|&n| n > 0), "every chunk decoded by the frontier");
 }
 
-/// **Chunks are taken from the tasks before the end**: a pulled pass at four
-/// workers read most of the way has handed out the plaintext of chunks the
-/// tasks decoded, at a read size that ends nowhere in particular and at one
-/// wider than a chunk's plaintext.
+/// The test payload as one gzip member flushed every 8 KiB of plaintext, so
+/// its deflate blocks end several times a [`CHUNKING`] chunk whatever backend
+/// `flate2` is built over, and its complete index at [`SPACING`].
+fn flushed_indexed(payload: &[u8]) -> (tempfile::NamedTempFile, GzipIndex) {
+    use std::io::Write as _;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    for piece in payload.chunks(8 * 1024) {
+        encoder.write_all(piece).unwrap();
+        encoder.flush().unwrap();
+    }
+    let bytes = encoder.finish().unwrap();
+    let (file, _) = source_of(&bytes);
+    let index = crate::source::gzip_indexed_in_memory(&bytes, SPACING.get());
+    (file, index)
+}
+
+/// How long a test waits for a task ahead to land before failing: far past
+/// what decoding one chunk of the test payload takes on a loaded machine.
+const LANDING_BOUND: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// A read short of any chunk's plaintext, so no read carries the frontier
+/// across a whole chunk.
+const STEP: usize = 1024;
+
+/// Read `pass` on from `got.len()` a [`STEP`] at a time, letting every task
+/// it hands out land between reads, until it holds a decode ahead of its
+/// frontier: whether it does before the end. A wait for a landing is bounded
+/// by [`LANDING_BOUND`].
+async fn read_until_a_decode_is_ready(pass: &FirstPass, got: &mut Vec<u8>, end: usize) -> bool {
+    while got.len() < end {
+        let len = STEP.min(end - got.len());
+        got.extend_from_slice(&pass.read_range(got.len() as u64, len).await.unwrap());
+        loop {
+            let (ready, running) =
+                pass.lock().frontier.as_mut().map_or((0, 0), |frontier| frontier.decode.settle());
+            if ready > 0 {
+                return true;
+            }
+            if running == 0 {
+                break;
+            }
+            tokio::time::timeout(LANDING_BOUND, pass.landed.notified())
+                .await
+                .expect("a task ahead lands within the bound");
+        }
+    }
+    false
+}
+
+/// **The frontier takes the chunks its tasks decoded**, on either feed at
+/// every count above one, over a member ending several blocks a chunk: read a
+/// step at a time, every task let land between steps, until a decode is held
+/// ahead of the frontier, then read on — at a read size that ends nowhere in
+/// particular and at one wider than a chunk's plaintext — and that chunk is
+/// taken. Sequenced rather than raced: whether a decode lands before the
+/// frontier reaches it is otherwise the scheduler's
+/// (`docs/design/decisions.md`, "D73").
 #[tokio::test]
 async fn a_lifted_frontier_takes_the_chunks_its_tasks_decoded() {
     let payload = gzip_test_payload();
-    let (compressed, _) = gzip_indexed(&payload, SPACING.get());
+    let (compressed, expected) = flushed_indexed(&payload);
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
-    for read in [4099, 1 << 20] {
-        let pass = FirstPass::chunked(
-            named(compressed.path()),
-            Feed::file(compressed.path()).unwrap(),
-            stored,
-            SPACING,
-            CHUNKING,
-            &std::env::temp_dir(),
-        )
-        .unwrap();
-        pass.hint_parallelism(lifted(4));
-        let most = payload.len() * 3 / 4;
-        let mut got = Vec::new();
-        while got.len() < most {
-            let len = read.min(most - got.len());
-            got.extend_from_slice(&pass.read_range(got.len() as u64, len).await.unwrap());
+    for feed_name in FEEDS {
+        for jobs in [2, 4, 8] {
+            for read in [4099, 1 << 20] {
+                let what = format!("{feed_name} at {jobs}, reads of {read}");
+                let pass = FirstPass::chunked(
+                    named(compressed.path()),
+                    feed(feed_name, compressed.path()),
+                    stored,
+                    SPACING,
+                    CHUNKING,
+                    &std::env::temp_dir(),
+                )
+                .unwrap();
+                pass.hint_parallelism(lifted(jobs));
+                let (mut got, most) = (Vec::new(), payload.len() * 3 / 4);
+                let ready = read_until_a_decode_is_ready(&pass, &mut got, most).await;
+                assert!(ready, "{what}: no decode landed ahead of the frontier");
+                while got.len() < most {
+                    let len = read.min(most - got.len());
+                    got.extend_from_slice(&pass.read_range(got.len() as u64, len).await.unwrap());
+                }
+                // Before the end, where the pass hands over and its frontier goes.
+                assert!(taken(&pass) > 0, "{what}: every chunk decoded by the frontier");
+                got.extend_from_slice(&scanned(&pass, most as u64, read).await);
+                assert_eq!(got, payload, "{what}");
+                assert_eq!(gzip_index_of(&pass), expected, "{what}");
+            }
         }
-        assert_eq!(got, payload[..most], "reads of {read}");
-        assert!(taken(&pass) > 0, "reads of {read}: every chunk decoded by the frontier");
     }
 }
 

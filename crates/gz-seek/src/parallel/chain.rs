@@ -144,6 +144,11 @@ impl Chain {
         self.guesses.len() + self.running.len() + self.decoded.len()
     }
 
+    /// The decodes done, held for the frontier.
+    pub(super) fn ready(&self) -> usize {
+        self.decoded.len()
+    }
+
     /// The bytes the chain holds: the guesses, the decodes done, and the
     /// windows of those queued and of its end.
     pub(super) fn held(&self) -> usize {

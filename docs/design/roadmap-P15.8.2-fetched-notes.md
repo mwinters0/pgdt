@@ -29,11 +29,9 @@ member header the search finds by magic.
   a fetched one never does.
 - **The charge**: a fetched pass adds two chunks a worker for the download
   (`Chunking::download_bytes`) to the pass's own and to each task's.
-- **A fetched pass recommends what a local one does**, the machine's cores
-  capped at its chunk count (D2), rather than one: its workers fetch nothing
-  a serial pass would not. Reviewed and reversed: 15.8.4 restores one
-  ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
-  "15.8.2's fetched default and the take tests, reviewed").
+- **A fetched pass recommends one worker** (D2), its tasks running only
+  under a stated `--jobs`: 15.8.2's cores were reviewed and reversed by 15.8.4
+  ([notes](roadmap-P15.8.4-fetched-default-notes.md)).
 - **The evidence**: `a_fetched_pass_downloads_the_object_once_with_tasks_ahead`
   (the transport's ranges tiling the object once at one to eight workers),
   `a_pass_inflates_ahead_on_either_feed_and_builds_the_serial_index`,
@@ -62,9 +60,8 @@ member header the search finds by magic.
   and each decode, and under CPU contention the frontier sometimes passes
   every chunk before its decode lands (14 of 80 runs of a four-worker pass at
   4099-byte reads, eight test binaries at once, against none of 80 on the
-  pulled feed). So the fetched test asserts a take at four workers or eight,
-  and the pulled test keeps its own assertion; both still race, which 15.8.4
-  removes by sequencing them.
+  pulled feed). So a take is not asserted by racing it on either feed;
+  15.8.4's test sequences it.
 - **A `parse` over a fetched gzip file reads more than its pass**, as the
   serial pass did at `08c62385`: the scan's restart at the file's start reads
   behind the frontier, a piece fetched again, and `attach_text`'s read of each

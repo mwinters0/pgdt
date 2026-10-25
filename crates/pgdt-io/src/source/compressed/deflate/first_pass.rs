@@ -817,18 +817,25 @@ impl ByteRangeSource for FirstPass {
         self.done.get().and_then(|done| done.block_decode_bytes())
     }
 
-    /// The machine's cores capped at the file's chunk count, fetched or
-    /// local: the scan is one partition whatever this says, and every worker
-    /// past the frontier runs a chunk ahead of it, a fetched file's reading
-    /// the one download its frontier reads (`docs/design/decisions.md`,
+    /// On a local file, the machine's cores capped at the file's chunk count:
+    /// the scan is one partition whatever this says, and every worker past
+    /// the frontier runs a chunk ahead of it. A fetched one, one, as the
+    /// fetched source answers: its tasks run only under a stated count, each
+    /// reading the one download its frontier reads (`docs/design/decisions.md`,
     /// "D2"). The indexed source's, once the pass has handed over to it.
     fn default_workers(&self) -> usize {
         if let Some(done) = self.done.get() {
             return done.default_workers();
         }
-        let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
-        let chunks = self.chunking.chunks(self.stored_size);
-        cores.min(usize::try_from(chunks).unwrap_or(usize::MAX))
+        match &self.feed {
+            Feed::File { .. } => {
+                let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+                let chunks = self.chunking.chunks(self.stored_size);
+                cores.min(usize::try_from(chunks).unwrap_or(usize::MAX))
+            }
+            #[cfg(any(feature = "http", test))]
+            Feed::Fetched(_) => 1,
+        }
     }
 
     /// The whole pass at one worker: two decodes, each charged a forward

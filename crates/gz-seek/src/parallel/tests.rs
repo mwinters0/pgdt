@@ -219,6 +219,32 @@ fn a_pass_takes_the_chunks_it_is_handed() {
     }
 }
 
+/// **A decode run ahead is ready before the frontier takes it**: with every
+/// task run as soon as it is handed out, the pass holds a decode before the
+/// frontier has taken any, so a caller can wait for one rather than race it.
+#[test]
+fn a_decode_run_ahead_is_ready_before_the_frontier_takes_it() {
+    let file = gzip(&payload(1_200_000, 3), 6);
+    let chunk = NonZeroU64::new(8 * 1024).unwrap();
+    let mut pass = Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+    let mut buf = vec![0u8; 1024];
+    let mut ready_before_a_take = false;
+    loop {
+        while let Some(task) = pass.task() {
+            pass.done(run(task, &file, 1 << 20));
+        }
+        ready_before_a_take |= pass.taken() == 0 && pass.ready() > 0;
+        let at = (pass.compressed_position() as usize).min(file.len());
+        let step = pass.read(&file[at..], &mut buf).unwrap();
+        assert_eq!(step.wait, None, "every task handed out has been run");
+        if step.needs_input() {
+            break;
+        }
+    }
+    assert!(ready_before_a_take);
+    assert!(pass.taken() > 0);
+}
+
 /// **A speculation is handed out no further ahead than its caller bounds
 /// it**: `task_through` hands out each chunk up to its bound and then nothing,
 /// and the first chunk past the bound is the first a wider one hands out.

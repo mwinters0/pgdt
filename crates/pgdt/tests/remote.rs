@@ -1233,16 +1233,15 @@ fn ranges_after_the_probe(oracle: &Oracle) -> Vec<(u64, u64)> {
 
 #[tokio::test]
 async fn a_remote_gzip_member_is_downloaded_once_by_a_first_pass_inflating_ahead() {
-    // A fetched first pass runs chunks of the member ahead of its frontier on
-    // the workers its parallelism affords, every one of them and the frontier
-    // reading one download, so the ranged GETs after the probe tile the
-    // object once, and recommends the cores a local file's pass does.
+    // A fetched first pass recommends one worker (D2), and under a stated
+    // count runs chunks of the member ahead of its frontier on the workers
+    // its parallelism affords, every one of them and the frontier reading one
+    // download, so the ranged GETs after the probe tile the object once.
     let bytes = scattered_gzip_dump(3, 4 << 20);
     assert!(bytes.len() > 4 << 20, "{} bytes, a few of the pass's chunks", bytes.len());
     let oracle = Oracle::serving(bytes.clone()).start();
     let source = source_of(&oracle.url_for("dump.sql.gz")).await;
-    let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-    assert_eq!(source.default_workers(), cores.min(bytes.len().div_ceil(1 << 20)));
+    assert_eq!(source.default_workers(), 1);
     source.hint_parallelism(Parallelism::workers(4, 4 << 30));
     let mut plaintext = 0;
     loop {
@@ -1264,8 +1263,9 @@ async fn a_remote_gzip_member_is_downloaded_once_by_a_first_pass_inflating_ahead
 #[test]
 fn parse_and_query_over_a_remote_gzip_member_inflate_ahead_and_answer_what_the_local_file_does() {
     // A `parse` stating its workers says its first pass inflates ahead on
-    // them, and a cold `query`, at the count the pass recommends, answers what
-    // the local file answers.
+    // them, one stating none that it reads serially, and a cold `query`, at
+    // the one worker a fetched pass recommends, answers what the local file
+    // answers.
     let bytes = scattered_gzip_dump(3, 4 << 20);
     let oracle = Oracle::serving(bytes.clone()).start();
     let url = oracle.url_for("dump.sql.gz");
@@ -1276,6 +1276,11 @@ fn parse_and_query_over_a_remote_gzip_member_inflate_ahead_and_answer_what_the_l
     let started: Vec<_> = said.lines().filter(|line| line.contains("first pass started")).collect();
     assert_eq!(started.len(), 1, "{said}");
     assert!(started[0].contains("inflating in parallel") && started[0].contains("workers=4"));
+    let unstated = tempfile::tempdir().unwrap();
+    let out = run_in(&unstated, &["parse", "--source", &url]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let said = stderr_of(&out);
+    assert!(said.contains("first pass started, reading serially"), "{said}");
 
     let local_dir = tempfile::tempdir().unwrap();
     let local = local_dir.path().join("dump.sql.gz");

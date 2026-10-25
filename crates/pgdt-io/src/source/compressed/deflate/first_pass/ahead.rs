@@ -203,6 +203,21 @@ impl Frontier {
     pub(super) fn taken(&self) -> u64 {
         self.pass.taken()
     }
+
+    /// What a read does before it steps, with no step: every result that has
+    /// come back handed to the pass, and the tasks it has room for handed
+    /// out. Answers how many decodes the pass then holds for the frontier,
+    /// and how many tasks are still running, so a test can wait for a
+    /// decode to land rather than race the frontier to it.
+    #[cfg(test)]
+    pub(super) fn settle(&mut self) -> (usize, usize) {
+        self.release();
+        let last = self.last_chunk();
+        let Some(ahead) = &mut self.ahead else { return (self.pass.ready(), 0) };
+        ahead.reap(&mut self.pass);
+        ahead.top_up(&mut self.pass, last);
+        (self.pass.ready(), ahead.running)
+    }
 }
 
 /// What a task reads its chunk from: the file a pulled feed reads, or the
