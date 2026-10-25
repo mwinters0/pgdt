@@ -16,9 +16,12 @@
 //! member start whose header is a plain gzip member's, which states no
 //! length, and is cut at the last member start it reached wherever the bytes there
 //! begin no member, an `ISIZE` passes BGZF's most, a member runs past the
-//! file's end, or the plaintext would pass the limit. A header no member start
-//! after it bears out was no header, and the search goes on past it. A chunk
-//! holding no BGZF header is searched as any file's chunk is.
+//! file's end, or the plaintext would pass the limit. A first header whose
+//! stated length lands inside the chunk on no member start was no header, and
+//! the search goes on past it; the length of the member reaching the chunk's
+//! end, the first's included, is taken as stated, the bytes after it unread. A
+//! chunk holding no BGZF header is searched as any file's chunk is, once the
+//! scan for one has read it to its end.
 
 use crate::bgzf::{BGZF_HEADER_LEN, BGZF_MAX_PLAINTEXT, MIN_MEMBER, bgzf_member_len};
 use crate::member::GZIP_MAGIC;

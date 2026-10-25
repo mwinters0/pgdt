@@ -18,8 +18,10 @@ first pass it comes out of the one download (15.8.2).
 - **The chain is cut** where it cannot be read on: at a plain member's start,
   which states no length; at the last member start reached where a stated
   length leads to no member, an `ISIZE` passes 64 KiB, a member runs past the
-  file's end, or the plaintext would pass the limit. A header whose length no
-  member start bears out is taken for no header, and the search goes past it.
+  file's end, or the plaintext would pass the limit. A first header whose
+  length lands inside the chunk on no member start is taken for no header, and
+  the search goes past it; the length of the member reaching the chunk's end is
+  taken as stated, nothing after it read (15.8.5).
   A first member alone past the limit hands back nothing. Each cut breaks the
   chain of windows, as a cut speculation does, and the frontier decodes on.
 - **Nothing in `pgdt-io` changed.** A task reading a chain holds less than a

@@ -108,6 +108,7 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.8.2** A parallel first pass, the fetched feed over one download, earned by 15.8.1's split: the fetched first pass inflating ahead on the workers its parallelism affords, its tasks and frontier reading one download, each piece fetched once and held from the frontier's piece over a room of two a worker, a speculation handed out only on a chunk the room reaches (`gz_seek::Parallel::task_through`), a fetched task fetching on the runtime and decoding on the caller's blocking threads, the frontier awaiting it there; a fetched pass recommending the cores a local one does — [notes](../design/roadmap-P15.8.2-fetched-notes.md)
 - [x] **15.8.4** A fetched first pass recommending one worker, and the take tests sequenced, earned by 15.8.2's review: a fetched gzip first pass's `default_workers` one again, its tasks ahead run only under a stated `--jobs`, D2's clause restored; each test asserting the frontier takes a chunk reading to a chunk, waiting, bounded, for a landed decode and reading on, on both feeds at every count above one, in place of asserting a race; D73's "No test races a signal" widened to a scheduler — [notes](../design/roadmap-P15.8.4-fetched-default-notes.md)
 - [x] **15.8.3** A fetched BGZF file's units from its members' headers, earned by 15.8.2's split: a fetched BGZF file's first pass taking each chunk's start, stop and plaintext from its members' headers, read out of the download, rather than speculatively (the spec's "Slice order") — [notes](../design/roadmap-P15.8.3-headers-notes.md)
+- [ ] **15.8.5** A BGZF chunk's every member length borne out, earned by 15.8.3's review, in `gz-seek`: the chain read takes a member's stated length only where a BGZF header, a plain member's magic or the file's end follows it, the member reaching the chunk's end and a lone first header included, a first header nothing bears out searched past and a later member cutting the chain at the last member start reached; tested with the lying `BSIZE` on the member reaching the chunk's end and with a lone header near it; before 15.7
 - [ ] **15.16** A chunk cut at its plaintext limit continued, in `gz-seek`: a speculation stopped by the limit hands back its guess and the pass speculates on from its stop to where the next chunk's guess begins, so a limit never ends the chain of windows, the limit restated as a constant of its own, twice the largest block zlib ends; before 15.7, which reads the arm (the spec's "Slice order")
 - [ ] **15.10** Checkpoints inside a static block: the forward pass walks a static block's codes itself to place a checkpoint at the first symbol boundary at or after each multiple, the resume priming a synthetic static-block header; after 15.8, reading its native decoding first (`KD129`)
 - [ ] **15.7** Readings and the record: resident readings at two or more reader counts against `MEMORY_UNPOOLED_BOUND`, the gzip throughput figures, the parallel first pass's on more than one writer's files and at two chunk lengths, the manual and `pg-dump-compatibility.md`
@@ -141,17 +142,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **15.8.3 reads a BGZF chunk off its headers wherever a speculation finds
-  one, not only on a fetched BGZF file.** The row names the fetched arm, which
-  knows from recognition that the file is BGZF and could have told
-  `gz_seek::Parallel` so. Instead each speculation looks for a BGZF header in
-  its own chunk and reads the chain from there, and searches as before where
-  it finds none (`speculate/members.rs`). Why: the file states it member by
-  member, as the placement rule reads it (D116), so the pass needs no mode,
-  and D116 refused a caller-chosen one. The cost is one byte scan of each
-  chunk of a non-BGZF file. A local BGZF file whose chain breaks gets the
-  read too, up to the break. Reconsidering: a constructor flag set from
-  `open_remote`'s recognition; a non-BGZF file's chunks would then not be
-  scanned, and a local broken chain would speculate natively, as before.
-  D117's "Rejected" names the flag.
