@@ -144,14 +144,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`M246` holds a member's `lib` and `bin` roots to a declaration, not its
-  test, bench or example roots.** Each of those is a crate of its own, which
-  a library's declaration does not reach; three integration tests hold
-  `unsafe`, a counting `GlobalAlloc` (`gz-seek`'s `tests/footprint.rs`,
-  `pgdt-mapping`'s `tests/statistics_heap.rs`, `pgdt-query`'s
-  `tests/render_allocations.rs`), and `pgdt-codec`'s `benches/decoders.rs`
-  calls the view append. The call: D27 counts what ships, so the row's
-  "root" is what a build links (`scripts/layering.py`, `ROOT_KINDS`).
-  Reconsidering widens `ROOT_KINDS` and gives every test, bench and example
-  root a declaration, `deny` with an `allow` at those four.
