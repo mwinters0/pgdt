@@ -33,8 +33,6 @@
 //! small, and the harness's preflight runs this around `/bin/true` in the
 //! pinned image, which bounds it: the floor any reading stands on.
 
-#![deny(unsafe_code)]
-
 use std::ffi::OsString;
 use std::io::{self, ErrorKind};
 use std::os::unix::process::ExitStatusExt;

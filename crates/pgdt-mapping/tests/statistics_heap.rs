@@ -52,6 +52,7 @@ thread_local! {
     static FREED: Cell<u64> = const { Cell::new(0) };
 }
 
+#[allow(unsafe_code)]
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         unsafe { System.alloc(layout) }

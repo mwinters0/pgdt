@@ -5,8 +5,6 @@
 //! `datafusion-pgdump`, `datafusion-cli-pgdump`, `pgdt` — reads a dump
 //! through.
 
-#![deny(unsafe_code)]
-
 mod batch;
 mod dump;
 mod options;

@@ -207,7 +207,10 @@ fn nested_family(c: &mut Criterion) {
             for _ in 0..VIEW_BATCH {
                 // SAFETY: `long_text` is ASCII, so 0..view_len is a valid
                 // UTF-8 range inside the block appended above.
-                unsafe { builder.append_view_unchecked(black_box(block), 0, view_len) }
+                #[allow(unsafe_code)]
+                unsafe {
+                    builder.append_view_unchecked(black_box(block), 0, view_len)
+                };
             }
             builder
         })

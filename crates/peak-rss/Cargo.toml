@@ -21,3 +21,6 @@ apparatus = true
 # `getrusage` and `struct rusage`, whose layout is the target's rather than a
 # hand-written one.
 libc = { workspace = true }
+
+[lints]
+workspace = true

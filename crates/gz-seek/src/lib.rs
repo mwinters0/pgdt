@@ -88,8 +88,8 @@
 //! mid-member, its history unknown — but only to find where a chunk begins and
 //! what history it ends with: every byte of plaintext the crate hands out is
 //! the engine's (`docs/design/decisions.md`, "D117").
-// upstream: UF4
-#![deny(unsafe_code)]
+// upstream: UF4 -- the root raises nothing above the workspace's
+// `deny(unsafe_code)`, `zlib.rs` allowing it, until the crate can forbid it.
 #![warn(missing_docs)]
 
 mod bgzf;

@@ -140,3 +140,6 @@ tempfile = { workspace = true }
 # crate takes the default `current_thread` flavour, the one `pgdt`'s own
 # commands run.
 tokio = { workspace = true, features = ["rt", "macros", "net", "time"] }
+
+[lints]
+workspace = true

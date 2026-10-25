@@ -35,3 +35,6 @@ pgdt-fixtures = { path = "../pgdt-fixtures" }
 pgdt-codec = { path = "../pgdt-codec", features = ["test-support"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

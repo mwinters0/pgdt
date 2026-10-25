@@ -49,3 +49,6 @@ pgdt-model = { path = "../pgdt-model" }
 pgdt-query = { path = "../pgdt-query" }
 regex = "1.12"
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
+
+[lints]
+workspace = true

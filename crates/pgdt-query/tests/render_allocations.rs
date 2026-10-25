@@ -53,6 +53,7 @@ fn tally() {
     }
 }
 
+#[allow(unsafe_code)]
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         tally();

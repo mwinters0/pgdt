@@ -44,3 +44,6 @@ libz-sys = { version = "=1.1.30", optional = true, default-features = false, fea
 # is checked against what someone else's encoder writes.
 flate2 = { workspace = true }
 noodles-bgzf = { workspace = true }
+
+[lints]
+workspace = true

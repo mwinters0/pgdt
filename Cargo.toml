@@ -73,6 +73,14 @@ tracing = "0.1"
 # one that ships.
 xz-seek = { path = "vendor/xz-seek" }
 
+# Every target of every member, a test, bench, example and build script
+# included, denies `unsafe`, each site allowing it where it stands; a shipped
+# root raises its crate to `forbid` in its own source
+# (`docs/design/decisions.md`, "D27"). Every member inherits it by
+# `lints.workspace = true`, which `scripts/layering.py` asserts.
+[workspace.lints.rust]
+unsafe_code = "deny"
+
 # The test build optimizes, the workspace at 1 and its dependencies at 2: the
 # fixture sweeps are CPU-bound in our own code, so optimizing dependencies alone
 # leaves most of their cost, and `dev` keeps debug assertions and overflow

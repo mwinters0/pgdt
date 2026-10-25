@@ -32,16 +32,30 @@ BASE: dict[str, str] = {
 }
 
 
-class Workspace:
-    """A temporary tree of members and the metadata `cargo` would give it."""
+#: The root manifest's floor, which every member's `MEMBER_MANIFEST` inherits.
+ROOT_MANIFEST = '[workspace]\nmembers = ["crates/*"]\n\n[workspace.lints.rust]\nunsafe_code = "deny"\n'
+MEMBER_MANIFEST = '[package]\nname = "x"\n\n[lints]\nworkspace = true\n'
 
-    def __init__(self, files: dict[str, str], deps: dict[str, list[tuple[str, str | None]]]):
+
+class Workspace:
+    """A temporary tree of members and the metadata `cargo` would give it,
+    each member's manifest inheriting the root's lints unless `files` names
+    one, and the root's `root_manifest`."""
+
+    def __init__(
+        self,
+        files: dict[str, str],
+        deps: dict[str, list[tuple[str, str | None]]],
+        root_manifest: str = ROOT_MANIFEST,
+    ):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
-        for name in la.GRAPH:
+        (self.root / "Cargo.toml").write_text(root_manifest)
+        for name in {*la.GRAPH, *(rel.split("/")[0] for rel in files)}:
             path = self.root / "crates" / name / "src" / "lib.rs"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("")
+            (path.parent.parent / "Cargo.toml").write_text(MEMBER_MANIFEST)
         for rel, text in {**BASE, **files}.items():
             path = self.root / "crates" / rel
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -69,8 +83,8 @@ class Workspace:
             self.tmp.cleanup()
 
 
-def problems(files: dict[str, str] | None = None, deps=None) -> list[str]:
-    return Workspace(files or {}, deps or {}).problems()
+def problems(files: dict[str, str] | None = None, deps=None, **kwargs) -> list[str]:
+    return Workspace(files or {}, deps or {}, **kwargs).problems()
 
 
 class Graph(unittest.TestCase):
@@ -343,71 +357,119 @@ def declared(files: dict[str, str], bins: tuple[str, ...] = ()) -> list[str]:
     return ws.problems()
 
 
-NOTHING = "declares nothing on `unsafe` (D27)"
+NOTHING = "declares nothing on `unsafe` and allows it at no site: forbid it (D27)"
+RESTATES = (
+    "restates the workspace's `deny(unsafe_code)`: a root states only `forbid`,"
+    " or `forbid` without one feature (D27)"
+)
+
+
+class Floor(unittest.TestCase):
+    """The workspace's `deny` on `unsafe`, reaching every member (D27)."""
+
+    def test_the_floor_inherited_by_every_member_holds(self):
+        self.assertEqual(problems(), [])
+
+    def test_a_root_manifest_without_the_floor_is_refused(self):
+        for manifest in (
+            '[workspace]\nmembers = ["crates/*"]\n',
+            '[workspace.lints.rust]\nunsafe_code = "warn"\n',
+            '[workspace.lints.rust]\nunsafe_code = "forbid"\n',
+        ):
+            found = problems(root_manifest=manifest)
+            self.assertEqual(
+                found,
+                ['Cargo.toml: `[workspace.lints.rust]` does not set `unsafe_code = "deny"` (D27)'],
+                manifest,
+            )
+
+    def test_the_floor_as_a_table_holds(self):
+        manifest = '[workspace.lints.rust]\nunsafe_code = { level = "deny", priority = 0 }\n'
+        self.assertEqual(problems(root_manifest=manifest), [])
+
+    def test_a_member_not_inheriting_the_lints_is_refused(self):
+        for manifest in (
+            '[package]\nname = "gz-seek"\n',
+            '[package]\nname = "gz-seek"\n\n[lints]\nworkspace = false\n',
+            '[package]\nname = "gz-seek"\n\n[lints.rust]\nunsafe_code = "deny"\n',
+        ):
+            found = problems({"gz-seek/Cargo.toml": manifest})
+            self.assertEqual(
+                found,
+                [
+                    "gz-seek: its manifest does not inherit the workspace's lints"
+                    " (`lints.workspace = true`) (D27)"
+                ],
+                manifest,
+            )
 
 
 class Unsafe(unittest.TestCase):
-    """Every root's declaration on `unsafe` (D27)."""
+    """Every root's declaration on `unsafe` above the floor (D27)."""
 
     def test_every_root_forbidding_holds(self):
         self.assertEqual(declared({}), [])
 
-    def test_a_root_declaring_nothing_is_refused(self):
-        found = declared({"gz-seek/src/lib.rs": "mod zlib;\n"})
+    def test_a_root_declaring_nothing_with_an_allowed_site_holds(self):
+        files = {"gz-seek/src/lib.rs": "mod zlib;\n", "gz-seek/src/zlib.rs": "#![allow(unsafe_code)]\n"}
+        self.assertEqual(declared(files), [])
+        files["gz-seek/src/zlib.rs"] = "#[allow(dead_code, unsafe_code)]\nfn f() {}\n"
+        self.assertEqual(declared(files), [])
+
+    def test_a_root_declaring_nothing_no_site_needs_is_refused(self):
+        found = declared({"gz-seek/src/lib.rs": "mod zlib;\n", "gz-seek/src/zlib.rs": ""})
         self.assertEqual(found, [f"crates/gz-seek/src/lib.rs {NOTHING}"])
 
     def test_a_declaration_in_a_comment_is_none(self):
         found = declared({"gz-seek/src/lib.rs": "// #![forbid(unsafe_code)]\n"})
-        self.assertEqual(len(found), 1)
-        self.assertIn("declares nothing", found[0])
+        self.assertEqual(found, [f"crates/gz-seek/src/lib.rs {NOTHING}"])
 
     def test_a_bin_root_is_read_and_a_test_root_is_not(self):
         files = {"peak-rss/src/main.rs": "fn main() {}\n", "peak-rss/tests/t.rs": "fn t() {}\n"}
         found = declared(files, bins=("peak-rss",))
         self.assertEqual(found, [f"crates/peak-rss/src/main.rs {NOTHING}"])
 
-    def test_a_deny_with_an_allowed_site_holds(self):
-        files = {
-            "gz-seek/src/lib.rs": "#![deny(unsafe_code)]\nmod zlib;\n",
-            "gz-seek/src/zlib.rs": "#![allow(unsafe_code)]\n",
-        }
-        self.assertEqual(declared(files), [])
-        files["gz-seek/src/zlib.rs"] = "#[allow(dead_code, unsafe_code)]\nfn f() {}\n"
-        self.assertEqual(declared(files), [])
-
-    def test_a_deny_no_site_needs_is_refused(self):
-        files = {
-            "gz-seek/src/lib.rs": "#![deny(unsafe_code)]\nmod zlib;\n",
-            "gz-seek/src/zlib.rs": "",
-        }
-        self.assertEqual(
-            declared(files),
-            ["crates/gz-seek/src/lib.rs denies `unsafe` and allows it at no site: forbid it (D27)"],
-        )
+    def test_a_root_restating_the_floor_is_refused(self):
+        for root in (
+            "#![deny(unsafe_code)]\n",
+            "#![forbid(unsafe_code)]\n#![deny(unsafe_code)]\n",
+            '#![cfg_attr(not(feature = "introspect"), forbid(unsafe_code))]\n'
+            '#![cfg_attr(feature = "introspect", deny(unsafe_code))]\n',
+        ):
+            found = declared({"gz-seek/src/lib.rs": f"{root}#[allow(unsafe_code)]\nfn f() {{}}\n"})
+            self.assertEqual(found, [f"crates/gz-seek/src/lib.rs {RESTATES}"], root)
 
     def test_an_allow_only_a_test_module_holds_is_no_site(self):
         files = {
-            "gz-seek/src/lib.rs": "#![deny(unsafe_code)]\n#[cfg(test)]\nmod tests;\n",
+            "gz-seek/src/lib.rs": "#[cfg(test)]\nmod tests;\n",
             "gz-seek/src/tests.rs": "#![allow(unsafe_code)]\n",
         }
-        self.assertEqual(len(declared(files)), 1)
+        self.assertEqual(declared(files), [f"crates/gz-seek/src/lib.rs {NOTHING}"])
 
-    def test_forbidding_without_a_feature_and_denying_with_it_holds(self):
+    def test_forbidding_without_a_feature_holds(self):
         root = (
             '#![cfg_attr(not(feature = "introspect"), forbid(unsafe_code))]\n'
-            '#![cfg_attr(feature = "introspect", deny(unsafe_code))]\n'
             "#[allow(unsafe_code)]\nfn ticks() {}\n"
         )
         self.assertEqual(declared({"gz-seek/src/lib.rs": root}), [])
 
-    def test_a_feature_pair_that_does_not_match_is_refused(self):
+    def test_forbidding_without_a_feature_no_site_needs_is_refused(self):
+        root = '#![cfg_attr(not(feature = "introspect"), forbid(unsafe_code))]\n'
+        self.assertEqual(
+            declared({"gz-seek/src/lib.rs": root}),
+            [
+                "crates/gz-seek/src/lib.rs forbids `unsafe` only without `introspect`"
+                " and allows it at no site: forbid it (D27)"
+            ],
+        )
+
+    def test_a_declaration_of_another_shape_is_refused(self):
         for root in (
+            '#![cfg_attr(feature = "a", forbid(unsafe_code))]\n',
             '#![cfg_attr(not(feature = "a"), forbid(unsafe_code))]\n'
-            '#![cfg_attr(feature = "b", deny(unsafe_code))]\n',
-            '#![cfg_attr(feature = "a", forbid(unsafe_code))]\n'
-            '#![cfg_attr(not(feature = "a"), deny(unsafe_code))]\n',
-            '#![cfg_attr(not(feature = "a"), forbid(unsafe_code))]\n',
-            "#![forbid(unsafe_code)]\n#![deny(unsafe_code)]\n",
+            '#![cfg_attr(not(feature = "b"), forbid(unsafe_code))]\n',
+            "#![forbid(unsafe_code)]\n#![forbid(unsafe_code)]\n",
+            '#![forbid(unsafe_code)]\n#![cfg_attr(not(feature = "a"), forbid(unsafe_code))]\n',
         ):
             found = declared({"gz-seek/src/lib.rs": f"{root}#[allow(unsafe_code)]\nfn f() {{}}\n"})
             self.assertEqual(len(found), 1, root)

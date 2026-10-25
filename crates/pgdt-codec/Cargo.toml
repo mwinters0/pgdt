@@ -39,3 +39,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 [[bench]]
 name = "decoders"
 harness = false
+
+[lints]
+workspace = true

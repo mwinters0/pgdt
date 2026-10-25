@@ -29,3 +29,6 @@ pgdt-mapping = { path = "../pgdt-mapping", optional = true }
 pgdt-model = { path = "../pgdt-model", optional = true }
 tempfile = { workspace = true }
 tokio-util = { workspace = true, optional = true }
+
+[lints]
+workspace = true

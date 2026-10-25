@@ -32,3 +32,6 @@ flate2 = { workspace = true }
 pgdt-io = { path = "../pgdt-io", features = ["serde", "test-support"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[lints]
+workspace = true

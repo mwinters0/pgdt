@@ -34,3 +34,6 @@ zlib-rs = "=0.6.8"
 # backend is checked against output none of them wrote.
 flate2 = { workspace = true }
 tempfile = { workspace = true }
+
+[lints]
+workspace = true

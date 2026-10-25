@@ -1,5 +1,4 @@
 #![cfg_attr(not(feature = "introspect"), forbid(unsafe_code))]
-#![cfg_attr(feature = "introspect", deny(unsafe_code))]
 
 use std::process::ExitCode;
 

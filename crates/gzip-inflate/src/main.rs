@@ -59,8 +59,6 @@
 //! `pgdt-io`'s `xz_decode` example: `O(1)` a call rather than a byte, so the
 //! figure's content stays the volume inflated divided by a time.
 
-#![deny(unsafe_code)]
-
 use std::ffi::{c_int, c_uint, c_void};
 use std::fs::File;
 use std::hint::black_box;

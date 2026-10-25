@@ -20,3 +20,6 @@ pgdt-core = { path = "../pgdt-core" }
 # `rc` for `CopyBlock::statistics`, held by `Arc` so a map clone copies a
 # reference.
 serde = { workspace = true, features = ["derive", "rc"] }
+
+[lints]
+workspace = true

@@ -53,3 +53,6 @@ xz-seek = { workspace = true }
 [[bench]]
 name = "whole_file"
 harness = false
+
+[lints]
+workspace = true

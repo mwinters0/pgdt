@@ -22,6 +22,7 @@ struct Counting;
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 static PEAK: AtomicUsize = AtomicUsize::new(0);
 
+#[allow(unsafe_code)]
 // SAFETY: every call is forwarded to `System` unchanged; the counters are
 // bookkeeping beside it.
 unsafe impl GlobalAlloc for Counting {

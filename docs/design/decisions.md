@@ -249,7 +249,7 @@ or the REPL's `ctrl_c` catches. Rejected: polling alone; a `ScanOptions` field; 
 bulk pass runs only when a row will decode something. Four `unsafe` attempts lost to the safe shape;
 the one that stands is `append_view_unchecked` (`batch/chunks.rs`), whose bounds come from the `contains`
 that produced its coordinates and whose validity comes from the decode's borrowed arm (D46).
-Each member's root declares itself on `unsafe` (`scripts/layering.py`): query `deny`s, this its one `allow`; core `forbid`s but under `introspect`; the other five `forbid`.
+The workspace's `[lints]` deny `unsafe` in every target, each site allowing it, and a root raises its crate to `forbid` (`scripts/layering.py`): query does not, this its one `allow`; core does but under `introspect`; the other five do.
 
 ### D28 One row split, shared unconditionally
 `RowSplit` memoizes field ends for every term and the batcher, extends as deep as asked, and is

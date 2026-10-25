@@ -33,12 +33,18 @@ refuses a name a crate could reach but should not, so this holds:
   only paths are its API one and `internal`'s;
 * **a namespaced API item is not also re-exported at its crate's root**: an
   API item has one path;
-* **every member's root declares itself on `unsafe`** -- each `lib` and
-  `bin` target's: `#![forbid(unsafe_code)]`, or `#![deny(unsafe_code)]` with
-  an `allow` at a site its production tree holds, or, for a crate whose sites
-  are all one feature's, `forbid` without that feature and `deny` with it
-  (`docs/design/decisions.md`, "D27"). A `deny` no site needs is refused, the
-  crate able to forbid; an `allow` under `forbid` is the compiler's to refuse.
+* **`unsafe` is denied in every target**: the workspace's
+  `[workspace.lints.rust]` sets `unsafe_code = "deny"` and every member
+  inherits it (`lints.workspace = true`), so a test, bench, example or build
+  script allows `unsafe` at each site holding it;
+* **every `lib` and `bin` root states only what it raises above that floor**
+  -- `#![forbid(unsafe_code)]`, or `forbid` without one feature
+  (`cfg_attr(not(feature = …), forbid(unsafe_code))`), or nothing -- and one
+  not forbidding outright allows `unsafe` at a site its production tree holds
+  (`docs/design/decisions.md`, "D27"). A root's `deny` is refused as
+  restating the floor, and a root no site needs below `forbid` is refused,
+  the crate able to forbid; an `allow` under `forbid` is the compiler's to
+  refuse.
 
 A library's production code is its module tree from `lib.rs`, every module a
 `#[cfg(test)]` declares left out and every `#[cfg(test)] mod {}` block
@@ -58,6 +64,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import TextIO
 
@@ -207,9 +214,9 @@ def roots(meta: dict) -> dict[str, list[Path]]:
 
 
 def unsafe_declaration(root: Path) -> tuple[str | None, str | None]:
-    """What a crate root declares on `unsafe`: `forbid`, `deny`, or
-    `feature:<name>` for `forbid` without that feature and `deny` with it,
-    `None` for nothing; and why, where what it declares is not one of them."""
+    """What a crate root raises `unsafe` to above the workspace's `deny`:
+    `forbid`, `feature:<name>` for `forbid` without that feature, `None` for
+    nothing; and why, where what it declares is not one of them."""
     original = root.read_text(encoding="utf-8")
     text = masked(original)
     plain = [m.group(1) for m in UNSAFE_LEVEL_RE.finditer(text)]
@@ -217,21 +224,43 @@ def unsafe_declaration(root: Path) -> tuple[str | None, str | None]:
         (bool(m.group(1)), original[m.start(2) : m.end(2)].strip('"'), m.group(3))
         for m in UNSAFE_CFG_RE.finditer(text)
     ]
+    if "deny" in plain or any(level == "deny" for _, _, level in gated):
+        return None, (
+            "restates the workspace's `deny(unsafe_code)`: a root states only `forbid`,"
+            " or `forbid` without one feature"
+        )
     if not plain and not gated:
         return None, None
-    if len(plain) == 1 and not gated:
-        return plain[0], None
-    if not plain and len(gated) == 2:
-        features = {f for _, f, _ in gated}
-        if len(features) == 1 and set(gated) == {
-            (True, *features, "forbid"),
-            (False, *features, "deny"),
-        }:
-            return f"feature:{features.pop()}", None
+    if plain == ["forbid"] and not gated:
+        return "forbid", None
+    if not plain and len(gated) == 1 and gated[0][0]:
+        return f"feature:{gated[0][1]}", None
     return None, (
-        "declares more than one level on `unsafe`, or a `cfg_attr` pair other than"
-        " `forbid` without a feature and `deny` with it"
+        "declares more than one level on `unsafe`, or a `cfg_attr` other than"
+        " `forbid` without a feature"
     )
+
+
+def lints_problems(meta: dict, repo: Path) -> list[str]:
+    """Where the workspace's `deny` on `unsafe` does not reach every member:
+    the root manifest not setting it, or a member not inheriting it."""
+    found: list[str] = []
+    root = repo / "Cargo.toml"
+    lints = tomllib.loads(root.read_text(encoding="utf-8")) if root.is_file() else {}
+    level = lints.get("workspace", {}).get("lints", {}).get("rust", {}).get("unsafe_code")
+    if isinstance(level, dict):
+        level = level.get("level")
+    if level != "deny":
+        found.append('Cargo.toml: `[workspace.lints.rust]` does not set `unsafe_code = "deny"` (D27)')
+    for name, directory in sorted(members(meta).items()):
+        manifest = directory / "Cargo.toml"
+        text = manifest.read_text(encoding="utf-8") if manifest.is_file() else ""
+        if tomllib.loads(text).get("lints", {}).get("workspace") is not True:
+            found.append(
+                f"{name}: its manifest does not inherit the workspace's lints"
+                " (`lints.workspace = true`) (D27)"
+            )
+    return found
 
 
 def dependencies(meta: dict, name: str) -> list[str]:
@@ -461,7 +490,8 @@ def problems(meta: dict, repo: Path) -> list[str]:
             for item in sorted(api & root_names):
                 found.append(f"{name}: `{item}` is at its root and in `{namespace}` (one path)")
 
-    # Every root declares itself on `unsafe` (D27).
+    # `unsafe` denied in every target, and each root raising only to `forbid` (D27).
+    found += lints_problems(meta, repo)
     for name, crate_roots in sorted(roots(meta).items()):
         for root in crate_roots:
             if not root.is_file():
@@ -469,14 +499,15 @@ def problems(meta: dict, repo: Path) -> list[str]:
             level, why = unsafe_declaration(root)
             if why:
                 found.append(f"{rel(root)} {why} (D27)")
-            elif level is None:
-                found.append(f"{rel(root)} declares nothing on `unsafe` (D27)")
             elif level != "forbid":
                 tree = module_tree(root.parent, root.name)
                 if not any(UNSAFE_ALLOW_RE.search(text) for text in tree.values()):
-                    found.append(
-                        f"{rel(root)} denies `unsafe` and allows it at no site: forbid it (D27)"
+                    what = (
+                        "declares nothing on `unsafe`"
+                        if level is None
+                        else f"forbids `unsafe` only without `{level.removeprefix('feature:')}`"
                     )
+                    found.append(f"{rel(root)} {what} and allows it at no site: forbid it (D27)")
 
     # What an embedder names.
     for name in EMBEDDERS:
