@@ -112,7 +112,9 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.16** A chunk cut at its plaintext limit continued, in `gz-seek`: a speculation stopped by the limit hands back its guess and the pass speculates on from its stop to where the next chunk's guess begins, so a limit never ends the chain of windows, the limit restated as a constant of its own, twice the largest block zlib ends; before 15.7, which reads the arm (the spec's "Slice order") — [notes](../design/roadmap-P15.16-continued-notes.md)
 - [x] **15.10** Checkpoints inside a static block: the forward pass walks a static block's codes itself to place a checkpoint at the first symbol boundary at or after each multiple, the resume priming a synthetic static-block header; after 15.8, reading its native decoding first (`KD129`) — [notes](../design/roadmap-P15.10-static-notes.md)
 - [x] **15.7** Readings, the resident: `gzip-resident`, `pgdt parse`'s peak resident over a single member's first pass and a BGZF file's block path at three worker counts, each cell's remainder over its charge read against `MEMORY_UNPOOLED_BOUND` and `MEMORY_RESERVE` by `charge_model_problem`'s lines, the speculation limit priced against a task's charge; taken at `511ca16b`, the bound holding on both legs and the first pass over-billed at every count — [notes](../design/roadmap-P15.7-resident-notes.md)
+- [ ] **15.17** A parallel first pass no slower than serial, earned by 15.7's review, in `gz-seek` with `pgdt-io`'s `first_pass/ahead.rs` as it needs: the frontier waits for a decode, in flight or unstarted, and never for a speculation, decoding on itself where no decode has been handed out; speculations handed out far enough ahead to land before it reaches them; done when a two- and a four-job first pass on `control_gz` are no slower than serial and a 24-job one falls toward its scan's floor; a profile of a two-job pass attributing what a speculation costs; before 15.7.1 (`KD142`)
 - [ ] **15.7.1** Readings, the throughput, earned by 15.7's split: the gzip throughput figures, the parallel first pass's on more than one writer's files and at two chunk lengths
+- [ ] **15.18** Readings, the resident again, earned by 15.7's review, after 15.17: `gzip-resident` re-taken over the repaired pass with a leg on a file whose chunks reach `SPECULATION_LIMIT`, the falsifier for an under-bill, and a heaptrack recording of a many-job first pass attributing a worker's remainder; it settles `Chunking::task_bytes` in whichever direction the reading falls; 15.7.1 does not wait on it, 15.7.2 does (`KD141`)
 - [ ] **15.7.2** The record, earned by 15.7's split, after 15.7.1, whose readings it writes from: the manual and `pg-dump-compatibility.md`
 
 ## Not started
@@ -144,37 +146,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **15.7: a gzip first pass's task charge stays the worst case.** The call:
-  `Chunking::task_bytes` is unchanged, although `gzip-resident` reads the
-  first pass over-billed at every count. Why: the over-bill comes from four
-  plaintext terms priced at `SPECULATION_LIMIT`. Those fill only at a chunk
-  reaching the limit, and `control`'s ratio fills about a quarter of them. The
-  charge is a bound over any file, so lowering it means proving a smaller one
-  ([`../design/measurements.md`](../design/measurements.md), "What a gzip scan
-  holds against its charge"). Reconsidering matters because the 2026-10-24
-  review reopens the limit where the charge rather than the cores bounds the
-  workers at a memory a user runs. On a many-core machine that is plausible.
-  The options are three. Price a task by a ratio the pass observes: the
-  charge is fixed before the first chunk is read, so this would need a
-  re-carve. Lower the limit, which its floor fixes
-  within a factor of two. Or bill the waiting decode by the chunk. A serial
-  pass is also billed a task it never runs (`default_worker_memory`), which
-  costs a one-job pass a task's worth of allowance and nothing else.
-- **15.7: a parallel first pass is slower than serial below about twelve
-  workers, and 15.7.1 would time it as it is.** The call: none yet. The
-  readings stand, since they are resident. What the next slice inherits is
-  written down, and the tree is untouched. The finding comes from
-  `gzip-resident`'s log at four jobs (`runs/gzip-resident-20261025-1721/log`,
-  each rep's line) and from a hand probe from two to twenty-four
-  (`runs/gzip-resident-20261025-1721/jobs-probe/times.txt`). At two jobs one
-  core is busy for several serial inflates' time. CPU time holds near that
-  at every count, and wall clock falls as the workers past the frontier
-  divide it. That fits a frontier that waits at each chunk for a task
-  several times slower than its own inflate (`Frontier::read`, `Ahead::wait_for`). Why a
-  task costs that much is unattributed. The local default is the cores capped
-  at the chunk count, so a machine with fewer than about twelve cores is
-  slower than serial by default. The evidence skill's fourth question says to
-  repair first and then measure, so the decision is whether to earn a
-  slice that repairs the wait, attributed by a profile of a two-job first
-  pass, and land it ahead of 15.7.1. Taking 15.7.1 first prices the defect.

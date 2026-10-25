@@ -4016,10 +4016,12 @@ unexplained:
   recording of a 24-job first pass would attribute it
   (`measure.py --heaptrack-recipe`).
 
-The charge is a bound over any file, and only a chunk reaching the limit,
-about 16 : 1, fills its plaintext terms. So the over-bill measures what the
-worst case costs at `pg_dump`'s ordinary ratio. It does not show that the
-charge is wrong.
+Only a chunk reaching the limit, about 16 : 1, fills the charge's plaintext
+terms, so the over-bill measures what the worst case costs at `pg_dump`'s
+ordinary ratio, and does not show the charge is wrong. Nor does it show the
+charge is a bound: no leg reads a file that fills the terms, and if the
+unattributed part does not shrink with them, such a file holds more than its
+charge.
 
 **The wall clock this sitting logged has a regression in it**
 (`runs/gzip-resident-20261025-1721/log`, each rep's line). The first pass took
@@ -4028,14 +4030,16 @@ twenty-four, and the `system` twins agree. A four-job first pass is more than
 twice as slow as the serial one. The BGZF leg scales normally, 3.28–3.31 s at
 one job to 0.83–0.96 s at twenty-four. A hand probe at more counts, outside
 the apparatus, finds the pass slower than serial at every count from two to
-eight. Its CPU time stays near six serial inflates whatever the count, so wall
+eight, level with it at twelve and slower at twenty-four: no count reads
+faster. Its CPU time stays near six serial inflates whatever the count, so wall
 clock falls as that work divides over the workers past the frontier. At two
 it ran one core
 (`runs/gzip-resident-20261025-1721/jobs-probe/times.txt`, with each run's
-`time` in the logs beside it). That shape fits a frontier waiting at each
-chunk for a task that costs several times its own inflate. Why a task costs
-that much is unattributed, and a profile of a two-job first pass would name
-it. These are not this figure's readings, which are resident. They are
+`time` in the logs beside it). The frontier waits at each chunk for that
+chunk's speculation and then its decode, never decoding on itself (`KD142`),
+so at two jobs a chunk costs both tasks in turn while the frontier is idle.
+Why a speculation costs several inflates is unattributed, and a profile of a
+two-job first pass would name it. These are not this figure's readings, which are resident. They are
 throughput, which a throughput figure is to read.
 
 ## koji full scan — the regression check

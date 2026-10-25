@@ -702,6 +702,12 @@ impl Parallel {
     /// Standing at `point`: take a decode beginning there, or answer a task
     /// to wait for, or go on decoding — with a new engine where none stands
     /// there.
+    ///
+    /// Deficiency register: `deficiency: KD142` — a speculation that may begin
+    /// here is waited for, and then the decode it lets the chain hand out, so
+    /// a chunk the tasks have not finished costs the frontier both tasks' time
+    /// where decoding it on would cost one inflate; with one task ahead every
+    /// chunk does. **(b) owned by 15.17**.
     fn look(&mut self, point: Point) -> Result<Option<TaskId>> {
         let bit = point.bit();
         self.at = bit;

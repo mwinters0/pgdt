@@ -434,6 +434,19 @@ parallel first pass at the shipped length and at rapidgzip's 4 MiB, at one
 worker count, the limit held fixed across both; the limit itself is priced
 by 7's resident readings against a task's charge, not by a leg.
 
+**A parallel first pass no slower than serial, slice 17, precedes 7's
+throughput readings** ([`../status/history/2026-10-25.md`](../status/history/2026-10-25.md),
+"15.7's two calls, reviewed"): 7's resident readings found the pass slower
+than serial at every count below twelve and faster at none, its frontier
+waiting for its own chunk's speculation and decode. The frontier waits only
+for a decode, which the engine's decode of the same bytes bounds, and never
+for a speculation, so the pass is no slower than serial whatever a task costs;
+the throughput legs then read a frontier that lifts the inflate. **The
+resident readings are taken again over it, slice 18, before 7's record**:
+with a leg on a file whose chunks reach the speculation limit, the falsifier
+for a task's charge as a bound, and the remainder a worker holds attributed,
+the charge being settled on that reading.
+
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
 "The broken BGZF chain, reviewed"): 13's pass ends its run of coalesced

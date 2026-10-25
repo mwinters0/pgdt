@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD141 -->
-**`KD1`–`KD141` are allocated, and nothing at or below `KD141` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD142 -->
+**`KD1`–`KD142` are allocated, and nothing at or below `KD142` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -523,7 +523,11 @@ than reading as a phase nobody has sliced.
   to miss its chunk's first block. Detail: `crates/gz-seek/src/find.rs`.
 
 - **KD141** — a gzip first pass's task ahead is charged a limit's worth of
-  compressed bytes past its chunk, where a speculation can hold more. **(c)
-  unowned**; promoted by a resident reading putting a task's remainder over
-  its charge. Detail:
+  compressed bytes past its chunk, where a speculation can hold more. **(b)
+  owned by 15.18**. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
+
+- **KD142** — a parallel first pass's frontier waits for its own chunk's
+  speculation and then for that chunk's decode, never decoding on itself, so
+  wherever tasks run behind it the pass is slower than the serial one.
+  **(b) owned by 15.17**. Detail: `crates/gz-seek/src/parallel.rs`.
