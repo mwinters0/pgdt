@@ -20,6 +20,7 @@ reused, including a struck phase's.
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
+| P37 — Parquet export as a Parquet-native writer leaves it | Sketched; not grilled | this file, below — the maintainer sets its order |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below; [inbox](roadmap-P23-resident-reserve-inbox.md) |
@@ -46,7 +47,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P36`** — nothing at or below it
+centering"). **Phase numbering continues from `P37`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -93,11 +94,14 @@ anyone who needs a schema pinned; until 1.0 it is the only one.
 
 ## Project goals
 
-Two things distinguish this project from existing `pg_dump` tooling
-(`pgdumplib` and friends), and both shape the phase ordering below:
+Three things distinguish this project from existing `pg_dump` tooling
+(`pgdumplib` and friends), and all three shape the phase ordering below:
 
 - **Embeddable as a query data source**, not just a dump reader — Arrow-native
   output, and a DataFusion `TableProvider`.
+- **Parquet export as a Parquet-native writer such as Spark leaves it**: the
+  files ordered and annotated as such a writer orders and annotates them, at
+  the speed the scan holds. P37 is where it is built.
 - **High performance is a core goal, not a later optimization**, specifically
   for the local-file reader. Dumps are routinely hundreds of gigabytes; the
   difference between a saturated-device scan and a merely-correct one is the
@@ -759,6 +763,46 @@ the fixed default. The phase owns what "available memory" means on a host with
 compressed memory and no cgroups, the `RT<n>` entries that rest on it, running
 the suite on a Mac, and the Apple build of the C dependencies. Sketched to
 corner-avoidance depth. The facts are in [its inbox](roadmap-P34-macos-inbox.md).
+
+## P37 — Parquet export as a Parquet-native writer leaves it
+
+**A table exported to Parquet keeps every order the dump gives it, and says
+so in the files**: the dump's row order within each file, each order the parse
+proved recorded as the row groups' `sorting_columns`, at the speed the scan
+holds ("Project goals"). Sketched to corner-avoidance depth.
+
+What it inherits, read off the code:
+
+- **DataFusion's `COPY` keeps the dump's order only from one scan
+  partition.** Its sink requires a single input partition (datafusion-datasource
+  55.1, `sink.rs`, `DataSinkExec`), so a parallel scan's partitions merge in
+  arrival order, and its demux round-robins batches across
+  `minimum_parallel_output_files` open files (`write/demux.rs`,
+  `row_count_demuxer`). Order costs that path the scan's
+  parallelism.
+- **The library already merges a parallel scan back into file order**
+  (`TablePartitions::in_file_order`), which `pgdt query` reads and the
+  provider does not.
+- **`sorting_columns` is written only under an `ORDER BY`**
+  (datafusion-datasource-parquet 55.1, `file_format.rs`,
+  `create_writer_physical_plan`), and the provider declares an order only for a
+  column ordered in every block and holding no NULL (`summary.rs`,
+  `column_order`). So a `COPY` with no `ORDER BY` records nothing, and a sorted
+  column holding NULLs cannot be recorded through it at all.
+
+What it must decide:
+
+- **The writer**: DataFusion's `COPY`, or pgdt's own over `in_file_order` and
+  the `parquet` crate's writer. Decided by whether `COPY` from one partition
+  is device-bound on koji, and by whether it can record what the files need.
+- **Which order a file is in**: the dump's, or a key's as Spark's
+  `sortWithinPartitions` leaves it; and what Spark and the other writers
+  record of it — `sorting_columns`, or a table format's sort order — which is
+  not yet established.
+- **The orders the parse misses**, each a `KD<k>` owned here once the order
+  check against the koji replica names it.
+- **The layout** — hive partitions by month or key range, file size and naming —
+  as a parameter or a convention, and where the phase sits on the concept map.
 
 ## P22 — The third tunable
 
