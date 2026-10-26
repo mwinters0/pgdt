@@ -80,9 +80,16 @@ at 1, 4 and 12 jobs on the after build are in `runs/p15.17.1/profile/`. The two
 - **The default worker count stays the logical count.** Twenty-four jobs is
   no slower than twelve, so D2 gains that rejection. 15.7.1 times that
   default.
-- **What would move the physical count nearer the floor**, if anyone wants
-  it: a cheaper speculation, and a chunk decode that does not zero its
-  buffer. Both are `KD143`'s marker.
+- **What a speculated chunk costs sets where the tasks pay**, 15.17.2's
+  (`KD143`). At twelve jobs nearly every chunk is speculated, and the pass
+  spends several times serial's CPU, a speculated byte costing that many
+  serial ones. Wall time near the CPU over the jobs at four, eight and twelve
+  puts the break-even count above four, the baseline. Below it the frontier
+  decodes alone, so two and four jobs are level with serial by 15.17's
+  construction, and their tasks' CPU is spent for nothing. What the CPU over
+  the jobs leaves at each count is unattributed. Only a cheaper speculated
+  chunk moves that count: the speculation's marked decode and copies,
+  `Input::push`'s growth, and a chunk decode zeroing its buffer.
 - **A probe pinned to as many CPUs as `--jobs`** oversubscribes them. The
   scan's thread is one more beside the frontier and the tasks. So the pinned
   twelve-job legs are slower than unpinned, and they compare only with each

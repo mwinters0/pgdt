@@ -114,8 +114,10 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.7** Readings, the resident: `gzip-resident`, `pgdt parse`'s peak resident over a single member's first pass and a BGZF file's block path at three worker counts, each cell's remainder over its charge read against `MEMORY_UNPOOLED_BOUND` and `MEMORY_RESERVE` by `charge_model_problem`'s lines, the speculation limit priced against a task's charge; taken at `511ca16b`, the bound holding on both legs and the first pass over-billed at every count — [notes](../design/roadmap-P15.7-resident-notes.md)
 - [x] **15.17** A parallel first pass whose frontier never waits for a speculation, earned by 15.7's review, in `gz-seek`: the frontier waits for a decode, in flight or unstarted, and never for a speculation, decoding on itself where no decode has been handed out; speculations handed out far enough ahead to land before it reaches them; a profile of a two-job pass attributing what a speculation costs; the row's gate moved to 15.17.1 by its split (`KD142`) — [notes](../design/roadmap-P15.17-frontier-notes.md)
 - [x] **15.17.1** A parallel first pass no slower than serial, earned by 15.17's split, in `gz-seek` with `pgdt-io`'s `first_pass/ahead.rs` as it needs: opening by separating the slowdown beside the tasks — the clock, a core shared by SMT siblings, a shared cache, memory bandwidth — by cycles and instructions per byte and by placement; the speculation's marked sink holding only the window its guess reads, a ring copying in bulk where its source lies past the last marker; done when a two- and a four-job first pass on `control_gz` are no slower than serial and one at the physical core count falls toward its scan's floor, the logical count read against the account; serving's cost owned by the gate, splitting off if the account puts it in code; the gzip first pass's default worker count settled from the reading, D2 amended for that source alone; speculations handed out in runs left unchosen; before 15.7.1 (`KD143`) — [notes](../design/roadmap-P15.17.1-window-notes.md)
+- [ ] **15.17.2** A speculated chunk cheaper, earned by 15.17.1's review, in `gz-seek`: opening by an account of a speculated chunk's cost at four jobs, term by term, from 15.17.1's profile, each term cut or left named in the deficiency; the speculation's marked decode and copies and `Input::push`'s growth; done when a four-job first pass on `control_gz` is faster than serial beyond the reps' spread and twenty-four jobs no slower per worker than 15.17.1's, the gzip first pass's default worker count settled again from the reading (D2); speculations handed out in runs left unchosen unless the account names wasted speculations as a term; before 15.7.1 and 15.18, which read the pass it changes (`KD143`)
+- [ ] **15.17.3** A chunk decode that does not zero its buffer, earned by 15.17.1's review, in `gz-seek`: the engine's decode of a taken chunk writing into a buffer it has not zeroed at the limit's size, the buffer's ownership and charge grilled when it opens; before 15.7.1 and 15.18, which read the pages it touches (`KD143`)
 - [ ] **15.7.1** Readings, the throughput, earned by 15.7's split: the gzip throughput figures, the parallel first pass's on more than one writer's files and at two chunk lengths
-- [ ] **15.18** Readings, the resident again, earned by 15.7's review, after 15.17.1: `gzip-resident` re-taken over the repaired pass with a leg on a file whose chunks reach `SPECULATION_LIMIT`, the falsifier for an under-bill, and a heaptrack recording of a many-job first pass attributing a worker's remainder; it settles `Chunking::task_bytes` in whichever direction the reading falls; 15.7.1 does not wait on it, 15.7.2 does (`KD141`)
+- [ ] **15.18** Readings, the resident again, earned by 15.7's review, after 15.17.2 and 15.17.3: `gzip-resident` re-taken over the repaired pass with a leg on a file whose chunks reach `SPECULATION_LIMIT`, the falsifier for an under-bill, and a heaptrack recording of a many-job first pass attributing a worker's remainder; it settles `Chunking::task_bytes` in whichever direction the reading falls; 15.7.1 does not wait on it, 15.7.2 does (`KD141`)
 - [ ] **15.7.2** The record, earned by 15.7's split, after 15.7.1, whose readings it writes from: the manual and `pg-dump-compatibility.md`
 
 ## Not started
@@ -147,16 +149,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **15.17.1's gate read as met at the physical count.** The row is done when
-  a pass at the physical core count "falls toward its scan's floor". On
-  `control_gz` a twelve-job pass now takes about half the serial time, where it
-  was level, but it is still several times the floor. The account puts the
-  rest in the speculation's cost, with the workers nearly saturated, so the box
-  is ticked and that cost stays a deficiency, `KD143`, now (c) unowned
-  (`../design/roadmap-P15.17.1-window-notes.md`, "What the probe found"). Two
-  and four jobs are level with serial within the reps' spread. Reconsidering
-  means reading the gate as a ceiling on the remaining distance: `KD143`'s
-  speculation cost becomes an earned 15.17.2 before 15.7.1, with the default
-  worker count settled again after it.
-

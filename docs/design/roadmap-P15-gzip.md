@@ -463,6 +463,23 @@ with a leg on a file whose chunks reach the speculation limit, the falsifier
 for a task's charge as a bound, and the remainder a worker holds attributed,
 the charge being settled on that reading.
 
+**A speculated chunk made cheaper, slice 17.2, is earned by 17.1's review**
+([`../status/history/2026-10-26.md`](../status/history/2026-10-26.md),
+"15.17.1's gate, reviewed"). 17.1's gate is met as worded. But a speculated
+chunk costs several of the serial pass's bytes, so the pass repays its tasks
+only above the four-worker baseline ("Four workers is the optimization
+baseline", `roadmap.md`). Below it, slice 8's purpose, lifting the inflate, is
+not served at all. Only that cost moves the count (`KD143`). It is two
+increments, two core paths: **17.2 the speculation's marked decode**, opened
+by an account of a speculated chunk's cost at four jobs and done when four
+beat serial beyond the reps' spread, twenty-four no slower per worker, the
+default worker count settled again; **17.3 a chunk decode that does not zero
+its limit-sized buffer**, its ownership grilled when it opens. A gate of a
+cost bound per speculated byte is rejected, a fit drawn before its account.
+**Both precede 7's throughput readings and 18's resident ones**, each reading
+the pass they change: its time, which prices the default and the chunk length,
+and the pages a decode touches.
+
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
 "The broken BGZF chain, reviewed"): 13's pass ends its run of coalesced

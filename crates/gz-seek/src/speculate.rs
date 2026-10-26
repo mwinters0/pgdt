@@ -304,11 +304,12 @@ enum State {
 /// speculation's decode rarely goes clean, so it writes nearly its whole
 /// chunk marked, and its symbol loop and copies cost several of the engine's
 /// inflates of the same bytes; beside it, each chunk decode zeroes a buffer of
-/// the limit's size before the engine writes into it (`chunk.rs`). Below the
-/// worker count at which consecutive guesses land ahead of the frontier the
-/// tasks give it few chunks, and at the physical core count the pass is bound
-/// by its workers, short of its scan's floor. **(c) unowned**; promoted by a
-/// first pass needed nearer that floor than the physical cores bring it.
+/// the limit's size before the engine writes into it (`chunk.rs`). A
+/// speculated chunk so costs several of the serial pass's bytes, and the tasks
+/// repay their CPU only above a few workers: at the four-worker baseline the
+/// frontier decodes alone, no faster than serial, and at the physical core
+/// count the pass is bound by its workers, short of its scan's floor. **(b)
+/// owned by 15.17.2**, the speculation, **and 15.17.3**, the zeroed buffer.
 pub(crate) struct Speculation {
     chunk: u64,
     /// The bit a continuation of a cut guess begins at.

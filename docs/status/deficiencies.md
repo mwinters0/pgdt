@@ -527,11 +527,11 @@ than reading as a phase nobody has sliced.
   owned by 15.18**. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
 
-- **KD143** — a speculation costs several inflates of its chunk, so below a
-  few workers the tasks buy the frontier little, and a first pass at the
-  physical core count is bound by its workers, short of its scan's floor.
-  **(c) unowned**; promoted by a first pass needed nearer that floor.
-  Detail: `crates/gz-seek/src/speculate.rs`.
+- **KD143** — a speculated chunk costs several of the serial pass's bytes, so
+  a first pass at the four-worker baseline is no faster than serial at several
+  times its CPU, and one at the physical core count is bound by its workers,
+  short of its scan's floor. **(b) owned by 15.17.2 and 15.17.3**. Detail:
+  `crates/gz-seek/src/speculate.rs`.
 
 - **KD144** — a range type's own `collation` parameter is not read, so a
   `text`-bounded range is compared as though it stated none: a spurious note
