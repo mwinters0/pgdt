@@ -527,11 +527,11 @@ than reading as a phase nobody has sliced.
   owned by 15.18**. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
 
-- **KD143** — a first pass at the four-worker baseline is no faster than
-  serial, its frontier waiting for decodes that wait for a worker to end a
-  speculation, and one at the physical core count is bound by its workers,
-  short of its scan's floor. **(b) owned by 15.17.4 and 15.17.3**. Detail:
-  `crates/gz-seek/src/speculate.rs`.
+- **KD143** — a first pass at the four-worker baseline is barely faster than
+  serial, the runs of landed guesses at its frontier short and its taken
+  decodes begun barely ahead of it, and one at the physical core count is
+  bound by its workers, short of its scan's floor. **(b) owned by 15.17.4 and
+  15.17.3**. Detail: `crates/gz-seek/src/speculate.rs`.
 
 - **KD144** — a range type's own `collation` parameter is not read, so a
   `text`-bounded range is compared as though it stated none: a spurious note

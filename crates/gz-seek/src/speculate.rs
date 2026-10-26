@@ -305,9 +305,12 @@ enum State {
 /// chunk marked, at more than the engine's cost of inflating the same bytes;
 /// beside it, each chunk decode zeroes a buffer of the limit's size before the
 /// engine writes into it (`chunk.rs`). At the four-worker baseline the pass is
-/// no faster than serial: a decode the chain queues waits for a worker to end
-/// a speculation, the frontier waiting for it in turn, and workers stand idle
-/// while guesses fill the room `pgdt-io` holds the pass's results to; at the
+/// barely faster than serial. A run of taken chunks costs one speculation more
+/// than it has chunks, its anchor's, and with nearly every chunk speculated the
+/// tasks keep barely ahead of the frontier: the runs of landed guesses there
+/// are short, a decode the chain queues waits for a worker to end a
+/// speculation, the frontier waits for it in turn, and workers stand idle
+/// while guesses fill the room `pgdt-io` holds the pass's results to. At the
 /// physical core count the pass is bound by its workers, short of its scan's
 /// floor. **(b) owned by 15.17.4**, the pass at four workers, **and 15.17.3**,
 /// the zeroed buffer.

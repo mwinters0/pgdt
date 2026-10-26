@@ -471,14 +471,35 @@ only above the four-worker baseline ("Four workers is the optimization
 baseline", `roadmap.md`). Below it, slice 8's purpose, lifting the inflate, is
 not served at all. Only that cost moves the count (`KD143`). It is two
 increments, two core paths: **17.2 the speculation's marked decode**, opened
-by an account of a speculated chunk's cost at four jobs and done when four
-beat serial beyond the reps' spread, twenty-four no slower per worker, the
-default worker count settled again; **17.3 a chunk decode that does not zero
-its limit-sized buffer**, its ownership grilled when it opens. A gate of a
-cost bound per speculated byte is rejected, a fit drawn before its account.
-**Both precede 7's throughput readings and 18's resident ones**, each reading
-the pass they change: its time, which prices the default and the chunk length,
-and the pages a decode touches.
+by an account of a speculated chunk's cost at four jobs; **17.3 a chunk decode
+that does not zero its limit-sized buffer**, its ownership grilled when it
+opens. A gate of a cost bound per speculated byte is rejected, a fit drawn
+before its account. **Both precede 7's throughput readings and 18's resident
+ones**, each reading the pass they change: its time, which prices the default
+and the chunk length, and the pages a decode touches.
+
+**The four-job gate is slice 17.4's**, earned by 17.2's split
+([`../status/history/2026-10-26.md`](../status/history/2026-10-26.md),
+"15.17.2's split, reviewed"): `ahead.rs`'s scheduling, a core path apart from
+the speculation, after 17.3. Its account is the run of landed guesses at the
+frontier. A chain anchors where the frontier stands, the frontier decoding that
+chunk itself, so a run of taken chunks costs one speculation more than it has
+chunks beside their decodes, and speculating nearly every chunk cannot keep
+ahead of the frontier at three tasks. Its levers, each tried first in an
+emulation of the scheduling and built only where the emulation moves: which
+chunks are speculated, in runs with gaps the frontier decodes unguessed; how
+far ahead a run is placed; a free worker given a resolved decode before a new
+speculation; the room `top_up` allows. **Done when** the frontier's waits on
+taken decodes are a small share of its time at four jobs and four jobs is
+faster than the tree it opens on, twenty-four no slower per worker, the gzip
+first pass's default worker count settled again (D2). **A gate on this line
+compares alternated reps by their paired differences**, never by whether two
+legs' ranges overlap, which a serial leg spread by placement decides. The
+emulation is committed as a `gz-seek` example when 17.4 opens, the line's
+instrument while it runs. **The line ends at D117's reopen**: once the levers
+are tried, a remaining term that is the second decode, the engine's beside a
+speculation's, goes to the maintainer under D117 rather than to another
+increment.
 
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),

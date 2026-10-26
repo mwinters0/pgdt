@@ -73,11 +73,14 @@ alternating this tree's build and HEAD's.
 
 ## What 15.17.4 inherits
 
-- The gate: four jobs faster than serial beyond the spread, and the default
-  worker count settled again. Twelve now beats twenty-four, which D2's
-  rejection of a cap at the physical cores says it does not.
+- The gate and the levers, in 15.17.4's row. By alternated reps' paired
+  differences, four jobs beat serial in every sitting here
+  (`runs/p15.17.2/gate/final/`); the range test failed on serial's fastest
+  rep. Twelve now beats twenty-four, which D2's rejection of a cap at the
+  physical cores says it does not.
 - The two terms above, both in scheduling rather than the speculation: a
-  decode waiting for a worker, and the room. The room counts a held guess as
+  decode waiting for a worker, and the room. Beneath both, the runs of landed
+  guesses at the frontier are short, nearly every chunk being speculated. The room counts a held guess as
   a decode is counted, and `Chunking::task_bytes` charges two guesses a task
   (`KD141`, 15.18's). Widening it changes that charge.
 - `spec_cost`'s `par` mode is the cheap instrument for both. It rebuilds in
