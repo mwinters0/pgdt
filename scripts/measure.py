@@ -15003,7 +15003,7 @@ def profile_recipe(cfg: Config) -> str:
         f"{RELEASE_DIFF_LEGS[1]} and {RELEASE_DIFF_LEGS[0]} legs on the workload's own argv,",
         f"and `perf diff` of the two, {RELEASE_DIFF_LEGS[0]} the baseline. A hot symbol only",
         f"{RELEASE_DIFF_LEGS[1]} carries is a call it leaves out of line: `#[inline]` goes",
-        "on it, or, where it is not ours, `codegraph callers` finds the calls crossing to it.",
+        "on it, or, where it is not ours, `rg` finds the calls crossing to it.",
         "Read for names, never for a time. Run only the failing workload's block, and",
         "before the next sitting, which overwrites the legs; each must name itself first.",
     )

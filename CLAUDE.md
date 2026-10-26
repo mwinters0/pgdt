@@ -124,8 +124,8 @@ Run it after rewriting a heading.
   `decisions.md`'s cache entry before touching a cache path.
 - **Every reading runs in a memory-limited container** (`scripts/contained.py`,
   whose hook refuses one outside), and none on an `introspect` build is timed.
-- **Find code with CodeGraph, not `grep`** — `codegraph explore "<q>"`, or
-  the `codegraph_explore` tool; [`.claude/CLAUDE.md`](.claude/CLAUDE.md) has the rest.
+- **Find code with CodeGraph, not `grep`** — `codegraph explore "<q>"`;
+  [`.claude/CLAUDE.md`](.claude/CLAUDE.md) has the rest, and where it guesses.
 - **Document what _is_, not what _was_**, inside `docs/status/history/` too. A
   fact is stated once, in one place, and cited everywhere else; a number is
   stated only in `measurements.md`. If something is worth keeping as history,

@@ -8,3 +8,10 @@ In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the re
 
 If there is no `.codegraph/` directory, skip CodeGraph entirely — indexing is the user's decision.
 <!-- CODEGRAPH_END -->
+
+Its call edges are matched by name, not resolved: a method called through a
+typed or `dyn` receiver, or passed by path, is often missing, a common name can
+resolve into a crate the caller cannot depend on, and nothing outside the
+workspace is indexed. So `rg` when every occurrence is wanted or the name is
+defined outside the workspace, and `scripts/module_graph.py --edges <module>`
+(rust-analyzer's references) when exact references decide something.
