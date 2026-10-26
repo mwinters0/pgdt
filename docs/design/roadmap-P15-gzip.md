@@ -441,8 +441,23 @@ throughput readings** ([`../status/history/2026-10-25.md`](../status/history/202
 than serial at every count below twelve and faster at none, its frontier
 waiting for its own chunk's speculation and decode. The frontier waits only
 for a decode, which the engine's decode of the same bytes bounds, and never
-for a speculation, so the pass is no slower than serial whatever a task costs;
-the throughput legs then read a frontier that lifts the inflate. **The
+for a speculation. That alone does not hold the pass to serial: the tasks slow
+the frontier and the scan beside them, and below the count where guesses chain
+they buy it few chunks (`KD143`). **So the gate is slice 17.1's**
+([`../status/history/2026-10-26.md`](../status/history/2026-10-26.md),
+"15.17's split, reviewed"), over one rework of the speculation: its marked sink
+holds only the window its guess reads, a ring copying in bulk where its source
+lies past the last marker, handing speculations out in runs staying unchosen
+until a reading after it. It opens by separating the slowdown beside the tasks
+— the clock, a core shared by SMT siblings, a shared cache, memory bandwidth —
+and is done when two and four jobs are no slower than serial and the physical
+core count falls toward the scan's floor, the logical count read against that
+account. The gate owns what holds the high counts beside the speculation,
+handing out plaintext and the scan slowing: a cause in contention stays in
+17.1, one in serving's code earns its own increment, a different core path from
+the sink. 17.1 settles the gzip first pass's default worker count from its
+reading, amending D2 for that source alone. The throughput legs then read a
+frontier that lifts the inflate, at that default. **The
 resident readings are taken again over it, slice 18, before 7's record**:
 with a leg on a file whose chunks reach the speculation limit, the falsifier
 for a task's charge as a bound, and the remainder a worker holds attributed,
