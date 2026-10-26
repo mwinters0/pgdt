@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD145 -->
-**`KD1`–`KD145` are allocated, and nothing at or below `KD145` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD146 -->
+**`KD1`–`KD146` are allocated, and nothing at or below `KD146` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -546,3 +546,8 @@ than reading as a phase nobody has sliced.
   cause undecided between a core shared and the scan's thread oversubscribing.
   **(b) owned by 15.7.1**. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.
+
+- **KD146** — a sorted column holding a NULL is declared in no order, even
+  where every NULL leads or trails its values, so it orders no scan and a
+  Parquet export cannot record its order. **(b) owned by P37**. Detail:
+  `crates/pgdt-query/src/summary.rs`.

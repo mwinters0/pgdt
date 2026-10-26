@@ -788,7 +788,7 @@ What it inherits, read off the code:
   `create_writer_physical_plan`), and the provider declares an order only for a
   column ordered in every block and holding no NULL (`summary.rs`,
   `column_order`). So a `COPY` with no `ORDER BY` records nothing, and a sorted
-  column holding NULLs cannot be recorded through it at all.
+  column holding NULLs cannot be recorded through it at all (`KD146`).
 
 What it must decide:
 

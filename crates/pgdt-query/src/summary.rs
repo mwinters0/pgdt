@@ -445,6 +445,15 @@ fn column_order(
         if !believed_under(column, declared_column(metadata, database, &qualified, name)) {
             return None;
         }
+        // deficiency: KD146 — a column holding a NULL is declared in no order
+        // even where every NULL leads or trails its values, as `NULLS FIRST`
+        // or `NULLS LAST` would state: a block's row order is gathered over its
+        // non-NULL values only (pgdt-mapping's `RowOrder`), and nothing records
+        // where its NULLs fall against them. So such a column orders no
+        // partition, and a Parquet export's `sorting_columns` cannot name it.
+        // NULLs among the values leave no order to declare. **(b) owned by
+        // P37**: a block recording whether its NULLs lead, trail or interleave
+        // its values, and the declaration stating which.
         if column.counted_groups() != statistics.groups.len()
             || (0..statistics.groups.len()).any(|g| column.null_count(g, reading) != Some(0))
         {
