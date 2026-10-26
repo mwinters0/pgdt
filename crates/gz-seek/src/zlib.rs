@@ -155,6 +155,43 @@ impl Inflated {
     }
 }
 
+/// Where a step's plaintext goes: a slice, or a vector's spare capacity,
+/// which is never zeroed first, each byte the inflater writes joining the
+/// vector's length (`docs/design/runtime-invariants.md`, "RT26").
+pub(crate) struct Out<'a>(Target<'a>);
+
+enum Target<'a> {
+    Slice { buf: &'a mut [u8], written: usize },
+    Spare { vec: &'a mut Vec<u8>, from: usize },
+}
+
+impl<'a> Out<'a> {
+    pub(crate) fn slice(buf: &'a mut [u8]) -> Out<'a> {
+        Out(Target::Slice { buf, written: 0 })
+    }
+
+    pub(crate) fn spare(vec: &'a mut Vec<u8>) -> Out<'a> {
+        let from = vec.len();
+        Out(Target::Spare { vec, from })
+    }
+
+    /// How many more bytes it takes.
+    pub(crate) fn room(&self) -> usize {
+        match &self.0 {
+            Target::Slice { buf, written } => buf.len() - written,
+            Target::Spare { vec, .. } => vec.capacity() - vec.len(),
+        }
+    }
+
+    /// Everything written through it.
+    pub(crate) fn written(&self) -> &[u8] {
+        match &self.0 {
+            Target::Slice { buf, written } => &buf[..*written],
+            Target::Spare { vec, from } => &vec[*from..],
+        }
+    }
+}
+
 /// One raw inflate stream.
 pub(crate) struct Raw {
     stream: Box<z_stream>,
@@ -217,17 +254,35 @@ impl Raw {
         len as usize
     }
 
-    /// Inflate from `input` into `out`, stopping at the next block boundary.
-    pub(crate) fn inflate(&mut self, input: &[u8], out: &mut [u8]) -> Result<Inflated> {
+    /// Inflate from `input` into `out`, after what was written through it, at
+    /// most `room` bytes, stopping at the next block boundary.
+    pub(crate) fn inflate(
+        &mut self,
+        input: &[u8],
+        out: &mut Out<'_>,
+        room: usize,
+    ) -> Result<Inflated> {
+        let (next_out, rest) = match &mut out.0 {
+            Target::Slice { buf, written } => {
+                let rest = &mut buf[*written..];
+                (rest.as_mut_ptr(), rest.len())
+            }
+            Target::Spare { vec, .. } => {
+                let spare = vec.spare_capacity_mut();
+                (spare.as_mut_ptr().cast::<u8>(), spare.len())
+            }
+        };
         let avail_in = c_uint::try_from(input.len()).unwrap_or(c_uint::MAX);
-        let avail_out = c_uint::try_from(out.len()).unwrap_or(c_uint::MAX);
+        let avail_out = c_uint::try_from(rest.min(room)).unwrap_or(c_uint::MAX);
         let stream = &mut *self.stream;
         stream.next_in = input.as_ptr().cast_mut();
         stream.avail_in = avail_in;
-        stream.next_out = out.as_mut_ptr();
+        stream.next_out = next_out;
         stream.avail_out = avail_out;
-        // SAFETY: the pointers above come from live slices at least as long
-        // as the lengths beside them, held for this call only.
+        // SAFETY: the pointers above come from a live slice and a live
+        // slice or spare capacity at least as long as the lengths beside
+        // them, held for this call only; each byte the inflater reports is
+        // plaintext it wrote, whatever the buffer held (RT26).
         let rc = unsafe { inflate(stream, Z_BLOCK) };
         let consumed = (avail_in - stream.avail_in) as usize;
         let produced = (avail_out - stream.avail_out) as usize;
@@ -235,6 +290,12 @@ impl Raw {
         stream.avail_in = 0;
         stream.next_out = std::ptr::null_mut();
         stream.avail_out = 0;
+        match &mut out.0 {
+            Target::Slice { written, .. } => *written += produced,
+            // SAFETY: the inflater wrote the `produced` bytes after the
+            // vector's length, inside its capacity (RT26).
+            Target::Spare { vec, .. } => unsafe { vec.set_len(vec.len() + produced) },
+        }
         let inflated = Inflated {
             consumed,
             produced,

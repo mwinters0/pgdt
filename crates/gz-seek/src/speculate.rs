@@ -302,18 +302,16 @@ enum State {
 ///
 /// Deficiency register: `deficiency: KD143` — on `pg_dump`'s level-6 text a
 /// speculation's decode rarely goes clean, so it writes nearly its whole
-/// chunk marked, at more than the engine's cost of inflating the same bytes;
-/// beside it, each chunk decode zeroes a buffer of the limit's size before the
-/// engine writes into it (`chunk.rs`). At the four-worker baseline the pass is
-/// barely faster than serial. A run of taken chunks costs one speculation more
-/// than it has chunks, its anchor's, and with nearly every chunk speculated the
+/// chunk marked, at more than the engine's cost of inflating the same bytes.
+/// At the four-worker baseline the pass is barely faster than serial. A run of
+/// taken chunks costs one speculation more than it has chunks, its anchor's,
+/// and with nearly every chunk speculated the
 /// tasks keep barely ahead of the frontier: the runs of landed guesses there
 /// are short, a decode the chain queues waits for a worker to end a
 /// speculation, the frontier waits for it in turn, and workers stand idle
 /// while guesses fill the room `pgdt-io` holds the pass's results to. At the
 /// physical core count the pass is bound by its workers, short of its scan's
-/// floor. **(b) owned by 15.17.4**, the pass at four workers, **and 15.17.3**,
-/// the zeroed buffer.
+/// floor. **(b) owned by 15.17.4**, the pass at four workers.
 pub(crate) struct Speculation {
     chunk: u64,
     /// The bit a continuation of a cut guess begins at.

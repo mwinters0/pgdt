@@ -27,7 +27,7 @@ use crate::bgzf::bgzf_member_len;
 use crate::error::{Error, Result};
 use crate::member::{Header, Trailer};
 use crate::native::{Walk, Walked};
-use crate::zlib::{Raw, WINDOW_SIZE};
+use crate::zlib::{Out, Raw, WINDOW_SIZE};
 
 /// What a step stopped at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -318,6 +318,16 @@ impl Engine {
     /// Take the next bytes of the file, `input`, beginning at
     /// [`Engine::compressed_position`], and produce plaintext into `out`.
     pub(crate) fn step(&mut self, input: &[u8], out: &mut [u8]) -> Result<Stepped> {
+        self.step_into(input, &mut Out::slice(out))
+    }
+
+    /// [`Engine::step`], appending the plaintext to `out` inside its
+    /// capacity, which is never zeroed first.
+    pub(crate) fn step_appending(&mut self, input: &[u8], out: &mut Vec<u8>) -> Result<Stepped> {
+        self.step_into(input, &mut Out::spare(out))
+    }
+
+    fn step_into(&mut self, input: &[u8], out: &mut Out<'_>) -> Result<Stepped> {
         match self.phase {
             Phase::Between => Ok(self.between(input)),
             Phase::Header(_) => self.header(input),
@@ -354,7 +364,7 @@ impl Engine {
         Ok(Stepped { consumed, event, ..Stepped::default() })
     }
 
-    fn inflate(&mut self, input: &[u8], out: &mut [u8]) -> Result<Stepped> {
+    fn inflate(&mut self, input: &[u8], out: &mut Out<'_>) -> Result<Stepped> {
         let mut input = input;
         let mut consumed = 0;
         if let Some(Prime { header, skip }) = self.prime {
@@ -410,24 +420,24 @@ impl Engine {
             return Ok(Stepped { consumed, produced: 0, event: Some(event) });
         }
         let input = &input[..held];
-        let room = self.room(out.len());
-        let out = &mut out[..room];
+        let room = self.room(out.room());
         let at = self.fed;
         let located = |e| match e {
             Error::Deflate { message, .. } => Error::Deflate { offset: at, message },
             other => other,
         };
-        let mut inflated = self.raw.inflate(input, out).map_err(located)?;
+        let mut inflated = self.raw.inflate(input, out, room).map_err(located)?;
         if inflated.at_final_block_end() {
             // The stream ends at the next byte boundary, which takes no more
             // input; a stop here would otherwise look like no progress.
             let more = self
                 .raw
-                .inflate(&input[inflated.consumed..], &mut out[inflated.produced..])
+                .inflate(&input[inflated.consumed..], out, room - inflated.produced)
                 .map_err(located)?;
             inflated = more.after(inflated);
         }
-        self.took(&input[..inflated.consumed], &out[..inflated.produced]);
+        debug_assert_eq!(out.written().len(), inflated.produced);
+        self.took(&input[..inflated.consumed], out.written());
         let (consumed, produced) = (consumed + inflated.consumed, inflated.produced);
         if inflated.stream_end {
             assert_eq!(

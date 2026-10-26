@@ -16,7 +16,7 @@ with its own entries: a **kernel major**, a **container-runtime upgrade**, a **R
 toolchain bump** (`RT7`, `RT11`, `RT12` and `RT24`'s `temp_dir`, whose behaviour is `std`'s), a **glibc
 release** — the host's or the figures' image's (`RT10` only) — a **bash
 release** (`RT20`), an **arrow or DataFusion upgrade** (`RT21`, `RT22`, `RT25`), a
-**zlib-rs upgrade** (`RT23`), a **tempfile upgrade** (`RT24`), and an
+**zlib-rs upgrade** (`RT23`, `RT26`), a **`libz-sys` upgrade** (`RT26`), a **tempfile upgrade** (`RT24`), and an
 **`object_store` upgrade** (`RT13`–`RT18`, whose behaviour is that crate's and
 whose re-verification is a test run against the oracle rather than a container;
 `crates/pgdt/tests/http_conformance.rs` reads the same claims against a real origin
@@ -39,7 +39,7 @@ crate's requirements register, which a phase spec and an inbox cite by number
 ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Inherited from the `.xz`
 source unchanged").
 
-**`RT1`–`RT25` are allocated**, and nothing at or below `RT25` is reused.
+**`RT1`–`RT26` are allocated**, and nothing at or below `RT26` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is
@@ -1301,3 +1301,52 @@ rg -n -i 'hidden.?col|metadata.?col|system.?col' "$(src datafusion-expr)/src" "$
 It holds while `expand_wildcard` skips only the two lists above, the table
 schema still names its virtual columns as seen by queries, and the search
 finds nothing.
+
+## RT26 — the zlib API's `inflate` writes its plaintext whatever its output buffer held
+
+**Claim.** `inflate` through the zlib API, under each engine `gz-seek`
+builds, writes exactly the bytes it reports — `avail_out`'s fall — from
+`next_out` on, and each is the stream's plaintext whatever the buffer held
+before the call: no byte it reports is taken from one it did not write in
+that call, so a buffer never initialized may be handed it and its reported
+prefix read.
+
+**Proof.** zlib-rs 0.6.8, `src/inflate.rs`'s `inflate`: the output is a
+`Writer` made by `Writer::new_uninit` over `next_out`, a slice of
+`MaybeUninit<u8>` whose `filled` count is what `avail_out` reports;
+`src/inflate/writer.rs`'s `copy_match_help` takes a match's source from the
+buffer behind its `filled` end, a chunked copy's overrun past the match
+landing beyond `filled`. Stock zlib's `inffast.c` and zlib-ng's
+`inffast_tpl.h`, as `libz-sys` 1.1.30 bundles them, take a match from the
+output only back to `beg`, the call's first `next_out`, the window holding
+everything before it. Observed by
+`a_step_appending_to_spare_capacity_decodes_as_one_into_a_slice`
+(`crates/gz-seek/src/engine/tests.rs`) and every chunk decode in
+`crates/gz-seek/src/chunk/tests.rs` and `crates/gz-seek/src/parallel/tests.rs`,
+each writing into a vector's spare capacity, under each of the three
+engines' features.
+
+**Scope limit.** Raw inflate under `Z_BLOCK`, as RT23. What a call leaves
+past the bytes it reports is not claimed, and nothing reads it.
+
+**Verified against:** zlib-rs 0.6.8, `libz-rs-sys` 0.6.8; `libz-sys` 1.1.30's
+bundled zlib and zlib-ng.
+
+**Relied on by:** `crates/gz-seek/src/zlib.rs`'s `Out`, through which a
+taken chunk's decode (`crates/gz-seek/src/chunk.rs`) writes into a buffer
+nothing zeroed.
+
+**Re-verify:**
+
+```sh
+cargo nextest run -p gz-seek
+cargo nextest run -p gz-seek --no-default-features --features zlib-ng
+cargo nextest run -p gz-seek --no-default-features --features zlib
+src() { cargo metadata --format-version 1 | jq -r --arg n "$1" '.packages[] | select(.name == $n) | .manifest_path' | xargs dirname; }
+grep -n 'new_uninit' "$(src zlib-rs)/src/inflate.rs"
+grep -n 'beg = ' "$(src libz-sys)/src/zlib/inffast.c" "$(src libz-sys)/src/zlib-ng/inffast_tpl.h"
+```
+
+The suites pass only while every chunk decode written into spare capacity
+is the file's plaintext; the searches show zlib-rs's output still made
+uninitialized and the C engines' match source still bounded by `beg`.

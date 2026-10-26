@@ -66,7 +66,7 @@ impl ChunkDecoded {
 ///
 /// It holds its window, and once fed an engine and room for the plaintext
 /// the speculation found from its start to its stop, and a byte to show a
-/// decode running past it.
+/// decode running past it, which nothing zeroes: the engine writes it.
 pub(crate) struct ChunkDecode {
     chunk: u64,
     generation: u64,
@@ -90,9 +90,9 @@ enum State {
 
 struct Running {
     engine: Engine,
-    /// Room for one byte past the limit, so that running past it shows.
+    /// The plaintext so far, with capacity for one byte past the limit, so
+    /// that running past it shows.
     out: Vec<u8>,
-    produced: usize,
     events: Vec<(u64, Event)>,
     pieces: Vec<(u64, u64, u32)>,
     /// Where the piece being decoded began.
@@ -179,8 +179,7 @@ impl ChunkDecode {
                 else {
                     unreachable!("running")
                 };
-                let Running { mut out, produced, events, pieces, .. } = *running;
-                out.truncate(produced);
+                let Running { out, events, pieces, .. } = *running;
                 self.state = State::Done(Some(Decoded { stop, plain: out, events, pieces }));
             }
             Err(Refused) => self.state = State::Done(None),
@@ -207,8 +206,7 @@ impl ChunkDecode {
         };
         Some(Running {
             engine: engine.unchecked(),
-            out: vec![0; self.limit + 1],
-            produced: 0,
+            out: Vec::with_capacity(self.limit + 1),
             events: Vec::new(),
             pieces: Vec::new(),
             piece_from: 0,
@@ -232,13 +230,10 @@ impl Running {
     ) -> Result<Option<Point>, Refused> {
         let mut taken = 0;
         loop {
-            let step = self
-                .engine
-                .step(&input[taken..], &mut self.out[self.produced..])
-                .map_err(|_| Refused)?;
+            let step =
+                self.engine.step_appending(&input[taken..], &mut self.out).map_err(|_| Refused)?;
             taken += step.consumed;
-            self.produced += step.produced;
-            if self.produced > limit {
+            if self.out.len() > limit {
                 return Err(Refused);
             }
             if let Some(stop) = step.event.and_then(|event| self.event(event, until)) {
@@ -258,7 +253,7 @@ impl Running {
 
     /// Record `event`, answering the stop where it is one.
     fn event(&mut self, event: EngineEvent, until: u64) -> Option<Point> {
-        let at = self.produced as u64;
+        let at = self.out.len() as u64;
         match event {
             EngineEvent::MemberStart if self.skip_start => {
                 self.skip_start = false;
@@ -296,7 +291,7 @@ impl Running {
     /// End the piece being decoded here.
     fn cut(&mut self) {
         let crc = self.engine.cut();
-        let to = self.produced as u64;
+        let to = self.out.len() as u64;
         if to > self.piece_from {
             self.pieces.push((self.piece_from, to, crc));
             self.piece_from = to;
