@@ -205,8 +205,9 @@ impl FirstPass {
         chunking: Chunking,
         spill: &Path,
     ) -> Result<FirstPass> {
-        let pass = gz_seek::Parallel::new(spacing, chunking.bytes, chunking.limit, stored_size)
+        let mut pass = gz_seek::Parallel::new(spacing, chunking.bytes, chunking.limit, stored_size)
             .map_err(gzip_error)?;
+        pass.set_lead(chunking.lead);
         let windows = PassWindows::fresh(spill);
         let frontier = Inflating::new(Frontier::new(pass));
         let started = Started::Fresh;
@@ -261,9 +262,10 @@ impl FirstPass {
             })?;
             provider.read_window(checkpoints.len() - 1, &mut window)?;
         }
-        let pass =
+        let mut pass =
             gz_seek::Parallel::resume(&index, &window, chunking.bytes, chunking.limit, stored_size)
                 .map_err(gzip_error)?;
+        pass.set_lead(chunking.lead);
         // A pass resumed at a member start places that checkpoint again.
         let placed = checkpoints.len() - usize::from(last.start == gz_seek::Start::Member);
         let base = checkpoints.len();
@@ -832,6 +834,14 @@ impl ByteRangeSource for FirstPass {
     /// fetched source answers: its tasks run only under a stated count, each
     /// reading the one download its frontier reads (`docs/design/decisions.md`,
     /// "D2"). The indexed source's, once the pass has handed over to it.
+    ///
+    /// Deficiency register: `deficiency: KD145` — on an SMT machine the
+    /// logical count is slower than the physical count. `--jobs` counts the
+    /// frontier and not the scan, so at the logical count the pass runs one
+    /// thread more than there are CPUs, and every task shares its core with
+    /// a sibling; which of the two costs the time is unread, and decides
+    /// whether the cap is the logical count less the scan's thread or the
+    /// physical cores within the affinity. **(b) owned by 15.7.1**.
     fn default_workers(&self) -> usize {
         if let Some(done) = self.done.get() {
             return done.default_workers();

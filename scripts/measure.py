@@ -10881,6 +10881,12 @@ GZIP_INPUT_CHUNK = 1 << 20
 #: and most of what a task is charged (`gzip_task_bytes`).
 GZIP_SPECULATION_LIMIT = 2 * ((1 << (9 + 6)) - 1) * 258
 
+#: `first_pass/ahead.rs`'s `DECODES_A_TASK` and `GUESSES_A_TASK`, mirrored:
+#: how many decodes and guesses a task may hold for the frontier, which
+#: `gzip_task_bytes` charges.
+GZIP_DECODES_A_TASK = 2
+GZIP_GUESSES_A_TASK = 5
+
 #: The first pass's `SKIP_SCRATCH` (`first_pass/pass.rs`), mirrored: what a
 #: read skipping to its first wanted byte decodes into.
 GZIP_SKIP_SCRATCH = 64 * 1024
@@ -10898,18 +10904,20 @@ def gzip_pass_bytes() -> int:
 
 def gzip_task_bytes() -> int:
     """What one task ahead of a first pass's frontier is charged: its chunk,
-    the limit's worth past it, its plaintext twice while it writes markers, a
-    decode's plaintext waiting for the frontier, two guesses' marked
-    histories, and its input buffer.
+    the limit's worth past it, its plaintext twice while it writes markers,
+    `DECODES_A_TASK` decodes' plaintext waiting for the frontier,
+    `GUESSES_A_TASK` guesses' marked histories, and its input buffer.
 
     `Chunking::task_bytes` at `Chunking::SHIPPED` (`first_pass/ahead.rs`),
-    mirrored. **Four limits of its five large terms are the speculation
-    limit's**, which is why this figure is what prices that constant: no leg
-    varies it, and a first-pass cell's remainder is read against a charge it
-    dominates (`docs/design/roadmap-P15-gzip.md`, "Slice order")."""
+    mirrored. **All of it but its two input chunks and the guesses is five
+    speculation limits**, which is why this figure is what prices that
+    constant: no leg varies it, and a first-pass cell's remainder is read
+    against a charge it dominates (`docs/design/roadmap-P15-gzip.md`, "Slice
+    order")."""
     limit = GZIP_SPECULATION_LIMIT
     guess = 2 * GZIP_WINDOW_BYTES
-    return GZIP_INPUT_CHUNK + limit + 2 * limit + limit + 2 * guess + GZIP_INPUT_CHUNK
+    decodes, guesses = GZIP_DECODES_A_TASK, GZIP_GUESSES_A_TASK
+    return GZIP_INPUT_CHUNK + limit + 2 * limit + decodes * limit + guesses * guess + GZIP_INPUT_CHUNK
 
 
 def gzip_first_pass_charge(jobs: int, stored_size: int) -> int:
@@ -11028,8 +11036,8 @@ def run_gzip_resident(session: Session) -> str:
     unnamed remainder exceeds `MEMORY_UNPOOLED_BOUND` (the bound is wrong for
     gzip, and the sitting re-derives it) or `MEMORY_RESERVE` (the rule does
     not hold for gzip); or an over-bill — a cell holding less than it was
-    charged, which on the first-pass leg names the speculation limit, four of
-    the five large terms of a task's charge (`gzip_task_bytes`). The secant
+    charged, which on the first-pass leg names the speculation limit, five
+    limits of a task's charge (`gzip_task_bytes`). The secant
     between the two upper counts states what each added worker held against
     what it was charged, which is that pricing; it is a secant over two
     counts, not a fit.
@@ -11185,7 +11193,7 @@ def run_gzip_resident(session: Session) -> str:
         "**rule** is. The `Criterion` column names the band. **A first-pass cell is billed "
         "per worker with no pool**: each worker the larger of the pass's two decodes and "
         f"skip scratch ({_fmt_budget_bytes(gzip_pass_bytes())}) and a task's charge "
-        f"({_fmt_budget_bytes(gzip_task_bytes())}, four speculation limits of it), and its "
+        f"({_fmt_budget_bytes(gzip_task_bytes())}, five speculation limits of it), and its "
         "`Workers` column says how many the pass ran — the frontier and the tasks ahead. "
         "**A BGZF cell is billed as an `.xz` one is**, a reader its "
         f"{_fmt_budget_bytes(bgzf_unit())} unit, the scan's chunk and gzip's pulling "

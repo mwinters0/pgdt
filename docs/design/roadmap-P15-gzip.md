@@ -455,9 +455,8 @@ core count falls toward the scan's floor, the logical count read against that
 account. The gate owns what holds the high counts beside the speculation,
 handing out plaintext and the scan slowing: a cause in contention stays in
 17.1, one in serving's code earns its own increment, a different core path from
-the sink. 17.1 settles the gzip first pass's default worker count from its
-reading, amending D2 for that source alone. The throughput legs then read a
-frontier that lifts the inflate, at that default. **The
+the sink. The throughput legs then read a frontier that lifts the inflate,
+and settle the gzip first pass's default worker count (7.1's, below). **The
 resident readings are taken again over it, slice 18, before 7's record**:
 with a leg on a file whose chunks reach the speculation limit, the falsifier
 for a task's charge as a bound, and the remainder a worker holds attributed,
@@ -493,10 +492,12 @@ and a decode's buffer is pooled only where it names them (D117). Its levers, eac
 emulation of the scheduling and built only where the emulation moves: which
 chunks are speculated, in runs with gaps the frontier decodes unguessed; how
 far ahead a run is placed; a free worker given a resolved decode before a new
-speculation; the room `top_up` allows. **Done when** the frontier's waits on
-taken decodes are a small share of its time at four jobs and four jobs is
-faster than the tree it opens on, twenty-four no slower per worker, the gzip
-first pass's default worker count settled again (D2). **A gate on this line
+speculation; the room `top_up` allows. **Done when** four jobs is faster than the
+tree it opens on, twenty-four no slower per worker; the frontier's waits are
+read in the account, not gated, the workers' time holding them
+([`../status/history/2026-10-26.md`](../status/history/2026-10-26.md),
+"15.17.4's waits, reviewed"). **A gate
+on this line
 compares alternated reps by their paired differences**, never by whether two
 legs' ranges overlap, which a serial leg spread by placement decides. The
 emulation is committed as a `gz-seek` example when 17.4 opens, the line's
@@ -504,6 +505,21 @@ instrument while it runs. **The line ends at D117's reopen**: once the levers
 are tried, a remaining term that is the second decode, the engine's beside a
 speculation's, goes to the maintainer under D117 rather than to another
 increment.
+
+**The gzip first pass's default worker count is 7.1's**, moved off 17.4
+([`../status/history/2026-10-26.md`](../status/history/2026-10-26.md),
+"15.17.4's default worker count, reviewed"): a default every user runs under
+is settled on a figure over more than one file, not on a hand probe of one.
+7.1 times the parallel first pass at the logical core count, the physical
+count, and the logical count less one, `--jobs` counting the frontier and not
+the scan, so that leg alone runs no more threads than there are CPUs. **The
+third leg is the falsifier**: level with the physical count, the cost is
+oversubscription, and the default becomes the logical count less the scan's
+thread, still read from `available_parallelism` (`RT7`); level with the
+logical count, it is a core or a cache shared, and the default is capped at
+the physical cores within the process's affinity, with a runtime invariant
+for how they are read; the logical count level with the physical, the default
+stands and D2 gains its rejection on the figure (`KD145`).
 
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),

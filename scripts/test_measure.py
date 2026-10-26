@@ -5114,12 +5114,14 @@ class GzipResident(unittest.TestCase):
 
     #: What each leg's run said it billed, read off `scan started` by hand from
     #: trial runs of `pgdt parse --memory 2550136832` over `control_gz` and
-    #: `control_bgzf` on 2026-10-25, the gzip charge as built: the mirror is
-    #: held to these, the bills a run states, as well as to the source.
+    #: `control_bgzf` on 2026-10-25, and over `control_gz` again on
+    #: 2026-10-26 once 15.17.4 moved a task's charge, the gzip charge as built:
+    #: the mirror is held to these, the bills a run states, as well as to the
+    #: source. At 24 that allowance now affords `control_gz` 20 workers, so no
+    #: run states its 24-worker bill; 15.18's sitting answers the count.
     STATED_BILLS = {
-        ("control_gz", 1): 69_859_312,
-        ("control_gz", 4): 279_437_248,
-        ("control_gz", 24): 1_676_623_488,
+        ("control_gz", 1): 86_963_692,
+        ("control_gz", 4): 347_854_768,
         ("control_bgzf", 1): 102_987_776,
         ("control_bgzf", 4): 185_168_384,
         ("control_bgzf", 24): 1_237_000_704,
@@ -5228,10 +5230,15 @@ class GzipResident(unittest.TestCase):
         self.assertIn("let per_worker = if ahead { pass.max(task) } else { pass };", first)
         ahead = (first_pass / "ahead.rs").read_text()
         self.assertIn("NonZeroU64::new(INPUT_CHUNK).unwrap();", ahead)
-        self.assertIn("Chunking { bytes: CHUNK_BYTES, limit: gz_seek::SPECULATION_LIMIT };", ahead)
-        self.assertIn("let guess = 2 * gz_seek::WINDOW_SIZE as u64;", ahead)
         self.assertIn(
-            "self.bytes.get() + limit + 2 * limit + limit + 2 * guess + INPUT_CHUNK", ahead
+            "Chunking { bytes: CHUNK_BYTES, limit: gz_seek::SPECULATION_LIMIT, lead: 4 };", ahead
+        )
+        self.assertIn("let guess = 2 * gz_seek::WINDOW_SIZE as u64;", ahead)
+        self.assertIn(f"const DECODES_A_TASK: usize = {measure.GZIP_DECODES_A_TASK};", ahead)
+        self.assertIn(f"const GUESSES_A_TASK: usize = {measure.GZIP_GUESSES_A_TASK};", ahead)
+        self.assertIn(
+            "self.bytes.get() + limit + 2 * limit + decodes * limit + guesses * guess + INPUT_CHUNK",
+            ahead,
         )
 
     def test_the_charges_are_the_bills_a_run_stated(self):
@@ -5284,17 +5291,19 @@ class GzipResident(unittest.TestCase):
         """A sitting whose every cell holds its bill plus `extra` MiB (100 by
         default), each run reporting the bill and count it ran under."""
         sizes = {"control_gz": self.GZ_SIZE, "control_bgzf": 842_864_994}
+        kinds = {leg: kind for leg, _, kind in measure.GZIP_RSS_LEGS}
         rss, reports = {}, {}
         for spec in measure._gzip_rss_specs():
             jobs = int(spec.command.rpartition("-jobs-")[2])
             key = spec.key(self.FIGURE)
-            held = self.STATED_BILLS[(spec.input, jobs)] + (extra or {}).get(
-                (spec.input, jobs), 100 * measure.MIB
-            )
+            # The mirror's bill, which `test_the_charges_are_the_bills_a_run_stated`
+            # holds to what runs stated.
+            bill, _ = measure.gzip_leg_charge(kinds[spec.input], jobs, sizes[spec.input])
+            held = bill + (extra or {}).get((spec.input, jobs), 100 * measure.MIB)
             rss[key] = [held / 1024 - 20, held / 1024 - 10, held / 1024]
             report = {
                 "resolved_jobs": str(jobs),
-                "resolved_budget": str(self.STATED_BILLS[(spec.input, jobs)]),
+                "resolved_budget": str(bill),
             }
             if spec.input == "control_gz":
                 report["first_pass_workers"] = str(jobs)

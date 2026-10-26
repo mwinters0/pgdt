@@ -457,11 +457,14 @@ async fn a_damaged_file_is_refused_where_the_pass_meets_it() {
     }
 }
 
-/// Chunks small enough that the test payload is a dozen of them. Its member
-/// as [`gzip_compress`] writes it ends a deflate block only every few chunks;
-/// [`flushed_indexed`]'s ends several in each.
-const CHUNKING: Chunking =
-    Chunking { bytes: NonZeroU64::new(8 * 1024).unwrap(), limit: 256 * 1024 };
+/// Chunks small enough that the test payload is a dozen of them, the shipped
+/// lead's. Its member as [`gzip_compress`] writes it ends a deflate block
+/// only every few chunks; [`flushed_indexed`]'s ends several in each.
+const CHUNKING: Chunking = Chunking {
+    bytes: NonZeroU64::new(8 * 1024).unwrap(),
+    limit: 256 * 1024,
+    lead: Chunking::SHIPPED.lead,
+};
 
 /// A parallelism of `jobs` workers whose budget affords every one of them.
 fn lifted(jobs: usize) -> Parallelism {
@@ -761,6 +764,9 @@ async fn a_damaged_file_is_refused_with_tasks_ahead() {
 /// only a race between threads makes it stand at a decode still running.
 #[test]
 fn a_frontier_waits_for_a_task_that_nothing_has_started_on_either_feed() {
+    // No lead: the guesses the first read lets land are of the first chunks,
+    // whose few block starts are the chain the wide read anchors.
+    let chunking = Chunking { lead: 0, ..CHUNKING };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .max_blocking_threads(1)
         .enable_time()
@@ -776,7 +782,7 @@ fn a_frontier_waits_for_a_task_that_nothing_has_started_on_either_feed() {
                 feed(feed_name, compressed.path()),
                 stored,
                 SPACING,
-                CHUNKING,
+                chunking,
                 &std::env::temp_dir(),
             )
             .unwrap();
@@ -814,8 +820,11 @@ fn a_frontier_waits_for_a_task_that_nothing_has_started_on_either_feed() {
 /// then stands at a member start within each chunk, passing the guesses it
 /// holds as it goes, where in a chunk shorter than a member it holds them for
 /// chunks at a time.
-const BGZF_CHUNKING: Chunking =
-    Chunking { bytes: NonZeroU64::new(64 * 1024).unwrap(), limit: 1024 * 1024 };
+const BGZF_CHUNKING: Chunking = Chunking {
+    bytes: NonZeroU64::new(64 * 1024).unwrap(),
+    limit: 1024 * 1024,
+    lead: Chunking::SHIPPED.lead,
+};
 
 /// **A fetched BGZF file inflates ahead over one download**, each chunk ahead
 /// of the frontier read off its members' headers (`gz_seek`'s

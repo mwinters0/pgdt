@@ -84,12 +84,12 @@ per arm. Reopens: a fetched source recommending more than one reader (D2). Code:
 ### D117 A parallel first pass speculates with a decoder of `gz-seek`'s own, and hands out only the engine's plaintext
 No zlib-API engine decodes from unknown history, so a speculation decodes a chunk natively only for its bounds and
 ending history; the engine decodes from there, and the frontier takes a decode only standing at its start with that
-history, so the index is the serial pass's. Its decoder decides who decodes a byte, never what it is: in one member no
-chunk but the last meets a trailer, so native plaintext would go unchecked. Rejected: native plaintext handed out,
-saving the second decode; the frontier waiting on its own chunk's speculation, slower than serial; per-task fetches over
-a transport; a decode's buffer pooled before a reading prices its pages, or the charge lowered before one attributes a
-worker's remainder (`KD141`). Reopens: a reading where the second decode keeps the pass from lifting the inflate. Code:
-`gz_seek::Parallel`.
+history, so the index is the serial pass's. Its decoder decides who decodes a byte, never what it is: a member's only
+check is its trailer, so a defect in ours would reach a caller unchecked till the member ends. Rejected: native
+plaintext handed out, saving the engine's share of the CPU; the frontier waiting on its own chunk's speculation, slower
+than serial; per-task fetches; a decode's buffer pooled before a reading prices its pages, or the charge lowered before
+one attributes a worker's remainder (`KD141`). Reopens: the second decode keeping the pass from lifting the inflate.
+Code: `gz_seek::Parallel`.
 
 ### D118 A checkpoint inside a static block is placed by walking its codes beside the engine
 A writer ending no block across a spacing is checkpointed as any other, with no inflater of our own: the engine walks a
@@ -99,6 +99,15 @@ needs marks only the frontier holds; holding a unit ending at a symbol to its co
 read to refuse a unit sooner than the next unit's CRC-32 does; a bound on the bytes consumed, catching only a
 misplacement past the lookahead. Reopens: a consumer acting on `IndexMismatch` apart from `UnitCheck`; the walk visible
 in a first pass's profile. Code: `native/walk.rs`. Evidence: `a_checkpoint_moved_inside_a_static_block_is_refused`.
+
+### D120 A parallel first pass gives decodes a room of their own, and places its speculations a lead ahead
+A decode begins only once the frontier anchors the chain before its chunk, and the frontier waits for most of one begun
+just ahead of it. So `Ahead::top_up` hands decodes out under `DECODES_A_TASK` a task, apart from the speculations and
+guesses it holds under `GUESSES_A_TASK`, and a speculation is placed `Chunking::lead` chunks past where it would land
+just ahead of the frontier, where the bound reaches (`Parallel::set_lead`). Rejected: one room for both, guesses held
+keeping a worker from a decode; one run of guesses in flight at a time; a worker kept for decodes; the frontier
+running a queued decode while it waits. Reopens: the second decode removed (D117). Code: `ahead.rs`. Evidence:
+`a_speculation_is_placed_its_lead_past_where_it_lands`, `decodes_and_speculations_are_handed_out_and_counted_apart`.
 
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source

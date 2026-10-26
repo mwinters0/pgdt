@@ -33,6 +33,12 @@ impl TaskId {
         self.chunk
     }
 
+    /// Whether the task decodes a chunk through the engine, rather than
+    /// speculating on one.
+    pub fn is_decode(&self) -> bool {
+        matches!(self.kind, Kind::Decode { .. })
+    }
+
     /// A decode's start and generation; `None` for a speculation.
     pub(crate) fn decode_of(&self) -> Option<(u64, u64)> {
         match self.kind {

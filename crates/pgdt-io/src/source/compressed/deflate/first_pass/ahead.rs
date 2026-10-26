@@ -36,25 +36,38 @@ use super::super::{INPUT_CHUNK, gzip_error};
 #[cfg(any(feature = "http", test))]
 use super::download::Download;
 
+/// How many decodes a task may have handed out or held for the frontier,
+/// and how many speculations or their guesses: what `Ahead::top_up` hands out
+/// to and [`Chunking::task_bytes`] charges, two consumers of one pair. A
+/// decode has a room of its own, so guesses held never keep a worker from
+/// the decodes they let begin (`docs/design/decisions.md`, "D120").
+const DECODES_A_TASK: usize = 2;
+const GUESSES_A_TASK: usize = 5;
+
 /// How many compressed bytes a chunk of the file is, which a speculation
 /// guesses the start of and the engine then decodes: the input chunk every
 /// gzip decode pulls, so a task reads its chunk in one positioned read.
 const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new(INPUT_CHUNK).unwrap();
 
-/// How a pass cuts its file into chunks: their compressed length, and the most
-/// plaintext one speculation or decode holds.
+/// How a pass cuts its file into chunks: their compressed length, the most
+/// plaintext one speculation or decode holds, and how many chunks past where
+/// it would land just ahead of the frontier a speculation is placed
+/// (`gz_seek::Parallel::set_lead`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Chunking {
     pub(super) bytes: NonZeroU64,
     pub(super) limit: usize,
+    pub(super) lead: u64,
 }
 
 impl Chunking {
     /// The chunking a pass ships with: the limit `gz_seek`'s, a constant of
     /// its writers' blocks rather than of the chunk, a guess it cuts being
-    /// continued from its stop.
+    /// continued from its stop; and a lead far enough that the decodes a
+    /// guess lets begin begin far enough ahead of the frontier that it seldom
+    /// waits for one (`docs/design/decisions.md`, "D120").
     pub(super) const SHIPPED: Chunking =
-        Chunking { bytes: CHUNK_BYTES, limit: gz_seek::SPECULATION_LIMIT };
+        Chunking { bytes: CHUNK_BYTES, limit: gz_seek::SPECULATION_LIMIT, lead: 4 };
 
     /// How many chunks a compressed file `stored_size` bytes long is cut
     /// into, at least one.
@@ -66,10 +79,10 @@ impl Chunking {
     /// it: a speculation's compressed bytes — its chunk, and at most the
     /// limit's worth past it, the block it stops in — its plaintext twice over
     /// while it writes markers, or a decode's window, engine and plaintext,
-    /// the speculation being the larger; then one decode's plaintext and two
-    /// guesses' marked histories waiting for the frontier (`Ahead::top_up`
-    /// holding the results to the tasks' count); and the buffer the task
-    /// reads its input into.
+    /// the speculation being the larger; then [`DECODES_A_TASK`] decodes'
+    /// plaintext and [`GUESSES_A_TASK`] guesses' marked histories waiting for
+    /// the frontier (`Ahead::top_up` holding the results to those multiples of
+    /// the tasks' count); and the buffer the task reads its input into.
     ///
     /// Deficiency register: `deficiency: KD141` — the compressed bytes past
     /// the chunk are charged as the limit's worth, which counts plaintext: a
@@ -80,14 +93,15 @@ impl Chunking {
     pub(super) const fn task_bytes(self) -> u64 {
         let limit = self.limit as u64;
         let guess = 2 * gz_seek::WINDOW_SIZE as u64;
-        self.bytes.get() + limit + 2 * limit + limit + 2 * guess + INPUT_CHUNK
+        let (decodes, guesses) = (DECODES_A_TASK as u64, GUESSES_A_TASK as u64);
+        self.bytes.get() + limit + 2 * limit + decodes * limit + guesses * guess + INPUT_CHUNK
     }
 
     /// How many pieces a fetched pass's download may hold with `tasks` run
     /// ahead, two a worker: the piece the frontier stands in, twice as many
-    /// chunks ahead of it as tasks run — the pass holding that many handed out
-    /// or waiting (`Ahead::top_up`) — and the piece after the last, where its
-    /// speculation stops (`Download::last_chunk`).
+    /// chunks ahead of it as tasks run — how far ahead its speculations are
+    /// handed out (`gz_seek::Parallel::speculation_through`) — and the piece
+    /// after the last, where its speculation stops (`Download::last_chunk`).
     #[cfg(any(feature = "http", test))]
     pub(super) const fn download_pieces(tasks: usize) -> u64 {
         2 * (tasks as u64 + 1)
@@ -303,14 +317,23 @@ impl Ahead {
         }
     }
 
-    /// Hand out tasks while fewer than `tasks` run and the pass holds fewer
-    /// than twice that many handed out or waiting for it — a chunk's guess and
-    /// its decode each counting — so what waits for the frontier is at most
-    /// one decode a task ([`Chunking::task_bytes`]), and a speculation only
-    /// on a chunk at or before `last`.
+    /// Hand out tasks while fewer than `tasks` run: a decode while the pass
+    /// has fewer than [`DECODES_A_TASK`] times that many handed out or held
+    /// for the frontier, and otherwise a speculation, on a chunk at or before
+    /// `last`, while it has fewer than [`GUESSES_A_TASK`] times as many
+    /// handed out or guesses held ([`Chunking::task_bytes`]).
     fn top_up(&mut self, pass: &mut gz_seek::Parallel, last: u64) {
-        while self.running < self.tasks && pass.pending() < 2 * self.tasks {
-            let Some(task) = pass.task_through(last) else { return };
+        while self.running < self.tasks {
+            let decode = match pass.decodes_pending() < DECODES_A_TASK * self.tasks {
+                true => pass.decode_task(),
+                false => None,
+            };
+            let task =
+                decode.or_else(|| match pass.guesses_pending() < GUESSES_A_TASK * self.tasks {
+                    true => pass.speculation_through(last),
+                    false => None,
+                });
+            let Some(task) = task else { return };
             self.spawn(task);
         }
     }

@@ -339,6 +339,58 @@ fn a_speculation_is_handed_out_as_far_ahead_as_the_last_one_lagged() {
     assert_eq!(after.id().chunk(), (frontier + 1).max(2 * crossed + 2));
 }
 
+/// **A lead places a speculation that many chunks past where it would land**,
+/// where the bound it is handed out under reaches that far, and where it does
+/// not, the speculation is handed out where it lands.
+#[test]
+fn a_speculation_is_placed_its_lead_past_where_it_lands() {
+    let file = gzip(&payload(1_200_000, 3), 6);
+    let chunk = NonZeroU64::new(8 * 1024).unwrap();
+    assert!(file.len() as u64 > 10 * chunk.get(), "{} bytes", file.len());
+    let mut pass = Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+    pass.set_lead(3);
+    let mut through = |last| {
+        std::iter::from_fn(|| pass.speculation_through(last))
+            .map(|t| t.id().chunk())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(through(2), [1, 2]);
+    assert_eq!(through(7), [4, 5, 6, 7]);
+}
+
+/// **Decodes and speculations are handed out apart and counted apart**: no
+/// decode is handed out before a guess lets one begin, a speculation counts
+/// as a guess from when it is handed out until the frontier passes its
+/// guess, and a decode counts as one from when it is handed out.
+#[test]
+fn decodes_and_speculations_are_handed_out_and_counted_apart() {
+    let file = gzip(&payload(1_200_000, 3), 6);
+    // Each chunk long enough to hold a block start of its own.
+    let chunk = NonZeroU64::new(64 * 1024).unwrap();
+    assert!(file.len() as u64 > 5 * chunk.get(), "{} bytes", file.len());
+    let mut pass = Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+    assert!(pass.decode_task().is_none());
+    let speculations = std::iter::from_fn(|| pass.speculation_through(4)).collect::<Vec<_>>();
+    assert_eq!((pass.guesses_pending(), pass.decodes_pending()), (4, 0));
+    for task in speculations {
+        assert!(!task.id().is_decode());
+        pass.done(run(task, &file, 1 << 20));
+    }
+    assert_eq!((pass.guesses_pending(), pass.decodes_pending()), (4, 0));
+    let mut buf = vec![0u8; 1024];
+    let decode = loop {
+        if let Some(task) = pass.decode_task() {
+            break task;
+        }
+        let at = (pass.compressed_position() as usize).min(file.len());
+        let step = pass.read(&file[at..], &mut buf).unwrap();
+        assert!(!step.needs_input(), "no decode was handed out before the file's end");
+    };
+    assert!(decode.id().is_decode());
+    assert_eq!(pass.decodes_pending(), 1);
+    assert!(pass.speculation_through(4).is_none());
+}
+
 /// Twice the most plaintext between two places a decode of `file` may resume
 /// at, as [`SPECULATION_LIMIT`](crate::SPECULATION_LIMIT) is twice the
 /// largest block zlib ends.
@@ -402,7 +454,7 @@ fn a_limit_never_ends_the_chain() {
 }
 
 /// **A speculation is handed out no further ahead than its caller bounds
-/// it**: `task_through` hands out each chunk up to its bound and then nothing,
+/// it**: `speculation_through` hands out each chunk up to its bound and then nothing,
 /// and the first chunk past the bound is the first a wider one hands out.
 #[test]
 fn a_speculation_is_handed_out_no_further_than_its_bound() {
@@ -412,7 +464,9 @@ fn a_speculation_is_handed_out_no_further_than_its_bound() {
     let mut pass =
         Parallel::new(self::spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
     let mut through = |last| {
-        std::iter::from_fn(|| pass.task_through(last)).map(|t| t.id().chunk()).collect::<Vec<_>>()
+        std::iter::from_fn(|| pass.speculation_through(last))
+            .map(|t| t.id().chunk())
+            .collect::<Vec<_>>()
     };
     assert_eq!(through(3), [1, 2, 3]);
     assert_eq!(through(3), Vec::<u64>::new());
@@ -427,13 +481,13 @@ fn a_continuation_is_handed_out_within_its_bound() {
     let chunk = NonZeroU64::new(160 * 1024).unwrap();
     let limit = twice_the_largest_block(&file);
     let mut pass = Parallel::new(spacing(64 * 1024), chunk, limit, file.len() as u64).unwrap();
-    let first = pass.task_through(1).unwrap();
+    let first = pass.speculation_through(1).unwrap();
     assert_eq!(first.id().continues_from(), None);
     pass.done(run(first, &file, 1 << 20));
     let from = pass.to_continue.keys().next().copied().expect("a guess the limit cut");
     assert_eq!(from / (8 * chunk.get()), 1, "cut inside its chunk");
-    assert!(pass.task_through(0).is_none());
-    let next = pass.task_through(1).unwrap();
+    assert!(pass.speculation_through(0).is_none());
+    let next = pass.speculation_through(1).unwrap();
     assert_eq!((next.id().chunk(), next.id().continues_from()), (1, Some(from)));
     assert!(pass.wants(next.id()));
 }

@@ -16,9 +16,10 @@ headers").
   chunks past the first; none before any parallelism is announced and none
   under `Serial` (D1), so the library default is the serial pass.
 - **What is held** is bounded by the gate in `Ahead::top_up`: at most that
-  many tasks running, and the pass's `pending()` under twice that many, so
-  each task's charge (`Chunking::task_bytes`) covers what it holds running
-  and one decode waiting for the frontier.
+  many tasks running, and the decodes and the guesses the pass has handed
+  out or holds each under its own multiple of that many (D120), so each
+  task's charge (`Chunking::task_bytes`) covers what it holds running and
+  what waits for the frontier.
 - **A wait never rests on a thread the runtime has yet to give**: the
   frontier waits on a blocking thread, so a task it waits for that no
   blocking thread has started it takes and runs itself (`Ahead::wait_for`);

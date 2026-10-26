@@ -302,16 +302,18 @@ enum State {
 ///
 /// Deficiency register: `deficiency: KD143` — on `pg_dump`'s level-6 text a
 /// speculation's decode rarely goes clean, so it writes nearly its whole
-/// chunk marked, at more than the engine's cost of inflating the same bytes.
-/// At the four-worker baseline the pass is barely faster than serial. A run of
-/// taken chunks costs one speculation more than it has chunks, its anchor's,
-/// and with nearly every chunk speculated the
-/// tasks keep barely ahead of the frontier: the runs of landed guesses there
-/// are short, a decode the chain queues waits for a worker to end a
-/// speculation, the frontier waits for it in turn, and workers stand idle
-/// while guesses fill the room `pgdt-io` holds the pass's results to. At the
-/// physical core count the pass is bound by its workers, short of its scan's
-/// floor. **(b) owned by 15.17.4**, the pass at four workers.
+/// chunk marked, at more than the engine's cost of inflating the same bytes,
+/// and a chunk the frontier takes is inflated again by the engine (D117). A
+/// run of taken chunks costs one speculation more than it has chunks, its
+/// anchor's. At the four-worker baseline the workers are nearly always busy,
+/// and the frontier waits for a large share of its time on taken decodes:
+/// one can begin only once the frontier anchors the chain before it, and a
+/// run longer than the tasks decodes no faster than they do, which
+/// `pgdt-io`'s room and lead (D120) narrow and do not remove: the workers'
+/// time, not their scheduling, holds it. At the physical core count the pass
+/// is bound by its workers, short of its scan's floor. **(a) deliberate
+/// tradeoff** — removing the engine's decode means handing out this
+/// decoder's plaintext, which D117 refuses.
 pub(crate) struct Speculation {
     chunk: u64,
     /// The bit a continuation of a cut guess begins at.

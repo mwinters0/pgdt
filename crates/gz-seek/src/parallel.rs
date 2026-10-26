@@ -40,7 +40,8 @@
 //! So no task's cost can make the pass slower than the serial one, and a
 //! speculation is handed out on a chunk far enough ahead of the frontier to
 //! land before it gets there: as many chunks past it as it crossed while the
-//! last speculation ran.
+//! last speculation ran, and the caller's lead past that
+//! ([`Parallel::set_lead`]).
 //!
 //! **Every byte handed out is checked as a forward pass checks it**: each
 //! unit's CRC-32 is recorded from the plaintext, and each member's trailer is
@@ -52,8 +53,10 @@
 //!
 //! Read as [`Forward::read`](crate::Forward::read) is read, supplying bytes
 //! from [`Parallel::compressed_position`], which jumps forward past a decode
-//! taken. Take [`Parallel::task`]s while it has memory and threads for them,
-//! feed each from its [`ChunkTask::wants`], and hand each result to
+//! taken. Take [`Parallel::task`]s while it has memory and threads for them —
+//! or decodes and speculations apart, each kind under a bound of its own
+//! ([`Parallel::decode_task`], [`Parallel::speculation_through`]) — feed
+//! each from its [`ChunkTask::wants`], and hand each result to
 //! [`Parallel::done`]. A step whose `wait` names a decode stands where that
 //! decode's result may be used: the next read waits for it rather than
 //! decoding those bytes a second time, so the caller runs every decode it
@@ -259,6 +262,9 @@ pub struct Parallel {
     window_len: usize,
     /// How many decodes the pass took.
     taken: u64,
+    /// How many chunks past where it lands a speculation is placed
+    /// ([`Parallel::set_lead`]).
+    lead: u64,
 }
 
 impl Parallel {
@@ -347,27 +353,47 @@ impl Parallel {
             window: Box::new([0; WINDOW_SIZE]),
             window_len: 0,
             taken: 0,
+            lead: 0,
         }
     }
 
-    /// The next task: a decode the chain has a window for, in chunk order,
-    /// or else a speculation continuing a guess the limit cut, from its stop,
-    /// or else one on the next chunk ahead of the frontier it may land before
-    /// the frontier reaches; `None` past the file's last chunk.
+    /// Place each speculation on a chunk's own start `lead` chunks past the
+    /// first it may land before the frontier reaches, where the bound it is
+    /// handed out under reaches that far ([`Parallel::speculation_through`]);
+    /// none by default. A decode begins only once the frontier anchors the
+    /// chain before its chunk, so a guess landing just ahead of the frontier
+    /// lets its decode begin barely ahead of it, and the frontier waits for
+    /// most of that decode: how far ahead is the caller's, priced against
+    /// its threads and the chunk it cuts.
+    pub fn set_lead(&mut self, lead: u64) {
+        self.lead = lead;
+    }
+
+    /// The next task: a decode the chain has a window for, in chunk order
+    /// ([`Parallel::decode_task`]), or else a speculation
+    /// ([`Parallel::speculation_through`]); `None` past the file's last
+    /// chunk.
     pub fn task(&mut self) -> Option<ChunkTask> {
-        self.task_through(u64::MAX)
+        self.decode_task().or_else(|| self.speculation_through(u64::MAX))
     }
 
-    /// [`Parallel::task`], handing out a speculation only on a chunk at or
-    /// before `last`, and a continuation only where it begins in one: a
-    /// caller holding the bytes its tasks read bounds how far ahead of the
-    /// frontier they reach, a decode the chain has a window for lying behind
-    /// a speculation already handed out. A chunk passed over here is the next one a
-    /// speculation is handed out on.
-    pub fn task_through(&mut self, last: u64) -> Option<ChunkTask> {
-        if let Some(decode) = self.chain.next_task() {
-            return Some(ChunkTask::decode(decode));
-        }
+    /// The next decode the chain has a window for, in chunk order: a caller
+    /// bounding what its tasks hold bounds decodes apart from speculations
+    /// ([`Parallel::decodes_pending`]), so a guess held never keeps a worker
+    /// from the decode it lets begin.
+    pub fn decode_task(&mut self) -> Option<ChunkTask> {
+        self.chain.next_task().map(ChunkTask::decode)
+    }
+
+    /// The next speculation: one continuing a guess the limit cut, from its
+    /// stop, or else one on the next chunk ahead of the frontier it may land
+    /// before the frontier reaches, or its lead past that
+    /// ([`Parallel::set_lead`]) — on a chunk at or before `last`, and a
+    /// continuation only where it begins in one: a caller holding the bytes
+    /// its tasks read bounds how far ahead of the frontier they reach, a lead
+    /// past that bound being dropped. A chunk passed over here is the next
+    /// one a speculation is handed out on.
+    pub fn speculation_through(&mut self, last: u64) -> Option<ChunkTask> {
         // A continuation the frontier has passed is of no use.
         self.to_continue = self.to_continue.split_off(&self.at);
         if let Some(entry) = self.to_continue.first_entry()
@@ -381,7 +407,12 @@ impl Parallel {
         }
         let frontier = self.frontier_chunk();
         // One the frontier reaches before it lands is of no use.
-        let chunk = self.next_chunk.max(frontier + 1 + self.lag);
+        let lands = frontier + 1 + self.lag;
+        let placed = match lands.saturating_add(self.lead) {
+            led if led <= last => led,
+            _ => lands,
+        };
+        let chunk = self.next_chunk.max(placed);
         if chunk > last || chunk.checked_mul(self.chunk_bytes)? >= self.file_len {
             return None;
         }
@@ -432,11 +463,17 @@ impl Parallel {
         }
     }
 
-    /// How many tasks are handed out or results held: what the caller's
-    /// memory holds for them is each running task's ([`ChunkTask`]) and
-    /// [`Parallel::held`].
-    pub fn pending(&self) -> usize {
-        self.speculating.len() + self.chain.pending()
+    /// How many decodes are handed out or held for the frontier: what the
+    /// caller's memory holds for them is each running one's ([`ChunkTask`])
+    /// and [`Parallel::held`].
+    pub fn decodes_pending(&self) -> usize {
+        self.chain.decodes()
+    }
+
+    /// How many speculations are handed out or their guesses held, as
+    /// [`Parallel::decodes_pending`] counts decodes.
+    pub fn guesses_pending(&self) -> usize {
+        self.speculating.len() + self.chain.guesses()
     }
 
     /// The bytes the results held for the frontier hold.

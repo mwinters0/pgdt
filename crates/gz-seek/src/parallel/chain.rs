@@ -149,9 +149,14 @@ impl Chain {
         self.decoded.clear();
     }
 
+    /// The guesses held.
+    pub(super) fn guesses(&self) -> usize {
+        self.guesses.len()
+    }
+
     /// The decodes handed out and the results held.
-    pub(super) fn pending(&self) -> usize {
-        self.guesses.len() + self.running.len() + self.decoded.len()
+    pub(super) fn decodes(&self) -> usize {
+        self.running.len() + self.decoded.len()
     }
 
     /// The decodes done, held for the frontier.

@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D119 -->
+<!-- decision-watermark: D120 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -38,6 +38,7 @@ are `docs/process.md`, "The decision register".
 - **D116** A forward pass coalesces BGZF members as the walk does, so a fetched BGZF file is read by a first pass
 - **D117** A parallel first pass speculates with a decoder of `gz-seek`'s own, and hands out only the engine's plaintext
 - **D118** A checkpoint inside a static block is placed by walking its codes beside the engine
+- **D120** A parallel first pass gives decodes a room of their own, and places its speculations a lead ahead
 - **D20** The library never replaces cache data automatically
 - **D21** Identity is `stored_size()` plus weak signals, in an opaque enum
 - **D87** A remote cache is named from the URL, and the origin it records is advisory

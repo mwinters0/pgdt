@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD144 -->
-**`KD1`–`KD144` are allocated, and nothing at or below `KD144` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD145 -->
+**`KD1`–`KD145` are allocated, and nothing at or below `KD145` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -527,11 +527,12 @@ than reading as a phase nobody has sliced.
   owned by 15.18**. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
 
-- **KD143** — a first pass at the four-worker baseline is barely faster than
-  serial, the runs of landed guesses at its frontier short and its taken
-  decodes begun barely ahead of it, and one at the physical core count is
-  bound by its workers, short of its scan's floor. **(b) owned by 15.17.4**.
-  Detail: `crates/gz-seek/src/speculate.rs`.
+- **KD143** — a parallel first pass speculates nearly every chunk and the
+  engine decodes each taken one again, so at four workers they are nearly
+  always busy and the frontier waits a large share of its time on taken
+  decodes, and at the physical core count it is short of its scan's floor.
+  **(a) deliberate tradeoff** — the second decode is D117's, the engine's
+  plaintext alone handed out. Detail: `crates/gz-seek/src/speculate.rs`.
 
 - **KD144** — a range type's own `collation` parameter is not read, so a
   `text`-bounded range is compared as though it stated none: a spurious note
@@ -539,3 +540,9 @@ than reading as a phase nobody has sliced.
   collation (I42) and the server's is not. **(c) unowned**; promoted by a dump
   in hand declaring a collated range. Detail:
   `crates/pgdt-codec/src/compare/walk.rs`.
+
+- **KD145** — a local gzip first pass recommends its logical core count, which
+  a hand probe on an SMT machine found slower than its physical count, the
+  cause undecided between a core shared and the scan's thread oversubscribing.
+  **(b) owned by 15.7.1**. Detail:
+  `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.
