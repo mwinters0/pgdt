@@ -39,6 +39,15 @@ the role's other items. A cycle
 spanning crates is one Cargo would refuse, and is reported as a crate
 cycle.
 
+**A module's edges are listed on request** (`--edges <module>`, repeatable):
+every reference into and out of the module and the modules under it, a
+crate's name taking the whole crate, each pair of items once with its count
+and first site, and with a design's moves applied when one is given. It is
+the evidence `.claude/skills/seams/SKILL.md` asks for: a type cluster moved
+to a module of its own is closed when nothing goes out of it but what it
+uses and nothing comes in but its API, and two groups of modules divide where
+few references cross between them.
+
 **Doc links are not edges**: an explanation may lean on whatever it is
 explained against. But a doc link that runs against the code's edges, one
 module's doc naming a module that reads it, says the concept does not yet
@@ -55,7 +64,7 @@ written by `--save-index`).
 
 Usage:
 
-    cd scripts && uv run module_graph.py [--docs] [--design <doc>]
+    cd scripts && uv run module_graph.py [--docs] [--design <doc>] [--edges <module>]...
     cd scripts && uv run python -m unittest test_module_graph
 """
 
@@ -687,6 +696,45 @@ def _crate(module: str) -> str:
     return module.split("::", 1)[0]
 
 
+def _under(module: str, group: str) -> bool:
+    return module == group or module.startswith(group + "::")
+
+
+def _end(item: str, member: str | None) -> str:
+    return f"{item}::{member}" if member else item
+
+
+def list_edges(graph: Graph, group: str, out: TextIO, moves: Moves | None = None) -> bool:
+    """Every reference into and out of `group` and the modules under it,
+    each pair of items once with its count and first site; false when the
+    group names no module of the (moved) tree."""
+    by_arc = edges(graph.refs, moves)
+    nodes = set(graph.modules)
+    if moves:
+        nodes |= set(moves.modules.values()) | set(moves.items.values()) | set(moves.members.values())
+    if not any(_under(m, group) for m in nodes):
+        print(f"!! --edges {group} names no module", file=out)
+        return False
+    crossing = {
+        (a, b): refs for (a, b), refs in by_arc.items() if _under(a, group) != _under(b, group)
+    }
+    counts = {
+        way: sum(len(r) for (a, _), r in crossing.items() if _under(a, group) == (way == "out"))
+        for way in ("out", "in")
+    }
+    print(f"-- edges of {group}: {counts['out']} references out, {counts['in']} in", file=out)
+    for (a, b), refs in sorted(crossing.items(), key=lambda kv: (not _under(kv[0][0], group), kv[0])):
+        way = "out" if _under(a, group) else "in"
+        print(f"   {way} {a} -> {b}: {len(refs)}", file=out)
+        pairs: dict[tuple[str, str], list[Ref]] = defaultdict(list)
+        for r in refs:
+            pairs[(_end(r.src_item, r.src_member), _end(r.dst_item, r.dst_member))].append(r)
+        for (src, dst), seen in sorted(pairs.items()):
+            more = f" (+{len(seen) - 1} more)" if len(seen) > 1 else ""
+            print(f"       {seen[0].rel}:{seen[0].line} {src} -> {dst}{more}", file=out)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # The report.
 
@@ -770,6 +818,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--docs", action="store_true", help="list doc links against the edges")
     parser.add_argument("--index", type=Path, help="read this SCIP index instead of building one")
     parser.add_argument("--save-index", type=Path, help="keep the index built at this path")
+    parser.add_argument(
+        "--edges",
+        action="append",
+        default=[],
+        metavar="MODULE",
+        help="list the references into and out of a module and those under it (a crate's name: the crate)",
+    )
     args = parser.parse_args(argv)
     meta = layering.metadata(REPO)
     sources = workspace_sources(REPO, meta)
@@ -796,7 +851,9 @@ def main(argv: list[str] | None = None) -> int:
         if problems:
             print(f"module-graph: {len(problems)} moves unreadable")
             return 1
-    return report(graph, sys.stdout, moves, args.docs)
+    named = [list_edges(graph, group, sys.stdout, moves) for group in args.edges]
+    code = report(graph, sys.stdout, moves, args.docs)
+    return code or (0 if all(named) else 1)
 
 
 if __name__ == "__main__":

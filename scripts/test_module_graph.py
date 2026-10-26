@@ -256,6 +256,38 @@ class Design(unittest.TestCase):
         self.assertIn("!! crate cycle: c, d", out)
 
 
+class ListedEdges(unittest.TestCase):
+    def listed(self, graph: mg.Graph, group: str, moves: mg.Moves | None = None) -> tuple[bool, str]:
+        out = io.StringIO()
+        return mg.list_edges(graph, group, out, moves), out.getvalue()
+
+    def test_a_modules_edges_are_listed_both_ways_each_pair_once(self):
+        f = two_modules("pub fn ay(_: crate::b::Bee, _: crate::b::Bee) {}\n")
+        f.define(A, "ay", sym("c", "a/ay()."), (0, 0))
+        f.refer(A, "Bee", BEE, 0).refer(A, "Bee", BEE, 1)
+        named, out = self.listed(f.graph(), "c::b")
+        self.assertTrue(named)
+        self.assertIn("-- edges of c::b: 0 references out, 2 in", out)
+        self.assertIn("   in c::a -> c::b: 2\n       c/src/a.rs:1 ay -> Bee (+1 more)\n", out)
+
+    def test_a_crate_takes_every_module_under_it_and_drops_what_stays_inside(self):
+        named, out = self.listed(Design().graph(), "c")
+        self.assertTrue(named)
+        self.assertIn("-- edges of c: 0 references out, 0 in", out)
+
+    def test_a_designs_new_module_lists_what_its_cluster_reads_and_is_read_by(self):
+        graph = Design().graph()
+        moves, _ = mg.read_moves("```moves\nc::b::helper -> c::h\n```\n", graph)
+        named, out = self.listed(graph, "c::h", moves)
+        self.assertTrue(named)
+        self.assertIn("   out c::h -> c::a: 1\n       c/src/b.rs:2 helper -> Ay\n", out)
+
+    def test_a_group_naming_no_module_is_refused(self):
+        named, out = self.listed(Design().graph(), "c::nothing")
+        self.assertFalse(named)
+        self.assertIn("!! --edges c::nothing names no module", out)
+
+
 class DocLinks(unittest.TestCase):
     def test_a_doc_link_against_the_edges_is_listed_and_never_fails(self):
         f = two_modules("pub struct Ay(crate::b::Bee);\n", "/// Held by [`crate::a::Ay`].\npub struct Bee;\n")

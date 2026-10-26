@@ -67,7 +67,10 @@ re-projects its own moves first, the cuts before it having moved the tree.
 The evidence for where seams fall, in order of weight:
 
 - **a type cluster** — a struct or enum, its impls and the free functions only
-  they call, which `codegraph callees <type>` shows closed;
+  they call: moved to a module of its own in a trial ```` ```moves ```` block,
+  `uv run module_graph.py --design <doc> --edges <that module>` shows it
+  closed when nothing goes out but what the cluster uses and nothing comes in
+  but its API;
 - **a trait and its implementors**, or **one arm of a family** — one source
   kind, one type family's decoders, one subcommand;
 - **the phase of a pipeline** — building, observing, closing;
@@ -157,7 +160,8 @@ The workspace graph is the current answer, not a fixed one. Before closing,
 ask it two questions, by evidence rather than taste:
 
 - **Should a crate split?** Its modules fall into two groups with few edges
-  between them (`codegraph impact <item>` from each side), one
+  between them (`module_graph.py --edges <group>` for each side, a design's
+  moves drawing a group no module holds yet), one
   group changing in most commits that leave the other alone (`git log
   --stat`), and a dependency the smaller group would not need.
 - **Should two merge?** Most commits touching one touch the other, or the
