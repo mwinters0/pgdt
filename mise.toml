@@ -2,7 +2,7 @@
 # Every tool is pinned exactly: the release image installs this file
 # (`release/Dockerfile`), and under `latest` a rehearsal and a CI run of one
 # commit could check under different versions. `scripts/test_release.py`
-# asserts both.
+# asserts both. A tool nothing in the image runs goes in `.config/mise.toml`.
 #
 # `cargo nextest run` runs the suite (`CLAUDE.md`, "Commands"), one test a CPU,
 # nextest's default: no thread cap is committed, a fixed count being wrong on

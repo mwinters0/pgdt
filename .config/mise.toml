@@ -1,0 +1,15 @@
+[tools]
+# The development tools no build or check runs, kept out of `mise.toml` because
+# the release image installs that file and refuses a tree whose copy differs
+# from its own (`scripts/release.py`, `check_inside`): a bump here rebuilds no
+# image. mise loads both files in a checkout.
+#
+# `graft`, which `.mcp.json` and `.claude/helpers/graft-hooks.cjs` run, is
+# always kept at npm's latest: pinned exactly so every checkout agrees, and
+# bumped whenever the session-start hook announces a newer one, by
+# `mise up --bump npm:@nanonets/graft` rather than the `graft upgrade` the hook
+# names, which installs a second copy with `npm i -g`. A mise tool because an
+# `npm i -g` lives in one Node install and is lost when `node` moves. Commit
+# the wiring the next session start rewrites with it. It runs on whichever
+# `node` mise or the system puts on `PATH`.
+"npm:@nanonets/graft" = "0.26.0"
