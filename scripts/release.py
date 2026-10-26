@@ -11,10 +11,19 @@ takes an image reference and the image is never pushed), and `--inside` runs
 it as it stands, which is what the image itself does.
 
 **The image is tagged by its inputs** -- the Dockerfile and the two files it
-copies, `rust-toolchain.toml` and `mise.toml` -- so a changed pin builds a new
-image and an unchanged one is reused, never a stale image under a name that
-outlived what built it. `--inside` refuses an image built from other copies
-of the two copied files than the tree's.
+copies, `rust-toolchain.toml` and `mise.toml`, the Dockerfile copying itself
+as well -- so a changed pin builds a new image and an unchanged one is
+reused, never a stale image under a name that outlived what built it.
+`--inside` refuses an image built from other copies of the three than the
+tree's.
+
+**Every cargo target directory a step builds into is keyed on what compiles
+objects** (`image_key`), read inside the image: the base digest, rustc's
+version and installed components, each C compiler's version and each
+target's libc-dev's. One holding another key, or none, is cleared before the
+step runs, and what moved is logged (`key_target`), so no object another
+image compiled reaches a release or a figure (`docs/design/decisions.md`,
+"D104"): cargo's own fingerprint misses these inputs.
 
 **Every binary `build` or `bench` makes is held to the floor** (`check_floor`): no `GLIBC_`
 version it needs may be past the glibc of the image's `libc6-dev` its target
@@ -79,6 +88,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import fcntl
 import hashlib
 import json
 import os
@@ -99,9 +109,12 @@ import check
 REPO = Path(__file__).resolve().parent.parent
 DOCKERFILE = REPO / "release" / "Dockerfile"
 #: What the Dockerfile copies into the image, from the repository root, and
-#: where the image keeps them (`--inside`'s guard compares the two).
+#: where the image keeps them (`--inside`'s guard compares the two). It keeps
+#: a copy of itself there too, which is where the base digest is read from
+#: inside (`image_key`).
 CONTEXT_FILES = ("rust-toolchain.toml", "mise.toml")
 IN_IMAGE_COPIES = Path("/opt/toolchain")
+IN_IMAGE_DOCKERFILE = IN_IMAGE_COPIES / "Dockerfile"
 IMAGE_NAME = "pgdt-release"
 
 #: Each release target, and the Debian package carrying the glibc it links
@@ -372,16 +385,140 @@ def run_in_image(
 
 def check_inside(copies: Path = IN_IMAGE_COPIES, repo: Path = REPO) -> None:
     """Refuse to run a step in an image built from other copies of
-    `CONTEXT_FILES` than the tree's."""
-    for name in CONTEXT_FILES:
+    `CONTEXT_FILES`, or of the Dockerfile, than the tree's."""
+    pairs = [(name, repo / name) for name in CONTEXT_FILES]
+    pairs.append(("Dockerfile", repo / "release" / "Dockerfile"))
+    for name, theirs in pairs:
         have = copies / name
         if not have.is_file():
             raise ReleaseError(f"--inside, but {have} is absent: this is not the release image")
-        if have.read_bytes() != (repo / name).read_bytes():
+        if have.read_bytes() != theirs.read_bytes():
             raise ReleaseError(
                 f"the image was built from another {name} than the tree's; rebuild it "
                 "(`cd scripts && uv run release.py image`)"
             )
+
+
+# --- the target directory's key --------------------------------------------
+
+#: The file in a cargo target directory naming what compiled its objects, and
+#: the lock every step holds on it while it builds there.
+TARGET_KEY = "pgdt-image-key"
+TARGET_LOCK = ".pgdt-image-key.lock"
+
+
+def image_key(
+    dockerfile: str,
+    rustc: str,
+    components: str,
+    compilers: Mapping[str, str],
+    libcs: Mapping[str, str],
+) -> str:
+    """What compiles objects in an image, one line each: the base it is built
+    from, `rustc -vV`, the sysroot's installed components, each C compiler's
+    `--version` line by its name, and each libc-dev package's version; not
+    the image's tag (`docs/design/decisions.md`, "D104")."""
+    lines = [f"base {pinned_base(dockerfile)}"]
+    lines += [f"rustc {line.strip()}" for line in rustc.splitlines() if line.strip()]
+    lines += [f"component {c}" for c in sorted(set(components.split()))]
+    lines += [f"compiler {name}: {version}" for name, version in sorted(compilers.items())]
+    lines += [f"libc {package} {version}" for package, version in sorted(libcs.items())]
+    return "\n".join(lines) + "\n"
+
+
+def read_image_key(dockerfile: Path = IN_IMAGE_DOCKERFILE) -> str:
+    """`image_key` of the image this runs in: the base its own copy of the
+    Dockerfile names, `rustc` as the tree's toolchain pin resolves it, `cc`
+    and the cross target's compiler where the image has one, and each
+    target's libc-dev package that is installed."""
+
+    def out(argv: Sequence[str]) -> subprocess.CompletedProcess:
+        return subprocess.run(argv, cwd=REPO, capture_output=True, text=True)
+
+    if not dockerfile.is_file():
+        raise ReleaseError(f"--inside, but {dockerfile} is absent: rebuild the release image")
+    rustc = out(["rustc", "-vV"])
+    sysroot = out(["rustc", "--print", "sysroot"])
+    if rustc.returncode or sysroot.returncode:
+        raise ReleaseError(f"rustc did not say what it is: {rustc.stderr.strip() or sysroot.stderr.strip()}")
+    components = Path(sysroot.stdout.strip()) / "lib" / "rustlib" / "components"
+    compilers = {}
+    for name in ("cc", os.environ.get(f"CC_{CROSS_TARGET.replace('-', '_')}")):
+        if name and shutil.which(name):
+            compilers[name] = (out([name, "--version"]).stdout.splitlines() or [""])[0].strip()
+    libcs = {}
+    for package in sorted(set(TARGETS.values())):
+        got = out(["dpkg-query", "-W", "-f", "${Version}", package])
+        if got.returncode == 0 and got.stdout.strip():
+            libcs[package] = got.stdout.strip()
+    return image_key(dockerfile.read_text(), rustc.stdout, components.read_text(), compilers, libcs)
+
+
+def clear_target(directory: Path) -> int:
+    """Remove everything in `directory` but its key and lock, leaving the
+    directory itself, which a container run mounts. How many entries went."""
+    gone = 0
+    for entry in directory.iterdir():
+        if entry.name in (TARGET_KEY, TARGET_LOCK):
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+        gone += 1
+    return gone
+
+
+def key_moves(held: str | None, key: str) -> list[str]:
+    """The lines saying why a directory keyed `held` is cleared for `key`."""
+    if held is None:
+        return ["  it named no image"]
+    old, new = held.splitlines(), key.splitlines()
+    return [f"  - {line}" for line in old if line not in new] + [f"  + {line}" for line in new if line not in old]
+
+
+def key_target(directory: Path, key: str) -> int:
+    """Hold `directory` to `key`, clearing it first where it holds another
+    or none, and return the lock held on it: shared, for as long as the step
+    builds there, so another image's step cannot clear it meanwhile. The
+    check is made again under each lock taken, a step of another image
+    clearing it between the two."""
+    directory.mkdir(parents=True, exist_ok=True)
+    keyfile = directory / TARGET_KEY
+    fd = os.open(directory / TARGET_LOCK, os.O_RDWR | os.O_CREAT, 0o644)
+
+    def held() -> str | None:
+        return keyfile.read_text() if keyfile.is_file() else None
+
+    while True:
+        fcntl.flock(fd, fcntl.LOCK_SH)
+        if held() == key:
+            return fd
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        before = held()
+        if before == key:
+            continue
+        gone = clear_target(directory)
+        written = directory / f"{TARGET_KEY}.new"
+        written.write_text(key)
+        written.replace(keyfile)
+        if gone or before is not None:
+            print(
+                f"release.py: cleared {directory} ({gone} entries), keyed to another image:",
+                *key_moves(before, key), sep="\n", file=sys.stderr, flush=True,
+            )  # fmt: skip
+
+
+def ready_inside() -> int:
+    """What every step checks in the image before it runs: that the image is
+    the tree's (`check_inside`), and that the target directory
+    `CARGO_TARGET_DIR` names, which a container run always does, is keyed to
+    it (`key_target`). The lock it returns is held until the step exits."""
+    check_inside()
+    named = os.environ.get("CARGO_TARGET_DIR")
+    if not named:
+        raise ReleaseError("--inside, but no CARGO_TARGET_DIR names the target directory to key")
+    return key_target(Path(named), read_image_key())
 
 
 # --- the floor -------------------------------------------------------------
@@ -1167,7 +1304,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not command:
                 raise ReleaseError("run takes a command, after --")
         if args.inside:
-            check_inside()
+            ready_inside()
             if args.cmd == "run":
                 return step_run(command, args.cwd)
             if bench is not None:

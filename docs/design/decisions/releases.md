@@ -6,13 +6,14 @@ tested: the pinned Debian image and the glibc floor, the fat-LTO profile, arm64'
 CMake's place. `release/`, `scripts/release.py`, `scripts/release_ci.py`.
 
 ### D104 A release is `pgdt` for Linux, linked against one digest-pinned Debian-stable image that also builds what the register times
-Two targets, Linux on x86-64 and arm64; macOS waits on its own discovery path (P34), Windows on an I/O layer that is
-`std::os::unix`. glibc, not static musl: the shipped binary is the timed one (D13). The floor follows Debian stable: at
-least six months' grace for a new stable, moved by twelve (`debian_window.py`). One digest-pinned `debian:trixie` image
-builds both targets and every binary the register times, so one pin names the build's glibc, the floor and every
-figure's runtime, as `rust-toolchain.toml` names one compiler. Rejected: `cargo zigbuild` (zig's clang for every C
-dependency); a build runner per architecture (arm64 rehearsed nowhere locally); cargo-dist (no glibc floor); the Rust
-pin in the image alone.
+Two targets, Linux on x86-64 and arm64; macOS waits on P34, Windows on an I/O layer that is `std::os::unix`. glibc, not
+static musl: the shipped binary is the timed one (D13). The floor follows Debian stable: at least six months' grace for
+a new stable, moved by twelve (`debian_window.py`). One digest-pinned `debian:trixie` image builds both targets and
+every binary the register times, so one pin names the build's glibc, the floor and every figure's runtime, as
+`rust-toolchain.toml` names one compiler; a target directory it fills is cleared once what compiles there moves
+(`key_target`). Rejected: `cargo zigbuild` (zig's clang for every C dependency); a build runner per architecture (arm64
+rehearsed nowhere locally); cargo-dist (no glibc floor); the Rust pin in the image alone; keying it on the image's tag
+(moved by tools compiling nothing).
 
 ### D105 The shipped build is fat LTO in one codegen unit, the leg retiring the fewest instructions on the typed query
 `[profile.release]` restates `release-fat`, the leg retiring the fewest `instructions:u` on every query row, `pgdt sql`
@@ -27,11 +28,11 @@ successive trees; DataFusion moving its profile. Code: `test_the_shipped_profile
 CI's runner cannot hold arm64's fat link (D105), so the arm64 archive is built in the pinned image on the maintainer's
 machine and attached to CI's draft. Its one attestation is the immutable release's, which `verify-asset` and mise's
 `github:` backend accept alone (RL1, RL2). `attach` reports CI's x86-64 archive differing from the rehearsal's, never
-refusing: the rehearsal builds in a target state earlier images filled (v0.2.0's differed so), and nothing relies on the
-two agreeing. Rejected: swap on the runner (a fat link paging); `ubuntu-24.04-arm`, or a paid or self-hosted runner; an
-arm64-only profile (reopens D105); a keyless signature as the maintainer (mise's backend fails it); `actions/attest`
-over the local build (provenance verifying and false). Reopens: a hosted runner holding the link; RL1 or RL2 failing.
-Code: `step_attach`.
+refusing: the two differ by the build clock gcc stamps into mimalloc (`__DATE__`), and nothing relies on them agreeing.
+Rejected: swap on the runner (a fat link paging); `ubuntu-24.04-arm`, or a paid or self-hosted runner; an arm64-only
+profile (reopens D105); a keyless signature as the maintainer (mise's backend fails it); `actions/attest` over the local
+build (provenance verifying and false). Reopens: a hosted runner holding the link; RL1 or RL2 failing. Code:
+`step_attach`.
 
 ### D110 The release suite is the round's, less the never-shipped measurement apparatus
 `release.py suite` leaves out each member whose manifest sets `[package.metadata.pgdt] apparatus`; `mise run check`

@@ -123,3 +123,9 @@ ENV UV_PYTHON_DOWNLOADS=never
 RUN apt-get update \
     && apt-get install -y --no-install-recommends heaptrack libc6-dbg linux-perf strace valgrind \
     && rm -rf /var/lib/apt/lists/*
+
+# **This file, as the image's own record of its base**: `scripts/release.py`
+# keys every cargo target directory it builds into on what compiles objects,
+# read inside the image, the base digest named here among it (`key_target`).
+# Last, so an edit here rebuilds only this layer.
+COPY Dockerfile /opt/toolchain/Dockerfile

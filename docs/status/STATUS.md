@@ -148,3 +148,11 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **The release build's clock is not pinned** (`M253`). A clean in-image build at v0.2.0's commit reproduced CI's
+  x86-64 `pgdt` byte for byte only with `SOURCE_DATE_EPOCH` set to CI's build time. gcc stamps `__DATE__` and
+  `__TIME__` into mimalloc's `options.c`, and the merged strings move every address after them
+  (`runs/m253-v0.2.0-clean/findings.md`). The call: `M253` landed the key as admitted and pins nothing, and D109 now
+  says the two archives differ by that clock. Reconsidering: `release.py build` could set `SOURCE_DATE_EPOCH` to
+  `HEAD`'s commit time, which the archives' mtimes already are. A rehearsal would then reproduce CI's x86-64 archive,
+  `attach` could refuse a difference instead of reporting it, and D109 would change with it.
+

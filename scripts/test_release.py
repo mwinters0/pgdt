@@ -9,8 +9,10 @@ and `ThisRepo` holds the committed Dockerfile, toolchain pin and suite to what
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -309,18 +311,169 @@ class Image(unittest.TestCase):
     def test_inside_refuses_an_image_built_from_other_pins(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo, copies = Path(tmp) / "repo", Path(tmp) / "copies"
-            repo.mkdir()
+            (repo / "release").mkdir(parents=True)
             copies.mkdir()
             for name in release.CONTEXT_FILES:
                 (repo / name).write_text(name)
                 (copies / name).write_text(name)
+            (repo / "release" / "Dockerfile").write_text("FROM x")
+            (copies / "Dockerfile").write_text("FROM x")
             release.check_inside(copies, repo)
+            (copies / "Dockerfile").write_text("FROM y")
+            with self.assertRaisesRegex(release.ReleaseError, "another Dockerfile"):
+                release.check_inside(copies, repo)
+            (copies / "Dockerfile").write_text("FROM x")
             (copies / "mise.toml").write_text("moved")
             with self.assertRaisesRegex(release.ReleaseError, "another mise.toml"):
                 release.check_inside(copies, repo)
             (copies / "mise.toml").unlink()
             with self.assertRaisesRegex(release.ReleaseError, "not the release image"):
                 release.check_inside(copies, repo)
+
+
+BASE = "FROM debian:trixie@sha256:" + "0" * 64 + "\n"
+RUSTC = "rustc 1.98.0 (88d9e12ae 2026-08-18)\nrelease: 1.98.0\nLLVM version: 22.1.8\n"
+
+
+def key(**moved) -> str:
+    """An image's key, each input but those `moved` names fixed."""
+    inputs = {
+        "dockerfile": BASE,
+        "rustc": RUSTC,
+        "components": "rustc-x86_64-unknown-linux-gnu\nrust-std-x86_64-unknown-linux-gnu\n",
+        "compilers": {"cc": "cc (Debian 14.2.0-19) 14.2.0"},
+        "libcs": {"libc6-dev": "2.41-12+deb13u4"},
+    }
+    return release.image_key(**{**inputs, **moved})
+
+
+def keyed(target: Path, key: str) -> None:
+    """`release.key_target`, its lock released as a step's exit releases it:
+    a second call in one process would otherwise wait on the first's."""
+    os.close(release.key_target(target, key))
+
+
+class TargetKey(unittest.TestCase):
+    """The target directory held to what compiles objects in the image
+    (`docs/design/decisions.md`, "D104")."""
+
+    def test_the_key_moves_with_each_input_and_only_with_one(self):
+        moves = {
+            "dockerfile": BASE.replace("0" * 64, "1" * 64),
+            "rustc": RUSTC.replace("22.1.8", "22.1.9"),
+            "components": "rustc-x86_64-unknown-linux-gnu\nrust-std-x86_64-unknown-linux-gnu\nrust-src\n",
+            "compilers": {"cc": "cc (Debian 14.2.0-20) 14.2.0"},
+            "libcs": {"libc6-dev": "2.41-12+deb13u5"},
+        }
+        for name, value in moves.items():
+            with self.subTest(moved=name):
+                self.assertNotEqual(key(**{name: value}), key())
+        # The sysroot's listing order is not an input.
+        self.assertEqual(
+            key(components="rust-std-x86_64-unknown-linux-gnu rustc-x86_64-unknown-linux-gnu"), key()
+        )
+        with self.assertRaises(release.ReleaseError):
+            key(dockerfile="FROM debian:trixie\n")
+
+    def test_an_unkeyed_empty_directory_is_keyed_and_nothing_said(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()) as err:
+            target = Path(tmp) / "target"
+            keyed(target, key())
+            self.assertEqual((target / release.TARGET_KEY).read_text(), key())
+        self.assertEqual(err.getvalue(), "")
+
+    def test_a_directory_under_its_own_key_is_kept(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()) as err:
+            target = Path(tmp)
+            keyed(target, key())
+            (target / "release").mkdir()
+            (target / "release" / "obj.rlib").write_text("x")
+            keyed(target, key())
+            self.assertTrue((target / "release" / "obj.rlib").is_file())
+        self.assertEqual(err.getvalue(), "")
+
+    def test_a_directory_under_another_key_is_cleared_and_what_moved_said(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()) as err:
+            target = Path(tmp)
+            keyed(target, key())
+            (target / "release").mkdir()
+            (target / "release" / "obj.rlib").write_text("x")
+            (target / "CACHEDIR.TAG").write_text("x")
+            moved = key(compilers={"cc": "cc (Debian 14.2.0-20) 14.2.0"})
+            keyed(target, moved)
+            self.assertEqual(
+                sorted(p.name for p in target.iterdir()), sorted([release.TARGET_KEY, release.TARGET_LOCK])
+            )
+            self.assertEqual((target / release.TARGET_KEY).read_text(), moved)
+        said = err.getvalue()
+        self.assertIn("cleared", said)
+        self.assertIn("2 entries", said)
+        self.assertIn("  - compiler cc: cc (Debian 14.2.0-19) 14.2.0", said)
+        self.assertIn("  + compiler cc: cc (Debian 14.2.0-20) 14.2.0", said)
+        self.assertNotIn("base", said)
+
+    def test_a_filled_directory_naming_no_image_is_cleared(self):
+        # The state every target directory was in before it was keyed.
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()) as err:
+            target = Path(tmp)
+            (target / "debug").mkdir()
+            keyed(target, key())
+            self.assertFalse((target / "debug").exists())
+        self.assertIn("it named no image", err.getvalue())
+
+    def test_the_lock_is_held_shared_while_the_step_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            fd = release.key_target(target, key())
+            other = os.open(target / release.TARGET_LOCK, os.O_RDWR)
+            try:
+                fcntl.flock(other, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                fcntl.flock(other, fcntl.LOCK_UN)
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(other)
+                os.close(fd)
+
+    def test_the_image_s_key_is_read_off_its_own_record_and_what_it_has(self):
+        def fake(argv, **_):
+            out = {
+                ("rustc", "-vV"): RUSTC,
+                ("rustc", "--print", "sysroot"): str(sysroot) + "\n",
+                ("cc", "--version"): "cc (Debian 14.2.0-19) 14.2.0\nCopyright\n",
+                ("dpkg-query", "-W", "-f", "${Version}", "libc6-dev"): "2.41-12+deb13u4",
+            }.get(tuple(argv))
+            return subprocess.CompletedProcess(argv, 0 if out is not None else 1, stdout=out or "", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sysroot = Path(tmp) / "sysroot"
+            (sysroot / "lib" / "rustlib").mkdir(parents=True)
+            (sysroot / "lib" / "rustlib" / "components").write_text(
+                "rustc-x86_64-unknown-linux-gnu\nrust-std-x86_64-unknown-linux-gnu\n"
+            )
+            dockerfile = Path(tmp) / "Dockerfile"
+            dockerfile.write_text(BASE)
+            cross = f"CC_{release.CROSS_TARGET.replace('-', '_')}"
+            # An image without the cross compiler or its libc keys on what it has.
+            with unittest.mock.patch.object(release.subprocess, "run", fake), \
+                    unittest.mock.patch.object(release.shutil, "which", lambda n: n if n == "cc" else None), \
+                    unittest.mock.patch.dict(release.os.environ, {cross: "aarch64-linux-gnu-gcc"}):
+                self.assertEqual(release.read_image_key(dockerfile), key())
+            with self.assertRaisesRegex(release.ReleaseError, "rebuild"):
+                release.read_image_key(Path(tmp) / "absent")
+
+    def test_a_step_inside_keys_the_directory_cargo_target_dir_names(self):
+        seen = []
+        with unittest.mock.patch.object(release, "check_inside"), \
+                unittest.mock.patch.object(release, "read_image_key", return_value="k"), \
+                unittest.mock.patch.object(release, "key_target", lambda d, k: seen.append((d, k)) or 0):
+            with unittest.mock.patch.dict(release.os.environ, {"CARGO_TARGET_DIR": "/state/target"}):
+                release.ready_inside()
+            self.assertEqual(seen, [(Path("/state/target"), "k")])
+            env = {k: v for k, v in release.os.environ.items() if k != "CARGO_TARGET_DIR"}
+            with unittest.mock.patch.dict(release.os.environ, env, clear=True):
+                with self.assertRaisesRegex(release.ReleaseError, "CARGO_TARGET_DIR"):
+                    release.ready_inside()
 
 
 def about(*licenses: tuple[str, str, list[tuple[str, str]]], crates: Sequence[dict] = ()) -> dict:
@@ -544,7 +697,7 @@ class Notices(unittest.TestCase):
 
     def test_a_notices_step_round_trips_through_the_command_line(self):
         seen = []
-        with unittest.mock.patch.object(release, "check_inside"), \
+        with unittest.mock.patch.object(release, "ready_inside"), \
                 unittest.mock.patch.object(release, "step_notices", lambda t: seen.append(t) or 0):
             self.assertEqual(release.main(["notices", "--inside"]), 0)
             self.assertEqual(release.main(["notices", "--target", release.NATIVE_TARGET, "--inside"]), 0)
@@ -617,8 +770,12 @@ class ThisRepo(unittest.TestCase):
         self.assertTrue(base.startswith("debian:trixie@sha256:"), base)
 
     def test_the_dockerfile_copies_exactly_the_tagged_inputs(self):
-        copied = re.findall(r"^COPY\s+(\S+)\s", release.DOCKERFILE.read_text(), re.MULTILINE)
-        self.assertEqual(sorted(copied), sorted(release.CONTEXT_FILES))
+        # Itself among them, the image's record of its base (`read_image_key`).
+        copied = re.findall(r"^COPY\s+(\S+)\s+(\S+)$", release.DOCKERFILE.read_text(), re.MULTILINE)
+        self.assertEqual(sorted(name for name, _ in copied), sorted(release.image_inputs()))
+        for name, at in copied:
+            self.assertEqual(Path(at), release.IN_IMAGE_COPIES / name)
+        self.assertEqual(release.IN_IMAGE_DOCKERFILE, release.IN_IMAGE_COPIES / "Dockerfile")
 
     def test_every_target_has_its_cross_package_installed(self):
         text = release.DOCKERFILE.read_text()
@@ -703,7 +860,7 @@ class ThisRepo(unittest.TestCase):
             with self.subTest(build=build):
                 step = release.build_step([build])
                 seen = []
-                with unittest.mock.patch.object(release, "check_inside"), \
+                with unittest.mock.patch.object(release, "ready_inside"), \
                         unittest.mock.patch.object(release, "step_build", lambda b: seen.extend(b) or 0):
                     self.assertEqual(release.main([*step, "--inside"]), 0)
                 self.assertEqual(seen, [build])
@@ -756,7 +913,7 @@ class ThisRepo(unittest.TestCase):
         for bench in (release.Bench("pgdt-codec", "decoders", "nested"),
                       release.Bench("pgdt-query", "whole_file")):
             seen = []
-            with unittest.mock.patch.object(release, "check_inside"), \
+            with unittest.mock.patch.object(release, "ready_inside"), \
                     unittest.mock.patch.object(release, "step_bench", lambda b: seen.append(b) or 0):
                 self.assertEqual(release.main([*bench.step(), "--inside"]), 0)
             self.assertEqual(seen, [bench])
@@ -834,7 +991,7 @@ class ThisRepo(unittest.TestCase):
 
     def test_the_suite_is_one_step_and_the_command_line_takes_no_archive(self):
         seen = []
-        with unittest.mock.patch.object(release, "check_inside"), \
+        with unittest.mock.patch.object(release, "ready_inside"), \
                 unittest.mock.patch.object(release, "step_suite", lambda: seen.append(1) or 0):
             self.assertEqual(release.main(["suite", "--inside"]), 0)
         self.assertEqual(seen, [1])
@@ -863,7 +1020,7 @@ class ThisRepo(unittest.TestCase):
         self.assertIn("-e NO_COLOR=1", " ".join(argv))
         self.assertNotIn("SECRET", " ".join(argv))
         seen = []
-        with unittest.mock.patch.object(release, "check_inside"), \
+        with unittest.mock.patch.object(release, "ready_inside"), \
                 unittest.mock.patch.object(release, "step_run", lambda c, cwd: seen.append((c, cwd)) or 0):
             self.assertEqual(release.main(argv[argv.index("scripts/release.py") + 1 :]), 0)
         self.assertEqual(seen, [(["uv", "run", "x.py", "--inside"], "scripts")])
