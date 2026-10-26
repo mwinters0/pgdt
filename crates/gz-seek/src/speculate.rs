@@ -229,15 +229,21 @@ impl Decode {
     }
 
     fn produced(&self) -> usize {
-        self.marked.as_ref().map_or(0, |m| m.out.len()) + self.plain.produced()
+        self.marked_len() + self.plain.produced()
     }
 
-    /// The value written at plaintext offset `i`: a byte, or a marker.
+    /// How much was written marked, before the decode went on in bytes.
+    fn marked_len(&self) -> usize {
+        self.marked.as_ref().map_or(0, Sink::produced)
+    }
+
+    /// The value written at plaintext offset `i`, which must still be held: a
+    /// byte, or a marker.
     fn value(&self, i: u64) -> u16 {
-        let marked = self.marked.as_ref().map_or(&[][..], |m| &m.out[..]);
-        match marked.get(i as usize) {
-            Some(&value) => value,
-            None => u16::from(self.plain.out[self.plain.history + i as usize - marked.len()]),
+        let (i, marked) = (i as usize, self.marked_len());
+        match &self.marked {
+            Some(sink) if i < marked => sink.get(i),
+            _ => u16::from(self.plain.get(i - marked)),
         }
     }
 
@@ -246,12 +252,21 @@ impl Decode {
         self.marked.is_some() && !self.bytes
     }
 
+    /// Record `event` here. A place a decode may resume at is the last a
+    /// guess may stop at, which reads only the 32 KiB before it, so the sinks
+    /// are released up to there.
     fn push(&mut self, event: Event) {
-        let at = self.produced() as u64;
+        let at = self.produced();
         if event.point().is_some() {
             self.last_point = Some(self.events.len());
+            let keep = at.saturating_sub(WINDOW_SIZE);
+            let marked = self.marked_len();
+            if let Some(sink) = &mut self.marked {
+                sink.release_before(keep);
+            }
+            self.plain.release_before(keep.saturating_sub(marked));
         }
-        self.events.push((at, event));
+        self.events.push((at as u64, event));
     }
 }
 
@@ -277,21 +292,23 @@ enum State {
 /// it runs on whatever thread the caller has.
 ///
 /// It holds the file's bytes from the place its decode began on — about a
-/// chunk of them, and the bytes of the block or member it stops in — and at
-/// most the plaintext limit, twice over while it is still writing markers,
-/// beside a few kilobytes of code tables; reading a BGZF chunk's members, the
-/// chunk's bytes, the member it stops in and the header after that alone.
+/// chunk of them, and the bytes of the block or member it stops in — and of
+/// its plaintext only what a guess may read, the 32 KiB before the last
+/// place it may stop and all written since (`Decode::push`): a few windows
+/// and a block, and so at most the plaintext limit, twice over while it is
+/// still writing markers, beside a few kilobytes of code tables; reading a
+/// BGZF chunk's members, the chunk's bytes, the member it stops in and the
+/// header after that alone.
 ///
 /// Deficiency register: `deficiency: KD143` — on `pg_dump`'s level-6 text a
 /// speculation's decode rarely goes clean, so it writes nearly its whole
-/// chunk through the marked sink, a value at a time into a buffer grown as it
-/// goes, and costs several of the engine's inflates of the same bytes. Below
-/// the worker count at which consecutive guesses land ahead of the frontier
-/// the tasks give it few chunks, and beside it the frontier's inflate, its
-/// serving and the scan each slow as tasks are added, the cause among the
-/// cores' clock, shared caches and memory bandwidth unseparated: a four-job
-/// first pass is slower than the serial one, and a 24-job pass taking almost
-/// every chunk is no faster. **(b) owned by 15.17.1**.
+/// chunk marked, and its symbol loop and copies cost several of the engine's
+/// inflates of the same bytes; beside it, each chunk decode zeroes a buffer of
+/// the limit's size before the engine writes into it (`chunk.rs`). Below the
+/// worker count at which consecutive guesses land ahead of the frontier the
+/// tasks give it few chunks, and at the physical core count the pass is bound
+/// by its workers, short of its scan's floor. **(c) unowned**; promoted by a
+/// first pass needed nearer that floor than the physical cores bring it.
 pub(crate) struct Speculation {
     chunk: u64,
     /// The bit a continuation of a cut guess begins at.
@@ -509,7 +526,7 @@ impl Speculation {
                         let sink = decode.marked.as_mut().expect("marked");
                         self.inflater.run(&self.input, &mut decode.bit, sink, limit)
                     } else {
-                        let before = decode.marked.as_ref().map_or(0, |m| m.out.len());
+                        let before = decode.marked_len();
                         let limit = limit.saturating_sub(before);
                         self.inflater.run(&self.input, &mut decode.bit, &mut decode.plain, limit)
                     }

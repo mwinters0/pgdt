@@ -58,7 +58,7 @@ fn native(file: &[u8], bit: u64, history: History<'_>, feed: usize) -> (Vec<u8>,
             _ => inflater.run(&input, &mut at, &mut plain, usize::MAX),
         }
         .unwrap();
-        let produced = marked.as_ref().map_or(0, |m| m.out.len()) + plain.produced();
+        let produced = marked.as_ref().map_or(0, Sink::produced) + plain.produced();
         match stop {
             Stop::Block { bit } => boundaries.push((bit, produced as u64)),
             Stop::End { .. } => break,
@@ -76,7 +76,7 @@ fn native(file: &[u8], bit: u64, history: History<'_>, feed: usize) -> (Vec<u8>,
     }
     let offset = WINDOW_SIZE - resolve.len();
     let mut out: Vec<u8> = marked.map_or_else(Vec::new, |m| {
-        m.out
+        m.values()
             .iter()
             .map(|&v| match v.checked_sub(MARKER) {
                 None => v as u8,
@@ -84,7 +84,7 @@ fn native(file: &[u8], bit: u64, history: History<'_>, feed: usize) -> (Vec<u8>,
             })
             .collect()
     });
-    out.extend_from_slice(&plain.out[plain.history..]);
+    out.extend_from_slice(plain.written());
     (out, boundaries)
 }
 
@@ -157,4 +157,133 @@ fn a_long_code_decodes_past_the_root_table() {
     assert_eq!(table.decode(ones), Some((14, 15)));
     assert_eq!(table.decode(ones | 1 << 14), Some((15, 15)));
     assert_eq!(table.decode((1 << 11) - 1), Some((11, 12)));
+}
+
+/// A native decode of `file` from `bit`, a block's start, to its stream's
+/// end — into `plain` where its history is known, else marked — calling
+/// `at_stop` at every stop with the sink written to and the plaintext offset
+/// it begins at. With `release`, each block boundary releases all but the
+/// 32 KiB before it, as a speculation releases its sinks.
+fn decode_checking(
+    file: &[u8],
+    bit: u64,
+    mut plain: Option<Plain>,
+    release: bool,
+    mut at_stop: impl FnMut(Either<'_>, usize),
+) {
+    let mut input = Input::new(bit / 8, file.len() as u64);
+    input.push(&file[bit as usize / 8..]);
+    let mut inflater = Inflater::new();
+    let (mut at, mut marked) = (bit, Marked::new());
+    loop {
+        let stop = match &mut plain {
+            None => inflater.run(&input, &mut at, &mut marked, usize::MAX),
+            Some(plain) => inflater.run(&input, &mut at, plain, usize::MAX),
+        }
+        .unwrap();
+        let produced = marked.produced() + plain.as_ref().map_or(0, Sink::produced);
+        if release && let Stop::Block { .. } = stop {
+            let keep = produced.saturating_sub(WINDOW_SIZE);
+            marked.release_before(keep);
+            if let Some(plain) = &mut plain {
+                plain.release_before(keep.saturating_sub(marked.produced()));
+            }
+        }
+        match &plain {
+            None => at_stop(Either::Marked(&marked), 0),
+            Some(plain) => at_stop(Either::Plain(plain), marked.produced()),
+        }
+        match stop {
+            Stop::Block { .. } => {}
+            Stop::End { .. } => break,
+            Stop::Clean => plain = Some(Plain::after(marked.window())),
+            Stop::Input | Stop::Limit => unreachable!("the whole file, no limit"),
+        }
+    }
+}
+
+enum Either<'a> {
+    Marked(&'a Marked),
+    Plain(&'a Plain),
+}
+
+/// **A marked sink knows where it last wrote a marker**, a copy in bulk
+/// finding it as a value-by-value copy would: the decode comes clean exactly
+/// when the last 32 KiB it wrote hold none.
+#[test]
+fn a_marked_sink_s_last_marker_is_the_last_it_wrote() {
+    let plaintext = payload(600_000, 5);
+    for level in [1, 6, 9] {
+        let file = gzip(&plaintext, level);
+        let (_, boundaries, _) = engine_view(&file);
+        for &(bit, _) in boundaries.iter().step_by(3) {
+            decode_checking(&file, bit, None, false, |sink, _| {
+                let Either::Marked(sink) = sink else { return };
+                let last = sink.values().iter().rposition(|&v| v >= MARKER).map_or(0, |i| i + 1);
+                assert_eq!(sink.clean_from(), last, "level {level}, from bit {bit}");
+            });
+        }
+    }
+}
+
+/// **A released sink holds a window, not the plaintext**, marked or in
+/// bytes: a few windows and the longest block, however much it writes, and
+/// still the last 32 KiB at every boundary, which resolve to the file's.
+#[test]
+fn a_released_sink_holds_a_window_and_the_last_32_kib() {
+    let plaintext = payload(6_000_000, 11);
+    let file = gzip(&plaintext, 6);
+    let (_, boundaries, _) = engine_view(&file);
+    let block = boundaries.windows(2).map(|w| w[1].1 - w[0].1).max().unwrap() as usize;
+    let bound = 4 * (block + 9 * WINDOW_SIZE);
+    assert!(2 * bound < plaintext.len(), "a payload too short to tell a window from it");
+    let (bit, start) = *boundaries.iter().find(|&&(_, at)| at >= WINDOW_SIZE as u64).unwrap();
+    let start = start as usize;
+    let history = &plaintext[start - WINDOW_SIZE..start];
+    for known in [false, true] {
+        let plain = known.then(|| Plain::after(history.to_vec()));
+        let (mut held, mut stops) = (0, 0);
+        decode_checking(&file, bit, plain, true, |sink, before| {
+            let (produced, capacity, last) = match sink {
+                Either::Marked(sink) => {
+                    let at = sink.produced();
+                    let last: Vec<u8> = (at - WINDOW_SIZE.min(at)..at)
+                        .map(|i| match sink.get(i).checked_sub(MARKER) {
+                            None => sink.get(i) as u8,
+                            Some(j) => history[usize::from(j)],
+                        })
+                        .collect();
+                    (at, sink.capacity(), last)
+                }
+                Either::Plain(sink) => {
+                    let at = sink.produced();
+                    let last: Vec<u8> =
+                        (at - WINDOW_SIZE.min(at)..at).map(|i| sink.get(i)).collect();
+                    (before + at, sink.capacity(), last)
+                }
+            };
+            held = held.max(capacity);
+            stops += 1;
+            let at = start + produced;
+            assert!(last[..] == plaintext[at - last.len()..at], "known {known}, at {produced}");
+        });
+        assert!(stops > 100, "known {known}: {stops} stops");
+        assert!(held <= bound, "known {known}: held {held} of a bound {bound}");
+    }
+}
+
+/// **An overlapping copy repeats its markers**, the last marker it writes
+/// being its source's last one's last repetition.
+#[test]
+fn an_overlapping_copy_repeats_its_markers() {
+    let mut sink = Marked::new();
+    sink.literal(b'a');
+    assert!(sink.copy(3, 2), "two values from before the start");
+    sink.literal(b'b');
+    assert!(sink.copy(2, 7), "a marker and a byte, repeated");
+    let w = WINDOW_SIZE as u16;
+    let (m, b) = (MARKER + w - 1, u16::from(b'b'));
+    assert_eq!(sink.values(), [u16::from(b'a'), MARKER + w - 2, m, b, m, b, m, b, m, b, m]);
+    assert_eq!(sink.clean_from(), 11);
+    assert!(!sink.copy(WINDOW_SIZE + 12, 3), "a copy reaching before the history");
 }

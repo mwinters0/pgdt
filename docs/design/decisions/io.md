@@ -17,8 +17,8 @@ A plain file recommends one: a serial plain `parse` is device-bound wherever a s
 NVMe does not bind, is held flat by `KD57` (D25). A local compressed source or gzip first pass recommends its cores
 capped at its units (`RT7`); a fetched one, one: more opens connections to a third party's server unasked. Rejected: a
 plain split once a typed one outran one worker on the NVMe; a fetched first pass recommending cores since its tasks
-fetch no extra byte, which answers bytes, not connections. Reopens: `KD57` closing (D7). Evidence: `scan-throughput-*`,
-`parallel-scan-throughput`.
+fetch no extra byte, which answers bytes, not connections. Nor a gzip first pass capped at its physical cores, no faster
+than its logical count. Reopens: `KD57` closing (D7). Evidence: `scan-throughput-*`, `parallel-scan-throughput`.
 
 ### D3 The memory constants, and what each one is
 `MEMORY_RESERVE` is a subtraction, not a fraction, which under-reserves the small allowances where being wrong kills the

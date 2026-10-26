@@ -54,9 +54,10 @@ impl TaskId {
 /// so it runs on whatever thread the caller has.
 ///
 /// A **speculation** finds where its chunk may begin and decodes it with the
-/// crate's own decoder, holding about a chunk of compressed bytes and the
-/// pass's plaintext limit and a match past it, twice over while it writes
-/// markers, a window more once it comes clean — or, over a
+/// crate's own decoder, holding about a chunk of compressed bytes and of its
+/// plaintext a few windows and a block, at most the pass's plaintext limit
+/// and a match past it, twice over while it writes markers, a window more
+/// once it comes clean — or, over a
 /// chunk holding a BGZF header, reads its guess off the member chain, holding
 /// the compressed bytes alone; one continuing a guess the limit cut begins at
 /// its stop and holds no more. A
