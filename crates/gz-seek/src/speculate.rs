@@ -302,14 +302,15 @@ enum State {
 ///
 /// Deficiency register: `deficiency: KD143` — on `pg_dump`'s level-6 text a
 /// speculation's decode rarely goes clean, so it writes nearly its whole
-/// chunk marked, and its symbol loop and copies cost several of the engine's
-/// inflates of the same bytes; beside it, each chunk decode zeroes a buffer of
-/// the limit's size before the engine writes into it (`chunk.rs`). A
-/// speculated chunk so costs several of the serial pass's bytes, and the tasks
-/// repay their CPU only above a few workers: at the four-worker baseline the
-/// frontier decodes alone, no faster than serial, and at the physical core
-/// count the pass is bound by its workers, short of its scan's floor. **(b)
-/// owned by 15.17.2**, the speculation, **and 15.17.3**, the zeroed buffer.
+/// chunk marked, at more than the engine's cost of inflating the same bytes;
+/// beside it, each chunk decode zeroes a buffer of the limit's size before the
+/// engine writes into it (`chunk.rs`). At the four-worker baseline the pass is
+/// no faster than serial: a decode the chain queues waits for a worker to end
+/// a speculation, the frontier waiting for it in turn, and workers stand idle
+/// while guesses fill the room `pgdt-io` holds the pass's results to; at the
+/// physical core count the pass is bound by its workers, short of its scan's
+/// floor. **(b) owned by 15.17.4**, the pass at four workers, **and 15.17.3**,
+/// the zeroed buffer.
 pub(crate) struct Speculation {
     chunk: u64,
     /// The bit a continuation of a cut guess begins at.
@@ -326,6 +327,13 @@ pub(crate) struct Speculation {
     refused_past_a_boundary: u32,
 }
 
+/// The compressed bytes a speculation's input has room for before it grows:
+/// its chunk, and as much again for the block it stops in, which a caller
+/// feeding it a chunk at a time hands it whole.
+fn input_room(chunk_bytes: u64) -> usize {
+    usize::try_from(2 * chunk_bytes).unwrap_or(usize::MAX)
+}
+
 /// How many candidates may be refused after passing a boundary before the
 /// next refusal ends the chunk instead: a bound on what damaged bytes cost.
 const REFUSALS_PAST_A_BOUNDARY: u32 = 4;
@@ -340,7 +348,7 @@ impl Speculation {
             from: None,
             until: 8 * (from + chunk_bytes),
             limit,
-            input: Input::new(from, file_len),
+            input: Input::with_capacity(from, file_len, input_room(chunk_bytes)),
             inflater: Inflater::new(),
             state: State::Members(Members::new(from)),
             refused_past_a_boundary: 0,
@@ -365,7 +373,7 @@ impl Speculation {
         };
         let mut task = Speculation::new(chunk, chunk_bytes, limit, file_len);
         task.from = Some(bit);
-        task.input = Input::new(bit / 8, file_len);
+        task.input = Input::with_capacity(bit / 8, file_len, input_room(chunk_bytes));
         task.state = match from {
             Point::Block(bit) => State::Decoding(Decode::new(Point::Block(bit), None, bit)),
             Point::Member(bit) => State::Members(Members::at(bit / 8)),

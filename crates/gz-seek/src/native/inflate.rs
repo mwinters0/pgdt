@@ -10,27 +10,12 @@
 
 use std::sync::OnceLock;
 
-use super::huffman::{Huffman, Kind};
+use super::huffman::{
+    DISTANCE_BASE, Huffman, Kind, LENGTH_BASE, Values, entry_base, entry_extra, entry_len,
+    entry_symbol,
+};
 use super::input::{Input, Reader};
 use super::sink::Sink;
-
-/// Each length symbol's base length and extra bits, from 257.
-pub(super) const LENGTH_BASE: [u16; 29] = [
-    3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131,
-    163, 195, 227, 258,
-];
-pub(super) const LENGTH_EXTRA: [u8; 29] =
-    [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
-
-/// Each distance symbol's base distance and extra bits.
-pub(super) const DISTANCE_BASE: [u16; 30] = [
-    1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537,
-    2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577,
-];
-pub(super) const DISTANCE_EXTRA: [u8; 30] = [
-    0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13,
-    13,
-];
 
 /// The order a dynamic header lists the code-length code's lengths in.
 const CODE_LENGTH_ORDER: [usize; 19] =
@@ -50,8 +35,12 @@ pub(super) fn fixed_codes() -> &'static (Huffman, Huffman) {
         lengths[256..280].fill(7);
         lengths[280..].fill(8);
         let (mut literals, mut distances) = (Huffman::empty(), Huffman::empty());
-        literals.build(&lengths, Kind::Other).expect("the fixed literal/length code");
-        distances.build(&[5; 32], Kind::Other).expect("the fixed distance code");
+        literals
+            .build_for(&lengths, Kind::Other, Values::Lengths)
+            .expect("the fixed literal/length code");
+        distances
+            .build_for(&[5; 32], Kind::Other, Values::Distances)
+            .expect("the fixed distance code");
         (literals, distances)
     })
 }
@@ -161,7 +150,10 @@ impl Inflater {
                     self.state = header?;
                     *bit = reader.bit;
                 }
-                State::Stored { left: 0 } => return Ok(self.block_end(*bit)),
+                State::Stored { left: 0 } => {
+                    sink.block_ended();
+                    return Ok(self.block_end(*bit));
+                }
                 State::Stored { left } => {
                     let held = input.from(*bit / 8);
                     let room = limit.saturating_sub(sink.produced());
@@ -279,18 +271,19 @@ impl Inflater {
             return Err("invalid code -- missing end-of-block");
         }
         self.literals
-            .build(&lengths[..literals], Kind::Other)
+            .build_for(&lengths[..literals], Kind::Other, Values::Lengths)
             .map_err(|_| "invalid literal/lengths set")?;
         self.distances
-            .build(&lengths[literals..total], Kind::Other)
+            .build_for(&lengths[literals..total], Kind::Other, Values::Distances)
             .map_err(|_| "invalid distances set")?;
         Ok(())
     }
 }
 
 /// Decode symbols until the block's end — `None` — or until `stop` says
-/// why not.
-#[inline]
+/// why not. Never inlined: the loop keeps its state in registers rather than
+/// its caller's frame, and a profile names it apart from its caller.
+#[inline(never)]
 fn codes<S: Sink>(
     (literals, distances): (&Huffman, &Huffman),
     input: &Input,
@@ -299,55 +292,111 @@ fn codes<S: Sink>(
     limit: usize,
 ) -> Result<Option<Stop>, &'static str> {
     let end = input.end_bit();
-    let mut at = *bit;
+    let mut bits = Bits::at(input, *bit);
+    // One comparison stands for the limit and a marked sink coming clean,
+    // which within a block only a copy moves.
+    let mut stop = sink.stop_at(limit);
     let result = loop {
-        if sink.produced() >= limit {
-            break Ok(Some(Stop::Limit));
+        let produced = sink.produced();
+        if produced >= stop {
+            break Ok(Some(if produced >= limit { Stop::Limit } else { Stop::Clean }));
         }
-        if sink.is_clean() {
-            break Ok(Some(Stop::Clean));
-        }
-        if end - at < SYMBOL_LOOKAHEAD {
+        if end - bits.position() < SYMBOL_LOOKAHEAD {
             break Ok(Some(Stop::Input));
         }
-        let bits = input.peek(at);
-        let Some((symbol, len)) = literals.decode(bits) else {
+        bits.refill(input);
+        let held = bits.word;
+        let Some(entry) = literals.entry(held) else {
             break Err("invalid literal/length code");
         };
+        let (symbol, len) = (entry_symbol(entry), entry_len(entry));
         if symbol < 256 {
             sink.literal(symbol as u8);
-            at += u64::from(len);
+            bits.consume(len);
+            // A second literal from the same bits, which hold more than two
+            // codes, where it neither reaches the stop nor is a length.
+            if produced + 1 < stop
+                && let Some(next) = literals.entry(held >> len)
+                && entry_symbol(next) < 256
+            {
+                sink.literal(entry_symbol(next) as u8);
+                bits.consume(entry_len(next));
+            }
             continue;
         }
         if symbol == 256 {
-            at += u64::from(len);
+            bits.consume(len);
+            sink.block_ended();
             break Ok(None);
         }
-        let i = usize::from(symbol - 257);
-        if i >= LENGTH_BASE.len() {
+        // The entries carry each base and its extra bits; a symbol with no
+        // base is one zlib refuses.
+        if usize::from(symbol) >= 257 + LENGTH_BASE.len() {
             break Err("invalid literal/length code");
         }
         let mut used = len;
-        let extra = u32::from(LENGTH_EXTRA[i]);
-        let length = usize::from(LENGTH_BASE[i]) + ((bits >> used) & ((1 << extra) - 1)) as usize;
+        let extra = entry_extra(entry);
+        let length = entry_base(entry) + ((held >> used) & ((1 << extra) - 1)) as usize;
         used += extra;
-        let Some((symbol, len)) = distances.decode(bits >> used) else {
+        let Some(entry) = distances.entry(held >> used) else {
             break Err("invalid distance code");
         };
-        let i = usize::from(symbol);
-        if i >= DISTANCE_BASE.len() {
+        if usize::from(entry_symbol(entry)) >= DISTANCE_BASE.len() {
             break Err("invalid distance code");
         }
-        used += len;
-        let extra = u32::from(DISTANCE_EXTRA[i]);
-        let distance =
-            usize::from(DISTANCE_BASE[i]) + ((bits >> used) & ((1 << extra) - 1)) as usize;
+        used += entry_len(entry);
+        let extra = entry_extra(entry);
+        let distance = entry_base(entry) + ((held >> used) & ((1 << extra) - 1)) as usize;
         used += extra;
         if !sink.copy(distance, length) {
             break Err("invalid distance too far back");
         }
-        at += u64::from(used);
+        bits.consume(used);
+        stop = sink.stop_at(limit);
     };
-    *bit = at;
+    *bit = bits.position();
     result
+}
+
+/// The bits a symbol loop reads, held in a register and refilled a word at a
+/// time, so the next symbol's bits are a shift away rather than a load.
+struct Bits {
+    /// The bits from the position on, low bit first: `count` of them the
+    /// stream's, any above them the stream's or zero.
+    word: u64,
+    count: u32,
+    /// The offset of the first byte not yet in `word`.
+    next: u64,
+}
+
+impl Bits {
+    /// Bits from `bit` on.
+    #[inline(always)]
+    fn at(input: &Input, bit: u64) -> Bits {
+        let mut bits = Bits { word: 0, count: 0, next: bit / 8 };
+        bits.refill(input);
+        bits.consume((bit % 8) as u32);
+        bits
+    }
+
+    /// The bit the next symbol begins at.
+    #[inline(always)]
+    fn position(&self) -> u64 {
+        8 * self.next - u64::from(self.count)
+    }
+
+    /// At least 56 bits held: whole bytes added above those held, zeros past
+    /// the input's end.
+    #[inline(always)]
+    fn refill(&mut self, input: &Input) {
+        self.word |= input.word(self.next) << self.count;
+        self.next += u64::from((63 - self.count) / 8);
+        self.count |= 56;
+    }
+
+    #[inline(always)]
+    fn consume(&mut self, n: u32) {
+        self.word >>= n;
+        self.count -= n;
+    }
 }

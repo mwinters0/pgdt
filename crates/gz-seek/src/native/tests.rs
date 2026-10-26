@@ -161,15 +161,15 @@ fn a_long_code_decodes_past_the_root_table() {
 
 /// A native decode of `file` from `bit`, a block's start, to its stream's
 /// end — into `plain` where its history is known, else marked — calling
-/// `at_stop` at every stop with the sink written to and the plaintext offset
-/// it begins at. With `release`, each block boundary releases all but the
+/// `at_stop` at every stop with the sink written to, the plaintext offset it
+/// begins at, and the stop. With `release`, each block boundary releases all but the
 /// 32 KiB before it, as a speculation releases its sinks.
 fn decode_checking(
     file: &[u8],
     bit: u64,
     mut plain: Option<Plain>,
     release: bool,
-    mut at_stop: impl FnMut(Either<'_>, usize),
+    mut at_stop: impl FnMut(Either<'_>, usize, Stop),
 ) {
     let mut input = Input::new(bit / 8, file.len() as u64);
     input.push(&file[bit as usize / 8..]);
@@ -190,8 +190,8 @@ fn decode_checking(
             }
         }
         match &plain {
-            None => at_stop(Either::Marked(&marked), 0),
-            Some(plain) => at_stop(Either::Plain(plain), marked.produced()),
+            None => at_stop(Either::Marked(&marked), 0, stop),
+            Some(plain) => at_stop(Either::Plain(plain), marked.produced(), stop),
         }
         match stop {
             Stop::Block { .. } => {}
@@ -207,20 +207,30 @@ enum Either<'a> {
     Plain(&'a Plain),
 }
 
-/// **A marked sink knows where it last wrote a marker**, a copy in bulk
-/// finding it as a value-by-value copy would: the decode comes clean exactly
-/// when the last 32 KiB it wrote hold none.
+/// **A marked sink's clean mark is never before its last marker**, and at a
+/// block's end it is the position after that marker, or no later than the
+/// start of the last 32 KiB where they hold none: the decode comes clean only
+/// once the last 32 KiB it wrote hold no marker, and at most a block later.
 #[test]
-fn a_marked_sink_s_last_marker_is_the_last_it_wrote() {
+fn a_marked_sink_comes_clean_within_a_block_of_its_last_marker() {
     let plaintext = payload(600_000, 5);
     for level in [1, 6, 9] {
         let file = gzip(&plaintext, level);
         let (_, boundaries, _) = engine_view(&file);
         for &(bit, _) in boundaries.iter().step_by(3) {
-            decode_checking(&file, bit, None, false, |sink, _| {
+            decode_checking(&file, bit, None, false, |sink, _, stop| {
                 let Either::Marked(sink) = sink else { return };
                 let last = sink.values().iter().rposition(|&v| v >= MARKER).map_or(0, |i| i + 1);
-                assert_eq!(sink.clean_from(), last, "level {level}, from bit {bit}");
+                let (mark, window) =
+                    (sink.clean_from(), sink.produced().saturating_sub(WINDOW_SIZE));
+                assert!(mark >= last, "level {level}, from bit {bit}");
+                if let Stop::Block { .. } = stop {
+                    if last > window {
+                        assert_eq!(mark, last, "level {level}, from bit {bit}");
+                    } else {
+                        assert!(mark <= window, "level {level}, from bit {bit}");
+                    }
+                }
             });
         }
     }
@@ -243,7 +253,7 @@ fn a_released_sink_holds_a_window_and_the_last_32_kib() {
     for known in [false, true] {
         let plain = known.then(|| Plain::after(history.to_vec()));
         let (mut held, mut stops) = (0, 0);
-        decode_checking(&file, bit, plain, true, |sink, before| {
+        decode_checking(&file, bit, plain, true, |sink, before, _| {
             let (produced, capacity, last) = match sink {
                 Either::Marked(sink) => {
                     let at = sink.produced();

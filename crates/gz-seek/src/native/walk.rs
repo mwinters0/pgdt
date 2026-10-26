@@ -10,7 +10,8 @@
 //! (`engine.rs`). Nothing it decodes is handed out, so it is not an
 //! inflater of the crate's own (`docs/design/decisions.md`, "D117").
 
-use super::inflate::{DISTANCE_BASE, DISTANCE_EXTRA, LENGTH_BASE, LENGTH_EXTRA, fixed_codes};
+use super::huffman::{DISTANCE_BASE, DISTANCE_EXTRA, LENGTH_BASE, LENGTH_EXTRA};
+use super::inflate::fixed_codes;
 use super::input::Input;
 
 /// Where a walk stopped.

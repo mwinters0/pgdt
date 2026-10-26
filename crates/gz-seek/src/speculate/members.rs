@@ -184,7 +184,7 @@ impl Members {
             let held = input.from(self.search);
             let room = usize::try_from(until - self.search).unwrap_or(usize::MAX);
             let looked = &held[..held.len().min(room)];
-            let Some(skip) = looked.iter().position(|&b| b == GZIP_MAGIC[0]) else {
+            let Some(skip) = position_of(looked, GZIP_MAGIC[0]) else {
                 self.search += looked.len() as u64;
                 if self.search < until {
                     return if input.is_complete() { Found::Nothing } else { Found::Input };
@@ -215,6 +215,20 @@ impl Members {
         self.search = chain.first + 1;
         None
     }
+}
+
+/// Where `byte` first is in `bytes`, looked for a chunk at a time, so the
+/// compiler compares a chunk's bytes at once: a chunk of compressed bytes
+/// holding a gzip magic only about once in its 256 bytes.
+pub(super) fn position_of(bytes: &[u8], byte: u8) -> Option<usize> {
+    const CHUNK: usize = 32;
+    let (chunks, rest) = bytes.as_chunks::<CHUNK>();
+    for (i, chunk) in chunks.iter().enumerate() {
+        if chunk.iter().fold(false, |any, &b| any | (b == byte)) {
+            return chunk.iter().position(|&b| b == byte).map(|j| i * CHUNK + j);
+        }
+    }
+    rest.iter().position(|&b| b == byte).map(|j| bytes.len() - rest.len() + j)
 }
 
 /// The length a BGZF header at the start of `bytes` states, where it is one

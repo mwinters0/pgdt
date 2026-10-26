@@ -20,7 +20,16 @@ pub(crate) struct Input {
 impl Input {
     /// No bytes yet, the next to come being the file's byte `base`.
     pub(crate) fn new(base: u64, file_len: u64) -> Input {
-        Input { bytes: vec![0; PAD], base, len: 0, file_len }
+        Input::with_capacity(base, file_len, 0)
+    }
+
+    /// [`Input::new`], with room for `capacity` bytes before it grows: a
+    /// caller that knows about how much it will be fed copies none of it
+    /// again as it comes.
+    pub(crate) fn with_capacity(base: u64, file_len: u64, capacity: usize) -> Input {
+        let mut bytes = Vec::with_capacity(capacity + PAD);
+        bytes.resize(PAD, 0);
+        Input { bytes, base, len: 0, file_len }
     }
 
     /// File offset of the next byte the input wants.
@@ -49,6 +58,8 @@ impl Input {
         let room = usize::try_from(self.file_len.saturating_sub(self.end())).unwrap_or(usize::MAX);
         let bytes = &bytes[..bytes.len().min(room)];
         self.bytes.truncate(self.len);
+        // The padding too, so the bytes are not moved twice to make room.
+        self.bytes.reserve(bytes.len() + PAD);
         self.bytes.extend_from_slice(bytes);
         self.len += bytes.len();
         self.bytes.resize(self.len + PAD, 0);
@@ -89,6 +100,27 @@ impl Input {
         let i = usize::try_from(from.saturating_sub(self.base)).unwrap_or(usize::MAX).min(self.len);
         debug_assert!(from >= self.base, "a read before the held bytes");
         &self.bytes[i..self.len]
+    }
+
+    /// The eight bytes from file offset `offset` on, little-endian: zeros
+    /// past the held bytes.
+    #[inline(always)]
+    pub(crate) fn word(&self, offset: u64) -> u64 {
+        debug_assert!(offset >= self.base, "a read before the held bytes");
+        let i = (offset - self.base) as usize;
+        match self.bytes.get(i..i + 8) {
+            Some(word) => u64::from_le_bytes(word.try_into().expect("eight bytes")),
+            None => self.word_past(i),
+        }
+    }
+
+    /// [`Input::word`] reaching past the padding.
+    #[cold]
+    fn word_past(&self, i: usize) -> u64 {
+        let mut word = [0u8; 8];
+        let tail = self.bytes.get(i..).unwrap_or(&[]);
+        word[..tail.len()].copy_from_slice(tail);
+        u64::from_le_bytes(word)
     }
 
     /// The 57 or more bits from `bit` on, in their low bits: zeros past the

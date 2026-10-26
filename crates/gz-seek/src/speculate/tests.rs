@@ -390,3 +390,25 @@ fn a_lone_bgzf_header_nothing_bears_out_is_searched_past() {
         assert_is_the_file(&truth, &guess, 8 * bytes, 16 * bytes, &what);
     }
 }
+
+/// **The search for a header's first byte finds it where a byte-by-byte one
+/// does**, at every place in and around a chunk, and in a slice shorter than
+/// one.
+#[test]
+fn the_first_byte_is_found_where_a_byte_by_byte_search_finds_it() {
+    let bytes: Vec<u8> = (0..200u32).map(|i| (i * 7 % 31) as u8).collect();
+    for at in [None, Some(0), Some(1), Some(31), Some(32), Some(33), Some(63), Some(150), Some(199)]
+    {
+        let mut bytes = bytes.clone();
+        bytes.iter_mut().filter(|b| **b == 0x1f).for_each(|b| *b = 0);
+        if let Some(at) = at {
+            bytes[at] = 0x1f;
+            bytes[199] = 0x1f;
+        }
+        for len in [0, 5, 32, 64, 100, 200] {
+            let slice = &bytes[..len];
+            let expected = slice.iter().position(|&b| b == 0x1f);
+            assert_eq!(members::position_of(slice, 0x1f), expected, "at {at:?}, len {len}");
+        }
+    }
+}

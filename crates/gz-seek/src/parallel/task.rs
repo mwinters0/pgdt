@@ -68,13 +68,14 @@ impl TaskId {
 pub struct ChunkTask(Work);
 
 enum Work {
-    Speculation(Speculation),
+    /// Boxed, being the larger by its decode's sinks.
+    Speculation(Box<Speculation>),
     Decode(ChunkDecode),
 }
 
 impl ChunkTask {
     pub(crate) fn speculation(task: Speculation) -> ChunkTask {
-        ChunkTask(Work::Speculation(task))
+        ChunkTask(Work::Speculation(Box::new(task)))
     }
 
     pub(crate) fn decode(task: ChunkDecode) -> ChunkTask {
@@ -113,7 +114,7 @@ impl ChunkTask {
     /// one not yet done hands back nothing.
     pub fn finish(self) -> ChunkDone {
         ChunkDone(match self.0 {
-            Work::Speculation(task) => Finished::Speculated(task.finish()),
+            Work::Speculation(task) => Finished::Speculated((*task).finish()),
             Work::Decode(task) => Finished::Decoded(task.finish()),
         })
     }

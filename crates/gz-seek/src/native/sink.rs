@@ -32,6 +32,16 @@ pub(crate) trait Sink {
     fn is_clean(&self) -> bool {
         false
     }
+    /// The plaintext position a decode under `limit` stops at, as things
+    /// stand: the limit, or where a marked sink would come clean, which
+    /// within a block only a copy moves.
+    #[inline(always)]
+    fn stop_at(&self, limit: usize) -> usize {
+        limit
+    }
+    /// A block ended here: where a marked sink finds its last marker.
+    #[inline(always)]
+    fn block_ended(&mut self) {}
 }
 
 /// How many positions of `len` held from `base` may be dropped, the caller
@@ -42,41 +52,121 @@ fn droppable(base: usize, len: usize, keep: usize) -> usize {
     if 2 * drop >= len { drop } else { 0 }
 }
 
-/// Output whose history is unknown: markers where it would be read.
-pub(crate) struct Marked {
-    /// The values written from position `base` on.
-    out: Vec<u16>,
+/// The values a chunked copy may write past a copy's end, a whole chunk
+/// being written at a time: room the buffer keeps beyond what it holds.
+const SLACK: usize = 32;
+
+/// A buffer of values written in place: `len` of them held, the rest room
+/// ([`SLACK`] past any write), from position `base` on.
+struct Held<T> {
+    buf: Vec<T>,
+    len: usize,
     base: usize,
-    /// The position after the last marker written: zero for the unknown
-    /// history itself.
-    clean_from: usize,
     /// The earliest position the caller still reads.
     keep: usize,
 }
 
+impl<T: Copy + Default> Held<T> {
+    fn new(buf: Vec<T>) -> Held<T> {
+        let len = buf.len();
+        Held { buf, len, base: 0, keep: 0 }
+    }
+
+    fn held(&self) -> &[T] {
+        &self.buf[..self.len]
+    }
+
+    /// Room for `n` more values and a chunk past them.
+    #[inline(always)]
+    fn make_room(&mut self, n: usize, least: usize) {
+        if self.len + n + SLACK > self.buf.len() {
+            self.grow(n, least);
+        }
+    }
+
+    /// The front dropped where it may be, then the buffer grown where that
+    /// leaves too little room — at least `least` values, and doubling.
+    #[cold]
+    fn grow(&mut self, n: usize, least: usize) {
+        let drop = droppable(self.base, self.len, self.keep);
+        if drop > 0 {
+            self.buf.copy_within(drop..self.len, 0);
+            self.len -= drop;
+            self.base += drop;
+        }
+        let want = self.len + n + SLACK;
+        if want > self.buf.len() {
+            let size = want.max(2 * self.buf.len()).max(least);
+            self.buf.resize(size, T::default());
+        }
+    }
+
+    /// Write `value` next, room being made for it.
+    #[inline(always)]
+    fn push(&mut self, value: T, least: usize) {
+        self.make_room(1, least);
+        self.buf[self.len] = value;
+        self.len += 1;
+    }
+}
+
+/// Copy `length` values from `distance` back to `out[start..]`, overlapping
+/// as deflate's copies do — the source repeated where it is shorter than the
+/// copy — in chunks of `N` where `distance` allows, writing up to a chunk
+/// past the copy's end.
+#[inline(always)]
+fn copy_back<T: Copy, const N: usize>(out: &mut [T], start: usize, distance: usize, length: usize) {
+    if distance >= N {
+        // From the source's first value to the last chunk's end, so the
+        // compiler sees every chunk inside it.
+        let out = &mut out[start - distance..start + length + N];
+        let mut i = 0;
+        while i < length {
+            let chunk: [T; N] = out[i..i + N].try_into().expect("a chunk");
+            out[distance + i..distance + i + N].copy_from_slice(&chunk);
+            i += N;
+        }
+    } else {
+        for i in start..start + length {
+            out[i] = out[i - distance];
+        }
+    }
+}
+
+/// Output whose history is unknown: markers where it would be read.
+pub(crate) struct Marked {
+    out: Held<u16>,
+    /// A position no marker is written at or after: at a block's end the
+    /// position after the last marker, or the start of the last 32 KiB where
+    /// they hold none; inside a block the end of the last copy whose source
+    /// began before it. So the sink comes clean no sooner than its values do
+    /// and at most a block later. Zero for the unknown history itself.
+    clean_from: usize,
+}
+
 impl Marked {
     pub(crate) fn new() -> Marked {
-        Marked { out: Vec::new(), base: 0, clean_from: 0, keep: 0 }
+        Marked { out: Held::new(Vec::new()), clean_from: 0 }
     }
 
     /// The value written at position `at`, which must still be held.
     pub(crate) fn get(&self, at: usize) -> u16 {
-        self.out[at - self.base]
+        self.out.held()[at - self.out.base]
     }
 
     /// The values held, from the first position still held on: every value
     /// written, where nothing was released.
     #[cfg(test)]
     pub(crate) fn values(&self) -> &[u16] {
-        &self.out
+        self.out.held()
     }
 
     /// The caller reads nothing before position `at` from here on.
     pub(crate) fn release_before(&mut self, at: usize) {
-        self.keep = self.keep.max(at);
+        self.out.keep = self.out.keep.max(at);
     }
 
-    /// The position after the last marker written.
+    /// The clean mark: no marker at or after it.
     #[cfg(test)]
     pub(crate) fn clean_from(&self) -> usize {
         self.clean_from
@@ -85,91 +175,112 @@ impl Marked {
     /// How many values the sink has room for.
     #[cfg(test)]
     pub(crate) fn capacity(&self) -> usize {
-        self.out.capacity()
+        self.out.buf.len()
     }
 
     /// The last 32 KiB written, as bytes: only once [`Sink::is_clean`].
     pub(crate) fn window(&self) -> Vec<u8> {
         debug_assert!(self.is_clean());
-        self.out[self.out.len() - WINDOW_SIZE..].iter().map(|&v| v as u8).collect()
+        let held = self.out.held();
+        held[held.len() - WINDOW_SIZE..].iter().map(|&v| v as u8).collect()
     }
 
-    /// Room for `n` more values, the front dropped first where it may be.
-    #[inline]
-    fn make_room(&mut self, n: usize) {
-        if self.out.len() + n > self.out.capacity() {
-            let drop = droppable(self.base, self.out.len(), self.keep);
-            if drop > 0 {
-                self.out.drain(..drop);
-                self.base += drop;
-            }
-            self.out.reserve(n.max(4 * WINDOW_SIZE));
+    /// Copy `length` values from `distance` back where that reaches before
+    /// the decode's start, `at`: a marker for each such position.
+    #[cold]
+    fn copy_from_before(&mut self, at: usize, distance: usize, length: usize) {
+        let start = self.out.len;
+        for i in 0..length {
+            self.out.buf[start + i] = if i < distance && at + i < distance {
+                MARKER + (WINDOW_SIZE + at + i - distance) as u16
+            } else {
+                self.out.buf[start + i - distance]
+            };
         }
     }
 }
 
 impl Sink for Marked {
+    #[inline(always)]
     fn produced(&self) -> usize {
-        self.base + self.out.len()
+        self.out.base + self.out.len
     }
 
-    #[inline]
+    #[inline(always)]
     fn literal(&mut self, byte: u8) {
-        self.make_room(1);
-        self.out.push(u16::from(byte));
+        self.out.push(u16::from(byte), 4 * WINDOW_SIZE);
     }
 
-    /// Copied in bulk, as [`Plain`] copies: the values from `distance` back,
-    /// markers standing for any part of it before the decode's start, then
-    /// repeated to `length` where it overlaps what it writes. Only the part of
-    /// the source before the last marker written is looked through, for the
-    /// last marker the copy writes.
+    /// Copied a chunk at a time, its values never looked at: a copy whose
+    /// source begins before the clean mark may write a marker, so it moves
+    /// the mark to its end, and a block's end finds the last one.
+    #[inline(always)]
     fn copy(&mut self, distance: usize, length: usize) -> bool {
         let at = self.produced();
         if distance > at + WINDOW_SIZE {
             return false;
         }
-        self.make_room(length);
-        let start = self.out.len();
-        let first = distance.min(length);
-        // Positions before the start are markers; the rest of the source, from
-        // `source` on, is held, the last 32 KiB never being dropped.
-        let unknown = distance.saturating_sub(at).min(first);
-        let oldest = WINDOW_SIZE + at - distance;
-        self.out.extend((oldest..oldest + unknown).map(|j| MARKER + j as u16));
-        let (source, known) = ((at + unknown).saturating_sub(distance), first - unknown);
-        let from = source - self.base;
-        self.out.extend_from_within(from..from + known);
-        // The last marker among the copy's first `first` values: only those
-        // read from before `clean_from` can be one.
-        let dirty = self.clean_from.saturating_sub(source).min(known);
-        let last = self.out[start + unknown..start + unknown + dirty]
-            .iter()
-            .rposition(|&v| v >= MARKER)
-            .map(|i| unknown + i)
-            .or(unknown.checked_sub(1));
-        // An overlapping copy repeats the `distance` values before it: each
-        // round copies all that is written since its start, doubling it.
-        while self.out.len() - start < length {
-            let n = (length - (self.out.len() - start)).min(self.out.len() - start);
-            self.out.extend_from_within(start..start + n);
+        self.out.make_room(length, 4 * WINDOW_SIZE);
+        let start = self.out.len;
+        if distance >= 16 && distance <= at {
+            copy_back::<u16, 16>(&mut self.out.buf, start, distance, length);
+        } else if distance <= at {
+            copy_back::<u16, 8>(&mut self.out.buf, start, distance, length);
+        } else {
+            self.copy_from_before(at, distance, length);
         }
-        // The copy repeats its first `distance` values, so its last marker is
-        // the last repetition of theirs.
-        if let Some(m) = last {
-            self.clean_from = at + m + distance * ((length - 1 - m) / distance) + 1;
+        self.out.len += length;
+        if at < self.clean_from + distance {
+            self.clean_from = at + length;
         }
         true
     }
 
     fn bytes(&mut self, bytes: &[u8]) {
-        self.make_room(bytes.len());
-        self.out.extend(bytes.iter().map(|&b| u16::from(b)));
+        self.out.make_room(bytes.len(), 4 * WINDOW_SIZE);
+        let start = self.out.len;
+        for (to, &b) in self.out.buf[start..start + bytes.len()].iter_mut().zip(bytes) {
+            *to = u16::from(b);
+        }
+        self.out.len += bytes.len();
     }
 
-    #[inline]
+    #[inline(always)]
     fn is_clean(&self) -> bool {
         self.produced() - self.clean_from >= WINDOW_SIZE
+    }
+
+    #[inline(always)]
+    fn stop_at(&self, limit: usize) -> usize {
+        limit.min(self.clean_from + WINDOW_SIZE)
+    }
+
+    /// The clean mark brought back to the position after the last marker
+    /// among the last 32 KiB, or to their start where they hold none: no
+    /// marker is at or after the mark, so the last is before it. Looked for
+    /// from the mark back a chunk at a time, so the compiler folds a chunk's
+    /// values at once.
+    fn block_ended(&mut self) {
+        const CHUNK: usize = 16;
+        let held = self.out.held();
+        let window = held.len().saturating_sub(WINDOW_SIZE);
+        let upto = self.clean_from.saturating_sub(self.out.base).min(held.len());
+        if upto <= window {
+            return;
+        }
+        let values = &held[window..upto];
+        let chunks = values.rchunks_exact(CHUNK);
+        let head = chunks.remainder().len();
+        let mut last = None;
+        for (k, chunk) in chunks.enumerate() {
+            if chunk.iter().fold(0, |acc, &v| acc | v) >= MARKER {
+                let i = chunk.iter().rposition(|&v| v >= MARKER).expect("a marker");
+                last = Some(values.len() - (k + 1) * CHUNK + i);
+                break;
+            }
+        }
+        let last = last.or_else(|| values[..head].iter().rposition(|&v| v >= MARKER));
+        self.clean_from = self.out.base + window + last.map_or(0, |i| i + 1);
     }
 }
 
@@ -178,107 +289,82 @@ impl Sink for Marked {
 /// Positions count from the history's first byte, so a decode's plaintext
 /// offset `i` is position `history + i`.
 pub(crate) struct Plain {
-    /// The bytes written from position `base` on, history first.
-    out: Vec<u8>,
-    base: usize,
+    /// The bytes written, history first.
+    out: Held<u8>,
     /// How many positions are history, not output.
     history: usize,
     /// The earliest position a back-reference may reach: the member's start
     /// where it began here, else the first.
     floor: usize,
-    /// The earliest position the caller still reads.
-    keep: usize,
 }
 
 impl Plain {
     /// Output beginning at a member's start, with no history.
     pub(crate) fn new() -> Plain {
-        Plain { out: Vec::new(), base: 0, history: 0, floor: 0, keep: 0 }
+        Plain { out: Held::new(Vec::new()), history: 0, floor: 0 }
     }
 
     /// Output whose member's last 32 KiB before it are `window`.
     pub(crate) fn after(window: Vec<u8>) -> Plain {
-        Plain { history: window.len(), out: window, base: 0, floor: 0, keep: 0 }
+        Plain { history: window.len(), out: Held::new(window), floor: 0 }
     }
 
     /// A new member begins here: nothing before it is history.
     pub(crate) fn member_start(&mut self) {
-        self.floor = self.base + self.out.len();
+        self.floor = self.out.base + self.out.len;
     }
 
     /// The byte at plaintext offset `i`, which must still be held.
     pub(crate) fn get(&self, i: usize) -> u8 {
-        self.out[self.history + i - self.base]
+        self.out.held()[self.history + i - self.out.base]
     }
 
     /// The plaintext written: only where nothing was released.
     #[cfg(test)]
     pub(crate) fn written(&self) -> &[u8] {
-        assert_eq!(self.base, 0, "a released sink");
-        &self.out[self.history..]
+        assert_eq!(self.out.base, 0, "a released sink");
+        &self.out.held()[self.history..]
     }
 
     /// The caller reads nothing before plaintext offset `i` from here on.
     pub(crate) fn release_before(&mut self, i: usize) {
-        self.keep = self.keep.max(self.history + i);
+        self.out.keep = self.out.keep.max(self.history + i);
     }
 
     /// How many bytes the sink has room for.
     #[cfg(test)]
     pub(crate) fn capacity(&self) -> usize {
-        self.out.capacity()
-    }
-
-    /// Room for `n` more bytes, the front dropped first where it may be.
-    #[inline]
-    fn make_room(&mut self, n: usize) {
-        if self.out.len() + n > self.out.capacity() {
-            let drop = droppable(self.base, self.out.len(), self.keep);
-            if drop > 0 {
-                self.out.drain(..drop);
-                self.base += drop;
-            }
-            self.out.reserve(n.max(8 * WINDOW_SIZE));
-        }
+        self.out.buf.len()
     }
 }
 
 impl Sink for Plain {
+    #[inline(always)]
     fn produced(&self) -> usize {
-        self.base + self.out.len() - self.history
+        self.out.base + self.out.len - self.history
     }
 
-    #[inline]
+    #[inline(always)]
     fn literal(&mut self, byte: u8) {
-        self.make_room(1);
-        self.out.push(byte);
+        self.out.push(byte, 8 * WINDOW_SIZE);
     }
 
-    #[inline]
+    #[inline(always)]
     fn copy(&mut self, distance: usize, length: usize) -> bool {
-        let at = self.base + self.out.len();
+        let at = self.out.base + self.out.len;
         if distance > at - self.floor {
             return false;
         }
-        self.make_room(length);
-        let from = at - distance - self.base;
-        if distance >= length {
-            self.out.extend_from_within(from..from + length);
-            return true;
-        }
-        // An overlapping copy repeats the `distance` bytes before it: each
-        // round copies all that is written since `from`, doubling it.
-        let mut left = length;
-        while left > 0 {
-            let n = left.min(self.out.len() - from);
-            self.out.extend_from_within(from..from + n);
-            left -= n;
-        }
+        self.out.make_room(length, 8 * WINDOW_SIZE);
+        copy_back::<u8, 16>(&mut self.out.buf, self.out.len, distance, length);
+        self.out.len += length;
         true
     }
 
     fn bytes(&mut self, bytes: &[u8]) {
-        self.make_room(bytes.len());
-        self.out.extend_from_slice(bytes);
+        self.out.make_room(bytes.len(), 8 * WINDOW_SIZE);
+        let start = self.out.len;
+        self.out.buf[start..start + bytes.len()].copy_from_slice(bytes);
+        self.out.len += bytes.len();
     }
 }
