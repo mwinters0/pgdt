@@ -82,13 +82,14 @@ per arm. Reopens: a fetched source recommending more than one reader (D2). Code:
 `open_remote`. Evidence: `a_remote_bgzf_file_is_read_once_by_a_first_pass_that_builds_the_walk_s_index`.
 
 ### D117 A parallel first pass speculates with a decoder of `gz-seek`'s own, and hands out only the engine's plaintext
-No zlib-API engine decodes from unknown history, so a speculation decodes a chunk natively only to guess its bounds and
-its ending history; the engine decodes the chunk from there, and the frontier takes a decode only standing at its start
-with that history, so the index is the serial pass's. The crate's decoder decides who decodes a byte, never what it is:
-in one member no chunk but the last meets a trailer, so native plaintext would go unchecked. Rejected: native plaintext
-handed out, saving the second decode; the frontier waiting on its own chunk's speculation, slower than serial; per-task
-fetches over a transport; the charge lowered before a resident reading attributes a worker's remainder (`KD141`).
-Reopens: a reading where the second decode keeps the pass from lifting the inflate. Code: `gz_seek::Parallel`.
+No zlib-API engine decodes from unknown history, so a speculation decodes a chunk natively only for its bounds and
+ending history; the engine decodes from there, and the frontier takes a decode only standing at its start with that
+history, so the index is the serial pass's. Its decoder decides who decodes a byte, never what it is: in one member no
+chunk but the last meets a trailer, so native plaintext would go unchecked. Rejected: native plaintext handed out,
+saving the second decode; the frontier waiting on its own chunk's speculation, slower than serial; per-task fetches over
+a transport; a decode's buffer pooled before a reading prices its pages, or the charge lowered before one attributes a
+worker's remainder (`KD141`). Reopens: a reading where the second decode keeps the pass from lifting the inflate. Code:
+`gz_seek::Parallel`.
 
 ### D118 A checkpoint inside a static block is placed by walking its codes beside the engine
 A writer ending no block across a spacing is checkpointed as any other, with no inflater of our own: the engine walks a

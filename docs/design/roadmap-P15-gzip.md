@@ -485,7 +485,11 @@ the speculation, after 17.3. Its account is the run of landed guesses at the
 frontier. A chain anchors where the frontier stands, the frontier decoding that
 chunk itself, so a run of taken chunks costs one speculation more than it has
 chunks beside their decodes, and speculating nearly every chunk cannot keep
-ahead of the frontier at three tasks. Its levers, each tried first in an
+ahead of the frontier at three tasks. Beside it, the pass's page faults by call
+stack ([`../status/history/2026-10-26.md`](../status/history/2026-10-26.md),
+"15.17.3's buffer, reviewed"): every profile on this line samples user cycles
+only, so whether a chunk decode's buffer arrives as fresh pages is read here,
+and a decode's buffer is pooled only where it names them (D117). Its levers, each tried first in an
 emulation of the scheduling and built only where the emulation moves: which
 chunks are speculated, in runs with gaps the frontier decodes unguessed; how
 far ahead a run is placed; a free worker given a resolved decode before a new
