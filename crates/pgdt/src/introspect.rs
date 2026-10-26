@@ -334,7 +334,8 @@ mod enabled {
     /// What the three scopes mean, in the report itself rather than only in
     /// the document that explains it. What it names is
     /// `xz_seek::Layout::decoder_bytes`, not `decode_footprint`: xz-seek's
-    /// input chunk passes through `GlobalAlloc` (`docs/design/decisions.md`, "D15").
+    /// input chunk is a Rust allocation, so it passes through `GlobalAlloc`
+    /// and is counted in `live_*`, not in the C `malloc` scope.
     const SCOPE_NOTE: &str = concat!(
         "# `live_*` counts only what passed through Rust's `GlobalAlloc`, and\n",
         "# `mimalloc_*` is the heap that serves it: their gap is mimalloc's\n",

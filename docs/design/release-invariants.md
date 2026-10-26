@@ -74,8 +74,8 @@ It holds while the output names `GitHub artifact attestations verified` and no
 makes GitHub sign an attestation of each asset, predicate type
 `https://in-toto.io/attestation/release/v0.2`, by its own certificate
 authority as `https://dotcom.releases.github.com`, its in-toto statement naming
-the repository, whoever uploaded the asset; `gh release verify-asset` and
-`gh attestation verify` check it.
+the repository, whoever uploaded the asset; `gh release verify-asset` checks
+it.
 
 **Proof.** Observed: v0.1.0's x86-64 archive's digest carries a bundle of
 predicate type `https://in-toto.io/attestation/release/v0.2` beside the
@@ -84,15 +84,22 @@ predicate type `https://in-toto.io/attestation/release/v0.2` beside the
 the shape's statement in source: `bundle_source_repository` trusts such a
 statement only from a certificate of GitHub's internal authority naming
 `GITHUB_RELEASE_ATTESTER_IDENTITY`, and `release_statement_repository` reads
-the repository from its predicate.
+the repository from its predicate. Observed for an asset no workflow
+uploaded: v0.2.0's arm64 archive, built and uploaded by the maintainer,
+passes `installing.md`'s check (`../status/history/2026-10-21.md`), and on
+2026-10-25 `gh release verify-asset` passed it again while the attestations
+API returned one bundle for its digest, of the release predicate type, whose
+statement names both archives and `SHA256SUMS`.
 
 **Scope limit.** Assets present when the release is published; an immutable
 release refuses a later one. Nothing about who uploaded an asset, from where,
-or which commit built it. That an asset no workflow uploaded is attested alike
-is not yet observed: v0.2.0's arm64 archive is the first, and the re-verify
-below is the check.
+or which commit built it. `gh attestation verify --predicate-type
+https://in-toto.io/attestation/release/v0.2` is not claimed: under `gh`
+2.102.0 it answers "no attestations found" for both v0.2.0 archives, the
+API holding the bundle, for a reason not read.
 
-**Verified against:** GitHub.com, `mwinters0/pgdt` v0.1.0.
+**Verified against:** GitHub.com, `mwinters0/pgdt` v0.1.0 (an asset a
+workflow uploaded) and v0.2.0 (the arm64 archive, one none did); `gh` 2.102.0.
 
 **Relied on by:** [`decisions.md`](decisions.md), "D109" — the arm64 archive's
 only attestation; [`../manual/installing.md`](../manual/installing.md),
@@ -101,12 +108,15 @@ only attestation; [`../manual/installing.md`](../manual/installing.md),
 **Re-verify** — after a release, from a directory holding its arm64 archive:
 
 ```sh
-gh release verify-asset v<version> pgdt-v<version>-aarch64-unknown-linux-gnu.tar.xz -R mwinters0/pgdt
-gh attestation verify pgdt-v<version>-aarch64-unknown-linux-gnu.tar.xz -R mwinters0/pgdt \
-  --predicate-type https://in-toto.io/attestation/release/v0.2
+a=pgdt-v<version>-aarch64-unknown-linux-gnu.tar.xz
+gh release verify-asset v<version> $a -R mwinters0/pgdt
+gh api repos/mwinters0/pgdt/attestations/sha256:$(sha256sum $a | cut -d' ' -f1) \
+  --jq '.attestations[].bundle.dsseEnvelope.payload' | base64 -d | jq '{predicateType, subject: [.subject[].name]}'
 ```
 
-Both pass while it holds, for an asset no workflow built.
+It holds while the first passes and the second prints the predicate type
+`https://in-toto.io/attestation/release/v0.2` with the archive among its
+subjects, for an asset no workflow built.
 
 ## RL3 — a pushed tag is a `releases.atom` entry at once, carrying its annotation, under the id a Release on it later takes
 

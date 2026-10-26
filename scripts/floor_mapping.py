@@ -34,9 +34,10 @@ comparable with and is more useful than. That is the whole long tail --
 coverage unbounded while its work stays bounded.
 
 **A disposition covers what the columns cannot say**, and there are four.
-Three are D2's stances proper; the fourth is `oid`, which satisfies the rule by
-answering a *different* type rather than a wider one, and says so because "not
-equal" is all this check can compute on its own.
+Three are stances proper, a row's reason for standing outside the rule; the
+fourth is `oid`, which satisfies the rule by answering a *different* type
+rather than a wider one, and says so because "not equal" is all this check can
+compute on its own.
 
 **The comparison is over the Arrow type, not the field's metadata.** Release 24
 stamps `arrow.json` on `json`/`jsonb` and nothing else; we stamp the same two
@@ -66,10 +67,11 @@ major brings forces a mapping decision above, and a typed mapping forces its
 extremes here: a typed arm no column declares, a column no typed arm answers,
 and a major whose `types` dump holds no such table are each a problem.
 
-**The pin is asserted here** (the spec's D8): the driver version every floor
-row records must equal `scripts/pyproject.toml`'s. The floor is a claim about
-one release, and bumping the pin is what obliges re-taking the oracle -- so the
-two are made unable to drift rather than trusted not to. The manual page that
+**The pin is asserted here** (`docs/design/decisions.md`, "D38"): the driver
+version every floor row records must equal `scripts/pyproject.toml`'s. The
+floor is a claim about one release, and bumping the pin is what obliges
+re-taking the oracle -- so the two are made unable to drift rather than trusted
+not to. The manual page that
 publishes the floor to a user names the release too, and is held to the pin
 the same way.
 
@@ -175,8 +177,9 @@ ARROW_RENDERING = {
 # --------------------------------------------------------------------------
 
 #: What a disposition claims about a row the floor reaches and our mapping does
-#: not meet. The first four are D2's stances; `narrower` is the fifth case,
-#: which is *inside* the rule rather than outside it.
+#: not meet. The first four are stances, a row's reason for standing outside
+#: the rule; `narrower` is the fifth case, which is *inside* the rule rather
+#: than outside it.
 STANCES = {
     "different-encodings": (
         "the COPY TEXT and binary encodings denote different values, so "
@@ -388,7 +391,7 @@ def pinned_driver(path: Path = PYPROJECT) -> tuple[str | None, list[str]]:
             return version.strip(), []
     return None, [
         f"{path.name} pins no exact `{wanted}` version — the floor is a claim "
-        "about one release (the spec's D8) and nothing else records which"
+        "about one release (`docs/design/decisions.md`, \"D38\") and nothing else records which"
     ]
 
 
@@ -571,7 +574,7 @@ def _citation_problems(
 ) -> list[str]:
     """Whatever stops a disposition's citation resolving.
 
-    A `waiting` row names the slice that closes it (the spec's D10) and the
+    A `waiting` row names the slice that closes it, and the
     `below-by-decision` row names the register entry that carries it. Both are
     pointers, into `STATUS.md` and `deficiencies.md`, and both go stale
     silently: a re-slice renumbers the first, a strike deletes the second. So
@@ -661,14 +664,14 @@ def reconcile(
                     f"({verdict.theirs}) at {version}"
                 )
 
-    # D8: the pin and the rows are one claim, so they are made unable to drift.
+    # The pin and the rows are one claim, so they are made unable to drift.
     if pin is not None:
         for driver in sorted(drivers):
             if driver != pin:
                 out.problems.append(
                     f"floor.tsv rows were taken with driver {driver!r} and "
                     f"pyproject.toml pins {pin!r} — bumping the pin obliges "
-                    "re-taking the oracle (the spec's D8)"
+                    "re-taking the oracle"
                 )
 
     # The direction that decays: an arm mapping a type no major declares.

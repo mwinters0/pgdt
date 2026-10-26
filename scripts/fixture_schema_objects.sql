@@ -2,7 +2,7 @@
 -- neither scripts/fixture_schema_edge_cases.sql nor scripts/fixture_schema_types.sql
 -- produces, plus a large object (a shape no pg_dump flag conjures on its own).
 --
--- Backs docs/design/decisions.md, "D69". The TOC
+-- Backs docs/design/pg-dump-compatibility.md's TOC `Type:` kind rows. The TOC
 -- vocabulary (~63 `Type:` values) is enumerable from `pg_dump` source. Across the two
 -- existing schemas, real pg_dump output produces only: TABLE, TABLE DATA,
 -- CONSTRAINT, FK CONSTRAINT, FUNCTION, SCHEMA, TYPE, DOMAIN, SHELL TYPE.
@@ -11,7 +11,7 @@
 -- Deliberately NOT attempted here, with why:
 --   - SECURITY LABEL: requires a security-label provider (e.g. sepgsql)
 --     registered via shared_preload_libraries; not present in a stock
---     postgres:*-alpine image.
+--     postgres:*-trixie image.
 --   - ACCESS METHOD, OPERATOR, OPERATOR CLASS, OPERATOR FAMILY, TRANSFORM,
 --     TEXT SEARCH PARSER, TEXT SEARCH TEMPLATE: all require a C-level
 --     handler function, so a real one only ever arrives via an extension

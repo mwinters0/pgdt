@@ -27,7 +27,7 @@ pub struct QueryOptions {
     /// exactly as [`crate::predicate::Predicate::column`] is, so a name the
     /// block does not carry is `Error::UnknownProjectionColumn` and a
     /// repeated name is `Error::DuplicateProjectionColumn`
-    /// (`docs/design/decisions.md`, "D28").
+    /// (`docs/design/decisions.md`, "D119").
     pub projection: Option<Vec<String>>,
     /// Post-parse row filter (`docs/design/decisions.md`, "D54"),
     /// as a boolean **expression** over single-column terms: a row is kept

@@ -50,8 +50,8 @@ pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 ///
 /// deficiency: KD34 — this value was fitted before statistics existed, and
 /// what a run holds above its charge and its statistics account has since been
-/// attributed at a worst 544 MiB on a compressed `query` — well past the
-/// 384 MiB held back here, with every wide-text compressed `query` leg from a
+/// attributed at a worst 544 MiB on a compressed `query` — well past what
+/// this holds back, with every wide-text compressed `query` leg from a
 /// 1 GiB limit up killed in every rep. That attribution was taken on the
 /// `introspect` build, so it sizes the gap without standing in for the blind
 /// gate a constant has to pass; P23 owns both. The `reserve` figure's stated
@@ -153,13 +153,13 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
 /// a discovered limit or a stated `--memory` — once `budget`, the read-buffer
 /// budget that arrangement resolved to, comes off [`margin_allowance`]'s
 /// ceiling, which already stands [`MEMORY_UNPOOLED_BOUND`] below its fraction
-/// of the allowance (`docs/design/decisions.md`, "D85").
+/// of the allowance.
 ///
 /// **It is carved after the workers, never before them**
-/// (`docs/design/decisions.md`, "D85"): the count is fixed before a byte is
-/// read, while statistics are gathered only as they accumulate. Those a cache
-/// hands the pass are known first and bill the workers' carving as `held`
-/// ([`Parallelism::within_shared`](crate::Parallelism::within_shared)), so what is left here covers them too.
+/// (`docs/design/decisions.md`, "D85"): statistics are gathered only as they
+/// accumulate. Those a cache hands the pass bill the workers' carving as `held`
+/// ([`Parallelism::within_shared`](crate::Parallelism::within_shared)), so
+/// what is left here covers them too.
 ///
 /// **[`MEMORY_RESERVE`] is not subtracted again here.** The reserve comes off
 /// the top for the *cap* a count is solved against, where this is the *margin*

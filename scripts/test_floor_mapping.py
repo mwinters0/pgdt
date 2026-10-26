@@ -245,7 +245,7 @@ class Reconciling(unittest.TestCase):
         self.assertEqual([v.declared for v in found.unanswered], ["text"])
 
     def test_a_driver_that_does_not_match_the_pin_is_a_problem(self) -> None:
-        """D8: the pin and the rows are one claim about one release."""
+        """D38: the pin and the rows are one claim about one release."""
         write_tree(self.fixtures, {"18": [floor_row("integer", "int32", driver="1.13.0")]})
         found = self.reconcile()
         self.assertTrue(any("obliges" in p for p in found.problems))
@@ -254,7 +254,7 @@ class Reconciling(unittest.TestCase):
         self.pyproject.write_text(
             PYPROJECT_TOML.replace('"adbc-driver-postgresql==1.12.0"', '"adbc-driver-postgresql"')
         )
-        self.assertTrue(any("D8" in p for p in self.reconcile().problems))
+        self.assertTrue(any("D38" in p for p in self.reconcile().problems))
 
     def test_a_manual_naming_another_release_is_a_problem(self) -> None:
         """The page publishing the floor names the pinned release, or the

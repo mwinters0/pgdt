@@ -1,5 +1,6 @@
 //! Decoder microbenchmarks, one `criterion_group` function per mapped type
-//! family (`docs/design/decisions.md`, "D73"). A regression tripwire for
+//! family (`docs/design/measurements.md`, "Decoder and whole-file
+//! benchmarks"). A regression tripwire for
 //! the decoders' own per-byte CPU cost, not a throughput number for the
 //! reader — see `benches/whole_file.rs` for that, and
 //! `docs/design/measurements.md` for the wider set of figures this narrowly

@@ -1,4 +1,6 @@
-//! One warm-cache whole-file run (`docs/design/decisions.md`, "D73"): an end-to-end regression tripwire for typed-decode CPU cost,
+//! One warm-cache whole-file run: an end-to-end regression tripwire for
+//! typed-decode CPU cost (`docs/design/measurements.md`, "Decoder and
+//! whole-file benchmarks"),
 //! complementing `benches/decoders.rs`'s per-family microbenchmarks. It is
 //! deliberately narrow — `docs/design/measurements.md` is where the dial
 //! turns up to koji-sized (~100 GB) runs and CPU%/bytes-per-second tracking;

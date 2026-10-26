@@ -11,7 +11,7 @@ hand-run reading run this script.
 
 It runs the command in the release image (`release.ensure_image`), whose glibc
 binaries built there are held to and which carries `perf`, `heaptrack`,
-`strace` and libc's debug symbols, as the invoking user, `-m` and
+`valgrind`, `strace` and libc's debug symbols, as the invoking user, `-m` and
 `--memory-swap` both at `--memory`. **Every path the command names is mounted
 at the same path**, the repository included, so a recipe line reads exactly as
 it would on the host: an absolute argument, the path after a `=`, a relative one

@@ -84,12 +84,14 @@ Usage:
     uv run measure.py --count-pair HEAD~1
     uv run measure.py --profile-recipe
     uv run measure.py --heaptrack-recipe
+    uv run measure.py --callgrind-recipe
     uv run python -m unittest test_measure -v
 
-Three invocations are printed rather than run, for two reasons: koji's because
-it is an hour on another medium, and the two instrument recipes' because
-neither a sampling profile nor a heap recording is a figure at all. All three
-live here because a command kept in prose is a command that stops running.
+Four invocations are printed rather than run, for two reasons: koji's because
+it is an hour on another medium, and the three instrument recipes' because
+none of a sampling profile, a heap recording or a callgrind count is a figure
+at all. All four live here because a command kept in prose is a command that
+stops running.
 """
 
 from __future__ import annotations
@@ -15911,6 +15913,12 @@ def count_pair_image_refusal(rev: str) -> str | None:
     )
 
 
+def count_pair_leg_binary(cfg: Config, leg: str) -> Path:
+    """Where `--count-pair` leaves a leg's binary, overwritten by the next pair
+    and read by `callgrind_recipe` as the binary counted."""
+    return cfg.out_dir / f"pgdt-count-pair-{leg}"
+
+
 def count_pair_binary(cfg: Config, leg: str, tree: Path, log: Callable[[str], None]) -> Path:
     """One leg of the pair: the shipped build — `release`, at the default
     features — of `tree`, in the release image, in a cargo target directory
@@ -15918,7 +15926,7 @@ def count_pair_binary(cfg: Config, leg: str, tree: Path, log: Callable[[str], No
     build ever finds another's output fresh. Copied into `Config.out_dir` and
     asked which profile built it, for `binary_profile`'s reason."""
     target = image_target_dir(cfg, f"count-pair-{leg}")
-    out = cfg.out_dir / f"pgdt-count-pair-{leg}"
+    out = count_pair_leg_binary(cfg, leg)
     if cfg.dry_run:
         log(f"  [dry-run] would build the {leg} leg from {tree} into {target}")
         return out
@@ -16101,6 +16109,221 @@ def cmd_count_pair(rev: str, cfg: Config) -> int:
         )
         + (" (A dry run: the time is the harness's, not a build's.)" if dry_run else "")
     )
+    return 0
+
+
+# --------------------------------------------------------------------------
+# The callgrind recipe: printed, never run.
+#
+# What places a rise `--count-pair` resolves (`docs/design/decisions.md`,
+# "D108"): callgrind's `Ir` on the pair's own two binaries, per function, the
+# parent's against the tree's. Like a profile it is not a figure: no medians, no
+# apparatus gate, no `measurements.md` marker, and its answer is where a count
+# already taken went, never a count of its own. It lives here for the reason
+# the other recipes do, and because each of its silent failures returns a
+# reading of some other workload than the one the pair counted.
+# --------------------------------------------------------------------------
+
+#: The counter: the release image's `valgrind`, run under `contained.py` as
+#: every recipe line running a binary is.
+CALLGRIND = "valgrind"
+
+#: Each callgrind run's container limit: a guard on the machine, sized to hold
+#: valgrind beside the run. **The run is not given it**: each states the limit
+#: its row's pair container had as its allowance (`callgrind_invocation`), so it
+#: carves what the counted run discovered rather than this.
+CALLGRIND_MEMORY = "4g"
+
+#: Runs per leg. valgrind serializes a process's threads, so two runs of one
+#: binary differ by scheduling alone, and a rise smaller than that spread is not
+#: placed.
+CALLGRIND_REPS = 2
+
+#: How many of the largest per-function changes each placement keeps.
+CALLGRIND_TOP = 60
+
+#: Each function's self `Ir` change between two `callgrind_annotate` listings,
+#: parent's first, as `|change| TAB change TAB function`, for `sort -rn`. The
+#: object in brackets is dropped, since each leg's binary has its own path, and
+#: a name met twice is summed. No single quote, as it is printed inside them.
+CALLGRIND_DIFF_AWK = (
+    "FNR == 1 { leg++ } / PROGRAM TOTALS$/ { next } "
+    "/^[0-9][0-9,]*  / { n = $1; gsub(/,/, \"\", n); sub(/^[0-9][0-9,]*  /, \"\"); "
+    "sub(/ \\[[^]]*\\]$/, \"\"); ir[leg, $0] += n; seen[$0] = 1 } "
+    "END { for (f in seen) { d = ir[2, f] - ir[1, f]; "
+    "if (d != 0) printf \"%.0f\\t%+.0f\\t%s\\n\", (d < 0 ? -d : d), d, f } }"
+)
+
+
+def callgrind_invocation(
+    command: str, source: Path | str, cache: Path | str, memory: int
+) -> tuple[list[str], list[str], list[str] | None]:
+    """The environment, the arguments (subcommand first) and the untimed
+    builder one `COUNT_PAIR_SHAPES` row runs under callgrind, each stating
+    `memory` as its allowance.
+
+    `_script`'s timed line and builder flag for flag, with one addition:
+    **the allowance the pair's container gave the row, stated**, `--memory` on
+    a `pgdt` command and `SET pgdump.memory` ahead of the provider's query,
+    since callgrind's container is larger and a discovered allowance would
+    carve something else. `test_measure.py`'s `CallgrindRecipe` holds the rest
+    to `_script`."""
+    stated = ["--memory", str(memory)]
+    if command == PARALLEL_SCAN:
+        env, argv, builder = release_diff_invocation(command, source, cache)
+        query = argv.index("-c")
+        argv = [*argv[:query], "-c", f"SET pgdump.memory = {memory}", *argv[query:]]
+        return env, argv, [*(builder or []), *stated]
+    if command.startswith(STATISTICS_FAMILY):
+        flags = dict(STATISTICS_LEGS)
+        leg = command.removeprefix(STATISTICS_FAMILY)
+        if leg not in flags:
+            raise ValueError(f"{command!r} is not a `--count-pair` shape")
+        argv = [
+            "parse",
+            "--source", str(source),
+            "--dtcache", str(cache),
+            "--jobs", str(SWEEP_JOBS),
+            *flags[leg].split(),
+        ]  # fmt: skip
+        return [], [*argv, *stated], None
+    if command not in {c for c, _, _ in COUNT_PAIR_SHAPES}:
+        raise ValueError(f"{command!r} is not a `--count-pair` shape")
+    builder = profile_builder_argv(command, source, cache)
+    return (
+        [],
+        [*profile_argv(command, source, cache), *stated],
+        [*builder, *stated] if builder else None,
+    )
+
+
+def callgrind_recipe(cfg: Config) -> str:
+    """The whole sequence, with every path filled in.
+
+    Each of these fails silently, returning a placement of some other
+    workload, and `test_measure.py`'s `CallgrindRecipe` asserts each:
+
+    * **the pair's own binaries, never rebuilt** (`count_pair_leg_binary`).
+      The rise being placed was counted in those two files; a rebuild is
+      another link, and each is asked that it is the shipped build first.
+    * **the pair's own input, shapes and worker count**: `COUNT_PAIR_INPUT`
+      off the SSD cache, unstaged as the pair reads it, and each row
+      `_script`'s line (`callgrind_invocation`).
+    * **the allowance the pair's container gave**, stated, since this
+      container is larger: a discovered allowance moves the readers and the
+      statistics a run holds (D85).
+    * **a fresh cache before every run**, the pair's container starting from
+      none, and a query row's builder ahead of it, uncounted.
+    * **both legs and two runs each, the leg going first alternated** as the
+      pair orders its reps, and the placement read on each rep pair.
+
+    The reading is D108's: the totals first, and only where they reproduce
+    the pair's median change are the functions read as its place."""
+    c = contained_prefix(cfg, CALLGRIND_MEMORY)
+    work = cfg.out_dir / "callgrind-count-pair"
+    legs = {leg: count_pair_leg_binary(cfg, leg) for leg in COUNT_PAIR_LEGS}
+    dump = work / input_file(COUNT_PAIR_INPUT)
+    cache = work / "x.dtcache"
+
+    lines: list[str] = []
+    step = 0
+
+    def head(*text: str) -> None:
+        """A numbered step, numbered as emitted rather than by literal."""
+        nonlocal step
+        lines.extend([f"# {step}. {text[0]}", *(f"#    {t}" for t in text[1:])])
+        step += 1
+
+    head(
+        "The tool: the release image's, in a container as every line below",
+        "running a binary is (scripts/contained.py), under a limit sized to hold",
+        "valgrind and given to no run as its allowance.",
+    )
+    lines += [f"{c} {CALLGRIND} --version", ""]
+
+    head(
+        "The legs: the two binaries `--count-pair` counted, where it left them.",
+        "Never rebuilt, since the rise placed is the one counted in these files, and",
+        "run before the next pair, which overwrites them. Each must say it is the",
+        "shipped build; their digests are kept beside the reading.",
+    )
+    for leg, binary in legs.items():
+        lines.append(
+            f"{c} {binary} --version | grep -qF '(profile: release)' "
+            f"|| echo '{binary} is not the shipped build: stop' >&2"
+        )
+    lines += [
+        f"mkdir -p {work}",
+        f"sha256sum {' '.join(str(b) for b in legs.values())} > {work / 'legs.sha256'}",
+        "",
+    ]
+
+    head(
+        f"The input: the pair's `{COUNT_PAIR_INPUT}`, off the SSD cache and unstaged,",
+        "as the pair reads it. Linked, so a cache the provider writes beside",
+        "the dump lands here rather than in the input cache.",
+    )
+    lines += [f"ln -sf {cfg.cache_dir / input_file(COUNT_PAIR_INPUT)} {dump}", ""]
+
+    head(
+        "One block per row; run only the block of a row the pair resolved. Each run",
+        "states the allowance its pair container gave it, starts from no cache as",
+        "the pair's container did, and writes pgdt's stderr beside its count: its",
+        "arrangement line must read the same in all four. Then the gate, read",
+        "before any function: each rep pair's total, tree less parent, against the",
+        "pair's median change for the row; where neither reproduces it, the rise",
+        "is layout (D108). Where both do, the place: each function's self `Ir`",
+        "change on each rep pair, largest first, the two agreeing. Changed code",
+        "at the top is the change's cost, reworked or accepted; identical code",
+        "called as often is layout (D108).",
+    )
+    reps = CALLGRIND_REPS
+    for command, label, memory in COUNT_PAIR_SHAPES:
+        allowance = contained.size_bytes(memory or cfg.memory)
+        env, argv, builder = callgrind_invocation(command, dump, cache, allowance)
+        written = builder[builder.index("--dtcache") + 1] if builder else str(cache)
+        lines += ["", f"# {label}"]
+        for rep in range(1, reps + 1):
+            order = COUNT_PAIR_LEGS if rep - 1 < (reps + 1) // 2 else COUNT_PAIR_LEGS[::-1]
+            for leg in order:
+                binary = legs[leg]
+                run = work / f"{command}-{leg}-{rep}"
+                lines += [
+                    f"rm -f {written}",
+                    *([f"{c} {binary} {' '.join(builder)} >/dev/null"] if builder else []),
+                    f"{c} {' '.join(['env', *env]) + ' ' if env else ''}{CALLGRIND} "
+                    "--tool=callgrind --dump-instr=yes \\",
+                    f"  --log-file={run}.log --callgrind-out-file={run}.out \\",
+                    f"  {dfcli_shell([], str(binary), argv).lstrip()} >/dev/null 2>{run}.err",
+                    f"{c} callgrind_annotate --inclusive=no --threshold=100 --show-percs=no "
+                    f"--auto=no {run}.out > {run}.txt",
+                ]
+        runs = " ".join(
+            str(work / f"{command}-{leg}-{rep}.txt")
+            for rep in range(1, reps + 1)
+            for leg in COUNT_PAIR_LEGS
+        )
+        lines += [f"rm -f {written}", f"grep -H 'PROGRAM TOTALS' {runs}"]
+        for rep in range(1, reps + 1):
+            parent, tree = (work / f"{command}-{leg}-{rep}.txt" for leg in COUNT_PAIR_LEGS)
+            lines.append(
+                f"awk '{CALLGRIND_DIFF_AWK}' \\\n  {parent} {tree} | sort -rn | cut -f2- "
+                f"| head -n {CALLGRIND_TOP} > {work / f'{command}-place-{rep}.txt'}"
+            )
+    lines.append("")
+    head("Tear down: the link, never the input it names.")
+    lines.append(f"rm -f {dump}")
+    return "\n".join(lines)
+
+
+def cmd_callgrind() -> int:
+    print(
+        "# A callgrind count is not a figure: no medians, no apparatus gate, no\n"
+        "# marker in measurements.md. It places a rise `--count-pair` resolved\n"
+        "# (decisions.md, \"D108\"), in a runs/ directory. A row's four runs are\n"
+        "# minutes each; past ten minutes in all, launch it detached (CLAUDE.md).\n"
+    )
+    print(callgrind_recipe(Config()))
     return 0
 
 
@@ -16383,6 +16606,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "never runs it",
     )
     parser.add_argument(
+        "--callgrind-recipe",
+        action="store_true",
+        help="print the sequence placing a rise --count-pair resolved, callgrind's Ir on "
+        "the pair's own two binaries — the harness owns it but never runs it",
+    )
+    parser.add_argument(
         "--count-pair",
         metavar="REV",
         help="the shipped build at REV, which must be the working tree's parent, and at the "
@@ -16427,6 +16656,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_profile()
     if args.heaptrack_recipe:
         return cmd_heaptrack()
+    if args.callgrind_recipe:
+        return cmd_callgrind()
     if args.check:
         return cmd_check(REPO / "docs/design/measurements.md")
     if args.stale:

@@ -269,8 +269,8 @@ per-leaf list: `scripts/fixture_schema_partitions.sql`'s `hollow` (no
 columns), `derived` (only generated ones) and `shuffle` (a leaf attached in
 another order) on 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6, under both
 flag sets.
-**Relied on by:** `decisions.md` ("D43" —
-the `COPY` header is authoritative; the DDL is a by-name type lookup);
+**Relied on by:** `resolve.rs`'s `resolve_columns`, which takes a block's
+columns in its `COPY` header's order and looks each up in the DDL by name;
 `stream/replay/plan.rs`'s `TableColumns`, which reorders a table's blocks by name,
 unions their census by name, and reads a header listing no columns as a
 block copying none; `ddl/metadata.rs`'s `fold_alter_type_drop_attribute`, for
@@ -468,7 +468,9 @@ pair *then* its own `\connect`.
 `fixtures/{13..18}/edge_cases/dumpall.sql`, a real `pg_dumpall` run at
 every major (`tests/preamble.rs`,
 `every_dumpall_database_keeps_its_own_version_headers`).
-**Relied on by:** `decisions.md` ("D36", "D69").
+**Relied on by:** `decisions.md` ("D36"); `ddl/metadata.rs`'s
+`dump_metadata_from_spans`, which gives each header pair to the `\connect`
+segment it heads.
 **Re-verify:** `grep -n 'Dumped from database version' -B5
 src/bin/pg_dump/pg_backup_archiver.c` — confirm it's still inside
 `RestoreArchive()` and still unconditional-per-call; `grep -n
@@ -627,7 +629,7 @@ the completed base type rather than its shell.
 **Verified against:** v18.6 source (`dumpShellType()`, `dumpUndefinedType()`,
 `DefineType()`); probed `pg_dump` 16.15; `fixtures/{13..18}/types/default.sql`
 — the same recipe across all six routine versions.
-**Relied on by:** `decisions.md` ("D69", "Type resolution and decoders").
+**Relied on by:** `decisions.md` ("D36").
 **Re-verify:** `grep -n '"SHELL TYPE"' -B 12 src/bin/pg_dump/pg_dump.c` —
 confirm `dumpShellType()` still emits a bare `CREATE TYPE x;` ahead of the
 real definition; re-run the recipe above against the newest major.
@@ -1311,10 +1313,10 @@ in the relevant loop; `pg_dump.c` identical modulo line numbers), plus
 `fixtures/{13..18}/types/default.sql`'s `public.empty_comp` /
 `t_composite.v_empty_comp`, whose DDL and `()` values are identical on all six.
 
-**Relied on by:** `decisions.md`, "Type resolution and decoders" (the all-or-nothing
-field list) and "D43" — "no fields parsed" and "no fields declared" have to stay
-distinguishable in the type definition when the literal cannot tell them apart,
-which is why `TypeKind::Composite::fields` is an `Option`.
+**Relied on by:** `decisions.md`, "D36" (the all-or-nothing field list);
+`TypeKind::Composite::fields`, an `Option` because "no fields parsed" and "no
+fields declared" have to stay distinguishable in the type definition when the
+literal cannot tell them apart.
 
 **Re-verify:**
 
@@ -1766,8 +1768,9 @@ about `pg_dump --create`, which emits one database and no ordering question.
 all three; and observed in output on all six routine majors, where
 `pgdt_tenant` lands between `pgdt_fixture` and `postgres` in every
 `edge_cases/dumpall.sql`.
-**Relied on by:** `decisions.md` ("D69"). The `edge_cases/dumpall`
-fixture's database sequence is chosen by naming, not observed: a second
+**Relied on by:** `scripts/generate_fixtures.py`'s `TENANT_DB_NAME`. The
+`edge_cases/dumpall` fixture's database sequence is chosen by naming, not
+observed: a second
 data-carrying database named `pgdt_tenant` lands between `pgdt_fixture` and
 `postgres`, which is what makes "cancel inside the *second* database's data" a
 deterministic file offset for the recurring-metadata-boundary test
@@ -3370,7 +3373,7 @@ probe below answers identically on `postgres:16.15-trixie` and
 **Scope limit.** Ranges and multiranges. Arrays and composites are I45. The
 *collation* a `text`-bounded range's comparison runs under is not covered here:
 a range type carries its own `collation` parameter, which this build does not
-read.
+read (`KD144`).
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 observed in the committed oracle at all six, and the probe below run against

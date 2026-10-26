@@ -120,7 +120,10 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
         !has_non_seekable_warning(&plain_json),
         "sanity: a plain file never earns a compression warning"
     );
-    assert!(!has_non_seekable_warning(&xz_json), "a seekable .xz source earns no D2 warning");
+    assert!(
+        !has_non_seekable_warning(&xz_json),
+        "a seekable .xz source earns no non-seekable warning"
+    );
 
     assert_eq!(plain_json["compression"], serde_json::Value::Null, "a plain file has no container");
     let shape = xz_json["compression"].clone();

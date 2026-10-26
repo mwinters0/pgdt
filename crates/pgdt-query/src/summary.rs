@@ -11,8 +11,8 @@
 //!
 //! **A summary says whether it is complete, and never how nearly.** A caller
 //! that answers a query from it needs to know that nothing was left out; a
-//! caller estimating does not care by how much, and a partial extreme is
-//! still an estimate of the whole table's.
+//! caller estimating does not care by how much (`docs/design/decisions.md`,
+//! "D89").
 
 use std::collections::{HashMap, HashSet};
 
@@ -63,9 +63,9 @@ pub struct ColumnSummary {
     pub bounds_complete: bool,
     /// How many distinct non-NULL values the column emits, where every group
     /// of every block kept a dictionary of its field texts: the size of their
-    /// union. `None` wherever one group did not — the union being only a
-    /// floor there — and for a `character` column, whose entries give up the
-    /// trailing blanks it emits (`docs/design/decisions.md`, "D89").
+    /// union. `None` wherever one group did not (`docs/design/decisions.md`,
+    /// "D89"), and for a `character` column, whose entries give up the
+    /// trailing blanks it emits.
     ///
     /// Distinct text is a distinct value in the column's Arrow type as in its
     /// text: each type is written in one form (I4, I40, I41), a
@@ -73,7 +73,8 @@ pub struct ColumnSummary {
     pub distinct: Option<u64>,
     /// The column's non-NULL values summed as integers — a decimal's unscaled
     /// — and wrapped at 128 bits, which reduces exactly to any narrower
-    /// wrapping sum ([`pgdt_model::ColumnStatistics::sums`]): where
+    /// wrapping sum ([`pgdt_model::ColumnStatistics::sums`];
+    /// `docs/design/decisions.md`, "D91"): where
     /// every group of every block kept one, under the DDL it was gathered
     /// under, and the column is emitted in the type it was summed as. `None`
     /// elsewhere, and where the column holds no non-NULL value, whose sum is

@@ -79,7 +79,7 @@ fn offsets(index: &GzipIndex, base: u64) -> (Vec<u64>, u64) {
 /// over the cache's name leaves it reading the bytes it was loaded from.
 ///
 /// **Its offsets are resident beside the checkpoints**, one per checkpoint,
-/// the index's own term (`docs/design/decisions.md`, "D4").
+/// the index's own term, which no charge bills (`KD26`).
 struct SectionWindows {
     file: File,
     offsets: Vec<u64>,

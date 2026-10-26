@@ -306,6 +306,12 @@ class Repoint(unittest.TestCase):
         self.assertEqual(o.status, "meter")
         self.assertEqual(len(o.details), 1)
 
+    def test_a_red_register_meter_alone_is_not_a_failure(self):
+        grown = "# A (`a.rs`)\n\n" + "x" * (repoint.REGISTER_GROWTH_BYTES + 1) + "\n\n### D1 x\nbody\n"
+        o = self.run_repoint(repoint.GROWTH_BUDGET, {"docs/design/decisions/a.md": grown})
+        self.assertEqual(o.status, "meter")
+        self.assertEqual(len(o.details), 1)
+
     def test_a_cap_fails_even_beside_a_red_meter(self):
         o = self.run_repoint(-1, {"CLAUDE.md": "x\n" * 1000})
         self.assertEqual(o.status, "FAILED")

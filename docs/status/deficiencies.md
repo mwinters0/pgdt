@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD143 -->
-**`KD1`–`KD143` are allocated, and nothing at or below `KD143` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD144 -->
+**`KD1`–`KD144` are allocated, and nothing at or below `KD144` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -162,12 +162,12 @@ than reading as a phase nobody has sliced.
   `crates/pgdt-io/src/source/compressed/blocks.rs`.
 
 - **KD25** — the plain source bills `PLAIN_PARTITION_CHUNKS` chunks a reader,
-  capped at `POOL_MAX_BYTES`, where the path holds `POOL_DEPTH` chunks flat, and recommends no per-reader
-  memory at all, so plain readers are bounded by a charge describing nothing held — 8 MiB
-  billed against 4 held at the shipped chunk, and unbounded above a budget of
-  `8 MiB × jobs`. **(c) unowned**; promoted by a reading of a parallel plain
-  scan on a real device, which is that path's own reopening condition. Detail:
-  `crates/pgdt-io/src/source/local.rs`.
+  capped at `POOL_MAX_BYTES`, where the path holds `POOL_DEPTH` chunks flat,
+  and recommends no per-reader memory at all, so plain readers are bounded by
+  a charge describing nothing held, and above a budget of that bill times
+  `jobs` not at all. **(c) unowned**; promoted by a reading of a parallel
+  plain scan on a real device, which is that path's own reopening condition.
+  Detail: `crates/pgdt-io/src/source/local.rs`.
 
 - **KD26** — no charge bills a compressed source's seek table, the only
   unbilled term in the account that grows with the file rather than the count —
@@ -289,11 +289,11 @@ than reading as a phase nobody has sliced.
   ([`upstream.md`](upstream.md), "UF1"). Detail:
   `crates/datafusion-pgdump/src/filter/dynamic.rs`.
 
-- **KD34** — `MEMORY_RESERVE`'s 384 MiB does not cover what a run holds above
-  its charge and its statistics account: a worst 544 MiB on a compressed
-  `query`, every `wide-xz24` `query` leg from 1 GiB up killed — glibc's
-  readings, as is the reserve's choice, and neither yet read under mimalloc,
-  the shipped build's. **(b) owned by P23**, which re-takes them, sets both
+- **KD34** — `MEMORY_RESERVE` does not cover what a run holds above its
+  charge and its statistics account on a compressed `query`, every
+  `wide-xz24` `query` leg from 1 GiB up killed — glibc's readings, as is the
+  reserve's choice, and neither yet read under mimalloc, the shipped
+  build's. **(b) owned by P23**, which re-takes them, sets both
   constants and runs the blind gate. Detail: `crates/pgdt-io/src/memory.rs`.
 
 - **KD50** — on a host stating no limit, a flagless run cut to half of
@@ -531,3 +531,10 @@ than reading as a phase nobody has sliced.
   slows beside it, so a four-job first pass is slower than the serial one
   and a 24-job one, taking almost every chunk, is no faster. **(b) owned by
   15.17.1**. Detail: `crates/gz-seek/src/speculate.rs`.
+
+- **KD144** — a range type's own `collation` parameter is not read, so a
+  `text`-bounded range is compared as though it stated none: a spurious note
+  where it states `C`, and a byte equality where it states a non-deterministic
+  collation (I42) and the server's is not. **(c) unowned**; promoted by a dump
+  in hand declaring a collated range. Detail:
+  `crates/pgdt-codec/src/compare/walk.rs`.

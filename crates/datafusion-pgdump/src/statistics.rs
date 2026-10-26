@@ -53,9 +53,8 @@ pub(crate) fn table_statistics(summary: &TableSummary, resolved: &ResolvedSchema
             let data_type = resolved.schema().field(i).data_type();
             let mut statistics = ColumnStatistics::new_unknown();
             statistics.null_count = count(column.nulls, column.nulls_complete);
-            // Never the union's size where a group kept no dictionary: that
-            // is only a floor, and a low distinct count inflates a join's
-            // estimate.
+            // `Absent`, never the union's size as `Inexact`, where a group
+            // kept no dictionary (`docs/design/decisions.md`, "D89").
             statistics.distinct_count = column
                 .distinct
                 .and_then(|distinct| usize::try_from(distinct).ok())
@@ -72,12 +71,11 @@ pub(crate) fn table_statistics(summary: &TableSummary, resolved: &ResolvedSchema
 }
 
 /// The statistics a scan of `projection` emits, `table` being the whole
-/// table's and `schema` the projected one. A pushed-down filter takes rows
-/// out, so under one — `kept` holding the rows pruning kept and each projected
-/// column's values' text bytes over them — the table's counts and extremes
-/// stop describing what the node emits and are handed over as estimates, and
-/// its rows and each column's bytes are bounded by what pruning kept, with no
-/// selectivity guessed below that (`docs/design/decisions.md`, "D89", "D91").
+/// table's and `schema` the projected one. Under a pushed-down filter —
+/// `kept` holding the rows pruning kept and each projected column's values'
+/// text bytes over them — every statistic is handed over `Inexact`, the rows
+/// and each column's bytes being what pruning kept, no selectivity guessed
+/// below them (`docs/design/decisions.md`, "D89", "D91").
 /// A fetch is the plan node's, and is applied there ([`fetched`]).
 pub(crate) fn scanned(
     table: &Statistics,

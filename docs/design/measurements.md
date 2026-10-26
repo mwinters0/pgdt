@@ -326,7 +326,7 @@ Eighteen standing rules for reading anything below:
   event in the timed run itself (`release-profile`). `--count-pair <rev>`
   counts it on the shipped build at the tree's parent and at the tree, which
   prices one change and publishes nothing; callgrind places a rise the pair
-  resolves ([`decisions.md`](decisions.md), "D108").
+  resolves (`--callgrind-recipe`; [`decisions.md`](decisions.md), "D108").
 - **A landed lever invalidates the tables that time its path, so a campaign's
   sweep goes last.** This binds by construction rather than by taste: a phase
   that admits levers from its own profiles is profiling the shape its figures
@@ -483,12 +483,12 @@ a figure" one scale down.
 **Every run of a built binary a reading takes is in a memory-limited
 container**, the figure's own or `scripts/contained.py`'s: a figure's legs and
 untimed builders, the row counts and the traced save count taken beside them,
-every line of the profile, heaptrack and koji recipes, and any probe a session
+every line of the profile, heaptrack, callgrind and koji recipes, and any probe a session
 runs by hand, `cargo run` and `cargo bench` included. An unlimited run takes
 from the machine rather than from the reading, and glibc's per-thread arenas
 grow with the cores. `contained.py` runs the command in the release image,
 whose glibc binaries built there are held to and which carries `perf`,
-`heaptrack`, `strace` and libc's debug symbols, each path it names mounted at
+`heaptrack`, `valgrind`, `strace` and libc's debug symbols, each path it names mounted at
 its own path. Its limit guards the machine and is no figure's budget, so a
 shape stating no allowance discovers it; one past half the machine is refused.
 **The rule is checked, not remembered**: a `PreToolUse` hook
@@ -2553,7 +2553,7 @@ five rows is unchanged.
 The projections are spelled on the CLI, which is what makes this an end-to-end
 figure — `render_field` included — rather than a library-internal one:
 `--no-columns` for the zero-column row and a repeated `--column <name>` for the
-rest ([`decisions.md`](decisions.md), "D28"). **So a per-column
+rest ([`decisions.md`](decisions.md), "D119"). **So a per-column
 delta here does not size a library change**; see "A mode difference and a
 per-column delta are CLI numbers" above.
 

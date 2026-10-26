@@ -67,10 +67,10 @@ enum Command {
     /// wasted work. Remove the
     /// cache file to force a scan from byte 0.
     Parse(parse::ParseArgs),
+    // Kept out of the help below: `docs/design/decisions.md`, "D61".
     /// Report what a dump's cache holds. **`info` never scans** — it reads the
     /// cache `pgdt parse` wrote and errors if there is not one, rather than
-    /// starting an hours-long scan on your behalf
-    /// (`docs/design/decisions.md`, "D61"). A cache from an
+    /// starting an hours-long scan on your behalf. A cache from an
     /// unfinished scan is reported for as far as it got, with the coverage
     /// stated at the top.
     Info(info::InfoArgs),

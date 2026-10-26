@@ -24,8 +24,8 @@ Every one of these is in the *same* change as the code, never a follow-up.
    restatement of the spec, not a changelog.
 2. **A `D<k>` entry** in `decisions.md` for each decision the code cannot
    explain, **cited from the code comment in one line** that never re-argues it
-   or quotes a measured number. The register is capped, so an entry added may
-   mean one pruned.
+   or quotes a measured number. An entry is capped in characters, and the register's growth is metered
+   (`repoint.py`), red meaning an audit, not a strike.
 3. **The STATUS checklist ticked**, linking the notes doc, plus any change to
    "Not started" or the deficiency register the slice caused. **The last
    slice's box is ticked like any other**; the wrap is a separate change.

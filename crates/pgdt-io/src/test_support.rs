@@ -54,8 +54,8 @@ pub(crate) fn seek_table_of(source: &dyn ByteRangeSource) -> SeekTable {
     }
 }
 
-/// `xz` is not `mise`-pinned (`docs/design/decisions.md`, "D73"), so a
-/// missing binary fails with the remedy rather than skipping silently
+/// `xz` is an external tool `mise.toml` does not pin, so a missing binary
+/// fails with the remedy rather than skipping silently
 /// (`docs/design/roadmap.md`, "A test may assume the tools `mise`
 /// pins").
 pub(crate) fn require_xz() {

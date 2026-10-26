@@ -40,6 +40,7 @@ pub(crate) struct QueryArgs {
     /// perform a fresh scan without persisting it.
     #[arg(long)]
     dtcache: Option<PathBuf>,
+    // Kept out of the help below: `docs/design/decisions.md`, "Predicates".
     /// Single-column filter: `column=value`, `column!=value`,
     /// `column<value`, `column<=value`, `column>value`,
     /// `column>=value`, `column IS DISTINCT FROM value`,
@@ -48,8 +49,7 @@ pub(crate) struct QueryArgs {
     /// Repeatable — every term
     /// must match, so the terms are ANDed. `OR`, negation and grouping
     /// are `--where`, which takes an expression over these same terms;
-    /// giving both flags ANDs them (`docs/design/decisions.md`,
-    /// "Predicates").
+    /// giving both flags ANDs them.
     ///
     /// `IS UNREPRESENTABLE` matches a value PostgreSQL accepts for the
     /// column's declared type and the column's type cannot hold — what
@@ -99,11 +99,11 @@ pub(crate) struct QueryArgs {
     /// Given with `--filter`, the expression and every term are ANDed.
     #[arg(long = "where", value_name = "EXPR")]
     where_expr: Option<String>,
+    // Kept out of the help below: `docs/design/decisions.md`, "D119".
     /// Materialize only this column, repeatable — the output carries the
     /// columns in the order the flags give them, which need not be the
     /// file's. A name the table does not carry is an error, and so is a
-    /// repeated one. Omit it entirely for every column
-    /// (`docs/design/decisions.md`, "D28").
+    /// repeated one. Omit it entirely for every column.
     ///
     /// A column that is not projected is never decoded, so projecting a
     /// column away is also the way past a value that fails to decode
@@ -123,9 +123,9 @@ pub(crate) struct QueryArgs {
     /// `--column`.
     #[arg(long, conflicts_with = "column")]
     no_columns: bool,
+    // Kept out of the help below: `docs/design/decisions.md`, "D49".
     /// Select which database to query when `table` is ambiguous across
-    /// a multi-`\connect` dump (`docs/design/decisions.md`,
-    /// "D49").
+    /// a multi-`\connect` dump.
     #[arg(long)]
     database: Option<String>,
     /// `typed` (default) resolves column types against the dump's DDL;

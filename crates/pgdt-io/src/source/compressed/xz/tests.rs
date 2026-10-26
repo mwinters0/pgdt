@@ -3,7 +3,7 @@ use crate::test_support::*;
 use super::*;
 
 /// **The seek table is held once, at a stated cost per entry** — the check
-/// for what is left of `KD26` (`docs/design/decisions.md`, "D4").
+/// for what is left of `KD26`.
 ///
 /// Two properties, neither checked anywhere else. The **share**:
 /// [`XzCodec::over`] takes the layout's own `Arc` through

@@ -121,5 +121,5 @@ ENV UV_PYTHON_DOWNLOADS=never
 # above it. Rejected: an image derived from this one, for the jemalloc leg's
 # reason above.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends heaptrack libc6-dbg linux-perf strace \
+    && apt-get install -y --no-install-recommends heaptrack libc6-dbg linux-perf strace valgrind \
     && rm -rf /var/lib/apt/lists/*

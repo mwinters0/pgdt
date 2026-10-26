@@ -41,18 +41,20 @@ pub(crate) struct ParseArgs {
     /// whole purpose is to write the cache, `none` is rejected.
     #[arg(long)]
     dtcache: Option<PathBuf>,
+    // Kept out of the help below: `docs/design/decisions.md`, "D30".
     /// Scan only the dump's preamble — the dump-level header alone, no
     /// per-block listing or row counts — instead of the whole file. Cost
     /// is independent of dump size regardless of how much `COPY` data
-    /// follows (`docs/design/decisions.md`, "D30"). The cache this leaves is a partial one that `pgdt info`
+    /// follows. The cache this leaves is a partial one that `pgdt info`
     /// reads like any other.
     #[arg(long)]
     preamble_only: bool,
+    // Kept out of the help below: `docs/design/measurements.md`, "What the
+    // read chunk size is worth".
     /// Bytes requested per read from the dump. The default, 1 MiB, is
     /// the fastest of the six sizes measured on the one device class
     /// where a chunk size shows anything at all, and makes no measurable
-    /// difference on the other two (`docs/design/measurements.md`, "What the read
-    /// chunk size is worth") — so this is a tuning escape hatch for a
+    /// difference on the other two — so this is a tuning escape hatch for a
     /// device unlike those, not a knob with a win behind it. A raised
     /// value keeps its buffer pooling and costs memory instead: the read
     /// path holds four buffers of whatever size you ask for, or what

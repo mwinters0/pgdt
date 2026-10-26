@@ -383,8 +383,7 @@ pub(crate) fn builtin_scalar(
 }
 
 /// A canonical Arrow extension type one of our columns claims — the *name*
-/// half of the mapping, which the Arrow type alone cannot carry
-/// (`docs/design/decisions.md`, "D37").
+/// half of the mapping, which the Arrow type alone cannot carry.
 ///
 /// Two exist for us, the two whose storage type is already what we emit:
 /// `arrow.uuid` over `FixedSizeBinary(16)` and `arrow.json` over `Utf8View`.
@@ -425,11 +424,12 @@ impl CanonicalExtension {
 /// element type, not the column's — then a `.`-qualified user type, where only
 /// a domain can bottom out at a built-in, then the built-in name itself.
 ///
-/// **Only a top-level column's field is stamped**
-/// (`docs/design/decisions.md`, "D37"): a `uuid` inside a composite or an
-/// array element keeps its `FixedSizeBinary(16)` with no name on it. Nothing
-/// here is load-bearing for decoding — the metadata is a claim about the
-/// bytes, never an input to producing them.
+/// **Only a top-level column's field is stamped**: a `uuid` inside a
+/// composite or an array element keeps its `FixedSizeBinary(16)` with no name
+/// on it, the nested fields coming from the shared type constructors this
+/// stamp never reaches, and a `uuid[]` column's own field is a `List`, which
+/// no UUID extension describes. Nothing here is load-bearing for decoding —
+/// the metadata is a claim about the bytes, never an input to producing them.
 ///
 /// [`comparison_for`]: crate::compare::comparison_for
 pub fn extension_for(declared: &str, types: &[TypeDef]) -> Option<CanonicalExtension> {

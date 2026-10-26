@@ -442,10 +442,11 @@ fn a_remote_cache_defaults_to_the_urls_last_segment_in_the_working_directory() {
 
 #[test]
 fn two_hosts_serving_the_same_name_share_a_cache_and_the_origin_says_so() {
-    // The consequence D4 states rather than defends away: two same-named
-    // dumps of equal stored size from different hosts, cached in one working
-    // directory, read each other's map. The default path is what makes that
-    // reachable; the recorded origin is what makes it visible.
+    // The consequence `docs/design/decisions.md`, "D87" states rather than
+    // defends away: two same-named dumps of equal stored size from different
+    // hosts, cached in one working directory, read each other's map. The
+    // default path is what makes that reachable; the recorded origin is what
+    // makes it visible.
     let here = serving_dump();
     let elsewhere = serving_dump();
     let dir = tempfile::tempdir().unwrap();

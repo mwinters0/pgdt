@@ -18,7 +18,7 @@ use super::super::WindowProvider;
 /// index's own provider: what a saved index's windows are read through.
 ///
 /// **Only where each window sits is resident**, one entry a checkpoint, the
-/// index's own term (`docs/design/decisions.md`, "D4"). The file is made at
+/// index's own term, which no charge bills (`KD26`). The file is made at
 /// the first window holding any bytes, so a pass that places none — a file
 /// under the spacing, or one resumed into its last unit — makes none.
 pub(super) struct PassWindows {

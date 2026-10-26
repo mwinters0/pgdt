@@ -14,7 +14,8 @@ a second copy of the xz source.
   nonzero `--compress` level compresses the whole output file, and gzip long
   predates the method selector, so `pg_dump -Fp -Z9` has produced a file this
   build cannot read for as long as there has been a build — and the file it
-  has to read is the single member `pg_dump` writes streaming (D14).
+  has to read is the single member `pg_dump` writes streaming ("Facts the
+  grilling found", below).
 - **One phase, not two**, because BGZF is a strict subset of gzip rather than a
   sibling format: the magic and the decoder are the same, and a gzip source
   that could not read a BGZF file would be wrong. What differs between the
@@ -153,8 +154,8 @@ a second copy of the xz source.
   check in the file covers the unit**: a unit of whole BGZF members is covered
   by the members' own trailers, and the walk that finds it (below) decodes
   nothing to record one from. `crc32_combine` relates the stored values to the
-  member's own check. Why: D15's "a read compares its check" stays true on
-  the parallel path. Rejected: trusting unit decodes after a checked first
+  member's own check. Why: a read on the parallel path stays checked, as
+  one through a member's own trailer is. Rejected: trusting unit decodes after a checked first
   pass, where a bit flip arrives as wrong rows rather than an error; checking
   only reads spanning a whole member.
 - **Only offsets, bit positions and CRCs are resident; windows are read when a

@@ -1,10 +1,10 @@
 -- Scanner edge-case fixture schema: structural and escaping cases.
 --
--- Deliberately not koji-derived: covers the edge-case breadth called out in
--- docs/design/decisions.md, "D69" (multiple schemas, NULLs, an empty table,
--- COPY TEXT escaping of newlines/tabs/backslashes/quotes, and a data value
--- containing a COPY-directive-like substring mid-line) rather than koji's
--- specific structure.
+-- Deliberately not koji-derived: covers scanner edge cases (multiple
+-- schemas, NULLs, an empty table, COPY TEXT escaping of
+-- newlines/tabs/backslashes/quotes, and a data value containing a
+-- COPY-directive-like substring mid-line) rather than koji's specific
+-- structure.
 --
 -- Type coverage is deliberately NOT this file's job -- see
 -- scripts/fixture_schema_types.sql. Keeping the two apart keeps this file's

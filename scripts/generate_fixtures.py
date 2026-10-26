@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Generate pg_dump fixture files across PostgreSQL versions and flag combos.
 
-Backs docs/design/decisions.md ("D69"), the
-tested/untested matrix in docs/design/pg-dump-compatibility.md, and
-same doc's fixture-tree rules. Spins up a
+Backs docs/design/decisions.md ("D69") and the
+tested/untested matrix in docs/design/pg-dump-compatibility.md. Spins up a
 throwaway, memory-limited Postgres container per version (never a host-run
 process, per this repo's CPU-heavy-machine / glibc-arena caution), loads one
 fixture schema at a time, runs pg_dump across each schema's own flag matrix, and
@@ -79,24 +78,17 @@ DOCKER = ["sudo", "-n", "docker"]
 HOST_PORT = 55432
 
 # Routine version set: the latest minor release of every PostgreSQL major
-# from 13 onward (13 being the oldest still-supported major) -- see
-# docs/design/decisions.md ("D69") for the policy.
+# from 13 onward (13 being the oldest still-supported major), each an exact
+# minor on `-trixie` (docs/design/decisions.md, "D69"). This dict is the one
+# place the pins are stated: a floating tag drifts to whatever minor it
+# resolves to that day, and the unsuffixed `postgres:16` has already moved
+# Debian suites once. A minor that ships is a regeneration, its pin updated
+# here and named in the commit message.
 #
-# Pinned to exact minors (not floating "16-trixie"-style tags) so a
-# regeneration is reproducible instead of silently drifting to whatever
-# minor the tag resolves to that day. This list changes as new minors ship;
-# update it here and say so in the commit message (see the policy doc for
-# what that message needs to assert).
-#
-# **`-trixie` at every minor, never the unsuffixed tag and never `-alpine`.**
-# The suffix is what pins the libc, and the libc is what the comparison
-# oracle's text answers are taken under: on Alpine (musl) `strcoll` is
-# `strcmp`, so every text comparison would silently be the `C`-collation
-# answer. The unsuffixed `postgres:16` has already moved Debian suites once,
-# which is the drift the pin exists against. `meta.tsv` records the platform
-# triple and the default collation's version, and `oracle_differences.py`
-# guards both across majors, so a version left on a different base is a
-# reported fault rather than five hundred silent differences.
+# `meta.tsv` records the platform triple and the default collation's version,
+# and `oracle_differences.py` guards both across majors, so a version left on
+# a different base is a reported fault rather than five hundred silent
+# differences.
 ROUTINE_VERSIONS = {
     "13": "postgres:13.23-trixie",
     "14": "postgres:14.24-trixie",
@@ -112,22 +104,22 @@ DB_USER = "postgres"
 # A second database, loaded for the `edge_cases` schema only, so that its
 # `dumpall` flag set produces a file in which *two* `\connect` segments carry
 # `COPY` blocks -- the only shape that exercises I1's recurring
-# metadata boundary (decisions.md, "D69"). By I30 this name sorts
+# metadata boundary. By I30 this name sorts
 # between DB_NAME and `postgres`, so the segment order is fixed by naming
 # rather than observed. See scripts/fixture_schema_edge_cases_tenant.sql for
 # why its tables look the way they do.
 TENANT_DB_NAME = "pgdt_tenant"
 TENANT_SCHEMA = "edge_cases"
 
-# fixture_schema_objects.sql's non-default tablespace (decisions.md,
-# "D69") needs a directory that exists and is
-# owned by the container's postgres OS user *before* its `CREATE TABLESPACE`
-# statement runs -- see prepare_tablespace_dir.
+# fixture_schema_objects.sql's non-default tablespace, the fixture for I18's
+# `Tablespace:` suffix, needs a directory that exists and is owned by the
+# container's postgres OS user *before* its `CREATE TABLESPACE` statement
+# runs -- see prepare_tablespace_dir.
 TABLESPACE_DIR = "/var/lib/postgresql/fixture_tablespace"
 
-# Each schema exercises a different concern and so wants a different flag
-# list -- see docs/design/decisions.md ("D69") for
-# why the split exists and why each gets exactly this set.
+# Each schema exercises one concern, which its `fixture_schema_<name>.sql`
+# header names, and gets the flag sets that concern needs: a set beyond
+# `default` says beside it what it is for.
 #
 # A [`Dumpall`] runs `pg_dumpall` over the whole cluster instead of `pg_dump`
 # over the schema's database, with its own flags -- see dump_flag_set.
@@ -135,8 +127,7 @@ TABLESPACE_DIR = "/var/lib/postgresql/fixture_tablespace"
 # A flag-set value is normally a plain flags list (or a `Dumpall`, above). It
 # can also be a `(min_version, flags)` pair restricting the run to versions >=
 # min_version -- introduced for objects/stats: `--statistics` (TOC_PREFIX_STATS,
-# decisions.md, "D69") is PG18+ only, and the
-# routine matrix runs versions 13-18.
+# I18) is PG18+ only, and the routine matrix runs versions 13-18.
 #
 # A third shape is a **session-setting variant**, [`Setting`]: a plain `pg_dump`
 # run while the schema's database carries one setting `pg_dump` does not pin
@@ -198,10 +189,9 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "bytea-output-escape": Setting("bytea_output", "escape"),
         "timezone-monrovia": Setting("TimeZone", "Africa/Monrovia"),
     },
-    # decisions.md, "D69": `--verbose` is the one
-    # documented way to widen the TOC comment block past three lines (the
-    # `-- TOC entry ... (class OID)` / `-- Dependencies: ...` lines), so it's
-    # this schema's whole reason for a flag set beyond the default.
+    # `--verbose` is the one way to widen the TOC comment block past three
+    # lines: `_printTocEntry()` writes `-- TOC entry ... (class ... OID ...)`
+    # and `-- Dependencies: ...` above the `Name:` line only under it.
     "objects": {
         "default": [],
         "verbose": ["--verbose"],
@@ -750,27 +740,23 @@ def generate_for_version(
         stop_container(name)
 
 
-# How long a full regeneration takes is recorded in
-# docs/design/decisions.md ("D69"), and this is the threshold past
-# which that figure has stopped being true. Thirty minutes is where a job
-# stops fitting inside one session and has to be handed off (CLAUDE.md,
-# "Long-running processes"), so a run that crosses it changes what a later
-# session has to plan for. The trigger is this print rather than a comment
-# asking someone to notice, because a comment is read when the file is edited
-# and this has to fire when the run is slow.
-STALE_AFTER_SECONDS = 30 * 60
+# Past this, a regeneration no longer fits inside one session and has to be
+# handed off to a later one (CLAUDE.md, "Long-running processes"), so a run
+# that crosses it changes what a later session has to plan for. The trigger is
+# this print rather than a comment asking someone to notice, because a comment
+# is read when the file is edited and this has to fire when the run is slow.
+HANDOFF_AFTER_SECONDS = 30 * 60
 
 
 def report_elapsed(seconds: float) -> None:
-    """The run's own duration, printed unconditionally, with the staleness
-    warning when it crosses [`STALE_AFTER_SECONDS`]."""
+    """The run's own duration, printed unconditionally, with the hand-off
+    warning when it crosses [`HANDOFF_AFTER_SECONDS`]."""
     print(f"\nelapsed: {seconds / 60:.1f} min ({seconds:.0f} s)")
-    if seconds > STALE_AFTER_SECONDS:
+    if seconds > HANDOFF_AFTER_SECONDS:
         print(
-            f"this run took longer than {STALE_AFTER_SECONDS // 60} minutes: the "
-            'figure in docs/design/decisions.md ("D69") is stale and must '
-            "be updated, and a regeneration now has to be handed off to a later "
-            "session rather than run inline.",
+            f"this run took longer than {HANDOFF_AFTER_SECONDS // 60} minutes: a "
+            "regeneration now has to be handed off to a later session rather "
+            "than run inline.",
             file=sys.stderr,
         )
 

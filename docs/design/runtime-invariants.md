@@ -15,7 +15,7 @@ given. The trigger to walk this file is therefore an upgrade of any of these, ea
 with its own entries: a **kernel major**, a **container-runtime upgrade**, a **Rust
 toolchain bump** (`RT7`, `RT11`, `RT12` and `RT24`'s `temp_dir`, whose behaviour is `std`'s), a **glibc
 release** — the host's or the figures' image's (`RT10` only) — a **bash
-release** (`RT20`), an **arrow or DataFusion upgrade** (`RT21`, `RT22`), a
+release** (`RT20`), an **arrow or DataFusion upgrade** (`RT21`, `RT22`, `RT25`), a
 **zlib-rs upgrade** (`RT23`), a **tempfile upgrade** (`RT24`), and an
 **`object_store` upgrade** (`RT13`–`RT18`, whose behaviour is that crate's and
 whose re-verification is a test run against the oracle rather than a container;
@@ -39,7 +39,7 @@ crate's requirements register, which a phase spec and an inbox cite by number
 ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Inherited from the `.xz`
 source unchanged").
 
-**`RT1`–`RT23` are allocated**, and nothing at or below `RT23` is reused.
+**`RT1`–`RT25` are allocated**, and nothing at or below `RT25` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is
@@ -1261,3 +1261,43 @@ rg -n "O_TMPFILE|TMPFILE|fn create_unlinked" "$(cargo metadata --format-version 
 The test passes only while the pass's spill directory stays empty; the
 search shows `create` still opening `O_TMPFILE` first and unlinking in its
 fallback.
+
+## RT25 — DataFusion has no hidden column: a wildcard expands to every field of a table's one schema
+
+**Claim.** A `TableProvider` states one schema, `TableProvider::schema`,
+and `SELECT *` expands to every field of it but the `USING` columns a join
+folds and those the query's own `EXCLUDE`/`EXCEPT` names. No column can be
+declared that a scan produces and a wildcard leaves out: the nearest thing,
+a file source's virtual columns, is appended to the schema queries see.
+
+**Proof.** DataFusion 55.1.0: `datafusion/session/src/table.rs`,
+`TableProvider::schema`, the trait's one schema;
+`datafusion/expr/src/utils.rs`, `expand_wildcard`, whose skip list is
+`exclude_using_columns` and `get_excluded_columns` alone;
+`datafusion/datasource/src/table_schema.rs`, `TableSchema::table_schema`,
+"the complete schema that will be seen by queries", virtual columns last in
+it. Source alone; no run observes it.
+
+**Scope limit.** Unqualified and qualified wildcards over a table, through
+SQL or a `DataFrame`. A column an embedder hides by its own projection, a
+view over the table, is not claimed: that is a second table, not a hidden
+column of the first.
+
+**Verified against:** DataFusion 55.1.0.
+
+**Relied on by:** [`decisions.md`](decisions.md), "D101" — a companion column
+carrying the unrepresentable test, rejected because every `SELECT *` would
+show it.
+
+**Re-verify:**
+
+```sh
+src() { cargo metadata --format-version 1 | jq -r --arg n "$1" '.packages[] | select(.name == $n) | .manifest_path' | xargs dirname; }
+grep -n -A19 '^pub fn expand_wildcard' "$(src datafusion-expr)/src/utils.rs"
+grep -n 'seen by queries' "$(src datafusion-datasource)/src/table_schema.rs"
+rg -n -i 'hidden.?col|metadata.?col|system.?col' "$(src datafusion-expr)/src" "$(src datafusion-sql)/src" "$(src datafusion-session)/src"
+```
+
+It holds while `expand_wildcard` skips only the two lists above, the table
+schema still names its virtual columns as seen by queries, and the search
+finds nothing.

@@ -82,19 +82,30 @@ one being unable to say which phase is short.
 
 ## The decision register
 
-`docs/design/decisions.md` is **capped at 800 lines** of numbered entries, each
-at most seven lines: **Decision**, **Why**, **Rejected** (and why), **Reopens**,
-**Code** (the item), **Evidence** (a figure id, an invariant, a test).
+`docs/design/decisions.md` is the **index and the citation target** — one
+`- **D<k>** <title>` line per entry under its topic's heading, and the
+allocation watermark — and each entry's body lives in its topic's file under
+`docs/design/decisions/`, which opens with what the topic is and reads on its
+own. An entry is **Decision**, **Why**, **Rejected** (and why), **Reopens**,
+**Code** (the item), **Evidence** (a figure id, an invariant, a test), **at most
+`ENTRY_CHARS` characters** (`scripts/repoint.py`), wrapped at 120 columns.
 
 - **`D<k>` is allocated on discovery, never renumbered and never reused**, as
   `P<k>` is: entries get cited, and a citation that renumbers lies.
 - **Mechanism description is not an entry**: how the thing works lives in the
   code and its rustdoc, and an entry says why it is that shape.
+- **A `Rejected` item is an alternative a reader of the code would propose**,
+  never the record of what one session tried; an entry cites no dated history
+  entry, which would hold that file past its keystone.
 - **A code comment cites `D<k>` in one line**, never re-arguing it or quoting a
   measured number — a measured quantity is stated once, in `measurements.md`,
   and an entry cites the figure.
-- **The cap is the mechanism**: folding a phase's decisions in prunes those that
-  no longer bind.
+- **The entry cap is the mechanism against padding; the audit is the mechanism
+  against dead weight.** No cap bounds the register whole, since a full one
+  strikes a live decision to admit the next: `repoint.py` meters the register's
+  growth in bytes since the last repoint, and red means every entry is read
+  against the code — mechanism, duplicate and spent rejection cut, an entry that
+  no longer binds struck — never that something is struck to fit.
 
 ## STATUS.md
 

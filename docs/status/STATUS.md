@@ -167,3 +167,17 @@ beside the mechanism it governs first. Full rules:
   small counts buy. A gate that holds four jobs to "no slower" may also need
   the slowdown beside the tasks separated first: a clock, cache or bandwidth
   cost is not one any of the three removes.
+
+- **The release target state is reused across images.** The call: `release.py`'s
+  persistent target state (`target/release-image/target/`) stays keyed to
+  nothing, so objects cargo fingerprints as fresh — on the rustc version, never
+  the image digest or its sysroot components — survive a change of image;
+  v0.2.0's rehearsed x86-64 archive differed from CI's by exactly this
+  (`runs/d109-archive-diff/findings.md`), and D109 now says so rather than
+  relying on the two agreeing. Why: nothing relies on the archives agreeing,
+  and keying the state to the digest costs a cold fat-LTO build of every leg at
+  every image change. Reconsidering changes D104's claim that one pin names
+  every figure's runtime: a C dependency's objects built under an earlier
+  image's gcc can survive into a timed binary, so holding that claim means
+  keying the state to the digest, or clearing it at each `upgrade-deps`, and a
+  rehearsal then builds what CI builds.

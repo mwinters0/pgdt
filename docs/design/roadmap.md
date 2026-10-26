@@ -103,8 +103,9 @@ Two things distinguish this project from existing `pg_dump` tooling
   difference between a saturated-device scan and a merely-correct one is the
   difference between a usable tool and an overnight job. Concretely: the
   local-file path should stay device-bound, not CPU-bound, on hardware from
-  HDD through NVMe, at flat memory. Where it currently stands, and what a scan
-  spends its time on, is [`decisions.md`](decisions.md), "D29"; the figures are [`measurements.md`](measurements.md).
+  HDD through NVMe, at flat memory. Where it currently stands is
+  [`measurements.md`](measurements.md), "Scan throughput by input shape", and
+  the rest of the figures are beside it.
 
   **Flat memory is a property of block-level structures**: resident that does
   not grow with the rows streamed is what shows a scan streams rather than
@@ -870,10 +871,11 @@ What it inherits:
 - **A branch already taken**: a remainder growing with the statistics volume
   is billed to the query rather than reserved — `pgdt query`'s mapping pass
   carves its workers around the statistics a loaded cache holds, and its
-  replay, which keeps none, around nothing (D85). Its instrument is kept —
-  `instrument::statistics::statistics_loaded`, the heap a cache load hands a pass, which is
-  the only statistics term a query has. It is filed for P22 as well, being a
-  fourth consumer of the one number, and whichever phase runs first settles
+  replay, carved once that pass has settled the table, around the settled
+  table's, which the table and its plan keep (D85). Its instrument is kept —
+  `instrument::statistics::statistics_loaded`, the heap a cache load hands a
+  pass, which reads the first of those terms alone. It is filed for P22 as
+  well, being a fourth consumer of the one number, and whichever phase runs first settles
   whether it stays billed.
 - **The figures owed.** `reserve`, `rss-attribution`, `statistics-gathering`
   and `statistics-pruning` were re-taken at `3a34f062`, on the shipped
@@ -1118,9 +1120,11 @@ which is what makes the difference worth minding at the moment one is found.
   exists to cap. Lifting it is one expression, and it is here rather than taken
   along with the read shape because it widens the *cut* at large stated chunks
   and nothing has measured that — a wider cut was measured to cost throughput
-  at the compressed default, which is a different mechanism but the same
-  question asked of the same number ([`decisions.md`](decisions.md),
-  "D8"). It wants a reading at `--chunk-size 2m`/`4m`/`8m`
+  at the compressed default
+  ([`../status/history/2026-09-11.md`](../status/history/2026-09-11.md),
+  "`19.20`: the cut width stays at one unit"), which is a different mechanism
+  but the same question asked of the same number
+  ([`decisions.md`](decisions.md), "D8"). It wants a reading at `--chunk-size 2m`/`4m`/`8m`
   before it lands, not a spec. **It also raises what the charge bills**, the
   same product being `Partitioning::partition_bytes` — which over-bills the
   plain path already
@@ -1322,9 +1326,10 @@ which is what makes the difference worth minding at the moment one is found.
   every column's text form has a bounded width, the `COPY` header bounds a
   row's width before the first row, so a block could be sized without waiting
   for its end — its in-flight statistics at the final size from the start. The
-  general rule sizes by rows per group at a block's end, because `varchar` and
-  its kin leave a header silent on width ([`decisions.md`](decisions.md),
-  "D82"); this is the cheaper case beside it, taken once that rule has shipped.
+  general rule sizes by rows per group at a block's end
+  (`crates/pgdt-mapping/src/statistics/density.rs`), because `varchar` and its
+  kin leave a header silent on width; this is the cheaper case beside it, taken
+  once that rule has shipped.
 
 - **`RESET` for a provider's session settings, upstream.** It waits on
   DataFusion ([`../status/upstream.md`](../status/upstream.md), "UF3"), and is

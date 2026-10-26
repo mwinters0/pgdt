@@ -26,17 +26,16 @@ Options:
       --preamble-only
           Scan only the dump's preamble — the dump-level header alone, no per-block listing or row
           counts — instead of the whole file. Cost is independent of dump size regardless of how
-          much `COPY` data follows (`docs/design/decisions.md`, "D30"). The cache this leaves is a
-          partial one that `pgdt info` reads like any other
+          much `COPY` data follows. The cache this leaves is a partial one that `pgdt info` reads
+          like any other
 
       --chunk-size <BYTES>
           Bytes requested per read from the dump. The default, 1 MiB, is the fastest of the six
           sizes measured on the one device class where a chunk size shows anything at all, and makes
-          no measurable difference on the other two (`docs/design/measurements.md`, "What the read
-          chunk size is worth") — so this is a tuning escape hatch for a device unlike those, not a
-          knob with a win behind it. A raised value keeps its buffer pooling and costs memory
-          instead: the read path holds four buffers of whatever size you ask for, or what `--memory`
-          leaves for read buffers, whichever is fewer
+          no measurable difference on the other two — so this is a tuning escape hatch for a device
+          unlike those, not a knob with a win behind it. A raised value keeps its buffer pooling and
+          costs memory instead: the read path holds four buffers of whatever size you ask for, or
+          what `--memory` leaves for read buffers, whichever is fewer
 
       --max-line-bytes <BYTES>
           The longest line the scan accepts, in bytes. A longer one stops the scan with an error
@@ -200,15 +199,14 @@ Options:
           sized off the count the source recommends rather than off a constant.
           
           **On `query` the buffer budget divides by two terms rather than one**: what a worker costs
-          to read, plus the 64 MiB a sub-stream's held batch may pin (`docs/design/decisions.md`,
-          "I/O, memory and parallelism") — charged on a plain file, where a batch pins read buffers
-          the first term never counted, and not on a block-decoding `.xz`, whose first term already
-          counts a decoded block. At 64 MiB — which is what a plain file gets unless a limit or this
-          flag says otherwise — the plain file's sum already exceeds the budget, so rather than
-          decline the readers the plan narrows each sub-stream's batch span to seat them
-          (`docs/design/decisions.md`, "D84"): `--jobs N` buys N sub-streams, bought with batch size
-          rather than with buffers. `parse` is unaffected by the second term: it builds no batches,
-          so nothing on that path pins a span.
+          to read, plus the 64 MiB a sub-stream's held batch may pin — charged on a plain file,
+          where a batch pins read buffers the first term never counted, and not on a block-decoding
+          `.xz`, whose first term already counts a decoded block. At 64 MiB — which is what a plain
+          file gets unless a limit or this flag says otherwise — the plain file's sum already
+          exceeds the budget, so rather than decline the readers the plan narrows each sub-stream's
+          batch span to seat them: `--jobs N` buys N sub-streams, bought with batch size rather than
+          with buffers. `parse` is unaffected by the second term: it builds no batches, so nothing
+          on that path pins a span.
 
   -h, --help
           Print help (see a summary with '-h')

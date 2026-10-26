@@ -2,12 +2,10 @@
 //! sub-streams, carrying what the dump's map says about the table.
 //!
 //! **It exists to answer `statistics_from_inputs`, and to carry the scan's
-//! own metrics.** DataFusion reads a source's statistics off the
-//! `ExecutionPlan` — `TableProvider::statistics` is read by nothing in DataFusion 55 — and
-//! `StreamingTableExec` answers `Statistics::new_unknown`. So the streaming
-//! exec stays, held as an implementation detail rather than as a child: this
-//! is a leaf, and nothing in a plan tree sees the node inside it. Its metrics
-//! are reported beside the streaming exec's own ([`ScanMetrics`]).
+//! own metrics** (`docs/design/decisions.md`, "D89"). The streaming exec is
+//! held as an implementation detail rather than as a child: this is a leaf,
+//! and nothing in a plan tree sees the node inside it. Its metrics are
+//! reported beside the streaming exec's own ([`ScanMetrics`]).
 //!
 //! **It holds the dynamic filters pushed to it** ([`DynamicFilters`]), and
 //! hands them to every sub-stream it runs ([`ReplayFilter`]): the sub-streams

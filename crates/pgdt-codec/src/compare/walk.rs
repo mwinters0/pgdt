@@ -72,14 +72,21 @@ fn array_comparison(
 /// The comparison for a range or multirange column `declared`, from its
 /// bound type and whether the range type canonicalizes.
 ///
-/// **The bound is asked with no `COLLATE` clause**, which is the one place
-/// this walk knowingly answers weaker than the file allows: a range type
-/// carries its own `collation` parameter and the preamble grammar keeps only
-/// `subtype`, `multirange_type_name` and `canonical` (I10), so a `text`-bounded
-/// range reaches [`collated_text`](crate::compare::collated_text)'s no-clause
-/// arm. That is the conservative direction — reading the parameter would move
-/// the verdict and never the answer, so it is a property here rather than a
-/// deficiency.
+/// **The bound is asked with no `COLLATE` clause**: the preamble grammar keeps
+/// only `subtype`, `multirange_type_name` and `canonical` of a range's
+/// parameters (I10), so a `text`-bounded range reaches
+/// [`collated_text`](crate::compare::collated_text)'s no-clause arm.
+///
+/// deficiency: KD144 — a range type's own `collation` parameter, which
+/// `pg_dump` writes where it differs from the subtype's, is not read, and the
+/// subtype's comparison runs under it (I46). So a range stating `C` gets
+/// [`UnknownCollation`](crate::compare::ComparisonDivergence::UnknownCollation)
+/// where it agrees outright, and a range stating a collation the same dump
+/// declares `deterministic = false` (I42) gets the same, which does not reach
+/// `=`/`!=`, where the server's equality is not a byte comparison and the row
+/// set differs. **(c) unowned**; closing it means reading the parameter into
+/// `TypeKind::Range` and passing it here as the bound's clause. Promoted by a
+/// dump in hand declaring a collated range.
 ///
 /// A range whose DDL stated no subtype at all is [`ComparisonPlan::Refused`]
 /// outright rather than a tree with an unnameable position in it: there is no

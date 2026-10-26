@@ -38,6 +38,8 @@ pub(crate) struct ParallelArgs {
     /// is delivered at all** — see that flag's own doc.
     #[arg(long, value_name = "N", value_parser = parse_jobs)]
     jobs: Option<usize>,
+    // Kept out of the help below: `docs/design/decisions.md`, "I/O, memory
+    // and parallelism" and "D84".
     /// How much memory pgdt may hold resident in total, in bytes — the number
     /// you would give the container. Left unstated, pgdt reads the
     /// memory limit it is running under — the smallest cgroup limit that binds
@@ -80,15 +82,14 @@ pub(crate) struct ParallelArgs {
     ///
     /// **On `query` the buffer budget divides by two terms rather than one**:
     /// what a worker costs to read, plus the 64 MiB a sub-stream's held batch
-    /// may pin (`docs/design/decisions.md`, "I/O, memory and parallelism") —
-    /// charged on a plain file, where a batch pins read buffers the first term
-    /// never counted, and not on a block-decoding `.xz`, whose first term
-    /// already counts a decoded block. At 64 MiB — which is what a plain file
-    /// gets unless a limit or this flag says otherwise — the plain file's sum
-    /// already exceeds the budget, so rather than decline the readers the
-    /// plan narrows each sub-stream's batch span to seat them
-    /// (`docs/design/decisions.md`, "D84"): `--jobs N` buys N sub-streams,
-    /// bought with batch size rather than with buffers.
+    /// may pin — charged on a plain file, where a batch pins read buffers the
+    /// first term never counted, and not on a block-decoding `.xz`, whose
+    /// first term already counts a decoded block. At 64 MiB — which is what a
+    /// plain file gets unless a limit or this flag says otherwise — the plain
+    /// file's sum already exceeds the budget, so rather than decline the
+    /// readers the plan narrows each sub-stream's batch span to seat them:
+    /// `--jobs N` buys N sub-streams, bought with batch size rather than with
+    /// buffers.
     /// `parse` is unaffected by the second term: it builds no batches, so
     /// nothing on that path pins a span.
     #[arg(long, value_name = "BYTES", value_parser = parse_memory)]

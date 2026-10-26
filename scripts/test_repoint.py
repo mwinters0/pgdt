@@ -19,7 +19,8 @@ from pathlib import Path
 import repoint
 
 FILES = {
-    "docs/design/decisions.md": "# Decisions\n\n## A (`a.rs`)\n### D1 x\nbody\n",
+    "docs/design/decisions.md": "# Decisions\n\n<!-- decision-watermark: D1 -->\n\n## A (`a.rs`)\n- **D1** x\n",
+    "docs/design/decisions/a.md": "# A (`a.rs`)\n\n### D1 x\nbody\n",
     "docs/status/STATUS.md": (
         "# Status\n\n<!-- repointed: STAMP -->\n\n## What exists\n\n"
         "| a | b |\n|---|---|\n| x | y |\n\n## Not started\n\n- a thing that will hold 5 MiB.\n"
@@ -61,30 +62,58 @@ def make_repo(tmp: str) -> Path:
 
 
 class Register(unittest.TestCase):
-    def check(self, text: str) -> list[str]:
+    INDEX = "# D\n\n<!-- decision-watermark: D4 -->\n\n## S\n- **D3** t\n- **D4** t\n"
+
+    def check(self, topic: str, index: str = INDEX) -> list[str]:
         with tempfile.TemporaryDirectory() as tmp:
-            write(Path(tmp), "docs/design/decisions.md", text)
+            write(Path(tmp), "docs/design/decisions.md", index)
+            write(Path(tmp), "docs/design/decisions/s.md", topic)
             return repoint.register_problems(Path(tmp))
 
-    def test_an_entry_over_seven_body_lines_is_named(self):
-        text = "# D\n\n## S\n### D3 t\n" + "l\n" * 8 + "### D4 t\nl\n"
-        self.assertEqual([p for p in self.check(text) if "D3" in p and "8 lines" in p].__len__(), 1)
-        self.assertFalse([p for p in self.check(text) if "D4" in p])
+    def test_an_entry_over_the_character_cap_is_named(self):
+        long = "x" * (repoint.ENTRY_CHARS + 1)
+        problems = self.check(f"# S\n### D3 t\n{long}\n### D4 t\nl\n")
+        self.assertEqual(len([p for p in problems if "D3" in p and "characters" in p]), 1)
+        self.assertFalse([p for p in problems if "D4" in p])
 
-    def test_blank_lines_do_not_count(self):
-        text = "# D\n\n## S\n### D3 t\n" + "l\n\n" * 7
-        self.assertEqual(self.check(text), [])
+    def test_blank_lines_and_the_lead_do_not_count(self):
+        lead = "x" * (repoint.ENTRY_CHARS + 1)
+        self.assertEqual(self.check(f"# S\n\n{lead}\n\n### D3 t\nl\n\nl\n### D4 t\nl\n"), [])
 
-    def test_the_file_cap_is_held(self):
-        text = "# D\n" + "\n" * (repoint.REGISTER_LINES + 1)
-        self.assertTrue(any("cap of" in p for p in self.check(text)))
+    def test_a_line_that_could_wrap_is_named_and_an_unbreakable_one_is_not(self):
+        wrap = "w " * repoint.LINE_COLUMNS
+        token = "t" * (repoint.LINE_COLUMNS + 40)
+        heading = "### D4 " + ("h " * repoint.LINE_COLUMNS).strip()
+        index = self.INDEX.replace("- **D4** t", "- **D4** " + ("h " * repoint.LINE_COLUMNS).strip())
+        problems = self.check(f"# S\n### D3 t\n{wrap}\n{heading}\n{token}\n", index)
+        self.assertEqual([p for p in problems if "could wrap" in p], [f"docs/design/decisions/s.md:3 runs past {repoint.LINE_COLUMNS} columns and could wrap"])
+
+    def test_the_index_and_the_topic_files_name_the_same_entries(self):
+        index = "# D\n\n<!-- decision-watermark: D5 -->\n\n- **D3** t\n- **D4** t\n"
+        problems = self.check("# S\n### D3 t\nl\n### D5 t\nl\n", index)
+        self.assertTrue(any("D5" in p and "does not index" in p for p in problems))
+        self.assertTrue(any("D4" in p and "no topic file" in p for p in problems))
+
+    def test_a_title_differing_between_index_and_file_is_named(self):
+        problems = self.check("# S\n### D3 other\nl\n### D4 t\nl\n")
+        self.assertTrue(any("D3" in p and "indexed as" in p for p in problems))
+
+    def test_an_entry_held_twice_and_a_watermark_below_an_entry_are_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp), "docs/design/decisions.md", "# D\n\n<!-- decision-watermark: D3 -->\n\n- **D3** t\n- **D4** t\n")
+            write(Path(tmp), "docs/design/decisions/s.md", "# S\n### D3 t\nl\n### D4 t\nl\n")
+            write(Path(tmp), "docs/design/decisions/u.md", "# U\n### D4 t\nl\n")
+            problems = repoint.register_problems(Path(tmp))
+        self.assertTrue(any("D4 is held by" in p for p in problems))
+        self.assertTrue(any("watermark D3 is below" in p for p in problems))
 
     def test_a_measured_quantity_is_named(self):
         for bad in ("runs 5.6× faster", "holds 384 MiB", "costs 0.113 s", "20% headroom"):
-            self.assertTrue(any("quantity" in p for p in self.check(f"# D\n### D1 t\n{bad}\n")), bad)
+            problems = self.check(f"# S\n### D3 t\n{bad}\n### D4 t\nl\n")
+            self.assertTrue(any("quantity" in p for p in problems), bad)
 
     def test_a_handle_or_a_constant_name_is_not_a_quantity(self):
-        self.assertEqual(self.check("# D\n### D1 t\n`POOL_DEPTH` slots, D46, I3, `scan-throughput-*`\n"), [])
+        self.assertEqual(self.check("# S\n### D3 t\n`POOL_DEPTH` slots, D46, I3, `scan-throughput-*`\n### D4 t\nl\n"), [])
 
 
 class History(unittest.TestCase):
@@ -211,6 +240,18 @@ class Meter(unittest.TestCase):
             write(repo, "docs/design/roadmap.md", "x\n" * 20)
             self.assertEqual(repoint.check(repo, budget=10, out=io.StringIO()), 1)
             self.assertEqual(repoint.check(repo, budget=100, out=io.StringIO()), 0)
+
+    def test_the_register_s_growth_is_metered_in_bytes(self):
+        topic = FILES["docs/design/decisions/a.md"]
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = make_repo(tmp)
+            grown = topic.replace("\n\n### D1", "\n\n" + "x" * (repoint.REGISTER_GROWTH_BYTES + 1) + "\n\n### D1")
+            write(repo, "docs/design/decisions/a.md", grown)
+            out = io.StringIO()
+            self.assertEqual(repoint.check(repo, out=out), 1)
+            self.assertIn("decision register has grown", out.getvalue())
+            write(repo, "docs/design/decisions/a.md", topic.replace("\n\n### D1", "\n\n" + "x" * 100 + "\n\n### D1"))
+            self.assertEqual(repoint.check(repo, out=io.StringIO()), 0)
 
     def test_a_stamp_that_is_not_an_ancestor_is_red(self):
         with tempfile.TemporaryDirectory() as tmp:

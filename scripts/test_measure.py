@@ -6607,10 +6607,10 @@ class Consumers(unittest.TestCase):
                 self.assertNotIn("docs/design/measurements.md", measure.consumers(fig))
 
     def test_a_document_naming_the_id_is_a_consumer(self):
-        # `decisions.md` cites every figure it argues from by id, which is what
-        # makes the computed edge possible at all.
+        # The register's topic files cite every figure they argue from by id,
+        # which is what makes the computed edge possible at all.
         self.assertIn(
-            "docs/design/decisions.md", measure.consumers(measure.FIGURES_BY_ID["allocator"])
+            "docs/design/decisions/io.md", measure.consumers(measure.FIGURES_BY_ID["allocator"])
         )
 
     def test_a_glob_reaches_the_family_it_spells(self):
@@ -6619,7 +6619,7 @@ class Consumers(unittest.TestCase):
         for fid in ("scan-throughput-cold", "scan-throughput-warm", "scan-throughput-nvme"):
             with self.subTest(figure=fid):
                 self.assertIn(
-                    "docs/design/decisions.md", measure.consumers(measure.FIGURES_BY_ID[fid])
+                    "docs/design/decisions/io.md", measure.consumers(measure.FIGURES_BY_ID[fid])
                 )
 
     def test_a_dated_history_entry_is_not_a_consumer(self):
@@ -7319,6 +7319,7 @@ class ReadingsContained(unittest.TestCase):
         recipes = {
             "profile": measure.profile_recipe(cfg),
             "heaptrack": measure.heaptrack_recipe(cfg),
+            "callgrind": measure.callgrind_recipe(cfg),
             **{f"koji wrap={w}": measure.koji_recipe(cfg, "pgdt-koji", w, 8) for w in (False, True)},
         }
         for name, recipe in recipes.items():
@@ -7389,7 +7390,7 @@ class ProfileRecipe(unittest.TestCase):
         # zero-copy phase's answer. The image's `libc6-dbg` is held to its
         # `libc6` by apt, and every recording and report runs there.
         dockerfile = (measure.REPO / "release/Dockerfile").read_text()
-        for package in ("libc6-dbg", "linux-perf", "heaptrack", "strace"):
+        for package in ("libc6-dbg", "linux-perf", "heaptrack", "strace", "valgrind"):
             with self.subTest(package=package):
                 self.assertIn(f" {package}", dockerfile)
         recipe = self._recipe()
@@ -7866,6 +7867,215 @@ class HeaptrackRecipe(unittest.TestCase):
         with unittest.mock.patch.object(measure, "run") as ran:
             with unittest.mock.patch("sys.stdout"):
                 measure.cmd_heaptrack()
+        ran.assert_not_called()
+
+
+class CallgrindRecipe(unittest.TestCase):
+    """What places a rise `--count-pair` resolved (`decisions.md`, "D108").
+    Every mistake below still returns a placement, of some other workload than
+    the one the pair counted, so the gate would be read against the wrong
+    number."""
+
+    def _recipe(self) -> str:
+        return measure.callgrind_recipe(measure.Config())
+
+    @staticmethod
+    def _counted(lines: list[str]) -> list[int]:
+        """The index of each callgrind run's first line."""
+        return [i for i, ln in enumerate(lines) if f" {measure.CALLGRIND} --tool=callgrind " in ln]
+
+    def test_the_legs_are_the_binaries_the_pair_counted(self):
+        # A rebuild is another link: the rise placed is the one counted in
+        # those two files, which the pair leaves where this reads them.
+        cfg = measure.Config()
+        lines = self._recipe().splitlines()
+        self.assertIn("count_pair_leg_binary(", inspect.getsource(measure.count_pair_binary))
+        first = self._counted(lines)[0]
+        for leg in measure.COUNT_PAIR_LEGS:
+            binary = measure.count_pair_leg_binary(cfg, leg)
+            with self.subTest(leg=leg):
+                self.assertEqual(binary, cfg.out_dir / f"pgdt-count-pair-{leg}")
+                asked = next(i for i, ln in enumerate(lines) if f"-- {binary} --version" in ln)
+                self.assertIn("'(profile: release)'", lines[asked])
+                self.assertLess(asked, first)
+        recipe = "\n".join(lines)
+        self.assertNotIn("release.py build", recipe)
+        self.assertNotIn("cargo build", recipe)
+
+    def test_each_row_runs_as_the_pair_counts_it(self):
+        """`_script`'s timed line and builder, flag for flag, less the stated
+        allowance: a moved flag would place a rise in a workload never
+        counted."""
+        for command, _, _ in measure.COUNT_PAIR_SHAPES:
+            with self.subTest(shape=command):
+                env, argv, builder = measure.callgrind_invocation(
+                    command, "/dump.sql", "/tmp/x.dtcache", 1 << 29
+                )
+                stated = ["--memory", str(1 << 29)]
+                if argv[0] == "sql":
+                    # Ahead of the query, so the scan it plans draws against it.
+                    at = argv.index(f"SET pgdump.memory = {1 << 29}")
+                    self.assertEqual(argv[at - 1 : at + 2 : 2], ["-c", "-c"])
+                    argv = [*argv[: at - 1], *argv[at + 1 :]]
+                else:
+                    self.assertEqual(argv[-2:], stated)
+                    argv = argv[:-2]
+                script = measure._script(command)
+                before, _, timed = script.partition("time ")
+                timed = timed.split(" >", 1)[0]
+                self.assertEqual(
+                    f"{' '.join([*env, '/pgdt'])} {' '.join(argv)}".lstrip(),
+                    timed.replace("'", "").lstrip(),
+                )
+                if builder is None:
+                    self.assertEqual(before, "")
+                    continue
+                self.assertEqual(builder[-2:], stated)
+                built = before.removesuffix(" && ").split()
+                self.assertEqual(built[0], "/pgdt")
+                self.assertEqual(builder[:-2], [w for w in built[1:] if w != ">/dev/null"])
+        with self.assertRaises(ValueError):
+            measure.callgrind_invocation("parse-rss", "/d", "/c", 1)
+
+    def test_each_run_states_the_allowance_its_pair_container_gave(self):
+        # The container here is larger, to hold valgrind; a discovered
+        # allowance would move the readers and what statistics may hold (D85).
+        cfg = measure.Config()
+        lines = re.sub(r"\\\n", " ", self._recipe()).splitlines()
+        prefix = measure.contained_prefix(cfg, measure.CALLGRIND_MEMORY)
+        for command, label, memory in measure.COUNT_PAIR_SHAPES:
+            allowance = contained.size_bytes(memory or cfg.memory)
+            self.assertGreater(contained.size_bytes(measure.CALLGRIND_MEMORY), allowance)
+            row = lines[lines.index(f"# {label}") + 1:]
+            row = row[: next((i for i, ln in enumerate(row) if ln.startswith("# ") or not ln), len(row))]
+            pgdt_runs = [
+                ln for ln in row
+                if ln.startswith(prefix) and "callgrind_annotate" not in ln
+            ]
+            with self.subTest(shape=command):
+                self.assertEqual(len(pgdt_runs) % (2 * measure.CALLGRIND_REPS), 0)
+                for line in pgdt_runs:
+                    self.assertTrue(
+                        f" --memory {allowance} " in line or f"'SET pgdump.memory = {allowance}'" in line,
+                        line,
+                    )
+
+    def test_the_input_is_the_pairs_unstaged(self):
+        cfg = measure.Config()
+        recipe = self._recipe()
+        name = measure.input_file(measure.COUNT_PAIR_INPUT)
+        link = cfg.out_dir / "callgrind-count-pair" / name
+        self.assertIn(f"ln -sf {cfg.cache_dir / name} {link}", recipe)
+        self.assertNotIn(str(cfg.warm_dir), recipe)
+        for line in recipe.splitlines():
+            if " parse --source " in line or " query --source " in line or " sql --dump " in line:
+                with self.subTest(line=line):
+                    self.assertTrue(
+                        f"--source {link} " in line or f"--dump {measure.DFCLI_CATALOG}={link} " in line,
+                        line,
+                    )
+        self.assertEqual(recipe.splitlines()[-1], f"rm -f {link}")
+
+    def test_every_run_starts_from_no_cache(self):
+        # The pair's container starts from none, so a run over a cache the
+        # last one left would count a read where the pair counted a map.
+        lines = self._recipe().splitlines()
+        for i in self._counted(lines):
+            with self.subTest(line=lines[i]):
+                before = lines[i - 1]
+                if " parse --source " in before and "--tool" not in before:
+                    before = lines[i - 2]
+                self.assertTrue(before.startswith("rm -f "), before)
+
+    def test_both_legs_alternate_as_the_pair_orders_its_reps(self):
+        self.assertGreaterEqual(measure.CALLGRIND_REPS, 2)
+        lines = self._recipe().splitlines()
+        reps = measure.CALLGRIND_REPS
+        expected = [
+            (leg, rep)
+            for rep in range(1, reps + 1)
+            for leg in (
+                measure.COUNT_PAIR_LEGS if rep - 1 < (reps + 1) // 2 else measure.COUNT_PAIR_LEGS[::-1]
+            )
+        ]
+        for command, _, _ in measure.COUNT_PAIR_SHAPES:
+            runs = [
+                re.search(rf"/{re.escape(command)}-(\w+)-(\d+)\.out ", lines[i + 1])
+                for i in self._counted(lines)
+            ]
+            got = [(m.group(1), int(m.group(2))) for m in runs if m]
+            with self.subTest(shape=command):
+                self.assertEqual(got, expected)
+
+    def test_each_count_is_annotated_and_its_rows_totals_listed(self):
+        cfg = measure.Config()
+        recipe = self._recipe()
+        work = cfg.out_dir / "callgrind-count-pair"
+        for command, _, _ in measure.COUNT_PAIR_SHAPES:
+            runs = [
+                work / f"{command}-{leg}-{rep}"
+                for rep in range(1, measure.CALLGRIND_REPS + 1)
+                for leg in measure.COUNT_PAIR_LEGS
+            ]
+            with self.subTest(shape=command):
+                for run in runs:
+                    self.assertIn(f"--callgrind-out-file={run}.out ", recipe)
+                    self.assertIn(
+                        f"callgrind_annotate --inclusive=no --threshold=100 --show-percs=no "
+                        f"--auto=no {run}.out > {run}.txt",
+                        recipe,
+                    )
+                # Named, not globbed: `parse-*` would take the data level's.
+                self.assertIn(
+                    f"grep -H 'PROGRAM TOTALS' {' '.join(f'{r}.txt' for r in runs)}\n", recipe
+                )
+                for rep in range(1, measure.CALLGRIND_REPS + 1):
+                    parent, tree = (work / f"{command}-{leg}-{rep}.txt" for leg in measure.COUNT_PAIR_LEGS)
+                    self.assertIn(f"  {parent} {tree} | sort -rn | cut -f2- ", recipe)
+
+    def test_the_place_is_each_functions_self_ir_change(self):
+        """The awk the recipe prints, run on two listings `callgrind_annotate`
+        writes: the object path each leg's binary has dropped, a name met
+        twice summed, the totals left out, an unchanged function absent."""
+        listing = (
+            "--------------------------------------------------------------------------------\n"
+            "Ir             \n"
+            "{total}  PROGRAM TOTALS\n\n"
+            "Ir             file:function\n"
+            "{a}  ???:pgdt_core::copy::unescape_field [{obj}]\n"
+            "1,000  ???:<a::B<C, D> as e::F>::g [{obj}]\n"
+            "{c}  ???:pgdt_codec::key::compare_keys [{obj}]\n"
+            "{c}  ???:pgdt_codec::key::compare_keys [{obj}]\n"
+            "7  ./string/memcmp.S:__memcmp_avx2_movbe [/usr/lib/x86_64-linux-gnu/libc.so.6]\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            parent, tree = Path(tmp) / "p.txt", Path(tmp) / "t.txt"
+            for path, total, a, c, leg in (
+                (parent, "9,000,000,000", "5,007,488,350", "2", "parent"),
+                (tree, "9,500,000,000", "4,007,488,350", "5", "tree"),
+            ):
+                path.write_text(listing.format(total=total, a=a, c=c, obj=f"/r/pgdt-count-pair-{leg}"))
+            out = subprocess.run(
+                ["awk", measure.CALLGRIND_DIFF_AWK, parent, tree],
+                capture_output=True, text=True, check=True,
+            ).stdout
+        got = sorted(out.splitlines(), key=lambda ln: -int(ln.split("\t")[0]))
+        self.assertEqual(
+            [ln.split("\t", 1)[1] for ln in got],
+            ["-1000000000\t???:pgdt_core::copy::unescape_field", "+6\t???:pgdt_codec::key::compare_keys"],
+        )
+
+    def test_the_step_numbering_has_no_hole(self):
+        numbered = [
+            int(ln.split(".")[0][2:]) for ln in self._recipe().splitlines()
+            if re.match(r"^# \d+\. ", ln)
+        ]
+        self.assertEqual(numbered, list(range(len(numbered))))
+
+    def test_the_recipe_never_runs_anything(self):
+        with unittest.mock.patch.object(measure, "run") as ran:
+            with unittest.mock.patch("sys.stdout"):
+                measure.cmd_callgrind()
         ran.assert_not_called()
 
 

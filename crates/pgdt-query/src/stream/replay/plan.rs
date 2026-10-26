@@ -699,8 +699,7 @@ fn refuse_metadata_level(matches: &[CopyBlock], query_options: &QueryOptions) ->
 
 /// Cut `resolved` down to `projection`, and say which of the block's fields
 /// each projected column is fed by: each requested column's record, in the
-/// requested order
-/// (`docs/design/decisions.md`, "D28").
+/// requested order (`docs/design/decisions.md`, "D119").
 ///
 /// Returns the projected schema and `field_targets` — one entry per field of
 /// the block, `Some(i)` when that field feeds projected column `i`. `None`

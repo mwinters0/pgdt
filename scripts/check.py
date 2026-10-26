@@ -354,9 +354,12 @@ def summarize_unittest(text: str, exit_code: int) -> Outcome:
     return Outcome("FAILED", headline, tuple(details) or _tail(text))
 
 
-#: `repoint.py`'s one problem that is its meter rather than a cap
-#: (`meter_problems`); `test_check` pins it against the real script's output.
-REPOINT_METER_RE = re.compile(r"^!! the live record has grown -?\d+ lines since \S+; repoint$")
+#: `repoint.py`'s two problems that are its meters rather than caps
+#: (`meter_problems`); `test_check` pins them against the real script's output.
+REPOINT_METER_RE = re.compile(
+    r"^!! the (?:live record has grown -?\d+ lines since \S+; repoint"
+    r"|decision register has grown -?\d+ bytes since \S+; audit it)$"
+)
 
 
 def summarize_repoint(text: str, exit_code: int) -> Outcome:

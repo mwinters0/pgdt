@@ -1,5 +1,5 @@
 //! `pgdt query --column` / `--no-columns` — projection's CLI surface
-//! (`docs/design/decisions.md`, "D28" and "The CLI").
+//! (`docs/design/decisions.md`, "D119" and "The CLI").
 //!
 //! `crates/pgdt-query/tests/projection.rs` already holds what a projection *means*
 //! against a cold query's stream. What only the binary can say is the part these

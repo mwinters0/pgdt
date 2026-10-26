@@ -19,7 +19,7 @@ python3 scripts/contained.py [--memory 4g] -- <binary> <args>   # any built bina
 
 cd scripts && uv run generate_fixtures.py [--version 13|16|18] [--skip-dumps] [--skip-oracle]
 cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--render <run-dir>|--count-pair <parent>
-cd scripts && uv run measure.py --koji-recipe [--wrap] | --profile-recipe | --heaptrack-recipe   # printed, never run
+cd scripts && uv run measure.py --koji-recipe [--wrap] | --profile-recipe | --heaptrack-recipe | --callgrind-recipe   # printed, never run
 cd scripts && uv run release.py image|build|bench|suite|notices|run   # the release image; pgdt built in it, held to its glibc; a bench, the suite, the notices, one command there
 python3 scripts/release_ci.py preflight|archive|smoke|checksums|draft|publish   # what the two release workflows run beside release.py
 python3 scripts/debian_window.py      # the image's Debian pin against the window a release allows; `/release`'s step
@@ -61,11 +61,11 @@ Never edit a `runs/` orchestration script while it is running.
   holding it in every crate, and why each crate holds its part. **Read it
   before deciding where new code goes**, grilling a phase, or a seams round.
 - `docs/design/decisions.md` — the decisions the code cannot explain, one
-  numbered `D<k>` entry each, capped at 800 lines: anticipatory shapes, chosen
-  defaults, measured refusals, and the layering rules. **Read the entries for
-  a mechanism before changing it or proposing an optimization to it**; most
-  obvious optimizations carry a refusal already. Cite an entry, never restate
-  it. Adding an entry may mean striking one.
+  numbered `D<k>` entry each, bodies by topic under `decisions/`, this file
+  the index: anticipatory shapes, chosen defaults, measured refusals, and the
+  layering rules. **Read the topic file for a mechanism before changing it or
+  proposing an optimization to it**; most obvious optimizations carry a refusal
+  already. Cite an entry, never restate it; an entry is capped, the register metered.
 - `docs/design/roadmap.md` — goals, "Standing rules", and the phase index.
   **Read "Standing rules" before a design decision a later phase inherits.**
   A phase is `P<k>`, allocated on discovery, never renumbered or reused; its

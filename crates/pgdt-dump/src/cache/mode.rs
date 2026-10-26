@@ -188,8 +188,8 @@ impl CacheMode {
     ) -> Result<()> {
         match self {
             CacheMode::Enabled { path, .. } => {
-                // **The check precedes the write** and is the whole of D12's
-                // "saves nothing": a run whose source moved underneath it
+                // **The check precedes the write**, so a run whose source
+                // moved underneath it (`docs/design/decisions.md`, "D21")
                 // writes no partial map and no statistics, and leaves
                 // whatever is already at `path` exactly as it is
                 // (`docs/design/decisions.md`, "D20").

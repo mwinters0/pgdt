@@ -50,12 +50,12 @@ pub(crate) struct InfoArgs {
     /// column keeps bounds and a dictionary.
     #[arg(long)]
     detail: bool,
-    /// List every span the map holds (`docs/design/decisions.md`,
-    /// "D34") — DDL objects
-    /// and framing included, not just `COPY` blocks — instead of the
-    /// per-table listing.
+    // Kept out of the help below: `docs/design/decisions.md`, "D34".
+    /// List every span the map holds — DDL objects and framing included,
+    /// not just `COPY` blocks — instead of the per-table listing.
     #[arg(long)]
     map: bool,
+    // Kept out of the help below: `docs/design/decisions.md`, "D67".
     /// Print the internal index as compact JSON instead of the
     /// human-readable listing: the whole cache file — the `DumpIndex`,
     /// every block's per-group statistics included, and the envelope
@@ -64,8 +64,8 @@ pub(crate) struct InfoArgs {
     /// per-`COPY`-block type resolution `--detail` renders as text.
     /// Statistics are not rolled up per table, as `--detail` rolls them.
     /// No schema stability is promised — this is a raw dump of our
-    /// internal representation, not a supported interchange format
-    /// (`docs/design/decisions.md`, "D67"). Incompatible with
+    /// internal representation, not a supported interchange format.
+    /// Incompatible with
     /// `--detail`/`--map`, which format detail this already carries in
     /// full.
     #[arg(long)]

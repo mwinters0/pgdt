@@ -1,5 +1,5 @@
 //! Column projection: what a query materializes, and what it therefore
-//! never decodes (`docs/design/decisions.md`, "D28").
+//! never decodes (`docs/design/decisions.md`, "D119").
 //!
 //! The library-level tests only: everything here drives a cold query
 //! directly. The flags are pinned separately, in

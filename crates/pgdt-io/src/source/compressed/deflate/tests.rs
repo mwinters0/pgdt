@@ -27,10 +27,10 @@ fn the_default_budget_declines_a_unit_of_the_spacing() {
 }
 
 /// **The checkpoints are held at a stated cost per entry** — what is left of
-/// `KD26` for gzip, an index the size of its offsets
-/// (`docs/design/decisions.md`, "D4"): a checkpoint is its plaintext offset,
-/// its bit, its kind with its window's length and its unit's CRC-32, and a change to
-/// `gz_seek` growing it fails here rather than silently moving the account.
+/// `KD26` for gzip, an index the size of its offsets: a checkpoint is its
+/// plaintext offset, its bit, its kind with its window's length and its unit's
+/// CRC-32, and a change to `gz_seek` growing it fails here rather than silently
+/// moving the account.
 #[test]
 fn a_checkpoint_is_held_at_a_stated_cost() {
     assert_eq!(std::mem::size_of::<gz_seek::Checkpoint>(), 32);
