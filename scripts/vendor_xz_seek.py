@@ -169,8 +169,7 @@ This is a read-only snapshot, not a fork: a bug found here is fixed upstream
 and arrives at the next sync, never patched in this copy directly. Re-sync
 with `cd scripts && uv run vendor_xz_seek.py`.
 
-The workspace names this copy as a path dependency, for `pgdt-io` and
-`pgdt-dump` (see
+The workspace names this copy as a path dependency (see
 docs/design/decisions.md, "The compressed source and the cache"), and re-takes it as
 upstream moves rather than waiting for a consumer that needs the newer work.
 So a sync can bring in code nothing in this tree exercises: it is finished by
