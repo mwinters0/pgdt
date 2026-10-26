@@ -7,5 +7,19 @@
 # `codegraph`, which `.mcp.json` runs, is always kept at its latest release:
 # pinned exactly so every checkout agrees, and bumped by
 # `mise up --bump codegraph` rather than `codegraph upgrade`, which would
-# replace the binary under the pin.
+# replace the binary under the pin. Its wiring is `.mcp.json` alone: the
+# `UserPromptSubmit` hook `codegraph install` also writes into
+# `.claude/settings.json` is left out, since it matches a prompt's words
+# against symbol names and injects whatever matches into every turn.
+# `codegraph.json` ranks `scripts/` below the crates, whose code most questions
+# are about, since the harness's Python shares their words.
 codegraph = "1.6.2"
+
+[env]
+# Set here rather than in `.mcp.json` because they hold for the shell's
+# `codegraph` as much as the MCP server's, and the server is started from the
+# same mise-activated environment that puts the binary on `PATH`. The pin above
+# is what moves the version, so its update check only nags; telemetry is
+# otherwise on by default, or off by a choice saved on one machine.
+CODEGRAPH_NO_UPDATE_CHECK = "1"
+CODEGRAPH_TELEMETRY = "0"
