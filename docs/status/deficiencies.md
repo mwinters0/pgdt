@@ -549,6 +549,5 @@ than reading as a phase nobody has sliced.
 - **KD147** — a gzip first pass hands out speculations whether or not the ones
   before them found a block, so over a member whose writer ends no block
   before its last it is slower in parallel than serially, at every count
-  `gzip-first-pass` reads. **(c) unowned**; promoted by a profile naming what
-  slows the frontier, or such a dump in hand. Detail:
+  `gzip-first-pass` reads. **(b) owned by 15.19**. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.

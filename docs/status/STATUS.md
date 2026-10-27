@@ -119,7 +119,8 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.17.4** A four-job first pass faster again, earned by 15.17.2's split, in `pgdt-io`'s `first_pass/ahead.rs` with `gz-seek` as it needs: opening by committing `spec_cost`'s emulation of the scheduling as a `gz-seek` example, and by the account at four jobs of the run of landed guesses at the frontier, the frontier's waits on taken decodes, the workers' idle time and the pass's page faults by call stack, a decode's buffer pooled only where they name it (D117); its levers each tried first in the emulation and built only where it moves — which chunks are speculated, in runs with gaps the frontier decodes unguessed, how far ahead a run is placed, a free worker given a resolved decode before a new speculation, the room `top_up` allows, which `Chunking::task_bytes` charges; done when four jobs is faster than the tree it opens on by alternated reps' paired differences, twenty-four jobs no slower per worker, the frontier's waits read in the account, not gated, and the gzip first pass's default worker count moved to 15.7.1; a remaining term that is the second decode going to the maintainer under D117, which kept it; after 15.17.3, before 15.7.1 and 15.18 (`KD143`) — [notes](../design/roadmap-P15.17.4-scheduling-notes.md)
 - [x] **15.7.1** Readings, the throughput, earned by 15.7's split: the gzip throughput figures, the parallel first pass's on more than one writer's files and at two chunk lengths, and at the logical core count, the physical count and the logical count less one; the gzip first pass's default worker count settled by which of the other two the third is level with, D2 amended for that source alone (`KD145`). `gzip-first-pass` taken at `c4069143` over four writers' files and a 4 MiB chunk leg; its verdict `shared`, so a local first pass recommends no more than the physical cores within its affinity (`cores.rs`, `RT27`), D2 amended and `KD145` struck; the shipped chunk kept (D121); the level-1 file regressing (`KD147`) — [notes](../design/roadmap-P15.7.1-throughput-notes.md)
 - [ ] **15.18** Readings, the resident again, earned by 15.7's review, after 15.17.3 and 15.17.4: `gzip-resident` re-taken over the repaired pass with a leg on a file whose chunks reach `SPECULATION_LIMIT`, the falsifier for an under-bill, and a heaptrack recording of a many-job first pass attributing a worker's remainder; it settles `Chunking::task_bytes` in whichever direction the reading falls; 15.7.1 does not wait on it, 15.7.2 does (`KD141`)
-- [ ] **15.7.2** The record, earned by 15.7's split, after 15.7.1, whose readings it writes from: the manual and `pg-dump-compatibility.md`
+- [ ] **15.19** A first pass that stops speculating where speculation finds nothing, earned by 15.7.1's review: opening by a profile of the level-1 file's serial pass and its frontier at two counts; once a speculation lands empty, none handed out until the frontier next crosses a block start; done when, by 15.7.1's bar, that file at the default count is no slower than serial and the level-6 files' default rows no slower than at `c4069143`; before 15.7.2 (`KD147`)
+- [ ] **15.7.2** The record, earned by 15.7's split, after 15.7.1 and 15.19, whose readings it writes from: the manual and `pg-dump-compatibility.md`
 
 ## Not started
 
@@ -150,16 +151,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`KD147` left unowned.** Over a member whose writer ends no block before
-  its last, `gzip-first-pass` finds the parallel first pass slower than
-  serial at every count, the new default's included. The spec names such a
-  file and says it does not block the default, so it is filed `(c) unowned`,
-  promoted by a profile naming what slows the frontier or by such a dump in
-  hand. `deflate_quick` writes such a member at level 1, under zlib-rs or a
-  default-built zlib-ng, so a level-1 `pg_dump -Z` linked against either
-  does; Fedora's `zlib-ng-compat` writes dynamic blocks there
-  ([`history/2026-10-27.md`](history/2026-10-27.md), "15.7.1's writers and
-  its bar, reviewed"). Reconsidering means owning it by a P15 slice before
-  the wrap — a pass that stops handing out speculations after a run of them
-  finds nothing, or one reading such a file serially — or by a later phase.

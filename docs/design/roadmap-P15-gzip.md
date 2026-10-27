@@ -529,6 +529,21 @@ no block. One count beats another only by consistent pairs *and* a margin, and
 shared wherever the physical count beats the third leg. A file any upper count
 makes slower than serial is named in the verdict and does not block it.
 
+**A first pass that stops speculating where speculation finds nothing, slice
+19, precedes 7's record** ([`../status/history/2026-10-27.md`](../status/history/2026-10-27.md),
+"`KD147`, reviewed"): 7.1's figure found the level-1 file, a member whose
+writer ends no block before its last, slower in parallel than serially at
+every count, the default's included (`KD147`). Once a speculation lands
+having found nothing, no new one is handed out until the frontier next crosses
+a block start: the frontier's own boundaries are the signal, with no run
+length to choose, so a pause lasts one block over a writer ending blocks often
+and the member's rest over one that ends none. It opens with a profile of that
+file's serial pass and of its frontier at two counts, attributing the slowdown
+and the serial pass's own cost; a walk the profile names reopens D118 for the
+maintainer, not this slice's gate. **Done when**, by 7.1's bar, the level-1
+file at the default count is no slower than serial and the three level-6
+files' default-count rows are no slower than at `c4069143`.
+
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
 "The broken BGZF chain, reviewed"): 13's pass ends its run of coalesced

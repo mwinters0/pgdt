@@ -339,7 +339,7 @@ impl Ahead {
     /// more so the more workers run. What slows the frontier is unattributed:
     /// the searches sharing its core, its caches or its memory bandwidth, or
     /// its own handling of the guesses that fail; a profile of the frontier at
-    /// two counts would name it. **(c) unowned**.
+    /// two counts would name it. **(b) owned by 15.19**.
     fn top_up(&mut self, pass: &mut gz_seek::Parallel, last: u64) {
         while self.running < self.tasks {
             let decode = match pass.decodes_pending() < DECODES_A_TASK * self.tasks {
