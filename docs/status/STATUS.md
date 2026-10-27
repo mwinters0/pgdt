@@ -152,18 +152,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A heaptrack recording's container is held to eight times what its run may
-  hold, a first pass's bill rather than its allowance** (15.18,
-  `measure.heaptrack_held_bound`). The harness held every recording to eight
-  times the allowance its run states. The first-pass pair states
-  `GZPASS_BUDGET`'s, so that asked about 27 GiB, more than this machine has.
-  A first pass retains no block, and its workers are resolved at a task's
-  charge, so its bill is what its resident is read against. Even so the
-  pair's limit is 15924m, just under the half of this machine `contained.py`
-  allows, so the pair records here and on no smaller machine. Rejected: a
-  gzip shape under a smaller allowance, which is no longer the shape
-  `gzip-resident` times. Reconsidering moves `HEAPTRACK_FIRST_PASS_MEMORY`
-  and its test: a factor sized to heaptrack's bookkeeping, which grows with
-  allocations rather than bytes, or a pair at a count the figure does not
-  read.

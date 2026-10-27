@@ -52,8 +52,10 @@ first time it ran in the image, and are fixed:
 
 - **The container rule** asked eight times a run's allowance, about 27 GiB
   for this pair. It now asks eight times what a run may hold
-  (`heaptrack_held_bound`), a first pass's bill; STATUS's "Decisions worth
-  another look" carries the call.
+  (`heaptrack_held_bound`), a first pass's bill. Reviewed, it is struck for
+  the timed shape's container plus a heaptrack term, `M255`
+  ([`../status/history/2026-10-27.md`](../status/history/2026-10-27.md), "The
+  heaptrack recording's container, reviewed").
 - **The image's heaptrack writes `.gz`**, being built without zstd, so a
   recipe naming `.zst` printed empty reports (`HEAPTRACK_SUFFIX`).
 - **A report piped from one container into another loses its tail**: a
