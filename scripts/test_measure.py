@@ -5495,13 +5495,13 @@ class GzipFirstPass(unittest.TestCase):
     FIGURE = "gzip-first-pass"
     WRITERS = tuple(leg for leg, _, _ in measure.GZPASS_WRITERS)
 
-    def test_it_is_registered_untaken_and_borrows_nothing(self):
-        # Built ahead of the commit its readings are taken from, so it waits
-        # in `UNTAKEN`; standing in no sharing edge is what lets it publish
-        # from that commit, outside a sweep.
+    def test_it_is_taken_and_borrows_nothing(self):
+        # Standing in no sharing edge is what lets it publish from its own
+        # commit, outside a sweep; taken, it is in `FIGURES`, where the
+        # doc-side checks apply.
         fig = measure.SELECTABLE_BY_ID[self.FIGURE]
-        self.assertIn(fig, measure.UNTAKEN)
-        self.assertNotIn(fig, measure.FIGURES)
+        self.assertIn(fig, measure.FIGURES)
+        self.assertNotIn(fig, measure.UNTAKEN)
         self.assertEqual(fig.shares, ())
         self.assertEqual(fig.stage, "warm-parallel")
         self.assertEqual(fig.memory, measure.GZPASS_MEMORY)

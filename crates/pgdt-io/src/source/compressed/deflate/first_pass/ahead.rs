@@ -46,7 +46,8 @@ const GUESSES_A_TASK: usize = 5;
 
 /// How many compressed bytes a chunk of the file is, which a speculation
 /// guesses the start of and the engine then decodes: the input chunk every
-/// gzip decode pulls, so a task reads its chunk in one positioned read.
+/// gzip decode pulls, so a task reads its chunk in one positioned read
+/// (`docs/design/decisions.md`, "D121").
 #[cfg(not(feature = "gzip-4mib-chunks"))]
 const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new(INPUT_CHUNK).unwrap();
 
@@ -329,6 +330,16 @@ impl Ahead {
     /// for the frontier, and otherwise a speculation, on a chunk at or before
     /// `last`, while it has fewer than [`GUESSES_A_TASK`] times as many
     /// handed out or guesses held ([`Chunking::task_bytes`]).
+    ///
+    /// Deficiency register: `deficiency: KD147` — a speculation is handed out
+    /// whether or not those before it found a block, so over a member whose
+    /// writer ends no block before its last, where none does, every worker
+    /// past the frontier searches its chunk for nothing, and the pass is
+    /// slower than its serial one at every count `gzip-first-pass` reads, the
+    /// more so the more workers run. What slows the frontier is unattributed:
+    /// the searches sharing its core, its caches or its memory bandwidth, or
+    /// its own handling of the guesses that fail; a profile of the frontier at
+    /// two counts would name it. **(c) unowned**.
     fn top_up(&mut self, pass: &mut gz_seek::Parallel, last: u64) {
         while self.running < self.tasks {
             let decode = match pass.decodes_pending() < DECODES_A_TASK * self.tasks {

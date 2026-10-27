@@ -479,8 +479,10 @@ fn taken(pass: &FirstPass) -> u64 {
 /// **A pass inflates ahead on the workers its parallelism affords and builds
 /// the serial pass's index, on either feed**: under each count the plaintext
 /// whole and the index and windows `gz_seek`'s forward pass builds. A pulled
-/// pass recommends what it can use, a fetched one one worker, its tasks
-/// running only under a count stated for it.
+/// pass recommends what it can use, the cores it was given and no more than
+/// the physical ones among them (`docs/design/decisions.md`, "D2"); a
+/// fetched one one worker, its tasks running only under a count stated for
+/// it.
 #[tokio::test]
 async fn a_pass_inflates_ahead_on_either_feed_and_builds_the_serial_index() {
     let payload = gzip_test_payload();
@@ -488,6 +490,7 @@ async fn a_pass_inflates_ahead_on_either_feed_and_builds_the_serial_index() {
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
     assert!(CHUNKING.chunks(stored) > 8, "{stored} bytes");
     let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+    let cores = crate::cores::physical_cores().map_or(cores, |physical| cores.min(physical));
     for feed_name in FEEDS {
         for jobs in [1, 2, 4, 8] {
             let what = format!("{feed_name} at {jobs}");

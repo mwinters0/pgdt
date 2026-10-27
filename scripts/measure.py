@@ -11602,8 +11602,8 @@ def run_gzip_first_pass(session: Session) -> str:
     scan's floor a first pass falls toward.
 
     **What it settles is the gzip first pass's default worker count**
-    (`KD145`): a local first pass recommends the logical count, which a hand
-    probe on this machine found slower than the physical one. Each file's
+    (`docs/design/decisions.md`, "D2"): the logical count, the physical one,
+    or the logical count less the scan's thread. Each file's
     three upper counts fall in one of `GZPASS_OUTCOMES`, by `gzpass_beats` over
     paired reps, and the figure settles the default only where every file the
     pass lifts on agrees (`gzpass_verdict`). **What would falsify each cause**,
@@ -12845,34 +12845,6 @@ FIGURES: list[Figure] = [
         memory=PARALLEL_MEMORY,
         run=run_gzip_resident,
     ),
-]
-
-FIGURES_BY_ID = {f.id: f for f in FIGURES}
-
-#: Instruments that are **built but whose figure has not been taken**.
-#:
-#: A sweep does not run these and the doc carries no table *of this harness's*
-#: for them, which is why they sit outside `ALL_FIGURES`: the marker
-#: reconciliation would otherwise demand a section with no numbers under it.
-#: `--figure <id>` still selects one, which is how the reading gets taken — and
-#: taking it moves the entry into `FIGURES`, where the doc-side checks start
-#: applying.
-#:
-#: The distinction is worth a list rather than a comment because *built* and
-#: *taken* fail differently. An instrument nobody built is work; an instrument
-#: built and never run is a claim nobody checked, and it is invisible unless
-#: something names it.
-#:
-#: **Empty is the healthy state, not a disused mechanism.** A figure published
-#: outside a stamped sweep declares inside its own
-#: marker the commit it was taken at, and a sitting run from a working tree
-#: carrying its own uncommitted apparatus has no such commit to name — so an
-#: instrument built ahead of that commit waits here rather than in `FIGURES`.
-#: *Rejected:* `composite-isolated`, which isolated one column by declaring it
-#: two ways over byte-identical rows — `projection-widths` makes the same
-#: isolation a subtraction between two adjacent rows of one table over one
-#: file.
-UNTAKEN: list[Figure] = [
     # A gzip first pass's wall clock against the worker count, over four
     # writers' single members, and at two chunk lengths. `depends` is
     # `gzip-resident`'s read path less its resident instrument, plus the chunk
@@ -12909,6 +12881,33 @@ UNTAKEN: list[Figure] = [
         run=run_gzip_first_pass,
     ),
 ]
+
+FIGURES_BY_ID = {f.id: f for f in FIGURES}
+
+#: Instruments that are **built but whose figure has not been taken**.
+#:
+#: A sweep does not run these and the doc carries no table *of this harness's*
+#: for them, which is why they sit outside `ALL_FIGURES`: the marker
+#: reconciliation would otherwise demand a section with no numbers under it.
+#: `--figure <id>` still selects one, which is how the reading gets taken — and
+#: taking it moves the entry into `FIGURES`, where the doc-side checks start
+#: applying.
+#:
+#: The distinction is worth a list rather than a comment because *built* and
+#: *taken* fail differently. An instrument nobody built is work; an instrument
+#: built and never run is a claim nobody checked, and it is invisible unless
+#: something names it.
+#:
+#: **Empty is the healthy state, not a disused mechanism.** A figure published
+#: outside a stamped sweep declares inside its own
+#: marker the commit it was taken at, and a sitting run from a working tree
+#: carrying its own uncommitted apparatus has no such commit to name — so an
+#: instrument built ahead of that commit waits here rather than in `FIGURES`.
+#: *Rejected:* `composite-isolated`, which isolated one column by declaring it
+#: two ways over byte-identical rows — `projection-widths` makes the same
+#: isolation a subtraction between two adjacent rows of one table over one
+#: file.
+UNTAKEN: list[Figure] = []
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

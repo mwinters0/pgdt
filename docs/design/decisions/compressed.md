@@ -109,6 +109,12 @@ keeping a worker from a decode; one run of guesses in flight at a time; a worker
 running a queued decode while it waits. Reopens: the second decode removed (D117). Code: `ahead.rs`. Evidence:
 `a_speculation_is_placed_its_lead_past_where_it_lands`, `decodes_and_speculations_are_handed_out_and_counted_apart`.
 
+### D121 A parallel first pass cuts its file at the input chunk every gzip decode pulls
+`Chunking::SHIPPED`'s chunk is `INPUT_CHUNK`, so a task reads the chunk a speculation guesses the start of in one
+positioned read, as every gzip decode pulls its input. Rejected: rapidgzip's longer chunk (`gzip-4mib-chunks`), the
+limit held, slower at four jobs on two writers' files and level on the other two. Reopens: a re-take on which a longer
+chunk beats the shipped one. Code: `ahead.rs` (`CHUNK_BYTES`). Evidence: `gzip-first-pass`.
+
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
 contradicts) is almost always a wrong path or a changed file, so every open refuses it (`CacheMode::refusal`) before the

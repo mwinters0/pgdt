@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD146 -->
-**`KD1`–`KD146` are allocated, and nothing at or below `KD146` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD147 -->
+**`KD1`–`KD147` are allocated, and nothing at or below `KD147` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -541,13 +541,14 @@ than reading as a phase nobody has sliced.
   in hand declaring a collated range. Detail:
   `crates/pgdt-codec/src/compare/walk.rs`.
 
-- **KD145** — a local gzip first pass recommends its logical core count, which
-  a hand probe on an SMT machine found slower than its physical count, the
-  cause undecided between a core shared and the scan's thread oversubscribing.
-  **(b) owned by 15.7.1**. Detail:
-  `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.
-
 - **KD146** — a sorted column holding a NULL is declared in no order, even
   where every NULL leads or trails its values, so it orders no scan and a
   Parquet export cannot record its order. **(b) owned by P37**. Detail:
   `crates/pgdt-query/src/summary.rs`.
+
+- **KD147** — a gzip first pass hands out speculations whether or not the ones
+  before them found a block, so over a member whose writer ends no block
+  before its last it is slower in parallel than serially, at every count
+  `gzip-first-pass` reads. **(c) unowned**; promoted by a profile naming what
+  slows the frontier, or such a dump in hand. Detail:
+  `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.

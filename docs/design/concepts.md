@@ -53,11 +53,11 @@ the compressed file pulled or fetched, the remote object
 ## Memory and parallelism
 
 The memory allowance and its discovery, its resolution into what a pass
-runs under, a caller's parallelism, what a worker holds resident, the
-partition advice a source gives and the cut ([`decisions.md`](decisions.md),
-"I/O, memory and parallelism").
+runs under, a caller's parallelism, the physical cores a process may run on,
+what a worker holds resident, the partition advice a source gives and the cut
+([`decisions.md`](decisions.md), "I/O, memory and parallelism").
 
-- **pgdt-io** — `memory.rs`, `arrangement.rs`, `parallelism.rs`,
+- **pgdt-io** — `memory.rs`, `arrangement.rs`, `parallelism.rs`, `cores.rs`,
   `partition.rs`: a source says what a worker holds, so sizing sits beside it
   (D68), and the one resolution every embedder calls with it, carrying where
   the allowance came from beside the `Parallelism` that never does (D64); the

@@ -6,11 +6,13 @@
 //! nested under its read contract; and memory and parallelism — the allowance
 //! and its discovery (`memory`), its resolution into what a pass runs under
 //! (`arrangement`), the arrangement and what a worker holds (`parallelism`),
-//! and where a range is cut (`partition`).
+//! the physical cores a process may run on (`cores`), and where a range is
+//! cut (`partition`).
 
 #![forbid(unsafe_code)]
 
 mod arrangement;
+mod cores;
 mod memory;
 mod parallelism;
 mod partition;

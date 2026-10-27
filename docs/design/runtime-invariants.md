@@ -39,7 +39,7 @@ crate's requirements register, which a phase spec and an inbox cite by number
 ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Inherited from the `.xz`
 source unchanged").
 
-**`RT1`–`RT26` are allocated**, and nothing at or below `RT26` is reused.
+**`RT1`–`RT27` are allocated**, and nothing at or below `RT27` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is
@@ -1350,3 +1350,65 @@ grep -n 'beg = ' "$(src libz-sys)/src/zlib/inffast.c" "$(src libz-sys)/src/zlib-
 The suites pass only while every chunk decode written into spare capacity
 is the file's plaintext; the searches show zlib-rs's output still made
 uninitialized and the C engines' match source still bounded by `beg`.
+
+## RT27 — `/proc` names a process's affinity, and sysfs each CPU's core
+
+**Claim.** On Linux, `/proc/self/status`'s `Cpus_allowed_list` is the
+process's affinity mask as a CPU list (`0-3,8`), a container's cpuset
+included, and each online CPU's
+`/sys/devices/system/cpu/cpu<N>/topology/core_cpus_list` lists the hardware
+threads sharing its core, `thread_siblings_list` being the same list under
+its older name. So the distinct lists among the allowed CPUs are the
+physical cores the process may run on, a core counting once however many of
+its threads are allowed.
+
+**Proof.** `fs/proc/array.c`'s `task_cpus_allowed` prints
+`Cpus_allowed_list:\t%*pbl` of `task->cpus_mask`, the mask
+`sched_setaffinity` and a cpuset set. `drivers/base/topology.c` defines both
+`core_cpus_list` and `thread_siblings_list` by
+`define_siblings_read_func(…, sibling_cpumask)`, one mask under two names,
+and adds and removes a CPU's `topology` group at `CPUHP_TOPOLOGY_PREPARE`
+(`topology_add_dev`, `topology_remove_dev`), so an offline CPU has none.
+`Documentation/ABI/stable/sysfs-devices-system-cpu` gives
+`thread_siblings_list` as `core_cpus_list`'s deprecated name. Observed, on
+a host of 12 cores of two threads, CPU `n` and `n + 12` sharing one, the
+container's `/sys` showing the host's topology:
+
+| run | `Cpus_allowed_list` | `nproc` | cores among them |
+|---|---|---|---|
+| `--cpuset-cpus=0,5,12` | `0,5,12` | 3 | 2 |
+| `--cpuset-cpus=0-11` | `0-11` | 12 | 12 |
+| `--cpuset-cpus=0-23` | `0-23` | 24 | 12 |
+
+**Scope limit.** `/proc/self` names the thread-group leader, so a thread
+re-pinned alone is not seen; `std`'s `available_parallelism` reads the
+calling thread's mask (`RT7`). The mask is `cpus_mask` before the kernel
+intersects it with the active CPUs, so an offline CPU in it is listed, and
+skipped for having no topology. A CPU quota is not a core count, and is
+`RT7`'s, so the caller takes the smaller of the two. Off Linux, or without
+`/proc` or `/sys`, nothing is read and the caller keeps `RT7`'s count.
+
+**Verified against:** Linux 7.2.9-arch1-1 (observed) and v7.1 (source);
+nerdctl 2.4.1 / containerd v2.4.1.
+
+**Relied on by:** [`decisions.md`](decisions.md), "I/O, memory and
+parallelism" — a local gzip first pass's worker default, capped at the
+physical cores within the affinity (`crates/pgdt-io/src/cores.rs`).
+
+**Re-verify.** Run each cpuset and count the cores among the CPUs it allows:
+
+```sh
+for c in 0,5,12 0-11 0-23; do
+  docker run --rm --memory 256m --cpuset-cpus=$c debian:stable-slim sh -c '
+    grep Cpus_allowed_list /proc/self/status; nproc
+    grep Cpus_allowed_list /proc/self/status | cut -f2 | tr , "\n" |
+      awk -F- "{ for (n = \$1; n <= (NF > 1 ? \$2 : \$1); n++) print n }" |
+      while read n; do cat /sys/devices/system/cpu/cpu$n/topology/core_cpus_list; done |
+      sort -u | wc -l'
+done
+cargo nextest run -p pgdt-io cores
+```
+
+On a host of the table's shape each run prints its row; on another, the
+last count is the cores its sibling lists give the allowed CPUs.
+`crate::cores::tests` holds the reading against a built tree.

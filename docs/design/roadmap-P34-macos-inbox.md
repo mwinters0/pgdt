@@ -50,3 +50,23 @@ least an ad-hoc signature to run.
 
 **Origin.** Filed 2026-10-06, from a `cargo metadata` /
 `cargo tree` walk of `pgdt`'s default-feature closure per target.
+
+---
+
+## A gzip first pass's physical-core cap reads Linux files only
+
+**Fact.** A local gzip first pass recommends no more workers than the
+physical cores within its affinity (`docs/design/decisions.md`, "D2"),
+read off `/proc/self/status` and each CPU's sysfs topology
+(`crates/pgdt-io/src/cores.rs`, `RT27`). On macOS both reads fail and the pass
+keeps `available_parallelism`'s count, the logical one. On an SMT machine
+that count is slower than the physical one (`measurements.md`,
+`gzip-first-pass`). Apple Silicon has no SMT, so there the two counts agree;
+an Intel Mac's do not.
+
+**Why P34 cares.** It decides whether macOS needs a physical-core reading
+(`sysctl hw.physicalcpu` and its affinity's equivalent) and an `RT<n>` for it,
+or whether the logical count is accepted there.
+
+**Origin.** 15.7.1, 2026-10-27. Contingent on `gzip-first-pass` keeping its
+`shared` verdict on a retake.

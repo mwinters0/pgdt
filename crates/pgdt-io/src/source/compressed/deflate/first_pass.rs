@@ -49,6 +49,7 @@ use tokio_util::sync::CancellationToken;
 
 use pgdt_core::{Error, Result};
 
+use crate::cores::physical_cores;
 use crate::parallelism::{Parallelism, WorkerMemory, worker_count};
 use crate::partition::Partitioning;
 use crate::source::pool::{BufferPool, POOL_DEPTH, PooledBuffer, budget_bytes};
@@ -828,20 +829,14 @@ impl ByteRangeSource for FirstPass {
         self.done.get().and_then(|done| done.block_decode_bytes())
     }
 
-    /// On a local file, the machine's cores capped at the file's chunk count:
-    /// the scan is one partition whatever this says, and every worker past
-    /// the frontier runs a chunk ahead of it. A fetched one, one, as the
-    /// fetched source answers: its tasks run only under a stated count, each
-    /// reading the one download its frontier reads (`docs/design/decisions.md`,
-    /// "D2"). The indexed source's, once the pass has handed over to it.
-    ///
-    /// Deficiency register: `deficiency: KD145` — on an SMT machine the
-    /// logical count is slower than the physical count. `--jobs` counts the
-    /// frontier and not the scan, so at the logical count the pass runs one
-    /// thread more than there are CPUs, and every task shares its core with
-    /// a sibling; which of the two costs the time is unread, and decides
-    /// whether the cap is the logical count less the scan's thread or the
-    /// physical cores within the affinity. **(b) owned by 15.7.1**.
+    /// On a local file, the cores this process was given, no more of them
+    /// than the physical cores its affinity allows, capped at the file's
+    /// chunk count: the scan is one partition whatever this says, and every
+    /// worker past the frontier runs a chunk ahead of it. A fetched one, one,
+    /// as the fetched source answers: its tasks run only under a stated
+    /// count, each reading the one download its frontier reads
+    /// (`docs/design/decisions.md`, "D2"). The indexed source's, once the
+    /// pass has handed over to it.
     fn default_workers(&self) -> usize {
         if let Some(done) = self.done.get() {
             return done.default_workers();
@@ -849,6 +844,7 @@ impl ByteRangeSource for FirstPass {
         match &self.feed {
             Feed::File { .. } => {
                 let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
+                let cores = physical_cores().map_or(cores, |physical| cores.min(physical));
                 let chunks = self.chunking.chunks(self.stored_size);
                 cores.min(usize::try_from(chunks).unwrap_or(usize::MAX))
             }
