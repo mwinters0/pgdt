@@ -124,8 +124,9 @@ Run it after rewriting a heading.
   `decisions.md`'s cache entry before touching a cache path.
 - **Every reading runs in a memory-limited container** (`scripts/contained.py`,
   whose hook refuses one outside), and none on an `introspect` build is timed.
-- **Find code with graft, not `grep`** — `graft ask "<q>" --source`;
-  [`.claude/CLAUDE.md`](.claude/CLAUDE.md) has the rest, and where it guesses.
+- **Find code with `rg`; settle callers, references and impls with `LSP`**,
+  and confirm with `rg` where `LSP` cannot see;
+  [`.claude/CLAUDE.md`](.claude/CLAUDE.md) has where that is.
 - **Document what _is_, not what _was_**, inside `docs/status/history/` too. A
   fact is stated once, in one place, and cited everywhere else; a number is
   stated only in `measurements.md`. If something is worth keeping as history,
