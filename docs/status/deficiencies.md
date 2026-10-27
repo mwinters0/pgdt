@@ -524,7 +524,7 @@ than reading as a phase nobody has sliced.
 
 - **KD141** — a gzip first pass's task ahead is charged a limit's worth of
   compressed bytes past its chunk, where a speculation can hold more. **(b)
-  owned by 15.18**. Detail:
+  owned by 15.18.1**. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
 
 - **KD143** — a parallel first pass speculates nearly every chunk and the

@@ -84,7 +84,7 @@ leg in both.
   `--jobs` counts the frontier and not the scan, so the logical count runs
   one thread more than there are CPUs; 15.7.1's leg at the logical count less
   one tells that apart from a core shared.
-- 15.7.1 and 15.18 read this tree. 15.18 settles `task_bytes`, which now
+- 15.7.1 and 15.18 read this tree. 15.18.1 settles `task_bytes`, which now
   charges two held decodes and five guesses a task (`KD141`). Under
   `PARALLEL_BUDGET` that charge affords `control_gz` twenty workers at
   `--jobs 24`, so 15.18 moved `gzip-resident` to `GZPASS_BUDGET`

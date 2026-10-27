@@ -11,7 +11,7 @@ marker searched for the last marker the copy writes. `Plain` is windowed the
 same way, so a decode that comes clean no longer grows toward the limit either.
 Nothing outside the speculation changed: no guess, decode or index differs,
 and `Chunking::task_bytes` still prices the worst case, a block as long as the
-limit, which 15.18 settles.
+limit, which 15.18.1 settles.
 
 **Not a ring of one window**, which the row named. A guess cut by the limit or
 by refusals stops at the last boundary its decode reached, up to a block back,

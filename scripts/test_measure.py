@@ -26,6 +26,7 @@ import inspect
 import io
 import json
 import re
+import shlex
 import subprocess
 import tempfile
 import tomllib
@@ -494,7 +495,7 @@ class StatisticsFlag(unittest.TestCase):
         flag = measure.NO_STATISTICS.split()
         argvs = [
             measure.profile_argv("parse", "/dump.sql", "/tmp/x.dtcache"),
-            *(measure.heaptrack_argv(shape, "/d", "/c") for shape, _ in measure.HEAPTRACK_AXIS),
+            *(measure.heaptrack_argv(shape, "/d", "/c") for shape, _ in measure.HEAPTRACK_SHAPES),
         ]
         for argv in argvs:
             with self.subTest(argv=argv):
@@ -8234,7 +8235,7 @@ class HeaptrackRecipe(unittest.TestCase):
     def _reports(self) -> list[str]:
         return [
             ln for ln in self._recipe().splitlines()
-            if f" {measure.HEAPTRACK}_print" in ln and not ln.startswith("#")
+            if f"{measure.HEAPTRACK}_print " in ln and not ln.startswith("#")
         ]
 
     def test_the_profiling_binary_is_the_one_recorded(self):
@@ -8266,7 +8267,7 @@ class HeaptrackRecipe(unittest.TestCase):
         recorded = [
             ln for ln in recipe.splitlines() if ln.strip().startswith(f"{binary} parse")
         ]
-        self.assertEqual(len(recorded), len(measure.HEAPTRACK_AXIS))
+        self.assertEqual(len(recorded), len(measure.HEAPTRACK_SHAPES))
 
     def test_the_recorded_build_has_a_target_dir_of_its_own(self):
         # A `--features` build under `--profile profiling` in the default
@@ -8297,7 +8298,7 @@ class HeaptrackRecipe(unittest.TestCase):
     def test_the_gui_is_never_launched(self):
         # Without `--record-only` heaptrack hands the finished file to
         # `heaptrack_gui`, which need not be installed and, where it is, may
-        # not start. The `.zst` is written either way, so the failure is
+        # not start. The recording is written either way, so the failure is
         # cosmetic — and a recipe ending in an error message is one a session
         # stops trusting.
         self.assertTrue(self._records())
@@ -8322,12 +8323,40 @@ class HeaptrackRecipe(unittest.TestCase):
         # `rustc_demangle`. Without the pipe the C frames read fine and the
         # Rust frames above them are noise.
         recipe = self._recipe()
-        c = measure.contained_prefix(measure.Config(), measure.HEAPTRACK_MEMORY)
         piped = [ln for ln in recipe.splitlines() if ".txt" in ln]
-        self.assertEqual(len(piped), len(measure.HEAPTRACK_AXIS) + 1)
+        self.assertEqual(
+            len(piped), len(measure.HEAPTRACK_SHAPES) + len(measure.HEAPTRACK_PAIRS)
+        )
         for line in piped:
             with self.subTest(line=line):
-                self.assertIn(f"| {c} {measure.HEAPTRACK_DEMANGLE} >", line)
+                self.assertIn(f"| {measure.HEAPTRACK_DEMANGLE} >", line)
+
+    def test_each_report_reads_the_file_the_recorder_writes(self):
+        # The image's heaptrack is built without zstd and writes `<stem>.gz`;
+        # a printer handed `<stem>.zst` reads nothing and the report is empty.
+        self.assertEqual(measure.HEAPTRACK_SUFFIX, ".gz")
+        for line in self._reports():
+            with self.subTest(line=line):
+                inner = shlex.split(line.partition(" sh -c ")[2])[0]
+                read = [w for w in inner.split() if w.startswith("/") and "heaptrack-" in w]
+                self.assertTrue(read)
+                self.assertTrue(all(w.endswith(measure.HEAPTRACK_SUFFIX) for w in read[:-1]), read)
+
+    def test_each_report_pipes_inside_one_container(self):
+        # A container's output reaches the host through the runtime's logger,
+        # which drops what is unwritten when the container exits: a printer
+        # piped to a second container's demangler lost the tail of every
+        # report (`runs/p15.18/heaptrack/`). So the pipe and the file it
+        # writes are both inside one `sh -c`, nothing crossing a container.
+        cfg = measure.Config()
+        for line in self._reports():
+            with self.subTest(line=line):
+                head, sep, inner = line.partition(" sh -c ")
+                self.assertTrue(sep, line)
+                self.assertIn(head, {measure.contained_prefix(cfg, m) for _, m, _ in measure.HEAPTRACK_PAIRS})
+                words = shlex.split(inner)
+                self.assertEqual(len(words), 1, line)
+                self.assertIn(f"| {measure.HEAPTRACK_DEMANGLE} > ", words[0])
 
     def test_each_recording_starts_from_no_cache(self):
         # `parse` resumes from a cache, so a pair sharing one would record a
@@ -8335,23 +8364,45 @@ class HeaptrackRecipe(unittest.TestCase):
         # whole workload rather than the one byte of budget between them.
         lines = self._recipe().splitlines()
         starts = [i for i, ln in enumerate(lines) if f" {measure.HEAPTRACK} --record-only" in ln]
-        self.assertEqual(len(starts), len(measure.HEAPTRACK_AXIS))
+        self.assertEqual(len(starts), len(measure.HEAPTRACK_SHAPES))
         for i in starts:
             with self.subTest(line=lines[i]):
                 self.assertTrue(lines[i - 1].startswith("rm -f "), lines[i - 1])
                 self.assertIn("heaptrack.dtcache", lines[i - 1])
 
-    def test_the_pair_is_read_as_a_difference(self):
-        # The whole reason there are two recordings: a single one names what a
-        # run holds, and only the difference names what the admitted reader
-        # added. Both recordings must appear in that one invocation.
+    def test_each_pair_is_read_as_a_difference(self):
+        # The whole reason there are two recordings a pair: a single one names
+        # what a run holds, and only the difference names what the admitted
+        # reader, or the added workers, asked for. Both recordings must appear
+        # in that one invocation, the first less the second.
         recipe = self._recipe()
-        lines = recipe.splitlines()
-        diff = [i for i, ln in enumerate(lines) if "--diff" in ln]
-        self.assertEqual(len(diff), 1)
-        (first, first_input), (second, second_input) = measure.HEAPTRACK_AXIS
-        self.assertIn(f"heaptrack-{second}-{second_input}.zst", lines[diff[0]])
-        self.assertIn(f"heaptrack-{first}-{first_input}.zst", lines[diff[0] - 1])
+        diff = [ln for ln in recipe.splitlines() if "--diff" in ln]
+        self.assertEqual(len(diff), len(measure.HEAPTRACK_PAIRS))
+        for line, (axis, _, name) in zip(diff, measure.HEAPTRACK_PAIRS):
+            with self.subTest(diff=name):
+                (first, first_input), (second, second_input) = axis
+                suffix = measure.HEAPTRACK_SUFFIX
+                first_at = line.index(f"heaptrack-{first}-{first_input}{suffix}")
+                second_at = line.index(f"--diff {measure.Config().out_dir}/heaptrack-{second}-{second_input}{suffix}")
+                self.assertLess(first_at, second_at)
+                self.assertIn(f"> {measure.Config().out_dir / name}.txt", line)
+
+    def test_the_first_pass_pair_differs_only_in_its_worker_count(self):
+        """The first-pass pair's difference is twenty added workers only if
+        the two argvs are otherwise identical, the allowance included: an
+        allowance moving with the count would put a second variable in it. The
+        four-job shape is the second, so the diff is the larger count less
+        the smaller, and both read the limit leg."""
+        axis = measure.HEAPTRACK_FIRST_PASS_AXIS
+        self.assertEqual({name for _, name in axis}, {measure.GZIP_LIMIT_LEG})
+        first, second = (
+            measure.heaptrack_argv(shape, "/dump.gz", "/tmp/x.dtcache") for shape, _ in axis
+        )
+        differing = [i for i, (a, b) in enumerate(zip(first, second)) if a != b]
+        self.assertEqual(len(first), len(second))
+        self.assertEqual(len(differing), 1, f"{first} vs {second}")
+        self.assertEqual(first[differing[0] - 1], "--jobs")
+        self.assertGreater(int(first[differing[0]]), int(second[differing[0]]))
 
     def test_the_pair_differs_only_in_its_budget(self):
         """A difference read frame by frame is only a difference if the two
@@ -8379,7 +8430,7 @@ class HeaptrackRecipe(unittest.TestCase):
         wrapper in front of it, so the two cannot be one function; a flag that
         moves in one and not the other gives a recording of something no figure
         measures, and nothing else would notice."""
-        for shape, _ in measure.HEAPTRACK_AXIS:
+        for shape, _ in measure.HEAPTRACK_SHAPES:
             with self.subTest(shape=shape):
                 script = measure._script(shape)
                 head, sep, rest = script.partition("/pgdt ")
@@ -8395,16 +8446,21 @@ class HeaptrackRecipe(unittest.TestCase):
         argv_lines = [
             ln for ln in self._recipe().splitlines() if "/profiling/pgdt parse" in ln
         ]
-        self.assertEqual(len(argv_lines), len(measure.HEAPTRACK_AXIS))
-        for line in argv_lines:
+        self.assertEqual(len(argv_lines), len(measure.HEAPTRACK_SHAPES))
+        for line, (shape, _) in zip(argv_lines, measure.HEAPTRACK_SHAPES):
             with self.subTest(line=line):
-                self.assertIn(f"--jobs {measure.RESERVE_JOBS}", line)
+                jobs = (
+                    measure.RESERVE_JOBS
+                    if shape.startswith(measure.RESERVE_STEP_FAMILY)
+                    else int(shape.removeprefix(measure.GZRSS_FAMILY))
+                )
+                self.assertIn(f"--jobs {jobs} ", line)
 
     def test_the_input_is_staged_and_torn_down(self):
         # tmpfs is 16 G and this input does not fit beside a sweep's.
         cfg = measure.Config()
         recipe = measure.heaptrack_recipe(cfg)
-        for _, name in measure.HEAPTRACK_AXIS:
+        for _, name in measure.HEAPTRACK_SHAPES:
             staged = cfg.warm_dir / measure.input_file(name)
             with self.subTest(input=name):
                 self.assertIn(f"cp -n {cfg.cache_dir / measure.input_file(name)}", recipe)
@@ -8414,12 +8470,34 @@ class HeaptrackRecipe(unittest.TestCase):
     def test_every_binary_runs_in_a_container_no_recording_meets(self):
         # Every run of a built binary is a reading in a memory-limited
         # container (`contained.py`). heaptrack's bookkeeping is charged to
-        # it, so the limit is several times what a recorded run is allowed.
+        # it, so each pair's limit is eight times what its recorded runs may
+        # hold: a block-path run its allowance, a first pass its bill
+        # (`heaptrack_held_bound`).
         self.assertEqual(recipe_uncontained(self._recipe()), [])
-        allowed = max(
-            int(measure.heaptrack_argv(shape, "/d", "/c")[-3]) for shape, _ in measure.HEAPTRACK_AXIS
-        )
-        self.assertGreaterEqual(contained.size_bytes(measure.HEAPTRACK_MEMORY), 8 * allowed)
+        for axis, memory, name in measure.HEAPTRACK_PAIRS:
+            with self.subTest(pair=name):
+                held = max(measure.heaptrack_held_bound(shape) for shape, _ in axis)
+                self.assertGreaterEqual(contained.size_bytes(memory), 8 * held)
+
+    def test_a_block_path_recording_is_held_to_its_allowance(self):
+        # The step pair's bound is what it states, its pool growing toward it.
+        for shape, _ in measure.HEAPTRACK_AXIS:
+            with self.subTest(shape=shape):
+                stated = int(measure.heaptrack_argv(shape, "/d", "/c")[-3])
+                self.assertEqual(measure.heaptrack_held_bound(shape), stated)
+
+    def test_a_first_pass_recording_is_held_to_its_bill(self):
+        # A first pass's bound is the bill its run states, which the figure's
+        # cells are read against (`GzipResident.STATED_BILLS`): its allowance
+        # would ask a container larger than the machine.
+        bills = GzipResident.STATED_BILLS
+        for shape, name in measure.HEAPTRACK_FIRST_PASS_AXIS:
+            with self.subTest(shape=shape):
+                jobs = int(shape.removeprefix(measure.GZRSS_FAMILY))
+                self.assertEqual(measure.heaptrack_held_bound(shape), bills[(name, jobs)])
+                self.assertLess(
+                    measure.heaptrack_held_bound(shape), measure.stated_allowance(measure.GZPASS_BUDGET)
+                )
 
     def test_the_step_numbering_has_no_hole(self):
         numbered = [

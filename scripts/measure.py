@@ -11206,6 +11206,9 @@ GZIP_RSS_LEGS: tuple[tuple[str, str, str], ...] = (
     ("control_bgzf", "BGZF, block path", "block"),
 )
 
+#: The limit leg, the first pass's falsifier, by name.
+GZIP_LIMIT_LEG = GZIP_RSS_LEGS[1][0]
+
 #: How far past the speculation limit's ratio the limit leg's member must
 #: pack, plaintext over compressed bytes, before a sitting reads it
 #: (`gzip_limit_ratio_problem`): a quarter, fixed before the sitting, so a
@@ -11316,7 +11319,7 @@ def run_gzip_resident(session: Session) -> str:
     across reps, and the reps are there to catch an outlier.
     """
     figure = "gzip-resident"
-    limit_leg = "repeated_gz"
+    limit_leg = GZIP_LIMIT_LEG
     packed = session.input_size(limit_leg, "warm-parallel")
     plaintext = session.input_size(INPUTS[limit_leg].derives_from, "warm-parallel")
     ratio_problem = gzip_limit_ratio_problem(plaintext, packed)
@@ -15799,12 +15802,19 @@ def cmd_profile() -> int:
 #: ship in one package, so a printer never reads another version's format.
 HEAPTRACK = "heaptrack"
 
-#: The limit each recording's container is given: a guard on the machine, not a
-#: figure's budget. **Several times what the recorded run holds**, since
-#: heaptrack's own bookkeeping is charged to it: a recording that met the limit
-#: would be one of heaptrack being reclaimed. Every recorded shape states its
-#: allowance (`heaptrack_argv`), so the limit moves no budget the run plans by.
+#: The limit the step pair's containers are given: a guard on the machine, not
+#: a figure's budget. **Eight times what the recorded run may hold**
+#: (`heaptrack_held_bound`), since heaptrack's own bookkeeping is charged to
+#: it: a recording that met the limit would be one of heaptrack being
+#: reclaimed. Every recorded shape states its allowance (`heaptrack_argv`), so
+#: the limit moves no budget the run plans by.
 HEAPTRACK_MEMORY = "8g"
+
+#: The suffix the recorder writes its file under, `-o`'s stem plus this:
+#: **the image's heaptrack compresses with gzip**, being built without zstd,
+#: so a recipe naming `.zst` reads a file that was never written and prints
+#: an empty report (observed: `runs/p15.18/heaptrack/`).
+HEAPTRACK_SUFFIX = ".gz"
 
 #: The demangler the report is piped through.
 #:
@@ -15836,7 +15846,7 @@ HEAPTRACK_BUILD = release.Build(
     profile="profiling", features=(HEAPTRACK_LEG,), default_features=False
 )
 
-#: The two shapes recorded, and they are a **pair** rather than a survey.
+#: The first pair recorded, the step: a **pair** rather than a survey.
 #:
 #: `reserve`'s path step: a stated budget either side of the one-reader charge
 #: `charge_bytes(unit, 1)` — `reader_bytes` plus the pool's retention list — one
@@ -15856,6 +15866,59 @@ HEAPTRACK_BUILD = release.Build(
 HEAPTRACK_AXIS: tuple[tuple[str, str], ...] = tuple(
     (f"{RESERVE_STEP_FAMILY}{budget}", RESERVE_MECHANISM_INPUT)
     for budget in RESERVE_STEP_BUDGETS
+)
+
+#: The second pair: a single member's first pass at the limit leg, at the top
+#: count and at `POOL_DEPTH`'s, `gzip-resident`'s two upper rows.
+#:
+#: **Read as a difference, it names what twenty added workers asked for**, by
+#: call stack: the secant that figure reads against `Chunking::task_bytes`,
+#: attributed term by term. The limit leg, because it is the one whose chunks
+#: fill a task's plaintext terms, so a remainder past them is a worker's own.
+#: The twenty-four-job shape is first, so the diff is it less the four-job one.
+HEAPTRACK_FIRST_PASS_AXIS: tuple[tuple[str, str], ...] = tuple(
+    (f"{GZRSS_FAMILY}{jobs}", GZIP_LIMIT_LEG) for jobs in (GZIP_RSS_JOBS[-1], GZIP_RSS_JOBS[1])
+)
+
+
+def heaptrack_held_bound(command: str) -> int:
+    """What a recorded shape's run may hold, which its container is held to
+    eight times over.
+
+    **A block-path run's is its allowance**, its pool growing toward what it
+    was allowed. **A first pass's is its bill**: its workers are resolved at
+    a task's charge under the allowance and it retains no block, so nothing
+    it holds grows toward the allowance, and `gzip-resident` reads each cell
+    against that bill. Holding it to its allowance instead would ask a
+    container larger than the machine of a run that holds a small part of
+    it."""
+    if command.startswith(RESERVE_STEP_FAMILY):
+        return stated_allowance(int(command.removeprefix(RESERVE_STEP_FAMILY)))
+    if command.startswith(GZRSS_FAMILY):
+        jobs = int(command.removeprefix(GZRSS_FAMILY))
+        # Any member of more than one chunk bills a task each.
+        return gzip_first_pass_charge(jobs, 2 * GZIP_INPUT_CHUNK)
+    raise ValueError(f"unknown heaptrack shape {command!r}")
+
+
+#: The first-pass pair's container limit, by the same rule over its own
+#: bound: its twenty-four-job shape's bill, eight times over, to the MiB.
+#: **Derived rather than rounded to a gigabyte**, because the rounding would
+#: pass half this machine's memory, which `contained.py` refuses.
+HEAPTRACK_FIRST_PASS_MEMORY = (
+    f"{-(-8 * max(heaptrack_held_bound(s) for s, _ in HEAPTRACK_FIRST_PASS_AXIS) // MIB)}m"
+)
+
+#: Each recorded pair: its axis, its container limit, and the stem its diff
+#: is written under.
+HEAPTRACK_PAIRS: tuple[tuple[tuple[tuple[str, str], ...], str, str], ...] = (
+    (HEAPTRACK_AXIS, HEAPTRACK_MEMORY, "heaptrack-step-diff"),
+    (HEAPTRACK_FIRST_PASS_AXIS, HEAPTRACK_FIRST_PASS_MEMORY, "heaptrack-first-pass-diff"),
+)
+
+#: Every recorded shape, pair by pair.
+HEAPTRACK_SHAPES: tuple[tuple[str, str], ...] = tuple(
+    shape for axis, _, _ in HEAPTRACK_PAIRS for shape in axis
 )
 
 
@@ -15880,15 +15943,27 @@ def heaptrack_argv(command: str, source: Path | str, cache: Path | str) -> list[
             "--memory", str(stated_allowance(int(budget))),
             *NO_STATISTICS.split(),
         ]
+    if command.startswith(GZRSS_FAMILY):
+        jobs = command.removeprefix(GZRSS_FAMILY)
+        if not jobs.isdigit() or int(jobs) not in GZIP_RSS_JOBS:
+            raise ValueError(f"{command!r} names a job count the figure does not carry")
+        return [
+            "parse",
+            "--source", str(source),
+            "--dtcache", str(cache),
+            "--jobs", jobs,
+            "--memory", str(stated_allowance(GZPASS_BUDGET)),
+            *NO_STATISTICS.split(),
+        ]
     raise ValueError(f"unknown heaptrack shape {command!r}")
 
 
 def heaptrack_recipe(cfg: Config) -> str:
     """The whole sequence, with every path filled in.
 
-    Six things here decide whether the recording describes what it claims to,
+    Eight things here decide whether the recording describes what it claims to,
     and each fails by returning a plausible report of something else.
-    `test_measure.py` asserts all six:
+    `test_measure.py` asserts all eight:
 
     * **a `HEAPTRACK_LEG` build, in a target directory of its own.** The
       default build's Rust heap never reaches `malloc`, so its recording names
@@ -15908,7 +15983,7 @@ def heaptrack_recipe(cfg: Config) -> str:
       build of the same source for no reading.
     * **`--record-only`.** heaptrack otherwise hands the finished file to
       `heaptrack_gui`, which the image does not carry. That failure is
-      cosmetic, the `.zst` being already written, but a recipe that ends in an
+      cosmetic, the recording being already written, but a recipe that ends in an
       error message is a recipe a session stops trusting.
     * **`--merge-backtraces=0` on the report.** `heaptrack_print` merges by
       default and its own `--help` says the merged peak consumption is not
@@ -15918,11 +15993,17 @@ def heaptrack_recipe(cfg: Config) -> str:
       is the shape of the one unexplained reading this instrument has produced.
     * **`c++filt`.** See `HEAPTRACK_DEMANGLE`: the Rust frames arrive v0-mangled
       and this build of heaptrack cannot demangle them.
+    * **the recorder's own suffix.** See `HEAPTRACK_SUFFIX`: a report of a
+      file the recorder never wrote is empty.
+    * **each report's pipe inside one container**, its file written there. A
+      container's output reaches the host through the runtime's logger, which
+      drops what is unwritten when the container exits, so a printer piped
+      into a second container's demangler loses its report's tail.
 
-    **Every line running a binary runs it in a container** under
-    `HEAPTRACK_MEMORY` (`contained.py`), as every run of a built binary is: a
-    limit guarding the machine, several times what a recording holds, so no
-    recording meets it."""
+    **Every line running a binary runs it in a container** under its pair's
+    limit (`HEAPTRACK_PAIRS`, `contained.py`), as every run of a built binary
+    is: a limit guarding the machine, eight times what a recording may hold
+    (`heaptrack_held_bound`), so no recording meets it."""
     warm = cfg.warm_dir
     target = image_target_dir(cfg, f"heaptrack-{HEAPTRACK_LEG}")
     binary = HEAPTRACK_BUILD.binary(target)
@@ -15961,9 +16042,9 @@ def heaptrack_recipe(cfg: Config) -> str:
     )
     lines += [recipe_build_line(HEAPTRACK_BUILD, target), f"{c} {binary} --version", ""]
 
-    staged = sorted({name for _, name in HEAPTRACK_AXIS})
+    staged = sorted({name for _, name in HEAPTRACK_SHAPES})
     head(
-        "Stage the input warm, on the host. Not for the reading's sake --",
+        "Stage the inputs warm, on the host. Not for the reading's sake --",
         "heaptrack counts allocations, which a cold read does not change --",
         "but because its own overhead makes the recording the slow part.",
     )
@@ -15976,20 +16057,22 @@ def heaptrack_recipe(cfg: Config) -> str:
         return f"heaptrack-{shape}-{name}"
 
     head(
-        "The recordings. --record-only: nothing is handed to heaptrack_gui,",
-        "which need not be installed and, where it is, may not start.",
-        "Each starts from no cache -- a `parse` resumes from one, so the",
-        "second run of a pair would otherwise scan nothing at all.",
+        "The recordings, each pair under its own limit. --record-only: nothing",
+        "is handed to heaptrack_gui, which need not be installed and, where it",
+        "is, may not start. Each starts from no cache -- a `parse` resumes from",
+        "one, so the second run of a pair would otherwise scan nothing at all.",
     )
-    for shape, name in HEAPTRACK_AXIS:
-        src = warm / input_file(name)
-        argv = " ".join(heaptrack_argv(shape, src, cache))
-        lines += [
-            "",
-            f"rm -f {cache} {out / (stem(shape, name) + '.zst')}",
-            f"{c} {HEAPTRACK} --record-only -o {out / stem(shape, name)} \\",
-            f"  {binary} {argv} >/dev/null",
-        ]
+    for axis, memory, _ in HEAPTRACK_PAIRS:
+        pc = contained_prefix(cfg, memory)
+        for shape, name in axis:
+            src = warm / input_file(name)
+            argv = " ".join(heaptrack_argv(shape, src, cache))
+            lines += [
+                "",
+                f"rm -f {cache} {out / (stem(shape, name) + HEAPTRACK_SUFFIX)}",
+                f"{pc} {HEAPTRACK} --record-only -o {out / stem(shape, name)} \\",
+                f"  {binary} {argv} >/dev/null",
+            ]
     lines.append("")
 
     head(
@@ -15997,30 +16080,45 @@ def heaptrack_recipe(cfg: Config) -> str:
         "the sum over the backtraces merged into it and heaptrack_print's own",
         "--help says it is not correct; c++filt, because the Rust frames are",
         "v0-mangled and this heaptrack cannot demangle them. Both are the",
-        "image's, so the printer reads its recorder's format.",
+        "image's, so the printer reads its recorder's format. Each pipe runs",
+        "inside one container, writing its file there: a container's own",
+        "output reaches the host through the runtime's logger, which drops",
+        "what is still unwritten when the container exits.",
     )
-    for shape, name in HEAPTRACK_AXIS:
-        lines.append(
-            f"{c} {printer} --merge-backtraces=0 {out / (stem(shape, name) + '.zst')} \\"
-        )
-        lines.append(f"  | {c} {HEAPTRACK_DEMANGLE} > {out / (stem(shape, name) + '.txt')}")
+    def report(pc: str, recording: str, written: Path, diff: str = "") -> list[str]:
+        against = f" --diff {diff}" if diff else ""
+        inner = f"{printer} --merge-backtraces=0 {recording}{against} | {HEAPTRACK_DEMANGLE} > {written}"
+        return [f"{pc} sh -c {shlex.quote(inner)}"]
+
+    for axis, memory, _ in HEAPTRACK_PAIRS:
+        pc = contained_prefix(cfg, memory)
+        for shape, name in axis:
+            lines += report(
+                pc, str(out / (stem(shape, name) + HEAPTRACK_SUFFIX)),
+                out / (stem(shape, name) + ".txt"),
+            )
     lines.append("")
 
-    (first, first_input), (second, second_input) = HEAPTRACK_AXIS
     head(
-        "The pair read as a difference: the block path against the streaming",
-        "fallback, one byte of budget apart. This is what a single recording",
-        "cannot give -- every term the admitted reader adds, named, with no",
-        "subtraction between sittings and no spread to carry.",
+        "Each pair read as a difference, its first recording less its second.",
+        "The step pair: the block path against the streaming fallback, one",
+        "byte of budget apart -- every term the admitted reader adds. The",
+        "first-pass pair: twenty-four jobs against four at the limit leg --",
+        "every term twenty added workers ask for. This is what a single",
+        "recording cannot give, with no subtraction between sittings and no",
+        "spread to carry.",
     )
-    lines += [
-        f"{c} {printer} --merge-backtraces=0 {out / (stem(first, first_input) + '.zst')} \\",
-        f"  --diff {out / (stem(second, second_input) + '.zst')} \\",
-        f"  | {c} {HEAPTRACK_DEMANGLE} > {out / 'heaptrack-step-diff.txt'}",
-        "",
-    ]
+    for axis, memory, diff in HEAPTRACK_PAIRS:
+        (first, first_input), (second, second_input) = axis
+        lines += report(
+            contained_prefix(cfg, memory),
+            str(out / (stem(first, first_input) + HEAPTRACK_SUFFIX)),
+            out / (diff + ".txt"),
+            diff=str(out / (stem(second, second_input) + HEAPTRACK_SUFFIX)),
+        )
+    lines.append("")
 
-    head("Tear down: the staged input, and the cache the recordings shared.")
+    head("Tear down: the staged inputs, and the cache the recordings shared.")
     lines.append(
         "rm -f "
         + " ".join(str(warm / input_file(n)) for n in staged)
