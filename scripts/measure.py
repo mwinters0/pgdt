@@ -138,9 +138,11 @@ from generate_xz_input import KOJI_RATIO_MAX, KOJI_RATIO_MIN
 
 # The plaintext a BGZF member holds, for `gzip-resident`'s unit arithmetic: the
 # generator writes the members, so the count a unit coalesces is read off the
-# constant it writes them at rather than spelled twice. Import-safe on the same
-# terms.
-from generate_gzip_input import BGZF_BLOCK
+# constant it writes them at rather than spelled twice; and the versions of the
+# writers `gzip-first-pass`'s inputs come from, which its table names for the
+# same reason. Import-safe on the same terms, zlib-ng imported only where a
+# file is written through it.
+from generate_gzip_input import BGZF_BLOCK, GNU_GZIP_VERSION, ZLIB_VERSION, ZLIBNG_VERSION
 
 # The release build, whose image builds every binary a figure runs and whose
 # base is the image every built binary runs in (`register_image`,
@@ -1631,6 +1633,43 @@ INPUTS["control_bgzf"] = InputSpec(
     # member; the single member's generous nominal holds it.
     nominal_bytes=1024 * MIB,
 )
+#: `gzip-first-pass`'s other writers' files: `control` written by another
+#: writer's deflate into one member (`generate_gzip_input.py --writer`), so
+#: every leg's plaintext is `control_gz`'s exactly and the files differ by
+#: their blocks alone (`GZPASS_WRITERS`).
+#:
+#: **zlib-ng at level 6** is `pg_dump -Z` where zlib-ng's compatibility build
+#: is the zlib it links; **GNU gzip at level 6** is `pg_dump | gzip`; **zlib-ng
+#: at level 1** is the writer that ends no block before its last
+#: (`deflate_quick`), whose first pass the frontier carries alone. Each a
+#: generous nominal, level 1 packing looser.
+INPUTS["control_gz_ng"] = InputSpec(
+    "control_gz_ng",
+    "generate_gzip_input.py",
+    ("--from-dump", "@SOURCE@", "--writer", "zlib-ng"),
+    scales=False,
+    suffix=".gz",
+    derives_from="control",
+    nominal_bytes=1024 * MIB,
+)
+INPUTS["control_gz_gnu"] = InputSpec(
+    "control_gz_gnu",
+    "generate_gzip_input.py",
+    ("--from-dump", "@SOURCE@", "--writer", "gzip"),
+    scales=False,
+    suffix=".gz",
+    derives_from="control",
+    nominal_bytes=1024 * MIB,
+)
+INPUTS["control_gz_quick"] = InputSpec(
+    "control_gz_quick",
+    "generate_gzip_input.py",
+    ("--from-dump", "@SOURCE@", "--writer", "zlib-ng", "--level", "1"),
+    scales=False,
+    suffix=".gz",
+    derives_from="control",
+    nominal_bytes=1536 * MIB,
+)
 #: The koji download, and where in it the koji leg's streams are taken from.
 #: **Not the head of the file**: koji's first 3 GiB of plaintext compresses
 #: 56.19x against the whole file's 19.41x, and a decode rate is per plaintext
@@ -2459,6 +2498,39 @@ GZSPACING_SHAPES: tuple[str, ...] = tuple(
     f"{GZSPACING_FAMILY}{stage}-{mib}" for mib in GZSPACING_MIB for stage in GZSPACING_STAGES
 )
 
+#: The `gzip-first-pass` figure's command family: `pgdt parse` of a single
+#: gzip member, its first pass, at a worker count its own axis carries
+#: (`GZPASS_JOBS`) under `GZPASS_BUDGET`. **Not a `JOBS_AXIS` family**, whose
+#: counts and budget are the `parallel-*` figures': exempted from `SWEEP_JOBS`
+#: by its own prefix, as the decode instrument's is, and still stating its
+#: count.
+GZPASS_FAMILY = "parse-gzpass-jobs-"
+
+#: This machine's hardware threads and physical cores, which the figure's
+#: rows are named by and `gzpass_topology_problem` holds the machine to
+#: before a reading: written down rather than read, so a table names the
+#: counts it was taken at, and refused on any other machine rather than
+#: retaken at counts that mean something else there.
+GZPASS_LOGICAL = 24
+GZPASS_PHYSICAL = 12
+
+#: The `--jobs` the figure is taken at, and its table's row order: the serial
+#: pass, the optimization baseline (`roadmap.md`, "Four workers is the
+#: optimization baseline; twenty-four is the guard"), the physical count, the
+#: logical count less one and the logical count. **The third leg is the
+#: falsifier the default is settled by** (`docs/design/roadmap-P15-gzip.md`,
+#: "Slice order"): `--jobs` counts the frontier and not the scan's thread, so
+#: at the logical count less one the process runs no more threads than there
+#: are CPUs, and which of the other two it is level with names the cause.
+GZPASS_JOBS: tuple[int, ...] = (1, 4, GZPASS_PHYSICAL, GZPASS_LOGICAL - 1, GZPASS_LOGICAL)
+
+#: The read-buffer budget every leg states (`stated_allowance`), and so a
+#: first pass's allowance: one that affords the widest row a task each at
+#: either chunk length under `margin_allowance` as well as under the budget,
+#: which `PARALLEL_BUDGET` does not (`gzip-resident`'s 24-job cell affords
+#: twenty). A row whose run resolves another count refuses the figure.
+GZPASS_BUDGET = 3 << 30
+
 #: The `--jobs` values the two `parallel-*` figures are taken at, and the row
 #: order of their tables.
 #:
@@ -2614,6 +2686,10 @@ PARALLEL_HEADROOM = 2 << 30
 #: is why the shared constant hid it.
 PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 
+#: `gzip-first-pass`'s container: its budget plus `PARALLEL_HEADROOM`, sized as
+#: `PARALLEL_MEMORY` is and for its reason.
+GZPASS_MEMORY = f"{(GZPASS_BUDGET + PARALLEL_HEADROOM) // GIB}g"
+
 #: The sub-stream count a provider leg of `parallel-scan-throughput` actually
 #: gets from `PARALLEL_BUDGET`, keyed by input — `worker_count`'s
 #: `WorkerMemory::affords`, reached through the scan budget's draw
@@ -2665,9 +2741,9 @@ PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 QUERY_SUBSTREAM_CAP: dict[str, int] = {"control": 7}
 
 #: The worker count every `pgdt` invocation this harness makes states, and the
-#: one every registered figure is taken at **except the four whose axis it is**
+#: one every registered figure is taken at **except the five whose axis it is**
 #: (`parallel-scan-throughput`, `parallel-peak-rss`, `gzip-resident`,
-#: `xz-decode-scaling`) **and
+#: `gzip-first-pass`, `xz-decode-scaling`) **and
 #: `reserve`**, whose stated legs hold `RESERVE_JOBS` and whose flagless legs
 #: state nothing.
 #:
@@ -4255,6 +4331,17 @@ def _script(command: str) -> str:
             f"{PROVIDER_BUILDER}time {dfcli_shell(env, SQL_SHELL, argv)} "
             f">/tmp/result.csv && {DFCLI_ANSWER}"
         )
+    if command.startswith(GZPASS_FAMILY):
+        # A gzip first pass at a count `gzip-first-pass` carries, and the plain
+        # `parse` it falls toward at one, the shape `parallel-scan-throughput`'s
+        # `parse` rows are under the figure's own budget.
+        jobs = command.removeprefix(GZPASS_FAMILY)
+        if not jobs.isdigit() or int(jobs) not in GZPASS_JOBS:
+            raise ValueError(f"{command!r} names a job count the figure does not carry")
+        return (
+            f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache --jobs {jobs} "
+            f"--memory {stated_allowance(GZPASS_BUDGET)} {ns} >/dev/null"
+        )
     if command.startswith(JOBS_AXIS):
         # The three shapes whose worker count is a figure's axis rather than the
         # apparatus's constant. Each `pgdt` one is otherwise the shape it is
@@ -4390,6 +4477,7 @@ def command_shapes() -> tuple[str, ...]:
         DYNFILTER_STARTUP,
         PARALLEL_SCAN,
         *(f"{family}{n}" for family in JOBS_AXIS for n in PARALLEL_JOBS),
+        *(f"{GZPASS_FAMILY}{n}" for n in GZPASS_JOBS),
         *(
             f"{RESERVE_FAMILY}{token}-{budget}"
             for token, _, _ in RESERVE_ARENAS
@@ -4585,7 +4673,8 @@ def pinned_count_problems() -> list[str]:
     defect from the other side and is the one no `--stale` can see.
 
     The decode instrument states `--workers`, not `--jobs`, and its counts are
-    its own figure's axis; it is exempt for the same reason, by prefix. So are
+    its own figure's axis; it is exempt for the same reason, by prefix, and so
+    is `gzip-first-pass`'s family (`GZPASS_FAMILY`). So are
     the reserve figure's two stated families, whose count is the figure's own
     constant (`RESERVE_JOBS`), and its flagless one, which states nothing and is
     held to that by `flagless_flag_problems`.
@@ -4593,7 +4682,8 @@ def pinned_count_problems() -> list[str]:
     bad = []
     for command in command_shapes():
         if command in _NO_WORKERS or command.startswith(
-            ("decode-", RESERVE_FAMILY, RESERVE_STEP_FAMILY, *_NO_FLAGS, *JOBS_AXIS)
+            ("decode-", GZPASS_FAMILY, RESERVE_FAMILY, RESERVE_STEP_FAMILY, *_NO_FLAGS,
+             *JOBS_AXIS)
         ):
             continue
         stated = set(_WORKER_COUNT.findall(_script(command)))
@@ -4862,6 +4952,8 @@ class Session:
             return ensure_allocator_binary(self.cfg, which.removeprefix("alloc:"), self.log)
         if which.startswith("profile:"):
             return ensure_profile_binary(self.cfg, which.removeprefix("profile:"), self.log)
+        if which.startswith("chunk:"):
+            return ensure_chunk_binary(self.cfg, which.removeprefix("chunk:"), self.log)
         if which == "introspect":
             return ensure_instrument_binary(self.cfg, self.log)
         raise ValueError(f"unknown binary {which!r}")
@@ -5195,6 +5287,15 @@ class Session:
                         if pruned
                         else {}
                     ),
+                }
+            if spec.command.startswith(GZPASS_FAMILY):
+                # A stand-in resolution, for the same reason: the first-pass
+                # table refuses a leg whose run resolved another count, or a
+                # gzip leg that opened no first pass and a plain one that did.
+                jobs = spec.command.removeprefix(GZPASS_FAMILY)
+                self._last_stdout = {
+                    "resolved_jobs": jobs,
+                    **({} if spec.input == "control" else {"first_pass_workers": jobs}),
                 }
             if spec.command.startswith(GZSPACING_FAMILY):
                 # A stand-in index, for the same reason: the spacing table
@@ -6569,6 +6670,78 @@ def ensure_profile_binary(cfg: Config, leg: str, log: Callable[[str], None]) -> 
             "publishes a comparison of something else"
         )
     log(f"  {out.name}: {leg}, {allocator}")
+    return out
+
+
+#: The `gzip-first-pass` figure's chunk-length leg: `pgdt`'s feature naming
+#: it, and the binary a `RunSpec` names it by. The shipped build but for a
+#: first pass's chunk, rapidgzip's 4 MiB in place of 1 MiB, the speculation
+#: limit held (`docs/design/roadmap-P15-gzip.md`, "Slice order").
+GZPASS_CHUNK_LEG = "gzip-4mib-chunks"
+GZPASS_CHUNK_BINARY = f"chunk:{GZPASS_CHUNK_LEG}"
+
+#: The chunk length that leg's first pass cuts, in bytes, and what its
+#: `--version` names (`crates/pgdt/src/version.rs`, `CHUNK_MARKER`); a build
+#: naming none cuts the shipped `GZIP_INPUT_CHUNK`.
+GZPASS_CHUNK_BYTES = 4 * MIB
+CHUNK_RE = re.compile(r"\(gzip chunk: (\d+) MiB\)")
+
+
+def binary_chunk(binary: Path) -> int:
+    """The chunk length a built `pgdt`'s gzip first pass cuts, in bytes, read
+    out of the binary for `binary_allocator`'s reason: two legs differing by
+    a feature are a comparison of two identical binaries the moment the
+    feature is dropped. A binary naming none cuts the shipped length."""
+    out = run([str(binary), "--version"], capture=True)
+    match = CHUNK_RE.search(out)
+    return int(match.group(1)) * MIB if match else GZIP_INPUT_CHUNK
+
+
+#: Legs built by this process, and legs a dry run has announced, for
+#: `_ALLOC_BUILT`'s and `_ALLOC_ANNOUNCED`'s reasons.
+_CHUNK_BUILT: set[str] = set()
+_CHUNK_ANNOUNCED: set[str] = set()
+
+
+def ensure_chunk_binary(cfg: Config, leg: str, log: Callable[[str], None]) -> Path:
+    """`gzip-first-pass`'s chunk-length leg, built and then interrogated.
+
+    `ensure_allocator_binary`'s details, with the chunk in the allocator's
+    place: **the default features plus the leg's**, so it links the shipped
+    allocator and differs from the shipped binary by the chunk alone; **its
+    own target dir**; **`--version` read back**, naming this leg's chunk, the
+    shipped allocator and `release`, or the leg is refused; and **once per
+    process**. Built in the release image (`build_in_image`), as the shipped
+    binary is. What a separate build cannot remove is its layout, which a
+    constant moved may move (`measurements.md`, "Two builds of one source can
+    differ by layout"); the figure's table says so."""
+    if leg != GZPASS_CHUNK_LEG:
+        raise ValueError(f"unknown chunk leg {leg!r}")
+    out = cfg.out_dir / f"pgdt-{leg}"
+    if leg in _CHUNK_BUILT:
+        return out
+    target = image_target_dir(cfg, leg)
+    if cfg.dry_run:
+        if leg not in _CHUNK_ANNOUNCED:
+            _CHUNK_ANNOUNCED.add(leg)
+            log(f"  [dry-run] would build the {leg} chunk leg into {target}")
+        return out
+    log(f"  building the {leg} chunk leg into {target}")
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    built = build_in_image(cfg, release.Build(features=(leg,)), target_dir=target)
+    shutil.copyfile(built, out)
+    out.chmod(0o755)
+    _CHUNK_BUILT.add(leg)
+    chunk, allocator, profile = binary_chunk(out), binary_allocator(out), binary_profile(out)
+    if (chunk, allocator, profile) != (GZPASS_CHUNK_BYTES, ALLOCATOR_LEGS[0], "release"):
+        out.unlink()
+        _CHUNK_BUILT.discard(leg)
+        raise RuntimeError(
+            f"the {leg} leg reports a {chunk}-byte chunk, allocator `{allocator}` and profile "
+            f"`{profile}`: a leg is the shipped build but for a {GZPASS_CHUNK_BYTES}-byte "
+            "chunk, or timing it publishes a comparison of something else"
+        )
+    log(f"  {out.name}: {chunk >> 20} MiB chunks, {allocator}, {profile}")
     return out
 
 
@@ -10902,14 +11075,15 @@ def gzip_pass_bytes() -> int:
     return 2 * decode + GZIP_SKIP_SCRATCH
 
 
-def gzip_task_bytes() -> int:
+def gzip_task_bytes(chunk: int = GZIP_INPUT_CHUNK) -> int:
     """What one task ahead of a first pass's frontier is charged: its chunk,
     the limit's worth past it, its plaintext twice while it writes markers,
     `DECODES_A_TASK` decodes' plaintext waiting for the frontier,
     `GUESSES_A_TASK` guesses' marked histories, and its input buffer.
 
     `Chunking::task_bytes` at `Chunking::SHIPPED` (`first_pass/ahead.rs`),
-    mirrored. **All of it but its two input chunks and the guesses is five
+    mirrored, or at a `chunk` a measured leg cuts in its place
+    (`GZPASS_CHUNK_BYTES`). **All of it but its two input chunks and the guesses is five
     speculation limits**, which is why this figure is what prices that
     constant: no leg varies it, and a first-pass cell's remainder is read
     against a charge it dominates (`docs/design/roadmap-P15-gzip.md`, "Slice
@@ -10917,7 +11091,7 @@ def gzip_task_bytes() -> int:
     limit = GZIP_SPECULATION_LIMIT
     guess = 2 * GZIP_WINDOW_BYTES
     decodes, guesses = GZIP_DECODES_A_TASK, GZIP_GUESSES_A_TASK
-    return GZIP_INPUT_CHUNK + limit + 2 * limit + decodes * limit + guesses * guess + GZIP_INPUT_CHUNK
+    return chunk + limit + 2 * limit + decodes * limit + guesses * guess + GZIP_INPUT_CHUNK
 
 
 def gzip_first_pass_charge(jobs: int, stored_size: int) -> int:
@@ -11222,6 +11396,350 @@ def run_gzip_resident(session: Session) -> str:
             figure,
             [(spec.label, spec, PARALLEL_BUDGET + PARALLEL_HEADROOM) for spec in specs],
         )
+    )
+
+
+# -- what a parallel gzip first pass buys -----------------------------------
+
+#: `gzip-first-pass`'s single members, in its table's column order: the
+#: registered input, the writer that wrote it, and what that file is to a
+#: reader. **Every one is `control`**, so a leg's plaintext and its rate's
+#: denominator are one file's and the legs differ by their writer's blocks
+#: alone, which is what a speculation finds a chunk's start by.
+GZPASS_WRITERS: tuple[tuple[str, str, str], ...] = (
+    ("control_gz", f"zlib {ZLIB_VERSION}, level 6", "`pg_dump -Z` over stock zlib"),
+    (
+        "control_gz_ng",
+        f"zlib-ng {ZLIBNG_VERSION}, level 6",
+        "`pg_dump -Z` where zlib is zlib-ng's compatibility build",
+    ),
+    ("control_gz_gnu", f"GNU gzip {GNU_GZIP_VERSION}, level 6", "`pg_dump | gzip`"),
+    (
+        "control_gz_quick",
+        f"zlib-ng {ZLIBNG_VERSION}, level 1",
+        "a writer ending no block before its last, whose first pass the frontier carries alone",
+    ),
+)
+
+#: The count the chunk-length leg is read at beside the shipped length: the
+#: optimization baseline, one count as the spec asks.
+GZPASS_CHUNK_JOBS = 4
+
+#: How many reps each leg takes, alternated within each and paired by rep:
+#: 15.17.4's probe's count, whose pairs this figure's rule reads.
+GZPASS_REPS = 7
+
+#: How many of its pairs a leg may lose and still **beat** the other
+#: (`gzpass_beats`), fixed before the sitting: at seven reps, six wins of seven.
+#: Two legs neither of which beats the other are **level**. A gate on this line
+#: reads alternated reps by their paired differences, never by whether two
+#: ranges overlap (`docs/design/roadmap-P15-gzip.md`, "Slice order").
+GZPASS_SPARED = 1
+
+
+def gzpass_topology(root: Path = release.CPU_SYSFS) -> tuple[int, int]:
+    """This machine's online hardware threads and physical cores, read off
+    each CPU's `thread_siblings_list`."""
+    cores = {
+        release.parse_cpu_list(path.read_text())
+        for path in root.glob("cpu[0-9]*/topology/thread_siblings_list")
+    }
+    return len(frozenset().union(*cores)), len(cores)
+
+
+def gzpass_topology_problem(topology: tuple[int, int]) -> str | None:
+    """Why `gzip-first-pass` cannot be taken on a machine of `topology`, or
+    `None`: its rows are this machine's logical and physical counts, and a
+    machine with others would read counts that mean something else there."""
+    if topology != (GZPASS_LOGICAL, GZPASS_PHYSICAL):
+        logical, physical = topology
+        return (
+            f"its rows are {GZPASS_LOGICAL} hardware threads on {GZPASS_PHYSICAL} cores, and "
+            f"this machine has {logical} on {physical}: move `GZPASS_LOGICAL` and "
+            "`GZPASS_PHYSICAL` to take it here"
+        )
+    return None
+
+
+def gzpass_wins(a: Sequence[float], b: Sequence[float]) -> int:
+    """In how many reps `a` was faster than `b`, rep by rep: the two legs'
+    readings in one sweep's rep order."""
+    if len(a) != len(b) or not a:
+        raise ValueError(f"{len(a)} and {len(b)} readings do not pair")
+    return sum(x < y for x, y in zip(a, b))
+
+
+def gzpass_beats(a: Sequence[float], b: Sequence[float]) -> bool:
+    """Whether `a` beats `b`: faster in all its pairs but `GZPASS_SPARED`, and
+    in more than half of them."""
+    n = len(a)
+    return gzpass_wins(a, b) >= max(n - GZPASS_SPARED, n // 2 + 1)
+
+
+def gzpass_level(a: Sequence[float], b: Sequence[float]) -> bool:
+    """Whether neither of `a` and `b` beats the other."""
+    return not gzpass_beats(a, b) and not gzpass_beats(b, a)
+
+
+#: What each outcome of one file's counts settles, by the spec's three
+#: (`docs/design/roadmap-P15-gzip.md`, "Slice order"), and the two that settle
+#: nothing.
+GZPASS_OUTCOMES: dict[str, str] = {
+    "stands": "the logical count is level with the physical count or faster: the default "
+    "stands, and D2 gains its rejection on this figure",
+    "oversubscription": "the logical count less one is level with the physical count and "
+    "beats the logical count: the cost is oversubscription, and the default becomes the "
+    "logical count less the scan's thread",
+    "shared": "the logical count less one is level with the logical count and the physical "
+    "count beats it: the cost is a core or a cache shared, and the default is capped at the "
+    "physical cores within the process's affinity",
+    "undecided": "the three counts fall in none of those orders",
+    "no lift": "the physical count does not beat the serial pass, so the file says nothing of "
+    "the default",
+}
+
+
+def gzpass_outcome(
+    serial: Sequence[float],
+    physical: Sequence[float],
+    less_one: Sequence[float],
+    logical: Sequence[float],
+) -> str:
+    """Which of `GZPASS_OUTCOMES` one file's readings at the serial, physical,
+    logical-less-one and logical counts fall in, by `gzpass_beats`."""
+    if not gzpass_beats(physical, serial):
+        return "no lift"
+    if not gzpass_beats(physical, logical):
+        return "stands"
+    if gzpass_level(less_one, physical) and gzpass_beats(less_one, logical):
+        return "oversubscription"
+    if gzpass_level(less_one, logical) and gzpass_beats(physical, less_one):
+        return "shared"
+    return "undecided"
+
+
+def gzpass_verdict(outcomes: Mapping[str, str]) -> str:
+    """What the files' outcomes settle together, keyed by each file's label:
+    one outcome where every file the pass lifts on falls in it and it is one
+    of the spec's three, and nothing otherwise."""
+    lifted = {label: o for label, o in outcomes.items() if o != "no lift"}
+    found = set(lifted.values())
+    if not lifted:
+        return "**The figure settles nothing**: the pass lifts on no file."
+    if len(found) == 1 and (outcome := found.pop()) != "undecided":
+        return (
+            f"**The figure settles the default: {outcome}.** On every file the pass lifts on, "
+            f"{GZPASS_OUTCOMES[outcome]}."
+        )
+    each = "; ".join(f"{label}: {o}" for label, o in lifted.items())
+    return f"**The figure does not settle the default**: the files the pass lifts on disagree, or fall in no order ({each})."
+
+
+def _gzpass_specs() -> list[RunSpec]:
+    """Every leg, a sweep a writer: the plain `parse` the pass falls toward,
+    read in each sweep, then the writer's file at every count and at the
+    chunk-length leg's."""
+    figure = "gzip-first-pass"
+    specs = []
+    for gi, (leg, label, _) in enumerate(GZPASS_WRITERS):
+        floor = RunSpec(
+            "pgdt", "control", f"{GZPASS_FAMILY}1", "warm-parallel",
+            f"plain `parse`, the scan's floor, beside {label}",
+        )
+        specs.append(in_sweep(figure, floor, gi))
+        specs += [
+            RunSpec("pgdt", leg, f"{GZPASS_FAMILY}{jobs}", "warm-parallel", f"{label}, {jobs}j")
+            for jobs in GZPASS_JOBS
+        ]
+        specs.append(
+            RunSpec(
+                GZPASS_CHUNK_BINARY, leg, f"{GZPASS_FAMILY}{GZPASS_CHUNK_JOBS}", "warm-parallel",
+                f"{label}, {GZPASS_CHUNK_BYTES >> 20} MiB chunks, {GZPASS_CHUNK_JOBS}j",
+            )
+        )
+    return specs
+
+
+def run_gzip_first_pass(session: Session) -> str:
+    """Wall clock of `pgdt parse` over one gzip member — its first pass —
+    by four writers, at the serial count, four, the physical count, the
+    logical count less one and the logical count, and at 4 MiB chunks at
+    four; beside each writer's sweep, the plain `parse` of `control`, the
+    scan's floor a first pass falls toward.
+
+    **What it settles is the gzip first pass's default worker count**
+    (`KD145`): a local first pass recommends the logical count, which a hand
+    probe on this machine found slower than the physical one. Each file's
+    three upper counts fall in one of `GZPASS_OUTCOMES`, by `gzpass_beats` over
+    paired reps, and the figure settles the default only where every file the
+    pass lifts on agrees (`gzpass_verdict`). **What would falsify each cause**,
+    written before any reading: oversubscription is falsified by the logical
+    count less one being slower than the physical count, and a shared core or
+    cache by its being faster than the logical count; the default standing,
+    by the physical count beating the logical one.
+
+    **It prices the chunk length too**: 4 MiB, rapidgzip's, against the
+    shipped 1 MiB at four jobs, the speculation limit held, by the same pairs
+    — a separate build, whose layout is a second difference no pair removes.
+
+    **Every leg is checked against its own run**: the count each `scan
+    started` line resolved must be the row's, a gzip leg must say its first
+    pass ran that many workers, and the floor must open none; the shipped
+    binary must cut the shipped chunk and the leg its own
+    (`ensure_chunk_binary`); and the machine must be the one the rows are
+    named for (`gzpass_topology_problem`).
+    """
+    figure = "gzip-first-pass"
+    specs = _gzpass_specs()
+    to_sweep = [s for s in specs if not session.has(figure, s)]
+    if to_sweep and not session.cfg.dry_run:
+        if problem := gzpass_topology_problem(gzpass_topology()):
+            raise RuntimeError(f"{figure} cannot be taken here: {problem}")
+        if (shipped := binary_chunk(session.cfg.bin_pgdt)) != GZIP_INPUT_CHUNK:
+            raise RuntimeError(
+                f"{figure}: the shipped binary cuts {shipped}-byte chunks, not the shipped "
+                f"{GZIP_INPUT_CHUNK}: it is a leg's build, and every other row would read it"
+            )
+    session.build_before_sweep(to_sweep)
+    session.sweep(figure, to_sweep, session.cfg.reps(GZPASS_REPS))
+
+    problems = []
+    for spec in specs:
+        report = session.reported.get(spec.key(figure), {})
+        jobs = spec.command.removeprefix(GZPASS_FAMILY)
+        if report.get("resolved_jobs") != jobs:
+            problems.append(
+                f"{spec.label}: the run resolved {report.get('resolved_jobs', 'no')} worker(s) "
+                f"where the row states {jobs}"
+            )
+        workers = report.get("first_pass_workers")
+        if spec.input == "control":
+            if workers is not None:
+                problems.append(f"{spec.label}: a plain dump opened a first pass")
+        elif workers != jobs:
+            problems.append(
+                f"{spec.label}: the first pass ran {workers or 'no'} worker(s) where the row "
+                f"states {jobs}"
+            )
+    if len({len(session.get(figure, s)) for s in specs}) != 1:
+        problems.append("the legs hold different numbers of reps, so they do not pair")
+    if problems:
+        raise RuntimeError(f"{figure} cannot read its legs: " + "; ".join(problems))
+
+    def at(leg: str, jobs: int, binary: str = "pgdt") -> list[float]:
+        return session.get(figure, RunSpec(binary, leg, f"{GZPASS_FAMILY}{jobs}", "warm-parallel", ""))
+
+    plain = session.input_size("control", "warm-parallel")
+    floor = RunSpec("pgdt", "control", f"{GZPASS_FAMILY}1", "warm-parallel", "")
+    floors = {
+        leg: session.get(figure, in_sweep(figure, floor, gi))
+        for gi, (leg, _, _) in enumerate(GZPASS_WRITERS)
+    }
+    labels = [label for _, label, _ in GZPASS_WRITERS]
+    rows = [
+        ["the scan's floor: plain `parse`, `--jobs 1`"]
+        + [
+            f"{fmt_median_spread(floors[leg])} · {fmt_rate(plain, median(floors[leg]))}"
+            for leg, _, _ in GZPASS_WRITERS
+        ]
+    ]
+    for jobs in GZPASS_JOBS:
+        name = {
+            1: " *(serial)*",
+            GZPASS_PHYSICAL: " *(physical)*",
+            GZPASS_LOGICAL - 1: " *(logical less one)*",
+            GZPASS_LOGICAL: " *(logical)*",
+        }.get(jobs, "")
+        cells = [f"`{jobs}`{name}"]
+        for leg, _, _ in GZPASS_WRITERS:
+            values, serial = at(leg, jobs), at(leg, 1)
+            cell = f"{fmt_median_spread(values)} · {fmt_rate(plain, median(values))}"
+            if jobs != 1:
+                cell += f" · {median(serial) / median(values):.2f}× serial"
+            cells.append(cell)
+        rows.append(cells)
+    rows.append(
+        [f"`{GZPASS_CHUNK_JOBS}`, {GZPASS_CHUNK_BYTES >> 20} MiB chunks"]
+        + [
+            f"{fmt_median_spread(v)} · {fmt_rate(plain, median(v))} · "
+            f"{median(at(leg, 1)) / median(v):.2f}× serial"
+            for leg, _, _ in GZPASS_WRITERS
+            for v in (at(leg, GZPASS_CHUNK_JOBS, GZPASS_CHUNK_BINARY),)
+        ]
+    )
+    table = md_table(["`--jobs`", *labels], rows)
+
+    def pair(a: Sequence[float], b: Sequence[float]) -> str:
+        diff = median([x - y for x, y in zip(a, b)])
+        mark = "**beats**" if gzpass_beats(a, b) else "beaten" if gzpass_beats(b, a) else "level"
+        return f"{mark} · faster in {gzpass_wins(a, b)}/{len(a)} · {diff:+.3f} s"
+
+    p, l1, lg = GZPASS_PHYSICAL, GZPASS_LOGICAL - 1, GZPASS_LOGICAL
+    outcomes: dict[str, str] = {}
+    pair_rows = []
+    for leg, label, _ in GZPASS_WRITERS:
+        outcome = gzpass_outcome(at(leg, 1), at(leg, p), at(leg, l1), at(leg, lg))
+        outcomes[label] = outcome
+        pair_rows.append(
+            [
+                label,
+                f"{median(at(leg, p)) / median(floors[leg]):.2f}×",
+                pair(at(leg, p), at(leg, 1)),
+                pair(at(leg, lg), at(leg, p)),
+                pair(at(leg, l1), at(leg, p)),
+                pair(at(leg, l1), at(leg, lg)),
+                pair(at(leg, GZPASS_CHUNK_JOBS, GZPASS_CHUNK_BINARY), at(leg, GZPASS_CHUNK_JOBS)),
+                f"**{outcome}**",
+            ]
+        )
+    pair_table = md_table(
+        [
+            "Writer",
+            f"`{p}` over the floor",
+            f"`{p}` against serial",
+            f"`{lg}` against `{p}`",
+            f"`{l1}` against `{p}`",
+            f"`{l1}` against `{lg}`",
+            f"{GZPASS_CHUNK_BYTES >> 20} MiB against 1 MiB chunks, `{GZPASS_CHUNK_JOBS}`",
+            "Outcome",
+        ],
+        pair_rows,
+    )
+
+    files = "\n".join(
+        f"- {label}: `{leg}`, {_fmt_bytes(size)} compressed, "
+        f"{plain / size:.2f} : 1 — {what}"
+        for leg, label, what in GZPASS_WRITERS
+        for size in (session.input_size(leg, "warm-parallel"),)
+    )
+    n = len(at(GZPASS_WRITERS[0][0], 1))
+    spared = max(n - GZPASS_SPARED, n // 2 + 1)
+    return (
+        table
+        + "\n\nEach cell is wall clock, the rate it implies per byte of `control`'s plaintext, "
+        "and a count's rate as a multiple of the same file's serial pass. Every leg is "
+        f"`pgdt parse` stating `--jobs` and `--memory {stated_allowance(GZPASS_BUDGET)}` in a "
+        f"{GZPASS_MEMORY} container, the allowance affording every row its count at a task's "
+        "charge, which each run's `scan started` line confirms; a gzip leg's is its first "
+        "pass, no cache preceding it, and its started line names the workers it ran. `--jobs` "
+        "counts the frontier and not the scan's thread. Each writer's file is its own sweep, "
+        "with the plain `parse` of `control` read in it, the floor a first pass falls toward. "
+        f"The {GZPASS_CHUNK_BYTES >> 20} MiB row is a build of its own, the shipped build but "
+        "for the chunk (`pgdt --version` names it), so its layout differs too.\n\n"
+        + files
+        + "\n\n**Paired by rep.** Every leg of a sweep runs in each rep, the order reversed "
+        "in the second half, so a count is read against another rep by rep. The first column "
+        f"is the `{p}`-job pass's median over the floor's in its sweep, how far the pass is "
+        "from the scan it falls toward. Each other cell says "
+        f"whether its first leg beats the second — faster in at least {spared} of {n} pairs — "
+        "is beaten, or is level, in how many pairs it was faster, and the median paired "
+        "difference, negative where the first is faster. A file's outcome is read off its "
+        "physical, logical-less-one and logical counts (`measure.gzpass_outcome`):\n\n"
+        + pair_table
+        + "\n\n"
+        + gzpass_verdict(outcomes)
+        + "\n\n"
+        + _per_rep(figure, session, specs)
     )
 
 
@@ -12315,7 +12833,43 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = []
+UNTAKEN: list[Figure] = [
+    # A gzip first pass's wall clock against the worker count, over four
+    # writers' single members, and at two chunk lengths. `depends` is
+    # `gzip-resident`'s read path less its resident instrument, plus the chunk
+    # leg's feature, declared in both manifests.
+    Figure(
+        id="gzip-first-pass",
+        section="What a parallel gzip first pass buys",
+        stage="warm-parallel",
+        depends=_declare(
+            *SCAN,
+            *MAP,
+            *READ,
+            *GZIP_READ,
+            *CACHE,
+            *QUERY_CLI,
+            *INTERIOR,
+            "scripts/generate_gzip_input.py",
+            *GEN_PERF,
+            "crates/pgdt/Cargo.toml",
+            "crates/pgdt-io/Cargo.toml",
+        ),
+        warm_inputs=("control", *(leg for leg, _, _ in GZPASS_WRITERS)),
+        warm_groups=tuple(("control", leg) for leg, _, _ in GZPASS_WRITERS),
+        # The physical count read against the floor beside it, file by file.
+        subtracts=tuple(
+            Subtraction(
+                "gzip-first-pass",
+                ("control", leg),
+                "the physical count's time over the plain `parse` read in its sweep",
+            )
+            for leg, _, _ in GZPASS_WRITERS
+        ),
+        memory=GZPASS_MEMORY,
+        run=run_gzip_first_pass,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
@@ -15432,7 +15986,8 @@ def cmd_check(doc: Path) -> int:
         print(
             f"No command shape inherits a worker count: each states `--jobs {SWEEP_JOBS}`, "
             f"or `--workers` for the\ndecode instrument, `PARALLEL_JOBS` for the "
-            f"{len(JOBS_AXIS)} families whose axis it is, or\n`--jobs {RESERVE_JOBS}` for "
+            f"{len(JOBS_AXIS)} families whose axis it is, `GZPASS_JOBS` for the gzip first\n"
+            f"pass's, or `--jobs {RESERVE_JOBS}` for "
             "the reserve's stated legs; the reserve's flagless legs state none\nby "
             "declaration, and `dd` is not a run of ours. Every run of "
             f"`{SQL_SHELL.lstrip('/')}`\nstates `{DFCLI_PARTITIONS}={SWEEP_JOBS}` besides.\n"

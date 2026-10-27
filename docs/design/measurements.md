@@ -536,9 +536,9 @@ against the harness's, so raising one without the other fails.
 and it is declared rather than inferred.** Such a figure's rows are the counts,
 so it cannot state one for all of them; its command shapes are named in
 `measure.JOBS_AXIS` and take theirs from `measure.PARALLEL_JOBS`, and the decode
-instrument's take their `--workers` from `measure.DECODE_WORKERS` and are
-exempted by their own prefix; each such figure's own table states what it
-varied. That is an exemption from the *constant*, never from stating a count:
+instrument's take their `--workers` from `measure.DECODE_WORKERS` and the gzip
+first pass's their `--jobs` from `measure.GZPASS_JOBS`, each family exempted by
+its own prefix; each such figure's own table states what it varied. That is an exemption from the *constant*, never from stating a count:
 `worker_count_problems` still refuses a shape that pins nothing, and
 `pinned_count_problems` refuses one that pins some third number without
 declaring itself an axis.

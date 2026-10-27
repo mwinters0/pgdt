@@ -897,6 +897,7 @@ FEATURE_BUILDS: tuple[FeatureBuild, ...] = (
     FeatureBuild("pgdt", ("introspect",), workspace=True),
     FeatureBuild("pgdt", ("jemalloc",), default_features=False),
     FeatureBuild("pgdt", ("system",), default_features=False),
+    FeatureBuild("pgdt", ("gzip-4mib-chunks",)),
     FeatureBuild("gz-seek", ("zlib-ng",), default_features=False),
     FeatureBuild("gz-seek", ("zlib",), default_features=False),
     FeatureBuild("datafusion-pgdump", ("http",)),

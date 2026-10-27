@@ -40,6 +40,11 @@ introspect = [
     "pgdt-query/introspect",
     "datafusion-cli-pgdump/introspect",
 ]
+# The `gzip-first-pass` figure's chunk-length leg: the shipped build but for
+# a gzip first pass's chunk, rapidgzip's 4 MiB in place of 1 MiB (`pgdt-io`'s
+# feature of the same name). `pgdt --version` names it, so the harness asks
+# the leg what it is before timing it. Never shipped.
+gzip-4mib-chunks = ["pgdt-io/gzip-4mib-chunks"]
 
 [dependencies]
 anyhow = "1.0.104"

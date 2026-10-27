@@ -4661,6 +4661,9 @@ class XzDecodeScaling(unittest.TestCase):
         # `parallel-peak-rss`'s stated allowance over gzip, twenty-four first
         # pass workers' charge being far past the recorded 512 MB.
         "gzip-resident",
+        # Its own allowance, affording twenty-four first pass workers a task
+        # each at either chunk length (`GZPASS_BUDGET`).
+        "gzip-first-pass",
     }
 
     def test_every_other_figure_runs_under_the_recorded_memory(self):
@@ -5481,6 +5484,390 @@ class GzipResident(unittest.TestCase):
         self.assertEqual(len(eof), 28)
         self.assertTrue(eof.startswith(generate_gzip_input.BGZF_HEADER))
         self.assertEqual(gzip.decompress(eof), b"")
+
+
+class GzipFirstPass(unittest.TestCase):
+    """A gzip first pass's wall clock against the worker count, over four
+    writers' single members and at two chunk lengths."""
+
+    FIGURE = "gzip-first-pass"
+    WRITERS = tuple(leg for leg, _, _ in measure.GZPASS_WRITERS)
+
+    def test_it_is_registered_untaken_and_borrows_nothing(self):
+        # Built ahead of the commit its readings are taken from, so it waits
+        # in `UNTAKEN`; standing in no sharing edge is what lets it publish
+        # from that commit, outside a sweep.
+        fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        self.assertIn(fig, measure.UNTAKEN)
+        self.assertNotIn(fig, measure.FIGURES)
+        self.assertEqual(fig.shares, ())
+        self.assertEqual(fig.stage, "warm-parallel")
+        self.assertEqual(fig.memory, measure.GZPASS_MEMORY)
+        # The floor is read against each file's pass, so each pair is one sweep's.
+        self.assertEqual(
+            [set(sub.inputs) for sub in fig.subtracts],
+            [{"control", leg} for leg in self.WRITERS],
+        )
+        self.assertEqual(set(fig.warm_inputs), {"control", *self.WRITERS})
+        # A sweep a writer, each beside the plain file its floor is read on.
+        self.assertEqual(fig.warm_groups, tuple(("control", leg) for leg in self.WRITERS))
+
+    def test_each_sweep_fits_the_tmpfs_budget(self):
+        cfg = measure.Config()
+        for group in measure.SELECTABLE_BY_ID[self.FIGURE].staging_groups:
+            with self.subTest(group=group):
+                self.assertLessEqual(
+                    sum(measure.nominal_size(cfg, name) for name in group), measure.warm_bound(cfg)
+                )
+
+    def test_what_can_move_it_is_declared_and_exists(self):
+        fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        for path in (
+            *measure.GZIP_READ,
+            *measure.READ,
+            *measure.SCAN,
+            *measure.QUERY_CLI,
+            "scripts/generate_gzip_input.py",
+            *measure.GEN_PERF,
+            # Where the chunk leg's feature is declared, through both crates.
+            "crates/pgdt/Cargo.toml",
+            "crates/pgdt-io/Cargo.toml",
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, fig.depends)
+                self.assertTrue((measure.REPO / path).exists(), path)
+
+    def test_every_writer_s_file_is_a_compression_of_the_control(self):
+        # So every leg's plaintext is one file's, and the files differ by
+        # their writer's blocks alone.
+        writers = []
+        for leg in self.WRITERS:
+            with self.subTest(leg=leg):
+                spec = measure.INPUTS[leg]
+                self.assertEqual(spec.derives_from, "control")
+                self.assertEqual(spec.generator, "generate_gzip_input.py")
+                self.assertEqual(measure.input_file(leg), f"{leg}.gz")
+                self.assertNotIn("--bgzf", spec.args)
+                writers.append(spec.args[spec.args.index("--writer") + 1] if "--writer" in spec.args else "zlib")
+        # pg_dump's own zlib, zlib-ng's, GNU gzip's, and a level-1 file.
+        self.assertEqual(set(writers), {"zlib", "zlib-ng", "gzip"})
+        self.assertEqual(measure.INPUTS["control_gz"].args, ("--from-dump", "@SOURCE@"))
+        self.assertIn("1", measure.INPUTS["control_gz_quick"].args)
+        self.assertEqual(len({measure.INPUTS[leg].args for leg in self.WRITERS}), len(self.WRITERS))
+
+    def test_the_counts_are_the_spec_s(self):
+        # Serial, the optimization baseline, and the three a default is read
+        # off: the physical count, the logical count less one, the logical.
+        self.assertEqual(
+            measure.GZPASS_JOBS,
+            (1, 4, measure.GZPASS_PHYSICAL, measure.GZPASS_LOGICAL - 1, measure.GZPASS_LOGICAL),
+        )
+        self.assertEqual(measure.GZPASS_LOGICAL, 2 * measure.GZPASS_PHYSICAL)
+        self.assertIn(measure.GZPASS_CHUNK_JOBS, measure.GZPASS_JOBS)
+        self.assertEqual(measure.GZPASS_CHUNK_JOBS, 4)
+
+    def test_another_topology_is_refused(self):
+        self.assertIsNone(
+            measure.gzpass_topology_problem((measure.GZPASS_LOGICAL, measure.GZPASS_PHYSICAL))
+        )
+        for topology in ((16, 8), (24, 24), (12, 12)):
+            with self.subTest(topology=topology):
+                self.assertIn("GZPASS_LOGICAL", measure.gzpass_topology_problem(topology))
+
+    def test_the_topology_is_read_off_each_cpu_s_siblings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for cpu in range(8):
+                topo = root / f"cpu{cpu}" / "topology"
+                topo.mkdir(parents=True)
+                topo.joinpath("thread_siblings_list").write_text(f"{cpu % 4},{cpu % 4 + 4}\n")
+            self.assertEqual(measure.gzpass_topology(root), (8, 4))
+
+    def test_every_shape_states_its_count_and_the_figure_s_budget(self):
+        for jobs in measure.GZPASS_JOBS:
+            with self.subTest(jobs=jobs):
+                script = measure._script(f"{measure.GZPASS_FAMILY}{jobs}")
+                self.assertIn(f"--jobs {jobs} ", script)
+                self.assertIn(
+                    f"--memory {measure.stated_allowance(measure.GZPASS_BUDGET)}", script
+                )
+                self.assertIn(measure.NO_STATISTICS, script)
+                self.assertEqual(script.count("time "), 1)
+                self.assertIn(f"{measure.GZPASS_FAMILY}{jobs}", measure.command_shapes())
+
+    def test_a_count_the_figure_does_not_carry_is_an_error(self):
+        for command in ("parse-gzpass-jobs-2", "parse-gzpass-jobs-", "parse-gzpass-jobs-all"):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    measure._script(command)
+
+    def test_the_budget_affords_the_widest_row_at_either_chunk(self):
+        # `Parallelism::fit` solves the count against the budget and
+        # `margin_allowance` both, a worker charged a task; `gzip-resident`'s
+        # 2 GiB affords twenty at the shipped chunk, which would clamp the top
+        # rows silently were the run's own count not checked too.
+        def afforded(budget: int, chunk: int) -> int:
+            allowance = measure.stated_allowance(budget)
+            ceiling = (allowance // 100) * (
+                100 - measure.LIBRARY_MEMORY_MARGIN_PERCENT
+            ) - measure.LIBRARY_MEMORY_UNPOOLED_BOUND
+            per_worker = max(measure.gzip_pass_bytes(), measure.gzip_task_bytes(chunk))
+            return min(budget, ceiling) // per_worker
+
+        for chunk in (measure.GZIP_INPUT_CHUNK, measure.GZPASS_CHUNK_BYTES):
+            with self.subTest(chunk=chunk):
+                self.assertGreaterEqual(
+                    afforded(measure.GZPASS_BUDGET, chunk), measure.GZPASS_LOGICAL
+                )
+        self.assertLess(
+            afforded(measure.PARALLEL_BUDGET, measure.GZIP_INPUT_CHUNK), measure.GZPASS_LOGICAL
+        )
+        self.assertEqual(
+            measure.GZPASS_MEMORY,
+            f"{(measure.GZPASS_BUDGET + measure.PARALLEL_HEADROOM) // measure.GIB}g",
+        )
+
+    def test_the_chunk_leg_is_the_library_s_feature_and_its_marker(self):
+        # One vocabulary in four places: the feature in both manifests, the
+        # constant it selects, the marker `--version` prints and the harness
+        # reads, and the lint build that turns it on.
+        repo = measure.REPO
+        leg = measure.GZPASS_CHUNK_LEG
+        pgdt = tomllib.loads((repo / "crates/pgdt/Cargo.toml").read_text())["features"]
+        io_ = tomllib.loads((repo / "crates/pgdt-io/Cargo.toml").read_text())["features"]
+        self.assertEqual(pgdt[leg], [f"pgdt-io/{leg}"])
+        self.assertEqual(io_[leg], [])
+        ahead = (
+            repo / "crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs"
+        ).read_text()
+        self.assertIn(f'#[cfg(feature = "{leg}")]', ahead)
+        self.assertIn(
+            f"const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new({measure.GZPASS_CHUNK_BYTES >> 20} << 20).unwrap();",
+            ahead,
+        )
+        version = (repo / "crates/pgdt/src/version.rs").read_text()
+        marker = re.search(rf'cfg!\(feature = "{leg}"\) {{ " (\([^"]*\))" }}', version)
+        self.assertIsNotNone(marker, "the marker is where the harness reads it")
+        found = measure.CHUNK_RE.search(marker.group(1))
+        self.assertEqual(int(found.group(1)) * measure.MIB, measure.GZPASS_CHUNK_BYTES)
+        import check
+
+        self.assertIn(check.FeatureBuild("pgdt", (leg,)), check.FEATURE_BUILDS)
+
+    def test_a_binary_naming_no_chunk_cuts_the_shipped_one(self):
+        for out, want in (
+            ("pgdt 0.2.0 (allocator: mimalloc) (profile: release) (datafusion: 55.1.0)",
+             measure.GZIP_INPUT_CHUNK),
+            ("pgdt 0.2.0 (allocator: mimalloc) (profile: release) (gzip chunk: 4 MiB) "
+             "(datafusion: 55.1.0)", measure.GZPASS_CHUNK_BYTES),
+        ):
+            with self.subTest(out=out):
+                with unittest.mock.patch.object(measure, "run", lambda *a, **k: out):
+                    self.assertEqual(measure.binary_chunk(Path("pgdt")), want)
+
+    def test_the_chunk_leg_is_built_apart_and_announced_in_a_dry_run(self):
+        cfg = measure.Config(dry_run=True)
+        logged = []
+        with unittest.mock.patch.object(measure, "_CHUNK_ANNOUNCED", set()):
+            out = measure.ensure_chunk_binary(cfg, measure.GZPASS_CHUNK_LEG, logged.append)
+        self.assertEqual(out.name, f"pgdt-{measure.GZPASS_CHUNK_LEG}")
+        self.assertNotEqual(out, cfg.bin_pgdt)
+        self.assertEqual(len(logged), 1)
+        with self.assertRaises(ValueError):
+            measure.ensure_chunk_binary(cfg, "gzip-8mib-chunks", logged.append)
+
+    def test_every_sweep_reads_its_floor_its_counts_and_the_chunk_leg(self):
+        specs = measure._gzpass_specs()
+        fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        parts = measure.split_specs(self.FIGURE, specs, fig.warm_groups)
+        self.assertEqual([gi for gi, _ in parts], list(range(len(self.WRITERS))))
+        for (gi, part), leg in zip(parts, self.WRITERS):
+            with self.subTest(leg=leg):
+                self.assertEqual({s.input for s in part}, {"control", leg})
+                floor = [s for s in part if s.input == "control"]
+                self.assertEqual([s.command for s in floor], [f"{measure.GZPASS_FAMILY}1"])
+                self.assertEqual(floor[0].sweep, gi or None)
+                shipped = [s for s in part if s.input == leg and s.binary == "pgdt"]
+                self.assertEqual(
+                    [s.command for s in shipped],
+                    [f"{measure.GZPASS_FAMILY}{j}" for j in measure.GZPASS_JOBS],
+                )
+                chunk = [s for s in part if s.binary == measure.GZPASS_CHUNK_BINARY]
+                self.assertEqual(
+                    [s.command for s in chunk],
+                    [f"{measure.GZPASS_FAMILY}{measure.GZPASS_CHUNK_JOBS}"],
+                )
+        self.assertEqual({s.regime for s in specs}, {"warm-parallel"})
+        self.assertEqual(len({s.key(self.FIGURE) for s in specs}), len(specs))
+        self.assertEqual(len({s.label for s in specs}), len(specs))
+
+    # -- the rule ------------------------------------------------------------
+
+    def test_a_leg_beats_another_in_all_its_pairs_but_one(self):
+        fast, slow = [1.0] * 7, [2.0] * 7
+        self.assertTrue(measure.gzpass_beats(fast, slow))
+        one_lost = [3.0] + [1.0] * 6
+        self.assertTrue(measure.gzpass_beats(one_lost, slow))
+        two_lost = [3.0, 3.0] + [1.0] * 5
+        self.assertFalse(measure.gzpass_beats(two_lost, slow))
+        self.assertTrue(measure.gzpass_level(two_lost, slow))
+        # Ties win nothing either way.
+        self.assertTrue(measure.gzpass_level(fast, fast))
+        # A short sitting still needs more than half.
+        self.assertFalse(measure.gzpass_beats([1.0, 3.0], [2.0, 2.0]))
+        with self.assertRaises(ValueError):
+            measure.gzpass_wins([1.0], [1.0, 2.0])
+
+    def test_each_outcome(self):
+        n = 7
+        serial, fast, mid, slow = [4.0] * n, [1.0] * n, [2.0] * n, [3.0] * n
+        o = measure.gzpass_outcome
+        self.assertEqual(o(serial, fast, fast, slow), "oversubscription")
+        self.assertEqual(o(serial, fast, slow, slow), "shared")
+        self.assertEqual(o(serial, fast, fast, fast), "stands")
+        self.assertEqual(o(serial, mid, slow, fast), "stands")
+        self.assertEqual(o(serial, fast, mid, slow), "undecided")
+        self.assertEqual(o(serial, serial, fast, fast), "no lift")
+        self.assertLessEqual(
+            {"stands", "oversubscription", "shared", "undecided", "no lift"},
+            set(measure.GZPASS_OUTCOMES),
+        )
+
+    def test_the_files_settle_the_default_only_together(self):
+        v = measure.gzpass_verdict
+        self.assertIn("settles the default: shared", v({"a": "shared", "b": "shared", "c": "no lift"}))
+        self.assertIn("does not settle", v({"a": "shared", "b": "oversubscription"}))
+        self.assertIn("does not settle", v({"a": "undecided", "b": "undecided"}))
+        self.assertIn("settles nothing", v({"a": "no lift"}))
+
+    # -- the renderer ------------------------------------------------------
+
+    TIMES = {1: 4.0, 4: 2.5, measure.GZPASS_PHYSICAL: 1.0, 23: 1.0, 24: 2.0}
+
+    def _raw(self, times=None, chunk=2.0, reported=None):
+        """A sitting whose every gzip leg reads `times` at its count, every
+        rep alike, and whose every run reports the count it states."""
+        rss, readings, reports = {}, {}, {}
+        for spec in measure._gzpass_specs():
+            key = spec.key(self.FIGURE)
+            jobs = int(spec.command.removeprefix(measure.GZPASS_FAMILY))
+            if spec.input == "control":
+                value = 0.8
+            elif spec.binary == measure.GZPASS_CHUNK_BINARY:
+                value = chunk
+            else:
+                value = (times or self.TIMES)[jobs]
+            readings[key] = [value] * 7
+            report = {"resolved_jobs": str(jobs)}
+            if spec.input != "control":
+                report["first_pass_workers"] = str(jobs)
+            report.update((reported or {}).get((spec.input, spec.binary, jobs), {}))
+            reports[key] = {k: v for k, v in report.items() if v is not None}
+        return {
+            "readings": readings,
+            "rss": rss,
+            "killed": {},
+            "reported": reports,
+            "input_sizes": {name: 1 << 30 for name in measure.INPUTS},
+            "runs": [],
+        }
+
+    def _render(self, raw):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = measure.ReplaySession(measure.Config(), raw, Path(tmp), lambda _m: None)
+            session.figure_id = self.FIGURE
+            return measure.run_gzip_first_pass(session)
+
+    def test_a_logical_count_less_one_level_with_the_physical_settles_on_oversubscription(self):
+        body = self._render(self._raw())
+        self.assertIn("**The figure settles the default: oversubscription.**", body)
+        # The header, a row a count, and the chunk leg's.
+        rows = [ln for ln in body.splitlines() if ln.startswith("| `")]
+        self.assertEqual(len(rows), 1 + len(measure.GZPASS_JOBS) + 1)
+        self.assertIn("4.00× serial", body)
+        # The chunk leg, at 2.0 s against the shipped chunk's 2.5 s.
+        self.assertIn("**beats** · faster in 7/7 · -0.500 s", body)
+
+    def test_a_count_other_than_the_row_s_refuses_the_figure(self):
+        raw = self._raw(reported={("control_gz_gnu", "pgdt", 23): {"resolved_jobs": "20"}})
+        with self.assertRaisesRegex(RuntimeError, "resolved 20 worker"):
+            self._render(raw)
+
+    def test_a_gzip_leg_without_its_first_pass_refuses_the_figure(self):
+        raw = self._raw(
+            reported={("control_gz", "pgdt", 4): {"first_pass_workers": None}}
+        )
+        with self.assertRaisesRegex(RuntimeError, "ran no worker"):
+            self._render(raw)
+
+    def test_a_floor_that_opened_a_first_pass_refuses_the_figure(self):
+        raw = self._raw(reported={("control", "pgdt", 1): {"first_pass_workers": "1"}})
+        with self.assertRaisesRegex(RuntimeError, "a plain dump opened a first pass"):
+            self._render(raw)
+
+    def test_unpaired_legs_refuse_the_figure(self):
+        raw = self._raw()
+        key = measure._gzpass_specs()[1].key(self.FIGURE)
+        raw["readings"][key] = raw["readings"][key][:-1]
+        with self.assertRaisesRegex(RuntimeError, "do not pair"):
+            self._render(raw)
+
+    # -- the generator ---------------------------------------------------
+
+    def test_each_writer_s_header_is_pg_dump_s_at_its_level(self):
+        import generate_gzip_input as g
+
+        self.assertEqual(g.header_for(g.LEVEL), g.PG_DUMP_HEADER)
+        self.assertEqual(g.header_for(1)[8], 4)
+        self.assertEqual(g.header_for(9)[8], 2)
+        self.assertEqual(g.header_for(1)[:8], g.PG_DUMP_HEADER[:8])
+
+    def test_another_writer_version_is_refused(self):
+        import generate_gzip_input as g
+
+        g.check_zlib_ng(g.ZLIBNG_VERSION)
+        g.check_gnu_gzip(g.GNU_GZIP_VERSION)
+        with self.assertRaises(SystemExit):
+            g.check_zlib_ng("2.1.6")
+        with self.assertRaises(SystemExit):
+            g.check_gnu_gzip("1.13")
+
+    def test_each_writer_writes_one_member_holding_the_source(self):
+        import gzip
+        import zlib
+
+        import generate_gzip_input as g
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "plain.sql"
+            source.write_bytes(b"COPY public.t (a) FROM stdin;\n1\n\\.\n" * 1000)
+            # The version gates are tested above; this is about the bytes.
+            with (
+                unittest.mock.patch.object(g, "gnu_gzip_version", lambda: g.GNU_GZIP_VERSION),
+                unittest.mock.patch.object(g.zlib, "ZLIB_RUNTIME_VERSION", g.ZLIB_VERSION),
+            ):
+                for writer, level in (("zlib", 6), ("zlib-ng", 6), ("zlib-ng", 1), ("gzip", 6)):
+                    with self.subTest(writer=writer, level=level):
+                        out = Path(tmp) / f"{writer}-{level}.gz"
+                        g.compress(source, out, writer, level)
+                        data = out.read_bytes()
+                        self.assertEqual(data[:10], g.header_for(level))
+                        self.assertEqual(gzip.decompress(data), source.read_bytes())
+                        inflater = zlib.decompressobj(g.GZIP_WINDOW_BITS)
+                        inflater.decompress(data)
+                        self.assertTrue(inflater.eof)
+                        self.assertEqual(inflater.unused_data, b"")
+            # Two writers' streams of one plaintext differ: the figure's
+            # columns are different blocks, not one file four times.
+            self.assertNotEqual(
+                (Path(tmp) / "zlib-6.gz").read_bytes(), (Path(tmp) / "zlib-ng-6.gz").read_bytes()
+            )
+
+    def test_bgzf_is_zlib_s_alone(self):
+        import generate_gzip_input as g
+
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            g.main(["--from-dump", "x.sql", "--bgzf", "--writer", "gzip", "out.gz"])
 
 
 class Reported(unittest.TestCase):
@@ -6345,6 +6732,11 @@ class WarmBound(unittest.TestCase):
                 "nested-end-to-end": (("control", "composite"), ("control", "arrays")),
                 "statistics-gathering": (
                     ("control",), ("arrays",), ("large_object",), ("insert_run",)
+                ),
+                # Control beside each writer's file, its floor read against
+                # the pass in every sweep.
+                "gzip-first-pass": tuple(
+                    ("control", leg) for leg, _, _ in measure.GZPASS_WRITERS
                 ),
             },
         )

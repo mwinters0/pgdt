@@ -24,6 +24,18 @@ stale.
 the same reason: it is what makes the file `pg_dump`'s shape rather than a
 gzip file that merely decodes to the same plaintext.
 
+**`--writer` and `--level` choose another single member's writer**, for
+`gzip-first-pass`, which reads a parallel first pass over more than one
+writer's blocks: `zlib` (the default) at `--level 6` is `pg_dump -Z` over
+stock zlib; `zlib-ng` is the same call over zlib-ng's own build, which a
+distribution shipping `zlib-ng-compat` as its zlib links `pg_dump` against,
+and at `--level 1` the writer that ends no block before its last
+(`deflate_quick`); `gzip` is GNU gzip, `pg_dump | gzip`. Each is refused
+unless it is the version this script names (`ZLIBNG_VERSION`,
+`GNU_GZIP_VERSION`), for `ZLIB_VERSION`'s reason, and each header is held to
+`pg_dump`'s at that level (`header_for`). zlib-ng is the `zlib-ng` package
+`pyproject.toml` pins, which bundles its own; GNU gzip is the one on `PATH`.
+
 **`--bgzf` writes BGZF instead**, the shape `bgzip` writes: one member a
 `BGZF_BLOCK` of plaintext, each deflated alone at the same level with no
 history from the one before, its header carrying the `BC` subfield that states
@@ -39,13 +51,16 @@ owns the bytes.
 
     cd scripts
     uv run generate_gzip_input.py --from-dump control.sql out.gz
+    uv run generate_gzip_input.py --from-dump control.sql --writer zlib-ng --level 1 out.gz
     uv run generate_gzip_input.py --from-dump control.sql --bgzf out.gz
 """
 
 from __future__ import annotations
 
 import argparse
+import shutil
 import struct
+import subprocess
 import sys
 import zlib
 from pathlib import Path
@@ -53,6 +68,18 @@ from pathlib import Path
 #: The zlib this script's bytes come from. Moving it is a decision about
 #: which stream the figure is taken on.
 ZLIB_VERSION = "1.3.1"
+
+#: The zlib-ng `--writer zlib-ng` deflates through: the version the `zlib-ng`
+#: package `pyproject.toml` pins bundles. Moving it is `ZLIB_VERSION`'s
+#: decision.
+ZLIBNG_VERSION = "2.2.5"
+
+#: The GNU gzip `--writer gzip` runs, as its `--version` names it, for the
+#: same reason.
+GNU_GZIP_VERSION = "1.15"
+
+#: The single member's writers `--writer` names, the default first.
+WRITERS = ("zlib", "zlib-ng", "gzip")
 
 #: `pg_dump`'s default gzip level (`Z_DEFAULT_COMPRESSION`), which is what a
 #: bare `-Z gzip` and the `compress` fixtures' `--compress=6` both write.
@@ -67,6 +94,15 @@ GZIP_WINDOW_BITS = 15 + 16
 #: The header every routine major's `-Z` output opens with: magic, deflate,
 #: no flags, `MTIME` 0, `XFL` 0, OS 3 (Unix).
 PG_DUMP_HEADER = bytes.fromhex("1f8b08000000000000" + "03")
+
+
+def header_for(level: int) -> bytes:
+    """`PG_DUMP_HEADER` at `level`: its `XFL` is 2 at level 9, 4 at level 1
+    and 0 otherwise, as zlib's `deflate.c` writes it, and zlib-ng's and GNU
+    gzip's with it."""
+    xfl = 2 if level == 9 else 4 if level == 1 else 0
+    return PG_DUMP_HEADER[:8] + bytes([xfl]) + PG_DUMP_HEADER[9:]
+
 
 #: The plaintext one BGZF member holds: `htslib`'s `BGZF_BLOCK_SIZE`, which
 #: `bgzip` fills every member but the last to. Its compressed member must fit
@@ -98,28 +134,80 @@ def check_zlib(version: str) -> None:
         )
 
 
-def check_header(header: bytes) -> None:
-    """Refuse a member whose header is not the one `pg_dump` writes."""
-    if header != PG_DUMP_HEADER:
+def check_zlib_ng(version: str) -> None:
+    """Refuse a zlib-ng other than `ZLIBNG_VERSION`, naming both."""
+    if version != ZLIBNG_VERSION:
         raise SystemExit(
-            f"the member opens {header.hex()}, not pg_dump's {PG_DUMP_HEADER.hex()}: "
-            "this zlib writes a header pg_dump's does not"
+            f"the zlib-ng package bundles zlib-ng {version}, and the figure's input is zlib-ng "
+            f"{ZLIBNG_VERSION}'s deflate: pin the package that bundles it, or decide in the open "
+            "that the figure is taken on another one and move ZLIBNG_VERSION"
         )
 
 
-def compress(source: Path, out: Path) -> None:
-    """`source` deflated into one gzip member at `out`, written beside it
-    first and moved into place once whole."""
-    check_zlib(zlib.ZLIB_RUNTIME_VERSION)
+def gnu_gzip_version() -> str:
+    """The version the `gzip` on `PATH` names, or what it said instead."""
+    if shutil.which("gzip") is None:
+        return "no gzip on PATH"
+    first = subprocess.run(
+        ["gzip", "--version"], check=True, capture_output=True, text=True
+    ).stdout.splitlines()
+    return first[0].removeprefix("gzip ").strip() if first else ""
+
+
+def check_gnu_gzip(version: str) -> None:
+    """Refuse a GNU gzip other than `GNU_GZIP_VERSION`, naming both."""
+    if version != GNU_GZIP_VERSION:
+        raise SystemExit(
+            f"the gzip on PATH is {version!r}, and the figure's input is GNU gzip "
+            f"{GNU_GZIP_VERSION}'s deflate: run it where that gzip is, or decide in the open "
+            "that the figure is taken on another one and move GNU_GZIP_VERSION"
+        )
+
+
+def check_header(header: bytes, level: int = LEVEL) -> None:
+    """Refuse a member whose header is not the one `pg_dump` writes at
+    `level`."""
+    want = header_for(level)
+    if header != want:
+        raise SystemExit(
+            f"the member opens {header.hex()}, not pg_dump's {want.hex()}: "
+            "this writer writes a header pg_dump's does not"
+        )
+
+
+def deflater_for(writer: str, level: int):
+    """A `compressobj` writing one gzip member at `level` through `writer`'s
+    deflate, its version checked: `zlib` or `zlib-ng`."""
+    if writer == "zlib":
+        check_zlib(zlib.ZLIB_RUNTIME_VERSION)
+        return zlib.compressobj(level, zlib.DEFLATED, GZIP_WINDOW_BITS)
+    if writer == "zlib-ng":
+        from zlib_ng import zlib_ng
+
+        check_zlib_ng(zlib_ng.ZLIBNG_RUNTIME_VERSION)
+        return zlib_ng.compressobj(level, zlib_ng.DEFLATED, GZIP_WINDOW_BITS)
+    raise ValueError(f"no in-process writer named {writer!r}")
+
+
+def compress(source: Path, out: Path, writer: str = "zlib", level: int = LEVEL) -> None:
+    """`source` written by `writer` at `level` into one gzip member at `out`,
+    beside it first and moved into place once whole. GNU gzip is run as
+    `gzip -n`, so its header carries no name and `MTIME` 0, as a pipe's would
+    but for the time."""
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + ".partial")
-    deflater = zlib.compressobj(LEVEL, zlib.DEFLATED, GZIP_WINDOW_BITS)
-    with source.open("rb") as src, tmp.open("wb") as dst:
-        while chunk := src.read(CHUNK):
-            dst.write(deflater.compress(chunk))
-        dst.write(deflater.flush())
+    if writer == "gzip":
+        check_gnu_gzip(gnu_gzip_version())
+        with source.open("rb") as src, tmp.open("wb") as dst:
+            subprocess.run(["gzip", "-n", f"-{level}", "-c"], stdin=src, stdout=dst, check=True)
+    else:
+        deflater = deflater_for(writer, level)
+        with source.open("rb") as src, tmp.open("wb") as dst:
+            while chunk := src.read(CHUNK):
+                dst.write(deflater.compress(chunk))
+            dst.write(deflater.flush())
     with tmp.open("rb") as written:
-        check_header(written.read(len(PG_DUMP_HEADER)))
+        check_header(written.read(len(PG_DUMP_HEADER)), level)
     tmp.replace(out)
 
 
@@ -168,9 +256,29 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="write BGZF, a member a 65,280-byte block, rather than pg_dump's one member",
     )
+    parser.add_argument(
+        "--writer",
+        choices=WRITERS,
+        default=WRITERS[0],
+        help="whose deflate writes the single member: pg_dump's zlib (the default), zlib-ng's, "
+        "or GNU gzip's",
+    )
+    parser.add_argument(
+        "--level",
+        type=int,
+        choices=range(1, 10),
+        default=LEVEL,
+        metavar="1-9",
+        help=f"the single member's level, {LEVEL} by default as pg_dump's",
+    )
     parser.add_argument("out", type=Path, help="where the .gz file goes")
     args = parser.parse_args(argv)
-    (compress_bgzf if args.bgzf else compress)(args.from_dump, args.out)
+    if args.bgzf:
+        if (args.writer, args.level) != (WRITERS[0], LEVEL):
+            parser.error("--bgzf is written through zlib at pg_dump's level alone")
+        compress_bgzf(args.from_dump, args.out)
+    else:
+        compress(args.from_dump, args.out, args.writer, args.level)
     plain = args.from_dump.stat().st_size
     packed = args.out.stat().st_size
     print(f"{args.out}: {packed} bytes, {plain} of plaintext, {plain / packed:.2f}x")

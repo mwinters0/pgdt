@@ -4,23 +4,33 @@ use crate::{alloc, profile};
 
 /// What `pgdt --version` prints: the crate version, `(unreleased)` unless
 /// this is a release's build ([`RELEASED`]), the allocator's markers
-/// ([`alloc::MARKERS`]), the Cargo profile ([`profile::MARKER`]), and the
+/// ([`alloc::MARKERS`]), the Cargo profile ([`profile::MARKER`]), a measured
+/// leg's gzip chunk where it is one ([`CHUNK_MARKER`]), and the
 /// DataFusion release `sql` is, which `sql`'s
 /// help also closes on, `sql` carrying no `--version` of its own. Formatted
 /// once at run time: `DATAFUSION_VERSION` is a path, which `concat!` refuses.
 pub(crate) fn version() -> &'static str {
     static VERSION: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "{}{} {} {} (datafusion: {})",
+            "{}{} {} {}{} (datafusion: {})",
             env!("CARGO_PKG_VERSION"),
             if RELEASED { "" } else { " (unreleased)" },
             alloc::MARKERS,
             profile::MARKER,
+            CHUNK_MARKER,
             datafusion_cli_pgdump::DATAFUSION_VERSION
         )
     });
     &VERSION
 }
+
+/// ` (gzip chunk: 4 MiB)` on the `gzip-first-pass` figure's chunk-length leg,
+/// and nothing on every other build: read from outside the process as
+/// [`alloc::MARKERS`] is, so the harness asks the leg which chunk its first
+/// pass cuts rather than trusting the feature it passed
+/// (`scripts/measure.py`, `binary_chunk`).
+const CHUNK_MARKER: &str =
+    if cfg!(feature = "gzip-4mib-chunks") { " (gzip chunk: 4 MiB)" } else { "" };
 
 /// The variable the release workflow builds with, naming the version it
 /// releases, so a release says it is one and every other build says it is
