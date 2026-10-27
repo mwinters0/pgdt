@@ -1,0 +1,4 @@
+#!/bin/sh
+# graft was renamed trail, whose package ships only a `trail` binary; this keeps
+# the `graft` that its hooks, skill and `.mcp.json` wiring name working.
+exec trail "$@"

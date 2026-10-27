@@ -1,13 +1,10 @@
 {
   "mcpServers": {
-    "codegraph": {
-      "type": "stdio",
-      "command": "codegraph",
+    "graft": {
+      "command": "graft",
       "args": [
-        "serve",
-        "--mcp"
-      ],
-      "alwaysLoad": true
+        "mcp"
+      ]
     }
   }
 }
