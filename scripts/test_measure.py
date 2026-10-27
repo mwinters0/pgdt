@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import ctypes
+import ctypes.util
 import dataclasses
 import hashlib
 import inspect
@@ -5549,8 +5551,10 @@ class GzipFirstPass(unittest.TestCase):
                 self.assertEqual(measure.input_file(leg), f"{leg}.gz")
                 self.assertNotIn("--bgzf", spec.args)
                 writers.append(spec.args[spec.args.index("--writer") + 1] if "--writer" in spec.args else "zlib")
-        # pg_dump's own zlib, zlib-ng's, GNU gzip's, and a level-1 file.
-        self.assertEqual(set(writers), {"zlib", "zlib-ng", "gzip"})
+        # pg_dump's own zlib, Fedora's zlib-ng-compat, GNU gzip's, and a
+        # level-1 file by zlib-ng's.
+        self.assertEqual(set(writers), {"zlib", "zlib-ng-compat", "zlib-ng", "gzip"})
+        self.assertIn("zlib-ng-compat", measure.INPUTS["control_gz_ng"].args)
         self.assertEqual(measure.INPUTS["control_gz"].args, ("--from-dump", "@SOURCE@"))
         self.assertIn("1", measure.INPUTS["control_gz_quick"].args)
         self.assertEqual(len({measure.INPUTS[leg].args for leg in self.WRITERS}), len(self.WRITERS))
@@ -5718,6 +5722,18 @@ class GzipFirstPass(unittest.TestCase):
         with self.assertRaises(ValueError):
             measure.gzpass_wins([1.0], [1.0, 2.0])
 
+    def test_a_leg_beats_another_only_by_the_margin(self):
+        # Seven wins of seven by under the margin are level, not a win.
+        base = [1.0] * 7
+        close = [1.0 + measure.GZPASS_MARGIN / 2] * 7
+        clear = [1.0 + measure.GZPASS_MARGIN * 2] * 7
+        self.assertEqual(measure.gzpass_wins(base, close), 7)
+        self.assertFalse(measure.gzpass_beats(base, close))
+        self.assertTrue(measure.gzpass_level(base, close))
+        self.assertTrue(measure.gzpass_beats(base, clear))
+        # It is a share of the median, so it scales with the leg.
+        self.assertFalse(measure.gzpass_beats([10.0] * 7, [10.0 + measure.GZPASS_MARGIN * 2] * 7))
+
     def test_each_outcome(self):
         n = 7
         serial, fast, mid, slow = [4.0] * n, [1.0] * n, [2.0] * n, [3.0] * n
@@ -5726,19 +5742,34 @@ class GzipFirstPass(unittest.TestCase):
         self.assertEqual(o(serial, fast, slow, slow), "shared")
         self.assertEqual(o(serial, fast, fast, fast), "stands")
         self.assertEqual(o(serial, mid, slow, fast), "stands")
-        self.assertEqual(o(serial, fast, mid, slow), "undecided")
+        # The mixed orders settle: 12 > 23 > 24 is a core shared, and
+        # 23 > 12 > 24 oversubscription, as is 23 level with both.
+        self.assertEqual(o(serial, fast, mid, slow), "shared")
+        self.assertEqual(o(serial, mid, fast, slow), "oversubscription")
+        self.assertEqual(o(serial, mid, mid, slow), "oversubscription")
         self.assertEqual(o(serial, serial, fast, fast), "no lift")
-        self.assertLessEqual(
-            {"stands", "oversubscription", "shared", "undecided", "no lift"},
+        # Serial beating any upper count is a regression, named apart.
+        self.assertEqual(o(fast, slow, fast, fast), "regresses")
+        self.assertEqual(o(mid, mid, mid, slow), "regresses")
+        self.assertEqual(
             set(measure.GZPASS_OUTCOMES),
+            {"stands", "oversubscription", "shared", "no lift", "regresses"},
         )
+        self.assertLess(measure.GZPASS_UNLIFTED, set(measure.GZPASS_OUTCOMES))
 
     def test_the_files_settle_the_default_only_together(self):
         v = measure.gzpass_verdict
         self.assertIn("settles the default: shared", v({"a": "shared", "b": "shared", "c": "no lift"}))
         self.assertIn("does not settle", v({"a": "shared", "b": "oversubscription"}))
-        self.assertIn("does not settle", v({"a": "undecided", "b": "undecided"}))
         self.assertIn("settles nothing", v({"a": "no lift"}))
+        # A regression blocks nothing and is named whatever the rest settle.
+        got = v({"a": "shared", "b": "regresses", "c": "no lift"})
+        self.assertIn("settles the default: shared", got)
+        self.assertIn("regresses on b", got)
+        self.assertNotIn("regresses on b, c", got)
+        self.assertIn("regresses on a", v({"a": "regresses"}))
+        self.assertIn("settles nothing", v({"a": "regresses"}))
+        self.assertNotIn("regresses on", v({"a": "stands"}))
 
     # -- the renderer ------------------------------------------------------
 
@@ -5786,7 +5817,7 @@ class GzipFirstPass(unittest.TestCase):
         self.assertEqual(len(rows), 1 + len(measure.GZPASS_JOBS) + 1)
         self.assertIn("4.00× serial", body)
         # The chunk leg, at 2.0 s against the shipped chunk's 2.5 s.
-        self.assertIn("**beats** · faster in 7/7 · -0.500 s", body)
+        self.assertIn("**beats** · faster in 7/7 · -0.500 s, -25.0%", body)
 
     def test_a_count_other_than_the_row_s_refuses_the_figure(self):
         raw = self._raw(reported={("control_gz_gnu", "pgdt", 23): {"resolved_jobs": "20"}})
@@ -5826,9 +5857,14 @@ class GzipFirstPass(unittest.TestCase):
         import generate_gzip_input as g
 
         g.check_zlib_ng(g.ZLIBNG_VERSION)
+        g.check_zlib_ng_compat(g.ZLIBNG_COMPAT_VERSION)
         g.check_gnu_gzip(g.GNU_GZIP_VERSION)
         with self.assertRaises(SystemExit):
             g.check_zlib_ng("2.1.6")
+        with self.assertRaises(SystemExit):
+            g.check_zlib_ng_compat("2.3.3-2.fc44")
+        # The image is pinned by digest, so the version it holds cannot move.
+        self.assertRegex(g.FEDORA_IMAGE, r"@sha256:[0-9a-f]{64}$")
         with self.assertRaises(SystemExit):
             g.check_gnu_gzip("1.13")
 
@@ -5842,11 +5878,18 @@ class GzipFirstPass(unittest.TestCase):
             source = Path(tmp) / "plain.sql"
             source.write_bytes(b"COPY public.t (a) FROM stdin;\n1\n\\.\n" * 1000)
             # The version gates are tested above; this is about the bytes.
+            # Fedora's library is copied out of an image no test runs; the
+            # host's libz stands in, through the same `ctypes` deflate.
+            host = ctypes.util.find_library("z")
+            writers = [("zlib", 6), ("zlib-ng", 6), ("zlib-ng", 1), ("gzip", 6)]
+            if host is not None:
+                writers.append(("zlib-ng-compat", 6))
             with (
                 unittest.mock.patch.object(g, "gnu_gzip_version", lambda: g.GNU_GZIP_VERSION),
                 unittest.mock.patch.object(g.zlib, "ZLIB_RUNTIME_VERSION", g.ZLIB_VERSION),
+                unittest.mock.patch.object(g, "load_zlib_ng_compat", lambda: ctypes.CDLL(host)),
             ):
-                for writer, level in (("zlib", 6), ("zlib-ng", 6), ("zlib-ng", 1), ("gzip", 6)):
+                for writer, level in writers:
                     with self.subTest(writer=writer, level=level):
                         out = Path(tmp) / f"{writer}-{level}.gz"
                         g.compress(source, out, writer, level)
@@ -5862,6 +5905,28 @@ class GzipFirstPass(unittest.TestCase):
             self.assertNotEqual(
                 (Path(tmp) / "zlib-6.gz").read_bytes(), (Path(tmp) / "zlib-ng-6.gz").read_bytes()
             )
+
+    @unittest.skipUnless(ctypes.util.find_library("z"), "no libz on this host")
+    def test_the_ctypes_deflate_is_python_s_over_the_same_zlib(self):
+        # Over a stock zlib of Python's own minor, the `ctypes` deflate writes
+        # Python's bytes: it opens `deflate` at `compressobj`'s parameters and
+        # feeds it the same chunks, so Fedora's library writes `pg_dump`'s.
+        import zlib
+
+        import generate_gzip_input as g
+
+        lib = ctypes.CDLL(ctypes.util.find_library("z"))
+        lib.zlibVersion.restype = ctypes.c_char_p
+        host = lib.zlibVersion().decode()
+        if "ng" in host or host.split(".")[:2] != zlib.ZLIB_RUNTIME_VERSION.split(".")[:2]:
+            self.skipTest(f"the host's libz is {host}, Python's {zlib.ZLIB_RUNTIME_VERSION}")
+        plain = b"".join(b"%d\tname%d\n" % (i, i * 7919 % 100_003) for i in range(200_000))
+        ours = g.LibzDeflater(lib, 6, g.GZIP_WINDOW_BITS)
+        theirs = zlib.compressobj(6, zlib.DEFLATED, g.GZIP_WINDOW_BITS)
+        cut = len(plain) // 3
+        got = ours.compress(plain[:cut]) + ours.compress(plain[cut:]) + ours.flush()
+        want = theirs.compress(plain[:cut]) + theirs.compress(plain[cut:]) + theirs.flush()
+        self.assertEqual(got, want)
 
     def test_bgzf_is_zlib_s_alone(self):
         import generate_gzip_input as g

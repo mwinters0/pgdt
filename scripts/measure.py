@@ -142,7 +142,13 @@ from generate_xz_input import KOJI_RATIO_MAX, KOJI_RATIO_MIN
 # writers `gzip-first-pass`'s inputs come from, which its table names for the
 # same reason. Import-safe on the same terms, zlib-ng imported only where a
 # file is written through it.
-from generate_gzip_input import BGZF_BLOCK, GNU_GZIP_VERSION, ZLIB_VERSION, ZLIBNG_VERSION
+from generate_gzip_input import (
+    BGZF_BLOCK,
+    GNU_GZIP_VERSION,
+    ZLIB_VERSION,
+    ZLIBNG_COMPAT_VERSION,
+    ZLIBNG_VERSION,
+)
 
 # The release build, whose image builds every binary a figure runs and whose
 # base is the image every built binary runs in (`register_image`,
@@ -1638,15 +1644,15 @@ INPUTS["control_bgzf"] = InputSpec(
 #: every leg's plaintext is `control_gz`'s exactly and the files differ by
 #: their blocks alone (`GZPASS_WRITERS`).
 #:
-#: **zlib-ng at level 6** is `pg_dump -Z` where zlib-ng's compatibility build
-#: is the zlib it links; **GNU gzip at level 6** is `pg_dump | gzip`; **zlib-ng
-#: at level 1** is the writer that ends no block before its last
-#: (`deflate_quick`), whose first pass the frontier carries alone. Each a
-#: generous nominal, level 1 packing looser.
+#: **Fedora's `zlib-ng-compat` at level 6** is `pg_dump -Z` on Fedora, whose
+#: zlib it is; **GNU gzip at level 6** is `pg_dump | gzip`; **zlib-ng at level
+#: 1** is the writer that ends no block before its last (`deflate_quick`),
+#: whose first pass the frontier carries alone. Each a generous nominal, level
+#: 1 packing looser.
 INPUTS["control_gz_ng"] = InputSpec(
     "control_gz_ng",
     "generate_gzip_input.py",
-    ("--from-dump", "@SOURCE@", "--writer", "zlib-ng"),
+    ("--from-dump", "@SOURCE@", "--writer", "zlib-ng-compat"),
     scales=False,
     suffix=".gz",
     derives_from="control",
@@ -11410,8 +11416,8 @@ GZPASS_WRITERS: tuple[tuple[str, str, str], ...] = (
     ("control_gz", f"zlib {ZLIB_VERSION}, level 6", "`pg_dump -Z` over stock zlib"),
     (
         "control_gz_ng",
-        f"zlib-ng {ZLIBNG_VERSION}, level 6",
-        "`pg_dump -Z` where zlib is zlib-ng's compatibility build",
+        f"zlib-ng-compat {ZLIBNG_COMPAT_VERSION}, level 6",
+        "`pg_dump -Z` on Fedora 44, whose zlib is zlib-ng's compatibility build",
     ),
     ("control_gz_gnu", f"GNU gzip {GNU_GZIP_VERSION}, level 6", "`pg_dump | gzip`"),
     (
@@ -11435,6 +11441,13 @@ GZPASS_REPS = 7
 #: reads alternated reps by their paired differences, never by whether two
 #: ranges overlap (`docs/design/roadmap-P15-gzip.md`, "Slice order").
 GZPASS_SPARED = 1
+
+#: How much faster a leg must be to **beat** another, besides its pairs: its
+#: median paired difference over this fraction of its own median. Fixed before
+#: the sitting at about half the gap between twelve and twenty-four jobs that
+#: the pairs in `runs/p15.17.4/gate/` found, so a sub-percent gap neither moves
+#: the default nor reads as a difference D2 could reject on.
+GZPASS_MARGIN = 0.03
 
 
 def gzpass_topology(root: Path = release.CPU_SYSFS) -> tuple[int, int]:
@@ -11471,9 +11484,12 @@ def gzpass_wins(a: Sequence[float], b: Sequence[float]) -> int:
 
 def gzpass_beats(a: Sequence[float], b: Sequence[float]) -> bool:
     """Whether `a` beats `b`: faster in all its pairs but `GZPASS_SPARED`, and
-    in more than half of them."""
+    in more than half of them, by a median paired difference over
+    `GZPASS_MARGIN` of `a`'s median."""
     n = len(a)
-    return gzpass_wins(a, b) >= max(n - GZPASS_SPARED, n // 2 + 1)
+    if gzpass_wins(a, b) < max(n - GZPASS_SPARED, n // 2 + 1):
+        return False
+    return median([y - x for x, y in zip(a, b)]) > GZPASS_MARGIN * median(a)
 
 
 def gzpass_level(a: Sequence[float], b: Sequence[float]) -> bool:
@@ -11483,20 +11499,27 @@ def gzpass_level(a: Sequence[float], b: Sequence[float]) -> bool:
 
 #: What each outcome of one file's counts settles, by the spec's three
 #: (`docs/design/roadmap-P15-gzip.md`, "Slice order"), and the two that settle
-#: nothing.
+#: nothing. **Every order of the three upper counts falls in one**: once the
+#: physical count beats the logical one, its beating the logical count less one
+#: as well reads as a core shared, and anything else as oversubscription.
 GZPASS_OUTCOMES: dict[str, str] = {
-    "stands": "the logical count is level with the physical count or faster: the default "
-    "stands, and D2 gains its rejection on this figure",
-    "oversubscription": "the logical count less one is level with the physical count and "
-    "beats the logical count: the cost is oversubscription, and the default becomes the "
-    "logical count less the scan's thread",
-    "shared": "the logical count less one is level with the logical count and the physical "
-    "count beats it: the cost is a core or a cache shared, and the default is capped at the "
-    "physical cores within the process's affinity",
-    "undecided": "the three counts fall in none of those orders",
-    "no lift": "the physical count does not beat the serial pass, so the file says nothing of "
-    "the default",
+    "stands": "the physical count does not beat the logical count: the default stands, and "
+    "D2 gains its rejection on this figure",
+    "oversubscription": "the physical count beats the logical count and not the logical count "
+    "less one: the cost is oversubscription, and the default becomes the logical count less "
+    "the scan's thread",
+    "shared": "the physical count beats the logical count and the logical count less one: the "
+    "cost is a core or a cache shared, and the default is capped at the physical cores within "
+    "the process's affinity, which removes the oversubscription too",
+    "no lift": "the physical count does not beat the serial pass, nor the serial pass any "
+    "upper count, so the file says nothing of the default",
+    "regresses": "the physical count does not beat the serial pass and the serial pass beats "
+    "an upper count: a defect in speculation that finds nothing, owed a `KD<k>` by the round "
+    "that reads it, which does not block the default",
 }
+
+#: The outcomes that say nothing of the default (`gzpass_verdict`).
+GZPASS_UNLIFTED = frozenset({"no lift", "regresses"})
 
 
 def gzpass_outcome(
@@ -11508,31 +11531,42 @@ def gzpass_outcome(
     """Which of `GZPASS_OUTCOMES` one file's readings at the serial, physical,
     logical-less-one and logical counts fall in, by `gzpass_beats`."""
     if not gzpass_beats(physical, serial):
+        if any(gzpass_beats(serial, upper) for upper in (physical, less_one, logical)):
+            return "regresses"
         return "no lift"
     if not gzpass_beats(physical, logical):
         return "stands"
-    if gzpass_level(less_one, physical) and gzpass_beats(less_one, logical):
-        return "oversubscription"
-    if gzpass_level(less_one, logical) and gzpass_beats(physical, less_one):
+    if gzpass_beats(physical, less_one):
         return "shared"
-    return "undecided"
+    return "oversubscription"
 
 
 def gzpass_verdict(outcomes: Mapping[str, str]) -> str:
     """What the files' outcomes settle together, keyed by each file's label:
-    one outcome where every file the pass lifts on falls in it and it is one
-    of the spec's three, and nothing otherwise."""
-    lifted = {label: o for label, o in outcomes.items() if o != "no lift"}
+    one outcome where every file the pass lifts on falls in it, and nothing
+    otherwise; each file the pass regresses on named whatever the rest
+    settle."""
+    lifted = {label: o for label, o in outcomes.items() if o not in GZPASS_UNLIFTED}
     found = set(lifted.values())
+    regressed = [label for label, o in outcomes.items() if o == "regresses"]
+    named = (
+        f" **The pass regresses on {', '.join(regressed)}**: {GZPASS_OUTCOMES['regresses']}."
+        if regressed
+        else ""
+    )
     if not lifted:
-        return "**The figure settles nothing**: the pass lifts on no file."
-    if len(found) == 1 and (outcome := found.pop()) != "undecided":
+        return "**The figure settles nothing**: the pass lifts on no file." + named
+    if len(found) == 1:
+        outcome = found.pop()
         return (
             f"**The figure settles the default: {outcome}.** On every file the pass lifts on, "
-            f"{GZPASS_OUTCOMES[outcome]}."
+            f"{GZPASS_OUTCOMES[outcome]}." + named
         )
     each = "; ".join(f"{label}: {o}" for label, o in lifted.items())
-    return f"**The figure does not settle the default**: the files the pass lifts on disagree, or fall in no order ({each})."
+    return (
+        f"**The figure does not settle the default**: the files the pass lifts on disagree ({each})."
+        + named
+    )
 
 
 def _gzpass_specs() -> list[RunSpec]:
@@ -11573,10 +11607,12 @@ def run_gzip_first_pass(session: Session) -> str:
     three upper counts fall in one of `GZPASS_OUTCOMES`, by `gzpass_beats` over
     paired reps, and the figure settles the default only where every file the
     pass lifts on agrees (`gzpass_verdict`). **What would falsify each cause**,
-    written before any reading: oversubscription is falsified by the logical
-    count less one being slower than the physical count, and a shared core or
-    cache by its being faster than the logical count; the default standing,
-    by the physical count beating the logical one.
+    written before any reading: once the physical count beats the logical one,
+    oversubscription is falsified by the physical count beating the logical
+    count less one too, and a shared core or cache by its not beating it; the
+    default standing, by the physical count beating the logical one. A file
+    the serial pass beats an upper count on is named as a regression and
+    settles nothing (`GZPASS_UNLIFTED`).
 
     **It prices the chunk length too**: 4 MiB, rapidgzip's, against the
     shipped 1 MiB at four jobs, the speculation limit held, by the same pairs
@@ -11672,7 +11708,8 @@ def run_gzip_first_pass(session: Session) -> str:
     def pair(a: Sequence[float], b: Sequence[float]) -> str:
         diff = median([x - y for x, y in zip(a, b)])
         mark = "**beats**" if gzpass_beats(a, b) else "beaten" if gzpass_beats(b, a) else "level"
-        return f"{mark} · faster in {gzpass_wins(a, b)}/{len(a)} · {diff:+.3f} s"
+        share = diff / min(median(a), median(b))
+        return f"{mark} · faster in {gzpass_wins(a, b)}/{len(a)} · {diff:+.3f} s, {share:+.1%}"
 
     p, l1, lg = GZPASS_PHYSICAL, GZPASS_LOGICAL - 1, GZPASS_LOGICAL
     outcomes: dict[str, str] = {}
@@ -11731,10 +11768,12 @@ def run_gzip_first_pass(session: Session) -> str:
         "in the second half, so a count is read against another rep by rep. The first column "
         f"is the `{p}`-job pass's median over the floor's in its sweep, how far the pass is "
         "from the scan it falls toward. Each other cell says "
-        f"whether its first leg beats the second — faster in at least {spared} of {n} pairs — "
-        "is beaten, or is level, in how many pairs it was faster, and the median paired "
-        "difference, negative where the first is faster. A file's outcome is read off its "
-        "physical, logical-less-one and logical counts (`measure.gzpass_outcome`):\n\n"
+        f"whether its first leg beats the second — faster in at least {spared} of {n} pairs, "
+        f"by a median paired difference over {GZPASS_MARGIN:.0%} of its own median — is "
+        "beaten, or is level, in how many pairs it was faster, and the median paired "
+        "difference in seconds and as a share of the faster leg's median, negative where the "
+        "first is faster. A file's outcome is read off its serial, physical, logical-less-one "
+        "and logical counts (`measure.gzpass_outcome`):\n\n"
         + pair_table
         + "\n\n"
         + gzpass_verdict(outcomes)

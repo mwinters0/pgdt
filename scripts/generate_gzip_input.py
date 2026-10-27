@@ -27,14 +27,24 @@ gzip file that merely decodes to the same plaintext.
 **`--writer` and `--level` choose another single member's writer**, for
 `gzip-first-pass`, which reads a parallel first pass over more than one
 writer's blocks: `zlib` (the default) at `--level 6` is `pg_dump -Z` over
-stock zlib; `zlib-ng` is the same call over zlib-ng's own build, which a
-distribution shipping `zlib-ng-compat` as its zlib links `pg_dump` against,
-and at `--level 1` the writer that ends no block before its last
-(`deflate_quick`); `gzip` is GNU gzip, `pg_dump | gzip`. Each is refused
-unless it is the version this script names (`ZLIBNG_VERSION`,
-`GNU_GZIP_VERSION`), for `ZLIB_VERSION`'s reason, and each header is held to
-`pg_dump`'s at that level (`header_for`). zlib-ng is the `zlib-ng` package
-`pyproject.toml` pins, which bundles its own; GNU gzip is the one on `PATH`.
+stock zlib; `zlib-ng-compat` is the same call where the zlib `pg_dump` links
+is Fedora's `zlib-ng-compat` build; `zlib-ng` at `--level 1` is the writer
+that ends no block before its last (`deflate_quick`); `gzip` is GNU gzip,
+`pg_dump | gzip`. Each is refused unless it is the version this script names
+(`ZLIBNG_COMPAT_VERSION`, `ZLIBNG_VERSION`, `GNU_GZIP_VERSION`), for
+`ZLIB_VERSION`'s reason, and each header is held to `pg_dump`'s at that level
+(`header_for`). zlib-ng is the `zlib-ng` package `pyproject.toml` pins, which
+bundles its own; GNU gzip is the one on `PATH`.
+
+**`zlib-ng-compat` is Fedora's library itself, not a build of the same
+source**: zlib-ng 2.2.5, as the `zlib-ng` package bundles it, writes another
+stream at level 6 than Fedora 44's build does, so a leg labelled `pg_dump -Z`
+on Fedora is written by the `libz.so.1` Fedora ships. It is copied out of
+`FEDORA_IMAGE`, pinned by digest, once its package is checked to be
+`ZLIBNG_COMPAT_VERSION`, and `deflate` is called through `ctypes` at the
+parameters `gzwrite` opens it with (`LibzDeflater`). The library needs only
+glibc, so the host loads it. `PGDT_MEASURE_CONTAINER` names the container
+runtime, as it does for `measure.py`.
 
 **`--bgzf` writes BGZF instead**, the shape `bgzip` writes: one member a
 `BGZF_BLOCK` of plaintext, each deflated alone at the same level with no
@@ -51,6 +61,7 @@ owns the bytes.
 
     cd scripts
     uv run generate_gzip_input.py --from-dump control.sql out.gz
+    uv run generate_gzip_input.py --from-dump control.sql --writer zlib-ng-compat out.gz
     uv run generate_gzip_input.py --from-dump control.sql --writer zlib-ng --level 1 out.gz
     uv run generate_gzip_input.py --from-dump control.sql --bgzf out.gz
 """
@@ -58,10 +69,13 @@ owns the bytes.
 from __future__ import annotations
 
 import argparse
+import ctypes
+import os
 import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import zlib
 from pathlib import Path
 
@@ -74,12 +88,28 @@ ZLIB_VERSION = "1.3.1"
 #: decision.
 ZLIBNG_VERSION = "2.2.5"
 
+#: The Fedora `zlib-ng-compat` package `--writer zlib-ng-compat` deflates
+#: through, as `rpm` names its version and release in `FEDORA_IMAGE`. Moving
+#: it is `ZLIB_VERSION`'s decision.
+ZLIBNG_COMPAT_VERSION = "2.3.3-3.fc44"
+
+#: The image `ZLIBNG_COMPAT_VERSION`'s `libz.so.1` is copied out of: Fedora
+#: 44, pinned by digest so the package the version check reads cannot move
+#: under the tag.
+FEDORA_IMAGE = (
+    "docker.io/library/fedora@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80"
+)
+
+#: What that library's `zlibVersion()` answers: the zlib API it is compatible
+#: with, marked as zlib-ng's. Checked so the library loaded is the one copied.
+ZLIBNG_COMPAT_API = "1.3.1.zlib-ng"
+
 #: The GNU gzip `--writer gzip` runs, as its `--version` names it, for the
 #: same reason.
 GNU_GZIP_VERSION = "1.15"
 
 #: The single member's writers `--writer` names, the default first.
-WRITERS = ("zlib", "zlib-ng", "gzip")
+WRITERS = ("zlib", "zlib-ng-compat", "zlib-ng", "gzip")
 
 #: `pg_dump`'s default gzip level (`Z_DEFAULT_COMPRESSION`), which is what a
 #: bare `-Z gzip` and the `compress` fixtures' `--compress=6` both write.
@@ -144,6 +174,121 @@ def check_zlib_ng(version: str) -> None:
         )
 
 
+def check_zlib_ng_compat(version: str) -> None:
+    """Refuse a `zlib-ng-compat` other than `ZLIBNG_COMPAT_VERSION`, naming
+    both."""
+    if version != ZLIBNG_COMPAT_VERSION:
+        raise SystemExit(
+            f"{FEDORA_IMAGE} holds zlib-ng-compat {version!r}, and the figure's input is "
+            f"zlib-ng-compat {ZLIBNG_COMPAT_VERSION}'s deflate: pin the image that holds it, or "
+            "decide in the open that the figure is taken on another one and move "
+            "ZLIBNG_COMPAT_VERSION"
+        )
+
+
+def load_zlib_ng_compat() -> ctypes.CDLL:
+    """Fedora's `libz.so.1`, copied out of `FEDORA_IMAGE` once its package's
+    version is checked, loaded, and its copy removed: the mapping outlives the
+    file."""
+    container = os.environ.get("PGDT_MEASURE_CONTAINER", "sudo nerdctl").split()
+    with tempfile.TemporaryDirectory() as tmp:
+        ran = subprocess.run(
+            [
+                *container, "run", "--rm", "--network", "none", "-v", f"{tmp}:/out",
+                FEDORA_IMAGE, "sh", "-c",
+                'rpm -q --qf "%{VERSION}-%{RELEASE}" zlib-ng-compat '
+                "&& cp -L /usr/lib64/libz.so.1 /out/libz.so.1",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if ran.returncode != 0:
+            raise SystemExit(
+                f"could not copy zlib-ng-compat out of {FEDORA_IMAGE}: {ran.stderr.strip()}"
+            )
+        check_zlib_ng_compat(ran.stdout.strip())
+        lib = ctypes.CDLL(str(Path(tmp) / "libz.so.1"))
+    lib.zlibVersion.restype = ctypes.c_char_p
+    if (api := lib.zlibVersion().decode()) != ZLIBNG_COMPAT_API:
+        raise SystemExit(f"the library copied answers zlib {api}, not {ZLIBNG_COMPAT_API}")
+    return lib
+
+
+class _ZStream(ctypes.Structure):
+    """zlib's `z_stream`, which zlib-ng's compatibility build keeps."""
+
+    _fields_ = [
+        ("next_in", ctypes.c_void_p),
+        ("avail_in", ctypes.c_uint),
+        ("total_in", ctypes.c_ulong),
+        ("next_out", ctypes.c_void_p),
+        ("avail_out", ctypes.c_uint),
+        ("total_out", ctypes.c_ulong),
+        ("msg", ctypes.c_char_p),
+        ("state", ctypes.c_void_p),
+        ("zalloc", ctypes.c_void_p),
+        ("zfree", ctypes.c_void_p),
+        ("opaque", ctypes.c_void_p),
+        ("data_type", ctypes.c_int),
+        ("adler", ctypes.c_ulong),
+        ("reserved", ctypes.c_ulong),
+    ]
+
+
+class LibzDeflater:
+    """A `compressobj` over a loaded libz's own `deflate`, opened as `gzwrite`
+    opens it: `deflateInit2` at `level`, `Z_DEFLATED`, `wbits`, memLevel 8 and
+    the default strategy, as `zlib.compressobj` does over Python's zlib."""
+
+    Z_OK, Z_STREAM_END, Z_BUF_ERROR = 0, 1, -5
+    Z_NO_FLUSH, Z_FINISH = 0, 4
+    #: The output buffer each `deflate` call writes into.
+    OUT = 1 << 20
+
+    def __init__(self, lib: ctypes.CDLL, level: int, wbits: int):
+        self._lib = lib
+        self._strm = _ZStream()
+        self._out = ctypes.create_string_buffer(self.OUT)
+        lib.zlibVersion.restype = ctypes.c_char_p
+        lib.deflateInit2_.argtypes = [
+            ctypes.POINTER(_ZStream), ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_int,
+        ]
+        lib.deflate.argtypes = [ctypes.POINTER(_ZStream), ctypes.c_int]
+        lib.deflateEnd.argtypes = [ctypes.POINTER(_ZStream)]
+        rc = lib.deflateInit2_(
+            ctypes.byref(self._strm), level, zlib.DEFLATED, wbits, 8, 0,
+            lib.zlibVersion(), ctypes.sizeof(_ZStream),
+        )
+        if rc != self.Z_OK:
+            raise SystemExit(f"deflateInit2 returned {rc}")
+
+    def _run(self, data: bytes, flush: int) -> bytes:
+        held = ctypes.create_string_buffer(data, len(data))
+        self._strm.next_in = ctypes.cast(held, ctypes.c_void_p)
+        self._strm.avail_in = len(data)
+        out = []
+        while True:
+            self._strm.next_out = ctypes.cast(self._out, ctypes.c_void_p)
+            self._strm.avail_out = self.OUT
+            rc = self._lib.deflate(ctypes.byref(self._strm), flush)
+            if rc not in (self.Z_OK, self.Z_STREAM_END, self.Z_BUF_ERROR):
+                raise SystemExit(f"deflate returned {rc}")
+            out.append(self._out.raw[: self.OUT - self._strm.avail_out])
+            if flush == self.Z_FINISH:
+                if rc == self.Z_STREAM_END:
+                    self._lib.deflateEnd(ctypes.byref(self._strm))
+                    return b"".join(out)
+            elif self._strm.avail_out != 0 and self._strm.avail_in == 0:
+                return b"".join(out)
+
+    def compress(self, data: bytes) -> bytes:
+        return self._run(data, self.Z_NO_FLUSH)
+
+    def flush(self) -> bytes:
+        return self._run(b"", self.Z_FINISH)
+
+
 def gnu_gzip_version() -> str:
     """The version the `gzip` on `PATH` names, or what it said instead."""
     if shutil.which("gzip") is None:
@@ -177,10 +322,12 @@ def check_header(header: bytes, level: int = LEVEL) -> None:
 
 def deflater_for(writer: str, level: int):
     """A `compressobj` writing one gzip member at `level` through `writer`'s
-    deflate, its version checked: `zlib` or `zlib-ng`."""
+    deflate, its version checked: `zlib`, `zlib-ng-compat` or `zlib-ng`."""
     if writer == "zlib":
         check_zlib(zlib.ZLIB_RUNTIME_VERSION)
         return zlib.compressobj(level, zlib.DEFLATED, GZIP_WINDOW_BITS)
+    if writer == "zlib-ng-compat":
+        return LibzDeflater(load_zlib_ng_compat(), level, GZIP_WINDOW_BITS)
     if writer == "zlib-ng":
         from zlib_ng import zlib_ng
 
@@ -260,8 +407,8 @@ def main(argv: list[str] | None = None) -> int:
         "--writer",
         choices=WRITERS,
         default=WRITERS[0],
-        help="whose deflate writes the single member: pg_dump's zlib (the default), zlib-ng's, "
-        "or GNU gzip's",
+        help="whose deflate writes the single member: pg_dump's zlib (the default), Fedora's "
+        "zlib-ng-compat, zlib-ng's, or GNU gzip's",
     )
     parser.add_argument(
         "--level",
