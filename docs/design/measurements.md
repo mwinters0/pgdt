@@ -4047,12 +4047,13 @@ the limit leg at 24 and 4 jobs, read as a difference
   on this file's blocks it asked for a small part of one.
 - **The rest of the reading is not heap.** 45.7 MiB held against 25.0 MiB
   asked leaves about 20.7 MiB a worker that heaptrack cannot see, since it
-  counts what was asked for and not what an allocator kept after a free. It
-  is unattributed. The candidate is a freed decode buffer kept resident,
-  under mimalloc and glibc's arenas alike, the twins agreeing; an
-  allocator-level instrument ("What an instrument can see, and what only a
-  sitting can", above) would name it. It is outside the heap the charge's terms describe, so a
-  charge cut to the heap's terms would hand it to the bound.
+  counts what was asked for and not what an allocator kept after a free.
+  It is named from the allocators' source, and no reading separates it: a
+  freed decode buffer kept resident, by mimalloc's purge delay and by
+  glibc's dynamic `mmap` threshold, the twins agreeing (`KD148`). The
+  reading that would separate it turns each allocator's retention off. It is
+  outside the heap the charge's terms describe, so a charge cut to the heap's
+  terms would hand it to the bound.
 
 **The limit leg's wall clock barely moves with the count**
 (`runs/gzip-resident-20261027-1824/log`, each rep's line). Its first pass

@@ -84,20 +84,22 @@ impl Chunking {
     }
 
     /// What one task ahead of the frontier holds, running and then held for
-    /// it: a speculation's compressed bytes — its chunk, and at most the
-    /// limit's worth past it, the block it stops in — its plaintext twice over
-    /// while it writes markers, or a decode's window, engine and plaintext,
-    /// the speculation being the larger; then [`DECODES_A_TASK`] decodes'
+    /// it: a speculation's compressed bytes — its chunk, and the limit's worth
+    /// past it, the block it stops in — its plaintext twice over while it
+    /// writes markers, or a decode's window, engine and plaintext, the
+    /// speculation being the larger; then [`DECODES_A_TASK`] decodes'
     /// plaintext and [`GUESSES_A_TASK`] guesses' marked histories waiting for
     /// the frontier (`Ahead::top_up` holding the results to those multiples of
-    /// the tasks' count); and the buffer the task reads its input into.
+    /// the tasks' count); and the buffer the task reads its input into. What
+    /// a speculation can hold past its two terms is `gz_seek`'s `KD141`.
     ///
-    /// Deficiency register: `deficiency: KD141` — the compressed bytes past
-    /// the chunk are charged as the limit's worth, which counts plaintext: a
-    /// fixed-code block spends nine bits on a literal, so past the chunk a
-    /// speculation holds up to nine eighths of the limit, and the last input
-    /// chunk fed it up to `INPUT_CHUNK` more, the speculation releasing
-    /// nothing after its decode's start. **(b) owned by 15.18.1**.
+    /// Deficiency register: `deficiency: KD148` — no term charges what the
+    /// allocator keeps resident of the decode buffers a task frees: mimalloc
+    /// commits a freed page for its purge delay, and glibc, once a freed
+    /// buffer raises its dynamic `mmap` threshold, serves the next from a
+    /// thread's arena and trims it only past twice that. It grows by a worker,
+    /// so it is not `MEMORY_UNPOOLED_BOUND`'s to cover; the terms holding
+    /// nothing on zlib's files cover it there. **(b) owned by 15.18.3**.
     pub(super) const fn task_bytes(self) -> u64 {
         let limit = self.limit as u64;
         let guess = 2 * gz_seek::WINDOW_SIZE as u64;

@@ -292,13 +292,21 @@ enum State {
 /// it runs on whatever thread the caller has.
 ///
 /// It holds the file's bytes from the place its decode began on — about a
-/// chunk of them, and the bytes of the block or member it stops in — and of
-/// its plaintext only what a guess may read, the 32 KiB before the last
-/// place it may stop and all written since (`Decode::push`): a few windows
-/// and a block, and so at most the plaintext limit, twice over while it is
-/// still writing markers, beside a few kilobytes of code tables; reading a
-/// BGZF chunk's members, the chunk's bytes, the member it stops in and the
-/// header after that alone.
+/// chunk of them, and those of every block past the chunk's end up to its
+/// stop — and of its plaintext only what a guess may read, the 32 KiB before
+/// the last place it may stop and all written since (`Decode::push`): a few
+/// windows and a block, in a buffer that doubles as it grows, beside a few
+/// kilobytes of code tables; reading a BGZF chunk's members, the chunk's
+/// bytes, the member it stops in and the header after that alone.
+///
+/// Deficiency register: `deficiency: KD141` — past the chunk's end the decode
+/// runs on through every block the search does not look for, fixed ones, to
+/// the first dynamic or stored one, so the compressed bytes and the events it
+/// holds there are bounded by nothing: empty fixed blocks carry no plaintext
+/// for the limit to count. And the marked sink, two bytes a value, doubles
+/// from `2^24` values to `2^25`, zero-filled, wherever the run it must keep
+/// at that grow is past half of it, about four times the limit in bytes
+/// where a task is charged two. **(b) owned by 15.18.2**.
 ///
 /// Deficiency register: `deficiency: KD143` — on `pg_dump`'s level-6 text a
 /// speculation's decode rarely goes clean, so it writes nearly its whole
