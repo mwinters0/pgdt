@@ -519,7 +519,15 @@ thread, still read from `available_parallelism` (`RT7`); level with the
 logical count, it is a core or a cache shared, and the default is capped at
 the physical cores within the process's affinity, with a runtime invariant
 for how they are read; the logical count level with the physical, the default
-stands and D2 gains its rejection on the figure (`KD145`).
+stands and D2 gains its rejection on the figure (`KD145`). **The files and
+the bar are fixed before the sitting**
+([`../status/history/2026-10-27.md`](../status/history/2026-10-27.md),
+"15.7.1's writers and its bar, reviewed"): `pg_dump -Z` over stock zlib and
+over Fedora's `zlib-ng-compat`, `pg_dump | gzip`, and a level-1 writer ending
+no block. One count beats another only by consistent pairs *and* a margin, and
+"level" is anything short of that. An order between the three reads as a core
+shared wherever the physical count beats the third leg. A file any upper count
+makes slower than serial is named in the verdict and does not block it.
 
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),

@@ -117,7 +117,7 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.17.2** A speculated chunk cheaper, earned by 15.17.1's review, in `gz-seek`: opening by an account of a speculated chunk's cost at four jobs, term by term, from 15.17.1's profile; the speculation's marked decode and copies and `Input::push`'s growth cut, a speculated chunk on one thread from about three serial chunks' cost to under two; the row's gate moved to 15.17.4 by its split (`KD143`) — [notes](../design/roadmap-P15.17.2-cheaper-notes.md)
 - [x] **15.17.3** A chunk decode that does not zero its buffer, earned by 15.17.1's review, in `gz-seek`: the engine's decode of a taken chunk writing into a buffer it has not zeroed at the limit's size, the buffer's ownership and charge grilled when it opens; before 15.7.1 and 15.18, which read the pages it touches (`KD143`) — [notes](../design/roadmap-P15.17.3-unzeroed-notes.md)
 - [x] **15.17.4** A four-job first pass faster again, earned by 15.17.2's split, in `pgdt-io`'s `first_pass/ahead.rs` with `gz-seek` as it needs: opening by committing `spec_cost`'s emulation of the scheduling as a `gz-seek` example, and by the account at four jobs of the run of landed guesses at the frontier, the frontier's waits on taken decodes, the workers' idle time and the pass's page faults by call stack, a decode's buffer pooled only where they name it (D117); its levers each tried first in the emulation and built only where it moves — which chunks are speculated, in runs with gaps the frontier decodes unguessed, how far ahead a run is placed, a free worker given a resolved decode before a new speculation, the room `top_up` allows, which `Chunking::task_bytes` charges; done when four jobs is faster than the tree it opens on by alternated reps' paired differences, twenty-four jobs no slower per worker, the frontier's waits read in the account, not gated, and the gzip first pass's default worker count moved to 15.7.1; a remaining term that is the second decode going to the maintainer under D117, which kept it; after 15.17.3, before 15.7.1 and 15.18 (`KD143`) — [notes](../design/roadmap-P15.17.4-scheduling-notes.md)
-- [ ] **15.7.1** Readings, the throughput, earned by 15.7's split: the gzip throughput figures, the parallel first pass's on more than one writer's files and at two chunk lengths, and at the logical core count, the physical count and the logical count less one; the gzip first pass's default worker count settled by which of the other two the third is level with, D2 amended for that source alone (`KD145`). The instrument is landed: `gzip-first-pass`, registered untaken, over four writers' files (`generate_gzip_input.py --writer`) and a 4 MiB chunk leg (`pgdt`'s `gzip-4mib-chunks`). The readings, the default and D2 remain — [notes](../design/roadmap-P15.7.1-throughput-notes.md)
+- [ ] **15.7.1** Readings, the throughput, earned by 15.7's split: the gzip throughput figures, the parallel first pass's on more than one writer's files and at two chunk lengths, and at the logical core count, the physical count and the logical count less one; the gzip first pass's default worker count settled by which of the other two the third is level with, D2 amended for that source alone (`KD145`). The instrument is landed: `gzip-first-pass`, registered untaken, over four writers' files (`generate_gzip_input.py --writer`) and a 4 MiB chunk leg (`pgdt`'s `gzip-4mib-chunks`). Its review's amendments ([history](history/2026-10-27.md), "15.7.1's writers and its bar, reviewed"), then the readings, the default and D2 remain — [notes](../design/roadmap-P15.7.1-throughput-notes.md)
 - [ ] **15.18** Readings, the resident again, earned by 15.7's review, after 15.17.3 and 15.17.4: `gzip-resident` re-taken over the repaired pass with a leg on a file whose chunks reach `SPECULATION_LIMIT`, the falsifier for an under-bill, and a heaptrack recording of a many-job first pass attributing a worker's remainder; it settles `Chunking::task_bytes` in whichever direction the reading falls; 15.7.1 does not wait on it, 15.7.2 does (`KD141`)
 - [ ] **15.7.2** The record, earned by 15.7's split, after 15.7.1, whose readings it writes from: the manual and `pg-dump-compatibility.md`
 
@@ -150,25 +150,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **15.7.1's writers.** `gzip-first-pass` reads four single members of
-  `control`: zlib 1.3.1, zlib-ng 2.2.5 and GNU gzip 1.15 at level 6, and
-  zlib-ng 2.2.5 at level 1 (`measure.GZPASS_WRITERS`). The spec asks for
-  "more than one writer's files" and names none. These are what `pg_dump -Z`
-  writes over stock zlib and over a zlib-ng compat build, `pg_dump | gzip`,
-  and the writer that ends no block, which 15.10's notes expected this figure
-  to read. The default worker count is settled where every file the pass
-  lifts on agrees (`gzpass_verdict`), and 15.7.2's manual says which
-  writers' files the pass reaches. So the set decides both. pigz, igzip and
-  zlib at other levels are left out, as is the exact zlib-ng Fedora builds
-  (`zlib-ng-compat`), which may differ from the Python package's bundled
-  build at level 6. Reconsidering means changing `GZPASS_WRITERS` and the
-  generator before the readings are taken.
-- **15.7.1's bar for "level".** One count beats another where it is faster
-  in all but one of seven alternated pairs (`GZPASS_SPARED`). Otherwise the
-  two are level, and the figure's verdict on the default follows from that
-  mechanically (`gzpass_outcome`). The spec says "level with" and gives no
-  bar, and 15.17.4's probe reported its pairs as counts, 7 of 7 and 5 of 7,
-  with none. Six of seven is a one-sided sign test at about 6%. A looser bar would settle the default on smaller gaps, and a
-  stricter one leaves more files `undecided`. Reconsidering means moving
-  `GZPASS_SPARED` or `GZPASS_REPS` before the sitting.

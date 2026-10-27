@@ -37,7 +37,11 @@ They were written before any reading.
     notes said this figure would read on the frontier alone.
 
   Each writer is refused at any version but the one the generator names.
-  The choice of four is under STATUS's "Decisions worth another look".
+  The level-6 zlib-ng leg is owed a move to Fedora's `zlib-ng-compat`, and
+  the bar a margin, the mixed orders an outcome and a regressing file its own,
+  before the sitting
+  ([`../status/history/2026-10-27.md`](../status/history/2026-10-27.md),
+  "15.7.1's writers and its bar, reviewed").
 - **The chunk-length leg is a build of its own**: `pgdt`'s
   `gzip-4mib-chunks` feature, which forwards to `pgdt-io`'s and switches
   `CHUNK_BYTES` in `first_pass/ahead.rs`. `pgdt --version` names it as
