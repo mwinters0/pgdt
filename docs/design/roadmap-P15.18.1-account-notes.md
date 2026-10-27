@@ -29,9 +29,13 @@ the charge in `pgdt-io`
 is at most a quarter of `L`. At a grow from `2^24` values the run a sink
 keeps is then under half the buffer, so the grow drops it rather than
 doubling, and the buffer stops at `2^24` values, just under `2L`. Only a run of more than about `2^23` values that stays marked reaches
-the doubling. That takes zlib's largest block at `memLevel` 9 written with
-nothing but long matches, or a writer whose blocks are longer than zlib's.
-Neither has been seen.
+the doubling. That takes a block as long as zlib's at `memLevel` 9, nearly all
+long matches, whose boundary before it falls between about 8.32M and 8.42M
+values into the decode, no earlier grow having compacted. GNU gzip writes
+blocks that long at its default level, 32,767 symbols where zlib at
+`memLevel` 8 writes 16,383 (`runs/p15.18.1-review/reading.txt`). So
+`pg_dump | gzip` reaches the doubling on near-repetitive content, such as a
+zero-filled large object.
 
 **`KD141`'s compressed-bytes clause understated it.** The clause said nine
 eighths of the limit. A dynamic block's literal codes reach 15 bits, and empty
@@ -73,6 +77,12 @@ leaves it unattributed again.
   needs a long marked run, and the compressed `L` a block near 1 : 1. One
   block cannot be both. Nothing here computes the joint maximum, which
   15.18.3 needs before it sets a term.
+- **Events are bounded over the whole decode**, not only past the chunk.
+  An event is 24 bytes, one per block, and an empty fixed block is ten bits.
+  So a chunk of them after a dynamic block holds about 20 MB that no term
+  charges. zlib never writes two such blocks in a row, since `deflate.c`
+  refuses a second flush with no input between. A damaged or crafted file
+  does.
 - **The bounds go in `gz-seek`, not in the charge.** Over blocks the search
   skips, the compressed bytes past the chunk have no maximum a charge could
   state. A guess cut where they would pass a bound and continued from its stop

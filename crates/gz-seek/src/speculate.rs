@@ -52,7 +52,8 @@ mod members;
 /// The plaintext limit to pass [`Parallel`](crate::Parallel), the most a
 /// speculation decodes and so a chunk's decode holds: twice the largest block
 /// zlib ends, `lit_bufsize - 1` symbols of at most 258 bytes at
-/// its largest `memLevel` (`deflate.c`), so a piece begun at a boundary
+/// its largest `memLevel` (`deflate.c`) — and GNU gzip's at its default
+/// level, its symbol buffer being that size — so a piece begun at a boundary
 /// reaches the next under it, a limit cutting the guess there rather than
 /// ending the chain of windows. A writer ending blocks more seldom gives a
 /// piece nothing to stop at, and the frontier decodes those bytes itself.
@@ -299,13 +300,16 @@ enum State {
 /// kilobytes of code tables; reading a BGZF chunk's members, the chunk's
 /// bytes, the member it stops in and the header after that alone.
 ///
-/// Deficiency register: `deficiency: KD141` — past the chunk's end the decode
-/// runs on through every block the search does not look for, fixed ones, to
-/// the first dynamic or stored one, so the compressed bytes and the events it
-/// holds there are bounded by nothing: empty fixed blocks carry no plaintext
-/// for the limit to count. And the marked sink, two bytes a value, doubles
-/// from `2^24` values to `2^25`, zero-filled, wherever the run it must keep
-/// at that grow is past half of it, about four times the limit in bytes
+/// Deficiency register: `deficiency: KD141` — the decode holds an event for
+/// every block, 24 bytes for as little as ten bits of input, inside the chunk
+/// as past it, and no term of a task's charge counts them. Past the chunk's
+/// end it runs on through every block the search does not look for, fixed
+/// ones, to the first dynamic or stored one, so the compressed bytes and the
+/// events it holds there are bounded by nothing: empty fixed blocks carry no
+/// plaintext for the limit to count. And the marked sink, two bytes a value,
+/// doubles from `2^24` values to `2^25`, zero-filled, wherever the run it must
+/// keep at that grow is past half of it — a block as long as GNU gzip's
+/// longest, nearly all long matches — about four times the limit in bytes
 /// where a task is charged two. **(b) owned by 15.18.2**.
 ///
 /// Deficiency register: `deficiency: KD143` — on `pg_dump`'s level-6 text a

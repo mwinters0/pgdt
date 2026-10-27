@@ -523,10 +523,11 @@ than reading as a phase nobody has sliced.
   to miss its chunk's first block. Detail: `crates/gz-seek/src/find.rs`.
 
 - **KD141** — a gzip first pass's speculation can hold more than a task is
-  charged: past its chunk, the compressed bytes and events of the blocks its
-  search skips, bounded by nothing, and a marked sink doubling to about four
-  limits where a long run stays marked. **(b) owned by 15.18.2**. Detail:
-  `crates/gz-seek/src/speculate.rs`.
+  charged: an event for every block it decodes, its chunk's included; past
+  its chunk, the compressed bytes and events of the blocks its search skips,
+  bounded by nothing; and a marked sink doubling to about four limits where a
+  long run stays marked, which GNU gzip's longest blocks reach. **(b) owned by
+  15.18.2**. Detail: `crates/gz-seek/src/speculate.rs`.
 
 - **KD143** — a parallel first pass speculates nearly every chunk and the
   engine decodes each taken one again, so at four workers they are nearly
