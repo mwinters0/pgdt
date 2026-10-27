@@ -5112,21 +5112,25 @@ class GzseekSpacing(unittest.TestCase):
 
 
 class GzipResident(unittest.TestCase):
-    """gzip's resident against its charge: a single member's first pass and a
-    BGZF file's block path, each at three worker counts."""
+    """gzip's resident against its charge: two single members' first passes,
+    one whose chunks reach the speculation limit, and a BGZF file's block
+    path, each at three worker counts."""
 
     FIGURE = "gzip-resident"
 
     #: What each leg's run said it billed, read off `scan started` by hand from
-    #: trial runs of `pgdt parse --memory 2550136832` over `control_gz` and
-    #: `control_bgzf` on 2026-10-25, and over `control_gz` again on
-    #: 2026-10-26 once 15.17.4 moved a task's charge, the gzip charge as built:
-    #: the mirror is held to these, the bills a run states, as well as to the
-    #: source. At 24 that allowance now affords `control_gz` 20 workers, so no
-    #: run states its 24-worker bill; 15.18's sitting answers the count.
+    #: trial runs of `pgdt parse --memory 3623878656` over every leg on
+    #: 2026-10-27, after 15.17.4 moved a task's charge, the gzip charge as built
+    #: (`runs/p15.18/trial-bills.sh`): the mirror is held to these, the bills a
+    #: run states, as well as to the source. Every run resolved its row's
+    #: count, and each first pass ran that many workers.
     STATED_BILLS = {
         ("control_gz", 1): 86_963_692,
         ("control_gz", 4): 347_854_768,
+        ("control_gz", 24): 2_087_128_608,
+        ("repeated_gz", 1): 86_963_692,
+        ("repeated_gz", 4): 347_854_768,
+        ("repeated_gz", 24): 2_087_128_608,
         ("control_bgzf", 1): 102_987_776,
         ("control_bgzf", 4): 185_168_384,
         ("control_bgzf", 24): 1_237_000_704,
@@ -5134,6 +5138,10 @@ class GzipResident(unittest.TestCase):
     #: `control_gz`'s stored size on those runs, which decides it has chunks
     #: past its first.
     GZ_SIZE = 791_308_108
+    #: Each leg's stored size on those runs, and the plaintext the limit leg
+    #: was generated from, `control`'s.
+    SIZES = {"control_gz": GZ_SIZE, "repeated_gz": 134_043_544, "control_bgzf": 842_864_994}
+    CONTROL_SIZE = 3_221_227_790
 
     def test_it_is_taken_and_borrows_nothing(self):
         # Standing in no sharing edge is what lets it publish from its own
@@ -5145,8 +5153,8 @@ class GzipResident(unittest.TestCase):
         self.assertEqual(fig.shares, ())
         self.assertEqual(fig.subtracts, ())
         self.assertEqual(fig.stage, "warm-parallel")
-        self.assertEqual(fig.warm_inputs, ("control_gz", "control_bgzf"))
-        self.assertEqual(fig.memory, measure.PARALLEL_MEMORY)
+        self.assertEqual(fig.warm_inputs, ("control_gz", "repeated_gz", "control_bgzf"))
+        self.assertEqual(fig.memory, measure.GZPASS_MEMORY)
 
     def test_what_can_move_it_is_declared_and_exists(self):
         fig = measure.SELECTABLE_BY_ID[self.FIGURE]
@@ -5155,6 +5163,7 @@ class GzipResident(unittest.TestCase):
             *measure.READ,
             *measure.RSS_INSTRUMENT,
             "scripts/generate_gzip_input.py",
+            "scripts/generate_repeated_rows.py",
             *measure.GEN_PERF,
             "crates/pgdt/Cargo.toml",
         ):
@@ -5171,6 +5180,54 @@ class GzipResident(unittest.TestCase):
         self.assertIn("--bgzf", spec.args)
         self.assertEqual(measure.input_file("control_bgzf"), "control_bgzf.gz")
 
+    def test_the_limit_leg_is_controls_rows_in_one_member(self):
+        spec = measure.INPUTS["repeated_gz"]
+        self.assertEqual(spec.derives_from, "control")
+        self.assertEqual(spec.generator, "generate_repeated_rows.py")
+        self.assertEqual(spec.args, ("--from-dump", "@SOURCE@"))
+        self.assertEqual(measure.input_file("repeated_gz"), "repeated_gz.gz")
+        kinds = {leg: kind for leg, _, kind in measure.GZIP_RSS_LEGS}
+        self.assertEqual(kinds["repeated_gz"], "pass")
+
+    def test_the_limit_leg_must_pack_past_the_limits_ratio_with_room(self):
+        # The ratio a chunk inflates to the limit at, and the room past it.
+        at = measure.GZIP_SPECULATION_LIMIT / measure.GZIP_INPUT_CHUNK
+        need = at * measure.GZIP_LIMIT_ROOM
+        plaintext = 3 << 30
+        self.assertIsNone(measure.gzip_limit_ratio_problem(plaintext, int(plaintext / need) - 1))
+        self.assertIn(
+            "fills no task's charge",
+            measure.gzip_limit_ratio_problem(plaintext, int(plaintext / need) + 1),
+        )
+        # A member packing at the limit's own ratio is no falsifier: a chunk
+        # looser than the mean would fall short of the limit.
+        self.assertIsNotNone(measure.gzip_limit_ratio_problem(plaintext, int(plaintext / at)))
+        self.assertIsNotNone(measure.gzip_limit_ratio_problem(plaintext, 0))
+        self.assertGreater(measure.GZIP_LIMIT_ROOM, 1)
+
+    def test_a_dry_run_reads_the_limit_leg_as_a_falsifier(self):
+        # A dry run sizes an ungenerated input by its nominal, so the limit
+        # leg's must clear the ratio check over `control`'s, or every dry run
+        # refuses the figure before it names a command.
+        cfg = measure.Config(dry_run=True)
+        plaintext = measure.nominal_size(cfg, measure.INPUTS["repeated_gz"].derives_from)
+        packed = measure.nominal_size(cfg, "repeated_gz")
+        self.assertIsNone(measure.gzip_limit_ratio_problem(plaintext, packed))
+        self.assertGreater(packed, self.SIZES["repeated_gz"])
+
+    def test_a_derived_inputs_source_is_sized_for_a_render(self):
+        # The limit leg's ratio reads `control`'s length, which no figure
+        # stages, so a re-render must find it among the recorded sizes.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = measure.Config(cache_dir=Path(tmp))
+            for name, size in (("control", 300), ("repeated_gz", 10)):
+                with (Path(tmp) / measure.input_file(name)).open("wb") as fh:
+                    fh.truncate(size)
+            sizes = measure.recorded_input_sizes(
+                measure.Stager(cfg, lambda _m: None), [measure.SELECTABLE_BY_ID[self.FIGURE]]
+            )
+        self.assertEqual(sizes, {"control": 300, "repeated_gz": 10})
+
     def test_the_counts_are_parallel_rows_either_side_of_the_depth(self):
         jobs = measure.GZIP_RSS_JOBS
         self.assertEqual(list(jobs), sorted(set(jobs)))
@@ -5184,17 +5241,36 @@ class GzipResident(unittest.TestCase):
     def test_every_leg_is_parallel_peak_rss_s_shape_over_gzip(self):
         specs = measure._gzip_rss_specs()
         self.assertEqual(len(specs), len(measure.GZIP_RSS_LEGS) * len(measure.GZIP_RSS_JOBS))
-        self.assertEqual({s.input for s in specs}, {"control_gz", "control_bgzf"})
+        self.assertEqual({s.input for s in specs}, {"control_gz", "repeated_gz", "control_bgzf"})
         self.assertEqual({s.regime for s in specs}, {"warm-parallel"})
         self.assertEqual({s.binary for s in specs}, {"pgdt"})
         for spec in specs:
             with self.subTest(spec=spec.label):
                 script = measure._script(spec.command)
                 self.assertIn("/peak-rss /pgdt parse", script)
+                self.assertIn(f"--jobs {spec.command.rpartition('-jobs-')[2]} ", script)
                 self.assertIn(
-                    f"--memory {measure.stated_allowance(measure.PARALLEL_BUDGET)}", script
+                    f"--memory {measure.stated_allowance(measure.GZPASS_BUDGET)}", script
+                )
+                # `parallel-peak-rss`'s row at that count, but for the budget.
+                twin = measure._script(spec.command.replace(measure.GZRSS_FAMILY, "parse-rss-jobs-"))
+                self.assertEqual(
+                    script,
+                    twin.replace(
+                        str(measure.stated_allowance(measure.PARALLEL_BUDGET)),
+                        str(measure.stated_allowance(measure.GZPASS_BUDGET)),
+                    ),
                 )
         self.assertEqual(len({s.label for s in specs}), len(specs))
+
+    def test_each_shape_is_a_command_shape_and_another_count_is_an_error(self):
+        for jobs in measure.GZIP_RSS_JOBS:
+            with self.subTest(jobs=jobs):
+                self.assertIn(f"{measure.GZRSS_FAMILY}{jobs}", measure.command_shapes())
+        for command in ("parse-gzrss-jobs-2", "parse-gzrss-jobs-", "parse-gzrss-jobs-all"):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    measure._script(command)
 
     def test_the_mirrored_constants_are_the_librarys_own(self):
         # Hand-copied on `QUERY_SUBSTREAM_CAP`'s argument, so checked here:
@@ -5247,7 +5323,7 @@ class GzipResident(unittest.TestCase):
         )
 
     def test_the_charges_are_the_bills_a_run_stated(self):
-        sizes = {"control_gz": self.GZ_SIZE, "control_bgzf": 842_864_994}
+        sizes = self.SIZES
         kinds = {leg: kind for leg, _, kind in measure.GZIP_RSS_LEGS}
         for (leg, jobs), stated in self.STATED_BILLS.items():
             with self.subTest(leg=leg, jobs=jobs):
@@ -5292,10 +5368,10 @@ class GzipResident(unittest.TestCase):
 
     # -- the renderer ------------------------------------------------------
 
-    def _raw(self, extra=None, reported=None):
+    def _raw(self, extra=None, reported=None, input_sizes=None):
         """A sitting whose every cell holds its bill plus `extra` MiB (100 by
         default), each run reporting the bill and count it ran under."""
-        sizes = {"control_gz": self.GZ_SIZE, "control_bgzf": 842_864_994}
+        sizes = self.SIZES
         kinds = {leg: kind for leg, _, kind in measure.GZIP_RSS_LEGS}
         rss, reports = {}, {}
         for spec in measure._gzip_rss_specs():
@@ -5310,7 +5386,7 @@ class GzipResident(unittest.TestCase):
                 "resolved_jobs": str(jobs),
                 "resolved_budget": str(bill),
             }
-            if spec.input == "control_gz":
+            if kinds[spec.input] == "pass":
                 report["first_pass_workers"] = str(jobs)
             report.update((reported or {}).get((spec.input, jobs), {}))
             reports[key] = {k: v for k, v in report.items() if v is not None}
@@ -5319,7 +5395,12 @@ class GzipResident(unittest.TestCase):
             "rss": rss,
             "killed": {},
             "reported": reports,
-            "input_sizes": {**{name: 1 << 30 for name in measure.INPUTS}, **sizes},
+            "input_sizes": {
+                **{name: 1 << 30 for name in measure.INPUTS},
+                "control": self.CONTROL_SIZE,
+                **sizes,
+                **(input_sizes or {}),
+            },
             "runs": [],
         }
 
@@ -5334,7 +5415,7 @@ class GzipResident(unittest.TestCase):
         self.assertIn("The model holds at every cell above", body)
         labels = tuple(f"| {label}, `--jobs " for _, label, _ in measure.GZIP_RSS_LEGS)
         rows = [ln for ln in body.splitlines() if ln.startswith(labels)]
-        self.assertEqual(len(rows), 6)
+        self.assertEqual(len(rows), 9)
         for row in rows:
             self.assertIn("| met |", row)
         # The first pass says how many workers it ran; the BGZF leg pools.
@@ -5368,9 +5449,28 @@ class GzipResident(unittest.TestCase):
         held_each = task + added
         self.assertIn(
             f"| single member, first pass | {measure._fmt_budget_bytes(held_each)} | "
-            f"{measure._fmt_budget_bytes(task)} |",
+            f"{measure._fmt_budget_bytes(task)} | "
+            f"**past it by {measure._fmt_budget_bytes(added)}** |",
             body,
         )
+        # A leg whose workers each held their charge or less is within it.
+        self.assertIn(
+            f"| single member at the limit, first pass | {measure._fmt_budget_bytes(task)} | "
+            f"{measure._fmt_budget_bytes(task)} | within it |",
+            body,
+        )
+
+    def test_the_limit_legs_ratio_is_stated(self):
+        body = self._render(self._raw())
+        ratio = self.CONTROL_SIZE / self.SIZES["repeated_gz"]
+        self.assertIn(f"`repeated_gz`, {measure._fmt_bytes(self.SIZES['repeated_gz'])} "
+                      f"compressed, {ratio:.2f} : 1", body)
+
+    def test_a_limit_leg_packing_short_of_the_limit_refuses_the_figure(self):
+        # Packed only as tightly as `control_gz`, its chunks fill no term.
+        raw = self._raw(input_sizes={"repeated_gz": self.GZ_SIZE})
+        with self.assertRaisesRegex(RuntimeError, "cannot read its limit leg"):
+            self._render(raw)
 
     def test_a_bill_the_mirror_does_not_charge_refuses_the_figure(self):
         raw = self._raw(reported={("control_bgzf", 4): {"resolved_budget": "1"}})
@@ -5607,9 +5707,10 @@ class GzipFirstPass(unittest.TestCase):
 
     def test_the_budget_affords_the_widest_row_at_either_chunk(self):
         # `Parallelism::fit` solves the count against the budget and
-        # `margin_allowance` both, a worker charged a task; `gzip-resident`'s
+        # `margin_allowance` both, a worker charged a task; `PARALLEL_BUDGET`'s
         # 2 GiB affords twenty at the shipped chunk, which would clamp the top
-        # rows silently were the run's own count not checked too.
+        # rows silently were the run's own count not checked too. So
+        # `gzip-resident`, whose top row is twenty-four, states this budget too.
         def afforded(budget: int, chunk: int) -> int:
             allowance = measure.stated_allowance(budget)
             ceiling = (allowance // 100) * (

@@ -1676,6 +1676,24 @@ INPUTS["control_gz_quick"] = InputSpec(
     derives_from="control",
     nominal_bytes=1536 * MIB,
 )
+#: `gzip-resident`'s limit leg: `control`'s rows repeated in runs and deflated
+#: into one member as `control_gz` is (`generate_repeated_rows.py`), so it
+#: packs past the speculation limit's ratio and every chunk's plaintext reaches
+#: the limit (`gzip_limit_ratio_problem`). **Not a compression of `control`**:
+#: its plaintext is another file of `control`'s length, so it is no
+#: `gzip-first-pass` writer, whose legs differ by their blocks alone. Its
+#: nominal is a little over what it weighs, and no more: a dry run reads the
+#: limit leg's ratio off the nominals, so one past `control`'s over
+#: `GZIP_LIMIT_ROOM` times the limit's ratio would refuse the figure there.
+INPUTS["repeated_gz"] = InputSpec(
+    "repeated_gz",
+    "generate_repeated_rows.py",
+    ("--from-dump", "@SOURCE@"),
+    scales=False,
+    suffix=".gz",
+    derives_from="control",
+    nominal_bytes=144 * MIB,
+)
 #: The koji download, and where in it the koji leg's streams are taken from.
 #: **Not the head of the file**: koji's first 3 GiB of plaintext compresses
 #: 56.19x against the whole file's 19.41x, and a decode rate is per plaintext
@@ -2512,6 +2530,14 @@ GZSPACING_SHAPES: tuple[str, ...] = tuple(
 #: count.
 GZPASS_FAMILY = "parse-gzpass-jobs-"
 
+#: The `gzip-resident` figure's command family: `pgdt parse` of a gzip file
+#: under the peak-resident wrapper, at a count its own axis carries
+#: (`GZIP_RSS_JOBS`) under `GZPASS_BUDGET`. `parallel-peak-rss`'s shape over
+#: gzip, but for the budget, which is why it is a family of its own rather
+#: than that figure's `JOBS_AXIS` rows: exempted from `SWEEP_JOBS` by its own
+#: prefix, as `GZPASS_FAMILY` is.
+GZRSS_FAMILY = "parse-gzrss-jobs-"
+
 #: This machine's hardware threads and physical cores, which the figure's
 #: rows are named by and `gzpass_topology_problem` holds the machine to
 #: before a reading: written down rather than read, so a table names the
@@ -2530,11 +2556,12 @@ GZPASS_PHYSICAL = 12
 #: are CPUs, and which of the other two it is level with names the cause.
 GZPASS_JOBS: tuple[int, ...] = (1, 4, GZPASS_PHYSICAL, GZPASS_LOGICAL - 1, GZPASS_LOGICAL)
 
-#: The read-buffer budget every leg states (`stated_allowance`), and so a
-#: first pass's allowance: one that affords the widest row a task each at
-#: either chunk length under `margin_allowance` as well as under the budget,
-#: which `PARALLEL_BUDGET` does not (`gzip-resident`'s 24-job cell affords
-#: twenty). A row whose run resolves another count refuses the figure.
+#: The read-buffer budget every leg of `gzip-first-pass` and of
+#: `gzip-resident` states (`stated_allowance`), and so a first pass's
+#: allowance: one that affords the widest row a task each at either chunk
+#: length under `margin_allowance` as well as under the budget, which
+#: `PARALLEL_BUDGET` does not (it affords a twenty-four-job first pass
+#: twenty). A row whose run resolves another count refuses either figure.
 GZPASS_BUDGET = 3 << 30
 
 #: The `--jobs` values the two `parallel-*` figures are taken at, and the row
@@ -2692,8 +2719,8 @@ PARALLEL_HEADROOM = 2 << 30
 #: is why the shared constant hid it.
 PARALLEL_MEMORY = f"{(PARALLEL_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 
-#: `gzip-first-pass`'s container: its budget plus `PARALLEL_HEADROOM`, sized as
-#: `PARALLEL_MEMORY` is and for its reason.
+#: `gzip-first-pass`'s and `gzip-resident`'s container: their budget plus
+#: `PARALLEL_HEADROOM`, sized as `PARALLEL_MEMORY` is and for its reason.
 GZPASS_MEMORY = f"{(GZPASS_BUDGET + PARALLEL_HEADROOM) // GIB}g"
 
 #: The sub-stream count a provider leg of `parallel-scan-throughput` actually
@@ -4348,6 +4375,16 @@ def _script(command: str) -> str:
             f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache --jobs {jobs} "
             f"--memory {stated_allowance(GZPASS_BUDGET)} {ns} >/dev/null"
         )
+    if command.startswith(GZRSS_FAMILY):
+        # `parse-rss-jobs-<n>` over a gzip file under `gzip-resident`'s
+        # budget, which affords its widest row a first pass's task each.
+        jobs = command.removeprefix(GZRSS_FAMILY)
+        if not jobs.isdigit() or int(jobs) not in GZIP_RSS_JOBS:
+            raise ValueError(f"{command!r} names a job count the figure does not carry")
+        return (
+            f"time {PEAK_RSS} /pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache "
+            f"--jobs {jobs} --memory {stated_allowance(GZPASS_BUDGET)} {ns} >/dev/null"
+        )
     if command.startswith(JOBS_AXIS):
         # The three shapes whose worker count is a figure's axis rather than the
         # apparatus's constant. Each `pgdt` one is otherwise the shape it is
@@ -4484,6 +4521,7 @@ def command_shapes() -> tuple[str, ...]:
         PARALLEL_SCAN,
         *(f"{family}{n}" for family in JOBS_AXIS for n in PARALLEL_JOBS),
         *(f"{GZPASS_FAMILY}{n}" for n in GZPASS_JOBS),
+        *(f"{GZRSS_FAMILY}{n}" for n in GZIP_RSS_JOBS),
         *(
             f"{RESERVE_FAMILY}{token}-{budget}"
             for token, _, _ in RESERVE_ARENAS
@@ -4680,16 +4718,16 @@ def pinned_count_problems() -> list[str]:
 
     The decode instrument states `--workers`, not `--jobs`, and its counts are
     its own figure's axis; it is exempt for the same reason, by prefix, and so
-    is `gzip-first-pass`'s family (`GZPASS_FAMILY`). So are
-    the reserve figure's two stated families, whose count is the figure's own
-    constant (`RESERVE_JOBS`), and its flagless one, which states nothing and is
-    held to that by `flagless_flag_problems`.
+    are `gzip-first-pass`'s and `gzip-resident`'s families (`GZPASS_FAMILY`,
+    `GZRSS_FAMILY`). So are the reserve figure's two stated families, whose
+    count is the figure's own constant (`RESERVE_JOBS`), and its flagless one,
+    which states nothing and is held to that by `flagless_flag_problems`.
     """
     bad = []
     for command in command_shapes():
         if command in _NO_WORKERS or command.startswith(
-            ("decode-", GZPASS_FAMILY, RESERVE_FAMILY, RESERVE_STEP_FAMILY, *_NO_FLAGS,
-             *JOBS_AXIS)
+            ("decode-", GZPASS_FAMILY, GZRSS_FAMILY, RESERVE_FAMILY, RESERVE_STEP_FAMILY,
+             *_NO_FLAGS, *JOBS_AXIS)
         ):
             continue
         stated = set(_WORKER_COUNT.findall(_script(command)))
@@ -6221,8 +6259,9 @@ ALLOCATOR_LEGS: tuple[str, ...] = ("mimalloc", "system", "jemalloc")
 #: limit, each failing on a kill alone: `reserve`'s flagless legs, a kill
 #: being a censored reading (`KILL_TOLERANT`), the margin each leaves
 #: reported beside the verdict (`REPORTED_MARGIN_PERCENT`);
-#: `parallel-peak-rss`'s and `gzip-resident`'s legs in `PARALLEL_MEMORY`, the
-#: library's own `budget + PARALLEL_HEADROOM`; and a kill anywhere else, which raises
+#: `parallel-peak-rss`'s legs in `PARALLEL_MEMORY` and `gzip-resident`'s in
+#: `GZPASS_MEMORY`, each the library's own `budget + PARALLEL_HEADROOM`; and a
+#: kill anywhere else, which raises
 #: (`Session.time_run`). Each is read on this
 #: build too, at the same commit in the same sitting, so the two legs differ by
 #: the allocator alone, as the `allocator` figure's legs do for time — and the
@@ -11145,27 +11184,63 @@ def bgzf_unit() -> int:
     return members * BGZF_BLOCK
 
 
-#: `gzip-resident`'s two legs: the registered input, what the table calls it,
-#: and which charge its `parse` runs under.
+#: `gzip-resident`'s three legs: the registered input, what the table calls
+#: it, and which charge its `parse` runs under.
 #:
-#: **One leg a charge, because a gzip `parse` runs under two.** A single
+#: **Two charges, because a gzip `parse` runs under two.** A single
 #: member's first `parse` is its first pass, charged per worker with no pool
 #: (`gzip_first_pass_charge`); a BGZF file is walked at open, so its first
-#: `parse` block-decodes as an `.xz` file's does (`gzip_block_charge`). Both are
-#: compressions of `control` at `pg_dump`'s level, so neither leg's plaintext
-#: or zlib differs from the other's.
+#: `parse` block-decodes as an `.xz` file's does (`gzip_block_charge`). Those
+#: two are compressions of `control` at `pg_dump`'s level, so neither's
+#: plaintext or zlib differs from the other's.
+#:
+#: **The third is the first pass's falsifier**: a member whose chunks reach
+#: the speculation limit (`repeated_gz`), the only file filling the plaintext
+#: terms most of a task's charge is (`gzip_task_bytes`), so the only one on
+#: which each added worker can hold more than it was charged
+#: (`docs/design/roadmap-P15-gzip.md`, "Slice order"). The same zlib, level
+#: and length of plaintext as `control_gz`, packed tighter.
 GZIP_RSS_LEGS: tuple[tuple[str, str, str], ...] = (
     ("control_gz", "single member, first pass", "pass"),
+    ("repeated_gz", "single member at the limit, first pass", "pass"),
     ("control_bgzf", "BGZF, block path", "block"),
 )
+
+#: How far past the speculation limit's ratio the limit leg's member must
+#: pack, plaintext over compressed bytes, before a sitting reads it
+#: (`gzip_limit_ratio_problem`): a quarter, fixed before the sitting, so a
+#: chunk packing looser than the file's mean still inflates to the limit.
+GZIP_LIMIT_ROOM = 1.25
+
+
+def gzip_limit_ratio_problem(plaintext: int, packed: int) -> str | None:
+    """Why a limit leg of `packed` compressed bytes over `plaintext` bytes
+    fills no task's charge, or `None`: its mean ratio must exceed what a chunk
+    of `GZIP_INPUT_CHUNK` needs to inflate to `GZIP_SPECULATION_LIMIT` by
+    `GZIP_LIMIT_ROOM`.
+
+    `plaintext` is the length of the dump the member was generated from,
+    which the member's own plaintext keeps to within one run of rows
+    (`generate_repeated_rows.py`)."""
+    need = GZIP_SPECULATION_LIMIT / GZIP_INPUT_CHUNK * GZIP_LIMIT_ROOM
+    if packed <= 0 or plaintext / packed < need:
+        ratio = plaintext / packed if packed > 0 else 0.0
+        return (
+            f"the limit leg packs {ratio:.2f} : 1, and a chunk reaches the speculation limit "
+            f"with room only past {need:.2f} : 1, so its first pass fills no task's charge: "
+            "move `generate_repeated_rows.REPEAT`"
+        )
+    return None
 
 #: The worker counts each leg is read at: the serial path, `POOL_DEPTH`, and
 #: the machine's hardware threads. **Three, where the spec asks two**: the
 #: block leg's pool is a constant below `POOL_DEPTH` and grows a unit a reader
 #: above it, so a reading either side of the depth is what separates the two
 #: regimes, and the top count is where a first pass runs the most tasks
-#: ahead. Each is a `PARALLEL_JOBS` row, so the shape is
-#: `parallel-peak-rss`'s, over another file.
+#: ahead, which only a stated `--jobs` reaches, a first pass recommending its
+#: physical cores. Each is a `PARALLEL_JOBS` row, so the shape is
+#: `parallel-peak-rss`'s, over another file and under `GZPASS_BUDGET`
+#: (`GZRSS_FAMILY`).
 GZIP_RSS_JOBS: tuple[int, ...] = (1, 4, 24)
 
 #: The read path a gzip `parse` adds to `READ`: the deflate adapter, its first
@@ -11181,7 +11256,7 @@ GZIP_READ = (
 
 def _gzip_rss_specs() -> list[RunSpec]:
     return [
-        RunSpec("pgdt", leg, f"parse-rss-jobs-{jobs}", "warm-parallel", f"{label}, {jobs}j")
+        RunSpec("pgdt", leg, f"{GZRSS_FAMILY}{jobs}", "warm-parallel", f"{label}, {jobs}j")
         for leg, label, _ in GZIP_RSS_LEGS
         for jobs in GZIP_RSS_JOBS
     ]
@@ -11216,11 +11291,19 @@ def run_gzip_resident(session: Session) -> str:
     unnamed remainder exceeds `MEMORY_UNPOOLED_BOUND` (the bound is wrong for
     gzip, and the sitting re-derives it) or `MEMORY_RESERVE` (the rule does
     not hold for gzip); or an over-bill — a cell holding less than it was
-    charged, which on the first-pass leg names the speculation limit, five
+    charged, which on a first-pass leg names the speculation limit, five
     limits of a task's charge (`gzip_task_bytes`). The secant
     between the two upper counts states what each added worker held against
     what it was charged, which is that pricing; it is a secant over two
     counts, not a fit.
+
+    **What would falsify a task's charge as a bound** is the limit leg's
+    secant: each added worker holding more than `Chunking::task_bytes` on a
+    member whose chunks reach the limit, an under-bill that admits workers a
+    container then kills (`KD141`'s promotion). The secant table says, leg by
+    leg, whether a worker held past its charge. The limit leg is refused
+    before any leg is read unless its member packs past the limit's ratio
+    (`gzip_limit_ratio_problem`), a leg filling no term being no falsifier.
 
     **The bill is mirrored and then held to the run's own**: each leg's
     `scan started` line states the budget its stated count spends, which at a
@@ -11233,9 +11316,15 @@ def run_gzip_resident(session: Session) -> str:
     across reps, and the reps are there to catch an outlier.
     """
     figure = "gzip-resident"
+    limit_leg = "repeated_gz"
+    packed = session.input_size(limit_leg, "warm-parallel")
+    plaintext = session.input_size(INPUTS[limit_leg].derives_from, "warm-parallel")
+    ratio_problem = gzip_limit_ratio_problem(plaintext, packed)
+    if ratio_problem:
+        raise RuntimeError(f"{figure} cannot read its limit leg: {ratio_problem}")
     specs = _gzip_rss_specs()
     # Every leg's gate twin beside it, as `parallel-peak-rss` pairs them: this
-    # figure's resident against `PARALLEL_MEMORY` is a gate reading too.
+    # figure's resident against `GZPASS_MEMORY` is a gate reading too.
     gate = [gate_twin(spec) for spec in specs]
     paired = [leg for pair in zip(specs, gate) for leg in pair]
     to_sweep = [s for s in paired if not session.has(figure, s)]
@@ -11341,28 +11430,49 @@ def run_gzip_resident(session: Session) -> str:
         added = high - low
         held_each = (held_worst[(leg, high)] - held_worst[(leg, low)]) / added
         billed_each = (bills[(leg, high)][0] - bills[(leg, low)][0]) / added
+        past = held_each - billed_each
         secants.append(
-            [label, _fmt_budget_bytes(held_each), _fmt_budget_bytes(billed_each)]
+            [
+                label,
+                _fmt_budget_bytes(held_each),
+                _fmt_budget_bytes(billed_each),
+                f"**past it by {_fmt_budget_bytes(past)}**" if past > 0 else "within it",
+            ]
         )
     secant_table = md_table(
-        ["Leg", f"Held a worker, `--jobs {low}` → `{high}`", "Charged a worker"], secants
+        [
+            "Leg",
+            f"Held a worker, `--jobs {low}` → `{high}`",
+            "Charged a worker",
+            "Against the charge",
+        ],
+        secants,
     )
 
     sizes = "\n".join(
         f"- {label}: `{leg}`, {_fmt_bytes(stored[leg])} compressed"
+        + (
+            f", {plaintext / packed:.2f} : 1 against the {_fmt_bytes(plaintext)} it was "
+            "generated from"
+            if leg == limit_leg
+            else ""
+        )
         for leg, label, _ in GZIP_RSS_LEGS
     )
     return (
         table
         + "\n\nEach cell is peak resident set, and the change from that leg's own one-job row. "
-        f"Every row states `--memory {stated_allowance(PARALLEL_BUDGET)}`, as "
-        f"`parallel-peak-rss`'s do, in a {PARALLEL_MEMORY} container, and every count is one "
-        "the allowance affords, which each run's own `scan started` line confirms. **The "
+        f"Every row states `--memory {stated_allowance(GZPASS_BUDGET)}`, as "
+        f"`gzip-first-pass`'s do, in a {GZPASS_MEMORY} container, and every count is one "
+        "the allowance affords, which each run's own `scan started` line confirms. **A "
         "single member's `parse` is its first pass**: no cache precedes it, so it inflates "
         "the file while it builds the index, its scan one reader and its inflate run ahead "
         "on the workers the count affords at a task's charge. **The BGZF file's is a block "
         "path**: walked at open, it is read in whole units by every reader, as an `.xz` file "
-        "is. Both are `control` at `pg_dump`'s level 6, through one zlib.\n\n"
+        "is. The first and the BGZF leg are `control` at `pg_dump`'s level 6, through one "
+        "zlib; **the limit leg** is `control`'s rows repeated in runs, deflated the same way, "
+        "so it packs past the ratio at which a chunk inflates to the speculation limit and "
+        "fills the plaintext terms of a task's charge (`generate_repeated_rows.py`).\n\n"
         + sizes
         + "\n\n**The charge against what was held**, cell by cell, read against "
         "`reserve`'s three lines: the unnamed remainder must be **non-negative** — a "
@@ -11385,9 +11495,10 @@ def run_gzip_resident(session: Session) -> str:
         + verdict
         + "\n\n**What each added worker held, against what it was charged**, the secant "
         f"between `--jobs {low}` and `--jobs {high}` over the worst reps: two counts, so a "
-        "difference the axis measured and not a fit. On the first-pass leg it is what a task "
+        "difference the axis measured and not a fit. On a first-pass leg it is what a task "
         "ahead holds against `Chunking::task_bytes`, which prices the speculation limit no "
-        "leg varies; on the BGZF leg, a reader's charge and the unit its pool grows by above "
+        "leg varies, and on the limit leg a worker held past it is an under-bill; on the "
+        "BGZF leg, a reader's charge and the unit its pool grows by above "
         "`POOL_DEPTH`:\n\n"
         + secant_table
         + "\n\nPer-rep readings (peak RSS):\n"
@@ -11400,7 +11511,7 @@ def run_gzip_resident(session: Session) -> str:
         + gate_section(
             session,
             figure,
-            [(spec.label, spec, PARALLEL_BUDGET + PARALLEL_HEADROOM) for spec in specs],
+            [(spec.label, spec, GZPASS_BUDGET + PARALLEL_HEADROOM) for spec in specs],
         )
     )
 
@@ -12818,8 +12929,9 @@ FIGURES: list[Figure] = [
         warm_inputs=("dynfilter",),
         run=run_dynamic_filter_topk,
     ),
-    # gzip's resident against its charge, at three worker counts over a single
-    # member's first pass and a BGZF file's block path. `depends` is
+    # gzip's resident against its charge, at three worker counts over two
+    # single members' first passes, one whose chunks reach the speculation
+    # limit, and a BGZF file's block path. `depends` is
     # `parallel-peak-rss`'s read path with gzip's in place of xz's, plus the
     # map and the cache, where a per-block cost would read as remainder.
     Figure(
@@ -12836,13 +12948,14 @@ FIGURES: list[Figure] = [
             *QUERY_CLI,
             *INTERIOR,
             "scripts/generate_gzip_input.py",
+            "scripts/generate_repeated_rows.py",
             *GEN_PERF,
             # The gate's twins are the `system` build, which these features
             # select (`GATE_LEG`).
             "crates/pgdt/Cargo.toml",
         ),
         warm_inputs=tuple(leg for leg, _, _ in GZIP_RSS_LEGS),
-        memory=PARALLEL_MEMORY,
+        memory=GZPASS_MEMORY,
         run=run_gzip_resident,
     ),
     # A gzip first pass's wall clock against the worker count, over four
@@ -14498,13 +14611,19 @@ def recorded_input_sizes(stager: Stager, figures: Sequence[Figure]) -> dict[str,
     Recorded so `--render` can rebuild a table's byte counts and rates without
     the inputs still existing: warm staging is evicted at the end of a sitting,
     and the SSD cache is explicitly safe to delete.
+
+    **A derived input's source is sized too**, though no figure stages it: a
+    renderer reading a compressed leg's plaintext length reads it there
+    (`gzip_limit_ratio_problem`).
     """
     sizes: dict[str, int] = {}
     for fig in figures:
         for name in (*fig.cold_inputs, *fig.warm_inputs, *fig.nvme_inputs):
-            path = stager.cfg.cache_dir / input_file(name)
-            if path.exists():
-                sizes[name] = path.stat().st_size
+            while name is not None:
+                path = stager.cfg.cache_dir / input_file(name)
+                if path.exists():
+                    sizes[name] = path.stat().st_size
+                name = INPUTS[name].derives_from
     return sizes
 
 
@@ -16025,7 +16144,8 @@ def cmd_check(doc: Path) -> int:
             f"No command shape inherits a worker count: each states `--jobs {SWEEP_JOBS}`, "
             f"or `--workers` for the\ndecode instrument, `PARALLEL_JOBS` for the "
             f"{len(JOBS_AXIS)} families whose axis it is, `GZPASS_JOBS` for the gzip first\n"
-            f"pass's, or `--jobs {RESERVE_JOBS}` for "
+            "pass's, `GZIP_RSS_JOBS` for the gzip resident's, or "
+            f"`--jobs {RESERVE_JOBS}` for "
             "the reserve's stated legs; the reserve's flagless legs state none\nby "
             "declaration, and `dd` is not a run of ours. Every run of "
             f"`{SQL_SHELL.lstrip('/')}`\nstates `{DFCLI_PARTITIONS}={SWEEP_JOBS}` besides.\n"

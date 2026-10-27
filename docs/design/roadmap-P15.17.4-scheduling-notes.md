@@ -86,10 +86,9 @@ leg in both.
   one tells that apart from a core shared.
 - 15.7.1 and 15.18 read this tree. 15.18 settles `task_bytes`, which now
   charges two held decodes and five guesses a task (`KD141`). Under
-  `gzip-resident`'s allowance that charge affords `control_gz` twenty workers
-  at `--jobs 24`, so that cell refuses itself (`resolved_jobs`) until 15.18's
-  sitting answers the count or the allowance. `test_measure.py`'s stated
-  bills hold the one- and four-job bills this tree's runs stated.
+  `PARALLEL_BUDGET` that charge affords `control_gz` twenty workers at
+  `--jobs 24`, so 15.18 moved `gzip-resident` to `GZPASS_BUDGET`
+  ([`roadmap-P15.18-resident-again-notes.md`](roadmap-P15.18-resident-again-notes.md)).
 
 ## Negative results
 
