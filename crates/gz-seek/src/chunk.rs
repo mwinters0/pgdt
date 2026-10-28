@@ -7,7 +7,9 @@
 //! (D112), begun from a window the pass supplies rather than one an index
 //! recorded, and run on whatever thread the caller has. It records the events
 //! an index is made of — each static block's start among them, where a
-//! checkpoint the pass owes may fall inside it — and each piece's CRC-32, and
+//! checkpoint the pass owes may fall inside it, and of a BGZF member, where
+//! none is owed but at its start, only its start, header and end (D123) — and
+//! each piece's CRC-32, and
 //! reads each trailer without comparing it, the member's plaintext before the
 //! chunk being the pass's to know. Whether its start and window were right is settled where the pass
 //! takes it: only standing at its start, with the very history it began with,
@@ -28,7 +30,7 @@ pub(crate) struct Decoded {
     /// from the start.
     pub(crate) events: Vec<(u64, Event)>,
     /// Each piece's plaintext range and CRC-32, in order, cut at every block's
-    /// end and member's end.
+    /// end it records and member's end.
     pub(crate) pieces: Vec<(u64, u64, u32)>,
 }
 
@@ -66,16 +68,10 @@ impl ChunkDecoded {
 ///
 /// It holds its window, and once fed an engine and room for the plaintext
 /// the speculation found from its start to its stop, and a byte to show a
-/// decode running past it, which nothing zeroes: the engine writes it.
-///
-/// Deficiency register: `deficiency: KD149` — it records an event at every
-/// block's end and a static block's start, and cuts a piece at every block
-/// that wrote any, inside a BGZF member too, where the placement owes
-/// nothing (`docs/design/decisions.md`, "D118"). A decoded guess counts its
-/// blocks against `EVENTS_A_GUESS`, bounding this decode; a BGZF chunk's,
-/// read off its chain, counts none, so a chunk of members of empty fixed
-/// blocks, ten bits each, holds two events for every ten bits of it.
-/// **(b) owned by 15.18.4**.
+/// decode running past it, which nothing zeroes: the engine writes it; and
+/// its events and pieces, at most twice the events its guess counted against
+/// `EVENTS_A_GUESS`, a BGZF member's being its start, header and end alone
+/// (`docs/design/decisions.md`, "D123").
 pub(crate) struct ChunkDecode {
     chunk: u64,
     generation: u64,
@@ -108,6 +104,9 @@ struct Running {
     piece_from: u64,
     /// The member start the decode begins at, which the pass has passed.
     skip_start: bool,
+    /// Whether the member being decoded has a BGZF member's header: not known
+    /// of one the decode begins inside, which a decoded guess bounds.
+    bgzf: bool,
 }
 
 impl ChunkDecode {
@@ -220,6 +219,7 @@ impl ChunkDecode {
             pieces: Vec::new(),
             piece_from: 0,
             skip_start: matches!(self.start, Point::Member(_)),
+            bgzf: false,
         })
     }
 }
@@ -260,7 +260,9 @@ impl Running {
         }
     }
 
-    /// Record `event`, answering the stop where it is one.
+    /// Record `event`, answering the stop where it is one. Inside a BGZF
+    /// member, a block's end is recorded only as the stop, and a static
+    /// block's start not at all.
     fn event(&mut self, event: EngineEvent, until: u64) -> Option<Point> {
         let at = self.out.len() as u64;
         match event {
@@ -269,19 +271,23 @@ impl Running {
                 None
             }
             EngineEvent::MemberStart => {
+                self.bgzf = false;
                 let offset = self.engine.member().offset;
                 self.events.push((at, Event::MemberStart { offset }));
                 (8 * offset >= until).then_some(Point::Member(8 * offset))
             }
             EngineEvent::Header { bgzf } => {
+                self.bgzf = bgzf;
                 self.events.push((at, Event::Header { bgzf }));
                 None
             }
+            EngineEvent::Block { bit } if self.bgzf && bit < until => None,
             EngineEvent::Block { bit } => {
                 self.cut();
                 self.events.push((at, Event::Block { bit }));
                 (bit >= until).then_some(Point::Block(bit))
             }
+            EngineEvent::Static { .. } if self.bgzf => None,
             EngineEvent::Static { bit } => {
                 self.events.push((at, Event::Static { bit }));
                 None

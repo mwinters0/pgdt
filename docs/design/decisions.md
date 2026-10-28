@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D122 -->
+<!-- decision-watermark: D123 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -41,6 +41,7 @@ are `docs/process.md`, "The decision register".
 - **D120** A parallel first pass gives decodes a room of their own, and places its speculations a lead ahead
 - **D121** A parallel first pass cuts its file at the input chunk every gzip decode pulls
 - **D122** A speculation's guess is cut at a bound on its events and on its bytes past its chunk, and continued
+- **D123** A taken chunk's decode records a BGZF member as its start, header and end, three events a chain read counts
 - **D20** The library never replaces cache data automatically
 - **D21** Identity is `stored_size()` plus weak signals, in an opaque enum
 - **D87** A remote cache is named from the URL, and the origin it records is advisory

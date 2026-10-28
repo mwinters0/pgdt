@@ -98,10 +98,8 @@ impl Chunking {
     /// three: its plain sink, up to the limit and a window once it comes
     /// clean, beside its marked one, which reaches a copy past two limits;
     /// its input, read past the limit's worth by the feed that reached it, in
-    /// a buffer grown by doubling; and a taken decode's events, up to about
-    /// twice `EVENTS_A_GUESS` where its guess was decoded, and over a BGZF
-    /// chunk bounded by nothing past its compressed bytes (`KD149`).
-    /// **(b) owned by 15.18.3**.
+    /// a buffer grown by doubling; and a taken decode's events and pieces,
+    /// up to about twice `EVENTS_A_GUESS` each. **(b) owned by 15.18.3**.
     ///
     /// Deficiency register: `deficiency: KD148` — no term charges what the
     /// allocator keeps resident of the decode buffers a task frees: mimalloc

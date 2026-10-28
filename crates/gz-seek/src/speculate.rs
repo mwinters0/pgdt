@@ -64,9 +64,10 @@ pub const SPECULATION_LIMIT: usize = 2 * ((1 << (9 + 6)) - 1) * 258;
 /// The most events a guess spans before a bound cuts it: sixteen times the
 /// blocks a writer that never flushes ends under [`SPECULATION_LIMIT`], each
 /// at least `lit_bufsize - 1` symbols at zlib's default `memLevel`, so only a
-/// flushing, many-membered or crafted writer's file is cut by it. A decoded
-/// guess's count bounds what the engine's decode of its chunk records, twice
-/// as many at most, a static block's start beside its end
+/// flushing, many-membered or crafted writer's file is cut by it. A guess's
+/// count bounds what the engine's decode of its chunk records, twice as many
+/// at most, a static block's start beside its end; a chain read counts three
+/// a member, all that decode records of a BGZF member
 /// (`docs/design/decisions.md`, "D122").
 pub(crate) const EVENTS_A_GUESS: usize = 16 * (SPECULATION_LIMIT / ((1 << (8 + 6)) - 1));
 
@@ -471,7 +472,7 @@ impl Speculation {
             self.state = match state {
                 State::Done(found) => State::Done(found),
                 State::Members(mut members) => {
-                    match members.read(&self.input, self.until, self.limit) {
+                    match members.read(&self.input, self.until, self.limit, EVENTS_A_GUESS) {
                         Read::Input => {
                             self.state = State::Members(members);
                             return;
@@ -652,9 +653,17 @@ impl Speculation {
                         header.read(self.input.from(decode.bit / 8)).map_err(|_| Halt::Refused)?;
                     decode.bit += 8 * taken as u64;
                     if !header.is_done() {
-                        return if complete { Err(Halt::Refused) } else { Ok(None) };
+                        // A name or comment no length bounds is read no
+                        // further than the compressed bound, as a block is.
+                        return if complete {
+                            Err(Halt::Refused)
+                        } else if decode.bit >= self.bound {
+                            Err(Halt::Limit)
+                        } else {
+                            Ok(None)
+                        };
                     }
-                    let bgzf = crate::bgzf::bgzf_member_len(header.bytes()).is_some();
+                    let bgzf = crate::bgzf::bgzf_member_len(header.head()).is_some();
                     decode.push(Event::Header { bgzf });
                     self.inflater.reset();
                     decode.phase = Phase::Deflate;

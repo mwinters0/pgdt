@@ -16,49 +16,67 @@ const FNAME: u8 = 0x08;
 const FCOMMENT: u8 = 0x10;
 const RESERVED: u8 = 0xe0;
 
+/// The header bytes kept: as many as BGZF recognition reads, the fixed
+/// header and `XLEN` among them, which every field after is read by.
+pub(crate) const KEPT: usize = 18;
+
 /// Where a header read has got to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Field {
     Fixed,
     ExtraLength,
-    Extra { left: usize },
+    Extra {
+        left: usize,
+    },
     Name,
     Comment,
-    HeaderCrc,
+    /// The header CRC, its first byte once read.
+    HeaderCrc {
+        first: Option<u8>,
+    },
     Done,
 }
 
 /// One member header, read incrementally.
 ///
-/// Deficiency register: `deficiency: KD150` — it holds every byte it reads,
-/// for the header CRC alone, so a name or comment, which no length bounds,
-/// is held whole by the engine and by a speculation; and a speculation, whose
-/// compressed bound is checked only in deflate data, holds its input from the
-/// header's start on beside it. **(b) owned by 15.18.4**.
+/// It holds its first [`KEPT`] bytes and the CRC-32 of every byte before the
+/// header CRC, running, never a name or comment, which no length bounds.
 #[derive(Debug)]
 pub(crate) struct Header {
     /// The member's compressed offset, for the errors.
     offset: u64,
-    /// Every byte read so far: the header CRC covers all of them before its
-    /// own two.
-    bytes: Vec<u8>,
+    /// How many bytes have been read.
+    len: u64,
+    /// The first [`KEPT`] of them.
+    head: [u8; KEPT],
+    /// The CRC-32 of every byte before the header CRC's own two read so far:
+    /// what the header CRC covers (RFC 1952, 2.3.1).
+    crc: u32,
     field: Field,
-    /// Where the header CRC begins, once the flags say there is one.
-    crc_at: usize,
 }
 
 impl Header {
     pub(crate) fn new(offset: u64) -> Header {
-        Header { offset, bytes: Vec::with_capacity(FIXED_LEN), field: Field::Fixed, crc_at: 0 }
+        Header { offset, len: 0, head: [0; KEPT], crc: 0, field: Field::Fixed }
     }
 
     /// Read from `input` until the header ends or the input does, answering
     /// how many bytes it took.
     pub(crate) fn read(&mut self, input: &[u8]) -> Result<usize> {
         let mut taken = 0;
+        // Where the bytes the running CRC-32 has yet to take begin, until the
+        // header CRC is reached.
+        let mut uncovered = Some(0);
         while self.field != Field::Done && taken < input.len() {
+            if let (Field::HeaderCrc { .. }, Some(from)) = (self.field, uncovered) {
+                self.crc = crate::zlib::crc32(self.crc, &input[from..taken]);
+                uncovered = None;
+            }
             self.push(input[taken])?;
             taken += 1;
+        }
+        if let Some(from) = uncovered {
+            self.crc = crate::zlib::crc32(self.crc, &input[from..taken]);
         }
         Ok(taken)
     }
@@ -67,19 +85,23 @@ impl Header {
         self.field == Field::Done
     }
 
-    /// Every byte of the header read so far: the whole header once
-    /// [`Header::is_done`].
-    pub(crate) fn bytes(&self) -> &[u8] {
-        &self.bytes
+    /// The header's first bytes, as many as BGZF recognition reads: the
+    /// whole header where it is shorter, once [`Header::is_done`].
+    pub(crate) fn head(&self) -> &[u8] {
+        &self.head[..usize::try_from(self.len).map_or(KEPT, |len| len.min(KEPT))]
     }
 
     fn push(&mut self, byte: u8) -> Result<()> {
-        self.bytes.push(byte);
-        let n = self.bytes.len();
+        if let Some(slot) = usize::try_from(self.len).ok().and_then(|at| self.head.get_mut(at)) {
+            *slot = byte;
+        }
+        self.len += 1;
+        let n = self.len;
         match self.field {
             Field::Fixed => {
-                if n <= GZIP_MAGIC.len() && byte != GZIP_MAGIC[n - 1] {
-                    return Err(if n == GZIP_MAGIC.len() {
+                let at = (n - 1) as usize;
+                if at < GZIP_MAGIC.len() && byte != GZIP_MAGIC[at] {
+                    return Err(if at + 1 == GZIP_MAGIC.len() {
                         self.refused("compression method is not deflate")
                     } else {
                         Error::NotGzip { offset: self.offset }
@@ -88,13 +110,13 @@ impl Header {
                 if n == 4 && byte & RESERVED != 0 {
                     return Err(self.refused("reserved flag bits are set"));
                 }
-                if n == FIXED_LEN {
+                if n == FIXED_LEN as u64 {
                     self.field = self.after(Field::Fixed);
                 }
             }
             Field::ExtraLength => {
-                if n == FIXED_LEN + 2 {
-                    let left = usize::from(u16::from_le_bytes([self.bytes[n - 2], byte]));
+                if n == FIXED_LEN as u64 + 2 {
+                    let left = usize::from(u16::from_le_bytes([self.head[FIXED_LEN], byte]));
                     self.field = if left == 0 {
                         self.after(Field::Extra { left })
                     } else {
@@ -114,17 +136,13 @@ impl Header {
                     self.field = self.after(self.field);
                 }
             }
-            Field::HeaderCrc => {
-                if n == self.crc_at + 2 {
-                    let stored = u16::from_le_bytes([self.bytes[self.crc_at], byte]);
-                    // The header CRC is the low half of the CRC-32 of every
-                    // header byte before it (RFC 1952, 2.3.1).
-                    let computed = crate::zlib::crc32(0, &self.bytes[..self.crc_at]) as u16;
-                    if stored != computed {
-                        return Err(self.refused("header CRC does not match"));
-                    }
-                    self.field = Field::Done;
+            Field::HeaderCrc { first: None } => self.field = Field::HeaderCrc { first: Some(byte) },
+            Field::HeaderCrc { first: Some(first) } => {
+                // The low half of the CRC-32 of every header byte before it.
+                if u16::from_le_bytes([first, byte]) != self.crc as u16 {
+                    return Err(self.refused("header CRC does not match"));
                 }
+                self.field = Field::Done;
             }
             Field::Done => unreachable!("a finished header takes no byte"),
         }
@@ -132,13 +150,13 @@ impl Header {
     }
 
     /// The field after `field`, skipping the optional ones the flags leave out.
-    fn after(&mut self, field: Field) -> Field {
-        let flags = self.bytes[3];
+    fn after(&self, field: Field) -> Field {
+        let flags = self.head[3];
         let order = [
             (Field::ExtraLength, FEXTRA),
             (Field::Name, FNAME),
             (Field::Comment, FCOMMENT),
-            (Field::HeaderCrc, FHCRC),
+            (Field::HeaderCrc { first: None }, FHCRC),
         ];
         let from = match field {
             Field::Fixed => 0,
@@ -147,15 +165,10 @@ impl Header {
             Field::Comment => 3,
             _ => unreachable!("only a field that ends moves on"),
         };
-        for &(next, flag) in &order[from..] {
-            if flags & flag != 0 {
-                if next == Field::HeaderCrc {
-                    self.crc_at = self.bytes.len();
-                }
-                return next;
-            }
-        }
-        Field::Done
+        order[from..]
+            .iter()
+            .find(|&&(_, flag)| flags & flag != 0)
+            .map_or(Field::Done, |&(next, _)| next)
     }
 
     fn refused(&self, reason: &'static str) -> Error {

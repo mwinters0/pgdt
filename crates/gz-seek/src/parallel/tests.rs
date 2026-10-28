@@ -4,7 +4,8 @@ use std::sync::mpsc;
 use super::*;
 use crate::Forward;
 use crate::test_support::{
-    Pass, bgzf, drive, forward, gzip, gzip_levels, gzip_members, payload, spacing,
+    Pass, bgzf, bgzf_member_of_empty_blocks, drive, forward, gzip, gzip_levels, gzip_members,
+    payload, spacing,
 };
 
 /// How a test runs the tasks a pass hands out.
@@ -450,6 +451,29 @@ fn a_limit_never_ends_the_chain() {
         assert!(pass.plaintext == serial.plaintext, "{name}");
         assert_eq!(anchors, unlimited, "{name}: anchored again at a limit {limit}");
         assert!(taken > whole, "{name}: {taken} pieces taken, {whole} chunks at no limit");
+    }
+}
+
+/// **A chain the event count cuts is continued as one the limit cuts**: a
+/// BGZF file of more one-byte members, each of empty fixed blocks, than a
+/// guess may span in a chunk is read off its headers in pieces, each taken,
+/// building the serial pass's index run ahead and on threads — given a few
+/// bytes of room a step, as a member's byte is all the plaintext it holds.
+#[test]
+fn a_chain_the_event_count_cuts_is_continued() {
+    let members = 2 * crate::speculate::EVENTS_A_GUESS;
+    let file: Vec<u8> =
+        (0..members).flat_map(|i| bgzf_member_of_empty_blocks(4, b'a' + (i % 26) as u8)).collect();
+    let serial = forward(&file, 64 * 1024, 1 << 16, 1 << 16).unwrap();
+    let chunk = file.len() as u64 / 3;
+    for driver in [Driver::Ahead, Driver::Threads(4)] {
+        let (pass, taken) =
+            parallel(&file, 64 * 1024, chunk, usize::MAX, driver, (1 << 16, 64)).unwrap();
+        assert_eq!(pass.index, serial.index, "{driver:?}");
+        assert!(pass.plaintext == serial.plaintext, "{driver:?}");
+        if let Driver::Ahead = driver {
+            assert!(taken > 2, "{taken} pieces taken over two chunks");
+        }
     }
 }
 

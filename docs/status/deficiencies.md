@@ -559,14 +559,3 @@ than reading as a phase nobody has sliced.
   task's charge; the slack of terms that hold nothing on zlib's files covers
   them. **(b) owned by 15.18.3**. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
-
-- **KD149** — a taken BGZF chunk's decode records every block of its members,
-  a static one twice, where its guess, read off the chain, counts none, so
-  members of empty blocks hold a decode's events to the chunk's bytes rather
-  than to `EVENTS_A_GUESS`. **(b) owned by 15.18.4**. Detail:
-  `crates/gz-seek/src/chunk.rs`.
-
-- **KD150** — a member's header holds every byte it reads, a name and comment
-  of any length among them, and a speculation reading one checks no bound
-  until its deflate data. **(b) owned by 15.18.4**. Detail:
-  `crates/gz-seek/src/member.rs`.

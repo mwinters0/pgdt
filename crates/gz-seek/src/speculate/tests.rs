@@ -1,5 +1,7 @@
 use super::*;
-use crate::test_support::{Truth, bgzf, gzip, gzip_members, payload, truth};
+use crate::test_support::{
+    Bits, HEADER, Truth, bgzf, bgzf_member_of_empty_blocks, gzip, gzip_members, payload, truth,
+};
 
 /// Run chunk `chunk`'s speculation over `file`, fed `feed` bytes at a time.
 fn speculate(file: &[u8], chunk: u64, bytes: u64, limit: usize, feed: usize) -> Option<Guess> {
@@ -413,75 +415,6 @@ fn the_first_byte_is_found_where_a_byte_by_byte_search_finds_it() {
     }
 }
 
-/// Deflate bits written by hand, low bit first: blocks no encoder writes.
-struct Bits {
-    bytes: Vec<u8>,
-    /// The next bit written.
-    bit: u64,
-}
-
-impl Bits {
-    /// Bits after `bytes`, from the next byte on.
-    fn after(bytes: Vec<u8>) -> Bits {
-        let bit = 8 * bytes.len() as u64;
-        Bits { bytes, bit }
-    }
-
-    /// `value`'s low `n` bits, low bit first.
-    fn put(&mut self, value: u32, n: u32) {
-        for i in 0..n {
-            if self.bit.is_multiple_of(8) {
-                self.bytes.push(0);
-            }
-            *self.bytes.last_mut().expect("a byte") |= (((value >> i) & 1) as u8) << (self.bit % 8);
-            self.bit += 1;
-        }
-    }
-
-    /// A Huffman code, its most significant bit first.
-    fn code(&mut self, code: u32, len: u32) {
-        for i in (0..len).rev() {
-            self.put((code >> i) & 1, 1);
-        }
-    }
-
-    /// A fixed block's header, not its member's last.
-    fn fixed(&mut self) {
-        self.put(0, 1);
-        self.put(1, 2);
-    }
-
-    /// The fixed code's end of block.
-    fn end_of_block(&mut self) {
-        self.code(0, 7);
-    }
-
-    /// A fixed literal below 144.
-    fn literal(&mut self, byte: u8) {
-        assert!(byte < 144);
-        self.code(0x30 + u32::from(byte), 8);
-    }
-
-    /// A fixed copy of 258 values from one back.
-    fn copy_258_from_1(&mut self) {
-        self.code(0xc5, 8);
-        self.code(0, 5);
-    }
-
-    /// An empty stored block, not its member's last: a sync flush.
-    fn sync(&mut self) {
-        self.put(0, 3);
-        while !self.bit.is_multiple_of(8) {
-            self.put(0, 1);
-        }
-        self.bytes.extend([0, 0, 0xff, 0xff]);
-        self.bit += 32;
-    }
-}
-
-/// A gzip member's header, flagging nothing.
-const HEADER: [u8; 10] = [0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];
-
 /// One member: `blocks` empty fixed blocks — no plaintext for a limit to
 /// count — a sync flush, and `after` written by `flate2` over zlib-rs; and
 /// the bit the flush's stored block begins at.
@@ -516,14 +449,8 @@ fn chained(file: &[u8], chunk: u64, bytes: u64, limit: usize, feed: usize) -> Ve
     let mut pieces: Vec<Guess> = Vec::new();
     loop {
         let what = format!("piece {} of chunk {chunk}, feed {feed}", pieces.len());
-        let bound = task.bound;
-        while let Some(at) = task.wants() {
-            let at = at as usize;
-            task.supply(&file[at..(at + feed).min(file.len())]);
-            let end = task.input.end();
-            assert!(end <= bound / 8 + 8 + feed as u64, "{what}: input to {end}, bound {bound}");
-        }
-        let guess = task.finish().found.unwrap_or_else(|| panic!("{what}: nothing"));
+        let guess =
+            fed_bounded(task, file, feed, &what).unwrap_or_else(|| panic!("{what}: nothing"));
         assert_is_the_file(&truth, &guess, 8 * chunk * bytes, u64::MAX, &what);
         if let Some(last) = pieces.last() {
             assert_eq!(guess.start, last.stop, "{what}");
@@ -595,6 +522,82 @@ fn a_run_of_empty_blocks_past_a_chunk_s_end_is_cut_at_the_limit_s_worth() {
         }
         assert_eq!(pieces.last().unwrap().stop, Point::Block(stored), "feed {feed}");
     }
+}
+
+/// How many members of `truth` begin after `guess`'s start and no later than
+/// its stop.
+fn members_spanned(truth: &Truth, guess: &Guess) -> usize {
+    let (start, stop) = (guess.start.bit(), guess.stop.bit());
+    truth.members.iter().filter(|&&(bit, _)| bit > start && bit <= stop).count()
+}
+
+/// **A BGZF chunk's chain is cut at [`EVENTS_A_GUESS`]**, three events a
+/// member: a chunk of more one-byte members than that allows, each of empty
+/// fixed blocks, is read off its headers in pieces each spanning at most a
+/// third of the count, the first exactly that, continued to the chunk's stop.
+#[test]
+fn a_bgzf_chain_is_cut_at_the_event_bound() {
+    let members = EVENTS_A_GUESS;
+    let file: Vec<u8> =
+        (0..members).flat_map(|i| bgzf_member_of_empty_blocks(4, b'a' + (i % 26) as u8)).collect();
+    let truth = truth(&file);
+    let bytes = file.len() as u64 - 1000;
+    for feed in [3000, 1 << 20] {
+        let pieces = chained(&file, 0, bytes, usize::MAX, feed);
+        assert!(pieces.len() >= 3, "feed {feed}: {} pieces", pieces.len());
+        assert!(pieces.iter().all(|g| g.end.is_empty()), "feed {feed}: a decoded piece");
+        assert_eq!(members_spanned(&truth, &pieces[0]), EVENTS_A_GUESS / 3, "feed {feed}");
+        for (i, piece) in pieces.iter().enumerate() {
+            let spanned = members_spanned(&truth, piece);
+            assert!(3 * spanned <= EVENTS_A_GUESS, "feed {feed}, piece {i}: {spanned} members");
+            assert_eq!(piece.len, spanned as u64, "feed {feed}, piece {i}: one byte a member");
+        }
+        let last = pieces.last().unwrap();
+        assert!(!last.cut && last.stop.bit() >= 8 * bytes, "feed {feed}: short of the stop");
+    }
+}
+
+/// **A member's name is read no further than the compressed bound**: a
+/// member beginning inside a chunk, its name running the limit's worth past
+/// the chunk's end and more, cuts the guess at its start, the input held no
+/// more than a feed past the bound; the continuation from there, meeting the
+/// same name, hands back nothing, its input bounded alike, so the frontier
+/// decodes it.
+#[test]
+fn a_name_past_the_compressed_bound_cuts_the_guess_at_its_member() {
+    let limit = 64 * 1024;
+    let first = gzip(&payload(50_000, 47), 6);
+    let mut named = HEADER.to_vec();
+    named[3] = 0x08;
+    named.extend(std::iter::repeat_n(b'n', 3 * limit));
+    named.push(0);
+    let body = gzip(&payload(20_000, 53), 6);
+    named.extend_from_slice(&body[HEADER.len()..]);
+    let file = [first.clone(), named].concat();
+    let start = first.len() as u64;
+    let bytes = start + 100;
+    for feed in [3000, 1 << 20] {
+        let what = format!("feed {feed}");
+        let task = Speculation::new(0, bytes, limit, file.len() as u64);
+        let guess = fed_bounded(task, &file, feed, &what).unwrap_or_else(|| panic!("{what}"));
+        let seen = (guess.start, guess.stop, guess.cut);
+        assert_eq!(seen, (Point::Member(0), Point::Member(8 * start), true), "{what}");
+        let task = Speculation::continuing(0, guess.stop, bytes, limit, file.len() as u64);
+        assert!(fed_bounded(task, &file, feed, &what).is_none(), "{what}: a guess through it");
+    }
+}
+
+/// Run `task` over `file`, fed `feed` bytes at a time, its input never more
+/// than a feed past its bound.
+fn fed_bounded(mut task: Speculation, file: &[u8], feed: usize, what: &str) -> Option<Guess> {
+    let bound = task.bound;
+    while let Some(at) = task.wants() {
+        let at = at as usize;
+        task.supply(&file[at..(at + feed).min(file.len())]);
+        let end = task.input.end();
+        assert!(end <= bound / 8 + 8 + feed as u64, "{what}: input to {end}, bound {bound}");
+    }
+    task.finish().found
 }
 
 /// **A marked run grows its sink no further than the limit asks**: a run of

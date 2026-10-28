@@ -354,7 +354,7 @@ impl Engine {
         self.fed += consumed as u64;
         let mut event = None;
         if header.is_done() {
-            event = Some(Event::Header { bgzf: bgzf_member_len(header.bytes()).is_some() });
+            event = Some(Event::Header { bgzf: bgzf_member_len(header.head()).is_some() });
             self.raw.reset()?;
             self.last_boundary = None;
             self.pending = Some(Pending::Header(8 * self.fed));

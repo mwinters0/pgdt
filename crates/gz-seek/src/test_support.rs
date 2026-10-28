@@ -224,3 +224,98 @@ impl Truth {
         &self.plaintext[from as usize..at as usize]
     }
 }
+
+/// Deflate bits written by hand, low bit first: blocks no encoder writes.
+pub(crate) struct Bits {
+    pub(crate) bytes: Vec<u8>,
+    /// The next bit written.
+    pub(crate) bit: u64,
+}
+
+impl Bits {
+    /// Bits after `bytes`, from the next byte on.
+    pub(crate) fn after(bytes: Vec<u8>) -> Bits {
+        let bit = 8 * bytes.len() as u64;
+        Bits { bytes, bit }
+    }
+
+    /// `value`'s low `n` bits, low bit first.
+    pub(crate) fn put(&mut self, value: u32, n: u32) {
+        for i in 0..n {
+            if self.bit.is_multiple_of(8) {
+                self.bytes.push(0);
+            }
+            *self.bytes.last_mut().expect("a byte") |= (((value >> i) & 1) as u8) << (self.bit % 8);
+            self.bit += 1;
+        }
+    }
+
+    /// A Huffman code, its most significant bit first.
+    pub(crate) fn code(&mut self, code: u32, len: u32) {
+        for i in (0..len).rev() {
+            self.put((code >> i) & 1, 1);
+        }
+    }
+
+    /// A fixed block's header, not its member's last.
+    pub(crate) fn fixed(&mut self) {
+        self.put(0, 1);
+        self.put(1, 2);
+    }
+
+    /// A fixed block's header, its member's last.
+    pub(crate) fn last_fixed(&mut self) {
+        self.put(1, 1);
+        self.put(1, 2);
+    }
+
+    /// The fixed code's end of block.
+    pub(crate) fn end_of_block(&mut self) {
+        self.code(0, 7);
+    }
+
+    /// A fixed literal below 144.
+    pub(crate) fn literal(&mut self, byte: u8) {
+        assert!(byte < 144);
+        self.code(0x30 + u32::from(byte), 8);
+    }
+
+    /// A fixed copy of 258 values from one back.
+    pub(crate) fn copy_258_from_1(&mut self) {
+        self.code(0xc5, 8);
+        self.code(0, 5);
+    }
+
+    /// An empty stored block, not its member's last: a sync flush.
+    pub(crate) fn sync(&mut self) {
+        self.put(0, 3);
+        while !self.bit.is_multiple_of(8) {
+            self.put(0, 1);
+        }
+        self.bytes.extend([0, 0, 0xff, 0xff]);
+        self.bit += 32;
+    }
+}
+
+/// A gzip member's header, flagging nothing.
+pub(crate) const HEADER: [u8; 10] = [0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];
+
+/// A BGZF member written by hand: `blocks` empty fixed blocks — ten bits
+/// each, no plaintext — and a last one holding `byte`.
+pub(crate) fn bgzf_member_of_empty_blocks(blocks: usize, byte: u8) -> Vec<u8> {
+    let mut bits = Bits::after(Vec::new());
+    for _ in 0..blocks {
+        bits.fixed();
+        bits.end_of_block();
+    }
+    bits.last_fixed();
+    bits.literal(byte);
+    bits.end_of_block();
+    let len = crate::bgzf::BGZF_HEADER_LEN + bits.bytes.len() + Trailer::LEN;
+    let mut member = vec![0x1f, 0x8b, 8, 4, 0, 0, 0, 0, 0, 0xff, 6, 0, b'B', b'C', 2, 0];
+    member.extend_from_slice(&u16::try_from(len - 1).expect("a BGZF member").to_le_bytes());
+    member.extend_from_slice(&bits.bytes);
+    member.extend_from_slice(&crate::zlib::crc32(0, &[byte]).to_le_bytes());
+    member.extend_from_slice(&1u32.to_le_bytes());
+    member
+}

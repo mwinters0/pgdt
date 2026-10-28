@@ -1,5 +1,8 @@
 use super::*;
-use crate::test_support::{Truth, bgzf, gzip, gzip_members, payload, truth};
+use crate::speculate::EVENTS_A_GUESS;
+use crate::test_support::{
+    Truth, bgzf, bgzf_member_of_empty_blocks, gzip, gzip_members, payload, truth,
+};
 use crate::zlib;
 
 /// Decode from `start` to the first place at or past `until` over `file`,
@@ -26,9 +29,29 @@ fn points(truth: &Truth) -> Vec<Point> {
     truth.events.iter().filter_map(|&(_, e)| e.point()).collect()
 }
 
+/// `events`, which a decode begun before them reads to `until`, as it records
+/// them: inside a member whose header it read as BGZF's, no block's end but
+/// the stop's and no static block.
+fn recorded(events: &[(u64, Event)], until: Point) -> Vec<(u64, Event)> {
+    let mut bgzf = false;
+    let mut kept = Vec::new();
+    for &(at, event) in events {
+        match event {
+            Event::MemberStart { .. } => bgzf = false,
+            Event::Header { bgzf: header } => bgzf = header,
+            Event::Block { bit } if bgzf && bit < until.bit() => continue,
+            Event::Static { .. } if bgzf => continue,
+            _ => {}
+        }
+        kept.push((at, event));
+    }
+    kept
+}
+
 /// **A decode begun at a place with its history is the file's from there to
 /// the first place at or past where it is told to stop**: its plaintext, its
-/// events, and each piece's CRC-32, whatever the feed.
+/// events — inside a BGZF member whose header it read, none of its blocks but
+/// the stop — and each piece's CRC-32, whatever the feed.
 #[test]
 fn a_decode_is_the_file_from_its_start_to_its_stop() {
     let (a, b) = (payload(400_000, 3), payload(150_000, 5));
@@ -57,9 +80,10 @@ fn a_decode_is_the_file_from_its_start_to_its_stop() {
                         .iter()
                         .position(|&(_, e)| e.point() == Some(start))
                         .unwrap();
-                    let expected: Vec<_> = truth.events[first..first + decoded.events.len()]
-                        .iter()
-                        .map(|&(p, e)| (p - begins, e))
+                    let expected: Vec<_> = recorded(&truth.events[first..], *until)
+                        .into_iter()
+                        .take(decoded.events.len())
+                        .map(|(p, e)| (p - begins, e))
                         .collect();
                     assert_eq!(decoded.events, expected, "{what}: events");
                     // The stop's event last; at the file's end, the last
@@ -108,4 +132,32 @@ fn a_decode_hands_back_nothing_past_its_limit_and_compares_no_trailer() {
     };
     assert_eq!(isize, plaintext.len() as u32);
     assert_ne!(crc, zlib::crc32(0, &plaintext), "the damaged CRC-32, as read");
+}
+
+/// **A decode through BGZF members records three events and one piece a
+/// member, whatever blocks they hold**: members of empty fixed blocks, ten
+/// bits each, read from the first member's start to the file's end, record
+/// each one's header and end and each start after the first, and no more
+/// than [`EVENTS_A_GUESS`] for as many members as a chain read spans.
+#[test]
+fn a_decode_through_bgzf_members_records_only_their_starts_headers_and_ends() {
+    let members = EVENTS_A_GUESS / 3;
+    let file: Vec<u8> =
+        (0..members).flat_map(|i| bgzf_member_of_empty_blocks(40, b'a' + (i % 26) as u8)).collect();
+    let truth = truth(&file);
+    let blocks = truth.events.iter().filter(|(_, e)| matches!(e, Event::Block { .. })).count();
+    assert!(blocks >= 40 * members, "{blocks} blocks");
+    for feed in [1 << 20, 777] {
+        let decoded = decode(&file, &truth, Point::Member(0), Point::End, members as u64, feed)
+            .expect("a decode");
+        assert_eq!(decoded.stop, Point::End);
+        assert!(decoded.plain == truth.plaintext, "feed {feed}");
+        assert_eq!(decoded.events.len(), 3 * members - 1, "feed {feed}: events");
+        assert!(decoded.events.len() <= EVENTS_A_GUESS, "feed {feed}");
+        assert_eq!(decoded.pieces.len(), members, "feed {feed}: pieces");
+        for (i, &(from, to, crc)) in decoded.pieces.iter().enumerate() {
+            assert_eq!((from, to), (i as u64, i as u64 + 1), "feed {feed}: piece {i}");
+            assert_eq!(crc, zlib::crc32(0, &decoded.plain[i..=i]), "feed {feed}: piece {i}");
+        }
+    }
 }

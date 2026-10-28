@@ -35,6 +35,9 @@ use crate::member::GZIP_MAGIC;
 /// what recognition reads.
 pub const BGZF_HEADER_LEN: usize = 18;
 
+// A member's header keeps what recognition reads.
+const _: () = assert!(BGZF_HEADER_LEN <= crate::member::KEPT);
+
 /// The most plaintext one BGZF member holds.
 pub const BGZF_MAX_PLAINTEXT: u32 = 64 * 1024;
 

@@ -27,8 +27,10 @@
 //! changes only who decoded the bytes, never what they are. Both kinds of
 //! decode report the same events at the same bits and plaintext offsets — but
 //! the symbol a static block is walked to, which only the frontier's decode
-//! sets a mark for, a chunk being cut where one may be owed — and one
-//! placement rule turns them into checkpoints (`placement.rs`). A guess
+//! sets a mark for, a chunk being cut where one may be owed, and the blocks
+//! inside a BGZF member, where none is owed, which a chunk's decode does not
+//! report — and one placement rule turns them into checkpoints
+//! (`placement.rs`). A guess
 //! that was wrong, or a decode a window the frontier holds contradicts,
 //! leaves the frontier to decode those bytes itself, so a pass handing out no
 //! task is the serial pass.

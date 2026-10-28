@@ -21,14 +21,20 @@
 //! an `ISIZE` passes BGZF's most, or a member runs past the file's end; where
 //! that start is its first, it was no header, and the search goes on past it,
 //! so a lone header the bytes do not bear out hands back no guess. Plaintext
-//! that would pass the limit cuts the chain there too, the guess marked cut
-//! for the pass to read on from (`super`). A chunk holding no BGZF header is
+//! that would pass the limit cuts the chain there too, and so does a member
+//! past the events a guess may span, three a member — its start, header and
+//! end, all the engine's decode of the chunk records of it — the guess marked
+//! cut for the pass to read on from (`super`). A chunk holding no BGZF header is
 //! searched as any file's chunk is, once the scan for one has read it to its
 //! end; a continuation looks for one only where it begins.
 
 use crate::bgzf::{BGZF_HEADER_LEN, BGZF_MAX_PLAINTEXT, MIN_MEMBER, bgzf_member_len};
 use crate::member::GZIP_MAGIC;
 use crate::native::Input;
+
+/// The events the engine's decode of a chained member records: its start,
+/// its header and its end (`docs/design/decisions.md`, "D123").
+const EVENTS_A_MEMBER: usize = 3;
 
 /// What a read of the chain came to.
 pub(super) enum Read {
@@ -92,6 +98,8 @@ struct Chain {
     len: u64,
     /// The plaintext from the first member's start to `at`'s.
     plaintext: u64,
+    /// The members from the first to `at`.
+    members: usize,
 }
 
 impl Members {
@@ -108,8 +116,8 @@ impl Members {
 
     /// Read on through `input`, held from the chunk's first byte, to `until`,
     /// the next chunk's first bit, holding at most `limit` bytes of
-    /// plaintext.
-    pub(super) fn read(&mut self, input: &Input, until: u64, limit: usize) -> Read {
+    /// plaintext and spanning at most `events` events.
+    pub(super) fn read(&mut self, input: &Input, until: u64, limit: usize, events: usize) -> Read {
         let file_len = input.file_len();
         loop {
             let Some(chain) = self.chain else {
@@ -148,20 +156,20 @@ impl Members {
             };
             let trailer = input.from(next - 4);
             let isize = u32::from_le_bytes(trailer[..4].try_into().expect("four bytes"));
-            let plaintext = chain.plaintext + u64::from(isize);
+            let (plaintext, members) = (chain.plaintext + u64::from(isize), chain.members + 1);
             if isize > BGZF_MAX_PLAINTEXT {
                 match self.cut(chain) {
                     Some(read) => return read,
                     None => continue,
                 }
             }
-            if plaintext > limit as u64 {
+            if plaintext > limit as u64 || EVENTS_A_MEMBER * members > events {
                 if chain.at == chain.first {
                     return Read::Done(None);
                 }
                 return Read::Done(Some(Walked { cut: true, ..walked(chain, Some(chain.at)) }));
             }
-            let reached = Chain { at: next, plaintext, ..chain };
+            let reached = Chain { at: next, plaintext, members, ..chain };
             match follows {
                 Follows::End => return Read::Done(Some(walked(reached, None))),
                 Follows::Bgzf(len) if 8 * next < until => {
@@ -198,7 +206,7 @@ impl Members {
             }
             if let Some(len) = member_len(bytes) {
                 let at = self.search;
-                return Found::Chain(Chain { first: at, at, len, plaintext: 0 });
+                return Found::Chain(Chain { first: at, at, len, plaintext: 0, members: 0 });
             }
             self.search += 1;
         }
