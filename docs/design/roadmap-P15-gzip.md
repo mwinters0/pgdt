@@ -541,10 +541,28 @@ and the member's rest over one that ends none. It opens with a profile of that
 file's serial pass and of its frontier at two counts, attributing the slowdown
 and the serial pass's own cost; a walk the profile names reopens D118 for the
 maintainer, not this slice's gate. **Done when**, by 7.1's bar, the level-1
-file at the default count is no slower than serial and the three level-6
+file's upper counts are no slower than its default and the three level-6
 files' default-count rows are no slower than the tree it opens on
 ([`../status/history/2026-10-28.md`](../status/history/2026-10-28.md),
-"15.19's level-6 half, reviewed").
+"15.19's level-6 half, reviewed", "15.19's level-1 half, reviewed").
+
+**The level-1 file at the default count no slower than serial, slice 19.1,
+is 19's undelivered part and precedes 7's record**
+([`../status/history/2026-10-28.md`](../status/history/2026-10-28.md),
+"15.19's level-1 half, reviewed"): the pause leaves a remainder that is not
+a speculation's cost, and the leading candidate is the frontier changing
+blocking thread from one scan read to the next, which it never does
+serially. It opens with an account of that from the code, then the
+frontier's task clock, context switches and migrations at one and twelve
+jobs on a release-image build. **The falsifier is written before the run**:
+a frontier kept on one thread for the whole pass that still leaves the
+level-1 file's default row beaten by serial rules the hop out, and the slice
+then returns the remainder unattributed, with what it eliminated, to the
+maintainer rather than trying a further mechanism. Any mechanism it lands
+stays inside D12. **Done when**, by 7.1's bar, the level-1 file at the
+default count is no slower than serial and the three level-6 files'
+default-count rows are no slower than the tree it opens on, by a re-take of
+`gzip-first-pass`.
 
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),

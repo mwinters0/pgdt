@@ -349,11 +349,13 @@ impl Ahead {
     /// only the speculations handed out before the first lands run.
     ///
     /// Deficiency register: `deficiency: KD147` — over such a member the
-    /// pass was slower than its serial one at every count
-    /// `gzip-first-pass` reads, the more so the more workers ran, every
-    /// worker past the frontier searching its chunk for nothing; that
-    /// reading predates the pause, and is the one that stands until the
-    /// figure is re-taken over it. **(b) owned by 15.19**.
+    /// pass is slower than its serial one at every count `gzip-first-pass`
+    /// reads, though no longer the more so the more workers run: what the
+    /// default count pays over serial is neither the frontier's user cycles
+    /// nor a wait on a task, and nothing yet attributes it. The leading
+    /// candidate is the frontier changing blocking thread from one scan read
+    /// to the next (`FirstPass::run_pulled`), which it does not do serially.
+    /// **(b) owned by 15.19.1**.
     fn top_up(&mut self, pass: &mut gz_seek::Parallel, last: u64) {
         while self.running < self.tasks {
             let decode = match pass.decodes_pending() < DECODES_A_TASK * self.tasks {
