@@ -123,7 +123,7 @@ Spec: [`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md).
 - [x] **15.18.2** What a speculation holds bounded, earned by 15.18.1's split, in `gz-seek`: its sinks grown no further than the limit asks, and its events over its whole decode and its compressed bytes past its chunk bounded, a guess cut at the last boundary it reached where they would pass a bound and continued from its stop as a limit-cut guess is; tested on a marked run past `2^23` values at a grow from `2^24`, and on runs of empty fixed blocks inside a chunk and past its end; before 15.18.3 (`KD141`). The speculation counts its events rather than holding them, `EVENTS_A_GUESS` and the limit's worth past the chunk cut a guess (D122), and `KD141` re-targeted to the charge, 15.18.3's — [notes](../design/roadmap-P15.18.2-bounded-notes.md)
 - [x] **15.18.4** What a taken decode and a member's header hold bounded, earned by 15.18.2's bound not reaching a BGZF chunk, in `gz-seek`: a chunk's decode recording no block boundary, static block or piece inside a BGZF member, where the placement owes nothing (D116, D118), and a chain read counting its members' events against `EVENTS_A_GUESS`, cut and continued as at the limit (D122); a member's `Header` holding its first `BGZF_HEADER_LEN` bytes and a running CRC-32 rather than every byte, and a speculation checking its compressed bound in a header too; tested on a BGZF chunk of members of empty fixed blocks, a chain cut at the count, and a member whose name passes the bound; before 15.18.3 (`KD149`, `KD150`). A BGZF member recorded by its start, header and end (D123), `KD149` and `KD150` struck — [notes](../design/roadmap-P15.18.4-held-notes.md)
 - [x] **15.18.3** `Chunking::task_bytes` settled, earned by 15.18.1's split, after 15.18.4, in `pgdt-io`'s `first_pass/ahead.rs`: opening by the reading that separates the remainder past the heap 15.18.1 named — the limit leg's 24- and 4-job pair with each allocator's retention off, `MIMALLOC_PURGE_DELAY=0` on the shipped build and a stated `MALLOC_MMAP_THRESHOLD_` on `system` — and by the joint maximum of the terms 15.18.2 bounds; then each term set to what the code allows, the queued and landed decodes' windows and events charged, and a freed decode buffer given a term, or the decodes' buffers reused where the reading names them (D117); done when `gzip-resident`, re-taken, finds no cell under-billed; before 15.7.2. The opening reading is taken, at `ef5f5d4b` (`runs/p15.18.3/`), and the charge set (D124): each term a bound `gz-seek` states on what the code writes, a speculation's two sinks charged together at their rooms, the decodes' and queued guesses' windows, events and pieces charged, and the decodes' plaintext buffers pooled in `gz_seek::Parallel`, each lent the next decode handed out, so none is freed while the pass runs and none is charged freed; what an allocator keeps of a buffer a task outgrows rewritten as an unowned deficiency. `gzip-resident` re-taken at `1d002b3b`: no cell under-billed and the bound holding on every leg; a worker on the limit leg holding what it held before the pool, the pool's spare buffers resident where the allocator's were — [notes](../design/roadmap-P15.18.3-settled-notes.md)
-- [ ] **15.19** A first pass that stops speculating where speculation finds nothing, earned by 15.7.1's review: opening by a profile of the level-1 file's serial pass and its frontier at two counts; once a speculation lands empty, none handed out until the frontier next crosses a block start; done when, by 15.7.1's bar, that file at the default count is no slower than serial and the level-6 files' default rows no slower than at `c4069143`; before 15.7.2 (`KD147`). The profile is taken (`runs/p15.19/head/`): the serial pass is mostly D118's walk, and the searches slow the frontier's inflate. The pause is built (D125); a hand probe reads the level-1 file's default row level with serial and the level-6 rows level with the opening tree's. Only the readings remain, `gzip-first-pass` re-taken from a commit carrying the pause — [notes](../design/roadmap-P15.19-pause-notes.md)
+- [ ] **15.19** A first pass that stops speculating where speculation finds nothing, earned by 15.7.1's review: opening by a profile of the level-1 file's serial pass and its frontier at two counts; once a speculation lands empty, none handed out until the frontier next crosses a block start; done when, by 15.7.1's bar, that file at the default count is no slower than serial and the level-6 files' default rows no slower than the tree it opens on; before 15.7.2 (`KD147`). The profile is taken (`runs/p15.19/head/`): the serial pass is mostly D118's walk, and the searches slow the frontier's inflate. The pause is built (D125); a hand probe on profiling builds reads the level-1 file's default row level with serial and the level-6 rows level with the opening tree's. Only the readings remain: the probe re-run on release-image builds of `d17eccb5` and `1c086123` for the level-6 half, and `gzip-first-pass` re-taken from a commit carrying the pause for the level-1 half ([history](history/2026-10-28.md)) — [notes](../design/roadmap-P15.19-pause-notes.md)
 - [ ] **15.7.2** The record, earned by 15.7's split, after 15.7.1, 15.18.3 and 15.19, whose readings it writes from: the manual and `pg-dump-compatibility.md`
 
 ## Not started
@@ -155,27 +155,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **D118's walk is most of a level-1 file's serial pass, and 15.19 left it
-  alone.** 15.19's opening profile puts about three fifths of the serial first
-  pass over `control_gz_quick` in `native/walk.rs`'s `Walk::run`, the fixed
-  block walked beside the engine to place checkpoints inside it, and a third
-  in zlib-rs's inflate ([`../design/roadmap-P15.19-pause-notes.md`](../design/roadmap-P15.19-pause-notes.md),
-  "The opening account"). D118 reopens on exactly that, and the spec sends it
-  here rather than to 15.19's gate, so the slice built only the pause (D125).
-  The call is whether a writer ending no block before its last earns work on
-  the walk — one cheaper per symbol, or another way to reach a symbol
-  boundary near each mark, each a `gz-seek` slice and a re-take of
-  `gzip-first-pass` — or D118 is affirmed at that cost, its reopen moved to
-  a writer users are found to hand us. Nothing in 15.7.2 waits on it.
-
-- **15.19's level-6 half is read by a hand probe, not the figure.** The row
-  asks the level-6 files' default rows to be no slower than at `c4069143` by
-  15.7.1's bar, which pairs reps within one sitting, and a re-take cannot
-  pair with a sitting two days old. The only paired reading across the
-  change is the probe alternating the two builds, as 15.17.4's gate was read:
-  level on all three writers (`runs/p15.19/pairs.txt`). Why: it is the bar
-  applied to the one comparison it can pair, rather than medians compared
-  across sittings. Reconsidering means a leg of the opening tree's build in
-  `gzip-first-pass`'s sweep, instrument work with an expiry (the `evidence`
-  skill, rule 7), before the re-take that would tick the row.

@@ -542,7 +542,9 @@ file's serial pass and of its frontier at two counts, attributing the slowdown
 and the serial pass's own cost; a walk the profile names reopens D118 for the
 maintainer, not this slice's gate. **Done when**, by 7.1's bar, the level-1
 file at the default count is no slower than serial and the three level-6
-files' default-count rows are no slower than at `c4069143`.
+files' default-count rows are no slower than the tree it opens on
+([`../status/history/2026-10-28.md`](../status/history/2026-10-28.md),
+"15.19's level-6 half, reviewed").
 
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),

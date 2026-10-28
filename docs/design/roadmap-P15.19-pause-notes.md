@@ -4,18 +4,18 @@
 gate the row are not.** A speculation landing having found nothing stops the
 next being handed out until the frontier next crosses a block start or a
 member start (`docs/design/decisions.md`, "D125"). Whether that holds the
-level-1 file to its serial pass, and the level-6 files to their `c4069143`
-default rows, is `gzip-first-pass`'s to say, re-taken from a commit carrying
-the pause:
+level-1 file to its serial pass is `gzip-first-pass`'s to say, re-taken from
+a commit carrying the pause:
 
     cd scripts && uv run measure.py --figure gzip-first-pass
 
-The row's bar is 15.7.1's, `measure.gzpass_beats`, which pairs reps within
-one sitting. The level-1 file's `1` and `12` rows pair in the re-take. The
-level-6 files' `12` rows cannot pair with the figure at `c4069143`, a
-different sitting, so the only paired reading across the change is the hand
-probe below, which alternated the two builds; the re-take's cells sit beside
-the old ones, whose per-rep readings stay at
+Whether it holds the level-6 files to the tree it opens on is `probe.sh`'s,
+re-run on release-image builds of `d17eccb5` and `1c086123`
+([history](../status/history/2026-10-28.md), "15.19's level-6 half,
+reviewed"). The row's bar is 15.7.1's, `measure.gzpass_beats`, which pairs
+reps within one sitting: the level-1 file's `1` and `12` rows pair in the
+re-take, and the level-6 files' `12` rows pair only in the probe, which
+alternates the two builds. The figure's cells at `c4069143` stay at
 `git show 1dc3778d:docs/design/measurements.md`.
 
 ## The opening account
@@ -98,8 +98,12 @@ by `measure.gzpass_beats` in `runs/p15.19/pairs.py` (`pairs.txt`).
 
 ## What the next round inherits
 
-- **The gate is `gzip-first-pass`**, re-taken from a commit carrying the pause,
-  the level-6 files' `12` rows read against the figure's at `c4069143` and
-  the probe's pairs above.
+- **The gate is two readings.** `gzip-first-pass`, re-taken from a commit
+  carrying the pause, reads the level-1 file's `12` row against its serial
+  pass. `runs/p15.19/probe.sh`, seven reps at `12` over the three level-6
+  files and the level-1 file, alternating release-image builds of `d17eccb5`
+  and `1c086123` and read by `pairs.py`, reads the level-6 rows against the
+  opening tree. The probe above timed frame-pointer `profiling` builds, so
+  it is the account, not the gate.
 - **15.7.2** reads `KD147` after the re-take: struck if the level-1 file's
   default row is no slower than serial, rewritten to the reading otherwise.
