@@ -20,13 +20,15 @@
 //! start is known, and the engine decodes the chunk from it
 //! (`docs/design/decisions.md`, "D117").
 //!
-//! **A limit cuts a guess, never the chain.** Plaintext that would pass the
+//! **A bound cuts a guess, never the chain.** Plaintext that would pass the
 //! limit ends the guess at the last boundary it reached, marked
 //! [`cut`](Guess::cut), and the pass speculates on from that stop
 //! ([`Speculation::continuing`]) — a start no search need find — to where the
 //! chunk's guess would have stopped, so guesses still chain where each piece
 //! reaches a boundary under the limit, which [`SPECULATION_LIMIT`] is chosen
-//! for.
+//! for. So do the two bounds on what a guess spans that plaintext does not
+//! count: [`EVENTS_A_GUESS`] events, and the limit's worth of compressed bytes
+//! past the chunk's end (`docs/design/decisions.md`, "D122").
 //!
 //! **A speculation never fails.** A candidate whose decode is refused was not
 //! a block's start, and the search goes on past it — up to a few refused only
@@ -58,6 +60,15 @@ mod members;
 /// ending the chain of windows. A writer ending blocks more seldom gives a
 /// piece nothing to stop at, and the frontier decodes those bytes itself.
 pub const SPECULATION_LIMIT: usize = 2 * ((1 << (9 + 6)) - 1) * 258;
+
+/// The most events a guess spans before a bound cuts it: sixteen times the
+/// blocks a writer that never flushes ends under [`SPECULATION_LIMIT`], each
+/// at least `lit_bufsize - 1` symbols at zlib's default `memLevel`, so only a
+/// flushing, many-membered or crafted writer's file is cut by it. A guess's
+/// count bounds what the engine's decode of its chunk records, twice as many
+/// at most, a static block's start beside its end
+/// (`docs/design/decisions.md`, "D122").
+pub(crate) const EVENTS_A_GUESS: usize = 16 * (SPECULATION_LIMIT / ((1 << (8 + 6)) - 1));
 
 /// A place a decode stands between two steps: where a chunk begins or ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -127,7 +138,7 @@ pub(crate) struct Guess {
     /// inside the chunk or at its start; otherwise the history before the
     /// start makes up the rest.
     pub(crate) fresh: bool,
-    /// Whether the limit stopped it short of where its chunk's guess stops,
+    /// Whether a bound stopped it short of where its chunk's guess stops,
     /// so the pass speculates on from its stop.
     pub(crate) cut: bool,
 }
@@ -185,6 +196,14 @@ enum Phase {
     Between,
 }
 
+/// A place a decode reached that a guess may stop at.
+#[derive(Clone, Copy)]
+struct Reached {
+    point: Point,
+    /// The plaintext offset it stands at.
+    at: u64,
+}
+
 /// The decode from one candidate.
 struct Decode {
     start: Point,
@@ -199,9 +218,15 @@ struct Decode {
     /// history stopped mattering.
     bytes: bool,
     plain: Plain,
-    events: Vec<(u64, Event)>,
-    /// The index in `events` of the last place a decode may resume at.
-    last_point: Option<usize>,
+    /// How many events it has passed: counted, not held, a guess reading
+    /// only the last place reached and its member's start.
+    events: usize,
+    /// The plaintext offset the member being decoded began at, where that
+    /// was inside the decode: the last place reached's member too, a
+    /// member's start being a place.
+    floor: Option<u64>,
+    /// The last place reached that a decode may resume at.
+    last_point: Option<Reached>,
     /// A boundary past the chunk's end, the next block's type not yet read.
     boundary: Option<u64>,
 }
@@ -209,11 +234,12 @@ struct Decode {
 impl Decode {
     /// A decode from `start`, its next bit `bit`: past a block's header the
     /// search read into the inflater, or at the header itself — a member's,
-    /// or a block's a continuation's fresh inflater reads.
-    fn new(start: Point, stored: Option<u64>, bit: u64) -> Decode {
+    /// or a block's a continuation's fresh inflater reads; its sinks made
+    /// for `limit`.
+    fn new(start: Point, stored: Option<u64>, bit: u64, limit: usize) -> Decode {
         let (phase, marked) = match start {
             Point::Member(_) => (Phase::Header(Header::new(bit / 8)), None),
-            _ => (Phase::Deflate, Some(Marked::new())),
+            _ => (Phase::Deflate, Some(Marked::new(limit))),
         };
         Decode {
             start,
@@ -222,8 +248,9 @@ impl Decode {
             bit,
             bytes: marked.is_none(),
             marked,
-            plain: Plain::new(),
-            events: Vec::new(),
+            plain: Plain::new(limit),
+            events: 0,
+            floor: matches!(start, Point::Member(_)).then_some(0),
             last_point: None,
             boundary: None,
         }
@@ -253,13 +280,17 @@ impl Decode {
         self.marked.is_some() && !self.bytes
     }
 
-    /// Record `event` here. A place a decode may resume at is the last a
+    /// Count `event` here. A place a decode may resume at is the last a
     /// guess may stop at, which reads only the 32 KiB before it, so the sinks
     /// are released up to there.
     fn push(&mut self, event: Event) {
         let at = self.produced();
-        if event.point().is_some() {
-            self.last_point = Some(self.events.len());
+        self.events += 1;
+        if let Event::MemberStart { .. } = event {
+            self.floor = Some(at as u64);
+        }
+        if let Some(point) = event.point() {
+            self.last_point = Some(Reached { point, at: at as u64 });
             let keep = at.saturating_sub(WINDOW_SIZE);
             let marked = self.marked_len();
             if let Some(sink) = &mut self.marked {
@@ -267,7 +298,6 @@ impl Decode {
             }
             self.plain.release_before(keep.saturating_sub(marked));
         }
-        self.events.push((at as u64, event));
     }
 }
 
@@ -275,7 +305,8 @@ impl Decode {
 enum Halt {
     /// The bytes are refused.
     Refused,
-    /// The plaintext holds the limit.
+    /// A bound: the plaintext holds the limit, or the decode has passed
+    /// [`EVENTS_A_GUESS`] events or its compressed bound.
     Limit,
 }
 
@@ -285,7 +316,8 @@ enum State {
     Members(Members),
     /// Searching from this bit.
     Finding(u64),
-    Decoding(Decode),
+    /// Boxed, being far larger than the others.
+    Decoding(Box<Decode>),
     Done(Option<Guess>),
 }
 
@@ -293,24 +325,13 @@ enum State {
 /// it runs on whatever thread the caller has.
 ///
 /// It holds the file's bytes from the place its decode began on — about a
-/// chunk of them, and those of every block past the chunk's end up to its
-/// stop — and of its plaintext only what a guess may read, the 32 KiB before
-/// the last place it may stop and all written since (`Decode::push`): a few
-/// windows and a block, in a buffer that doubles as it grows, beside a few
-/// kilobytes of code tables; reading a BGZF chunk's members, the chunk's
-/// bytes, the member it stops in and the header after that alone.
-///
-/// Deficiency register: `deficiency: KD141` — the decode holds an event for
-/// every block, 24 bytes for as little as ten bits of input, inside the chunk
-/// as past it, and no term of a task's charge counts them. Past the chunk's
-/// end it runs on through every block the search does not look for, fixed
-/// ones, to the first dynamic or stored one, so the compressed bytes and the
-/// events it holds there are bounded by nothing: empty fixed blocks carry no
-/// plaintext for the limit to count. And the marked sink, two bytes a value,
-/// doubles from `2^24` values to `2^25`, zero-filled, wherever the run it must
-/// keep at that grow is past half of it — a block as long as GNU gzip's
-/// longest, nearly all long matches — about four times the limit in bytes
-/// where a task is charged two. **(b) owned by 15.18.2**.
+/// chunk of them, and past the chunk's end those up to its stop, no further
+/// than its compressed bound and the feed that reached it — and of its
+/// plaintext only what a guess may read, the 32 KiB before the last place it
+/// may stop and all written since (`Decode::push`): a few windows and a
+/// block, in a buffer that doubles as it grows to the room its limit asks,
+/// beside a few kilobytes of code tables; reading a BGZF chunk's members, the
+/// chunk's bytes, the member it stops in and the header after that alone.
 ///
 /// Deficiency register: `deficiency: KD143` — on `pg_dump`'s level-6 text a
 /// speculation's decode rarely goes clean, so it writes nearly its whole
@@ -335,6 +356,10 @@ pub(crate) struct Speculation {
     until: u64,
     /// The most plaintext the chunk holds.
     limit: usize,
+    /// The bit at which a decode is cut rather than reading on: the limit's
+    /// worth of compressed bytes past the chunk's end, or past a
+    /// continuation's start where that lies beyond it.
+    bound: u64,
     input: Input,
     inflater: Box<Inflater>,
     state: State,
@@ -358,11 +383,13 @@ impl Speculation {
     /// `chunk_bytes`, holding at most `limit` bytes of plaintext.
     pub(crate) fn new(chunk: u64, chunk_bytes: u64, limit: usize, file_len: u64) -> Speculation {
         let from = chunk * chunk_bytes;
+        let until = 8 * (from + chunk_bytes);
         Speculation {
             chunk,
             from: None,
-            until: 8 * (from + chunk_bytes),
+            until,
             limit,
+            bound: bound_past(until, limit),
             input: Input::with_capacity(from, file_len, input_room(chunk_bytes)),
             inflater: Inflater::new(),
             state: State::Members(Members::new(from)),
@@ -371,7 +398,7 @@ impl Speculation {
     }
 
     /// Chunk `chunk`'s speculation continued from `from`, the stop of a guess
-    /// the limit cut, to where the chunk's guess would have stopped: a BGZF
+    /// a bound cut, to where the chunk's guess would have stopped: a BGZF
     /// member there read off its chain, a block there decoded from with
     /// nothing searched for first, a plain member's header found by a search
     /// beginning at it.
@@ -388,9 +415,12 @@ impl Speculation {
         };
         let mut task = Speculation::new(chunk, chunk_bytes, limit, file_len);
         task.from = Some(bit);
+        task.bound = bound_past(task.until.max(bit), limit);
         task.input = Input::with_capacity(bit / 8, file_len, input_room(chunk_bytes));
         task.state = match from {
-            Point::Block(bit) => State::Decoding(Decode::new(Point::Block(bit), None, bit)),
+            Point::Block(bit) => {
+                State::Decoding(Box::new(Decode::new(Point::Block(bit), None, bit, limit)))
+            }
             Point::Member(bit) => State::Members(Members::at(bit / 8)),
             Point::End => State::Done(None),
         };
@@ -452,7 +482,7 @@ impl Speculation {
                 }
                 State::Finding(from) => {
                     match find(&self.input, from, self.until, &mut self.inflater) {
-                        Found::At(candidate) => State::Decoding(self.begin(candidate)),
+                        Found::At(candidate) => State::Decoding(Box::new(self.begin(candidate))),
                         Found::Input(at) => {
                             self.input.release_before(at / 8);
                             self.state = State::Finding(at);
@@ -464,16 +494,16 @@ impl Speculation {
                 State::Decoding(mut decode) => match self.step(&mut decode) {
                     Ok(Some(stop)) => {
                         let at = decode.produced() as u64;
-                        State::Done(Some(guess(&decode, decode.events.len(), stop, at)))
+                        State::Done(Some(guess(&decode, stop, at, decode.floor)))
                     }
                     Ok(None) => {
                         self.state = State::Decoding(decode);
                         return;
                     }
-                    // A limit cuts the guess at the last boundary reached, the
+                    // A bound cuts the guess at the last boundary reached, the
                     // pass speculating on from there.
                     Err(Halt::Limit) => match decode.last_point {
-                        Some(i) => State::Done(Some(truncated(&decode, i, true))),
+                        Some(reached) => State::Done(Some(truncated(&decode, reached, true))),
                         None => State::Done(None),
                     },
                     // A refused candidate was most likely no place a decode
@@ -481,8 +511,10 @@ impl Speculation {
                     // a few of those the bytes are more likely damaged, and
                     // the chunk ends at the last boundary reached.
                     Err(Halt::Refused) => match decode.last_point {
-                        Some(i) if self.refused_past_a_boundary >= REFUSALS_PAST_A_BOUNDARY => {
-                            State::Done(Some(truncated(&decode, i, false)))
+                        Some(reached)
+                            if self.refused_past_a_boundary >= REFUSALS_PAST_A_BOUNDARY =>
+                        {
+                            State::Done(Some(truncated(&decode, reached, false)))
                         }
                         last => {
                             self.refused_past_a_boundary += u32::from(last.is_some());
@@ -506,9 +538,11 @@ impl Speculation {
     /// A decode from `candidate`, whose block header the search has read.
     fn begin(&mut self, candidate: Candidate) -> Decode {
         match candidate {
-            Candidate::Block { bit, body, stored } => Decode::new(Point::Block(bit), stored, body),
+            Candidate::Block { bit, body, stored } => {
+                Decode::new(Point::Block(bit), stored, body, self.limit)
+            }
             Candidate::Member { offset } => {
-                Decode::new(Point::Member(8 * offset), None, 8 * offset)
+                Decode::new(Point::Member(8 * offset), None, 8 * offset, self.limit)
             }
         }
     }
@@ -545,6 +579,11 @@ impl Speculation {
                             return Ok(Some(Point::Block(bit)));
                         }
                     }
+                    // Plaintext the limit counts aside, what a guess spans is
+                    // bounded here: empty blocks carry none.
+                    if decode.events >= EVENTS_A_GUESS || decode.bit >= self.bound {
+                        return Err(Halt::Limit);
+                    }
                     let limit = self.limit;
                     let stop = if decode.is_marked() {
                         let sink = decode.marked.as_mut().expect("marked");
@@ -567,11 +606,13 @@ impl Speculation {
                             decode.phase = Phase::Trailer;
                         }
                         Stop::Input if complete => return Err(Halt::Refused),
+                        Stop::Input if decode.bit >= self.bound => return Err(Halt::Limit),
                         Stop::Input => return Ok(None),
                         Stop::Limit => return Err(Halt::Limit),
                         Stop::Clean => {
                             let window = decode.marked.as_ref().expect("marked").window();
-                            decode.plain = Plain::after(window);
+                            let limit = self.limit.saturating_sub(decode.marked_len());
+                            decode.plain = Plain::after(window, limit);
                             decode.bytes = true;
                         }
                     }
@@ -637,22 +678,21 @@ fn read_off(walked: Walked) -> Guess {
     }
 }
 
-/// The guess the decode makes, cut at its event `i`, the last place it
-/// reached that a decode may resume at — by the limit where `cut`.
-fn truncated(decode: &Decode, i: usize, cut: bool) -> Guess {
-    let (at, event) = decode.events[i];
-    Guess { cut, ..guess(decode, i + 1, event.point().expect("a point"), at) }
+/// The bit a decode is cut at, past `from`: the limit's worth of compressed
+/// bytes.
+fn bound_past(from: u64, limit: usize) -> u64 {
+    from.saturating_add(u64::try_from(limit).unwrap_or(u64::MAX).saturating_mul(8))
+}
+
+/// The guess the decode makes, cut at `reached`, the last place it reached
+/// that a decode may resume at — by a bound where `cut`.
+fn truncated(decode: &Decode, reached: Reached, cut: bool) -> Guess {
+    Guess { cut, ..guess(decode, reached.point, reached.at, decode.floor) }
 }
 
 /// The guess a decode makes standing at `stop`, plaintext offset `at`, its
-/// first `events` events behind it.
-fn guess(decode: &Decode, events: usize, stop: Point, at: u64) -> Guess {
-    let floor = decode.events[..events]
-        .iter()
-        .rev()
-        .find(|(_, e)| matches!(e, Event::MemberStart { .. }))
-        .map(|&(p, _)| p)
-        .or(matches!(decode.start, Point::Member(_)).then_some(0));
+/// member begun at plaintext offset `floor` where that was inside it.
+fn guess(decode: &Decode, stop: Point, at: u64, floor: Option<u64>) -> Guess {
     let end = match stop {
         Point::Block(_) => {
             let from = at.saturating_sub(WINDOW_SIZE as u64).max(floor.unwrap_or(0));

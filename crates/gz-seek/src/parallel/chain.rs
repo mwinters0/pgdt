@@ -10,8 +10,8 @@
 //! caller has. Each window rests on every guess before it; the frontier proves
 //! one only by standing at that decode's start with that very history, which
 //! nothing but the engine's decode of everything before it gives it. A guess
-//! the limit cut is followed by the one continuing it from its stop, so a
-//! limit only lengthens the chain by a link. **A guess stopping short of
+//! a bound cut is followed by the one continuing it from its stop, so a
+//! bound only lengthens the chain by a link. **A guess stopping short of
 //! where the next begins ends the chain**, refusals or a false start having
 //! cut it: the frontier decodes on to the next guess, anchors there, and
 //! decodes that chunk itself.

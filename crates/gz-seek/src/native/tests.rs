@@ -47,8 +47,8 @@ fn native(file: &[u8], bit: u64, history: History<'_>, feed: usize) -> (Vec<u8>,
     let mut inflater = Inflater::new();
     let mut at = bit;
     let (mut marked, mut plain, resolve) = match history {
-        History::Known(window) => (None, Plain::after(window.to_vec()), &[][..]),
-        History::Unknown(window) => (Some(Marked::new()), Plain::new(), window),
+        History::Known(window) => (None, Plain::after(window.to_vec(), usize::MAX), &[][..]),
+        History::Unknown(window) => (Some(Marked::new(usize::MAX)), Plain::new(usize::MAX), window),
     };
     let mut in_bytes = marked.is_none();
     let mut boundaries = Vec::new();
@@ -68,7 +68,7 @@ fn native(file: &[u8], bit: u64, history: History<'_>, feed: usize) -> (Vec<u8>,
                 input.push(&file[from..(from + feed).min(file.len())]);
             }
             Stop::Clean => {
-                plain = Plain::after(marked.as_ref().unwrap().window());
+                plain = Plain::after(marked.as_ref().unwrap().window(), usize::MAX);
                 in_bytes = true;
             }
             Stop::Limit => unreachable!("no limit"),
@@ -174,7 +174,7 @@ fn decode_checking(
     let mut input = Input::new(bit / 8, file.len() as u64);
     input.push(&file[bit as usize / 8..]);
     let mut inflater = Inflater::new();
-    let (mut at, mut marked) = (bit, Marked::new());
+    let (mut at, mut marked) = (bit, Marked::new(usize::MAX));
     loop {
         let stop = match &mut plain {
             None => inflater.run(&input, &mut at, &mut marked, usize::MAX),
@@ -196,7 +196,7 @@ fn decode_checking(
         match stop {
             Stop::Block { .. } => {}
             Stop::End { .. } => break,
-            Stop::Clean => plain = Some(Plain::after(marked.window())),
+            Stop::Clean => plain = Some(Plain::after(marked.window(), usize::MAX)),
             Stop::Input | Stop::Limit => unreachable!("the whole file, no limit"),
         }
     }
@@ -251,7 +251,7 @@ fn a_released_sink_holds_a_window_and_the_last_32_kib() {
     let start = start as usize;
     let history = &plaintext[start - WINDOW_SIZE..start];
     for known in [false, true] {
-        let plain = known.then(|| Plain::after(history.to_vec()));
+        let plain = known.then(|| Plain::after(history.to_vec(), usize::MAX));
         let (mut held, mut stops) = (0, 0);
         decode_checking(&file, bit, plain, true, |sink, before, _| {
             let (produced, capacity, last) = match sink {
@@ -286,7 +286,7 @@ fn a_released_sink_holds_a_window_and_the_last_32_kib() {
 /// being its source's last one's last repetition.
 #[test]
 fn an_overlapping_copy_repeats_its_markers() {
-    let mut sink = Marked::new();
+    let mut sink = Marked::new(usize::MAX);
     sink.literal(b'a');
     assert!(sink.copy(3, 2), "two values from before the start");
     sink.literal(b'b');

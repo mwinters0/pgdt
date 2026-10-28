@@ -61,11 +61,12 @@ impl TaskId {
 ///
 /// A **speculation** finds where its chunk may begin and decodes it with the
 /// crate's own decoder, holding about a chunk of compressed bytes and those
-/// past it to its stop, and of its plaintext a few windows and a block, two
-/// bytes a value while it writes markers, a window more once it comes clean
-/// (`Speculation`, `KD141`) — or, over a
+/// past it to its stop, at most the limit's worth and a feed, and of its
+/// plaintext a few windows and a block, two bytes a value while it writes
+/// markers, a window more once it comes clean, never past its limit's room
+/// (`Speculation`; `docs/design/decisions.md`, "D122") — or, over a
 /// chunk holding a BGZF header, reads its guess off the member chain, holding
-/// the compressed bytes alone; one continuing a guess the limit cut begins at
+/// the compressed bytes alone; one continuing a guess a bound cut begins at
 /// its stop and holds no more. A
 /// **decode** decodes a chunk through the engine from where a speculation
 /// found it begins, holding its 32 KiB window, an engine

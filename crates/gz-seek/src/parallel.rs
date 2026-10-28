@@ -7,7 +7,7 @@
 //! result back. A **speculation** guesses where its chunk — the file's
 //! compressed bytes from `k` chunk lengths in to `k + 1` — begins and stops,
 //! and the history at its stop, still marked, or in a BGZF file reads all
-//! three off its members' headers, a guess the plaintext limit cut being
+//! three off its members' headers, a guess a bound cut being
 //! continued by a speculation from its stop; resolving those histories in
 //! order from a place the frontier stands at gives each chunk ahead a window,
 //! and a **decode** decodes the chunk through the engine from its start with
@@ -254,7 +254,7 @@ pub struct Parallel {
     /// chunks past the one after the frontier's, to land before the frontier
     /// gets there, a continuation's being shorter and not counted.
     lag: u64,
-    /// Each guess the limit cut, its continuation yet to be handed out: its
+    /// Each guess a bound cut, its continuation yet to be handed out: its
     /// chunk and stop, by the stop's bit.
     to_continue: BTreeMap<u64, (u64, Point)>,
     chain: Chain,
@@ -385,7 +385,7 @@ impl Parallel {
         self.chain.next_task().map(ChunkTask::decode)
     }
 
-    /// The next speculation: one continuing a guess the limit cut, from its
+    /// The next speculation: one continuing a guess a bound cut, from its
     /// stop, or else one on the next chunk ahead of the frontier it may land
     /// before the frontier reaches, or its lead past that
     /// ([`Parallel::set_lead`]) — on a chunk at or before `last`, and a

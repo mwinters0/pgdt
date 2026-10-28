@@ -115,6 +115,16 @@ positioned read, as every gzip decode pulls its input. Rejected: rapidgzip's lon
 limit held, slower at four jobs on two writers' files and level on the other two. Reopens: a re-take on which a longer
 chunk beats the shipped one. Code: `ahead.rs` (`CHUNK_BYTES`). Evidence: `gzip-first-pass`.
 
+### D122 A speculation's guess is cut at a bound on its events and on its bytes past its chunk, and continued
+The limit counts plaintext, and an empty fixed block is ten bits of none, so a run of them grows a speculation's input
+and the events a taken chunk's decode records without bound. So a guess is cut at the last boundary it reached past
+`EVENTS_A_GUESS` events or the limit's worth of compressed bytes past its chunk, and continued from its stop as a
+limit-cut guess is; its sinks grow to the limit's room and no further. Rejected: charging them instead, a cost on every
+worker for writers zlib is not; the count a parameter a test sets small, the shipped one untested. Reopens: a writer
+whose guesses the count cuts often. Code: `speculate.rs` (`EVENTS_A_GUESS`, `bound_past`), `native/sink.rs`
+(`Held::new`). Evidence: `a_run_of_empty_blocks_inside_a_chunk_is_cut_at_the_event_bound`,
+`a_marked_run_grows_its_sink_no_further_than_the_limit_asks`.
+
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
 contradicts) is almost always a wrong path or a changed file, so every open refuses it (`CacheMode::refusal`) before the

@@ -10,6 +10,10 @@
 //! ring of one window: a guess the limit or a refusal cuts stops at the last
 //! boundary its decode reached, as much as a block back, and reads the 32 KiB
 //! before that.
+//!
+//! **Nor more than its limit asks.** A decode under a limit stops there,
+//! having written at most one copy past it, so a sink made for that limit
+//! grows to that room and no further, where a doubling would pass it.
 
 use crate::zlib::WINDOW_SIZE;
 
@@ -56,6 +60,10 @@ fn droppable(base: usize, len: usize, keep: usize) -> usize {
 /// being written at a time: room the buffer keeps beyond what it holds.
 const SLACK: usize = 32;
 
+/// The longest copy deflate codes: how far past its limit a decode writes,
+/// a step beginning only short of it.
+const LONGEST_COPY: usize = 258;
+
 /// A buffer of values written in place: `len` of them held, the rest room
 /// ([`SLACK`] past any write), from position `base` on.
 struct Held<T> {
@@ -64,12 +72,18 @@ struct Held<T> {
     base: usize,
     /// The earliest position the caller still reads.
     keep: usize,
+    /// The most room it grows to: what its decode's limit asks.
+    most: usize,
 }
 
 impl<T: Copy + Default> Held<T> {
-    fn new(buf: Vec<T>) -> Held<T> {
-        let len = buf.len();
-        Held { buf, len, base: 0, keep: 0 }
+    /// A buffer holding `history`, written on by a decode under `limit`: its
+    /// room at most the history, the limit, a copy begun just short of it
+    /// and its slack.
+    fn new(history: Vec<T>, limit: usize) -> Held<T> {
+        let len = history.len();
+        let most = len.saturating_add(limit).saturating_add(LONGEST_COPY + SLACK);
+        Held { buf: history, len, base: 0, keep: 0, most }
     }
 
     fn held(&self) -> &[T] {
@@ -85,7 +99,9 @@ impl<T: Copy + Default> Held<T> {
     }
 
     /// The front dropped where it may be, then the buffer grown where that
-    /// leaves too little room — at least `least` values, and doubling.
+    /// leaves too little room — at least `least` values, and doubling, but
+    /// never past the room its limit asks, which no write under the limit
+    /// passes.
     #[cold]
     fn grow(&mut self, n: usize, least: usize) {
         let drop = droppable(self.base, self.len, self.keep);
@@ -95,8 +111,9 @@ impl<T: Copy + Default> Held<T> {
             self.base += drop;
         }
         let want = self.len + n + SLACK;
+        debug_assert!(want <= self.most, "a write {want} past the limit's room {}", self.most);
         if want > self.buf.len() {
-            let size = want.max(2 * self.buf.len()).max(least);
+            let size = want.max((2 * self.buf.len()).max(least).min(self.most));
             self.buf.resize(size, T::default());
         }
     }
@@ -145,8 +162,9 @@ pub(crate) struct Marked {
 }
 
 impl Marked {
-    pub(crate) fn new() -> Marked {
-        Marked { out: Held::new(Vec::new()), clean_from: 0 }
+    /// A sink for a decode under `limit`.
+    pub(crate) fn new(limit: usize) -> Marked {
+        Marked { out: Held::new(Vec::new(), limit), clean_from: 0 }
     }
 
     /// The value written at position `at`, which must still be held.
@@ -299,14 +317,16 @@ pub(crate) struct Plain {
 }
 
 impl Plain {
-    /// Output beginning at a member's start, with no history.
-    pub(crate) fn new() -> Plain {
-        Plain { out: Held::new(Vec::new()), history: 0, floor: 0 }
+    /// Output beginning at a member's start, with no history, of a decode
+    /// under `limit`.
+    pub(crate) fn new(limit: usize) -> Plain {
+        Plain { out: Held::new(Vec::new(), limit), history: 0, floor: 0 }
     }
 
-    /// Output whose member's last 32 KiB before it are `window`.
-    pub(crate) fn after(window: Vec<u8>) -> Plain {
-        Plain { history: window.len(), out: Held::new(window), floor: 0 }
+    /// Output whose member's last 32 KiB before it are `window`, of a decode
+    /// under `limit`.
+    pub(crate) fn after(window: Vec<u8>, limit: usize) -> Plain {
+        Plain { history: window.len(), out: Held::new(window, limit), floor: 0 }
     }
 
     /// A new member begins here: nothing before it is history.

@@ -412,3 +412,224 @@ fn the_first_byte_is_found_where_a_byte_by_byte_search_finds_it() {
         }
     }
 }
+
+/// Deflate bits written by hand, low bit first: blocks no encoder writes.
+struct Bits {
+    bytes: Vec<u8>,
+    /// The next bit written.
+    bit: u64,
+}
+
+impl Bits {
+    /// Bits after `bytes`, from the next byte on.
+    fn after(bytes: Vec<u8>) -> Bits {
+        let bit = 8 * bytes.len() as u64;
+        Bits { bytes, bit }
+    }
+
+    /// `value`'s low `n` bits, low bit first.
+    fn put(&mut self, value: u32, n: u32) {
+        for i in 0..n {
+            if self.bit.is_multiple_of(8) {
+                self.bytes.push(0);
+            }
+            *self.bytes.last_mut().expect("a byte") |= (((value >> i) & 1) as u8) << (self.bit % 8);
+            self.bit += 1;
+        }
+    }
+
+    /// A Huffman code, its most significant bit first.
+    fn code(&mut self, code: u32, len: u32) {
+        for i in (0..len).rev() {
+            self.put((code >> i) & 1, 1);
+        }
+    }
+
+    /// A fixed block's header, not its member's last.
+    fn fixed(&mut self) {
+        self.put(0, 1);
+        self.put(1, 2);
+    }
+
+    /// The fixed code's end of block.
+    fn end_of_block(&mut self) {
+        self.code(0, 7);
+    }
+
+    /// A fixed literal below 144.
+    fn literal(&mut self, byte: u8) {
+        assert!(byte < 144);
+        self.code(0x30 + u32::from(byte), 8);
+    }
+
+    /// A fixed copy of 258 values from one back.
+    fn copy_258_from_1(&mut self) {
+        self.code(0xc5, 8);
+        self.code(0, 5);
+    }
+
+    /// An empty stored block, not its member's last: a sync flush.
+    fn sync(&mut self) {
+        self.put(0, 3);
+        while !self.bit.is_multiple_of(8) {
+            self.put(0, 1);
+        }
+        self.bytes.extend([0, 0, 0xff, 0xff]);
+        self.bit += 32;
+    }
+}
+
+/// A gzip member's header, flagging nothing.
+const HEADER: [u8; 10] = [0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];
+
+/// One member: `blocks` empty fixed blocks — no plaintext for a limit to
+/// count — a sync flush, and `after` written by `flate2` over zlib-rs; and
+/// the bit the flush's stored block begins at.
+fn empty_blocks_then(blocks: usize, after: &[u8]) -> (Vec<u8>, u64) {
+    use flate2::{Compress, Compression, FlushCompress};
+    let mut bits = Bits::after(HEADER.to_vec());
+    for _ in 0..blocks {
+        bits.fixed();
+        bits.end_of_block();
+    }
+    let stored = bits.bit;
+    bits.sync();
+    let mut file = bits.bytes;
+    let mut deflate = Compress::new(Compression::new(6), false);
+    let mut body = Vec::with_capacity(after.len() + 1024);
+    deflate.compress_vec(after, &mut body, FlushCompress::Finish).unwrap();
+    file.extend_from_slice(&body);
+    let mut crc = flate2::Crc::new();
+    crc.update(after);
+    file.extend_from_slice(&crc.sum().to_le_bytes());
+    file.extend_from_slice(&crc.amount().to_le_bytes());
+    (file, stored)
+}
+
+/// Chunk `chunk`'s guess over `file` under `limit`, and each continuing the
+/// one before from its stop while a bound cuts it, fed `feed` bytes at a
+/// time: every piece the file's, each beginning where the one before stops,
+/// and no speculation's input more than a feed past its bound.
+fn chained(file: &[u8], chunk: u64, bytes: u64, limit: usize, feed: usize) -> Vec<Guess> {
+    let truth = truth(file);
+    let mut task = Speculation::new(chunk, bytes, limit, file.len() as u64);
+    let mut pieces: Vec<Guess> = Vec::new();
+    loop {
+        let what = format!("piece {} of chunk {chunk}, feed {feed}", pieces.len());
+        let bound = task.bound;
+        while let Some(at) = task.wants() {
+            let at = at as usize;
+            task.supply(&file[at..(at + feed).min(file.len())]);
+            let end = task.input.end();
+            assert!(end <= bound / 8 + 8 + feed as u64, "{what}: input to {end}, bound {bound}");
+        }
+        let guess = task.finish().found.unwrap_or_else(|| panic!("{what}: nothing"));
+        assert_is_the_file(&truth, &guess, 8 * chunk * bytes, u64::MAX, &what);
+        if let Some(last) = pieces.last() {
+            assert_eq!(guess.start, last.stop, "{what}");
+        }
+        let (cut, stop) = (guess.cut, guess.stop);
+        pieces.push(guess);
+        if !cut {
+            return pieces;
+        }
+        task = Speculation::continuing(chunk, stop, bytes, limit, file.len() as u64);
+    }
+}
+
+/// How many blocks of `truth` end after `guess`'s start and no later than
+/// its stop.
+fn blocks_spanned(truth: &Truth, guess: &Guess) -> usize {
+    let (start, stop) = (guess.start.bit(), guess.stop.bit());
+    let ends = |e: &Event| matches!(*e, Event::Block { bit } if bit > start && bit <= stop);
+    truth.events.iter().filter(|(_, e)| ends(e)).count()
+}
+
+/// **A run of empty blocks inside a chunk is cut at [`EVENTS_A_GUESS`]**:
+/// the guess stops at its last boundary short of the count, inside the
+/// chunk, and the one continuing it reaches the chunk's stop, no piece
+/// spanning more blocks than the count.
+#[test]
+fn a_run_of_empty_blocks_inside_a_chunk_is_cut_at_the_event_bound() {
+    let blocks = 3 * EVENTS_A_GUESS / 2;
+    // Ten bits a block, each an event of `truth`'s: a run a test can hold.
+    assert!(blocks < 1 << 16, "{blocks} blocks");
+    let (file, stored) = empty_blocks_then(blocks, &payload(300_000, 41));
+    let truth = truth(&file);
+    // The chunk holds the run and the flush, and ends inside `after`.
+    let bytes = stored / 8 + 20_000;
+    for feed in [3000, 1 << 20] {
+        let pieces = chained(&file, 0, bytes, usize::MAX, feed);
+        assert!(pieces.len() >= 2, "feed {feed}: nothing cut");
+        assert!(pieces[0].stop.bit() < 8 * bytes, "feed {feed}: cut past the chunk's end");
+        assert!(blocks_spanned(&truth, &pieces[0]) >= EVENTS_A_GUESS - 2, "feed {feed}");
+        for (i, piece) in pieces.iter().enumerate() {
+            let spanned = blocks_spanned(&truth, piece);
+            assert!(spanned <= EVENTS_A_GUESS, "feed {feed}, piece {i}: {spanned} blocks");
+        }
+        assert!(pieces.last().unwrap().stop.bit() >= 8 * bytes, "feed {feed}: short of the end");
+    }
+}
+
+/// **A run of empty blocks past a chunk's end is cut at the limit's worth of
+/// compressed bytes**, each piece continued from its stop, to the flush the
+/// next chunk's search would begin at: each piece's bits past the chunk's
+/// end, or past its own start beyond it, the limit's worth and at most one
+/// block more.
+#[test]
+fn a_run_of_empty_blocks_past_a_chunk_s_end_is_cut_at_the_limit_s_worth() {
+    let limit = 8 * 1024;
+    let bytes = HEADER.len() as u64 + 1000;
+    // Past the chunk's end, three and a half limits' worth of ten-bit blocks.
+    let blocks = (8 * (1000 + 7 * limit / 2)) / 10;
+    assert!(blocks < 2 * EVENTS_A_GUESS && 8 * limit / 10 < EVENTS_A_GUESS);
+    let (file, stored) = empty_blocks_then(blocks, &payload(100_000, 43));
+    let until = 8 * bytes;
+    for feed in [3000, 1 << 20] {
+        let pieces = chained(&file, 0, bytes, limit, feed);
+        assert!(pieces.len() >= 4, "feed {feed}: {} pieces", pieces.len());
+        for (i, piece) in pieces.iter().enumerate().rev().skip(1) {
+            let past = piece.stop.bit() - piece.start.bit().max(until);
+            let worth = 8 * limit as u64;
+            assert!(past >= worth && past <= worth + 10, "feed {feed}, piece {i}: {past} bits");
+        }
+        assert_eq!(pieces.last().unwrap().stop, Point::Block(stored), "feed {feed}");
+    }
+}
+
+/// **A marked run grows its sink no further than the limit asks**: a run of
+/// copies from before the decode's start, every value a marker and no
+/// boundary in it, past `2^24` values under [`SPECULATION_LIMIT`], so the
+/// sink grows from `2^24` holding more than half of it — to the limit's room,
+/// not to `2^25`.
+#[test]
+fn a_marked_run_grows_its_sink_no_further_than_the_limit_asks() {
+    let mut bits = Bits::after(HEADER.to_vec());
+    bits.fixed();
+    bits.literal(b'a');
+    bits.end_of_block();
+    let start = bits.bit;
+    bits.fixed();
+    for _ in 0..SPECULATION_LIMIT / 258 + 64 {
+        bits.copy_258_from_1();
+    }
+    bits.end_of_block();
+    bits.sync();
+    let file = bits.bytes;
+    let len = file.len() as u64;
+    let mut task = Speculation::continuing(0, Point::Block(start), len, SPECULATION_LIMIT, len);
+    let (mut most, mut at_2_24) = (0, false);
+    while let Some(at) = task.wants() {
+        let at = at as usize;
+        task.supply(&file[at..(at + 4096).min(file.len())]);
+        if let State::Decoding(decode) = &task.state {
+            assert!(decode.is_marked(), "a run that came clean");
+            let capacity = decode.marked.as_ref().expect("marked").capacity();
+            most = most.max(capacity);
+            at_2_24 |= capacity == 1 << 24;
+        }
+    }
+    assert!(at_2_24, "the sink never held 2^24 values");
+    assert!(most > 1 << 24 && most <= SPECULATION_LIMIT + 258 + 32, "grew to {most}");
+    assert!(task.finish().found.is_none(), "a run the limit ended with no boundary");
+}

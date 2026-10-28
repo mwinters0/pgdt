@@ -90,8 +90,17 @@ impl Chunking {
     /// speculation being the larger; then [`DECODES_A_TASK`] decodes'
     /// plaintext and [`GUESSES_A_TASK`] guesses' marked histories waiting for
     /// the frontier (`Ahead::top_up` holding the results to those multiples of
-    /// the tasks' count); and the buffer the task reads its input into. What
-    /// a speculation can hold past its two terms is `gz_seek`'s `KD141`.
+    /// the tasks' count); and the buffer the task reads its input into.
+    ///
+    /// Deficiency register: `deficiency: KD141` — the terms are not set on
+    /// the bounds `gz_seek` puts on a speculation and on the decode its guess
+    /// lets begin (`docs/design/decisions.md`, "D122"), and fall short of
+    /// three: its plain sink, up to the limit and a window once it comes
+    /// clean, beside its marked one, which reaches a copy past two limits;
+    /// its input, read past the limit's worth by the feed that reached it, in
+    /// a buffer grown by doubling; and a taken decode's events, up to about
+    /// twice `EVENTS_A_GUESS`, or four a member over a BGZF chunk.
+    /// **(b) owned by 15.18.3**.
     ///
     /// Deficiency register: `deficiency: KD148` — no term charges what the
     /// allocator keeps resident of the decode buffers a task frees: mimalloc
