@@ -86,11 +86,20 @@ pub(crate) struct ChunkDecoded {
     /// The history it began with, which the pass compares with its own.
     pub(crate) window: Vec<u8>,
     pub(crate) found: Option<Decoded>,
+    /// The plaintext buffer it was lent, where it found nothing to hold in it.
+    pub(crate) spare: Vec<u8>,
 }
 
 impl ChunkDecoded {
     pub(crate) fn held(&self) -> usize {
-        self.window.capacity() + self.found.as_ref().map_or(0, Decoded::held)
+        self.window.capacity()
+            + self.spare.capacity()
+            + self.found.as_ref().map_or(0, Decoded::held)
+    }
+
+    /// The plaintext buffer it holds, for the pass to lend the next decode.
+    pub(crate) fn into_buffer(self) -> Vec<u8> {
+        self.found.map_or(self.spare, |found| found.plain)
     }
 }
 
@@ -99,7 +108,9 @@ impl ChunkDecoded {
 ///
 /// It holds its window, and once fed an engine and room for the plaintext
 /// the speculation found from its start to its stop, and a byte to show a
-/// decode running past it, which nothing zeroes: the engine writes it; and
+/// decode running past it, which nothing zeroes: the engine writes it, in the
+/// buffer the pass lent it at dispatch where it did ([`ChunkDecode::lend`]);
+/// and
 /// its events and pieces, at most twice the events its guess counted against
 /// `EVENTS_A_GUESS`, a BGZF member's being its start, header and end alone
 /// (`docs/design/decisions.md`, "D123").
@@ -114,6 +125,9 @@ pub(crate) struct ChunkDecode {
     file_len: u64,
     /// The most plaintext the decode may write before it stops.
     limit: usize,
+    /// The plaintext buffer lent it, until it begins, or handed back by a
+    /// decode the engine refused.
+    buffer: Vec<u8>,
     state: State,
 }
 
@@ -166,8 +180,16 @@ impl ChunkDecode {
             until,
             file_len,
             limit,
+            buffer: Vec::new(),
             state: State::Ready,
         }
+    }
+
+    /// Write the plaintext into `buffer` rather than one made for this decode:
+    /// the pass's, kept from a decode it has done with, so no buffer is freed
+    /// while the pass runs (`docs/design/decisions.md`, "D124").
+    pub(crate) fn lend(&mut self, buffer: Vec<u8>) {
+        self.buffer = buffer;
     }
 
     pub(crate) fn chunk(&self) -> u64 {
@@ -183,9 +205,10 @@ impl ChunkDecode {
         self.start
     }
 
-    /// The bytes it holds before it is fed: its window.
+    /// The bytes it holds before it is fed: its window, and the buffer lent
+    /// it.
     pub(crate) fn held(&self) -> usize {
-        self.window.capacity()
+        self.window.capacity() + self.buffer.capacity()
     }
 
     /// The compressed offset of the next byte the decode wants, `None` once it
@@ -221,21 +244,28 @@ impl ChunkDecode {
                 let Running { out, events, pieces, .. } = *running;
                 self.state = State::Done(Some(Decoded { stop, plain: out, events, pieces }));
             }
-            Err(Refused) => self.state = State::Done(None),
+            Err(Refused) => {
+                if let State::Running(running) =
+                    std::mem::replace(&mut self.state, State::Done(None))
+                {
+                    self.buffer = running.out;
+                }
+            }
         }
     }
 
     /// What the decode came to; one not yet done hands back nothing.
     pub(crate) fn finish(self) -> ChunkDecoded {
-        let found = match self.state {
-            State::Done(found) => found,
-            _ => None,
+        let ChunkDecode { chunk, generation, start, window, buffer, state, .. } = self;
+        let (found, spare) = match state {
+            State::Done(found) => (found, buffer),
+            State::Running(running) => (None, running.out),
+            State::Ready => (None, buffer),
         };
-        let ChunkDecode { chunk, generation, start, window, .. } = self;
-        ChunkDecoded { chunk, generation, start, window, found }
+        ChunkDecoded { chunk, generation, start, window, found, spare }
     }
 
-    fn begin(&self) -> Option<Running> {
+    fn begin(&mut self) -> Option<Running> {
         let engine = match self.start {
             Point::Block(bit) => {
                 Engine::at_block(bit, 0, &self.window, Member::resumed(0, 0, None, 0)).ok()?
@@ -243,9 +273,13 @@ impl ChunkDecode {
             Point::Member(bit) => Engine::at_member(bit / 8, 0).ok()?,
             Point::End => return None,
         };
+        // A lent buffer already has the room; one not lent is made for it.
+        let mut out = std::mem::take(&mut self.buffer);
+        out.clear();
+        out.reserve_exact(self.limit + 1);
         Some(Running {
             engine: engine.unchecked(),
-            out: Vec::with_capacity(self.limit + 1),
+            out,
             events: Vec::new(),
             pieces: Vec::new(),
             piece_from: 0,

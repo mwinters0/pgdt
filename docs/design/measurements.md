@@ -4052,7 +4052,8 @@ the limit leg at 24 and 4 jobs, read as a difference
   resident, by mimalloc's purge delay and by glibc's dynamic `mmap`
   threshold, the twins agreeing, and turning each allocator's retention off
   bears the name out (`runs/p15.18.3/`). It is outside the heap the charge's
-  terms describe, so a task's charge gives it a term of its own (D124).
+  terms describe, so the pass keeps each decode buffer for the next decode
+  rather than freeing it (D124).
 
 **The limit leg's wall clock barely moves with the count**
 (`runs/gzip-resident-20261027-1824/log`, each rep's line). Its first pass

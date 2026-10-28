@@ -8,6 +8,11 @@ use crate::test_support::{
     payload, spacing,
 };
 
+/// A limit past every test file's plaintext, so none is reached: the pass
+/// makes each decode's buffer with room for it, so it is one a test can
+/// allocate.
+const NO_LIMIT: usize = 4 << 20;
+
 /// How a test runs the tasks a pass hands out.
 #[derive(Debug, Clone, Copy)]
 enum Driver {
@@ -206,7 +211,7 @@ fn the_index_is_the_serial_pass_s_at_every_worker_count() {
                 Driver::Hoarding,
             ];
             for driver in drivers {
-                for limit in [usize::MAX, 100_000] {
+                for limit in [NO_LIMIT, 100_000] {
                     let what = format!("{name}, chunk {chunk}, {driver:?}, limit {limit}");
                     let (pass, taken) =
                         parallel(&file, 64 * 1024, chunk, limit, driver, (1 << 16, 1 << 16))
@@ -241,8 +246,7 @@ fn a_pass_takes_the_chunks_it_is_handed() {
             chunks = starts.range(1..chunks).count() as u64;
         }
         let (_, taken) =
-            parallel(&file, 64 * 1024, chunk, usize::MAX, Driver::Ahead, (1 << 16, 1 << 16))
-                .unwrap();
+            parallel(&file, 64 * 1024, chunk, NO_LIMIT, Driver::Ahead, (1 << 16, 1 << 16)).unwrap();
         // zlib-rs's level 1 ends a block only where its writer finishes.
         if name != "level 1" && name != "levels" {
             assert!(taken * 4 >= chunks * 3, "{name}: {taken} of {chunks} chunks taken");
@@ -257,7 +261,7 @@ fn a_pass_takes_the_chunks_it_is_handed() {
 fn a_decode_run_ahead_is_ready_before_the_frontier_takes_it() {
     let file = gzip(&payload(1_200_000, 3), 6);
     let chunk = NonZeroU64::new(8 * 1024).unwrap();
-    let mut pass = Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+    let mut pass = Parallel::new(spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64).unwrap();
     let mut buf = vec![0u8; 1024];
     let mut ready_before_a_take = false;
     loop {
@@ -285,7 +289,7 @@ fn the_frontier_never_waits_for_a_speculation() {
         let serial = forward(&file, 64 * 1024, 1 << 16, 1 << 16).unwrap();
         let chunk = NonZeroU64::new(16 * 1024).unwrap();
         let mut pass =
-            Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+            Parallel::new(spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64).unwrap();
         let (mut buf, mut plaintext, mut hoarded) = (vec![0u8; 4096], Vec::new(), 0);
         loop {
             while let Some(task) = pass.task() {
@@ -316,7 +320,7 @@ fn a_speculation_is_handed_out_as_far_ahead_as_the_last_one_lagged() {
     let file = gzip(&payload(1_200_000, 3), 6);
     let chunk = NonZeroU64::new(8 * 1024).unwrap();
     let chunk_bits = 8 * chunk.get();
-    let mut pass = Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+    let mut pass = Parallel::new(spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64).unwrap();
     let first = pass.task().unwrap();
     assert_eq!(first.id().chunk(), 1);
     let mut buf = vec![0u8; 1024];
@@ -348,7 +352,7 @@ fn a_speculation_is_placed_its_lead_past_where_it_lands() {
     let file = gzip(&payload(1_200_000, 3), 6);
     let chunk = NonZeroU64::new(8 * 1024).unwrap();
     assert!(file.len() as u64 > 10 * chunk.get(), "{} bytes", file.len());
-    let mut pass = Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+    let mut pass = Parallel::new(spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64).unwrap();
     pass.set_lead(3);
     let mut through = |last| {
         std::iter::from_fn(|| pass.speculation_through(last))
@@ -369,7 +373,7 @@ fn decodes_and_speculations_are_handed_out_and_counted_apart() {
     // Each chunk long enough to hold a block start of its own.
     let chunk = NonZeroU64::new(64 * 1024).unwrap();
     assert!(file.len() as u64 > 5 * chunk.get(), "{} bytes", file.len());
-    let mut pass = Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+    let mut pass = Parallel::new(spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64).unwrap();
     assert!(pass.decode_task().is_none());
     let speculations = std::iter::from_fn(|| pass.speculation_through(4)).collect::<Vec<_>>();
     assert_eq!((pass.guesses_pending(), pass.decodes_pending()), (4, 0));
@@ -444,7 +448,7 @@ fn a_limit_never_ends_the_chain() {
         let serial = forward(&file, 64 * 1024, 1 << 16, 1 << 16).unwrap();
         let chunk = 160 * 1024;
         let limit = twice_the_largest_block(&file);
-        let (_, whole, unlimited) = run_ahead(&file, chunk, usize::MAX);
+        let (_, whole, unlimited) = run_ahead(&file, chunk, NO_LIMIT);
         let (pass, taken, anchors) = run_ahead(&file, chunk, limit);
         assert_eq!(pass.index, serial.index, "{name}");
         assert_eq!(pass.windows, serial.windows, "{name}");
@@ -468,7 +472,7 @@ fn a_chain_the_event_count_cuts_is_continued() {
     let chunk = file.len() as u64 / 3;
     for driver in [Driver::Ahead, Driver::Threads(4)] {
         let (pass, taken) =
-            parallel(&file, 64 * 1024, chunk, usize::MAX, driver, (1 << 16, 64)).unwrap();
+            parallel(&file, 64 * 1024, chunk, NO_LIMIT, driver, (1 << 16, 64)).unwrap();
         assert_eq!(pass.index, serial.index, "{driver:?}");
         assert!(pass.plaintext == serial.plaintext, "{driver:?}");
         if let Driver::Ahead = driver {
@@ -486,7 +490,7 @@ fn a_speculation_is_handed_out_no_further_than_its_bound() {
     let chunk = NonZeroU64::new(8 * 1024).unwrap();
     assert!(file.len() as u64 > 6 * chunk.get(), "{} bytes", file.len());
     let mut pass =
-        Parallel::new(self::spacing(64 * 1024), chunk, usize::MAX, file.len() as u64).unwrap();
+        Parallel::new(self::spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64).unwrap();
     let mut through = |last| {
         std::iter::from_fn(|| pass.speculation_through(last))
             .map(|t| t.id().chunk())
@@ -526,7 +530,7 @@ fn a_decode_the_frontier_contradicts_is_decoded_again() {
     let serial = forward(&file, 64 * 1024, 1 << 16, 1 << 16).unwrap();
     let pass = |tamper: Tamper| {
         let chunk = NonZeroU64::new(16 * 1024).unwrap();
-        let pass = Parallel::new(spacing(64 * 1024), chunk, usize::MAX, file.len() as u64)?;
+        let pass = Parallel::new(spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64)?;
         drive_parallel(pass, &file, Driver::Ahead, (1 << 16, 1 << 16), Vec::new(), tamper)
     };
     let (_, whole) = pass(&|_| {}).unwrap();
@@ -549,6 +553,59 @@ fn a_decode_the_frontier_contradicts_is_decoded_again() {
     assert!(taken > 0 && taken < whole, "{taken} taken, {whole} untampered");
 }
 
+/// **No decode's plaintext buffer is freed while the pass runs**: each comes
+/// back to the pass once it has done with it and is lent the next decode
+/// handed out, so a caller holding at most two tasks at once has the pass
+/// make no more than three — those two and the one the frontier serves —
+/// over a file of many chunks, the rest kept spare.
+#[test]
+fn a_decode_s_plaintext_buffer_is_lent_the_next() {
+    let file = gzip(&payload(1_200_000, 3), 6);
+    let chunk = NonZeroU64::new(16 * 1024).unwrap();
+    let pass = Parallel::new(spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64).unwrap();
+    let mut made = None;
+    let buffers = |pass: &Parallel| made = Some(pass.chain.buffers());
+    let (taken, _) = drive_buffers(pass, &file, buffers);
+    let (made, spare) = made.unwrap();
+    assert!(taken >= 20, "{taken} decodes taken");
+    assert!(made <= 3, "{made} buffers made for {taken} decodes taken");
+    assert_eq!(spare, made, "every buffer is spare once the file is read");
+}
+
+/// A pass over `file` run as `Driver::Lazily(2)` runs it, `at_end` handed it
+/// once the input has ended: how many decodes it took, and its index.
+fn drive_buffers(
+    mut pass: Parallel,
+    file: &[u8],
+    mut at_end: impl FnMut(&Parallel),
+) -> (u64, Index) {
+    let mut buf = vec![0u8; 1 << 16];
+    let mut handed: BTreeMap<TaskId, ChunkTask> = BTreeMap::new();
+    loop {
+        handed.retain(|&id, _| pass.wants(id));
+        while handed.len() < 2
+            && let Some(task) = pass.task()
+        {
+            match task.id().decode_of() {
+                None => pass.done(run(task, file, 5000)),
+                Some(_) => drop(handed.insert(task.id(), task)),
+            }
+        }
+        let at = (pass.compressed_position() as usize).min(file.len());
+        let step = pass.read(&file[at..], &mut buf).unwrap();
+        if let Some(id) = step.wait {
+            let task = handed.remove(&id).expect("a handed-out task");
+            pass.done(run(task, file, 5000));
+            continue;
+        }
+        if step.needs_input() {
+            break;
+        }
+    }
+    at_end(&pass);
+    (pass.taken(), pass.finish().unwrap())
+}
+
 /// The buffers a pass is fed and given are its caller's to choose.
 #[test]
 fn the_index_is_one_whatever_the_buffers() {
@@ -556,7 +613,7 @@ fn the_index_is_one_whatever_the_buffers() {
     let serial = forward(&file, 16 * 1024, 1 << 20, 1 << 20).unwrap();
     for buffers in [(1, 1 << 16), (7, 13), (4096, 1), (65_536, 100_003), (file.len(), 3)] {
         let (pass, _) =
-            parallel(&file, 16 * 1024, 16 * 1024, usize::MAX, Driver::Lazily(2), buffers).unwrap();
+            parallel(&file, 16 * 1024, 16 * 1024, NO_LIMIT, Driver::Lazily(2), buffers).unwrap();
         assert_eq!(pass.index, serial.index, "buffers {buffers:?}");
         assert_eq!(pass.windows, serial.windows, "buffers {buffers:?}");
         assert!(pass.plaintext == serial.plaintext, "buffers {buffers:?}");
@@ -621,7 +678,7 @@ fn damage_is_refused_as_the_serial_pass_refuses_it() {
     for damaged in [crc, len] {
         let serial = forward(&damaged, 64 * 1024, 4096, 4096).err().unwrap();
         for driver in [Driver::Ahead, Driver::Threads(3)] {
-            let result = parallel(&damaged, 64 * 1024, 16 * 1024, usize::MAX, driver, (4096, 4096));
+            let result = parallel(&damaged, 64 * 1024, 16 * 1024, NO_LIMIT, driver, (4096, 4096));
             assert_eq!(result.err(), Some(serial.clone()), "{driver:?}");
         }
     }
@@ -630,7 +687,7 @@ fn damage_is_refused_as_the_serial_pass_refuses_it() {
         let mut data = file.clone();
         data[at] ^= 1 << (i % 8);
         let serial = forward(&data, 64 * 1024, 4096, 4096);
-        let result = parallel(&data, 64 * 1024, 16 * 1024, usize::MAX, Driver::Ahead, (4096, 4096));
+        let result = parallel(&data, 64 * 1024, 16 * 1024, NO_LIMIT, Driver::Ahead, (4096, 4096));
         match (serial, result) {
             (Err(serial), Err(parallel)) => assert_eq!(
                 std::mem::discriminant(&parallel),
@@ -651,7 +708,7 @@ fn damage_is_refused_as_the_serial_pass_refuses_it() {
     }
     for cut in [n / 2, n - 9, n - 1] {
         let result =
-            parallel(&file[..cut], 64 * 1024, 16 * 1024, usize::MAX, Driver::Ahead, (4096, 4096));
+            parallel(&file[..cut], 64 * 1024, 16 * 1024, NO_LIMIT, Driver::Ahead, (4096, 4096));
         assert!(matches!(result, Err(Error::Truncated { .. })), "cut at {cut}");
     }
 }
@@ -679,7 +736,7 @@ fn bgzf_damage_is_refused_as_the_serial_pass_refuses_it() {
         for chunk in [16 * 1024, 64 * 1024] {
             for driver in [Driver::Ahead, Driver::Threads(3)] {
                 let what = format!("{what}, chunk {chunk}, {driver:?}");
-                let result = parallel(&damaged, 64 * 1024, chunk, usize::MAX, driver, (4096, 4096));
+                let result = parallel(&damaged, 64 * 1024, chunk, NO_LIMIT, driver, (4096, 4096));
                 match (&serial, result) {
                     (Err(serial), Err(parallel)) => assert_eq!(&parallel, serial, "{what}"),
                     (Ok(serial), Ok((parallel, _))) => {
@@ -704,6 +761,6 @@ fn bytes_after_the_last_member_are_refused() {
     let mut file = gzip(&payload(300_000, 13), 6);
     let end = file.len() as u64;
     file.extend_from_slice(&[0, 0, 0, 0]);
-    let result = parallel(&file, 64 * 1024, 8 * 1024, usize::MAX, Driver::Ahead, (4096, 4096));
+    let result = parallel(&file, 64 * 1024, 8 * 1024, NO_LIMIT, Driver::Ahead, (4096, 4096));
     assert_eq!(result.err(), Some(Error::NotGzip { offset: end }));
 }

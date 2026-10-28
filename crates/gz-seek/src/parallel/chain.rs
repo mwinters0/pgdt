@@ -23,6 +23,13 @@
 //! frontier contradicts, drops every decode of the last — queued, running or
 //! done — as resting on a window nothing proved, and a running one's result
 //! is dropped when it comes back.
+//!
+//! **No decode's plaintext buffer is freed while the pass runs.** Each is
+//! made for the pass's limit and lent a decode as it is handed out, never as
+//! it is queued, and comes back here when the pass has done with it — served,
+//! refused or dropped — for the next decode handed out. One is made only
+//! where none is spare, so the buffers never outnumber the decodes the pass
+//! has had out at once (`docs/design/decisions.md`, "D124").
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -59,10 +66,19 @@ pub(super) struct Chain {
     /// at, with its chunk and where it begins.
     running: BTreeMap<u64, (u64, Point)>,
     decoded: BTreeMap<u64, ChunkDecoded>,
+    /// The room a plaintext buffer is made with: the pass's limit and a byte.
+    room: usize,
+    /// The plaintext buffers no decode holds.
+    spare: Vec<Vec<u8>>,
+    /// How many plaintext buffers were made.
+    #[cfg(test)]
+    made: usize,
 }
 
 impl Chain {
-    pub(super) fn new(file_len: u64) -> Chain {
+    /// The chain of a pass over a file `file_len` bytes long, no decode of
+    /// which writes more than `limit` bytes of plaintext.
+    pub(super) fn new(file_len: u64, limit: usize) -> Chain {
         Chain {
             file_len,
             generation: 0,
@@ -71,6 +87,10 @@ impl Chain {
             queued: VecDeque::new(),
             running: BTreeMap::new(),
             decoded: BTreeMap::new(),
+            room: limit + 1,
+            spare: Vec::new(),
+            #[cfg(test)]
+            made: 0,
         }
     }
 
@@ -89,14 +109,35 @@ impl Chain {
             decoded.generation == self.generation && self.running.remove(&start).is_some();
         if current && start >= bit {
             self.decoded.insert(start, decoded);
+        } else {
+            self.recycle(decoded.into_buffer());
         }
     }
 
-    /// The next decode to hand out, in chunk order.
+    /// The next decode to hand out, in chunk order, lent a plaintext buffer.
     pub(super) fn next_task(&mut self) -> Option<ChunkDecode> {
-        let task = self.queued.pop_front()?;
+        let mut task = self.queued.pop_front()?;
         self.running.insert(task.start().bit(), (task.chunk(), task.start()));
+        let buffer = match self.spare.pop() {
+            Some(buffer) => buffer,
+            None => {
+                #[cfg(test)]
+                {
+                    self.made += 1;
+                }
+                Vec::with_capacity(self.room)
+            }
+        };
+        task.lend(buffer);
         Some(task)
+    }
+
+    /// Keep `buffer`, a decode's plaintext the pass has done with, for the
+    /// next decode handed out.
+    pub(super) fn recycle(&mut self, buffer: Vec<u8>) {
+        if buffer.capacity() > 0 {
+            self.spare.push(buffer);
+        }
     }
 
     /// Whether the decode handed out from bit `start` is still wanted.
@@ -109,7 +150,10 @@ impl Chain {
     /// result comes back.
     pub(super) fn pass(&mut self, bit: u64) {
         self.guesses.retain(|_, (_, guess)| !behind(guess, bit));
-        self.decoded.retain(|&start, _| start >= bit);
+        let ahead = self.decoded.split_off(&bit);
+        for passed in std::mem::replace(&mut self.decoded, ahead).into_values() {
+            self.recycle(passed.into_buffer());
+        }
         self.queued.retain(|task| task.start().bit() >= bit);
         if self.end.as_ref().is_some_and(|(point, _)| point.bit() < bit) {
             self.end = None;
@@ -146,7 +190,9 @@ impl Chain {
         self.end = None;
         self.queued.clear();
         self.running.clear();
-        self.decoded.clear();
+        for dropped in std::mem::take(&mut self.decoded).into_values() {
+            self.recycle(dropped.into_buffer());
+        }
     }
 
     /// The guesses held.
@@ -164,13 +210,14 @@ impl Chain {
         self.decoded.len()
     }
 
-    /// The bytes the chain holds: the guesses, the decodes done, and the
-    /// windows of those queued and of its end.
+    /// The bytes the chain holds: the guesses, the decodes done, the windows
+    /// of those queued and of its end, and the spare plaintext buffers.
     pub(super) fn held(&self) -> usize {
         self.guesses.values().map(|(_, guess)| guess.held()).sum::<usize>()
             + self.decoded.values().map(ChunkDecoded::held).sum::<usize>()
             + self.queued.iter().map(ChunkDecode::held).sum::<usize>()
             + self.end.as_ref().map_or(0, |(_, window)| window.capacity())
+            + self.spare.iter().map(Vec::capacity).sum::<usize>()
     }
 
     /// Queue a decode of each guess beginning where the chain ends.
@@ -205,6 +252,12 @@ impl Chain {
     #[cfg(test)]
     pub(super) fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// How many plaintext buffers were made, and how many are spare.
+    #[cfg(test)]
+    pub(super) fn buffers(&self) -> (usize, usize) {
+        (self.made, self.spare.len())
     }
 }
 

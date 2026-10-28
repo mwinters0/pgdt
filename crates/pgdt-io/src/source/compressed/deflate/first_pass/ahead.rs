@@ -90,11 +90,12 @@ impl Chunking {
     /// one; [`DECODES_A_TASK`] decodes handed out or held for the frontier,
     /// and [`GUESSES_A_TASK`] guesses with the windows of the decodes queued
     /// behind them (`Ahead::top_up` holding the results to those multiples of
-    /// the tasks' count); the buffer a local task reads its input into; and a
-    /// decode's plaintext buffer freed, which the allocator keeps resident
-    /// (`docs/design/decisions.md`, "D124"). The frontier's own worker is
-    /// charged a task too, and holds the pass, the decode it serves and the
-    /// chain's end.
+    /// the tasks' count); and the buffer a local task reads its input into.
+    /// No decode's plaintext buffer is freed while the pass runs, the pass
+    /// keeping each for the next decode, so the buffers never outnumber the
+    /// decodes charged here (`docs/design/decisions.md`, "D124"). The
+    /// frontier's own worker is charged a task too, and holds the pass, the
+    /// decode it serves and the chain's end.
     ///
     /// Deficiency register: `deficiency: KD148` — no term charges what the
     /// allocator keeps of a buffer a task outgrows as it grows — a
@@ -113,8 +114,7 @@ impl Chunking {
         let running = if speculation > decode { speculation } else { decode };
         let (decodes, guesses) = (DECODES_A_TASK as u64, GUESSES_A_TASK as u64);
         let held = decodes * decode + guesses * gz_seek::ChunkTask::GUESS_BYTES;
-        let freed = limit as u64 + 1;
-        running + held + INPUT_CHUNK + freed
+        running + held + INPUT_CHUNK
     }
 
     /// How many pieces a fetched pass's download may hold with `tasks` run

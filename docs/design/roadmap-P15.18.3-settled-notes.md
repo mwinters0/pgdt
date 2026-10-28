@@ -1,10 +1,10 @@
 # P15.18.3 notes — `Chunking::task_bytes` settled
 
 **The charge is set, and the re-take is not taken.** Every term of a task's
-charge is now a bound `gz-seek` states on what the code writes, and one freed
-decode buffer is charged a task (`docs/design/decisions.md`, "D124"). The
-decode buffers are pooled next, dropping that term, and the `gzip-resident`
-re-take that closes the row is taken from a commit carrying the pool.
+charge is now a bound `gz-seek` states on what the code writes, and no decode
+buffer is freed while the pass runs (`docs/design/decisions.md`, "D124"). The
+`gzip-resident` re-take that closes the row is taken from a commit carrying
+the pool.
 
 ## What landed
 
@@ -37,9 +37,22 @@ re-take that closes the row is taken from a commit carrying the pool.
 - **Queued decodes are charged with the guesses.** A queued decode's guess
   stays in the chain's guesses, which `GUESSES_A_TASK` already counts, so a
   guess's term carries the window of the decode behind it.
-- **The freed decode buffer is charged, not pooled**, a call the review
-  reversed: the plaintext buffers are pooled before the re-take
-  ([history](../status/history/2026-10-28.md)).
+- **The decodes' plaintext buffers are pooled in `gz_seek::Parallel`**
+  (`parallel/chain.rs`). Each is made with room for the pass's limit and a
+  byte, lent a decode as `Chain::next_task` hands it out, not as it is
+  queued, and recycled wherever the pass has done with it: served, refused at
+  the take, dropped as passed or by a reset, or landing for a generation no
+  longer current. One is made only where none is spare, so the buffers never
+  outnumber the decodes out at once, which the charge already covers.
+  `a_decode_s_plaintext_buffer_is_lent_the_next` holds a caller with two
+  tasks out to three buffers over a file of many chunks. The charge's freed
+  term is gone, so a first-pass worker's bill falls by a limit and a byte
+  (`runs/p15.18.3/trial-bills/`). A decode whose task the caller drops, or
+  whose task panics, takes its buffer with it; `pgdt-io` runs every task it
+  takes and hands each result back.
+- **A pass's limit now sizes every decode buffer**, so `Parallel::new` needs
+  one a caller can allocate. The `gz-seek` tests that passed `usize::MAX` for
+  no limit pass `NO_LIMIT`, 4 MiB, past every test file's plaintext.
 - **`measure.py` mirrors the new charge, and `GZPASS_BUDGET` rises to
   4 GiB.** The old 3 GiB no longer afforded twenty-four workers a task each
   under `margin_allowance`, at either chunk length
@@ -54,13 +67,14 @@ re-take that closes the row is taken from a commit carrying the pool.
 
 - **Command**: `cd scripts && uv run measure.py --figure gzip-resident`, run
   from a commit carrying the pool. It is long, so follow `CLAUDE.md`'s
-  "Long-running processes".
+  "Long-running processes". The first-pass legs' bills it holds the run to
+  are `GzipResident.STATED_BILLS`, read from the pool's trial runs.
 - **Done when no cell is under-billed.** Over-bills are expected at every
   count. The charge bounds a crafted file, and `control_gz` and `repeated_gz`
   fill little of it.
 - **`KD148` is now what an allocator keeps of a buffer a task outgrows.** That
   covers a speculation's input and sinks, and a decode's events, as each
-  grows. It is not the decode buffer, which has its own term. It is
+  grows. It is not the decode buffer, which is pooled and never outgrown. It is
   `(c) unowned`: no file `gzip-resident` reads makes those buffers large.
 
 ## Negative results

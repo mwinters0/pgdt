@@ -71,8 +71,10 @@ impl TaskId {
 /// its stop and holds no more. A
 /// **decode** decodes a chunk through the engine from where a speculation
 /// found it begins, holding its 32 KiB window, an engine
-/// ([`DECODER_BYTES`](crate::DECODER_BYTES)) and room for at most that
-/// speculation's plaintext.
+/// ([`DECODER_BYTES`](crate::DECODER_BYTES)) and the plaintext buffer the pass
+/// lent it, made with room for the pass's limit, writing at most that
+/// speculation's plaintext into it; the pass keeps it for the next decode once
+/// its result comes back, and a task the caller drops takes it with it.
 pub struct ChunkTask(Work);
 
 enum Work {

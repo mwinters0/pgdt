@@ -274,7 +274,10 @@ impl Parallel {
     /// plaintext bytes apart, over a file `file_len` bytes long cut into
     /// chunks of `chunk_bytes`, a speculation stopping its decode at `limit`
     /// bytes of plaintext, a match's few hundred past it aside
-    /// ([`SPECULATION_LIMIT`](crate::SPECULATION_LIMIT)).
+    /// ([`SPECULATION_LIMIT`](crate::SPECULATION_LIMIT)). Each decode's
+    /// plaintext buffer is made with room for `limit` bytes and a byte, and
+    /// kept for the next decode rather than freed, so the limit is one the
+    /// caller can allocate.
     pub fn new(
         spacing: NonZeroU64,
         chunk_bytes: NonZeroU64,
@@ -351,7 +354,7 @@ impl Parallel {
             speculating: BTreeMap::new(),
             lag: 0,
             to_continue: BTreeMap::new(),
-            chain: Chain::new(file_len),
+            chain: Chain::new(file_len, limit),
             window: Box::new([0; WINDOW_SIZE]),
             window_len: 0,
             taken: 0,
@@ -478,7 +481,8 @@ impl Parallel {
         self.speculating.len() + self.chain.guesses()
     }
 
-    /// The bytes the results held for the frontier hold.
+    /// The bytes the results held for the frontier hold, with the plaintext
+    /// buffers kept for decodes to come.
     pub fn held(&self) -> usize {
         self.chain.held()
     }
@@ -582,7 +586,8 @@ impl Parallel {
                         if serving.cursor == serving.chunk.len()
                             && serving.event == serving.chunk.events.len()
                         {
-                            let stop = serving.chunk.stop;
+                            let Decoded { stop, plain, .. } = serving.chunk;
+                            self.chain.recycle(plain);
                             self.stand(stop);
                         } else {
                             self.frontier = Frontier::Serving(serving);
@@ -816,19 +821,29 @@ impl Parallel {
     /// `None` where the engine refused its bytes, where a trailer it holds
     /// does not match, or where it was begun with another history than the
     /// frontier's — every decode after it resting on that one's, the chain is
-    /// dropped — its bytes then left to the frontier.
+    /// dropped — its bytes then left to the frontier and its buffer kept.
     fn take(&mut self, decoded: ChunkDecoded) -> Option<Serving> {
-        let mut chunk = decoded.found?;
-        if !self.history.is(&decoded.window) {
+        let ChunkDecoded { window, found, spare, .. } = decoded;
+        let Some(mut chunk) = found else {
+            self.chain.recycle(spare);
+            return None;
+        };
+        if !self.history.is(&window) {
             self.chain.reset();
+            self.chain.recycle(chunk.plain);
             return None;
         }
         self.cut_at_static(&mut chunk);
-        if chunk.plain.is_empty() && chunk.events.is_empty() {
+        if (chunk.plain.is_empty() && chunk.events.is_empty()) || !self.trailers_match(&chunk) {
+            self.chain.recycle(chunk.plain);
             return None;
         }
-        // Every trailer the decode holds, checked before a byte of it is
-        // handed out.
+        Some(Serving { chunk, cursor: 0, event: 0, piece: 0 })
+    }
+
+    /// Whether every trailer `chunk` holds matches the plaintext before it,
+    /// checked before a byte of it is handed out.
+    fn trailers_match(&self, chunk: &Decoded) -> bool {
         let mut member = self.member;
         let mut piece = 0;
         for &(at, event) in &chunk.events {
@@ -841,14 +856,14 @@ impl Parallel {
             match event {
                 ChunkEvent::MemberEnd { crc, isize } => {
                     if member.crc != crc || member.len as u32 != isize {
-                        return None;
+                        return false;
                     }
                 }
                 ChunkEvent::MemberStart { .. } => member = Crc::default(),
                 _ => {}
             }
         }
-        Some(Serving { chunk, cursor: 0, event: 0, piece: 0 })
+        true
     }
 
     /// Fold the engine's run since the last fold, CRC-32 `crc`, into the

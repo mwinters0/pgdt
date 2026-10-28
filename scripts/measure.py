@@ -11178,14 +11178,15 @@ def gzip_task_bytes(chunk: int = GZIP_INPUT_CHUNK) -> int:
     """What one task ahead of a first pass's frontier is charged: a running
     speculation, fed a read of `INPUT_CHUNK` or a chunk where that is longer;
     `DECODES_A_TASK` decodes held for the frontier; `GUESSES_A_TASK` guesses,
-    each with the window of a decode queued behind it; its read buffer; and a
-    decode's plaintext buffer freed, which the allocator keeps.
+    each with the window of a decode queued behind it; and its read buffer.
+    No decode's plaintext buffer is freed while the pass runs, the pass
+    keeping each for the next decode (D124).
 
     `Chunking::task_bytes` at `Chunking::SHIPPED` (`first_pass/ahead.rs`),
     mirrored, or at a `chunk` a measured leg cuts in its place
-    (`GZPASS_CHUNK_BYTES`). **All of it but a few chunks' worth is seven
+    (`GZPASS_CHUNK_BYTES`). **All of it but a few chunks' worth is six
     speculation limits** — a speculation's input past its chunk and its two
-    sinks four, two decodes held and one freed — which is why this figure is
+    sinks four, and two decodes held — which is why this figure is
     what prices that constant: no leg varies it, and a first-pass
     cell's remainder is read against a charge it dominates
     (`docs/design/roadmap-P15-gzip.md`, "Slice order")."""
@@ -11193,8 +11194,7 @@ def gzip_task_bytes(chunk: int = GZIP_INPUT_CHUNK) -> int:
     running = max(gzip_speculation_bytes(chunk, feed), gzip_decode_bytes())
     decodes, guesses = GZIP_DECODES_A_TASK, GZIP_GUESSES_A_TASK
     held = decodes * gzip_decode_bytes() + guesses * 3 * GZIP_WINDOW_BYTES
-    freed = GZIP_SPECULATION_LIMIT + 1
-    return running + held + GZIP_INPUT_CHUNK + freed
+    return running + held + GZIP_INPUT_CHUNK
 
 
 def gzip_first_pass_charge(jobs: int, stored_size: int) -> int:
@@ -11544,7 +11544,7 @@ def run_gzip_resident(session: Session) -> str:
         "**rule** is. The `Criterion` column names the band. **A first-pass cell is billed "
         "per worker with no pool**: each worker the larger of the pass's two decodes and "
         f"skip scratch ({_fmt_budget_bytes(gzip_pass_bytes())}) and a task's charge "
-        f"({_fmt_budget_bytes(gzip_task_bytes())}, seven speculation limits of it), and its "
+        f"({_fmt_budget_bytes(gzip_task_bytes())}, six speculation limits of it), and its "
         "`Workers` column says how many the pass ran — the frontier and the tasks ahead. "
         "**A BGZF cell is billed as an `.xz` one is**, a reader its "
         f"{_fmt_budget_bytes(bgzf_unit())} unit, the scan's chunk and gzip's pulling "

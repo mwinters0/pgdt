@@ -5121,19 +5121,19 @@ class GzipResident(unittest.TestCase):
 
     #: What each leg's run said it billed, read off `scan started` by hand from
     #: trial runs of `pgdt parse` under `GZPASS_BUDGET`'s allowance: the
-    #: first-pass legs on 2026-10-28, after 15.18.3 set a task's charge
+    #: first-pass legs on 2026-10-28, after 15.18.3 pooled the decode buffers
     #: (`runs/p15.18.3/trial-bills.sh`), the BGZF leg's block path on
     #: 2026-10-27 (`runs/p15.18/trial-bills.sh`), which that charge does not
     #: move. The mirror is held to these, the bills a run states, as well as
     #: to the source. Every run resolved its row's count, and each first pass
     #: ran that many workers.
     STATED_BILLS = {
-        ("control_gz", 1): 124_731_479,
-        ("control_gz", 4): 498_925_916,
-        ("control_gz", 24): 2_993_555_496,
-        ("repeated_gz", 1): 124_731_479,
-        ("repeated_gz", 4): 498_925_916,
-        ("repeated_gz", 24): 2_993_555_496,
+        ("control_gz", 1): 107_823_706,
+        ("control_gz", 4): 431_294_824,
+        ("control_gz", 24): 2_587_768_944,
+        ("repeated_gz", 1): 107_823_706,
+        ("repeated_gz", 4): 431_294_824,
+        ("repeated_gz", 24): 2_587_768_944,
         ("control_bgzf", 1): 102_987_776,
         ("control_bgzf", 4): 185_168_384,
         ("control_bgzf", 24): 1_237_000_704,
@@ -5323,8 +5323,7 @@ class GzipResident(unittest.TestCase):
             "let feed = if chunk > INPUT_CHUNK { chunk } else { INPUT_CHUNK };",
             "let running = if speculation > decode { speculation } else { decode };",
             "let held = decodes * decode + guesses * gz_seek::ChunkTask::GUESS_BYTES;",
-            "let freed = limit as u64 + 1;",
-            "running + held + INPUT_CHUNK + freed",
+            "running + held + INPUT_CHUNK",
         ):
             self.assertIn(line, ahead)
         gz = repo / "crates/gz-seek/src"

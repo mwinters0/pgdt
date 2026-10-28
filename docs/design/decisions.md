@@ -42,7 +42,7 @@ are `docs/process.md`, "The decision register".
 - **D121** A parallel first pass cuts its file at the input chunk every gzip decode pulls
 - **D122** A speculation's guess is cut at a bound on its events and on its bytes past its chunk, and continued
 - **D123** A taken chunk's decode records a BGZF member as its start, header and end, three events a chain read counts
-- **D124** A gzip first pass charges a task what `gz-seek` bounds it to write, and one freed decode buffer
+- **D124** A gzip first pass charges a task what `gz-seek` bounds it to write, and frees no decode buffer while it runs
 - **D20** The library never replaces cache data automatically
 - **D21** Identity is `stored_size()` plus weak signals, in an opaque enum
 - **D87** A remote cache is named from the URL, and the origin it records is advisory
