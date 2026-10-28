@@ -3,8 +3,8 @@
 **The charge is set, and the re-take is not taken.** Every term of a task's
 charge is now a bound `gz-seek` states on what the code writes, and one freed
 decode buffer is charged a task (`docs/design/decisions.md`, "D124"). The
-`gzip-resident` re-take that closes the row needs a commit carrying the
-charge, so it is the next round's.
+decode buffers are pooled next, dropping that term, and the `gzip-resident`
+re-take that closes the row is taken from a commit carrying the pool.
 
 ## What landed
 
@@ -37,8 +37,9 @@ charge, so it is the next round's.
 - **Queued decodes are charged with the guesses.** A queued decode's guess
   stays in the chain's guesses, which `GUESSES_A_TASK` already counts, so a
   guess's term carries the window of the decode behind it.
-- **The freed decode buffer is charged, not pooled.** That is one judgement
-  call, put under STATUS's "Decisions worth another look".
+- **The freed decode buffer is charged, not pooled**, a call the review
+  reversed: the plaintext buffers are pooled before the re-take
+  ([history](../status/history/2026-10-28.md)).
 - **`measure.py` mirrors the new charge, and `GZPASS_BUDGET` rises to
   4 GiB.** The old 3 GiB no longer afforded twenty-four workers a task each
   under `margin_allowance`, at either chunk length
@@ -52,7 +53,7 @@ charge, so it is the next round's.
 ## What the re-take inherits
 
 - **Command**: `cd scripts && uv run measure.py --figure gzip-resident`, run
-  from a commit carrying this change. It is long, so follow `CLAUDE.md`'s
+  from a commit carrying the pool. It is long, so follow `CLAUDE.md`'s
   "Long-running processes".
 - **Done when no cell is under-billed.** Over-bills are expected at every
   count. The charge bounds a crafted file, and `control_gz` and `repeated_gz`
