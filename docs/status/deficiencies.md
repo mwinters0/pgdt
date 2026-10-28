@@ -543,9 +543,9 @@ than reading as a phase nobody has sliced.
 
 - **KD147** — over a member whose writer ends no block before its last, a
   gzip first pass is read slower in parallel than serially at every count
-  `gzip-first-pass` reads, the default's included, by a remainder the pause
-  (D125) leaves flat past the default and nothing yet attributes. **(b) owned
-  by 15.19.1**. Detail:
+  `gzip-first-pass` reads, the default's included, a reading taken before
+  D126 kept its frontier on one thread and not yet re-taken. **(b) owned by
+  15.19.1**. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
 
 - **KD148** — what mimalloc and glibc keep resident of a buffer a gzip first

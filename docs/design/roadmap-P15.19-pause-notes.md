@@ -158,9 +158,10 @@ resolved workers checked.
   rise from four jobs to twelve; nothing here explains twelve and twenty-four
   being level, and nothing has priced a change of thread.
 - **Unattributed, and what would attribute it**: the frontier's off-CPU time
-  at one and twelve jobs on a release-image build. `perf stat`'s software
-  counters (task clock, context switches, migrations) are permitted at this
-  machine's `perf_event_paranoid` of 2; kernel samples are not.
+  at one and twelve jobs on a release-image build. At this machine's
+  `perf_event_paranoid` of 2, `perf stat` counts user time only, so its
+  context switches and migrations read zero; `/proc/<tid>/sched` holds them
+  ([`roadmap-P15.19.1-kept-notes.md`](roadmap-P15.19.1-kept-notes.md)).
 - **The level-6 rows and the default stand.** Each level-6 file's `12` row
   beats serial and both upper counts, the verdict is `shared` as at
   `c4069143`, so D2 is unchanged, and the 4 MiB chunk is slower or level on

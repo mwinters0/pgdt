@@ -64,6 +64,7 @@ mod ahead;
 #[cfg(any(feature = "http", test))]
 mod download;
 mod inflating;
+mod kept;
 mod pass;
 mod spill;
 
@@ -71,6 +72,7 @@ use self::ahead::{Chunking, Frontier, Lift, Reads};
 #[cfg(any(feature = "http", test))]
 use self::download::Download;
 use self::inflating::Inflating;
+use self::kept::Kept;
 use self::pass::{Job, Pass, Route, SKIP_SCRATCH, Served};
 use self::spill::PassWindows;
 
@@ -140,6 +142,8 @@ pub(crate) struct FirstPass {
     download: Option<Arc<Download>>,
     /// Told each time a task ahead lands, for a fetched read awaiting one.
     landed: Arc<Notify>,
+    /// The thread a pulled pass's every job runs on.
+    kept: Kept,
 }
 
 /// Where a pass started, for its started line.
@@ -322,6 +326,7 @@ impl FirstPass {
             #[cfg(any(feature = "http", test))]
             download,
             landed: Arc::new(Notify::new()),
+            kept: Kept::new(),
         }
     }
 
@@ -437,8 +442,8 @@ impl FirstPass {
     }
 
     /// `job`, its decode pulling its compressed bytes from the file, the
-    /// whole of it inside one blocking task, `tasks` let run ahead of the
-    /// frontier each on a blocking task of its own.
+    /// whole of it on the pass's kept thread (`kept.rs`), `tasks` let run
+    /// ahead of the frontier each on a blocking task of its own.
     async fn run_pulled(
         &self,
         file: Arc<std::fs::File>,
@@ -455,32 +460,36 @@ impl FirstPass {
             tasks,
             landed: Arc::clone(&self.landed),
         };
-        tokio::task::spawn_blocking(move || {
-            let mut out = job.obtain(&pool);
-            let mut pass = inner.lock().unwrap_or_else(|e| e.into_inner());
-            pass.lift(&lift);
-            let Some(route) = job.route(&mut pass)? else {
-                return Ok((None, 0, false));
-            };
-            let mut filled = 0usize;
-            loop {
-                match pass.serve(
-                    route,
-                    job.offset(),
-                    job.buffer(&mut out),
-                    &mut filled,
-                    &windows,
-                    stored_size,
-                )? {
-                    Served::Full => return Ok((out, filled, false)),
-                    Served::Ended => return Ok((out, filled, matches!(route, Route::Frontier))),
-                    Served::Needs(at) => pass.refill_from_file(route, &file, at, stored_size)?,
-                    Served::Waits => unreachable!("a pulled frontier waits where it stands"),
+        self.kept
+            .run(move || {
+                let mut out = job.obtain(&pool);
+                let mut pass = inner.lock().unwrap_or_else(|e| e.into_inner());
+                pass.lift(&lift);
+                let Some(route) = job.route(&mut pass)? else {
+                    return Ok((None, 0, false));
+                };
+                let mut filled = 0usize;
+                loop {
+                    match pass.serve(
+                        route,
+                        job.offset(),
+                        job.buffer(&mut out),
+                        &mut filled,
+                        &windows,
+                        stored_size,
+                    )? {
+                        Served::Full => return Ok((out, filled, false)),
+                        Served::Ended => {
+                            return Ok((out, filled, matches!(route, Route::Frontier)));
+                        }
+                        Served::Needs(at) => {
+                            pass.refill_from_file(route, &file, at, stored_size)?
+                        }
+                        Served::Waits => unreachable!("a pulled frontier waits where it stands"),
+                    }
                 }
-            }
-        })
-        .await
-        .map_err(Error::join)?
+            })
+            .await?
     }
 
     /// `job`, its decode fed bytes fetched through the transport, back on
@@ -586,6 +595,7 @@ impl FirstPass {
     /// what the index holds.
     fn hand_over(&self) -> Result<()> {
         let index = self.lock().ended.clone().expect("the frontier reached the end");
+        self.kept.retire();
         #[cfg(any(feature = "http", test))]
         if let Some(download) = &self.download {
             download.clear();

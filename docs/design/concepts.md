@@ -30,7 +30,8 @@ the compressed file pulled or fetched, the remote object
   the BGZF walk that reads a local BGZF file's index at open, and the first
   pass that builds any other's, the source a file no cache has indexed is read
   through until it hands over to the arms, the tasks it runs ahead of its
-  frontier on the caller's threads, the one download a fetched file's
+  frontier on the caller's threads, the one blocking thread a local file's
+  frontier is kept on across reads, the one download a fetched file's
   frontier and tasks read, and the file it spills its windows to, in the
   directory `open`'s caller names.
 - **gz-seek** — `index.rs`, `forward.rs`, `placement.rs`, `parallel/`,
