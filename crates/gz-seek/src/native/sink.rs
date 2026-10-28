@@ -64,6 +64,10 @@ const SLACK: usize = 32;
 /// a step beginning only short of it.
 const LONGEST_COPY: usize = 258;
 
+/// The room a sink keeps past its history and its decode's limit: a copy
+/// begun just short of the limit, and its slack.
+pub(crate) const ROOM_PAST_LIMIT: usize = LONGEST_COPY + SLACK;
+
 /// A buffer of values written in place: `len` of them held, the rest room
 /// ([`SLACK`] past any write), from position `base` on.
 struct Held<T> {
@@ -82,7 +86,7 @@ impl<T: Copy + Default> Held<T> {
     /// and its slack.
     fn new(history: Vec<T>, limit: usize) -> Held<T> {
         let len = history.len();
-        let most = len.saturating_add(limit).saturating_add(LONGEST_COPY + SLACK);
+        let most = len.saturating_add(limit).saturating_add(ROOM_PAST_LIMIT);
         Held { buf: history, len, base: 0, keep: 0, most }
     }
 

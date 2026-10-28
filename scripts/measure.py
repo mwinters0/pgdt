@@ -2560,9 +2560,9 @@ GZPASS_JOBS: tuple[int, ...] = (1, 4, GZPASS_PHYSICAL, GZPASS_LOGICAL - 1, GZPAS
 #: `gzip-resident` states (`stated_allowance`), and so a first pass's
 #: allowance: one that affords the widest row a task each at either chunk
 #: length under `margin_allowance` as well as under the budget, which
-#: `PARALLEL_BUDGET` does not (it affords a twenty-four-job first pass
-#: twenty). A row whose run resolves another count refuses either figure.
-GZPASS_BUDGET = 3 << 30
+#: `PARALLEL_BUDGET` does not. A row whose run resolves another count refuses
+#: either figure.
+GZPASS_BUDGET = 4 << 30
 
 #: The `--jobs` values the two `parallel-*` figures are taken at, and the row
 #: order of their tables.
@@ -11105,6 +11105,33 @@ GZIP_SPECULATION_LIMIT = 2 * ((1 << (9 + 6)) - 1) * 258
 GZIP_DECODES_A_TASK = 2
 GZIP_GUESSES_A_TASK = 5
 
+#: `gz-seek`'s `EVENTS_A_GUESS` (`speculate.rs`), mirrored: the most events a
+#: guess spans before a bound cuts it, which bounds what a chunk's decode
+#: records (`gzip_decode_bytes`).
+GZIP_EVENTS_A_GUESS = 16 * (GZIP_SPECULATION_LIMIT // ((1 << (8 + 6)) - 1))
+
+#: The bytes of one event and one piece a chunk's decode records
+#: (`size_of::<(u64, Event)>()` and `size_of::<(u64, u64, u32)>()` in
+#: `gz-seek`'s `chunk.rs`), mirrored.
+GZIP_EVENT_BYTES = 24
+GZIP_PIECE_BYTES = 24
+
+#: `gz-seek`'s `STATE_BYTES` (`speculate.rs`), mirrored: what a task's own
+#: state holds besides the buffers its bound names.
+GZIP_TASK_STATE_BYTES = 32 * 1024
+
+#: `gz-seek`'s `LONGEST_HEADER` (`native/inflate.rs`), `PAD`
+#: (`native/input.rs`) and `ROOM_PAST_LIMIT` (`native/sink.rs`), mirrored:
+#: what a speculation's input holds past where its decode waits, the padding
+#: past its bytes, and the room each sink keeps past its limit.
+GZIP_LONGEST_HEADER = (3 + 5 + 5 + 4 + 19 * 3 + (288 + 32) * 7 + 7) // 8
+GZIP_INPUT_PAD = 8
+GZIP_ROOM_PAST_LIMIT = 258 + 32
+
+#: `gz-seek`'s `CHAIN_PAST` (`speculate.rs`), mirrored: the most a BGZF chain
+#: read holds past its chunk, a member as long as a `BSIZE` states and a header.
+GZIP_CHAIN_PAST = (1 << 16) + 18
+
 #: The first pass's `SKIP_SCRATCH` (`first_pass/pass.rs`), mirrored: what a
 #: read skipping to its first wanted byte decodes into.
 GZIP_SKIP_SCRATCH = 64 * 1024
@@ -11120,23 +11147,54 @@ def gzip_pass_bytes() -> int:
     return 2 * decode + GZIP_SKIP_SCRATCH
 
 
+def gzip_speculation_bytes(chunk: int, feed: int) -> int:
+    """The most one running speculation holds: its input, from its chunk to
+    the limit's worth past it, a block's header and a feed; its two sinks at
+    their rooms, the marked one two bytes a value; the guess it hands back;
+    and its state.
+
+    `gz_seek::ChunkTask::speculation_bytes` (`speculate.rs`, `most_held`),
+    mirrored."""
+    limit = GZIP_SPECULATION_LIMIT
+    past = max(limit, GZIP_CHAIN_PAST)
+    held = chunk + past + GZIP_LONGEST_HEADER + feed + GZIP_INPUT_PAD
+    sinks = 3 * (limit + GZIP_ROOM_PAST_LIMIT)
+    return held + sinks + 2 * GZIP_WINDOW_BYTES + GZIP_TASK_STATE_BYTES
+
+
+def gzip_decode_bytes() -> int:
+    """The most one chunk's decode holds, handed out or done: its window, its
+    plaintext and a byte, its events and pieces, its engine and its state.
+
+    `gz_seek::ChunkTask::decode_bytes` (`chunk.rs`, `most_held`), mirrored."""
+    guessed = GZIP_EVENTS_A_GUESS + 3
+    events = (2 * guessed + 1) * GZIP_EVENT_BYTES
+    pieces = guessed * GZIP_PIECE_BYTES
+    buffers = GZIP_WINDOW_BYTES + GZIP_SPECULATION_LIMIT + 1 + events + pieces
+    return buffers + GZIP_DECODER_BYTES + GZIP_TASK_STATE_BYTES
+
+
 def gzip_task_bytes(chunk: int = GZIP_INPUT_CHUNK) -> int:
-    """What one task ahead of a first pass's frontier is charged: its chunk,
-    the limit's worth past it, its plaintext twice while it writes markers,
-    `DECODES_A_TASK` decodes' plaintext waiting for the frontier,
-    `GUESSES_A_TASK` guesses' marked histories, and its input buffer.
+    """What one task ahead of a first pass's frontier is charged: a running
+    speculation, fed a read of `INPUT_CHUNK` or a chunk where that is longer;
+    `DECODES_A_TASK` decodes held for the frontier; `GUESSES_A_TASK` guesses,
+    each with the window of a decode queued behind it; its read buffer; and a
+    decode's plaintext buffer freed, which the allocator keeps.
 
     `Chunking::task_bytes` at `Chunking::SHIPPED` (`first_pass/ahead.rs`),
     mirrored, or at a `chunk` a measured leg cuts in its place
-    (`GZPASS_CHUNK_BYTES`). **All of it but its two input chunks and the guesses is five
-    speculation limits**, which is why this figure is what prices that
-    constant: no leg varies it, and a first-pass cell's remainder is read
-    against a charge it dominates (`docs/design/roadmap-P15-gzip.md`, "Slice
-    order")."""
-    limit = GZIP_SPECULATION_LIMIT
-    guess = 2 * GZIP_WINDOW_BYTES
+    (`GZPASS_CHUNK_BYTES`). **All of it but a few chunks' worth is seven
+    speculation limits** — a speculation's input past its chunk and its two
+    sinks four, two decodes held and one freed — which is why this figure is
+    what prices that constant: no leg varies it, and a first-pass
+    cell's remainder is read against a charge it dominates
+    (`docs/design/roadmap-P15-gzip.md`, "Slice order")."""
+    feed = max(chunk, GZIP_INPUT_CHUNK)
+    running = max(gzip_speculation_bytes(chunk, feed), gzip_decode_bytes())
     decodes, guesses = GZIP_DECODES_A_TASK, GZIP_GUESSES_A_TASK
-    return chunk + limit + 2 * limit + decodes * limit + guesses * guess + GZIP_INPUT_CHUNK
+    held = decodes * gzip_decode_bytes() + guesses * 3 * GZIP_WINDOW_BYTES
+    freed = GZIP_SPECULATION_LIMIT + 1
+    return running + held + GZIP_INPUT_CHUNK + freed
 
 
 def gzip_first_pass_charge(jobs: int, stored_size: int) -> int:
@@ -11294,8 +11352,8 @@ def run_gzip_resident(session: Session) -> str:
     unnamed remainder exceeds `MEMORY_UNPOOLED_BOUND` (the bound is wrong for
     gzip, and the sitting re-derives it) or `MEMORY_RESERVE` (the rule does
     not hold for gzip); or an over-bill — a cell holding less than it was
-    charged, which on a first-pass leg names the speculation limit, five
-    limits of a task's charge (`gzip_task_bytes`). The secant
+    charged, which on a first-pass leg names the speculation limit, most of
+    a task's charge (`gzip_task_bytes`). The secant
     between the two upper counts states what each added worker held against
     what it was charged, which is that pricing; it is a secant over two
     counts, not a fit.
@@ -11303,7 +11361,7 @@ def run_gzip_resident(session: Session) -> str:
     **What would falsify a task's charge as a bound** is the limit leg's
     secant: each added worker holding more than `Chunking::task_bytes` on a
     member whose chunks reach the limit, an under-bill that admits workers a
-    container then kills (`KD141`'s promotion). The secant table says, leg by
+    container then kills (D124). The secant table says, leg by
     leg, whether a worker held past its charge. The limit leg is refused
     before any leg is read unless its member packs past the limit's ratio
     (`gzip_limit_ratio_problem`), a leg filling no term being no falsifier.
@@ -11486,7 +11544,7 @@ def run_gzip_resident(session: Session) -> str:
         "**rule** is. The `Criterion` column names the band. **A first-pass cell is billed "
         "per worker with no pool**: each worker the larger of the pass's two decodes and "
         f"skip scratch ({_fmt_budget_bytes(gzip_pass_bytes())}) and a task's charge "
-        f"({_fmt_budget_bytes(gzip_task_bytes())}, five speculation limits of it), and its "
+        f"({_fmt_budget_bytes(gzip_task_bytes())}, seven speculation limits of it), and its "
         "`Workers` column says how many the pass ran — the frontier and the tasks ahead. "
         "**A BGZF cell is billed as an `.xz` one is**, a reader its "
         f"{_fmt_budget_bytes(bgzf_unit())} unit, the scan's chunk and gzip's pulling "

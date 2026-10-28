@@ -87,8 +87,8 @@ ending history; the engine decodes from there, and the frontier takes a decode o
 history, so the index is the serial pass's. Its decoder decides who decodes a byte, never what it is: a member's only
 check is its trailer, so a defect in ours would reach a caller unchecked till the member ends. Rejected: native
 plaintext handed out, saving the engine's share of the CPU; the frontier waiting on its own chunk's speculation, slower
-than serial; per-task fetches; a decode's buffer pooled before a reading prices its pages, or the charge lowered before
-one attributes a worker's remainder (`KD141`). Reopens: the second decode keeping the pass from lifting the inflate.
+than serial; per-task fetches; a decode's buffer pooled, the one an allocator keeps charged instead (D124). Reopens:
+the second decode keeping the pass from lifting the inflate.
 Code: `gz_seek::Parallel`.
 
 ### D118 A checkpoint inside a static block is placed by walking its codes beside the engine
@@ -133,6 +133,16 @@ construction. Rejected: handing back nothing past an event bound, which wastes t
 boundary under the bound, as `cut_at_static` does, a cut where nothing need be recorded. Reopens: a checkpoint owed
 inside a BGZF member. Code: `chunk.rs` (`Running::event`), `speculate/members.rs` (`EVENTS_A_MEMBER`). Evidence:
 `a_decode_through_bgzf_members_records_only_their_starts_headers_and_ends`, `a_chain_the_event_count_cuts_is_continued`.
+
+### D124 A gzip first pass charges a task what `gz-seek` bounds it to write, and one freed decode buffer
+`Chunking::task_bytes` sums bounds `gz-seek` states beside the code they bound (`ChunkTask::speculation_bytes`,
+`decode_bytes`, `GUESS_BYTES`), counting bytes written, not room never touched, with one decode's plaintext buffer
+freed, which mimalloc's purge delay and glibc's arenas keep resident about one a worker. Rejected: a buffer's capacity
+counted, charging pages no write touches; the larger sink alone, which a member begun midway through a marked decode
+passes; decode buffers pooled in `gz_seek::Parallel`, a rework of the pass's handoff that the charge does not need.
+Reopens: `gzip-resident` under-billing; a pool. Code: `ahead.rs` (`Chunking::task_bytes`), `speculate.rs` and
+`chunk.rs` (`most_held`). Evidence: `a_speculation_s_sinks_fill_together_within_its_bound`,
+`a_decode_of_a_guess_the_count_cut_records_within_its_bound`.
 
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source

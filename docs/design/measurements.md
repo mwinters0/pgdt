@@ -4027,7 +4027,7 @@ holds what it was charged. The bound needs no re-derivation for gzip
 That leg's chunks inflate past `SPECULATION_LIMIT`, so every plaintext term of
 `Chunking::task_bytes` can fill. Each added worker between 4 and 24 held
 45.7 MiB against the 82.9 MiB charged, and the `system` twins held about the
-same. No under-bill appeared, so `KD141`'s term was not promoted. On
+same. No under-bill appeared. On
 `control_gz` each added worker held 25.6 MiB, down from 41.7 MiB at
 `511ca16b`, under a charge 15.17.4 raised.
 
@@ -4048,12 +4048,11 @@ the limit leg at 24 and 4 jobs, read as a difference
 - **The rest of the reading is not heap.** 45.7 MiB held against 25.0 MiB
   asked leaves about 20.7 MiB a worker that heaptrack cannot see, since it
   counts what was asked for and not what an allocator kept after a free.
-  It is named from the allocators' source, and no reading separates it: a
-  freed decode buffer kept resident, by mimalloc's purge delay and by
-  glibc's dynamic `mmap` threshold, the twins agreeing (`KD148`). The
-  reading that would separate it turns each allocator's retention off. It is
-  outside the heap the charge's terms describe, so a charge cut to the heap's
-  terms would hand it to the bound.
+  It is named from the allocators' source: a freed decode buffer kept
+  resident, by mimalloc's purge delay and by glibc's dynamic `mmap`
+  threshold, the twins agreeing, and turning each allocator's retention off
+  bears the name out (`runs/p15.18.3/`). It is outside the heap the charge's
+  terms describe, so a task's charge gives it a term of its own (D124).
 
 **The limit leg's wall clock barely moves with the count**
 (`runs/gzip-resident-20261027-1824/log`, each rep's line). Its first pass

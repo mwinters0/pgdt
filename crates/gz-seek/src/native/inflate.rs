@@ -25,6 +25,16 @@ const CODE_LENGTH_ORDER: [usize; 19] =
 /// symbol with its extra bits, and no more than a member's trailer.
 const SYMBOL_LOOKAHEAD: u64 = 64;
 
+/// The most input a decode holds past where it stands when [`Inflater::run`]
+/// stops for more, in bytes: a dynamic block's longest header — its type,
+/// its three counts, nineteen code-length code lengths, and 320 code lengths
+/// of at most seven bits each, a repeat's extra bits standing for three or
+/// more — which is longer than a stored block's header or a symbol's
+/// lookahead.
+pub(crate) const LONGEST_HEADER: usize =
+    (3 + 5 + 5 + 4 + 19 * 3 + (288 + 32) * 7_usize).div_ceil(8);
+const _: () = assert!(LONGEST_HEADER * 8 >= SYMBOL_LOOKAHEAD as usize);
+
 /// The fixed block's codes.
 pub(super) fn fixed_codes() -> &'static (Huffman, Huffman) {
     static FIXED: OnceLock<(Huffman, Huffman)> = OnceLock::new();

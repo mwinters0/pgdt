@@ -522,13 +522,6 @@ than reading as a phase nobody has sliced.
   begins late or not at all. **(c) unowned**; promoted by a speculation seen
   to miss its chunk's first block. Detail: `crates/gz-seek/src/find.rs`.
 
-- **KD141** — a gzip first pass's task charge is not set on the bounds
-  `gz-seek` puts on a speculation and the decode its guess lets begin: a
-  speculation's plain sink beside its marked one, its input past the limit's
-  worth by a feed, and a taken decode's events are each held outside or past
-  a term. **(b) owned by 15.18.3**. Detail:
-  `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
-
 - **KD143** — a parallel first pass speculates nearly every chunk and the
   engine decodes each taken one again, so at four workers they are nearly
   always busy and the frontier waits a large share of its time on taken
@@ -554,8 +547,9 @@ than reading as a phase nobody has sliced.
   `gzip-first-pass` reads. **(b) owned by 15.19**. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
 
-- **KD148** — a gzip first pass's freed decode buffers, which mimalloc and
-  glibc each keep resident, about one a worker, are charged by no term of a
-  task's charge; the slack of terms that hold nothing on zlib's files covers
-  them. **(b) owned by 15.18.3**. Detail:
+- **KD148** — what mimalloc and glibc keep resident of a buffer a gzip first
+  pass's task outgrows as it grows — a speculation's input and sinks, a
+  decode's events — is charged by no term of a task's charge, up to as much
+  again as those terms. **(c) unowned**; promoted by a reading over a file
+  whose speculations fill their sinks. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.

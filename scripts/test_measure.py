@@ -5120,18 +5120,20 @@ class GzipResident(unittest.TestCase):
     FIGURE = "gzip-resident"
 
     #: What each leg's run said it billed, read off `scan started` by hand from
-    #: trial runs of `pgdt parse --memory 3623878656` over every leg on
-    #: 2026-10-27, after 15.17.4 moved a task's charge, the gzip charge as built
-    #: (`runs/p15.18/trial-bills.sh`): the mirror is held to these, the bills a
-    #: run states, as well as to the source. Every run resolved its row's
-    #: count, and each first pass ran that many workers.
+    #: trial runs of `pgdt parse` under `GZPASS_BUDGET`'s allowance: the
+    #: first-pass legs on 2026-10-28, after 15.18.3 set a task's charge
+    #: (`runs/p15.18.3/trial-bills.sh`), the BGZF leg's block path on
+    #: 2026-10-27 (`runs/p15.18/trial-bills.sh`), which that charge does not
+    #: move. The mirror is held to these, the bills a run states, as well as
+    #: to the source. Every run resolved its row's count, and each first pass
+    #: ran that many workers.
     STATED_BILLS = {
-        ("control_gz", 1): 86_963_692,
-        ("control_gz", 4): 347_854_768,
-        ("control_gz", 24): 2_087_128_608,
-        ("repeated_gz", 1): 86_963_692,
-        ("repeated_gz", 4): 347_854_768,
-        ("repeated_gz", 24): 2_087_128_608,
+        ("control_gz", 1): 124_731_479,
+        ("control_gz", 4): 498_925_916,
+        ("control_gz", 24): 2_993_555_496,
+        ("repeated_gz", 1): 124_731_479,
+        ("repeated_gz", 4): 498_925_916,
+        ("repeated_gz", 24): 2_993_555_496,
         ("control_bgzf", 1): 102_987_776,
         ("control_bgzf", 4): 185_168_384,
         ("control_bgzf", 24): 1_237_000_704,
@@ -5315,13 +5317,60 @@ class GzipResident(unittest.TestCase):
         self.assertIn(
             "Chunking { bytes: CHUNK_BYTES, limit: gz_seek::SPECULATION_LIMIT, lead: 4 };", ahead
         )
-        self.assertIn("let guess = 2 * gz_seek::WINDOW_SIZE as u64;", ahead)
         self.assertIn(f"const DECODES_A_TASK: usize = {measure.GZIP_DECODES_A_TASK};", ahead)
         self.assertIn(f"const GUESSES_A_TASK: usize = {measure.GZIP_GUESSES_A_TASK};", ahead)
+        for line in (
+            "let feed = if chunk > INPUT_CHUNK { chunk } else { INPUT_CHUNK };",
+            "let running = if speculation > decode { speculation } else { decode };",
+            "let held = decodes * decode + guesses * gz_seek::ChunkTask::GUESS_BYTES;",
+            "let freed = limit as u64 + 1;",
+            "running + held + INPUT_CHUNK + freed",
+        ):
+            self.assertIn(line, ahead)
+        gz = repo / "crates/gz-seek/src"
+        task = (gz / "parallel/task.rs").read_text()
+        self.assertIn("pub const GUESS_BYTES: u64 = 3 * WINDOW_SIZE as u64;", task)
         self.assertIn(
-            "self.bytes.get() + limit + 2 * limit + decodes * limit + guesses * guess + INPUT_CHUNK",
-            ahead,
+            "const EVENTS_A_GUESS: usize = 16 * (SPECULATION_LIMIT / ((1 << (8 + 6)) - 1));",
+            speculate,
         )
+        self.assertIn(
+            f"const STATE_BYTES: u64 = {measure.GZIP_TASK_STATE_BYTES >> 10} * 1024;", speculate
+        )
+        self.assertIn(
+            "const CHAIN_PAST: u64 = u16::MAX as u64 + 1 + crate::bgzf::BGZF_HEADER_LEN as u64;",
+            speculate,
+        )
+        for line in (
+            "let past = if limit > CHAIN_PAST { limit } else { CHAIN_PAST };",
+            "let input = chunk_bytes + past + LONGEST_HEADER as u64 + feed + PAD as u64;",
+            "let sinks = 3 * (limit + ROOM_PAST_LIMIT as u64);",
+            "let guess = 2 * WINDOW_SIZE as u64;",
+            "input + sinks + guess + STATE_BYTES",
+        ):
+            self.assertIn(line, speculate)
+        chunk = (gz / "chunk.rs").read_text()
+        for line in (
+            "const EVENTS_A_GUESSED: usize = EVENTS_A_GUESS + 3;",
+            "pub(crate) const PIECES_A_DECODE: usize = EVENTS_A_GUESSED;",
+            "pub(crate) const EVENTS_A_DECODE: usize = 2 * EVENTS_A_GUESSED + 1;",
+            "let buffers = WINDOW_SIZE + limit + 1 + events + pieces;",
+            "buffers as u64 + DECODER_BYTES + STATE_BYTES",
+        ):
+            self.assertIn(line, chunk)
+        native = gz / "native"
+        inflate = (native / "inflate.rs").read_text()
+        self.assertIn("pub(crate) const LONGEST_HEADER: usize =", inflate)
+        self.assertIn("(3 + 5 + 5 + 4 + 19 * 3 + (288 + 32) * 7_usize).div_ceil(8);", inflate)
+        self.assertEqual(measure.GZIP_LONGEST_HEADER, 290)
+        self.assertIn(
+            f"pub(crate) const PAD: usize = {measure.GZIP_INPUT_PAD};",
+            (native / "input.rs").read_text(),
+        )
+        sink = (native / "sink.rs").read_text()
+        self.assertIn("const LONGEST_COPY: usize = 258;", sink)
+        self.assertIn("const SLACK: usize = 32;", sink)
+        self.assertEqual(measure.GZIP_ROOM_PAST_LIMIT, 258 + 32)
 
     def test_the_charges_are_the_bills_a_run_stated(self):
         sizes = self.SIZES
@@ -5709,9 +5758,10 @@ class GzipFirstPass(unittest.TestCase):
     def test_the_budget_affords_the_widest_row_at_either_chunk(self):
         # `Parallelism::fit` solves the count against the budget and
         # `margin_allowance` both, a worker charged a task; `PARALLEL_BUDGET`'s
-        # 2 GiB affords twenty at the shipped chunk, which would clamp the top
-        # rows silently were the run's own count not checked too. So
-        # `gzip-resident`, whose top row is twenty-four, states this budget too.
+        # 2 GiB affords fewer than twenty-four at the shipped chunk, which would
+        # clamp the top rows silently were the run's own count not checked too.
+        # So `gzip-resident`, whose top row is twenty-four, states this budget
+        # too.
         def afforded(budget: int, chunk: int) -> int:
             allowance = measure.stated_allowance(budget)
             ceiling = (allowance // 100) * (

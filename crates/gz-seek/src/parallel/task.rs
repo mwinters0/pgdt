@@ -3,6 +3,7 @@
 
 use crate::chunk::{ChunkDecode, ChunkDecoded};
 use crate::speculate::{Speculated, Speculation};
+use crate::zlib::WINDOW_SIZE;
 
 /// Which of a pass's tasks this is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -81,6 +82,29 @@ enum Work {
 }
 
 impl ChunkTask {
+    /// The most bytes a guess held for the frontier holds — its marked
+    /// history at its stop, at most a window of two-byte values — with the
+    /// window of the decode it lets begin, while that decode is queued and
+    /// not yet handed out.
+    pub const GUESS_BYTES: u64 = 3 * WINDOW_SIZE as u64;
+
+    /// The most bytes a speculation holds while it runs, over a file cut into
+    /// chunks of `chunk_bytes` under the pass's `limit`, its caller supplying
+    /// at most `feed` bytes at a time: its input, its two sinks at their
+    /// rooms, the guess it hands back and its code tables. A bound the code
+    /// holds it to, counting what it writes and not room it never writes
+    /// (`docs/design/decisions.md`, "D124").
+    pub const fn speculation_bytes(chunk_bytes: u64, limit: usize, feed: u64) -> u64 {
+        crate::speculate::most_held(chunk_bytes, limit, feed)
+    }
+
+    /// The most bytes a decode holds under the pass's `limit`, handed out or
+    /// done and held for the frontier: its window, its plaintext, its events
+    /// and pieces, and its engine while it runs.
+    pub const fn decode_bytes(limit: usize) -> u64 {
+        crate::chunk::most_held(limit)
+    }
+
     pub(crate) fn speculation(task: Speculation) -> ChunkTask {
         ChunkTask(Work::Speculation(Box::new(task)))
     }

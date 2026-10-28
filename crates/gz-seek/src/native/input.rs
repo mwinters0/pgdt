@@ -3,7 +3,7 @@
 
 /// Zero bytes kept past the held ones, so that an eight-byte load at any held
 /// byte stays inside the buffer.
-const PAD: usize = 8;
+pub(crate) const PAD: usize = 8;
 
 /// A window of the file's bytes, addressed by file offset.
 pub(crate) struct Input {
@@ -30,6 +30,13 @@ impl Input {
         let mut bytes = Vec::with_capacity(capacity + PAD);
         bytes.resize(PAD, 0);
         Input { bytes, base, len: 0, file_len }
+    }
+
+    /// How many bytes it has written, padding included: what it holds
+    /// resident, room it never wrote aside.
+    #[cfg(test)]
+    pub(crate) fn written(&self) -> usize {
+        self.bytes.len()
     }
 
     /// File offset of the next byte the input wants.

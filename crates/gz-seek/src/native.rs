@@ -35,9 +35,9 @@ mod input;
 mod sink;
 mod walk;
 
-pub(crate) use self::inflate::{Inflater, Stop};
-pub(crate) use self::input::Input;
-pub(crate) use self::sink::{MARKER, Marked, Plain, Sink};
+pub(crate) use self::inflate::{Inflater, LONGEST_HEADER, Stop};
+pub(crate) use self::input::{Input, PAD};
+pub(crate) use self::sink::{MARKER, Marked, Plain, ROOM_PAST_LIMIT, Sink};
 pub(crate) use self::walk::{Walk, Walked};
 
 #[cfg(test)]

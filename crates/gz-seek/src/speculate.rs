@@ -44,7 +44,9 @@
 
 use crate::find::{Candidate, Found, find, is_searched_for, stored_length_at};
 use crate::member::{Header, Trailer};
-use crate::native::{Inflater, Input, MARKER, Marked, Plain, Sink, Stop};
+use crate::native::{
+    Inflater, Input, LONGEST_HEADER, MARKER, Marked, PAD, Plain, ROOM_PAST_LIMIT, Sink, Stop,
+};
 use crate::zlib::WINDOW_SIZE;
 
 use self::members::{Members, Read, Walked};
@@ -70,6 +72,51 @@ pub const SPECULATION_LIMIT: usize = 2 * ((1 << (9 + 6)) - 1) * 258;
 /// a member, all that decode records of a BGZF member
 /// (`docs/design/decisions.md`, "D122").
 pub(crate) const EVENTS_A_GUESS: usize = 16 * (SPECULATION_LIMIT / ((1 << (8 + 6)) - 1));
+
+/// What a speculation's or a chunk decode's own state holds besides the
+/// buffers its bound names — a decoder's code tables, and the bookkeeping
+/// around its buffers — held under it by an assertion beside each.
+pub(crate) const STATE_BYTES: u64 = 32 * 1024;
+const _: () = assert!(
+    std::mem::size_of::<Speculation>()
+        + std::mem::size_of::<Decode>()
+        + std::mem::size_of::<Inflater>()
+        <= STATE_BYTES as usize
+);
+
+/// The most compressed bytes a BGZF chain read holds past its chunk's end:
+/// the member reaching past it, as long as a `BSIZE` states, and the header
+/// after that.
+const CHAIN_PAST: u64 = u16::MAX as u64 + 1 + crate::bgzf::BGZF_HEADER_LEN as u64;
+
+/// The most bytes one speculation holds written, of a file cut into chunks of
+/// `chunk_bytes` under `limit`, its caller supplying at most `feed` bytes at
+/// a time: what a caller's memory is charged for it running.
+///
+/// - **Its input**, from where its decode began — no earlier than its chunk's
+///   first byte, or a continuation's start — to its compressed bound, the
+///   limit's worth past the chunk's end, or a chain read's member and header
+///   past it: the decode stops for more short of the bound by at most a
+///   block's header ([`LONGEST_HEADER`]), and one feed then reaches past it;
+///   and the padding.
+/// - **Its two sinks, each at its room** (`Held::new`): the marked one, two
+///   bytes a value, and the plain one, made for the whole limit at the
+///   decode's start and written once a member begins inside the decode, so
+///   both are full where that member begins about halfway to the limit.
+/// - **The guess it hands back**, at most a window of values, built while
+///   the sinks are held.
+///
+/// Bytes a buffer has room for and never wrote are not counted, since no
+/// page of them is touched; what an allocator keeps of a buffer outgrown is
+/// the caller's to charge (`docs/design/decisions.md`, "D124").
+pub(crate) const fn most_held(chunk_bytes: u64, limit: usize, feed: u64) -> u64 {
+    let limit = limit as u64;
+    let past = if limit > CHAIN_PAST { limit } else { CHAIN_PAST };
+    let input = chunk_bytes + past + LONGEST_HEADER as u64 + feed + PAD as u64;
+    let sinks = 3 * (limit + ROOM_PAST_LIMIT as u64);
+    let guess = 2 * WINDOW_SIZE as u64;
+    input + sinks + guess + STATE_BYTES
+}
 
 /// A place a decode stands between two steps: where a chunk begins or ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -426,6 +473,20 @@ impl Speculation {
             Point::End => State::Done(None),
         };
         task
+    }
+
+    /// The bytes its input and its sinks have written: what
+    /// [`most_held`] bounds, its guess and code tables aside.
+    #[cfg(test)]
+    pub(crate) fn written(&self) -> usize {
+        let sinks = match &self.state {
+            State::Decoding(decode) => {
+                let marked = decode.marked.as_ref().map_or(0, Marked::capacity);
+                2 * marked + decode.plain.capacity()
+            }
+            _ => 0,
+        };
+        self.input.written() + sinks
     }
 
     /// Which chunk of the file this is.

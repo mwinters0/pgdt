@@ -84,35 +84,37 @@ impl Chunking {
     }
 
     /// What one task ahead of the frontier holds, running and then held for
-    /// it: a speculation's compressed bytes — its chunk, and the limit's worth
-    /// past it, the block it stops in — its plaintext twice over while it
-    /// writes markers, or a decode's window, engine and plaintext, the
-    /// speculation being the larger; then [`DECODES_A_TASK`] decodes'
-    /// plaintext and [`GUESSES_A_TASK`] guesses' marked histories waiting for
-    /// the frontier (`Ahead::top_up` holding the results to those multiples of
-    /// the tasks' count); and the buffer the task reads its input into.
-    ///
-    /// Deficiency register: `deficiency: KD141` — the terms are not set on
-    /// the bounds `gz_seek` puts on a speculation and on the decode its guess
-    /// lets begin (`docs/design/decisions.md`, "D122"), and fall short of
-    /// three: its plain sink, up to the limit and a window once it comes
-    /// clean, beside its marked one, which reaches a copy past two limits;
-    /// its input, read past the limit's worth by the feed that reached it, in
-    /// a buffer grown by doubling; and a taken decode's events and pieces,
-    /// up to about twice `EVENTS_A_GUESS` each. **(b) owned by 15.18.3**.
+    /// it, each term a bound `gz_seek` states on what the code writes: a
+    /// running speculation, the larger of the two kinds of task, fed a read
+    /// of [`INPUT_CHUNK`] on a local file or a piece of a chunk on a fetched
+    /// one; [`DECODES_A_TASK`] decodes handed out or held for the frontier,
+    /// and [`GUESSES_A_TASK`] guesses with the windows of the decodes queued
+    /// behind them (`Ahead::top_up` holding the results to those multiples of
+    /// the tasks' count); the buffer a local task reads its input into; and a
+    /// decode's plaintext buffer freed, which the allocator keeps resident
+    /// (`docs/design/decisions.md`, "D124"). The frontier's own worker is
+    /// charged a task too, and holds the pass, the decode it serves and the
+    /// chain's end.
     ///
     /// Deficiency register: `deficiency: KD148` — no term charges what the
-    /// allocator keeps resident of the decode buffers a task frees: mimalloc
-    /// commits a freed page for its purge delay, and glibc, once a freed
-    /// buffer raises its dynamic `mmap` threshold, serves the next from a
-    /// thread's arena and trims it only past twice that. It grows by a worker,
-    /// so it is not `MEMORY_UNPOOLED_BOUND`'s to cover; the terms holding
-    /// nothing on zlib's files cover it there. **(b) owned by 15.18.3**.
+    /// allocator keeps of a buffer a task outgrows as it grows — a
+    /// speculation's input, its sinks, a decode's events — the way mimalloc
+    /// commits a freed page for its purge delay and glibc serves the next
+    /// allocation from a thread's arena, trimming only past its threshold.
+    /// What a task outgrows is under what it ends up holding, so it is up to
+    /// as much again of those terms; they hold little on every file
+    /// `gzip-resident` reads. **(c) unowned**; promoted by a reading over a
+    /// file whose speculations fill their sinks.
     pub(super) const fn task_bytes(self) -> u64 {
-        let limit = self.limit as u64;
-        let guess = 2 * gz_seek::WINDOW_SIZE as u64;
+        let (chunk, limit) = (self.bytes.get(), self.limit);
+        let feed = if chunk > INPUT_CHUNK { chunk } else { INPUT_CHUNK };
+        let speculation = gz_seek::ChunkTask::speculation_bytes(chunk, limit, feed);
+        let decode = gz_seek::ChunkTask::decode_bytes(limit);
+        let running = if speculation > decode { speculation } else { decode };
         let (decodes, guesses) = (DECODES_A_TASK as u64, GUESSES_A_TASK as u64);
-        self.bytes.get() + limit + 2 * limit + decodes * limit + guesses * guess + INPUT_CHUNK
+        let held = decodes * decode + guesses * gz_seek::ChunkTask::GUESS_BYTES;
+        let freed = limit as u64 + 1;
+        running + held + INPUT_CHUNK + freed
     }
 
     /// How many pieces a fetched pass's download may hold with `tasks` run

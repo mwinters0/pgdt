@@ -636,3 +636,73 @@ fn a_marked_run_grows_its_sink_no_further_than_the_limit_asks() {
     assert!(most > 1 << 24 && most <= SPECULATION_LIMIT + 258 + 32, "grew to {most}");
     assert!(task.finish().found.is_none(), "a run the limit ended with no boundary");
 }
+
+/// **A speculation's two sinks fill together**, so what it holds is bounded
+/// by both rooms, not the larger: a marked run past half the limit, its
+/// member's end, and a member whose one block runs on to the limit, written
+/// into the plain sink made at the decode's start. Its input and sinks never
+/// pass [`most_held`], and reach most of it.
+#[test]
+fn a_speculation_s_sinks_fill_together_within_its_bound() {
+    let mut bits = Bits::after(HEADER.to_vec());
+    bits.fixed();
+    bits.literal(b'a');
+    bits.end_of_block();
+    let start = bits.bit;
+    bits.last_fixed();
+    for _ in 0..SPECULATION_LIMIT / 2 / 258 + 64 {
+        bits.copy_258_from_1();
+    }
+    bits.end_of_block();
+    let mut file = bits.bytes;
+    // The trailer, which a speculation reads unchecked.
+    file.extend_from_slice(&[0; 8]);
+    let mut bits = Bits::after([file, HEADER.to_vec()].concat());
+    bits.last_fixed();
+    bits.literal(b'b');
+    for _ in 0..SPECULATION_LIMIT / 2 / 258 {
+        bits.copy_258_from_1();
+    }
+    bits.end_of_block();
+    let file = bits.bytes;
+    let len = file.len() as u64;
+    // Fine enough that a supply growing the plain sink does not also reach
+    // the limit, ending the decode before its sinks are read.
+    let feed = 64;
+    let bound = most_held(len, SPECULATION_LIMIT, feed as u64) as usize;
+    let mut task = Speculation::continuing(0, Point::Block(start), len, SPECULATION_LIMIT, len);
+    let mut most = 0;
+    while let Some(at) = task.wants() {
+        let at = at as usize;
+        task.supply(&file[at..(at + feed).min(file.len())]);
+        most = most.max(task.written());
+    }
+    assert!(most <= bound, "held {most} against {bound}");
+    assert!(10 * most > 29 * SPECULATION_LIMIT, "held {most}: the sinks never filled together");
+}
+
+/// **The engine's decode of a guess the event count cut records no more than
+/// a decode's bound**: over a run of empty fixed blocks, each one's static
+/// start and its end, about twice the events the guess spans.
+#[test]
+fn a_decode_of_a_guess_the_count_cut_records_within_its_bound() {
+    use crate::chunk::{ChunkDecode, EVENTS_A_DECODE, PIECES_A_DECODE};
+    let blocks = 3 * EVENTS_A_GUESS / 2;
+    let (file, stored) = empty_blocks_then(blocks, &payload(300_000, 41));
+    let truth = truth(&file);
+    let bytes = stored / 8 + 20_000;
+    let first = &chained(&file, 0, bytes, usize::MAX, 1 << 20)[0];
+    assert!(first.cut, "a guess the count did not cut");
+    let window = truth.window(truth.offset_of(first.start).unwrap()).to_vec();
+    let len = file.len() as u64;
+    let mut task = ChunkDecode::new((0, 0), first.start, window, first.stop, first.len, len);
+    while let Some(at) = task.wants() {
+        let at = at as usize;
+        task.supply(&file[at..(at + (1 << 20)).min(file.len())]);
+    }
+    let decoded = task.finish().found.expect("the guess decoded");
+    let events = decoded.events.len();
+    assert!(events >= 2 * (EVENTS_A_GUESS - 2), "{events} events");
+    assert!(events <= EVENTS_A_DECODE, "{events} events against {EVENTS_A_DECODE}");
+    assert!(decoded.pieces.len() <= PIECES_A_DECODE, "{} pieces", decoded.pieces.len());
+}

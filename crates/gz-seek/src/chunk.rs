@@ -20,7 +20,38 @@
 //! meets those bytes and refuses them as the serial pass does.
 
 use crate::engine::{Engine, Event as EngineEvent, Member};
-use crate::speculate::{Event, Point};
+use crate::speculate::{EVENTS_A_GUESS, Event, Point, STATE_BYTES};
+use crate::zlib::{DECODER_BYTES, WINDOW_SIZE};
+
+/// The most events one guess spans: [`EVENTS_A_GUESS`], and the trailer, start
+/// and header a speculation passes between two of its checks of the count.
+const EVENTS_A_GUESSED: usize = EVENTS_A_GUESS + 3;
+
+/// The most pieces a chunk's decode records: one at each block's or member's
+/// end its guess spans.
+pub(crate) const PIECES_A_DECODE: usize = EVENTS_A_GUESSED;
+
+/// The most events a chunk's decode records: those its guess spans, a static
+/// block's start beside each block's end, and its stop. Inside a BGZF member
+/// it records three a member, which a chain read counts
+/// (`docs/design/decisions.md`, "D123").
+pub(crate) const EVENTS_A_DECODE: usize = 2 * EVENTS_A_GUESSED + 1;
+
+const _: () = assert!(
+    std::mem::size_of::<ChunkDecode>() + std::mem::size_of::<Running>() <= STATE_BYTES as usize
+);
+
+/// The most bytes one chunk's decode holds written, under `limit`, handed out
+/// or done: its window, its plaintext and the byte past it, its events and
+/// pieces, and its engine while it runs ([`DECODER_BYTES`]). Bytes a buffer
+/// has room for and never wrote are not counted (`docs/design/decisions.md`,
+/// "D124").
+pub(crate) const fn most_held(limit: usize) -> u64 {
+    let events = EVENTS_A_DECODE * std::mem::size_of::<(u64, Event)>();
+    let pieces = PIECES_A_DECODE * std::mem::size_of::<(u64, u64, u32)>();
+    let buffers = WINDOW_SIZE + limit + 1 + events + pieces;
+    buffers as u64 + DECODER_BYTES + STATE_BYTES
+}
 
 /// A chunk's plaintext from its start, as the engine decoded it.
 pub(crate) struct Decoded {
