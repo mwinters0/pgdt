@@ -157,15 +157,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-
-- **15.19.1: the kept frontier gives its thread back after 100 ms idle, and
-  keeps the serial pass too.** `Kept`'s `IDLE` (`first_pass/kept.rs`, D126)
-  is a chosen constant, not a measured one. A runtime's shutdown waits for
-  every blocking task, so a thread waiting with no timeout would hang a
-  runtime outliving an unretired pass, and 100 ms is far above a scan's gap
-  between reads. A read after a longer gap starts the thread again, on
-  whichever idle thread the pool picks. The kept thread also runs a serial
-  pass's jobs, where the pool already kept one thread, so the local arm has
-  one path at every count. Reconsidering means one of three things: a
-  measured gap; no timeout at all, the hang being an embedder's leak; or a
-  kept thread only where tasks run ahead.

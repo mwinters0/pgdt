@@ -154,11 +154,12 @@ than before it. Code: `Parallel::speculation_through`. Evidence:
 `a_speculation_finding_nothing_pauses_speculation_until_the_next_block_start`.
 
 ### D126 A local gzip first pass keeps its frontier on one blocking thread from read to read
-A `spawn_blocking` a read goes to the blocking thread idle longest, so once the tasks ahead leave threads idle the
-frontier changes thread, and core, at every scan read, where a serial pass keeps one. Its jobs run in order on one
-`spawn_blocking`, given back at the hand-over, on drop, or after `IDLE` with none, as a runtime's shutdown waits for it.
-Rejected: a thread of our own (D12); pinning a thread to a core, the operator's to set; keeping the fetched arm's
-frontier, which goes back to the runtime between steps (D15). Reopens: `gzip-first-pass` reading a default count no
+A `spawn_blocking` a read wakes the idle blocking thread the platform's condvar picks, on Linux the longest idle, so
+once the tasks ahead leave threads idle the frontier changes thread, and core, at every read, where a serial pass keeps
+one. Its jobs run in order on one `spawn_blocking`, given back at the hand-over, on drop, or after `IDLE` with none, as
+a runtime's shutdown waits for it. Rejected: a thread of our own (D12); pinning to a core, the operator's to set;
+keeping the fetched arm's frontier, back on the runtime between steps (D15); a kept thread only where tasks run ahead,
+a second path for what the pool keeps at one job. Reopens: `gzip-first-pass` reading a default count no
 faster than before it. Code: `first_pass/kept.rs` (`Kept`). Evidence:
 `every_job_runs_on_one_thread_while_other_blocking_threads_idle`, `gzip-first-pass`.
 

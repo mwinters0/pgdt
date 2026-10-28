@@ -13,7 +13,7 @@ stays empty.
 - **A scan read is one job**, and `FirstPass::run_pulled` ran each as a
   `spawn_blocking` of its own. A cold `parse` reads `SCAN_CHUNK_DEFAULT_SIZE_BYTES`
   at a time, about 3,100 reads over `control_gz_quick`'s plaintext.
-- **tokio's blocking pool wakes the thread that has been idle longest.** Its
+- **tokio's blocking pool wakes one idle thread; Linux picks the longest idle.** Its
   idle threads wait on one `Condvar` (`tokio-1.53.1`,
   `runtime/blocking/pool.rs`, `Inner::run`), and `spawn_task` calls
   `notify_one`. The futex wakes its waiters in FIFO order, so successive jobs

@@ -4,10 +4,11 @@
 //! scan read to the next (`docs/design/decisions.md`, "D126").
 //!
 //! **Why a `spawn_blocking` a read would not do**: the runtime's blocking
-//! pool wakes whichever idle thread has waited longest, so once the tasks run
-//! ahead of the frontier have left threads idle, each read lands on the next
-//! of them in turn, each on the core it last ran on; kept, the frontier stays
-//! on one thread at every worker count, as a serial pass's does.
+//! pool wakes one idle thread on a condvar, and the platform picks which — on
+//! Linux the one waiting longest — so once the tasks run ahead of the frontier
+//! have left threads idle, each read lands on the next of them in turn, each
+//! on the core it last ran on; kept, the frontier stays on one thread at every
+//! worker count, as a serial pass's does.
 
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex, Weak};

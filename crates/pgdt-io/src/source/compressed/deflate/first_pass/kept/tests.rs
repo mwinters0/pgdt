@@ -21,7 +21,8 @@ async fn idle_blocking_threads(threads: usize) {
 async fn every_job_runs_on_one_thread_while_other_blocking_threads_idle() {
     idle_blocking_threads(8).await;
     // The pool's own choice, for contrast: a job a `spawn_blocking` goes
-    // to the thread idle longest, so successive ones move between threads.
+    // to whichever idle thread its condvar wakes, on Linux the one idle
+    // longest, so successive ones move between threads.
     let mut pooled = std::collections::HashSet::new();
     for _ in 0..16 {
         pooled.insert(tokio::task::spawn_blocking(|| std::thread::current().id()).await.unwrap());
