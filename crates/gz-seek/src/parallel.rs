@@ -43,7 +43,9 @@
 //! speculation is handed out on a chunk far enough ahead of the frontier to
 //! land before it gets there: as many chunks past it as it crossed while the
 //! last speculation ran, and the caller's lead past that
-//! ([`Parallel::set_lead`]).
+//! ([`Parallel::set_lead`]) — and none from when one finds nothing until the
+//! frontier next crosses a block start, so over a member whose writer ends
+//! no block the frontier decodes it alone, as the serial pass does.
 //!
 //! **Every byte handed out is checked as a forward pass checks it**: each
 //! unit's CRC-32 is recorded from the plaintext, and each member's trailer is
@@ -259,6 +261,10 @@ pub struct Parallel {
     /// Each guess a bound cut, its continuation yet to be handed out: its
     /// chunk and stop, by the stop's bit.
     to_continue: BTreeMap<u64, (u64, Point)>,
+    /// Where the frontier stood when a speculation last landed having found
+    /// nothing: none is handed out until it stands past it, at the next block
+    /// start or member start it crosses.
+    paused_at: Option<u64>,
     chain: Chain,
     window: Box<[u8; WINDOW_SIZE]>,
     window_len: usize,
@@ -354,6 +360,7 @@ impl Parallel {
             speculating: BTreeMap::new(),
             lag: 0,
             to_continue: BTreeMap::new(),
+            paused_at: None,
             chain: Chain::new(file_len, limit),
             window: Box::new([0; WINDOW_SIZE]),
             window_len: 0,
@@ -397,8 +404,15 @@ impl Parallel {
     /// continuation only where it begins in one: a caller holding the bytes
     /// its tasks read bounds how far ahead of the frontier they reach, a lead
     /// past that bound being dropped. A chunk passed over here is the next
-    /// one a speculation is handed out on.
+    /// one a speculation is handed out on. None is handed out from when a
+    /// speculation lands having found nothing until the frontier next
+    /// crosses a block start or a member start: a writer ending no block
+    /// gives the next nothing to find either, and one ending blocks often
+    /// pauses for one.
     pub fn speculation_through(&mut self, last: u64) -> Option<ChunkTask> {
+        if self.paused_at.is_some_and(|stood| self.at <= stood) {
+            return None;
+        }
         // A continuation the frontier has passed is of no use.
         self.to_continue = self.to_continue.split_off(&self.at);
         if let Some(entry) = self.to_continue.first_entry()
@@ -439,13 +453,16 @@ impl Parallel {
                 {
                     self.lag = self.frontier_chunk().saturating_sub(handed);
                 }
-                if let Some(guess) = result.found {
-                    let stop = guess.stop.bit();
-                    if guess.cut && stop >= self.at {
-                        self.to_continue.insert(stop, (result.chunk, guess.stop));
-                    }
-                    self.chain.guessed(result.chunk, guess, self.at);
+                // One that found nothing pauses speculation (`docs/design/decisions.md`, "D125").
+                let Some(guess) = result.found else {
+                    self.paused_at = Some(self.at);
+                    return;
+                };
+                let stop = guess.stop.bit();
+                if guess.cut && stop >= self.at {
+                    self.to_continue.insert(stop, (result.chunk, guess.stop));
                 }
+                self.chain.guessed(result.chunk, guess, self.at);
             }
             Finished::Decoded(result) => self.chain.decoded(result, self.at),
         }

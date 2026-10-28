@@ -260,7 +260,8 @@ fn a_pass_takes_the_chunks_it_is_handed() {
 #[test]
 fn a_decode_run_ahead_is_ready_before_the_frontier_takes_it() {
     let file = gzip(&payload(1_200_000, 3), 6);
-    let chunk = NonZeroU64::new(8 * 1024).unwrap();
+    // Each chunk long enough to hold a block start of its own.
+    let chunk = NonZeroU64::new(32 * 1024).unwrap();
     let mut pass = Parallel::new(spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64).unwrap();
     let mut buf = vec![0u8; 1024];
     let mut ready_before_a_take = false;
@@ -318,7 +319,8 @@ fn the_frontier_never_waits_for_a_speculation() {
 #[test]
 fn a_speculation_is_handed_out_as_far_ahead_as_the_last_one_lagged() {
     let file = gzip(&payload(1_200_000, 3), 6);
-    let chunk = NonZeroU64::new(8 * 1024).unwrap();
+    // Each chunk long enough to hold a block start of its own.
+    let chunk = NonZeroU64::new(32 * 1024).unwrap();
     let chunk_bits = 8 * chunk.get();
     let mut pass = Parallel::new(spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64).unwrap();
     let first = pass.task().unwrap();
@@ -518,6 +520,72 @@ fn a_continuation_is_handed_out_within_its_bound() {
     let next = pass.speculation_through(1).unwrap();
     assert_eq!((next.id().chunk(), next.id().continues_from()), (1, Some(from)));
     assert!(pass.wants(next.id()));
+}
+
+/// **A speculation that finds nothing pauses speculation until the frontier
+/// next crosses a block start**: over a member whose writer ends one block
+/// before its last, every speculation finds nothing, so with each run as it
+/// is handed out, one is handed out at the member's start and at most one
+/// more past each block start the frontier crosses, the frontier decoding
+/// the rest as the serial pass does. A level-6 file run so is speculated on
+/// at nearly every chunk.
+#[test]
+fn a_member_ending_no_block_is_speculated_on_until_one_finds_nothing() {
+    let chunk = NonZeroU64::new(16 * 1024).unwrap();
+    let speculated = |file: &[u8]| {
+        let mut pass =
+            Parallel::new(spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64).unwrap();
+        let (mut buf, mut plaintext, mut handed) = (vec![0u8; 4096], Vec::new(), 0);
+        loop {
+            while let Some(task) = pass.task() {
+                handed += usize::from(!task.id().is_decode());
+                pass.done(run(task, file, 1 << 20));
+            }
+            let at = (pass.compressed_position() as usize).min(file.len());
+            let step = pass.read(&file[at..], &mut buf).unwrap();
+            plaintext.extend_from_slice(&buf[..step.progress.produced]);
+            if step.needs_input() {
+                break;
+            }
+        }
+        (handed, plaintext, pass.finish().unwrap())
+    };
+    let file = gzip(&payload(1_200_000, 3), 1);
+    let chunks = file.len() as u64 / chunk.get();
+    let truth = crate::test_support::truth(&file);
+    let blocks = truth.events.iter().filter(|(_, e)| matches!(e, ChunkEvent::Block { .. })).count();
+    assert!(blocks <= 2 && chunks > 40, "{blocks} blocks over {chunks} chunks");
+    let serial = forward(&file, 64 * 1024, 1 << 16, 1 << 16).unwrap();
+    let (handed, plaintext, index) = speculated(&file);
+    assert!(handed <= 1 + blocks, "{handed} speculations, {blocks} block starts crossed");
+    assert!(plaintext == serial.plaintext);
+    assert_eq!(index, serial.index);
+    let (handed, ..) = speculated(&gzip(&payload(1_200_000, 3), 6));
+    assert!(handed as u64 > chunks / 4, "{handed} speculations on a level-6 file");
+}
+
+/// **The pause lasts until the frontier next crosses a block start, and no
+/// longer**: over a writer ending blocks often, a speculation that found
+/// nothing stops the next being handed out only while the frontier stands
+/// where it stood when that one landed.
+#[test]
+fn a_speculation_finding_nothing_pauses_speculation_until_the_next_block_start() {
+    let file = gzip(&payload(1_200_000, 3), 6);
+    let chunk = NonZeroU64::new(16 * 1024).unwrap();
+    let mut pass = Parallel::new(spacing(64 * 1024), chunk, NO_LIMIT, file.len() as u64).unwrap();
+    let first = pass.task().unwrap();
+    let mut done = run(first, &file, 1 << 20);
+    let Finished::Speculated(result) = &mut done.0 else { unreachable!("a speculation") };
+    assert!(result.found.take().is_some(), "a level-6 chunk holds a block start");
+    let stood = pass.at;
+    pass.done(done);
+    let mut buf = vec![0u8; 256];
+    while pass.at == stood {
+        assert!(pass.speculation_through(u64::MAX).is_none(), "handed out at bit {stood}");
+        let at = (pass.compressed_position() as usize).min(file.len());
+        assert!(!pass.read(&file[at..], &mut buf).unwrap().needs_input(), "a block start");
+    }
+    assert!(pass.speculation_through(u64::MAX).is_some(), "paused past bit {}", pass.at);
 }
 
 /// **A decode begun with a history the frontier contradicts is never taken**:

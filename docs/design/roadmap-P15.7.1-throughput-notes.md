@@ -27,23 +27,20 @@ this bar: [`../status/history/2026-10-27.md`](../status/history/2026-10-27.md),
   The manual's `--jobs` paragraph names only `.xz`'s default. A member whose
   writer ends no block before its last, `deflate_quick` at level 1, is read
   more slowly in parallel than serially (`KD147`). Its serial first pass is
-  also several times slower than a level-6 file's, and that cost is
-  unattributed (below).
+  also several times slower than a level-6 file's, mostly D118's walk
+  ([`roadmap-P15.19-pause-notes.md`](roadmap-P15.19-pause-notes.md), "The
+  opening account").
 - **15.18**: a flagless first pass now runs at most the physical count. So
   `gzip-resident`'s twenty-four-job leg prices a count that only a stated
   `--jobs` reaches.
 
 ## Negative results
 
-- **The level-1 file's serial pass is unattributed.** It is several times
-  slower than the level-6 files' serial passes over the same plaintext. One
-  candidate is the walk a static block's checkpoint takes, which D118 reopens
-  on once a profile shows it. The other is the file's larger compressed size.
-  A profile of the serial pass would tell them apart. Nothing here took one.
-- **What slows the level-1 frontier as workers are added is unattributed**
-  (`KD147`). Every speculation over that file finds nothing, as 15.10's notes
-  foresaw, so the workers add no lift. Each added worker still makes the pass
-  slower.
+- **The level-1 file's serial pass and its slowing frontier** were
+  unattributed here; 15.19's profile attributes both
+  ([`roadmap-P15.19-pause-notes.md`](roadmap-P15.19-pause-notes.md), "The
+  opening account"). Every speculation over that file finds nothing, as
+  15.10's notes foresaw, so the workers add no lift (`KD147`).
 - **The floor is noisier than the passes.** One sweep's plain `parse` median
   sits above the others, so that writer's "over the floor" ratio reads lower.
   The paired verdicts do not read the floor.

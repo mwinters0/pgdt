@@ -768,14 +768,16 @@ async fn a_damaged_file_is_refused_with_tasks_ahead() {
 #[test]
 fn a_frontier_waits_for_a_task_that_nothing_has_started_on_either_feed() {
     // No lead: the guesses the first read lets land are of the first chunks,
-    // whose few block starts are the chain the wide read anchors.
-    let chunking = Chunking { lead: 0, ..CHUNKING };
+    // whose block starts are the chain the wide read anchors. Each chunk holds
+    // one, so none of those guesses finds nothing and pauses the rest
+    // (`docs/design/decisions.md`, "D125").
+    let chunking = Chunking { lead: 0, bytes: NonZeroU64::new(64 * 1024).unwrap(), ..CHUNKING };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .max_blocking_threads(1)
         .enable_time()
         .build()
         .unwrap();
-    let payload = gzip_test_payload();
+    let payload: Vec<u8> = (0..10).flat_map(|_| gzip_test_payload()).collect();
     let (compressed, expected) = gzip_indexed(&payload, SPACING.get());
     let stored = std::fs::metadata(compressed.path()).unwrap().len();
     for feed_name in FEEDS {

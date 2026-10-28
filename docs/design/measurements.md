@@ -4142,10 +4142,12 @@ looks for a dynamic block's header, and this writer ends no block before its
 last, so every speculation finds nothing
 ([`roadmap-P15.10-static-notes.md`](roadmap-P15.10-static-notes.md), "What
 later slices inherit"); the frontier inflates alone, and more slowly the more
-workers search beside it (`KD147`). Its serial pass is several times the
-level-6 files' over the same plaintext, which is unattributed: the walk a
-static block's checkpoint takes (D118) and the file's larger compressed size
-are candidates, and a profile of the serial pass would separate them.
+workers search beside it (`KD147`), its inflate taking more cycles with them
+(D125 pauses them since). Its serial pass is several times the level-6 files'
+over the same plaintext, about three fifths of it the walk a static block's
+checkpoint takes (D118), which covers this member whole
+([`roadmap-P15.19-pause-notes.md`](roadmap-P15.19-pause-notes.md), "The
+opening account").
 
 ## koji full scan — the regression check
 

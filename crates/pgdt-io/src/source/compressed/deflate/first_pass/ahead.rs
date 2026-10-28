@@ -343,15 +343,17 @@ impl Ahead {
     /// `last`, while it has fewer than [`GUESSES_A_TASK`] times as many
     /// handed out or guesses held ([`Chunking::task_bytes`]).
     ///
-    /// Deficiency register: `deficiency: KD147` — a speculation is handed out
-    /// whether or not those before it found a block, so over a member whose
-    /// writer ends no block before its last, where none does, every worker
-    /// past the frontier searches its chunk for nothing, and the pass is
-    /// slower than its serial one at every count `gzip-first-pass` reads, the
-    /// more so the more workers run. What slows the frontier is unattributed:
-    /// the searches sharing its core, its caches or its memory bandwidth, or
-    /// its own handling of the guesses that fail; a profile of the frontier at
-    /// two counts would name it. **(b) owned by 15.19**.
+    /// None is handed out from when a speculation finds nothing until the
+    /// frontier next crosses a block start (`docs/design/decisions.md`,
+    /// "D125"), so over a member whose writer ends no block before its last
+    /// only the speculations handed out before the first lands run.
+    ///
+    /// Deficiency register: `deficiency: KD147` — over such a member the
+    /// pass was slower than its serial one at every count
+    /// `gzip-first-pass` reads, the more so the more workers ran, every
+    /// worker past the frontier searching its chunk for nothing; that
+    /// reading predates the pause, and is the one that stands until the
+    /// figure is re-taken over it. **(b) owned by 15.19**.
     fn top_up(&mut self, pass: &mut gz_seek::Parallel, last: u64) {
         while self.running < self.tasks {
             let decode = match pass.decodes_pending() < DECODES_A_TASK * self.tasks {

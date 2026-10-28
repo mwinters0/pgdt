@@ -143,6 +143,16 @@ to what allocators keep; a mapping a buffer, zeroing a limit each decode. Reopen
 `a_speculation_s_sinks_fill_together_within_its_bound`, `a_decode_of_a_guess_the_count_cut_records_within_its_bound`,
 `a_decode_s_plaintext_buffer_is_lent_the_next`.
 
+### D125 A parallel first pass hands out no speculation from when one finds nothing until its frontier crosses a block start
+A speculation finds a chunk's start by a block's header, so over a member whose writer ends no block before its last
+every one finds nothing, and the searches slow the frontier past the serial pass. The frontier's own block starts are
+the signal: a pause lasts one block over a writer ending blocks often, and the member's rest over one ending none.
+Rejected: a run of empty speculations before pausing, a constant to choose; recognising such a file and reading it
+serially, a second rule beside speculation. Reopens: `gzip-first-pass` reading a writer ending blocks often slower
+than before it. Code: `Parallel::speculation_through`. Evidence:
+`a_member_ending_no_block_is_speculated_on_until_one_finds_nothing`,
+`a_speculation_finding_nothing_pauses_speculation_until_the_next_block_start`.
+
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
 contradicts) is almost always a wrong path or a changed file, so every open refuses it (`CacheMode::refusal`) before the
