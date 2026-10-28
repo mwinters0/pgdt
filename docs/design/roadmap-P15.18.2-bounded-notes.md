@@ -33,12 +33,15 @@ cut a guess rather than raise a charge is `docs/design/decisions.md`, "D122".
   marked. Below the cap a buffer still grows by doubling, so either can hold
   up to twice what it held at its last grow.
 - **The input** is at most the chunk, the limit's worth past it, one feed
-  and the symbol lookahead, in an `Input` that grows by doubling.
+  and the symbol lookahead, in an `Input` that grows by doubling, except
+  while a member's header is read, where nothing bounds it or the header
+  (`KD150`, 15.18.4's).
 - **A taken chunk's decode** records at most about 2 × `EVENTS_A_GUESS`
   events (`size_of::<(u64, Event)>()` each, which `Decoded::held` already
-  counts). Over a BGZF chunk it records about four a member, and the chunk's
-  bytes bound its members. `EVENTS_A_GUESS` is `pub(crate)`, so a charge in
-  `pgdt-io` that names it needs it exported.
+  counts). Over a BGZF chunk it records every block of its members, its
+  guess, read off the chain, counting none, so only the chunk's bytes bound
+  them; 15.18.4 bounds them (`KD149`). `EVENTS_A_GUESS` is `pub(crate)`,
+  so a charge in `pgdt-io` that names it needs it exported.
 - **A single block past the bound is cut back to the boundary before it.**
   The continuation from there meets the same block. A block whose compressed
   bytes alone pass the limit's worth (over 8/15 of the limit in plaintext,

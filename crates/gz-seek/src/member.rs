@@ -29,6 +29,12 @@ enum Field {
 }
 
 /// One member header, read incrementally.
+///
+/// Deficiency register: `deficiency: KD150` — it holds every byte it reads,
+/// for the header CRC alone, so a name or comment, which no length bounds,
+/// is held whole by the engine and by a speculation; and a speculation, whose
+/// compressed bound is checked only in deflate data, holds its input from the
+/// header's start on beside it. **(b) owned by 15.18.4**.
 #[derive(Debug)]
 pub(crate) struct Header {
     /// The member's compressed offset, for the errors.

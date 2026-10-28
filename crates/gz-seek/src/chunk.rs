@@ -67,6 +67,15 @@ impl ChunkDecoded {
 /// It holds its window, and once fed an engine and room for the plaintext
 /// the speculation found from its start to its stop, and a byte to show a
 /// decode running past it, which nothing zeroes: the engine writes it.
+///
+/// Deficiency register: `deficiency: KD149` — it records an event at every
+/// block's end and a static block's start, and cuts a piece at every block
+/// that wrote any, inside a BGZF member too, where the placement owes
+/// nothing (`docs/design/decisions.md`, "D118"). A decoded guess counts its
+/// blocks against `EVENTS_A_GUESS`, bounding this decode; a BGZF chunk's,
+/// read off its chain, counts none, so a chunk of members of empty fixed
+/// blocks, ten bits each, holds two events for every ten bits of it.
+/// **(b) owned by 15.18.4**.
 pub(crate) struct ChunkDecode {
     chunk: u64,
     generation: u64,

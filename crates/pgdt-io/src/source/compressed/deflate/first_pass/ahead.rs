@@ -99,7 +99,8 @@ impl Chunking {
     /// clean, beside its marked one, which reaches a copy past two limits;
     /// its input, read past the limit's worth by the feed that reached it, in
     /// a buffer grown by doubling; and a taken decode's events, up to about
-    /// twice `EVENTS_A_GUESS`, or four a member over a BGZF chunk.
+    /// twice `EVENTS_A_GUESS` where its guess was decoded, and over a BGZF
+    /// chunk bounded by nothing past its compressed bytes (`KD149`).
     /// **(b) owned by 15.18.3**.
     ///
     /// Deficiency register: `deficiency: KD148` — no term charges what the

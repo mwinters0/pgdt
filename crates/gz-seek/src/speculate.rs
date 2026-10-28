@@ -64,9 +64,9 @@ pub const SPECULATION_LIMIT: usize = 2 * ((1 << (9 + 6)) - 1) * 258;
 /// The most events a guess spans before a bound cuts it: sixteen times the
 /// blocks a writer that never flushes ends under [`SPECULATION_LIMIT`], each
 /// at least `lit_bufsize - 1` symbols at zlib's default `memLevel`, so only a
-/// flushing, many-membered or crafted writer's file is cut by it. A guess's
-/// count bounds what the engine's decode of its chunk records, twice as many
-/// at most, a static block's start beside its end
+/// flushing, many-membered or crafted writer's file is cut by it. A decoded
+/// guess's count bounds what the engine's decode of its chunk records, twice
+/// as many at most, a static block's start beside its end
 /// (`docs/design/decisions.md`, "D122").
 pub(crate) const EVENTS_A_GUESS: usize = 16 * (SPECULATION_LIMIT / ((1 << (8 + 6)) - 1));
 
