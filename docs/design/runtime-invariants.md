@@ -16,7 +16,7 @@ with its own entries: a **kernel major**, a **container-runtime upgrade**, a **R
 toolchain bump** (`RT7`, `RT11`, `RT12` and `RT24`'s `temp_dir`, whose behaviour is `std`'s), a **glibc
 release** — the host's or the figures' image's (`RT10` only) — a **bash
 release** (`RT20`), an **arrow or DataFusion upgrade** (`RT21`, `RT22`, `RT25`), a
-**zlib-rs upgrade** (`RT23`, `RT26`), a **`libz-sys` upgrade** (`RT26`), a **tempfile upgrade** (`RT24`), and an
+**zlib-rs upgrade** (`RT23`, `RT26`), a **`libz-sys` upgrade** (`RT26`), a **tempfile upgrade** (`RT24`), a **tokio upgrade** (`RT28`), and an
 **`object_store` upgrade** (`RT13`–`RT18`, whose behaviour is that crate's and
 whose re-verification is a test run against the oracle rather than a container;
 `crates/pgdt/tests/http_conformance.rs` reads the same claims against a real origin
@@ -39,7 +39,7 @@ crate's requirements register, which a phase spec and an inbox cite by number
 ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Inherited from the `.xz`
 source unchanged").
 
-**`RT1`–`RT27` are allocated**, and nothing at or below `RT27` is reused.
+**`RT1`–`RT28` are allocated**, and nothing at or below `RT28` is reused.
 
 **The `Re-verify` field is a container invocation, not a citation.** Reading the
 kernel source proves what the kernel *does*; what a decision here rests on is
@@ -1412,3 +1412,48 @@ cargo nextest run -p pgdt-io cores
 On a host of the table's shape each run prints its row; on another, the
 last count is the cores its sibling lists give the allowed CPUs.
 `crate::cores::tests` holds the reading against a built tree.
+
+## RT28 — a tokio runtime shutting down drops every task before it waits for its blocking threads
+
+**Claim.** Dropping a tokio `Runtime`, of either flavour, drops every task
+spawned on it that has not finished, its future with it, and then waits for
+every blocking thread it started, with no timeout; so a blocking thread
+waiting on a channel whose last sender a task holds sees the channel close,
+and the shutdown waits only for what it was running.
+
+**Proof.** tokio 1.53.1, `src/runtime/runtime.rs`: `Runtime`'s `Drop` calls
+the scheduler's `shutdown` before its fields drop, `blocking_pool` last.
+`scheduler/current_thread/mod.rs`'s `shutdown2` calls
+`owned.close_and_shutdown_all`; on the multi-thread flavour each worker's
+`pre_shutdown` does (`scheduler/multi_thread/worker.rs`), its workers being
+threads of the same blocking pool. `runtime/blocking/pool.rs`: `BlockingPool`'s
+`Drop` calls `shutdown(None)`, which joins every worker thread. Observed by
+`a_runtime_shuts_down_at_once_with_a_pass_left_unretired` and
+`a_pass_reads_on_across_two_runtimes`
+(`crates/pgdt-io/src/source/compressed/deflate/first_pass/kept/tests.rs`),
+on both flavours.
+
+**Scope limit.** A runtime dropped, not one shut down by
+`shutdown_timeout` or `shutdown_background`, which bound or skip the wait. A
+task's future is dropped on the runtime's threads, so on the multi-thread
+flavour not necessarily before `Runtime::drop`'s caller reaches the wait, only
+before the wait ends.
+
+**Verified against:** tokio 1.53.1.
+
+**Relied on by:** [`decisions.md`](decisions.md), "D126" — the gzip first
+pass's kept frontier thread, whose channel's one sender a parked task holds
+(`crates/pgdt-io/src/source/compressed/deflate/first_pass/kept.rs`).
+
+**Re-verify:**
+
+```sh
+cargo nextest run -p pgdt-io --features http,test-support kept
+src="$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "tokio") | .manifest_path' | xargs dirname)/src/runtime"
+grep -n 'close_and_shutdown_all' "$src/scheduler/current_thread/mod.rs" "$src/scheduler/multi_thread/worker.rs"
+grep -n 'self.shutdown(None)' "$src/blocking/pool.rs"
+```
+
+The tests pass only while each runtime's drop returns with the kept thread
+left unretired; the searches show both flavours still shutting their tasks
+down and the pool's drop still waiting with no timeout.

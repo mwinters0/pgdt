@@ -754,17 +754,19 @@ async fn a_damaged_file_is_refused_with_tasks_ahead() {
     }
 }
 
-/// **A wait never rests on a thread the runtime has yet to give**: on a
-/// runtime of one blocking thread, which the frontier's step holds, every
-/// task handed out during a read queues behind it. So one read, a step into
-/// the first chunk, is let land its speculations, nothing anchored behind
-/// them; the next, wider than the chunks they guessed, anchors at the first
-/// guess and reaches the decodes it then hands out with none started, a
-/// pulled frontier running each it waits for itself. Both feeds reach the
-/// end with the serial pass's index. **A fetched frontier's wait is not
-/// reached here, and no test reaches it**: it steps a piece at a time, going
-/// back to the runtime for each, where the decode's own pieces run first, so
-/// only a race between threads makes it stand at a decode still running.
+/// **A wait never rests on a thread the runtime has yet to give**: on a runtime
+/// of one blocking thread, which the frontier's step holds, every task handed
+/// out during a read queues behind it, and behind the thread a pulled frontier
+/// keeps between reads (`docs/design/decisions.md`, "D126"). So one read, a
+/// step into the first chunk, is let land its speculations once that thread is
+/// retired, nothing anchored behind them; the next, wider than the chunks they
+/// guessed, anchors at the first guess and reaches the decodes it then hands
+/// out with none started, a pulled frontier running each it waits for itself.
+/// Both feeds reach the end with the serial pass's index. **A fetched
+/// frontier's wait is not reached here, and no test reaches it**: it steps a
+/// piece at a time, going back to the runtime for each, where the decode's own
+/// pieces run first, so only a race between threads makes it stand at a decode
+/// still running.
 #[test]
 fn a_frontier_waits_for_a_task_that_nothing_has_started_on_either_feed() {
     // No lead: the guesses the first read lets land are of the first chunks,
@@ -793,6 +795,7 @@ fn a_frontier_waits_for_a_task_that_nothing_has_started_on_either_feed() {
             .unwrap();
             pass.hint_parallelism(lifted(4));
             let mut got = pass.read_range(0, STEP).await.unwrap().to_vec();
+            pass.kept.retire();
             loop {
                 let (ready, running) = pass
                     .lock()

@@ -72,7 +72,8 @@ twelve jobs would attribute it.
 ## What the next round inherits
 
 - **The gate, in two halves read as 15.19's were.** Both are taken from a
-  commit carrying this tree.
+  commit carrying this tree and `M257`, which ties the kept thread to its
+  runtime in place of a timeout.
   - The level-1 half: `cd scripts && uv run measure.py --figure
     gzip-first-pass`, about an hour, handed off per
     `.claude/skills/gosub/handoff.md`. It is met when, by 7.1's bar, the
@@ -83,4 +84,3 @@ twelve jobs would attribute it.
     sitting, so it cannot compare two trees.
 - **`KD147`** is struck by the re-take if it reads the default level, and
   rewritten to that reading otherwise.
-- **`IDLE`** is a chosen constant (STATUS, "Decisions worth another look").

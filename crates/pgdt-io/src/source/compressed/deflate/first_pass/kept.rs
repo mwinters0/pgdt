@@ -1,7 +1,7 @@
 //! The frontier's own blocking thread: every job of a pulled pass run on one
-//! `spawn_blocking` kept while its reads keep coming, so the frontier's decode
-//! stays on one thread, and on the core whose caches hold its state, from one
-//! scan read to the next (`docs/design/decisions.md`, "D126").
+//! `spawn_blocking` kept while the pass lives, so the frontier's decode stays
+//! on one thread, and on the core whose caches hold its state, from one scan
+//! read to the next (`docs/design/decisions.md`, "D126").
 //!
 //! **Why a `spawn_blocking` a read would not do**: the runtime's blocking
 //! pool wakes one idle thread on a condvar, and the platform picks which — on
@@ -9,35 +9,66 @@
 //! have left threads idle, each read lands on the next of them in turn, each
 //! on the core it last ran on; kept, the frontier stays on one thread at every
 //! worker count, as a serial pass's does.
+//!
+//! **What ends the thread** is its channel closing: the pass retiring it at
+//! hand-over, the pass dropped, or the thread's runtime shutting down. The
+//! channel's one sender sits in a slot held strongly only by a parked task
+//! spawned beside the thread on its runtime, and [`Kept`] sends through a
+//! weak reference to it, so a runtime shutting down, which drops every task
+//! before it waits for its blocking threads
+//! (`docs/design/runtime-invariants.md`, "RT28"), closes the channel and the
+//! thread leaves rather than holding the shutdown up.
 
-use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, Weak, mpsc};
 
 use pgdt_core::{Error, Result};
-
-/// How long the kept thread waits for the pass's next job before giving its
-/// thread back to the runtime: far longer than a scan takes between reads,
-/// and short enough that a runtime shutting down, which waits for every
-/// blocking task, does not wait on a pass nobody reads.
-const IDLE: Duration = Duration::from_millis(100);
 
 /// One job, run where it is sent.
 type Work = Box<dyn FnOnce() + Send>;
 
-/// Where a job for the kept thread is sent: none while no thread is kept.
-type Queue = Mutex<Option<mpsc::Sender<Work>>>;
+/// The kept thread's channel's one sender, taken out to close it.
+type Slot = Mutex<Option<mpsc::Sender<Work>>>;
+
+/// The kept thread's channel, as [`Kept`] reaches it: the slot the parked
+/// task holds, and that task, for the pass to end it by.
+struct Line {
+    slot: Weak<Slot>,
+    parked: tokio::task::AbortHandle,
+}
+
+impl Line {
+    /// Queue `work` on the line's thread, or hand it back where the channel
+    /// is closed. A send that succeeds is always received: the thread leaves
+    /// only once the sender is gone and the channel is empty.
+    fn send(&self, work: Work) -> std::result::Result<(), Work> {
+        let Some(slot) = self.slot.upgrade() else { return Err(work) };
+        let sender = lock(&slot);
+        match sender.as_ref() {
+            Some(sender) => sender.send(work).map_err(|mpsc::SendError(work)| work),
+            None => Err(work),
+        }
+    }
+
+    /// Close the channel, so the thread leaves once it has run what was sent,
+    /// and end the parked task.
+    fn close(self) {
+        if let Some(slot) = self.slot.upgrade() {
+            drop(lock(&slot).take());
+        }
+        self.parked.abort();
+    }
+}
 
 /// The frontier's thread: started by the first job, kept until the pass
-/// [retires](Kept::retire) it, is dropped, or sends nothing for [`IDLE`], the
+/// [retires](Kept::retire) it or is dropped, or its runtime shuts down, the
 /// next job then starting another.
 pub(super) struct Kept {
-    queue: Arc<Queue>,
+    line: Mutex<Option<Line>>,
 }
 
 impl Kept {
     pub(super) fn new() -> Kept {
-        Kept { queue: Arc::new(Mutex::new(None)) }
+        Kept { line: Mutex::new(None) }
     }
 
     /// `work`'s answer, run on the kept thread after every job sent before it;
@@ -63,54 +94,53 @@ impl Kept {
 
     /// Give the thread back to the runtime once the jobs sent so far are run.
     pub(super) fn retire(&self) {
-        drop(lock(&self.queue).take());
+        if let Some(line) = lock(&self.line).take() {
+            line.close();
+        }
     }
 
-    /// Queue `work` on the kept thread, starting one where none is kept.
+    /// Queue `work` on the kept thread, starting one where none is kept: none
+    /// started yet, retired, or ended with its runtime.
     fn send(&self, work: Work) {
-        let mut queue = lock(&self.queue);
-        // A thread leaving for want of work clears the queue under this lock
-        // first, so a send that succeeds is always received.
-        let work = match queue.as_ref() {
-            Some(sender) => match sender.send(work) {
+        let mut line = lock(&self.line);
+        let work = match line.as_ref() {
+            Some(kept) => match kept.send(work) {
                 Ok(()) => return,
-                Err(mpsc::SendError(work)) => work,
+                Err(work) => work,
             },
             None => work,
         };
+        if let Some(ended) = line.take() {
+            ended.close();
+        }
         let (sender, receiver) = mpsc::channel();
         sender.send(work).expect("the receiver is held");
-        let queue_held = Arc::downgrade(&self.queue);
-        drop(tokio::task::spawn_blocking(move || serve(&receiver, &queue_held)));
-        *queue = Some(sender);
+        let slot = Arc::new(Mutex::new(Some(sender)));
+        let weak = Arc::downgrade(&slot);
+        let parked = tokio::spawn(async move {
+            let _slot = slot;
+            std::future::pending::<()>().await;
+        });
+        drop(tokio::task::spawn_blocking(move || serve(&receiver)));
+        *line = Some(Line { slot: weak, parked: parked.abort_handle() });
     }
 }
 
-/// Run each job as it comes until the pass stops sending: its queue retired
-/// or dropped, or nothing sent for [`IDLE`].
-fn serve(receiver: &mpsc::Receiver<Work>, queue: &Weak<Queue>) {
-    loop {
-        match receiver.recv_timeout(IDLE) {
-            Ok(work) => work(),
-            Err(RecvTimeoutError::Disconnected) => return,
-            Err(RecvTimeoutError::Timeout) => {
-                let Some(queue) = queue.upgrade() else { return };
-                let mut queue = lock(&queue);
-                // Anything sent before the lock was taken is run first.
-                if let Ok(work) = receiver.try_recv() {
-                    drop(queue);
-                    work();
-                    continue;
-                }
-                *queue = None;
-                return;
-            }
-        }
+impl Drop for Kept {
+    fn drop(&mut self) {
+        self.retire();
     }
 }
 
-fn lock(queue: &Queue) -> std::sync::MutexGuard<'_, Option<mpsc::Sender<Work>>> {
-    queue.lock().unwrap_or_else(|e| e.into_inner())
+/// Run each job as it comes until the channel closes and is empty.
+fn serve(receiver: &mpsc::Receiver<Work>) {
+    while let Ok(work) = receiver.recv() {
+        work();
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(test)]
