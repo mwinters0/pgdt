@@ -1,10 +1,11 @@
 # P15.18.3 notes — `Chunking::task_bytes` settled
 
-**The charge is set, and the re-take is not taken.** Every term of a task's
-charge is now a bound `gz-seek` states on what the code writes, and no decode
-buffer is freed while the pass runs (`docs/design/decisions.md`, "D124"). The
-`gzip-resident` re-take that closes the row is taken from a commit carrying
-the pool.
+**The charge is set and borne out.** Every term of a task's charge is now a
+bound `gz-seek` states on what the code writes, and no decode buffer is freed
+while the pass runs (`docs/design/decisions.md`, "D124"). `gzip-resident`,
+re-taken at `1d002b3b` (`runs/measure-20261028T160236/`, its log
+`runs/gzip-resident-20261028-1552/log`), finds no cell under-billed and
+`MEMORY_UNPOOLED_BOUND` holding on every leg.
 
 ## What landed
 
@@ -63,19 +64,22 @@ the pool.
   `runs/p15.18.3/trial-bills/`, read into `test_measure.py`'s
   `GzipResident.STATED_BILLS`.
 
-## What the re-take inherits
+## What the next slice inherits
 
-- **Command**: `cd scripts && uv run measure.py --figure gzip-resident`, run
-  from a commit carrying the pool. It is long, so follow `CLAUDE.md`'s
-  "Long-running processes". The first-pass legs' bills it holds the run to
-  are `GzipResident.STATED_BILLS`, read from the pool's trial runs.
-- **Done when no cell is under-billed.** Over-bills are expected at every
-  count. The charge bounds a crafted file, and `control_gz` and `repeated_gz`
-  fill little of it.
+- **Every first-pass cell is over-billed, at every count.** The charge bounds a
+  crafted file, and `control_gz` and `repeated_gz` fill little of it
+  (`docs/design/measurements.md`, "What a gzip scan holds against its charge").
 - **`KD148` is now what an allocator keeps of a buffer a task outgrows.** That
   covers a speculation's input and sinks, and a decode's events, as each
   grows. It is not the decode buffer, which is pooled and never outgrown. It is
   `(c) unowned`: no file `gzip-resident` reads makes those buffers large.
+- **A one-job `parse` of a single member now ends on the block path.** The
+  read of the DDL spans after the scan lands in the last unit after the pass
+  has handed over. A first-pass worker's budget now affords one reader's
+  block-path charge, so that read decodes the unit whole into a slot where
+  it streamed in pieces before. Billed, and within every cell's bill; the
+  figure's prose has the attribution (`runs/p15.18.3/one-job.sh`, `one-job.txt`,
+  `heaptrack-gzrss-jobs-1-control_gz.txt`).
 
 ## Negative results
 
@@ -86,3 +90,10 @@ the pool.
 - **The 15.18.1 notes' "one block cannot be both" does not hold for the
   sinks.** It reasoned about one block's ratio. The sinks fill together
   across a member boundary, so their maximum is their sum.
+- **The pool did not lower what a worker holds.** On the limit leg a worker
+  holds what it held at `ef5f5d4b` before the pool, on the shipped build, and
+  a little less on `system`; turning each allocator's retention off had cut it
+  by about a limit. The pass keeps a buffer for every decode it has had out at
+  once, each written to the limit on that leg, so the spare buffers stay
+  resident where the allocator kept a freed one. What the pool buys is a
+  charge that bounds the buffers by construction, not a smaller resident.
