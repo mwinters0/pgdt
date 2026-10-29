@@ -73,8 +73,8 @@ which is left out and named on stderr with why
   is read in any case, as `pgdt query`'s flags and the `pgdump.` options read
   it; `:postgres-invalid-values=strict`, a `pgdt parse` mode alone, is
   refused.
-- **The source is anything `pgdt --source` takes**: a path, an `.xz` file, or
-  an `http(s)://` URL. A path containing `=` is written `./a=b.sql`; a URL's
+- **The source is anything `pgdt --source` takes**: a path, an `.xz` or gzip
+  file, or an `http(s)://` URL. A path containing `=` is written `./a=b.sql`; a URL's
   `=` is never read as a name.
 
 ## `CREATE EXTERNAL TABLE … STORED AS PGDUMP`: one table
@@ -151,7 +151,7 @@ statement one line naming its table.
 **Planning a query prints what its scan could not do as asked**, once for
 each scan of a table, before any row is: fewer readers than DataFusion's
 `target_partitions` because the memory the scans share could not seat them,
-one reader only because it could not seat even that, or an `.xz` dump read
+one reader only because it could not seat even that, or a compressed dump read
 through its streaming decoder because one of its blocks would not fit
 ([Memory](#memory)).
 

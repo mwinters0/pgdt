@@ -146,14 +146,10 @@ is by content, not by name, so a compressed dump called something other than
 `.xz` is still read as one, and a file *named* `.xz` that is really plain text
 is still read as plain text.
 
-**gzip is read the same way**, the `.gz` file `pg_dump -Fp --compress` or
-`pg_dump | gzip` writes included. A gzip file says nothing about where inside
-it a read could begin, so the first command to read one reads it from start
-to end with one reader, and the cache it writes records where later reads can
-begin; every later command reads it as an `.xz` file is read. A `parse`
-stopped part-way resumes from where it saved, as on an uncompressed file. A
-BGZF file — what `bgzip` writes — does say, so a local one is read as an
-`.xz` file is from the first command.
+**gzip is read the same way** — what `pg_dump -Fp --compress` writes at any
+level, `pg_dump | gzip`, gzip files concatenated, and what `bgzip` writes —
+though the first command to read one pays for something an `.xz` file does
+not need (below, "gzip files: the first pass builds the index").
 
 **Other compression is not read yet.** `.zst` and `.lz4` — including what
 `pg_dump -Fp --compress=zstd` or `lz4` writes — still have to be decompressed
@@ -216,6 +212,129 @@ scanning would write over it. Delete it, or point `--dtcache` somewhere else,
 and `parse` builds a fresh one — or, where the file really is replaced under
 the same name, pass `--overwrite-unusable-cache` (below).
 
+### gzip files: the first pass builds the index
+
+A gzip file says nothing about where inside it a read could begin. So the
+first command to read one reads it from start to end — its **first pass** —
+and records as it goes a place a later read can begin about every 24 MiB of
+the dump, with the 32 KiB of history a read starting there needs. The cache
+that command saves keeps them, and every command after it reads the file as
+an `.xz` file is read: in units between those places, by as many readers as
+`--jobs` and `--memory` buy, a backward read decoding only from the start of
+its unit. Run `parse` once and nothing after it pays the first pass again.
+
+```
+$ pgdt parse --source mydump.sql.gz
+2026-10-29T15:00:33.206677112Z  INFO resolved the arrangement jobs=12 (recommended by the source) memory_bytes=1369381944 (discovered: /sys/fs/cgroup/memory.max states a limit of 4294967296 byte(s)) statistics_bytes=1798156360 (discovered)
+2026-10-29T15:00:33.206746062Z  INFO preamble scan started bytes=at least 0 chunk_size=1048576 jobs=12 memory_bytes=1369381944
+2026-10-29T15:00:33.206777962Z  INFO first pass started, inflating in parallel while it builds the index, its scan one reader source=mydump.sql.gz codec=gzip workers=12
+2026-10-29T15:00:33.226405076Z  INFO preamble scan complete bytes=1048576 reached_eof=false
+2026-10-29T15:00:33.228959979Z  INFO scan started bytes=at least 0 resumed_from=425 chunk_size=1048576 jobs=12 memory_bytes=1369381944
+2026-10-29T15:00:33.230314801Z  INFO scan arrangement jobs=1 asked=12 bound_by="source"
+2026-10-29T15:00:35.238747133Z  INFO first pass complete, the index built source=mydump.sql.gz codec=gzip units=128 members=1
+2026-10-29T15:00:35.28700893Z  INFO scan complete bytes=3221227790 reached_eof=true
+```
+
+**The first pass's scan is one reader; its inflate is what the workers
+share.** Decompressing is where the first pass spends its time, so pgdt
+decompresses ahead of the scan on the workers the `first pass started` line
+names, and the scan reads what they hand it in order. That is why `scan
+arrangement` says `jobs=1` on a first pass, whatever was asked: it is
+expected, and says nothing is short. With no `--jobs`, a gzip file on disk
+takes one worker for each physical core among the CPUs this process may run
+on — on a machine with two hardware threads to a core, half its CPUs, the
+second thread of a core having bought nothing measured — and never more than
+the file has 4 MiB stretches of compressed bytes. `--jobs` states the count,
+`--jobs 1` reads serially, and each worker is charged about 109 MiB of the
+read-buffer budget, so a `--memory` too small for that many lowers the count
+as it lowers an `.xz` file's readers (below, "`--jobs` and `--memory`"). Once
+the index is built the file recommends its CPUs, as an `.xz` file does.
+
+**What the workers buy depends on how the file was written.** A file whose
+writer ended a deflate block every so often — `pg_dump -Z` over zlib or
+zlib-ng at its default level, and `gzip` — gives each worker a place to start,
+and its first pass runs several times faster than one worker reads it. A file
+whose writer ended no block before its last, as zlib-rs's level 1 does and
+zlib-ng's in its default build, gives the workers nowhere to start: they
+stop looking once one has found nothing, and the file is read at its serial
+pace at any `--jobs`. That pace is itself slower than a level-6 file's of the
+same dump. Either kind is seekable once its index is built.
+
+**A `parse` stopped during the first pass resumes from the last place it
+saved**, its started line naming the place (`checkpoint=`) and how far into
+the dump it lies (`plaintext=`):
+
+```
+2026-10-29T15:00:58.736495037Z  INFO first pass started, resuming from a saved checkpoint and inflating in parallel while it builds the index, its scan one reader source=mydump.sql.gz codec=gzip checkpoint=115 plaintext=2894120859 workers=12
+```
+
+Until the first pass reaches the end, nobody knows how large the dump is —
+gzip records its size only modulo 4 GiB — so `scan started` says `bytes=at
+least …`, an interrupted `parse` says `interrupted at byte … of at least …`,
+and `info` says `the total is not known until a scan reaches the end`.
+
+**The history a read needs is written to disk as the pass goes, not held in
+memory**: to a file with no name, so it is gone with the process whatever
+ends it, made in the cache's directory — beside the dump, or wherever
+`--dtcache` puts it — or, where the cache is turned off, the system's temp
+directory (`TMPDIR`). It grows by up to 32 KiB for each 24 MiB of the dump,
+about a 768th of it — some 1 GB for a 784 GB dump — and the cache a `parse`
+saves holds the same. A run that cannot make that file stops at the first
+place it records, naming the directory:
+
+```
+Error: io error: a gzip first pass cannot make the file it holds its windows in, in /tmp: Read-only file system (os error 30)
+```
+
+**A `query` that settles its table before the first pass has reached the end
+of the file says so** before its rows, since it reads them with one reader
+for that reason alone:
+
+```
+note: this gzip source has no complete index yet, so it is read with one reader, through the first pass that places its checkpoints as it goes; once a read reaches its end, its reads are cut at those checkpoints, and so are a later run's through any cache this run saves
+```
+
+**One kind of gzip file stays slow to seek into, and pgdt says so.** A place
+a read can begin falls where the writer ended a deflate block — or, inside a
+block coded with deflate's fixed codes, between any two of its symbols — so a
+writer that coded more than twice the 24 MiB spacing in one block of codes it
+chose itself leaves a unit that every read inside it decodes from its start. No zlib-family writer does, at any
+level; an encoder that does is named by the warning, from the first pass's
+end on:
+
+```
+diagnostics:
+    [warning] this gzip source has no seek structure: its largest unit holds 67108864 byte(s) of plaintext, more than twice the 25165824-byte spacing its checkpoints are placed at, its writer having coded them in one dynamic deflate block (3 unit(s)) — every read inside that unit decodes it from its start; recompress with `bgzip` or `gzip` for random access
+```
+
+**A BGZF file — what `bgzip` writes — states where each member ends**, so a
+local one needs no first pass: pgdt walks its members' headers when it opens
+it, gathering them into units of about 24 MiB, and reads it as an `.xz` file
+from the first command, with its CPUs. The walk is said on stderr as the
+`.xz` seek-table walk is, and reads every header in the file once, so a cache
+saves it too:
+
+```
+2026-10-29T15:01:12.363338492Z  INFO BGZF member walk started source=mydump.sql.bgz codec=gzip
+2026-10-29T15:01:13.890568826Z  INFO BGZF member walk complete source=mydump.sql.bgz codec=gzip units=128 members=49346
+```
+
+A file that opens as BGZF but whose chain of members does not hold — damaged,
+or with a member after the first that is not BGZF's — is said at
+`WARN` (`BGZF member walk stopped: …`) and read by a first pass like any gzip
+file. A BGZF file read over HTTP is read by a first pass too (below).
+
+`info --detail`'s compression line names a gzip file's units and members:
+
+```
+compression: gzip — 128 unit(s) in 1 member(s), largest unit 25274047 bytes uncompressed
+```
+
+`largest unit` is what the read buffers have to clear four times over, as
+`largest block` is for an `.xz` file; a gzip file's units being about 24 MiB,
+one reader of it asks a little less than a 24 MiB-block `.xz` file's, its
+decoder holding less.
+
 ### Reading a dump over HTTP
 
 `--source` takes a URL as readily as a path, on all three commands:
@@ -269,6 +388,17 @@ compressed as thousands of small streams costs tens of thousands of requests
 before any row is read. pgdt says so on stderr before it starts. It is
 paid once — keep the cache the run writes — and if you would rather not pay it
 at all, fetch the file once and parse the local copy.
+
+**A gzip dump over HTTP is read by its first pass**, as a local one is,
+fetching the object once from start to end; with no footer to walk, nothing
+is paid before the first row. Its scan is one reader and so, by default, is
+its decompression: state `--jobs` and that many workers decompress ahead of
+the scan, all from the same one download. **A BGZF file over HTTP is read by a
+first pass too, not walked**: the walk reads every part of the file, and the
+scan would then fetch it all a second time. Its first pass takes its units
+from its members' headers, so under a stated `--jobs` it decompresses in
+parallel as well. Either way, keep the cache the run writes, and later runs
+fetch only the units they read.
 
 **A network failure stops the run**, naming the URL and what went wrong. It is
 not treated as an interruption, because nobody asked for it — but a `parse`
@@ -723,7 +853,10 @@ container already told pgdt, and the read-buffer budget that follows is
 same carve, which is what makes it a number an operator can size a container
 from.
 
-The one place the read-buffer budget bites is `.xz` input. A compressed file is
+The one place the read-buffer budget bites is compressed input — an `.xz`
+file, or a gzip file once its index is built, whose units are its blocks here;
+a gzip file's first pass is charged per worker instead (above, "gzip files:
+the first pass builds the index"). A compressed file is
 normally read a whole block at a
 time, which is what makes reading the same block twice free — but that needs
 room for **four** blocks at one worker: the one that worker is decoding, which
@@ -835,7 +968,10 @@ blocks reads with at most six workers however wide the machine — and with
 fewer on a machine narrower than that, the count being the smaller of the two.
 That is what `parse` gains: a typed `query` reads a compressed dump's rows back
 no faster with more workers than with one, and a plain one about a tenth
-faster. An `.xz` dump read over HTTP takes one worker. **How many of those workers actually read is then bounded by
+faster. A gzip dump on disk takes its CPUs too once its index is built, and
+its first pass one worker for each physical core (above, "gzip files: the
+first pass builds the index"). An `.xz` or gzip dump read over HTTP takes one
+worker. **How many of those workers actually read is then bounded by
 `--memory`**: one reader of an ordinary 24 MiB-block file wants about
 106 MiB once the pool's four slots are counted, so a read-buffer budget of
 64 MiB delivers one worker whatever `--jobs` says, reading through the
@@ -966,6 +1102,11 @@ line-anchored statement boundary a second reader could start from, which is
 unfortunate, because it is also the shape that costs the most: about five times
 a `COPY` block's CPU per byte.
 
+A gzip file's first pass is one more until it ends: its scan is one reader
+whatever you set, and only its decompression runs on the workers (above,
+"gzip files: the first pass builds the index"). Once the index is built the
+file is split like any compressed one.
+
 A plain (uncompressed) file *is* split, but do not expect much from it, and it
 is the shape where the number you state is not the number you get. pgdt's read
 buffers are pooled four deep on such a file, and a worker needs one to read
@@ -978,8 +1119,8 @@ for.
 ### Status on stderr
 
 `parse`, `info` and `query` all write a line to stderr the moment there is
-something worth watching a long run for: an `.xz` file's seek-table walk, and
-each of the two passes a `parse` (or a `query`'s mapping pass) makes over the
+something worth watching a long run for: an `.xz` file's seek-table walk, a
+gzip file's first pass or a BGZF file's member walk, and each of the two passes a `parse` (or a `query`'s mapping pass) makes over the
 file — a bounded prepass that reads only far enough to find the header
 metadata, then the real scan. Every line opens with an RFC3339 timestamp, so
 it lines up with anything else read off the same clock — a `dmesg` entry, a
@@ -1011,7 +1152,11 @@ opens straight on `scan started` naming the byte the interrupted run reached.
 
 The seek-table lines only appear on a fresh `.xz` file — the walk they report
 is what a cache's persisted table exists to skip (above, "`.xz` files are read
-directly").
+directly"). A gzip file's `first pass` lines and a BGZF file's `BGZF member
+walk` lines are their counterparts, shown under "gzip files: the first pass
+builds the index" above: the first pass is said at its first read, inside the
+`preamble scan` it serves, and complete when its read reaches the end of the
+file.
 
 **Two of those lines say what this run is going to do, and where each number
 came from.** Both are printed by `parse` and by `query` alike, and they are two
@@ -1100,9 +1245,10 @@ pass and prints none of them. `resolved the arrangement` comes after that
 pass, naming what the rows are read under, and where the table holds
 statistics it pays for those and ends `held_bytes=…`, what they hold. Two
 things can still cut the count: a compressed dump whose largest block the
-budget cannot hold is read through the streaming decoder and is **serial
-whatever `--jobs` said**, and a budget too small for the readers asked for buys
-fewer of them. Either prints one line, once per scan:
+budget cannot hold is read through the streaming decoder, and a gzip dump with
+no complete index through its first pass, each **serial whatever `--jobs`
+said**; and a budget too small for the readers asked for buys fewer of them.
+Either prints one line, once per scan:
 
 ```
 2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=67108864
@@ -1111,7 +1257,8 @@ fewer of them. Either prints one line, once per scan:
 
 `jobs=` is what is running, `asked=` is what `scan started` announced,
 `bound_by=` is which of the two cut it — `source` for a container path the
-budget could not afford, `budget` for readers it could not afford — and
+budget could not afford or a gzip first pass, `budget` for readers it could
+not afford — and
 `would_hold_bytes=` is what the arrangement that was refused would have held,
 which is the read-buffer budget to raise `--memory` past. **No such line means the
 count was started as announced**, or that the block was left to one reader for
@@ -1240,7 +1387,8 @@ handling](type-handling.md) for what "resolved"
 means and why a column sometimes isn't). A column that is simply text says
 nothing and prints no line. It names beneath each block what a strict `parse`
 does not check in it, described above. On a compressed dump it also prints
-the container's shape, described under "`.xz` files are read directly" above.
+the container's shape, described under "`.xz` files are read directly" and
+"gzip files: the first pass builds the index" above.
 
 `--detail` also turns the `user-defined types` count into a listing of the
 types themselves, one line each, in the order the dump declares them:
@@ -1374,7 +1522,7 @@ are seven different messages because they mean seven different things:
 | `… is cut short or damaged` | A pgdt cache, but not all of it is there. |
 | `… was written by a different pgdt build` | The cache's format version is not this build's. Pre-1.0 this happens after an upgrade; nothing is migrated. |
 | `… was written for a source of …` | The dump file's size no longer matches. Every offset in the cache could be wrong. |
-| `… records compression details this source contradicts` | The cache says this file is compressed and it is not, or the other way round, or the seek table it recorded does not fit the file. |
+| `… records compression details this source contradicts` | The cache says this file is compressed and it is not, or the other way round, or the seek table or gzip index it recorded does not fit the file. |
 | `… counted the values a query cannot display against a calendar ending …` | The cache counts the dates a DataFusion query cannot display (below, "Values a column's type cannot hold") against a calendar that ends on another day than this build's, which only a library upgrade moves. Its counts are not this build's. |
 
 **Only the first sends you straight to `pgdt parse`.** `parse` and `query`
@@ -1505,7 +1653,8 @@ carries three things the text views state differently:
 - **Coverage as components**, not as the rendered percentage —
   `scanned_through` and `total_size`, so you compute whatever ratio you want.
 - **`compression`**, the container's shape — `container`, `streams`, `blocks`
-  and `max_block_uncompressed` — or `null` for a plain dump. The same three
+  and `max_block_uncompressed` — or `null` for a plain dump, a gzip dump's
+  members under `streams` and its units under `blocks`. The same three
   numbers `--detail` prints on one line, read off `compression_index`.
 - **`resolution`**, one record per `COPY` block, with the per-column outcome
   `--detail` renders as prose. Each column carries its name, the declared
