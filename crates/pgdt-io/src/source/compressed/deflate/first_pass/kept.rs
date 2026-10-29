@@ -4,8 +4,8 @@
 //! read to the next (`docs/design/decisions.md`, "D126").
 //!
 //! **Why a `spawn_blocking` a read would not do**: the runtime's blocking
-//! pool wakes one idle thread on a condvar, and the platform picks which — on
-//! Linux the one waiting longest — so once the tasks run ahead of the frontier
+//! pool wakes one idle thread on a condvar, the one waiting longest in
+//! `pgdt`'s build, whose tokio waits on `parking_lot`'s queue — so once the tasks run ahead of the frontier
 //! have left threads idle, each read lands on the next of them in turn, each
 //! on the core it last ran on; kept, the frontier stays on one thread at every
 //! worker count, as a serial pass's does.
@@ -38,8 +38,10 @@ struct Line {
 
 impl Line {
     /// Queue `work` on the line's thread, or hand it back where the channel
-    /// is closed. A send that succeeds is always received: the thread leaves
-    /// only once the sender is gone and the channel is empty.
+    /// is closed. A send that succeeds is received but where the runtime
+    /// shuts down before the thread has started, dropping its task and the
+    /// channel with it: once running, the thread leaves only once the sender
+    /// is gone and the channel is empty.
     fn send(&self, work: Work) -> std::result::Result<(), Work> {
         let Some(slot) = self.slot.upgrade() else { return Err(work) };
         let sender = lock(&slot);

@@ -43,7 +43,7 @@ are `docs/process.md`, "The decision register".
 - **D122** A speculation's guess is cut at a bound on its events and on its bytes past its chunk, and continued
 - **D123** A taken chunk's decode records a BGZF member as its start, header and end, three events a chain read counts
 - **D124** A gzip first pass charges a task what `gz-seek` bounds it to write, and frees no decode buffer while it runs
-- **D125** A parallel first pass hands out no speculation from when one finds nothing until its frontier crosses a block start
+- **D125** A parallel first pass hands out no speculation from when one finds nothing until its frontier crosses a block or member start
 - **D126** A local gzip first pass keeps its frontier on one blocking thread from read to read
 - **D20** The library never replaces cache data automatically
 - **D21** Identity is `stored_size()` plus weak signals, in an opaque enum

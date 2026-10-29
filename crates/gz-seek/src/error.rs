@@ -28,7 +28,8 @@ pub enum Error {
         reason: &'static str,
     },
     /// The deflate data is invalid; `offset` is where the failing step's input
-    /// began.
+    /// began, a byte past it where a resumed decode's first step took the
+    /// byte its checkpoint begins inside.
     Deflate {
         /// Compressed offset.
         offset: u64,

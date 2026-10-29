@@ -14,11 +14,11 @@ concurrency.
 ### D2 A plain file recommends one worker; a local compressed one the machine's cores
 A plain file recommends one: a serial plain `parse` is device-bound wherever a split reaches, a `COPY` block's interior
 (an `INSERT` run, `KD9`, admits none), each piece's tail read adds bytes, and `query`'s typed scan, unbound on the NVMe,
-is held flat by `KD57` (D25). A local compressed source or gzip first pass recommends its cores capped at its units
-(`RT7`), a first pass's also at its affinity's physical cores (`RT27`); a fetched one, one: more connects to a third
-party unasked. Rejected: a plain split once a typed one outran one worker on the NVMe; a fetched first pass's cores, its
-tasks fetching no more; a first pass's logical count or one less, neither beating the physical. Reopens: `KD57` closing
-(D7); either beating it on a file it or the physical lifts. Evidence: `scan-throughput-*`, `parallel-scan-throughput`,
+is held flat by `KD57` (D25). A local compressed source recommends its cores capped at its units, a gzip first pass at
+its chunks (`RT7`) and its affinity's physical cores (`RT27`); a fetched one, one: more connects to a third party
+unasked. Rejected: a plain split once a typed one outran one worker on the NVMe; a fetched first pass's cores, its tasks
+fetching no more; a first pass's logical count or one less, neither beating the physical. Reopens: `KD57` closing (D7);
+either beating it on a file it or the physical lifts. Evidence: `scan-throughput-*`, `parallel-scan-throughput`,
 `gzip-first-pass`.
 
 ### D3 The memory constants, and what each one is
@@ -76,9 +76,10 @@ which an `INSERT` run on the NVMe meets (`KD9`) and a default `parse` there may 
 ### D11 Limit discovery takes a root; the seam is `internal`'s
 `discover_memory_limit_in` reads the cgroup limit (RT3, RT5) under a filesystem root, because the arms worth pinning are
 ones no machine is more than one of; an embedder discovers at `/` (`Allowance::discover`) or states an allowance, so the
-root-taking readers are `internal`'s (D106). With no limit found, a source recommending a charge is capped at half of
-`MemAvailable` (RT8), untuned, and one recommending none is not. Rejected: an env var overriding the root; the seam
-public for tests alone.
+root-taking readers are `internal`'s (D106). With no limit found, `pgdt` caps a source recommending a charge at half of
+`MemAvailable` (RT8), untuned, and not one recommending none; a request carving that estimate (`carve_estimate`, the
+provider's) carves half as an allowance, and with `MemAvailable` unreadable nothing caps (`KD113`). Rejected: an env var
+overriding the root; the seam public for tests alone.
 
 ### D12 Workers are `spawn_blocking`; no runtime flavour is imposed
 The library keeps `tokio` at `rt`+`sync` and imposes no runtime flavour, its work being `spawn_blocking`; `pgdt`'s own

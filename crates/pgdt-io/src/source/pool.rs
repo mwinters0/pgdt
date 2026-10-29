@@ -18,8 +18,8 @@ use super::WaitPolicy;
 /// alive when chunk *N+1* is read — and every chunk a batch's views point into
 /// is alive until that batch flushes, which this depth does not cover (`KD54`).
 ///
-/// **It is a wish, not the bound** — the stated budget is the bound, and the
-/// two together are what make a slot able to hold a decoded xz block rather
+/// **It is the ceiling on the slot count, and the stated budget lowers it**
+/// where a slot is large; the two together are what make a slot able to hold a decoded xz block rather
 /// than only a read chunk.
 ///
 /// **It is also the floor under a stated worker count**, not a second number
@@ -44,8 +44,8 @@ pub(crate) const POOL_DEPTH: usize = 4;
 ///
 /// The read path's steady state is chunk-sized — [`crate::SCAN_CHUNK_DEFAULT_SIZE_BYTES`],
 /// tunable through `ReadOptions::chunk_size_bytes`. What can be far larger is
-/// `pgdt_dump::attach_text`'s coalesced span read, which happens once per map
-/// and never again; holding one of those for the rest of a process would trade
+/// `pgdt_dump::attach_text`'s reads of the DDL between data blocks, one per
+/// contiguous run, made as a map is built and repeated by no scan; holding one of those for the rest of a process would trade
 /// what a scan holds resident (`peak-rss`) for an allocation nothing asks for
 /// twice.
 ///
@@ -293,8 +293,8 @@ impl BufferPool {
     /// affords it, fewer where a slot is large, never zero.
     ///
     /// **This is what makes the pool block-capable.** At the default chunk it
-    /// is [`POOL_DEPTH`]; at a decoded xz block large enough that the depth
-    /// would be the whole allowance, it is one.
+    /// is [`POOL_DEPTH`]; at a decoded xz block over half the allowance, it
+    /// is one.
     pub(super) fn slots(&self) -> usize {
         let depth = self.depth.load(Ordering::Relaxed).max(1);
         (self.budget() / self.slot_bytes()).clamp(1, depth)
@@ -309,7 +309,8 @@ impl BufferPool {
 
     /// The most this pool can hold at once, in bytes: its slot count at its
     /// own slot size, counting the free list and whatever a reserving holder
-    /// retains **together**.
+    /// retains **together** — once acquisitions have drained a free list a
+    /// lowered limit left over it ([`PoolState::free`]).
     ///
     /// **It is a true bound only because [`BufferPool::keeps`] refuses
     /// anything above a slot and [`BufferPool::reserve`] takes the retained
@@ -343,8 +344,8 @@ impl BufferPool {
     /// does not have: it reads [`PartitionRead::Chunked`](crate::PartitionRead::Chunked), so every buffer its
     /// read loop takes is the announced length. It does take one other length
     /// — `pgdt_dump::attach_text`'s run read, which is bounded by the spans
-    /// it is filling rather than by the hint — and this rule is exactly what
-    /// drops that buffer instead of pooling it. The two-unit sources are the
+    /// it is filling rather than by the hint — and this rule drops that buffer
+    /// instead of pooling it wherever it is longer than a slot. The two-unit sources are the
     /// compressed ones, [`CompressedFileSource`](crate::CompressedFileSource) and
     /// [`FetchedCompressedSource`](crate::FetchedCompressedSource), whose `DecodeBudget` takes
     /// a second pool rather than a second hint.

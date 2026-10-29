@@ -88,8 +88,8 @@ fn an_unlimited_hierarchy_and_a_missing_one_both_read_as_no_limit() {
 }
 
 /// **A v1 hierarchy is read from its own mount, located through
-/// `mountinfo`** (`RT4`, `RT6`), and "unlimited" there is a *threshold*
-/// near `LONG_MAX` rather than a sentinel string, the value being a
+/// `mountinfo`** (`RT4`, `RT6`), and "unlimited" there is a large number
+/// rather than a sentinel string, read by a threshold, the value being a
 /// function of the page size and the word width.
 ///
 /// This establishes that the reader handles the shape `RT4` describes. It

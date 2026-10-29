@@ -39,13 +39,15 @@
 //! where a decode handed out begins, it waits for that decode — which, begun
 //! from the same bytes, costs at most what decoding them on would — and
 //! anywhere else it decodes on, a speculation landing behind it being dropped.
-//! So no task's cost can make the pass slower than the serial one, and a
+//! So the frontier never waits on what a speculation costs, though the tasks
+//! share the machine with it (`docs/design/decisions.md`, "D125"), and a
 //! speculation is handed out on a chunk far enough ahead of the frontier to
 //! land before it gets there: as many chunks past it as it crossed while the
-//! last speculation ran, and the caller's lead past that
-//! ([`Parallel::set_lead`]) — and none from when one finds nothing until the
-//! frontier next crosses a block start, so over a member whose writer ends
-//! no block the frontier decodes it alone, as the serial pass does.
+//! last speculation on a chunk's own start ran, and the caller's lead past
+//! that ([`Parallel::set_lead`]) — and none from when one finds nothing until
+//! the frontier next crosses a block start or a member start, so over a member
+//! whose writer ends no block the frontier decodes it alone, as the serial
+//! pass does.
 //!
 //! **Every byte handed out is checked as a forward pass checks it**: each
 //! unit's CRC-32 is recorded from the plaintext, and each member's trailer is
@@ -384,7 +386,7 @@ impl Parallel {
     /// The next task: a decode the chain has a window for, in chunk order
     /// ([`Parallel::decode_task`]), or else a speculation
     /// ([`Parallel::speculation_through`]); `None` past the file's last
-    /// chunk.
+    /// chunk, or while speculation is paused with no decode to hand out.
     pub fn task(&mut self) -> Option<ChunkTask> {
         self.decode_task().or_else(|| self.speculation_through(u64::MAX))
     }
@@ -403,8 +405,9 @@ impl Parallel {
     /// ([`Parallel::set_lead`]) — on a chunk at or before `last`, and a
     /// continuation only where it begins in one: a caller holding the bytes
     /// its tasks read bounds how far ahead of the frontier they reach, a lead
-    /// past that bound being dropped. A chunk passed over here is the next
-    /// one a speculation is handed out on. None is handed out from when a
+    /// past that bound being dropped. A chunk past `last` is handed out once
+    /// `last` reaches it, unless the frontier and its lag have placed the
+    /// next speculation past it by then. None is handed out from when a
     /// speculation lands having found nothing until the frontier next
     /// crosses a block start or a member start: a writer ending no block
     /// gives the next nothing to find either, and one ending blocks often
@@ -470,8 +473,11 @@ impl Parallel {
 
     /// Whether a task handed out is still of use: a decode resting on a window
     /// the pass has since dropped, or a speculation on a chunk the frontier
-    /// has passed — a continuation, past its start — need not be run, and its
-    /// result is dropped.
+    /// has passed — a continuation, past its start — need not be run to its
+    /// end, and its result is dropped. It is still handed back
+    /// ([`Parallel::done`]): a speculation dropped instead is counted by
+    /// [`Parallel::guesses_pending`] for the rest of the pass, and one handed
+    /// back unrun pauses speculation as one finding nothing does.
     pub fn wants(&self, id: TaskId) -> bool {
         match id.decode_of() {
             None => {
@@ -487,7 +493,8 @@ impl Parallel {
 
     /// How many decodes are handed out or held for the frontier: what the
     /// caller's memory holds for them is each running one's ([`ChunkTask`])
-    /// and [`Parallel::held`].
+    /// and [`Parallel::held`], beside the one the frontier is serving, which
+    /// neither counts.
     pub fn decodes_pending(&self) -> usize {
         self.chain.decodes()
     }
@@ -836,7 +843,8 @@ impl Parallel {
 
     /// A decode beginning where the frontier stands, ready to hand out:
     /// `None` where the engine refused its bytes, where a trailer it holds
-    /// does not match, or where it was begun with another history than the
+    /// does not match, where it is cut to nothing at a static block it begins
+    /// with, or where it was begun with another history than the
     /// frontier's — every decode after it resting on that one's, the chain is
     /// dropped — its bytes then left to the frontier and its buffer kept.
     fn take(&mut self, decoded: ChunkDecoded) -> Option<Serving> {

@@ -24,8 +24,9 @@ pub(crate) struct ParallelArgs {
     /// **It states what is asked for, not what is delivered.** Two input
     /// shapes admit no parallelism whatever this says: a `.xz` file with one
     /// block, and an `INSERT` run (`docs/manual/dump-inspection.md`). And on a
-    /// plain file the read buffer pool's own depth binds before this does, so
-    /// a `parse` above `--jobs 4` runs four workers and queues the rest.
+    /// plain file the read buffer pool's own depth binds before this does: it
+    /// holds at most four chunks, and a `parse` above `--jobs 4` queues the
+    /// readers past them wherever a read may wait.
     ///
     /// What it reaches is `query`'s row replay, cut into at most this many
     /// sub-streams read at once and merged back into file order; a `parse`'s
@@ -51,9 +52,10 @@ pub(crate) struct ParallelArgs {
     /// everything pgdt holds that no buffer accounts for — the runtime's
     /// threads, the allocator's per-thread arenas, the decoder state a
     /// compressed source keeps outside its pools, the binary itself. What is
-    /// left is what the read buffers may hold, and the worker count is lowered
-    /// again so that a fifth of the whole number, plus a further 256 MiB,
-    /// stays unspent. So the buffer
+    /// left is what the read buffers may hold, and the buffer budget is what
+    /// as many workers spend as leave a fifth of the whole number, plus a
+    /// further 256 MiB, unspent — the worker count itself lowered to that
+    /// where the source states a charge and `--jobs` did not. So the buffer
     /// budget a run reports is always smaller than what you typed, and the
     /// `resolved the arrangement` line on stderr names both.
     ///

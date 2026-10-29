@@ -5,8 +5,9 @@
 //! holds** — its header's `BSIZE`, its trailer's `ISIZE` — and begins with no
 //! history, so the guess a speculation would decode a chunk to reach is read
 //! off the chain instead: from the first BGZF header at or past the chunk's
-//! first byte to the first member start at or past its end, the stop a decoded
-//! speculation reaches there (`super`), its length the `ISIZE`s between and
+//! first byte to the first member start at or past its end, where a decoded
+//! speculation stops too unless a block inside that member ends first
+//! (`super`), its length the `ISIZE`s between and
 //! its history at the stop none. Still a guess: the frontier takes the decode
 //! it lets begin only standing at its start, every trailer it holds matching
 //! (`docs/design/decisions.md`, "D117").
@@ -20,7 +21,7 @@
 //! member start it reached wherever the bytes after a member begin no member,
 //! an `ISIZE` passes BGZF's most, or a member runs past the file's end; where
 //! that start is its first, it was no header, and the search goes on past it,
-//! so a lone header the bytes do not bear out hands back no guess. Plaintext
+//! so no guess begins at a lone header the bytes do not bear out. Plaintext
 //! that would pass the limit cuts the chain there too, and so does a member
 //! past the events a guess may span, three a member — its start, header and
 //! end, all the engine's decode of the chunk records of it — the guess marked
@@ -33,7 +34,8 @@ use crate::member::GZIP_MAGIC;
 use crate::native::Input;
 
 /// The events the engine's decode of a chained member records: its start,
-/// its header and its end (`docs/design/decisions.md`, "D123").
+/// its header and its end (`docs/design/decisions.md`, "D123"), a span
+/// holding no other member (`KD154`).
 const EVENTS_A_MEMBER: usize = 3;
 
 /// What a read of the chain came to.

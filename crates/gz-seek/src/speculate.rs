@@ -69,7 +69,7 @@ pub const SPECULATION_LIMIT: usize = 2 * ((1 << (9 + 6)) - 1) * 258;
 /// flushing, many-membered or crafted writer's file is cut by it. A guess's
 /// count bounds what the engine's decode of its chunk records, twice as many
 /// at most, a static block's start beside its end; a chain read counts three
-/// a member, all that decode records of a BGZF member
+/// a member, all that decode records of a BGZF member (but `KD154`)
 /// (`docs/design/decisions.md`, "D122").
 pub(crate) const EVENTS_A_GUESS: usize = 16 * (SPECULATION_LIMIT / ((1 << (8 + 6)) - 1));
 
@@ -616,8 +616,10 @@ impl Speculation {
     /// decoded guess stops at the first block boundary the next chunk's
     /// search would begin at, while the next chunk's guess begins at the
     /// first BGZF header it holds where it holds one: a plain member running
-    /// past a chunk's end into BGZF members gives two guesses that never meet,
-    /// the frontier decoding from the one's stop to the other's start itself.
+    /// past a chunk's end into BGZF members, with a block the search looks for
+    /// beginning in it past that end, gives two guesses that never meet, the
+    /// frontier decoding from the one's stop to the other's start, and the
+    /// chunk it anchors at there, itself.
     /// **(c) unowned**; promoted by a profile of a plain-then-BGZF file's pass
     /// showing that decode.
     fn step(&mut self, decode: &mut Decode) -> Result<Option<Point>, Halt> {

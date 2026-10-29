@@ -24,12 +24,14 @@
 //! done — as resting on a window nothing proved, and a running one's result
 //! is dropped when it comes back.
 //!
-//! **No decode's plaintext buffer is freed while the pass runs.** Each is
+//! **No decode's plaintext buffer is freed while the pass runs**, but with a
+//! task its caller drops rather than hands back. Each is
 //! made for the pass's limit and lent a decode as it is handed out, never as
 //! it is queued, and comes back here when the pass has done with it — served,
 //! refused or dropped — for the next decode handed out. One is made only
 //! where none is spare, so the buffers never outnumber the decodes the pass
-//! has had out at once (`docs/design/decisions.md`, "D124").
+//! has had out at once (`docs/design/decisions.md`, "D124") — those a reset
+//! drops while they run counted among them (`KD153`).
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -185,6 +187,13 @@ impl Chain {
     }
 
     /// Drop every decode, the chain ending until the frontier anchors again.
+    ///
+    /// Deficiency register: `deficiency: KD153` — a decode still running
+    /// leaves `running` here and keeps its buffer until it lands, while the
+    /// decodes handed out after the reset are lent new ones, so the buffers
+    /// can outnumber the decodes `decodes` counts and a caller charges, up to
+    /// a running decode's more a task. **(c) unowned**; promoted by
+    /// `gzip-resident` under-billing, or a recording naming the buffers.
     pub(super) fn reset(&mut self) {
         self.generation += 1;
         self.end = None;

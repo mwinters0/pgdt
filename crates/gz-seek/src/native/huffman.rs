@@ -140,8 +140,9 @@ impl Huffman {
         let max = (1..=MAX_BITS).rev().find(|&len| count[len] != 0).unwrap_or(0);
         if max == 0 {
             // zlib accepts a code with no symbols and fails at its first use;
-            // a code-length code of none is refused at once here, where zlib
-            // reads it as lengths of zero and refuses the missing end-of-block.
+            // a code-length code of none is refused at its first decode
+            // (`inflate.rs`'s `dynamic`), where zlib reads it as lengths of
+            // zero and refuses the missing end-of-block.
             return Ok(());
         }
         let mut left: i32 = 1;

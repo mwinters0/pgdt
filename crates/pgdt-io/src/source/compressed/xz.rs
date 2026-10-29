@@ -235,11 +235,11 @@ impl UnitRead for XzRead {
 ///
 /// Deficiency register: `deficiency: KD36` — this driver fetches exactly what
 /// it is asked for, so a cold walk over a dump compressed as many small streams
-/// is at least four round trips a stream before a row is read. The remedy is a **straddling
-/// window**: one read per stream positioned backward from the pending request
-/// and sized to cover what the walk asks for next, which answers three of every
-/// stream's four requests because a stream's header is adjacent to its
-/// predecessor's padding, footer and index. **One fetch a stream is then a
+/// is four round trips a stream holding a block before a row is read. The
+/// remedy is a **straddling window**: one read per stream positioned backward
+/// from the pending request and sized to cover what the walk asks for next,
+/// which answers three of every stream's four requests because a stream's
+/// header is adjacent to its predecessor's padding, footer and index. **One fetch a stream is then a
 /// floor, not a cost still looking for a remedy** — the distance to the next
 /// boundary is knowable only from the index just read, and this file family has
 /// no stream stride to predict it from. What would beat the floor is not a

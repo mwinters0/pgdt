@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD151 -->
-**`KD1`–`KD151` are allocated, and nothing at or below `KD151` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD154 -->
+**`KD1`–`KD154` are allocated, and nothing at or below `KD154` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -169,7 +169,8 @@ than reading as a phase nobody has sliced.
   plain scan on a real device, which is that path's own reopening condition.
   Detail: `crates/pgdt-io/src/source/local.rs`.
 
-- **KD26** — no charge bills a compressed source's seek table, the only
+- **KD26** — no charge bills a compressed source's index — an `.xz` seek
+  table, a gzip index — the only
   unbilled term in the account that grows with the file rather than the count —
   3.33 MiB on koji's download against 4.11 KiB on the fixtures the bound was
   read off. **(c) unowned**; promoted by a source whose index is not small
@@ -208,15 +209,14 @@ than reading as a phase nobody has sliced.
 - **KD35** — a budget too small for a decoded block is read serially: the
   piecewise arm advises one partition on both providers, where a decoder retains
   far less than the block it decodes and several would fit. What pins the count
-  at one is not the budget but one forward-only handle behind a mutex — the
-  fetched arm's statelessness, which would have served several partitions for
-  want of cut points alone, was spent to stop it re-decoding a block a scan sits
-  inside. **(c) unowned**; promoted by a phase taking up compressed scan
+  at one is one forward-only live unit on each arm, the fetched arm's
+  statelessness spent to stop it re-decoding a block a scan sits inside.
+  **(c) unowned**; promoted by a phase taking up compressed scan
   throughput, which is also what takes the figure. Detail: `crates/pgdt-io/src/source/compressed/blocks.rs`.
 
 - **KD36** — a fetched `.xz` file with no cached seek table is walked one
-  request at a time, so a cold remote open costs at least four round trips per
-  stream — a footer, an index, a header and a padding probe — before a row is
+  request at a time, so a cold remote open costs four round trips per stream
+  holding a block — a footer, an index, a header and a padding probe — before a row is
   read. The remedy is a straddling window, below which one fetch a stream is a
   floor rather than a remaining cost. **(c) unowned**; promoted by a phase that
   tunes the network, which is where the deferred fetch policy belongs.
@@ -513,8 +513,9 @@ than reading as a phase nobody has sliced.
   `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.
 
 - **KD139** — a parallel first pass's guesses do not meet where a plain
-  member runs past a chunk's end into BGZF members, so the frontier decodes
-  the gap itself. **(c) unowned**; promoted by a profile showing that decode.
+  member runs past a chunk's end into BGZF members with a block the search
+  looks for between, so the frontier decodes the gap, and the chunk past it,
+  itself. **(c) unowned**; promoted by a profile showing that decode.
   Detail: `crates/gz-seek/src/speculate.rs`.
 
 - **KD140** — the block search can pass over a true dynamic block whose
@@ -554,3 +555,22 @@ than reading as a phase nobody has sliced.
   mistyped source or a read-only cache directory reads only "No such file or
   directory" or "Read-only file system". **(b) owned by `M258`**, which names
   the path. Detail: `crates/pgdt-core/src/error.rs`.
+
+- **KD152** — a fetched gzip first pass's frontier copies up to a chunk of
+  compressed input where its decode is charged an input chunk, so it holds up
+  to the difference unbilled. **(c) unowned**; promoted by a reading of a
+  fetched first pass's resident. Detail:
+  `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.
+
+- **KD153** — a gzip parallel first pass's chain, reset, stops counting the
+  decodes still running, which keep their plaintext buffers until they land
+  while new decodes are lent new ones, so the buffers can outnumber the
+  decodes a task's charge names. **(c) unowned**; promoted by `gzip-resident`
+  under-billing, or a recording naming the buffers. Detail:
+  `crates/gz-seek/src/parallel/chain.rs`.
+
+- **KD154** — a taken chunk's decode records every member inside a BGZF
+  member's stated `BSIZE` span, where a chain read counts three events a span,
+  so a crafted span of many plain members passes the decode's event bound.
+  **(c) unowned**; promoted by such a file met, or a decode's events checked
+  against its bound. Detail: `crates/gz-seek/src/chunk.rs`.

@@ -357,8 +357,8 @@ impl BlockCache {
     /// is never decoded whole.
     ///
     /// **What it declines is memory, not seekability**: a file written with
-    /// large blocks (`xz -9 -T0`, or an explicit `--block-size`) is declined
-    /// under the default budget and does have parallelism to lose, which
+    /// `xz -T0`'s ordinary blocks or larger is declined under the default
+    /// budget and does have parallelism to lose, which
     /// `--memory` or `Parallelism::Workers` reverses.
     pub(super) fn affordable(&self, chunk_bytes: u64, decode_bytes: u64, budget: u64) -> bool {
         self.worker_memory(chunk_bytes, decode_bytes).at(1) <= budget

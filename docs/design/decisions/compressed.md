@@ -8,18 +8,20 @@ gives a gzip file one, and the cache file — its identity checks, what it persi
 
 ### D14 Recognition sniffs content; `xz-seek` is a vendored read-only copy
 Recognition compares a file's first bytes with each format's magic, never its name, outside the source trait, told them
-by `Origin`'s one probe, which also answers D20's stored size, so nothing settled before a source exists assumes a local
-file. Rejected: extension dispatch. `xz-seek` is a vendored read-only copy (`scripts/vendor_xz_seek.py`): a defect or a
-missing seam is fixed upstream and re-synced, never patched or bridged here, as its sans-IO walk and block handle were
-for a fetched source. Rejected: a path dependency, failing `cargo check` without the sibling checkout.
+by `Origin`'s one probe (`CompressedFileSource::open`, opened alone, reads its own), which also answers D20's stored
+size, so nothing settled before a source exists assumes a local file. Rejected: extension dispatch. `xz-seek` is a
+vendored read-only copy (`scripts/vendor_xz_seek.py`): a defect or a missing seam is fixed upstream and re-synced, never
+patched or bridged here, as its sans-IO walk and block handle were for a fetched source. Rejected: a path dependency,
+failing `cargo check` without the sibling checkout.
 
 ### D15 A read decodes whole blocks and retains them; reading one in pieces is the fallback
-A read decodes whole units and retains them, LRU, where the caller's budget affords one reader's charge from file-wide
-inputs (`BlockCache::affordable`). Rejected: a fixed refusal line; keying on block count. Below that line a read goes
-through one live forward handle behind a mutex, kept across reads so a forward scan continues, advising one partition
-(`KD35`); the fetched arm's window is charged, not booked unpooled. Both arms are written once over a `dyn Codec` and
-their own `Positioned` read, never one body branching on the provider. Rejected: a source per codec and transport;
-generic arms or an enum, holders being `dyn` (D6) and the codec chosen at open. Evidence: `reserve`.
+A read decodes whole units and retains them, LRU, where the caller's budget affords one reader and the retention list
+beside it, from file-wide inputs (`BlockCache::affordable`). Rejected: a fixed refusal line; keying on block count.
+Below that line a read goes through one live forward unit, the local arm's behind a mutex and the fetched arm's taken by
+its read, kept across reads so a forward scan continues, advising one partition (`KD35`); the fetched arm's window is
+charged, not booked unpooled. Both arms are written once over a `dyn Codec` and their own `Positioned` read, never one
+body branching on the provider. Rejected: a source per codec and transport; generic arms or an enum, holders being `dyn`
+(D6) and the codec chosen at open. Evidence: `reserve`.
 
 ### D18 The seek table is persisted and identity is three-state
 A many-stream `.xz` file costs a footer read per stream, so a save persists the compression index and an open hands it
@@ -32,10 +34,10 @@ save of one file.
 A budget decline is a `PlanNote`, a property of the file *and this run's budget*; a `Diagnostic` is a finding about the
 file alone. A file with no seek structure opens and is warned (`NonSeekableCompressedSource`), only its user being able
 to judge decoding a unit from its start: an `.xz` file of one block, a gzip file with a unit wider than twice the
-spacing, which only a writer coding it in one dynamic block leaves (D118). A gzip first pass is a note, the pass making
-the file seekable. A statistics skip is noted at zero wherever statistics were consulted, a narrowed span (D84) wherever
-the plan charged less than stated. Rejected: omitting a zero; counting only believed filtered columns; warning gzip by
-unit count, which says nothing of the writer. Reopens: a puzzling zero.
+spacing, which only a writer coding more than a spacing in one dynamic block leaves (D118), or a false BGZF header. A
+gzip first pass is a note, the pass making the file seekable. A statistics skip is noted at zero wherever statistics
+were consulted, a narrowed span (D84) wherever the plan charged less than stated. Rejected: omitting a zero; counting
+only believed filtered columns; warning gzip by unit count, which says nothing of the writer. Reopens: a puzzling zero.
 
 ### D112 `gz-seek` inflates through zlib-rs, by `libz-rs-sys`'s zlib C API
 Of the engines exporting what an index needs through the zlib API, zlib-rs is the fastest at both of `gz-seek`'s costs,
@@ -75,19 +77,19 @@ cache's. Code: `CacheMode::spill_dir`. Evidence: `a_first_pass_spills_beside_its
 ### D116 A forward pass coalesces BGZF members as the walk does, so a fetched BGZF file is read by a first pass
 A fetched source recommends one reader (D2), so a member walk would download the object for parallelism the run does not
 take, before the scan downloads it again; the first pass reads it once and coalesces members as the walk does, so a file
-has one index whichever arm reads it, a broken chain included. Each member is decided by its own header alone, never by
-a stated length, which a resumed pass cannot know. Rejected: the walk on both arms, two downloads; the coalesced run
-ending for good at the first plain header; a BGZF mode the caller states or recognition sets, a broken file then indexed
-per arm. Reopens: a fetched source recommending more than one reader (D2). Code: `gz-seek`'s `placement.rs`;
-`open_remote`. Evidence: `a_remote_bgzf_file_is_read_once_by_a_first_pass_that_builds_the_walk_s_index`.
+has one index whichever arm reads it, a broken chain included. Each member is decided by its own header and the unit it
+would join, never by a stated length, which a resumed pass cannot know. Rejected: the walk on both arms, two downloads;
+the coalesced run ending for good at the first plain header; a BGZF mode the caller states or recognition sets, a broken
+file then indexed per arm. Reopens: a fetched source recommending more than one reader (D2). Code: `gz-seek`'s
+`placement.rs`; `open_remote`. Evidence: `a_remote_bgzf_file_is_read_once_by_a_first_pass_that_builds_the_walk_s_index`.
 
 ### D117 A parallel first pass speculates with a decoder of `gz-seek`'s own, and hands out only the engine's plaintext
-No zlib-API engine decodes from unknown history, so a speculation decodes a chunk natively only for its bounds and
-ending history; the engine decodes from there, and the frontier takes a decode only standing at its start with that
-history, so the index is the serial pass's. Its decoder decides who decodes a byte, never what it is: a member's only
-check is its trailer, so a defect in ours would reach a caller unchecked till the member ends. Rejected: native
-plaintext handed out, saving the engine's share of the CPU; the frontier waiting on its own chunk's speculation, slower
-than serial; per-task fetches. Reopens: the second decode keeping the pass from lifting the inflate. Code:
+No zlib-API engine decodes from unknown history, so a speculation finds a chunk's bounds and ending history natively, by
+decoding it or off its BGZF headers; the engine decodes from there, and the frontier takes a decode only standing at its
+start with that history, so the index is the serial pass's. Its decoder decides who decodes a byte, never what it is: a
+member's only check is its trailer, so a defect in ours would reach a caller unchecked till the member ends. Rejected:
+native plaintext handed out, saving the engine's share of the CPU; the frontier waiting on its own chunk's speculation,
+slower than serial; per-task fetches. Reopens: the second decode keeping the pass from lifting the inflate. Code:
 `gz_seek::Parallel`.
 
 ### D118 A checkpoint inside a static block is placed by walking its codes beside the engine
@@ -105,7 +107,7 @@ just ahead of it. So `Ahead::top_up` hands decodes out under `DECODES_A_TASK` a 
 guesses it holds under `GUESSES_A_TASK`, and a speculation is placed `Chunking::lead` chunks past where it would land
 just ahead of the frontier, where the bound reaches (`Parallel::set_lead`). Rejected: one room for both, guesses held
 keeping a worker from a decode; one run of guesses in flight at a time; a worker kept for decodes; the frontier
-running a queued decode while it waits. Reopens: the second decode removed (D117). Code: `ahead.rs`. Evidence:
+running another queued decode while it waits. Reopens: the second decode removed (D117). Code: `ahead.rs`. Evidence:
 `a_speculation_is_placed_its_lead_past_where_it_lands`, `decodes_and_speculations_are_handed_out_and_counted_apart`.
 
 ### D121 A parallel first pass cuts its file at rapidgzip's chunk, four input chunks
@@ -127,41 +129,42 @@ whose guesses the count cuts often. Code: `speculate.rs` (`EVENTS_A_GUESS`, `bou
 `a_marked_run_grows_its_sink_no_further_than_the_limit_asks`.
 
 ### D123 A taken chunk's decode records a BGZF member as its start, header and end, three events a chain read counts
-Inside a BGZF member the placement owes nothing but its start (D116, D118), so a taken chunk's decode records there no
-static block, no block's end but its stop and one piece a member, and a chain read counts three events a member against
-`EVENTS_A_GUESS`, cut and continued as D122's guesses are: a chunk of members of empty blocks is bounded by
-construction. Rejected: handing back nothing past an event bound, which wastes the decode; cutting it at its last
-boundary under the bound, as `cut_at_static` does, a cut where nothing need be recorded. Reopens: a checkpoint owed
-inside a BGZF member. Code: `chunk.rs` (`Running::event`), `speculate/members.rs` (`EVENTS_A_MEMBER`). Evidence:
-`a_decode_through_bgzf_members_records_only_their_starts_headers_and_ends`, `a_chain_the_event_count_cuts_is_continued`.
+Inside a BGZF member the placement owes nothing but its start (D116, D118), so a taken chunk's decode records, in one
+whose header it reads, no static block, no block's end but its stop and one piece a member, and a chain read counts
+three events a member against `EVENTS_A_GUESS`, cut and continued as D122's guesses are: a chunk of members of empty
+blocks is bounded by construction. Rejected: handing back nothing past an event bound, which wastes the decode; cutting
+it at its last boundary under the bound, as `cut_at_static` does, a cut where nothing need be recorded. Reopens: a
+checkpoint owed inside a BGZF member. Code: `chunk.rs` (`Running::event`), `speculate/members.rs` (`EVENTS_A_MEMBER`).
+Evidence: `a_decode_through_bgzf_members_records_only_their_starts_headers_and_ends`,
+`a_chain_the_event_count_cuts_is_continued`.
 
 ### D124 A gzip first pass charges a task what `gz-seek` bounds it to write, and frees no decode buffer while it runs
 `Chunking::task_bytes` sums bounds `gz-seek` states beside its code (`ChunkTask::speculation_bytes`, `decode_bytes`,
 `GUESS_BYTES`), counting what is written. A decode's plaintext buffer, made for the limit, is kept and lent the next
-decode handed out, never outnumbering the decodes charged. Rejected: counting a buffer's capacity, pages no write
-touches; the larger sink alone, which a member begun inside a marked decode passes; a freed buffer charged a task, a fit
-to what allocators keep; a mapping a buffer, zeroing a limit each decode. Reopens: `gzip-resident` under-billing. Code:
+decode handed out, never outnumbering the decodes charged (but `KD153`). Rejected: counting capacity, pages no write
+touches; the larger sink alone, which a member begun inside a marked decode passes; a freed buffer charged, a fit to
+what allocators keep; a mapping a buffer, zeroing a limit each decode. Reopens: `gzip-resident` under-billing. Code:
 `Chunking::task_bytes`; `most_held` in `speculate.rs` and `chunk.rs`; `parallel/chain.rs`. Evidence:
 `a_speculation_s_sinks_fill_together_within_its_bound`, `a_decode_of_a_guess_the_count_cut_records_within_its_bound`,
 `a_decode_s_plaintext_buffer_is_lent_the_next`.
 
-### D125 A parallel first pass hands out no speculation from when one finds nothing until its frontier crosses a block start
+### D125 A parallel first pass hands out no speculation from when one finds nothing until its frontier crosses a block or member start
 A speculation finds a chunk's start by a block's header, so over a member whose writer ends no block before its last
-every one finds nothing, and the searches slow the frontier past the serial pass. The frontier's own block starts are
-the signal: a pause lasts one block over a writer ending blocks often, and the member's rest over one ending none.
-Rejected: a run of empty speculations before pausing, a constant to choose; recognising such a file and reading it
-serially, a second rule beside speculation. Reopens: `gzip-first-pass` reading a writer ending blocks often slower
-than before it. Code: `Parallel::speculation_through`. Evidence:
+every one finds nothing, and the searches slow the frontier past the serial pass. The frontier's own block and member
+starts are the signal: a pause lasts one block over a writer ending blocks often, and the member's rest over one ending
+none. Rejected: a run of empty speculations before pausing, a constant to choose; recognising such a file and reading it
+serially, a second rule beside speculation. Reopens: `gzip-first-pass` reading a writer ending blocks often slower than
+before it. Code: `Parallel::speculation_through`. Evidence:
 `a_member_ending_no_block_is_speculated_on_until_one_finds_nothing`,
 `a_speculation_finding_nothing_pauses_speculation_until_the_next_block_start`.
 
 ### D126 A local gzip first pass keeps its frontier on one blocking thread from read to read
-A `spawn_blocking` a read wakes the idle blocking thread the condvar picks, on Linux the longest idle, so once the tasks
-ahead leave threads idle the frontier changes thread and core at every read, unlike a serial pass's. Its jobs run in
-order on one `spawn_blocking`, ended at the hand-over, on drop, or by its runtime's shutdown, dropping the task holding
-its channel's sender (RT28). Rejected: a thread of our own (D12); pinning to a core, the operator's; keeping the fetched
-arm's (D15); a kept thread only where tasks run ahead, a second path; an idle timeout, a value nothing anchors. Reopens:
-`gzip-first-pass` reading a default count no faster than before it. Code: `first_pass/kept.rs`. Evidence:
+A `spawn_blocking` a read wakes the idle blocking thread the condvar picks, the longest idle in `pgdt`, so once
+the tasks ahead leave threads idle the frontier changes thread and core at every read, unlike a serial pass's. Its jobs
+run in order on one `spawn_blocking`, ended at the hand-over, on drop, or by its runtime's shutdown, dropping the task
+holding its channel's sender (RT28). Rejected: a thread of our own (D12); pinning to a core, the operator's; keeping the
+fetched arm's (D15); a kept thread only where tasks run ahead, a second path; an idle timeout, a value nothing anchors.
+Reopens: `gzip-first-pass` reading a default count no faster than before it. Code: `first_pass/kept.rs`. Evidence:
 `every_job_runs_on_one_thread_while_other_blocking_threads_idle`,
 `a_runtime_shuts_down_at_once_with_a_pass_left_unretired`, `gzip-first-pass`.
 

@@ -10,7 +10,8 @@
 //! complete — whichever provider its window was read through. Inside the open
 //! unit it is a forward decode resumed at the unit's checkpoint, whose bytes
 //! are the frontier's own, from the window the frontier began from, and
-//! checked where the frontier's are.
+//! checked where the frontier's are — none of them once the frontier has
+//! closed that unit (`KD137`).
 
 use std::sync::Arc;
 

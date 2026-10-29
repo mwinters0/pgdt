@@ -18,7 +18,8 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT_MEMORY_BUDGET: u64 = 64 << 20;
 
 /// What [`Arrangement::resolve`](crate::Arrangement::resolve) holds back from a memory allowance,
-/// discovered or stated, in bytes: everything the process holds that the pools' budget
+/// discovered or stated (not from `pgdt`'s half-of-`MemAvailable` estimate,
+/// which it carves nothing from), in bytes: everything the process holds that the pools' budget
 /// does not bound — the runtime's threads, the allocators' per-thread state, the
 /// decoder state a compressed source keeps outside its pools, and the binary
 /// itself.
@@ -90,8 +91,8 @@ pub const MEMORY_RESERVE: u64 = 384 << 20;
 /// it binds above `5 × (MEMORY_RESERVE − MEMORY_UNPOOLED_BOUND)` and, but for
 /// the few hundred bytes under it its rounding down reaches, nowhere below.
 ///
-/// **It bounds the count, and the budget only by what a caller holds besides
-/// its arrangements**: [`Parallelism::fit`](crate::Parallelism::fit) keeps one worker at whatever the
+/// **It bounds the count, and so the budget that count spends**:
+/// [`Parallelism::fit`](crate::Parallelism::fit) keeps one worker at whatever the
 /// cap is and reports the budget that count spends, up to the cap, and
 /// [`BlockCache::affordable`](crate::source::compressed::blocks::BlockCache::affordable) reads the budget the cap leaves, lowered only by
 /// the holdings [`Parallelism::within_shared`](crate::Parallelism::within_shared) cannot fit under the margin.

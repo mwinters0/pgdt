@@ -136,7 +136,7 @@ impl Inflater {
 
     /// Decode from `bit` into `sink` to the first [`Stop`] — a block's end,
     /// the stream's, the input's, `limit` bytes held, or a marked sink come
-    /// clean — advancing `bit` past each step taken.
+    /// clean in a block of codes — advancing `bit` past each step taken.
     ///
     /// # Errors
     ///

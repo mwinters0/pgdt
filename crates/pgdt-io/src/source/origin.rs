@@ -181,9 +181,9 @@ impl Origin {
         };
         match url.scheme() {
             "http" | "https" => Self::remote(&url),
-            // `to_file_path` refuses two things, and they are different
-            // mistakes: a host naming another machine, and a path that is not
-            // absolute.
+            // `to_file_path` refuses a host naming another machine, and on
+            // Unix nothing else, the parser making every `file:` path
+            // absolute; the second message is for a platform where it can.
             "file" => url.to_file_path().map(Self::local).map_err(|()| {
                 refuse(match url.host_str() {
                     Some(host) if host != "localhost" => format!(
@@ -377,8 +377,8 @@ pub async fn open(origin: &Origin, known: KnownCompression, spill: &Path) -> Res
 /// walk started`, and each `… complete`;
 /// `crates/pgdt/tests/status_output.rs`, `crates/pgdt/tests/gzip_source.rs`),
 /// so the wait does not read as a hang. An embedder opening one inside a busy
-/// runtime would want it on a blocking thread; the DataFusion provider never
-/// builds one, reading the index its complete cache holds.
+/// runtime would want it on a blocking thread; the DataFusion provider builds
+/// one only where it has no cache, before refusing the file for that.
 pub(crate) async fn open_local(
     origin: &Origin,
     known: KnownCompression,

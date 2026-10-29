@@ -296,9 +296,11 @@ note: this gzip source has no complete index yet, so it is read with one reader,
 
 **One kind of gzip file stays slow to seek into, and pgdt says so.** A place
 a read can begin falls where the writer ended a deflate block — or, inside a
-block coded with deflate's fixed codes, between any two of its symbols — so a
-writer that coded more than twice the 24 MiB spacing in one block of codes it
-chose itself leaves a unit that every read inside it decodes from its start. No zlib-family writer does, at any
+block coded with deflate's fixed codes, between any two of its symbols — so
+only a writer that coded more than the 24 MiB spacing in one block of codes it
+chose itself can leave a unit wider than twice that, which every read inside
+it decodes from its start — that, or a member whose header claims to be
+BGZF's while holding more than BGZF's 64 KiB. No zlib-family writer does, at any
 level; an encoder that does is named by the warning, from the first pass's
 end on:
 
@@ -969,7 +971,7 @@ fewer on a machine narrower than that, the count being the smaller of the two.
 That is what `parse` gains: a typed `query` reads a compressed dump's rows back
 no faster with more workers than with one, and a plain one about a tenth
 faster. A gzip dump on disk takes its CPUs too once its index is built, and
-its first pass one worker for each physical core (above, "gzip files: the
+its first pass no more than one worker for each physical core (above, "gzip files: the
 first pass builds the index"). An `.xz` or gzip dump read over HTTP takes one
 worker. **How many of those workers actually read is then bounded by
 `--memory`**: one reader of an ordinary 24 MiB-block file wants about

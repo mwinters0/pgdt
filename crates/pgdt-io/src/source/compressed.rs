@@ -51,8 +51,8 @@ pub(crate) use self::xz::walk_seek_table;
 /// **Leaving a unit completes it**, which is where its check is compared, and
 /// the unit a run's last read stopped inside is left as that run's reading
 /// ends ([`ByteRangeSource::complete_reads`](crate::ByteRangeSource::complete_reads)).
-/// A handle is dropped uncompleted only where its read failed, or with its
-/// source.
+/// A handle is dropped uncompleted only where its read failed or was
+/// cancelled, or with its source.
 struct LiveBlock {
     /// Which unit the handle is decoding.
     index: usize,

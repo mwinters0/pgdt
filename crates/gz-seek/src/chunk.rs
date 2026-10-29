@@ -7,8 +7,9 @@
 //! (D112), begun from a window the pass supplies rather than one an index
 //! recorded, and run on whatever thread the caller has. It records the events
 //! an index is made of — each static block's start among them, where a
-//! checkpoint the pass owes may fall inside it, and of a BGZF member, where
-//! none is owed but at its start, only its start, header and end (D123) — and
+//! checkpoint the pass owes may fall inside it, and of a BGZF member whose
+//! header it reads, where none is owed but at its start, only its start,
+//! header, end and any stop inside it (D123) — and
 //! each piece's CRC-32, and
 //! reads each trailer without comparing it, the member's plaintext before the
 //! chunk being the pass's to know. Whether its start and window were right is settled where the pass
@@ -35,6 +36,12 @@ pub(crate) const PIECES_A_DECODE: usize = EVENTS_A_GUESSED;
 /// block's start beside each block's end, and its stop. Inside a BGZF member
 /// it records three a member, which a chain read counts
 /// (`docs/design/decisions.md`, "D123").
+///
+/// Deficiency register: `deficiency: KD154` — a chain read counts three
+/// events a stated `BSIZE` span and reads nothing inside it, so a crafted
+/// span holding many plain members, each recorded, passes this: nothing caps
+/// a decode's events there. **(c) unowned**; promoted by such a file met, or
+/// by a decode's events checked against its bound.
 pub(crate) const EVENTS_A_DECODE: usize = 2 * EVENTS_A_GUESSED + 1;
 
 const _: () = assert!(
@@ -57,8 +64,8 @@ pub(crate) const fn most_held(limit: usize) -> u64 {
 pub(crate) struct Decoded {
     pub(crate) stop: Point,
     pub(crate) plain: Vec<u8>,
-    /// Every event after the start, the stop's included, by plaintext offset
-    /// from the start.
+    /// Every event after the start, the stop's included but at the file's
+    /// end, by plaintext offset from the start.
     pub(crate) events: Vec<(u64, Event)>,
     /// Each piece's plaintext range and CRC-32, in order, cut at every block's
     /// end it records and member's end.
@@ -113,7 +120,7 @@ impl ChunkDecoded {
 /// and
 /// its events and pieces, at most twice the events its guess counted against
 /// `EVENTS_A_GUESS`, a BGZF member's being its start, header and end alone
-/// (`docs/design/decisions.md`, "D123").
+/// (`docs/design/decisions.md`, "D123"), but for a crafted chain (`KD154`).
 pub(crate) struct ChunkDecode {
     chunk: u64,
     generation: u64,

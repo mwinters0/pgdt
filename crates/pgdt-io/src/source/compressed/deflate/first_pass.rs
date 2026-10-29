@@ -79,6 +79,13 @@ use self::spill::PassWindows;
 /// What one forward decode of the pass holds besides the plaintext it hands
 /// out: the inflater and its window, the window copy a checkpoint is read out
 /// of, and the compressed input chunk.
+///
+/// Deficiency register: `deficiency: KD152` — a fetched frontier's input is
+/// the rest of the download's piece it stands in ([`Download::read_frontier`]),
+/// up to a chunk, where this charges `INPUT_CHUNK`: a fetched first pass holds
+/// up to a chunk less an input chunk that no term names, the download's own
+/// term billing the piece and not this copy of it. **(c) unowned**; promoted
+/// by a reading of a fetched first pass's resident.
 const DECODE_BYTES: u64 = gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64 + INPUT_CHUNK;
 
 /// What the pass holds besides the plaintext it hands out: its two decodes —
@@ -106,7 +113,8 @@ const PASS_BYTES: u64 = 2 * DECODE_BYTES + SKIP_SCRATCH as u64;
 /// behind the frontier inside a closed unit is compared against that unit's
 /// recorded CRC-32** as the decode leaves the unit, or as the run's reads
 /// complete ([`ByteRangeSource::complete_reads`]); one inside the open unit
-/// decodes the frontier's own bytes and is the frontier's to check.
+/// decodes the frontier's own bytes and is the frontier's to check, and is
+/// not compared once the frontier closes that unit (`KD137`).
 pub(crate) struct FirstPass {
     feed: Feed,
     /// What the pass's status lines name the file by: its origin as a message
@@ -863,12 +871,12 @@ impl ByteRangeSource for FirstPass {
         }
     }
 
-    /// The whole pass at one worker: two decodes, each charged a forward
-    /// one's — the frontier and one behind it — and the skip scratch, its
-    /// windows being on disk. Past one, a task ahead a worker, each charged
-    /// what one holds running and waiting for the frontier, the pass's own
-    /// charge inside the first's — on a file of more than one chunk, where a
-    /// task can run at all. A fetched file's download adds its pieces to
+    /// The whole pass — two decodes, each charged a forward one's, the
+    /// frontier and one behind it, and the skip scratch, its windows being on
+    /// disk — a worker on a file of one chunk. On a file of more than one,
+    /// where a task can run at all, every worker the larger of that and a
+    /// task's charge, what one holds running and waiting for the frontier,
+    /// the pass's own inside the first's. A fetched file's download adds its pieces to
     /// every worker (`Chunking::download_bytes`).
     fn default_worker_memory(&self) -> Option<WorkerMemory> {
         if let Some(done) = self.done.get() {
@@ -881,7 +889,8 @@ impl ByteRangeSource for FirstPass {
     }
 
     /// Leave the decode behind the frontier, comparing the check of a closed
-    /// unit it sits inside, and then the indexed source's, once there is one.
+    /// unit it sits inside (`KD137` is the exception), and then the indexed
+    /// source's, once there is one.
     /// Nothing else: a single member's only check is its trailer, which a
     /// pass stopped short of it has not reached, and reaching it would mean
     /// decoding the rest of the file.

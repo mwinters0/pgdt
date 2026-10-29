@@ -441,8 +441,8 @@ pub enum WaitPolicy {
 /// Shipped, not probed (`docs/design/decisions.md`, "D10"): the default that
 /// is worst-case-best across the device classes measured
 /// (`docs/design/measurements.md`, "What the read chunk size is worth").
-/// Public and named because it is what [`pgdt_dump::ReadOptions::chunk_size_bytes`] is
-/// compared against and what callers scale from.
+/// Public and named because it is what [`pgdt_dump::ReadOptions::chunk_size_bytes`]
+/// defaults to and what callers scale from.
 ///
 /// **Raising it costs memory, not pooling.** Every read loop announces the
 /// size it is about to repeat ([`crate::ByteRangeSource::hint_read_size`]), so

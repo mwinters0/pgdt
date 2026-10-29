@@ -93,7 +93,8 @@ impl Chunking {
     /// the tasks' count); and the buffer a local task reads its input into.
     /// No decode's plaintext buffer is freed while the pass runs, the pass
     /// keeping each for the next decode, so the buffers never outnumber the
-    /// decodes charged here (`docs/design/decisions.md`, "D124"). The
+    /// decodes charged here (`docs/design/decisions.md`, "D124") but across a
+    /// chain's reset (`KD153`). The
     /// frontier's own worker is charged a task too, and holds the pass, the
     /// decode it serves and the chain's end.
     ///
@@ -344,8 +345,8 @@ impl Ahead {
     /// handed out or guesses held ([`Chunking::task_bytes`]).
     ///
     /// None is handed out from when a speculation finds nothing until the
-    /// frontier next crosses a block start (`docs/design/decisions.md`,
-    /// "D125"), so over a member whose writer ends no block before its last
+    /// frontier next crosses a block or member start
+    /// (`docs/design/decisions.md`, "D125"), so over a member whose writer ends no block before its last
     /// only the speculations handed out before the first lands run, and the
     /// pass is read at its serial pace at every count (`gzip-first-pass`).
     fn top_up(&mut self, pass: &mut gz_seek::Parallel, last: u64) {

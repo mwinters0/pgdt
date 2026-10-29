@@ -441,7 +441,8 @@ non-root cgroup and the *absence* of `/sys/fs/cgroup/memory/` together confirm.
 v1, minimised over every ancestor, rounded **down**, and floored at 1. An
 unset quota (`max` in v2, an unparseable or absent value in v1) leaves the
 affinity count alone. So the CPU half of "discover the allocation we were
-given" needs no code here.
+given" needs no code here but the physical-core count a gzip first pass caps
+at (`RT27`).
 
 **Proof.** `library/std/src/sys/thread/unix.rs`. The entry point takes
 `quota = cgroups::quota().max(1)` and then `CPU_COUNT(&set).min(quota)`, with

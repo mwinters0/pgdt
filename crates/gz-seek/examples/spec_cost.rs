@@ -31,13 +31,15 @@
 //! # What `par` prints
 //!
 //! Beside the wall time and the plaintext: the tasks handed out by kind, and
-//! each kind's time on the workers (`spec_cpu`, `decode_cpu`); how much of
-//! the workers' time was idle (`idle`, the share of `jobs - 1` times the wall
-//! time no task ran); results the pass no longer wanted when they landed
+//! each kind's time running (`spec_cpu`, `decode_cpu`), a task the frontier
+//! ran itself included (`ran_here`); how much of the workers' time was idle
+//! (`idle`, the share of `jobs - 1` times the wall time those two leave, so
+//! understated by what the frontier ran); results the pass no longer wanted when they landed
 //! (`unwanted`); the frontier's time split between its own engine
 //! (`f_decode`), handing out a taken decode (`f_serve`) and waiting for one
-//! (`f_wait`), how many waits there were and how long the decode waited for
-//! had run when the frontier reached it, on average (`head_ms`); the chunks
+//! (`f_wait`), how many waits there were and how long before the frontier
+//! reached it the decode waited for was handed out, queue time included, on
+//! average (`head_ms`); the chunks
 //! the frontier took
 //! from a decode (`taken`), and the runs they came in — each a stretch of
 //! taken chunks the frontier's engine decoded nothing between — as their

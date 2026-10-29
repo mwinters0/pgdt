@@ -15,7 +15,8 @@
 //! hands back nothing and the frontier meets those bytes itself; the frontier
 //! is never refused. The tasks ahead are handed out no further than the room
 //! reaches ([`Download::last_chunk`]), so a task is refused only where its
-//! chunk's speculation runs past the piece after it.
+//! chunk's speculation runs past the piece after it, or after a
+//! `complete_reads` has narrowed the room (`KD138`).
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU64;

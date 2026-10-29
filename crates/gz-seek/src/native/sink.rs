@@ -158,8 +158,8 @@ fn copy_back<T: Copy, const N: usize>(out: &mut [T], start: usize, distance: usi
 pub(crate) struct Marked {
     out: Held<u16>,
     /// A position no marker is written at or after: at a block's end the
-    /// position after the last marker, or the start of the last 32 KiB where
-    /// they hold none; inside a block the end of the last copy whose source
+    /// position after the last marker, or no later than the start of the last
+    /// 32 KiB where they hold none; inside a block the end of the last copy whose source
     /// began before it. So the sink comes clean no sooner than its values do
     /// and at most a block later. Zero for the unknown history itself.
     clean_from: usize,
@@ -278,7 +278,8 @@ impl Sink for Marked {
     }
 
     /// The clean mark brought back to the position after the last marker
-    /// among the last 32 KiB, or to their start where they hold none: no
+    /// among the last 32 KiB, or where they hold none to no later than their
+    /// start: no
     /// marker is at or after the mark, so the last is before it. Looked for
     /// from the mark back a chunk at a time, so the compiler folds a chunk's
     /// values at once.
