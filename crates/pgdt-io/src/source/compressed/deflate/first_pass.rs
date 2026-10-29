@@ -38,7 +38,7 @@
 use std::future::Future;
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
@@ -52,13 +52,12 @@ use pgdt_core::{Error, Result};
 use crate::cores::physical_cores;
 use crate::parallelism::{Parallelism, WorkerMemory, worker_count};
 use crate::partition::Partitioning;
-use crate::source::local::{OPEN_DUMP, READ_DUMP, dump_failure};
 use crate::source::pool::{BufferPool, POOL_DEPTH, PooledBuffer, budget_bytes};
 use crate::source::{ByteRangeSource, Extent, RemoteIdentity, WaitPolicy};
 
 #[cfg(any(feature = "http", test))]
 use super::super::FetchedCompressedSource;
-use super::super::{CompressedFileSource, CompressionIndex, short_read};
+use super::super::{CompressedFileSource, CompressionIndex, DumpFile, short_read};
 use super::{CHECKPOINT_SPACING, GZIP, GzipIndex, INPUT_CHUNK, WindowProvider, gzip_error};
 
 mod ahead;
@@ -168,19 +167,15 @@ enum Started {
 /// decode steps (`docs/design/decisions.md`, "D15"), which only the remote
 /// source and the tests construct, so `http` or a test build carries it.
 pub(crate) enum Feed {
-    File {
-        path: PathBuf,
-        file: Arc<std::fs::File>,
-    },
+    File(Arc<DumpFile>),
     #[cfg(any(feature = "http", test))]
     Fetched(Arc<dyn ByteRangeSource>),
 }
 
 impl Feed {
     /// The local file at `path`.
-    pub(crate) fn file(path: &std::path::Path) -> Result<Feed> {
-        let file = std::fs::File::open(path).map_err(dump_failure(OPEN_DUMP, path))?;
-        Ok(Feed::File { path: path.to_path_buf(), file: Arc::new(file) })
+    pub(crate) fn file(path: &Path) -> Result<Feed> {
+        Ok(Feed::File(Arc::new(DumpFile::open(path)?)))
     }
 }
 
@@ -324,7 +319,7 @@ impl FirstPass {
         let pass = Pass::new(frontier, placed, resumed_over);
         #[cfg(any(feature = "http", test))]
         let download = match &feed {
-            Feed::File { .. } => None,
+            Feed::File(_) => None,
             Feed::Fetched(raw) => {
                 Some(Arc::new(Download::new(Arc::clone(raw), chunking.bytes, stored_size)))
             }
@@ -453,7 +448,7 @@ impl FirstPass {
     /// the frontier met the file's end.
     async fn run(&self, job: Job, tasks: usize) -> Result<(Option<PooledBuffer>, usize, bool)> {
         match &self.feed {
-            Feed::File { file, .. } => self.run_pulled(Arc::clone(file), job, tasks).await,
+            Feed::File(file) => self.run_pulled(Arc::clone(file), job, tasks).await,
             #[cfg(any(feature = "http", test))]
             Feed::Fetched(raw) => self.run_fetched(Arc::clone(raw), job, tasks).await,
         }
@@ -464,7 +459,7 @@ impl FirstPass {
     /// ahead of the frontier each on a blocking task of its own.
     async fn run_pulled(
         &self,
-        file: Arc<std::fs::File>,
+        file: Arc<DumpFile>,
         job: Job,
         tasks: usize,
     ) -> Result<(Option<PooledBuffer>, usize, bool)> {
@@ -623,7 +618,7 @@ impl FirstPass {
         let (units, members) = (index.unit_count(), index.member_count());
         let index = CompressionIndex::Gzip(index);
         let done: Arc<dyn ByteRangeSource> = match &self.feed {
-            Feed::File { path, .. } => Arc::new(CompressedFileSource::with_index(path, index)?),
+            Feed::File(file) => Arc::new(CompressedFileSource::with_index(file.path(), index)?),
             #[cfg(any(feature = "http", test))]
             Feed::Fetched(raw) => Arc::new(FetchedCompressedSource::with_index(
                 Arc::clone(raw),
@@ -651,7 +646,7 @@ impl FirstPass {
         match &self.feed {
             #[cfg(any(feature = "http", test))]
             Feed::Fetched(raw) => Some(raw),
-            Feed::File { .. } => None,
+            Feed::File(_) => None,
         }
     }
 
@@ -759,14 +754,11 @@ impl ByteRangeSource for FirstPass {
             match &self.feed {
                 #[cfg(any(feature = "http", test))]
                 Feed::Fetched(raw) => raw.modified().await,
-                Feed::File { path, file } => {
+                Feed::File(file) => {
                     let file = Arc::clone(file);
-                    let mtime = tokio::task::spawn_blocking(move || {
-                        file.metadata().and_then(|m| m.modified())
-                    })
-                    .await
-                    .map_err(Error::join)?
-                    .map_err(dump_failure(READ_DUMP, path))?;
+                    let mtime = tokio::task::spawn_blocking(move || file.modified())
+                        .await
+                        .map_err(Error::join)??;
                     Ok(Some(mtime))
                 }
             }
@@ -780,12 +772,11 @@ impl ByteRangeSource for FirstPass {
             match &self.feed {
                 #[cfg(any(feature = "http", test))]
                 Feed::Fetched(raw) => raw.stored_size().await,
-                Feed::File { path, file } => {
+                Feed::File(file) => {
                     let file = Arc::clone(file);
                     tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
                         .await
                         .map_err(Error::join)?
-                        .map_err(dump_failure(READ_DUMP, path))
                 }
             }
         })
@@ -870,7 +861,7 @@ impl ByteRangeSource for FirstPass {
             return done.default_workers();
         }
         match &self.feed {
-            Feed::File { .. } => {
+            Feed::File(_) => {
                 let cores = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
                 let cores = physical_cores().map_or(cores, |physical| cores.min(physical));
                 let chunks = self.chunking.chunks(self.stored_size);

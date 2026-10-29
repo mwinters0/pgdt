@@ -18,12 +18,12 @@ fn the_seek_table_is_held_once_at_a_stated_cost_per_entry() {
     assert_eq!(std::mem::size_of::<xz_seek::BlockEntry>(), 32);
 
     let compressed = xz_compress(&xz_test_payload(), &["--block-size=4096"]);
-    let file = std::fs::File::open(compressed.path()).unwrap();
+    let file = DumpFile::open(compressed.path()).unwrap();
     let stored_size = file.metadata().unwrap().len();
 
     // The walking constructor: the walk built the table and the layout
     // hands its own handle out.
-    let walked = XzCodec::walk(compressed.path(), &file, stored_size).unwrap();
+    let walked = XzCodec::walk(&file, stored_size).unwrap();
     assert!(
         std::ptr::eq(&*walked.table, walked.layout.index()),
         "the codec's table must be the layout's own, not a clone of it",
@@ -46,9 +46,9 @@ fn the_seek_table_is_held_once_at_a_stated_cost_per_entry() {
 fn the_codecs_units_are_the_files_blocks() {
     let payload = xz_test_payload();
     let compressed = xz_compress(&payload, &["--block-size=4096"]);
-    let file = std::fs::File::open(compressed.path()).unwrap();
+    let file = DumpFile::open(compressed.path()).unwrap();
     let stored_size = file.metadata().unwrap().len();
-    let codec = XzCodec::walk(compressed.path(), &file, stored_size).unwrap();
+    let codec = XzCodec::walk(&file, stored_size).unwrap();
 
     assert_eq!(codec.name(), "xz");
     assert_eq!(codec.plaintext_size(), payload.len() as u64);
@@ -73,17 +73,37 @@ fn the_codecs_units_are_the_files_blocks() {
     assert_eq!(&out[..], &payload[4096..8192]);
 }
 
+/// **A read of the dump failing through `xz_seek` names the dump**, in the
+/// message its error displays: the payload the read carried, the path and
+/// what was being done to it — whether the footer walk or a unit's decode
+/// failed.
+#[test]
+fn a_failing_read_of_the_dump_names_it_through_the_codec() {
+    let compressed = xz_compress(&xz_test_payload(), &["--block-size=4096"]);
+    let file = DumpFile::open(compressed.path()).unwrap();
+    let stored_size = file.metadata().unwrap().len();
+    let codec = XzCodec::walk(&file, stored_size).unwrap();
+    let unreadable = DumpFile::unreadable(compressed.path());
+    let named = format!("cannot read the dump at {}: ", compressed.path().display());
+
+    let decoded = codec.decode(1, &unreadable, &mut [0u8; 4096]).expect_err("refused");
+    let walked = XzCodec::walk(&unreadable, stored_size).err().expect("refused");
+    for (what, error) in [("a decode", decoded), ("the walk", walked)] {
+        assert!(error.codec_cause::<xz_seek::Error>().is_some(), "{what}: {error:?}");
+        let message = error.to_string();
+        assert!(message.starts_with("xz error: ") && message.contains(&named), "{what}: {message}");
+    }
+}
+
 /// **A table that does not describe the file is refused as such**, the error
 /// [`refuses_table`] names and recognition turns into a mismatch rather than
 /// a walk; any other codec error is not that.
 #[test]
 fn a_table_for_another_file_is_refused_as_not_describing_it() {
     let one = xz_compress(&xz_test_payload(), &["--block-size=4096"]);
-    let file = std::fs::File::open(one.path()).unwrap();
+    let file = DumpFile::open(one.path()).unwrap();
     let stored_size = file.metadata().unwrap().len();
-    let CompressionIndex::Xz(table) =
-        XzCodec::walk(one.path(), &file, stored_size).unwrap().index()
-    else {
+    let CompressionIndex::Xz(table) = XzCodec::walk(&file, stored_size).unwrap().index() else {
         panic!("an `.xz` codec's index");
     };
 

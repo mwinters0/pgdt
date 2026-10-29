@@ -290,8 +290,9 @@ fn with_windows(
     mut reader: BufReader<File>,
     path: &Path,
 ) -> Result<std::result::Result<CacheFile, CacheStatus>> {
-    let read = |cause| Error::file(READ_CACHE, path, cause);
-    let base = reader.stream_position().map_err(read)?;
+    let path = path.to_path_buf();
+    let read = move |cause| Error::file(READ_CACHE, &path, cause);
+    let base = reader.stream_position().map_err(&read)?;
     match windows::attach_section(file.compression.take(), reader.into_inner(), base, read)? {
         Ok(compression) => Ok(Ok(CacheFile { compression, ..file })),
         Err(why) => Ok(Err(CacheStatus::Unusable(why))),

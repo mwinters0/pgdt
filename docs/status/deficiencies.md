@@ -549,12 +549,6 @@ than reading as a phase nobody has sliced.
   whose speculations fill their sinks. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
 
-- **KD151** — a read of a local compressed dump failing through its codec —
-  an index's walk, a unit's decode, a first pass — or of a gzip cache's
-  window as a decode begins, is reported as its codec's error or `io error:`
-  and the OS's message, naming no path. **(b) owned by `M260`**, which
-  names it. Detail: `crates/pgdt-io/src/source/compressed/codec.rs`.
-
 - **KD152** — a fetched gzip first pass's frontier copies up to a chunk of
   compressed input where its decode is charged an input chunk, so it holds up
   to the difference unbilled. **(c) unowned**; promoted by a reading of a

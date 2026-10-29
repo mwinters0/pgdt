@@ -45,23 +45,23 @@ pub(super) fn write_section(
 /// reading its windows out of `file`'s section, which begins at `base`, the
 /// encoded file's end — or [`Unusable::Unreadable`] where the file does not
 /// end with the section's last window, cut short or run on. Any other index
-/// is handed back as it was decoded. A read failing is named by `failed`,
-/// which knows the cache's path.
+/// is handed back as it was decoded. A read failing, now or as a decode
+/// reads a window, is named by `failed`, which knows the cache's path.
 pub(super) fn attach_section(
     compression: Option<CompressionIndex>,
     file: File,
     base: u64,
-    failed: impl FnOnce(std::io::Error) -> Error,
+    failed: impl Fn(std::io::Error) -> Error + Send + Sync + 'static,
 ) -> Result<std::result::Result<Option<CompressionIndex>, Unusable>> {
     let Some(CompressionIndex::Gzip(index)) = compression else {
         return Ok(Ok(compression));
     };
     let (offsets, end) = offsets(&index, base);
-    let len = file.metadata().map_err(failed)?.len();
+    let len = file.metadata().map_err(&failed)?.len();
     if len != end {
         return Ok(Err(Unusable::Unreadable));
     }
-    let windows = SectionWindows { file, offsets };
+    let windows = SectionWindows { file, failed: Box::new(failed), offsets };
     Ok(Ok(Some(CompressionIndex::Gzip(index.with_windows(Arc::new(windows))))))
 }
 
@@ -83,10 +83,16 @@ fn offsets(index: &GzipIndex, base: u64) -> (Vec<u64>, u64) {
 /// load decoded: a handle of its own, so a later save renaming another file
 /// over the cache's name leaves it reading the bytes it was loaded from.
 ///
+/// **A read failing names the cache's path inside its `io::Error`**, the
+/// error `failed` makes as the payload ([`Error::into_io`]), so
+/// [`WindowProvider`] stays `io::Result` and the decode reading a window
+/// changes nothing; its `?` hands the [`Error::File`] back.
+///
 /// **Its offsets are resident beside the checkpoints**, one per checkpoint,
 /// the index's own term, which no charge bills (`KD26`).
 struct SectionWindows {
     file: File,
+    failed: Box<dyn Fn(std::io::Error) -> Error + Send + Sync>,
     offsets: Vec<u64>,
 }
 
@@ -95,7 +101,7 @@ impl WindowProvider for SectionWindows {
         let offset = self.offsets.get(checkpoint).ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::InvalidInput, "no such checkpoint")
         })?;
-        self.file.read_exact_at(out, *offset)
+        self.file.read_exact_at(out, *offset).map_err(|e| (self.failed)(e).into_io())
     }
 }
 

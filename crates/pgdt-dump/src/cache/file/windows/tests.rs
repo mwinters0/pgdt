@@ -136,3 +136,29 @@ async fn a_cache_saved_over_itself_keeps_its_windows_and_reads_its_file() {
     assert_eq!(&read[..], &plaintext[..], "the plaintext, its windows read from a removed cache");
     source.complete_reads().await.unwrap();
 }
+
+/// **A window read failing names the cache**: a cache whose section is cut
+/// away after the load attached it fails the first decode needing a window,
+/// and the error the read carried out of the provider is the cache's, its path
+/// and what was being done to it, never a bare `io error:`.
+#[tokio::test]
+async fn a_failing_window_read_names_the_cache() {
+    let (dir, dump, plaintext, index) = gzip_file();
+    let (file, _) = cache_of(&dump, CompressionIndex::Gzip(index)).await;
+    let path = dir.path().join("dump.sql.gz.dtcache");
+    write(&path, &file);
+    let Ok(Ok(loaded)) = read_cache_file(&path) else { panic!("the cache reads back") };
+    let header = CACHE_MAGIC.len() + CACHE_FORMAT_VERSION.to_le_bytes().len();
+    let encoded = bincode::serde::encode_to_vec(&file, bincode::config::standard()).unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len((header + encoded.len()) as u64)
+        .unwrap();
+
+    let source = CompressedFileSource::with_index(&dump, loaded.compression.unwrap()).unwrap();
+    let error = source.read_range(0, plaintext.len()).await.expect_err("no window to read");
+    let Error::File { doing, path: named, .. } = &error else { panic!("not named: {error:?}") };
+    assert_eq!((*doing, named.as_path()), ("read the cache at", path.as_path()));
+}

@@ -1,13 +1,15 @@
 //! What a compressed file's codec answers the two arms: the `Codec` trait over
 //! its units, the forward-only `UnitRead` handle, the `Positioned` read a
-//! decode pulls its compressed bytes through, and the short read every arm and
-//! codec reports a read past the plaintext as.
+//! decode pulls its compressed bytes through and the local dump it reads, and
+//! the short read every arm and codec reports a read past the plaintext as.
 
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use pgdt_core::{Error, Result};
 
 use super::CompressionIndex;
+use crate::source::local::{OPEN_DUMP, READ_DUMP, dump_failure};
 
 /// What a unit decode reads its compressed bytes through: a file pulled from,
 /// or a window of bytes already fetched, in the file's own coordinates.
@@ -29,35 +31,78 @@ pub(crate) trait Positioned: Send + Sync {
     }
 }
 
-/// Positioned reads on a file, looping past a short `pread` that is not the
+/// A local compressed dump: the file, read positionally and never seeked, and
+/// the path it was opened at, which every failure of it names.
+///
+/// **A read failing names the path inside its `io::Error`**, an
+/// [`Error::File`] as the payload ([`Error::into_io`]), so [`Positioned`]
+/// stays `io::Result` and no decode path changes: through `xz_seek`'s or
+/// `pgdt_gzip_seek`'s error the payload's message names the file, and where no
+/// codec wrapped it, `From<io::Error>` hands back the [`Error::File`] itself.
+/// *Rejected:* a path-carrying error type in the trait — `xz_seek`'s source
+/// trait answers `io::Result`, so its reads would carry ours as a payload all
+/// the same.
+pub(crate) struct DumpFile {
+    file: std::fs::File,
+    path: PathBuf,
+}
+
+impl DumpFile {
+    /// The dump at `path`, opened for reading.
+    pub(crate) fn open(path: &Path) -> Result<Self> {
+        let file = std::fs::File::open(path).map_err(dump_failure(OPEN_DUMP, path))?;
+        Ok(Self { file, path: path.to_path_buf() })
+    }
+
+    /// The file at `path` opened for writing alone, so every read of it fails
+    /// and a `stat` answers its length: a failing read on any filesystem.
+    #[cfg(test)]
+    pub(crate) fn unreadable(path: &Path) -> Self {
+        let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        Self { file, path: path.to_path_buf() }
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// A `stat` of the file.
+    pub(crate) fn metadata(&self) -> Result<std::fs::Metadata> {
+        self.file.metadata().map_err(dump_failure(READ_DUMP, &self.path))
+    }
+
+    /// The file's modification time.
+    pub(crate) fn modified(&self) -> Result<std::time::SystemTime> {
+        self.metadata()?.modified().map_err(dump_failure(READ_DUMP, &self.path))
+    }
+
+    /// `cause`, met reading the file, as the `io::Error` naming it.
+    fn failed(&self, cause: std::io::Error) -> std::io::Error {
+        Error::file(READ_DUMP, &self.path, cause).into_io()
+    }
+}
+
+/// Positioned reads on the file, looping past a short `pread` that is not the
 /// file's end — what makes the fill-or-end contract true of a file. It holds
 /// nothing, so it lends nothing.
-// Deficiency register: `deficiency: KD151` — so a read failing here names no
-// path: an index's walk or a unit's decode, which reaches the user as its
-// codec's error or `io error:`, and a first pass's (`first_pass/pass.rs`'s
-// `refill_from_file`). A gzip
-// cache's window read as a decode begins (`pgdt-dump`'s
-// `cache/file/windows.rs`, `SectionWindows`) is the cache's, as unnamed. Every
-// open and `stat` of the dump and every open, read and write of the cache name
-// theirs (`pgdt_core::Error::File`).
 #[cfg(unix)]
-impl Positioned for std::fs::File {
+impl Positioned for DumpFile {
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
         use std::os::unix::fs::FileExt;
         let mut done = 0;
         while done < buf.len() {
-            match FileExt::read_at(self, &mut buf[done..], offset + done as u64) {
+            match FileExt::read_at(&self.file, &mut buf[done..], offset + done as u64) {
                 Ok(0) => break,
                 Ok(n) => done += n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(e),
+                Err(e) => return Err(self.failed(e)),
             }
         }
         Ok(done)
     }
 
     fn size(&self) -> std::io::Result<u64> {
-        Ok(self.metadata()?.len())
+        self.file.metadata().map(|m| m.len()).map_err(|e| self.failed(e))
     }
 }
 

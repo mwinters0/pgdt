@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use pgdt_core::{Error, Result};
 
-use super::super::super::Positioned;
+use super::super::super::{DumpFile, Positioned};
 use super::super::{WindowProvider, gzip_error};
 use super::ahead::{Frontier, Lift};
 use super::inflating::{Decode, Filled, Inflating, Step};
@@ -346,7 +346,7 @@ impl Pass {
     pub(super) fn refill_from_file(
         &mut self,
         route: Route,
-        file: &std::fs::File,
+        file: &DumpFile,
         at: u64,
         stored_size: u64,
     ) -> Result<()> {

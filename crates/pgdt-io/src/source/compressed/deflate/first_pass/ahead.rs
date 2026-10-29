@@ -31,7 +31,7 @@ use tokio::sync::Notify;
 
 use pgdt_core::{Error, Result};
 
-use super::super::super::Positioned;
+use super::super::super::{DumpFile, Positioned};
 use super::super::{INPUT_CHUNK, gzip_error};
 #[cfg(any(feature = "http", test))]
 use super::download::Download;
@@ -285,7 +285,7 @@ impl Frontier {
 /// download a fetched one reads.
 #[derive(Clone)]
 pub(super) enum Reads {
-    File(Arc<std::fs::File>),
+    File(Arc<DumpFile>),
     #[cfg(any(feature = "http", test))]
     Fetched(Arc<Download>),
 }
@@ -517,7 +517,7 @@ async fn run_downloaded(mut task: pgdt_gzip_seek::ChunkTask, download: &Download
 }
 
 /// `task` run to its result, a panic landing as its failure.
-fn run_caught(task: pgdt_gzip_seek::ChunkTask, file: &std::fs::File, stored_size: u64) -> Landed {
+fn run_caught(task: pgdt_gzip_seek::ChunkTask, file: &DumpFile, stored_size: u64) -> Landed {
     let id = task.id();
     let run = std::panic::AssertUnwindSafe(|| run_task(task, file, stored_size));
     match std::panic::catch_unwind(run) {
@@ -531,7 +531,7 @@ fn run_caught(task: pgdt_gzip_seek::ChunkTask, file: &std::fs::File, stored_size
 /// and the failure, itself.
 fn run_task(
     mut task: pgdt_gzip_seek::ChunkTask,
-    file: &std::fs::File,
+    file: &DumpFile,
     stored_size: u64,
 ) -> pgdt_gzip_seek::ChunkDone {
     let mut buf = Vec::new();

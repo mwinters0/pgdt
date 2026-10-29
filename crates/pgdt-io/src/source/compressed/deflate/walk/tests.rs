@@ -28,7 +28,7 @@ fn payload() -> Vec<u8> {
 fn walked(path: &std::path::Path, spacing: NonZeroU64) -> Option<GzipIndex> {
     let stored = std::fs::metadata(path).unwrap().len();
     let named = path.display().to_string();
-    walk_file_spaced(&named, &std::fs::File::open(path).unwrap(), stored, spacing).unwrap()
+    walk_file_spaced(&named, &DumpFile::open(path).unwrap(), stored, spacing).unwrap()
 }
 
 /// **A BGZF file's index is read off its headers**: complete, every unit

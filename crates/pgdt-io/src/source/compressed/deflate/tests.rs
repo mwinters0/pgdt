@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::memory::DEFAULT_MEMORY_BUDGET;
+use crate::source::compressed::DumpFile;
 use crate::source::compressed::blocks::BlockCache;
 use crate::test_support::*;
 use crate::{
@@ -66,7 +67,7 @@ impl Positioned for Lent {
 fn the_codecs_units_are_the_indexs_units() {
     let payload = gzip_test_payload();
     let (compressed, layout) = gzip_indexed(&payload, SPACING);
-    let file = std::fs::File::open(compressed.path()).unwrap();
+    let file = DumpFile::open(compressed.path()).unwrap();
     let stored_size = file.metadata().unwrap().len();
     let codec = DeflateCodec::over(layout.clone(), stored_size).unwrap();
 
@@ -150,7 +151,7 @@ fn damaged(unit: usize) -> (Vec<u8>, tempfile::NamedTempFile, GzipIndex) {
 #[test]
 fn a_damaged_unit_is_refused() {
     let (_, compressed, layout) = damaged(1);
-    let file = std::fs::File::open(compressed.path()).unwrap();
+    let file = DumpFile::open(compressed.path()).unwrap();
     let codec = DeflateCodec::over(layout, file.metadata().unwrap().len()).unwrap();
     let len = codec.plaintext(1).map(|u| u.end - u.start).unwrap() as usize;
     let error = codec.decode(1, &file, &mut vec![0u8; len]).expect_err("refused");
@@ -158,6 +159,21 @@ fn a_damaged_unit_is_refused() {
     // Its neighbours are untouched.
     let len = codec.plaintext(0).map(|u| u.end - u.start).unwrap() as usize;
     codec.decode(0, &file, &mut vec![0u8; len]).unwrap();
+}
+
+/// **A read of the dump failing as a unit decodes names the dump**: the
+/// gzip adapter's `?` hands back the [`Error::File`] the read carried, so no
+/// codec's message stands between the user and the path.
+#[test]
+fn a_failing_read_of_the_dump_names_it() {
+    let (compressed, layout) = gzip_indexed(&gzip_test_payload(), SPACING);
+    let codec =
+        DeflateCodec::over(layout, std::fs::metadata(compressed.path()).unwrap().len()).unwrap();
+    let unreadable = DumpFile::unreadable(compressed.path());
+    let len = codec.plaintext(1).map(|u| u.end - u.start).unwrap() as usize;
+    let error = codec.decode(1, &unreadable, &mut vec![0u8; len]).expect_err("refused");
+    let Error::File { doing, path, .. } = &error else { panic!("not named: {error:?}") };
+    assert_eq!((*doing, path.as_path()), ("read the dump at", compressed.path()));
 }
 
 /// Both ways to a gzip file's bytes over an index handed in: the local file

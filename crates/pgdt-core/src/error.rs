@@ -26,9 +26,12 @@ pub enum Error {
     /// file written beside the cache — naming its path and what was being
     /// done to it, `doing` a phrase ending in the word the path follows:
     /// `open the dump at`. Raised at every open, `stat` and plain read of a
-    /// local source, every open, read and write of a cache and of the file a
-    /// save writes beside it, and where a gzip first pass cannot make the
-    /// file it holds its windows in, naming its directory ([`Error::file`]).
+    /// local source, every read a decode makes of a local compressed one or
+    /// of a cache's gzip windows — carried through the codec's crate in an
+    /// `io::Error` ([`Error::into_io`]) — every open, read and write of a cache
+    /// and of the file a save writes beside it, and where a gzip first pass
+    /// cannot make the file it holds its windows in, naming its directory
+    /// ([`Error::file`]).
     ///
     /// The `io::Error` is displayed and not chained, as [`Error::Io`]'s is,
     /// and is reached as the `cause` field; it is not called `source`, which
@@ -450,8 +453,14 @@ fn cached_block_changed(path: Option<&Path>, header_offset: u64) -> String {
     }
 }
 
+/// An `io::Error` as the library's: [`Error::Io`], unless its payload is
+/// one of ours ([`Error::into_io`]), which is handed back as itself.
 impl From<std::io::Error> for Error {
     fn from(cause: std::io::Error) -> Self {
+        if cause.get_ref().is_some_and(|payload| payload.is::<Error>()) {
+            let payload = cause.into_inner().expect("a payload was just read");
+            return *payload.downcast::<Error>().expect("its type was just read");
+        }
         Error::Io(cause)
     }
 }
@@ -460,6 +469,21 @@ impl Error {
     /// [`Error::File`]: `cause`, met doing `doing` to the file at `path`.
     pub fn file(doing: &'static str, path: impl Into<PathBuf>, cause: std::io::Error) -> Self {
         Error::File { doing, path: path.into(), cause }
+    }
+
+    /// This error as an `io::Error`, for a read behind a trait that answers
+    /// one: [`Error::Io`]'s own, or one whose payload is this error, of its
+    /// cause's kind for [`Error::File`]. `From<io::Error>` hands the payload
+    /// back, and through a codec's error, which displays the `io::Error`, its
+    /// message is this error's — so a file named here is named whoever carries
+    /// it.
+    pub fn into_io(self) -> std::io::Error {
+        let kind = match self {
+            Error::Io(cause) => return cause,
+            Error::File { ref cause, .. } => cause.kind(),
+            _ => std::io::ErrorKind::Other,
+        };
+        std::io::Error::new(kind, self)
     }
 
     /// [`Error::Arrow`] carrying `cause`, an `ArrowError`.
@@ -622,3 +646,6 @@ impl std::fmt::Display for RowEndingRefusal {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;

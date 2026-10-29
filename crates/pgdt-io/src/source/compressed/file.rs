@@ -4,7 +4,7 @@
 use std::future::Future;
 use std::num::NonZeroUsize;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -15,7 +15,6 @@ use pgdt_core::{Error, Result};
 
 use crate::parallelism::{Parallelism, WorkerMemory};
 use crate::partition::Partitioning;
-use crate::source::local::{OPEN_DUMP, READ_DUMP, dump_failure};
 use crate::source::pool::BufferPool;
 use crate::source::{ByteRangeSource, Extent, WaitPolicy};
 
@@ -23,8 +22,8 @@ use super::blocks::{BlockCache, Claim, DecodeBudget, DecodedBlock};
 use super::deflate::{DeflateCodec, is_bgzf, walk_file};
 use super::xz::XzCodec;
 use super::{
-    Codec, CompressionIndex, Format, LiveBlock, Positioned, RECOGNITION_BYTES, codec_over,
-    piece_of, short_read,
+    Codec, CompressionIndex, DumpFile, Format, LiveBlock, Positioned, RECOGNITION_BYTES,
+    codec_over, piece_of, short_read,
 };
 
 /// A `ByteRangeSource` decoding a compressed local file on the fly, whatever
@@ -55,10 +54,9 @@ use super::{
 /// piecewise arm compares it when it leaves the unit, or as the run ends for
 /// the unit a read left it inside ([`ByteRangeSource::complete_reads`]).
 pub struct CompressedFileSource {
-    path: PathBuf,
-    /// The file, read positionally and never seeked: `stat` and every decode
-    /// share it.
-    pub(super) file: Arc<std::fs::File>,
+    /// The file and its path, which a failing read names: `stat` and every
+    /// decode share it.
+    pub(super) file: Arc<DumpFile>,
     /// The file's units and how to decode one — everything a decode needs
     /// but the file's bytes, a gzip unit's window read through the provider
     /// its index carries. It holds no source.
@@ -88,23 +86,18 @@ impl CompressedFileSource {
     /// Recognition that falls back to the plain source, and checks an index a
     /// cache hands in, is [`open`](crate::open).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref().to_path_buf();
-        let file = std::fs::File::open(&path).map_err(dump_failure(OPEN_DUMP, &path))?;
+        let file = DumpFile::open(path.as_ref())?;
         let mut leading = [0u8; RECOGNITION_BYTES];
-        let read =
-            Positioned::read_at(&file, 0, &mut leading).map_err(dump_failure(READ_DUMP, &path))?;
+        let read = Positioned::read_at(&file, 0, &mut leading)?;
         let leading = &leading[..read];
-        let refuse = |why: &str| Error::SourceNotReadable {
-            origin: path.display().to_string(),
-            why: why.to_string(),
-        };
+        let named = file.path().display().to_string();
+        let refuse =
+            |why: &str| Error::SourceNotReadable { origin: named.clone(), why: why.to_string() };
         match Format::recognize(leading) {
             None => Err(refuse("its first bytes name no compressed format this build reads")),
-            Some(Format::Xz) => Self::walked_xz(path, file),
+            Some(Format::Xz) => Self::walked_xz(file),
             Some(Format::Gzip) => {
-                let named = path.display().to_string();
-                let walked =
-                    if is_bgzf(leading) { Self::walked_bgzf(&path, file, &named)? } else { None };
+                let walked = if is_bgzf(leading) { Self::walked_bgzf(file, &named)? } else { None };
                 walked.ok_or_else(|| {
                     refuse(
                         "it is gzip-compressed and not BGZF, and such a file's index is built by \
@@ -120,14 +113,13 @@ impl CompressedFileSource {
     /// table: what [`open`](crate::open) does where the origin's probe has
     /// already recognised it.
     pub(crate) fn xz(path: &Path) -> Result<Self> {
-        let file = std::fs::File::open(path).map_err(dump_failure(OPEN_DUMP, path))?;
-        Self::walked_xz(path.to_path_buf(), file)
+        Self::walked_xz(DumpFile::open(path)?)
     }
 
-    fn walked_xz(path: PathBuf, file: std::fs::File) -> Result<Self> {
-        let stored_size = file.metadata().map_err(dump_failure(READ_DUMP, &path))?.len();
-        let codec = Arc::new(XzCodec::walk(&path, &file, stored_size)?);
-        Ok(Self::over(path, Arc::new(file), codec))
+    fn walked_xz(file: DumpFile) -> Result<Self> {
+        let stored_size = file.metadata()?.len();
+        let codec = Arc::new(XzCodec::walk(&file, stored_size)?);
+        Ok(Self::over(Arc::new(file), codec))
     }
 
     /// Open the BGZF file at `path`, walking its members' headers for its
@@ -135,17 +127,16 @@ impl CompressedFileSource {
     /// breaks, the file then being a first pass's to read
     /// ([`open`](crate::open)).
     pub(crate) fn bgzf(path: &Path, named: &str) -> Result<Option<Self>> {
-        let file = std::fs::File::open(path).map_err(dump_failure(OPEN_DUMP, path))?;
-        Self::walked_bgzf(path, file, named)
+        Self::walked_bgzf(DumpFile::open(path)?, named)
     }
 
-    fn walked_bgzf(path: &Path, file: std::fs::File, named: &str) -> Result<Option<Self>> {
-        let stored_size = file.metadata().map_err(dump_failure(READ_DUMP, path))?.len();
+    fn walked_bgzf(file: DumpFile, named: &str) -> Result<Option<Self>> {
+        let stored_size = file.metadata()?.len();
         let Some(index) = walk_file(named, &file, stored_size)? else {
             return Ok(None);
         };
         let codec = Arc::new(DeflateCodec::over(index, stored_size)?);
-        Ok(Some(Self::over(path.to_path_buf(), Arc::new(file), codec)))
+        Ok(Some(Self::over(Arc::new(file), codec)))
     }
 
     /// Open `path` from an index a previous build of the *same* file
@@ -161,11 +152,10 @@ impl CompressedFileSource {
     /// [`Recognized::Mismatch`](crate::Recognized::Mismatch) rather than a
     /// rebuild.
     pub fn with_index(path: impl AsRef<Path>, index: CompressionIndex) -> Result<Self> {
-        let path = path.as_ref().to_path_buf();
-        let file = Arc::new(std::fs::File::open(&path).map_err(dump_failure(OPEN_DUMP, &path))?);
-        let stored_size = file.metadata().map_err(dump_failure(READ_DUMP, &path))?.len();
+        let file = DumpFile::open(path.as_ref())?;
+        let stored_size = file.metadata()?.len();
         let codec = codec_over(index, stored_size)?;
-        Ok(Self::over(path, file, codec))
+        Ok(Self::over(Arc::new(file), codec))
     }
 
     /// The one place the constructors agree: the budget policy is built over
@@ -190,13 +180,13 @@ impl CompressedFileSource {
     // **(c) unowned**; closing it means a per-source term, which
     // [`WorkerMemory`] does not have. Billing it buys accuracy and no
     // protection, the build having already happened.
-    fn over(path: PathBuf, file: Arc<std::fs::File>, codec: Arc<dyn Codec>) -> Self {
+    fn over(file: Arc<DumpFile>, codec: Arc<dyn Codec>) -> Self {
         let budget = DecodeBudget::over(codec.largest_unit(), codec.pulling_footprint());
-        Self { path, file, codec, live: Arc::new(Mutex::new(None)), budget }
+        Self { file, codec, live: Arc::new(Mutex::new(None)), budget }
     }
 
     pub fn path(&self) -> &Path {
-        &self.path
+        self.file.path()
     }
 
     /// The unit at `index`, from the retention list, from another reader's
@@ -210,7 +200,7 @@ impl CompressedFileSource {
         index: usize,
         cache: &BlockCache,
         codec: &dyn Codec,
-        file: &std::fs::File,
+        file: &DumpFile,
     ) -> Result<Arc<DecodedBlock>> {
         let decoding = loop {
             match cache.claim(index) {
@@ -246,7 +236,7 @@ impl CompressedFileSource {
         len: usize,
         cache: &BlockCache,
         codec: &dyn Codec,
-        file: &std::fs::File,
+        file: &DumpFile,
         chunks: &Arc<BufferPool>,
     ) -> Result<Bytes> {
         let end = offset.checked_add(len as u64).ok_or_else(short_read)?;
@@ -295,7 +285,7 @@ impl CompressedFileSource {
         offset: u64,
         len: usize,
         codec: &dyn Codec,
-        file: &std::fs::File,
+        file: &DumpFile,
         live: &Mutex<Option<LiveBlock>>,
         chunks: &Arc<BufferPool>,
     ) -> Result<Bytes> {
@@ -374,11 +364,9 @@ impl ByteRangeSource for CompressedFileSource {
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
         Box::pin(async move {
             let file = Arc::clone(&self.file);
-            let mtime =
-                tokio::task::spawn_blocking(move || file.metadata().and_then(|m| m.modified()))
-                    .await
-                    .map_err(Error::join)?
-                    .map_err(dump_failure(READ_DUMP, &self.path))?;
+            let mtime = tokio::task::spawn_blocking(move || file.modified())
+                .await
+                .map_err(Error::join)??;
             Ok(Some(mtime))
         })
     }
@@ -391,8 +379,7 @@ impl ByteRangeSource for CompressedFileSource {
             let file = Arc::clone(&self.file);
             let len = tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
                 .await
-                .map_err(Error::join)?
-                .map_err(dump_failure(READ_DUMP, &self.path))?;
+                .map_err(Error::join)??;
             Ok(len)
         })
     }

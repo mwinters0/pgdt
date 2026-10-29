@@ -5,12 +5,11 @@
 //! `xz_seek`.
 
 use std::ops::Range;
-use std::path::Path;
 use std::sync::Arc;
 
 use pgdt_core::{Error, Result};
 
-use super::{Codec, CompressionIndex, Positioned, UnitRead, short_read};
+use super::{Codec, CompressionIndex, DumpFile, Positioned, UnitRead, short_read};
 
 mod table;
 
@@ -62,13 +61,14 @@ impl XzCodec {
         Ok(Self { layout, table })
     }
 
-    /// Walk the stream footers of the local `.xz` file at `path` for its
-    /// table, saying so before and after: the walk this names is the one a
-    /// cached index exists to skip, so only this constructor emits it
+    /// Walk the stream footers of the local `.xz` file for its table, saying
+    /// so before and after: the walk this names is the one a cached index
+    /// exists to skip, so only this constructor emits it
     /// (`docs/design/decisions.md`, "D64").
-    pub(super) fn walk(path: &Path, file: &std::fs::File, stored_size: u64) -> Result<Self> {
+    pub(super) fn walk(file: &DumpFile, stored_size: u64) -> Result<Self> {
+        let path = file.path();
         tracing::info!(path = %path.display(), "seek table build started");
-        let table = xz_seek::SeekTable::from_source(file).map_err(xz_error)?;
+        let table = xz_seek::SeekTable::from_source(&Bridge(file)).map_err(xz_error)?;
         tracing::info!(
             path = %path.display(),
             streams = table.stream_count(),

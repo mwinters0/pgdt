@@ -19,7 +19,7 @@ use std::ops::ControlFlow;
 
 use pgdt_core::Result;
 
-use super::super::Positioned;
+use super::super::{DumpFile, Positioned};
 use super::{CHECKPOINT_SPACING, GZIP, GzipIndex, INPUT_CHUNK};
 
 /// Whether `leading`, a file's first bytes, open with a BGZF member's header:
@@ -44,7 +44,7 @@ const WALK_CHUNK: u64 = INPUT_CHUNK;
 /// A read of the file failing.
 pub(crate) fn walk_file(
     named: &str,
-    file: &std::fs::File,
+    file: &DumpFile,
     stored_size: u64,
 ) -> Result<Option<GzipIndex>> {
     walk_file_spaced(named, file, stored_size, CHECKPOINT_SPACING)
@@ -53,7 +53,7 @@ pub(crate) fn walk_file(
 /// [`walk_file`] coalescing into units of at least `spacing`.
 fn walk_file_spaced(
     named: &str,
-    file: &std::fs::File,
+    file: &DumpFile,
     stored_size: u64,
     spacing: NonZeroU64,
 ) -> Result<Option<GzipIndex>> {
