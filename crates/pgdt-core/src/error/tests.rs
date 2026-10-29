@@ -37,3 +37,24 @@ fn an_io_error_carrying_another_payload_stays_io() {
     assert!(matches!(&error, Error::Io(e) if e.to_string() == "not ours"));
     assert!(error.source().is_none(), "the message is displayed, not chained");
 }
+
+/// **No variant carrying a cause chains it, and each displays it** — the
+/// rule `Io` and `File` hold, held by the four carrying a dependency's error
+/// too — so a reporter walking the chain prints the cause's message once.
+#[test]
+fn a_cause_is_displayed_and_never_chained() {
+    let cause = || std::io::Error::other("the cause's own message");
+    for error in [
+        Error::Io(cause()),
+        Error::file("read the dump at", "/data/dump.sql.gz", cause()),
+        Error::join(cause()),
+        Error::arrow(cause()),
+        Error::codec("gzip", cause()),
+        Error::cache_encode(cause()),
+    ] {
+        assert!(error.to_string().ends_with("the cause's own message"), "{error}");
+        assert!(error.source().is_none(), "chained: {error:?}");
+    }
+    let codec = Error::codec("gzip", cause());
+    assert!(codec.codec_cause::<std::io::Error>().is_some(), "reached through its field");
+}

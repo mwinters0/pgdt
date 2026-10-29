@@ -232,6 +232,27 @@ fn a_gzip_first_pass_is_announced_once_started_and_complete() {
     }
 }
 
+/// **A codec's failure is said once** (`docs/design/decisions.md`, "D129"):
+/// a member whose trailer's CRC-32 its data contradicts fails the first pass,
+/// and the codec's sentence is on the refusal's line and nowhere else.
+#[test]
+fn a_codec_failure_is_said_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let gz = dir.path().join("dump.sql.gz");
+    let mut bytes = std::fs::read(gzip_fixture(16, "edge_cases", "compress")).unwrap();
+    let crc = bytes.len() - 8;
+    bytes[crc] ^= 0xff;
+    std::fs::write(&gz, &bytes).unwrap();
+
+    let out = run(&["parse", "--source", gz.to_str().unwrap()]);
+    let err = stderr_of(&out);
+    assert!(!out.status.success(), "{err}");
+    let refusal = err.lines().find(|line| line.starts_with("Error: ")).expect(&err);
+    let (_, said) = refusal.split_once("gzip error: ").expect(&err);
+    assert!(said.contains("does not match its trailer's"), "{err}");
+    assert_eq!(err.matches(said).count(), 1, "{err}");
+}
+
 /// A dump of two tables, `small` then `large` of `rows` rows, compressed as
 /// one gzip member by `flate2` at its default level.
 fn two_table_gzip(dir: &Path, rows: u64) -> std::path::PathBuf {

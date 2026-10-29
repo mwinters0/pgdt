@@ -40,3 +40,13 @@ in the library's order on every refusal leaving a command; `datafusion-pgdump`'s
 `Spelling` a front end handed at open or registration, `pgdt sql` handing one per grammar. Rejected: a structured
 `Remedy` (a second taxonomy); a sentence per variant per front end (wording that drifted); spelling in `pgdt sql`'s
 `run()` alone; DataFusion's `Context`; a variant wrapping any refusal.
+
+### D129 A core error displays its cause and never chains it
+A `pgdt_core::Error` variant carrying a cause, an `io::Error` or a dependency's `Cause`, writes it into its `Display`
+and has no `source`: a reporter walking the chain (anyhow's `Caused by:`) prints each message once, and one printing
+`Display` alone (DataFusion's `External`) prints it whole. Each cause displays what lies beneath it, and none wraps one
+of ours: the one `Arrow` raised is `RecordBatch` validation's. A typed cause is its field's (`Error::codec_cause`).
+Rejected: chaining, not displaying (lost where `Display` alone prints); chaining what lies beneath the cause (xz-seek
+and arrow display and chain theirs, so the duplicate moves down a level); a choice per variant. Reopens: a cause whose
+`Display` omits its inner error. Code: `pgdt_core::Error`. Evidence: `error::tests`, `gzip_source.rs`'s
+`a_codec_failure_is_said_once`.

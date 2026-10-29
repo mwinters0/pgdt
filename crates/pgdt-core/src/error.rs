@@ -10,16 +10,18 @@ pub type Cause = Box<dyn std::error::Error + Send + Sync + 'static>;
 /// What the library refuses. A sentence naming a remedy names it in the
 /// library's own terms, never a front end's flag, which each front end adds
 /// when it reports one (`docs/design/decisions.md`, "D107").
+///
+/// **A variant carrying a cause displays it and never chains it**: no variant
+/// has a [`source`](std::error::Error::source), so a reporter walking the
+/// chain prints each message once, and one printing `Display` alone — as
+/// DataFusion's `External` does — still prints it whole. A typed cause is
+/// reached through the variant's field ([`Error::codec_cause`])
+/// (`docs/design/decisions.md`, "D129").
 #[derive(Debug, ThisError)]
 pub enum Error {
     /// An I/O failure on no file a user named: a source's own refusal worded
     /// as one, or a read through something that does not know its path. One
     /// on a named file is [`Error::File`].
-    ///
-    /// **The message is displayed and not chained**: the `io::Error` is no
-    /// [`source`](std::error::Error::source), so a reporter walking the chain
-    /// prints the OS's message once, and one printing `Display` alone — as
-    /// DataFusion's `External` does — still prints it.
     #[error("io error: {0}")]
     Io(std::io::Error),
     /// An I/O failure on a file the user named — the dump, the cache, or a
@@ -33,15 +35,14 @@ pub enum Error {
     /// cannot make the file it holds its windows in, naming its directory
     /// ([`Error::file`]).
     ///
-    /// The `io::Error` is displayed and not chained, as [`Error::Io`]'s is,
-    /// and is reached as the `cause` field; it is not called `source`, which
-    /// `thiserror` reads as an error cause.
+    /// The `io::Error` is reached as the `cause` field; it is not called
+    /// `source`, which `thiserror` reads as an error cause.
     #[error("cannot {doing} {}: {cause}", path.display())]
     File { doing: &'static str, path: PathBuf, cause: std::io::Error },
     /// A background task panicked or was cancelled; the cause is tokio's
     /// `JoinError` ([`Error::join`]).
     #[error("background task failed: {0}")]
-    Join(#[source] Cause),
+    Join(Cause),
     #[error("COPY block at offset {header_offset} has no terminating `\\.` line")]
     UnterminatedCopyBlock { header_offset: u64 },
     #[error("large-object data region at offset {start_offset} has no terminating `COMMIT;` line")]
@@ -59,7 +60,7 @@ pub enum Error {
     /// Arrow refused something; the cause is its `ArrowError`
     /// ([`Error::arrow`]).
     #[error("arrow error: {0}")]
-    Arrow(#[source] Cause),
+    Arrow(Cause),
     /// A `--source` argument names something this build does not read: a URL
     /// scheme it speaks nothing for, a `file:` URL naming another machine, a
     /// URL carrying a credential it would have to send, or a place whose kind
@@ -98,13 +99,12 @@ pub enum Error {
     Codec {
         /// The codec's name, as a message says it: `xz`.
         codec: &'static str,
-        #[source]
         cause: Cause,
     },
     /// The cache did not encode; the cause is bincode's `EncodeError`
     /// ([`Error::cache_encode`]).
     #[error("failed to encode structure cache: {0}")]
-    CacheEncode(#[source] Cause),
+    CacheEncode(Cause),
     /// An operation needing a cache file asked of a cache mode that is
     /// disabled (`pgdt_dump::cache::CacheMode::require_enabled`).
     #[error("`{operation}` requires a cache file, and the cache is disabled — name one")]

@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D128 -->
+<!-- decision-watermark: D129 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -137,6 +137,7 @@ are `docs/process.md`, "The decision register".
 - **D74** Below the codec no Arrow, the codec pure, and the core's error naming no dependency
 - **D106** A crate's API is a designed surface, and what a boundary forces public that is not API is `internal`'s
 - **D107** A library refusal names its remedy in the library's terms, and each embedder spells it after the sentence
+- **D129** A core error displays its cause and never chains it
 
 ## Fixtures and tests (`scripts/`, `fixtures/`)
 [`decisions/fixtures.md`](decisions/fixtures.md)
