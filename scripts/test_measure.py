@@ -5906,10 +5906,23 @@ class GzipFirstPass(unittest.TestCase):
         self.assertEqual(o(serial, mid, slow, fast), "reopens")
         self.assertEqual(o(serial, mid, fast, slow), "reopens")
         self.assertEqual(o(serial, mid, fast, fast), "reopens")
-        # ... on a file the pass lifts at that count, even where the
+        # ... on a file it or the physical count lifts, even where the
         # physical count lifts on none.
         self.assertEqual(o(serial, serial, fast, serial), "reopens")
         self.assertEqual(o(serial, serial, serial, serial), "no lift")
+        # An upper count lifting a file without beating the physical count
+        # leaves it `no lift`: the other outcomes read the default's lift.
+        near, nearer = [3.95] * n, [3.85] * n
+        self.assertTrue(measure.gzpass_beats(nearer, serial))
+        self.assertTrue(measure.gzpass_level(near, serial))
+        self.assertTrue(measure.gzpass_level(nearer, near))
+        self.assertEqual(o(serial, near, nearer, nearer), "no lift")
+        # Beating a physical count that regresses, on a file no count lifts,
+        # is no reopening: the regression is speculation's, not the cap's.
+        worse, less_worse = [4.4] * n, [4.05] * n
+        self.assertTrue(measure.gzpass_beats(less_worse, worse))
+        self.assertTrue(measure.gzpass_level(less_worse, serial))
+        self.assertEqual(o(serial, worse, less_worse, less_worse), "regresses")
         # Serial beating any upper count is a regression, named apart.
         self.assertEqual(o(fast, slow, fast, fast), "regresses")
         self.assertEqual(o(mid, mid, mid, slow), "regresses")

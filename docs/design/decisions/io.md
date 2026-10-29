@@ -13,13 +13,13 @@ concurrency.
 
 ### D2 A plain file recommends one worker; a local compressed one the machine's cores
 A plain file recommends one: a serial plain `parse` is device-bound wherever a split reaches, a `COPY` block's interior
-(an `INSERT` run, `KD9`, admits none), each piece's tail read adds bytes, and `query`'s typed scan, unbound on the
-NVMe, is held flat by `KD57` (D25). A local compressed source or gzip first pass recommends its cores capped at its
-units (`RT7`), a first pass's also at its affinity's physical cores (`RT27`); a fetched one, one: more opens
-connections to a third party unasked. Rejected: a plain split once a typed one outran one worker on the NVMe; a fetched
-first pass's cores, its tasks fetching no extra byte; a first pass's logical count or one less, neither beating the
-physical. Reopens: `KD57` closing (D7); either beating it on a file the pass lifts. Evidence: `scan-throughput-*`,
-`parallel-scan-throughput`, `gzip-first-pass`.
+(an `INSERT` run, `KD9`, admits none), each piece's tail read adds bytes, and `query`'s typed scan, unbound on the NVMe,
+is held flat by `KD57` (D25). A local compressed source or gzip first pass recommends its cores capped at its units
+(`RT7`), a first pass's also at its affinity's physical cores (`RT27`); a fetched one, one: more connects to a third
+party unasked. Rejected: a plain split once a typed one outran one worker on the NVMe; a fetched first pass's cores, its
+tasks fetching no more; a first pass's logical count or one less, neither beating the physical. Reopens: `KD57` closing
+(D7); either beating it on a file it or the physical lifts. Evidence: `scan-throughput-*`, `parallel-scan-throughput`,
+`gzip-first-pass`.
 
 ### D3 The memory constants, and what each one is
 `MEMORY_RESERVE` is a subtraction, not a fraction, which under-reserves the small allowances where being wrong kills the

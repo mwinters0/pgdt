@@ -15,7 +15,7 @@ The bar is the harness's, so the table states the verdict
 pairs and margin, 7.1's bar:
 
 - **`reopens`** is read first: the logical count or the logical count less
-  one beats the physical count, on a file the pass lifts at that count — the
+  one beats the physical count, on a file either lifts — the
   physical count beating serial, or that upper count beating serial itself.
   One such file reopens the default, whatever the others read.
 - **Otherwise each lifted file names the cost an upper count adds**, by 7.1's
@@ -23,7 +23,8 @@ pairs and margin, 7.1's bar:
   count level with the logical count. `level` replaces 7.1's `stands`, which
   named the logical default standing; it no longer ships. The verdict lists
   each lifted file's outcome, and the pair table every file's.
-- `no lift` and `regresses` are unchanged and settle nothing.
+- `no lift` and `regresses` read the lift at the physical count and settle
+  nothing.
 
 Applied to `ab7f630c`'s per-rep readings (`measurements.md`, "What a parallel
 gzip first pass buys"), the bar reads zlib's and zlib-ng-compat's files

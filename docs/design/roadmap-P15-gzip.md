@@ -587,7 +587,7 @@ falsifier was stated while the logical count shipped, so its `stands` keeps
 a default that no longer ships, and slice 20's sitting read the upper counts
 at a chunk that no longer ships. `gzip-first-pass`'s verdict on the default
 is read against the shipped cap: D2's gzip clause reopens only where an upper
-count beats the physical count on a file the pass lifts, by 7.1's bar, and
+count beats the physical count on a file it or the physical count lifts, by 7.1's bar, and
 the default holds otherwise, each file's outcome still reported as it falls.
 **Done when** the verdict reads so, and `gzip-first-pass` and
 `gzip-resident` are re-taken on the shipped chunk from a commit carrying it,
