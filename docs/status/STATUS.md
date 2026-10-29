@@ -110,3 +110,21 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`M258` closed `KD151` in part (2026-10-29).** Every open and `stat` of a
+  local dump, a plain dump's reads and the cache's every open, read and write
+  name their file (`pgdt_core::Error::File`); a read through a compressed
+  dump's codec, or of a gzip cache's window as a decode begins, does not, and
+  `KD151` now says so, `(c) unowned`. The call: those reads fail through
+  `Positioned` and `WindowProvider`, which answer `io::Result` and hold no
+  path, and giving them one reworks already-tested decode paths, on a row
+  that named the opens and the cache. Reconsidering means a row giving those
+  traits a failure that carries the file's path, which strikes `KD151`.
+- **`Error::Io` and `Error::File` display their cause and do not chain it;
+  `Join`, `Arrow`, `Codec` and `CacheEncode` still do both** (2026-10-29),
+  so `pgdt` prints theirs twice, under `Caused by:`. The call: `M258` asked
+  for the OS's message once, and displaying rather than chaining is the half
+  that keeps it where DataFusion's `External` prints `Display` alone. Not
+  applied to the other four, whose causes may carry chains of their own that
+  a `Display` would drop. Reconsidering means one rule for every variant
+  carrying a cause, stated beside D74, and the four brought under it.

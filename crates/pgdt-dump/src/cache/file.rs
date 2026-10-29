@@ -23,6 +23,16 @@ use pgdt_model::{CACHE_FORMAT_VERSION, DumpIndex, calendar_end};
 
 mod windows;
 
+/// What [`Error::File`] says was being done to a cache that failed to open.
+const OPEN_CACHE: &str = "open the cache at";
+/// What [`Error::File`] says was being done to a cache a read of failed.
+const READ_CACHE: &str = "read the cache at";
+/// What [`Error::File`] says was being done to the file a save writes before
+/// renaming it over the cache ([`beside`]).
+const WRITE_BESIDE: &str = "write the cache's new copy at";
+/// What [`Error::File`] says was being done where that rename failed.
+const REPLACE_CACHE: &str = "rename the cache's new copy over the cache at";
+
 /// The bytes every cache file opens with, ahead of [`CACHE_FORMAT_VERSION`] as
 /// a little-endian `u32`, then the encoded [`CacheFile`] and, for a gzip
 /// source, its window section ([`windows`]). **Both are read
@@ -223,25 +233,26 @@ impl LoadedCache {
 /// error.
 pub fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheStatus>> {
     let unusable = |why| Ok(Err(CacheStatus::Unusable(why)));
+    let read = |cause| Error::file(READ_CACHE, path, cause);
     let mut reader = match File::open(path) {
         Ok(file) => BufReader::new(file),
         Err(e) if e.kind() == ErrorKind::NotFound => {
             return Ok(Err(CacheStatus::Missing));
         }
-        Err(e) => return Err(Error::Io(e)),
+        Err(e) => return Err(Error::file(OPEN_CACHE, path, e)),
     };
     let mut magic = [0u8; CACHE_MAGIC.len()];
     match reader.read_exact(&mut magic) {
         Ok(()) if magic == CACHE_MAGIC => {}
         Ok(()) => return unusable(Unusable::NotACache),
         Err(e) if e.kind() == ErrorKind::UnexpectedEof => return unusable(Unusable::NotACache),
-        Err(e) => return Err(Error::Io(e)),
+        Err(e) => return Err(read(e)),
     }
     let mut version = [0u8; 4];
     match reader.read_exact(&mut version) {
         Ok(()) => {}
         Err(e) if e.kind() == ErrorKind::UnexpectedEof => return unusable(Unusable::Unreadable),
-        Err(e) => return Err(Error::Io(e)),
+        Err(e) => return Err(read(e)),
     }
     let found = u32::from_le_bytes(version);
     if found != CACHE_FORMAT_VERSION {
@@ -263,23 +274,25 @@ pub fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, Cac
                 build: calendar_end(),
             })
         }
-        Ok(file) => with_windows(file, reader),
+        Ok(file) => with_windows(file, reader, path),
         Err(DecodeError::Io { inner, .. }) if inner.kind() != ErrorKind::UnexpectedEof => {
-            Err(Error::Io(inner))
+            Err(read(inner))
         }
         Err(_) => unusable(Unusable::Unreadable),
     }
 }
 
 /// `file` with its gzip index's provider attached, reading the window section
-/// that begins where `reader` stopped decoding — the encoded file's end,
-/// bincode reading no byte past what it decodes.
+/// that begins where `reader`, over the cache at `path`, stopped decoding —
+/// the encoded file's end, bincode reading no byte past what it decodes.
 fn with_windows(
     mut file: CacheFile,
     mut reader: BufReader<File>,
+    path: &Path,
 ) -> Result<std::result::Result<CacheFile, CacheStatus>> {
-    let base = reader.stream_position()?;
-    match windows::attach_section(file.compression.take(), reader.into_inner(), base)? {
+    let read = |cause| Error::file(READ_CACHE, path, cause);
+    let base = reader.stream_position().map_err(read)?;
+    match windows::attach_section(file.compression.take(), reader.into_inner(), base, read)? {
         Ok(compression) => Ok(Ok(CacheFile { compression, ..file })),
         Err(why) => Ok(Err(CacheStatus::Unusable(why))),
     }
@@ -304,34 +317,37 @@ pub struct CacheFileRef<'a> {
 /// gzip index's window section — streamed into a file beside `path` and
 /// renamed over it ([`write_beside`]).
 pub fn write_cache_file(path: &Path, file: &CacheFileRef<'_>) -> Result<()> {
-    write_beside(path, |writer| {
-        writer.write_all(&CACHE_MAGIC)?;
-        writer.write_all(&CACHE_FORMAT_VERSION.to_le_bytes())?;
+    write_beside(path, |writer, beside| {
+        let write = |cause| Error::file(WRITE_BESIDE, beside, cause);
+        writer.write_all(&CACHE_MAGIC).map_err(write)?;
+        writer.write_all(&CACHE_FORMAT_VERSION.to_le_bytes()).map_err(write)?;
         bincode::serde::encode_into_std_write(file, writer, bincode::config::standard()).map_err(
             |e| match e {
-                EncodeError::Io { inner, .. } => Error::Io(inner),
+                EncodeError::Io { inner, .. } => write(inner),
                 other => Error::cache_encode(other),
             },
         )?;
-        windows::write_section(writer, file.compression.as_ref())
+        windows::write_section(writer, write, file.compression.as_ref())
     })
 }
 
-/// Run `encode` into a new file [`beside`] `path`, then rename that file over
-/// `path`; on any failure, remove it and leave `path` as it was.
+/// Run `encode` into a new file [`beside`] `path`, handed that file's path to
+/// name in a failure, then rename it over `path`; on any failure, remove it
+/// and leave `path` as it was.
 fn write_beside(
     path: &Path,
-    encode: impl FnOnce(&mut BufWriter<File>) -> Result<()>,
+    encode: impl FnOnce(&mut BufWriter<File>, &Path) -> Result<()>,
 ) -> Result<()> {
     let beside = beside(path);
-    let file = OpenOptions::new().write(true).create_new(true).open(&beside)?;
+    let write = |cause| Error::file(WRITE_BESIDE, &beside, cause);
+    let file = OpenOptions::new().write(true).create_new(true).open(&beside).map_err(write)?;
     let written = (|| {
         let mut writer = BufWriter::new(file);
-        encode(&mut writer)?;
-        writer.flush()?;
+        encode(&mut writer, &beside)?;
+        writer.flush().map_err(write)?;
         // Closed before the rename, which some platforms need.
         drop(writer);
-        std::fs::rename(&beside, path)?;
+        std::fs::rename(&beside, path).map_err(|e| Error::file(REPLACE_CACHE, path, e))?;
         Ok(())
     })();
     if written.is_err() {

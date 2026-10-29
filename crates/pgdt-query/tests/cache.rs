@@ -215,7 +215,9 @@ async fn save_overwrites_an_existing_cache() {
 }
 
 /// A write failure (here: parent directory doesn't exist) must propagate as
-/// a hard error, never a silent fallback to running without a cache.
+/// a hard error, never a silent fallback to running without a cache — naming
+/// the file the save writes beside the cache, its OS message displayed once
+/// and not chained.
 #[tokio::test]
 async fn save_propagates_write_failures() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -223,7 +225,14 @@ async fn save_propagates_write_failures() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("no-such-subdir").join("edge_cases.sql.dtcache");
-    assert!(matches!(pgdt_dump::internal::save(&path, &source, &index).await, Err(Error::Io(_))));
+    let err = pgdt_dump::internal::save(&path, &source, &index).await.unwrap_err();
+    let Error::File { path: named, cause, .. } = &err else { panic!("{err:?}") };
+    assert_eq!(named.parent(), path.parent(), "the file beside the cache: {err}");
+    assert_eq!(cause.kind(), std::io::ErrorKind::NotFound, "{err}");
+    let message = err.to_string();
+    assert!(message.contains(&named.display().to_string()), "{message}");
+    assert!(message.ends_with(&cause.to_string()), "{message}");
+    assert!(std::error::Error::source(&err).is_none(), "displayed, not chained: {err:?}");
 }
 
 /// A cache saved against a differently-sized file is invalidated outright —

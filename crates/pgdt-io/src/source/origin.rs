@@ -16,7 +16,7 @@ use super::compressed::{
     CompressedFileSource, CompressionIndex, Feed, FirstPass, Format, RECOGNITION_BYTES,
     index_refused, is_bgzf,
 };
-use super::local::LocalFileSource;
+use super::local::{LocalFileSource, OPEN_DUMP, READ_DUMP, dump_failure};
 #[cfg(feature = "http")]
 use super::remote::{
     REMOTE_READ_TIMEOUT, RemoteObject, open_remote, remote_name_of, without_credentials,
@@ -261,8 +261,9 @@ async fn probe_local_file(path: &Path) -> Result<OriginProbe> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<OriginProbe> {
         use std::io::Read;
-        let mut file = std::fs::File::open(&path)?;
-        let metadata = file.metadata()?;
+        let read = || dump_failure(READ_DUMP, &path);
+        let mut file = std::fs::File::open(&path).map_err(dump_failure(OPEN_DUMP, &path))?;
+        let metadata = file.metadata().map_err(read())?;
         let mut buf = [0u8; ORIGIN_LEADING_BYTES];
         let mut filled = 0;
         while filled < buf.len() {
@@ -270,12 +271,12 @@ async fn probe_local_file(path: &Path) -> Result<OriginProbe> {
                 Ok(0) => break,
                 Ok(n) => filled += n,
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(Error::Io(e)),
+                Err(e) => return Err(read()(e)),
             }
         }
         Ok(OriginProbe {
             stored_size: metadata.len(),
-            modified: Some(metadata.modified()?),
+            modified: Some(metadata.modified().map_err(read())?),
             leading: buf[..filled].to_vec(),
         })
     })

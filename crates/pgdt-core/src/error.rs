@@ -12,16 +12,29 @@ pub type Cause = Box<dyn std::error::Error + Send + Sync + 'static>;
 /// when it reports one (`docs/design/decisions.md`, "D107").
 #[derive(Debug, ThisError)]
 pub enum Error {
-    /// Deficiency register: `deficiency: KD151` — this carries no path, and
-    /// every `?` on an `io::Error` reaches it bare, so a failure opening the
-    /// source (`pgdt-io`'s `source/local.rs`, `source/origin.rs`,
-    /// `source/compressed/file.rs`, `deflate/first_pass.rs`) or reading or
-    /// saving the cache (`pgdt-dump`'s `cache/file.rs`) names neither its path
-    /// nor what it was doing; the first pass's spill file is the one site that
-    /// names its directory. The OS's message is printed twice, here and again
-    /// as this variant's source.
+    /// An I/O failure on no file a user named: a source's own refusal worded
+    /// as one, or a read through something that does not know its path. One
+    /// on a named file is [`Error::File`].
+    ///
+    /// **The message is displayed and not chained**: the `io::Error` is no
+    /// [`source`](std::error::Error::source), so a reporter walking the chain
+    /// prints the OS's message once, and one printing `Display` alone — as
+    /// DataFusion's `External` does — still prints it.
     #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
+    /// An I/O failure on a file the user named — the dump, the cache, or a
+    /// file written beside the cache — naming its path and what was being
+    /// done to it, `doing` a phrase ending in the word the path follows:
+    /// `open the dump at`. Raised at every open, `stat` and plain read of a
+    /// local source, every open, read and write of a cache and of the file a
+    /// save writes beside it, and where a gzip first pass cannot make the
+    /// file it holds its windows in, naming its directory ([`Error::file`]).
+    ///
+    /// The `io::Error` is displayed and not chained, as [`Error::Io`]'s is,
+    /// and is reached as the `cause` field; it is not called `source`, which
+    /// `thiserror` reads as an error cause.
+    #[error("cannot {doing} {}: {cause}", path.display())]
+    File { doing: &'static str, path: PathBuf, cause: std::io::Error },
     /// A background task panicked or was cancelled; the cause is tokio's
     /// `JoinError` ([`Error::join`]).
     #[error("background task failed: {0}")]
@@ -437,7 +450,18 @@ fn cached_block_changed(path: Option<&Path>, header_offset: u64) -> String {
     }
 }
 
+impl From<std::io::Error> for Error {
+    fn from(cause: std::io::Error) -> Self {
+        Error::Io(cause)
+    }
+}
+
 impl Error {
+    /// [`Error::File`]: `cause`, met doing `doing` to the file at `path`.
+    pub fn file(doing: &'static str, path: impl Into<PathBuf>, cause: std::io::Error) -> Self {
+        Error::File { doing, path: path.into(), cause }
+    }
+
     /// [`Error::Arrow`] carrying `cause`, an `ArrowError`.
     pub fn arrow(cause: impl std::error::Error + Send + Sync + 'static) -> Self {
         Error::Arrow(Box::new(cause))

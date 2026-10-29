@@ -112,6 +112,7 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
         | Lib::CachedBlockChanged { path: None, .. }
         | Lib::CacheDisabled { .. }
         | Lib::Io(_)
+        | Lib::File { .. }
         | Lib::Join(_)
         | Lib::UnterminatedCopyBlock { .. }
         | Lib::UnterminatedLargeObjectRegion { .. }

@@ -549,12 +549,11 @@ than reading as a phase nobody has sliced.
   whose speculations fill their sinks. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
 
-- **KD151** — an I/O failure on a file the user named — the dump `--source`
-  names, the cache `--dtcache` names, the file a save writes beside it — is
-  reported as `io error:` and the OS's message alone, naming no path, so a
-  mistyped source or a read-only cache directory reads only "No such file or
-  directory" or "Read-only file system". **(b) owned by `M258`**, which names
-  the path. Detail: `crates/pgdt-core/src/error.rs`.
+- **KD151** — a read of a local compressed dump failing through its codec —
+  an index's walk, a unit's decode, a first pass — or of a gzip cache's
+  window as a decode begins, is reported as its codec's error or `io error:`
+  and the OS's message, naming no path. **(c) unowned**; promoted by a user meeting one. Detail:
+  `crates/pgdt-io/src/source/compressed/codec.rs`.
 
 - **KD152** — a fetched gzip first pass's frontier copies up to a chunk of
   compressed input where its decode is charged an input chunk, so it holds up

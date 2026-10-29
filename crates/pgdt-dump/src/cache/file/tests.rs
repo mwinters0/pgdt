@@ -22,7 +22,7 @@ fn a_save_leaves_the_previous_cache_whole_until_it_renames() {
     let path = dir.path().join("dump.sql.dtcache");
     std::fs::write(&path, b"the previous cache").unwrap();
 
-    let failed = write_beside(&path, |writer| {
+    let failed = write_beside(&path, |writer, _| {
         writer.write_all(b"the first half of the next")?;
         writer.flush()?;
         assert_eq!(std::fs::read(&path).unwrap(), b"the previous cache");
@@ -40,7 +40,7 @@ fn a_save_leaves_the_previous_cache_whole_until_it_renames() {
     assert_eq!(std::fs::read(&path).unwrap(), b"the previous cache");
     assert_eq!(listing(dir.path()), ["dump.sql.dtcache"]);
 
-    write_beside(&path, |writer| {
+    write_beside(&path, |writer, _| {
         writer.write_all(b"the next cache")?;
         assert_eq!(std::fs::read(&path).unwrap(), b"the previous cache");
         Ok(())

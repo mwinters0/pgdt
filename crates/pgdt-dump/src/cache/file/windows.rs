@@ -13,7 +13,7 @@ use std::io::Write;
 use std::os::unix::fs::FileExt;
 use std::sync::Arc;
 
-use pgdt_core::{Result, Unusable};
+use pgdt_core::{Error, Result, Unusable};
 use pgdt_io::{CompressionIndex, GzipIndex, WindowProvider};
 
 /// Write `compression`'s window section — each checkpoint's window, read
@@ -23,8 +23,10 @@ use pgdt_io::{CompressionIndex, GzipIndex, WindowProvider};
 /// **A save whose index was loaded from the cache it replaces reads the
 /// previous file's windows**, through the handle its provider holds, which a
 /// rename over that file's name leaves open on the same bytes.
+/// A write failing is named by `failed`, which knows the file written.
 pub(super) fn write_section(
     writer: &mut impl Write,
+    failed: impl Fn(std::io::Error) -> Error,
     compression: Option<&CompressionIndex>,
 ) -> Result<()> {
     let Some(CompressionIndex::Gzip(index)) = compression else {
@@ -34,7 +36,7 @@ pub(super) fn write_section(
     for checkpoint in 0..index.checkpoint_count() {
         window.resize(index.window_len(checkpoint).expect("a counted checkpoint"), 0);
         index.read_window(checkpoint, &mut window)?;
-        writer.write_all(&window)?;
+        writer.write_all(&window).map_err(&failed)?;
     }
     Ok(())
 }
@@ -43,17 +45,20 @@ pub(super) fn write_section(
 /// reading its windows out of `file`'s section, which begins at `base`, the
 /// encoded file's end — or [`Unusable::Unreadable`] where the file does not
 /// end with the section's last window, cut short or run on. Any other index
-/// is handed back as it was decoded.
+/// is handed back as it was decoded. A read failing is named by `failed`,
+/// which knows the cache's path.
 pub(super) fn attach_section(
     compression: Option<CompressionIndex>,
     file: File,
     base: u64,
+    failed: impl FnOnce(std::io::Error) -> Error,
 ) -> Result<std::result::Result<Option<CompressionIndex>, Unusable>> {
     let Some(CompressionIndex::Gzip(index)) = compression else {
         return Ok(Ok(compression));
     };
     let (offsets, end) = offsets(&index, base);
-    if file.metadata()?.len() != end {
+    let len = file.metadata().map_err(failed)?.len();
+    if len != end {
         return Ok(Err(Unusable::Unreadable));
     }
     let windows = SectionWindows { file, offsets };

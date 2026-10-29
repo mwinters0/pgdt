@@ -32,6 +32,15 @@ pub(crate) trait Positioned: Send + Sync {
 /// Positioned reads on a file, looping past a short `pread` that is not the
 /// file's end — what makes the fill-or-end contract true of a file. It holds
 /// nothing, so it lends nothing.
+// Deficiency register: `deficiency: KD151` — so a read failing here names no
+// path: an index's walk or a unit's decode, which reaches the user as its
+// codec's error or `io error:`, and a first pass's (`first_pass/pass.rs`'s
+// `refill_from_file`). A gzip
+// cache's window read as a decode begins (`pgdt-dump`'s
+// `cache/file/windows.rs`, `SectionWindows`) is the cache's, as unnamed. Every
+// open and `stat` of the dump and every open, read and write of the cache name
+// theirs (`pgdt_core::Error::File`). **(c) unowned**; closing it means a
+// failure these `io::Result` traits carry its file's path in.
 #[cfg(unix)]
 impl Positioned for std::fs::File {
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {

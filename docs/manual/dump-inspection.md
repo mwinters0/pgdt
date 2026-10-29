@@ -283,7 +283,7 @@ saves holds the same. A run that cannot make that file stops at the first
 place it records, naming the directory:
 
 ```
-Error: io error: a gzip first pass cannot make the file it holds its windows in, in /tmp: Read-only file system (os error 30)
+Error: cannot make the file a gzip first pass holds its windows in, in /tmp: Read-only file system (os error 30)
 ```
 
 **A `query` that settles its table before the first pass has reached the end

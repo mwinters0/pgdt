@@ -15,6 +15,7 @@ use pgdt_core::{Error, Result};
 
 use crate::parallelism::{Parallelism, WorkerMemory};
 use crate::partition::Partitioning;
+use crate::source::local::{OPEN_DUMP, READ_DUMP, dump_failure};
 use crate::source::pool::BufferPool;
 use crate::source::{ByteRangeSource, Extent, WaitPolicy};
 
@@ -88,9 +89,10 @@ impl CompressedFileSource {
     /// cache hands in, is [`open`](crate::open).
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let file = std::fs::File::open(&path)?;
+        let file = std::fs::File::open(&path).map_err(dump_failure(OPEN_DUMP, &path))?;
         let mut leading = [0u8; RECOGNITION_BYTES];
-        let read = Positioned::read_at(&file, 0, &mut leading)?;
+        let read =
+            Positioned::read_at(&file, 0, &mut leading).map_err(dump_failure(READ_DUMP, &path))?;
         let leading = &leading[..read];
         let refuse = |why: &str| Error::SourceNotReadable {
             origin: path.display().to_string(),
@@ -118,11 +120,12 @@ impl CompressedFileSource {
     /// table: what [`open`](crate::open) does where the origin's probe has
     /// already recognised it.
     pub(crate) fn xz(path: &Path) -> Result<Self> {
-        Self::walked_xz(path.to_path_buf(), std::fs::File::open(path)?)
+        let file = std::fs::File::open(path).map_err(dump_failure(OPEN_DUMP, path))?;
+        Self::walked_xz(path.to_path_buf(), file)
     }
 
     fn walked_xz(path: PathBuf, file: std::fs::File) -> Result<Self> {
-        let stored_size = file.metadata()?.len();
+        let stored_size = file.metadata().map_err(dump_failure(READ_DUMP, &path))?.len();
         let codec = Arc::new(XzCodec::walk(&path, &file, stored_size)?);
         Ok(Self::over(path, Arc::new(file), codec))
     }
@@ -132,11 +135,12 @@ impl CompressedFileSource {
     /// breaks, the file then being a first pass's to read
     /// ([`open`](crate::open)).
     pub(crate) fn bgzf(path: &Path, named: &str) -> Result<Option<Self>> {
-        Self::walked_bgzf(path, std::fs::File::open(path)?, named)
+        let file = std::fs::File::open(path).map_err(dump_failure(OPEN_DUMP, path))?;
+        Self::walked_bgzf(path, file, named)
     }
 
     fn walked_bgzf(path: &Path, file: std::fs::File, named: &str) -> Result<Option<Self>> {
-        let stored_size = file.metadata()?.len();
+        let stored_size = file.metadata().map_err(dump_failure(READ_DUMP, path))?.len();
         let Some(index) = walk_file(named, &file, stored_size)? else {
             return Ok(None);
         };
@@ -158,8 +162,8 @@ impl CompressedFileSource {
     /// rebuild.
     pub fn with_index(path: impl AsRef<Path>, index: CompressionIndex) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let file = Arc::new(std::fs::File::open(&path)?);
-        let stored_size = file.metadata()?.len();
+        let file = Arc::new(std::fs::File::open(&path).map_err(dump_failure(OPEN_DUMP, &path))?);
+        let stored_size = file.metadata().map_err(dump_failure(READ_DUMP, &path))?.len();
         let codec = codec_over(index, stored_size)?;
         Ok(Self::over(path, file, codec))
     }
@@ -374,7 +378,7 @@ impl ByteRangeSource for CompressedFileSource {
                 tokio::task::spawn_blocking(move || file.metadata().and_then(|m| m.modified()))
                     .await
                     .map_err(Error::join)?
-                    .map_err(Error::from)?;
+                    .map_err(dump_failure(READ_DUMP, &self.path))?;
             Ok(Some(mtime))
         })
     }
@@ -388,7 +392,7 @@ impl ByteRangeSource for CompressedFileSource {
             let len = tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
                 .await
                 .map_err(Error::join)?
-                .map_err(Error::from)?;
+                .map_err(dump_failure(READ_DUMP, &self.path))?;
             Ok(len)
         })
     }

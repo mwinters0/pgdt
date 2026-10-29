@@ -235,6 +235,34 @@ async fn refusals_name_both_ways_out() {
     assert!(ways_out < parse_hint, "the ways out come before the command they enable: {err}");
 }
 
+/// **An I/O failure on a file the user named names its path, and the OS's
+/// message is printed once** — a source that is not there, and a cache in a
+/// directory that is not, where the save's own file is what fails to open.
+#[tokio::test]
+async fn an_io_failure_names_its_file_and_says_why_once() {
+    let (dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
+    let missing = dir.path().join("missing.sql");
+    let absent = dir.path().join("no-such-dir");
+    let not_found = std::fs::File::open(&missing).unwrap_err().to_string();
+
+    let cache = absent.join("dump.sql.dtcache");
+    for (args, named) in [
+        (vec!["parse", "--source", missing.to_str().unwrap()], missing.to_str().unwrap()),
+        (
+            vec!["parse", "--source", dump.to_str().unwrap(), "--dtcache", cache.to_str().unwrap()],
+            absent.to_str().unwrap(),
+        ),
+    ] {
+        let out = run(&args);
+        assert!(!out.status.success(), "{args:?}: {}", stdout_of(&out));
+        let err = stderr_of(&out);
+        let refusal = err.lines().find(|line| line.starts_with("Error: ")).expect(&err);
+        assert!(refusal.contains(named), "{args:?}: {err}");
+        assert!(refusal.ends_with(&not_found), "{args:?}: {err}");
+        assert_eq!(err.matches(&not_found).count(), 1, "{args:?}: {err}");
+    }
+}
+
 /// Foreign bytes and a cache from another build are told apart too — the path
 /// is wrong in the first case and right in the second, which is different
 /// advice — and `parse` refuses to write over the foreign bytes, which no flag

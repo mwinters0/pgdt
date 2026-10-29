@@ -42,6 +42,22 @@ use super::{ByteRangeSource, Extent, WaitPolicy};
 /// *Rejected:* deriving this from [`POOL_MAX_BYTES`].
 pub(crate) const PLAIN_PARTITION_CHUNKS: usize = 8;
 
+/// What [`Error::File`] says was being done to a local dump that failed to
+/// open — every opener's, compressed or not.
+pub(crate) const OPEN_DUMP: &str = "open the dump at";
+/// What [`Error::File`] says was being done to a local dump a read or a
+/// `stat` of failed.
+pub(crate) const READ_DUMP: &str = "read the dump at";
+
+/// `cause`, met doing `doing` to the dump at `path`.
+pub(crate) fn dump_failure(
+    doing: &'static str,
+    path: &Path,
+) -> impl FnOnce(std::io::Error) -> Error {
+    let path = path.to_path_buf();
+    move |cause| Error::file(doing, path, cause)
+}
+
 /// A local file, read via blocking positioned reads on a `spawn_blocking`
 /// task (`tokio` has no native async positioned-read). See
 /// `docs/design/decisions.md`, "D10".
@@ -54,7 +70,7 @@ pub struct LocalFileSource {
 impl LocalFileSource {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let file = std::fs::File::open(&path)?;
+        let file = std::fs::File::open(&path).map_err(dump_failure(OPEN_DUMP, &path))?;
         Ok(Self { path, file: Arc::new(file), pool: Arc::new(BufferPool::default()) })
     }
 
@@ -72,6 +88,7 @@ impl ByteRangeSource for LocalFileSource {
         Box::pin(async move {
             let file = Arc::clone(&self.file);
             let pool = Arc::clone(&self.pool);
+            let failed = dump_failure(READ_DUMP, &self.path);
             // A read that fails drops its buffer, whose `Drop` releases it to
             // the pool as any holder's does.
             //
@@ -87,7 +104,7 @@ impl ByteRangeSource for LocalFileSource {
             })
             .await
             .map_err(Error::join)?
-            .map_err(Error::from)?;
+            .map_err(failed)?;
             Ok(Bytes::from_owner(slot).slice(..len))
         })
     }
@@ -98,7 +115,7 @@ impl ByteRangeSource for LocalFileSource {
             let len = tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
                 .await
                 .map_err(Error::join)?
-                .map_err(Error::from)?;
+                .map_err(dump_failure(READ_DUMP, &self.path))?;
             Ok(Extent::Exact(len))
         })
     }
@@ -110,7 +127,7 @@ impl ByteRangeSource for LocalFileSource {
                 tokio::task::spawn_blocking(move || file.metadata().and_then(|m| m.modified()))
                     .await
                     .map_err(Error::join)?
-                    .map_err(Error::from)?;
+                    .map_err(dump_failure(READ_DUMP, &self.path))?;
             Ok(Some(mtime))
         })
     }

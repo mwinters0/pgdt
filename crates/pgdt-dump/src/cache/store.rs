@@ -158,8 +158,8 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
 /// Write `index` to `path` (colocated or explicit — whichever the caller
 /// resolved), replacing any existing cache there, and record `source`'s
 /// current stored size/mtime plus its addressable length for the next open
-/// to check. Propagates I/O failures as `Error::Io` rather than
-/// swallowing them — see the module docs.
+/// to check. Propagates I/O failures as `Error::File`, naming the file, rather
+/// than swallowing them — see the module docs.
 ///
 /// **This is the writer, not the run's save**: the in-flight identity check a
 /// scan makes rides [`CacheMode::save`](super::CacheMode::save), which is

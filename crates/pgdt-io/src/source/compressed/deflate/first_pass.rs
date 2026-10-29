@@ -52,6 +52,7 @@ use pgdt_core::{Error, Result};
 use crate::cores::physical_cores;
 use crate::parallelism::{Parallelism, WorkerMemory, worker_count};
 use crate::partition::Partitioning;
+use crate::source::local::{OPEN_DUMP, READ_DUMP, dump_failure};
 use crate::source::pool::{BufferPool, POOL_DEPTH, PooledBuffer, budget_bytes};
 use crate::source::{ByteRangeSource, Extent, RemoteIdentity, WaitPolicy};
 
@@ -178,7 +179,8 @@ pub(crate) enum Feed {
 impl Feed {
     /// The local file at `path`.
     pub(crate) fn file(path: &std::path::Path) -> Result<Feed> {
-        Ok(Feed::File { path: path.to_path_buf(), file: Arc::new(std::fs::File::open(path)?) })
+        let file = std::fs::File::open(path).map_err(dump_failure(OPEN_DUMP, path))?;
+        Ok(Feed::File { path: path.to_path_buf(), file: Arc::new(file) })
     }
 }
 
@@ -757,14 +759,14 @@ impl ByteRangeSource for FirstPass {
             match &self.feed {
                 #[cfg(any(feature = "http", test))]
                 Feed::Fetched(raw) => raw.modified().await,
-                Feed::File { file, .. } => {
+                Feed::File { path, file } => {
                     let file = Arc::clone(file);
                     let mtime = tokio::task::spawn_blocking(move || {
                         file.metadata().and_then(|m| m.modified())
                     })
                     .await
                     .map_err(Error::join)?
-                    .map_err(Error::from)?;
+                    .map_err(dump_failure(READ_DUMP, path))?;
                     Ok(Some(mtime))
                 }
             }
@@ -778,12 +780,12 @@ impl ByteRangeSource for FirstPass {
             match &self.feed {
                 #[cfg(any(feature = "http", test))]
                 Feed::Fetched(raw) => raw.stored_size().await,
-                Feed::File { file, .. } => {
+                Feed::File { path, file } => {
                     let file = Arc::clone(file);
                     tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
                         .await
                         .map_err(Error::join)?
-                        .map_err(Error::from)
+                        .map_err(dump_failure(READ_DUMP, path))
                 }
             }
         })

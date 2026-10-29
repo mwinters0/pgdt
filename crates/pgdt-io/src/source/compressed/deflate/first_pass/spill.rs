@@ -99,13 +99,7 @@ impl PassWindows {
     /// descriptors on it (`docs/design/runtime-invariants.md`, "RT24").
     fn make(&self) -> Result<File> {
         tempfile::tempfile_in(&self.dir).map_err(|e| {
-            Error::Io(std::io::Error::new(
-                e.kind(),
-                format!(
-                    "a gzip first pass cannot make the file it holds its windows in, in {}: {e}",
-                    self.dir.display()
-                ),
-            ))
+            Error::file("make the file a gzip first pass holds its windows in, in", &self.dir, e)
         })
     }
 }

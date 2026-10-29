@@ -47,9 +47,9 @@ pub(crate) fn about_the_source(err: &pgdt_core::Error) -> bool {
         // query maps for itself and reads such a table again, so it never
         // meets this one either.
         Lib::TableAtMetadataLevel { .. } => true,
-        // Named by the library itself: each of these carries the origin or
-        // the URL in its own sentence.
-        Lib::SourceNotReadable { .. } | Lib::Remote { .. } => false,
+        // Named by the library itself: each of these carries the origin, the
+        // URL or the file's path in its own sentence.
+        Lib::SourceNotReadable { .. } | Lib::Remote { .. } | Lib::File { .. } => false,
         // About a place inside the dump, a value in it, or the request made
         // of it — never about which file was read.
         Lib::Io(_)
@@ -132,6 +132,7 @@ pub(crate) fn spelling(err: &pgdt_core::Error) -> Option<String> {
         // beside the request it refuses.
         Lib::CachedBlockChanged { path: None, .. }
         | Lib::Io(_)
+        | Lib::File { .. }
         | Lib::Join(_)
         | Lib::UnterminatedCopyBlock { .. }
         | Lib::UnterminatedLargeObjectRegion { .. }
