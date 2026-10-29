@@ -8354,7 +8354,7 @@ class HeaptrackRecipe(unittest.TestCase):
     def _records(self) -> list[str]:
         return [
             ln for ln in self._recipe().splitlines()
-            if f" {measure.HEAPTRACK} --record-only" in ln and not ln.startswith("#")
+            if f"{measure.HEAPTRACK} --record-only" in ln and not ln.startswith("#")
         ]
 
     def _reports(self) -> list[str]:
@@ -8387,11 +8387,9 @@ class HeaptrackRecipe(unittest.TestCase):
         self.assertIn(f"(allocator: {measure.HEAPTRACK_LEG})", recipe)
         target = measure.image_target_dir(cfg, f"heaptrack-{measure.HEAPTRACK_LEG}")
         binary = measure.HEAPTRACK_BUILD.binary(target)
-        c = measure.contained_prefix(cfg, measure.HEAPTRACK_MEMORY)
+        c = measure.contained_prefix(cfg, contained.DEFAULT_MEMORY)
         self.assertIn(f"{c} {binary} --version", recipe.splitlines())
-        recorded = [
-            ln for ln in recipe.splitlines() if ln.strip().startswith(f"{binary} parse")
-        ]
+        recorded = [ln for ln in recipe.splitlines() if f" {binary} parse " in ln]
         self.assertEqual(len(recorded), len(measure.HEAPTRACK_SHAPES))
 
     def test_the_recorded_build_has_a_target_dir_of_its_own(self):
@@ -8488,7 +8486,7 @@ class HeaptrackRecipe(unittest.TestCase):
         # full scan and then a no-op — two recordings whose difference is the
         # whole workload rather than the one byte of budget between them.
         lines = self._recipe().splitlines()
-        starts = [i for i, ln in enumerate(lines) if f" {measure.HEAPTRACK} --record-only" in ln]
+        starts = [i for i, ln in enumerate(lines) if f"{measure.HEAPTRACK} --record-only" in ln]
         self.assertEqual(len(starts), len(measure.HEAPTRACK_SHAPES))
         for i in starts:
             with self.subTest(line=lines[i]):
@@ -8592,37 +8590,77 @@ class HeaptrackRecipe(unittest.TestCase):
                 self.assertIn(f"--source {staged}", recipe)
                 self.assertIn(str(staged), recipe.splitlines()[-1])
 
-    def test_every_binary_runs_in_a_container_no_recording_meets(self):
+    def test_every_binary_runs_in_a_container(self):
         # Every run of a built binary is a reading in a memory-limited
-        # container (`contained.py`). heaptrack's bookkeeping is charged to
-        # it, so each pair's limit is eight times what its recorded runs may
-        # hold: a block-path run its allowance, a first pass its bill
-        # (`heaptrack_held_bound`).
+        # container (`contained.py`), the recordings' included.
         self.assertEqual(recipe_uncontained(self._recipe()), [])
+
+    def test_a_recording_is_held_to_its_figures_container_plus_one_term(self):
+        # A recorded shape is a timed one, so it is recorded in the container
+        # its figure times it under, plus heaptrack's term: one stated GiB
+        # whatever the shape, its bookkeeping growing with allocations and
+        # backtraces rather than with what the run holds. The step pair's
+        # container is `reserve`'s per-spec limit, the first-pass pair's
+        # `gzip-resident`'s figure-wide one.
+        self.assertEqual(measure.HEAPTRACK_TERM, 1 << 30)
+        timed = {
+            "heaptrack-step-diff": measure.RESERVE_MECHANISM_LIMIT,
+            "heaptrack-first-pass-diff": measure.GZPASS_MEMORY,
+        }
+        self.assertEqual({name for _, _, name in measure.HEAPTRACK_PAIRS}, set(timed))
+        cfg = measure.Config()
+        records = self._records()
         for axis, memory, name in measure.HEAPTRACK_PAIRS:
             with self.subTest(pair=name):
-                held = max(measure.heaptrack_held_bound(shape) for shape, _ in axis)
-                self.assertGreaterEqual(contained.size_bytes(memory), 8 * held)
-
-    def test_a_block_path_recording_is_held_to_its_allowance(self):
-        # The step pair's bound is what it states, its pool growing toward it.
-        for shape, _ in measure.HEAPTRACK_AXIS:
-            with self.subTest(shape=shape):
-                stated = int(measure.heaptrack_argv(shape, "/d", "/c")[-3])
-                self.assertEqual(measure.heaptrack_held_bound(shape), stated)
-
-    def test_a_first_pass_recording_is_held_to_its_bill(self):
-        # A first pass's bound is the bill its run states, which the figure's
-        # cells are read against (`GzipResident.STATED_BILLS`): its allowance
-        # would ask a container larger than the machine.
-        bills = GzipResident.STATED_BILLS
-        for shape, name in measure.HEAPTRACK_FIRST_PASS_AXIS:
-            with self.subTest(shape=shape):
-                jobs = int(shape.removeprefix(measure.GZRSS_FAMILY))
-                self.assertEqual(measure.heaptrack_held_bound(shape), bills[(name, jobs)])
-                self.assertLess(
-                    measure.heaptrack_held_bound(shape), measure.stated_allowance(measure.GZPASS_BUDGET)
+                self.assertEqual(
+                    contained.size_bytes(memory),
+                    contained.size_bytes(timed[name]) + measure.HEAPTRACK_TERM,
                 )
+                prefix = measure.contained_prefix(cfg, memory)
+                for shape, input_name in axis:
+                    stem = f"heaptrack-{shape}-{input_name}"
+                    line = next(ln for ln in records if f" -o {cfg.out_dir / stem} " in ln)
+                    self.assertTrue(line.startswith(f"{prefix} sh -c "), line)
+
+    def test_both_pairs_fit_half_a_sixteen_gib_machine(self):
+        # The rule's portability: a figure's container works on any machine
+        # the harness runs on, and so does it plus one term.
+        for _, memory, name in measure.HEAPTRACK_PAIRS:
+            with self.subTest(pair=name):
+                contained.check_memory(memory, 16 << 30)
+
+    def test_the_container_is_the_one_its_figure_states(self):
+        # Read off the sweep's own specs, so a figure moving its container
+        # moves the recording's with it, and a shape its figure does not time
+        # has no container to be recorded in.
+        specs = measure._reserve_step_specs()
+        self.assertEqual(
+            measure.heaptrack_memory("reserve", specs, measure.HEAPTRACK_AXIS),
+            f"{(contained.size_bytes(specs[0].memory) + measure.HEAPTRACK_TERM) >> 20}m",
+        )
+        with self.assertRaises(ValueError):
+            measure.heaptrack_memory("reserve", specs, measure.HEAPTRACK_FIRST_PASS_AXIS)
+
+    def test_each_recording_writes_its_containers_peak_beside_it(self):
+        # The term is stated, not read: no reading of it exists, the timed
+        # cell is another build, and `heaptrack_interpret` runs in the same
+        # cgroup. So each recording's own container writes its `memory.peak`
+        # from inside its `sh -c`, beside the `.gz`, keeping the recorder's
+        # exit status; the line before removes a stale one.
+        cfg = measure.Config()
+        lines = self._recipe().splitlines()
+        records = [i for i, ln in enumerate(lines) if f"{measure.HEAPTRACK} --record-only" in ln]
+        self.assertEqual(len(records), len(measure.HEAPTRACK_SHAPES))
+        for i, (shape, name) in zip(records, measure.HEAPTRACK_SHAPES):
+            with self.subTest(shape=shape):
+                peak = cfg.out_dir / f"heaptrack-{shape}-{name}{measure.HEAPTRACK_PEAK_SUFFIX}"
+                _, sep, inner = lines[i].partition(" sh -c ")
+                self.assertTrue(sep, lines[i])
+                words = shlex.split(inner)
+                self.assertEqual(len(words), 1, lines[i])
+                self.assertIn(f">/dev/null; s=$?; cat {measure.CGROUP_MEMORY_PEAK} > {peak};", words[0])
+                self.assertTrue(words[0].endswith("; exit $s"), words[0])
+                self.assertIn(str(peak), lines[i - 1].split())
 
     def test_the_step_numbering_has_no_hole(self):
         numbered = [

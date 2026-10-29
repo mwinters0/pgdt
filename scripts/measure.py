@@ -15926,13 +15926,24 @@ def cmd_profile() -> int:
 #: ship in one package, so a printer never reads another version's format.
 HEAPTRACK = "heaptrack"
 
-#: The limit the step pair's containers are given: a guard on the machine, not
-#: a figure's budget. **Eight times what the recorded run may hold**
-#: (`heaptrack_held_bound`), since heaptrack's own bookkeeping is charged to
-#: it: a recording that met the limit would be one of heaptrack being
-#: reclaimed. Every recorded shape states its allowance (`heaptrack_argv`), so
-#: the limit moves no budget the run plans by.
-HEAPTRACK_MEMORY = "8g"
+#: What a recording's container adds to the one the sweep times its shape
+#: under: heaptrack's term, **one stated GiB whatever the shape**. heaptrack's
+#: bookkeeping grows with live allocations and distinct backtraces, not with
+#: what the run holds, and `heaptrack_interpret` runs beside the recorder in the
+#: same cgroup, so no multiple of a held bound prices it; each recording's
+#: `memory.peak` (`HEAPTRACK_PEAK_SUFFIX`) is what re-sizes it.
+HEAPTRACK_TERM = GIB
+
+#: The file each recording's container writes its cgroup's `memory.peak` to,
+#: beside the recording: `-o`'s stem plus this. Read from inside the
+#: recording's own `sh -c`, so it is that container's peak, recorder and
+#: interpreter included, and one build's — never a timed cell less a recording,
+#: which would price two builds.
+HEAPTRACK_PEAK_SUFFIX = ".memory.peak"
+
+#: Where a container states its own peak: the cgroup v2 file a container sees
+#: as its own cgroup's.
+CGROUP_MEMORY_PEAK = "/sys/fs/cgroup/memory.peak"
 
 #: The suffix the recorder writes its file under, `-o`'s stem plus this:
 #: **the image's heaptrack compresses with gzip**, being built without zstd,
@@ -15982,8 +15993,8 @@ HEAPTRACK_BUILD = release.Build(
 #: no single recording gives.
 #:
 #: **Why this pair and not the flagless family.** Every other `reserve` leg
-#: differs from its neighbour by a container limit, which a recording under
-#: `HEAPTRACK_MEMORY` does not reproduce; the step is the one axis that lives
+#: differs from its neighbour by a container limit, which a recording, its
+#: container carrying `HEAPTRACK_TERM`, does not reproduce; the step is the one axis that lives
 #: entirely in the argv, so it is the one a recording can reproduce exactly. The input is `RESERVE_MECHANISM_INPUT` for the same reason that
 #: figure's mechanism legs use it — the budgets are computed from its block
 #: size, so a second input would price a step nobody measured.
@@ -16005,39 +16016,45 @@ HEAPTRACK_FIRST_PASS_AXIS: tuple[tuple[str, str], ...] = tuple(
 )
 
 
-def heaptrack_held_bound(command: str) -> int:
-    """What a recorded shape's run may hold, which its container is held to
-    eight times over.
+def heaptrack_memory(
+    figure: str, specs: Sequence[RunSpec], axis: tuple[tuple[str, str], ...]
+) -> str:
+    """A recorded pair's container limit: the one the sweep times its shapes
+    under in `figure` — each spec's own `RunSpec.memory`, else the figure's,
+    else the recorded default, as `Session` resolves it — plus
+    `HEAPTRACK_TERM`.
 
-    **A block-path run's is its allowance**, its pool growing toward what it
-    was allowed. **A first pass's is its bill**: its workers are resolved at
-    a task's charge under the allowance and it retains no block, so nothing
-    it holds grows toward the allowance, and `gzip-resident` reads each cell
-    against that bill. Holding it to its allowance instead would ask a
-    container larger than the machine of a run that holds a small part of
-    it."""
-    if command.startswith(RESERVE_STEP_FAMILY):
-        return stated_allowance(int(command.removeprefix(RESERVE_STEP_FAMILY)))
-    if command.startswith(GZRSS_FAMILY):
-        jobs = int(command.removeprefix(GZRSS_FAMILY))
-        # Any member of more than one chunk bills a task each.
-        return gzip_first_pass_charge(jobs, 2 * GZIP_CHUNK)
-    raise ValueError(f"unknown heaptrack shape {command!r}")
+    **The figure's container, because a recorded shape is a timed one**
+    (`heaptrack_argv`), so the container it already works in on any machine is
+    the one to record it in, and heaptrack is the only thing a recording adds.
+    It is a guard on the machine and moves no budget: every recorded shape
+    states its allowance."""
+    timed = {
+        (spec.command, spec.input): spec.memory or FIGURES_BY_ID[figure].memory or Config.memory
+        for spec in specs
+    }
+    missing = [shape for shape in axis if shape not in timed]
+    if missing:
+        raise ValueError(f"{figure} times no {missing}")
+    limits = {timed[shape] for shape in axis}
+    if len(limits) != 1:
+        raise ValueError(f"{figure} times one pair under {sorted(limits)}")
+    return f"{(contained.size_bytes(limits.pop()) + HEAPTRACK_TERM) // MIB}m"
 
-
-#: The first-pass pair's container limit, by the same rule over its own
-#: bound: its twenty-four-job shape's bill, eight times over, to the MiB.
-#: **Derived rather than rounded to a gigabyte**, because the rounding would
-#: pass half this machine's memory, which `contained.py` refuses.
-HEAPTRACK_FIRST_PASS_MEMORY = (
-    f"{-(-8 * max(heaptrack_held_bound(s) for s, _ in HEAPTRACK_FIRST_PASS_AXIS) // MIB)}m"
-)
 
 #: Each recorded pair: its axis, its container limit, and the stem its diff
 #: is written under.
 HEAPTRACK_PAIRS: tuple[tuple[tuple[tuple[str, str], ...], str, str], ...] = (
-    (HEAPTRACK_AXIS, HEAPTRACK_MEMORY, "heaptrack-step-diff"),
-    (HEAPTRACK_FIRST_PASS_AXIS, HEAPTRACK_FIRST_PASS_MEMORY, "heaptrack-first-pass-diff"),
+    (
+        HEAPTRACK_AXIS,
+        heaptrack_memory("reserve", _reserve_step_specs(), HEAPTRACK_AXIS),
+        "heaptrack-step-diff",
+    ),
+    (
+        HEAPTRACK_FIRST_PASS_AXIS,
+        heaptrack_memory("gzip-resident", _gzip_rss_specs(), HEAPTRACK_FIRST_PASS_AXIS),
+        "heaptrack-first-pass-diff",
+    ),
 )
 
 #: Every recorded shape, pair by pair.
@@ -16124,14 +16141,17 @@ def heaptrack_recipe(cfg: Config) -> str:
       drops what is unwritten when the container exits, so a printer piped
       into a second container's demangler loses its report's tail.
 
-    **Every line running a binary runs it in a container** under its pair's
-    limit (`HEAPTRACK_PAIRS`, `contained.py`), as every run of a built binary
-    is: a limit guarding the machine, eight times what a recording may hold
-    (`heaptrack_held_bound`), so no recording meets it."""
+    **Every line running a binary runs it in a container** (`contained.py`),
+    as every run of a built binary is: a recording and its reports under their
+    pair's limit, the figure's own container plus heaptrack's term
+    (`heaptrack_memory`), and each recording writes that container's
+    `memory.peak` beside it (`HEAPTRACK_PEAK_SUFFIX`), so one that came near
+    its limit says so in its own artifact. A `--version` states no limit,
+    taking `contained.py`'s."""
     warm = cfg.warm_dir
     target = image_target_dir(cfg, f"heaptrack-{HEAPTRACK_LEG}")
     binary = HEAPTRACK_BUILD.binary(target)
-    c = contained_prefix(cfg, HEAPTRACK_MEMORY)
+    c = contained_prefix(cfg, contained.DEFAULT_MEMORY)
     cache = warm / "heaptrack.dtcache"
     out = cfg.out_dir
     printer = f"{HEAPTRACK}_print"
@@ -16147,7 +16167,7 @@ def heaptrack_recipe(cfg: Config) -> str:
     head(
         "The tool: the release image's, run in a container as every line",
         "below that runs a binary is (scripts/contained.py), under a limit",
-        "that guards the machine and that no recording meets. It hooks malloc",
+        "that guards the machine. It hooks malloc",
         "through LD_PRELOAD, so it sees liblzma's dictionary -- which is the",
         "whole reason for it: the counting global allocator sees only Rust's",
         "allocations. On the build below, whose Rust heap is the system one, it",
@@ -16181,21 +16201,29 @@ def heaptrack_recipe(cfg: Config) -> str:
         return f"heaptrack-{shape}-{name}"
 
     head(
-        "The recordings, each pair under its own limit. --record-only: nothing",
-        "is handed to heaptrack_gui, which need not be installed and, where it",
-        "is, may not start. Each starts from no cache -- a `parse` resumes from",
-        "one, so the second run of a pair would otherwise scan nothing at all.",
+        "The recordings, each pair under its figure's own container plus",
+        f"heaptrack's {HEAPTRACK_TERM // GIB} GiB. --record-only: nothing is handed to heaptrack_gui,",
+        "which need not be installed and, where it is, may not start. Each",
+        "starts from no cache -- a `parse` resumes from one, so the second run",
+        "of a pair would otherwise scan nothing at all -- and writes its",
+        f"container's memory.peak beside it, as <stem>{HEAPTRACK_PEAK_SUFFIX}: a recording",
+        "near its limit says so there, and that number re-sizes the term.",
     )
     for axis, memory, _ in HEAPTRACK_PAIRS:
         pc = contained_prefix(cfg, memory)
         for shape, name in axis:
             src = warm / input_file(name)
             argv = " ".join(heaptrack_argv(shape, src, cache))
+            recording = out / stem(shape, name)
+            peak = out / (stem(shape, name) + HEAPTRACK_PEAK_SUFFIX)
+            inner = (
+                f"{HEAPTRACK} --record-only -o {recording} {binary} {argv} >/dev/null; "
+                f"s=$?; cat {CGROUP_MEMORY_PEAK} > {peak}; exit $s"
+            )
             lines += [
                 "",
-                f"rm -f {cache} {out / (stem(shape, name) + HEAPTRACK_SUFFIX)}",
-                f"{pc} {HEAPTRACK} --record-only -o {out / stem(shape, name)} \\",
-                f"  {binary} {argv} >/dev/null",
+                f"rm -f {cache} {out / (stem(shape, name) + HEAPTRACK_SUFFIX)} {peak}",
+                f"{pc} sh -c {shlex.quote(inner)}",
             ]
     lines.append("")
 

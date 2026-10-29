@@ -496,8 +496,9 @@ shape stating no allowance discovers it; one past half the machine is refused.
 run`, `cargo bench` or a profiler outside a container, and `test_measure.py`'s
 `ReadingsContained` holds every printed recipe line to that classifier.
 *Rejected:* a profile on the host, the cgroup changing no proportion it reads;
-a heaptrack recording on the host, its bookkeeping meeting the limit, which a
-limit several times the recording's own allowance does not.
+a heaptrack recording on the host, its bookkeeping meeting the limit, which its
+figure's own container plus a stated heaptrack term does not, each recording
+writing that container's `memory.peak` beside it.
 
 **That binary is built by the harness, in the first second, and not looked up.**
 The built binary survives between sessions, so a preflight that asks only
