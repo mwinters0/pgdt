@@ -1238,8 +1238,8 @@ async fn a_remote_gzip_member_is_downloaded_once_by_a_first_pass_inflating_ahead
     // count runs chunks of the member ahead of its frontier on the workers
     // its parallelism affords, every one of them and the frontier reading one
     // download, so the ranged GETs after the probe tile the object once.
-    let bytes = scattered_gzip_dump(3, 4 << 20);
-    assert!(bytes.len() > 4 << 20, "{} bytes, a few of the pass's chunks", bytes.len());
+    let bytes = scattered_gzip_dump(3, 12 << 20);
+    assert!(bytes.len() > 12 << 20, "{} bytes, a few of the pass's chunks", bytes.len());
     let oracle = Oracle::serving(bytes.clone()).start();
     let source = source_of(&oracle.url_for("dump.sql.gz")).await;
     assert_eq!(source.default_workers(), 1);
@@ -1267,7 +1267,8 @@ fn parse_and_query_over_a_remote_gzip_member_inflate_ahead_and_answer_what_the_l
     // them, one stating none that it reads serially, and a cold `query`, at
     // the one worker a fetched pass recommends, answers what the local file
     // answers.
-    let bytes = scattered_gzip_dump(3, 4 << 20);
+    let bytes = scattered_gzip_dump(3, 12 << 20);
+    assert!(bytes.len() > 12 << 20, "{} bytes, a chunk for each worker", bytes.len());
     let oracle = Oracle::serving(bytes.clone()).start();
     let url = oracle.url_for("dump.sql.gz");
     let dir = tempfile::tempdir().unwrap();

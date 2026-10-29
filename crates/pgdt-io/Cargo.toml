@@ -20,11 +20,12 @@ http = ["dep:object_store", "dep:url", "tokio/net", "tokio/time"]
 # `SeekTable`'s persisted form, which `pgdt-dump`'s cache writes and reads:
 # `xz_seek`'s own table's, unchanged.
 serde = ["dep:serde", "xz-seek/serde"]
-# A gzip first pass cutting its file into 4 MiB chunks, rapidgzip's length,
-# in place of the shipped 1 MiB: the `gzip-first-pass` figure's chunk-length
-# leg, built by `scripts/measure.py` through `pgdt`'s feature of the same name,
-# which `pgdt --version` names. A measured leg, never shipped.
-gzip-4mib-chunks = []
+# A gzip first pass cutting its file into 1 MiB chunks, the input chunk, in
+# place of the shipped 4 MiB, rapidgzip's length: the `gzip-first-pass`
+# figure's chunk-length leg, built by `scripts/measure.py` through `pgdt`'s
+# feature of the same name, which `pgdt --version` names. A measured leg,
+# never shipped.
+gzip-1mib-chunks = []
 # What a crate above's tests reach that nothing else may: a gzip file's index
 # built in memory at a spacing the test states (`internal::gzip_indexed_in_memory`),
 # where a first pass places checkpoints at the shipped one alone.

@@ -264,8 +264,8 @@ fn two_table_gzip(dir: &Path, rows: u64) -> std::path::PathBuf {
 #[test]
 fn a_gzip_first_pass_says_whether_it_inflates_in_parallel() {
     let dir = tempfile::tempdir().unwrap();
-    let gz = two_table_gzip(dir.path(), 1_000_000);
-    assert!(std::fs::metadata(&gz).unwrap().len() > 2 << 20, "three chunks or more");
+    let gz = two_table_gzip(dir.path(), 2_000_000);
+    assert!(std::fs::metadata(&gz).unwrap().len() > 8 << 20, "three chunks or more");
     let gz_arg = gz.to_str().unwrap();
     let mut described = Vec::new();
     for (jobs, says) in [

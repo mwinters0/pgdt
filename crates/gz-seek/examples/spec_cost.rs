@@ -12,7 +12,7 @@
 //!
 //! - **`forward`**: the serial first pass, [`gz_seek::Forward`] over the whole
 //!   file.
-//! - **`spec`**: every chunk's speculation as `pgdt-io` cuts them (1 MiB
+//! - **`spec`**: every chunk's speculation as `pgdt-io` cuts them (4 MiB
 //!   chunks, [`gz_seek::SPECULATION_LIMIT`]), one after another on this
 //!   thread, each fed a MiB at a time. Its time over `forward`'s is a
 //!   speculated chunk's cost in serial chunks.
@@ -57,7 +57,7 @@ const MIB: usize = 1 << 20;
 const SPACING: NonZeroU64 = NonZeroU64::new(24 << 20).unwrap();
 
 /// The chunk length `pgdt-io` cuts a file into.
-const CHUNK: NonZeroU64 = NonZeroU64::new(MIB as u64).unwrap();
+const CHUNK: NonZeroU64 = NonZeroU64::new(4 * MIB as u64).unwrap();
 
 fn main() {
     let mut args = std::env::args().skip(1);

@@ -12,10 +12,10 @@ import generate_gzip_input
 import generate_perf_data as perf
 import generate_repeated_rows as gen
 
-#: `measure.GZIP_SPECULATION_LIMIT` over `measure.GZIP_INPUT_CHUNK`: the ratio a
+#: `measure.GZIP_SPECULATION_LIMIT` over `measure.GZIP_CHUNK`: the ratio a
 #: chunk must inflate past to reach the limit. Restated rather than imported,
 #: `measure` being the module whose check this generator answers to.
-LIMIT_RATIO = 2 * ((1 << (9 + 6)) - 1) * 258 / (1 << 20)
+LIMIT_RATIO = 2 * ((1 << (9 + 6)) - 1) * 258 / (4 << 20)
 
 
 def _blocks(data: bytes) -> tuple[list[bytes], list[list[bytes]]]:

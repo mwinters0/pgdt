@@ -45,17 +45,17 @@ const DECODES_A_TASK: usize = 2;
 const GUESSES_A_TASK: usize = 5;
 
 /// How many compressed bytes a chunk of the file is, which a speculation
-/// guesses the start of and the engine then decodes: the input chunk every
-/// gzip decode pulls, so a task reads its chunk in one positioned read
-/// (`docs/design/decisions.md`, "D121").
-#[cfg(not(feature = "gzip-4mib-chunks"))]
-const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new(INPUT_CHUNK).unwrap();
-
-/// rapidgzip's chunk length in place of the shipped one, the limit held: the
-/// `gzip-first-pass` figure's chunk-length leg, which is never shipped
-/// (`scripts/measure.py`, `GZPASS_CHUNK_LEG`).
-#[cfg(feature = "gzip-4mib-chunks")]
+/// guesses the start of and the engine then decodes: rapidgzip's length,
+/// four input chunks, so a local task reads its chunk in four positioned
+/// reads (`docs/design/decisions.md`, "D121").
+#[cfg(not(feature = "gzip-1mib-chunks"))]
 const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new(4 << 20).unwrap();
+
+/// The input chunk every gzip decode pulls in place of the shipped length,
+/// the limit held: the `gzip-first-pass` figure's chunk-length leg, which is
+/// never shipped (`scripts/measure.py`, `GZPASS_CHUNK_LEG`).
+#[cfg(feature = "gzip-1mib-chunks")]
+const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new(INPUT_CHUNK).unwrap();
 
 /// How a pass cuts its file into chunks: their compressed length, the most
 /// plaintext one speculation or decode holds, and how many chunks past where

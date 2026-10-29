@@ -39,7 +39,7 @@ are `docs/process.md`, "The decision register".
 - **D117** A parallel first pass speculates with a decoder of `gz-seek`'s own, and hands out only the engine's plaintext
 - **D118** A checkpoint inside a static block is placed by walking its codes beside the engine
 - **D120** A parallel first pass gives decodes a room of their own, and places its speculations a lead ahead
-- **D121** A parallel first pass cuts its file at the input chunk every gzip decode pulls
+- **D121** A parallel first pass cuts its file at rapidgzip's chunk, four input chunks
 - **D122** A speculation's guess is cut at a bound on its events and on its bytes past its chunk, and continued
 - **D123** A taken chunk's decode records a BGZF member as its start, header and end, three events a chain read counts
 - **D124** A gzip first pass charges a task what `gz-seek` bounds it to write, and frees no decode buffer while it runs

@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 30 figures below come from that sitting.** The other 7 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzip-first-pass` (`9aa23e5a`), `gzip-resident` (`1d002b3b`), `gzseek-backend` (`39744f33`), `gzseek-spacing` (`4691536e`), `inflate-throughput` (`d2cf15c4`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 30 figures below come from that sitting.** The other 7 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzip-first-pass` (`ab7f630c`), `gzip-resident` (`1d002b3b`), `gzseek-backend` (`39744f33`), `gzseek-spacing` (`4691536e`), `inflate-throughput` (`d2cf15c4`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -4067,17 +4067,17 @@ here attributes the flat curve.
 
 ## What a parallel gzip first pass buys
 
-<!-- figure: gzip-first-pass — taken at `9aa23e5a` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure gzip-first-pass` -->
+<!-- figure: gzip-first-pass — taken at `ab7f630c` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure gzip-first-pass` -->
 
 | `--jobs` | zlib 1.3.1, level 6 | zlib-ng-compat 2.3.3-3.fc44, level 6 | GNU gzip 1.15, level 6 | zlib-ng 2.2.5, level 1 |
 |---|---|---|---|---|
-| the scan's floor: plain `parse`, `--jobs 1` | **0.464 s** (0.439–0.684) · ~6942 MB/s | **0.487 s** (0.441–0.757) · ~6614 MB/s | **0.481 s** (0.439–0.624) · ~6697 MB/s | **0.499 s** (0.446–0.783) · ~6455 MB/s |
-| `1` *(serial)* | **3.06 s** (2.97–3.31) · ~1054 MB/s | **3.02 s** (2.89–3.38) · ~1068 MB/s | **2.88 s** (2.75–3.09) · ~1118 MB/s | **8.96 s** (8.77–9.16) · ~360 MB/s |
-| `4` | **2.22 s** (2.19–2.24) · ~1454 MB/s · 1.38× serial | **2.20 s** (2.17–2.26) · ~1467 MB/s · 1.37× serial | **2.20 s** (2.16–2.25) · ~1463 MB/s · 1.31× serial | **9.00 s** (8.73–9.30) · ~358 MB/s · 1.00× serial |
-| `12` *(physical)* | **1.019 s** (0.966–1.132) · ~3161 MB/s · 3.00× serial | **0.991 s** (0.946–1.018) · ~3250 MB/s · 3.04× serial | **1.041 s** (1.007–1.061) · ~3094 MB/s · 2.77× serial | **9.06 s** (8.94–9.13) · ~356 MB/s · 0.99× serial |
-| `23` *(logical less one)* | **1.144 s** (1.096–1.274) · ~2816 MB/s · 2.67× serial | **1.176 s** (1.117–1.275) · ~2739 MB/s · 2.56× serial | **1.117 s** (1.091–1.247) · ~2884 MB/s · 2.58× serial | **9.00 s** (8.89–9.31) · ~358 MB/s · 1.00× serial |
-| `24` *(logical)* | **1.165 s** (1.108–1.282) · ~2765 MB/s · 2.62× serial | **1.148 s** (1.102–1.173) · ~2806 MB/s · 2.63× serial | **1.136 s** (1.085–1.233) · ~2836 MB/s · 2.54× serial | **9.14 s** (8.77–9.30) · ~353 MB/s · 0.98× serial |
-| `4`, 4 MiB chunks | **2.22 s** (2.11–2.28) · ~1454 MB/s · 1.38× serial | **2.19 s** (2.14–2.29) · ~1472 MB/s · 1.38× serial | **2.08 s** (2.06–2.19) · ~1546 MB/s · 1.38× serial | **8.88 s** (8.80–9.15) · ~363 MB/s · 1.01× serial |
+| the scan's floor: plain `parse`, `--jobs 1` | **0.473 s** (0.462–0.591) · ~6810 MB/s | **0.467 s** (0.461–0.932) · ~6898 MB/s | **0.476 s** (0.460–0.835) · ~6767 MB/s | **0.478 s** (0.469–0.553) · ~6739 MB/s |
+| `1` *(serial)* | **3.18 s** (3.01–3.51) · ~1013 MB/s | **3.03 s** (2.91–3.08) · ~1063 MB/s | **2.86 s** (2.79–2.92) · ~1126 MB/s | **9.07 s** (8.92–9.22) · ~355 MB/s |
+| `4` | **2.21 s** (2.19–2.28) · ~1461 MB/s · 1.44× serial | **2.17 s** (2.14–2.19) · ~1488 MB/s · 1.40× serial | **2.19 s** (2.15–2.25) · ~1468 MB/s · 1.30× serial | **9.18 s** (8.72–9.25) · ~351 MB/s · 0.99× serial |
+| `12` *(physical)* | **1.012 s** (0.995–1.159) · ~3183 MB/s · 3.14× serial | **1.023 s** (0.959–1.163) · ~3149 MB/s · 2.96× serial | **1.030 s** (1.000–1.157) · ~3127 MB/s · 2.78× serial | **9.16 s** (8.97–9.34) · ~352 MB/s · 0.99× serial |
+| `23` *(logical less one)* | **1.136 s** (1.105–1.234) · ~2836 MB/s · 2.80× serial | **1.161 s** (1.118–1.278) · ~2775 MB/s · 2.61× serial | **1.125 s** (1.076–1.151) · ~2863 MB/s · 2.54× serial | **9.29 s** (8.99–9.37) · ~347 MB/s · 0.98× serial |
+| `24` *(logical)* | **1.138 s** (1.097–1.243) · ~2831 MB/s · 2.79× serial | **1.147 s** (1.087–1.215) · ~2808 MB/s · 2.64× serial | **1.133 s** (1.097–1.204) · ~2843 MB/s · 2.52× serial | **9.03 s** (8.76–9.34) · ~357 MB/s · 1.00× serial |
+| `12`, 4 MiB chunks | **0.942 s** (0.914–0.989) · ~3420 MB/s · 3.38× serial | **0.945 s** (0.912–1.061) · ~3409 MB/s · 3.21× serial | **0.966 s** (0.894–1.055) · ~3335 MB/s · 2.96× serial | **8.99 s** (8.92–9.22) · ~358 MB/s · 1.01× serial |
 
 Each cell is wall clock, the rate it implies per byte of `control`'s plaintext, and a count's rate as a multiple of the same file's serial pass. Every leg is `pgdt parse` stating `--jobs` and `--memory 4697620480` in a 6g container, the allowance affording every row its count at a task's charge, which each run's `scan started` line confirms; a gzip leg's is its first pass, no cache preceding it, and its started line names the workers it ran. `--jobs` counts the frontier and not the scan's thread. Each writer's file is its own sweep, with the plain `parse` of `control` read in it, the floor a first pass falls toward. The 4 MiB row is a build of its own, the shipped build but for the chunk (`pgdt --version` names it), so its layout differs too.
 
@@ -4088,56 +4088,71 @@ Each cell is wall clock, the rate it implies per byte of `control`'s plaintext, 
 
 **Paired by rep.** Every leg of a sweep runs in each rep, the order reversed in the second half, so a count is read against another rep by rep. The first column is the `12`-job pass's median over the floor's in its sweep, how far the pass is from the scan it falls toward. Each other cell says whether its first leg beats the second — faster in at least 6 of 7 pairs, by a median paired difference over 3% of its own median — is beaten, or is level, in how many pairs it was faster, and the median paired difference in seconds and as a share of the faster leg's median, negative where the first is faster. A file's outcome is read off its serial, physical, logical-less-one and logical counts (`measure.gzpass_outcome`):
 
-| Writer | `12` over the floor | `12` against serial | `24` against `12` | `23` against `12` | `23` against `24` | 4 MiB against 1 MiB chunks, `4` | Outcome |
+| Writer | `12` over the floor | `12` against serial | `24` against `12` | `23` against `12` | `23` against `24` | 4 MiB against 1 MiB chunks, `12` | Outcome |
 |---|---|---|---|---|---|---|---|
-| zlib 1.3.1, level 6 | 2.20× | **beats** · faster in 7/7 · -2.073 s, -203.4% | beaten · faster in 1/7 · +0.146 s, +14.3% | beaten · faster in 1/7 · +0.153 s, +15.0% | level · faster in 4/7 · -0.011 s, -1.0% | level · faster in 4/7 · -0.001 s, -0.0% | **shared** |
-| zlib-ng-compat 2.3.3-3.fc44, level 6 | 2.03× | **beats** · faster in 7/7 · -2.033 s, -205.1% | beaten · faster in 0/7 · +0.153 s, +15.4% | beaten · faster in 0/7 · +0.185 s, +18.7% | level · faster in 2/7 · +0.041 s, +3.6% | level · faster in 5/7 · -0.029 s, -1.3% | **shared** |
-| GNU gzip 1.15, level 6 | 2.16× | **beats** · faster in 7/7 · -1.860 s, -178.7% | beaten · faster in 0/7 · +0.101 s, +9.7% | beaten · faster in 0/7 · +0.092 s, +8.8% | level · faster in 5/7 · -0.019 s, -1.7% | **beats** · faster in 7/7 · -0.117 s, -5.6% | **shared** |
-| zlib-ng 2.2.5, level 1 | 18.15× | level · faster in 1/7 · +0.080 s, +0.9% | level · faster in 1/7 · +0.079 s, +0.9% | level · faster in 5/7 · -0.030 s, -0.3% | level · faster in 4/7 · -0.150 s, -1.7% | level · faster in 5/7 · -0.160 s, -1.8% | **no lift** |
+| zlib 1.3.1, level 6 | 2.14× | **beats** · faster in 7/7 · -2.174 s, -214.8% | beaten · faster in 1/7 · +0.139 s, +13.7% | beaten · faster in 0/7 · +0.104 s, +10.3% | level · faster in 3/7 · +0.010 s, +0.9% | **beats** · faster in 7/7 · -0.081 s, -8.6% | **shared** |
+| zlib-ng-compat 2.3.3-3.fc44, level 6 | 2.19× | **beats** · faster in 7/7 · -2.007 s, -196.2% | beaten · faster in 1/7 · +0.123 s, +12.0% | beaten · faster in 1/7 · +0.137 s, +13.4% | level · faster in 2/7 · +0.022 s, +1.9% | **beats** · faster in 6/7 · -0.078 s, -8.3% | **shared** |
+| GNU gzip 1.15, level 6 | 2.16× | **beats** · faster in 7/7 · -1.791 s, -173.9% | level · faster in 2/7 · +0.103 s, +10.0% | level · faster in 2/7 · +0.088 s, +8.5% | level · faster in 5/7 · -0.015 s, -1.3% | **beats** · faster in 6/7 · -0.050 s, -5.2% | **stands** |
+| zlib-ng 2.2.5, level 1 | 19.17× | level · faster in 2/7 · +0.041 s, +0.5% | level · faster in 6/7 · -0.043 s, -0.5% | level · faster in 3/7 · +0.048 s, +0.5% | level · faster in 2/7 · +0.160 s, +1.8% | level · faster in 6/7 · -0.160 s, -1.8% | **no lift** |
 
-**The figure settles the default: shared.** On every file the pass lifts on, the physical count beats the logical count and the logical count less one: the cost is a core or a cache shared, and the default is capped at the physical cores within the process's affinity, which removes the oversubscription too.
+**The figure does not settle the default**: the files the pass lifts on disagree (zlib 1.3.1, level 6: shared; zlib-ng-compat 2.3.3-3.fc44, level 6: shared; GNU gzip 1.15, level 6: stands). **The chunk leg replaces the shipped chunk**: the 4 MiB chunk beats the shipped 1 MiB on 3 of the 3 level-6 writers' files (zlib 1.3.1, level 6, zlib-ng-compat 2.3.3-3.fc44, level 6, GNU gzip 1.15, level 6) and is beaten on none.
 
 Per-rep readings (s):
-- plain `parse`, the scan's floor, beside zlib 1.3.1, level 6: 0.684, 0.628, 0.439, 0.504, 0.441, 0.440, 0.464
-- zlib 1.3.1, level 6, 1j: 3.14, 3.16, 3.04, 3.31, 3.06, 2.99, 2.97
-- zlib 1.3.1, level 6, 4j: 2.24, 2.24, 2.22, 2.22, 2.22, 2.20, 2.19
-- zlib 1.3.1, level 6, 12j: 1.028, 1.084, 1.132, 0.985, 0.966, 1.019, 1.016
-- zlib 1.3.1, level 6, 23j: 1.097, 1.138, 1.096, 1.274, 1.144, 1.172, 1.203
-- zlib 1.3.1, level 6, 24j: 1.207, 1.149, 1.108, 1.184, 1.282, 1.165, 1.153
-- zlib 1.3.1, level 6, 4 MiB chunks, 4j: 2.23, 2.20, 2.22, 2.22, 2.28, 2.20, 2.11
-- plain `parse`, the scan's floor, beside zlib-ng-compat 2.3.3-3.fc44, level 6: 0.757, 0.541, 0.487, 0.510, 0.464, 0.458, 0.441
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 1j: 3.01, 3.19, 3.38, 2.99, 3.06, 3.02, 2.89
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 4j: 2.18, 2.26, 2.19, 2.17, 2.20, 2.24, 2.20
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 12j: 0.976, 1.018, 1.012, 0.977, 0.991, 1.009, 0.946
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 23j: 1.240, 1.117, 1.174, 1.189, 1.176, 1.275, 1.131
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 24j: 1.129, 1.153, 1.102, 1.148, 1.173, 1.139, 1.161
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 4 MiB chunks, 4j: 2.19, 2.22, 2.19, 2.14, 2.29, 2.21, 2.15
-- plain `parse`, the scan's floor, beside GNU gzip 1.15, level 6: 0.533, 0.440, 0.446, 0.481, 0.624, 0.507, 0.439
-- GNU gzip 1.15, level 6, 1j: 3.09, 2.90, 2.95, 2.79, 2.81, 2.75, 2.88
-- GNU gzip 1.15, level 6, 4j: 2.16, 2.19, 2.25, 2.23, 2.20, 2.20, 2.22
-- GNU gzip 1.15, level 6, 12j: 1.061, 1.041, 1.047, 1.007, 1.017, 1.056, 1.020
-- GNU gzip 1.15, level 6, 23j: 1.117, 1.133, 1.091, 1.108, 1.094, 1.247, 1.193
-- GNU gzip 1.15, level 6, 24j: 1.136, 1.233, 1.148, 1.119, 1.168, 1.085, 1.115
-- GNU gzip 1.15, level 6, 4 MiB chunks, 4j: 2.15, 2.06, 2.19, 2.06, 2.10, 2.08, 2.06
-- plain `parse`, the scan's floor, beside zlib-ng 2.2.5, level 1: 0.479, 0.783, 0.501, 0.457, 0.499, 0.446, 0.574
-- zlib-ng 2.2.5, level 1, 1j: 8.83, 9.10, 8.96, 8.96, 9.16, 8.77, 8.86
-- zlib-ng 2.2.5, level 1, 4j: 8.73, 8.97, 9.00, 9.01, 9.30, 9.28, 8.88
-- zlib-ng 2.2.5, level 1, 12j: 9.08, 9.13, 9.06, 9.03, 9.05, 9.07, 8.94
-- zlib-ng 2.2.5, level 1, 23j: 9.05, 9.31, 8.89, 9.00, 8.95, 8.90, 9.18
-- zlib-ng 2.2.5, level 1, 24j: 8.77, 9.14, 9.07, 9.15, 9.30, 9.29, 9.02
-- zlib-ng 2.2.5, level 1, 4 MiB chunks, 4j: 8.97, 8.84, 8.80, 8.85, 9.10, 8.88, 9.15
+- plain `parse`, the scan's floor, beside zlib 1.3.1, level 6: 0.591, 0.473, 0.462, 0.555, 0.465, 0.464, 0.477
+- zlib 1.3.1, level 6, 1j: 3.51, 3.10, 3.19, 3.11, 3.01, 3.18, 3.39
+- zlib 1.3.1, level 6, 4j: 2.19, 2.21, 2.28, 2.20, 2.19, 2.21, 2.21
+- zlib 1.3.1, level 6, 12j: 1.159, 0.995, 1.012, 1.001, 1.032, 0.999, 1.051
+- zlib 1.3.1, level 6, 23j: 1.178, 1.118, 1.114, 1.234, 1.136, 1.148, 1.105
+- zlib 1.3.1, level 6, 24j: 1.118, 1.243, 1.097, 1.170, 1.182, 1.138, 1.111
+- zlib 1.3.1, level 6, 4 MiB chunks, 12j: 0.947, 0.914, 0.942, 0.982, 0.939, 0.989, 0.928
+- plain `parse`, the scan's floor, beside zlib-ng-compat 2.3.3-3.fc44, level 6: 0.464, 0.558, 0.612, 0.467, 0.465, 0.932, 0.461
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 1j: 3.03, 3.08, 2.95, 2.91, 3.06, 3.05, 3.00
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 4j: 2.18, 2.17, 2.14, 2.14, 2.14, 2.17, 2.19
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 12j: 1.024, 1.002, 0.997, 1.163, 1.023, 0.959, 1.028
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 23j: 1.169, 1.278, 1.121, 1.161, 1.130, 1.118, 1.165
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 24j: 1.147, 1.140, 1.087, 1.161, 1.215, 1.149, 1.134
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 4 MiB chunks, 12j: 0.945, 0.944, 1.061, 0.985, 0.912, 0.913, 0.950
+- plain `parse`, the scan's floor, beside GNU gzip 1.15, level 6: 0.461, 0.461, 0.477, 0.476, 0.726, 0.460, 0.835
+- GNU gzip 1.15, level 6, 1j: 2.92, 2.86, 2.92, 2.92, 2.86, 2.85, 2.79
+- GNU gzip 1.15, level 6, 4j: 2.19, 2.25, 2.19, 2.23, 2.17, 2.23, 2.15
+- GNU gzip 1.15, level 6, 12j: 1.030, 1.157, 1.022, 1.000, 1.066, 1.138, 1.023
+- GNU gzip 1.15, level 6, 23j: 1.118, 1.101, 1.151, 1.137, 1.076, 1.125, 1.126
+- GNU gzip 1.15, level 6, 24j: 1.133, 1.142, 1.204, 1.137, 1.122, 1.097, 1.129
+- GNU gzip 1.15, level 6, 4 MiB chunks, 12j: 0.989, 0.894, 0.972, 0.966, 0.940, 0.912, 1.055
+- plain `parse`, the scan's floor, beside zlib-ng 2.2.5, level 1: 0.511, 0.478, 0.469, 0.553, 0.512, 0.471, 0.470
+- zlib-ng 2.2.5, level 1, 1j: 8.93, 8.92, 9.07, 9.22, 9.16, 8.97, 9.17
+- zlib-ng 2.2.5, level 1, 4j: 9.20, 9.18, 9.25, 8.72, 9.03, 9.10, 9.20
+- zlib-ng 2.2.5, level 1, 12j: 9.08, 9.34, 9.09, 9.26, 9.28, 8.97, 9.16
+- zlib-ng 2.2.5, level 1, 23j: 9.37, 8.99, 9.00, 9.31, 9.06, 9.33, 9.29
+- zlib-ng 2.2.5, level 1, 24j: 9.03, 9.34, 8.89, 8.76, 9.29, 8.77, 9.13
+- zlib-ng 2.2.5, level 1, 4 MiB chunks, 12j: 8.92, 8.92, 8.95, 9.06, 9.17, 9.22, 8.99
 
-Apparatus over every run in this table: CPU stall ≤1.75%, I/O stall ≤6.57%, machine ≤35% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤77°C.
+Apparatus over every run in this table: CPU stall ≤1.85%, I/O stall ≤10.43%, machine ≤36% busy, steal ≤0.00%, busiest core ≥3.49 GHz, ≤78°C.
 
-**The figure holds the default at the physical count**: a local first pass
-recommends no more workers than the physical cores within its affinity
-([`decisions.md`](decisions.md), "D2"; `RT27`). On the three level-6 files
-the physical count beats both upper counts by a margin, in six or seven
-pairs of seven, and the two upper counts are level, so the cost is a core or
-a cache shared and not the scan's thread. The 4 MiB chunk is level with the
-shipped one on three writers' files and beats it on GNU gzip's, at four jobs,
-the only count it is read at, which is not the default
-([`decisions.md`](decisions.md), "D121"). What moved it is unattributed.
+**This sitting does not settle the default, and nothing here moves it.** A
+local first pass recommends no more workers than the physical cores within
+its affinity ([`decisions.md`](decisions.md), "D2"; `RT27`), on the three
+sittings before this one, each reading `shared`. Here zlib's and
+zlib-ng-compat's files read `shared` again: the physical count beats both
+upper counts in six or seven pairs of seven, and those two are level. GNU
+gzip's reads `stands`: its physical count is faster than both upper counts by
+medians of 8.5% and 10.0%, but in five pairs of seven, one short of the bar,
+two of its seven `12` reps running about 0.1 s slower than the other five.
+Nothing here attributes those two reps. No count beats the physical count on
+any file. Whether this reading reopens D2's gzip clause is the maintainer's
+([`../status/STATUS.md`](../status/STATUS.md), "Decisions worth another
+look").
+
+**The 4 MiB chunk beats the 1 MiB at the default count, and now ships**
+([`decisions.md`](decisions.md), "D121"). At twelve jobs it is faster on
+each level-6 writer's file, in six or seven pairs of seven, by 5–9%, and
+level on the level-1 file, which meets the bar fixed before the sitting
+(`measure.gzpass_chunk_verdict`). This table was taken at `ab7f630c`, whose
+shipped build cut 1 MiB and whose leg cut 4 MiB. Since then the two are
+swapped, so a re-take's leg is the 1 MiB. Two things the reading cannot say:
+the leg is a build of its own, so its layout is a second difference no pair
+removes; and the figure affords every count its memory, so it never prices
+what the longer chunk adds to every task's charge.
 
 **The level-1 file gains nothing in parallel and loses nothing at any
 count.** Speculation looks for a dynamic block's header, and this writer ends
@@ -4146,7 +4161,7 @@ no block before its last, so every speculation finds nothing
 later slices inherit"); the first to land pauses the rest (D125), and the
 frontier inflates alone, on one blocking thread (D126). Every count is level
 with serial, and the upper counts with the default. The default is still the
-slower in six pairs of seven, under the margin, and that remainder is
+slower in five pairs of seven, under the margin, and that remainder is
 unattributed ([`roadmap-P15.19.1-kept-notes.md`](roadmap-P15.19.1-kept-notes.md),
 "Unattributed"). Its serial pass is several times the level-6 files' over the
 same plaintext, about three fifths of it the walk a static block's checkpoint

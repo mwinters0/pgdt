@@ -24,13 +24,13 @@ pub(crate) fn version() -> &'static str {
     &VERSION
 }
 
-/// ` (gzip chunk: 4 MiB)` on the `gzip-first-pass` figure's chunk-length leg,
+/// ` (gzip chunk: 1 MiB)` on the `gzip-first-pass` figure's chunk-length leg,
 /// and nothing on every other build: read from outside the process as
 /// [`alloc::MARKERS`] is, so the harness asks the leg which chunk its first
 /// pass cuts rather than trusting the feature it passed
 /// (`scripts/measure.py`, `binary_chunk`).
 const CHUNK_MARKER: &str =
-    if cfg!(feature = "gzip-4mib-chunks") { " (gzip chunk: 4 MiB)" } else { "" };
+    if cfg!(feature = "gzip-1mib-chunks") { " (gzip chunk: 1 MiB)" } else { "" };
 
 /// The variable the release workflow builds with, naming the version it
 /// releases, so a release says it is one and every other build says it is

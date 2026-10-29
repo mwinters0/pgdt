@@ -5121,19 +5121,19 @@ class GzipResident(unittest.TestCase):
 
     #: What each leg's run said it billed, read off `scan started` by hand from
     #: trial runs of `pgdt parse` under `GZPASS_BUDGET`'s allowance: the
-    #: first-pass legs on 2026-10-28, after 15.18.3 pooled the decode buffers
-    #: (`runs/p15.18.3/trial-bills.sh`), the BGZF leg's block path on
+    #: first-pass legs on 2026-10-29, at the 4 MiB chunk
+    #: (`runs/p15.20/trial-bills.sh`), the BGZF leg's block path on
     #: 2026-10-27 (`runs/p15.18/trial-bills.sh`), which that charge does not
     #: move. The mirror is held to these, the bills a run states, as well as
     #: to the source. Every run resolved its row's count, and each first pass
     #: ran that many workers.
     STATED_BILLS = {
-        ("control_gz", 1): 107_823_706,
-        ("control_gz", 4): 431_294_824,
-        ("control_gz", 24): 2_587_768_944,
-        ("repeated_gz", 1): 107_823_706,
-        ("repeated_gz", 4): 431_294_824,
-        ("repeated_gz", 24): 2_587_768_944,
+        ("control_gz", 1): 114_115_162,
+        ("control_gz", 4): 456_460_648,
+        ("control_gz", 24): 2_738_763_888,
+        ("repeated_gz", 1): 114_115_162,
+        ("repeated_gz", 4): 456_460_648,
+        ("repeated_gz", 24): 2_738_763_888,
         ("control_bgzf", 1): 102_987_776,
         ("control_bgzf", 4): 185_168_384,
         ("control_bgzf", 24): 1_237_000_704,
@@ -5194,7 +5194,7 @@ class GzipResident(unittest.TestCase):
 
     def test_the_limit_leg_must_pack_past_the_limits_ratio_with_room(self):
         # The ratio a chunk inflates to the limit at, and the room past it.
-        at = measure.GZIP_SPECULATION_LIMIT / measure.GZIP_INPUT_CHUNK
+        at = measure.GZIP_SPECULATION_LIMIT / measure.GZIP_CHUNK
         need = at * measure.GZIP_LIMIT_ROOM
         plaintext = 3 << 30
         self.assertIsNone(measure.gzip_limit_ratio_problem(plaintext, int(plaintext / need) - 1))
@@ -5313,7 +5313,11 @@ class GzipResident(unittest.TestCase):
         self.assertIn("const PASS_BYTES: u64 = 2 * DECODE_BYTES + SKIP_SCRATCH as u64;", first)
         self.assertIn("let per_worker = if ahead { pass.max(task) } else { pass };", first)
         ahead = (first_pass / "ahead.rs").read_text()
-        self.assertIn("NonZeroU64::new(INPUT_CHUNK).unwrap();", ahead)
+        self.assertIn(
+            "const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new("
+            f"{measure.GZIP_CHUNK >> 20} << 20).unwrap();",
+            ahead,
+        )
         self.assertIn(
             "Chunking { bytes: CHUNK_BYTES, limit: gz_seek::SPECULATION_LIMIT, lead: 4 };", ahead
         )
@@ -5388,7 +5392,7 @@ class GzipResident(unittest.TestCase):
     def test_a_first_pass_of_one_chunk_bills_the_pass_alone(self):
         # No task can run on a file of one chunk, so none is charged.
         self.assertEqual(
-            measure.gzip_first_pass_charge(4, measure.GZIP_INPUT_CHUNK),
+            measure.gzip_first_pass_charge(4, measure.GZIP_CHUNK),
             4 * measure.gzip_pass_bytes(),
         )
         self.assertLess(measure.gzip_pass_bytes(), measure.gzip_task_bytes())
@@ -5771,13 +5775,13 @@ class GzipFirstPass(unittest.TestCase):
             per_worker = max(measure.gzip_pass_bytes(), measure.gzip_task_bytes(chunk))
             return min(budget, ceiling) // per_worker
 
-        for chunk in (measure.GZIP_INPUT_CHUNK, measure.GZPASS_CHUNK_BYTES):
+        for chunk in (measure.GZIP_CHUNK, measure.GZPASS_CHUNK_BYTES):
             with self.subTest(chunk=chunk):
                 self.assertGreaterEqual(
                     afforded(measure.GZPASS_BUDGET, chunk), measure.GZPASS_LOGICAL
                 )
         self.assertLess(
-            afforded(measure.PARALLEL_BUDGET, measure.GZIP_INPUT_CHUNK), measure.GZPASS_LOGICAL
+            afforded(measure.PARALLEL_BUDGET, measure.GZIP_CHUNK), measure.GZPASS_LOGICAL
         )
         self.assertEqual(
             measure.GZPASS_MEMORY,
@@ -5798,10 +5802,9 @@ class GzipFirstPass(unittest.TestCase):
             repo / "crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs"
         ).read_text()
         self.assertIn(f'#[cfg(feature = "{leg}")]', ahead)
-        self.assertIn(
-            f"const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new({measure.GZPASS_CHUNK_BYTES >> 20} << 20).unwrap();",
-            ahead,
-        )
+        # The leg cuts the input chunk, and says so by its name.
+        self.assertEqual(measure.GZPASS_CHUNK_BYTES, measure.GZIP_INPUT_CHUNK)
+        self.assertIn("const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new(INPUT_CHUNK).unwrap();", ahead)
         version = (repo / "crates/pgdt/src/version.rs").read_text()
         marker = re.search(rf'cfg!\(feature = "{leg}"\) {{ " (\([^"]*\))" }}', version)
         self.assertIsNotNone(marker, "the marker is where the harness reads it")
@@ -5814,8 +5817,8 @@ class GzipFirstPass(unittest.TestCase):
     def test_a_binary_naming_no_chunk_cuts_the_shipped_one(self):
         for out, want in (
             ("pgdt 0.2.0 (allocator: mimalloc) (profile: release) (datafusion: 55.1.0)",
-             measure.GZIP_INPUT_CHUNK),
-            ("pgdt 0.2.0 (allocator: mimalloc) (profile: release) (gzip chunk: 4 MiB) "
+             measure.GZIP_CHUNK),
+            ("pgdt 0.2.0 (allocator: mimalloc) (profile: release) (gzip chunk: 1 MiB) "
              "(datafusion: 55.1.0)", measure.GZPASS_CHUNK_BYTES),
         ):
             with self.subTest(out=out):
@@ -5973,12 +5976,12 @@ class GzipFirstPass(unittest.TestCase):
         # physical count, on every writer's file.
         self.assertIn("**beats** · faster in 7/7 · -0.200 s, -25.0%", body)
         self.assertIn("**The chunk leg replaces the shipped chunk**", body)
-        self.assertIn(f"4 MiB against 1 MiB chunks, `{measure.GZPASS_PHYSICAL}`", body)
+        self.assertIn(f"1 MiB against 4 MiB chunks, `{measure.GZPASS_PHYSICAL}`", body)
 
     def test_the_chunk_leg_beaten_anywhere_leaves_the_shipped_chunk(self):
         body = self._render(self._raw(chunk=1.5))
         self.assertIn("**The shipped chunk stands**", body)
-        self.assertIn("beats the shipped 1 MiB on 0 of the 3", body)
+        self.assertIn("beats the shipped 4 MiB on 0 of the 3", body)
 
     def test_the_chunk_verdict_is_d121_s_bar(self):
         v = measure.gzpass_chunk_verdict

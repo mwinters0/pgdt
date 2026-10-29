@@ -6720,15 +6720,16 @@ def ensure_profile_binary(cfg: Config, leg: str, log: Callable[[str], None]) -> 
 
 #: The `gzip-first-pass` figure's chunk-length leg: `pgdt`'s feature naming
 #: it, and the binary a `RunSpec` names it by. The shipped build but for a
-#: first pass's chunk, rapidgzip's 4 MiB in place of 1 MiB, the speculation
-#: limit held (`docs/design/roadmap-P15-gzip.md`, "Slice order").
-GZPASS_CHUNK_LEG = "gzip-4mib-chunks"
+#: first pass's chunk, the 1 MiB input chunk in place of rapidgzip's 4 MiB,
+#: the speculation limit held: the length D121 rejects, so a re-take can meet
+#: its `Reopens` (`docs/design/decisions.md`, "D121").
+GZPASS_CHUNK_LEG = "gzip-1mib-chunks"
 GZPASS_CHUNK_BINARY = f"chunk:{GZPASS_CHUNK_LEG}"
 
 #: The chunk length that leg's first pass cuts, in bytes, and what its
 #: `--version` names (`crates/pgdt/src/version.rs`, `CHUNK_MARKER`); a build
-#: naming none cuts the shipped `GZIP_INPUT_CHUNK`.
-GZPASS_CHUNK_BYTES = 4 * MIB
+#: naming none cuts the shipped `GZIP_CHUNK`.
+GZPASS_CHUNK_BYTES = 1 * MIB
 CHUNK_RE = re.compile(r"\(gzip chunk: (\d+) MiB\)")
 
 
@@ -6739,7 +6740,7 @@ def binary_chunk(binary: Path) -> int:
     feature is dropped. A binary naming none cuts the shipped length."""
     out = run([str(binary), "--version"], capture=True)
     match = CHUNK_RE.search(out)
-    return int(match.group(1)) * MIB if match else GZIP_INPUT_CHUNK
+    return int(match.group(1)) * MIB if match else GZIP_CHUNK
 
 
 #: Legs built by this process, and legs a dry run has announced, for
@@ -11084,14 +11085,15 @@ GZIP_DECODER_BYTES = 64 * 1024
 GZIP_WINDOW_BYTES = 32 * 1024
 
 #: The gzip adapter's `INPUT_CHUNK` (`source/compressed/deflate.rs`), mirrored:
-#: the compressed input a decode pulls through at a time, and a first pass's
-#: chunk length (`Chunking::SHIPPED`).
-#:
-#: **One value with two consumers**, which the library states as one constant:
-#: what a unit decode's input buffer holds, and how many compressed bytes a
-#: first pass cuts a chunk at. `gzip-resident` reads both through it; a change
-#: that splits them moves `gzip_task_bytes` and `gzip_block_reader_bytes` apart.
+#: the compressed input a decode pulls through at a time, and what a local
+#: task reads its chunk in.
 GZIP_INPUT_CHUNK = 1 << 20
+
+#: `first_pass/ahead.rs`'s `CHUNK_BYTES`, mirrored: how many compressed bytes
+#: a first pass cuts a chunk at (`Chunking::SHIPPED`), rapidgzip's length
+#: (`docs/design/decisions.md`, "D121"). **Not `GZIP_INPUT_CHUNK`**: a task's
+#: charge and a file's chunk count read this, a decode's input buffer that.
+GZIP_CHUNK = 4 << 20
 
 #: `gz_seek::SPECULATION_LIMIT`, mirrored: twice the largest block zlib ends,
 #: `lit_bufsize - 1` symbols of at most 258 bytes at its largest `memLevel` —
@@ -11174,7 +11176,7 @@ def gzip_decode_bytes() -> int:
     return buffers + GZIP_DECODER_BYTES + GZIP_TASK_STATE_BYTES
 
 
-def gzip_task_bytes(chunk: int = GZIP_INPUT_CHUNK) -> int:
+def gzip_task_bytes(chunk: int = GZIP_CHUNK) -> int:
     """What one task ahead of a first pass's frontier is charged: a running
     speculation, fed a read of `INPUT_CHUNK` or a chunk where that is longer;
     `DECODES_A_TASK` decodes held for the frontier; `GUESSES_A_TASK` guesses,
@@ -11207,7 +11209,7 @@ def gzip_first_pass_charge(jobs: int, stored_size: int) -> int:
     `FirstPass::default_worker_memory`, mirrored — a local file, so no
     download is added. Charged at one worker too, though a serial pass runs no
     task: the charge is per worker whatever runs on it."""
-    chunks = max(1, -(-stored_size // GZIP_INPUT_CHUNK))
+    chunks = max(1, -(-stored_size // GZIP_CHUNK))
     per_worker = max(gzip_pass_bytes(), gzip_task_bytes()) if chunks > 1 else gzip_pass_bytes()
     return jobs * per_worker
 
@@ -11254,8 +11256,8 @@ def bgzf_unit() -> int:
 #:
 #: **The third is the first pass's falsifier**: a member whose chunks reach
 #: the speculation limit (`repeated_gz`), the only file filling the plaintext
-#: terms most of a task's charge is (`gzip_task_bytes`), so the only one on
-#: which each added worker can hold more than it was charged
+#: terms most of a task's charge is (`gzip_task_bytes`) on every chunk, so the
+#: only one on which each added worker can hold more than it was charged
 #: (`docs/design/roadmap-P15-gzip.md`, "Slice order"). The same zlib, level
 #: and length of plaintext as `control_gz`, packed tighter.
 GZIP_RSS_LEGS: tuple[tuple[str, str, str], ...] = (
@@ -11277,13 +11279,13 @@ GZIP_LIMIT_ROOM = 1.25
 def gzip_limit_ratio_problem(plaintext: int, packed: int) -> str | None:
     """Why a limit leg of `packed` compressed bytes over `plaintext` bytes
     fills no task's charge, or `None`: its mean ratio must exceed what a chunk
-    of `GZIP_INPUT_CHUNK` needs to inflate to `GZIP_SPECULATION_LIMIT` by
+    of `GZIP_CHUNK` needs to inflate to `GZIP_SPECULATION_LIMIT` by
     `GZIP_LIMIT_ROOM`.
 
     `plaintext` is the length of the dump the member was generated from,
     which the member's own plaintext keeps to within one run of rows
     (`generate_repeated_rows.py`)."""
-    need = GZIP_SPECULATION_LIMIT / GZIP_INPUT_CHUNK * GZIP_LIMIT_ROOM
+    need = GZIP_SPECULATION_LIMIT / GZIP_CHUNK * GZIP_LIMIT_ROOM
     if packed <= 0 or plaintext / packed < need:
         ratio = plaintext / packed if packed > 0 else 0.0
         return (
@@ -11756,7 +11758,7 @@ def gzpass_chunk_verdict(marks: Mapping[str, str], labels: Mapping[str, str]) ->
     the shipped one where it beats it on at least `GZPASS_CHUNK_WINS` of
     `GZPASS_CHUNK_WRITERS` and is beaten on none, and the shipped one stands
     otherwise."""
-    leg, shipped = f"{GZPASS_CHUNK_BYTES >> 20} MiB", f"{GZIP_INPUT_CHUNK >> 20} MiB"
+    leg, shipped = f"{GZPASS_CHUNK_BYTES >> 20} MiB", f"{GZIP_CHUNK >> 20} MiB"
     wins = [w for w in GZPASS_CHUNK_WRITERS if marks[w] == "beats"]
     beaten = [w for w in marks if marks[w] == "beaten"]
     tally = (
@@ -11805,7 +11807,7 @@ def _gzpass_specs() -> list[RunSpec]:
 def run_gzip_first_pass(session: Session) -> str:
     """Wall clock of `pgdt parse` over one gzip member — its first pass —
     by four writers, at the serial count, four, the physical count, the
-    logical count less one and the logical count, and at 4 MiB chunks at the
+    logical count less one and the logical count, and at 1 MiB chunks at the
     physical count; beside each writer's sweep, the plain `parse` of
     `control`, the scan's floor a first pass falls toward.
 
@@ -11822,9 +11824,9 @@ def run_gzip_first_pass(session: Session) -> str:
     the serial pass beats an upper count on is named as a regression and
     settles nothing (`GZPASS_UNLIFTED`).
 
-    **It prices the chunk length too**: 4 MiB, rapidgzip's, against the
-    shipped 1 MiB at the physical count, the default, the speculation limit
-    held, by the same pairs — a separate build, whose layout is a second
+    **It prices the chunk length too**: 1 MiB, the input chunk, against the
+    shipped 4 MiB, rapidgzip's, at the physical count, the default, the
+    speculation limit held, by the same pairs — a separate build, whose layout is a second
     difference no pair removes — and says which chunk ships
     (`gzpass_chunk_verdict`), by a rule written before any reading.
 
@@ -11841,10 +11843,10 @@ def run_gzip_first_pass(session: Session) -> str:
     if to_sweep and not session.cfg.dry_run:
         if problem := gzpass_topology_problem(gzpass_topology()):
             raise RuntimeError(f"{figure} cannot be taken here: {problem}")
-        if (shipped := binary_chunk(session.cfg.bin_pgdt)) != GZIP_INPUT_CHUNK:
+        if (shipped := binary_chunk(session.cfg.bin_pgdt)) != GZIP_CHUNK:
             raise RuntimeError(
                 f"{figure}: the shipped binary cuts {shipped}-byte chunks, not the shipped "
-                f"{GZIP_INPUT_CHUNK}: it is a leg's build, and every other row would read it"
+                f"{GZIP_CHUNK}: it is a leg's build, and every other row would read it"
             )
     session.build_before_sweep(to_sweep)
     session.sweep(figure, to_sweep, session.cfg.reps(GZPASS_REPS))
@@ -11954,7 +11956,8 @@ def run_gzip_first_pass(session: Session) -> str:
             f"`{lg}` against `{p}`",
             f"`{l1}` against `{p}`",
             f"`{l1}` against `{lg}`",
-            f"{GZPASS_CHUNK_BYTES >> 20} MiB against 1 MiB chunks, `{GZPASS_CHUNK_JOBS}`",
+            f"{GZPASS_CHUNK_BYTES >> 20} MiB against {GZIP_CHUNK >> 20} MiB chunks, "
+            f"`{GZPASS_CHUNK_JOBS}`",
             "Outcome",
         ],
         pair_rows,
@@ -16002,7 +16005,7 @@ def heaptrack_held_bound(command: str) -> int:
     if command.startswith(GZRSS_FAMILY):
         jobs = int(command.removeprefix(GZRSS_FAMILY))
         # Any member of more than one chunk bills a task each.
-        return gzip_first_pass_charge(jobs, 2 * GZIP_INPUT_CHUNK)
+        return gzip_first_pass_charge(jobs, 2 * GZIP_CHUNK)
     raise ValueError(f"unknown heaptrack shape {command!r}")
 
 

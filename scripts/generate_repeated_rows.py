@@ -5,11 +5,11 @@ times in a run, deflated as `pg_dump -Z` writes it.
 
 **What it is for is a gzip member whose chunks reach the speculation limit.**
 A first pass's task is charged `gz_seek::SPECULATION_LIMIT` of plaintext six
-times over, and those terms fill only where a chunk of `INPUT_CHUNK`
-compressed bytes inflates to the limit or past it, about 16 : 1. `control`
-deflates about 4 : 1, so no leg reading it fills them, and no reading over it
-can say whether the charge is a bound (`docs/design/roadmap-P15-gzip.md`,
-"Slice order"). A row repeated in a run is coded as matches into the copy
+times over, and those terms fill only where a chunk of `CHUNK_BYTES`
+compressed bytes inflates to the limit or past it, about 4 : 1. `control`
+deflates at about that ratio, so a leg reading it fills them only on the
+chunks packing tighter than its mean, and no reading over it can say whether
+the charge is a bound (`docs/design/roadmap-P15-gzip.md`, "Slice order"). A row repeated in a run is coded as matches into the copy
 before it, which deflate's window holds, `control`'s rows being far shorter
 than the window, so the member packs several times tighter; `REPEAT` is chosen
 so it does with room over the limit's ratio, which `measure.run_gzip_resident`

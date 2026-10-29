@@ -108,13 +108,13 @@ keeping a worker from a decode; one run of guesses in flight at a time; a worker
 running a queued decode while it waits. Reopens: the second decode removed (D117). Code: `ahead.rs`. Evidence:
 `a_speculation_is_placed_its_lead_past_where_it_lands`, `decodes_and_speculations_are_handed_out_and_counted_apart`.
 
-### D121 A parallel first pass cuts its file at the input chunk every gzip decode pulls
-`Chunking::SHIPPED`'s chunk is `INPUT_CHUNK`, so a task reads the chunk a speculation guesses the start of in one
-positioned read, as every gzip decode pulls its input. Rejected: rapidgzip's longer chunk (`gzip-4mib-chunks`), the
-limit held, read at four jobs level on three writers' files and faster on GNU gzip's: one writer's gain does not
-move a default every writer's pass runs, and every task is charged the longer chunk twice, as its chunk and its feed.
-Reopens: a re-take at the default count on which a longer chunk beats the shipped one on two of the three level-6
-writers' files and is beaten on none. Code: `ahead.rs` (`CHUNK_BYTES`). Evidence: `gzip-first-pass`.
+### D121 A parallel first pass cuts its file at rapidgzip's chunk, four input chunks
+`Chunking::SHIPPED`'s chunk is four of the input chunks every gzip decode pulls, rapidgzip's length: at the default
+count it beats the input chunk on each level-6 writer's file and is level on the level-1 file. Every task is charged
+it twice, as its chunk and its feed, which the figure, affording every count its memory, does not price. Rejected: the
+input chunk (`gzip-1mib-chunks`), the limit held, which a local task reads in one positioned read. Reopens: a re-take
+at the default count on which the input chunk beats the shipped one on two of the three level-6 writers' files and is
+beaten on none. Code: `ahead.rs` (`CHUNK_BYTES`). Evidence: `gzip-first-pass`.
 
 ### D122 A speculation's guess is cut at a bound on its events and on its bytes past its chunk, and continued
 The limit counts plaintext, and an empty fixed block is ten bits of none, so a run of them grows a speculation's input
