@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 30 figures below come from that sitting.** The other 7 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzip-first-pass` (`ab7f630c`), `gzip-resident` (`1d002b3b`), `gzseek-backend` (`39744f33`), `gzseek-spacing` (`4691536e`), `inflate-throughput` (`d2cf15c4`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 30 figures below come from that sitting.** The other 7 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzip-first-pass` (`055c8d27`), `gzip-resident` (`055c8d27`), `gzseek-backend` (`39744f33`), `gzseek-spacing` (`4691536e`), `inflate-throughput` (`d2cf15c4`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -3931,13 +3931,13 @@ because an operator who sets `--memory` by hand needs it.
 
 ## What a gzip scan holds against its charge
 
-<!-- figure: gzip-resident — taken at `1d002b3b` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure gzip-resident` -->
+<!-- figure: gzip-resident — taken at `055c8d27` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure gzip-resident` -->
 
 | `--jobs` | single member, first pass | single member at the limit, first pass | BGZF, block path |
 |---|---|---|---|
-| 1 *(serial)* | **56.07 MiB** (55.95–56.20) | **56.37 MiB** (55.84–57.27) | **100.07 MiB** (99.96–100.17) |
-| 4 | **150.11 MiB** (146.79–159.78) · +94.04 MiB | **240.96 MiB** (232.93–246.93) · +184.59 MiB | **242.06 MiB** (240.28–245.58) · +141.99 MiB |
-| 24 | **697.51 MiB** (659.66–703.61) · +641.44 MiB | **1120.68 MiB** (1114.90–1122.16) · +1064.31 MiB | **1331.57 MiB** (1325.33–1343.41) · +1231.50 MiB |
+| 1 *(serial)* | **56.39 MiB** (56.33–56.63) | **56.97 MiB** (56.96–57.12) | **100.01 MiB** (99.98–100.09) |
+| 4 | **234.46 MiB** (214.41–240.35) · +178.07 MiB | **251.22 MiB** (249.92–257.79) · +194.25 MiB | **241.58 MiB** (240.06–244.12) · +141.57 MiB |
+| 24 | **1180.26 MiB** (1177.34–1195.86) · +1123.88 MiB | **1163.66 MiB** (1155.75–1181.96) · +1106.69 MiB | **1349.39 MiB** (1327.61–1365.46) · +1249.38 MiB |
 
 Each cell is peak resident set, and the change from that leg's own one-job row. Every row states `--memory 4697620480`, as `gzip-first-pass`'s do, in a 6g container, and every count is one the allowance affords, which each run's own `scan started` line confirms. **A single member's `parse` is its first pass**: no cache precedes it, so it inflates the file while it builds the index, its scan one reader and its inflate run ahead on the workers the count affords at a task's charge. **The BGZF file's is a block path**: walked at open, it is read in whole units by every reader, as an `.xz` file is. The first and the BGZF leg are `control` at `pg_dump`'s level 6, through one zlib; **the limit leg** is `control`'s rows repeated in runs, deflated the same way, so it packs past the ratio at which a chunk inflates to the speculation limit and fills the plaintext terms of a task's charge (`generate_repeated_rows.py`).
 
@@ -3945,28 +3945,28 @@ Each cell is peak resident set, and the change from that leg's own one-job row. 
 - single member at the limit, first pass: `repeated_gz`, 127.8 MB compressed, 24.03 : 1 against the 3.00 GiB it was generated from
 - BGZF, block path: `control_bgzf`, 803.8 MB compressed
 
-**The charge against what was held**, cell by cell, read against `reserve`'s three lines: the unnamed remainder must be **non-negative** — a negative one is an over-bill — and is read against **`MEMORY_UNPOOLED_BOUND`** (256.0 MiB), above which the **bound** is wrong for gzip, and **`MEMORY_RESERVE`** (384.0 MiB), above which the **rule** is. The `Criterion` column names the band. **A first-pass cell is billed per worker with no pool**: each worker the larger of the pass's two decodes and skip scratch (2.2 MiB) and a task's charge (102.8 MiB, six speculation limits of it), and its `Workers` column says how many the pass ran — the frontier and the tasks ahead. **A BGZF cell is billed as an `.xz` one is**, a reader its 24.0 MiB unit, the scan's chunk and gzip's pulling footprint (26.1 MiB in all), and the readers together the pool's retention list. Each bill is the one the run's own `scan started` line states:
+**The charge against what was held**, cell by cell, read against `reserve`'s three lines: the unnamed remainder must be **non-negative** — a negative one is an over-bill — and is read against **`MEMORY_UNPOOLED_BOUND`** (256.0 MiB), above which the **bound** is wrong for gzip, and **`MEMORY_RESERVE`** (384.0 MiB), above which the **rule** is. The `Criterion` column names the band. **A first-pass cell is billed per worker with no pool**: each worker the larger of the pass's two decodes and skip scratch (2.2 MiB) and a task's charge (108.8 MiB, six speculation limits of it), and its `Workers` column says how many the pass ran — the frontier and the tasks ahead. **A BGZF cell is billed as an `.xz` one is**, a reader its 24.0 MiB unit, the scan's chunk and gzip's pulling footprint (26.1 MiB in all), and the readers together the pool's retention list. Each bill is the one the run's own `scan started` line states:
 
 | Leg | Workers | Billed | of which pool list | Worst rep held | Unnamed | Criterion |
 |---|---|---|---|---|---|---|
-| single member, first pass, `--jobs 1` | 1 · 1 ran | 102.8 MiB | — | 56.20 MiB | -46.6 MiB | **over-bill** |
-| single member, first pass, `--jobs 4` | 4 · 4 ran | 411.3 MiB | — | 159.78 MiB | -251.5 MiB | **over-bill** |
-| single member, first pass, `--jobs 24` | 24 · 24 ran | 2467.9 MiB | — | 703.61 MiB | -1764.3 MiB | **over-bill** |
-| single member at the limit, first pass, `--jobs 1` | 1 · 1 ran | 102.8 MiB | — | 57.27 MiB | -45.6 MiB | **over-bill** |
-| single member at the limit, first pass, `--jobs 4` | 4 · 4 ran | 411.3 MiB | — | 246.93 MiB | -164.4 MiB | **over-bill** |
-| single member at the limit, first pass, `--jobs 24` | 24 · 24 ran | 2467.9 MiB | — | 1122.16 MiB | -1345.7 MiB | **over-bill** |
-| BGZF, block path, `--jobs 1` | 1 | 98.2 MiB | 72.1 MiB | 100.17 MiB | 2.0 MiB | met |
-| BGZF, block path, `--jobs 4` | 4 | 176.6 MiB | 72.1 MiB | 245.58 MiB | 69.0 MiB | met |
-| BGZF, block path, `--jobs 24` | 24 | 1179.7 MiB | 552.7 MiB | 1343.41 MiB | 163.7 MiB | met |
+| single member, first pass, `--jobs 1` | 1 · 1 ran | 108.8 MiB | — | 56.63 MiB | -52.2 MiB | **over-bill** |
+| single member, first pass, `--jobs 4` | 4 · 4 ran | 435.3 MiB | — | 240.35 MiB | -195.0 MiB | **over-bill** |
+| single member, first pass, `--jobs 24` | 24 · 24 ran | 2611.9 MiB | — | 1195.86 MiB | -1416.0 MiB | **over-bill** |
+| single member at the limit, first pass, `--jobs 1` | 1 · 1 ran | 108.8 MiB | — | 57.12 MiB | -51.7 MiB | **over-bill** |
+| single member at the limit, first pass, `--jobs 4` | 4 · 4 ran | 435.3 MiB | — | 257.79 MiB | -177.5 MiB | **over-bill** |
+| single member at the limit, first pass, `--jobs 24` | 24 · 24 ran | 2611.9 MiB | — | 1181.96 MiB | -1429.9 MiB | **over-bill** |
+| BGZF, block path, `--jobs 1` | 1 | 98.2 MiB | 72.1 MiB | 100.09 MiB | 1.9 MiB | met |
+| BGZF, block path, `--jobs 4` | 4 | 176.6 MiB | 72.1 MiB | 244.12 MiB | 67.5 MiB | met |
+| BGZF, block path, `--jobs 24` | 24 | 1179.7 MiB | 552.7 MiB | 1365.46 MiB | 185.8 MiB | met |
 
 **The model is refuted, and by these cells:**
 
-- **single member, first pass** at `--jobs 1`: **over-billed by 46.6 MiB** — 1 reader(s) were charged 102.8 MiB, and the whole process held 56.2 MiB. The rule admitted fewer readers than the allocation affords.
-- **single member, first pass** at `--jobs 4`: **over-billed by 251.5 MiB** — 4 reader(s) were charged 411.3 MiB, and the whole process held 159.8 MiB. The rule admitted fewer readers than the allocation affords.
-- **single member, first pass** at `--jobs 24`: **over-billed by 1764.3 MiB** — 24 reader(s) were charged 2467.9 MiB, and the whole process held 703.6 MiB. The rule admitted fewer readers than the allocation affords.
-- **single member at the limit, first pass** at `--jobs 1`: **over-billed by 45.6 MiB** — 1 reader(s) were charged 102.8 MiB, and the whole process held 57.3 MiB. The rule admitted fewer readers than the allocation affords.
-- **single member at the limit, first pass** at `--jobs 4`: **over-billed by 164.4 MiB** — 4 reader(s) were charged 411.3 MiB, and the whole process held 246.9 MiB. The rule admitted fewer readers than the allocation affords.
-- **single member at the limit, first pass** at `--jobs 24`: **over-billed by 1345.7 MiB** — 24 reader(s) were charged 2467.9 MiB, and the whole process held 1122.2 MiB. The rule admitted fewer readers than the allocation affords.
+- **single member, first pass** at `--jobs 1`: **over-billed by 52.2 MiB** — 1 reader(s) were charged 108.8 MiB, and the whole process held 56.6 MiB. The rule admitted fewer readers than the allocation affords.
+- **single member, first pass** at `--jobs 4`: **over-billed by 195.0 MiB** — 4 reader(s) were charged 435.3 MiB, and the whole process held 240.4 MiB. The rule admitted fewer readers than the allocation affords.
+- **single member, first pass** at `--jobs 24`: **over-billed by 1416.0 MiB** — 24 reader(s) were charged 2611.9 MiB, and the whole process held 1195.9 MiB. The rule admitted fewer readers than the allocation affords.
+- **single member at the limit, first pass** at `--jobs 1`: **over-billed by 51.7 MiB** — 1 reader(s) were charged 108.8 MiB, and the whole process held 57.1 MiB. The rule admitted fewer readers than the allocation affords.
+- **single member at the limit, first pass** at `--jobs 4`: **over-billed by 177.5 MiB** — 4 reader(s) were charged 435.3 MiB, and the whole process held 257.8 MiB. The rule admitted fewer readers than the allocation affords.
+- **single member at the limit, first pass** at `--jobs 24`: **over-billed by 1429.9 MiB** — 24 reader(s) were charged 2611.9 MiB, and the whole process held 1182.0 MiB. The rule admitted fewer readers than the allocation affords.
 
 The `bound` band is the one a sitting discharges itself, and each cell above is in a band it is not: `over-bill`, where an over-bill is bytes the rule charged that nothing holds, so it admitted fewer readers than the allocation afforded. The table publishes all the same: a refutation is a reading of the library, and only a killed leg keeps a figure out of the document.
 
@@ -3974,112 +3974,111 @@ The `bound` band is the one a sitting discharges itself, and each cell above is 
 
 | Leg | Held a worker, `--jobs 4` → `24` | Charged a worker | Against the charge |
 |---|---|---|---|
-| single member, first pass | 27.2 MiB | 102.8 MiB | within it |
-| single member at the limit, first pass | 43.8 MiB | 102.8 MiB | within it |
-| BGZF, block path | 54.9 MiB | 50.2 MiB | **past it by 4.7 MiB** |
+| single member, first pass | 47.8 MiB | 108.8 MiB | within it |
+| single member at the limit, first pass | 46.2 MiB | 108.8 MiB | within it |
+| BGZF, block path | 56.1 MiB | 50.2 MiB | **past it by 5.9 MiB** |
 
 Per-rep readings (peak RSS):
-- single member, first pass, 1j: 56.20 MiB, 56.07 MiB, 55.95 MiB
-- single member, first pass, 4j: 146.79 MiB, 150.11 MiB, 159.78 MiB
-- single member, first pass, 24j: 659.66 MiB, 697.51 MiB, 703.61 MiB
-- single member at the limit, first pass, 1j: 57.27 MiB, 55.84 MiB, 56.37 MiB
-- single member at the limit, first pass, 4j: 232.93 MiB, 246.93 MiB, 240.96 MiB
-- single member at the limit, first pass, 24j: 1114.90 MiB, 1122.16 MiB, 1120.68 MiB
-- BGZF, block path, 1j: 99.96 MiB, 100.07 MiB, 100.17 MiB
-- BGZF, block path, 4j: 245.58 MiB, 240.28 MiB, 242.06 MiB
-- BGZF, block path, 24j: 1343.41 MiB, 1325.33 MiB, 1331.57 MiB
-- single member, first pass, 1j, system: 42.66 MiB, 43.29 MiB, 43.23 MiB
-- single member, first pass, 4j, system: 93.41 MiB, 82.03 MiB, 79.61 MiB
-- single member, first pass, 24j, system: 478.86 MiB, 472.74 MiB, 455.25 MiB
-- single member at the limit, first pass, 1j, system: 43.27 MiB, 43.22 MiB, 42.73 MiB
-- single member at the limit, first pass, 4j, system: 163.84 MiB, 161.40 MiB, 166.02 MiB
-- single member at the limit, first pass, 24j, system: 918.81 MiB, 919.18 MiB, 937.62 MiB
-- BGZF, block path, 1j, system: 89.15 MiB, 89.11 MiB, 88.75 MiB
-- BGZF, block path, 4j, system: 313.64 MiB, 339.22 MiB, 336.77 MiB
-- BGZF, block path, 24j, system: 1257.36 MiB, 1331.56 MiB, 1249.24 MiB
+- single member, first pass, 1j: 56.39 MiB, 56.63 MiB, 56.33 MiB
+- single member, first pass, 4j: 240.35 MiB, 214.41 MiB, 234.46 MiB
+- single member, first pass, 24j: 1195.86 MiB, 1177.34 MiB, 1180.26 MiB
+- single member at the limit, first pass, 1j: 56.97 MiB, 56.96 MiB, 57.12 MiB
+- single member at the limit, first pass, 4j: 249.92 MiB, 251.22 MiB, 257.79 MiB
+- single member at the limit, first pass, 24j: 1181.96 MiB, 1155.75 MiB, 1163.66 MiB
+- BGZF, block path, 1j: 100.09 MiB, 100.01 MiB, 99.98 MiB
+- BGZF, block path, 4j: 240.06 MiB, 241.58 MiB, 244.12 MiB
+- BGZF, block path, 24j: 1365.46 MiB, 1349.39 MiB, 1327.61 MiB
+- single member, first pass, 1j, system: 43.09 MiB, 43.25 MiB, 43.36 MiB
+- single member, first pass, 4j, system: 163.32 MiB, 149.89 MiB, 162.55 MiB
+- single member, first pass, 24j, system: 874.45 MiB, 849.94 MiB, 872.27 MiB
+- single member at the limit, first pass, 1j, system: 43.16 MiB, 43.56 MiB, 43.26 MiB
+- single member at the limit, first pass, 4j, system: 164.59 MiB, 164.24 MiB, 169.34 MiB
+- single member at the limit, first pass, 24j, system: 902.48 MiB, 907.98 MiB, 901.56 MiB
+- BGZF, block path, 1j, system: 88.66 MiB, 88.44 MiB, 88.64 MiB
+- BGZF, block path, 4j, system: 289.64 MiB, 358.57 MiB, 337.66 MiB
+- BGZF, block path, 24j, system: 1260.09 MiB, 1308.42 MiB, 1305.96 MiB
 
 **The gate.** Each leg is read again on the `system` build in the same sitting, the two differing by the allocator alone, and each cell is the worst surviving rep and what it left of the limit, or the kill. A leg fails where it is killed, its container being the contract under test.
 
 | Leg | Shipped build | `system` | Gate |
 |---|---|---|---|
-| single member, first pass, 1j | 56.20 MiB · head 99.1% | 43.29 MiB · head 99.3% | passes |
-| single member, first pass, 4j | 159.78 MiB · head 97.4% | 93.41 MiB · head 98.5% | passes |
-| single member, first pass, 24j | 703.61 MiB · head 88.5% | 478.86 MiB · head 92.2% | passes |
-| single member at the limit, first pass, 1j | 57.27 MiB · head 99.1% | 43.27 MiB · head 99.3% | passes |
-| single member at the limit, first pass, 4j | 246.93 MiB · head 96.0% | 166.02 MiB · head 97.3% | passes |
-| single member at the limit, first pass, 24j | 1122.16 MiB · head 81.7% | 937.62 MiB · head 84.7% | passes |
-| BGZF, block path, 1j | 100.17 MiB · head 98.4% | 89.15 MiB · head 98.5% | passes |
-| BGZF, block path, 4j | 245.58 MiB · head 96.0% | 339.22 MiB · head 94.5% | passes |
-| BGZF, block path, 24j | 1343.41 MiB · head 78.1% | 1331.56 MiB · head 78.3% | passes |
+| single member, first pass, 1j | 56.63 MiB · head 99.1% | 43.36 MiB · head 99.3% | passes |
+| single member, first pass, 4j | 240.35 MiB · head 96.1% | 163.32 MiB · head 97.3% | passes |
+| single member, first pass, 24j | 1195.86 MiB · head 80.5% | 874.45 MiB · head 85.8% | passes |
+| single member at the limit, first pass, 1j | 57.12 MiB · head 99.1% | 43.56 MiB · head 99.3% | passes |
+| single member at the limit, first pass, 4j | 257.79 MiB · head 95.8% | 169.34 MiB · head 97.2% | passes |
+| single member at the limit, first pass, 24j | 1181.96 MiB · head 80.8% | 907.98 MiB · head 85.2% | passes |
+| BGZF, block path, 1j | 100.09 MiB · head 98.4% | 88.66 MiB · head 98.6% | passes |
+| BGZF, block path, 4j | 244.12 MiB · head 96.0% | 358.57 MiB · head 94.2% | passes |
+| BGZF, block path, 24j | 1365.46 MiB · head 77.8% | 1308.42 MiB · head 78.7% | passes |
 
 **The gate passes**: no leg failed on the shipped build alone.
 
-Apparatus over every run in this table: CPU stall ≤2.60%, I/O stall ≤4.55%, machine ≤35% busy, steal ≤0.00%, busiest core ≥3.69 GHz, ≤72°C.
+Apparatus over every run in this table: CPU stall ≤1.21%, I/O stall ≤4.29%, machine ≤33% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤74°C.
 
-**`MEMORY_UNPOOLED_BOUND` holds for gzip on every leg.** That was the
-hypothesis under test, and `measure.run_gzip_resident`'s docstring names what
-would have falsified it. No cell's remainder is past the bound. On the block
-path the worst is 163.7 MiB, at `--jobs 24`; on either first pass no cell
-holds what it was charged. The bound needs no re-derivation for gzip
+**`MEMORY_UNPOOLED_BOUND` holds for gzip on every leg, at the shipped 4 MiB
+chunk** ([`decisions.md`](decisions.md), "D121"). That was the hypothesis
+under test, and `measure.run_gzip_resident`'s docstring names what would have
+falsified it. No cell's remainder is past the bound. On the block path the
+worst is 185.8 MiB, at `--jobs 24`; on either first pass no cell holds what
+it was charged. The bound needs no re-derivation for gzip
 ([`decisions.md`](decisions.md), "D113").
 
 **A task's charge is a bound on the limit leg, the falsifier aimed at it.**
 That leg's chunks inflate past `SPECULATION_LIMIT`, so every plaintext term of
 `Chunking::task_bytes` can fill. Each added worker between 4 and 24 held
-43.8 MiB against the 102.8 MiB charged, and its `system` twin 38.6 MiB. No
-under-bill appeared. On `control_gz` each added worker held 27.2 MiB.
+46.2 MiB against the 108.8 MiB charged, and its `system` twin 36.9 MiB. No
+under-bill appeared.
 
-**Pooling the decode buffers did not lower what a worker holds.** On the
-limit leg the shipped build's secant is the 43.8 MiB a worker that
-15.18.3's opening reading took at `ef5f5d4b` before the pool, against 29.6 MiB
-there with mimalloc's retention off (`runs/p15.18.3/secant.txt`); the `system`
-build's fell from 43.6 to 38.6 MiB, against 24.9 MiB with glibc's off. That
-is what the code allows: the pass keeps a buffer for every decode it has had
-out at once, a task's running decode and `DECODES_A_TASK` more, each written
-to its decode's plaintext, which on this leg reaches the limit, so the pool's
-spare buffers are resident where a freed one the allocator kept was before.
-How many it made at the peak is not recorded; a heaptrack pair of this leg at
-24 and 4 jobs on this commit would count them. What the pool bought is a
-charge that bounds a buffer by construction (D124), not a smaller resident.
+**At the shipped chunk, `control_gz` fills a task as the limit leg does.**
+Each added worker on it held 47.8 MiB, and its `system` twin 35.6 MiB. That
+is what the chunk and the file's ratio give: `SPECULATION_LIMIT` is
+16,907,772 bytes, and a 4 MiB chunk of a 4.07 : 1 file inflates to about
+that, where a 1 MiB chunk filled a quarter of it. So `control_gz`'s upper
+rows now hold about what the limit leg's do, and both stay within the charge.
 
-**The one-job cells rose by about one unit, and the first pass did not.** On
-both first-pass legs the serial row holds about 28 MiB more than at
-`c4ec490d` on the shipped build and 24 MiB more on `system`, the same at
-either stated allowance (`runs/p15.18.3/one-job.txt`). A heaptrack recording
-of the one-job leg (`runs/p15.18.3/heaptrack-gzrss-jobs-1-control_gz.txt`)
-puts the peak in one 25.27 MB block-path slot (`compressed/file.rs`,
-`read_by_blocks`), decoded after the pass hands over to the indexed source,
-by the read of the DDL spans after the data, in the last unit. The indexed
-source takes the block path only where a reader's charge for its unit fits
-the budget replayed on it (`BlockCache::affordable`): one reader's is the
-102,987,776 bytes the BGZF leg's one-job bill states, which a first-pass
-worker's budget, 107,823,706 bytes, now affords and 15.18's 82.9 MiB did not,
-so that read streamed in pieces then. The slot is billed by the same budget,
-and no cell holds what it was charged.
+**The BGZF leg's secant is past a reader's charge, unattributed.** Each
+reader between 4 and 24 held 5.9 MiB more than the 50.2 MiB a reader and its
+pool's unit are charged, so the unnamed remainder grows with the count, to
+185.8 MiB at twenty-four. Nothing here names those bytes; a heaptrack pair of
+this leg at 24 and 4 jobs would. The block path's charge does not depend on
+the first pass's chunk.
+
+**The one-job cells peak in a block-path slot after the pass hands over**,
+reading here as they did when 15.18.3 recorded it. A heaptrack recording of
+the one-job leg (`runs/p15.18.3/heaptrack-gzrss-jobs-1-control_gz.txt`) puts
+the peak in one 25.27 MB block-path slot (`compressed/file.rs`,
+`read_by_blocks`), decoded after the pass hands over to the indexed source, by
+the read of the DDL spans after the data, in the last unit. The indexed source
+takes the block path only where a reader's charge for its unit fits the budget
+replayed on it (`BlockCache::affordable`): one reader's is the 102,987,776
+bytes the BGZF leg's one-job bill states, which a first-pass worker's budget,
+114,115,162 bytes, affords. The slot is billed by the same budget, and no cell
+holds what it was charged.
 
 **The limit leg's wall clock barely moves with the count**
-(`runs/gzip-resident-20261028-1552/log`, each rep's line). Its first pass
-took 0.86–1.40 s at one job, 0.81–0.85 s at four and 0.88–0.97 s at
-twenty-four, while `control_gz`'s fell from about 3.1 s to 1.28–1.40 s, as
+(`runs/gzip-first-pass-resident-20261029-1355/log`, each rep's line). Its
+first pass took 0.87–0.94 s at one job, 0.82–0.93 s at four and 0.73–0.82 s
+at twenty-four, while `control_gz`'s fell from about 3.0 s to 0.97–0.99 s, as
 `gzip-first-pass` reads it. The limit leg's serial pass is already about a
 third of `control_gz`'s. These are not this figure's readings, and nothing
 here attributes the flat curve.
 
 ## What a parallel gzip first pass buys
 
-<!-- figure: gzip-first-pass — taken at `ab7f630c` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure gzip-first-pass` -->
+<!-- figure: gzip-first-pass — taken at `055c8d27` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure gzip-first-pass` -->
 
 | `--jobs` | zlib 1.3.1, level 6 | zlib-ng-compat 2.3.3-3.fc44, level 6 | GNU gzip 1.15, level 6 | zlib-ng 2.2.5, level 1 |
 |---|---|---|---|---|
-| the scan's floor: plain `parse`, `--jobs 1` | **0.473 s** (0.462–0.591) · ~6810 MB/s | **0.467 s** (0.461–0.932) · ~6898 MB/s | **0.476 s** (0.460–0.835) · ~6767 MB/s | **0.478 s** (0.469–0.553) · ~6739 MB/s |
-| `1` *(serial)* | **3.18 s** (3.01–3.51) · ~1013 MB/s | **3.03 s** (2.91–3.08) · ~1063 MB/s | **2.86 s** (2.79–2.92) · ~1126 MB/s | **9.07 s** (8.92–9.22) · ~355 MB/s |
-| `4` | **2.21 s** (2.19–2.28) · ~1461 MB/s · 1.44× serial | **2.17 s** (2.14–2.19) · ~1488 MB/s · 1.40× serial | **2.19 s** (2.15–2.25) · ~1468 MB/s · 1.30× serial | **9.18 s** (8.72–9.25) · ~351 MB/s · 0.99× serial |
-| `12` *(physical)* | **1.012 s** (0.995–1.159) · ~3183 MB/s · 3.14× serial | **1.023 s** (0.959–1.163) · ~3149 MB/s · 2.96× serial | **1.030 s** (1.000–1.157) · ~3127 MB/s · 2.78× serial | **9.16 s** (8.97–9.34) · ~352 MB/s · 0.99× serial |
-| `23` *(logical less one)* | **1.136 s** (1.105–1.234) · ~2836 MB/s · 2.80× serial | **1.161 s** (1.118–1.278) · ~2775 MB/s · 2.61× serial | **1.125 s** (1.076–1.151) · ~2863 MB/s · 2.54× serial | **9.29 s** (8.99–9.37) · ~347 MB/s · 0.98× serial |
-| `24` *(logical)* | **1.138 s** (1.097–1.243) · ~2831 MB/s · 2.79× serial | **1.147 s** (1.087–1.215) · ~2808 MB/s · 2.64× serial | **1.133 s** (1.097–1.204) · ~2843 MB/s · 2.52× serial | **9.03 s** (8.76–9.34) · ~357 MB/s · 1.00× serial |
-| `12`, 4 MiB chunks | **0.942 s** (0.914–0.989) · ~3420 MB/s · 3.38× serial | **0.945 s** (0.912–1.061) · ~3409 MB/s · 3.21× serial | **0.966 s** (0.894–1.055) · ~3335 MB/s · 2.96× serial | **8.99 s** (8.92–9.22) · ~358 MB/s · 1.01× serial |
+| the scan's floor: plain `parse`, `--jobs 1` | **0.433 s** (0.422–0.494) · ~7439 MB/s | **0.456 s** (0.421–0.566) · ~7064 MB/s | **0.486 s** (0.422–0.637) · ~6628 MB/s | **0.506 s** (0.449–0.643) · ~6366 MB/s |
+| `1` *(serial)* | **3.04 s** (3.00–3.17) · ~1060 MB/s | **2.95 s** (2.87–3.43) · ~1093 MB/s | **2.88 s** (2.78–3.09) · ~1120 MB/s | **9.21 s** (8.73–9.29) · ~350 MB/s |
+| `4` | **2.19 s** (2.18–2.26) · ~1472 MB/s · 1.39× serial | **2.17 s** (2.12–2.23) · ~1481 MB/s · 1.35× serial | **2.15 s** (2.09–2.19) · ~1501 MB/s · 1.34× serial | **9.10 s** (8.71–9.14) · ~354 MB/s · 1.01× serial |
+| `12` *(physical)* | **0.963 s** (0.932–1.033) · ~3345 MB/s · 3.16× serial | **0.963 s** (0.916–1.049) · ~3345 MB/s · 3.06× serial | **0.990 s** (0.941–1.073) · ~3254 MB/s · 2.90× serial | **9.18 s** (8.88–9.43) · ~351 MB/s · 1.00× serial |
+| `23` *(logical less one)* | **0.984 s** (0.955–1.125) · ~3274 MB/s · 3.09× serial | **1.017 s** (0.980–1.065) · ~3167 MB/s · 2.90× serial | **0.985 s** (0.920–1.061) · ~3270 MB/s · 2.92× serial | **9.24 s** (9.05–9.48) · ~349 MB/s · 1.00× serial |
+| `24` *(logical)* | **1.015 s** (0.962–1.106) · ~3174 MB/s · 3.00× serial | **1.021 s** (0.962–1.032) · ~3155 MB/s · 2.89× serial | **0.996 s** (0.953–1.030) · ~3234 MB/s · 2.89× serial | **9.21 s** (9.01–9.62) · ~350 MB/s · 1.00× serial |
+| `12`, 1 MiB chunks | **1.023 s** (0.987–1.090) · ~3149 MB/s · 2.97× serial | **0.987 s** (0.953–1.066) · ~3264 MB/s · 2.99× serial | **1.024 s** (0.988–1.136) · ~3146 MB/s · 2.81× serial | **9.12 s** (8.83–9.30) · ~353 MB/s · 1.01× serial |
 
-Each cell is wall clock, the rate it implies per byte of `control`'s plaintext, and a count's rate as a multiple of the same file's serial pass. Every leg is `pgdt parse` stating `--jobs` and `--memory 4697620480` in a 6g container, the allowance affording every row its count at a task's charge, which each run's `scan started` line confirms; a gzip leg's is its first pass, no cache preceding it, and its started line names the workers it ran. `--jobs` counts the frontier and not the scan's thread. Each writer's file is its own sweep, with the plain `parse` of `control` read in it, the floor a first pass falls toward. The 4 MiB row is a build of its own, the shipped build but for the chunk (`pgdt --version` names it), so its layout differs too.
+Each cell is wall clock, the rate it implies per byte of `control`'s plaintext, and a count's rate as a multiple of the same file's serial pass. Every leg is `pgdt parse` stating `--jobs` and `--memory 4697620480` in a 6g container, the allowance affording every row its count at a task's charge, which each run's `scan started` line confirms; a gzip leg's is its first pass, no cache preceding it, and its started line names the workers it ran. `--jobs` counts the frontier and not the scan's thread. Each writer's file is its own sweep, with the plain `parse` of `control` read in it, the floor a first pass falls toward. The 1 MiB row is a build of its own, the shipped build but for the chunk (`pgdt --version` names it), so its layout differs too.
 
 - zlib 1.3.1, level 6: `control_gz`, 754.7 MB compressed, 4.07 : 1 — `pg_dump -Z` over stock zlib
 - zlib-ng-compat 2.3.3-3.fc44, level 6: `control_gz_ng`, 748.0 MB compressed, 4.11 : 1 — `pg_dump -Z` on Fedora 44, whose zlib is zlib-ng's compatibility build
@@ -4088,71 +4087,84 @@ Each cell is wall clock, the rate it implies per byte of `control`'s plaintext, 
 
 **Paired by rep.** Every leg of a sweep runs in each rep, the order reversed in the second half, so a count is read against another rep by rep. The first column is the `12`-job pass's median over the floor's in its sweep, how far the pass is from the scan it falls toward. Each other cell says whether its first leg beats the second — faster in at least 6 of 7 pairs, by a median paired difference over 3% of its own median — is beaten, or is level, in how many pairs it was faster, and the median paired difference in seconds and as a share of the faster leg's median, negative where the first is faster. A file's outcome is read off its serial, physical, logical-less-one and logical counts (`measure.gzpass_outcome`):
 
-| Writer | `12` over the floor | `12` against serial | `24` against `12` | `23` against `12` | `23` against `24` | 4 MiB against 1 MiB chunks, `12` | Outcome |
+| Writer | `12` over the floor | `12` against serial | `24` against `12` | `23` against `12` | `23` against `24` | 1 MiB against 4 MiB chunks, `12` | Outcome |
 |---|---|---|---|---|---|---|---|
-| zlib 1.3.1, level 6 | 2.14× | **beats** · faster in 7/7 · -2.174 s, -214.8% | beaten · faster in 1/7 · +0.139 s, +13.7% | beaten · faster in 0/7 · +0.104 s, +10.3% | level · faster in 3/7 · +0.010 s, +0.9% | **beats** · faster in 7/7 · -0.081 s, -8.6% | **shared** |
-| zlib-ng-compat 2.3.3-3.fc44, level 6 | 2.19× | **beats** · faster in 7/7 · -2.007 s, -196.2% | beaten · faster in 1/7 · +0.123 s, +12.0% | beaten · faster in 1/7 · +0.137 s, +13.4% | level · faster in 2/7 · +0.022 s, +1.9% | **beats** · faster in 6/7 · -0.078 s, -8.3% | **shared** |
-| GNU gzip 1.15, level 6 | 2.16× | **beats** · faster in 7/7 · -1.791 s, -173.9% | level · faster in 2/7 · +0.103 s, +10.0% | level · faster in 2/7 · +0.088 s, +8.5% | level · faster in 5/7 · -0.015 s, -1.3% | **beats** · faster in 6/7 · -0.050 s, -5.2% | **stands** |
-| zlib-ng 2.2.5, level 1 | 19.17× | level · faster in 2/7 · +0.041 s, +0.5% | level · faster in 6/7 · -0.043 s, -0.5% | level · faster in 3/7 · +0.048 s, +0.5% | level · faster in 2/7 · +0.160 s, +1.8% | level · faster in 6/7 · -0.160 s, -1.8% | **no lift** |
+| zlib 1.3.1, level 6 | 2.22× | **beats** · faster in 7/7 · -2.067 s, -214.6% | level · faster in 3/7 · +0.046 s, +4.8% | level · faster in 2/7 · +0.025 s, +2.6% | level · faster in 5/7 · -0.011 s, -1.1% | beaten · faster in 1/7 · +0.057 s, +5.9% | **level** |
+| zlib-ng-compat 2.3.3-3.fc44, level 6 | 2.11× | **beats** · faster in 7/7 · -2.031 s, -210.9% | level · faster in 2/7 · +0.034 s, +3.5% | beaten · faster in 1/7 · +0.035 s, +3.6% | level · faster in 1/7 · +0.018 s, +1.8% | level · faster in 3/7 · +0.040 s, +4.2% | **level** |
+| GNU gzip 1.15, level 6 | 2.04× | **beats** · faster in 7/7 · -1.900 s, -191.9% | level · faster in 3/7 · +0.002 s, +0.2% | level · faster in 5/7 · -0.005 s, -0.5% | level · faster in 4/7 · -0.006 s, -0.6% | level · faster in 1/7 · +0.050 s, +5.1% | **level** |
+| zlib-ng 2.2.5, level 1 | 18.13× | level · faster in 5/7 · -0.079 s, -0.9% | level · faster in 3/7 · +0.036 s, +0.4% | level · faster in 2/7 · +0.068 s, +0.7% | level · faster in 2/7 · +0.144 s, +1.6% | level · faster in 4/7 · -0.155 s, -1.7% | **no lift** |
 
-**The figure does not settle the default**: the files the pass lifts on disagree (zlib 1.3.1, level 6: shared; zlib-ng-compat 2.3.3-3.fc44, level 6: shared; GNU gzip 1.15, level 6: stands). **The chunk leg replaces the shipped chunk**: the 4 MiB chunk beats the shipped 1 MiB on 3 of the 3 level-6 writers' files (zlib 1.3.1, level 6, zlib-ng-compat 2.3.3-3.fc44, level 6, GNU gzip 1.15, level 6) and is beaten on none.
+**The physical cap holds**: no upper count beats the physical count on a file either lifts, and the files the physical count lifts read zlib 1.3.1, level 6: level; zlib-ng-compat 2.3.3-3.fc44, level 6: level; GNU gzip 1.15, level 6: level. **The shipped chunk stands**: the 1 MiB chunk beats the shipped 4 MiB on 0 of the 3 level-6 writers' files and is beaten on zlib 1.3.1, level 6, where replacing it asks 2 and none.
 
 Per-rep readings (s):
-- plain `parse`, the scan's floor, beside zlib 1.3.1, level 6: 0.591, 0.473, 0.462, 0.555, 0.465, 0.464, 0.477
-- zlib 1.3.1, level 6, 1j: 3.51, 3.10, 3.19, 3.11, 3.01, 3.18, 3.39
-- zlib 1.3.1, level 6, 4j: 2.19, 2.21, 2.28, 2.20, 2.19, 2.21, 2.21
-- zlib 1.3.1, level 6, 12j: 1.159, 0.995, 1.012, 1.001, 1.032, 0.999, 1.051
-- zlib 1.3.1, level 6, 23j: 1.178, 1.118, 1.114, 1.234, 1.136, 1.148, 1.105
-- zlib 1.3.1, level 6, 24j: 1.118, 1.243, 1.097, 1.170, 1.182, 1.138, 1.111
-- zlib 1.3.1, level 6, 4 MiB chunks, 12j: 0.947, 0.914, 0.942, 0.982, 0.939, 0.989, 0.928
-- plain `parse`, the scan's floor, beside zlib-ng-compat 2.3.3-3.fc44, level 6: 0.464, 0.558, 0.612, 0.467, 0.465, 0.932, 0.461
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 1j: 3.03, 3.08, 2.95, 2.91, 3.06, 3.05, 3.00
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 4j: 2.18, 2.17, 2.14, 2.14, 2.14, 2.17, 2.19
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 12j: 1.024, 1.002, 0.997, 1.163, 1.023, 0.959, 1.028
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 23j: 1.169, 1.278, 1.121, 1.161, 1.130, 1.118, 1.165
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 24j: 1.147, 1.140, 1.087, 1.161, 1.215, 1.149, 1.134
-- zlib-ng-compat 2.3.3-3.fc44, level 6, 4 MiB chunks, 12j: 0.945, 0.944, 1.061, 0.985, 0.912, 0.913, 0.950
-- plain `parse`, the scan's floor, beside GNU gzip 1.15, level 6: 0.461, 0.461, 0.477, 0.476, 0.726, 0.460, 0.835
-- GNU gzip 1.15, level 6, 1j: 2.92, 2.86, 2.92, 2.92, 2.86, 2.85, 2.79
-- GNU gzip 1.15, level 6, 4j: 2.19, 2.25, 2.19, 2.23, 2.17, 2.23, 2.15
-- GNU gzip 1.15, level 6, 12j: 1.030, 1.157, 1.022, 1.000, 1.066, 1.138, 1.023
-- GNU gzip 1.15, level 6, 23j: 1.118, 1.101, 1.151, 1.137, 1.076, 1.125, 1.126
-- GNU gzip 1.15, level 6, 24j: 1.133, 1.142, 1.204, 1.137, 1.122, 1.097, 1.129
-- GNU gzip 1.15, level 6, 4 MiB chunks, 12j: 0.989, 0.894, 0.972, 0.966, 0.940, 0.912, 1.055
-- plain `parse`, the scan's floor, beside zlib-ng 2.2.5, level 1: 0.511, 0.478, 0.469, 0.553, 0.512, 0.471, 0.470
-- zlib-ng 2.2.5, level 1, 1j: 8.93, 8.92, 9.07, 9.22, 9.16, 8.97, 9.17
-- zlib-ng 2.2.5, level 1, 4j: 9.20, 9.18, 9.25, 8.72, 9.03, 9.10, 9.20
-- zlib-ng 2.2.5, level 1, 12j: 9.08, 9.34, 9.09, 9.26, 9.28, 8.97, 9.16
-- zlib-ng 2.2.5, level 1, 23j: 9.37, 8.99, 9.00, 9.31, 9.06, 9.33, 9.29
-- zlib-ng 2.2.5, level 1, 24j: 9.03, 9.34, 8.89, 8.76, 9.29, 8.77, 9.13
-- zlib-ng 2.2.5, level 1, 4 MiB chunks, 12j: 8.92, 8.92, 8.95, 9.06, 9.17, 9.22, 8.99
+- plain `parse`, the scan's floor, beside zlib 1.3.1, level 6: 0.482, 0.422, 0.494, 0.437, 0.429, 0.425, 0.433
+- zlib 1.3.1, level 6, 1j: 3.04, 3.00, 3.02, 3.10, 3.05, 3.17, 3.00
+- zlib 1.3.1, level 6, 4j: 2.19, 2.18, 2.26, 2.20, 2.22, 2.19, 2.18
+- zlib 1.3.1, level 6, 12j: 0.975, 0.932, 1.008, 1.033, 0.935, 0.963, 0.959
+- zlib 1.3.1, level 6, 23j: 1.125, 1.004, 1.010, 0.978, 0.977, 0.955, 0.984
+- zlib 1.3.1, level 6, 24j: 0.962, 1.015, 1.005, 1.027, 0.981, 1.106, 1.025
+- zlib 1.3.1, level 6, 1 MiB chunks, 12j: 0.987, 1.090, 1.020, 1.023, 1.026, 1.020, 1.038
+- plain `parse`, the scan's floor, beside zlib-ng-compat 2.3.3-3.fc44, level 6: 0.449, 0.424, 0.566, 0.421, 0.534, 0.557, 0.456
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 1j: 2.93, 3.09, 2.92, 2.96, 2.87, 3.43, 2.95
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 4j: 2.15, 2.23, 2.17, 2.18, 2.12, 2.18, 2.17
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 12j: 1.049, 0.963, 1.025, 0.918, 0.954, 0.990, 0.916
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 23j: 1.065, 0.998, 0.980, 1.061, 1.024, 1.017, 1.005
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 24j: 1.032, 0.997, 0.962, 1.032, 1.021, 1.022, 0.983
+- zlib-ng-compat 2.3.3-3.fc44, level 6, 1 MiB chunks, 12j: 0.979, 1.066, 0.987, 0.977, 0.953, 1.030, 1.006
+- plain `parse`, the scan's floor, beside GNU gzip 1.15, level 6: 0.625, 0.453, 0.486, 0.422, 0.493, 0.637, 0.426
+- GNU gzip 1.15, level 6, 1j: 2.84, 2.78, 2.88, 3.02, 2.79, 3.00, 3.09
+- GNU gzip 1.15, level 6, 4j: 2.15, 2.14, 2.19, 2.10, 2.19, 2.15, 2.09
+- GNU gzip 1.15, level 6, 12j: 0.941, 0.988, 0.998, 0.990, 1.073, 0.991, 0.951
+- GNU gzip 1.15, level 6, 23j: 1.061, 0.966, 1.004, 0.985, 0.939, 0.990, 0.920
+- GNU gzip 1.15, level 6, 24j: 1.030, 1.022, 0.979, 0.984, 1.006, 0.996, 0.953
+- GNU gzip 1.15, level 6, 1 MiB chunks, 12j: 1.013, 0.988, 1.020, 1.040, 1.031, 1.136, 1.024
+- plain `parse`, the scan's floor, beside zlib-ng 2.2.5, level 1: 0.558, 0.458, 0.449, 0.498, 0.643, 0.576, 0.506
+- zlib-ng 2.2.5, level 1, 1j: 8.95, 9.21, 9.26, 8.73, 9.29, 9.19, 9.27
+- zlib-ng 2.2.5, level 1, 4j: 9.11, 9.13, 8.99, 9.14, 8.93, 9.10, 8.71
+- zlib-ng 2.2.5, level 1, 12j: 9.43, 8.88, 8.90, 9.18, 9.21, 9.18, 9.02
+- zlib-ng 2.2.5, level 1, 23j: 9.24, 9.23, 9.48, 9.17, 9.27, 9.36, 9.05
+- zlib-ng 2.2.5, level 1, 24j: 9.20, 9.30, 9.25, 9.01, 9.09, 9.21, 9.62
+- zlib-ng 2.2.5, level 1, 1 MiB chunks, 12j: 9.14, 9.12, 9.30, 8.83, 8.88, 9.02, 9.17
 
-Apparatus over every run in this table: CPU stall ≤1.85%, I/O stall ≤10.43%, machine ≤36% busy, steal ≤0.00%, busiest core ≥3.49 GHz, ≤78°C.
+Apparatus over every run in this table: CPU stall ≤46.28%, I/O stall ≤8.38%, machine ≤35% busy, steal ≤0.00%, busiest core ≥3.56 GHz, ≤78°C.
 
-**This sitting does not settle the default, and nothing here moves it.** A
-local first pass recommends no more workers than the physical cores within
-its affinity ([`decisions.md`](decisions.md), "D2"; `RT27`), on the three
-sittings before this one, each reading `shared`. Here zlib's and
-zlib-ng-compat's files read `shared` again: the physical count beats both
-upper counts in six or seven pairs of seven, and those two are level. GNU
-gzip's reads `stands`: its physical count is faster than both upper counts by
-medians of 8.5% and 10.0%, but in five pairs of seven, one short of the bar,
-two of its seven `12` reps running about 0.1 s slower than the other five.
-Nothing here attributes those two reps. No count beats the physical count on
-any file, so the cap holds: D2's gzip clause reopens only on an upper count
-beating it ([`decisions.md`](decisions.md), "D2"), and the verdict line above
-is still read against the logical count's default until 15.21 restates it.
+**The physical cap holds, and D2 is unchanged** ([`decisions.md`](decisions.md),
+"D2"; `RT27`). The verdict reads the default, the physical count, as the
+incumbent, and it reopens only where an upper count beats it on a file either
+lifts (`measure.gzpass_outcome`). None does. Each level-6 writer's file reads
+`level`: the physical count lifts it about threefold over serial, in seven
+pairs of seven, and is level with the logical count, by medians within 5%
+either way. On zlib-ng-compat's file the physical count beats the count one
+less than logical, in six pairs of seven by 3.6%; on the other two that pair
+is level. The level-1 file reads `no lift`.
 
-**The 4 MiB chunk beats the 1 MiB at the default count, and now ships**
-([`decisions.md`](decisions.md), "D121"). At twelve jobs it is faster on
-each level-6 writer's file, in six or seven pairs of seven, by 5–9%, and
-level on the level-1 file, which meets the bar fixed before the sitting
-(`measure.gzpass_chunk_verdict`). This table was taken at `ab7f630c`, whose
-shipped build cut 1 MiB and whose leg cut 4 MiB. Since then the two are
-swapped, so a re-take's leg is the 1 MiB. Two things the reading cannot say:
-the leg is a build of its own, so its layout is a second difference no pair
-removes; and the figure affords every count its memory, so it never prices
-what the longer chunk adds to every task's charge.
+**At the shipped chunk the upper counts are level with the physical count.**
+At `ab7f630c`'s 1 MiB chunk the physical count beat both upper counts by
+10–14% on two level-6 files, reading `shared`. Here the twelve-job rows are
+within 3% of that sitting's 4 MiB leg, and the twenty-three- and
+twenty-four-job rows 11–13% faster than that sitting's. Nothing here
+attributes the change in the upper rows.
+
+**The shipped 4 MiB chunk stands** ([`decisions.md`](decisions.md), "D121"),
+by the bar fixed before the sitting (`measure.gzpass_chunk_verdict`): the
+1 MiB leg beats it on none of the level-6 writers' files, and is beaten on
+zlib's, in six pairs of seven by 5.9%. On zlib-ng-compat's and GNU gzip's
+files the 4 MiB chunk is faster by medians of 4.2% and 5.1%, in four pairs of
+seven and in five with one tied, so those read level. The leg is a build of its
+own, so its layout is a second difference no pair removes. At `ab7f630c` the
+4 MiB chunk was the leg and beat the shipped 1 MiB on all three files by
+5–9%. With the builds swapped, it beats on one and is level on two, so part
+of that margin may have been layout, and the two sittings cannot separate it.
+The figure affords every count its memory, so it never prices what the
+longer chunk adds to every task's charge; `gzip-resident` reads that.
+
+**One rep's CPU stall is outside its timed span.** The apparatus line's
+46.28% is GNU gzip's file at twelve jobs, the fourth rep. That run's
+container window was 4.53 s, against about 1.8 s for its siblings, and its
+own wall clock, 0.990 s, and CPU seconds match theirs, so the stall fell in
+the container's start or teardown. A `warm-parallel` run is gated on steal
+alone, its own workers being what the stall counter sees, so it was kept. No
+other run in the table exceeds 3%.
 
 **The level-1 file gains nothing in parallel and loses nothing at any
 count.** Speculation looks for a dynamic block's header, and this writer ends
@@ -4160,10 +4172,11 @@ no block before its last, so every speculation finds nothing
 ([`roadmap-P15.10-static-notes.md`](roadmap-P15.10-static-notes.md), "What
 later slices inherit"); the first to land pauses the rest (D125), and the
 frontier inflates alone, on one blocking thread (D126). Every count is level
-with serial, and the upper counts with the default. The default is still the
-slower in five pairs of seven, under the margin, and that remainder is
-unattributed ([`roadmap-P15.19.1-kept-notes.md`](roadmap-P15.19.1-kept-notes.md),
-"Unattributed"). Its serial pass is several times the level-6 files' over the
+with serial, and the upper counts with the default. Here the default is the
+faster in five pairs of seven, by under 1%, so the remainder 15.19.1 left
+unattributed, the default the slower by as little
+([`roadmap-P15.19.1-kept-notes.md`](roadmap-P15.19.1-kept-notes.md),
+"Unattributed"), does not recur. Its serial pass is about three times the level-6 files' over the
 same plaintext, about three fifths of it the walk a static block's checkpoint
 takes (D118), which covers this member whole
 ([`roadmap-P15.19-pause-notes.md`](roadmap-P15.19-pause-notes.md), "The

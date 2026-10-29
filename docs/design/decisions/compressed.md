@@ -110,11 +110,11 @@ running a queued decode while it waits. Reopens: the second decode removed (D117
 
 ### D121 A parallel first pass cuts its file at rapidgzip's chunk, four input chunks
 `Chunking::SHIPPED`'s chunk is four of the input chunks every gzip decode pulls, rapidgzip's length: at the default
-count it beats the input chunk on each level-6 writer's file and is level on the level-1 file. Every task is charged
-it twice, as its chunk and its feed, which the figure, affording every count its memory, does not price. Rejected: the
-input chunk (`gzip-1mib-chunks`), the limit held, which a local task reads in one positioned read. Reopens: a re-take
-at the default count on which the input chunk beats the shipped one on two of the three level-6 writers' files and is
-beaten on none. Code: `ahead.rs` (`CHUNK_BYTES`). Evidence: `gzip-first-pass`.
+count the input chunk beats it on no file and is beaten on a level-6 writer's. Every task is charged it twice, as its
+chunk and its feed, which the figure, affording every count its memory, does not price. Rejected: the input chunk
+(`gzip-1mib-chunks`), the limit held, which a local task reads in one positioned read. Reopens: a re-take at the default
+count on which the input chunk beats the shipped one on two of the three level-6 writers' files and is beaten on none.
+Code: `ahead.rs` (`CHUNK_BYTES`). Evidence: `gzip-first-pass`.
 
 ### D122 A speculation's guess is cut at a bound on its events and on its bytes past its chunk, and continued
 The limit counts plaintext, and an empty fixed block is ten bits of none, so a run of them grows a speculation's input

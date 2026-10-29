@@ -60,7 +60,7 @@ physical cores within its affinity (`docs/design/decisions.md`, "D2"),
 read off `/proc/self/status` and each CPU's sysfs topology
 (`crates/pgdt-io/src/cores.rs`, `RT27`). On macOS both reads fail and the pass
 keeps `available_parallelism`'s count, the logical one. On an SMT machine
-that count is slower than the physical one (`measurements.md`,
+that count is no faster than the physical one (`measurements.md`,
 `gzip-first-pass`). Apple Silicon has no SMT, so there the two counts agree;
 an Intel Mac's do not.
 
