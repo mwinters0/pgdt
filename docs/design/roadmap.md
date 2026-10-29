@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P14, P16, P17, P19, P20, P25, P27–P31, P35, P36 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P15 — gzip input | **Current** | [spec](roadmap-P15-gzip.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
+| P15 — gzip input | **Complete** | [spec](roadmap-P15-gzip.md); [notes](roadmap-P15-gzip-notes.md) |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
@@ -978,10 +978,10 @@ corner-avoidance depth. What it starts from:
 
 ## P15 — gzip input
 
-**Spec:** [`roadmap-P15-gzip.md`](roadmap-P15-gzip.md); its inbox is drained
-into it. `.gz` input in both its shapes, and the decompression
-layer redrawn so `.xz` and `.gz` are two implementors of one codec-generic
-layer.
+**Complete.** `.gz` input in both its shapes, and the decompression layer
+redrawn so `.xz` and `.gz` are two implementors of one codec-generic layer.
+The spec is [`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), and what it leaves
+the next phase its [notes](roadmap-P15-gzip-notes.md).
 
 ## P18 — zstd and lz4 input
 

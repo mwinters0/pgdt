@@ -148,7 +148,7 @@ our API, CLI, or data until we reach v1.0.
         - [ ] binary
     - Compression
         - [x] xz (seekable)
-        - [ ] gzip (non-seekable) / bgzip (seekable)
+        - [x] gzip (seekable once a first pass has indexed it) / bgzip (seekable)
         - [ ] zstd (non-seekable and seekable)
         - [ ] lz4
     - File locations

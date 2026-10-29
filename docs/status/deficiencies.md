@@ -501,8 +501,8 @@ than reading as a phase nobody has sliced.
 - **KD137** — a read behind a gzip first pass's frontier, continuing a decode
   begun in the unit that was open, hands out that unit's bytes after the
   frontier has closed it, and those of every closed unit after it, unchecked
-  against the CRC-32 each recorded. **(c) unowned**; promoted by P15
-  scheduling the fix. Detail:
+  against the CRC-32 each recorded. **(c) unowned**; promoted by work
+  on the gzip first pass scheduling the fix. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/pass.rs`.
 
 - **KD138** — a fetched gzip first pass's download room falls to two pieces

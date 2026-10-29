@@ -5,8 +5,8 @@
 brace-free `control`) into **one gzip member, the shape `pg_dump -Fp -Z`
 writes**: zlib's own deflate at `pg_dump`'s default level, with no flush point
 anywhere in it, behind the header every routine major writes
-(`docs/design/roadmap-P15.1-fixtures-notes.md`, "Negative results") — no
-`FNAME`, `MTIME` 0, `XFL` 0, OS Unix. What the figure reads is how fast a
+(`PG_DUMP_HEADER`, which `test_measure.py` reads back off each major's
+`compress.sql.gz`) — no `FNAME`, `MTIME` 0, `XFL` 0, OS Unix. What the figure reads is how fast a
 first pass can inflate that shape serially, so a file of any other shape would
 be a reading of something `pg_dump` does not write.
 

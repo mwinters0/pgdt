@@ -68,22 +68,22 @@ graph and D106.
 
 ---
 
-## An embedder tells one `.xz` failure from another only by naming `xz_seek`
+## An embedder tells one compressed failure from another only by naming its codec's crate
 
 **Fact.** `pgdt_core::Error::Codec` carries `xz_seek`'s error boxed for an
-`.xz` failure, naming the codec, and `Error::codec_cause::<E>()` downcasts it,
-so a caller distinguishing
-`InvalidTable` from `BlockCheckFailed` depends on `xz-seek` and names its
-type. The seek table is opaque (`pgdt_io::SeekTable`); this path is
+`.xz` failure and `gz_seek`'s for a gzip one, naming the codec, and
+`Error::codec_cause::<E>()` downcasts it, so a caller distinguishing
+`InvalidTable` from `BlockCheckFailed`, or `UnitCheck` from `IndexMismatch`,
+depends on that crate and names its type. The seek table is opaque (`pgdt_io::SeekTable`); this path is
 unweighed, and no embedder in the workspace reads it.
 
 **Why P24 cares.** A Python exception hierarchy either maps those causes to
 classes of its own, which needs the binding to name `xz_seek`'s error, or
-reports every `.xz` failure as one class; the library offering the
+reports every codec's failures as one class; the library offering the
 distinction in its own terms is the alternative, and a spec change.
 
-**Origin.** Filed 2026-10-19, wrapping the embedder API's reshape;
-contingent on `Error::codec_cause` (`crates/pgdt-core/src/error.rs`).
+**Origin.** Filed 2026-10-19, wrapping the embedder API's reshape, and
+widened to gzip 2026-10-29, wrapping P15; contingent on `Error::codec_cause` (`crates/pgdt-core/src/error.rs`).
 
 ---
 

@@ -4168,19 +4168,15 @@ other run in the table exceeds 3%.
 
 **The level-1 file gains nothing in parallel and loses nothing at any
 count.** Speculation looks for a dynamic block's header, and this writer ends
-no block before its last, so every speculation finds nothing
-([`roadmap-P15.10-static-notes.md`](roadmap-P15.10-static-notes.md), "What
-later slices inherit"); the first to land pauses the rest (D125), and the
+no block before its last, so every speculation finds nothing; the first to
+land pauses the rest (D125), and the
 frontier inflates alone, on one blocking thread (D126). Every count is level
 with serial, and the upper counts with the default. Here the default is the
 faster in five pairs of seven, by under 1%, so the remainder 15.19.1 left
-unattributed, the default the slower by as little
-([`roadmap-P15.19.1-kept-notes.md`](roadmap-P15.19.1-kept-notes.md),
-"Unattributed"), does not recur. Its serial pass is about three times the level-6 files' over the
+unattributed, the default the slower by as little, does not recur. Its serial pass is about three times the level-6 files' over the
 same plaintext, about three fifths of it the walk a static block's checkpoint
-takes (D118), which covers this member whole
-([`roadmap-P15.19-pause-notes.md`](roadmap-P15.19-pause-notes.md), "The
-opening account").
+takes (D118), which covers this member whole (a profile of its serial pass,
+`runs/p15.19/head/`).
 
 ## koji full scan — the regression check
 
