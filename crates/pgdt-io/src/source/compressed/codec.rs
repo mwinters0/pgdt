@@ -39,8 +39,7 @@ pub(crate) trait Positioned: Send + Sync {
 // cache's window read as a decode begins (`pgdt-dump`'s
 // `cache/file/windows.rs`, `SectionWindows`) is the cache's, as unnamed. Every
 // open and `stat` of the dump and every open, read and write of the cache name
-// theirs (`pgdt_core::Error::File`). **(c) unowned**; closing it means a
-// failure these `io::Result` traits carry its file's path in.
+// theirs (`pgdt_core::Error::File`).
 #[cfg(unix)]
 impl Positioned for std::fs::File {
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> std::io::Result<usize> {
