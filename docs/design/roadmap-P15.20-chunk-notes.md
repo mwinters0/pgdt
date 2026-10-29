@@ -64,7 +64,7 @@ The same sitting reads the default `shared` on zlib's and zlib-ng-compat's
 files and `stands` on GNU gzip's, where the physical count is faster than
 both upper counts by its medians but in five pairs of seven, one short of
 the bar. The three sittings before read `shared` on every level-6 file. D2
-is unchanged and the chunk was priced at the shipped default. Whether this
-reading reopens D2's gzip clause is the maintainer's (STATUS, "Decisions
-worth another look"). The P34 inbox's physical-core entry is contingent on
-the same verdict.
+is unchanged and the chunk was priced at the shipped default. Nothing
+beats the physical count on any file, and only that reopens D2's gzip clause
+now; 15.21 reads the verdict that way and re-takes the figure at the shipped
+chunk.

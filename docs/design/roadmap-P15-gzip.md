@@ -579,6 +579,20 @@ switch is one constant the leg already builds, so the slice is not split, and
 it inverts the leg to cut the shipped 1 MiB, so a later sitting still reads
 the length D121 rejects.
 
+**The default read as the incumbent and the readings re-taken at the shipped
+chunk, slice 21, admitted after spec time, precedes 7's record**
+([`../status/history/2026-10-29.md`](../status/history/2026-10-29.md),
+"D2's gzip clause, reviewed: the physical cap read as the incumbent"): 7.1's
+falsifier was stated while the logical count shipped, so its `stands` keeps
+a default that no longer ships, and slice 20's sitting read the upper counts
+at a chunk that no longer ships. `gzip-first-pass`'s verdict on the default
+is read against the shipped cap: D2's gzip clause reopens only where an upper
+count beats the physical count on a file the pass lifts, by 7.1's bar, and
+the default holds otherwise, each file's outcome still reported as it falls.
+**Done when** the verdict reads so, and `gzip-first-pass` and
+`gzip-resident` are re-taken on the shipped chunk from a commit carrying it,
+`gzip-resident` by 18.3's bar finding no cell under-billed.
+
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),
 "The broken BGZF chain, reviewed"): 13's pass ends its run of coalesced

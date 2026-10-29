@@ -4139,9 +4139,9 @@ gzip's reads `stands`: its physical count is faster than both upper counts by
 medians of 8.5% and 10.0%, but in five pairs of seven, one short of the bar,
 two of its seven `12` reps running about 0.1 s slower than the other five.
 Nothing here attributes those two reps. No count beats the physical count on
-any file. Whether this reading reopens D2's gzip clause is the maintainer's
-([`../status/STATUS.md`](../status/STATUS.md), "Decisions worth another
-look").
+any file, so the cap holds: D2's gzip clause reopens only on an upper count
+beating it ([`decisions.md`](decisions.md), "D2"), and the verdict line above
+is still read against the logical count's default until 15.21 restates it.
 
 **The 4 MiB chunk beats the 1 MiB at the default count, and now ships**
 ([`decisions.md`](decisions.md), "D121"). At twelve jobs it is faster on
