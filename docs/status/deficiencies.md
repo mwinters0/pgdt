@@ -541,13 +541,6 @@ than reading as a phase nobody has sliced.
   Parquet export cannot record its order. **(b) owned by P37**. Detail:
   `crates/pgdt-query/src/summary.rs`.
 
-- **KD147** — over a member whose writer ends no block before its last, a
-  gzip first pass is read slower in parallel than serially at every count
-  `gzip-first-pass` reads, the default's included, a reading taken before
-  D126 kept its frontier on one thread and not yet re-taken. **(b) owned by
-  15.19.1**. Detail:
-  `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
-
 - **KD148** — what mimalloc and glibc keep resident of a buffer a gzip first
   pass's task outgrows as it grows — a speculation's input and sinks, a
   decode's events — is charged by no term of a task's charge, up to as much

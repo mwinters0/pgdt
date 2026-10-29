@@ -111,8 +111,10 @@ running a queued decode while it waits. Reopens: the second decode removed (D117
 ### D121 A parallel first pass cuts its file at the input chunk every gzip decode pulls
 `Chunking::SHIPPED`'s chunk is `INPUT_CHUNK`, so a task reads the chunk a speculation guesses the start of in one
 positioned read, as every gzip decode pulls its input. Rejected: rapidgzip's longer chunk (`gzip-4mib-chunks`), the
-limit held, slower at four jobs on two writers' files and level on the other two. Reopens: a re-take on which a longer
-chunk beats the shipped one. Code: `ahead.rs` (`CHUNK_BYTES`). Evidence: `gzip-first-pass`.
+limit held, read at four jobs level on three writers' files and faster on GNU gzip's: Reopens is met, and the chunk
+stands until the maintainer rules ([`../../status/STATUS.md`](../../status/STATUS.md), "Decisions worth another
+look"). Reopens: a re-take on which a longer chunk beats the shipped one. Code: `ahead.rs` (`CHUNK_BYTES`). Evidence:
+`gzip-first-pass`.
 
 ### D122 A speculation's guess is cut at a bound on its events and on its bytes past its chunk, and continued
 The limit counts plaintext, and an empty fixed block is ten bits of none, so a run of them grows a speculation's input

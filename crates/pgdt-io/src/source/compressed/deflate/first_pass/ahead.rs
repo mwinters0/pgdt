@@ -346,13 +346,8 @@ impl Ahead {
     /// None is handed out from when a speculation finds nothing until the
     /// frontier next crosses a block start (`docs/design/decisions.md`,
     /// "D125"), so over a member whose writer ends no block before its last
-    /// only the speculations handed out before the first lands run.
-    ///
-    /// Deficiency register: `deficiency: KD147` — over such a member
-    /// `gzip-first-pass` reads the pass slower than its serial one at every
-    /// count, a reading taken while the frontier changed blocking thread at
-    /// every scan read, which it no longer does (`kept.rs`); whether the
-    /// default count is still slower is unread. **(b) owned by 15.19.1**.
+    /// only the speculations handed out before the first lands run, and the
+    /// pass is read at its serial pace at every count (`gzip-first-pass`).
     fn top_up(&mut self, pass: &mut gz_seek::Parallel, last: u64) {
         while self.running < self.tasks {
             let decode = match pass.decodes_pending() < DECODES_A_TASK * self.tasks {

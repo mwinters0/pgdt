@@ -26,7 +26,9 @@ this bar: [`../status/history/2026-10-27.md`](../status/history/2026-10-27.md),
   physical cores within its affinity. An `.xz` file still takes its cores.
   The manual's `--jobs` paragraph names only `.xz`'s default. A member whose
   writer ends no block before its last, `deflate_quick` at level 1, is read
-  more slowly in parallel than serially (`KD147`). Its serial first pass is
+  at its serial pace at every count
+  ([`roadmap-P15.19.1-kept-notes.md`](roadmap-P15.19.1-kept-notes.md), "The
+  gate's level-1 half, at `9aa23e5a`"). Its serial first pass is
   also several times slower than a level-6 file's, mostly D118's walk
   ([`roadmap-P15.19-pause-notes.md`](roadmap-P15.19-pause-notes.md), "The
   opening account").

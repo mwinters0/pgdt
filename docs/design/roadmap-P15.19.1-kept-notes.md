@@ -4,9 +4,10 @@
 read (`docs/design/decisions.md`, "D126"), and the falsifier did not fire.** A
 hand probe on release-image builds reads the level-1 file's default count
 level with serial, where the opening tree's is beaten by it. The level-6
-files' default rows are level with or beating the opening tree's. The gate is
-still owed: `gzip-first-pass` re-taken from a commit carrying D126. So the box
-stays empty.
+files' default rows are level with or beating the opening tree's. **The gate
+is met at `9aa23e5a`**, which carries D126 and `M257`: the level-6 half by the
+probe re-run there, the level-1 half by `gzip-first-pass` re-taken there.
+`KD147` is struck.
 
 ## The account from the code
 
@@ -61,26 +62,48 @@ Not figures.
 
 ## Unattributed
 
-The level-1 file's default row is still slower than serial in five pairs of
-seven, by a median 2%. No term is named. Two candidates are already known,
-and neither is priced on this build: the speculations handed out before the
-first lands (the 15.19 notes, "What the hand probe says"), and the frontier's
-inflate slowing beside them (the 15.19 notes, "The opening account"). The
-re-take's paired rows read it by the bar. A profile of `pgdt-kept` at one and
-twelve jobs would attribute it.
+The level-1 file's default row is still slower than serial in most
+pairs, by less than the bar's margin: in six of seven in the re-take
+([`measurements.md`](measurements.md), "What a parallel gzip first pass
+buys"), five of seven in the first probe. No term is named. Two candidates
+are already known, and neither is priced on this build: the speculations
+handed out before the first lands (the 15.19 notes, "What the hand probe
+says"), and the frontier's inflate slowing beside them (the 15.19 notes,
+"The opening account"). A profile of `pgdt-kept` at one and twelve jobs would
+attribute it.
+
+## The gate's level-6 half, at `9aa23e5a`
+
+`probe.sh` re-run, seven reps at one and twelve jobs over the four files, on a
+release-image build of `9aa23e5a` (`pgdt-9aa23e5a`, beside the other two)
+against `pgdt-head` (`probe-9aa23e5a.txt`, `pairs-9aa23e5a.txt`). **Met**:
+each level-6 file's `12` row beats the opening tree's, in 6/7 or 7/7. The
+level-1 file's `12` row is level with the opening tree's (7/7) and with its
+own serial pass (4/7), and every serial row is level across builds. The
+opening build's level-1 `12` row reads level with its serial pass here
+(0/7), beaten in the first probe: that row sits at the bar's margin.
+
+## The gate's level-1 half, at `9aa23e5a`
+
+`gzip-first-pass` re-taken at `9aa23e5a` (`runs/measure-20261028T235753/`,
+launched from `runs/gzip-first-pass-20261028-2350/`), all 196 readings taken,
+none discarded. **Met**: the level-1 file's `12` row is level with its serial
+row, and so is every other count, `4`'s included (`measure.gzpass_beats` over
+the per-rep readings), its outcome `no lift` where the sittings before D126
+read `regresses`. The verdict on the default is `shared`, as at `c4069143`
+and `eb3f9c7b`, so D2's gzip clause and the P34 inbox's contingency stand.
+Across sittings, unpaired, the level-6 files' `12` rows are faster than at
+`eb3f9c7b`, as the probe read them paired.
+
+**The 4 MiB chunk leg moved, and that is not this slice's.** At four jobs it
+is level with the shipped chunk on three writers' files and beats it on GNU
+gzip's, where both earlier sittings read it beaten on two and level on two.
+That meets D121's `Reopens`. Across sittings, the shipped chunk's own
+four-job rows did not move and the 4 MiB leg's did. Nothing attributes it.
 
 ## What the next round inherits
 
-- **The gate, in two halves read as 15.19's were.** Both are taken from a
-  commit carrying this tree and `M257`, which ties the kept thread to its
-  runtime in place of a timeout.
-  - The level-1 half: `cd scripts && uv run measure.py --figure
-    gzip-first-pass`, about an hour, handed off per
-    `.claude/skills/gosub/handoff.md`. It is met when, by 7.1's bar, the
-    level-1 file's `1` row does not beat its `12` row. If the `1` row beats
-    it, the remainder goes to the maintainer unattributed, per the spec row.
-  - The level-6 half: `probe.sh` re-run at `12` on a release-image build of
-    that commit against `pgdt-head`. The figure pairs only within its own
-    sitting, so it cannot compare two trees.
-- **`KD147`** is struck by the re-take if it reads the default level, and
-  rewritten to that reading otherwise.
+- **D121's reopening is the maintainer's** ([`../status/STATUS.md`](../status/STATUS.md),
+  "Decisions worth another look"): the shipped chunk stands until it is ruled on.
+- **15.7.2**, the record, is the phase's last slice, and nothing it waits on
+  is open.

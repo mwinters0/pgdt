@@ -174,5 +174,7 @@ resolved workers checked.
   its falsifier fixed in the spec row before the run. A change of thread
   also happens on the level-6 files, hidden under their lift, so whatever
   15.19.1 lands is gated on their rows too.
-- **`KD147` is 15.19.1's**, rewritten to the re-take's reading; 15.7.2
-  reads it once 15.19.1 closes.
+- **`KD147` is struck** by 15.19.1's re-take, which reads the level-1 file
+  at its serial pace at every count; 15.7.2 reads that
+  ([`roadmap-P15.19.1-kept-notes.md`](roadmap-P15.19.1-kept-notes.md), "The
+  gate's level-1 half, at `9aa23e5a`").
