@@ -2549,11 +2549,12 @@ GZPASS_PHYSICAL = 12
 #: The `--jobs` the figure is taken at, and its table's row order: the serial
 #: pass, the optimization baseline (`roadmap.md`, "Four workers is the
 #: optimization baseline; twenty-four is the guard"), the physical count, the
-#: logical count less one and the logical count. **The third leg is the
-#: falsifier the default is settled by** (`docs/design/roadmap-P15-gzip.md`,
-#: "Slice order"): `--jobs` counts the frontier and not the scan's thread, so
-#: at the logical count less one the process runs no more threads than there
-#: are CPUs, and which of the other two it is level with names the cause.
+#: logical count less one and the logical count. **The upper two are the
+#: challengers the default, the physical count, is read against**
+#: (`gzpass_outcome`), and the third the falsifier naming the cost they add
+#: (`docs/design/roadmap-P15-gzip.md`, "Slice order"): `--jobs` counts the
+#: frontier and not the scan's thread, so at the logical count less one the
+#: process runs no more threads than there are CPUs.
 GZPASS_JOBS: tuple[int, ...] = (1, 4, GZPASS_PHYSICAL, GZPASS_LOGICAL - 1, GZPASS_LOGICAL)
 
 #: The read-buffer budget every leg of `gzip-first-pass` and of
@@ -11679,22 +11680,24 @@ def gzpass_level(a: Sequence[float], b: Sequence[float]) -> bool:
     return not gzpass_beats(a, b) and not gzpass_beats(b, a)
 
 
-#: What each outcome of one file's counts settles, by the spec's three
-#: (`docs/design/roadmap-P15-gzip.md`, "Slice order"), and the two that settle
-#: nothing. **Every order of the three upper counts falls in one**: once the
-#: physical count beats the logical one, its beating the logical count less one
-#: as well reads as a core shared, and anything else as oversubscription.
+#: What each outcome of one file's counts says, read against the shipped
+#: default, the physical count (`docs/design/decisions.md`, "D2"): only
+#: `reopens` moves it, an upper count beating the physical count on a file it
+#: lifts (D2's `Reopens`); the cap holds on every other, and the three below it
+#: still name the cost an upper count adds by 7.1's falsifiers
+#: (`docs/design/roadmap-P15-gzip.md`, "Slice order"). **Every order of the
+#: four counts falls in one.**
 GZPASS_OUTCOMES: dict[str, str] = {
-    "stands": "the physical count does not beat the logical count: the default stands, and "
-    "D2 gains its rejection on this figure",
-    "oversubscription": "the physical count beats the logical count and not the logical count "
-    "less one: the cost is oversubscription, and the default becomes the logical count less "
-    "the scan's thread",
+    "reopens": "an upper count beats the physical count on a file the pass lifts at that "
+    "count: D2's gzip clause reopens",
     "shared": "the physical count beats the logical count and the logical count less one: the "
-    "cost is a core or a cache shared, and the default is capped at the physical cores within "
-    "the process's affinity, which removes the oversubscription too",
-    "no lift": "the physical count does not beat the serial pass, nor the serial pass any "
-    "upper count, so the file says nothing of the default",
+    "cost an upper count adds is a core or a cache shared, which the cap removes",
+    "oversubscription": "the physical count beats the logical count and is level with the "
+    "logical count less one: the cost is oversubscription, which the cap removes too",
+    "level": "the physical count is level with the logical count and no upper count beats it: "
+    "the cap holds, and the file names no cost",
+    "no lift": "no count beats the serial pass, nor the serial pass any upper count, so the "
+    "file says nothing of the default",
     "regresses": "the physical count does not beat the serial pass and the serial pass beats "
     "an upper count: a defect in speculation that finds nothing, owed a `KD<k>` by the round "
     "that reads it, which does not block the default",
@@ -11711,25 +11714,36 @@ def gzpass_outcome(
     logical: Sequence[float],
 ) -> str:
     """Which of `GZPASS_OUTCOMES` one file's readings at the serial, physical,
-    logical-less-one and logical counts fall in, by `gzpass_beats`."""
-    if not gzpass_beats(physical, serial):
+    logical-less-one and logical counts fall in, by `gzpass_beats`. An upper
+    count beating the physical count reopens wherever the pass lifts at it —
+    the physical count beating serial, or that count beating serial itself —
+    and is read before anything else, the challenger's burden being the only
+    one the figure carries."""
+    lifts = gzpass_beats(physical, serial)
+    if any(
+        gzpass_beats(upper, physical) and (lifts or gzpass_beats(upper, serial))
+        for upper in (less_one, logical)
+    ):
+        return "reopens"
+    if not lifts:
         if any(gzpass_beats(serial, upper) for upper in (physical, less_one, logical)):
             return "regresses"
         return "no lift"
     if not gzpass_beats(physical, logical):
-        return "stands"
+        return "level"
     if gzpass_beats(physical, less_one):
         return "shared"
     return "oversubscription"
 
 
 def gzpass_verdict(outcomes: Mapping[str, str]) -> str:
-    """What the files' outcomes settle together, keyed by each file's label:
-    one outcome where every file the pass lifts on falls in it, and nothing
-    otherwise; each file the pass regresses on named whatever the rest
-    settle."""
+    """What the files' outcomes settle together, keyed by each file's label,
+    read against the shipped physical cap: it reopens where any file reopens
+    it, holds where the pass lifts on some file and none reopens, each such
+    file's outcome listed, and settles nothing where the pass lifts on none;
+    each file the pass regresses on named whatever the rest settle."""
     lifted = {label: o for label, o in outcomes.items() if o not in GZPASS_UNLIFTED}
-    found = set(lifted.values())
+    reopened = [label for label, o in lifted.items() if o == "reopens"]
     regressed = [label for label, o in outcomes.items() if o == "regresses"]
     named = (
         f" **The pass regresses on {', '.join(regressed)}**: {GZPASS_OUTCOMES['regresses']}."
@@ -11738,16 +11752,15 @@ def gzpass_verdict(outcomes: Mapping[str, str]) -> str:
     )
     if not lifted:
         return "**The figure settles nothing**: the pass lifts on no file." + named
-    if len(found) == 1:
-        outcome = found.pop()
+    if reopened:
         return (
-            f"**The figure settles the default: {outcome}.** On every file the pass lifts on, "
-            f"{GZPASS_OUTCOMES[outcome]}." + named
+            "**The figure reopens D2's gzip clause**: an upper count beats the physical count "
+            f"on {', '.join(reopened)}, each a file the pass lifts at that count." + named
         )
     each = "; ".join(f"{label}: {o}" for label, o in lifted.items())
     return (
-        f"**The figure does not settle the default**: the files the pass lifts on disagree ({each})."
-        + named
+        "**The physical cap holds**: no upper count beats the physical count on any file the "
+        f"pass lifts on ({each})." + named
     )
 
 
@@ -11811,18 +11824,18 @@ def run_gzip_first_pass(session: Session) -> str:
     physical count; beside each writer's sweep, the plain `parse` of
     `control`, the scan's floor a first pass falls toward.
 
-    **What it settles is the gzip first pass's default worker count**
-    (`docs/design/decisions.md`, "D2"): the logical count, the physical one,
-    or the logical count less the scan's thread. Each file's
-    three upper counts fall in one of `GZPASS_OUTCOMES`, by `gzpass_beats` over
-    paired reps, and the figure settles the default only where every file the
-    pass lifts on agrees (`gzpass_verdict`). **What would falsify each cause**,
-    written before any reading: once the physical count beats the logical one,
-    oversubscription is falsified by the physical count beating the logical
-    count less one too, and a shared core or cache by its not beating it; the
-    default standing, by the physical count beating the logical one. A file
-    the serial pass beats an upper count on is named as a regression and
-    settles nothing (`GZPASS_UNLIFTED`).
+    **What it reads is whether the gzip first pass's default worker count
+    holds** (`docs/design/decisions.md`, "D2"): the physical count, the
+    incumbent, which only an upper count beating it on a file the pass lifts
+    reopens. Each file's four counts fall in one of `GZPASS_OUTCOMES`, by
+    `gzpass_beats` over paired reps, and one file reopening reopens the
+    default (`gzpass_verdict`). Where none does, a file's outcome still names
+    the cost an upper count adds, by falsifiers written before any reading:
+    once the physical count beats the logical one, oversubscription is
+    falsified by the physical count beating the logical count less one too,
+    and a shared core or cache by its not beating it. A file the serial pass
+    beats an upper count on is named as a regression and settles nothing
+    (`GZPASS_UNLIFTED`).
 
     **It prices the chunk length too**: 1 MiB, the input chunk, against the
     shipped 4 MiB, rapidgzip's, at the physical count, the default, the

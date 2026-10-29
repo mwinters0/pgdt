@@ -5896,36 +5896,54 @@ class GzipFirstPass(unittest.TestCase):
         o = measure.gzpass_outcome
         self.assertEqual(o(serial, fast, fast, slow), "oversubscription")
         self.assertEqual(o(serial, fast, slow, slow), "shared")
-        self.assertEqual(o(serial, fast, fast, fast), "stands")
-        self.assertEqual(o(serial, mid, slow, fast), "stands")
-        # The mixed orders settle: 12 > 23 > 24 is a core shared, and
-        # 23 > 12 > 24 oversubscription, as is 23 level with both.
+        self.assertEqual(o(serial, fast, fast, fast), "level")
+        # The mixed orders settle: 12 > 23 > 24 is a core shared, and 23
+        # level with 12 and both beating 24 oversubscription.
         self.assertEqual(o(serial, fast, mid, slow), "shared")
-        self.assertEqual(o(serial, mid, fast, slow), "oversubscription")
         self.assertEqual(o(serial, mid, mid, slow), "oversubscription")
-        self.assertEqual(o(serial, serial, fast, fast), "no lift")
+        # Either upper count beating the physical count reopens, whatever
+        # the other does: the physical count is the incumbent.
+        self.assertEqual(o(serial, mid, slow, fast), "reopens")
+        self.assertEqual(o(serial, mid, fast, slow), "reopens")
+        self.assertEqual(o(serial, mid, fast, fast), "reopens")
+        # ... on a file the pass lifts at that count, even where the
+        # physical count lifts on none.
+        self.assertEqual(o(serial, serial, fast, serial), "reopens")
+        self.assertEqual(o(serial, serial, serial, serial), "no lift")
         # Serial beating any upper count is a regression, named apart.
         self.assertEqual(o(fast, slow, fast, fast), "regresses")
         self.assertEqual(o(mid, mid, mid, slow), "regresses")
         self.assertEqual(
             set(measure.GZPASS_OUTCOMES),
-            {"stands", "oversubscription", "shared", "no lift", "regresses"},
+            {"reopens", "level", "oversubscription", "shared", "no lift", "regresses"},
         )
         self.assertLess(measure.GZPASS_UNLIFTED, set(measure.GZPASS_OUTCOMES))
+        self.assertNotIn("reopens", measure.GZPASS_UNLIFTED)
 
-    def test_the_files_settle_the_default_only_together(self):
+    def test_the_cap_holds_unless_a_file_reopens_it(self):
         v = measure.gzpass_verdict
-        self.assertIn("settles the default: shared", v({"a": "shared", "b": "shared", "c": "no lift"}))
-        self.assertIn("does not settle", v({"a": "shared", "b": "oversubscription"}))
+        holds = "**The physical cap holds**"
+        got = v({"a": "shared", "b": "level", "c": "no lift"})
+        self.assertIn(holds, got)
+        # Each lifted file's outcome is reported, whatever it names.
+        self.assertIn("a: shared; b: level", got)
+        self.assertNotIn("c: no lift", got)
+        # Files naming different costs still hold the cap: only a challenger
+        # beating it moves the default.
+        self.assertIn(holds, v({"a": "shared", "b": "oversubscription"}))
+        got = v({"a": "shared", "b": "reopens", "c": "reopens"})
+        self.assertIn("reopens D2's gzip clause", got)
+        self.assertIn("on b, c", got)
+        self.assertNotIn(holds, got)
         self.assertIn("settles nothing", v({"a": "no lift"}))
         # A regression blocks nothing and is named whatever the rest settle.
         got = v({"a": "shared", "b": "regresses", "c": "no lift"})
-        self.assertIn("settles the default: shared", got)
+        self.assertIn(holds, got)
         self.assertIn("regresses on b", got)
         self.assertNotIn("regresses on b, c", got)
         self.assertIn("regresses on a", v({"a": "regresses"}))
         self.assertIn("settles nothing", v({"a": "regresses"}))
-        self.assertNotIn("regresses on", v({"a": "stands"}))
+        self.assertNotIn("regresses on", v({"a": "level"}))
 
     # -- the renderer ------------------------------------------------------
 
@@ -5965,9 +5983,10 @@ class GzipFirstPass(unittest.TestCase):
             session.figure_id = self.FIGURE
             return measure.run_gzip_first_pass(session)
 
-    def test_a_logical_count_less_one_level_with_the_physical_settles_on_oversubscription(self):
+    def test_a_logical_count_less_one_level_with_the_physical_holds_the_cap(self):
         body = self._render(self._raw())
-        self.assertIn("**The figure settles the default: oversubscription.**", body)
+        self.assertIn("**The physical cap holds**", body)
+        self.assertIn("level 6: oversubscription", body)
         # The header, a row a count, and the chunk leg's.
         rows = [ln for ln in body.splitlines() if ln.startswith("| `")]
         self.assertEqual(len(rows), 1 + len(measure.GZPASS_JOBS) + 1)
@@ -5977,6 +5996,13 @@ class GzipFirstPass(unittest.TestCase):
         self.assertIn("**beats** · faster in 7/7 · -0.200 s, -25.0%", body)
         self.assertIn("**The chunk leg replaces the shipped chunk**", body)
         self.assertIn(f"1 MiB against 4 MiB chunks, `{measure.GZPASS_PHYSICAL}`", body)
+
+    def test_an_upper_count_beating_the_physical_reopens_the_default(self):
+        times = {**self.TIMES, measure.GZPASS_LOGICAL: 0.8}
+        body = self._render(self._raw(times))
+        self.assertIn("**The figure reopens D2's gzip clause**", body)
+        self.assertNotIn("**The physical cap holds**", body)
+        self.assertIn("**reopens**", body)
 
     def test_the_chunk_leg_beaten_anywhere_leaves_the_shipped_chunk(self):
         body = self._render(self._raw(chunk=1.5))
