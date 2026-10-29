@@ -168,6 +168,25 @@ Reopens: `gzip-first-pass` reading a default count no faster than before it. Cod
 `every_job_runs_on_one_thread_while_other_blocking_threads_idle`,
 `a_runtime_shuts_down_at_once_with_a_pass_left_unretired`, `gzip-first-pass`.
 
+### D127 `gz-seek` is a leaf crate of this workspace: a gzip index of our own over a bought inflater
+A container's positioned read names no `pg_dump`, so it is a crate below `pgdt-io`, as `xz-seek` is, its size contract
+its own: open until a pass ends, where xz's footer states it. It is built here beside the codec trait it serves until
+the maintainer splits it into a repo of its own, vendored as `xz-seek` is (D14); its first pass is held to zlib-ng's
+serial inflate. Rejected: `rapidgzip`, which holds every window resident in each reader, checks no unit, reads a
+truncated file as whole, cuts its index by a chunk its thread count moves, runs a pool of its own (D1, D12) and fails a
+release link; `rusty-rapidgzip`, a whole-file decoder with no index; a module of `pgdt-io`; a repo of its own from the
+start. Code: `crates/gz-seek/`. Evidence: `inflate-throughput`, `gzseek-backend`.
+
+### D128 A gzip index is one checkpoint list, the first full pass's by-product, each unit checked by its own CRC-32
+A checkpoint is a plaintext offset, a bit and a window, empty at a member start, so a single member, concatenated
+members and BGZF are one layout, a unit apiece; only BGZF's is found otherwise, by its walk (D18). A single member
+states nothing of its interior, so the scan's decode places them by a rule of the file alone, and a resumed pass or any
+`--jobs` builds one index. A member's CRC-32 covers it all, so the pass records each unit's and a unit decode compares
+it, but where whole BGZF members' trailers do. Rejected: a variant per shape, members wider than the spacing fitting
+none; an indexing pass, two cold decodes; checkpoints where reads land; trusting units after a checked pass, a flipped
+bit then wrong rows; a `.gzi` sidecar, a file no identity check covers. Code: `GzipIndex`, `gz_seek::placement`.
+Evidence: `determinism.rs`'s gzip tests.
+
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
 contradicts) is almost always a wrong path or a changed file, so every open refuses it (`CacheMode::refusal`) before the

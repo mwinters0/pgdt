@@ -20,7 +20,9 @@ use super::super::WindowProvider;
 /// **Only where each window sits is resident**, one entry a checkpoint, the
 /// index's own term, which no charge bills (`KD26`). The file is made at
 /// the first window holding any bytes, so a pass that places none — a file
-/// under the spacing, or one resumed into its last unit — makes none.
+/// under the spacing, or one resumed into its last unit — makes none, and
+/// never at open: `info` and the DataFusion provider open a pass before
+/// refusing to scan, and an unwritable directory would refuse them too.
 pub(super) struct PassWindows {
     /// The resumed index's provider, for the checkpoints before `base`.
     earlier: Option<Arc<dyn WindowProvider>>,

@@ -83,7 +83,7 @@ reports every codec's failures as one class; the library offering the
 distinction in its own terms is the alternative, and a spec change.
 
 **Origin.** Filed 2026-10-19, wrapping the embedder API's reshape, and
-widened to gzip 2026-10-29, wrapping P15; contingent on `Error::codec_cause` (`crates/pgdt-core/src/error.rs`).
+widened to gzip 2026-10-29; contingent on `Error::codec_cause` (`crates/pgdt-core/src/error.rs`).
 
 ---
 

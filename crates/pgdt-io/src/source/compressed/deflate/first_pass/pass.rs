@@ -152,7 +152,10 @@ impl Pass {
     /// goes on serving after the frontier has closed that unit, handing out
     /// its bytes, and every closed unit's after it, compared against no
     /// CRC-32 a unit recorded, the member's trailer checking them only where a
-    /// read reaches it. **(c) unowned**; promoted by P15 scheduling the fix,
+    /// read reaches it. Neither the resumed decode's own CRC-32s, which
+    /// compare nothing for a decode left mid-unit, nor decoding the closed
+    /// unit whole, holding plaintext no charge names, closes it. **(c)
+    /// unowned**; promoted by work on the gzip first pass scheduling the fix,
     /// leaving a kept `Behind::Open` decode once its unit has closed.
     pub(super) fn route(&mut self, offset: u64) -> Result<Route> {
         if offset >= self.frontier_position()? {

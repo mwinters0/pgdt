@@ -5,9 +5,10 @@
 //! first pass and the BGZF walk that find a file's checkpoints, the only
 //! modules of the compressed layer naming `gz_seek`.
 //!
-//! **The codec is deflate; gzip is the framing** (`docs/design/roadmap-P15-gzip.md`,
-//! "Settled in the grilling"), so the module is named for the codec and its
-//! name for a message is the container's.
+//! **The codec is deflate; gzip is the framing**, as a custom-format
+//! archive's zlib-framed entries are another framing over the same inflater,
+//! so the module is named for the codec and its name for a message is the
+//! container's.
 
 use std::num::NonZeroU64;
 use std::ops::Range;

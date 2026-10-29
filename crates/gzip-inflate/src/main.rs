@@ -2,12 +2,11 @@
 //! gzip file whole, on one thread, through one of three deflate backends, and
 //! print what was inflated.
 //!
-//! What the figure is for is P15's evidence slice
-//! (`docs/design/roadmap-P15-gzip.md`, "Slice order"): a single member's first
-//! pass decodes serially, so serial inflate set against the plain parse on
-//! each measured device is what decides whether a parallel first pass is
-//! worth building, and the backends' rates are what `gz-seek`'s throughput
-//! floor is read off.
+//! What the figure is for: a single member's first pass decodes serially, so
+//! serial inflate set against the plain parse on each measured device is
+//! what decides whether a parallel first pass is worth building
+//! (`docs/design/decisions.md`, "D117"), and the backends' rates are what
+//! `gz-seek`'s throughput floor is read off (D127).
 //!
 //! ```sh
 //! cargo build --release -p gzip-inflate
@@ -17,9 +16,9 @@
 //! # The backends, each driven directly
 //!
 //! - **`zlib-ng`**: zlib-ng's native `zng_inflate`, through `libz-ng-sys` —
-//!   the reference `gz-seek`'s throughput floor is stated against (the spec's
-//!   "`gz-seek`'s bar is ours"). Its CMake build is why this instrument is a
-//!   member of its own (`Cargo.toml`).
+//!   the reference `gz-seek`'s throughput floor is stated against (D127).
+//!   Its CMake build is why this instrument is a member of its own
+//!   (`Cargo.toml`).
 //! - **`zlib-rs`**: the `zlib-rs` crate's stable `Inflate`.
 //! - **`miniz_oxide`**: its streaming `inflate` over raw deflate, the gzip
 //!   header parsed and the CRC-32 and `ISIZE` checked here, the CRC by
@@ -36,15 +35,14 @@
 //! for gzip (`windowBits` 31) and check the header, the CRC-32 and `ISIZE`;
 //! the `miniz_oxide` leg parses the header, its magic and method checked, and
 //! checks the other two here. A first pass
-//! has to check its member's CRC-32 (the P15 spec's "Each unit carries its
-//! own CRC-32"), so a rate without one would be a rate of something no first
-//! pass does.
+//! has to check its member's CRC-32 (D128), so a rate without one would be a
+//! rate of something no first pass does.
 //!
 //! **One member and nothing after it**, which is what `pg_dump -Fp -Z`
-//! writes (the spec's "Facts the grilling found"). Trailing bytes after the
-//! member are refused rather than read as a second member: this figure's
-//! input is the single-member shape, and a run that silently read another
-//! would be a reading of some other file.
+//! writes (`pgdt-io`'s `test_support` asserts it at every major). Trailing
+//! bytes after the member are refused rather than read as a second member:
+//! this figure's input is the single-member shape, and a run that silently
+//! read another would be a reading of some other file.
 //!
 //! # What it does not time
 //!

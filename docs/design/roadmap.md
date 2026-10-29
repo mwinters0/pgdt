@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P7, P9–P14, P16, P17, P19, P20, P25, P27–P31, P35, P36 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P15 — gzip input | **Complete** | [spec](roadmap-P15-gzip.md); [notes](roadmap-P15-gzip-notes.md) |
+| P1–P7, P9–P17, P19, P20, P25, P27–P31, P35, P36 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
@@ -54,7 +53,7 @@ Two standing-constraint docs cut across everything below.
 [`decisions.md`](decisions.md), "D68" and "D74", assign each module to one of
 seven crates, fix the direction dependencies may point, and pre-answer the
 cross-crate phases below: what statistics may persist and how they parse a
-value is settled there, and the remote source, as the ones P15 and P18 add, is io's. [`postgres-invariants.md`](postgres-invariants.md)
+value is settled there, and the remote source, as the gzip one and P18's are, is io's. [`postgres-invariants.md`](postgres-invariants.md)
 is the evidence layer: every `pg_dump` behaviour a decision treats as
 guaranteed, with its proof and its re-verification command.
 
@@ -976,32 +975,25 @@ corner-avoidance depth. What it starts from:
   clipped head in place of a key for a bytewise value is one — swept from
   `decisions.md` when this phase is grilled.
 
-## P15 — gzip input
-
-**Complete.** `.gz` input in both its shapes, and the decompression layer
-redrawn so `.xz` and `.gz` are two implementors of one codec-generic layer.
-The spec is [`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), and what it leaves
-the next phase its [notes](roadmap-P15-gzip-notes.md).
-
 ## P18 — zstd and lz4 input
 
 **Inbox:** [`roadmap-P18-zstd-inbox.md`](roadmap-P18-zstd-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
 
 The codecs `pg_dump` gained with PG 16, in the single-frame shape and in the
 seekable one (`t2sz`'s zstd seekable format, a skippable frame carrying the
-frame index). Same argument as P15 above — a `--compress=zstd` plain dump is
+frame index). Same argument as gzip's — a `--compress=zstd` plain dump is
 ordinary `pg_dump` output this build cannot read — and the same length
 problem in its own form: zstd's frame content size is *optional* and a
 streaming writer omits it, so the number is unavailable for exactly the files
 this phase exists to read, whose extent is `Open` until a first pass ends
 ([`decisions.md`](decisions.md), "D6").
 
-**Carved out of P15 rather than shipped with it**, because nothing the gzip
-work does is on this phase's critical path: a different decoder dependency, a
+**Carved out of the gzip work rather than shipped with it**, because nothing
+the gzip work does is on this phase's critical path: a different decoder dependency, a
 different seekable container, a different index payload, and a codec that
 arrives with a PG version rather than predating everything. What the two share
-is the extent contract, settled once, by P15, rather than being a reason to run
-them together.
+is the extent contract, settled once, by the gzip work (D6), rather than being a
+reason to run them together.
 
 **lz4 rides here**, for the reason it never belonged with gzip: it is the third
 arm of the same PG 16 method selector, with the same shape of problem and no
@@ -1009,8 +1001,9 @@ gzip-specific anything. Whether it is worth reading at all is this phase's to
 decide, and the honest answer may be no — it earns its place from a real dump
 somebody has, not from the flag existing.
 
-**Scheduled ahead of P8** for P15's reason, and after it for no reason beyond
-gzip being the older and more likely input.
+**Scheduled ahead of P8** because its Track B decodes each archive entry with
+the decoders whole-file input lands, and after gzip for no reason beyond gzip
+being the older and more likely input.
 
 ## P8 — Format coverage beyond plain COPY TEXT
 
@@ -1056,7 +1049,7 @@ in it are genuinely new and should be scoped as such when this phase becomes
 current:
 
 - **Per-entry streaming decompression** (gzip, and lz4/zstd for PG 16+
-  archives) — the decoders P15 and P18 land for whole-file input, applied per
+  archives) — the decoders the gzip source and P18 land for whole-file input, applied per
   entry.
   What is new here is the *placement*: an archive compresses **internally**, so
   the container layer decompresses an entry rather than a file, and there is no

@@ -59,8 +59,10 @@ pub(crate) fn payload(len: usize, seed: u64) -> Vec<u8> {
 }
 
 /// `bytes` as one gzip member, written by `flate2` at `level` over zlib-rs
-/// whatever a build selects (the workspace's `Cargo.toml`). Still no test assumes where
-/// its blocks end, which is the encoder's to choose.
+/// whatever a build selects (the workspace's `Cargo.toml`). Still no test
+/// assumes where its blocks end, which is the encoder's to choose: at level 1
+/// a sync flush ends none, so a test wanting units inside a member flushes at
+/// the default level.
 pub(crate) fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::new(level));
     encoder.write_all(bytes).unwrap();
@@ -71,7 +73,9 @@ pub(crate) fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
 /// zlib-rs — level 1 writing one static block across its part, the others
 /// whatever blocks zlib-rs chooses — each but the last ended by a sync flush,
 /// so its blocks are not final and it ends on a byte, and the deflate streams
-/// concatenated are one: no back-reference reaches before its part.
+/// concatenated are one: no back-reference reaches before its part. Not one
+/// stream changing level, which fails through `flate2` over zlib-rs
+/// (`set_level` flushes with no output buffer).
 pub(crate) fn gzip_levels(parts: &[(&[u8], u32)]) -> Vec<u8> {
     use flate2::{Compress, Compression, FlushCompress, Status};
     let mut member = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff];

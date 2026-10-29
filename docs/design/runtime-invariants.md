@@ -35,9 +35,8 @@ reason every register here numbers its entries: an entry gets cited, and a
 citation that renumbers is a citation that lies. Two letters rather than one is
 `docs/process.md`'s advice under "Known deficiencies", and here it is not
 merely advice — `R<n>` is already spoken for in this tree by the `xz-seek`
-crate's requirements register, which a phase spec and an inbox cite by number
-([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Inherited from the `.xz`
-source unchanged").
+crate's requirements register, which an inbox cites by number
+([`roadmap-P18-zstd-inbox.md`](roadmap-P18-zstd-inbox.md)).
 
 **`RT1`–`RT28` are allocated**, and nothing at or below `RT28` is reused.
 
@@ -1206,9 +1205,9 @@ not relied on.
 
 **Verified against:** zlib-rs 0.6.8, `libz-rs-sys` 0.6.8.
 
-**Relied on by:** [`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Settled in
-the grilling" — a checkpoint's place a function of the file alone, and a unit
-resumed from its checkpoint and window; `crates/gz-seek/src/engine.rs`, which
+**Relied on by:** [`decisions.md`](decisions.md), "D128" — a checkpoint's
+place a function of the file alone, and a unit resumed from its checkpoint and
+window; `crates/gz-seek/src/engine.rs`, which
 reads a member's trailer from the byte after its deflate data and a block's
 type from the bytes a stop's unused bits came from; D118.
 

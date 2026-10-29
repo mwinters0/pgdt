@@ -5,9 +5,9 @@ document**: when P18 is grilled, walk every entry, fold it into the spec or
 discard it as stale, and delete this file. See `docs/process.md`, "Inboxes:
 facts filed by destination".
 
-These three entries were filed for the compressed-input work when gzip and zstd
-were one phase, and they bear on both halves; P15's inbox carries them in its
-own terms.
+The first three entries were filed for the compressed-input work when gzip and
+zstd were one phase, and they bear on both halves; the gzip source answered
+them in its own terms (`decisions.md`, "D6", "D127", "D128").
 
 ---
 
@@ -30,8 +30,7 @@ inherits the contract rather than deciding it, and decides only when its source
 can state `Exact` (a seekable file's frame index, a frame that states its size).
 
 **Origin.** 2026-09-02, grilling the compressed-input work; the contract is
-P15's ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Settled in the
-grilling").
+[`decisions.md`](decisions.md), "D6".
 
 ---
 
@@ -45,11 +44,12 @@ crate's interface (its R3), and a crate that treats three codecs as one shape
 gets the size contract wrong for all three.
 
 **Why P18 cares.** This phase will want an addressing layer for zstd's seekable
-format, and the natural instinct will be to extend the xz crate — or, by then,
-whatever P15 built for gzip. The interface is reusable; the size guarantee is
-not. Whether that becomes a sibling crate, a generalized trait, or something
-this repo owns is this phase's to decide — but it decides it knowing the xz
-crate declined the generalization deliberately rather than by oversight.
+format, and the natural instinct will be to extend the xz crate, or `gz-seek`,
+the gzip one, a crate of its own for the same reason
+([`decisions.md`](decisions.md), "D127"). The interface is reusable; the size
+guarantee is not. Whether that becomes a sibling crate, a generalized trait, or
+something this repo owns is this phase's to decide — but it decides it knowing
+the xz crate declined the generalization deliberately rather than by oversight.
 
 **Origin.** 2026-09-02, grilling the compressed-input work.
 
@@ -61,17 +61,17 @@ crate declined the generalization deliberately rather than by oversight.
 built ([`decisions.md`](decisions.md), "The compressed source and the cache" and "The compressed source and the cache"): `stored_size()` on the trait with
 `SourceIdentity` recording it, so the staleness check stays a `stat`; the seek
 table living in the cache envelope as a sibling of `ContainerKind`, which stays
-`Plain` because the span offsets genuinely are plain-format offsets; one
-streaming decoder behind a mutex, restarted on seek, with no retained decoded
-output; and a non-seekable file being warned about rather than refused.
+`Plain` because the span offsets genuinely are plain-format offsets; whole units
+decoded and retained, one live forward handle where the budget cannot hold a
+unit (D15); and a non-seekable file being warned about rather than refused.
 
 **Why P18 cares.** A `.zst` source is the same shape of object and should not
 re-decide any of them. `CompressionIndex` is an enum from its first commit with
 one variant in it, so this phase adds a sibling variant of its own layout — the
-seekable format's frame index — rather than reshaping the field. If P15 has
-already added variants of its own, the question this phase inherits is whether
-they generalize or stay per-codec, which is a naming and layout question rather
-than an envelope one.
+seekable format's frame index — rather than reshaping the field. gzip's is
+`Gzip`, a checkpoint list (D128), so the question this phase inherits is
+whether the two generalize or stay per-codec, which is a naming and layout
+question rather than an envelope one.
 
 **Origin.** 2026-09-02, grilling the compressed-input work.
 
@@ -187,14 +187,14 @@ charge its constructor is handed and as the wait policy each source announces
 for itself; `hint_wait_policy` and `default_workers` stayed outside it, being
 the two answers the two sources genuinely differ on.
 
-**Why P18 cares.** This phase adds a *format*, not a transport, so the shape
-to copy is P15's: a codec implementing `source/compressed`'s `Codec` trait,
-which both arms — each holding the budget value and composing over whatever
-byte source it is given — are written once over, rather than a source per
-(codec, transport) pair. If the codec's reader cannot be driven from a caller's
-window the way `xz-seek`'s block handle is, that is the difference to find
-before the slices are written, since it is what decides whether the fetched arm
-exists at all.
+**Why P18 cares.** This phase adds a *format*, not a transport, so the shape to
+copy is the gzip source's: a codec implementing `source/compressed`'s `Codec`
+trait, which both arms — each holding the budget value and composing over
+whatever byte source it is given — are written once over, rather than a source
+per (codec, transport) pair. If the codec's reader cannot be driven from a
+caller's window the way `xz-seek`'s block handle is, that is the difference to
+find before the slices are written, since it is what decides whether the fetched
+arm exists at all.
 
 **Origin.** The remote-input work, 2026-09-20. *Contingent on* both `.xz`
 sources still sharing one budget value — see `crates/pgdt-io/src/source/compressed/blocks.rs` and

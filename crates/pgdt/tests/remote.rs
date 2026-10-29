@@ -1033,7 +1033,7 @@ async fn a_remote_gzip_member_reads_by_its_first_pass_and_then_by_its_index() {
     // The fetched arm's genericity: a single member's first pass is a serial
     // ranged read of the object, open until it meets the end, which then
     // reads as the indexed source whose index a cache would hold
-    // (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling").
+    // (`docs/design/decisions.md`, "D15").
     let (_oracle, url) = serving_gzip_dump();
     let source = source_of(&url).await;
     assert_eq!(source.extent().await.unwrap(), Extent::Open { at_least: 0 });

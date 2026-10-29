@@ -9,7 +9,7 @@ publish.workspace = true
 # reads a `.gz` source through, as `xz-seek` is the `.xz` one's. A leaf — it
 # depends on no workspace crate and names nothing of `pg_dump` — so that the
 # split into its own repo is a move rather than a rewrite
-# (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling").
+# (`docs/design/decisions.md`, "D127").
 
 # The inflater, one of three engines a feature names, each reached through its
 # zlib-compatible C API, the one surface exposing what an index needs —
@@ -23,7 +23,10 @@ publish.workspace = true
 default = ["zlib-rs"]
 # zlib-rs, a Rust engine, through `libz-rs-sys`.
 zlib-rs = ["dep:libz-rs-sys"]
-# zlib-ng 2.3.3 in its zlib-compatible build, by CMake, through `libz-sys`.
+# zlib-ng 2.3.3 in its zlib-compatible build, by CMake, through `libz-sys`:
+# its `cc` build fails zlib-ng's function table at 1.1.30 and leaves AVX-512
+# symbols undefined at 1.1.23, and a build given both modes builds stock zlib,
+# which is why the harness asks each leg its engine.
 zlib-ng = ["dep:libz-sys", "libz-sys/zlib-ng", "dep:libc"]
 # Stock zlib, the copy `libz-sys` bundles, built by `cc` and linked statically.
 zlib = ["dep:libz-sys", "libz-sys/stock-zlib", "libz-sys/static", "dep:libc"]

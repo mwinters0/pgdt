@@ -73,7 +73,10 @@ impl Chunking {
     /// its writers' blocks rather than of the chunk, a guess it cuts being
     /// continued from its stop; and a lead far enough that the decodes a
     /// guess lets begin begin far enough ahead of the frontier that it seldom
-    /// waits for one (`docs/design/decisions.md`, "D120").
+    /// waits for one (`docs/design/decisions.md`, "D120"). Placing them
+    /// further buys two or four jobs nothing, their guesses landing too far
+    /// apart to chain: two to six chunks past the lag is one plateau, and
+    /// three or four times the lag overshoots.
     pub(super) const SHIPPED: Chunking =
         Chunking { bytes: CHUNK_BYTES, limit: gz_seek::SPECULATION_LIMIT, lead: 4 };
 

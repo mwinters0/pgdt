@@ -1274,7 +1274,8 @@ processes in user space and nothing below it, so a profile of a scan whose time
 goes into reads and page copies reports the user-space remainder in proportion
 and says nothing about the kernel half — a plain partition's double read did
 not appear in one. Read such a profile against a figure's wall time, never
-instead of it.
+instead of it. For the same reason `perf stat` counts no context switch or
+migration here; `/proc/<pid>/task/<tid>/sched` holds both.
 
 **What this does not license.** An instrument reading taken outside a
 registered figure's sitting — an ad-hoc probe, a `runs/` artifact — is not a
@@ -3274,7 +3275,7 @@ plaintext from memory, whichever is slower, and every inflate row exceeds
 both in all three regimes: the two zlib backends take about six times the
 warm `parse` on tmpfs and the NVMe, and about twice the `.gz` floor on the
 SATA SSD. That margin is what only a parallel first pass would lift
-([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Slice order").
+([`decisions.md`](decisions.md), "D117").
 
 **Against the plain `parse`, the device decides which file is slower.** On
 tmpfs and the NVMe every inflate row is slower than the plain `parse` beside
@@ -3287,8 +3288,8 @@ one there, still held by its inflate.
 `gz-seek`'s floor.** `zlib-rs`'s cells lie wholly below zlib-ng's in all
 three, and `miniz_oxide` takes more than twice either's time. The floor
 `gz-seek`'s forward decode is held to is the `Inflate, zlib-ng` row
-([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Settled in the grilling");
-which backend it builds on is its own decision.
+([`decisions.md`](decisions.md), "D127"); which backend it builds on is
+D112's.
 
 ## Which engine `gz-seek` reads gzip through
 
@@ -3331,8 +3332,8 @@ both. So the backend is zlib-rs ([`decisions.md`](decisions.md), "D112"),
 which is also the one engine of the three needing no C build.
 
 **Its first pass meets the floor it is held to**, below zlib-ng's serial
-inflate of the same member ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md),
-"Settled in the grilling"), while zlib-ng's own first pass does not. Against
+inflate of the same member ([`decisions.md`](decisions.md), "D127"), while
+zlib-ng's own first pass does not. Against
 its own engine's serial inflate row, each first pass takes about 7% longer —
 the stops at every block's end, the windows copied out and each unit's CRC-32,
 and the difference between two instruments' builds, the zlib-ng row's being
@@ -3343,8 +3344,7 @@ Nothing here divides that remainder among them.
 both being a decode of all the plaintext. What 96 resumes add above that — a
 stream reset, a window primed, a range read each — is not separable here from
 the spread of the two rows the resumed row is the difference of; pricing it is
-the spacing figure's ([`roadmap-P15-gzip.md`](roadmap-P15-gzip.md), "Slice
-order").
+the spacing figure's ("What a checkpoint's spacing costs gzip", below).
 
 **The reference rows agree with `inflate-throughput`'s warm cells**, taken at
 another commit, to within 5%.
@@ -4044,9 +4044,9 @@ pool's unit are charged, so the unnamed remainder grows with the count, to
 this leg at 24 and 4 jobs would. The block path's charge does not depend on
 the first pass's chunk.
 
-**The one-job cells peak in a block-path slot after the pass hands over**,
-reading here as they did when 15.18.3 recorded it. A heaptrack recording of
-the one-job leg (`runs/p15.18.3/heaptrack-gzrss-jobs-1-control_gz.txt`) puts
+**The one-job cells peak in a block-path slot after the pass hands over.** A
+heaptrack recording of the one-job leg
+(`runs/p15.18.3/heaptrack-gzrss-jobs-1-control_gz.txt`) puts
 the peak in one 25.27 MB block-path slot (`compressed/file.rs`,
 `read_by_blocks`), decoded after the pass hands over to the indexed source, by
 the read of the DDL spans after the data, in the last unit. The indexed source
@@ -4055,6 +4055,9 @@ replayed on it (`BlockCache::affordable`): one reader's is the 102,987,776
 bytes the BGZF leg's one-job bill states, which a first-pass worker's budget,
 114,115,162 bytes, affords. The slot is billed by the same budget, and no cell
 holds what it was charged.
+
+**A secant over the counts settles no term of a task's charge**: on the limit
+leg, every term whose worst case outruns its charge holds nothing.
 
 **The limit leg's wall clock barely moves with the count**
 (`runs/gzip-first-pass-resident-20261029-1355/log`, each rep's line). Its
@@ -4172,11 +4175,14 @@ no block before its last, so every speculation finds nothing; the first to
 land pauses the rest (D125), and the
 frontier inflates alone, on one blocking thread (D126). Every count is level
 with serial, and the upper counts with the default. Here the default is the
-faster in five pairs of seven, by under 1%, so the remainder 15.19.1 left
-unattributed, the default the slower by as little, does not recur. Its serial pass is about three times the level-6 files' over the
+faster in five pairs of seven, by under 1%, so the remainder an earlier
+sitting left unattributed, the default the slower by as little, does not recur. Its serial pass is about three times the level-6 files' over the
 same plaintext, about three fifths of it the walk a static block's checkpoint
 takes (D118), which covers this member whole (a profile of its serial pass,
 `runs/p15.19/head/`).
+
+**No figure reads a fetched first pass**: its time, its resident, and what its
+download adds to a task's charge are unmeasured.
 
 ## koji full scan — the regression check
 

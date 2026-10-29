@@ -147,8 +147,8 @@ back. **`UF1`–`UF4` are allocated, and none is reused.**
   `miniz_oxide`'s safe `block-boundary` API, its inflate slower than the floor
   in every regime ([`../design/measurements.md`](../design/measurements.md),
   "What serial inflate costs against the plain parse"); an inflater of our
-  own, the spec buying it ([`../design/roadmap-P15-gzip.md`](../design/roadmap-P15-gzip.md),
-  "Settled in the grilling").
+  own, the inflater being bought ([`../design/decisions.md`](../design/decisions.md),
+  "D127").
 - **Watch.** None can be a test: the fix is an API appearing. The
   `upgrade-deps` skill's read of zlib-rs's `src/stable.rs` at each bump of
   `libz-rs-sys`'s `=0.6.8` pin in `crates/gz-seek/Cargo.toml` is the watch.

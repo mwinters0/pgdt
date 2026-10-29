@@ -563,7 +563,10 @@ impl Parallel {
     /// Take compressed bytes from `input`, which begins at
     /// [`Parallel::compressed_position`], and produce plaintext into `out`, as
     /// [`Forward::read`](crate::Forward::read) does, until a step
-    /// [`ParallelStep::needs_input`].
+    /// [`ParallelStep::needs_input`]. It returns only at a checkpoint or a
+    /// full `out`, so over a file whose plaintext is a small fraction of its
+    /// compressed bytes — only a crafted one — the caller gets no chance to
+    /// run decodes between.
     ///
     /// # Errors
     ///

@@ -154,7 +154,11 @@ fn copy_back<T: Copy, const N: usize>(out: &mut [T], start: usize, distance: usi
     }
 }
 
-/// Output whose history is unknown: markers where it would be read.
+/// Output whose history is unknown: markers where it would be read. On
+/// `control_gz`, a level-6 member, a marked decode almost never comes clean,
+/// so the plain sink is not what a speculation spends; an exact clean mark,
+/// kept as a copy, was slower than this source-region mark in each of three
+/// forms.
 pub(crate) struct Marked {
     out: Held<u16>,
     /// A position no marker is written at or after: at a block's end the

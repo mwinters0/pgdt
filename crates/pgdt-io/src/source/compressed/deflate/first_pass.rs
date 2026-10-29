@@ -4,7 +4,7 @@
 //! to the indexed source once it reaches the end.
 //!
 //! **The index is the first full pass's by-product**
-//! (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling"): a single
+//! (`docs/design/decisions.md`, "D128"): a single
 //! member states nothing about its own interior, so the scan that maps the
 //! file is the decode that finds its checkpoints, placed by `gz_seek`'s rule
 //! at [`CHECKPOINT_SPACING`] — a function of the file alone, so a pass
@@ -185,7 +185,8 @@ impl FirstPass {
     /// A pass from the file's first byte, placing checkpoints at
     /// [`CHECKPOINT_SPACING`] and spilling their windows into `spill`, its
     /// status lines naming the file `named` — its origin as a message to the
-    /// user names it.
+    /// user names it, a `String` because naming `source::origin` here closes
+    /// a module cycle through the openers.
     pub(crate) fn fresh(
         named: String,
         feed: Feed,

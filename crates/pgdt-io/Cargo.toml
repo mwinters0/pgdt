@@ -77,7 +77,7 @@ bincode = { workspace = true, features = ["serde"] }
 # The gzip encoders `test_support` writes its single-member and BGZF payloads
 # with, neither ours, so a reader is checked against what someone else's
 # encoder writes; the lock pins each writer as `mise` pins a tool
-# (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling").
+# (`docs/design/roadmap.md`, "A test may assume the tools `mise` pins").
 flate2 = { workspace = true }
 noodles-bgzf = { workspace = true }
 # Where `pg_dump`'s own compressed fixtures are.

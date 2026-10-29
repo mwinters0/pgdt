@@ -2459,9 +2459,9 @@ DECODE_BASELINE = 1
 INFLATE_FAMILY = "inflate-"
 
 #: The deflate backends that figure is taken over, in its table's row order,
-#: each spelled as the instrument's `--backend` spells it: the three
-#: `docs/design/roadmap-P15-gzip.md` names, zlib-ng first as the reference
-#: `gz-seek`'s throughput floor is stated against.
+#: each spelled as the instrument's `--backend` spells it, zlib-ng first as
+#: the reference `gz-seek`'s throughput floor is stated against
+#: (`docs/design/decisions.md`, "D127").
 INFLATE_BACKENDS: tuple[str, ...] = ("zlib-ng", "zlib-rs", "miniz-oxide")
 
 #: Every inflate shape, `INFLATE_FAMILY` and a backend.
@@ -2512,9 +2512,9 @@ GZSPACING_STAGES: tuple[str, ...] = ("forward", "starts", "units")
 #: default block (three times the dictionary, at least 1 MiB: `xz(1)`,
 #: `--block-size`) through the 24 and 128 MiB blocks the xz figures read —
 #: since a unit is also the decode unit, the block-cache unit and the
-#: partition grain (`docs/design/roadmap-P15-gzip.md`, "Settled in the
-#: grilling"). The smallest is where a resume's fixed cost is multiplied
-#: most, so it is the row that resolves it.
+#: partition grain (`docs/design/decisions.md`, "D113"). The smallest is
+#: where a resume's fixed cost is multiplied most, so it is the row that
+#: resolves it.
 GZSPACING_MIB: tuple[int, ...] = (1, 2, 4, 8, 16, 32, 64, 128)
 
 #: Every spacing shape, `GZSPACING_FAMILY`, a stage and a spacing.
@@ -2552,7 +2552,7 @@ GZPASS_PHYSICAL = 12
 #: logical count less one and the logical count. **The upper two are the
 #: challengers the default, the physical count, is read against**
 #: (`gzpass_outcome`), and the third the falsifier naming the cost they add
-#: (`docs/design/roadmap-P15-gzip.md`, "Slice order"): `--jobs` counts the
+#: (`docs/design/decisions.md`, "D2"): `--jobs` counts the
 #: frontier and not the scan's thread, so at the logical count less one the
 #: process runs no more threads than there are CPUs.
 GZPASS_JOBS: tuple[int, ...] = (1, 4, GZPASS_PHYSICAL, GZPASS_LOGICAL - 1, GZPASS_LOGICAL)
@@ -8805,16 +8805,16 @@ def run_inflate_throughput(session: Session) -> str:
     """Serial inflate of one gzip member, against the plain `parse` of the
     same plaintext, in every regime.
 
-    What it decides is the P15 spec's (`docs/design/roadmap-P15-gzip.md`,
-    "Slice order"): a single member's first pass inflates serially, so an
-    inflate row slower than that pass's own floor — the `.gz` file's `dd` row
-    or the warm `parse`, the plaintext reaching its scan from memory,
-    whichever is slower — is a first pass bound by the inflate, which only a
-    parallel first pass would lift; and the backends' rates are what
-    `gz-seek`'s throughput floor is read off. **The ratio each inflate cell
-    carries answers a different question**, whether a `.gz` first pass is
-    slower than the plain file's `parse` on the same device: below 1 on a
-    device holding the plain `parse`, the pass can still be its inflate's.
+    What it decides (`docs/design/decisions.md`, "D117", "D127"): a single
+    member's first pass inflates serially, so an inflate row slower than that
+    pass's own floor — the `.gz` file's `dd` row or the warm `parse`, the
+    plaintext reaching its scan from memory, whichever is slower — is a first
+    pass bound by the inflate, which only a parallel first pass would lift;
+    and the backends' rates are what `gz-seek`'s throughput floor is read
+    off. **The ratio each inflate cell carries answers a different
+    question**, whether a `.gz` first pass is slower than the plain file's
+    `parse` on the same device: below 1 on a device holding the plain
+    `parse`, the pass can still be its inflate's.
 
     **The plain `parse` is this figure's own reading**, not borrowed from
     `scan-throughput-*`: each inflate row is read as a ratio against it, and
@@ -8892,7 +8892,7 @@ def run_inflate_throughput(session: Session) -> str:
 #: The `gzseek-backend` figure's reference rows: the serial inflate of the same
 #: member by the `inflate-throughput` instrument, on the two zlib-API engines
 #: it carries — zlib-ng's the floor `gz-seek`'s first pass is held to
-#: (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling").
+#: (`docs/design/decisions.md`, "D127").
 GZSEEK_REFERENCES: tuple[str, ...] = ("zlib-ng", "zlib-rs")
 
 
@@ -8920,9 +8920,8 @@ def run_gzseek_backend(session: Session) -> str:
     """`gz-seek`'s first pass and its resumed unit decodes on each engine it
     builds over, against a serial inflate of the same member.
 
-    What it decides is the P15 spec's (`docs/design/roadmap-P15-gzip.md`,
-    "Slice order"): which engine `gz-seek` ships, the fastest winning and the
-    lighter build within noise. **Two costs an engine sets**, read off one
+    What it decides (`docs/design/decisions.md`, "D112"): which engine
+    `gz-seek` ships, the fastest winning and the lighter build within noise. **Two costs an engine sets**, read off one
     build of the `gz_read` example an engine (`ensure_gzseek_binary`): the
     first pass, which stops at every block's end and copies each
     checkpoint's window; and every unit decoded alone from its checkpoint,
@@ -9031,9 +9030,8 @@ def run_gzseek_spacing(session: Session) -> str:
     """gzip's own costs at each candidate checkpoint spacing, on the engine
     `gz-seek` ships, against a serial inflate of the same member.
 
-    What it prices is the P15 spec's (`docs/design/roadmap-P15-gzip.md`,
-    "Slice order"): the three costs a spacing sets that xz does not share —
-    **the first pass**, which stops at every block's end whatever the spacing
+    What it prices (`docs/design/decisions.md`, "D113"): the three costs a
+    spacing sets that xz does not share — **the first pass**, which stops at every block's end whatever the spacing
     and copies one window a checkpoint, set against zlib-ng's serial inflate,
     the floor it is held to; **a resume's fixed cost**, the `starts` shape's
     time less the `forward` shape's over the unit count, both of one binary in
@@ -11192,7 +11190,7 @@ def gzip_task_bytes(chunk: int = GZIP_CHUNK) -> int:
     sinks four, and two decodes held — which is why this figure is
     what prices that constant: no leg varies it, and a first-pass
     cell's remainder is read against a charge it dominates
-    (`docs/design/roadmap-P15-gzip.md`, "Slice order")."""
+    (`docs/design/decisions.md`, "D124")."""
     feed = max(chunk, GZIP_INPUT_CHUNK)
     running = max(gzip_speculation_bytes(chunk, feed), gzip_decode_bytes())
     decodes, guesses = GZIP_DECODES_A_TASK, GZIP_GUESSES_A_TASK
@@ -11259,7 +11257,7 @@ def bgzf_unit() -> int:
 #: the speculation limit (`repeated_gz`), the only file filling the plaintext
 #: terms most of a task's charge is (`gzip_task_bytes`) on every chunk, so the
 #: only one on which each added worker can hold more than it was charged
-#: (`docs/design/roadmap-P15-gzip.md`, "Slice order"). The same zlib, level
+#: (`docs/design/decisions.md`, "D124"). The same zlib, level
 #: and length of plaintext as `control_gz`, packed tighter.
 GZIP_RSS_LEGS: tuple[tuple[str, str, str], ...] = (
     ("control_gz", "single member, first pass", "pass"),
@@ -11343,7 +11341,7 @@ def run_gzip_resident(session: Session) -> str:
     each cell's worst rep read against the charge the budget rule billed it.
 
     **What is under test is `MEMORY_UNPOOLED_BOUND`, read off `.xz` alone**
-    (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling"). The bound
+    (`docs/design/decisions.md`, "D3"). The bound
     is what `margin_allowance` predicts a count's resident with above its
     charge, so a gzip decoder or first pass holding more outside its charge
     than liblzma's does gets a correct charge and an optimistic prediction —
@@ -11604,8 +11602,7 @@ GZPASS_WRITERS: tuple[tuple[str, str, str], ...] = (
 
 #: The count the chunk-length leg is read at beside the shipped length: the
 #: default, the physical count (`docs/design/decisions.md`, "D2"), since the
-#: leg prices a constant every default pass runs (`docs/design/roadmap-P15-gzip.md`,
-#: "Slice order").
+#: leg prices a constant every default pass runs (D121).
 GZPASS_CHUNK_JOBS = GZPASS_PHYSICAL
 
 #: The writers the chunk leg must beat the shipped length on to replace it,
@@ -11615,14 +11612,15 @@ GZPASS_CHUNK_WRITERS: tuple[str, ...] = ("control_gz", "control_gz_ng", "control
 GZPASS_CHUNK_WINS = 2
 
 #: How many reps each leg takes, alternated within each and paired by rep:
-#: 15.17.4's probe's count, whose pairs this figure's rule reads.
+#: the count of the hand probe whose pairs this figure's rule was fixed on
+#: (`runs/p15.17.4/gate/`).
 GZPASS_REPS = 7
 
 #: How many of its pairs a leg may lose and still **beat** the other
 #: (`gzpass_beats`), fixed before the sitting: at seven reps, six wins of seven.
 #: Two legs neither of which beats the other are **level**. A gate on this line
 #: reads alternated reps by their paired differences, never by whether two
-#: ranges overlap (`docs/design/roadmap-P15-gzip.md`, "Slice order").
+#: ranges overlap, which a serial leg spread by placement decides.
 GZPASS_SPARED = 1
 
 #: How much faster a leg must be to **beat** another, besides its pairs: its
@@ -11684,8 +11682,8 @@ def gzpass_level(a: Sequence[float], b: Sequence[float]) -> bool:
 #: default, the physical count (`docs/design/decisions.md`, "D2"): only
 #: `reopens` moves it, an upper count beating the physical count on a file
 #: either lifts (D2's `Reopens`); the cap holds on every other, and the three
-#: below it still name the cost an upper count adds by 7.1's falsifiers
-#: (`docs/design/roadmap-P15-gzip.md`, "Slice order"). **Every order of the
+#: below it still name the cost an upper count adds, by the falsifiers the
+#: figure's first sitting fixed (D2's `Rejected`). **Every order of the
 #: four counts falls in one.**
 GZPASS_OUTCOMES: dict[str, str] = {
     "reopens": "an upper count beats the physical count on a file it or the physical count "

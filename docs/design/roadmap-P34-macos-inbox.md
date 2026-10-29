@@ -68,6 +68,6 @@ an Intel Mac's do not.
 (`sysctl hw.physicalcpu` and its affinity's equivalent) and an `RT<n>` for it,
 or whether the logical count is accepted there.
 
-**Origin.** 15.7.1, 2026-10-27. Contingent on no re-take of
+**Origin.** `gzip-first-pass`, 2026-10-27. Contingent on no re-take of
 `gzip-first-pass` finding an upper count beating the physical count on a file
 it or the physical count lifts (`decisions.md`, "D2").

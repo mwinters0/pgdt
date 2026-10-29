@@ -175,9 +175,8 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "on-conflict-do-nothing": ["--inserts", "--on-conflict-do-nothing"],
         "disable-triggers": ["--data-only", "--disable-triggers"],
         # The plain dump compressed whole, one gzip member at every major,
-        # written as `compress.sql.gz` (`output_suffix`): what P15's gzip
-        # source reads (`docs/design/roadmap-P15-gzip.md`, "Facts the
-        # grilling found").
+        # written as `compress.sql.gz` (`output_suffix`): what the gzip
+        # source reads, its shape asserted by `pgdt-io`'s `test_support`.
         "compress": ["--compress=6"],
     },
     "types": {

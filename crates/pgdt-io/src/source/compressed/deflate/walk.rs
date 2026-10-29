@@ -8,8 +8,7 @@
 //! whole members at least [`CHECKPOINT_SPACING`] long, every one a member start
 //! (`docs/design/decisions.md`, "D116"). It reads every part of the file, a
 //! member being at most 64 KiB, which locally buys a parallel first scan; a
-//! fetched file is read by a first pass instead, downloaded once
-//! (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling"). A file whose
+//! fetched file is read by a first pass instead, downloaded once. A file whose
 //! first member is BGZF's and whose chain then breaks — a later member not
 //! BGZF's, a length running past the file — is a gzip file of several members
 //! or a damaged one, so it is handed to a first pass, which reads the first

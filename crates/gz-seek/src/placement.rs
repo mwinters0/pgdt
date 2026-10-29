@@ -11,7 +11,7 @@
 //! inside a static block, before any symbol but its end-of-block code — so the same file and spacing give the
 //! same index however the caller cuts its buffers, wherever an earlier pass was
 //! interrupted, and whichever decode, on whichever thread, read each piece
-//! (`docs/design/roadmap-P15-gzip.md`, "Settled in the grilling"). A decode
+//! (`docs/design/decisions.md`, "D128"). A decode
 //! reports every block's end, and the rule checks each against the next
 //! multiple; inside a static block the decode walks to the mark
 //! ([`Placement::mark`]) and stops at the first symbol there, so a writer

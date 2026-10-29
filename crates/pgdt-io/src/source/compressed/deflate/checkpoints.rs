@@ -13,10 +13,10 @@ pub(crate) use gz_seek::{BGZF_HEADER_LEN, GZIP_MAGIC};
 /// window is read from: [`CompressionIndex::Gzip`]'s layout.
 ///
 /// **Opaque**: `gz_seek`, whose index this wraps, is a crate to be split off
-/// this workspace (`docs/design/roadmap-P15-gzip.md`, "Settled in the
-/// grilling"), so its types are not part of this crate's API. What an
-/// embedder reads is the file's shape, through the methods below; what it
-/// persists is the checkpoints whole, under the `serde` feature.
+/// this workspace (`docs/design/decisions.md`, "D127"), so its types are not
+/// part of this crate's API. What an embedder reads is the file's shape,
+/// through the methods below; what it persists is the checkpoints whole,
+/// under the `serde` feature.
 ///
 /// **Only offsets, bit positions, CRCs and each checkpoint's kind are held.** A unit decode inside a
 /// member needs the plaintext before its checkpoint, which is read through the

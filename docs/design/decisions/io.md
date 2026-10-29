@@ -24,9 +24,10 @@ either beating it on a file it or the physical lifts. Evidence: `scan-throughput
 ### D3 The memory constants, and what each one is
 `MEMORY_RESERVE` is a subtraction, not a fraction, which under-reserves the small allowances where being wrong kills the
 process. `MEMORY_MARGIN_PERCENT` is a judgement about the worst rep, enforced on the count. `MEMORY_UNPOOLED_BOUND` is
-read off a grid, never a per-reader term. `DEFAULT_MEMORY_BUDGET` stays small enough to decline block decode on an
-ordinary `.xz`; raising it to clear that gate makes one number answer two questions. Re-setting the reserve and the
-bound is P23's (`KD34`). Evidence: `reserve`, `chunk-size`.
+read off a grid, never a per-reader term, and a new codec's resident is read against it, never argued to carry over
+(`charge_model_problem`). `DEFAULT_MEMORY_BUDGET` stays small enough to decline block decode on an ordinary `.xz`;
+raising it to clear that gate makes one number answer two questions. Re-setting the reserve and the bound is P23's
+(`KD34`). Evidence: `reserve`, `chunk-size`, `gzip-resident`.
 
 ### D83 `--memory` states what the process may hold; one carving serves stated and discovered
 A read-buffer budget is a number no operator can size a container from, so `--memory` states what the process may hold

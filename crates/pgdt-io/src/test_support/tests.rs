@@ -1,9 +1,12 @@
 //! The gzip shapes a gzip source is read against, pinned where they are
 //! written: the payloads [`gzip_compress`] and [`bgzf_compress`] write with
 //! encoders not ours, and the file `pg_dump -Fp --compress` writes at every
-//! major (`docs/design/roadmap-P15-gzip.md`, "Facts the grilling found").
-//! Nothing here reads them through a source; what is asserted is that each
-//! file has the shape the reader built over it will assume.
+//! major: one member, written through zlib's `gzwrite` with no flush before
+//! `gzclose`, its header flags and `MTIME` zero. Nothing here reads them
+//! through a source; what is asserted is that each file has the shape the
+//! reader built over it will assume. A regenerated fixture is not compared
+//! with the committed `default.sql`, `\restrict`'s key and the `now()` column
+//! moving every run (D69), so its framing and major are what is checked.
 
 use std::io::Read;
 
