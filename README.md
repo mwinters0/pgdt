@@ -1,22 +1,21 @@
 # Postgres Dump Tool
 
-Inspect Postgres dumps and query them like they're parquet (with streaming Arrow batches).
+Inspect Postgres dumps and query them like parquet (with streaming Arrow batches).
 
 Available as:
 - Rust library: `pgdt-query`
 - A CLI: `pgdt`
-    - Parse & cache your dump's metadata
-    - Inspect it: tables, roles, functions, row counts, etc.
-    - Execute simple queries
+    - Parse your dump's metadata
+    - Inspect its contents: tables, roles, functions, row counts, etc.
 - A DataFusion shell: `pgdt sql`
     - Full SQL support (See: the [Datafusion SQL reference](https://datafusion.apache.org/user-guide/sql/index.html))
-    - Export to Parquet, etc
+    - Export to Parquet, CSV, etc
 
 
 <details>
 
 <summary>
-🧐🤖 _Human author, LLM bicycle._
+🧐🤖 <i>Human author, LLM bicycle.</i>
 </summary>
 
 I'm experimenting in this repo to see whether I can negotiate a middle ground between traditional
@@ -37,20 +36,22 @@ Anyone is welcome to open human- or AI-generated PRs and Issues.
 </details>
 
 ## Why
-My use case: I have a 40Gb .xz dump which expands to 1.5Tb by the time it's loaded into Postgres
-with indexes. I want just last week's data from it (3% of the data) as Parquet.
+I have a 40Gb .xz dump which expands to 1.5Tb by the time it's loaded into Postgres. I want just
+last week's data from it (3% of the data) as Parquet.
 
 **Traditional approach:**
 1. Load it into Postgres: 36 hours + 1.5Tb of disk
 2. Extract it to Parquet: 5 minutes
 
 **With `pgdt`:**
-1. Build the cache: 40 minutes + 15Mb of disk
-2. Extract it to Parquet: 20 minutes
+1. Build the cache: 20 minutes + 15Mb of disk
+2. Extract it to Parquet: 15 minutes
 
 
 ## Install
-Linux-only for now.  If you're enlightened, add this to your `mise.toml`:
+Linux-only for now.  (Hire me so I can afford more hardware!)
+
+If you're enlightened, you can add this to your `mise.toml`:
 
 ```toml
 [tools]
@@ -94,7 +95,7 @@ See: [dump inspection docs](docs/manual/dump-inspection.md) for more.
 
 ### `pgdt sql`
 
-Use case: you want to inspect your _data_ and/or extract some portion of it.
+Use case: you want to query the data in your dump.
 
 ```bash
 # Parse a dump (builds foo.xz.dtcache)
