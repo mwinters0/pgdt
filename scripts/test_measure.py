@@ -5716,8 +5716,10 @@ class GzipFirstPass(unittest.TestCase):
             (1, 4, measure.GZPASS_PHYSICAL, measure.GZPASS_LOGICAL - 1, measure.GZPASS_LOGICAL),
         )
         self.assertEqual(measure.GZPASS_LOGICAL, 2 * measure.GZPASS_PHYSICAL)
+        # The chunk leg is read at the default count, the constant it prices
+        # being one every default pass runs.
         self.assertIn(measure.GZPASS_CHUNK_JOBS, measure.GZPASS_JOBS)
-        self.assertEqual(measure.GZPASS_CHUNK_JOBS, 4)
+        self.assertEqual(measure.GZPASS_CHUNK_JOBS, measure.GZPASS_PHYSICAL)
 
     def test_another_topology_is_refused(self):
         self.assertIsNone(
@@ -5926,7 +5928,7 @@ class GzipFirstPass(unittest.TestCase):
 
     TIMES = {1: 4.0, 4: 2.5, measure.GZPASS_PHYSICAL: 1.0, 23: 1.0, 24: 2.0}
 
-    def _raw(self, times=None, chunk=2.0, reported=None):
+    def _raw(self, times=None, chunk=0.8, reported=None):
         """A sitting whose every gzip leg reads `times` at its count, every
         rep alike, and whose every run reports the count it states."""
         rss, readings, reports = {}, {}, {}
@@ -5967,8 +5969,40 @@ class GzipFirstPass(unittest.TestCase):
         rows = [ln for ln in body.splitlines() if ln.startswith("| `")]
         self.assertEqual(len(rows), 1 + len(measure.GZPASS_JOBS) + 1)
         self.assertIn("4.00× serial", body)
-        # The chunk leg, at 2.0 s against the shipped chunk's 2.5 s.
-        self.assertIn("**beats** · faster in 7/7 · -0.500 s, -25.0%", body)
+        # The chunk leg, at 0.8 s against the shipped chunk's 1.0 s at the
+        # physical count, on every writer's file.
+        self.assertIn("**beats** · faster in 7/7 · -0.200 s, -25.0%", body)
+        self.assertIn("**The chunk leg replaces the shipped chunk**", body)
+        self.assertIn(f"4 MiB against 1 MiB chunks, `{measure.GZPASS_PHYSICAL}`", body)
+
+    def test_the_chunk_leg_beaten_anywhere_leaves_the_shipped_chunk(self):
+        body = self._render(self._raw(chunk=1.5))
+        self.assertIn("**The shipped chunk stands**", body)
+        self.assertIn("beats the shipped 1 MiB on 0 of the 3", body)
+
+    def test_the_chunk_verdict_is_d121_s_bar(self):
+        v = measure.gzpass_chunk_verdict
+        labels = {leg: leg for leg, _, _ in measure.GZPASS_WRITERS}
+        quick = "control_gz_quick"
+        self.assertNotIn(quick, measure.GZPASS_CHUNK_WRITERS)
+        self.assertEqual(set(measure.GZPASS_CHUNK_WRITERS) | {quick}, set(labels))
+
+        def marks(**over):
+            return {leg: over.get(leg, "level") for leg in labels}
+
+        replaces = "replaces the shipped chunk"
+        # Two of the three level-6 files, beaten on none: it ships.
+        self.assertIn(replaces, v(marks(control_gz="beats", control_gz_gnu="beats"), labels))
+        # One file's gain does not move a default.
+        self.assertIn("stands", v(marks(control_gz_gnu="beats"), labels))
+        # Beaten anywhere, the level-1 file's included, it does not ship.
+        self.assertIn(
+            "stands",
+            v(marks(control_gz="beats", control_gz_ng="beats", control_gz_gnu="beats",
+                    control_gz_quick="beaten"), labels),
+        )
+        # A win on the level-1 file counts toward nothing.
+        self.assertIn("stands", v(marks(control_gz="beats", control_gz_quick="beats"), labels))
 
     def test_a_count_other_than_the_row_s_refuses_the_figure(self):
         raw = self._raw(reported={("control_gz_gnu", "pgdt", 23): {"resolved_jobs": "20"}})

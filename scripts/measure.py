@@ -11600,8 +11600,16 @@ GZPASS_WRITERS: tuple[tuple[str, str, str], ...] = (
 )
 
 #: The count the chunk-length leg is read at beside the shipped length: the
-#: optimization baseline, one count as the spec asks.
-GZPASS_CHUNK_JOBS = 4
+#: default, the physical count (`docs/design/decisions.md`, "D2"), since the
+#: leg prices a constant every default pass runs (`docs/design/roadmap-P15-gzip.md`,
+#: "Slice order").
+GZPASS_CHUNK_JOBS = GZPASS_PHYSICAL
+
+#: The writers the chunk leg must beat the shipped length on to replace it,
+#: and on how many of them (`gzpass_chunk_verdict`): the level-6 files, two of
+#: the three, and beaten on none of `GZPASS_WRITERS` (D121's `Reopens`).
+GZPASS_CHUNK_WRITERS: tuple[str, ...] = ("control_gz", "control_gz_ng", "control_gz_gnu")
+GZPASS_CHUNK_WINS = 2
 
 #: How many reps each leg takes, alternated within each and paired by rep:
 #: 15.17.4's probe's count, whose pairs this figure's rule reads.
@@ -11741,6 +11749,34 @@ def gzpass_verdict(outcomes: Mapping[str, str]) -> str:
     )
 
 
+def gzpass_chunk_verdict(marks: Mapping[str, str], labels: Mapping[str, str]) -> str:
+    """What the chunk leg settles, from each writer's mark against the shipped
+    length at `GZPASS_CHUNK_JOBS` — `beats`, `beaten` or `level`, keyed by
+    the writer's input — with `labels` naming each: the leg's chunk replaces
+    the shipped one where it beats it on at least `GZPASS_CHUNK_WINS` of
+    `GZPASS_CHUNK_WRITERS` and is beaten on none, and the shipped one stands
+    otherwise."""
+    leg, shipped = f"{GZPASS_CHUNK_BYTES >> 20} MiB", f"{GZIP_INPUT_CHUNK >> 20} MiB"
+    wins = [w for w in GZPASS_CHUNK_WRITERS if marks[w] == "beats"]
+    beaten = [w for w in marks if marks[w] == "beaten"]
+    tally = (
+        f"the {leg} chunk beats the shipped {shipped} on {len(wins)} of the "
+        f"{len(GZPASS_CHUNK_WRITERS)} level-6 writers' files"
+        + (f" ({', '.join(labels[w] for w in wins)})" if wins else "")
+        + (
+            f" and is beaten on {', '.join(labels[w] for w in beaten)}"
+            if beaten
+            else " and is beaten on none"
+        )
+    )
+    if len(wins) >= GZPASS_CHUNK_WINS and not beaten:
+        return f"**The chunk leg replaces the shipped chunk**: {tally}."
+    return (
+        f"**The shipped chunk stands**: {tally}, where replacing it asks "
+        f"{GZPASS_CHUNK_WINS} and none."
+    )
+
+
 def _gzpass_specs() -> list[RunSpec]:
     """Every leg, a sweep a writer: the plain `parse` the pass falls toward,
     read in each sweep, then the writer's file at every count and at the
@@ -11769,9 +11805,9 @@ def _gzpass_specs() -> list[RunSpec]:
 def run_gzip_first_pass(session: Session) -> str:
     """Wall clock of `pgdt parse` over one gzip member — its first pass —
     by four writers, at the serial count, four, the physical count, the
-    logical count less one and the logical count, and at 4 MiB chunks at
-    four; beside each writer's sweep, the plain `parse` of `control`, the
-    scan's floor a first pass falls toward.
+    logical count less one and the logical count, and at 4 MiB chunks at the
+    physical count; beside each writer's sweep, the plain `parse` of
+    `control`, the scan's floor a first pass falls toward.
 
     **What it settles is the gzip first pass's default worker count**
     (`docs/design/decisions.md`, "D2"): the logical count, the physical one,
@@ -11787,8 +11823,10 @@ def run_gzip_first_pass(session: Session) -> str:
     settles nothing (`GZPASS_UNLIFTED`).
 
     **It prices the chunk length too**: 4 MiB, rapidgzip's, against the
-    shipped 1 MiB at four jobs, the speculation limit held, by the same pairs
-    — a separate build, whose layout is a second difference no pair removes.
+    shipped 1 MiB at the physical count, the default, the speculation limit
+    held, by the same pairs — a separate build, whose layout is a second
+    difference no pair removes — and says which chunk ships
+    (`gzpass_chunk_verdict`), by a rule written before any reading.
 
     **Every leg is checked against its own run**: the count each `scan
     started` line resolved must be the row's, a gzip leg must say its first
@@ -11877,18 +11915,25 @@ def run_gzip_first_pass(session: Session) -> str:
     )
     table = md_table(["`--jobs`", *labels], rows)
 
+    def mark(a: Sequence[float], b: Sequence[float]) -> str:
+        return "beats" if gzpass_beats(a, b) else "beaten" if gzpass_beats(b, a) else "level"
+
     def pair(a: Sequence[float], b: Sequence[float]) -> str:
         diff = median([x - y for x, y in zip(a, b)])
-        mark = "**beats**" if gzpass_beats(a, b) else "beaten" if gzpass_beats(b, a) else "level"
+        shown = "**beats**" if (m := mark(a, b)) == "beats" else m
         share = diff / min(median(a), median(b))
-        return f"{mark} · faster in {gzpass_wins(a, b)}/{len(a)} · {diff:+.3f} s, {share:+.1%}"
+        return f"{shown} · faster in {gzpass_wins(a, b)}/{len(a)} · {diff:+.3f} s, {share:+.1%}"
 
     p, l1, lg = GZPASS_PHYSICAL, GZPASS_LOGICAL - 1, GZPASS_LOGICAL
     outcomes: dict[str, str] = {}
+    chunk_marks: dict[str, str] = {}
     pair_rows = []
     for leg, label, _ in GZPASS_WRITERS:
         outcome = gzpass_outcome(at(leg, 1), at(leg, p), at(leg, l1), at(leg, lg))
         outcomes[label] = outcome
+        chunk_marks[leg] = mark(
+            at(leg, GZPASS_CHUNK_JOBS, GZPASS_CHUNK_BINARY), at(leg, GZPASS_CHUNK_JOBS)
+        )
         pair_rows.append(
             [
                 label,
@@ -11949,6 +11994,8 @@ def run_gzip_first_pass(session: Session) -> str:
         + pair_table
         + "\n\n"
         + gzpass_verdict(outcomes)
+        + " "
+        + gzpass_chunk_verdict(chunk_marks, {leg: label for leg, label, _ in GZPASS_WRITERS})
         + "\n\n"
         + _per_rep(figure, session, specs)
     )
