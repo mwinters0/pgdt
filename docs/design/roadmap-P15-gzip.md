@@ -431,8 +431,8 @@ how much of the file the frontier decodes alone, and is restated as a constant
 of its own rather than a multiple of the chunk: twice the largest block zlib
 ends, at its largest `memLevel`, a piece reaching no boundary under it
 returning nothing. **7's throughput figure prices the chunk length**: the
-parallel first pass at the shipped length and at rapidgzip's 4 MiB, at one
-worker count, the limit held fixed across both; the limit itself is priced
+parallel first pass at the shipped length and at rapidgzip's 4 MiB, at the
+default count, the limit held fixed across both; the limit itself is priced
 by 7's resident readings against a task's charge, not by a leg.
 
 **A parallel first pass no slower than serial, slice 17, precedes 7's
@@ -563,6 +563,21 @@ stays inside D12. **Done when**, by 7.1's bar, the level-1 file at the
 default count is no slower than serial and the three level-6 files'
 default-count rows are no slower than the tree it opens on, by a re-take of
 `gzip-first-pass`.
+
+**The chunk priced at the default count, slice 20, admitted after spec time,
+precedes 7's record**
+([`../status/history/2026-10-29.md`](../status/history/2026-10-29.md),
+"D121's reopening, reviewed: the chunk priced at the default count"): 7.1
+read the chunk leg at four jobs, a count nothing ships once the default is
+the physical count (D2). The leg moves to the physical count, one leg in
+place of the four-job one, and `gzip-first-pass` is re-taken. **Done when**
+the shipped chunk is chosen on that reading: rapidgzip's 4 MiB if, by 7.1's
+bar, it beats the shipped length on at least two of the three level-6
+writers' files and is beaten on none, the level-1 file's included; the
+shipped length otherwise, D121's `Rejected` line rewritten to the reading. A
+switch is one constant the leg already builds, so the slice is not split, and
+it inverts the leg to cut the shipped 1 MiB, so a later sitting still reads
+the length D121 rejects.
 
 **BGZF members coalesced per member, slice 14, precedes 8**
 ([`../status/history/2026-10-24.md`](../status/history/2026-10-24.md),

@@ -103,7 +103,7 @@ four-job rows did not move and the 4 MiB leg's did. Nothing attributes it.
 
 ## What the next round inherits
 
-- **D121's reopening is the maintainer's** ([`../status/STATUS.md`](../status/STATUS.md),
-  "Decisions worth another look"): the shipped chunk stands until it is ruled on.
-- **15.7.2**, the record, is the phase's last slice, and nothing it waits on
-  is open.
+- **15.20 prices the chunk at the default count** before 15.7.2, the
+  record, which is the phase's last slice
+  ([`../status/history/2026-10-29.md`](../status/history/2026-10-29.md),
+  "D121's reopening, reviewed: the chunk priced at the default count").

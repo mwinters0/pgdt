@@ -4136,10 +4136,8 @@ the physical count beats both upper counts by a margin, in six or seven
 pairs of seven, and the two upper counts are level, so the cost is a core or
 a cache shared and not the scan's thread. The 4 MiB chunk is level with the
 shipped one on three writers' files and beats it on GNU gzip's, at four jobs,
-the only count it is read at: D121's reopening condition, put to the
-maintainer ([`../status/STATUS.md`](../status/STATUS.md), "Decisions worth
-another look"). What moved it is
-unattributed.
+the only count it is read at, which is not the default
+([`decisions.md`](decisions.md), "D121"). What moved it is unattributed.
 
 **The level-1 file gains nothing in parallel and loses nothing at any
 count.** Speculation looks for a dynamic block's header, and this writer ends
