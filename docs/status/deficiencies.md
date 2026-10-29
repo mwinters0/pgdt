@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD150 -->
-**`KD1`–`KD150` are allocated, and nothing at or below `KD150` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD151 -->
+**`KD1`–`KD151` are allocated, and nothing at or below `KD151` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -547,3 +547,10 @@ than reading as a phase nobody has sliced.
   again as those terms. **(c) unowned**; promoted by a reading over a file
   whose speculations fill their sinks. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass/ahead.rs`.
+
+- **KD151** — an I/O failure on a file the user named — the dump `--source`
+  names, the cache `--dtcache` names, the file a save writes beside it — is
+  reported as `io error:` and the OS's message alone, naming no path, so a
+  mistyped source or a read-only cache directory reads only "No such file or
+  directory" or "Read-only file system". **(b) owned by `M258`**, which names
+  the path. Detail: `crates/pgdt-core/src/error.rs`.

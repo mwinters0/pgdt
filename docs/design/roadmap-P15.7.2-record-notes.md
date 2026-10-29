@@ -36,8 +36,6 @@ names gzip as a source.
 - **`scan started` on a fresh first pass reads `bytes=at least 0`**, the open
   extent before anything is decoded. The manual explains it and does not
   change it.
-- **A `parse` whose `--dtcache` names a read-only directory fails `io error:
-  Read-only file system (os error 30)`, naming no path**, before the first
-  pass's own refusal. That refusal names its directory, and it is what the
-  manual quotes. It was observed with `--dtcache /sys/x.dtcache` inside the
-  container and is not filed.
+- **A `parse` whose `--dtcache` names a read-only directory fails naming no
+  path** (`KD151`), before the first pass's own refusal. That refusal names
+  its directory, and it is what the manual quotes.

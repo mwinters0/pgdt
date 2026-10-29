@@ -12,6 +12,14 @@ pub type Cause = Box<dyn std::error::Error + Send + Sync + 'static>;
 /// when it reports one (`docs/design/decisions.md`, "D107").
 #[derive(Debug, ThisError)]
 pub enum Error {
+    /// Deficiency register: `deficiency: KD151` — this carries no path, and
+    /// every `?` on an `io::Error` reaches it bare, so a failure opening the
+    /// source (`pgdt-io`'s `source/local.rs`, `source/origin.rs`,
+    /// `source/compressed/file.rs`, `deflate/first_pass.rs`) or reading or
+    /// saving the cache (`pgdt-dump`'s `cache/file.rs`) names neither its path
+    /// nor what it was doing; the first pass's spill file is the one site that
+    /// names its directory. The OS's message is printed twice, here and again
+    /// as this variant's source.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     /// A background task panicked or was cancelled; the cause is tokio's
