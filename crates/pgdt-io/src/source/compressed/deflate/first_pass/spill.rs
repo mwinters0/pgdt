@@ -70,6 +70,12 @@ impl PassWindows {
     /// A spill file that cannot be made, naming its directory — never
     /// answered by holding the window in memory instead — or a write to it
     /// that fails.
+    ///
+    /// Deficiency register: `deficiency: KD155` — that write's failure, and a
+    /// failed read back in [`read_window`](WindowProvider::read_window), are
+    /// `io error:` and the OS's message, naming no directory, though the
+    /// directory is the cache's and `make` names it: a full disk partway
+    /// through a pass does not say which.
     pub(super) fn place(&self, checkpoint: usize, window: &[u8]) -> Result<()> {
         if checkpoint < self.base {
             return Ok(());
