@@ -375,7 +375,25 @@ def sha(data: bytes) -> str:
 
 X86 = release_ci.archive_name(VERSION, release.NATIVE_TARGET)
 ARM = release_ci.archive_name(VERSION, release.CROSS_TARGET)
-CI_BYTES = b"ci's x86-64 archive"
+MTIME = 1_700_000_000
+MEMBERS = sorted(("pgdt", "LICENSE", release.NOTICES_NAME, "README.md"))
+
+
+def archive_bytes(target: str, *, pgdt: str = "pgdt", mtime: int = MTIME) -> bytes:
+    """An archive of `target` as `release_ci.py archive` writes it, its
+    `pgdt` holding `pgdt`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp)
+        for name in MEMBERS:
+            (src / name).write_text(pgdt if name == "pgdt" else name)
+        files = [release_ci.Member(n, src / n, 0o644) for n in MEMBERS]
+        release_ci.write_archive(src / "a.tar.xz", release_ci.archive_stem(VERSION, target), files, mtime)
+        return (src / "a.tar.xz").read_bytes()
+
+
+CI_BYTES = archive_bytes(release.NATIVE_TARGET)
+#: A rehearsal's x86-64 archive that is not CI's: its `pgdt` built otherwise.
+OWN_BYTES = archive_bytes(release.NATIVE_TARGET, pgdt="another build")
 
 
 def ci_draft(*, commit: str = SHA, extra=(), digest: str | None = None, state: str = "uploaded") -> dict:
@@ -391,16 +409,9 @@ def ci_draft(*, commit: str = SHA, extra=(), digest: str | None = None, state: s
 
 
 class Attach(unittest.TestCase):
-    MTIME = 1_700_000_000
-
     def rehearse(self, dist: Path, *, x86: bytes = CI_BYTES, mtime: int = MTIME) -> None:
         """`dist/` as the rehearsal leaves it: both archives and their sums."""
-        src = dist.parent / "src"
-        src.mkdir(exist_ok=True)
-        for name in ("pgdt", "LICENSE", release.NOTICES_NAME, "README.md"):
-            (src / name).write_text(name)
-        files = [release_ci.Member(n, src / n, 0o644) for n in sorted(("pgdt", "LICENSE", release.NOTICES_NAME, "README.md"))]
-        release_ci.write_archive(dist / ARM, release_ci.archive_stem(VERSION, release.CROSS_TARGET), files, mtime)
+        (dist / ARM).write_bytes(archive_bytes(release.CROSS_TARGET, mtime=mtime))
         (dist / X86).write_bytes(x86)
         (dist / "SHA256SUMS").write_text("the rehearsal's\n")
 
@@ -409,7 +420,7 @@ class Attach(unittest.TestCase):
         with unittest.mock.patch.object(release, "workspace_version", return_value=VERSION), \
                 unittest.mock.patch.object(release_ci, "tree_is_clean", return_value=clean), \
                 unittest.mock.patch.object(release_ci, "head_commit", return_value=head), \
-                unittest.mock.patch.object(release_ci, "commit_time", return_value=self.MTIME), \
+                unittest.mock.patch.object(release_ci, "commit_time", return_value=MTIME), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(release_ci.step_attach(gh, dist), 0)
         return out.getvalue()
@@ -432,19 +443,6 @@ class Attach(unittest.TestCase):
             self.assertEqual(sorted(p.name for p in dist.iterdir()), sorted([ARM, X86, "SHA256SUMS"]))
             self.assertEqual((dist / "SHA256SUMS").read_text(), "the rehearsal's\n")
 
-    def test_a_ci_archive_unlike_the_rehearsals_is_reported_and_attached_all_the_same(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            dist = Path(tmp) / "dist"
-            dist.mkdir()
-            self.rehearse(dist, x86=b"the rehearsal's own bytes")
-            gh = FakeGh({}, releases=[ci_draft()], blobs={11: CI_BYTES})
-            out = self.attach(gh, dist)
-            here = sha(b"the rehearsal's own bytes")
-            self.assertIn(f"differs from the rehearsal's: CI {sha(CI_BYTES)}, rehearsal {here}", out)
-            self.assertIn("SHA256SUMS", gh.uploaded)
-            (dist / X86).unlink()
-            self.assertIn("no rehearsal archive", self.attach(FakeGh({}, releases=[ci_draft()], blobs={11: CI_BYTES}), dist))
-
     def test_each_refusal_comes_before_anything_is_uploaded(self):
         cases = {
             "not clean": dict(clean=False),
@@ -456,16 +454,20 @@ class Attach(unittest.TestCase):
             "lacks CI's uploaded": dict(releases=[ci_draft(state="starter")]),
             "not the .* the API states": dict(releases=[ci_draft(digest=f"sha256:{'0' * 64}")]),
             "not sha256:<hex>": dict(releases=[ci_draft(digest="md5:x")]),
-            "not at HEAD's commit time": dict(mtime=self.MTIME + 1),
-            "is missing: rehearse HEAD first": dict(no_arm=True),
+            f"{ARM} was archived at": dict(mtime=MTIME + 1),
+            f"{X86} was archived at": dict(x86=archive_bytes(release.NATIVE_TARGET, mtime=MTIME + 1)),
+            f"{ARM} is missing: rehearse HEAD first": dict(missing=ARM),
+            f"{X86} is missing: rehearse HEAD first": dict(missing=X86),
+            f"x86_64-unknown-linux-gnu: CI's archive differs from the rehearsal's: CI {sha(CI_BYTES)}, "
+            f"rehearsal {sha(OWN_BYTES)}; nothing is attached": dict(x86=OWN_BYTES),
         }  # fmt: skip
         for why, case in cases.items():
             with self.subTest(why), tempfile.TemporaryDirectory() as tmp:
                 dist = Path(tmp) / "dist"
                 dist.mkdir()
-                self.rehearse(dist, mtime=case.get("mtime", self.MTIME))
-                if case.get("no_arm"):
-                    (dist / ARM).unlink()
+                self.rehearse(dist, x86=case.get("x86", CI_BYTES), mtime=case.get("mtime", MTIME))
+                if case.get("missing"):
+                    (dist / case["missing"]).unlink()
                 gh = FakeGh({}, releases=case.get("releases", [ci_draft()]), blobs={11: CI_BYTES})
                 with self.assertRaisesRegex(ReleaseError, why):
                     self.attach(gh, dist, clean=case.get("clean", True))

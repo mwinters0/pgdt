@@ -121,12 +121,11 @@ default cleanup strips every line opening with `#`, from the editor and from
 character moves instead, and a line opening with `;` is what is lost.
 
 `attach` uploads the rehearsal's arm64 archive and a `SHA256SUMS` over both
-archives, refusing a dirty tree or a draft of another commit, and prints
-whether CI's x86-64 archive is byte-identical to the rehearsal's. **That line
-goes into the day's history entry**, one a release, until a decision consumes
-the readings (D109): relay it when the maintainer runs `attach` in the
-session, and otherwise say that it is owed there. The tag's workflow runs the draft's arm64
-archive on real arm64 before it publishes.
+archives, refusing a dirty tree, a draft of another commit, and CI's x86-64
+archive unless it is the rehearsal's byte for byte (D109). **A refusal there
+is a build input the two did not share**, found before anything is attached:
+relay it and stop, the release waiting on that input being found. The tag's
+workflow runs the draft's arm64 archive on real arm64 before it publishes.
 
 and `git log --oneline v<previous>..<SHA>` as an aid to the text, which is the
 maintainer's. **The tag must be annotated**: the publish workflow refuses a

@@ -20,10 +20,17 @@ tree's.
 **Every cargo target directory a step builds into is keyed on what compiles
 objects** (`image_key`), read inside the image: the base digest, rustc's
 version and installed components, each C compiler's version and each
-target's libc-dev's. One holding another key, or none, is cleared before the
-step runs, and what moved is logged (`key_target`), so no object another
-image compiled reaches a release or a figure (`docs/design/decisions.md`,
-"D104"): cargo's own fingerprint misses these inputs.
+target's libc-dev's, and the build's clock. One holding another key, or none,
+is cleared before the step runs, and what moved is logged (`key_target`), so
+no object another image compiled reaches a release or a figure
+(`docs/design/decisions.md`, "D104"): cargo's own fingerprint misses these
+inputs.
+
+**Every step builds under one clock**, `SOURCE_DATE_EPOCH` set to the constant
+`CLOCK` inside the image (`ready_inside`), so what a C compiler stamps with
+`__DATE__` and `__TIME__` is the same in every build, a rehearsal's and CI's
+alike, and the two make one commit's x86-64 archive byte for byte
+(`docs/design/decisions.md`, "D109").
 
 **Every binary `build` or `bench` makes is held to the floor** (`check_floor`): no `GLIBC_`
 version it needs may be past the glibc of the image's `libc6-dev` its target
@@ -130,6 +137,13 @@ CROSS_TARGET = "aarch64-unknown-linux-gnu"
 #: The variable `pgdt` reads to know it is a release's build, which must name
 #: the workspace version (`crates/pgdt/src/version.rs`, `RELEASED`).
 RELEASE_VARIABLE = "PGDT_RELEASE_VERSION"
+#: The clock every step builds under (`ready_inside`): the time CI's v0.2.0
+#: build read, 2026-10-21 05:11:04 UTC, so that build is reproducible here. A
+#: constant, not the commit's time: no build script declares the variable to
+#: cargo, so a C object keeps the clock it was first compiled under for as
+#: long as its target directory's key holds (D109).
+CLOCK_VARIABLE = "SOURCE_DATE_EPOCH"
+CLOCK = 1792559464
 
 CONTAINER = os.environ.get("PGDT_RELEASE_CONTAINER", "sudo nerdctl")
 #: The memory limit of every container run that builds or tests: a
@@ -413,16 +427,19 @@ def image_key(
     components: str,
     compilers: Mapping[str, str],
     libcs: Mapping[str, str],
+    clock: int = CLOCK,
 ) -> str:
     """What compiles objects in an image, one line each: the base it is built
     from, `rustc -vV`, the sysroot's installed components, each C compiler's
-    `--version` line by its name, and each libc-dev package's version; not
-    the image's tag (`docs/design/decisions.md`, "D104")."""
+    `--version` line by its name, each libc-dev package's version, and the
+    clock a step builds under; not the image's tag
+    (`docs/design/decisions.md`, "D104")."""
     lines = [f"base {pinned_base(dockerfile)}"]
     lines += [f"rustc {line.strip()}" for line in rustc.splitlines() if line.strip()]
     lines += [f"component {c}" for c in sorted(set(components.split()))]
     lines += [f"compiler {name}: {version}" for name, version in sorted(compilers.items())]
     lines += [f"libc {package} {version}" for package, version in sorted(libcs.items())]
+    lines.append(f"clock {CLOCK_VARIABLE}={clock}")
     return "\n".join(lines) + "\n"
 
 
@@ -513,11 +530,14 @@ def ready_inside() -> int:
     """What every step checks in the image before it runs: that the image is
     the tree's (`check_inside`), and that the target directory
     `CARGO_TARGET_DIR` names, which a container run always does, is keyed to
-    it (`key_target`). The lock it returns is held until the step exits."""
+    it (`key_target`). The lock it returns is held until the step exits.
+    Every command the step runs inherits `CLOCK`, whatever clock it was
+    handed."""
     check_inside()
     named = os.environ.get("CARGO_TARGET_DIR")
     if not named:
         raise ReleaseError("--inside, but no CARGO_TARGET_DIR names the target directory to key")
+    os.environ[CLOCK_VARIABLE] = str(CLOCK)
     return key_target(Path(named), read_image_key())
 
 

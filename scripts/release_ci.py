@@ -33,9 +33,10 @@ names its functions.
 (`attach`): run where the rehearsal ran, on the clean tree whose `HEAD` the
 draft was built from, it uploads `dist/`'s arm64 archive, downloads the
 draft's x86-64 one, and replaces the draft's `SHA256SUMS` with one over both.
-It compares CI's x86-64 archive with the rehearsal's and reports, never
-refuses: equal bytes are the evidence that this machine's pipeline makes CI's
-from one commit, and the property is not yet one anything relies on.
+It refuses CI's x86-64 archive unless it is the rehearsal's byte for byte:
+equal bytes say the pipeline that built the arm64 archive here makes CI's
+bytes from one commit, and a difference is an input the two did not share
+(D109).
 
 The workflows
 (`.github/workflows/release-build.yml`, `release-publish.yml`) hold no logic of
@@ -550,41 +551,44 @@ def check_archived_from(archive: Path, stem: str, mtime: int) -> None:
         raise ReleaseError(f"{archive.name} was archived at {sorted(times)}, not at HEAD's commit time {mtime}")
 
 
-def comparison_line(target: str, ci: str, rehearsed: Path) -> str:
-    """Whether CI's archive for `target` is the rehearsal's, byte for byte."""
-    if not rehearsed.is_file():
-        return f"{target}: no rehearsal archive at {rehearsed} to compare CI's with"
-    here = sha256_of(rehearsed)
-    if here == ci:
-        return f"{target}: CI's archive is byte-identical to the rehearsal's ({ci})"
-    return f"{target}: CI's archive differs from the rehearsal's: CI {ci}, rehearsal {here}"
+def check_same_bytes(target: str, ci: str, rehearsed: str) -> None:
+    """Refuse CI's archive for `target` unless it is the rehearsal's, byte for
+    byte: one commit built in one image under one clock makes one archive
+    (D109), so a difference is an input one of the two builds did not share."""
+    if ci != rehearsed:
+        raise ReleaseError(
+            f"{target}: CI's archive differs from the rehearsal's: CI {ci}, rehearsal {rehearsed}; "
+            "nothing is attached"
+        )
 
 
 def step_attach(gh: Gh, dist: Path = DIST, repo: Path = REPO) -> int:
     """The attached targets' archives onto `HEAD`'s draft, and `SHA256SUMS`
-    over them and CI's, replacing CI's own; CI's archive compared with the
-    rehearsal's and reported. Refused on a dirty tree, an archive in `dist/`
-    not archived at `HEAD`'s commit time, and a draft `plan_attach` refuses, before anything is
-    uploaded."""
+    over them and CI's, replacing CI's own. Refused on a dirty tree, a
+    rehearsal's archive missing from `dist/` or not archived at `HEAD`'s
+    commit time, a draft `plan_attach` refuses, and CI's archive differing
+    from the rehearsal's, before anything is uploaded."""
     version = release.workspace_version()
     if not tree_is_clean(repo):
         raise ReleaseError("the tree is not clean: an archive is attached from the checkout of the commit it is of")
     head = head_commit(repo)
     draft = plan_attach(version, head, gh.releases())
     tag, mtime = tag_of(version), commit_time(repo)
-    local = []
-    for target in ATTACHED_TARGETS:
+    rehearsed = {}
+    for target in (*ATTACHED_TARGETS, *CI_TARGETS):
         path = dist / archive_name(version, target)
         if not path.is_file():
             raise ReleaseError(f"{path} is missing: rehearse HEAD first (`/release`, step 4)")
         check_archived_from(path, archive_stem(version, target), mtime)
-        local.append(path)
+        rehearsed[target] = path
+    local = [rehearsed[t] for t in ATTACHED_TARGETS]
     digests = {p.name: sha256_of(p) for p in local}
     with tempfile.TemporaryDirectory(prefix="pgdt-attach-", dir=dist) as tmp:
         for target in CI_TARGETS:
             name = archive_name(version, target)
             digests[name] = fetch_asset(gh, asset_named(draft, name), Path(tmp) / name)
-            print(comparison_line(target, digests[name], dist / name), flush=True)
+            check_same_bytes(target, digests[name], sha256_of(rehearsed[target]))
+            print(f"{target}: CI's archive is byte-identical to the rehearsal's ({digests[name]})", flush=True)
         sums = Path(tmp) / CHECKSUMS
         sums.write_text(checksum_lines(digests))
         gh.upload(tag, [*local, sums])

@@ -27,12 +27,12 @@ successive trees; DataFusion moving its profile. Code: `test_the_shipped_profile
 ### D109 arm64's archive is built on the maintainer's machine and attested by its release alone; x86-64's is CI's, with build provenance
 CI's runner cannot hold arm64's fat link (D105), so the arm64 archive is built in the pinned image on the maintainer's
 machine and attached to CI's draft. Its one attestation is the immutable release's, which `verify-asset` and mise's
-`github:` backend accept alone (RL1, RL2). `attach` reports CI's x86-64 archive differing from the rehearsal's, never
-refusing: the two differ by the build clock gcc stamps into mimalloc (`__DATE__`), and nothing relies on them agreeing.
-Rejected: swap on the runner (a fat link paging); `ubuntu-24.04-arm`, or a paid or self-hosted runner; an arm64-only
+`github:` backend accept alone (RL1, RL2). Every in-image build shares one constant `SOURCE_DATE_EPOCH`, keyed too, so
+a rehearsal makes CI's x86-64 archive and `attach` refuses another. Rejected: the commit's time (a C object keeps its
+first); swap on the runner (a fat link paging); `ubuntu-24.04-arm`, or a paid or self-hosted runner; an arm64-only
 profile (reopens D105); a keyless signature as the maintainer (mise's backend fails it); `actions/attest` over the local
 build (provenance verifying and false). Reopens: a hosted runner holding the link; RL1 or RL2 failing. Code:
-`step_attach`.
+`step_attach`, `CLOCK`.
 
 ### D110 The release suite is the round's, less the never-shipped measurement apparatus
 `release.py suite` leaves out each member whose manifest sets `[package.metadata.pgdt] apparatus`; `mise run check`

@@ -364,6 +364,7 @@ class TargetKey(unittest.TestCase):
             "components": "rustc-x86_64-unknown-linux-gnu\nrust-std-x86_64-unknown-linux-gnu\nrust-src\n",
             "compilers": {"cc": "cc (Debian 14.2.0-20) 14.2.0"},
             "libcs": {"libc6-dev": "2.41-12+deb13u5"},
+            "clock": release.CLOCK + 1,
         }
         for name, value in moves.items():
             with self.subTest(moved=name):
@@ -474,6 +475,18 @@ class TargetKey(unittest.TestCase):
             with unittest.mock.patch.dict(release.os.environ, env, clear=True):
                 with self.assertRaisesRegex(release.ReleaseError, "CARGO_TARGET_DIR"):
                     release.ready_inside()
+
+    def test_a_step_inside_builds_under_the_one_clock_whatever_it_was_handed(self):
+        # The clock reaches every command the step runs, and the key names it.
+        for handed in ({}, {release.CLOCK_VARIABLE: "1"}):
+            with self.subTest(handed=handed), \
+                    unittest.mock.patch.object(release, "check_inside"), \
+                    unittest.mock.patch.object(release, "read_image_key", return_value="k"), \
+                    unittest.mock.patch.object(release, "key_target", return_value=0), \
+                    unittest.mock.patch.dict(release.os.environ, {**handed, "CARGO_TARGET_DIR": "/state/target"}):
+                release.ready_inside()
+                self.assertEqual(release.os.environ[release.CLOCK_VARIABLE], str(release.CLOCK))
+        self.assertIn(f"clock SOURCE_DATE_EPOCH={release.CLOCK}\n", key())
 
 
 def about(*licenses: tuple[str, str, list[tuple[str, str]]], crates: Sequence[dict] = ()) -> dict:
