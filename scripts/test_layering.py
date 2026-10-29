@@ -389,15 +389,15 @@ class Floor(unittest.TestCase):
 
     def test_a_member_not_inheriting_the_lints_is_refused(self):
         for manifest in (
-            '[package]\nname = "gz-seek"\n',
-            '[package]\nname = "gz-seek"\n\n[lints]\nworkspace = false\n',
-            '[package]\nname = "gz-seek"\n\n[lints.rust]\nunsafe_code = "deny"\n',
+            '[package]\nname = "pgdt-gzip-seek"\n',
+            '[package]\nname = "pgdt-gzip-seek"\n\n[lints]\nworkspace = false\n',
+            '[package]\nname = "pgdt-gzip-seek"\n\n[lints.rust]\nunsafe_code = "deny"\n',
         ):
-            found = problems({"gz-seek/Cargo.toml": manifest})
+            found = problems({"pgdt-gzip-seek/Cargo.toml": manifest})
             self.assertEqual(
                 found,
                 [
-                    "gz-seek: its manifest does not inherit the workspace's lints"
+                    "pgdt-gzip-seek: its manifest does not inherit the workspace's lints"
                     " (`lints.workspace = true`) (D27)"
                 ],
                 manifest,
@@ -411,18 +411,18 @@ class Unsafe(unittest.TestCase):
         self.assertEqual(declared({}), [])
 
     def test_a_root_declaring_nothing_with_an_allowed_site_holds(self):
-        files = {"gz-seek/src/lib.rs": "mod zlib;\n", "gz-seek/src/zlib.rs": "#![allow(unsafe_code)]\n"}
+        files = {"pgdt-gzip-seek/src/lib.rs": "mod zlib;\n", "pgdt-gzip-seek/src/zlib.rs": "#![allow(unsafe_code)]\n"}
         self.assertEqual(declared(files), [])
-        files["gz-seek/src/zlib.rs"] = "#[allow(dead_code, unsafe_code)]\nfn f() {}\n"
+        files["pgdt-gzip-seek/src/zlib.rs"] = "#[allow(dead_code, unsafe_code)]\nfn f() {}\n"
         self.assertEqual(declared(files), [])
 
     def test_a_root_declaring_nothing_no_site_needs_is_refused(self):
-        found = declared({"gz-seek/src/lib.rs": "mod zlib;\n", "gz-seek/src/zlib.rs": ""})
-        self.assertEqual(found, [f"crates/gz-seek/src/lib.rs {NOTHING}"])
+        found = declared({"pgdt-gzip-seek/src/lib.rs": "mod zlib;\n", "pgdt-gzip-seek/src/zlib.rs": ""})
+        self.assertEqual(found, [f"crates/pgdt-gzip-seek/src/lib.rs {NOTHING}"])
 
     def test_a_declaration_in_a_comment_is_none(self):
-        found = declared({"gz-seek/src/lib.rs": "// #![forbid(unsafe_code)]\n"})
-        self.assertEqual(found, [f"crates/gz-seek/src/lib.rs {NOTHING}"])
+        found = declared({"pgdt-gzip-seek/src/lib.rs": "// #![forbid(unsafe_code)]\n"})
+        self.assertEqual(found, [f"crates/pgdt-gzip-seek/src/lib.rs {NOTHING}"])
 
     def test_a_bin_root_is_read_and_a_test_root_is_not(self):
         files = {"peak-rss/src/main.rs": "fn main() {}\n", "peak-rss/tests/t.rs": "fn t() {}\n"}
@@ -436,29 +436,29 @@ class Unsafe(unittest.TestCase):
             '#![cfg_attr(not(feature = "introspect"), forbid(unsafe_code))]\n'
             '#![cfg_attr(feature = "introspect", deny(unsafe_code))]\n',
         ):
-            found = declared({"gz-seek/src/lib.rs": f"{root}#[allow(unsafe_code)]\nfn f() {{}}\n"})
-            self.assertEqual(found, [f"crates/gz-seek/src/lib.rs {RESTATES}"], root)
+            found = declared({"pgdt-gzip-seek/src/lib.rs": f"{root}#[allow(unsafe_code)]\nfn f() {{}}\n"})
+            self.assertEqual(found, [f"crates/pgdt-gzip-seek/src/lib.rs {RESTATES}"], root)
 
     def test_an_allow_only_a_test_module_holds_is_no_site(self):
         files = {
-            "gz-seek/src/lib.rs": "#[cfg(test)]\nmod tests;\n",
-            "gz-seek/src/tests.rs": "#![allow(unsafe_code)]\n",
+            "pgdt-gzip-seek/src/lib.rs": "#[cfg(test)]\nmod tests;\n",
+            "pgdt-gzip-seek/src/tests.rs": "#![allow(unsafe_code)]\n",
         }
-        self.assertEqual(declared(files), [f"crates/gz-seek/src/lib.rs {NOTHING}"])
+        self.assertEqual(declared(files), [f"crates/pgdt-gzip-seek/src/lib.rs {NOTHING}"])
 
     def test_forbidding_without_a_feature_holds(self):
         root = (
             '#![cfg_attr(not(feature = "introspect"), forbid(unsafe_code))]\n'
             "#[allow(unsafe_code)]\nfn ticks() {}\n"
         )
-        self.assertEqual(declared({"gz-seek/src/lib.rs": root}), [])
+        self.assertEqual(declared({"pgdt-gzip-seek/src/lib.rs": root}), [])
 
     def test_forbidding_without_a_feature_no_site_needs_is_refused(self):
         root = '#![cfg_attr(not(feature = "introspect"), forbid(unsafe_code))]\n'
         self.assertEqual(
-            declared({"gz-seek/src/lib.rs": root}),
+            declared({"pgdt-gzip-seek/src/lib.rs": root}),
             [
-                "crates/gz-seek/src/lib.rs forbids `unsafe` only without `introspect`"
+                "crates/pgdt-gzip-seek/src/lib.rs forbids `unsafe` only without `introspect`"
                 " and allows it at no site: forbid it (D27)"
             ],
         )
@@ -471,7 +471,7 @@ class Unsafe(unittest.TestCase):
             "#![forbid(unsafe_code)]\n#![forbid(unsafe_code)]\n",
             '#![forbid(unsafe_code)]\n#![cfg_attr(not(feature = "a"), forbid(unsafe_code))]\n',
         ):
-            found = declared({"gz-seek/src/lib.rs": f"{root}#[allow(unsafe_code)]\nfn f() {{}}\n"})
+            found = declared({"pgdt-gzip-seek/src/lib.rs": f"{root}#[allow(unsafe_code)]\nfn f() {{}}\n"})
             self.assertEqual(len(found), 1, root)
             self.assertIn("declares more than one level", found[0])
 

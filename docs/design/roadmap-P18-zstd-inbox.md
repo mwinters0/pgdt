@@ -44,7 +44,7 @@ crate's interface (its R3), and a crate that treats three codecs as one shape
 gets the size contract wrong for all three.
 
 **Why P18 cares.** This phase will want an addressing layer for zstd's seekable
-format, and the natural instinct will be to extend the xz crate, or `gz-seek`,
+format, and the natural instinct will be to extend the xz crate, or `pgdt-gzip-seek`,
 the gzip one, a crate of its own for the same reason
 ([`decisions.md`](decisions.md), "D127"). The interface is reusable; the size
 guarantee is not. Whether that becomes a sibling crate, a generalized trait, or

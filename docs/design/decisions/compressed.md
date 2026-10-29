@@ -4,7 +4,7 @@ Part of the decision register, [`../decisions.md`](../decisions.md), whose rules
 register"; an entry is cited by its `D<k>` against that index. Reading a dump through a compression layer, and
 remembering what a scan found: recognition, the `.xz` and gzip sources and their seek structures, the first pass that
 gives a gzip file one, and the cache file — its identity checks, what it persists and when it is refused. `pgdt-io`'s
-`source/compressed`, `gz-seek`, the vendored `xz-seek` and `pgdt-dump`'s `cache`.
+`source/compressed`, `pgdt-gzip-seek`, the vendored `xz-seek` and `pgdt-dump`'s `cache`.
 
 ### D14 Recognition sniffs content; `xz-seek` is a vendored read-only copy
 Recognition compares a file's first bytes with each format's magic, never its name, outside the source trait, told them
@@ -39,13 +39,14 @@ gzip first pass is a note, the pass making the file seekable. A statistics skip 
 were consulted, a narrowed span (D84) wherever the plan charged less than stated. Rejected: omitting a zero; counting
 only believed filtered columns; warning gzip by unit count, which says nothing of the writer. Reopens: a puzzling zero.
 
-### D112 `gz-seek` inflates through zlib-rs, by `libz-rs-sys`'s zlib C API
-Of the engines exporting what an index needs through the zlib API, zlib-rs is the fastest at both of `gz-seek`'s costs,
-a first pass and a unit resumed from its checkpoint, and the only one built with no C toolchain; why its C API rather
-than its safe one is UF4's. zlib-ng and stock zlib stay features, the figure's legs. Rejected: zlib-ng and stock zlib,
-slower at both; the system's `libz.so.1`, a dependency a release does not promise (D104); ISA-L, its block stops only in
-rapidgzip's fork, its resume priming undocumented state. Reopens: another engine ahead at either cost in a re-take, at a
-bump of any engine's pin. Code: `crates/gz-seek/Cargo.toml`'s features, `src/zlib.rs`. Evidence: `gzseek-backend`; RT23.
+### D112 `pgdt-gzip-seek` inflates through zlib-rs, by `libz-rs-sys`'s zlib C API
+Of the engines exporting what an index needs through the zlib API, zlib-rs is the fastest at both of `pgdt-gzip-seek`'s
+costs, a first pass and a unit resumed from its checkpoint, and the only one built with no C toolchain; why its C API
+rather than its safe one is UF4's. zlib-ng and stock zlib stay features, the figure's legs. Rejected: zlib-ng and stock
+zlib, slower at both; the system's `libz.so.1`, a dependency a release does not promise (D104); ISA-L, its block stops
+only in rapidgzip's fork, its resume priming undocumented state. Reopens: another engine ahead at either cost in a
+re-take, at a bump of any engine's pin. Code: `crates/pgdt-gzip-seek/Cargo.toml`'s features, `src/zlib.rs`. Evidence:
+`gzseek-backend`; RT23.
 
 ### D113 gzip's checkpoint spacing is the block `xz -T0` writes by default
 A shipped constant, never derived from the file. Across xz's block sizes a spacing moves only gzip's window section and
@@ -80,17 +81,17 @@ take, before the scan downloads it again; the first pass reads it once and coale
 has one index whichever arm reads it, a broken chain included. Each member is decided by its own header and the unit it
 would join, never by a stated length, which a resumed pass cannot know. Rejected: the walk on both arms, two downloads;
 the coalesced run ending for good at the first plain header; a BGZF mode the caller states or recognition sets, a broken
-file then indexed per arm. Reopens: a fetched source recommending more than one reader (D2). Code: `gz-seek`'s
+file then indexed per arm. Reopens: a fetched source recommending more than one reader (D2). Code: `pgdt-gzip-seek`'s
 `placement.rs`; `open_remote`. Evidence: `a_remote_bgzf_file_is_read_once_by_a_first_pass_that_builds_the_walk_s_index`.
 
-### D117 A parallel first pass speculates with a decoder of `gz-seek`'s own, and hands out only the engine's plaintext
+### D117 A parallel first pass speculates with a decoder of `pgdt-gzip-seek`'s own, and hands out only the engine's plaintext
 No zlib-API engine decodes from unknown history, so a speculation finds a chunk's bounds and ending history natively, by
 decoding it or off its BGZF headers; the engine decodes from there, and the frontier takes a decode only standing at its
 start with that history, so the index is the serial pass's. Its decoder decides who decodes a byte, never what it is: a
 member's only check is its trailer, so a defect in ours would reach a caller unchecked till the member ends. Rejected:
 native plaintext handed out, saving the engine's share of the CPU; the frontier waiting on its own chunk's speculation,
 slower than serial; per-task fetches. Reopens: the second decode keeping the pass from lifting the inflate. Code:
-`gz_seek::Parallel`.
+`pgdt_gzip_seek::Parallel`.
 
 ### D118 A checkpoint inside a static block is placed by walking its codes beside the engine
 A writer ending no block across a spacing is checkpointed as any other, with no inflater of our own: the engine walks a
@@ -138,8 +139,8 @@ checkpoint owed inside a BGZF member. Code: `chunk.rs` (`Running::event`), `spec
 Evidence: `a_decode_through_bgzf_members_records_only_their_starts_headers_and_ends`,
 `a_chain_the_event_count_cuts_is_continued`.
 
-### D124 A gzip first pass charges a task what `gz-seek` bounds it to write, and frees no decode buffer while it runs
-`Chunking::task_bytes` sums bounds `gz-seek` states beside its code (`ChunkTask::speculation_bytes`, `decode_bytes`,
+### D124 A gzip first pass charges a task what `pgdt-gzip-seek` bounds it to write, and frees no decode buffer while it runs
+`Chunking::task_bytes` sums bounds the crate states beside its code (`ChunkTask::speculation_bytes`, `decode_bytes`,
 `GUESS_BYTES`), counting what is written. A decode's plaintext buffer, made for the limit, is kept and lent the next
 decode handed out, never outnumbering the decodes charged (but `KD153`). Rejected: counting capacity, pages no write
 touches; the larger sink alone, which a member begun inside a marked decode passes; a freed buffer charged, a fit to
@@ -168,23 +169,23 @@ Reopens: `gzip-first-pass` reading a default count no faster than before it. Cod
 `every_job_runs_on_one_thread_while_other_blocking_threads_idle`,
 `a_runtime_shuts_down_at_once_with_a_pass_left_unretired`, `gzip-first-pass`.
 
-### D127 `gz-seek` is a leaf crate of this workspace: a gzip index of our own over a bought inflater
+### D127 `pgdt-gzip-seek` is a leaf crate of this workspace: a gzip index of our own over a bought inflater
 A container's positioned read names no `pg_dump`, so it is a crate below `pgdt-io`, as `xz-seek` is, its size contract
 its own: open until a pass ends, where xz's footer states it. It is built here beside the codec trait it serves until
 the maintainer splits it into a repo of its own, vendored as `xz-seek` is (D14); its first pass is held to zlib-ng's
 serial inflate. Rejected: `rapidgzip`, which holds every window resident in each reader, checks no unit, reads a
 truncated file as whole, cuts its index by a chunk its thread count moves, runs a pool of its own (D1, D12) and fails a
 release link; `rusty-rapidgzip`, a whole-file decoder with no index; a module of `pgdt-io`; a repo of its own from the
-start. Code: `crates/gz-seek/`. Evidence: `inflate-throughput`, `gzseek-backend`.
+start. Code: `crates/pgdt-gzip-seek/`. Evidence: `inflate-throughput`, `gzseek-backend`.
 
 ### D128 A gzip index is one checkpoint list, the first full pass's by-product, each unit checked by its own CRC-32
 A checkpoint is a plaintext offset, a bit and a window, empty at a member start, so a single member, concatenated
 members and BGZF are one layout, a unit apiece; only BGZF's is found otherwise, by its walk (D18). A single member
-states nothing of its interior, so the scan's decode places them by a rule of the file alone, and a resumed pass or any
+states nothing of its interior, so the decode places them by a rule of the file alone, and a resumed pass or any
 `--jobs` builds one index. A member's CRC-32 covers it all, so the pass records each unit's and a unit decode compares
 it, but where whole BGZF members' trailers do. Rejected: a variant per shape, members wider than the spacing fitting
 none; an indexing pass, two cold decodes; checkpoints where reads land; trusting units after a checked pass, a flipped
-bit then wrong rows; a `.gzi` sidecar, a file no identity check covers. Code: `GzipIndex`, `gz_seek::placement`.
+bit then wrong rows; a `.gzi` sidecar, a file no identity check covers. Code: `GzipIndex`, `pgdt_gzip_seek::placement`.
 Evidence: `determinism.rs`'s gzip tests.
 
 ### D20 The library never replaces cache data automatically

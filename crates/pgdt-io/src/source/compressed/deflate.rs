@@ -1,9 +1,9 @@
-//! The gzip adapter: the codec over `gz_seek`'s checkpoints, each unit decoded
+//! The gzip adapter: the codec over `pgdt_gzip_seek`'s checkpoints, each unit decoded
 //! from its checkpoint with the window its provider reads, the bridge from a
-//! [`Positioned`] read to the bytes a `gz_seek` decode is fed, and the
-//! plaintext spacing this crate hands `gz_seek` — with its submodules, the
+//! [`Positioned`] read to the bytes a `pgdt_gzip_seek` decode is fed, and the
+//! plaintext spacing this crate hands `pgdt_gzip_seek` — with its submodules, the
 //! first pass and the BGZF walk that find a file's checkpoints, the only
-//! modules of the compressed layer naming `gz_seek`.
+//! modules of the compressed layer naming `pgdt_gzip_seek`.
 //!
 //! **The codec is deflate; gzip is the framing**, as a custom-format
 //! archive's zlib-framed entries are another framing over the same inflater,
@@ -30,7 +30,7 @@ pub(crate) use self::walk::{is_bgzf, walk_file};
 
 /// The plaintext spacing a forward pass places a checkpoint at the first
 /// place a decode resumes at or after each multiple of — a deflate block
-/// boundary, or inside a static block before a symbol — and `gz_seek`'s BGZF
+/// boundary, or inside a static block before a symbol — and `pgdt_gzip_seek`'s BGZF
 /// walk coalesces members into units of at least, the last aside: **the block `xz -T0` writes at its
 /// default preset**, so a gzip unit is an ordinary `.xz` block's size for the
 /// block cache, the partition grain and the resident bounds read off `.xz`
@@ -55,21 +55,21 @@ const INPUT_CHUNK: u64 = 1 << 20;
 /// on the stack, as the `.xz` adapter's is.
 const SKIP_CHUNK: usize = 4096;
 
-/// A `gz_seek` failure as this crate's codec error, naming its container.
-fn gzip_error(cause: gz_seek::Error) -> Error {
+/// A `pgdt_gzip_seek` failure as this crate's codec error, naming its container.
+fn gzip_error(cause: pgdt_gzip_seek::Error) -> Error {
     Error::codec(GZIP, cause)
 }
 
-/// Whether `error` is `gz_seek`, or this adapter on its behalf, refusing an
+/// Whether `error` is `pgdt_gzip_seek`, or this adapter on its behalf, refusing an
 /// index handed in as not describing the file ([`super::index_refused`]).
 pub(super) fn refuses_index(error: &Error) -> bool {
-    matches!(error.codec_cause(), Some(gz_seek::Error::InvalidIndex { .. }))
+    matches!(error.codec_cause(), Some(pgdt_gzip_seek::Error::InvalidIndex { .. }))
 }
 
 /// A gzip file's units as the compressed arms read them, each the span from
 /// one checkpoint to the next.
 ///
-/// **The index and its window provider, and what is read off them once**: a [`gz_seek::UnitTask`]
+/// **The index and its window provider, and what is read off them once**: a [`pgdt_gzip_seek::UnitTask`]
 /// is `Copy` and holds no index, so naming a unit takes no lock, and a unit's
 /// window is read as its decode begins and dropped once the inflater holds it.
 pub(super) struct DeflateCodec {
@@ -82,7 +82,7 @@ pub(super) struct DeflateCodec {
 impl DeflateCodec {
     /// The codec over a complete index, checked against the compressed file's
     /// own length, **reading no bytes**: an index ending elsewhere than the
-    /// file is `gz_seek::Error::InvalidIndex` ([`refuses_index`]).
+    /// file is `pgdt_gzip_seek::Error::InvalidIndex` ([`refuses_index`]).
     ///
     /// An index that stops short of the file's end is refused as a caller's
     /// error rather than as another file's: only a first pass continues one,
@@ -97,7 +97,7 @@ impl DeflateCodec {
             )));
         };
         if compressed_size != stored_size {
-            return Err(gzip_error(gz_seek::Error::InvalidIndex {
+            return Err(gzip_error(pgdt_gzip_seek::Error::InvalidIndex {
                 reason: "the index ends elsewhere than the file does",
             }));
         }
@@ -121,7 +121,7 @@ impl DeflateCodec {
     }
 
     /// Unit `unit`'s task, or the short read past the last.
-    fn task(&self, unit: usize) -> Result<gz_seek::UnitTask> {
+    fn task(&self, unit: usize) -> Result<pgdt_gzip_seek::UnitTask> {
         if unit >= self.layout.unit_count() {
             return Err(short_read());
         }
@@ -213,7 +213,7 @@ impl Codec for DeflateCodec {
     /// The inflater and the window read as a decode begins: a lending source
     /// is fed from where it holds its bytes, so no input chunk is built.
     fn lending_footprint(&self) -> u64 {
-        gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64
+        pgdt_gzip_seek::DECODER_BYTES + pgdt_gzip_seek::WINDOW_SIZE as u64
     }
 
     fn decode(&self, unit: usize, source: &dyn Positioned, out: &mut [u8]) -> Result<()> {
@@ -234,14 +234,14 @@ impl Codec for DeflateCodec {
     }
 }
 
-/// One `gz_seek::UnitRead`, fed from a [`Positioned`] read: out of the bytes
+/// One `pgdt_gzip_seek::UnitRead`, fed from a [`Positioned`] read: out of the bytes
 /// a fetched window lends, or through a chunk pulled from a file.
 ///
 /// **Fed no further than the unit's own compressed extent**, so the decode's
 /// refusal of a unit running on past where its index says it ends is about the
 /// file, never about bytes the feed over-supplied.
 struct DeflateRead {
-    read: gz_seek::UnitRead,
+    read: pgdt_gzip_seek::UnitRead,
     /// The unit's compressed extent.
     compressed: Range<u64>,
     /// The pulled chunk, built on the first pull and only over a source that

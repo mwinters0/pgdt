@@ -31,21 +31,21 @@ are `docs/process.md`, "The decision register".
 - **D15** A read decodes whole blocks and retains them; reading one in pieces is the fallback
 - **D18** The seek table is persisted and identity is three-state
 - **D19** A budget decline is a `PlanNote`; a non-seekable file is warned, not refused
-- **D112** `gz-seek` inflates through zlib-rs, by `libz-rs-sys`'s zlib C API
+- **D112** `pgdt-gzip-seek` inflates through zlib-rs, by `libz-rs-sys`'s zlib C API
 - **D113** gzip's checkpoint spacing is the block `xz -T0` writes by default
 - **D114** A gzip cache's windows follow its encoded file, and every save writes them all
 - **D115** A gzip first pass spills its windows to a file with no name, beside the cache or in the temp directory
 - **D116** A forward pass coalesces BGZF members as the walk does, so a fetched BGZF file is read by a first pass
-- **D117** A parallel first pass speculates with a decoder of `gz-seek`'s own, and hands out only the engine's plaintext
+- **D117** A parallel first pass speculates with a decoder of `pgdt-gzip-seek`'s own, and hands out only the engine's plaintext
 - **D118** A checkpoint inside a static block is placed by walking its codes beside the engine
 - **D120** A parallel first pass gives decodes a room of their own, and places its speculations a lead ahead
 - **D121** A parallel first pass cuts its file at rapidgzip's chunk, four input chunks
 - **D122** A speculation's guess is cut at a bound on its events and on its bytes past its chunk, and continued
 - **D123** A taken chunk's decode records a BGZF member as its start, header and end, three events a chain read counts
-- **D124** A gzip first pass charges a task what `gz-seek` bounds it to write, and frees no decode buffer while it runs
+- **D124** A gzip first pass charges a task what `pgdt-gzip-seek` bounds it to write, and frees no decode buffer while it runs
 - **D125** A parallel first pass hands out no speculation from when one finds nothing until its frontier crosses a block or member start
 - **D126** A local gzip first pass keeps its frontier on one blocking thread from read to read
-- **D127** `gz-seek` is a leaf crate of this workspace: a gzip index of our own over a bought inflater
+- **D127** `pgdt-gzip-seek` is a leaf crate of this workspace: a gzip index of our own over a bought inflater
 - **D128** A gzip index is one checkpoint list, the first full pass's by-product, each unit checked by its own CRC-32
 - **D20** The library never replaces cache data automatically
 - **D21** Identity is `stored_size()` plus weak signals, in an opaque enum

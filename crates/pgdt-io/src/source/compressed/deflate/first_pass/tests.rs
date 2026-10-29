@@ -71,7 +71,7 @@ fn windows_of(index: &GzipIndex) -> Vec<Vec<u8>> {
 /// builds**, on both feeds and at a chunk that ends nowhere in particular:
 /// the plaintext whole, the extent open until the read that meets the end and
 /// exact from it, and the complete index, every checkpoint's window read
-/// through the provider beside it, equal to `gz_seek`'s own pass's.
+/// through the provider beside it, equal to `pgdt_gzip_seek`'s own pass's.
 #[tokio::test]
 async fn a_first_pass_reads_the_file_and_builds_its_index() {
     let payload = gzip_test_payload();
@@ -108,7 +108,7 @@ async fn a_first_pass_reads_the_file_and_builds_its_index() {
 
 /// **The pass holds its windows in a file with no name, made where it is
 /// told**: a pass spilling into a directory of its own leaves nothing there,
-/// halfway or at its end, while every window reads back as `gz_seek`'s own
+/// halfway or at its end, while every window reads back as `pgdt_gzip_seek`'s own
 /// pass placed it. One told a directory that does not exist reads a file under
 /// the spacing whole, placing no window holding bytes, and refuses the read
 /// that would place one, naming the directory, rather than holding the window
@@ -260,7 +260,10 @@ async fn a_read_behind_the_frontier_reads_from_its_checkpoint() {
 /// A unit decode's refusal of a unit whose plaintext does not match the
 /// CRC-32 its index recorded.
 fn is_unit_check(error: &Error) -> bool {
-    matches!(error.codec_cause::<gz_seek::Error>(), Some(gz_seek::Error::UnitCheck { .. }))
+    matches!(
+        error.codec_cause::<pgdt_gzip_seek::Error>(),
+        Some(pgdt_gzip_seek::Error::UnitCheck { .. })
+    )
 }
 
 /// **A read behind the frontier inside a closed unit is checked against the
@@ -478,7 +481,7 @@ fn taken(pass: &FirstPass) -> u64 {
 
 /// **A pass inflates ahead on the workers its parallelism affords and builds
 /// the serial pass's index, on either feed**: under each count the plaintext
-/// whole and the index and windows `gz_seek`'s forward pass builds. A pulled
+/// whole and the index and windows `pgdt_gzip_seek`'s forward pass builds. A pulled
 /// pass recommends what it can use, the cores it was given and no more than
 /// the physical ones among them (`docs/design/decisions.md`, "D2"); a
 /// fetched one one worker, its tasks running only under a count stated for
@@ -835,7 +838,7 @@ const BGZF_CHUNKING: Chunking = Chunking {
 };
 
 /// **A fetched BGZF file inflates ahead over one download**, each chunk ahead
-/// of the frontier read off its members' headers (`gz_seek`'s
+/// of the frontier read off its members' headers (`pgdt_gzip_seek`'s
 /// `a_bgzf_chunk_is_read_off_its_members_headers`): at every count above one the frontier takes a chunk its tasks decoded —
 /// sequenced as [`a_lifted_frontier_takes_the_chunks_its_tasks_decoded`] is —
 /// the pass builds the index a forward pass builds, which is the walk's

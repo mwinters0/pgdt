@@ -6,7 +6,7 @@
 //! serial inflate set against the plain parse on each measured device is
 //! what decides whether a parallel first pass is worth building
 //! (`docs/design/decisions.md`, "D117"), and the backends' rates are what
-//! `gz-seek`'s throughput floor is read off (D127).
+//! `pgdt-gzip-seek`'s throughput floor is read off (D127).
 //!
 //! ```sh
 //! cargo build --release -p gzip-inflate
@@ -16,7 +16,7 @@
 //! # The backends, each driven directly
 //!
 //! - **`zlib-ng`**: zlib-ng's native `zng_inflate`, through `libz-ng-sys` —
-//!   the reference `gz-seek`'s throughput floor is stated against (D127).
+//!   the reference `pgdt-gzip-seek`'s throughput floor is stated against (D127).
 //!   Its CMake build is why this instrument is a member of its own
 //!   (`Cargo.toml`).
 //! - **`zlib-rs`**: the `zlib-rs` crate's stable `Inflate`.

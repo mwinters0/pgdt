@@ -1,7 +1,7 @@
-//! The pass's frontier: `gz_seek`'s parallel pass, and the tasks it hands out,
+//! The pass's frontier: `pgdt_gzip_seek`'s parallel pass, and the tasks it hands out,
 //! run ahead of it on the caller's threads.
 //!
-//! **The frontier is [`gz_seek::Parallel`] whatever runs beside it**: with no
+//! **The frontier is [`pgdt_gzip_seek::Parallel`] whatever runs beside it**: with no
 //! task run it is the serial pass, and with tasks run it builds the same index
 //! (`docs/design/decisions.md`, "D117"), so lifting the inflate changes who
 //! decoded the bytes, never what the pass records. Nothing here starts a
@@ -60,7 +60,7 @@ const CHUNK_BYTES: NonZeroU64 = NonZeroU64::new(INPUT_CHUNK).unwrap();
 /// How a pass cuts its file into chunks: their compressed length, the most
 /// plaintext one speculation or decode holds, and how many chunks past where
 /// it would land just ahead of the frontier a speculation is placed
-/// (`gz_seek::Parallel::set_lead`).
+/// (`pgdt_gzip_seek::Parallel::set_lead`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Chunking {
     pub(super) bytes: NonZeroU64,
@@ -69,7 +69,7 @@ pub(super) struct Chunking {
 }
 
 impl Chunking {
-    /// The chunking a pass ships with: the limit `gz_seek`'s, a constant of
+    /// The chunking a pass ships with: the limit `pgdt_gzip_seek`'s, a constant of
     /// its writers' blocks rather than of the chunk, a guess it cuts being
     /// continued from its stop; and a lead far enough that the decodes a
     /// guess lets begin begin far enough ahead of the frontier that it seldom
@@ -78,7 +78,7 @@ impl Chunking {
     /// apart to chain: two to six chunks past the lag is one plateau, and
     /// three or four times the lag overshoots.
     pub(super) const SHIPPED: Chunking =
-        Chunking { bytes: CHUNK_BYTES, limit: gz_seek::SPECULATION_LIMIT, lead: 4 };
+        Chunking { bytes: CHUNK_BYTES, limit: pgdt_gzip_seek::SPECULATION_LIMIT, lead: 4 };
 
     /// How many chunks a compressed file `stored_size` bytes long is cut
     /// into, at least one.
@@ -87,7 +87,7 @@ impl Chunking {
     }
 
     /// What one task ahead of the frontier holds, running and then held for
-    /// it, each term a bound `gz_seek` states on what the code writes: a
+    /// it, each term a bound `pgdt_gzip_seek` states on what the code writes: a
     /// running speculation, the larger of the two kinds of task, fed a read
     /// of [`INPUT_CHUNK`] on a local file or a piece of a chunk on a fetched
     /// one; [`DECODES_A_TASK`] decodes handed out or held for the frontier,
@@ -113,18 +113,18 @@ impl Chunking {
     pub(super) const fn task_bytes(self) -> u64 {
         let (chunk, limit) = (self.bytes.get(), self.limit);
         let feed = if chunk > INPUT_CHUNK { chunk } else { INPUT_CHUNK };
-        let speculation = gz_seek::ChunkTask::speculation_bytes(chunk, limit, feed);
-        let decode = gz_seek::ChunkTask::decode_bytes(limit);
+        let speculation = pgdt_gzip_seek::ChunkTask::speculation_bytes(chunk, limit, feed);
+        let decode = pgdt_gzip_seek::ChunkTask::decode_bytes(limit);
         let running = if speculation > decode { speculation } else { decode };
         let (decodes, guesses) = (DECODES_A_TASK as u64, GUESSES_A_TASK as u64);
-        let held = decodes * decode + guesses * gz_seek::ChunkTask::GUESS_BYTES;
+        let held = decodes * decode + guesses * pgdt_gzip_seek::ChunkTask::GUESS_BYTES;
         running + held + INPUT_CHUNK
     }
 
     /// How many pieces a fetched pass's download may hold with `tasks` run
     /// ahead, two a worker: the piece the frontier stands in, twice as many
     /// chunks ahead of it as tasks run — how far ahead its speculations are
-    /// handed out (`gz_seek::Parallel::speculation_through`) — and the piece
+    /// handed out (`pgdt_gzip_seek::Parallel::speculation_through`) — and the piece
     /// after the last, where its speculation stops (`Download::last_chunk`).
     #[cfg(any(feature = "http", test))]
     pub(super) const fn download_pieces(tasks: usize) -> u64 {
@@ -142,7 +142,7 @@ impl Chunking {
 /// The frontier's decode: the parallel pass, the tasks running ahead of it
 /// where its feed runs any, and the download a fetched one reads.
 pub(super) struct Frontier {
-    pub(super) pass: gz_seek::Parallel,
+    pub(super) pass: pgdt_gzip_seek::Parallel,
     ahead: Option<Ahead>,
     #[cfg(any(feature = "http", test))]
     download: Option<Arc<Download>>,
@@ -153,7 +153,7 @@ pub(super) struct Frontier {
 }
 
 impl Frontier {
-    pub(super) fn new(pass: gz_seek::Parallel) -> Frontier {
+    pub(super) fn new(pass: pgdt_gzip_seek::Parallel) -> Frontier {
         Frontier {
             pass,
             ahead: None,
@@ -203,7 +203,7 @@ impl Frontier {
         &mut self,
         input: &[u8],
         out: &mut [u8],
-    ) -> Result<(gz_seek::ParallelStep, Option<gz_seek::TaskId>)> {
+    ) -> Result<(pgdt_gzip_seek::ParallelStep, Option<pgdt_gzip_seek::TaskId>)> {
         self.release();
         let last = self.last_chunk();
         if let Some(ahead) = &mut self.ahead {
@@ -314,18 +314,18 @@ struct Ahead {
     landed: mpsc::Receiver<Landed>,
     /// Each task handed out, until its result lands: empty once a blocking
     /// thread or the frontier has taken it to run.
-    unstarted: BTreeMap<gz_seek::TaskId, Slot>,
+    unstarted: BTreeMap<pgdt_gzip_seek::TaskId, Slot>,
     /// Tasks that panicked, which the pass would otherwise wait for forever.
-    failed: BTreeSet<gz_seek::TaskId>,
+    failed: BTreeSet<pgdt_gzip_seek::TaskId>,
 }
 
 /// A task handed out, taken by whichever runs it first.
-type Slot = Arc<Mutex<Option<gz_seek::ChunkTask>>>;
+type Slot = Arc<Mutex<Option<pgdt_gzip_seek::ChunkTask>>>;
 
 /// What a task came back with.
 enum Landed {
-    Done(gz_seek::ChunkDone),
-    Failed(gz_seek::TaskId),
+    Done(pgdt_gzip_seek::ChunkDone),
+    Failed(pgdt_gzip_seek::TaskId),
 }
 
 impl Ahead {
@@ -335,7 +335,7 @@ impl Ahead {
     }
 
     /// Hand the pass every result that has come back.
-    fn reap(&mut self, pass: &mut gz_seek::Parallel) {
+    fn reap(&mut self, pass: &mut pgdt_gzip_seek::Parallel) {
         while let Ok(landed) = self.landed.try_recv() {
             self.land(landed, pass);
         }
@@ -352,7 +352,7 @@ impl Ahead {
     /// (`docs/design/decisions.md`, "D125"), so over a member whose writer ends no block before its last
     /// only the speculations handed out before the first lands run, and the
     /// pass is read at its serial pace at every count (`gzip-first-pass`).
-    fn top_up(&mut self, pass: &mut gz_seek::Parallel, last: u64) {
+    fn top_up(&mut self, pass: &mut pgdt_gzip_seek::Parallel, last: u64) {
         while self.running < self.tasks {
             let decode = match pass.decodes_pending() < DECODES_A_TASK * self.tasks {
                 true => pass.decode_task(),
@@ -372,7 +372,11 @@ impl Ahead {
     /// back meanwhile — or run it here where no blocking thread has started
     /// it, so a wait never rests on a thread the runtime has yet to give:
     /// answers whether it ran here.
-    fn wait_for(&mut self, id: gz_seek::TaskId, pass: &mut gz_seek::Parallel) -> Result<bool> {
+    fn wait_for(
+        &mut self,
+        id: pgdt_gzip_seek::TaskId,
+        pass: &mut pgdt_gzip_seek::Parallel,
+    ) -> Result<bool> {
         let Some(slot) = self.unstarted.get(&id) else {
             // Not handed out, or landed: the pass waits for a landed task
             // only where it failed, its result never handed over.
@@ -400,7 +404,7 @@ impl Ahead {
     /// Whether a read may await task `id`: one handed out and not yet
     /// landed, its result then coming back on the channel. A landed one the
     /// pass still waits for failed.
-    fn awaitable(&self, id: gz_seek::TaskId) -> Result<()> {
+    fn awaitable(&self, id: pgdt_gzip_seek::TaskId) -> Result<()> {
         if self.unstarted.contains_key(&id) {
             return Ok(());
         }
@@ -409,7 +413,7 @@ impl Ahead {
     }
 
     /// What task `id`, landed, came to: its failure where it panicked.
-    fn outcome(&self, id: gz_seek::TaskId) -> Result<()> {
+    fn outcome(&self, id: pgdt_gzip_seek::TaskId) -> Result<()> {
         match self.failed.contains(&id) {
             true => Err(Error::Io(std::io::Error::other(
                 "a task of this gzip file's first pass failed before its result came back",
@@ -419,7 +423,11 @@ impl Ahead {
     }
 
     /// Hand the pass one result, answering which task it came from.
-    fn land(&mut self, landed: Landed, pass: &mut gz_seek::Parallel) -> gz_seek::TaskId {
+    fn land(
+        &mut self,
+        landed: Landed,
+        pass: &mut pgdt_gzip_seek::Parallel,
+    ) -> pgdt_gzip_seek::TaskId {
         self.running -= 1;
         let id = match landed {
             Landed::Done(done) => {
@@ -440,7 +448,7 @@ impl Ahead {
     /// blocking thread of its own unless the frontier has taken it to run
     /// first, or on the runtime over the download, each piece decoded on a
     /// blocking thread.
-    fn spawn(&mut self, task: gz_seek::ChunkTask) {
+    fn spawn(&mut self, task: pgdt_gzip_seek::ChunkTask) {
         let (stored_size, landing, notify) =
             (self.stored_size, self.landing.clone(), Arc::clone(&self.notify));
         let id = task.id();
@@ -475,7 +483,7 @@ impl Ahead {
 }
 
 /// The task in `slot`, where nothing has taken it yet.
-fn take(slot: &Slot) -> Option<gz_seek::ChunkTask> {
+fn take(slot: &Slot) -> Option<pgdt_gzip_seek::ChunkTask> {
     slot.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
 
@@ -484,7 +492,7 @@ fn take(slot: &Slot) -> Option<gz_seek::ChunkTask> {
 /// download refuses or fails to fetch leaves it unfinished, so it hands back
 /// nothing and the frontier meets those bytes, and the failure, itself.
 #[cfg(any(feature = "http", test))]
-async fn run_downloaded(mut task: gz_seek::ChunkTask, download: &Download) -> Landed {
+async fn run_downloaded(mut task: pgdt_gzip_seek::ChunkTask, download: &Download) -> Landed {
     let id = task.id();
     while let Some(at) = task.wants() {
         let Ok(Some(bytes)) = download.read(at).await else { break };
@@ -509,7 +517,7 @@ async fn run_downloaded(mut task: gz_seek::ChunkTask, download: &Download) -> La
 }
 
 /// `task` run to its result, a panic landing as its failure.
-fn run_caught(task: gz_seek::ChunkTask, file: &std::fs::File, stored_size: u64) -> Landed {
+fn run_caught(task: pgdt_gzip_seek::ChunkTask, file: &std::fs::File, stored_size: u64) -> Landed {
     let id = task.id();
     let run = std::panic::AssertUnwindSafe(|| run_task(task, file, stored_size));
     match std::panic::catch_unwind(run) {
@@ -522,10 +530,10 @@ fn run_caught(task: gz_seek::ChunkTask, file: &std::fs::File, stored_size: u64) 
 /// unfinished, so it hands back nothing and the frontier meets those bytes,
 /// and the failure, itself.
 fn run_task(
-    mut task: gz_seek::ChunkTask,
+    mut task: pgdt_gzip_seek::ChunkTask,
     file: &std::fs::File,
     stored_size: u64,
-) -> gz_seek::ChunkDone {
+) -> pgdt_gzip_seek::ChunkDone {
     let mut buf = Vec::new();
     while let Some(at) = task.wants() {
         let want = INPUT_CHUNK.min(stored_size.saturating_sub(at)) as usize;
@@ -541,7 +549,7 @@ fn run_task(
 
 /// The pass waiting for a task this frontier never ran: a defect, refused
 /// rather than waited on forever.
-fn unrun(id: gz_seek::TaskId) -> Error {
+fn unrun(id: pgdt_gzip_seek::TaskId) -> Error {
     Error::Io(std::io::Error::other(format!(
         "this gzip file's first pass waits for the task on chunk {} that nothing runs",
         id.chunk()

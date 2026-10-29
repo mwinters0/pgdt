@@ -1267,10 +1267,10 @@ class RealWorkspace(unittest.TestCase):
         for s in check.FEATURE_BUILDS:
             self.assertLessEqual({f"{s.package}/{f}" for f in s.features}, declared, s.name)
         self.assertLessEqual(
-            {"pgdt/introspect", "pgdt-core/introspect", "pgdt/jemalloc", "gz-seek/zlib-ng"},
+            {"pgdt/introspect", "pgdt-core/introspect", "pgdt/jemalloc", "pgdt-gzip-seek/zlib-ng"},
             declared - without,
         )
-        self.assertLessEqual({"pgdt-io/http", "pgdt-io/test-support", "gz-seek/zlib-rs"}, without)
+        self.assertLessEqual({"pgdt-io/http", "pgdt-io/test-support", "pgdt-gzip-seek/zlib-rs"}, without)
 
     def test_the_commit_editing_only_doc_comments_runs_no_test(self):
         # 5c835d4b filed two deficiencies by marker comments in two library

@@ -2617,17 +2617,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
-name = "gz-seek"
-version = "0.2.0"
-dependencies = [
- "flate2",
- "libc",
- "libz-rs-sys",
- "libz-sys",
- "noodles-bgzf",
-]
-
-[[package]]
 name = "gzip-inflate"
 version = "0.2.0"
 dependencies = [
@@ -3798,6 +3787,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pgdt-gzip-seek"
+version = "0.2.0"
+dependencies = [
+ "flate2",
+ "libc",
+ "libz-rs-sys",
+ "libz-sys",
+ "noodles-bgzf",
+]
+
+[[package]]
 name = "pgdt-io"
 version = "0.2.0"
 dependencies = [
@@ -3805,11 +3805,11 @@ dependencies = [
  "bytes",
  "flate2",
  "futures",
- "gz-seek",
  "noodles-bgzf",
  "object_store 0.14.2",
  "pgdt-core",
  "pgdt-fixtures",
+ "pgdt-gzip-seek",
  "serde",
  "tempfile",
  "tokio",

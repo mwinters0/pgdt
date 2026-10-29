@@ -20,13 +20,15 @@
 #![allow(unsafe_code)]
 
 #[cfg(not(any(feature = "zlib-rs", feature = "zlib-ng", feature = "zlib")))]
-compile_error!("gz-seek needs an inflater: one of the features `zlib-rs`, `zlib-ng` or `zlib`");
+compile_error!(
+    "pgdt-gzip-seek needs an inflater: one of the features `zlib-rs`, `zlib-ng` or `zlib`"
+);
 
 #[cfg(any(
     all(feature = "zlib-rs", any(feature = "zlib-ng", feature = "zlib")),
     all(feature = "zlib-ng", feature = "zlib"),
 ))]
-compile_error!("gz-seek links one inflater: name one of `zlib-rs`, `zlib-ng` and `zlib`");
+compile_error!("pgdt-gzip-seek links one inflater: name one of `zlib-rs`, `zlib-ng` and `zlib`");
 
 use std::ffi::{CStr, c_int, c_uint};
 

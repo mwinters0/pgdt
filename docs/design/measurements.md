@@ -135,7 +135,7 @@ Eighteen standing rules for reading anything below:
   Every binary a figure runs in the image — the shipped `pgdt`, each
   `allocator` leg, each `release-profile` leg, the instrument, the
   `xz_decode` example, the `gzip-inflate` member and each engine leg of
-  `gz-seek`'s `gz_read` example — is built in
+  `pgdt-gzip-seek`'s `gz_read` example — is built in
   the release image (`measure.build_in_image`), so a figure's two builds
   differ by what it names and never by a compiler or a glibc; and the image
   they run in is that image's base by its digest (`measure.register_image`),
@@ -3285,13 +3285,13 @@ the inflate rows run at 0.48–0.52× of it: a `.gz` first pass beats the plain
 one there, still held by its inflate.
 
 **`zlib-rs` is the fastest backend in every regime, and zlib-ng's row is
-`gz-seek`'s floor.** `zlib-rs`'s cells lie wholly below zlib-ng's in all
+`pgdt-gzip-seek`'s floor.** `zlib-rs`'s cells lie wholly below zlib-ng's in all
 three, and `miniz_oxide` takes more than twice either's time. The floor
-`gz-seek`'s forward decode is held to is the `Inflate, zlib-ng` row
+`pgdt-gzip-seek`'s forward decode is held to is the `Inflate, zlib-ng` row
 ([`decisions.md`](decisions.md), "D127"); which backend it builds on is
 D112's.
 
-## Which engine `gz-seek` reads gzip through
+## Which engine `pgdt-gzip-seek` reads gzip through
 
 <!-- figure: gzseek-backend — taken at `39744f33` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure gzseek-backend` -->
 
@@ -3309,7 +3309,7 @@ D112's.
 | First pass, then every unit, `zlib` | **13.68 s** (13.54–14.05) · ~236 MB/s |
 | Every unit resumed, `zlib` (the row above less the first pass) | **6.82 s** · ~472 MB/s |
 
-Each cell is wall clock and the rate it implies, per plaintext byte, and a first pass's time as a multiple of `zlib-ng`'s serial inflate of the same member, the floor it is held to. The instrument is `crates/gz-seek/examples/gz_read.rs`, one build an engine (`crates/gz-seek/Cargo.toml`'s features), one thread, every member's CRC-32 and `ISIZE` compared, and every unit's CRC-32 where a row decodes every unit; the serial inflate rows are `crates/gzip-inflate/src/main.rs`'s.
+Each cell is wall clock and the rate it implies, per plaintext byte, and a first pass's time as a multiple of `zlib-ng`'s serial inflate of the same member, the floor it is held to. The instrument is `crates/pgdt-gzip-seek/examples/gz_read.rs`, one build an engine (`crates/pgdt-gzip-seek/Cargo.toml`'s features), one thread, every member's CRC-32 and `ISIZE` compared, and every unit's CRC-32 where a row decodes every unit; the serial inflate rows are `crates/gzip-inflate/src/main.rs`'s.
 
 - `control_gz`: 754.7 MB compressed, 3.00 GiB of plaintext, checkpoints every 32 MiB of plaintext, 96 units
 
@@ -3325,7 +3325,7 @@ Per-rep readings (s):
 
 Apparatus over every run in this table: CPU stall ≤0.41%, I/O stall ≤9.80%, machine ≤10% busy, steal ≤0.00%, busiest core ≥3.72 GHz, ≤70°C.
 
-**`zlib-rs` is the fastest engine at both of `gz-seek`'s costs, resolved.**
+**`zlib-rs` is the fastest engine at both of `pgdt-gzip-seek`'s costs, resolved.**
 Every rep of its first pass, and of its first pass with every unit, lies below
 every rep of zlib-ng's; stock zlib takes more than twice either's time at
 both. So the backend is zlib-rs ([`decisions.md`](decisions.md), "D112"),
@@ -3364,7 +3364,7 @@ another commit, to within 5%.
 | 64 MiB | 48 | 1.5 MB · 0.19% of the `.gz` | **2.82 s** (2.71–2.86) · 1.01× `zlib-ng`'s serial inflate | +645.8 µs | **2.74 s** · ~1176 MB/s |
 | 128 MiB | 24 | 736 KB · 0.10% of the `.gz` | **2.75 s** (2.73–2.82) · 0.98× `zlib-ng`'s serial inflate | +2791.7 µs | **2.87 s** · ~1122 MB/s |
 
-The first pass is wall clock, and its time as a multiple of `zlib-ng`'s serial inflate of the same member, the floor it is held to. A unit begun is the median of the first pass with every unit begun and brought to its first plaintext byte, less the first pass's, over the unit count: a fresh inflate state, the window set, the bits primed, a positioned read and the first block's header — which a whole unit decode reads anyway, so it bounds a resume's fixed cost from above. Every unit resumed is the median of the first pass with every unit decoded whole, less the first pass's, and the rate it implies per plaintext byte. The window section is every checkpoint's window as the instrument counts it, and its share of the compressed file. The instrument is `crates/gz-seek/examples/gz_read.rs`, the `zlib-rs` build (`crates/gz-seek/Cargo.toml`'s default), one thread, every member's CRC-32 and `ISIZE` compared, and every unit's CRC-32 where a row decodes every unit; the serial inflate rows are `crates/gzip-inflate/src/main.rs`'s.
+The first pass is wall clock, and its time as a multiple of `zlib-ng`'s serial inflate of the same member, the floor it is held to. A unit begun is the median of the first pass with every unit begun and brought to its first plaintext byte, less the first pass's, over the unit count: a fresh inflate state, the window set, the bits primed, a positioned read and the first block's header — which a whole unit decode reads anyway, so it bounds a resume's fixed cost from above. Every unit resumed is the median of the first pass with every unit decoded whole, less the first pass's, and the rate it implies per plaintext byte. The window section is every checkpoint's window as the instrument counts it, and its share of the compressed file. The instrument is `crates/pgdt-gzip-seek/examples/gz_read.rs`, the `zlib-rs` build (`crates/pgdt-gzip-seek/Cargo.toml`'s default), one thread, every member's CRC-32 and `ISIZE` compared, and every unit's CRC-32 where a row decodes every unit; the serial inflate rows are `crates/gzip-inflate/src/main.rs`'s.
 
 - `control_gz`: 754.7 MB compressed, 3.00 GiB of plaintext
 - Serial inflate, `zlib-ng`: **2.80 s** (2.77–2.86) · ~1152 MB/s

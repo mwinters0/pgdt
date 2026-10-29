@@ -1,5 +1,5 @@
 [package]
-name = "gz-seek"
+name = "pgdt-gzip-seek"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

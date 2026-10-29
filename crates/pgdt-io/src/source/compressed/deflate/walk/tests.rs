@@ -119,7 +119,7 @@ fn a_walk_reads_a_chunk_at_a_time() {
     let (mut reads, mut members) = (0, None);
     while members.is_none() {
         let (offset, len) = walk.next_read();
-        assert!(len as u64 <= WALK_CHUNK.max(gz_seek::BGZF_HEADER_LEN as u64 + 4));
+        assert!(len as u64 <= WALK_CHUNK.max(pgdt_gzip_seek::BGZF_HEADER_LEN as u64 + 4));
         reads += 1;
         let end = (offset as usize + len).min(file.len());
         if let ControlFlow::Break(walked) = walk.supply(offset, &file[offset as usize..end]) {

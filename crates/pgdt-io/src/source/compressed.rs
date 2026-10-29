@@ -143,7 +143,7 @@ fn piece_of(unit: Range<u64>, offset: u64, end: u64) -> Option<(usize, u64, usiz
 /// The codec an index describes, over a compressed file of `stored_size`
 /// bytes, checked against that length without reading a byte — a seek
 /// table's consistency here too, a gzip index's where its parts are read back
-/// (`gz_seek::Index::from_parts`); an index that does not describe the file is refused
+/// (`pgdt_gzip_seek::Index::from_parts`); an index that does not describe the file is refused
 /// ([`index_refused`]).
 fn codec_over(index: CompressionIndex, stored_size: u64) -> Result<std::sync::Arc<dyn Codec>> {
     match index {

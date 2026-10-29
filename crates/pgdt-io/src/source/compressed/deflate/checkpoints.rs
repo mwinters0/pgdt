@@ -6,13 +6,13 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-pub(crate) use gz_seek::{BGZF_HEADER_LEN, GZIP_MAGIC};
+pub(crate) use pgdt_gzip_seek::{BGZF_HEADER_LEN, GZIP_MAGIC};
 
 /// Where a gzip file's units sit — its checkpoints, each a place a decode can
 /// begin, the span from one to the next a unit — and where each checkpoint's
 /// window is read from: [`CompressionIndex::Gzip`]'s layout.
 ///
-/// **Opaque**: `gz_seek`, whose index this wraps, is a crate to be split off
+/// **Opaque**: `pgdt_gzip_seek`, whose index this wraps, is a crate to be split off
 /// this workspace (`docs/design/decisions.md`, "D127"), so its types are not
 /// part of this crate's API. What an embedder reads is the file's shape,
 /// through the methods below; what it persists is the checkpoints whole,
@@ -28,7 +28,7 @@ pub(crate) use gz_seek::{BGZF_HEADER_LEN, GZIP_MAGIC};
 /// [`CompressionIndex::Gzip`]: super::super::CompressionIndex::Gzip
 #[derive(Clone)]
 pub struct GzipIndex {
-    pub(crate) index: gz_seek::Index,
+    pub(crate) index: pgdt_gzip_seek::Index,
     pub(crate) windows: Option<Arc<dyn WindowProvider>>,
 }
 
@@ -110,7 +110,7 @@ impl GzipIndex {
     /// far as the last checkpoint.
     pub fn uncompressed_size(&self) -> u64 {
         match self.index.size() {
-            gz_seek::Size::Exact(len) | gz_seek::Size::Open { at_least: len } => len,
+            pgdt_gzip_seek::Size::Exact(len) | pgdt_gzip_seek::Size::Open { at_least: len } => len,
         }
     }
 
@@ -130,7 +130,7 @@ impl GzipIndex {
     /// unit it begins reads: zero at a member start, its member's history
     /// before it, up to 32 KiB, otherwise.
     pub fn window_len(&self, checkpoint: usize) -> Option<usize> {
-        self.index.checkpoints().get(checkpoint).map(gz_seek::Checkpoint::window_len)
+        self.index.checkpoints().get(checkpoint).map(pgdt_gzip_seek::Checkpoint::window_len)
     }
 
     /// Fill `out`, [`GzipIndex::window_len`] long, with checkpoint
@@ -159,7 +159,7 @@ impl GzipIndex {
     }
 
     /// Unit `unit`, which the caller has counted.
-    pub(crate) fn task(&self, unit: usize) -> gz_seek::UnitTask {
+    pub(crate) fn task(&self, unit: usize) -> pgdt_gzip_seek::UnitTask {
         self.index.unit(unit).expect("a counted unit")
     }
 }
@@ -183,7 +183,7 @@ impl std::fmt::Debug for GzipIndex {
     }
 }
 
-/// The persisted form: the parts `gz_seek::Index::from_parts` takes back,
+/// The persisted form: the parts `pgdt_gzip_seek::Index::from_parts` takes back,
 /// which validates their structure, so a cache damaged there is refused as
 /// undecodable rather than handed out as an index; a damaged CRC-32 is
 /// refused by its unit's decode.
@@ -234,9 +234,11 @@ mod persisted {
                 .iter()
                 .map(|c| {
                     let (window, symbol) = match c.start {
-                        gz_seek::Start::Member => (None, None),
-                        gz_seek::Start::Block { window } => (Some(window), None),
-                        gz_seek::Start::Symbol { window, last } => (Some(window), Some(last)),
+                        pgdt_gzip_seek::Start::Member => (None, None),
+                        pgdt_gzip_seek::Start::Block { window } => (Some(window), None),
+                        pgdt_gzip_seek::Start::Symbol { window, last } => {
+                            (Some(window), Some(last))
+                        }
                     };
                     Point { plaintext: c.plaintext, bit: c.bit, window, symbol, crc: c.crc }
                 })
@@ -255,16 +257,18 @@ mod persisted {
                 .into_iter()
                 .map(|p| {
                     let start = match (p.window, p.symbol) {
-                        (None, None) => gz_seek::Start::Member,
-                        (Some(window), None) => gz_seek::Start::Block { window },
-                        (Some(window), Some(last)) => gz_seek::Start::Symbol { window, last },
+                        (None, None) => pgdt_gzip_seek::Start::Member,
+                        (Some(window), None) => pgdt_gzip_seek::Start::Block { window },
+                        (Some(window), Some(last)) => {
+                            pgdt_gzip_seek::Start::Symbol { window, last }
+                        }
                         (None, Some(_)) => {
                             return Err(serde::de::Error::custom(
                                 "a gzip checkpoint at a member's start inside a static block",
                             ));
                         }
                     };
-                    Ok(gz_seek::Checkpoint {
+                    Ok(pgdt_gzip_seek::Checkpoint {
                         plaintext: p.plaintext,
                         bit: p.bit,
                         start,
@@ -274,9 +278,10 @@ mod persisted {
                 .collect::<Result<_, D::Error>>()?;
             let end = parts
                 .end
-                .map(|e| gz_seek::End { plaintext: e.plaintext, compressed: e.compressed });
-            let index = gz_seek::Index::from_parts(parts.spacing, checkpoints, parts.members, end)
-                .map_err(serde::de::Error::custom)?;
+                .map(|e| pgdt_gzip_seek::End { plaintext: e.plaintext, compressed: e.compressed });
+            let index =
+                pgdt_gzip_seek::Index::from_parts(parts.spacing, checkpoints, parts.members, end)
+                    .map_err(serde::de::Error::custom)?;
             Ok(GzipIndex { index, windows: None })
         }
     }

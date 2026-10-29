@@ -25,7 +25,7 @@ REFUSED = [
     "./target/profiling/pgdt info --dtcache x",
     "FOO=1 time /mnt/x/pgdt parse --source a",
     "env A=1 B=2 runs/pgdt-alloc-system parse --source a",
-    "cd .. && timeout 60 ./target/debug/deps/gz_seek-0123abcd",
+    "cd .. && timeout 60 ./target/debug/deps/pgdt_gzip_seek-0123abcd",
     "pgdt parse --source dump.sql",
     "cargo run -p pgdt -- parse --source x",
     "cargo +nightly bench -p pgdt-codec",
@@ -58,7 +58,7 @@ ALLOWED = [
     "perf diff a.data b.data",
     "heaptrack_print --merge-backtraces=0 x.zst | c++filt",
     "cargo build --release -p pgdt",
-    "cargo nextest run -p gz-seek",
+    "cargo nextest run -p pgdt-gzip-seek",
     "cat <<'EOF' > runs/x.sh\ntarget/release/pgdt parse\nperf record -- ls\nEOF\nchmod +x runs/x.sh",
     "echo 'unbalanced",
 ]

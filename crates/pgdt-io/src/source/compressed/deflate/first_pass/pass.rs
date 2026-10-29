@@ -34,17 +34,17 @@ pub(super) struct Pass {
     /// The decode at the frontier, until it reaches the end or fails.
     pub(super) frontier: Option<Inflating<Frontier>>,
     /// The complete index, once the frontier has reached the end.
-    pub(super) ended: Option<gz_seek::Index>,
+    pub(super) ended: Option<pgdt_gzip_seek::Index>,
     /// The index as far as a frontier decode got before it failed, which
     /// nothing continues.
-    pub(super) stopped: Option<gz_seek::Index>,
+    pub(super) stopped: Option<pgdt_gzip_seek::Index>,
     /// How many checkpoints the frontier's pass holds: the next it places is
     /// this one.
     pub(super) placed: usize,
     /// The index the pass was resumed over, answered until the pass places a
     /// checkpoint of its own: a pass resumed at a member start sets that
     /// checkpoint again with its first step.
-    pub(super) resumed_over: Option<gz_seek::Index>,
+    pub(super) resumed_over: Option<pgdt_gzip_seek::Index>,
     /// The decode behind the frontier, kept across reads.
     behind: Option<Inflating<Behind>>,
     /// What follows once the decode behind is left — set where a read it
@@ -79,9 +79,9 @@ pub(super) enum Served {
 enum Behind {
     /// Inside a closed unit: that unit alone, decoded from its checkpoint and
     /// compared against the CRC-32 it recorded as it ends.
-    Closed(gz_seek::UnitRead),
+    Closed(pgdt_gzip_seek::UnitRead),
     /// Inside the open unit: a forward decode resumed at its checkpoint.
-    Open(gz_seek::Forward),
+    Open(pgdt_gzip_seek::Forward),
 }
 
 /// What the decode behind gives way to once it has been left.
@@ -99,7 +99,7 @@ impl Pass {
     pub(super) fn new(
         frontier: Inflating<Frontier>,
         placed: usize,
-        resumed_over: Option<gz_seek::Index>,
+        resumed_over: Option<pgdt_gzip_seek::Index>,
     ) -> Pass {
         Pass {
             frontier: Some(frontier),
@@ -114,7 +114,7 @@ impl Pass {
     }
 
     /// The index as far as the pass has got.
-    pub(super) fn index(&self) -> gz_seek::Index {
+    pub(super) fn index(&self) -> pgdt_gzip_seek::Index {
         let known = self.ended.as_ref().or(self.resumed_over.as_ref()).or(self.stopped.as_ref());
         match (known, &self.frontier) {
             (Some(index), _) => index.clone(),
@@ -329,10 +329,14 @@ impl Pass {
             None => {
                 let mut parts = checkpoints[..=at].to_vec();
                 parts[at].crc = None;
-                let prefix =
-                    gz_seek::Index::from_parts(index.spacing(), parts, index.member_count(), None)
-                        .map_err(gzip_error)?;
-                Behind::Open(gz_seek::Forward::resume(&prefix, &window).map_err(gzip_error)?)
+                let prefix = pgdt_gzip_seek::Index::from_parts(
+                    index.spacing(),
+                    parts,
+                    index.member_count(),
+                    None,
+                )
+                .map_err(gzip_error)?;
+                Behind::Open(pgdt_gzip_seek::Forward::resume(&prefix, &window).map_err(gzip_error)?)
             }
         };
         Ok(Inflating::new(decode))
@@ -449,7 +453,7 @@ impl Decode for Behind {
         match self {
             Behind::Closed(read) => {
                 let progress = read.read(input, out).map_err(gzip_error)?;
-                let needs_input = progress == gz_seek::Progress::default();
+                let needs_input = progress == pgdt_gzip_seek::Progress::default();
                 Ok(Step { progress, checkpoint: false, needs_input, waits: false })
             }
             Behind::Open(forward) => Decode::step(forward, input, out),

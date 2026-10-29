@@ -1,4 +1,4 @@
-//! **What one decode holds is under [`gz_seek::DECODER_BYTES`]**, counted on
+//! **What one decode holds is under [`pgdt_gzip_seek::DECODER_BYTES`]**, counted on
 //! the engine whose allocations the Rust allocator sees — and a forward pass,
 //! a static block's walk included, under that and the window it copies out.
 //!
@@ -14,7 +14,7 @@ use std::io::Write;
 use std::num::NonZeroU64;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use gz_seek::{DECODER_BYTES, Forward, Start, WINDOW_SIZE};
+use pgdt_gzip_seek::{DECODER_BYTES, Forward, Start, WINDOW_SIZE};
 
 /// The system allocator, counting what is live and the most that has been.
 struct Counting;

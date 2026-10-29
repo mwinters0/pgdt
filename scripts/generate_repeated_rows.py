@@ -4,7 +4,7 @@
 times in a run, deflated as `pg_dump -Z` writes it.
 
 **What it is for is a gzip member whose chunks reach the speculation limit.**
-A first pass's task is charged `gz_seek::SPECULATION_LIMIT` of plaintext six
+A first pass's task is charged `pgdt_gzip_seek::SPECULATION_LIMIT` of plaintext six
 times over, and those terms fill only where a chunk of `CHUNK_BYTES`
 compressed bytes inflates to the limit or past it, about 4 : 1. `control`
 deflates at about that ratio, so a leg reading it fills them only on the

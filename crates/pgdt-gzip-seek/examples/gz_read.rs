@@ -1,4 +1,4 @@
-//! The instrument `gz-seek`'s figures time: one gzip file read through this
+//! The instrument `pgdt-gzip-seek`'s figures time: one gzip file read through this
 //! crate on one thread, as a first pass or as every unit resumed alone, and
 //! what was read printed.
 //!
@@ -8,19 +8,19 @@
 //! the shipped engine's build at each candidate spacing:
 //!
 //! ```sh
-//! cargo build --release -p gz-seek --example gz_read --no-default-features --features zlib-ng
+//! cargo build --release -p pgdt-gzip-seek --example gz_read --no-default-features --features zlib-ng
 //! ./target/release/examples/gz_read --source control_gz.gz --spacing 33554432 --shape units
 //! ```
 //!
 //! # The three shapes
 //!
-//! - **`forward`**: the first pass — [`gz_seek::Forward`] over the whole file,
+//! - **`forward`**: the first pass — [`pgdt_gzip_seek::Forward`] over the whole file,
 //!   a checkpoint at each multiple of `--spacing`, every member's CRC-32 and
 //!   `ISIZE` compared and each unit's CRC-32 recorded, and each checkpoint's
 //!   window copied out, as a caller writing them to its cache does.
 //! - **`units`**: that pass, then every unit of the index it built decoded
 //!   alone from its checkpoint and window, its compressed range read
-//!   positionally, each a fresh [`gz_seek::UnitTask::decode`] comparing the
+//!   positionally, each a fresh [`pgdt_gzip_seek::UnitTask::decode`] comparing the
 //!   unit's CRC-32. What a resumed unit decode costs is this shape's time
 //!   less `forward`'s, both taken in one sitting.
 //! - **`starts`**: that pass, then every unit begun alone from its checkpoint
@@ -62,7 +62,7 @@ use std::os::unix::fs::FileExt;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use gz_seek::{Forward, Index};
+use pgdt_gzip_seek::{Forward, Index};
 
 /// Compressed bytes read from the file at a time by the first pass.
 const READ_BUFFER: usize = 1 << 20;
@@ -232,7 +232,7 @@ fn run(args: &Args) -> Result<(), String> {
         Shape::Units => delivered = every_unit(&file, &index, &windows)?,
         Shape::Starts => started = Some(every_start(&file, &index, &windows)?),
     }
-    println!("engine={}", gz_seek::engine());
+    println!("engine={}", pgdt_gzip_seek::engine());
     println!("delivered={delivered}");
     println!("units={}", index.unit_count());
     println!("windows={}", windows.iter().map(Vec::len).sum::<usize>());
@@ -244,7 +244,7 @@ fn run(args: &Args) -> Result<(), String> {
 
 fn main() -> ExitCode {
     if std::env::args().skip(1).eq(["--engine"]) {
-        println!("engine={}", gz_seek::engine());
+        println!("engine={}", pgdt_gzip_seek::engine());
         return ExitCode::SUCCESS;
     }
     let result = parse_args().and_then(|args| run(&args));

@@ -37,7 +37,7 @@ futures = { workspace = true }
 # The gzip codec's crate, named by `source/compressed/deflate.rs` and its
 # layout alone: a leaf of this workspace, linked with its default engine,
 # zlib-rs, which builds no C (`docs/design/decisions.md`, "D112").
-gz-seek = { path = "../gz-seek" }
+pgdt-gzip-seek = { path = "../pgdt-gzip-seek" }
 # `http` only, and `default-features = false` to leave out the `fs` backend:
 # what is wanted is one `HttpStore` over ranged GETs. The `http` feature
 # resolves to rustls over `aws-lc-rs`, whose `aws-lc-sys` is a C build by its

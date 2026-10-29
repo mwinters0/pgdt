@@ -55,7 +55,7 @@
 //! let file = encoder.finish()?;
 //!
 //! // The first pass: the plaintext, the index, and each checkpoint's window.
-//! let mut pass = gz_seek::Forward::new(NonZeroU64::new(128 * 1024).unwrap())?;
+//! let mut pass = pgdt_gzip_seek::Forward::new(NonZeroU64::new(128 * 1024).unwrap())?;
 //! let (mut taken, mut out, mut windows) = (0, vec![0u8; 64 * 1024], Vec::new());
 //! loop {
 //!     let step = pass.read(&file[taken..], &mut out)?;

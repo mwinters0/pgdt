@@ -4,7 +4,7 @@
 //!
 //! **Each piece is fetched once.** A speculation reads its chunk, the engine's
 //! decode of the chunk reads it again, and the frontier reads every byte no
-//! decode it took covers (`gz_seek::ChunkTask::wants`); over a transport each
+//! decode it took covers (`pgdt_gzip_seek::ChunkTask::wants`); over a transport each
 //! of those reads would be a ranged GET of its own. Here each is a slice of
 //! the piece the first of them fetched, a second reader of a piece in flight
 //! waiting for that fetch rather than making its own.

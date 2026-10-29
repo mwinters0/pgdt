@@ -20,7 +20,7 @@ pub(super) enum Filled {
 
 /// One step of a decode, as [`Inflating::fill`] drives either kind.
 pub(super) struct Step {
-    pub(super) progress: gz_seek::Progress,
+    pub(super) progress: pgdt_gzip_seek::Progress,
     /// Whether the step placed a checkpoint.
     pub(super) checkpoint: bool,
     /// Whether the decode needs more input than it was given to go on: a step
@@ -47,13 +47,13 @@ pub(super) trait Decode {
     }
 }
 
-impl Decode for gz_seek::Forward {
+impl Decode for pgdt_gzip_seek::Forward {
     fn position(&self) -> u64 {
-        gz_seek::Forward::position(self)
+        pgdt_gzip_seek::Forward::position(self)
     }
 
     fn compressed_position(&self) -> u64 {
-        gz_seek::Forward::compressed_position(self)
+        pgdt_gzip_seek::Forward::compressed_position(self)
     }
 
     fn input_end(&self, stored_size: u64) -> u64 {
@@ -63,7 +63,7 @@ impl Decode for gz_seek::Forward {
     fn step(&mut self, input: &[u8], out: &mut [u8]) -> Result<Step> {
         let step = self.read(input, out).map_err(gzip_error)?;
         let needs_input =
-            step.progress == gz_seek::Progress::default() && step.checkpoint.is_none();
+            step.progress == pgdt_gzip_seek::Progress::default() && step.checkpoint.is_none();
         let checkpoint = step.checkpoint.is_some();
         Ok(Step { progress: step.progress, checkpoint, needs_input, waits: false })
     }

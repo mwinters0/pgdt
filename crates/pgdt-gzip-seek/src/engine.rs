@@ -443,7 +443,7 @@ impl Engine {
             assert_eq!(
                 inflated.unused_bits(),
                 0,
-                "gz-seek: the inflater ended a stream holding unused bits, which zlib's \
+                "pgdt-gzip-seek: the inflater ended a stream holding unused bits, which zlib's \
                  contract rules out (docs/design/runtime-invariants.md, RT23)"
             );
             self.walking = None;
@@ -486,7 +486,7 @@ impl Engine {
         let held = usize::try_from(self.fed.saturating_sub(bit / 8)).unwrap_or(usize::MAX);
         assert!(
             held <= usize::from(self.tail_len),
-            "gz-seek: a stop held more unused bits than the bytes it took"
+            "pgdt-gzip-seek: a stop held more unused bits than the bytes it took"
         );
         (0..held).rev().map(|i| (self.tail >> (8 * i)) as u8).collect()
     }

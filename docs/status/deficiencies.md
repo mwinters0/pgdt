@@ -516,19 +516,19 @@ than reading as a phase nobody has sliced.
   member runs past a chunk's end into BGZF members with a block the search
   looks for between, so the frontier decodes the gap, and the chunk past it,
   itself. **(c) unowned**; promoted by a profile showing that decode.
-  Detail: `crates/gz-seek/src/speculate.rs`.
+  Detail: `crates/pgdt-gzip-seek/src/speculate.rs`.
 
 - **KD140** — the block search can pass over a true dynamic block whose
   header's checks straddle an unfinished input's end, so a chunk's guess
   begins late or not at all. **(c) unowned**; promoted by a speculation seen
-  to miss its chunk's first block. Detail: `crates/gz-seek/src/find.rs`.
+  to miss its chunk's first block. Detail: `crates/pgdt-gzip-seek/src/find.rs`.
 
 - **KD143** — a parallel first pass speculates nearly every chunk and the
   engine decodes each taken one again, so at four workers they are nearly
   always busy and the frontier waits a large share of its time on taken
   decodes, and at the physical core count it is short of its scan's floor.
   **(a) deliberate tradeoff** — the second decode is D117's, the engine's
-  plaintext alone handed out. Detail: `crates/gz-seek/src/speculate.rs`.
+  plaintext alone handed out. Detail: `crates/pgdt-gzip-seek/src/speculate.rs`.
 
 - **KD144** — a range type's own `collation` parameter is not read, so a
   `text`-bounded range is compared as though it stated none: a spurious note
@@ -567,10 +567,10 @@ than reading as a phase nobody has sliced.
   while new decodes are lent new ones, so the buffers can outnumber the
   decodes a task's charge names. **(c) unowned**; promoted by `gzip-resident`
   under-billing, or a recording naming the buffers. Detail:
-  `crates/gz-seek/src/parallel/chain.rs`.
+  `crates/pgdt-gzip-seek/src/parallel/chain.rs`.
 
 - **KD154** — a taken chunk's decode records every member inside a BGZF
   member's stated `BSIZE` span, where a chain read counts three events a span,
   so a crafted span of many plain members passes the decode's event bound.
   **(c) unowned**; promoted by such a file met, or a decode's events checked
-  against its bound. Detail: `crates/gz-seek/src/chunk.rs`.
+  against its bound. Detail: `crates/pgdt-gzip-seek/src/chunk.rs`.

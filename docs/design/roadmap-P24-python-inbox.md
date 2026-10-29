@@ -71,7 +71,7 @@ graph and D106.
 ## An embedder tells one compressed failure from another only by naming its codec's crate
 
 **Fact.** `pgdt_core::Error::Codec` carries `xz_seek`'s error boxed for an
-`.xz` failure and `gz_seek`'s for a gzip one, naming the codec, and
+`.xz` failure and `pgdt_gzip_seek`'s for a gzip one, naming the codec, and
 `Error::codec_cause::<E>()` downcasts it, so a caller distinguishing
 `InvalidTable` from `BlockCheckFailed`, or `UnitCheck` from `IndexMismatch`,
 depends on that crate and names its type. The seek table is opaque (`pgdt_io::SeekTable`); this path is

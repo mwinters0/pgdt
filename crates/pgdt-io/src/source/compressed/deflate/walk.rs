@@ -1,5 +1,5 @@
 //! A local BGZF file's index, read at open off its members' headers and
-//! trailers with nothing decoded (`gz_seek::Walk`) — the place the `.xz`
+//! trailers with nothing decoded (`pgdt_gzip_seek::Walk`) — the place the `.xz`
 //! footer walk has, and announced as it is, being the same wait before any
 //! scan (`docs/design/decisions.md`, "D64").
 //!
@@ -27,7 +27,7 @@ use super::{CHECKPOINT_SPACING, GZIP, GzipIndex, INPUT_CHUNK};
 /// recognition tells a file whose index is walked from one whose index a
 /// first pass builds.
 pub(crate) fn is_bgzf(leading: &[u8]) -> bool {
-    gz_seek::bgzf_member_len(leading).is_some()
+    pgdt_gzip_seek::bgzf_member_len(leading).is_some()
 }
 
 /// How many bytes one read of the walk asks for at least: the input chunk a
@@ -71,7 +71,7 @@ fn walk_file_spaced(
 
 /// One walk, its status lines and the reads it asks for.
 struct Walking<'a> {
-    walk: gz_seek::Walk,
+    walk: pgdt_gzip_seek::Walk,
     named: &'a str,
     stored_size: u64,
 }
@@ -79,7 +79,7 @@ struct Walking<'a> {
 impl<'a> Walking<'a> {
     fn begin(named: &'a str, stored_size: u64, spacing: NonZeroU64) -> Self {
         tracing::info!(source = %named, codec = %GZIP, "BGZF member walk started");
-        Self { walk: gz_seek::Walk::new(stored_size, spacing), named, stored_size }
+        Self { walk: pgdt_gzip_seek::Walk::new(stored_size, spacing), named, stored_size }
     }
 
     /// The next read: the walk's request, read on to [`WALK_CHUNK`] within
@@ -95,8 +95,8 @@ impl<'a> Walking<'a> {
     /// `None` where the chain broke, each said; or the next read.
     fn supply(&mut self, offset: u64, bytes: &[u8]) -> ControlFlow<Option<GzipIndex>> {
         match self.walk.supply(offset, bytes) {
-            Ok(gz_seek::WalkStep::Need(_)) => ControlFlow::Continue(()),
-            Ok(gz_seek::WalkStep::Done(index)) => {
+            Ok(pgdt_gzip_seek::WalkStep::Need(_)) => ControlFlow::Continue(()),
+            Ok(pgdt_gzip_seek::WalkStep::Done(index)) => {
                 let index = GzipIndex { index, windows: None };
                 tracing::info!(
                     source = %self.named,

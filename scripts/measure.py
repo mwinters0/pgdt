@@ -53,7 +53,7 @@ own container memory and its own contention row, both of which its table
 declares. `inflate-throughput`'s inflate rows time the `gzip-inflate`
 apparatus member the same way, built in the same image, over a `.gz`
 compression of the control staged beside it, and `gzseek-backend` times
-`gz-seek`'s `gz_read` example, one build an engine in a target dir of its own,
+`pgdt-gzip-seek`'s `gz_read` example, one build an engine in a target dir of its own,
 each asked its engine before it is timed, and `gzseek-spacing` the shipped
 engine's build at each candidate spacing. The dynamic-filter figures time **`pgdt sql`**, DataFusion's CLI,
 with `pgdt parse` building the cache it reads first: it states its worker
@@ -2460,19 +2460,19 @@ INFLATE_FAMILY = "inflate-"
 
 #: The deflate backends that figure is taken over, in its table's row order,
 #: each spelled as the instrument's `--backend` spells it, zlib-ng first as
-#: the reference `gz-seek`'s throughput floor is stated against
+#: the reference `pgdt-gzip-seek`'s throughput floor is stated against
 #: (`docs/design/decisions.md`, "D127").
 INFLATE_BACKENDS: tuple[str, ...] = ("zlib-ng", "zlib-rs", "miniz-oxide")
 
 #: Every inflate shape, `INFLATE_FAMILY` and a backend.
 INFLATE_SHAPES: tuple[str, ...] = tuple(f"{INFLATE_FAMILY}{b}" for b in INFLATE_BACKENDS)
 
-#: The `gzseek-backend` figure's command family: `gz-seek`'s `gz_read`
+#: The `gzseek-backend` figure's command family: `pgdt-gzip-seek`'s `gz_read`
 #: example over one gzip member, a shape a stage and an engine.
 GZSEEK_FAMILY = "gzseek-"
 
-#: The engines `gz-seek` builds over, each spelled as the crate's feature, in
-#: the table's row order, **the crate's default first** — `crates/gz-seek/
+#: The engines `pgdt-gzip-seek` builds over, each spelled as the crate's feature, in
+#: the table's row order, **the crate's default first** — `crates/pgdt-gzip-seek/
 #: Cargo.toml`'s `default`, which a test holds this to.
 GZSEEK_ENGINES: tuple[str, ...] = ("zlib-rs", "zlib-ng", "zlib")
 
@@ -2480,7 +2480,7 @@ GZSEEK_ENGINES: tuple[str, ...] = ("zlib-rs", "zlib-ng", "zlib")
 #: pass followed by every unit decoded alone from its checkpoint.
 GZSEEK_STAGES: tuple[str, ...] = ("forward", "units")
 
-#: Every `gz-seek` shape, `GZSEEK_FAMILY`, a stage and an engine.
+#: Every `pgdt-gzip-seek` shape, `GZSEEK_FAMILY`, a stage and an engine.
 GZSEEK_SHAPES: tuple[str, ...] = tuple(
     f"{GZSEEK_FAMILY}{stage}-{engine}" for engine in GZSEEK_ENGINES for stage in GZSEEK_STAGES
 )
@@ -2490,10 +2490,10 @@ GZSEEK_SHAPES: tuple[str, ...] = tuple(
 #: picked (`docs/design/decisions.md`, "D113"): one within xz's block sizes,
 #: so each engine's per-unit fixed cost is in its unit rows at a count the
 #: shipped spacing could give, and the decoder stops at every block's end
-#: whatever the spacing (`crates/gz-seek/src/forward.rs`).
+#: whatever the spacing (`crates/pgdt-gzip-seek/src/forward.rs`).
 GZSEEK_SPACING = 32 * MIB
 
-#: The `gzseek-spacing` figure's command family: `gz-seek`'s `gz_read`
+#: The `gzseek-spacing` figure's command family: `pgdt-gzip-seek`'s `gz_read`
 #: example on the engine that ships, a shape a stage and a spacing in MiB.
 GZSPACING_FAMILY = "gzspacing-"
 
@@ -4459,7 +4459,7 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a backend the figure does not carry")
         return f"time /pgdt --source /dump.sql --backend {backend}"
     if command.startswith(GZSEEK_FAMILY):
-        # `gz-seek`'s `gz_read` example, one build an engine, mounted where
+        # `pgdt-gzip-seek`'s `gz_read` example, one build an engine, mounted where
         # every figure's binary is. **Nothing is redirected**, for the inflate
         # instrument's reason.
         stage, _, engine = command.removeprefix(GZSEEK_FAMILY).partition("-")
@@ -4544,7 +4544,7 @@ def command_shapes() -> tuple[str, ...]:
 _WORKER_COUNT = re.compile(r"--(?:jobs|workers) \d+")
 
 #: The shapes that state no worker count and are right not to, being no run
-#: of `pgdt`: `dd`, the device floor, and the inflate and `gz-seek`
+#: of `pgdt`: `dd`, the device floor, and the inflate and `pgdt-gzip-seek`
 #: instruments', each of which has one thread by construction and no default a
 #: count could be inherited from. Named rather than inferred, so another
 #: non-`pgdt` shape has to be admitted here on purpose.
@@ -6186,7 +6186,7 @@ def ensure_gzip_inflate_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     return out
 
 
-#: The `gz-seek` engine legs this process has built, per process for
+#: The `pgdt-gzip-seek` engine legs this process has built, per process for
 #: `_XZ_DECODE_BUILT`'s reason.
 _GZSEEK_BUILT: set[str] = set()
 
@@ -6195,7 +6195,7 @@ def gzseek_engine_problem(engine: str, reported: str) -> str | None:
     """Why a `gz_read` build reporting `reported` as its `engine=` is not the
     `engine` leg, or `None` where it is.
 
-    Read off the engine's own `zlibVersion` (`gz_seek::engine`), the one
+    Read off the engine's own `zlibVersion` (`pgdt_gzip_seek::engine`), the one
     thing that names which library the binary links: zlib-rs's carries
     `zlib-rs`, zlib-ng's compatible build `zlib-ng`, and stock zlib's neither.
     A `libz-sys` build handed both of its modes builds stock zlib, so a
@@ -6209,7 +6209,7 @@ def gzseek_engine_problem(engine: str, reported: str) -> str | None:
 
 
 def ensure_gzseek_binary(cfg: Config, engine: str, log: Callable[[str], None]) -> Path:
-    """One engine leg of `gz-seek`'s `gz_read` example, built and then
+    """One engine leg of `pgdt-gzip-seek`'s `gz_read` example, built and then
     interrogated, as an `allocator` leg is (`ensure_allocator_binary`):
     `--no-default-features --features <engine>`, so the leg is the one engine
     it names, the crate refusing any other count; **its own target dir**, so
@@ -6218,19 +6218,19 @@ def ensure_gzseek_binary(cfg: Config, engine: str, log: Callable[[str], None]) -
     `pgdt`, built in the release image for every reason
     `ensure_xz_decode_binary` gives."""
     if engine not in GZSEEK_ENGINES:
-        raise ValueError(f"unknown gz-seek engine {engine!r}")
+        raise ValueError(f"unknown pgdt-gzip-seek engine {engine!r}")
     out = cfg.out_dir / f"pgdt-gzseek-{engine}"
     if engine in _GZSEEK_BUILT:
         return out
     target = image_target_dir(cfg, f"gzseek-{engine}")
     if cfg.dry_run:
-        log(f"  [dry-run] would build the gz-seek {engine} leg into {target}")
+        log(f"  [dry-run] would build the pgdt-gzip-seek {engine} leg into {target}")
         _GZSEEK_BUILT.add(engine)
         return out
-    log(f"  building the gz-seek {engine} leg into {target}")
+    log(f"  building the pgdt-gzip-seek {engine} leg into {target}")
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
     build = release.Build(
-        package="gz-seek", example="gz_read", features=(engine,), default_features=False
+        package="pgdt-gzip-seek", example="gz_read", features=(engine,), default_features=False
     )
     built = build_in_image(cfg, build, target_dir=target)
     shutil.copyfile(built, out)
@@ -8810,7 +8810,7 @@ def run_inflate_throughput(session: Session) -> str:
     pass's own floor — the `.gz` file's `dd` row or the warm `parse`, the
     plaintext reaching its scan from memory, whichever is slower — is a first
     pass bound by the inflate, which only a parallel first pass would lift;
-    and the backends' rates are what `gz-seek`'s throughput floor is read
+    and the backends' rates are what `pgdt-gzip-seek`'s throughput floor is read
     off. **The ratio each inflate cell carries answers a different
     question**, whether a `.gz` first pass is slower than the plain file's
     `parse` on the same device: below 1 on a device holding the plain
@@ -8887,11 +8887,11 @@ def run_inflate_throughput(session: Session) -> str:
     return table + notes + "\n" + _per_rep(figure, session, specs)
 
 
-# -- gz-seek's engine ---------------------------------------------------------
+# -- pgdt-gzip-seek's engine ---------------------------------------------------------
 
 #: The `gzseek-backend` figure's reference rows: the serial inflate of the same
 #: member by the `inflate-throughput` instrument, on the two zlib-API engines
-#: it carries — zlib-ng's the floor `gz-seek`'s first pass is held to
+#: it carries — zlib-ng's the floor `pgdt-gzip-seek`'s first pass is held to
 #: (`docs/design/decisions.md`, "D127").
 GZSEEK_REFERENCES: tuple[str, ...] = ("zlib-ng", "zlib-rs")
 
@@ -8917,11 +8917,11 @@ def _gzseek_specs() -> list[RunSpec]:
 
 
 def run_gzseek_backend(session: Session) -> str:
-    """`gz-seek`'s first pass and its resumed unit decodes on each engine it
+    """`pgdt-gzip-seek`'s first pass and its resumed unit decodes on each engine it
     builds over, against a serial inflate of the same member.
 
     What it decides (`docs/design/decisions.md`, "D112"): which engine
-    `gz-seek` ships, the fastest winning and the lighter build within noise. **Two costs an engine sets**, read off one
+    `pgdt-gzip-seek` ships, the fastest winning and the lighter build within noise. **Two costs an engine sets**, read off one
     build of the `gz_read` example an engine (`ensure_gzseek_binary`): the
     first pass, which stops at every block's end and copies each
     checkpoint's window; and every unit decoded alone from its checkpoint,
@@ -8987,8 +8987,8 @@ def run_gzseek_backend(session: Session) -> str:
     notes = (
         "\n\nEach cell is wall clock and the rate it implies, per plaintext byte, and a first "
         "pass's time as a multiple of `zlib-ng`'s serial inflate of the same member, the floor "
-        "it is held to. The instrument is `crates/gz-seek/examples/gz_read.rs`, one build an "
-        "engine (`crates/gz-seek/Cargo.toml`'s features), one thread, every member's CRC-32 "
+        "it is held to. The instrument is `crates/pgdt-gzip-seek/examples/gz_read.rs`, one build an "
+        "engine (`crates/pgdt-gzip-seek/Cargo.toml`'s features), one thread, every member's CRC-32 "
         "and `ISIZE` compared, and every unit's CRC-32 where a row decodes every unit; the "
         "serial inflate rows are "
         "`crates/gzip-inflate/src/main.rs`'s.\n\n"
@@ -8999,7 +8999,7 @@ def run_gzseek_backend(session: Session) -> str:
     return table + notes + "\n" + _per_rep(figure, session, specs)
 
 
-# -- gz-seek's spacing --------------------------------------------------------
+# -- pgdt-gzip-seek's spacing --------------------------------------------------------
 
 
 def _gzspacing_specs() -> list[RunSpec]:
@@ -9028,7 +9028,7 @@ def _gzspacing_specs() -> list[RunSpec]:
 
 def run_gzseek_spacing(session: Session) -> str:
     """gzip's own costs at each candidate checkpoint spacing, on the engine
-    `gz-seek` ships, against a serial inflate of the same member.
+    `pgdt-gzip-seek` ships, against a serial inflate of the same member.
 
     What it prices (`docs/design/decisions.md`, "D113"): the three costs a
     spacing sets that xz does not share — **the first pass**, which stops at every block's end whatever the spacing
@@ -9137,8 +9137,8 @@ def run_gzseek_spacing(session: Session) -> str:
         "resumed is the median of the first pass with every unit decoded whole, less the "
         "first pass's, and the rate it implies per plaintext byte. The window section is "
         "every checkpoint's window as the instrument counts it, and its share of the "
-        "compressed file. The instrument is `crates/gz-seek/examples/gz_read.rs`, the "
-        f"`{GZSPACING_ENGINE}` build (`crates/gz-seek/Cargo.toml`'s default), one thread, "
+        "compressed file. The instrument is `crates/pgdt-gzip-seek/examples/gz_read.rs`, the "
+        f"`{GZSPACING_ENGINE}` build (`crates/pgdt-gzip-seek/Cargo.toml`'s default), one thread, "
         "every member's CRC-32 and `ISIZE` compared, and every unit's CRC-32 where a row "
         "decodes every unit; the serial inflate rows are `crates/gzip-inflate/src/main.rs`'s.\n\n"
         f"- `control_gz`: {_fmt_bytes(compressed)} compressed, {_fmt_bytes(plaintext)} of "
@@ -11075,11 +11075,11 @@ def _per_rep(figure: str, session: Session, specs: Sequence[RunSpec]) -> str:
 #: (`bgzf_unit`).
 LIBRARY_GZIP_SPACING = 24 << 20
 
-#: `gz_seek::DECODER_BYTES`, mirrored: the inflater's own state, which a gzip
+#: `pgdt_gzip_seek::DECODER_BYTES`, mirrored: the inflater's own state, which a gzip
 #: decode is charged whichever engine it runs on.
 GZIP_DECODER_BYTES = 64 * 1024
 
-#: `gz_seek::WINDOW_SIZE`, mirrored: deflate's 32 KiB history, read as a unit's
+#: `pgdt_gzip_seek::WINDOW_SIZE`, mirrored: deflate's 32 KiB history, read as a unit's
 #: decode begins and copied out at each checkpoint a first pass places.
 GZIP_WINDOW_BYTES = 32 * 1024
 
@@ -11094,7 +11094,7 @@ GZIP_INPUT_CHUNK = 1 << 20
 #: charge and a file's chunk count read this, a decode's input buffer that.
 GZIP_CHUNK = 4 << 20
 
-#: `gz_seek::SPECULATION_LIMIT`, mirrored: twice the largest block zlib ends,
+#: `pgdt_gzip_seek::SPECULATION_LIMIT`, mirrored: twice the largest block zlib ends,
 #: `lit_bufsize - 1` symbols of at most 258 bytes at its largest `memLevel` —
 #: the most plaintext one speculation or decode ahead of the frontier holds,
 #: and most of what a task is charged (`gzip_task_bytes`).
@@ -11106,22 +11106,22 @@ GZIP_SPECULATION_LIMIT = 2 * ((1 << (9 + 6)) - 1) * 258
 GZIP_DECODES_A_TASK = 2
 GZIP_GUESSES_A_TASK = 5
 
-#: `gz-seek`'s `EVENTS_A_GUESS` (`speculate.rs`), mirrored: the most events a
+#: `pgdt-gzip-seek`'s `EVENTS_A_GUESS` (`speculate.rs`), mirrored: the most events a
 #: guess spans before a bound cuts it, which bounds what a chunk's decode
 #: records (`gzip_decode_bytes`).
 GZIP_EVENTS_A_GUESS = 16 * (GZIP_SPECULATION_LIMIT // ((1 << (8 + 6)) - 1))
 
 #: The bytes of one event and one piece a chunk's decode records
 #: (`size_of::<(u64, Event)>()` and `size_of::<(u64, u64, u32)>()` in
-#: `gz-seek`'s `chunk.rs`), mirrored.
+#: `pgdt-gzip-seek`'s `chunk.rs`), mirrored.
 GZIP_EVENT_BYTES = 24
 GZIP_PIECE_BYTES = 24
 
-#: `gz-seek`'s `STATE_BYTES` (`speculate.rs`), mirrored: what a task's own
+#: `pgdt-gzip-seek`'s `STATE_BYTES` (`speculate.rs`), mirrored: what a task's own
 #: state holds besides the buffers its bound names.
 GZIP_TASK_STATE_BYTES = 32 * 1024
 
-#: `gz-seek`'s `LONGEST_HEADER` (`native/inflate.rs`), `PAD`
+#: `pgdt-gzip-seek`'s `LONGEST_HEADER` (`native/inflate.rs`), `PAD`
 #: (`native/input.rs`) and `ROOM_PAST_LIMIT` (`native/sink.rs`), mirrored:
 #: what a speculation's input holds past where its decode waits, the padding
 #: past its bytes, and the room each sink keeps past its limit.
@@ -11129,7 +11129,7 @@ GZIP_LONGEST_HEADER = (3 + 5 + 5 + 4 + 19 * 3 + (288 + 32) * 7 + 7) // 8
 GZIP_INPUT_PAD = 8
 GZIP_ROOM_PAST_LIMIT = 258 + 32
 
-#: `gz-seek`'s `CHAIN_PAST` (`speculate.rs`), mirrored: the most a BGZF chain
+#: `pgdt-gzip-seek`'s `CHAIN_PAST` (`speculate.rs`), mirrored: the most a BGZF chain
 #: read holds past its chunk, a member as long as a `BSIZE` states and a header.
 GZIP_CHAIN_PAST = (1 << 16) + 18
 
@@ -11154,7 +11154,7 @@ def gzip_speculation_bytes(chunk: int, feed: int) -> int:
     their rooms, the marked one two bytes a value; the guess it hands back;
     and its state.
 
-    `gz_seek::ChunkTask::speculation_bytes` (`speculate.rs`, `most_held`),
+    `pgdt_gzip_seek::ChunkTask::speculation_bytes` (`speculate.rs`, `most_held`),
     mirrored."""
     limit = GZIP_SPECULATION_LIMIT
     past = max(limit, GZIP_CHAIN_PAST)
@@ -11167,7 +11167,7 @@ def gzip_decode_bytes() -> int:
     """The most one chunk's decode holds, handed out or done: its window, its
     plaintext and a byte, its events and pieces, its engine and its state.
 
-    `gz_seek::ChunkTask::decode_bytes` (`chunk.rs`, `most_held`), mirrored."""
+    `pgdt_gzip_seek::ChunkTask::decode_bytes` (`chunk.rs`, `most_held`), mirrored."""
     guessed = GZIP_EVENTS_A_GUESS + 3
     events = (2 * guessed + 1) * GZIP_EVENT_BYTES
     pieces = guessed * GZIP_PIECE_BYTES
@@ -11236,7 +11236,7 @@ def gzip_block_charge(unit: int, jobs: int) -> int:
 def bgzf_unit() -> int:
     """The plaintext a unit of a BGZF file holds where every member is a full
     `BGZF_BLOCK`: members join a unit until it holds the spacing, so a unit is
-    the fewest members reaching it (`gz_seek::Walk`, `placement.rs`). Every
+    the fewest members reaching it (`pgdt_gzip_seek::Walk`, `placement.rs`). Every
     unit of `control_bgzf` but its last is this size, the plaintext holding
     many units, and the last is smaller, so it is the file's largest unit."""
     members = -(-LIBRARY_GZIP_SPACING // BGZF_BLOCK)
@@ -11311,8 +11311,8 @@ GZIP_RSS_JOBS: tuple[int, ...] = (1, 4, 24)
 GZIP_READ = (
     "crates/pgdt-io/src/source/compressed/deflate.rs",
     "crates/pgdt-io/src/source/compressed/deflate/",
-    "crates/gz-seek/src/",
-    "crates/gz-seek/Cargo.toml",
+    "crates/pgdt-gzip-seek/src/",
+    "crates/pgdt-gzip-seek/Cargo.toml",
 )
 
 
@@ -12723,18 +12723,18 @@ FIGURES: list[Figure] = [
         ),
         run=run_inflate_throughput,
     ),
-    # `gz-seek`'s first pass and resumed unit decodes on each engine it builds
+    # `pgdt-gzip-seek`'s first pass and resumed unit decodes on each engine it builds
     # over. What can move it is the crate and its example, the engines its
     # manifest pins, the inflate instrument behind the reference rows, and the
     # generators behind the file.
     Figure(
         id="gzseek-backend",
-        section="Which engine `gz-seek` reads gzip through",
+        section="Which engine `pgdt-gzip-seek` reads gzip through",
         stage="warm",
         depends=_declare(
-            "crates/gz-seek/src/",
-            "crates/gz-seek/examples/gz_read.rs",
-            "crates/gz-seek/Cargo.toml",
+            "crates/pgdt-gzip-seek/src/",
+            "crates/pgdt-gzip-seek/examples/gz_read.rs",
+            "crates/pgdt-gzip-seek/Cargo.toml",
             "crates/gzip-inflate/src/",
             "crates/gzip-inflate/Cargo.toml",
             "scripts/generate_gzip_input.py",
@@ -12744,7 +12744,7 @@ FIGURES: list[Figure] = [
         run=run_gzseek_backend,
     ),
     # gzip's own costs at each candidate checkpoint spacing, on the engine
-    # `gz-seek` ships. What can move it is the crate and its example, the
+    # `pgdt-gzip-seek` ships. What can move it is the crate and its example, the
     # engine its manifest pins, the inflate instrument behind the reference
     # rows, and the generators behind the file.
     Figure(
@@ -12752,9 +12752,9 @@ FIGURES: list[Figure] = [
         section="What a checkpoint's spacing costs gzip",
         stage="warm",
         depends=_declare(
-            "crates/gz-seek/src/",
-            "crates/gz-seek/examples/gz_read.rs",
-            "crates/gz-seek/Cargo.toml",
+            "crates/pgdt-gzip-seek/src/",
+            "crates/pgdt-gzip-seek/examples/gz_read.rs",
+            "crates/pgdt-gzip-seek/Cargo.toml",
             "crates/gzip-inflate/src/",
             "crates/gzip-inflate/Cargo.toml",
             "scripts/generate_gzip_input.py",

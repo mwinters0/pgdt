@@ -6,7 +6,7 @@
 //! **The index is the first full pass's by-product**
 //! (`docs/design/decisions.md`, "D128"): a single
 //! member states nothing about its own interior, so the scan that maps the
-//! file is the decode that finds its checkpoints, placed by `gz_seek`'s rule
+//! file is the decode that finds its checkpoints, placed by `pgdt_gzip_seek`'s rule
 //! at [`CHECKPOINT_SPACING`] — a function of the file alone, so a pass
 //! resumed from a saved index builds the one an uninterrupted pass builds.
 //! A fetched BGZF file is read here too, the rule coalescing its members as
@@ -14,7 +14,7 @@
 //!
 //! **One partition until the end, then the indexed source.** The extent is
 //! open until a read meets the file's end, so nothing cuts the file and one
-//! forward pass serves the scan — `gz_seek`'s parallel pass, which runs chunks
+//! forward pass serves the scan — `pgdt_gzip_seek`'s parallel pass, which runs chunks
 //! of the file ahead of it on as many of the caller's threads as its
 //! parallelism allows, lifting the inflate but not the scan (`ahead.rs`), a
 //! fetched file's tasks and frontier reading one download of it
@@ -86,7 +86,8 @@ use self::spill::PassWindows;
 /// up to a chunk less an input chunk that no term names, the download's own
 /// term billing the piece and not this copy of it. **(c) unowned**; promoted
 /// by a reading of a fetched first pass's resident.
-const DECODE_BYTES: u64 = gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64 + INPUT_CHUNK;
+const DECODE_BYTES: u64 =
+    pgdt_gzip_seek::DECODER_BYTES + pgdt_gzip_seek::WINDOW_SIZE as u64 + INPUT_CHUNK;
 
 /// What the pass holds besides the plaintext it hands out: its two decodes —
 /// the frontier and one behind it, a forward decode at most — and the scratch
@@ -219,8 +220,9 @@ impl FirstPass {
         chunking: Chunking,
         spill: &Path,
     ) -> Result<FirstPass> {
-        let mut pass = gz_seek::Parallel::new(spacing, chunking.bytes, chunking.limit, stored_size)
-            .map_err(gzip_error)?;
+        let mut pass =
+            pgdt_gzip_seek::Parallel::new(spacing, chunking.bytes, chunking.limit, stored_size)
+                .map_err(gzip_error)?;
         pass.set_lead(chunking.lead);
         let windows = PassWindows::fresh(spill);
         let frontier = Inflating::new(Frontier::new(pass));
@@ -235,7 +237,7 @@ impl FirstPass {
     /// which checkpoint.
     ///
     /// **Checked against the file, reading no bytes of it**: an index whose
-    /// last checkpoint lies at or past the file's end, or that `gz_seek`
+    /// last checkpoint lies at or past the file's end, or that `pgdt_gzip_seek`
     /// cannot resume, does not describe this file, which
     /// [`open`](crate::open) turns into
     /// [`Recognized::Mismatch`](crate::Recognized::Mismatch).
@@ -262,7 +264,7 @@ impl FirstPass {
         let checkpoints = index.checkpoints();
         let last = *checkpoints.last().expect("an index holds its first checkpoint");
         if last.bit / 8 >= stored_size {
-            return Err(gzip_error(gz_seek::Error::InvalidIndex {
+            return Err(gzip_error(pgdt_gzip_seek::Error::InvalidIndex {
                 reason: "the index's last checkpoint lies past the file's end",
             }));
         }
@@ -276,12 +278,17 @@ impl FirstPass {
             })?;
             provider.read_window(checkpoints.len() - 1, &mut window)?;
         }
-        let mut pass =
-            gz_seek::Parallel::resume(&index, &window, chunking.bytes, chunking.limit, stored_size)
-                .map_err(gzip_error)?;
+        let mut pass = pgdt_gzip_seek::Parallel::resume(
+            &index,
+            &window,
+            chunking.bytes,
+            chunking.limit,
+            stored_size,
+        )
+        .map_err(gzip_error)?;
         pass.set_lead(chunking.lead);
         // A pass resumed at a member start places that checkpoint again.
-        let placed = checkpoints.len() - usize::from(last.start == gz_seek::Start::Member);
+        let placed = checkpoints.len() - usize::from(last.start == pgdt_gzip_seek::Start::Member);
         let base = checkpoints.len();
         let pass_windows = PassWindows::after(windows, base, spill);
         let frontier = Inflating::new(Frontier::new(pass));
@@ -307,7 +314,7 @@ impl FirstPass {
         stored_size: u64,
         frontier: Inflating<Frontier>,
         placed: usize,
-        resumed_over: Option<gz_seek::Index>,
+        resumed_over: Option<pgdt_gzip_seek::Index>,
         windows: PassWindows,
         chunking: Chunking,
         started: Started,

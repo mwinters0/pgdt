@@ -32,7 +32,7 @@ own; `Option<&CancellationToken>` or a `Stop` trait inside the passes; `exit(128
 One SIMD validation of the largest line-terminated prefix per chunk, not one `from_utf8` per field, skipped where
 nothing is decoded; the escaped path still validates (`\xNN` synthesizes bytes). In D68's seven crates the one site is
 `append_view_unchecked` (`batch/chunks.rs`), its bounds from the `contains` that produced its coordinates and its
-validity from the decode's borrowed arm (D46); `gz-seek`'s zlib module is the other shipped site (UF4). The workspace
+validity from the decode's borrowed arm (D46); `pgdt-gzip-seek`'s zlib module is the other shipped site (UF4). The workspace
 denies `unsafe` in every target and each root forbids it unless a site of its production tree allows it
 (`scripts/layering.py`). Four `unsafe` attempts lost to the safe shape.
 

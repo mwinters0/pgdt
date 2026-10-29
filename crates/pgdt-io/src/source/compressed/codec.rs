@@ -16,7 +16,7 @@ use super::CompressionIndex;
 /// the file ended there and nothing else, and [`Positioned::slice_at`] lends a
 /// range only where it holds every byte of it, declining being always
 /// correct. A codec's adapter turns this into what its crate reads through —
-/// `xz_seek`'s source trait, or the bytes a `gz_seek` decode is fed — so the
+/// `xz_seek`'s source trait, or the bytes a `pgdt_gzip_seek` decode is fed — so the
 /// arms name no codec's crate.
 pub(crate) trait Positioned: Send + Sync {
     /// Fill `buf` with the bytes at `offset`, answering how many were written.

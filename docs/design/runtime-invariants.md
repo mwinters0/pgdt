@@ -1187,13 +1187,13 @@ holds at most 32; a fixed block's codes are its tables'
 (`inffixed_tbl`), whoever read its header; and the window is updated from
 whatever a call wrote, a stop for want of output included. zlib's own `zlib.h` states the same `data_type`
 contract. Observed by `the_index_is_one_whatever_the_buffers`
-(`crates/gz-seek/src/forward/tests.rs`), every unit decoding alone in
-`crates/gz-seek/src/unit/tests.rs`, and
+(`crates/pgdt-gzip-seek/src/forward/tests.rs`), every unit decoding alone in
+`crates/pgdt-gzip-seek/src/unit/tests.rs`, and
 `a_member_s_end_is_found_at_every_place_in_a_supply`
-(`crates/gz-seek/src/engine/tests.rs`), whose decode panics where a stream
+(`crates/pgdt-gzip-seek/src/engine/tests.rs`), whose decode panics where a stream
 ends holding a bit; and `a_static_block_is_checkpointed_at_the_spacing` and
 `a_static_block_between_dynamic_ones_is_checkpointed_inside_it`
-(`crates/gz-seek/src/forward/tests.rs`), every unit beginning or ending
+(`crates/pgdt-gzip-seek/src/forward/tests.rs`), every unit beginning or ending
 before a static block's symbol decoding alone to the pass's plaintext.
 
 **Scope limit.** Raw deflate (`windowBits` −15) alone; the gzip and zlib
@@ -1207,14 +1207,14 @@ not relied on.
 
 **Relied on by:** [`decisions.md`](decisions.md), "D128" — a checkpoint's
 place a function of the file alone, and a unit resumed from its checkpoint and
-window; `crates/gz-seek/src/engine.rs`, which
+window; `crates/pgdt-gzip-seek/src/engine.rs`, which
 reads a member's trailer from the byte after its deflate data and a block's
 type from the bytes a stop's unused bits came from; D118.
 
 **Re-verify:**
 
 ```sh
-cargo nextest run -p gz-seek
+cargo nextest run -p pgdt-gzip-seek
 ```
 
 The suite passes only while every buffer size gives one index and every unit
@@ -1304,7 +1304,7 @@ finds nothing.
 
 ## RT26 — the zlib API's `inflate` writes its plaintext whatever its output buffer held
 
-**Claim.** `inflate` through the zlib API, under each engine `gz-seek`
+**Claim.** `inflate` through the zlib API, under each engine `pgdt-gzip-seek`
 builds, writes exactly the bytes it reports — `avail_out`'s fall — from
 `next_out` on, and each is the stream's plaintext whatever the buffer held
 before the call: no byte it reports is taken from one it did not write in
@@ -1321,8 +1321,8 @@ landing beyond `filled`. Stock zlib's `inffast.c` and zlib-ng's
 output only back to `beg`, the call's first `next_out`, the window holding
 everything before it. Observed by
 `a_step_appending_to_spare_capacity_decodes_as_one_into_a_slice`
-(`crates/gz-seek/src/engine/tests.rs`) and every chunk decode in
-`crates/gz-seek/src/chunk/tests.rs` and `crates/gz-seek/src/parallel/tests.rs`,
+(`crates/pgdt-gzip-seek/src/engine/tests.rs`) and every chunk decode in
+`crates/pgdt-gzip-seek/src/chunk/tests.rs` and `crates/pgdt-gzip-seek/src/parallel/tests.rs`,
 each writing into a vector's spare capacity, under each of the three
 engines' features.
 
@@ -1332,16 +1332,16 @@ past the bytes it reports is not claimed, and nothing reads it.
 **Verified against:** zlib-rs 0.6.8, `libz-rs-sys` 0.6.8; `libz-sys` 1.1.30's
 bundled zlib and zlib-ng.
 
-**Relied on by:** `crates/gz-seek/src/zlib.rs`'s `Out`, through which a
-taken chunk's decode (`crates/gz-seek/src/chunk.rs`) writes into a buffer
+**Relied on by:** `crates/pgdt-gzip-seek/src/zlib.rs`'s `Out`, through which a
+taken chunk's decode (`crates/pgdt-gzip-seek/src/chunk.rs`) writes into a buffer
 nothing zeroed.
 
 **Re-verify:**
 
 ```sh
-cargo nextest run -p gz-seek
-cargo nextest run -p gz-seek --no-default-features --features zlib-ng
-cargo nextest run -p gz-seek --no-default-features --features zlib
+cargo nextest run -p pgdt-gzip-seek
+cargo nextest run -p pgdt-gzip-seek --no-default-features --features zlib-ng
+cargo nextest run -p pgdt-gzip-seek --no-default-features --features zlib
 src() { cargo metadata --format-version 1 | jq -r --arg n "$1" '.packages[] | select(.name == $n) | .manifest_path' | xargs dirname; }
 grep -n 'new_uninit' "$(src zlib-rs)/src/inflate.rs"
 grep -n 'beg = ' "$(src libz-sys)/src/zlib/inffast.c" "$(src libz-sys)/src/zlib-ng/inffast_tpl.h"

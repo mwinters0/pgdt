@@ -4904,9 +4904,9 @@ class InflateThroughput(unittest.TestCase):
 
 
 class GzseekBackend(unittest.TestCase):
-    """`gz-seek`'s first pass and resumed unit decodes, an engine a build."""
+    """`pgdt-gzip-seek`'s first pass and resumed unit decodes, an engine a build."""
 
-    CRATE = measure.REPO / "crates/gz-seek"
+    CRATE = measure.REPO / "crates/pgdt-gzip-seek"
     INSTRUMENT = CRATE / "examples/gz_read.rs"
 
     def manifest(self) -> dict:
@@ -4934,10 +4934,10 @@ class GzseekBackend(unittest.TestCase):
     def test_what_can_move_it_is_declared(self):
         fig = measure.SELECTABLE_BY_ID["gzseek-backend"]
         for path in (
-            "crates/gz-seek/src/",
-            "crates/gz-seek/examples/gz_read.rs",
+            "crates/pgdt-gzip-seek/src/",
+            "crates/pgdt-gzip-seek/examples/gz_read.rs",
             # Where the engines' versions are pinned.
-            "crates/gz-seek/Cargo.toml",
+            "crates/pgdt-gzip-seek/Cargo.toml",
             # The reference rows' instrument.
             "crates/gzip-inflate/src/",
             "crates/gzip-inflate/Cargo.toml",
@@ -5011,7 +5011,7 @@ class GzseekBackend(unittest.TestCase):
 class GzseekSpacing(unittest.TestCase):
     """gzip's own costs at each candidate spacing, on the shipped engine."""
 
-    INSTRUMENT = measure.REPO / "crates/gz-seek/examples/gz_read.rs"
+    INSTRUMENT = measure.REPO / "crates/pgdt-gzip-seek/examples/gz_read.rs"
 
     def test_it_is_taken_and_borrows_nothing(self):
         # Standing in no sharing edge is what lets it publish outside a sweep,
@@ -5028,9 +5028,9 @@ class GzseekSpacing(unittest.TestCase):
     def test_what_can_move_it_is_declared(self):
         fig = measure.SELECTABLE_BY_ID["gzseek-spacing"]
         for path in (
-            "crates/gz-seek/src/",
-            "crates/gz-seek/examples/gz_read.rs",
-            "crates/gz-seek/Cargo.toml",
+            "crates/pgdt-gzip-seek/src/",
+            "crates/pgdt-gzip-seek/examples/gz_read.rs",
+            "crates/pgdt-gzip-seek/Cargo.toml",
             "crates/gzip-inflate/src/",
             "crates/gzip-inflate/Cargo.toml",
             "scripts/generate_gzip_input.py",
@@ -5289,13 +5289,13 @@ class GzipResident(unittest.TestCase):
         self.assertIn(f"const INPUT_CHUNK: u64 = 1 << {measure.GZIP_INPUT_CHUNK.bit_length() - 1};",
                       deflate)
         self.assertIn("self.lending_footprint() + self.input_chunk()", deflate)
-        self.assertIn("gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64", deflate)
-        zlib = (repo / "crates/gz-seek/src/zlib.rs").read_text()
+        self.assertIn("pgdt_gzip_seek::DECODER_BYTES + pgdt_gzip_seek::WINDOW_SIZE as u64", deflate)
+        zlib = (repo / "crates/pgdt-gzip-seek/src/zlib.rs").read_text()
         self.assertIn(f"pub const DECODER_BYTES: u64 = {measure.GZIP_DECODER_BYTES >> 10} * 1024;",
                       zlib)
         self.assertIn(f"pub const WINDOW_SIZE: usize = {measure.GZIP_WINDOW_BYTES >> 10} * 1024;",
                       zlib)
-        speculate = (repo / "crates/gz-seek/src/speculate.rs").read_text()
+        speculate = (repo / "crates/pgdt-gzip-seek/src/speculate.rs").read_text()
         self.assertIn("pub const SPECULATION_LIMIT: usize = 2 * ((1 << (9 + 6)) - 1) * 258;",
                       speculate)
         self.assertEqual(measure.GZIP_SPECULATION_LIMIT, 2 * ((1 << (9 + 6)) - 1) * 258)
@@ -5306,8 +5306,8 @@ class GzipResident(unittest.TestCase):
         )
         first = (first_pass.parent / "first_pass.rs").read_text()
         self.assertIn(
-            "const DECODE_BYTES: u64 = gz_seek::DECODER_BYTES + gz_seek::WINDOW_SIZE as u64 + "
-            "INPUT_CHUNK;",
+            "const DECODE_BYTES: u64 =\n"
+            "    pgdt_gzip_seek::DECODER_BYTES + pgdt_gzip_seek::WINDOW_SIZE as u64 + INPUT_CHUNK;",
             first,
         )
         self.assertIn("const PASS_BYTES: u64 = 2 * DECODE_BYTES + SKIP_SCRATCH as u64;", first)
@@ -5319,18 +5319,18 @@ class GzipResident(unittest.TestCase):
             ahead,
         )
         self.assertIn(
-            "Chunking { bytes: CHUNK_BYTES, limit: gz_seek::SPECULATION_LIMIT, lead: 4 };", ahead
+            "Chunking { bytes: CHUNK_BYTES, limit: pgdt_gzip_seek::SPECULATION_LIMIT, lead: 4 };", ahead
         )
         self.assertIn(f"const DECODES_A_TASK: usize = {measure.GZIP_DECODES_A_TASK};", ahead)
         self.assertIn(f"const GUESSES_A_TASK: usize = {measure.GZIP_GUESSES_A_TASK};", ahead)
         for line in (
             "let feed = if chunk > INPUT_CHUNK { chunk } else { INPUT_CHUNK };",
             "let running = if speculation > decode { speculation } else { decode };",
-            "let held = decodes * decode + guesses * gz_seek::ChunkTask::GUESS_BYTES;",
+            "let held = decodes * decode + guesses * pgdt_gzip_seek::ChunkTask::GUESS_BYTES;",
             "running + held + INPUT_CHUNK",
         ):
             self.assertIn(line, ahead)
-        gz = repo / "crates/gz-seek/src"
+        gz = repo / "crates/pgdt-gzip-seek/src"
         task = (gz / "parallel/task.rs").read_text()
         self.assertIn("pub const GUESS_BYTES: u64 = 3 * WINDOW_SIZE as u64;", task)
         self.assertIn(

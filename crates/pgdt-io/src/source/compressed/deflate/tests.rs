@@ -29,11 +29,11 @@ fn the_default_budget_declines_a_unit_of_the_spacing() {
 /// **The checkpoints are held at a stated cost per entry** — what is left of
 /// `KD26` for gzip, an index the size of its offsets: a checkpoint is its
 /// plaintext offset, its bit, its kind with its window's length and its unit's
-/// CRC-32, and a change to `gz_seek` growing it fails here rather than silently
+/// CRC-32, and a change to `pgdt_gzip_seek` growing it fails here rather than silently
 /// moving the account.
 #[test]
 fn a_checkpoint_is_held_at_a_stated_cost() {
-    assert_eq!(std::mem::size_of::<gz_seek::Checkpoint>(), 32);
+    assert_eq!(std::mem::size_of::<pgdt_gzip_seek::Checkpoint>(), 32);
 }
 
 /// A source over a buffer that lends every byte it holds, as a fetched
@@ -123,7 +123,7 @@ fn an_index_for_another_file_is_refused_as_not_describing_it() {
     assert!(!refuses_index(&error), "{error}");
 
     let file = std::fs::read(compressed.path()).unwrap();
-    let mut pass = gz_seek::Forward::new(NonZeroU64::new(SPACING).unwrap()).unwrap();
+    let mut pass = pgdt_gzip_seek::Forward::new(NonZeroU64::new(SPACING).unwrap()).unwrap();
     let mut out = vec![0u8; 4096];
     pass.read(&file, &mut out).unwrap();
     let partial = GzipIndex { index: pass.index(), windows: layout.windows.clone() };
@@ -154,7 +154,7 @@ fn a_damaged_unit_is_refused() {
     let codec = DeflateCodec::over(layout, file.metadata().unwrap().len()).unwrap();
     let len = codec.plaintext(1).map(|u| u.end - u.start).unwrap() as usize;
     let error = codec.decode(1, &file, &mut vec![0u8; len]).expect_err("refused");
-    assert!(error.codec_cause::<gz_seek::Error>().is_some(), "{error}");
+    assert!(error.codec_cause::<pgdt_gzip_seek::Error>().is_some(), "{error}");
     // Its neighbours are untouched.
     let len = codec.plaintext(0).map(|u| u.end - u.start).unwrap() as usize;
     codec.decode(0, &file, &mut vec![0u8; len]).unwrap();
@@ -232,7 +232,7 @@ async fn a_unit_a_read_stopped_inside_is_compared_when_reads_complete() {
         let got = source.read_range(start, 10).await.unwrap();
         assert_eq!(&got[..], &payload[at..at + 10]);
         let error = source.complete_reads().await.expect_err("the unit's check");
-        assert!(error.codec_cause::<gz_seek::Error>().is_some(), "{error}");
+        assert!(error.codec_cause::<pgdt_gzip_seek::Error>().is_some(), "{error}");
         source.complete_reads().await.unwrap();
     }
 }
@@ -312,11 +312,11 @@ async fn recognition_reads_gzip_through_an_index_or_its_first_pass() {
 
 /// **An index is persisted as its checkpoints and read back as the same
 /// index**, its provider left behind for the reader to attach; parts
-/// `gz_seek` would refuse are undecodable rather than an index, so a damaged
+/// `pgdt_gzip_seek` would refuse are undecodable rather than an index, so a damaged
 /// cache never hands one out.
 #[cfg(feature = "serde")]
 #[test]
-fn an_index_reads_back_as_its_checkpoints_and_refuses_parts_gz_seek_would() {
+fn an_index_reads_back_as_its_checkpoints_and_refuses_parts_pgdt_gzip_seek_would() {
     let config = bincode::config::standard();
     let (_, layout) = gzip_indexed(&gzip_test_payload(), SPACING);
     let persisted = CompressionIndex::Gzip(layout.clone());
@@ -342,18 +342,18 @@ fn an_index_reads_back_as_its_checkpoints_and_refuses_parts_gz_seek_would() {
         members: 1,
         end: Some(checkpoints::End { plaintext: 10, compressed: 20 }),
     };
-    let refusal = gz_seek::Index::from_parts(
+    let refusal = pgdt_gzip_seek::Index::from_parts(
         spacing,
-        vec![gz_seek::Checkpoint {
+        vec![pgdt_gzip_seek::Checkpoint {
             plaintext: 1,
             bit: 0,
-            start: gz_seek::Start::Member,
+            start: pgdt_gzip_seek::Start::Member,
             crc: None,
         }],
         1,
-        Some(gz_seek::End { plaintext: 10, compressed: 20 }),
+        Some(pgdt_gzip_seek::End { plaintext: 10, compressed: 20 }),
     )
-    .expect_err("gz_seek refuses the parts")
+    .expect_err("pgdt_gzip_seek refuses the parts")
     .to_string();
     let bytes = bincode::serde::encode_to_vec(&damaged, config).unwrap();
     let refused = bincode::serde::decode_from_slice::<GzipIndex, _>(&bytes, config)

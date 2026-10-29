@@ -1,4 +1,4 @@
-//! A gzip file's index built by `gz_seek`'s forward pass over the file held
+//! A gzip file's index built by `pgdt_gzip_seek`'s forward pass over the file held
 //! in memory, its windows held beside it: what a test reads a gzip file
 //! through, in this crate and above it under `test-support`, at a spacing it
 //! states where a first pass opened above this crate places checkpoints at
@@ -22,15 +22,18 @@ impl WindowProvider for HeldWindows {
 
 /// The complete index of the gzip file `file` holds, checkpoints `spacing`
 /// plaintext bytes apart, and every checkpoint's window, as a forward pass
-/// over it hands them out — built by `gz_seek` directly.
+/// over it hands them out — built by `pgdt_gzip_seek` directly.
 ///
 /// # Panics
 ///
 /// Where `file` is not a whole gzip file, or `spacing` is zero: a test's
 /// fixture, not a reader's input.
-pub(crate) fn index_and_windows(file: &[u8], spacing: u64) -> (gz_seek::Index, Vec<Vec<u8>>) {
+pub(crate) fn index_and_windows(
+    file: &[u8],
+    spacing: u64,
+) -> (pgdt_gzip_seek::Index, Vec<Vec<u8>>) {
     let spacing = NonZeroU64::new(spacing).expect("a nonzero spacing");
-    let mut pass = gz_seek::Forward::new(spacing).expect("a forward pass begins");
+    let mut pass = pgdt_gzip_seek::Forward::new(spacing).expect("a forward pass begins");
     let (mut out, mut windows) = (vec![0u8; 16 * 1024], Vec::new());
     loop {
         let at = pass.compressed_position() as usize;

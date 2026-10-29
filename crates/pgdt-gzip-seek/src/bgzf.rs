@@ -134,7 +134,7 @@ impl Walk {
         let request = self.request();
         assert!(
             offset <= request.offset,
-            "gz-seek: a supply at {offset} answers a request at {}",
+            "pgdt-gzip-seek: a supply at {offset} answers a request at {}",
             request.offset
         );
         let held = offset + bytes.len() as u64;

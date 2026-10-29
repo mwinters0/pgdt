@@ -55,14 +55,14 @@ is fixed by gating that code on the feature reaching it.
 
 **So is every other build the project makes or names to an embedder**
 (`FEATURE_BUILDS`), each a named feature set linted at both of a library's
-builds: the instrument over the workspace, `pgdt`'s allocator legs, `gz-seek`'s
+builds: the instrument over the workspace, `pgdt`'s allocator legs, `pgdt-gzip-seek`'s
 engine legs, `datafusion-pgdump` with `http`. A feature no linted build turns
 on compiles nowhere a warning would surface, so `test_check` asserts off
 `cargo metadata` that every feature a member declares is turned on by one --
 the workspace's, a library's alone or a set -- or is exempted in
 `UNLINTED_FEATURES` with its reason. The sets are named rather than generated
 (`cargo hack --each-feature`), which refuses the two exclusive choices
-(`gz-seek`'s inflater, `pgdt`'s allocator) until told them in its own syntax
+(`pgdt-gzip-seek`'s inflater, `pgdt`'s allocator) until told them in its own syntax
 and then lints combinations nobody builds.
 
 **The cargo checks run in the release image** (`release.py run`), as the
@@ -898,8 +898,8 @@ FEATURE_BUILDS: tuple[FeatureBuild, ...] = (
     FeatureBuild("pgdt", ("jemalloc",), default_features=False),
     FeatureBuild("pgdt", ("system",), default_features=False),
     FeatureBuild("pgdt", ("gzip-1mib-chunks",)),
-    FeatureBuild("gz-seek", ("zlib-ng",), default_features=False),
-    FeatureBuild("gz-seek", ("zlib",), default_features=False),
+    FeatureBuild("pgdt-gzip-seek", ("zlib-ng",), default_features=False),
+    FeatureBuild("pgdt-gzip-seek", ("zlib",), default_features=False),
     FeatureBuild("datafusion-pgdump", ("http",)),
 )
 

@@ -34,7 +34,7 @@ the compressed file pulled or fetched, the remote object
   frontier is kept on across reads, the one download a fetched file's
   frontier and tasks read, and the file it spills its windows to, in the
   directory `open`'s caller names.
-- **gz-seek** — `index.rs`, `forward.rs`, `placement.rs`, `parallel/`,
+- **pgdt-gzip-seek** — `index.rs`, `forward.rs`, `placement.rs`, `parallel/`,
   `speculate/`, `find.rs`, `native/`, `chunk.rs`, `unit.rs`, `bgzf.rs`,
   `engine.rs`, `member.rs`, `zlib.rs`, `error.rs`: a gzip file's positioned
   read — its index of checkpoints, the forward pass that builds one and the

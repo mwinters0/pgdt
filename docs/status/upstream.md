@@ -120,7 +120,7 @@ back. **`UF1`–`UF4` are allocated, and none is reused.**
   block's end under `InflateFlush::Block` but says nothing of where: it has no
   `data_type` (the unused bits, whether the stop is a block boundary), no
   `prime` to start inside a byte, and no read of the window. A gzip index needs
-  all three, so `gz-seek` reaches them through `libz-rs-sys`'s zlib C API,
+  all three, so `pgdt-gzip-seek` reaches them through `libz-rs-sys`'s zlib C API,
   whose calls are `unsafe`. A user meets nothing; the crate carries `unsafe` a
   safe API would not need.
 - **Upstream.** No issue, PR or discussion found asking for them (searched
@@ -136,7 +136,7 @@ back. **`UF1`–`UF4` are allocated, and none is reused.**
 - **Fixed when.** `zlib_rs::Inflate` answers where a `Block` stop left its
   reader (the unused bits, and whether it is a non-final block's end), primes
   bits ahead of its input, and copies its window out, in a semver-stable API.
-- **Workaround.** `crates/gz-seek/src/zlib.rs` drives `libz-rs-sys` 0.6.8's
+- **Workaround.** `crates/pgdt-gzip-seek/src/zlib.rs` drives `libz-rs-sys` 0.6.8's
   `inflateInit2_`, `inflate(Z_BLOCK)`, `inflatePrime`, `inflateSetDictionary`,
   `inflateGetDictionary`, `inflateReset` and `inflateEnd`, and reads
   `zlibVersion`, behind a type whose methods are safe, and its
@@ -151,9 +151,9 @@ back. **`UF1`–`UF4` are allocated, and none is reused.**
   "D127").
 - **Watch.** None can be a test: the fix is an API appearing. The
   `upgrade-deps` skill's read of zlib-rs's `src/stable.rs` at each bump of
-  `libz-rs-sys`'s `=0.6.8` pin in `crates/gz-seek/Cargo.toml` is the watch.
-- **When it lands.** Rewrite `crates/gz-seek/src/zlib.rs` over
+  `libz-rs-sys`'s `=0.6.8` pin in `crates/pgdt-gzip-seek/Cargo.toml` is the watch.
+- **When it lands.** Rewrite `crates/pgdt-gzip-seek/src/zlib.rs` over
   `zlib_rs::Inflate`, name `zlib-rs` for `libz-rs-sys` in
-  `crates/gz-seek/Cargo.toml` — its `crc32` module is safe already — and let
-  `crates/gz-seek/src/lib.rs` `forbid` `unsafe` as `xz-seek` does, above
+  `crates/pgdt-gzip-seek/Cargo.toml` — its `crc32` module is safe already — and let
+  `crates/pgdt-gzip-seek/src/lib.rs` `forbid` `unsafe` as `xz-seek` does, above
   the workspace's `deny`.

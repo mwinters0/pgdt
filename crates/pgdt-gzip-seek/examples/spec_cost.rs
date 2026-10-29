@@ -1,5 +1,5 @@
 //! The instrument the parallel first pass's scheduling is tuned on: what a
-//! speculated chunk costs on one thread, and [`gz_seek::Parallel`] driven as
+//! speculated chunk costs on one thread, and [`pgdt_gzip_seek::Parallel`] driven as
 //! `pgdt-io`'s `first_pass/ahead.rs` drives it, over a file held in memory and
 //! with no scan beside it. Never a figure: it rebuilds in seconds where `pgdt`
 //! takes a quarter of an hour, and a lever moves the pass here first.
@@ -10,10 +10,10 @@
 //!
 //! # The three shapes
 //!
-//! - **`forward`**: the serial first pass, [`gz_seek::Forward`] over the whole
+//! - **`forward`**: the serial first pass, [`pgdt_gzip_seek::Forward`] over the whole
 //!   file.
 //! - **`spec`**: every chunk's speculation as `pgdt-io` cuts them (4 MiB
-//!   chunks, [`gz_seek::SPECULATION_LIMIT`]), one after another on this
+//!   chunks, [`pgdt_gzip_seek::SPECULATION_LIMIT`]), one after another on this
 //!   thread, each fed a MiB at a time. Its time over `forward`'s is a
 //!   speculated chunk's cost in serial chunks.
 //! - **`par<jobs>`**: the frontier on this thread and `jobs - 1` tasks at a
@@ -51,7 +51,9 @@ use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Instant;
 
-use gz_seek::{ChunkDone, ChunkTask, Forward, Parallel, Progress, SPECULATION_LIMIT, TaskId};
+use pgdt_gzip_seek::{
+    ChunkDone, ChunkTask, Forward, Parallel, Progress, SPECULATION_LIMIT, TaskId,
+};
 
 const MIB: usize = 1 << 20;
 
