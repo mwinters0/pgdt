@@ -567,9 +567,3 @@ than reading as a phase nobody has sliced.
   so a crafted span of many plain members passes the decode's event bound.
   **(c) unowned**; promoted by such a file met, or a decode's events checked
   against its bound. Detail: `crates/pgdt-gzip-seek/src/chunk.rs`.
-
-- **KD155** — a write to a gzip first pass's spill file, or a read back from
-  it, failing is reported as `io error:` and the OS's message, naming no
-  directory, where its making names the cache's: a disk filling partway
-  through a pass does not say which. **(b) owned by `M262`**, which names it.
-  Detail: `crates/pgdt-io/src/source/compressed/deflate/first_pass/spill.rs`.

@@ -171,6 +171,33 @@ async fn a_first_pass_spills_its_windows_where_it_is_told() {
     assert!(!missing.exists());
 }
 
+/// **A spill file failing after it is made names its directory**: a write
+/// to one that refuses writes, as a full disk does, and a read back from one
+/// that refuses reads, each an [`Error::File`] naming the directory, the
+/// read's carried through `WindowProvider`'s `io::Error` and handed back as
+/// itself.
+#[test]
+fn a_failing_spill_file_names_its_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+    let open = |write: bool| {
+        std::fs::OpenOptions::new().read(!write).write(write).open(file.path()).unwrap()
+    };
+    let named = |error: &Error, expected: &str| {
+        let Error::File { doing, path, .. } = error else { panic!("not named: {error:?}") };
+        assert_eq!((*doing, path.as_path()), (expected, dir.path()));
+    };
+
+    let read_only = PassWindows::spilling_into(open(false), dir.path());
+    let error = read_only.place(0, &[7u8; 64]).expect_err("a read-only file refuses the write");
+    named(&error, "write the file a gzip first pass holds its windows in, in");
+
+    let write_only = PassWindows::spilling_into(open(true), dir.path());
+    write_only.place(0, &[7u8; 64]).unwrap();
+    let failed = write_only.read_window(0, &mut [0u8; 64]).expect_err("refused");
+    named(&Error::from(failed), "read back the file a gzip first pass holds its windows in, in");
+}
+
 /// **The pass hands over to the indexed source at the end**: its reads and
 /// partitioning are then the indexed source's, so a range is cut at unit
 /// starts, a read anywhere answers the payload's bytes, and a read past the

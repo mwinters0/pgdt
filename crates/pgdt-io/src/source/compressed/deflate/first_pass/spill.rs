@@ -12,6 +12,13 @@ use pgdt_core::{Error, Result};
 
 use super::super::WindowProvider;
 
+/// What a failure of the spill file was doing, each naming the directory it
+/// was made in: the file has no name of its own, and the directory is the one
+/// a user can act on — the cache's, or the temp directory.
+const MAKE: &str = "make the file a gzip first pass holds its windows in, in";
+const WRITE: &str = "write the file a gzip first pass holds its windows in, in";
+const READ: &str = "read back the file a gzip first pass holds its windows in, in";
+
 /// Every window the pass has placed, in its spill file for as long as an
 /// index carrying it lives — the one the pass hands over included — and
 /// before them those of the index it was resumed over, read through that
@@ -67,15 +74,9 @@ impl PassWindows {
     ///
     /// # Errors
     ///
-    /// A spill file that cannot be made, naming its directory — never
-    /// answered by holding the window in memory instead — or a write to it
-    /// that fails.
-    ///
-    /// Deficiency register: `deficiency: KD155` — that write's failure, and a
-    /// failed read back in [`read_window`](WindowProvider::read_window), are
-    /// `io error:` and the OS's message, naming no directory, though the
-    /// directory is the cache's and `make` names it: a full disk partway
-    /// through a pass does not say which.
+    /// A spill file that cannot be made — never answered by holding the
+    /// window in memory instead — or a write to it that fails, a disk filling
+    /// partway through a pass: [`Error::File`], naming its directory.
     pub(super) fn place(&self, checkpoint: usize, window: &[u8]) -> Result<()> {
         if checkpoint < self.base {
             return Ok(());
@@ -93,7 +94,7 @@ impl PassWindows {
                 Some(file) => file,
                 none => none.insert(self.make()?),
             };
-            file.write_all_at(window, offset)?;
+            file.write_all_at(window, offset).map_err(|e| Error::file(WRITE, &self.dir, e))?;
         }
         let len = u32::try_from(window.len()).expect("a window is at most 32 KiB");
         spilled.at.push((offset, len));
@@ -104,12 +105,23 @@ impl PassWindows {
     /// The spill file, made in `dir` with no name, so nothing outlives the
     /// descriptors on it (`docs/design/runtime-invariants.md`, "RT24").
     fn make(&self) -> Result<File> {
-        tempfile::tempfile_in(&self.dir).map_err(|e| {
-            Error::file("make the file a gzip first pass holds its windows in, in", &self.dir, e)
-        })
+        tempfile::tempfile_in(&self.dir).map_err(|e| Error::file(MAKE, &self.dir, e))
+    }
+
+    /// The windows of a pass from the file's start, spilled into `file` as
+    /// though it had been made in `dir`: a spill file whose writes or reads
+    /// fail, on any filesystem.
+    #[cfg(test)]
+    pub(super) fn spilling_into(file: File, dir: &Path) -> PassWindows {
+        let windows = Self::fresh(dir);
+        windows.spilled.write().unwrap().file = Some(file);
+        windows
     }
 }
 
+/// A failed read back names the spill file's directory inside its
+/// `io::Error`, an [`Error::File`] as the payload ([`Error::into_io`]), so
+/// [`WindowProvider`] stays `io::Result`, as a cache's windows do.
 impl WindowProvider for PassWindows {
     fn read_window(&self, checkpoint: usize, out: &mut [u8]) -> std::io::Result<()> {
         if checkpoint < self.base {
@@ -130,7 +142,9 @@ impl WindowProvider for PassWindows {
             ));
         }
         match &spilled.file {
-            Some(file) if len > 0 => file.read_exact_at(out, offset),
+            Some(file) if len > 0 => file
+                .read_exact_at(out, offset)
+                .map_err(|e| Error::file(READ, &self.dir, e).into_io()),
             _ => Ok(()),
         }
     }

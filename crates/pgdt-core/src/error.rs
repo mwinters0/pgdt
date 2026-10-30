@@ -32,8 +32,8 @@ pub enum Error {
     /// of a cache's gzip windows — carried through the codec's crate in an
     /// `io::Error` ([`Error::into_io`]) — every open, read and write of a cache
     /// and of the file a save writes beside it, and where a gzip first pass
-    /// cannot make the file it holds its windows in, naming its directory
-    /// ([`Error::file`]).
+    /// cannot make, write or read back the file it holds its windows in,
+    /// naming its directory ([`Error::file`]).
     ///
     /// The `io::Error` is reached as the `cause` field; it is not called
     /// `source`, which `thiserror` reads as an error cause.

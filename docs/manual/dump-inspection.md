@@ -280,7 +280,8 @@ ends it, made in the cache's directory — beside the dump, or wherever
 directory (`TMPDIR`). It grows by up to 32 KiB for each 24 MiB of the dump,
 about a 768th of it — some 1 GB for a 784 GB dump — and the cache a `parse`
 saves holds the same. A run that cannot make that file stops at the first
-place it records, naming the directory:
+place it records, and one that cannot write to it — a disk filling partway
+through the pass — or read it back stops there; each names the directory:
 
 ```
 Error: cannot make the file a gzip first pass holds its windows in, in /tmp: Read-only file system (os error 30)
