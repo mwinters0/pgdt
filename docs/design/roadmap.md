@@ -19,7 +19,7 @@ reused, including a struck phase's.
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
-| P37 — Parquet export as a Parquet-native writer leaves it | Sketched; not grilled | this file, below — the maintainer sets its order |
+| P37 — Parquet export as a Parquet-native writer leaves it | Sketched; not grilled | this file, below; [inbox](roadmap-P37-parquet-export-inbox.md) — the maintainer sets its order |
 | P22 — the third tunable | Sketched; not grilled | this file, below |
 | P21 — statistics gathered by a query | Sketched; not grilled | this file, below; [inbox](roadmap-P21-query-statistics-inbox.md) |
 | P23 — statistics coverage and the resident reserve | Sketched; not grilled | this file, below; [inbox](roadmap-P23-resident-reserve-inbox.md) |
@@ -798,8 +798,9 @@ What it must decide:
   `sortWithinPartitions` leaves it; and what Spark and the other writers
   record of it — `sorting_columns`, or a table format's sort order — which is
   not yet established.
-- **The orders the parse misses**, each a `KD<k>` owned here once the order
-  check against the koji replica names it.
+- **The orders the parse misses**, each a `KD<k>` owned here once an order
+  check against the dump names it; the koji replica's heap holds another
+  order (the inbox).
 - **The layout** — hive partitions by month or key range, file size and naming —
   as a parameter or a convention, and where the phase sits on the concept map.
 

@@ -11373,6 +11373,7 @@ def run_gzip_resident(session: Session) -> str:
     from the library refuses the figure rather than reading a remainder off a
     stale bill. A first-pass leg must say it opened a first pass, and a BGZF
     leg must not — a BGZF file read by a first pass is a walk that did not run.
+    A `--dry-run` writes no such line, so it cannot rehearse this figure.
 
     **Three reps**, as `parallel-peak-rss` takes: a peak is a maximum, steady
     across reps, and the reps are there to catch an outlier.

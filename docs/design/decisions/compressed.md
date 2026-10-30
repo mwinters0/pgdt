@@ -99,8 +99,9 @@ static block's codes on the native decoder's tables, writing nothing, and caps i
 Rejected: `Z_TREES`'s header stop for a block's type (RT23); a taken chunk's decode walking its static blocks, which
 needs marks only the frontier holds; holding a unit ending at a symbol to its compressed end, a second walk on every
 read to refuse a unit sooner than the next unit's CRC-32 does; a bound on the bytes consumed, catching only a
-misplacement past the lookahead. Reopens: a consumer acting on `IndexMismatch` apart from `UnitCheck`; the walk visible
-in a first pass's profile. Code: `native/walk.rs`. Evidence: `a_checkpoint_moved_inside_a_static_block_is_refused`.
+misplacement past the lookahead. Reopens: a consumer acting on `IndexMismatch` apart from `UnitCheck`; a profile giving
+the walk more than the engine's inflate of the same symbols. Code: `native/walk.rs`. Evidence:
+`a_checkpoint_moved_inside_a_static_block_is_refused`.
 
 ### D120 A parallel first pass gives decodes a room of their own, and places its speculations a lead ahead
 A decode begins only once the frontier anchors the chain before its chunk, and the frontier waits for most of one begun
