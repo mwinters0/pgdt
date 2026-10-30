@@ -109,8 +109,8 @@ gh workflow run release-build -f ref=<SHA>
 # once the draft exists (gh release view v<V>), from this clean checkout of <SHA>:
 python3 scripts/release_ci.py attach
 # the message is the Release body; either, so a Markdown heading survives:
-git -c core.commentChar=';' tag -a v<V> <SHA>             # pasted into the editor
-git tag -a v<V> <SHA> -F <notes.md> --cleanup=whitespace  # or read from a file
+git tag -a v<V> <SHA> -F runs/release-v<V>/notes.md --cleanup=whitespace
+git -c core.commentChar=';' tag -a v<V> <SHA>             # or pasted into the editor
 git push origin v<V>
 ```
 
@@ -127,8 +127,9 @@ is a build input the two did not share**, found before anything is attached:
 relay it and stop, the release waiting on that input being found. The tag's
 workflow runs the draft's arm64 archive on real arm64 before it publishes.
 
-and `git log --oneline v<previous>..<SHA>` as an aid to the text, which is the
-maintainer's. **The tag must be annotated**: the publish workflow refuses a
+and the path of the release notes drafted below, which the maintainer edits
+before tagging: **the text is theirs, the draft an aid to it**. **The tag must
+be annotated**: the publish workflow refuses a
 lightweight one, and a draft built from another commit. Say that
 **publishing makes the release immutable**, so a mistake in it is a new
 version, and that [`docs/manual/installing.md`](../../../docs/manual/installing.md)
@@ -137,3 +138,32 @@ is in its six-to-twelve-month band. A rehearsal, an `attach` or a publication
 meeting something unexpected of GitHub or of an installer is a walk of
 [`docs/design/release-invariants.md`](../../../docs/design/release-invariants.md)
 before anything is worked around.
+
+## The release notes
+
+Draft them into `runs/release-v<V>/notes.md` from
+[`notes-template.md`](notes-template.md), off `git log v<previous>..<SHA>`,
+before printing step 5. The maintainer's edit of v0.3.0's
+(`https://github.com/mwinters0/pgdt/releases/tag/v0.3.0`) is the reference
+for tone and length.
+
+- **The opening sentence is the five-second summary**: what a user gets, and
+  that something breaks if it does — "Support for gzip, and some breaking
+  renames for uniformity." It may grow further paragraphs, as a commit's
+  subject grows a body, only when one sentence truly cannot carry what a user
+  must know before the lists.
+- **Sections in the template's order, each left out when empty.** ⚠️ CAUTION
+  holds the template's cache line when `CACHE_FORMAT_VERSION` differs from
+  the previous tag's, which pre-1.0 is nearly always.
+- **💥 Breaking changes is every change that needs a user to act**: a renamed
+  command, flag or file, an output a script parses changing shape — whatever
+  makes a script calling `pgdt` or a user's habit stop working. Each item says
+  what to do where the rename alone does not ("…so you should simply
+  `rm *.dtcache`").
+- **🚀 Features takes `feat`; 🔧 Fixes takes `fix` and `perf`.** A commit no
+  user can observe — docs, tests, harness, refactors — is left out.
+- **An item is one or two short sentences of user-visible effect**, prefixed
+  `<kind>(<scope>):`, never the mechanism or a docs link unless a user needs it
+  to act, and ends with `( <URL> )`, one
+  `https://github.com/mwinters0/pgdt/commit/<full SHA>` per commit it covers,
+  space-separated.
