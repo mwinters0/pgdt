@@ -255,7 +255,7 @@ hardware knob is a decision somebody wrote down, not one that arrived quietly
 (`crates/pgdt/src/tests.rs`, `every_numeric_flag_is_classified`). **It skips `pgdt
 sql` alone**, whose flags are the DataFusion CLI's as upstream ships it — its
 `--memory-limit` sizing DataFusion's pool, which the provider bills against its
-allowance — bar `--dump` and `--strict-identity`, ours and taking no number; a
+allowance — bar `--source` and `--strict-identity`, ours and taking no number; a
 test pins the exemption to that one subcommand
 (`the_two_tunables_rule_skips_sql_alone`).
 
@@ -1342,7 +1342,7 @@ which is what makes the difference worth minding at the moment one is found.
   embedder implementing a source must depend on `bytes` in step with us.
 
 - **One pass over CLI output, help text included.** Taken as a whole rather
-  than fixed page by page. Known candidates: `pgdt sql`'s `--dump` value name,
+  than fixed page by page. Known candidates: `pgdt sql`'s `--source` value name,
   the whole suffix grammar, renders a spec line wider than the 100-column page
   (`decisions.md`, "D67"), which a placeholder such as
   `[NAME=]SOURCE[:SUFFIX]...` would fix with its paragraph keeping the grammar,

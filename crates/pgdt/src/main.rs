@@ -36,12 +36,12 @@ enum Invocation {
     #[command(flatten)]
     Native(Command),
     /// A SQL shell over dumps `pgdt parse` has cached: DataFusion's own CLI,
-    /// with each `--dump` registered as catalogs, one per database it holds.
+    /// with each `--source` registered as catalogs, one per database it holds.
     ///
     /// It never parses: a dump is read through the complete cache `pgdt parse`
     /// leaves, and one without is refused naming the `parse` that builds it.
     /// `CREATE EXTERNAL TABLE … STORED AS PGDUMP` registers one table, and `SET
-    /// pgdump.*` states a session's provider settings. Every flag but `--dump`
+    /// pgdump.*` states a session's provider settings. Every flag but `--source`
     /// and `--strict-identity` is DataFusion's own, as its CLI ships it —
     /// `--memory-limit` among them, the limit on DataFusion's own memory pool,
     /// which the dumps' scans bill against the allowance they share.

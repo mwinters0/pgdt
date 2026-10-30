@@ -2,12 +2,12 @@
 source: crates/pgdt/tests/help_text.rs
 expression: "help_page(&[\"sql\", \"--help\"])"
 ---
-A SQL shell over dumps `pgdt parse` has cached: DataFusion's own CLI, with each `--dump` registered
-as catalogs, one per database it holds.
+A SQL shell over dumps `pgdt parse` has cached: DataFusion's own CLI, with each `--source`
+registered as catalogs, one per database it holds.
 
 It never parses: a dump is read through the complete cache `pgdt parse` leaves, and one without is
 refused naming the `parse` that builds it. `CREATE EXTERNAL TABLE … STORED AS PGDUMP` registers one
-table, and `SET pgdump.*` states a session's provider settings. Every flag but `--dump` and
+table, and `SET pgdump.*` states a session's provider settings. Every flag but `--source` and
 `--strict-identity` is DataFusion's own, as its CLI ships it — `--memory-limit` among them, the
 limit on DataFusion's own memory pool, which the dumps' scans bill against the allowance they share.
 
@@ -69,7 +69,7 @@ Options:
           
           [default: Disabled]
 
-      --dump <[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]>
+      --source <[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]>
           Register a pg_dump file as catalogs, one per database it holds, read through the cache
           `pgdt parse` leaves. A database the file names is a catalog of that name, unless NAME= is
           given; NAME= is required for a dump that names no database, and refused for one of
@@ -83,7 +83,7 @@ Options:
           dump's strictness where --strict-identity would. Repeatable
 
       --strict-identity[=<TERMS>]
-          Bind identity signals, as `pgdt --strict-identity` does, for every --dump and STORED AS
+          Bind identity signals, as `pgdt --strict-identity` does, for every --source and STORED AS
           PGDUMP that states none of its own: `time` refuses a cache whose recorded modification
           signal the dump no longer states, `location` one written for another URL, the bare flag
           both. A dump changing under a scan fails it under every selection but `none`, so a server

@@ -183,16 +183,16 @@ pub struct Args {
     )]
     object_store_profiling: InstrumentedObjectStoreMode,
 
-    // pgdump: `--dump`.
+    // pgdump: `--source`.
     // deficiency: KD110 — the value name spells every suffix and is wider than
     // a 100-column page, so clap sets every other flag's help column past it
     // and prints that help one word to a line, short and long pages alike,
     // unless the command sets `next_line_help`, as `pgdt sql` does and nothing
     // here makes an embedder's do.
     #[clap(
-        long = "dump",
+        long = "source",
         value_name = "[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]",
-        help = pgdump::DUMP_HELP,
+        help = pgdump::SOURCE_HELP,
         value_parser(pgdump::DumpArg::parse)
     )]
     dumps: Vec<pgdump::DumpArg>,
@@ -233,7 +233,7 @@ impl Args {
 // pgdump: since `#[tokio::main]` refuses arguments on a function named `main`.
 pub async fn run(args: Args) -> ExitCode {
     if let Err(e) = main_inner(args).await {
-        // deficiency: KD122 — an error that ends the run (a `--dump` refused at
+        // deficiency: KD122 — an error that ends the run (a `--source` refused at
         // registration, a `-c` statement's) prints to stdout, as upstream's
         // `main` prints it, where every other `pgdt` command and this shell's
         // own findings (`pgdump::StderrSink`) write to stderr; a statement's
@@ -350,7 +350,7 @@ async fn main_inner(args: Args) -> Result<()> {
         Arc::new(ListFilesCacheFunc::new(ctx.task_ctx().runtime_env().cache_manager.clone())),
     );
 
-    // pgdump: `STORED AS PGDUMP`, then every `--dump`.
+    // pgdump: `STORED AS PGDUMP`, then every `--source`.
     let strict = args.strict_identity.unwrap_or_default();
     pgdump::register(&ctx, &args.dumps, strict, args.quiet).await?;
 

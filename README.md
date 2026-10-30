@@ -102,7 +102,7 @@ Use case: you want to query the data in your dump.
 pgdt parse --source=foo.xz
 
 # Then query it as catalog `foo`
-pgdt sql --dump foo=foo.xz
+pgdt sql --source foo=foo.xz
 ```
 
 ```sql

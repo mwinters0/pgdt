@@ -155,7 +155,7 @@ fn the_two_tunables_rule_skips_sql_alone() {
     let sql = cli.find_subcommand("sql").expect("`pgdt sql` exists");
     let ours: Vec<_> = sql
         .get_arguments()
-        .filter(|arg| matches!(arg.get_long(), Some("dump" | "strict-identity")))
+        .filter(|arg| matches!(arg.get_long(), Some("source" | "strict-identity")))
         .map(|arg| {
             let value = arg.get_value_names().and_then(|n| n.first()).map(|n| n.to_string());
             (arg.get_long().unwrap_or_default(), value.unwrap_or_default())

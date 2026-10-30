@@ -1,9 +1,9 @@
-//! What this crate adds to `datafusion-cli`: `--dump`, `STORED AS PGDUMP`,
+//! What this crate adds to `datafusion-cli`: `--source`, `STORED AS PGDUMP`,
 //! the sink printing what a registration finds to stderr, and each
 //! registration's spelling of a refusal's remedy (`crate::spelling`); ending
 //! as its PID namespace's init (`docs/design/decisions.md`, "D26"); and what a
 //! caller composing the CLI reads of it — the copied release's version,
-//! `--dump`'s and `--strict-identity`'s help texts, and the introspection
+//! `--source`'s and `--strict-identity`'s help texts, and the introspection
 //! build's report section. It never parses: a dump without a complete cache is
 //! refused, spelled with the `pgdt parse` that builds one
 //! (`docs/design/decisions.md`, "D90").
@@ -60,7 +60,7 @@ pub fn end_as_namespace_init(repl: bool) -> Result<()> {
     Ok(())
 }
 
-pub const DUMP_HELP: &str = "Register a pg_dump file as catalogs, one per database it holds, \
+pub const SOURCE_HELP: &str = "Register a pg_dump file as catalogs, one per database it holds, \
     read through the cache `pgdt parse` leaves. A database the file names is a catalog of that \
     name, unless NAME= is given; NAME= is required for a dump that names no database, and \
     refused for one of several. :strings reads every column as its text, \
@@ -74,14 +74,14 @@ pub const DUMP_HELP: &str = "Register a pg_dump file as catalogs, one per databa
     strictness where --strict-identity would. Repeatable";
 
 pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict-identity` \
-    does, for every --dump and STORED AS PGDUMP that states none of its own: `time` refuses a \
+    does, for every --source and STORED AS PGDUMP that states none of its own: `time` refuses a \
     cache whose recorded modification signal the dump no longer states, `location` one written \
     for another URL, the bare flag both. A dump changing under a scan fails it under every \
     selection but `none`, so a server stating neither a strong entity tag nor a Last-Modified \
     is refused; `none` binds nothing, that check included, and reads it anyway, and `advisory` is the default, which a dump under a stricter \
     session states to keep that check";
 
-/// One `--dump [NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]`.
+/// One `--source [NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]`.
 ///
 /// **`NAME=` is recognised only where what precedes the first `=` could not
 /// be part of a path or a URL** — no `/`, `\`, `.` or `:` — so a URL's query
@@ -117,16 +117,17 @@ impl DumpArg {
         loop {
             if let Some(rest) = arg.strip_suffix(":strings") {
                 if std::mem::replace(&mut strings, true) {
-                    return Err("--dump states :strings twice".to_string());
+                    return Err("--source states :strings twice".to_string());
                 }
                 arg = rest;
             } else if let Some((rest, mode)) =
                 arg.rsplit_once(UNREPRESENTABLE).filter(|(_, mode)| !mode.contains(':'))
             {
-                let mode =
-                    mode.parse().map_err(|why| format!("--dump {UNREPRESENTABLE}{mode}: {why}"))?;
+                let mode = mode
+                    .parse()
+                    .map_err(|why| format!("--source {UNREPRESENTABLE}{mode}: {why}"))?;
                 if unrepresentable.replace(mode).is_some() {
-                    return Err(format!("--dump states {UNREPRESENTABLE} twice"));
+                    return Err(format!("--source states {UNREPRESENTABLE} twice"));
                 }
                 arg = rest;
             } else if let Some((rest, mode)) =
@@ -135,18 +136,18 @@ impl DumpArg {
                 let mode = mode
                     .parse()
                     .and_then(PostgresInvalidValues::queryable)
-                    .map_err(|why| format!("--dump {INVALID}{mode}: {why}"))?;
+                    .map_err(|why| format!("--source {INVALID}{mode}: {why}"))?;
                 if invalid.replace(mode).is_some() {
-                    return Err(format!("--dump states {INVALID} twice"));
+                    return Err(format!("--source states {INVALID} twice"));
                 }
                 arg = rest;
             } else if let Some((rest, terms)) =
                 arg.rsplit_once(STRICT).filter(|(_, terms)| !terms.contains(':'))
             {
                 let strict =
-                    terms.parse().map_err(|why| format!("--dump {STRICT}{terms}: {why}"))?;
+                    terms.parse().map_err(|why| format!("--source {STRICT}{terms}: {why}"))?;
                 if strict_identity.replace(strict).is_some() {
-                    return Err(format!("--dump states {STRICT} twice"));
+                    return Err(format!("--source states {STRICT} twice"));
                 }
                 arg = rest;
             } else {
@@ -161,7 +162,7 @@ impl DumpArg {
             _ => (None, arg),
         };
         if source.is_empty() {
-            return Err("--dump names no source".to_string());
+            return Err("--source names no dump".to_string());
         }
         Ok(Self {
             name,
@@ -219,7 +220,7 @@ pub async fn register(
             unrepresentable: dump.unrepresentable,
             postgres_invalid_values: dump.postgres_invalid_values,
             strict_identity: dump.strict_identity.unwrap_or(strict_identity),
-            spelling: Some(Arc::new(Grammar::Dump)),
+            spelling: Some(Arc::new(Grammar::Source)),
             ..PgDumpOptions::default()
         };
         let opened = PgDump::open(&dump.source, options).await?;

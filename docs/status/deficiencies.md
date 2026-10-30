@@ -440,7 +440,7 @@ than reading as a phase nobody has sliced.
   `crates/pgdt/src/alloc.rs`.
 
 - **KD110** — `datafusion-cli-pgdump`'s exported `Args` prints every flag's
-  help but `--dump`'s one word to a line, `--dump`'s value name being wider
+  help but `--source`'s one word to a line, `--source`'s value name being wider
   than the page, in any embedder not setting `next_line_help` as `pgdt sql`
   does. **(c) unowned**; promoted by the pass
   over CLI output (`../design/roadmap.md`, "Future — wanted, unscheduled").
@@ -466,7 +466,7 @@ than reading as a phase nobody has sliced.
   user. Detail: `crates/pgdt-io/src/arrangement.rs`.
 
 - **KD122** — `pgdt sql` prints an error that ends its run, a refused
-  `--dump` or a failed `-c` statement, to stdout, as upstream's
+  `--source` or a failed `-c` statement, to stdout, as upstream's
   `datafusion-cli` does, where every other command writes errors to stderr; a
   redirected run writes the refusal into its output. **(c) unowned**; promoted
   by the maintainer deciding whether the shell departs from upstream's `main`

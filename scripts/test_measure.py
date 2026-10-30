@@ -329,7 +329,7 @@ class WorkerCount(unittest.TestCase):
     def test_a_builder_beside_the_sql_shell_states_its_own(self):
         # The shell's count is its partitions, which does not pin the `parse`
         # ahead of it; one running no builder needs nothing more.
-        shell = f"time {measure.DFCLI_PARTITIONS}=4 {measure.SQL_SHELL} --dump x=/dump.sql"
+        shell = f"time {measure.DFCLI_PARTITIONS}=4 {measure.SQL_SHELL} --source x=/dump.sql"
         for script, inherits in (
             (shell, False),
             (f"/pgdt parse --source /dump.sql --jobs 1 >/dev/null && {shell}", False),
@@ -900,7 +900,7 @@ class DynamicFilterFigures(unittest.TestCase):
         self.assertEqual(value, "true")
 
     def test_the_builder_is_untimed_and_writes_where_dump_looks(self):
-        # `--dump` reads the cache beside the dump, and `pgdt sql` takes no
+        # `--source` reads the cache beside the dump, and `pgdt sql` takes no
         # cache path; the builder gathers what the scan prunes by.
         for command in self.SHAPES:
             with self.subTest(command=command):
@@ -909,7 +909,7 @@ class DynamicFilterFigures(unittest.TestCase):
                 self.assertIn("--dtcache /dump.sql.dtcache ", builder)
                 self.assertIn(measure.GATHER_STATISTICS, builder)
                 self.assertTrue(timed.startswith("time "))
-                self.assertIn(f"--dump {measure.DFCLI_CATALOG}=/dump.sql ", timed)
+                self.assertIn(f"--source {measure.DFCLI_CATALOG}=/dump.sql ", timed)
 
     def test_every_run_of_the_sql_shell_states_its_partitions(self):
         for command in self.SHAPES:
@@ -924,7 +924,7 @@ class DynamicFilterFigures(unittest.TestCase):
     def test_a_run_inheriting_its_partitions_is_reported_though_the_builder_states_jobs(self):
         script = (
             "/pgdt parse --source /dump.sql --jobs 1 >/dev/null && "
-            f"time {measure.SQL_SHELL} --dump b=/dump.sql -c 'SELECT 1'"
+            f"time {measure.SQL_SHELL} --source b=/dump.sql -c 'SELECT 1'"
         )
         with unittest.mock.patch.object(measure, "_script", lambda c: script):
             self.assertEqual(sorted(measure.worker_count_problems()), sorted(
@@ -8197,7 +8197,7 @@ class ProfileRecipe(unittest.TestCase):
         """The costing row's pair, and the introspection build's runs of it,
         state what `_script` times: the same environment, arguments and SQL,
         read out of the timed line rather than restated, over a cache the
-        figure's own `pgdt parse` writes where `--dump` looks."""
+        figure's own `pgdt parse` writes where `--source` looks."""
         cfg = measure.Config()
         recipe = measure.profile_recipe(cfg)
         figure, query = measure.DFCLI_ACCOUNT
@@ -8776,10 +8776,10 @@ class CallgrindRecipe(unittest.TestCase):
         self.assertIn(f"ln -sf {cfg.cache_dir / name} {link}", recipe)
         self.assertNotIn(str(cfg.warm_dir), recipe)
         for line in recipe.splitlines():
-            if " parse --source " in line or " query --source " in line or " sql --dump " in line:
+            if " parse --source " in line or " query --source " in line or " sql --source " in line:
                 with self.subTest(line=line):
                     self.assertTrue(
-                        f"--source {link} " in line or f"--dump {measure.DFCLI_CATALOG}={link} " in line,
+                        f"--source {link} " in line or f"--source {measure.DFCLI_CATALOG}={link} " in line,
                         line,
                     )
         self.assertEqual(recipe.splitlines()[-1], f"rm -f {link}")
@@ -9741,7 +9741,7 @@ class ParallelScanThroughputProvider(unittest.TestCase):
                 self.assertTrue(
                     rest.startswith(
                         f"time {measure.DFCLI_PARTITIONS}={jobs} {measure.SQL_SHELL} "
-                        f"--dump {measure.DFCLI_CATALOG}=/dump.sql "
+                        f"--source {measure.DFCLI_CATALOG}=/dump.sql "
                     ),
                     rest,
                 )

@@ -2,8 +2,8 @@
 source: crates/pgdt/tests/help_text.rs
 expression: "help_page(&[\"sql\", \"-h\"])"
 ---
-A SQL shell over dumps `pgdt parse` has cached: DataFusion's own CLI, with each `--dump` registered
-as catalogs, one per database it holds
+A SQL shell over dumps `pgdt parse` has cached: DataFusion's own CLI, with each `--source`
+registered as catalogs, one per database it holds
 
 Usage: pgdt sql [OPTIONS]
 
@@ -40,7 +40,7 @@ Options:
       --object-store-profiling <OBJECT_STORE_PROFILING>
           Specify the default object_store_profiling mode, defaults to 'disabled'.
           [possible values: disabled, summary, trace] [default: Disabled]
-      --dump <[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]>
+      --source <[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]>
           Register a pg_dump file as catalogs, one per database it holds, read through the cache
           `pgdt parse` leaves. A database the file names is a catalog of that name, unless NAME= is
           given; NAME= is required for a dump that names no database, and refused for one of
@@ -53,7 +53,7 @@ Options:
           written, a NULL in a `NOT NULL` column as NULL — and :strict-identity=TERMS states this
           dump's strictness where --strict-identity would. Repeatable
       --strict-identity[=<TERMS>]
-          Bind identity signals, as `pgdt --strict-identity` does, for every --dump and STORED AS
+          Bind identity signals, as `pgdt --strict-identity` does, for every --source and STORED AS
           PGDUMP that states none of its own: `time` refuses a cache whose recorded modification
           signal the dump no longer states, `location` one written for another URL, the bare flag
           both. A dump changing under a scan fails it under every selection but `none`, so a server

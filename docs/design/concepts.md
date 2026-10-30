@@ -374,7 +374,7 @@ scanned by the partitioned replay, and the `pgdump.` session settings
 
 ## The DataFusion CLI
 
-`datafusion-cli` with `--dump` and `STORED AS PGDUMP`: upstream's `main.rs`
+`datafusion-cli` with `--source` and `STORED AS PGDUMP`: upstream's `main.rs`
 with each change marked, and everything of ours beside it.
 
 - **datafusion-cli-pgdump** — `lib.rs`, `pgdump.rs`; its spelling of a

@@ -121,7 +121,7 @@ fn as_its_namespace_s_init_an_interrupted_parse_saves_and_exits_130() {
 }
 
 /// **`sql -c` ends on `SIGINT`, and the REPL on `SIGTERM`**, each held at a
-/// `--dump` whose origin accepts the connection and never answers. The
+/// `--source` whose origin accepts the connection and never answers. The
 /// connection arriving is what says the handlers are installed: they are,
 /// before any dump is registered.
 #[test]
@@ -135,7 +135,7 @@ fn as_its_namespace_s_init_the_sql_shell_ends_on_a_signal() {
 
         let mut command = as_namespace_init(env!("CARGO_BIN_EXE_pgdt"));
         command
-            .args(["sql", "-q", "--dump", &url])
+            .args(["sql", "-q", "--source", &url])
             .args(mode)
             .current_dir(dir.path())
             .stdin(Stdio::null());

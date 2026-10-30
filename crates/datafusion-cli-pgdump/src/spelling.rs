@@ -1,5 +1,5 @@
 //! The shell's spelling of each refusal's remedy, in the grammar of whatever
-//! registered the dump: a `--dump`'s suffixes, or a `STORED AS PGDUMP`
+//! registered the dump: a `--source`'s suffixes, or a `STORED AS PGDUMP`
 //! statement's options; and `pgdt`'s own commands where the remedy is a
 //! parse (`docs/design/decisions.md`, "D107").
 
@@ -12,8 +12,8 @@ use pgdt_model::TableName;
 /// prints it, the REPL and `-f` included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Grammar {
-    /// `--dump [NAME=]SOURCE[:strings]…`.
-    Dump,
+    /// `--source [NAME=]SOURCE[:strings]…`.
+    Source,
     /// `CREATE EXTERNAL TABLE … STORED AS PGDUMP … OPTIONS ('pgdump.…' …)`.
     Statement,
 }
@@ -36,15 +36,15 @@ pub(crate) fn spelling(grammar: Grammar, refused: &Refusal) -> Option<String> {
     let spelled = match (refused, grammar) {
         (Refusal::Library(refused), _) => return library(grammar, refused),
         (Refusal::CacheNotComplete { pass, .. }, _) => format!("`{}`", parse(pass, None)),
-        (Refusal::MetadataLevel { pass, table, .. }, Grammar::Dump) => {
+        (Refusal::MetadataLevel { pass, table, .. }, Grammar::Source) => {
             format!("`{}`; `:strings`", parse(pass, Some(table)))
         }
         (Refusal::MetadataLevel { pass, table, .. }, Grammar::Statement) => {
             format!("`{}`; {}", parse(pass, Some(table)), option("schema_mode", "strings"))
         }
-        (Refusal::CatalogNameNeeded { .. }, Grammar::Dump) => "`--dump NAME=SOURCE`".to_string(),
-        (Refusal::CatalogNameRefused { .. }, Grammar::Dump) => {
-            "`--dump SOURCE`, without `NAME=`".to_string()
+        (Refusal::CatalogNameNeeded { .. }, Grammar::Source) => "`--source NAME=SOURCE`".to_string(),
+        (Refusal::CatalogNameRefused { .. }, Grammar::Source) => {
+            "`--source SOURCE`, without `NAME=`".to_string()
         }
         // A statement registers one table, never a catalog.
         (Refusal::CatalogNameNeeded { .. } | Refusal::CatalogNameRefused { .. }, Grammar::Statement)
@@ -59,13 +59,13 @@ pub(crate) fn spelling(grammar: Grammar, refused: &Refusal) -> Option<String> {
 /// The library's refusal, as [`spelling`] spells it.
 fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
     use pgdt_core::Error as Lib;
-    let (dump, statement) = match refused {
+    let (source, statement) = match refused {
         Lib::SourceChangedWhileRead { .. } | Lib::SourceUncheckable { .. } => {
             ("`:strict-identity=none`", "`'pgdump.strict_identity' 'none'`".to_string())
         }
         Lib::StrictIdentityUnmet { term, .. } => {
             return Some(match grammar {
-                Grammar::Dump => format!("`pgdt parse`; `:strict-identity=` without `{term}`"),
+                Grammar::Source => format!("`pgdt parse`; `:strict-identity=` without `{term}`"),
                 Grammar::Statement => {
                     format!("`pgdt parse`; `'pgdump.strict_identity'` without `{term}`")
                 }
@@ -92,11 +92,11 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
             "`'pgdump.unrepresentable' 'null'`; `'pgdump.unrepresentable' 'text'`".to_string(),
         ),
         Lib::TestNeedsDeclaredType { .. } => {
-            ("`--dump` without `:strings`", "`'pgdump.schema_mode' 'typed'`".to_string())
+            ("`--source` without `:strings`", "`'pgdump.schema_mode' 'typed'`".to_string())
         }
         // Only a statement names a table by a selector that can match two.
         Lib::AmbiguousTable { .. } => match grammar {
-            Grammar::Dump => return None,
+            Grammar::Source => return None,
             Grammar::Statement => return Some("`'pgdump.schema'`; `'pgdump.database'`".into()),
         },
         // The rest of an enum's labels are in its declaration, which `info
@@ -141,7 +141,7 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
         | Lib::FieldRender { .. } => return None,
     };
     Some(match grammar {
-        Grammar::Dump => dump.to_string(),
+        Grammar::Source => source.to_string(),
         Grammar::Statement => statement,
     })
 }

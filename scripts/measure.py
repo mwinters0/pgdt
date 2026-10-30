@@ -2620,7 +2620,7 @@ PARALLEL_SCAN = "dfcli-query-typed"
 
 #: The same query over a cache built **in a container of its own** ahead of the
 #: sweep (`Session.prebuild`), `JOBS_AXIS`' fourth prefix less its `-jobs-`:
-#: the timed container mounts that cache read-only where `--dump` looks for it
+#: the timed container mounts that cache read-only where `--source` looks for it
 #: and runs no builder.
 #:
 #: **A cold leg cannot build its cache in the timed container**, as
@@ -2965,7 +2965,7 @@ PRUNING_LEGS = ("none", "all")
 #: DataFusion's CLI, as the binary the figures time carries it: `pgdt`'s
 #: `sql`, run after a `pgdt parse` that builds the cache it reads.
 SQL_SHELL = "/pgdt sql"
-#: The catalog `--dump` registers the input under: a generated dump names no
+#: The catalog `--source` registers the input under: a generated dump names no
 #: database, so one is given.
 DFCLI_CATALOG = "bench"
 #: **The worker count, stated as `datafusion-cli` takes it**: the session's
@@ -2976,7 +2976,7 @@ DFCLI_CATALOG = "bench"
 DFCLI_PARTITIONS = "DATAFUSION_EXECUTION_TARGET_PARTITIONS"
 #: `dynamic-filter-join` and `dynamic-filter-topk`'s shapes,
 #: `<family><figure>-<query>-<leg>`: one untimed `pgdt parse` stating
-#: `GATHER_STATISTICS` writes the cache where `--dump` looks for it, beside
+#: `GATHER_STATISTICS` writes the cache where `--source` looks for it, beside
 #: the dump, and the timed `pgdt sql -c` runs one query under
 #: one of `DYNFILTER_LEGS`. What the query returned is hashed outside the
 #: timer, so the three legs are held to one answer.
@@ -3076,7 +3076,7 @@ def dfcli_invocation(figure: str, name: str, leg: str, dump: str) -> tuple[list[
         f"{DFCLI_PARTITIONS}={SWEEP_JOBS}",
         f"{DYNFILTER_FLAGS[figure]}={DYNFILTER_LEGS[leg]}",
     ]
-    argv = ["--dump", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q"]
+    argv = ["--source", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q"]
     if leg == DYNFILTER_ROWS_LEG:
         argv += ["-c", DYNFILTER_ROWS_SQL]
     return env, [*argv, "-c", DYNFILTER_QUERIES[figure][name][0]]
@@ -3128,7 +3128,7 @@ def parallel_scan_invocation(partitions: int, dump: str) -> tuple[list[str], lis
         raise ValueError(f"{partitions} is a partition count the figure does not carry")
     env = [f"{DFCLI_PARTITIONS}={partitions}"]
     argv = [
-        "--dump", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q",
+        "--source", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q",
         "-c", f"SET pgdump.memory = {stated_allowance(PARALLEL_BUDGET)}",
         "-c", PARALLEL_SCAN_SQL,
     ]
@@ -3144,12 +3144,12 @@ def typed_scan_invocation(dump: str) -> tuple[list[str], list[str]]:
     shapes run in one container, which a stated `PARALLEL_BUDGET` would
     overrun."""
     env = [f"{DFCLI_PARTITIONS}={SWEEP_JOBS}"]
-    argv = ["--dump", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q", "-c", PARALLEL_SCAN_SQL]
+    argv = ["--source", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q", "-c", PARALLEL_SCAN_SQL]
     return env, argv
 
 
 #: The untimed builder every `PARALLEL_SCAN` shape but the prebuilt one runs
-#: ahead of its query: the cache, written beside the dump where `--dump`
+#: ahead of its query: the cache, written beside the dump where `--source`
 #: looks, at `SWEEP_JOBS` whatever partition count the query states, so every
 #: row of a figure reads one cache.
 PROVIDER_BUILDER = (
@@ -4262,7 +4262,7 @@ def _script(command: str) -> str:
         # query whose answer is read back outside the timer, so a startup that
         # did not answer is refused rather than timed.
         env = [f"{DFCLI_PARTITIONS}={SWEEP_JOBS}"]
-        argv = ["--dump", f"{DFCLI_CATALOG}=/dump.sql", "--format", "csv", "-q", "-c", STARTUP_SQL]
+        argv = ["--source", f"{DFCLI_CATALOG}=/dump.sql", "--format", "csv", "-q", "-c", STARTUP_SQL]
         return (
             f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
             f"{GATHER_STATISTICS} >/dev/null && "
@@ -4273,7 +4273,7 @@ def _script(command: str) -> str:
     if command.startswith(DYNFILTER_FAMILY):
         # `dynamic-filter-join` and `-topk`. The builder is outside the timer,
         # as `statistics-pruning`'s is, and writes the cache beside the dump,
-        # where `--dump` looks — the root of the container's own layer, since
+        # where `--source` looks — the root of the container's own layer, since
         # the dump is mounted read-only. The answer is read back outside the
         # timer too, as `key=value` lines `parse_reported` takes.
         figure, _, rest = command.removeprefix(DYNFILTER_FAMILY).partition("-")
@@ -4415,7 +4415,7 @@ def _script(command: str) -> str:
             # The dynamic-filter figures' builder and read-back around
             # `PARALLEL_SCAN_SQL`: the builder states `SWEEP_JOBS`, not the
             # row's count, so every row reads one cache, written beside the
-            # dump where `--dump` looks; the count is the provider's
+            # dump where `--source` looks; the count is the provider's
             # `target_partitions`, and `--memory` its `SET pgdump.memory`.
             env, argv = parallel_scan_invocation(int(jobs), "/dump.sql")
             return (
@@ -5191,7 +5191,7 @@ class Session:
         ]
         mounts.append(f"{dump}:/dump.sql:ro")
         if spec.command.startswith(f"{PARALLEL_SCAN_PREBUILT}-jobs-"):
-            # Where `--dump` looks for it, and only one this sitting built.
+            # Where `--source` looks for it, and only one this sitting built.
             if dump not in self._prebuilt:
                 raise RuntimeError(
                     f"{spec.label} reads a cache `Session.prebuild` did not build this sitting"
@@ -9358,7 +9358,7 @@ def run_parallel_scan_throughput(session: Session) -> str:
         '(`docs/design/decisions.md`, "D25").\n\n'
         + _substream_note()
         + "Each provider leg, at every count, reads a cache one untimed `pgdt parse` stating "
-        f"`{GATHER_STATISTICS}` wrote beside the dump in the same container, where `--dump` "
+        f"`{GATHER_STATISTICS}` wrote beside the dump in the same container, where `--source` "
         "looks for it — but the cold leg below — so its reading carries decoding that cache "
         "whole, statistics included, and no mapping pass, and its filter rules out no row "
         "group.\n\n"
@@ -15633,7 +15633,7 @@ def release_diff_invocation(
 
     A `pgdt` shape is `profile_argv`'s and `profile_builder_argv`'s, over
     `cache`; `PARALLEL_SCAN` is `typed_scan_invocation`'s over a cache
-    `PROVIDER_BUILDER`'s flags write beside the dump, where `--dump` looks, and
+    `PROVIDER_BUILDER`'s flags write beside the dump, where `--source` looks, and
     `cache` goes unused. `test_measure.py`'s `ProfileRecipe` holds each to
     `_script`'s timed line, so the differential runs the workload the verdict
     was read on."""
@@ -15698,7 +15698,7 @@ def profile_recipe(cfg: Config) -> str:
 
     **`DFCLI_ACCOUNT`'s pair runs `pgdt sql`**, off the same
     profiling build, over a cache the figure's own `pgdt parse` writes beside
-    the dump where `--dump` looks, each leg stating `dfcli_invocation`'s
+    the dump where `--source` looks, each leg stating `dfcli_invocation`'s
     environment and arguments. Beside it, **the introspection build**
     (`--features introspect`, in a target directory of its own so no timed
     binary is overwritten) runs the same legs, each run writing what
@@ -15807,7 +15807,7 @@ def profile_recipe(cfg: Config) -> str:
     head(
         f"The pair `{figure}`'s `{query}` row is read as: its legs",
         f"{' and '.join(DFCLI_ACCOUNT_LEGS)}, the setting alone apart, over a cache the",
-        "figure's own `pgdt parse` writes beside the dump, where `--dump` looks.",
+        "figure's own `pgdt parse` writes beside the dump, where `--source` looks.",
         "Read as a difference, bucket by bucket.",
     )
     lines += [

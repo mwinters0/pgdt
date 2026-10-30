@@ -22,7 +22,7 @@ fn metadata_level(postgres_invalid_values: PostgresInvalidValues) -> Refusal {
 }
 
 /// **Each refusal names its remedy in the grammar that registered its
-/// dump**: a `--dump`'s suffix or a statement's `pgdump.` option, and
+/// dump**: a `--source`'s suffix or a statement's `pgdump.` option, and
 /// `pgdt`'s own command where the remedy is a parse. Which variants have a
 /// spelling is an exhaustive match, so the compiler pins the coverage and
 /// this test pins the words — one case per refusal the shell spells, its
@@ -84,7 +84,7 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
         ),
         (
             Refusal::CatalogNameNeeded { origin: "/d/koji.dump".into() },
-            Some("`--dump NAME=SOURCE`"),
+            Some("`--source NAME=SOURCE`"),
             None,
         ),
         (
@@ -93,7 +93,7 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
                 databases: 2,
                 name: "shop".into(),
             },
-            Some("`--dump SOURCE`, without `NAME=`"),
+            Some("`--source SOURCE`, without `NAME=`"),
             None,
         ),
         (Refusal::DatabaseUnnamed { origin: "/d/all.dump".into() }, None, None),
@@ -171,7 +171,7 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
         ),
         (
             lib(pgdt_core::Error::TestNeedsDeclaredType { column: "d".into(), op: "<" }),
-            Some("`--dump` without `:strings`"),
+            Some("`--source` without `:strings`"),
             Some("`'pgdump.schema_mode' 'typed'`"),
         ),
         (
@@ -196,8 +196,8 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
         ),
         (lib(pgdt_core::Error::CacheDisabled { operation: "open" }), None, None),
     ];
-    for (refused, dump, statement) in cases {
-        assert_eq!(spelling(Grammar::Dump, &refused).as_deref(), dump, "{refused}");
+    for (refused, source, statement) in cases {
+        assert_eq!(spelling(Grammar::Source, &refused).as_deref(), source, "{refused}");
         assert_eq!(spelling(Grammar::Statement, &refused).as_deref(), statement, "{refused}");
         // The library's sentence, and the provider's own, name no flag or
         // command of the shell's.

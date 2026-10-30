@@ -8,8 +8,8 @@ Everything `datafusion-cli` does, it does — the REPL, `-c`, `-f`, `--format`,
 carries.
 
 ```sh
-pgdt parse --source koji.dump        # once: builds koji.dump.dtcache
-pgdt sql --dump koji=koji.dump       # then query it
+pgdt parse --source koji.dump      # once: builds koji.dump.dtcache
+pgdt sql --source koji=koji.dump   # then query it
 ```
 
 ```sql
@@ -24,7 +24,7 @@ parse` command that would build it. So `pgdt parse` first, once per dump; see
 writes it — beside a local dump, and in the working directory for a URL.
 
 **A refusal ends with its remedy in parentheses**, in the words of whatever
-attached the dump — a `--dump` suffix such as `:strings`, or a `pgdump.`
+attached the dump — a `--source` suffix such as `:strings`, or a `pgdump.`
 option such as `'pgdump.schema_mode' 'strings'` — or the `pgdt` command that
 is one, at registration, from `-c` and `-f`, and in the REPL alike.
 
@@ -35,19 +35,19 @@ and `docker stop` end it. A crash's signal — `SIGSEGV`, `SIGBUS` and the like 
 still ends it as a crash; sent by hand, it is ignored. In the REPL, Ctrl-C is left to `datafusion-cli`,
 which cancels the statement running rather than the session.
 
-## `--dump`: a dump as catalogs
+## `--source`: a dump as catalogs
 
 ```sh
-pgdt sql --dump koji.dump
-pgdt sql --dump koji=koji.dump
-pgdt sql --dump koji=https://example.com/dumps/koji.dump.xz:strings
+pgdt sql --source koji.dump
+pgdt sql --source koji=koji.dump
+pgdt sql --source koji=https://example.com/dumps/koji.dump.xz:strings
 ```
 
 Each database in the file becomes a **catalog**, each of its PostgreSQL
 schemas a schema, and each table a table, so `koji.public.build` names a
 table and `SHOW TABLES` lists them all — bar a table no query can read,
 which is left out and named on stderr with why
-([below](#what-it-says-on-stderr)). `--dump` is repeatable.
+([below](#what-it-says-on-stderr)). `--source` is repeatable.
 
 - **A database the file names is a catalog of that name.** A dump taken with
   `--create`, and every database in a `pg_dumpall` file, is named by the file.
@@ -73,7 +73,7 @@ which is left out and named on stderr with why
   is read in any case, as `pgdt query`'s flags and the `pgdump.` options read
   it; `:postgres-invalid-values=strict`, a `pgdt parse` mode alone, is
   refused.
-- **The source is anything `pgdt --source` takes**: a path, an `.xz` or gzip
+- **SOURCE is anything `pgdt parse --source` takes**: a path, an `.xz` or gzip
   file, or an `http(s)://` URL. A path containing `=` is written `./a=b.sql`; a URL's
   `=` is never read as a name.
 
@@ -101,7 +101,7 @@ table's columns are the dump's, so the statement declares none.
 
 ## `--strict-identity`: when a moved file should stop the session
 
-`pgdt`'s flag, with its terms and its default, for every `--dump` and every
+`pgdt`'s flag, with its terms and its default, for every `--source` and every
 `STORED AS PGDUMP` statement of the session that does not state its own —
 with `:strict-identity=TERMS` or `pgdump.strict_identity`, above: `time`
 refuses a cache written against another modification time or entity tag,
@@ -124,7 +124,7 @@ naming its table as SQL reaches it, and a line for anything amiss with the
 cache itself:
 
 ```
-$ pgdt sql --dump shop=types.sql
+$ pgdt sql --source shop=types.sql
 warning: shop.public.t_base_type: column `v_mybase` (public.mybase): opaque base type — information-free in the dump; its value is the file's text, and compares as that text
 warning: shop.public.t_enum_domain: `v_mood` (public.mood) is compared by its labels' text, as DataFusion compares the emitted dictionary, where PostgreSQL orders an enum's labels as its type declares them
 warning: types.sql: 14 column(s) in 6 table(s) are each compared bytewise: the column declares no COLLATE clause, so its collation is the database's, which a plain dump does not record — this matches the server only if that collation is C or POSIX

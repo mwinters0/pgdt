@@ -1,4 +1,4 @@
-//! `pgdt sql` as a user runs it: `--dump`, `STORED AS PGDUMP` and what
+//! `pgdt sql` as a user runs it: `--source`, `STORED AS PGDUMP` and what
 //! reaches stderr.
 
 mod common;
@@ -28,7 +28,7 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-/// **`--dump NAME=SOURCE` is a catalog, and `STORED AS PGDUMP` a table**, both
+/// **`--source NAME=SOURCE` is a catalog, and `STORED AS PGDUMP` a table**, both
 /// answering SQL.
 #[tokio::test]
 async fn a_dump_answers_through_both_registrations() {
@@ -40,7 +40,7 @@ async fn a_dump_answers_through_both_registrations() {
 
     let out = run(&[
         "-q",
-        "--dump",
+        "--source",
         &format!("shop={dump}"),
         "-c",
         "SELECT count(*) AS n FROM shop.logs.events",
@@ -96,7 +96,7 @@ async fn registration_warnings_reach_stderr_unless_quiet() {
     common::ungathered(&copy).await;
     let dump = format!("shop={}", copy.display());
 
-    let out = run(&["--dump", &dump, "-c", "SELECT 1"]);
+    let out = run(&["--source", &dump, "-c", "SELECT 1"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     let stderr = text(&out.stderr);
     let lines: Vec<&str> = stderr.lines().collect();
@@ -113,7 +113,7 @@ async fn registration_warnings_reach_stderr_unless_quiet() {
     assert!(folded.starts_with(&counted), "{counted}\n{stderr}");
     assert_eq!(lines.iter().filter(|line| line.contains("no COLLATE clause")).count(), 1);
 
-    let out = run(&["-q", "--dump", &dump, "-c", "SELECT 1"]);
+    let out = run(&["-q", "--source", &dump, "-c", "SELECT 1"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stderr), "");
 }
@@ -153,7 +153,8 @@ async fn a_scan_s_warnings_reach_stderr_when_it_is_planned() {
         common::parsed_copy(&fixture("edge_cases"), dir.path(), &StatisticsRequest::DATA).await;
     common::ungathered(&copy).await;
     let dump = format!("shop={}", copy.display());
-    let args = ["--memory-limit", "1024T", "--dump", &dump, "-c", "SELECT * FROM shop.logs.events"];
+    let args =
+        ["--memory-limit", "1024T", "--source", &dump, "-c", "SELECT * FROM shop.logs.events"];
     let floor = |stderr: &str| {
         stderr
             .lines()
@@ -194,7 +195,7 @@ async fn a_scan_setting_is_set_by_sql() {
     let dump = format!("shop={}", copy.display());
 
     let out = run(&[
-        "--dump",
+        "--source",
         &dump,
         "-c",
         "SET pgdump.memory = 1",
@@ -279,7 +280,7 @@ async fn the_unrepresentable_function_is_guarded_at_planning() {
 
     let out = run(&[
         "-q",
-        "--dump",
+        "--source",
         &dump,
         "-c",
         "SELECT id FROM shop.public.t_date \
@@ -290,7 +291,7 @@ async fn the_unrepresentable_function_is_guarded_at_planning() {
 
     let out = run(&[
         "-q",
-        "--dump",
+        "--source",
         &dump,
         "-c",
         "SELECT pgdump_unrepresentable(v_date) FROM shop.public.t_date",
@@ -303,8 +304,8 @@ async fn the_unrepresentable_function_is_guarded_at_planning() {
 
 /// **A refusal names its remedy in the grammar that registered its dump,
 /// wherever it is printed**: a statement `-f` runs, its refusal printed by
-/// DataFusion's CLI itself, is spelled in `--dump`'s suffixes for a dump
-/// `--dump` registered, and in `pgdump.` options for one a statement
+/// DataFusion's CLI itself, is spelled in `--source`'s suffixes for a dump
+/// `--source` registered, and in `pgdump.` options for one a statement
 /// registered.
 #[tokio::test]
 async fn a_refusal_is_spelled_in_the_grammar_that_registered_its_dump() {
@@ -319,7 +320,7 @@ async fn a_refusal_is_spelled_in_the_grammar_that_registered_its_dump() {
 
     let select = file("select.sql", "SELECT v_date FROM shop.public.t_date;\n");
     let dump = format!("shop={}:unrepresentable=refuse", copy.display());
-    let out = run(&["-q", "--dump", &dump, "-f", &select]);
+    let out = run(&["-q", "--source", &dump, "-f", &select]);
     let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
     assert!(said.contains("(`:unrepresentable=null`; `:unrepresentable=text`)"), "{said}");
 
@@ -347,7 +348,7 @@ async fn a_dump_with_no_cache_names_the_parse() {
     let dir = tempfile::tempdir().unwrap();
     let bare = dir.path().join("bare.sql");
     std::fs::copy(fixture("edge_cases"), &bare).unwrap();
-    let out = run(&["-q", "--dump", &format!("shop={}", bare.display()), "-c", "SELECT 1"]);
+    let out = run(&["-q", "--source", &format!("shop={}", bare.display()), "-c", "SELECT 1"]);
     assert!(!out.status.success());
     let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
     assert!(said.contains(&format!("pgdt parse --source {}", bare.display())), "{said}");
@@ -355,7 +356,7 @@ async fn a_dump_with_no_cache_names_the_parse() {
 
 /// **`--strict-identity` is `pgdt`'s, and binds every registration stating
 /// none of its own**: a dump touched since its parse opens with a warning
-/// unless `time` is stated, and then neither `--dump` nor `STORED AS PGDUMP`
+/// unless `time` is stated, and then neither `--source` nor `STORED AS PGDUMP`
 /// opens it.
 #[tokio::test]
 async fn strict_identity_binds_both_registrations() {
@@ -368,10 +369,10 @@ async fn strict_identity_binds_both_registrations() {
     let dump = copy.to_str().unwrap();
     let catalog = format!("shop={dump}");
 
-    let out = run(&["-q", "--dump", &catalog, "-c", "SELECT 1"]);
+    let out = run(&["-q", "--source", &catalog, "-c", "SELECT 1"]);
     assert!(out.status.success(), "{}", text(&out.stderr));
 
-    let out = run(&["-q", "--strict-identity=time", "--dump", &catalog, "-c", "SELECT 1"]);
+    let out = run(&["-q", "--strict-identity=time", "--source", &catalog, "-c", "SELECT 1"]);
     assert!(!out.status.success());
     let said = format!("{}{}", text(&out.stdout), text(&out.stderr));
     assert!(said.contains("with `time` bound"), "{said}");
@@ -386,7 +387,7 @@ async fn strict_identity_binds_both_registrations() {
 }
 
 /// **A dump's own strictness overrides the session's**, from either front
-/// door: `--dump …:strict-identity=` and `pgdump.strict_identity` open a
+/// door: `--source …:strict-identity=` and `pgdump.strict_identity` open a
 /// touched dump under `none` or `advisory` where the session binds `time`, and
 /// refuse it under `time` where the session is advisory.
 #[tokio::test]
@@ -406,11 +407,11 @@ async fn a_dump_s_own_strictness_overrides_the_session_s() {
 
     for loose in ["none", "advisory"] {
         let loose = format!("shop={dump}:strict-identity={loose}");
-        let out = run(&["-q", "--strict-identity=time", "--dump", &loose, "-c", count]);
+        let out = run(&["-q", "--strict-identity=time", "--source", &loose, "-c", count]);
         assert!(out.status.success(), "{loose}: {}", text(&out.stderr));
         assert_eq!(text(&out.stdout).trim(), "n\n3");
     }
-    let out = run(&["-q", "--dump", &format!("shop={dump}:strict-identity=time"), "-c", count]);
+    let out = run(&["-q", "--source", &format!("shop={dump}:strict-identity=time"), "-c", count]);
     assert!(!out.status.success());
     refused(&out);
 
