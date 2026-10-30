@@ -42,6 +42,15 @@ it does need the container reachable *from the host*, because the driver is a
 pip wheel in this script's own `uv` environment rather than something installed
 into a `postgres:` image. That is what HOST_PORT is for.
 
+Each flag set of the schemas a table is read with its descendants in
+(`ANSWERED_SCHEMAS`, and `timescaledb`) is restored into a fresh database and
+the server's **answers** over it committed beside the dump, as
+`<flag-set>.answers.tsv` (`write_answers`; docs/design/decisions.md, "D130").
+
+The `timescaledb` schema runs on its own servers, one `timescale/timescaledb-ha`
+pin per routine major (`TIMESCALEDB_PINS`), each dumped by that major's routine
+`pg_dump` over the host's loopback (docs/design/timescaledb-invariants.md).
+
 Requires `docker` (aliased to `nerdctl` in this environment) runnable via
 passwordless `sudo`.
 """
@@ -326,7 +335,74 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "default": [],
         "load-via-partition-root": ["--load-via-partition-root"],
     },
+    # A table read with its descendants (fixture_schema_inheritance.sql):
+    # inheritance at depth, and partitions of partitions, which
+    # `--load-via-partition-root` writes through the top root.
+    "inheritance": {
+        "default": [],
+        "load-via-partition-root": ["--load-via-partition-root"],
+    },
 }
+
+# The schemas whose every flag set's restore is answered by the server, table
+# by table, read through and `ONLY` ([`write_answers`]): what a table read with
+# its descendants is checked against (docs/design/decisions.md, "D130").
+ANSWERED_SCHEMAS = ("inheritance", "partitions")
+
+
+@dataclass(frozen=True)
+class TimescalePin:
+    """One pinned TimescaleDB release: the `timescale/timescaledb-ha` image
+    serving it, on the PostgreSQL major it is keyed by, and the scripts loaded
+    after `fixture_schema_timescaledb.sql` for the shapes only it has."""
+
+    release: str
+    image: str
+    scripts: tuple[str, ...] = ()
+
+
+TIMESCALEDB_SCHEMA = "timescaledb"
+
+# One TimescaleDB release per dump-visible shape, each on its own routine
+# major, whose `pg_dump` writes the fixture against the pin's server so the
+# dump is the same producer's output as every other
+# (docs/design/roadmap-P38-descendants.md, "What is shown, claimed and
+# checked"). The last is the newest release and moves as the routine set does.
+TIMESCALEDB_PINS = {
+    "13": TimescalePin("2.13.1", "timescale/timescaledb-ha:pg13.13-ts2.13.1"),
+    "15": TimescalePin(
+        "2.21.4",
+        "timescale/timescaledb-ha:pg15.14-ts2.21.4",
+        ("fixture_schema_timescaledb_hypercore.sql",),
+    ),
+    "16": TimescalePin(
+        "2.27.2",
+        "timescale/timescaledb-ha:pg16.14-ts2.27.2",
+        ("fixture_schema_timescaledb_root_rows.sql",),
+    ),
+    "17": TimescalePin(
+        "2.28.3",
+        "timescale/timescaledb-ha:pg17.10-ts2.28.3",
+        ("fixture_schema_timescaledb_root_rows.sql",),
+    ),
+    "18": TimescalePin(
+        "2.31.0",
+        "timescale/timescaledb-ha:pg18.6-ts2.31.0",
+        ("fixture_schema_timescaledb_root_rows.sql",),
+    ),
+}
+
+# The TimescaleDB flag sets, each with the majors it runs at. Past `default`,
+# the two ways a dump leaves chunks out, at the oldest pin and the newest:
+# `--schema=public` drops the extension and its catalog with them, and
+# excluding the chunks' schema keeps the catalog listing chunks the file lacks.
+TIMESCALEDB_FLAG_SETS: dict[str, tuple[tuple[str, ...], list[str]]] = {
+    "default": (tuple(TIMESCALEDB_PINS), []),
+    "schema-public": (("13", "18"), ["--schema=public"]),
+    "exclude-chunks": (("13", "18"), ["--exclude-schema=_timescaledb_internal"]),
+}
+
+RESTORED_DB_NAME = "pgdt_restored"
 
 
 # What every run passes besides its flag set, named so the emitter register
@@ -410,8 +486,8 @@ def container_name(version: str) -> str:
     return f"pgdt-fixture-{version}"
 
 
-def start_container(version: str, image: str) -> str:
-    name = container_name(version)
+def start_container(version: str, image: str, name: str | None = None, memory: str = "512m") -> str:
+    name = name or container_name(version)
     subprocess.run(DOCKER + ["rm", "-f", name], capture_output=True)
     run(
         DOCKER
@@ -421,7 +497,7 @@ def start_container(version: str, image: str) -> str:
             "--name",
             name,
             "--memory",
-            "512m",
+            memory,
             "-e",
             "MALLOC_ARENA_MAX=2",
             "-e",
@@ -448,6 +524,20 @@ def wait_ready(name: str, timeout: float = 30.0) -> None:
     raise TimeoutError(f"postgres in container {name} did not become ready in {timeout}s")
 
 
+def wait_final_server(name: str, timeout: float = 120.0) -> None:
+    """Wait for the server the image's entrypoint ends on, not the temporary
+    one it initializes under: the entrypoint execs `postgres` as process 1
+    only once initialization is done, and a connection made before then is
+    terminated when the temporary server stops."""
+    deadline = time.monotonic() + timeout
+    probe = 'test "$(cat /proc/1/comm)" = postgres && pg_isready -q'
+    while time.monotonic() < deadline:
+        if subprocess.run(DOCKER + ["exec", name, "sh", "-c", probe], capture_output=True).returncode == 0:
+            return
+        time.sleep(0.5)
+    raise TimeoutError(f"postgres in container {name} did not become ready in {timeout}s")
+
+
 def prepare_tablespace_dir(name: str, directory: str = TABLESPACE_DIR) -> None:
     # `docker exec` defaults to root in the official postgres image (the
     # entrypoint drops to the postgres OS user itself via gosu, but that
@@ -469,9 +559,7 @@ def load_sql(name: str, database: str, sql: str) -> None:
     )
 
 
-def create_fixture_db(
-    name: str, version: str, schema: str, attempts: int = 10, delay: float = 1.0
-) -> None:
+def create_database(name: str, attempts: int = 10, delay: float = 1.0) -> None:
     # The official postgres image briefly starts a *temporary* instance to
     # run init scripts before restarting for real; pg_isready can succeed
     # against that transient instance. Retry the actual DDL-capable command
@@ -480,13 +568,16 @@ def create_fixture_db(
     for _ in range(attempts):
         try:
             run(DOCKER + ["exec", name, "createdb", "-U", DB_USER, DB_NAME], capture_output=True)
-            last_error = None
-            break
+            return
         except subprocess.CalledProcessError as exc:
             last_error = exc
             time.sleep(delay)
-    if last_error is not None:
-        raise last_error
+    assert last_error is not None
+    raise last_error
+
+
+def create_fixture_db(name: str, version: str, schema: str) -> None:
+    create_database(name)
     if schema == "objects":
         prepare_tablespace_dir(name)
     if (cluster := CLUSTER_SCRIPTS.get(schema)) is not None:
@@ -694,6 +785,162 @@ def take_floor(version: str) -> None:
     )
 
 
+def answers_path(version: str, schema: str, flag_name: str) -> Path:
+    """Where the server's answers over one flag set's restore are committed:
+    beside the dump, as `<flag-set>.answers.tsv`."""
+    return FIXTURES_DIR / version / schema / f"{flag_name}.answers.tsv"
+
+
+# Every table a restore holds but an extension's own, which a dump states as
+# its extension's `COPY` blocks rather than as anything a user reads.
+ANSWERED_TABLES_SQL = """
+SELECT format('%I.%I', n.nspname, c.relname)
+FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('r', 'p')
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname !~ '^pg_'
+  AND NOT EXISTS (
+      SELECT FROM pg_depend d
+      WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'
+  )
+ORDER BY 1
+"""
+
+# A psql line's location prefix, which moves with the dump's length.
+_PSQL_PREFIX = re.compile(r"^psql:[^:]*:[0-9]+: ")
+
+
+def psql_errors(stderr: str) -> list[str]:
+    """The `ERROR:` lines of a psql session's stderr, each without the
+    location prefix, so a regeneration that moves nothing else moves none."""
+    lines = (_PSQL_PREFIX.sub("", line) for line in stderr.splitlines())
+    return [line for line in lines if line.startswith("ERROR:")]
+
+
+def answer_lines(query: list[str], relation: str, mode: str) -> list[str]:
+    """The server's answer for one table read one way: `rows` and its count
+    and a `row` line per row in `COPY` text, in the text's order, or the one
+    `error` line the server refused it with. Sorted here rather than by the
+    server, which at 2.13 cannot sort a compressed hypertable's rows by their
+    text ("could not find pathkey item to sort")."""
+    source = relation if mode == "descendants" else f"ONLY {relation}"
+    result = subprocess.run(
+        query
+        + ["-d", RESTORED_DB_NAME, "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=terse"]
+        + ["-c", "SET TimeZone = 'UTC'"]
+        + ["-c", f"COPY (SELECT t.* FROM {source} AS t) TO STDOUT"],
+        capture_output=True,
+        text=True,
+    )
+    key = f"{relation}\t{mode}"
+    if result.returncode != 0:
+        errors = psql_errors(result.stderr) or [result.stderr.strip()]
+        return [f"{key}\terror\t{errors[0]}"]
+    rows = sorted(result.stdout.splitlines())
+    return [f"{key}\trows\t{len(rows)}"] + [f"{key}\trow\t{row}" for row in rows]
+
+
+def write_answers(
+    query: list[str], restore: list[str], dump: Path, out: Path, timescaledb: bool = False
+) -> None:
+    """Restore `dump` into a fresh database and write what the server answers
+    for every table it then holds, read with its descendants and `ONLY`: the
+    reference a table read with its descendants is checked against, short
+    being measured against the server the dump restores to
+    (docs/design/roadmap-P38-descendants.md, "The generic mechanism").
+
+    `query` and `restore` are psql command lines reaching the server: the
+    restore's is the routine `pg_dump`'s own psql, which reads what it wrote
+    (`\\restrict`). A TimescaleDB restore runs between
+    `timescaledb_pre_restore()` and `timescaledb_post_restore()`, as its
+    documentation states. Errors the restore met open the file as
+    `restore-error` lines, not as a failure: they are what the server holds.
+    """
+    run(query + ["-d", "postgres", "-c", f"CREATE DATABASE {RESTORED_DB_NAME}"], capture_output=True)
+    try:
+        errors: list[str] = []
+        if timescaledb:
+            run(
+                query
+                + ["-d", RESTORED_DB_NAME, "-v", "ON_ERROR_STOP=1"]
+                + ["-c", "CREATE EXTENSION IF NOT EXISTS timescaledb"]
+                + ["-c", "SELECT timescaledb_pre_restore()"],
+                capture_output=True,
+            )
+        restored = subprocess.run(
+            restore + ["-d", RESTORED_DB_NAME, "-v", "VERBOSITY=terse"],
+            input=dump.read_text(),
+            capture_output=True,
+            text=True,
+        )
+        errors += psql_errors(restored.stderr)
+        if timescaledb:
+            post = subprocess.run(
+                query
+                + ["-d", RESTORED_DB_NAME, "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=terse"]
+                + ["-c", "SELECT timescaledb_post_restore()"],
+                capture_output=True,
+                text=True,
+            )
+            errors += psql_errors(post.stderr)
+        tables = run(
+            query + ["-d", RESTORED_DB_NAME, "-A", "-t", "-c", ANSWERED_TABLES_SQL],
+            capture_output=True,
+            text=True,
+        ).stdout.split()
+        lines = [f"-\t-\trestore-error\t{error}" for error in errors]
+        for relation in tables:
+            for mode in ("descendants", "only"):
+                lines += answer_lines(query, relation, mode)
+    finally:
+        run(
+            query + ["-d", "postgres", "-c", f"DROP DATABASE IF EXISTS {RESTORED_DB_NAME} WITH (FORCE)"],
+            capture_output=True,
+        )
+    out.write_text("".join(f"{line}\n" for line in lines))
+    print(f"  {out.relative_to(REPO_ROOT)} ({len(tables)} tables, {len(errors)} restore errors)")
+
+
+def generate_timescaledb(version: str, pin: TimescalePin) -> None:
+    """The TimescaleDB pin at `version`: its server loaded with
+    `fixture_schema_timescaledb.sql` and the pin's own scripts, dumped by the
+    routine image's `pg_dump` over the host's loopback, and each flag set's
+    restore answered by the same server."""
+    routine = ROUTINE_VERSIONS[version]
+    print(f"== {version} timescaledb {pin.release} ({pin.image}) ==")
+    name = start_container(version, pin.image, name=f"pgdt-fixture-{TIMESCALEDB_SCHEMA}-{version}", memory="1g")
+    client = DOCKER + ["run", "--rm", "-i", "--network", "host", "--memory", "512m", routine]
+    remote = ["-h", "127.0.0.1", "-p", str(HOST_PORT)]
+    try:
+        wait_final_server(name)
+        create_database(name)
+        for path in [schema_file(TIMESCALEDB_SCHEMA)] + [SCRIPT_DIR / script for script in pin.scripts]:
+            load_sql(name, DB_NAME, path.read_text())
+        out_dir = FIXTURES_DIR / version / TIMESCALEDB_SCHEMA
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for flag_name, (majors, flags) in TIMESCALEDB_FLAG_SETS.items():
+            if version not in majors:
+                continue
+            out_path = out_dir / f"{flag_name}.sql"
+            dump = run(
+                client + ["pg_dump", *remote, *PG_DUMP_ARGS, *flags, DB_NAME],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            out_path.write_text(dump.stdout)
+            print(f"  {TIMESCALEDB_SCHEMA}/{flag_name}: {out_path.relative_to(REPO_ROOT)} ({out_path.stat().st_size} bytes)")
+            write_answers(
+                DOCKER + ["exec", "-i", name, "psql", "-U", DB_USER, "-X", "-q"],
+                client + ["psql", *remote, "-U", DB_USER, "-X", "-q"],
+                out_path,
+                answers_path(version, TIMESCALEDB_SCHEMA, flag_name),
+                timescaledb=True,
+            )
+    finally:
+        stop_container(name)
+
+
 def generate_for_version(
     version: str,
     image: str,
@@ -725,6 +972,9 @@ def generate_for_version(
                         f"  {schema}/{flag_name}: "
                         f"{out_path.relative_to(REPO_ROOT)} ({size} bytes)"
                     )
+                    if schema in ANSWERED_SCHEMAS:
+                        psql = DOCKER + ["exec", "-i", name, "psql", "-U", DB_USER, "-X", "-q"]
+                        write_answers(psql, psql, out_path, answers_path(version, schema, flag_name))
                 drop_fixture_db(name)
         if oracle or values:
             create_fixture_db(name, version, ORACLE_SCHEMA)
@@ -781,8 +1031,9 @@ def _run() -> int:
         "--schema",
         action="append",
         dest="schemas",
-        choices=sorted(SCHEMAS),
-        help="limit to specific fixture schema(s); default: all schemas",
+        choices=sorted([*SCHEMAS, TIMESCALEDB_SCHEMA]),
+        help="limit to specific fixture schema(s); default: all schemas. "
+        f"`{TIMESCALEDB_SCHEMA}` runs at its pins' majors, on their own servers",
     )
     parser.add_argument(
         "--skip-dumps",
@@ -809,23 +1060,27 @@ def _run() -> int:
     )
     args = parser.parse_args()
     versions = args.versions or sorted(ROUTINE_VERSIONS)
-    schemas = args.schemas or sorted(SCHEMAS)
+    schemas = args.schemas or sorted([*SCHEMAS, TIMESCALEDB_SCHEMA])
     if args.skip_dumps and args.skip_oracle and args.skip_floor and args.skip_values:
         parser.error(
             "--skip-dumps, --skip-oracle, --skip-floor and --skip-values together "
             "leave nothing to do"
         )
 
+    routine = [schema for schema in schemas if schema in SCHEMAS]
     for version in versions:
-        generate_for_version(
-            version,
-            ROUTINE_VERSIONS[version],
-            schemas,
-            dumps=not args.skip_dumps,
-            oracle=not args.skip_oracle,
-            floor=not args.skip_floor,
-            values=not args.skip_values,
-        )
+        if routine or not (args.skip_oracle and args.skip_floor and args.skip_values):
+            generate_for_version(
+                version,
+                ROUTINE_VERSIONS[version],
+                routine,
+                dumps=not args.skip_dumps,
+                oracle=not args.skip_oracle,
+                floor=not args.skip_floor,
+                values=not args.skip_values,
+            )
+        if TIMESCALEDB_SCHEMA in schemas and not args.skip_dumps and version in TIMESCALEDB_PINS:
+            generate_timescaledb(version, TIMESCALEDB_PINS[version])
 
     if not args.skip_oracle:
         print("\ncross-major differences:")

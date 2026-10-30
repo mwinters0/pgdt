@@ -1,0 +1,8 @@
+-	-	restore-error	ERROR:  relation "_timescaledb_internal._materialized_hypertable_2" does not exist at character 193
+-	-	restore-error	ERROR:  relation "public.metrics_daily" does not exist
+-	-	restore-error	ERROR:  relation "_timescaledb_internal._materialized_hypertable_3" does not exist at character 120
+-	-	restore-error	ERROR:  relation "public.metrics_weekly" does not exist
+public.counters	descendants	error	ERROR:  relation "_timescaledb_internal._hyper_5_17_chunk" not found
+public.counters	only	rows	0
+public.metrics	descendants	error	ERROR:  relation "_timescaledb_internal._hyper_1_2_chunk" not found
+public.metrics	only	rows	0

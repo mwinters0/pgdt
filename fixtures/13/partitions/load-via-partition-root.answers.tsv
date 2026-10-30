@@ -1,0 +1,76 @@
+public.derived	descendants	rows	2
+public.derived	descendants	row	1	x
+public.derived	descendants	row	1	x
+public.derived	only	rows	2
+public.derived	only	row	1	x
+public.derived	only	row	1	x
+public.evt	descendants	rows	3
+public.evt	descendants	row	1	a
+public.evt	descendants	row	2	a
+public.evt	descendants	row	3	z
+public.evt	only	rows	0
+public.evt_a	descendants	rows	2
+public.evt_a	descendants	row	1	a
+public.evt_a	descendants	row	2	a
+public.evt_a	only	rows	2
+public.evt_a	only	row	1	a
+public.evt_a	only	row	2	a
+public.evt_m	descendants	rows	1
+public.evt_m	descendants	row	unrelated
+public.evt_m	only	rows	1
+public.evt_m	only	row	unrelated
+public.evt_z	descendants	rows	1
+public.evt_z	descendants	row	3	z
+public.evt_z	only	rows	1
+public.evt_z	only	row	3	z
+public.feel	descendants	rows	3
+public.feel	descendants	row	1	sad
+public.feel	descendants	row	2	ok
+public.feel	descendants	row	3	happy
+public.feel	only	rows	0
+public.feel_a	descendants	rows	0
+public.feel_a	only	rows	0
+public.feel_m	descendants	rows	1
+public.feel_m	descendants	row	unrelated
+public.feel_m	only	rows	1
+public.feel_m	only	row	unrelated
+public.feel_z	descendants	rows	3
+public.feel_z	descendants	row	1	sad
+public.feel_z	descendants	row	2	ok
+public.feel_z	descendants	row	3	happy
+public.feel_z	only	rows	3
+public.feel_z	only	row	1	sad
+public.feel_z	only	row	2	ok
+public.feel_z	only	row	3	happy
+public.hollow	descendants	rows	3
+public.hollow	descendants	row	
+public.hollow	descendants	row	
+public.hollow	descendants	row	
+public.hollow	only	rows	3
+public.hollow	only	row	
+public.hollow	only	row	
+public.hollow	only	row	
+public.shuffle	descendants	rows	3
+public.shuffle	descendants	row	1	sad	one
+public.shuffle	descendants	row	2	ok	two
+public.shuffle	descendants	row	3	happy	three
+public.shuffle	only	rows	0
+public.shuffle_a	descendants	rows	0
+public.shuffle_a	only	rows	0
+public.shuffle_z	descendants	rows	3
+public.shuffle_z	descendants	row	one	sad	1
+public.shuffle_z	descendants	row	three	happy	3
+public.shuffle_z	descendants	row	two	ok	2
+public.shuffle_z	only	rows	3
+public.shuffle_z	only	row	one	sad	1
+public.shuffle_z	only	row	three	happy	3
+public.shuffle_z	only	row	two	ok	2
+public.spread	descendants	rows	1
+public.spread	descendants	row	1	sad
+public.spread	only	rows	0
+public.spread_a	descendants	rows	0
+public.spread_a	only	rows	0
+public.spread_z	descendants	rows	1
+public.spread_z	descendants	row	1	sad
+public.spread_z	only	rows	1
+public.spread_z	only	row	1	sad

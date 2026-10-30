@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict cHxTN3nw6iaG24wCc6IekSNySXUQZw0b4BlWdYsksvGttc9yYv9gqosJzuPdw9d
+\restrict eHMLrM7824Tm3GdpTVKpY9Tf6G4wevqVUjfLKQcK7m23GOF23OYQXAfxdbZQjhk
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -336,7 +336,6 @@ COPY public.evt (id, region) FROM stdin;
 -- load via partition root public.feel
 
 COPY public.feel (id, m) FROM stdin;
-1	sad
 2	ok
 3	happy
 \.
@@ -358,6 +357,7 @@ unrelated
 -- load via partition root public.feel
 
 COPY public.feel (id, m) FROM stdin;
+1	sad
 \.
 
 
@@ -379,7 +379,6 @@ COPY public.hollow  FROM stdin;
 -- load via partition root public.shuffle
 
 COPY public.shuffle (id, m, note) FROM stdin;
-1	sad	one
 2	ok	two
 3	happy	three
 \.
@@ -392,6 +391,7 @@ COPY public.shuffle (id, m, note) FROM stdin;
 -- load via partition root public.shuffle
 
 COPY public.shuffle (note, m, id) FROM stdin;
+one	sad	1
 \.
 
 
@@ -402,7 +402,6 @@ COPY public.shuffle (note, m, id) FROM stdin;
 -- load via partition root public.spread
 
 COPY public.spread (id, m) FROM stdin;
-1	sad
 \.
 
 
@@ -413,6 +412,7 @@ COPY public.spread (id, m) FROM stdin;
 -- load via partition root public.spread
 
 COPY public.spread (id, m) FROM stdin;
+1	sad
 \.
 
 
@@ -420,5 +420,5 @@ COPY public.spread (id, m) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict cHxTN3nw6iaG24wCc6IekSNySXUQZw0b4BlWdYsksvGttc9yYv9gqosJzuPdw9d
+\unrestrict eHMLrM7824Tm3GdpTVKpY9Tf6G4wevqVUjfLKQcK7m23GOF23OYQXAfxdbZQjhk
 

@@ -1,0 +1,710 @@
+_timescaledb_internal._compressed_hypertable_4	descendants	rows	6
+_timescaledb_internal._compressed_hypertable_4	descendants	row	BAAAArGU8GdQAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYiRc3sAAAAViED8HX/8AAAAAAAAAAA==	1	AwBAeQAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUA481A849AsEAAAAAAAPMPQAAAA4AAAACAAAAAAAAADUBiIMohkGI0AAAAAAAAAAeAAAAAT4v99/e/f2A3Q==	14	10	2024-01-04 00:00:00+00	2024-01-10 12:00:00+00
+_timescaledb_internal._compressed_hypertable_4	descendants	row	BAAAArGU8GdQAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYiRc3sAAAAViED8HX/8AAAAAAAAAAA==	2	AwBAf0AAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIU809A48xA84EAAAAAAAPOQAAAAA4AAAACAAAAAAAAADUBDKMRBmEMkAAAAAAAAAAcAAAAATwPvf33+9+A6w==	14	10	2024-01-04 00:00:00+00	2024-01-10 12:00:00+00
+_timescaledb_internal._compressed_hypertable_4	descendants	row	BAAAArGU8GdQAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYiRc3sAAAAViED8HX/8AAAAAAAAAAA==	3	AwBAgsAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUA9FAg9A480EAAAAAAAQROQAAAA4AAAACAAAAAAAAACUCjIIaxiIMsQAAAAAAAAAOAAAAAgP797/2+/sB7wAAAAAAAAAF	14	10	2024-01-04 00:00:00+00	2024-01-10 12:00:00+00
+_timescaledb_internal._compressed_hypertable_4	descendants	row	BAAAArIhwUrwAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYz3+pgAAAAVjKeDOn/8AAAAAAAAAAA==	1	AwBAgcAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUAhA849A084EAAAAAAAQRPQAAAA4AAAACAAAAAAAAACUCDSIZBiKMkQAAAAAAAAAOAAAAAUC+//9+/fsB5w==	14	10	2024-01-11 00:00:00+00	2024-01-17 12:00:00+00
+_timescaledb_internal._compressed_hypertable_4	descendants	row	BAAAArIhwUrwAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYz3+pgAAAAVjKeDOn/8AAAAAAAAAAA==	2	AwBAhOAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUBE9A5FA9BEEAAAAAAARQNQAAAA4AAAABAAAAAAAAAAQAI2MkNSNDKAAAAAEyAAO/339794E=	14	10	2024-01-11 00:00:00+00	2024-01-17 12:00:00+00
+_timescaledb_internal._compressed_hypertable_4	descendants	row	BAAAArIhwUrwAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYz3+pgAAAAVjKeDOn/8AAAAAAAAAAA==	3	AwBAiAAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUFA5BE9A1FAEAAAAAAAMQPQAAAA4AAAACAAAAAAAAADUCCGUYiDMIcgAAAAAAAAA7AAAAAgH37399/vYEGQAAAAAAAAAB	14	10	2024-01-11 00:00:00+00	2024-01-17 12:00:00+00
+_timescaledb_internal._compressed_hypertable_4	only	rows	0
+_timescaledb_internal._hyper_1_2_chunk	descendants	rows	14
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-04 00:00:00+00	1	244
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-04 12:00:00+00	1	256
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-05 00:00:00+00	1	268
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-05 12:00:00+00	1	280
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-06 00:00:00+00	1	292
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-06 12:00:00+00	1	304
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-07 00:00:00+00	1	316
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-07 12:00:00+00	1	328
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-08 00:00:00+00	1	340
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-08 12:00:00+00	1	352
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-09 00:00:00+00	1	364
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-09 12:00:00+00	1	376
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-10 00:00:00+00	1	388
+_timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-10 12:00:00+00	1	400
+_timescaledb_internal._hyper_1_2_chunk	only	rows	0
+_timescaledb_internal._hyper_1_3_chunk	descendants	rows	15
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-11 00:00:00+00	1	412
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-11 12:00:00+00	1	424
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-12 00:00:00+00	1	436
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-12 06:00:00+00	1	-1
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-12 12:00:00+00	1	448
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-13 00:00:00+00	1	460
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-13 12:00:00+00	1	472
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-14 00:00:00+00	1	484
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-14 12:00:00+00	1	496
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-15 00:00:00+00	1	508
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-15 12:00:00+00	1	520
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-16 00:00:00+00	1	532
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-16 12:00:00+00	1	544
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-17 00:00:00+00	1	556
+_timescaledb_internal._hyper_1_3_chunk	descendants	row	2024-01-17 12:00:00+00	1	568
+_timescaledb_internal._hyper_1_3_chunk	only	rows	1
+_timescaledb_internal._hyper_1_3_chunk	only	row	2024-01-12 06:00:00+00	1	-1
+_timescaledb_internal._hyper_1_4_chunk	descendants	rows	14
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-18 00:00:00+00	1	580
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-18 12:00:00+00	1	592
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-19 00:00:00+00	1	604
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-19 12:00:00+00	1	616
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-20 00:00:00+00	1	628
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-20 12:00:00+00	1	640
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-21 00:00:00+00	1	652
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-21 12:00:00+00	1	664
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-22 00:00:00+00	1	676
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-22 12:00:00+00	1	688
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-23 00:00:00+00	1	700
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-23 12:00:00+00	1	712
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-24 00:00:00+00	1	724
+_timescaledb_internal._hyper_1_4_chunk	descendants	row	2024-01-24 12:00:00+00	1	736
+_timescaledb_internal._hyper_1_4_chunk	only	rows	14
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-18 00:00:00+00	1	580
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-18 12:00:00+00	1	592
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-19 00:00:00+00	1	604
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-19 12:00:00+00	1	616
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-20 00:00:00+00	1	628
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-20 12:00:00+00	1	640
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-21 00:00:00+00	1	652
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-21 12:00:00+00	1	664
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-22 00:00:00+00	1	676
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-22 12:00:00+00	1	688
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-23 00:00:00+00	1	700
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-23 12:00:00+00	1	712
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-24 00:00:00+00	1	724
+_timescaledb_internal._hyper_1_4_chunk	only	row	2024-01-24 12:00:00+00	1	736
+_timescaledb_internal._hyper_1_6_chunk	descendants	rows	28
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-04 00:00:00+00	2	344
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-04 00:00:00+00	3	444
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-04 12:00:00+00	2	356
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-04 12:00:00+00	3	456
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-05 00:00:00+00	2	368
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-05 00:00:00+00	3	468
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-05 12:00:00+00	2	380
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-05 12:00:00+00	3	480
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-06 00:00:00+00	2	392
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-06 00:00:00+00	3	492
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-06 12:00:00+00	2	404
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-06 12:00:00+00	3	504
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-07 00:00:00+00	2	416
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-07 00:00:00+00	3	516
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-07 12:00:00+00	2	428
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-07 12:00:00+00	3	528
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-08 00:00:00+00	2	440
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-08 00:00:00+00	3	540
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-08 12:00:00+00	2	452
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-08 12:00:00+00	3	552
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-09 00:00:00+00	2	464
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-09 00:00:00+00	3	564
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-09 12:00:00+00	2	476
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-09 12:00:00+00	3	576
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-10 00:00:00+00	2	488
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-10 00:00:00+00	3	588
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-10 12:00:00+00	2	500
+_timescaledb_internal._hyper_1_6_chunk	descendants	row	2024-01-10 12:00:00+00	3	600
+_timescaledb_internal._hyper_1_6_chunk	only	rows	0
+_timescaledb_internal._hyper_1_7_chunk	descendants	rows	29
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-11 00:00:00+00	2	512
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-11 00:00:00+00	3	612
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-11 12:00:00+00	2	524
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-11 12:00:00+00	3	624
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-12 00:00:00+00	2	536
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-12 00:00:00+00	3	636
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-12 06:00:00+00	2	-2
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-12 12:00:00+00	2	548
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-12 12:00:00+00	3	648
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-13 00:00:00+00	2	560
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-13 00:00:00+00	3	660
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-13 12:00:00+00	2	572
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-13 12:00:00+00	3	672
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-14 00:00:00+00	2	584
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-14 00:00:00+00	3	684
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-14 12:00:00+00	2	596
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-14 12:00:00+00	3	696
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-15 00:00:00+00	2	608
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-15 00:00:00+00	3	708
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-15 12:00:00+00	2	620
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-15 12:00:00+00	3	720
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-16 00:00:00+00	2	632
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-16 00:00:00+00	3	732
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-16 12:00:00+00	2	644
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-16 12:00:00+00	3	744
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-17 00:00:00+00	2	656
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-17 00:00:00+00	3	756
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-17 12:00:00+00	2	668
+_timescaledb_internal._hyper_1_7_chunk	descendants	row	2024-01-17 12:00:00+00	3	768
+_timescaledb_internal._hyper_1_7_chunk	only	rows	1
+_timescaledb_internal._hyper_1_7_chunk	only	row	2024-01-12 06:00:00+00	2	-2
+_timescaledb_internal._hyper_1_8_chunk	descendants	rows	28
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-18 00:00:00+00	2	680
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-18 00:00:00+00	3	780
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-18 12:00:00+00	2	692
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-18 12:00:00+00	3	792
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-19 00:00:00+00	2	704
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-19 00:00:00+00	3	804
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-19 12:00:00+00	2	716
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-19 12:00:00+00	3	816
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-20 00:00:00+00	2	728
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-20 00:00:00+00	3	828
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-20 12:00:00+00	2	740
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-20 12:00:00+00	3	840
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-21 00:00:00+00	2	752
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-21 00:00:00+00	3	852
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-21 12:00:00+00	2	764
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-21 12:00:00+00	3	864
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-22 00:00:00+00	2	776
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-22 00:00:00+00	3	876
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-22 12:00:00+00	2	788
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-22 12:00:00+00	3	888
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-23 00:00:00+00	2	800
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-23 00:00:00+00	3	900
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-23 12:00:00+00	2	812
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-23 12:00:00+00	3	912
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-24 00:00:00+00	2	824
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-24 00:00:00+00	3	924
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-24 12:00:00+00	2	836
+_timescaledb_internal._hyper_1_8_chunk	descendants	row	2024-01-24 12:00:00+00	3	936
+_timescaledb_internal._hyper_1_8_chunk	only	rows	28
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-18 00:00:00+00	2	680
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-18 00:00:00+00	3	780
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-18 12:00:00+00	2	692
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-18 12:00:00+00	3	792
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-19 00:00:00+00	2	704
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-19 00:00:00+00	3	804
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-19 12:00:00+00	2	716
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-19 12:00:00+00	3	816
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-20 00:00:00+00	2	728
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-20 00:00:00+00	3	828
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-20 12:00:00+00	2	740
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-20 12:00:00+00	3	840
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-21 00:00:00+00	2	752
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-21 00:00:00+00	3	852
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-21 12:00:00+00	2	764
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-21 12:00:00+00	3	864
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-22 00:00:00+00	2	776
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-22 00:00:00+00	3	876
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-22 12:00:00+00	2	788
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-22 12:00:00+00	3	888
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-23 00:00:00+00	2	800
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-23 00:00:00+00	3	900
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-23 12:00:00+00	2	812
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-23 12:00:00+00	3	912
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-24 00:00:00+00	2	824
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-24 00:00:00+00	3	924
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-24 12:00:00+00	2	836
+_timescaledb_internal._hyper_1_8_chunk	only	row	2024-01-24 12:00:00+00	3	936
+_timescaledb_internal._hyper_2_10_chunk	descendants	rows	21
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-18 00:00:00+00	1	2	592
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-18 00:00:00+00	2	2	692
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-18 00:00:00+00	3	2	792
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-19 00:00:00+00	1	2	616
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-19 00:00:00+00	2	2	716
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-19 00:00:00+00	3	2	816
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-20 00:00:00+00	1	2	640
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-20 00:00:00+00	2	2	740
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-20 00:00:00+00	3	2	840
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-21 00:00:00+00	1	2	664
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-21 00:00:00+00	2	2	764
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-21 00:00:00+00	3	2	864
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-22 00:00:00+00	1	2	688
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-22 00:00:00+00	2	2	788
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-22 00:00:00+00	3	2	888
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-23 00:00:00+00	1	2	712
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-23 00:00:00+00	2	2	812
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-23 00:00:00+00	3	2	912
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-24 00:00:00+00	1	2	736
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-24 00:00:00+00	2	2	836
+_timescaledb_internal._hyper_2_10_chunk	descendants	row	2024-01-24 00:00:00+00	3	2	936
+_timescaledb_internal._hyper_2_10_chunk	only	rows	21
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-18 00:00:00+00	1	2	592
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-18 00:00:00+00	2	2	692
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-18 00:00:00+00	3	2	792
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-19 00:00:00+00	1	2	616
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-19 00:00:00+00	2	2	716
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-19 00:00:00+00	3	2	816
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-20 00:00:00+00	1	2	640
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-20 00:00:00+00	2	2	740
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-20 00:00:00+00	3	2	840
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-21 00:00:00+00	1	2	664
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-21 00:00:00+00	2	2	764
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-21 00:00:00+00	3	2	864
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-22 00:00:00+00	1	2	688
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-22 00:00:00+00	2	2	788
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-22 00:00:00+00	3	2	888
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-23 00:00:00+00	1	2	712
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-23 00:00:00+00	2	2	812
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-23 00:00:00+00	3	2	912
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-24 00:00:00+00	1	2	736
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-24 00:00:00+00	2	2	836
+_timescaledb_internal._hyper_2_10_chunk	only	row	2024-01-24 00:00:00+00	3	2	936
+_timescaledb_internal._hyper_2_9_chunk	descendants	rows	60
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2023-12-29 00:00:00+00	1	2	112
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2023-12-29 00:00:00+00	2	2	212
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2023-12-29 00:00:00+00	3	2	312
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2023-12-30 00:00:00+00	1	2	136
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2023-12-30 00:00:00+00	2	2	236
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2023-12-30 00:00:00+00	3	2	336
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2023-12-31 00:00:00+00	1	2	160
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2023-12-31 00:00:00+00	2	2	260
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2023-12-31 00:00:00+00	3	2	360
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-01 00:00:00+00	1	2	184
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-01 00:00:00+00	2	2	284
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-01 00:00:00+00	3	2	384
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-02 00:00:00+00	1	2	208
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-02 00:00:00+00	2	2	308
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-02 00:00:00+00	3	2	408
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-03 00:00:00+00	1	2	232
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-03 00:00:00+00	2	2	332
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-03 00:00:00+00	3	2	432
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-04 00:00:00+00	1	2	256
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-04 00:00:00+00	2	2	356
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-04 00:00:00+00	3	2	456
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-05 00:00:00+00	1	2	280
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-05 00:00:00+00	2	2	380
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-05 00:00:00+00	3	2	480
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-06 00:00:00+00	1	2	304
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-06 00:00:00+00	2	2	404
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-06 00:00:00+00	3	2	504
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-07 00:00:00+00	1	2	328
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-07 00:00:00+00	2	2	428
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-07 00:00:00+00	3	2	528
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-08 00:00:00+00	1	2	352
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-08 00:00:00+00	2	2	452
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-08 00:00:00+00	3	2	552
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-09 00:00:00+00	1	2	376
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-09 00:00:00+00	2	2	476
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-09 00:00:00+00	3	2	576
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-10 00:00:00+00	1	2	400
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-10 00:00:00+00	2	2	500
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-10 00:00:00+00	3	2	600
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-11 00:00:00+00	1	2	424
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-11 00:00:00+00	2	2	524
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-11 00:00:00+00	3	2	624
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-12 00:00:00+00	1	2	448
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-12 00:00:00+00	2	2	548
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-12 00:00:00+00	3	2	648
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-13 00:00:00+00	1	2	472
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-13 00:00:00+00	2	2	572
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-13 00:00:00+00	3	2	672
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-14 00:00:00+00	1	2	496
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-14 00:00:00+00	2	2	596
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-14 00:00:00+00	3	2	696
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-15 00:00:00+00	1	2	520
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-15 00:00:00+00	2	2	620
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-15 00:00:00+00	3	2	720
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-16 00:00:00+00	1	2	544
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-16 00:00:00+00	2	2	644
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-16 00:00:00+00	3	2	744
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-17 00:00:00+00	1	2	568
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-17 00:00:00+00	2	2	668
+_timescaledb_internal._hyper_2_9_chunk	descendants	row	2024-01-17 00:00:00+00	3	2	768
+_timescaledb_internal._hyper_2_9_chunk	only	rows	60
+_timescaledb_internal._hyper_2_9_chunk	only	row	2023-12-29 00:00:00+00	1	2	112
+_timescaledb_internal._hyper_2_9_chunk	only	row	2023-12-29 00:00:00+00	2	2	212
+_timescaledb_internal._hyper_2_9_chunk	only	row	2023-12-29 00:00:00+00	3	2	312
+_timescaledb_internal._hyper_2_9_chunk	only	row	2023-12-30 00:00:00+00	1	2	136
+_timescaledb_internal._hyper_2_9_chunk	only	row	2023-12-30 00:00:00+00	2	2	236
+_timescaledb_internal._hyper_2_9_chunk	only	row	2023-12-30 00:00:00+00	3	2	336
+_timescaledb_internal._hyper_2_9_chunk	only	row	2023-12-31 00:00:00+00	1	2	160
+_timescaledb_internal._hyper_2_9_chunk	only	row	2023-12-31 00:00:00+00	2	2	260
+_timescaledb_internal._hyper_2_9_chunk	only	row	2023-12-31 00:00:00+00	3	2	360
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-01 00:00:00+00	1	2	184
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-01 00:00:00+00	2	2	284
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-01 00:00:00+00	3	2	384
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-02 00:00:00+00	1	2	208
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-02 00:00:00+00	2	2	308
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-02 00:00:00+00	3	2	408
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-03 00:00:00+00	1	2	232
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-03 00:00:00+00	2	2	332
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-03 00:00:00+00	3	2	432
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-04 00:00:00+00	1	2	256
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-04 00:00:00+00	2	2	356
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-04 00:00:00+00	3	2	456
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-05 00:00:00+00	1	2	280
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-05 00:00:00+00	2	2	380
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-05 00:00:00+00	3	2	480
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-06 00:00:00+00	1	2	304
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-06 00:00:00+00	2	2	404
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-06 00:00:00+00	3	2	504
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-07 00:00:00+00	1	2	328
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-07 00:00:00+00	2	2	428
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-07 00:00:00+00	3	2	528
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-08 00:00:00+00	1	2	352
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-08 00:00:00+00	2	2	452
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-08 00:00:00+00	3	2	552
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-09 00:00:00+00	1	2	376
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-09 00:00:00+00	2	2	476
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-09 00:00:00+00	3	2	576
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-10 00:00:00+00	1	2	400
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-10 00:00:00+00	2	2	500
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-10 00:00:00+00	3	2	600
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-11 00:00:00+00	1	2	424
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-11 00:00:00+00	2	2	524
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-11 00:00:00+00	3	2	624
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-12 00:00:00+00	1	2	448
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-12 00:00:00+00	2	2	548
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-12 00:00:00+00	3	2	648
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-13 00:00:00+00	1	2	472
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-13 00:00:00+00	2	2	572
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-13 00:00:00+00	3	2	672
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-14 00:00:00+00	1	2	496
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-14 00:00:00+00	2	2	596
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-14 00:00:00+00	3	2	696
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-15 00:00:00+00	1	2	520
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-15 00:00:00+00	2	2	620
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-15 00:00:00+00	3	2	720
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-16 00:00:00+00	1	2	544
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-16 00:00:00+00	2	2	644
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-16 00:00:00+00	3	2	744
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-17 00:00:00+00	1	2	568
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-17 00:00:00+00	2	2	668
+_timescaledb_internal._hyper_2_9_chunk	only	row	2024-01-17 00:00:00+00	3	2	768
+_timescaledb_internal._hyper_3_11_chunk	descendants	rows	4
+_timescaledb_internal._hyper_3_11_chunk	descendants	row	2023-12-25 00:00:00+00	18
+_timescaledb_internal._hyper_3_11_chunk	descendants	row	2024-01-01 00:00:00+00	42
+_timescaledb_internal._hyper_3_11_chunk	descendants	row	2024-01-08 00:00:00+00	42
+_timescaledb_internal._hyper_3_11_chunk	descendants	row	2024-01-15 00:00:00+00	42
+_timescaledb_internal._hyper_3_11_chunk	only	rows	4
+_timescaledb_internal._hyper_3_11_chunk	only	row	2023-12-25 00:00:00+00	18
+_timescaledb_internal._hyper_3_11_chunk	only	row	2024-01-01 00:00:00+00	42
+_timescaledb_internal._hyper_3_11_chunk	only	row	2024-01-08 00:00:00+00	42
+_timescaledb_internal._hyper_3_11_chunk	only	row	2024-01-15 00:00:00+00	42
+_timescaledb_internal._hyper_3_12_chunk	descendants	rows	1
+_timescaledb_internal._hyper_3_12_chunk	descendants	row	2024-01-22 00:00:00+00	18
+_timescaledb_internal._hyper_3_12_chunk	only	rows	1
+_timescaledb_internal._hyper_3_12_chunk	only	row	2024-01-22 00:00:00+00	18
+_timescaledb_internal._hyper_5_17_chunk	descendants	rows	10
+_timescaledb_internal._hyper_5_17_chunk	descendants	row	0	0
+_timescaledb_internal._hyper_5_17_chunk	descendants	row	10	1
+_timescaledb_internal._hyper_5_17_chunk	descendants	row	20	2
+_timescaledb_internal._hyper_5_17_chunk	descendants	row	30	3
+_timescaledb_internal._hyper_5_17_chunk	descendants	row	40	4
+_timescaledb_internal._hyper_5_17_chunk	descendants	row	50	5
+_timescaledb_internal._hyper_5_17_chunk	descendants	row	60	6
+_timescaledb_internal._hyper_5_17_chunk	descendants	row	70	7
+_timescaledb_internal._hyper_5_17_chunk	descendants	row	80	8
+_timescaledb_internal._hyper_5_17_chunk	descendants	row	90	9
+_timescaledb_internal._hyper_5_17_chunk	only	rows	10
+_timescaledb_internal._hyper_5_17_chunk	only	row	0	0
+_timescaledb_internal._hyper_5_17_chunk	only	row	10	1
+_timescaledb_internal._hyper_5_17_chunk	only	row	20	2
+_timescaledb_internal._hyper_5_17_chunk	only	row	30	3
+_timescaledb_internal._hyper_5_17_chunk	only	row	40	4
+_timescaledb_internal._hyper_5_17_chunk	only	row	50	5
+_timescaledb_internal._hyper_5_17_chunk	only	row	60	6
+_timescaledb_internal._hyper_5_17_chunk	only	row	70	7
+_timescaledb_internal._hyper_5_17_chunk	only	row	80	8
+_timescaledb_internal._hyper_5_17_chunk	only	row	90	9
+_timescaledb_internal._hyper_5_18_chunk	descendants	rows	10
+_timescaledb_internal._hyper_5_18_chunk	descendants	row	100	10
+_timescaledb_internal._hyper_5_18_chunk	descendants	row	110	11
+_timescaledb_internal._hyper_5_18_chunk	descendants	row	120	12
+_timescaledb_internal._hyper_5_18_chunk	descendants	row	130	13
+_timescaledb_internal._hyper_5_18_chunk	descendants	row	140	14
+_timescaledb_internal._hyper_5_18_chunk	descendants	row	150	15
+_timescaledb_internal._hyper_5_18_chunk	descendants	row	160	16
+_timescaledb_internal._hyper_5_18_chunk	descendants	row	170	17
+_timescaledb_internal._hyper_5_18_chunk	descendants	row	180	18
+_timescaledb_internal._hyper_5_18_chunk	descendants	row	190	19
+_timescaledb_internal._hyper_5_18_chunk	only	rows	10
+_timescaledb_internal._hyper_5_18_chunk	only	row	100	10
+_timescaledb_internal._hyper_5_18_chunk	only	row	110	11
+_timescaledb_internal._hyper_5_18_chunk	only	row	120	12
+_timescaledb_internal._hyper_5_18_chunk	only	row	130	13
+_timescaledb_internal._hyper_5_18_chunk	only	row	140	14
+_timescaledb_internal._hyper_5_18_chunk	only	row	150	15
+_timescaledb_internal._hyper_5_18_chunk	only	row	160	16
+_timescaledb_internal._hyper_5_18_chunk	only	row	170	17
+_timescaledb_internal._hyper_5_18_chunk	only	row	180	18
+_timescaledb_internal._hyper_5_18_chunk	only	row	190	19
+_timescaledb_internal._hyper_5_19_chunk	descendants	rows	10
+_timescaledb_internal._hyper_5_19_chunk	descendants	row	200	20
+_timescaledb_internal._hyper_5_19_chunk	descendants	row	210	21
+_timescaledb_internal._hyper_5_19_chunk	descendants	row	220	22
+_timescaledb_internal._hyper_5_19_chunk	descendants	row	230	23
+_timescaledb_internal._hyper_5_19_chunk	descendants	row	240	24
+_timescaledb_internal._hyper_5_19_chunk	descendants	row	250	25
+_timescaledb_internal._hyper_5_19_chunk	descendants	row	260	26
+_timescaledb_internal._hyper_5_19_chunk	descendants	row	270	27
+_timescaledb_internal._hyper_5_19_chunk	descendants	row	280	28
+_timescaledb_internal._hyper_5_19_chunk	descendants	row	290	29
+_timescaledb_internal._hyper_5_19_chunk	only	rows	10
+_timescaledb_internal._hyper_5_19_chunk	only	row	200	20
+_timescaledb_internal._hyper_5_19_chunk	only	row	210	21
+_timescaledb_internal._hyper_5_19_chunk	only	row	220	22
+_timescaledb_internal._hyper_5_19_chunk	only	row	230	23
+_timescaledb_internal._hyper_5_19_chunk	only	row	240	24
+_timescaledb_internal._hyper_5_19_chunk	only	row	250	25
+_timescaledb_internal._hyper_5_19_chunk	only	row	260	26
+_timescaledb_internal._hyper_5_19_chunk	only	row	270	27
+_timescaledb_internal._hyper_5_19_chunk	only	row	280	28
+_timescaledb_internal._hyper_5_19_chunk	only	row	290	29
+_timescaledb_internal._materialized_hypertable_2	descendants	rows	81
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2023-12-29 00:00:00+00	1	2	112
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2023-12-29 00:00:00+00	2	2	212
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2023-12-29 00:00:00+00	3	2	312
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2023-12-30 00:00:00+00	1	2	136
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2023-12-30 00:00:00+00	2	2	236
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2023-12-30 00:00:00+00	3	2	336
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2023-12-31 00:00:00+00	1	2	160
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2023-12-31 00:00:00+00	2	2	260
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2023-12-31 00:00:00+00	3	2	360
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-01 00:00:00+00	1	2	184
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-01 00:00:00+00	2	2	284
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-01 00:00:00+00	3	2	384
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-02 00:00:00+00	1	2	208
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-02 00:00:00+00	2	2	308
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-02 00:00:00+00	3	2	408
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-03 00:00:00+00	1	2	232
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-03 00:00:00+00	2	2	332
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-03 00:00:00+00	3	2	432
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-04 00:00:00+00	1	2	256
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-04 00:00:00+00	2	2	356
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-04 00:00:00+00	3	2	456
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-05 00:00:00+00	1	2	280
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-05 00:00:00+00	2	2	380
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-05 00:00:00+00	3	2	480
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-06 00:00:00+00	1	2	304
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-06 00:00:00+00	2	2	404
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-06 00:00:00+00	3	2	504
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-07 00:00:00+00	1	2	328
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-07 00:00:00+00	2	2	428
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-07 00:00:00+00	3	2	528
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-08 00:00:00+00	1	2	352
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-08 00:00:00+00	2	2	452
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-08 00:00:00+00	3	2	552
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-09 00:00:00+00	1	2	376
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-09 00:00:00+00	2	2	476
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-09 00:00:00+00	3	2	576
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-10 00:00:00+00	1	2	400
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-10 00:00:00+00	2	2	500
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-10 00:00:00+00	3	2	600
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-11 00:00:00+00	1	2	424
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-11 00:00:00+00	2	2	524
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-11 00:00:00+00	3	2	624
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-12 00:00:00+00	1	2	448
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-12 00:00:00+00	2	2	548
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-12 00:00:00+00	3	2	648
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-13 00:00:00+00	1	2	472
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-13 00:00:00+00	2	2	572
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-13 00:00:00+00	3	2	672
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-14 00:00:00+00	1	2	496
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-14 00:00:00+00	2	2	596
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-14 00:00:00+00	3	2	696
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-15 00:00:00+00	1	2	520
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-15 00:00:00+00	2	2	620
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-15 00:00:00+00	3	2	720
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-16 00:00:00+00	1	2	544
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-16 00:00:00+00	2	2	644
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-16 00:00:00+00	3	2	744
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-17 00:00:00+00	1	2	568
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-17 00:00:00+00	2	2	668
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-17 00:00:00+00	3	2	768
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-18 00:00:00+00	1	2	592
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-18 00:00:00+00	2	2	692
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-18 00:00:00+00	3	2	792
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-19 00:00:00+00	1	2	616
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-19 00:00:00+00	2	2	716
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-19 00:00:00+00	3	2	816
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-20 00:00:00+00	1	2	640
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-20 00:00:00+00	2	2	740
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-20 00:00:00+00	3	2	840
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-21 00:00:00+00	1	2	664
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-21 00:00:00+00	2	2	764
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-21 00:00:00+00	3	2	864
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-22 00:00:00+00	1	2	688
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-22 00:00:00+00	2	2	788
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-22 00:00:00+00	3	2	888
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-23 00:00:00+00	1	2	712
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-23 00:00:00+00	2	2	812
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-23 00:00:00+00	3	2	912
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-24 00:00:00+00	1	2	736
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-24 00:00:00+00	2	2	836
+_timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-24 00:00:00+00	3	2	936
+_timescaledb_internal._materialized_hypertable_2	only	rows	0
+_timescaledb_internal._materialized_hypertable_3	descendants	rows	5
+_timescaledb_internal._materialized_hypertable_3	descendants	row	2023-12-25 00:00:00+00	18
+_timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-01 00:00:00+00	42
+_timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-08 00:00:00+00	42
+_timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-15 00:00:00+00	42
+_timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-22 00:00:00+00	18
+_timescaledb_internal._materialized_hypertable_3	only	rows	0
+_timescaledb_internal.compress_hyper_4_13_chunk	descendants	rows	1
+_timescaledb_internal.compress_hyper_4_13_chunk	descendants	row	BAAAArGU8GdQAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYiRc3sAAAAViED8HX/8AAAAAAAAAAA==	1	AwBAeQAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUA481A849AsEAAAAAAAPMPQAAAA4AAAACAAAAAAAAADUBiIMohkGI0AAAAAAAAAAeAAAAAT4v99/e/f2A3Q==	14	10	2024-01-04 00:00:00+00	2024-01-10 12:00:00+00
+_timescaledb_internal.compress_hyper_4_13_chunk	only	rows	1
+_timescaledb_internal.compress_hyper_4_13_chunk	only	row	BAAAArGU8GdQAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYiRc3sAAAAViED8HX/8AAAAAAAAAAA==	1	AwBAeQAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUA481A849AsEAAAAAAAPMPQAAAA4AAAACAAAAAAAAADUBiIMohkGI0AAAAAAAAAAeAAAAAT4v99/e/f2A3Q==	14	10	2024-01-04 00:00:00+00	2024-01-10 12:00:00+00
+_timescaledb_internal.compress_hyper_4_14_chunk	descendants	rows	1
+_timescaledb_internal.compress_hyper_4_14_chunk	descendants	row	BAAAArIhwUrwAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYz3+pgAAAAVjKeDOn/8AAAAAAAAAAA==	1	AwBAgcAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUAhA849A084EAAAAAAAQRPQAAAA4AAAACAAAAAAAAACUCDSIZBiKMkQAAAAAAAAAOAAAAAUC+//9+/fsB5w==	14	10	2024-01-11 00:00:00+00	2024-01-17 12:00:00+00
+_timescaledb_internal.compress_hyper_4_14_chunk	only	rows	1
+_timescaledb_internal.compress_hyper_4_14_chunk	only	row	BAAAArIhwUrwAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYz3+pgAAAAVjKeDOn/8AAAAAAAAAAA==	1	AwBAgcAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUAhA849A084EAAAAAAAQRPQAAAA4AAAACAAAAAAAAACUCDSIZBiKMkQAAAAAAAAAOAAAAAUC+//9+/fsB5w==	14	10	2024-01-11 00:00:00+00	2024-01-17 12:00:00+00
+_timescaledb_internal.compress_hyper_4_15_chunk	descendants	rows	2
+_timescaledb_internal.compress_hyper_4_15_chunk	descendants	row	BAAAArGU8GdQAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYiRc3sAAAAViED8HX/8AAAAAAAAAAA==	2	AwBAf0AAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIU809A48xA84EAAAAAAAPOQAAAAA4AAAACAAAAAAAAADUBDKMRBmEMkAAAAAAAAAAcAAAAATwPvf33+9+A6w==	14	10	2024-01-04 00:00:00+00	2024-01-10 12:00:00+00
+_timescaledb_internal.compress_hyper_4_15_chunk	descendants	row	BAAAArGU8GdQAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYiRc3sAAAAViED8HX/8AAAAAAAAAAA==	3	AwBAgsAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUA9FAg9A480EAAAAAAAQROQAAAA4AAAACAAAAAAAAACUCjIIaxiIMsQAAAAAAAAAOAAAAAgP797/2+/sB7wAAAAAAAAAF	14	10	2024-01-04 00:00:00+00	2024-01-10 12:00:00+00
+_timescaledb_internal.compress_hyper_4_15_chunk	only	rows	2
+_timescaledb_internal.compress_hyper_4_15_chunk	only	row	BAAAArGU8GdQAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYiRc3sAAAAViED8HX/8AAAAAAAAAAA==	2	AwBAf0AAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIU809A48xA84EAAAAAAAPOQAAAAA4AAAACAAAAAAAAADUBDKMRBmEMkAAAAAAAAAAcAAAAATwPvf33+9+A6w==	14	10	2024-01-04 00:00:00+00	2024-01-10 12:00:00+00
+_timescaledb_internal.compress_hyper_4_15_chunk	only	row	BAAAArGU8GdQAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYiRc3sAAAAViED8HX/8AAAAAAAAAAA==	3	AwBAgsAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUA9FAg9A480EAAAAAAAQROQAAAA4AAAACAAAAAAAAACUCjIIaxiIMsQAAAAAAAAAOAAAAAgP797/2+/sB7wAAAAAAAAAF	14	10	2024-01-04 00:00:00+00	2024-01-10 12:00:00+00
+_timescaledb_internal.compress_hyper_4_16_chunk	descendants	rows	2
+_timescaledb_internal.compress_hyper_4_16_chunk	descendants	row	BAAAArIhwUrwAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYz3+pgAAAAVjKeDOn/8AAAAAAAAAAA==	2	AwBAhOAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUBE9A5FA9BEEAAAAAAARQNQAAAA4AAAABAAAAAAAAAAQAI2MkNSNDKAAAAAEyAAO/339794E=	14	10	2024-01-11 00:00:00+00	2024-01-17 12:00:00+00
+_timescaledb_internal.compress_hyper_4_16_chunk	descendants	row	BAAAArIhwUrwAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYz3+pgAAAAVjKeDOn/8AAAAAAAAAAA==	3	AwBAiAAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUFA5BE9A1FAEAAAAAAAMQPQAAAA4AAAACAAAAAAAAADUCCGUYiDMIcgAAAAAAAAA7AAAAAgH37399/vYEGQAAAAAAAAAB	14	10	2024-01-11 00:00:00+00	2024-01-17 12:00:00+00
+_timescaledb_internal.compress_hyper_4_16_chunk	only	rows	2
+_timescaledb_internal.compress_hyper_4_16_chunk	only	row	BAAAArIhwUrwAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYz3+pgAAAAVjKeDOn/8AAAAAAAAAAA==	2	AwBAhOAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUBE9A5FA9BEEAAAAAAARQNQAAAA4AAAABAAAAAAAAAAQAI2MkNSNDKAAAAAEyAAO/339794E=	14	10	2024-01-11 00:00:00+00	2024-01-17 12:00:00+00
+_timescaledb_internal.compress_hyper_4_16_chunk	only	row	BAAAArIhwUrwAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYz3+pgAAAAVjKeDOn/8AAAAAAAAAAA==	3	AwBAiAAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUFA5BE9A1FAEAAAAAAAMQPQAAAA4AAAACAAAAAAAAADUCCGUYiDMIcgAAAAAAAAA7AAAAAgH37399/vYEGQAAAAAAAAAB	14	10	2024-01-11 00:00:00+00	2024-01-17 12:00:00+00
+public.counters	descendants	rows	30
+public.counters	descendants	row	0	0
+public.counters	descendants	row	10	1
+public.counters	descendants	row	100	10
+public.counters	descendants	row	110	11
+public.counters	descendants	row	120	12
+public.counters	descendants	row	130	13
+public.counters	descendants	row	140	14
+public.counters	descendants	row	150	15
+public.counters	descendants	row	160	16
+public.counters	descendants	row	170	17
+public.counters	descendants	row	180	18
+public.counters	descendants	row	190	19
+public.counters	descendants	row	20	2
+public.counters	descendants	row	200	20
+public.counters	descendants	row	210	21
+public.counters	descendants	row	220	22
+public.counters	descendants	row	230	23
+public.counters	descendants	row	240	24
+public.counters	descendants	row	250	25
+public.counters	descendants	row	260	26
+public.counters	descendants	row	270	27
+public.counters	descendants	row	280	28
+public.counters	descendants	row	290	29
+public.counters	descendants	row	30	3
+public.counters	descendants	row	40	4
+public.counters	descendants	row	50	5
+public.counters	descendants	row	60	6
+public.counters	descendants	row	70	7
+public.counters	descendants	row	80	8
+public.counters	descendants	row	90	9
+public.counters	only	rows	0
+public.metrics	descendants	rows	128
+public.metrics	descendants	row	2024-01-04 00:00:00+00	1	244
+public.metrics	descendants	row	2024-01-04 00:00:00+00	2	344
+public.metrics	descendants	row	2024-01-04 00:00:00+00	3	444
+public.metrics	descendants	row	2024-01-04 12:00:00+00	1	256
+public.metrics	descendants	row	2024-01-04 12:00:00+00	2	356
+public.metrics	descendants	row	2024-01-04 12:00:00+00	3	456
+public.metrics	descendants	row	2024-01-05 00:00:00+00	1	268
+public.metrics	descendants	row	2024-01-05 00:00:00+00	2	368
+public.metrics	descendants	row	2024-01-05 00:00:00+00	3	468
+public.metrics	descendants	row	2024-01-05 12:00:00+00	1	280
+public.metrics	descendants	row	2024-01-05 12:00:00+00	2	380
+public.metrics	descendants	row	2024-01-05 12:00:00+00	3	480
+public.metrics	descendants	row	2024-01-06 00:00:00+00	1	292
+public.metrics	descendants	row	2024-01-06 00:00:00+00	2	392
+public.metrics	descendants	row	2024-01-06 00:00:00+00	3	492
+public.metrics	descendants	row	2024-01-06 12:00:00+00	1	304
+public.metrics	descendants	row	2024-01-06 12:00:00+00	2	404
+public.metrics	descendants	row	2024-01-06 12:00:00+00	3	504
+public.metrics	descendants	row	2024-01-07 00:00:00+00	1	316
+public.metrics	descendants	row	2024-01-07 00:00:00+00	2	416
+public.metrics	descendants	row	2024-01-07 00:00:00+00	3	516
+public.metrics	descendants	row	2024-01-07 12:00:00+00	1	328
+public.metrics	descendants	row	2024-01-07 12:00:00+00	2	428
+public.metrics	descendants	row	2024-01-07 12:00:00+00	3	528
+public.metrics	descendants	row	2024-01-08 00:00:00+00	1	340
+public.metrics	descendants	row	2024-01-08 00:00:00+00	2	440
+public.metrics	descendants	row	2024-01-08 00:00:00+00	3	540
+public.metrics	descendants	row	2024-01-08 12:00:00+00	1	352
+public.metrics	descendants	row	2024-01-08 12:00:00+00	2	452
+public.metrics	descendants	row	2024-01-08 12:00:00+00	3	552
+public.metrics	descendants	row	2024-01-09 00:00:00+00	1	364
+public.metrics	descendants	row	2024-01-09 00:00:00+00	2	464
+public.metrics	descendants	row	2024-01-09 00:00:00+00	3	564
+public.metrics	descendants	row	2024-01-09 12:00:00+00	1	376
+public.metrics	descendants	row	2024-01-09 12:00:00+00	2	476
+public.metrics	descendants	row	2024-01-09 12:00:00+00	3	576
+public.metrics	descendants	row	2024-01-10 00:00:00+00	1	388
+public.metrics	descendants	row	2024-01-10 00:00:00+00	2	488
+public.metrics	descendants	row	2024-01-10 00:00:00+00	3	588
+public.metrics	descendants	row	2024-01-10 12:00:00+00	1	400
+public.metrics	descendants	row	2024-01-10 12:00:00+00	2	500
+public.metrics	descendants	row	2024-01-10 12:00:00+00	3	600
+public.metrics	descendants	row	2024-01-11 00:00:00+00	1	412
+public.metrics	descendants	row	2024-01-11 00:00:00+00	2	512
+public.metrics	descendants	row	2024-01-11 00:00:00+00	3	612
+public.metrics	descendants	row	2024-01-11 12:00:00+00	1	424
+public.metrics	descendants	row	2024-01-11 12:00:00+00	2	524
+public.metrics	descendants	row	2024-01-11 12:00:00+00	3	624
+public.metrics	descendants	row	2024-01-12 00:00:00+00	1	436
+public.metrics	descendants	row	2024-01-12 00:00:00+00	2	536
+public.metrics	descendants	row	2024-01-12 00:00:00+00	3	636
+public.metrics	descendants	row	2024-01-12 06:00:00+00	1	-1
+public.metrics	descendants	row	2024-01-12 06:00:00+00	2	-2
+public.metrics	descendants	row	2024-01-12 12:00:00+00	1	448
+public.metrics	descendants	row	2024-01-12 12:00:00+00	2	548
+public.metrics	descendants	row	2024-01-12 12:00:00+00	3	648
+public.metrics	descendants	row	2024-01-13 00:00:00+00	1	460
+public.metrics	descendants	row	2024-01-13 00:00:00+00	2	560
+public.metrics	descendants	row	2024-01-13 00:00:00+00	3	660
+public.metrics	descendants	row	2024-01-13 12:00:00+00	1	472
+public.metrics	descendants	row	2024-01-13 12:00:00+00	2	572
+public.metrics	descendants	row	2024-01-13 12:00:00+00	3	672
+public.metrics	descendants	row	2024-01-14 00:00:00+00	1	484
+public.metrics	descendants	row	2024-01-14 00:00:00+00	2	584
+public.metrics	descendants	row	2024-01-14 00:00:00+00	3	684
+public.metrics	descendants	row	2024-01-14 12:00:00+00	1	496
+public.metrics	descendants	row	2024-01-14 12:00:00+00	2	596
+public.metrics	descendants	row	2024-01-14 12:00:00+00	3	696
+public.metrics	descendants	row	2024-01-15 00:00:00+00	1	508
+public.metrics	descendants	row	2024-01-15 00:00:00+00	2	608
+public.metrics	descendants	row	2024-01-15 00:00:00+00	3	708
+public.metrics	descendants	row	2024-01-15 12:00:00+00	1	520
+public.metrics	descendants	row	2024-01-15 12:00:00+00	2	620
+public.metrics	descendants	row	2024-01-15 12:00:00+00	3	720
+public.metrics	descendants	row	2024-01-16 00:00:00+00	1	532
+public.metrics	descendants	row	2024-01-16 00:00:00+00	2	632
+public.metrics	descendants	row	2024-01-16 00:00:00+00	3	732
+public.metrics	descendants	row	2024-01-16 12:00:00+00	1	544
+public.metrics	descendants	row	2024-01-16 12:00:00+00	2	644
+public.metrics	descendants	row	2024-01-16 12:00:00+00	3	744
+public.metrics	descendants	row	2024-01-17 00:00:00+00	1	556
+public.metrics	descendants	row	2024-01-17 00:00:00+00	2	656
+public.metrics	descendants	row	2024-01-17 00:00:00+00	3	756
+public.metrics	descendants	row	2024-01-17 12:00:00+00	1	568
+public.metrics	descendants	row	2024-01-17 12:00:00+00	2	668
+public.metrics	descendants	row	2024-01-17 12:00:00+00	3	768
+public.metrics	descendants	row	2024-01-18 00:00:00+00	1	580
+public.metrics	descendants	row	2024-01-18 00:00:00+00	2	680
+public.metrics	descendants	row	2024-01-18 00:00:00+00	3	780
+public.metrics	descendants	row	2024-01-18 12:00:00+00	1	592
+public.metrics	descendants	row	2024-01-18 12:00:00+00	2	692
+public.metrics	descendants	row	2024-01-18 12:00:00+00	3	792
+public.metrics	descendants	row	2024-01-19 00:00:00+00	1	604
+public.metrics	descendants	row	2024-01-19 00:00:00+00	2	704
+public.metrics	descendants	row	2024-01-19 00:00:00+00	3	804
+public.metrics	descendants	row	2024-01-19 12:00:00+00	1	616
+public.metrics	descendants	row	2024-01-19 12:00:00+00	2	716
+public.metrics	descendants	row	2024-01-19 12:00:00+00	3	816
+public.metrics	descendants	row	2024-01-20 00:00:00+00	1	628
+public.metrics	descendants	row	2024-01-20 00:00:00+00	2	728
+public.metrics	descendants	row	2024-01-20 00:00:00+00	3	828
+public.metrics	descendants	row	2024-01-20 12:00:00+00	1	640
+public.metrics	descendants	row	2024-01-20 12:00:00+00	2	740
+public.metrics	descendants	row	2024-01-20 12:00:00+00	3	840
+public.metrics	descendants	row	2024-01-21 00:00:00+00	1	652
+public.metrics	descendants	row	2024-01-21 00:00:00+00	2	752
+public.metrics	descendants	row	2024-01-21 00:00:00+00	3	852
+public.metrics	descendants	row	2024-01-21 12:00:00+00	1	664
+public.metrics	descendants	row	2024-01-21 12:00:00+00	2	764
+public.metrics	descendants	row	2024-01-21 12:00:00+00	3	864
+public.metrics	descendants	row	2024-01-22 00:00:00+00	1	676
+public.metrics	descendants	row	2024-01-22 00:00:00+00	2	776
+public.metrics	descendants	row	2024-01-22 00:00:00+00	3	876
+public.metrics	descendants	row	2024-01-22 12:00:00+00	1	688
+public.metrics	descendants	row	2024-01-22 12:00:00+00	2	788
+public.metrics	descendants	row	2024-01-22 12:00:00+00	3	888
+public.metrics	descendants	row	2024-01-23 00:00:00+00	1	700
+public.metrics	descendants	row	2024-01-23 00:00:00+00	2	800
+public.metrics	descendants	row	2024-01-23 00:00:00+00	3	900
+public.metrics	descendants	row	2024-01-23 12:00:00+00	1	712
+public.metrics	descendants	row	2024-01-23 12:00:00+00	2	812
+public.metrics	descendants	row	2024-01-23 12:00:00+00	3	912
+public.metrics	descendants	row	2024-01-24 00:00:00+00	1	724
+public.metrics	descendants	row	2024-01-24 00:00:00+00	2	824
+public.metrics	descendants	row	2024-01-24 00:00:00+00	3	924
+public.metrics	descendants	row	2024-01-24 12:00:00+00	1	736
+public.metrics	descendants	row	2024-01-24 12:00:00+00	2	836
+public.metrics	descendants	row	2024-01-24 12:00:00+00	3	936
+public.metrics	only	rows	0

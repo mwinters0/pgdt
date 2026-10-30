@@ -1,0 +1,11 @@
+-	-	restore-error	ERROR:  schema "public" already exists
+-	-	restore-error	ERROR:  relation "_timescaledb_internal._materialized_hypertable_2" does not exist at character 85
+-	-	restore-error	ERROR:  relation "public.metrics_daily" does not exist
+-	-	restore-error	ERROR:  relation "_timescaledb_internal._materialized_hypertable_3" does not exist at character 120
+-	-	restore-error	ERROR:  relation "public.metrics_weekly" does not exist
+public.counters	descendants	rows	0
+public.counters	only	rows	0
+public.metrics	descendants	rows	1
+public.metrics	descendants	row	2024-01-20 00:00:00+00	9	900
+public.metrics	only	rows	1
+public.metrics	only	row	2024-01-20 00:00:00+00	9	900

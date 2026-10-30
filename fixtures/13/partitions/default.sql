@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict flPOaychvzaDfQF6ukScVHJgnoh4dttSNQsgPPHh8zaPdYVyMDiaTt7CMzhJflo
+\restrict QIcjEwNv0fE2Mc6EGMarj9nhYT52s8K5nUL7huQivab1kAIxgkyVy4iyoYkQTR6
 
 -- Dumped from database version 13.23 (Debian 13.23-1.pgdg13+1)
 -- Dumped by pg_dump version 13.23 (Debian 13.23-1.pgdg13+1)
@@ -284,7 +284,7 @@ COPY public.evt_z (id, region) FROM stdin;
 
 COPY public.feel (id, m) FROM stdin;
 1	sad
-2	ok
+3	happy
 \.
 
 
@@ -304,7 +304,7 @@ unrelated
 -- load via partition root public.feel
 
 COPY public.feel (id, m) FROM stdin;
-3	happy
+2	ok
 \.
 
 
@@ -327,7 +327,7 @@ COPY public.hollow  FROM stdin;
 
 COPY public.shuffle (id, m, note) FROM stdin;
 1	sad	one
-2	ok	two
+3	happy	three
 \.
 
 
@@ -338,7 +338,7 @@ COPY public.shuffle (id, m, note) FROM stdin;
 -- load via partition root public.shuffle
 
 COPY public.shuffle (note, m, id) FROM stdin;
-three	happy	3
+two	ok	2
 \.
 
 
@@ -367,5 +367,5 @@ COPY public.spread (id, m) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict flPOaychvzaDfQF6ukScVHJgnoh4dttSNQsgPPHh8zaPdYVyMDiaTt7CMzhJflo
+\unrestrict QIcjEwNv0fE2Mc6EGMarj9nhYT52s8K5nUL7huQivab1kAIxgkyVy4iyoYkQTR6
 

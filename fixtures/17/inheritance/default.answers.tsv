@@ -1,0 +1,67 @@
+kennel.puppy	descendants	rows	1
+kennel.puppy	descendants	row	5	bit	4	pug	8
+kennel.puppy	only	rows	1
+kennel.puppy	only	row	5	bit	4	pug	8
+public.animal	descendants	rows	7
+public.animal	descendants	row	1	generic
+public.animal	descendants	row	2	whale
+public.animal	descendants	row	3	rex
+public.animal	descendants	row	4	fido
+public.animal	descendants	row	5	bit
+public.animal	descendants	row	6	tom
+public.animal	descendants	row	7	tweety
+public.animal	only	rows	1
+public.animal	only	row	1	generic
+public.bird	descendants	rows	1
+public.bird	descendants	row	7	tweety	2
+public.bird	only	rows	1
+public.bird	only	row	7	tweety	2
+public.cat	descendants	rows	1
+public.cat	descendants	row	6	tom	4	ann
+public.cat	only	rows	1
+public.cat	only	row	6	tom	4	ann
+public.dog	descendants	rows	3
+public.dog	descendants	row	3	rex	4	collie
+public.dog	descendants	row	4	fido	4	pug
+public.dog	descendants	row	5	bit	4	pug
+public.dog	only	rows	2
+public.dog	only	row	3	rex	4	collie
+public.dog	only	row	4	fido	4	pug
+public.fossil	descendants	rows	0
+public.fossil	only	rows	0
+public.mammal	descendants	rows	5
+public.mammal	descendants	row	2	whale	0
+public.mammal	descendants	row	3	rex	4
+public.mammal	descendants	row	4	fido	4
+public.mammal	descendants	row	5	bit	4
+public.mammal	descendants	row	6	tom	4
+public.mammal	only	rows	1
+public.mammal	only	row	2	whale	0
+public.pet	descendants	rows	1
+public.pet	descendants	row	ann
+public.pet	only	rows	0
+public.reading	descendants	rows	4
+public.reading	descendants	row	2020	north	1
+public.reading	descendants	row	2020	south	2
+public.reading	descendants	row	2020	south	3
+public.reading	descendants	row	2021	north	4
+public.reading	only	rows	0
+public.reading_2020	descendants	rows	3
+public.reading_2020	descendants	row	2020	north	1
+public.reading_2020	descendants	row	2020	south	2
+public.reading_2020	descendants	row	2020	south	3
+public.reading_2020	only	rows	0
+public.reading_2020_north	descendants	rows	1
+public.reading_2020_north	descendants	row	2020	north	1
+public.reading_2020_north	only	rows	1
+public.reading_2020_north	only	row	2020	north	1
+public.reading_2020_south	descendants	rows	2
+public.reading_2020_south	descendants	row	2	south	2020
+public.reading_2020_south	descendants	row	3	south	2020
+public.reading_2020_south	only	rows	2
+public.reading_2020_south	only	row	2	south	2020
+public.reading_2020_south	only	row	3	south	2020
+public.reading_2021	descendants	rows	1
+public.reading_2021	descendants	row	2021	north	4
+public.reading_2021	only	rows	1
+public.reading_2021	only	row	2021	north	4

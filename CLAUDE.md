@@ -84,11 +84,11 @@ Never edit a `runs/` orchestration script while it is running.
   around a dependency's defect, and `upgrade-deps` before any dependency
   upgrade**; the first holds the register's rules.
 - `docs/design/postgres-invariants.md` (`I<n>`), `runtime-invariants.md`
-  (`RT<n>`) and `release-invariants.md` (`RL<n>`) — what decisions rely on in
-  `pg_dump`'s output, the process's environment, and where a release is
-  published and installed. **Add an entry when a decision starts depending on
-  one; walk each at the triggers its header names.** A difference between
-  majors nothing depends on yet is a `VD<n>` in `postgres-major-differences.md`:
+  (`RT<n>`), `release-invariants.md` (`RL<n>`), `timescaledb-invariants.md`
+  (`TS<n>`) — what decisions rely on in `pg_dump`'s output, the environment,
+  where a release is published, and TimescaleDB. **Add an entry when a decision
+  starts depending on one; walk each at the triggers its header names.** A
+  difference between majors nothing depends on yet is a `VD<n>` in `postgres-major-differences.md`:
   **file one when you find it, and read the file before adding an invariant about a major.**
 - `docs/design/measurements.md` — every performance figure, with the command
   that reproduces it; "The apparatus" holds the rules for taking one. **Read

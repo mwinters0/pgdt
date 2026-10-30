@@ -123,5 +123,48 @@ class CommittedSchemas(unittest.TestCase):
                 self.assertEqual(gf.output_suffix(flags), ".sql")
 
 
+class TimescalePins(unittest.TestCase):
+    def test_each_pin_is_on_a_routine_major_and_its_scripts_exist(self):
+        for major, pin in gf.TIMESCALEDB_PINS.items():
+            with self.subTest(major=major):
+                self.assertIn(major, gf.ROUTINE_VERSIONS)
+                self.assertIn(f"pg{major}.", pin.image)
+                self.assertTrue(pin.image.endswith(f"-ts{pin.release}"), pin.image)
+                for script in pin.scripts:
+                    self.assertTrue((gf.SCRIPT_DIR / script).is_file(), script)
+                    # Not a sidecar, which would load at every later major.
+                    self.assertFalse(gf._SIDECAR.match(script), script)
+
+    def test_every_flag_set_runs_at_pins_only_and_default_at_all(self):
+        self.assertEqual(set(gf.TIMESCALEDB_FLAG_SETS["default"][0]), set(gf.TIMESCALEDB_PINS))
+        for name, (majors, _) in gf.TIMESCALEDB_FLAG_SETS.items():
+            with self.subTest(flag_set=name):
+                self.assertLessEqual(set(majors), set(gf.TIMESCALEDB_PINS))
+
+    def test_timescaledb_is_no_routine_schema(self):
+        # It runs on its own servers, not in the routine container's loop.
+        self.assertNotIn(gf.TIMESCALEDB_SCHEMA, gf.SCHEMAS)
+        self.assertLessEqual(set(gf.ANSWERED_SCHEMAS), set(gf.SCHEMAS))
+
+
+class Answers(unittest.TestCase):
+    def test_a_restore_error_loses_its_location_and_nothing_else_is_kept(self):
+        stderr = (
+            "psql:<stdin>:193: ERROR:  relation \"x\" does not exist at character 85\n"
+            "psql:<stdin>:200: NOTICE:  skipping\n"
+            "ERROR:  schema \"public\" already exists\n"
+        )
+        self.assertEqual(
+            gf.psql_errors(stderr),
+            ['ERROR:  relation "x" does not exist at character 85', 'ERROR:  schema "public" already exists'],
+        )
+
+    def test_answers_sit_beside_the_dump(self):
+        self.assertEqual(
+            gf.answers_path("16", "inheritance", "default"),
+            gf.FIXTURES_DIR / "16" / "inheritance" / "default.answers.tsv",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

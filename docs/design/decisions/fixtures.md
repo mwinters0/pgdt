@@ -44,3 +44,11 @@ accepted; none is too small to place. A phase adopts the refusal by its spec. Re
 shapes (a workload never shipped); a sampled profile placing it (line tables move the code); a materiality floor; rework
 resting on codegen (`ChunkedScanner::end_pass`). Code: `cmd_count_pair`, `callgrind_recipe`. Evidence:
 `test_measure.py`'s `CountPair` and `CallgrindRecipe`.
+
+### D130 A table read with its descendants is checked against the server's answers over a restore of its dump
+Each flag set's dump of `inheritance`, `partitions` and `timescaledb` is restored into a fresh database, TimescaleDB's
+between `timescaledb_pre_restore()` and `_post_restore()`, and every table but an extension's own is read through and
+`ONLY`, its rows in full or the server's error committed as `<flag-set>.answers.tsv`. Why: short is measured against the
+server the dump restores to, where a hash partition's rows are re-routed and an absent chunk holds none; rows in full
+check a projection, not a count. Rejected: the source database's answers; counts alone; the server sorting (2.13
+cannot). Reopens: a shape whose rows outgrow review. Code: `write_answers`. Evidence: TS8, TS10.
