@@ -1,5 +1,6 @@
 //! The frontier's own blocking thread: every job of a pulled pass run on one
-//! `spawn_blocking` kept while the pass lives, so the frontier's decode stays
+//! `spawn_blocking` kept until the hand-over — a `complete_reads` after it
+//! taking another, kept until the pass drops — so the frontier's decode stays
 //! on one thread, and on the core whose caches hold its state, from one scan
 //! read to the next (`docs/design/decisions.md`, "D126").
 //!

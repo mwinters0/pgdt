@@ -603,8 +603,9 @@ impl FirstPass {
     }
 
     /// The pass has reached the end: the indexed source over the complete
-    /// index, its windows still read out of the spill file, which every call
-    /// is from now on, with what callers announced replayed on it, saying
+    /// index, its windows still read out of the spill file, which every read,
+    /// partitioning and index answer is from now on — the identity answers
+    /// staying the feed's — with what callers announced replayed on it, saying
     /// what the index holds.
     fn hand_over(&self) -> Result<()> {
         let index = self.lock().ended.clone().expect("the frontier reached the end");
@@ -828,6 +829,14 @@ impl ByteRangeSource for FirstPass {
 
     /// The index as far as the pass has got — its last unit open until the
     /// end — which a save persists and a later pass resumes from.
+    ///
+    /// Deficiency register: `deficiency: KD156` — a pass stopped by its spill
+    /// file refusing a window's write answers the index holding that window's
+    /// checkpoint, which the pass placed before handing it out
+    /// (`Pass::serve_frontier`'s `stopped`), so a save of it refuses at that
+    /// checkpoint's window, and a pass resumed from it would. `pgdt` saves
+    /// nothing after the failure; a library caller saving or resuming does.
+    /// **(c) unowned**; promoted by a caller that saves after a failed read.
     fn compression_index(&self) -> Option<CompressionIndex> {
         match self.done.get() {
             Some(done) => done.compression_index(),
@@ -835,8 +844,14 @@ impl ByteRangeSource for FirstPass {
         }
     }
 
-    /// One partition until the end, a forward decode and the skip scratch
-    /// costing what they hold: nothing cuts a file whose extent is open.
+    /// One partition until the end: nothing cuts a file whose extent is open.
+    ///
+    /// Deficiency register: `deficiency: KD157` — its cost is a forward
+    /// decode and the skip scratch, where a pass read behind its frontier, as
+    /// a cold query's replay reads it, holds two decodes and the scratch
+    /// (`PASS_BYTES`), so a budget between the two is not told it is below
+    /// one reader's floor. **(c) unowned**; promoted by a reading of a cold
+    /// `.gz` query's resident under a tight `--memory`.
     fn partitions(&self, range: Range<u64>) -> Partitioning {
         match self.done.get() {
             Some(done) => done.partitions(range),

@@ -14,11 +14,12 @@ use pgdt_model::internal::DiagnosticExt;
 use pgdt_model::{Diagnostic, DumpIndex};
 
 /// How a caller wants the structure cache handled for one operation, and
-/// which identity signals bind while it does. Constructed via
-/// [`CacheMode::resolve`], [`CacheMode::enabled`] or [`CacheMode::DISABLED`],
-/// each of which leaves [`StrictIdentity::ADVISORY`] and refuses an unusable
-/// cache; [`CacheMode::with_strict_identity`] and
-/// [`CacheMode::with_overwrite_unusable`] are what state anything else.
+/// which identity signals bind while it does. [`CacheMode::resolve`],
+/// [`CacheMode::enabled`] and [`CacheMode::DISABLED`] each leave
+/// [`StrictIdentity::ADVISORY`], an enabled one refusing an unusable cache;
+/// [`CacheMode::with_strict_identity`] and
+/// [`CacheMode::with_overwrite_unusable`] state anything else, as a variant
+/// built directly does.
 /// **A caller states a disabled cache itself**: no path means one, so a
 /// front end's spelling of "no cache" is its own to parse.
 ///

@@ -271,6 +271,7 @@ pgdt query --source dump.sql --table public.t_date --unrepresentable refuse
 # represent, and it refuses a column holding one — read them in the null mode,
 # as NULL, or in the text mode, the column as its text, or leave the column
 # unmaterialized, read only by a filter the library answers
+# (`--unrepresentable null`; `--unrepresentable text`)
 ```
 
 **`--unrepresentable text` prints such a column as its text**, the text the
@@ -395,8 +396,11 @@ a dump can contain. A spelling it will not read is refused by name:
 
 ```sh
 pgdt query --source dump.sql --table public.jobs --filter 'ran_for>1 month'
-# error: filter value `1 month` for `ran_for > ...` does not parse as the
-# column's declared type `interval`
+# Error: filter value `1 month` for `ran_for > ...` does not parse as the
+# column's declared type `interval`, which is written the way `interval`
+# prints it — `1 year 2 mons 3 days`, `-01:00:00`, `00:00:00` for zero — each
+# unit once, its minutes under `60` and seconds at most `60`, or
+# `infinity`/`-infinity`
 ```
 
 ### `jsonb` compares as a document, with one caveat about strings

@@ -190,12 +190,12 @@ Evidence: `determinism.rs`'s gzip tests.
 
 ### D20 The library never replaces cache data automatically
 A cache not ours, damaged, another build's or another file's (stored size, or a compression layer the source
-contradicts) is almost always a wrong path or a changed file, so every open refuses it (`CacheMode::refusal`) before the
-dump is read past its magic. `--overwrite-unusable-cache` (`with_overwrite_unusable`) starts cold over one recognisably
-ours, for a file replaced under a stable name; foreign bytes never. Rejected: a cold start (a silent re-scan after a
-typo or an upgrade); the guard in `CacheMode::save` (policy an embedder cannot override); keeping a damaged one of ours
-from the flag (nothing readable lost, an unbumped version its likely cause); `load` checking size alone (a claimless
-open gets another file's map).
+contradicts) is almost always a wrong path or a changed file, so every open refuses it (`CacheMode::refusal`), before
+the dump is read past its magic wherever the origin's probe answers. `--overwrite-unusable-cache`
+(`with_overwrite_unusable`) starts cold over one recognisably ours, for a file replaced under a stable name; foreign
+bytes never. Rejected: a cold start (a silent re-scan after a typo or an upgrade); the guard in `CacheMode::save`
+(policy an embedder cannot override); keeping a damaged one of ours from the flag (nothing readable lost, an unbumped
+version its likely cause); `load` checking size alone (a claimless open gets another file's map).
 
 ### D21 Identity is `stored_size()` plus weak signals, in an opaque enum
 `stored_size()` keeps the staleness check a `stat` where `extent()` needs a decompressing source opened first.

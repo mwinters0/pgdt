@@ -127,7 +127,8 @@ Options:
           bytes moving underneath a read that has already returned some of them cannot produce a
           right answer; `none` is the only way to turn that into a warning, and it turns off
           everything else too. So a source nothing can check while it is read — a server stating
-          neither a strong entity tag nor a `Last-Modified` — is refused unless this says `none`.
+          neither a strong entity tag nor a `Last-Modified` — is refused where a read of it begins
+          unless this says `none`; `info` reads none of it.
           
           It asks one question of every command, and needs a source to ask it of, so stating it
           without `--source` — `info` answering from the cache alone, whose identity is not

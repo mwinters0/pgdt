@@ -137,8 +137,9 @@ impl ParallelArgs {
 
 /// What a run knows about its own allowance **before the dump is opened**: the
 /// two flags exactly as they were typed, and the allowance this process runs
-/// under — a memory limit with the file that stated it, or half of what the
-/// machine reports available. Nothing here is downstream of the source
+/// under — a memory limit with the file that stated it, half of what the
+/// machine reports available, or none where it reports nothing. Nothing here
+/// is downstream of the source
 /// ([`ParallelArgs::discover`]).
 pub(crate) struct Discovered<'a> {
     args: &'a ParallelArgs,

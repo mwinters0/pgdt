@@ -209,7 +209,7 @@ enum Either<'a> {
 
 /// **A marked sink's clean mark is never before its last marker**, and at a
 /// block's end it is the position after that marker, or no later than the
-/// start of the last 32 KiB where they hold none: the decode comes clean only
+/// start of the last 32 KiB where they hold none: the sink comes clean only
 /// once the last 32 KiB it wrote hold no marker, and at most a block later.
 #[test]
 fn a_marked_sink_comes_clean_within_a_block_of_its_last_marker() {
@@ -238,7 +238,8 @@ fn a_marked_sink_comes_clean_within_a_block_of_its_last_marker() {
 
 /// **A released sink holds a window, not the plaintext**, marked or in
 /// bytes: a few windows and the longest block, however much it writes, and
-/// still the last 32 KiB at every boundary, which resolve to the file's.
+/// still the last 32 KiB at every boundary, or all it wrote where that is
+/// less, which resolve to the file's.
 #[test]
 fn a_released_sink_holds_a_window_and_the_last_32_kib() {
     let plaintext = payload(6_000_000, 11);

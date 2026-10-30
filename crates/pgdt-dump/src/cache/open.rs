@@ -105,8 +105,9 @@ impl CacheMode {
     ///    which refuse only where the mode binds them and otherwise warn
     ///    (`docs/design/decisions.md`, "D21").
     ///
-    /// **Every refusal is word for word the one a scan entry point makes**,
-    /// being `CacheMode::refusal`'s, and a mode that may replace the cache
+    /// **Every refusal is the one every open makes**: an unusable cache's is
+    /// `CacheMode::refusal`'s and a bound weak signal's `CacheMode::judged`'s,
+    /// and a mode that may replace the cache
     /// opens the source claiming nothing and answers [`Held::Replacing`]
     /// instead (`docs/design/decisions.md`, "D20").
     ///

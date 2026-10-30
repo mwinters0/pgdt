@@ -86,8 +86,9 @@ pub(crate) struct BufferPool {
     /// recovers the guard rather than propagating a panic from an unrelated
     /// task.
     state: Mutex<PoolState>,
-    /// Signalled whenever a charged buffer comes back, which is the only event
-    /// that can let a waiting acquisition through.
+    /// Signalled whenever a charged buffer comes back, and by a raised
+    /// ceiling ([`BufferPool::set_limits`]): the two events that can let a
+    /// waiting acquisition through.
     returned: Condvar,
     /// What this pool may hold in free buffers at once, in bytes: for a chunk
     /// pool [`DEFAULT_MEMORY_BUDGET`] until a caller states one through

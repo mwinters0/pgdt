@@ -5,8 +5,8 @@
 //! from the earliest position its caller still reads (`release_before`), and
 //! never less than the last 32 KiB, which a back-reference may reach: one
 //! buffer reused in place, its front dropped once the part released is at
-//! least half of it, so a decode writing a whole chunk holds a few windows of
-//! it rather than the chunk. A sink nobody releases keeps everything. Not a
+//! least half of it, so a decode writing a whole chunk, released at each
+//! block, holds its longest block and a few windows rather than the chunk. A sink nobody releases keeps everything. Not a
 //! ring of one window: a guess the limit or a refusal cuts stops at the last
 //! boundary its decode reached, as much as a block back, and reads the 32 KiB
 //! before that.

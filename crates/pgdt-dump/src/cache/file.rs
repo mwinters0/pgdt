@@ -138,8 +138,9 @@ impl CompressionShape {
     }
 }
 
-/// Everything a cache file persists beside its index and `extent`, as it
-/// was read — handed out on [`LoadedCache`] so a reporting caller can export the whole file, which `pgdt info --json`
+/// Everything a cache file's encoded part persists beside its index and
+/// `extent`, as it was read — the window section after it is not here, being
+/// the gzip index's provider's — — handed out on [`LoadedCache`] so a reporting caller can export the whole file, which `pgdt info --json`
 /// does (`docs/design/decisions.md`, "D67").
 ///
 /// **Opaque to Rust, whole to serde**: the fields stay private, so no caller

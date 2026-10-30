@@ -87,13 +87,16 @@ impl Chunking {
     }
 
     /// What one task ahead of the frontier holds, running and then held for
-    /// it, each term a bound `pgdt_gzip_seek` states on what the code writes: a
+    /// it, each term but the last a bound `pgdt_gzip_seek` states on what the
+    /// code writes: a
     /// running speculation, the larger of the two kinds of task, fed a read
     /// of [`INPUT_CHUNK`] on a local file or a piece of a chunk on a fetched
     /// one; [`DECODES_A_TASK`] decodes handed out or held for the frontier,
     /// and [`GUESSES_A_TASK`] guesses with the windows of the decodes queued
     /// behind them (`Ahead::top_up` holding the results to those multiples of
-    /// the tasks' count); and the buffer a local task reads its input into.
+    /// the tasks' count); and this crate's [`INPUT_CHUNK`], the buffer a local
+    /// task reads its input into, which a fetched task, reading the download's
+    /// pieces, is charged without holding.
     /// No decode's plaintext buffer is freed while the pass runs, the pass
     /// keeping each for the next decode, so the buffers never outnumber the
     /// decodes charged here (`docs/design/decisions.md`, "D124") but across a
@@ -165,9 +168,10 @@ impl Frontier {
     }
 
     /// Let `tasks` run ahead at once, each reading what `lift` reads, of
-    /// `stored_size` bytes, on `runtime`: set at each read, so the count
-    /// follows the parallelism announced last, a fetched download's room
-    /// with it. None is the serial pass.
+    /// `stored_size` bytes, on `runtime`: the count, and a fetched download's
+    /// room with it, set at each read, so they follow the parallelism
+    /// announced last; what the tasks read and the runtime they run on, at
+    /// the first lift with any. None is the serial pass.
     pub(super) fn lift(&mut self, lift: &Lift) {
         #[cfg(any(feature = "http", test))]
         if let Reads::Fetched(download) = &lift.reads {

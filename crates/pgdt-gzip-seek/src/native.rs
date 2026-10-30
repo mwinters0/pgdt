@@ -10,7 +10,7 @@
 //! value naming which byte of that history it copies — and the markers are
 //! resolved once the history is known. Once 32 KiB have been written with no
 //! marker among them nothing later can reach one, and the decode goes on in
-//! bytes.
+//! bytes from its next block of codes.
 //!
 //! **Its plaintext is never handed out.** What a speculation keeps is where
 //! its chunk begins and stops and the history at the stop, still marked; the
@@ -26,8 +26,9 @@
 //! code-length code holds no code (`inflate.rs`): the same over-subscribed
 //! and incomplete codes, the same missing end-of-block code, the same invalid symbols and
 //! distances — but a back-reference reaching before a speculation's start,
-//! which a marker stands for whatever the member's real history, and only the
-//! engine's resume with that history refuses.
+//! which a marker stands for whatever the member's real history: the chain
+//! resolving it ends where it reaches before that history, and the engine's
+//! resume with that history refuses it.
 
 mod huffman;
 mod inflate;

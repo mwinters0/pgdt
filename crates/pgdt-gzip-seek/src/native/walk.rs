@@ -3,10 +3,10 @@
 //!
 //! A fixed block's codes are deflate's own rather than its header's, so a
 //! decode can begin at any of its symbols given a synthetic three-bit header
-//! and the history before it. No inflater stops there, so the forward pass
-//! walks the block's codes beside the engine — counting the plaintext each
+//! and the history before it. No inflater stops there, so the engine walks
+//! the block's codes beside its inflater — counting the plaintext each
 //! symbol stands for and writing none — to find the first symbol at or past
-//! a plaintext offset, and caps the engine's output there
+//! the mark the forward pass sets, and caps the inflater's output there
 //! (`engine.rs`). Nothing it decodes is handed out, so it is not an
 //! inflater of the crate's own (`docs/design/decisions.md`, "D117").
 

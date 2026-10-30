@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD155 -->
-**`KD1`–`KD155` are allocated, and nothing at or below `KD155` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD157 -->
+**`KD1`–`KD157` are allocated, and nothing at or below `KD157` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -567,3 +567,16 @@ than reading as a phase nobody has sliced.
   so a crafted span of many plain members passes the decode's event bound.
   **(c) unowned**; promoted by such a file met, or a decode's events checked
   against its bound. Detail: `crates/pgdt-gzip-seek/src/chunk.rs`.
+
+- **KD156** — a gzip first pass stopped by its spill file refusing a write
+  answers an index holding the checkpoint whose window it could not keep, so
+  a library caller saving or resuming from it is refused there. **(c)
+  unowned**; promoted by a caller that saves after a failed read. Detail:
+  `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.
+
+- **KD157** — an open gzip first pass's one partition costs one decode and the
+  skip scratch, where a pass read behind its frontier holds two, so a budget
+  between the two is not said to be below one reader's floor. **(c)
+  unowned**; promoted by a reading of a cold `.gz` query's resident under a
+  tight `--memory`. Detail:
+  `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.

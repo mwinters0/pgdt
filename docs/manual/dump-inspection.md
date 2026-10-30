@@ -26,7 +26,9 @@ pgdt parse --source mydump.sql
 ```
 
 It scans the file end to end, writes the cache beside it
-(`mydump.sql.pgdt`), and prints the same listing `info` prints. Pass
+(`mydump.sql.pgdt`), and prints the same listing `info` prints — under
+`--postgres-invalid-values strict` naming under each table what it left
+unchecked, as `info --detail` does. Pass
 `--cache <path>` to put the cache somewhere else — worth doing when the dump
 sits on a read-only mount, since the default location is next to the dump.
 
@@ -206,9 +208,12 @@ whatever the file's size.
 
 If the cache stops matching the file it sits beside — you replaced the dump,
 or pointed `--cache` at another file's cache — pgdt says so rather than
-quietly working around it. All three commands refuse, `parse` included: a
+quietly working around it. Where the file's size or its compression differs
+from what the cache records, all three commands refuse, `parse` included: a
 cache that does not describe this file describes some *other* file, and
-scanning would write over it. Delete it, or point `--cache` somewhere else,
+scanning would write over it. One of the same size and compression is read,
+with a warning where the file's modification time is not the one the cache
+records, unless `--strict-identity` says it must be (below). Delete it, or point `--cache` somewhere else,
 and `parse` builds a fresh one — or, where the file really is replaced under
 the same name, pass `--overwrite-unusable-cache` (below).
 
@@ -225,6 +230,7 @@ its unit. Run `parse` once and nothing after it pays the first pass again.
 
 ```
 $ pgdt parse --source mydump.sql.gz
+2026-10-29T15:00:33.206608217Z  INFO running inside a stated memory allocation limit_bytes=4294967296 limit_read_from=/sys/fs/cgroup/memory.max jobs_flag=(not stated) memory_flag=(not stated)
 2026-10-29T15:00:33.206677112Z  INFO resolved the arrangement jobs=12 (recommended by the source) memory_bytes=1369381944 (discovered: /sys/fs/cgroup/memory.max states a limit of 4294967296 byte(s)) statistics_bytes=1798156360 (discovered)
 2026-10-29T15:00:33.206746062Z  INFO preamble scan started bytes=at least 0 chunk_size=1048576 jobs=12 memory_bytes=1369381944
 2026-10-29T15:00:33.206777962Z  INFO first pass started, inflating in parallel while it builds the index, its scan one reader source=mydump.sql.gz codec=gzip workers=12
@@ -365,8 +371,8 @@ command allows. A URL that names no object — a bare host, or a path ending in
 That default means two same-named dumps from **different hosts**, read in one
 directory, share a cache file. If their sizes differ the second run refuses,
 naming the URL it refused for; if they match, it reads the first one's map and
-says on stderr that the cache was written for a dump fetched from somewhere
-else. `--strict-identity=location` turns that warning into a refusal, and
+says under `diagnostics:` in its listing that the cache was written for a
+dump fetched from somewhere else. `--strict-identity=location` turns that warning into a refusal, and
 `--cache <path>` keeps them apart in the first place.
 
 **No credentials are sent, ever.** A URL carrying `user:password@` is refused
@@ -423,8 +429,8 @@ Size is not the only thing pgdt knows about your dump — it also records the
 file's modification time when it writes the cache. By default that time is
 **advisory**: a dump that was copied to another machine, restored from backup
 or simply `touch`ed still has the same bytes, and refusing to read it would be
-refusing a file that is perfectly good. `parse`, `query` and `info` all say so
-and carry on.
+refusing a file that is perfectly good. `parse` and `info` say so in their
+listing and carry on; `query` carries on.
 
 `--strict-identity` turns that into a refusal, for a pipeline where the file
 genuinely should not have moved. It takes a comma-separated selection, and the
@@ -458,9 +464,10 @@ is refused.
 
 The flag asks the same question of all three commands, so `info` stops too
 rather than reporting, and the refusal reads the same on each: the dump you
-named, then the cache, what failed and the two modification times it compared
-(seconds and nanoseconds since the Unix epoch, which `date -d @<seconds>` reads
-back), which is more than the diagnostic says. The dump's name leads it because
+named, then the cache, what failed and what it compared — the two entity tags,
+the two modification times (seconds and nanoseconds since the Unix epoch,
+which `date -d @<seconds>` reads back), the signal one side lacks, or for
+`location` the two origins — which is more than the diagnostic says. The dump's name leads it because
 a cache's own is not always enough — over HTTP the cache is named after the
 URL's last segment, so `mydump.pgdt` does not say which `mydump` asked for
 it. It does need a source to ask about: cache-only
@@ -482,8 +489,10 @@ its `Last-Modified` where it sent no tag or only a weak one (`W/"…"`, which a
 server will not match a version against) — so an object rewritten mid-scan is
 refused on the first read after it happens rather than at the next save. A
 server that sends neither, or a weak tag alone, gives nothing to name, so no
-check could see a change: such a run is refused before it reads anything, and
+check could see a change: such a run is refused before it reads the dump's
+data — an uncached `.xz` file's seek table is fetched first — and
 `--strict-identity=none` reads it anyway, with no in-flight check at all.
+`info`, which reads none of the dump, is not refused.
 
 ```
 $ pgdt parse --source https://example.org/mydump.sql
@@ -1755,7 +1764,8 @@ pgdt info --cache mydump.sql.pgdt
 This works for the default listing, `--map` and `--json` alike — whichever one
 you'd run against the live file, partial caches included. It's for exactly the
 sysadmin-facing use case this whole page is about: keep a folder of `.pgdt`
-files from dumps you no longer keep around, and still be able to answer "what
+files from dumps you no longer keep around — until a pgdt release changes the
+cache format, which no other release reads — and still be able to answer "what
 tables did this have," "which roles did it need," "did the schema change since
 last time," without the multi-hundred-gigabyte file itself.
 

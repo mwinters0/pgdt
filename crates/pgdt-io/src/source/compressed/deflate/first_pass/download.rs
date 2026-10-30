@@ -9,7 +9,8 @@
 //! the piece the first of them fetched, a second reader of a piece in flight
 //! waiting for that fetch rather than making its own.
 //!
-//! **What is held is bounded by a room, in pieces, from the frontier's on.**
+//! **What is fetched is bounded by a room, in pieces, from the frontier's
+//! on**, a narrowed room keeping what it holds until the frontier passes it.
 //! A piece the frontier has passed is dropped, every task reading it being of
 //! no further use, and a task asking for one past the room is refused, so it
 //! hands back nothing and the frontier meets those bytes itself; the frontier

@@ -67,10 +67,11 @@ impl GzipIndex {
     }
 
     /// Whether the file has seek structure: no unit wider than twice the
-    /// spacing (`docs/design/decisions.md`, "D19"). Only a writer that coded a
-    /// whole spacing in one dynamic block leaves a wider one, a static block
-    /// being checkpointed inside, so a file under the spacing — one unit by
-    /// the reader's choice — has it. A
+    /// spacing (`docs/design/decisions.md`, "D19"). Only a writer that coded
+    /// more than a spacing in one dynamic block, or a member falsely headed as
+    /// BGZF's, leaves a wider one, a static block being checkpointed inside,
+    /// so a file under the spacing — one unit by the reader's choice — has it.
+    /// A
     /// unit is read correctly either way, by decoding from its start.
     pub fn is_seekable(&self) -> bool {
         self.largest_unit() <= self.spacing().saturating_mul(2)

@@ -796,7 +796,7 @@ construction rather than by anyone keeping them in step. Evidence:
 un-declares it.** `QUERY_CLI` is the worked case, and it is now the directory
 `crates/pgdt/src/` rather than `main.rs`: naming the one file left every other module
 in that crate outside every declaration quoting it, which is a staleness edge
-nobody declared — and the crate is a module a subcommand, the rows rendered
+nobody declared — and the crate is a module a subcommand but `sql`, the rows rendered
 in `query.rs`. Splitting a crate up
 is fine; whatever splits it widens the declaration to the directory in the same
 change, because the alternative is a `--stale` that is silent about the file

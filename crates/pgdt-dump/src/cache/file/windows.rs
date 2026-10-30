@@ -83,7 +83,8 @@ fn offsets(index: &GzipIndex, base: u64) -> (Vec<u64>, u64) {
 /// load decoded: a handle of its own, so a later save renaming another file
 /// over the cache's name leaves it reading the bytes it was loaded from.
 ///
-/// **A read failing names the cache's path inside its `io::Error`**, the
+/// **A failing read of the file names the cache's path inside its
+/// `io::Error`**, the
 /// error `failed` makes as the payload ([`Error::into_io`]), so
 /// [`WindowProvider`] stays `io::Result` and the decode reading a window
 /// changes nothing; its `?` hands the [`Error::File`] back.

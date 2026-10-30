@@ -36,9 +36,10 @@ pub(crate) trait Positioned: Send + Sync {
 ///
 /// **A read failing names the path inside its `io::Error`**, an
 /// [`Error::File`] as the payload ([`Error::into_io`]), so [`Positioned`]
-/// stays `io::Result` and no decode path changes: through `xz_seek`'s or
-/// `pgdt_gzip_seek`'s error the payload's message names the file, and where no
-/// codec wrapped it, `From<io::Error>` hands back the [`Error::File`] itself.
+/// stays `io::Result` and no decode path changes: through `xz_seek`'s error,
+/// which wraps the read's, the payload's message names the file, and where no
+/// codec wrapped it — gzip's, the adapter reading and feeding the bytes —
+/// `From<io::Error>` hands back the [`Error::File`] itself.
 /// *Rejected:* a path-carrying error type in the trait — `xz_seek`'s source
 /// trait answers `io::Result`, so its reads would carry ours as a payload all
 /// the same.

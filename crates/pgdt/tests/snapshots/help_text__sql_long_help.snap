@@ -83,13 +83,13 @@ Options:
           dump's strictness where --strict-identity would. Repeatable
 
       --strict-identity[=<TERMS>]
-          Bind identity signals, as `pgdt --strict-identity` does, for every --source and STORED AS
-          PGDUMP that states none of its own: `time` refuses a cache whose recorded modification
-          signal the dump no longer states, `location` one written for another URL, the bare flag
-          both. A dump changing under a scan fails it under every selection but `none`, so a server
-          stating neither a strong entity tag nor a Last-Modified is refused; `none` binds nothing,
-          that check included, and reads it anyway, and `advisory` is the default, which a dump
-          under a stricter session states to keep that check
+          Bind identity signals, as `--strict-identity` does on `pgdt parse`, `query` and `info`,
+          for every --source and STORED AS PGDUMP that states none of its own: `time` refuses a
+          cache whose recorded modification signal the dump no longer states, `location` one written
+          for another URL, the bare flag both. A dump changing under a scan fails it under every
+          selection but `none`, so a server stating neither a strong entity tag nor a Last-Modified
+          is refused; `none` binds nothing, that check included, and reads it anyway, and `advisory`
+          is the default, which a dump under a stricter session states to keep that check
 
   -h, --help
           Print help (see a summary with '-h')

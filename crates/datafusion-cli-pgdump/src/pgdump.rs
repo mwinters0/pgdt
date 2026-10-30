@@ -73,9 +73,9 @@ pub const SOURCE_HELP: &str = "Register a pg_dump file as catalogs, one per data
     :strict-identity=TERMS states this dump's \
     strictness where --strict-identity would. Repeatable";
 
-pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `pgdt --strict-identity` \
-    does, for every --source and STORED AS PGDUMP that states none of its own: `time` refuses a \
-    cache whose recorded modification signal the dump no longer states, `location` one written \
+pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `--strict-identity` \
+    does on `pgdt parse`, `query` and `info`, for every --source and STORED AS PGDUMP that \
+    states none of its own: `time` refuses a cache whose recorded modification signal the dump no longer states, `location` one written \
     for another URL, the bare flag both. A dump changing under a scan fails it under every \
     selection but `none`, so a server stating neither a strong entity tag nor a Last-Modified \
     is refused; `none` binds nothing, that check included, and reads it anyway, and `advisory` is the default, which a dump under a stricter \

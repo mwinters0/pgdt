@@ -64,8 +64,8 @@ where
     }
 }
 
-/// Which weak identity signals a command asks to *bind*, shared by every
-/// command that reads a dump against a cache
+/// Which weak identity signals a command asks to *bind*, shared by `parse`,
+/// `info` and `query`; `pgdt sql` declares its own (`datafusion-cli-pgdump`)
 /// (`docs/design/decisions.md`, "D21").
 #[derive(Args)]
 pub(crate) struct IdentityArgs {
@@ -86,8 +86,8 @@ pub(crate) struct IdentityArgs {
     /// returned some of them cannot produce a right answer; `none` is the only
     /// way to turn that into a warning, and it turns off everything else too.
     /// So a source nothing can check while it is read — a server stating
-    /// neither a strong entity tag nor a `Last-Modified` — is refused unless
-    /// this says `none`.
+    /// neither a strong entity tag nor a `Last-Modified` — is refused where a
+    /// read of it begins unless this says `none`; `info` reads none of it.
     ///
     /// It asks one question of every command, and needs a source to ask it
     /// of, so stating it without `--source` — `info` answering from the cache
@@ -186,7 +186,7 @@ impl ReadFlags {
 /// ([`crate::parallel::Discovered::resolve`]). `parse`'s mapping pass gathers,
 /// and takes the arrangement itself ([`Resolved::arrangement`]).
 ///
-/// **Resolved once per command and passed in, not re-resolved here.** `query`
+/// **Resolved once per pass and passed in, not re-resolved here.** `query`
 /// passes its mapping pass's, its replay's going into [`pgdt_query::QueryOptions`]
 /// ([`crate::parallel::Discovered::resolve_pass`]).
 pub(crate) fn scan_options(read: ReadFlags, parallel: &Resolved) -> ScanOptions {
