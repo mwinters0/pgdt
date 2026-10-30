@@ -1280,7 +1280,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "count-instructions"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
 ]
@@ -1611,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "datafusion-cli-pgdump"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "datafusion",
@@ -2060,7 +2060,7 @@ dependencies = [
 
 [[package]]
 name = "datafusion-pgdump"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arrow",
  "async-trait",
@@ -2618,7 +2618,7 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "gzip-inflate"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -3384,7 +3384,7 @@ dependencies = [
 
 [[package]]
 name = "namespace-init"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
  "signal-hook",
@@ -3668,7 +3668,7 @@ dependencies = [
 
 [[package]]
 name = "peak-rss"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "libc",
 ]
@@ -3693,7 +3693,7 @@ dependencies = [
 
 [[package]]
 name = "pgdt"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "arrow",
@@ -3729,7 +3729,7 @@ dependencies = [
 
 [[package]]
 name = "pgdt-codec"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arrow",
  "arrow-buffer",
@@ -3747,7 +3747,7 @@ dependencies = [
 
 [[package]]
 name = "pgdt-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "memchr",
@@ -3758,7 +3758,7 @@ dependencies = [
 
 [[package]]
 name = "pgdt-dump"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -3776,7 +3776,7 @@ dependencies = [
 
 [[package]]
 name = "pgdt-fixtures"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pgdt-dump",
  "pgdt-io",
@@ -3788,7 +3788,7 @@ dependencies = [
 
 [[package]]
 name = "pgdt-gzip-seek"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "flate2",
  "libc",
@@ -3799,7 +3799,7 @@ dependencies = [
 
 [[package]]
 name = "pgdt-io"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bincode",
  "bytes",
@@ -3821,7 +3821,7 @@ dependencies = [
 
 [[package]]
 name = "pgdt-mapping"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arrow-schema",
  "bytes",
@@ -3843,7 +3843,7 @@ dependencies = [
 
 [[package]]
 name = "pgdt-model"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "memchr",
@@ -3853,7 +3853,7 @@ dependencies = [
 
 [[package]]
 name = "pgdt-query"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "arrow",
  "async-stream",
