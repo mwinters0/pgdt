@@ -16,8 +16,8 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P17, P19, P20, P25, P27–P31, P35, P36 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
+| P38 — a table reads its descendants; TimescaleDB under its own names | **Current** | [spec](roadmap-P38-descendants.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
-| P38 — a table reads its descendants; TimescaleDB under its own names | Specified | [spec](roadmap-P38-descendants.md) — after P33 |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
 | P37 — Parquet export as a Parquet-native writer leaves it | Sketched; not grilled | this file, below; [inbox](roadmap-P37-parquet-export-inbox.md) — the maintainer sets its order |
@@ -736,16 +736,16 @@ PostgreSQL would not read, not as a buffer pgdt would not grow. Memory may
 slow a long line, and never refuses one under the bound. Today
 `max_line_bytes` refuses one past 64 MiB (`KD93`). **This is the answer to
 a user who cannot know a dump needs a longer line**: no setting to discover,
-and no ceiling taken from the hardware, PostgreSQL's being the only one. It
-runs before P38. Sketched to corner-avoidance depth. The facts
-are in [its inbox](roadmap-P33-line-bound-inbox.md).
+and no ceiling taken from the hardware, PostgreSQL's being the only one.
+Sketched to corner-avoidance depth. The facts are in
+[its inbox](roadmap-P33-line-bound-inbox.md).
 
 ## P38 — A table reads its descendants; TimescaleDB under its own names
 
 A table reads its own rows and every descendant's, for every dump, as `SELECT
 … FROM parent` does on the server, and a TimescaleDB hypertable is read under
 its own name on top of that, its catalog read to say which children are chunks
-and which rows the file does not hold. It runs after P33. The spec is
+and which rows the file does not hold. The spec is
 [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md).
 
 ## P32 — The schema model: every object and property a dump declares

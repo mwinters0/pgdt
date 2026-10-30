@@ -81,12 +81,24 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
 "What an instrument can see"). `--count-pair <rev>` counts one change's
 `instructions:u` against the tree's parent and prints the comparison alone.
 
+## P38 progress
+
+Spec: [`../design/roadmap-P38-descendants.md`](../design/roadmap-P38-descendants.md).
+
+- [ ] **38.1** Evidence: the TimescaleDB generator at each pin, the `-n public` dumps, the inheritance schema, and each server's answers committed (D71); every shape in the spec's "Facts the grilling found" confirmed or corrected, and `timescaledb-invariants.md` opened with what was confirmed; no pgdt code
+- [ ] **38.2** A table reads its descendants: the walk, a table's blocks across identities projected to the parent's columns, a descendant's refusal refusing its parent, the load-via-root refusals with a `KD<k>` (c); library and every front end, checked against 38.1's plain oracle
+- [ ] **38.3** `--inheritance <descendants|only>`: `QueryOptions`, `pgdump.inheritance`, `--source …:inheritance=`, `pgdt query --inheritance`, each front end's remedy spellings naming it
+- [ ] **38.4** The catalog recorded: the model's rows, the pass recording them, the era recipes and the version fingerprint (cache bump); `pgdt info --json` showing them, each pin's recipe checked against its fixture's catalog
+- [ ] **38.5** Hypertables resolved: compressed and partially compressed chunks refused at the hypertable and by name under both modes with a `KD<k>` (c), dropped rows skipped, absent chunks read as absent with their finding, an unreadable catalog refusing its hypertables; every pin checked against its oracle
+- [ ] **38.6** `pgdt info`'s logical model: parents and their descendants, the TimescaleDB section, continuous aggregates, chunks folded
+- [ ] **38.7** The record: the README's supported/unsupported list, the manual, `pg-dump-compatibility.md`'s rows, and the hand run on the reference dump
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** A dump is readable over HTTP, plain, `.xz` and gzip,
+- **P38 is open** (above). A dump is readable over HTTP, plain, `.xz` and gzip,
   with nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in

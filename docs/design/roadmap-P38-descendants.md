@@ -24,7 +24,8 @@ children are chunks and which rows the file does not hold.
   that pgdt supports TimescaleDB, or a supported/unsupported list where it
   falls short. Datanommer surfaced the need as koji did for scale: the
   requirements, fixtures and harnesses stand on their own, and no test assumes
-  the dump exists. Its lines past `max_line_bytes` are P33's, which runs first.
+  the dump exists. Its lines past `max_line_bytes` are P33's, which runs after
+  this phase; until it lands the dump is read with the limit raised.
 
 ## Settled in the grilling
 
@@ -268,8 +269,7 @@ answer changing before slice 3 offers the way back, which costs no user anything
 between releases; slice 4's `info --json` is what slice 5 is checked against,
 so the administrator's view waits until the semantics are settled. Each refusal
 P38 leaves a valid dump with is a `KD<k>`, stance (c), its Future item named as
-what promotes it, registered by the slice that adds the refusal. The checklist
-is written into `STATUS.md` when the phase is sliced, after P33.
+what promotes it, registered by the slice that adds the refusal.
 
 1. **Evidence: the fixtures and their oracle.** The TimescaleDB generator at
    each pin, the `-n public` dumps, the inheritance schema (multi-level,
@@ -302,7 +302,8 @@ is written into `STATUS.md` when the phase is sliced, after P33.
    [`pg-dump-compatibility.md`](pg-dump-compatibility.md)'s rows for
    inheritance, partitions and TimescaleDB, and a hand run of
    `SELECT count(*) FROM datanommer2.public.messages` on the reference dump
-   against its catalog's chunks, noted in the slice's notes, not a test.
+   against its catalog's chunks, its line limit raised past the longest line,
+   noted in the slice's notes, not a test.
 
 ## Facts the grilling found
 
