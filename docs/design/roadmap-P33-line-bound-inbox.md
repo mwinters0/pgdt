@@ -106,3 +106,67 @@ de-escaped buffer's bound is argued from `CopyReadAttributesText`, not yet
 read on every major.
 
 **Origin.** As above.
+
+---
+
+## A user cannot know a dump needs a longer line, except by failing
+
+**Fact.** The maintainer's account of Datanommer, Fedora's message archive
+(`roadmap.md`, "P38 — A table reads its descendants; TimescaleDB under its own
+names"): in some regions, mostly rows inserted after 2020, an inserting program's
+defect left text truncated at the longest value the PostgreSQL of the time
+allowed, so lines run past `max_line_bytes`' default and the dump is read only
+after raising it. Nothing tells the user that, or the value that suffices,
+short of raising it and running again. Dumps needing a raised limit are
+little exercised by the suite.
+
+A full pass over the dump (machine-local report:
+`runs/datanommer-survey/report.md`) measured its data lines: 32,664 over
+1 MiB, 436 over 16 MiB, 62 over 64 MiB, 5 over 256 MiB, none over 512 MiB, the
+longest 462,157,088 bytes, all of them `public.messages` rows made long by
+`msg`. The lines over 64 MiB date from 2016, 2022 and 2024–2026, and over
+1 MiB mostly from 2022 on. Their lengths do not cluster at any limit: no value
+approaches I71's bound, the repeated exact lengths are repeated messages, and
+one topic's rows double within a day (112, 225, 450 MB decoded), so the
+lengths neither confirm nor rule out truncation at an uncommon length, which
+only a field's tail would show.
+
+**Why P33 cares.** It is the user-facing case for reading every line under
+I71's bound with no setting at all, and the reference dump for the phase's
+long-line paths; the requirements and fixtures stand without it.
+
+**Origin.** The 2026-10-30 session that sketched P38.
+
+---
+
+## The refusal names an offset and a limit, and the parse saves nothing after it
+
+**Fact.** `Error::LineTooLong` (`pgdt-core/src/error.rs`) reads "line at
+offset {offset} exceeds the {limit}-byte line limit": not the line's length,
+and no setting to raise (`pgdt/src/refusal.rs` and the SQL shell's
+`spelling.rs` spell no remedy for it). The forward pass returns the error with
+no save on that path (`pgdt-mapping/src/forward.rs`), so only the throttled
+saves at earlier `COPY` ends survive. Neither the limit a parse used nor the
+longest line it saw is in the cache, and a query reads with its own limit, so
+a line the parse read can be refused by a query with a smaller one.
+
+**Why P33 cares.** It is the iterate-to-discover experience the maintainer
+names, reproduced in code; whatever the phase leaves of the knob decides
+whether any of these survive.
+
+**Origin.** The 2026-10-30 session that sketched P38, from a read of the code.
+
+---
+
+## Long lines arrive in clusters
+
+**Fact.** In the reference dump the 62 lines over 64 MiB fall in 18 chunks,
+three to nine per chunk, often within a few thousand lines of each other:
+seven in `_hyper_1_509_chunk` between dump lines 234,157,948 and 235,313,492,
+two of them 462 MB.
+
+**Why P33 cares.** Several pieces of one block can each be carrying a line of
+hundreds of MiB at once, so the admission rule for long lines is exercised by
+concurrency on real data, not only by one line at a time.
+
+**Origin.** The 2026-10-30 session that sketched P38, from the same pass.
