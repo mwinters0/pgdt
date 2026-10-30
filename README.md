@@ -161,23 +161,22 @@ our API, CLI, or data until we reach v1.0.
     - [x] CLI text / TSV
     - [x] Parquet, CSV, etc via `pgdt sql`
 - Consumers
-    - [x] Rust library, as layered crates whose dependency graph Cargo enforces, each API shaped for its embedder
+    - [x] Rust library
     - [x] DataFusion provider + shell, in the one `pgdt` binary
     - [ ] Python
     - [ ] DuckDB
     - [ ] Trino (?)
     - [ ] Spark (?)
 - Distribution
-    - [x] Linux binaries for x86-64 and arm64, as versioned releases (see: [installing](docs/manual/installing.md))
+    - [x] Linux binaries for x86-64 and arm64 (see: [installing](docs/manual/installing.md))
     - [ ] macOS
 - Metadata collection:
-    - [x] A full byte-exact file map and DDL object inventory.
+    - [x] A full file map and DDL object inventory.
     - [x] Row groups with per-column statistics.
     - [ ] Statistics gathered by a cold `query`.
 - Postgres Correctness
     - [x] Tests cover all major Postgres releases, v13-v18.
-    - [x] Every literal `pg_dump` can write, and every option it takes, is checked against the test
-    fixtures, and every typed value against the server's own reading of it.
+    - [x] Extensive test fixtures against every literal that `pg_dump` can write, and every option it takes.
     - Data types
         - [x] Almost all common base types parsed into Arrow types (see: [type
         handling](docs/manual/type-handling.md))
