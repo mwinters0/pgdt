@@ -10,9 +10,11 @@
 //! (`engine.rs`). Nothing it decodes is handed out, so it is not an
 //! inflater of the crate's own (`docs/design/decisions.md`, "D117").
 
-use super::huffman::{DISTANCE_BASE, DISTANCE_EXTRA, LENGTH_BASE, LENGTH_EXTRA};
+use super::huffman::{
+    DISTANCE_BASE, Huffman, LENGTH_BASE, entry_base, entry_extra, entry_len, entry_symbol,
+};
 use super::inflate::fixed_codes;
-use super::input::Input;
+use super::input::{Bits, Input};
 
 /// Where a walk stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,48 +75,76 @@ impl Walk {
     /// A symbol a fixed block cannot hold, by zlib's message.
     pub(crate) fn run(&mut self, mark: u64) -> Result<Walked, &'static str> {
         let (literals, distances) = fixed_codes();
-        let end = self.input.end_bit();
-        loop {
-            let at = self.bit;
-            // Bits past the held bytes read as zeros: a code decoded from
-            // them is whole only where it ends before them, a prefix code
-            // being decided by its own bits alone.
-            let bits = self.input.peek(at);
-            let (symbol, len) = literals.decode(bits).ok_or("invalid literal/length code")?;
-            if at + u64::from(len) > end {
-                return Ok(Walked::Input);
-            }
-            if symbol == 256 {
-                self.bit = at + u64::from(len);
-                return Ok(Walked::End);
-            }
-            if self.plaintext >= mark {
-                return Ok(Walked::Mark { bit: at, plaintext: self.plaintext });
-            }
-            let (used, produced) = if symbol < 256 {
-                (len, 1)
-            } else {
-                let i = usize::from(symbol - 257);
-                if i >= LENGTH_BASE.len() {
-                    return Err("invalid literal/length code");
-                }
-                let mut used = len;
-                let extra = u32::from(LENGTH_EXTRA[i]);
-                let length = u64::from(LENGTH_BASE[i]) + ((bits >> used) & ((1 << extra) - 1));
-                used += extra;
-                let (symbol, len) =
-                    distances.decode(bits >> used).ok_or("invalid distance code")?;
-                if usize::from(symbol) >= DISTANCE_BASE.len() {
-                    return Err("invalid distance code");
-                }
-                used += len + u32::from(DISTANCE_EXTRA[usize::from(symbol)]);
-                (used, length)
-            };
-            if at + u64::from(used) > end {
-                return Ok(Walked::Input);
-            }
-            self.bit = at + u64::from(used);
-            self.plaintext += produced;
-        }
+        let (bit, plaintext, walked) =
+            walk((literals, distances), &self.input, self.bit, self.plaintext, mark);
+        (self.bit, self.plaintext) = (bit, plaintext);
+        walked
     }
+}
+
+/// [`Walk::run`]'s loop, from the symbol at compressed `bit` and plaintext
+/// `plaintext`: where it stopped, and why. Never inlined, as `inflate.rs`'s
+/// `codes` is not: its state stays in registers, and a profile names it.
+///
+/// The bits are held across symbols ([`Bits`]) and each entry carries its
+/// symbol's base and extra bits, so a symbol costs a refill, a lookup and,
+/// for a length, the lookup of its distance in the same word. Bits past the
+/// held bytes read as zeros: a code decoded from them is whole only where it
+/// ends before them, a prefix code being decided by its own bits alone, which
+/// is all the comparison against `end` asks.
+#[inline(never)]
+fn walk(
+    (literals, distances): (&Huffman, &Huffman),
+    input: &Input,
+    bit: u64,
+    mut plaintext: u64,
+    mark: u64,
+) -> (u64, u64, Result<Walked, &'static str>) {
+    let end = input.end_bit();
+    let mut bits = Bits::at(input, bit);
+    let walked = loop {
+        let at = bits.position();
+        bits.refill(input);
+        let held = bits.word;
+        // Every literal/length code is a fixed block's, and those it cannot
+        // hold are refused by their symbol below.
+        let Some(entry) = literals.entry(held) else {
+            break Err("invalid literal/length code");
+        };
+        let (symbol, len) = (entry_symbol(entry), entry_len(entry));
+        if at + u64::from(len) > end {
+            break Ok(Walked::Input);
+        }
+        if symbol == 256 {
+            bits.consume(len);
+            break Ok(Walked::End);
+        }
+        if plaintext >= mark {
+            break Ok(Walked::Mark { bit: at, plaintext });
+        }
+        if symbol < 256 {
+            bits.consume(len);
+            plaintext += 1;
+            continue;
+        }
+        if usize::from(symbol) >= 257 + LENGTH_BASE.len() {
+            break Err("invalid literal/length code");
+        }
+        let extra = entry_extra(entry);
+        let length = entry_base(entry) as u64 + ((held >> len) & ((1 << extra) - 1));
+        let mut used = len + extra;
+        let Some(entry) = distances.entry(held >> used) else {
+            break Err("invalid distance code");
+        };
+        if usize::from(entry_symbol(entry)) >= DISTANCE_BASE.len() {
+            break Err("invalid distance code");
+        }
+        used += entry_len(entry) + entry_extra(entry);
+        if at + u64::from(used) > end {
+            break Ok(Walked::Input);
+        }
+        bits.consume(used);
+        plaintext += length;
+    };
+    (bits.position(), plaintext, walked)
 }

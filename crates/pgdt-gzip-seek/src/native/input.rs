@@ -149,6 +149,49 @@ impl Input {
     }
 }
 
+/// The bits a symbol loop reads, held in a register and refilled a word at a
+/// time, so the next symbol's bits are a shift away rather than a load.
+pub(super) struct Bits {
+    /// The bits from the position on, low bit first: `count` of them the
+    /// stream's, any above them the stream's or zero.
+    pub(super) word: u64,
+    count: u32,
+    /// The offset of the first byte not yet in `word`.
+    next: u64,
+}
+
+impl Bits {
+    /// Bits from `bit` on.
+    #[inline(always)]
+    pub(super) fn at(input: &Input, bit: u64) -> Bits {
+        let mut bits = Bits { word: 0, count: 0, next: bit / 8 };
+        bits.refill(input);
+        bits.consume((bit % 8) as u32);
+        bits
+    }
+
+    /// The bit the next symbol begins at.
+    #[inline(always)]
+    pub(super) fn position(&self) -> u64 {
+        8 * self.next - u64::from(self.count)
+    }
+
+    /// At least 56 bits held: whole bytes added above those held, zeros past
+    /// the input's end.
+    #[inline(always)]
+    pub(super) fn refill(&mut self, input: &Input) {
+        self.word |= input.word(self.next) << self.count;
+        self.next += u64::from((63 - self.count) / 8);
+        self.count |= 56;
+    }
+
+    #[inline(always)]
+    pub(super) fn consume(&mut self, n: u32) {
+        self.word >>= n;
+        self.count -= n;
+    }
+}
+
 /// A bit reader over an [`Input`] for what is read rarely and in pieces — a
 /// block's header — which reads zeros past the held bytes and says whether it
 /// went there.

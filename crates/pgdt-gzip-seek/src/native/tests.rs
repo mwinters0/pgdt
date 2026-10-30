@@ -297,3 +297,54 @@ fn an_overlapping_copy_repeats_its_markers() {
     assert_eq!(sink.clean_from(), 11);
     assert!(!sink.copy(WINDOW_SIZE + 12, 3), "a copy reaching before the history");
 }
+
+/// A walk over the static block whose first symbol is at compressed `bit`,
+/// fed `feed` bytes at a time as the engine feeds it, asked to stop at each
+/// of `marks` in turn: each stop, and the plaintext the block holds.
+fn walked(file: &[u8], bit: u64, marks: &[u64], feed: usize) -> (Vec<(u64, u64)>, u64) {
+    let chunk = |at: usize| &file[at..(at + feed).min(file.len())];
+    let mut walk = Walk::new(bit, 0, chunk((bit / 8) as usize));
+    let (mut stops, mut marks) = (Vec::new(), marks.iter().copied());
+    let mut mark = marks.next();
+    loop {
+        match walk.run(mark.unwrap_or(u64::MAX)).unwrap() {
+            Walked::Mark { bit, plaintext } => {
+                stops.push((bit, plaintext));
+                mark = marks.next();
+            }
+            Walked::Input => {
+                let at = walk.end() as usize;
+                assert!(at < file.len(), "the walk ran out of file");
+                walk.release();
+                walk.push(chunk(at));
+            }
+            Walked::End => return (stops, walk.plaintext()),
+        }
+    }
+}
+
+/// **A walk stops where it is told, however it is fed**: over a level-1
+/// member's static block, fed a byte at a time, a few, a push's worth or the
+/// whole file, it stops at the same symbols — each the first at or past its
+/// mark, no symbol standing for more than 258 bytes — and ends where the
+/// engine says the block does.
+#[test]
+fn a_walk_stops_at_the_same_symbols_however_it_is_fed() {
+    let plaintext = payload(300_000, 61);
+    let file = gzip(&plaintext, 1);
+    let (_, boundaries, start) = engine_view(&file);
+    let header = file[(start / 8) as usize] >> (start % 8);
+    assert_eq!(header >> 1 & 0b11, 0b01, "level 1 opens on a static block");
+    let ends = boundaries.iter().map(|&(_, at)| at).find(|&at| at > 0);
+    let block_end = ends.unwrap_or(plaintext.len() as u64);
+    let marks: Vec<u64> = (1..).map(|i| i * 997).take_while(|&m| m < block_end - 258).collect();
+    let whole = walked(&file, start + 3, &marks, file.len());
+    assert_eq!(whole.1, block_end);
+    assert_eq!(whole.0.len(), marks.len());
+    for (&(_, at), &mark) in whole.0.iter().zip(&marks) {
+        assert!((mark..mark + 258).contains(&at), "mark {mark}: stopped at {at}");
+    }
+    for feed in [1, 7, 4096] {
+        assert_eq!(walked(&file, start + 3, &marks, feed), whole, "feed {feed}");
+    }
+}
