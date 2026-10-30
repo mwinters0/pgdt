@@ -24,26 +24,26 @@ fn only_the_refusals_about_a_source_are_given_its_name() {
     // checked against, which is the whole point where the path was
     // derived from a URL.
     let said = named(pgdt_core::Error::CacheUnusable {
-        path: PathBuf::from("koji.dump.dtcache"),
+        path: PathBuf::from("koji.dump.pgdt"),
         unusable: Unusable::SourceChanged { cached_stored_size: 10, live_stored_size: 11 },
     });
     assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
-    assert!(said.contains("koji.dump.dtcache"), "the cache is still named: {said}");
+    assert!(said.contains("koji.dump.pgdt"), "the cache is still named: {said}");
 
     // A bound weak signal that does not hold: the same derived cache
     // path, and a clause about times rather than sizes.
     let said = named(pgdt_core::Error::StrictIdentityUnmet {
-        path: PathBuf::from("koji.dump.dtcache"),
+        path: PathBuf::from("koji.dump.pgdt"),
         term: "time",
         unmet: "the modification time has moved".into(),
     });
     assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
-    assert!(said.contains("koji.dump.dtcache"), "the cache is still named: {said}");
+    assert!(said.contains("koji.dump.pgdt"), "the cache is still named: {said}");
 
     // Both arms of the block refusal, the cache-less one naming nothing
     // at all by itself — the case with most to gain.
     let said = named(pgdt_core::Error::CachedBlockChanged {
-        path: Some(PathBuf::from("koji.dump.dtcache")),
+        path: Some(PathBuf::from("koji.dump.pgdt")),
         header_offset: 4096,
     });
     assert!(said.starts_with("/tmp/koji.dump: "), "the source leads the sentence: {said}");
@@ -64,7 +64,7 @@ fn only_the_refusals_about_a_source_are_given_its_name() {
 #[test]
 fn each_refusal_names_the_flag_its_remedy_is() {
     let origin = Origin::local("/tmp/koji.dump");
-    let cache = || PathBuf::from("koji.dump.dtcache");
+    let cache = || PathBuf::from("koji.dump.pgdt");
     let said = |err: pgdt_core::Error| {
         if about_the_source(&err) {
             spelled_chain(refusal(err, &origin)).to_string()

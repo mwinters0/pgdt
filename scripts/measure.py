@@ -2183,7 +2183,7 @@ class Stager:
             del self._staged[name]
         # The caches a run writes into the staging directory go with it, and
         # so do the binaries a staged leg ran (`Session.stage_binary`).
-        for leftover in self.cfg.warm_dir.glob("*.dtcache"):
+        for leftover in self.cfg.warm_dir.glob("*.pgdt"):
             leftover.unlink(missing_ok=True)
         shutil.rmtree(self.cfg.warm_dir / STAGED_BIN_DIR, ignore_errors=True)
 
@@ -2219,7 +2219,7 @@ class Stager:
             }
         self.log(f"  profiling {name} (untimed)")
         path = self.warm_path(name) if name in self._staged else self.cold_path(name)
-        tmp = self.cfg.cache_dir / f"{name}.profile.dtcache"
+        tmp = self.cfg.cache_dir / f"{name}.profile.pgdt"
         tmp.unlink(missing_ok=True)
         # `--jobs` even though nothing here is timed: the row counts this
         # returns are the divisor under every per-row number in the document,
@@ -2867,12 +2867,12 @@ DATA_LEVEL_QUERIES: tuple[str, ...] = (
 )
 #: That builder, ahead of the timer.
 DATA_LEVEL_BUILDER = (
-    f"/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache --jobs {SWEEP_JOBS} "
+    f"/pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt --jobs {SWEEP_JOBS} "
     f"{GATHER_STATISTICS} >/dev/null && "
 )
 #: What the timed query states: the builder's cache, and no use of its
 #: statistics.
-DATA_LEVEL_QUERY = "--dtcache /tmp/x.dtcache --statistics none"
+DATA_LEVEL_QUERY = "--dtcache /tmp/x.pgdt --statistics none"
 
 #: Where `Session.prebuild`'s container sees the directory its cache is
 #: written to.
@@ -3153,7 +3153,7 @@ def typed_scan_invocation(dump: str) -> tuple[list[str], list[str]]:
 #: looks, at `SWEEP_JOBS` whatever partition count the query states, so every
 #: row of a figure reads one cache.
 PROVIDER_BUILDER = (
-    f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache --jobs {SWEEP_JOBS} "
+    f"/pgdt parse --source /dump.sql --dtcache /dump.sql.pgdt --jobs {SWEEP_JOBS} "
     f"{GATHER_STATISTICS} >/dev/null && "
 )
 
@@ -4118,7 +4118,7 @@ def _script(command: str) -> str:
     j = f"--jobs {SWEEP_JOBS}"
     ns = NO_STATISTICS
     if command == "parse":
-        return f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache {j} {ns} >/dev/null"
+        return f"{q} parse --source /dump.sql --dtcache /tmp/x.pgdt {j} {ns} >/dev/null"
     if command == "parse-rss":
         # The same `parse` as above, wrapped so the run reports its own peak
         # resident set as well as its wall clock. The redirection is outside
@@ -4126,11 +4126,11 @@ def _script(command: str) -> str:
         # stderr, where bash's `time` report already goes.
         return (
             f"time {PEAK_RSS} /pgdt parse --source /dump.sql "
-            f"--dtcache /tmp/x.dtcache {j} {ns} >/dev/null"
+            f"--dtcache /tmp/x.pgdt {j} {ns} >/dev/null"
         )
     if command == "parse-preamble":
         return (
-            f"{q} parse --preamble-only --source /dump.sql --dtcache /tmp/x.dtcache "
+            f"{q} parse --preamble-only --source /dump.sql --dtcache /tmp/x.pgdt "
             f"{j} >/dev/null"
         )
     if command == "parse-preamble-rss":
@@ -4142,7 +4142,7 @@ def _script(command: str) -> str:
         # exactly one block and the two coincide in it.
         return (
             f"time {PEAK_RSS} /pgdt parse --preamble-only "
-            f"--source /dump.sql --dtcache /tmp/x.dtcache {j} >/dev/null"
+            f"--source /dump.sql --dtcache /tmp/x.pgdt {j} >/dev/null"
         )
     if command == "info-cache-rss":
         # An index *deserialized* rather than built: the second route to the
@@ -4162,8 +4162,8 @@ def _script(command: str) -> str:
         # none**: `info` takes no `--jobs` because it starts no workers, so
         # there is no default for it to inherit.
         return (
-            f"/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache {j} {ns} >/dev/null && "
-            f"time {PEAK_RSS} /pgdt info --dtcache /tmp/x.dtcache "
+            f"/pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt {j} {ns} >/dev/null && "
+            f"time {PEAK_RSS} /pgdt info --dtcache /tmp/x.pgdt "
             ">/dev/null"
         )
     if command in ("query-nomatch-cached-rss", "query-nomatch-rss"):
@@ -4176,7 +4176,7 @@ def _script(command: str) -> str:
         # `query` rather than `parse` because `parse` refuses `--dtcache none`
         # outright -- "cache is disabled, but `parse` requires a cache file" --
         # so the un-throttled shape is reachable only through `query`.
-        cache = "/tmp/x.dtcache" if command.endswith("cached-rss") else "none"
+        cache = "/tmp/x.pgdt" if command.endswith("cached-rss") else "none"
         return (
             f"time {PEAK_RSS} /pgdt query --source /dump.sql "
             f"--table public.nosuchtable --dtcache {cache} {j} >/dev/null"
@@ -4185,8 +4185,8 @@ def _script(command: str) -> str:
         # The cache goes to the mounted tmpfs, not the container's own layer,
         # and the removal is outside the timer.
         return (
-            "rm -f /out/measure.dtcache; "
-            f"{q} parse --source /dump.sql --dtcache /out/measure.dtcache {j} {ns} >/dev/null"
+            "rm -f /out/measure.pgdt; "
+            f"{q} parse --source /dump.sql --dtcache /out/measure.pgdt {j} {ns} >/dev/null"
         )
     if command in ("query-typed", "query-strings"):
         # Over a data-level cache built ahead of the timer (`DATA_LEVEL_QUERIES`).
@@ -4236,12 +4236,12 @@ def _script(command: str) -> str:
             raise ValueError(f"unknown command shape {command!r}")
         if not suffix:
             return (
-                f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache {j} {flags[leg]} "
+                f"{q} parse --source /dump.sql --dtcache /tmp/x.pgdt {j} {flags[leg]} "
                 ">/dev/null"
             )
         return (
             f"time {PEAK_RSS} /pgdt parse --source /dump.sql "
-            f"--dtcache /tmp/x.dtcache {j} {flags[leg]} >/dev/null"
+            f"--dtcache /tmp/x.pgdt {j} {flags[leg]} >/dev/null"
         )
     if command.startswith(PRUNING_FAMILY):
         # `statistics-pruning`. The builder is outside the timer and states the
@@ -4252,9 +4252,9 @@ def _script(command: str) -> str:
             raise ValueError(f"unknown command shape {command!r}")
         expr = PRUNING_FILTERS[name][0]
         return (
-            f"/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache {j} "
+            f"/pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt {j} "
             f"{GATHER_STATISTICS} >/dev/null && "
-            f"{q} query --source /dump.sql --table public.perf --dtcache /tmp/x.dtcache "
+            f"{q} query --source /dump.sql --table public.perf --dtcache /tmp/x.pgdt "
             f"--schema-mode typed --where '{expr}' --statistics {leg} {j} >/dev/null"
         )
     if command == DYNFILTER_STARTUP:
@@ -4264,7 +4264,7 @@ def _script(command: str) -> str:
         env = [f"{DFCLI_PARTITIONS}={SWEEP_JOBS}"]
         argv = ["--source", f"{DFCLI_CATALOG}=/dump.sql", "--format", "csv", "-q", "-c", STARTUP_SQL]
         return (
-            f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
+            f"/pgdt parse --source /dump.sql --dtcache /dump.sql.pgdt {j} "
             f"{GATHER_STATISTICS} >/dev/null && "
             f"time {dfcli_shell(env, SQL_SHELL, argv)} "
             ">/tmp/result.csv && "
@@ -4282,7 +4282,7 @@ def _script(command: str) -> str:
             raise ValueError(f"unknown command shape {command!r}")
         env, argv = dfcli_invocation(figure, name, leg, "/dump.sql")
         return (
-            f"/pgdt parse --source /dump.sql --dtcache /dump.sql.dtcache {j} "
+            f"/pgdt parse --source /dump.sql --dtcache /dump.sql.pgdt {j} "
             f"{GATHER_STATISTICS} >/dev/null && "
             f"time {dfcli_shell(env, SQL_SHELL, argv)} "
             f">/tmp/result.csv && {DFCLI_ANSWER}"
@@ -4298,7 +4298,7 @@ def _script(command: str) -> str:
         if int(size) not in CHUNK_SIZES:
             raise ValueError(f"{command!r} names a chunk size the figure does not carry")
         return (
-            f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache "
+            f"{q} parse --source /dump.sql --dtcache /tmp/x.pgdt "
             f"--chunk-size {size} {j} {ns} >/dev/null"
         )
     if command.startswith(RESERVE_FAMILY):
@@ -4320,7 +4320,7 @@ def _script(command: str) -> str:
         arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
         return (
             f"time {arena}{PEAK_RSS} /pgdt parse "
-            f"--source /dump.sql --dtcache /tmp/x.dtcache "
+            f"--source /dump.sql --dtcache /tmp/x.pgdt "
             f"--jobs {RESERVE_JOBS} --memory {stated_allowance(int(budget))} {ns} >/dev/null"
         )
     if command.startswith(RESERVE_FLAGLESS):
@@ -4341,7 +4341,7 @@ def _script(command: str) -> str:
         arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
         return (
             f"time {arena}{PEAK_RSS} /pgdt parse "
-            f"--source /dump.sql --dtcache /tmp/x.dtcache {ns} >/dev/null"
+            f"--source /dump.sql --dtcache /tmp/x.pgdt {ns} >/dev/null"
         )
     if command.startswith(RESERVE_STEP_FAMILY):
         # The path step: a stated budget either side of `charge_bytes(unit, 1)`
@@ -4354,7 +4354,7 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a budget the figure does not carry")
         return (
             f"time {PEAK_RSS} /pgdt parse "
-            f"--source /dump.sql --dtcache /tmp/x.dtcache "
+            f"--source /dump.sql --dtcache /tmp/x.pgdt "
             f"--jobs {RESERVE_JOBS} --memory {stated_allowance(int(budget))} {ns} >/dev/null"
         )
     if command == PARALLEL_SCAN:
@@ -4373,7 +4373,7 @@ def _script(command: str) -> str:
         if not jobs.isdigit() or int(jobs) not in GZPASS_JOBS:
             raise ValueError(f"{command!r} names a job count the figure does not carry")
         return (
-            f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache --jobs {jobs} "
+            f"{q} parse --source /dump.sql --dtcache /tmp/x.pgdt --jobs {jobs} "
             f"--memory {stated_allowance(GZPASS_BUDGET)} {ns} >/dev/null"
         )
     if command.startswith(GZRSS_FAMILY):
@@ -4383,7 +4383,7 @@ def _script(command: str) -> str:
         if not jobs.isdigit() or int(jobs) not in GZIP_RSS_JOBS:
             raise ValueError(f"{command!r} names a job count the figure does not carry")
         return (
-            f"time {PEAK_RSS} /pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache "
+            f"time {PEAK_RSS} /pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt "
             f"--jobs {jobs} --memory {stated_allowance(GZPASS_BUDGET)} {ns} >/dev/null"
         )
     if command.startswith(JOBS_AXIS):
@@ -4405,11 +4405,11 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a job count the figure does not carry")
         p = f"--jobs {jobs} --memory {stated_allowance(PARALLEL_BUDGET)}"
         if shape == "parse":
-            return f"{q} parse --source /dump.sql --dtcache /tmp/x.dtcache {p} {ns} >/dev/null"
+            return f"{q} parse --source /dump.sql --dtcache /tmp/x.pgdt {p} {ns} >/dev/null"
         if shape == "parse-rss":
             return (
                 f"time {PEAK_RSS} /pgdt parse --source /dump.sql "
-                f"--dtcache /tmp/x.dtcache {p} {ns} >/dev/null"
+                f"--dtcache /tmp/x.pgdt {p} {ns} >/dev/null"
             )
         if shape == PARALLEL_SCAN:
             # The dynamic-filter figures' builder and read-back around
@@ -5111,7 +5111,7 @@ class Session:
             dump = self.input_path(spec.input, spec.regime)
             if dump in self._prebuilt:
                 continue
-            cache = dump.with_name(dump.name + ".dtcache")
+            cache = dump.with_name(dump.name + ".pgdt")
             memory = self.memory or self.cfg.memory
             argv = [
                 *self.cfg.container_argv(), "run", "--rm",
@@ -5196,7 +5196,7 @@ class Session:
                 raise RuntimeError(
                     f"{spec.label} reads a cache `Session.prebuild` did not build this sitting"
                 )
-            mounts.append(f"{self._prebuilt[dump]}:/dump.sql.dtcache:ro")
+            mounts.append(f"{self._prebuilt[dump]}:/dump.sql.pgdt:ro")
         # A staged leg reads its binaries once before the timer, inside the
         # container and off the path it will run them from.
         preread = (
@@ -6873,7 +6873,7 @@ def count_saves(
 
     Untimed, but the save count it returns is published, and `-f` follows every
     thread — so it states its worker count like everything else here."""
-    cache = cfg.warm_dir / "savecount.dtcache"
+    cache = cfg.warm_dir / "savecount.pgdt"
     cache.unlink(missing_ok=True)
     if cfg.dry_run:
         return (0, 0)
@@ -15374,7 +15374,7 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
     ]
     if not wrap:
         out += [
-            leg(name, f"{name}.dtcache", f"{name}-scan.log"),
+            leg(name, f"{name}.pgdt", f"{name}-scan.log"),
             "",
             f"# still going?   sudo nerdctl inspect -f '{{{{.State.Status}}}}' {name}",
             f"# peak RSS:      sudo grep VmHWM /proc/$(sudo nerdctl inspect -f "
@@ -15395,7 +15395,7 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
     else:
         out += [
             "# leg 1 — cold, interrupted partway.",
-            leg(f"{name}-wrap1", f"{name}-wrap.dtcache", f"{name}-wrap-scan.log"),
+            leg(f"{name}-wrap1", f"{name}-wrap.pgdt", f"{name}-wrap-scan.log"),
             f"sleep 1200 && sudo nerdctl stop -t 120 {name}-wrap1",
             f"sudo nerdctl inspect -f '{{{{.State.ExitCode}}}}' {name}-wrap1   # 143 (SIGTERM)",
             "",
@@ -15404,13 +15404,13 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
             # keep the trailing line-continuation: the mounts run straight on
             # into the image name below.
             mounts.rstrip("\n"),
-            f"  {cfg.image} /pgdt info --dtcache /out/{name}-wrap.dtcache --detail \\",
+            f"  {cfg.image} /pgdt info --dtcache /out/{name}-wrap.pgdt --detail \\",
             "  | grep -c 'not declared\\|metadata not scanned'",
             "",
             "# leg 2 — resume the identical command, then compare to a full run's cache",
             f"sudo nerdctl rm -f {name}-wrap1",
-            leg(f"{name}-wrap2", f"{name}-wrap.dtcache", f"{name}-wrap-scan.log"),
-            f"cmp runs/{name}-wrap.dtcache runs/<a previous full run>.dtcache",
+            leg(f"{name}-wrap2", f"{name}-wrap.pgdt", f"{name}-wrap-scan.log"),
+            f"cmp runs/{name}-wrap.pgdt runs/<a previous full run>.pgdt",
         ]
     return "\n".join(out)
 
@@ -15642,7 +15642,7 @@ def release_diff_invocation(
         builder = [
             "parse",
             "--source", str(source),
-            "--dtcache", f"{source}.dtcache",
+            "--dtcache", f"{source}.pgdt",
             "--jobs", str(SWEEP_JOBS),
             *GATHER_STATISTICS.split(),
         ]
@@ -15728,12 +15728,12 @@ def profile_recipe(cfg: Config) -> str:
     introspect_target = image_target_dir(cfg, "dfcli-introspect")
     introspect = f"{DFCLI_INTROSPECT_BUILD.binary(introspect_target)} sql"
     c = contained_prefix(cfg, PROFILE_MEMORY)
-    cache = warm / "profile.dtcache"
+    cache = warm / "profile.pgdt"
     out = cfg.out_dir
     figure, query = DFCLI_ACCOUNT
     account_input = "dynfilter"
     account_dump = warm / f"{account_input}.sql"
-    account_cache = warm / f"{account_input}.sql.dtcache"
+    account_cache = warm / f"{account_input}.sql.pgdt"
 
     lines: list[str] = []
     step = 0
@@ -15882,7 +15882,7 @@ def profile_recipe(cfg: Config) -> str:
     head("Tear down: tmpfs is 16 G and these inputs do not fit beside a sweep's.")
     lines.append(
         f"rm -f {' '.join(str(warm / f'{n}.sql') for n in staged)} {cache} {account_cache} "
-        f"{release_dump}.dtcache"
+        f"{release_dump}.pgdt"
     )
     return "\n".join(lines)
 
@@ -16152,7 +16152,7 @@ def heaptrack_recipe(cfg: Config) -> str:
     target = image_target_dir(cfg, f"heaptrack-{HEAPTRACK_LEG}")
     binary = HEAPTRACK_BUILD.binary(target)
     c = contained_prefix(cfg, contained.DEFAULT_MEMORY)
-    cache = warm / "heaptrack.dtcache"
+    cache = warm / "heaptrack.pgdt"
     out = cfg.out_dir
     printer = f"{HEAPTRACK}_print"
 
@@ -17194,7 +17194,7 @@ def callgrind_recipe(cfg: Config) -> str:
     work = cfg.out_dir / "callgrind-count-pair"
     legs = {leg: count_pair_leg_binary(cfg, leg) for leg in COUNT_PAIR_LEGS}
     dump = work / input_file(COUNT_PAIR_INPUT)
-    cache = work / "x.dtcache"
+    cache = work / "x.pgdt"
 
     lines: list[str] = []
     step = 0

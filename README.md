@@ -79,7 +79,7 @@ Otherwise, this bash snippet will download it to `$PWD`:
 Use case: you have a dump and you want to know what's in it.
 
 ```bash
-# Parse a dump (builds foo.xz.dtcache)
+# Parse a dump (builds foo.xz.pgdt)
 pgdt parse --source=foo.xz
 
 # Inspect what you parsed: tables, roles, etc
@@ -98,7 +98,7 @@ See: [dump inspection docs](docs/manual/dump-inspection.md) for more.
 Use case: you want to query the data in your dump.
 
 ```bash
-# Parse a dump (builds foo.xz.dtcache)
+# Parse a dump (builds foo.xz.pgdt)
 pgdt parse --source=foo.xz
 
 # Then query it as catalog `foo`

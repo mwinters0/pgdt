@@ -70,7 +70,7 @@ fn non_seekable_xz() -> (tempfile::TempDir, PathBuf) {
 }
 
 /// A plain (uncompressed) copy of the same content, in its own directory so
-/// its colocated `.dtcache` cannot collide with either xz fixture's.
+/// its colocated `.pgdt` cannot collide with either xz fixture's.
 fn plain() -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql");
@@ -147,7 +147,7 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
     }
     assert_eq!(table["compressed_file_size"], xz_json["identity"]["LocalFile"]["stored_size"]);
     // The envelope is the cache file's, so the cache alone exports it whole.
-    let cache = xz_path.with_extension("xz.dtcache");
+    let cache = xz_path.with_extension("xz.pgdt");
     let out = run(&["info", "--dtcache", cache.to_str().unwrap(), "--json"]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let offline: serde_json::Value = serde_json::from_str(&stdout_of(&out)).unwrap();
@@ -179,7 +179,7 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
 fn info_detail_states_the_container_shape_from_the_cache_alone() {
     let (_xd, xz_path) = seekable_xz();
     parse(&xz_path);
-    let cache = xz_path.with_extension("xz.dtcache");
+    let cache = xz_path.with_extension("xz.pgdt");
     assert!(cache.exists(), "parse writes the cache beside the dump: {}", cache.display());
 
     for args in [
@@ -369,7 +369,7 @@ fn overwrite_with_plain_bytes_of_the_same_length(path: &Path) {
 fn every_command_refuses_a_cache_that_does_not_describe_the_file() {
     let (_dir, path) = seekable_xz();
     parse(&path);
-    let cache = PathBuf::from(format!("{}.dtcache", path.display()));
+    let cache = PathBuf::from(format!("{}.pgdt", path.display()));
     let before = std::fs::read(&cache).unwrap();
     overwrite_with_plain_bytes_of_the_same_length(&path);
 
@@ -403,7 +403,7 @@ fn parse_scans_once_the_refused_cache_is_removed_or_may_be_replaced() {
     for replace in [false, true] {
         let (_dir, path) = seekable_xz();
         parse(&path);
-        let cache = PathBuf::from(format!("{}.dtcache", path.display()));
+        let cache = PathBuf::from(format!("{}.pgdt", path.display()));
         let before = std::fs::read(&cache).unwrap();
         overwrite_with_plain_bytes_of_the_same_length(&path);
         let mut args = vec!["parse", "--source", path.to_str().unwrap()];
@@ -445,7 +445,7 @@ fn parse_scans_once_the_refused_cache_is_removed_or_may_be_replaced() {
 fn a_cache_recorded_against_another_file_is_refused_without_walking_this_one() {
     let (_dir, path) = seekable_xz();
     parse(&path);
-    let cache = PathBuf::from(format!("{}.dtcache", path.display()));
+    let cache = PathBuf::from(format!("{}.pgdt", path.display()));
     let before = std::fs::read(&cache).unwrap();
 
     let bytes = std::fs::read(&path).unwrap();

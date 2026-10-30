@@ -351,7 +351,7 @@ fn ms(n: u64) -> Duration {
 /// A cache path in a fresh tempdir. A remote source has nothing to sit beside,
 /// so every command below is given one.
 fn cache_in(dir: &tempfile::TempDir) -> String {
-    dir.path().join("remote.dtcache").to_str().unwrap().to_string()
+    dir.path().join("remote.pgdt").to_str().unwrap().to_string()
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn parse_over_a_url_finds_what_a_local_parse_finds() {
     let remote = run_ok(&["parse", "--source", &oracle.url(), "--dtcache", &cache]);
 
     let local_dir = tempfile::tempdir().unwrap();
-    let local_cache = local_dir.path().join("local.dtcache");
+    let local_cache = local_dir.path().join("local.pgdt");
     let dump = fixture(16, "edge_cases", "default");
     let local = run_ok(&[
         "parse",
@@ -430,9 +430,9 @@ fn a_remote_cache_defaults_to_the_urls_last_segment_in_the_working_directory() {
     let dir = tempfile::tempdir().unwrap();
     let said = run_ok_in(&dir, &["parse", "--source", &oracle.url()]);
 
-    // Predictable by reading the URL: `…/dump.sql` becomes `./dump.sql.dtcache`.
-    assert!(said.contains("wrote cache to dump.sql.dtcache"), "{said}");
-    assert!(dir.path().join("dump.sql.dtcache").exists(), "{:?}", std::fs::read_dir(dir.path()));
+    // Predictable by reading the URL: `…/dump.sql` becomes `./dump.sql.pgdt`.
+    assert!(said.contains("wrote cache to dump.sql.pgdt"), "{said}");
+    assert!(dir.path().join("dump.sql.pgdt").exists(), "{:?}", std::fs::read_dir(dir.path()));
 
     // And the run that follows reads it: `info` never scans, so a report of
     // this dump's tables can only have come from the cache just written.
@@ -466,7 +466,7 @@ fn two_hosts_serving_the_same_name_share_a_cache_and_the_origin_says_so() {
 
 #[test]
 fn a_cache_recorded_against_another_object_names_the_url_that_refused_it() {
-    // The cache path is derived, so "the cache at dump.sql.dtcache" does not
+    // The cache path is derived, so "the cache at dump.sql.pgdt" does not
     // say which `dump.sql` this run asked for.
     let here = serving_dump();
     let mut longer = dump_bytes();
@@ -479,7 +479,7 @@ fn a_cache_recorded_against_another_object_names_the_url_that_refused_it() {
     assert!(!refused.status.success());
     let said = stderr_of(&refused);
     assert!(said.contains(&format!("Error: {}: the cache at", elsewhere.url())), "{said}");
-    assert!(said.contains("dump.sql.dtcache"), "the cache is still named: {said}");
+    assert!(said.contains("dump.sql.pgdt"), "the cache is still named: {said}");
 }
 
 // ---------------------------------------------------------------------------
@@ -717,7 +717,7 @@ async fn a_cancelled_remote_read_is_an_interrupted_run_rather_than_an_error() {
     let oracle = Oracle::serving(dump_bytes()).stalling_request(FIRST_READ, STALL).start();
     let source = source_of(&oracle.url()).await;
     let dir = tempfile::tempdir().unwrap();
-    let mode = CacheMode::enabled(dir.path().join("remote.dtcache"));
+    let mode = CacheMode::enabled(dir.path().join("remote.pgdt"));
     let cancel = CancellationToken::new();
 
     // Cancel while the stalled read is in flight, so the flag lands inside a
@@ -760,7 +760,7 @@ fn a_network_failure_names_the_url_and_the_command_exits_non_zero() {
 
 #[test]
 fn a_scheme_this_build_does_not_read_is_refused_before_anything_is_fetched() {
-    let out = run(&["info", "--source", "ftp://example.com/koji.dump", "--dtcache", "x.dtcache"]);
+    let out = run(&["info", "--source", "ftp://example.com/koji.dump", "--dtcache", "x.pgdt"]);
     assert!(!out.status.success());
     let err = stderr_of(&out);
     assert!(err.contains("`ftp:`"), "{err}");
@@ -939,7 +939,7 @@ fn a_cached_seek_table_spares_a_remote_xz_the_walk_entirely() {
     let said = run_in(&dir, &["parse", "--source", &xz_url(&oracle)]);
     assert!(said.status.success(), "{}", stderr_of(&said));
     assert!(
-        String::from_utf8_lossy(&said.stdout).contains("wrote cache to dump.sql.xz.dtcache"),
+        String::from_utf8_lossy(&said.stdout).contains("wrote cache to dump.sql.xz.pgdt"),
         "{}",
         String::from_utf8_lossy(&said.stdout),
     );

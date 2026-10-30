@@ -28,7 +28,7 @@ fn a_gzip_dump_reads_as_its_plaintext() {
         std::fs::copy(gzip_fixture(version, "edge_cases", "compress"), &gz).unwrap();
         let plain = plaintext_beside(&gz);
         let (gz_arg, plain_arg) = (gz.to_str().unwrap(), plain.to_str().unwrap());
-        let cache = dir.path().join("dump.sql.gz.dtcache");
+        let cache = dir.path().join("dump.sql.gz.pgdt");
 
         for table in ["public.widgets", "logs.events", "public.escapes"] {
             let expected = run_ok(&["query", "--source", plain_arg, "--table", table]);
@@ -293,7 +293,7 @@ fn a_gzip_first_pass_says_whether_it_inflates_in_parallel() {
         ("3", "inflating in parallel while it builds the index, its scan one reader"),
         ("1", "reading serially while it builds the index"),
     ] {
-        let cache = dir.path().join(format!("at-{jobs}.dtcache"));
+        let cache = dir.path().join(format!("at-{jobs}.pgdt"));
         let cache_arg = cache.to_str().unwrap();
         let stderr =
             stderr_ok(&["parse", "--source", gz_arg, "--jobs", jobs, "--dtcache", cache_arg]);

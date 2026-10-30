@@ -141,7 +141,7 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
         // through the cache it persisted, and a shared one would let the
         // first pass answer for the second.
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("dump.dtcache");
+        let path = dir.path().join("dump.pgdt");
         let cold = Cold { cache: CacheMode::enabled(&path), extent, ..Cold::default() };
         let stream = cold.stream(Arc::clone(&source), "public.t_array", QueryOptions::default());
         let mut stream = stream.await.unwrap().unwrap();
@@ -184,7 +184,7 @@ async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
 
     for extent in [ScanExtent::UntilTargetSettled, ScanExtent::Full] {
         let dir = tempfile::tempdir().unwrap();
-        let cache = CacheMode::enabled(dir.path().join("dump.dtcache"));
+        let cache = CacheMode::enabled(dir.path().join("dump.pgdt"));
         let cold = Cold { cache, extent, ..Cold::default() };
         let stream = cold.stream(Arc::clone(&source), "public.t_array_shape", Default::default());
         let mut stream = stream.await.unwrap().unwrap();

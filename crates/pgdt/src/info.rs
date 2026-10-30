@@ -30,7 +30,7 @@ pub(crate) struct InfoArgs {
     /// anything.
     #[arg(long)]
     source: Option<String>,
-    /// Cache file path, defaulting to the dump's name plus `.dtcache`:
+    /// Cache file path, defaulting to the dump's name plus `.pgdt`:
     /// beside a local dump, and for a URL in the working directory, named
     /// after the URL's last path segment. Required when `--source` is
     /// omitted — that is the cache-only entry point, and there is nothing

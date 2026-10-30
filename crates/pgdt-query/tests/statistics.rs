@@ -2585,7 +2585,7 @@ async fn a_parse_fails_at_an_undeclared_label_only_where_the_labels_are_exact() 
 async fn a_block_rewritten_at_the_same_size_is_refused() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("rewritten.sql");
-    let cache_path = dir.path().join("elsewhere").join("rewritten.dtcache");
+    let cache_path = dir.path().join("elsewhere").join("rewritten.pgdt");
     std::fs::create_dir(cache_path.parent().unwrap()).unwrap();
     let mode = CacheMode::enabled(cache_path.clone());
     let before = "COPY public.t (a) FROM stdin;\n11\n2\n\\.\nSELECT 1;\n";

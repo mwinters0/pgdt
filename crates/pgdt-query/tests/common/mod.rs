@@ -55,7 +55,7 @@ pub async fn dump_over(
     index: &DumpIndex,
     dir: &Path,
 ) -> pgdt_core::Result<Dump> {
-    let mode = CacheMode::enabled(dir.join("held.dtcache"));
+    let mode = CacheMode::enabled(dir.join("held.pgdt"));
     let watch = SourceWatch::open(source.as_ref(), StrictIdentity::ADVISORY).await?;
     mode.save(&watch, source.as_ref(), index).await?;
     Dump::opened(mode.open_source(source).await?).await

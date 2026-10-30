@@ -494,7 +494,7 @@ class StatisticsFlag(unittest.TestCase):
         # read against a figure that states it.
         flag = measure.NO_STATISTICS.split()
         argvs = [
-            measure.profile_argv("parse", "/dump.sql", "/tmp/x.dtcache"),
+            measure.profile_argv("parse", "/dump.sql", "/tmp/x.pgdt"),
             *(measure.heaptrack_argv(shape, "/d", "/c") for shape, _ in measure.HEAPTRACK_SHAPES),
         ]
         for argv in argvs:
@@ -906,7 +906,7 @@ class DynamicFilterFigures(unittest.TestCase):
             with self.subTest(command=command):
                 builder, _, timed = measure._script(command).partition(" && ")
                 self.assertTrue(builder.startswith("/pgdt parse --source /dump.sql "))
-                self.assertIn("--dtcache /dump.sql.dtcache ", builder)
+                self.assertIn("--dtcache /dump.sql.pgdt ", builder)
                 self.assertIn(measure.GATHER_STATISTICS, builder)
                 self.assertTrue(timed.startswith("time "))
                 self.assertIn(f"--source {measure.DFCLI_CATALOG}=/dump.sql ", timed)
@@ -2507,7 +2507,7 @@ class PeakRss(unittest.TestCase):
         # A wrapped `parse`, not a different command: what this figure reports
         # has to be the resident set of the scan the rest of the doc measures.
         script = measure._script("parse-rss")
-        self.assertIn("/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache", script)
+        self.assertIn("/pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt", script)
 
     def test_the_redirection_takes_pgdt_s_stdout_and_not_the_reading(self):
         # The reading goes to stderr, where bash's own `time` report goes, so
@@ -8161,7 +8161,7 @@ class ProfileRecipe(unittest.TestCase):
                 # own paths; what is left is the flags both must agree on.
                 self.assertEqual(timed[:2], ["time", "/pgdt"])
                 timed = [w for w in timed[2:] if w != ">/dev/null"]
-                profiled = measure.profile_argv(shape, "/dump.sql", "/tmp/x.dtcache")
+                profiled = measure.profile_argv(shape, "/dump.sql", "/tmp/x.pgdt")
                 self.assertEqual(profiled, timed)
 
     def test_a_profiled_query_is_preceded_by_the_builder_its_figure_runs(self):
@@ -8174,7 +8174,7 @@ class ProfileRecipe(unittest.TestCase):
         binary = self._binary(cfg)
         c = measure.contained_prefix(cfg, measure.PROFILE_MEMORY)
         for shape in measure.PROFILE_SHAPES:
-            builder = measure.profile_builder_argv(shape, "/dump.sql", "/tmp/x.dtcache")
+            builder = measure.profile_builder_argv(shape, "/dump.sql", "/tmp/x.pgdt")
             with self.subTest(shape=shape):
                 if not shape.startswith(measure.DATA_LEVEL_QUERIES):
                     self.assertIsNone(builder)
@@ -8184,7 +8184,7 @@ class ProfileRecipe(unittest.TestCase):
                 self.assertEqual(builder, [w for w in timed[1:] if w != ">/dev/null"])
                 for name in measure.PROFILE_INPUTS:
                     source = cfg.warm_dir / f"{name}.sql"
-                    built = measure.profile_builder_argv(shape, source, cfg.warm_dir / "profile.dtcache")
+                    built = measure.profile_builder_argv(shape, source, cfg.warm_dir / "profile.pgdt")
                     record = next(
                         i for i, ln in enumerate(lines)
                         if ln.startswith(f"{c} {measure.PERF} record")
@@ -8204,7 +8204,7 @@ class ProfileRecipe(unittest.TestCase):
         dump = cfg.warm_dir / "dynfilter.sql"
         self.assertIn(f"cp -n {cfg.cache_dir / 'dynfilter.sql'} {dump}", recipe)
         self.assertIn(
-            f"parse --source {dump} --dtcache {dump}.dtcache --jobs {measure.SWEEP_JOBS} "
+            f"parse --source {dump} --dtcache {dump}.pgdt --jobs {measure.SWEEP_JOBS} "
             f"{measure.GATHER_STATISTICS} >/dev/null",
             recipe,
         )
@@ -8233,7 +8233,7 @@ class ProfileRecipe(unittest.TestCase):
                     )
         self.assertIn("uv run release.py build --target x86_64-unknown-linux-gnu --features=introspect", recipe)
         self.assertIn(f"--target-dir {introspect_target})", recipe)
-        self.assertIn(f"{dump}.dtcache", recipe.splitlines()[-1])
+        self.assertIn(f"{dump}.pgdt", recipe.splitlines()[-1])
 
     def test_the_differential_runs_each_shape_as_the_figure_times_it(self):
         """The downstream-build rule's differential is read against a verdict,
@@ -8243,7 +8243,7 @@ class ProfileRecipe(unittest.TestCase):
         for command, _ in measure.RELEASE_PROFILE_SHAPES:
             with self.subTest(shape=command):
                 env, argv, builder = measure.release_diff_invocation(
-                    command, "/dump.sql", "/tmp/x.dtcache"
+                    command, "/dump.sql", "/tmp/x.pgdt"
                 )
                 script = measure._script(command)
                 before, _, timed = script.partition("time ")
@@ -8330,7 +8330,7 @@ class ProfileRecipe(unittest.TestCase):
             if line.startswith("  -- ") and "pgdt-release-" in line:
                 with self.subTest(line=line):
                     self.assertTrue(f"--source {dump} " in line or f"={dump} " in line, line)
-        self.assertIn(f"{dump}.dtcache", lines[-1].split())
+        self.assertIn(f"{dump}.pgdt", lines[-1].split())
 
     def test_the_recipe_never_runs_anything(self):
         # The same rule koji's recipe obeys: this prints, and a session runs it
@@ -8491,7 +8491,7 @@ class HeaptrackRecipe(unittest.TestCase):
         for i in starts:
             with self.subTest(line=lines[i]):
                 self.assertTrue(lines[i - 1].startswith("rm -f "), lines[i - 1])
-                self.assertIn("heaptrack.dtcache", lines[i - 1])
+                self.assertIn("heaptrack.pgdt", lines[i - 1])
 
     def test_each_pair_is_read_as_a_difference(self):
         # The whole reason there are two recordings a pair: a single one names
@@ -8519,7 +8519,7 @@ class HeaptrackRecipe(unittest.TestCase):
         axis = measure.HEAPTRACK_FIRST_PASS_AXIS
         self.assertEqual({name for _, name in axis}, {measure.GZIP_LIMIT_LEG})
         first, second = (
-            measure.heaptrack_argv(shape, "/dump.gz", "/tmp/x.dtcache") for shape, _ in axis
+            measure.heaptrack_argv(shape, "/dump.gz", "/tmp/x.pgdt") for shape, _ in axis
         )
         differing = [i for i, (a, b) in enumerate(zip(first, second)) if a != b]
         self.assertEqual(len(first), len(second))
@@ -8533,7 +8533,7 @@ class HeaptrackRecipe(unittest.TestCase):
         moved with the budget would put a second variable in the one reading
         this pair exists to isolate."""
         argvs = [
-            measure.heaptrack_argv(shape, "/dump.sql", "/tmp/x.dtcache")
+            measure.heaptrack_argv(shape, "/dump.sql", "/tmp/x.pgdt")
             for shape, _ in measure.HEAPTRACK_AXIS
         ]
         self.assertEqual(len(argvs), 2)
@@ -8559,7 +8559,7 @@ class HeaptrackRecipe(unittest.TestCase):
                 head, sep, rest = script.partition("/pgdt ")
                 self.assertTrue(sep, script)
                 timed = [w for w in rest.split() if w != ">/dev/null"]
-                recorded = measure.heaptrack_argv(shape, "/dump.sql", "/tmp/x.dtcache")
+                recorded = measure.heaptrack_argv(shape, "/dump.sql", "/tmp/x.pgdt")
                 self.assertEqual(recorded, timed)
 
     def test_every_recorded_invocation_states_its_worker_count(self):
@@ -8717,7 +8717,7 @@ class CallgrindRecipe(unittest.TestCase):
         for command, _, _ in measure.COUNT_PAIR_SHAPES:
             with self.subTest(shape=command):
                 env, argv, builder = measure.callgrind_invocation(
-                    command, "/dump.sql", "/tmp/x.dtcache", 1 << 29
+                    command, "/dump.sql", "/tmp/x.pgdt", 1 << 29
                 )
                 stated = ["--memory", str(1 << 29)]
                 if argv[0] == "sql":
@@ -9737,7 +9737,7 @@ class ParallelScanThroughputProvider(unittest.TestCase):
                 self.assertNotIn("time ", builder)
                 self.assertIn(measure.GATHER_STATISTICS, builder)
                 self.assertIn(f"--jobs {measure.SWEEP_JOBS} ", builder)
-                self.assertIn("--dtcache /dump.sql.dtcache ", builder)
+                self.assertIn("--dtcache /dump.sql.pgdt ", builder)
                 self.assertTrue(
                     rest.startswith(
                         f"time {measure.DFCLI_PARTITIONS}={jobs} {measure.SQL_SHELL} "
@@ -9882,9 +9882,9 @@ class ParallelScanThroughputColdNvme(unittest.TestCase):
 
     def test_the_builder_is_the_warm_legs_but_for_where_it_writes(self):
         warm = measure._script(f"{measure.PARALLEL_SCAN}-jobs-1").partition(" && ")[0]
-        built = measure.PREBUILT_BUILDER.format(name="dump.sql.dtcache")
+        built = measure.PREBUILT_BUILDER.format(name="dump.sql.pgdt")
         self.assertEqual(
-            built.replace(f"{measure.PREBUILT_MOUNT}/dump.sql.dtcache", "/dump.sql.dtcache"),
+            built.replace(f"{measure.PREBUILT_MOUNT}/dump.sql.pgdt", "/dump.sql.pgdt"),
             warm,
         )
         self.assertNotIn("time ", built)
@@ -9901,7 +9901,7 @@ class ParallelScanThroughputColdNvme(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             session, logged = self._session(tmp)
             session.prebuild(measure._parallel_specs())
-            builds = [m for m in logged if "--dtcache /out/control.sql.dtcache" in m]
+            builds = [m for m in logged if "--dtcache /out/control.sql.pgdt" in m]
             self.assertEqual(len(builds), 1, logged)
             self.assertNotIn("time ", builds[0])
             dump = session.input_path("control", "cold-nvme-parallel")
@@ -9909,8 +9909,8 @@ class ParallelScanThroughputColdNvme(unittest.TestCase):
             self.assertIn(f"{dump.parent}:/out ", builds[0])
             logged.clear()
             session.time_run(self._cold()[0])
-            cache = dump.with_name(dump.name + ".dtcache")
-            self.assertTrue(any(f"{cache}:/dump.sql.dtcache:ro" in m for m in logged), logged)
+            cache = dump.with_name(dump.name + ".pgdt")
+            self.assertTrue(any(f"{cache}:/dump.sql.pgdt:ro" in m for m in logged), logged)
             self.assertTrue(any("drop_caches" in m for m in logged), logged)
 
     def test_a_warm_leg_is_given_no_built_cache(self):
@@ -9920,7 +9920,7 @@ class ParallelScanThroughputColdNvme(unittest.TestCase):
             warm = [s for s in measure._parallel_specs() if s.binary == "dfcli"][0]
             logged.clear()
             session.time_run(warm)
-            self.assertFalse(any(".dtcache:/dump.sql.dtcache" in m for m in logged), logged)
+            self.assertFalse(any(".pgdt:/dump.sql.pgdt" in m for m in logged), logged)
 
     def test_the_column_stops_where_the_regime_test_does(self):
         specs = measure._parallel_specs()

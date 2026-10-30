@@ -162,7 +162,7 @@ fn resolved_report(stderr: &str) -> &str {
 #[test]
 fn a_fresh_parse_announces_the_preamble_pass_and_the_scan_separately() {
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("out.dtcache");
+    let cache = dir.path().join("out.pgdt");
     let out = run(&[
         "parse",
         "--source",
@@ -200,7 +200,7 @@ fn a_fresh_parse_announces_the_preamble_pass_and_the_scan_separately() {
 #[test]
 fn an_uninterrupted_parse_never_looks_like_a_resumed_one() {
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("out.dtcache");
+    let cache = dir.path().join("out.pgdt");
     let out = run(&[
         "parse",
         "--source",
@@ -262,7 +262,7 @@ async fn a_genuine_resume_reports_no_preamble_pass_and_names_the_frontier() {
 #[test]
 fn scan_started_names_jobs_and_the_stated_memory_budget_as_a_quantity() {
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("out.dtcache");
+    let cache = dir.path().join("out.pgdt");
     let out = run(&[
         "parse",
         "--source",
@@ -302,7 +302,7 @@ fn scan_started_names_jobs_and_the_stated_memory_budget_as_a_quantity() {
 #[test]
 fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("out.dtcache");
+    let cache = dir.path().join("out.pgdt");
     let out = run(&[
         "parse",
         "--source",
@@ -352,7 +352,7 @@ fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
 #[test]
 fn a_scanning_command_reports_the_arrangement_it_resolved() {
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("out.dtcache");
+    let cache = dir.path().join("out.pgdt");
     let out = run(&[
         "parse",
         "--source",
@@ -431,7 +431,7 @@ fn a_scanning_command_reports_the_arrangement_it_resolved() {
 fn the_stated_half_is_reported_before_the_seek_table_walk() {
     let (_dir, xz) = seekable_xz();
     let out_dir = tempfile::tempdir().unwrap();
-    let cache = out_dir.path().join("out.dtcache");
+    let cache = out_dir.path().join("out.pgdt");
     let out = run(&[
         "parse",
         "--source",
@@ -459,7 +459,7 @@ fn the_stated_half_is_reported_before_the_seek_table_walk() {
 #[test]
 fn the_mode_report_marks_a_stated_flag_as_stated() {
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("out.dtcache");
+    let cache = dir.path().join("out.pgdt");
     let out = run(&[
         "parse",
         "--source",
@@ -501,7 +501,7 @@ fn the_mode_report_marks_a_stated_flag_as_stated() {
 #[test]
 fn a_stated_memory_budget_at_a_serial_job_count_is_not_marked_default() {
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("out.dtcache");
+    let cache = dir.path().join("out.pgdt");
     let out = run(&[
         "parse",
         "--source",
@@ -530,7 +530,7 @@ fn a_stated_memory_budget_at_a_serial_job_count_is_not_marked_default() {
 #[test]
 fn no_status_line_ever_prints_nones_or_somes() {
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("out.dtcache");
+    let cache = dir.path().join("out.pgdt");
     let out = run(&[
         "parse",
         "--source",
@@ -551,7 +551,7 @@ fn no_status_line_ever_prints_nones_or_somes() {
 #[test]
 fn a_fully_cached_reparse_announces_no_scan() {
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("out.dtcache");
+    let cache = dir.path().join("out.pgdt");
     let first = run(&[
         "parse",
         "--source",
@@ -581,7 +581,7 @@ fn a_fully_cached_reparse_announces_no_scan() {
 #[test]
 fn info_announces_no_scan() {
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("out.dtcache");
+    let cache = dir.path().join("out.pgdt");
     let parsed = run(&[
         "parse",
         "--source",
@@ -614,7 +614,7 @@ fn info_announces_no_scan() {
 fn the_seek_table_walk_is_announced_once_and_only_on_a_fresh_open() {
     let (_dir, xz_path) = seekable_xz();
     let cache_dir = tempfile::tempdir().unwrap();
-    let cache = cache_dir.path().join("out.dtcache");
+    let cache = cache_dir.path().join("out.pgdt");
 
     let first = run(&[
         "parse",
@@ -678,10 +678,10 @@ fn an_xz_parse_defaults_to_the_cores_and_a_plain_one_to_serial() {
             .to_string()
     };
 
-    let compressed = started_of(xz_path.to_str().unwrap(), cache_dir.path().join("xz.dtcache"));
+    let compressed = started_of(xz_path.to_str().unwrap(), cache_dir.path().join("xz.pgdt"));
     assert!(compressed.contains(&format!("jobs={cores}")), "{compressed}");
 
-    let plain = started_of(plain_dump().to_str().unwrap(), cache_dir.path().join("plain.dtcache"));
+    let plain = started_of(plain_dump().to_str().unwrap(), cache_dir.path().join("plain.pgdt"));
     assert!(plain.contains("jobs=1"), "{plain}");
 }
 
@@ -714,7 +714,7 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         "--source",
         compressed.to_str().unwrap(),
         "--dtcache",
-        dir.path().join("declined.dtcache").to_str().unwrap(),
+        dir.path().join("declined.pgdt").to_str().unwrap(),
         "--statistics-level",
         "metadata",
         "--jobs",
@@ -754,7 +754,7 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         "--source",
         compressed.to_str().unwrap(),
         "--dtcache",
-        dir.path().join("afforded.dtcache").to_str().unwrap(),
+        dir.path().join("afforded.pgdt").to_str().unwrap(),
         "--statistics-level",
         "metadata",
         "--jobs",
@@ -772,7 +772,7 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         "--source",
         plain_dump().to_str().unwrap(),
         "--dtcache",
-        dir.path().join("plain.dtcache").to_str().unwrap(),
+        dir.path().join("plain.pgdt").to_str().unwrap(),
         "--statistics-level",
         "metadata",
         "--jobs",
@@ -801,7 +801,7 @@ fn a_gathering_parse_is_not_corrected() {
             "--source",
             plain_dump().to_str().unwrap(),
             "--dtcache",
-            dir.path().join(format!("{leg}.dtcache")).to_str().unwrap(),
+            dir.path().join(format!("{leg}.pgdt")).to_str().unwrap(),
             "--jobs",
             "2",
             "--chunk-size",

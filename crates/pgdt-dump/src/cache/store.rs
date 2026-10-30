@@ -23,10 +23,10 @@ use pgdt_io::{ByteRangeSource, KnownCompression, Origin};
 use pgdt_model::{CACHE_FORMAT_VERSION, DataBlock, DumpIndex, SpanBody, calendar_end};
 
 /// The default cache location when no explicit path is given:
-/// `<dump-path>.dtcache`.
+/// `<dump-path>.pgdt`.
 pub fn colocated_path(dump_path: &Path) -> PathBuf {
     let mut path = dump_path.as_os_str().to_owned();
-    path.push(".dtcache");
+    path.push(".pgdt");
     PathBuf::from(path)
 }
 

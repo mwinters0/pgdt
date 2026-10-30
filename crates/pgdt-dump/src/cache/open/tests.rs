@@ -8,8 +8,8 @@ use super::*;
 /// cache, which names no directory (`docs/design/decisions.md`, "D115").
 #[test]
 fn a_first_pass_spills_beside_its_cache_or_in_the_temp_directory() {
-    let beside = CacheMode::enabled("/srv/dumps/koji.sql.gz.dtcache");
+    let beside = CacheMode::enabled("/srv/dumps/koji.sql.gz.pgdt");
     assert_eq!(beside.spill_dir(), Path::new("/srv/dumps"));
-    assert_eq!(CacheMode::enabled("koji.sql.gz.dtcache").spill_dir(), Path::new("."));
+    assert_eq!(CacheMode::enabled("koji.sql.gz.pgdt").spill_dir(), Path::new("."));
     assert_eq!(CacheMode::DISABLED.spill_dir(), std::env::temp_dir());
 }

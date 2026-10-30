@@ -528,7 +528,7 @@ fn contradictory_or_empty_statistics_flags_are_refused() {
         assert!(!out.status.success(), "{extra:?} was accepted");
         assert!(stderr_of(&out).contains(says), "{extra:?}: {}", stderr_of(&out));
     }
-    assert!(!dump.with_extension("sql.dtcache").exists(), "a refusal scans nothing");
+    assert!(!dump.with_extension("sql.pgdt").exists(), "a refusal scans nothing");
 }
 
 /// **`query` skips what the statistics rule out, says so, and prints what
@@ -706,7 +706,7 @@ fn a_query_of_a_metadata_level_table_censuses_it_and_writes_nothing() {
     let listing = run_ok(&["info", "--source", dump.to_str().unwrap()]);
     assert!(listing.lines().any(|l| l == "    level: metadata"), "{listing}");
     assert!(!listing.lines().any(|l| l == "    level: data"), "{listing}");
-    let cache = dump.with_extension("sql.dtcache");
+    let cache = dump.with_extension("sql.pgdt");
     let written = std::fs::read(&cache).unwrap();
     let (got, said) = query(&dump);
     assert_eq!(got, expected);

@@ -100,7 +100,7 @@ async fn source_of(url: &str) -> Arc<dyn ByteRangeSource> {
 /// A cache path in a fresh tempdir. A remote source has nothing to sit beside,
 /// so every command below is given one.
 fn cache_in(dir: &tempfile::TempDir) -> String {
-    dir.path().join("conformance.dtcache").to_str().unwrap().to_string()
+    dir.path().join("conformance.pgdt").to_str().unwrap().to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +205,7 @@ async fn a_real_server_accepts_the_precondition_every_read_after_the_probe_carri
 /// from and in nothing else.
 fn local_parse() -> String {
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("local.dtcache");
+    let cache = dir.path().join("local.pgdt");
     let dump = fixtures_root().join(FIXTURE);
     let out = run_ok(&[
         "parse",

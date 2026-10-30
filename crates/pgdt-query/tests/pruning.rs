@@ -526,7 +526,7 @@ async fn check_fixture(
     let (dir, dump, index) = gathered(fixture, TINY_GROUP).await;
     // Resolution reads no statistic, so what refuses is asked of a cache
     // holding none, which loads in a fraction of the time.
-    let plain = dir.path().join("plain.dtcache");
+    let plain = dir.path().join("plain.pgdt");
     let source: Arc<dyn pgdt_io::ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     let request = StatisticsRequest::METADATA;
     map_file(

@@ -331,7 +331,7 @@ async fn check_fixture(
     tally: &mut Tally,
 ) {
     let (dir, dump, index) = gathered(fixture).await;
-    let plain = dir.path().join("plain.dtcache");
+    let plain = dir.path().join("plain.pgdt");
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     map_file(
         CacheMode::enabled(plain.clone()).open_source(Arc::clone(&source)).await.unwrap(),

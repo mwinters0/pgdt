@@ -19,7 +19,7 @@ fn listing(dir: &Path) -> Vec<String> {
 #[test]
 fn a_save_leaves_the_previous_cache_whole_until_it_renames() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("dump.sql.dtcache");
+    let path = dir.path().join("dump.sql.pgdt");
     std::fs::write(&path, b"the previous cache").unwrap();
 
     let failed = write_beside(&path, |writer, _| {
@@ -28,9 +28,9 @@ fn a_save_leaves_the_previous_cache_whole_until_it_renames() {
         assert_eq!(std::fs::read(&path).unwrap(), b"the previous cache");
         let names = listing(dir.path());
         assert_eq!(names.len(), 2, "the cache and the save's own file: {names:?}");
-        let partial = names.iter().find(|name| *name != "dump.sql.dtcache").unwrap();
+        let partial = names.iter().find(|name| *name != "dump.sql.pgdt").unwrap();
         assert!(
-            partial.starts_with("dump.sql.dtcache.") && partial.ends_with(".tmp"),
+            partial.starts_with("dump.sql.pgdt.") && partial.ends_with(".tmp"),
             "the partial file is named for its cache: {partial}"
         );
         assert_eq!(std::fs::read(dir.path().join(partial)).unwrap(), b"the first half of the next");
@@ -38,7 +38,7 @@ fn a_save_leaves_the_previous_cache_whole_until_it_renames() {
     });
     assert!(matches!(failed, Err(Error::CacheDisabled { .. })));
     assert_eq!(std::fs::read(&path).unwrap(), b"the previous cache");
-    assert_eq!(listing(dir.path()), ["dump.sql.dtcache"]);
+    assert_eq!(listing(dir.path()), ["dump.sql.pgdt"]);
 
     write_beside(&path, |writer, _| {
         writer.write_all(b"the next cache")?;
@@ -47,5 +47,5 @@ fn a_save_leaves_the_previous_cache_whole_until_it_renames() {
     })
     .unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), b"the next cache");
-    assert_eq!(listing(dir.path()), ["dump.sql.dtcache"]);
+    assert_eq!(listing(dir.path()), ["dump.sql.pgdt"]);
 }

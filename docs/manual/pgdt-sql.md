@@ -8,7 +8,7 @@ Everything `datafusion-cli` does, it does — the REPL, `-c`, `-f`, `--format`,
 carries.
 
 ```sh
-pgdt parse --source koji.dump      # once: builds koji.dump.dtcache
+pgdt parse --source koji.dump      # once: builds koji.dump.pgdt
 pgdt sql --source koji=koji.dump   # then query it
 ```
 

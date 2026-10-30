@@ -42,7 +42,7 @@ fn already_cancelled() -> CancellationToken {
 }
 
 /// A private copy of the hand-written `edge_cases.sql` in a fresh tempdir, so each
-/// test may freely write the colocated `.dtcache` beside it — same fixture and
+/// test may freely write the colocated `.pgdt` beside it — same fixture and
 /// same convention as `tests/query_cache.rs`, which is what makes the "a query
 /// stops at its target" setup below behave identically here.
 mod common;
@@ -156,7 +156,7 @@ async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
                     let label =
                         format!("{schema_dir}/{flag_set}, {jobs} jobs, {chunk_size}B chunk");
                     let mode =
-                        CacheMode::enabled(dir.path().join(format!("{chunk_size}-{jobs}.dtcache")));
+                        CacheMode::enabled(dir.path().join(format!("{chunk_size}-{jobs}.pgdt")));
                     let options =
                         ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() };
                     let run = map_file(

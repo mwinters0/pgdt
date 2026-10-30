@@ -50,7 +50,7 @@ fn info_refuses_a_moved_signal_under_strict_time_and_reports_without_it() {
     let refused = run(&["info", "--source", dump, "--strict-identity=time"]);
     assert!(!refused.status.success(), "`time` binds the modification time on `info` too");
     let said = stderr_of(&refused);
-    assert!(said.contains("dump.sql.dtcache"), "it names the cache it refused: {said}");
+    assert!(said.contains("dump.sql.pgdt"), "it names the cache it refused: {said}");
     assert!(said.contains(dump), "and the source it refused it about: {said}");
     assert!(said.contains("modification time has moved"), "and why: {said}");
     assert!(
@@ -74,7 +74,7 @@ fn strict_identity_without_a_source_is_a_usage_error() {
     let (_dir, dump) = sandboxed();
     let dump = dump.to_str().unwrap();
     run_ok(&["parse", "--source", dump]);
-    let cache = format!("{dump}.dtcache");
+    let cache = format!("{dump}.pgdt");
 
     // The same invocation is fine without the flag — cache-only mode is the
     // supported entry point, and it is the *flag* that is refused.
@@ -102,5 +102,5 @@ fn a_scanning_command_names_the_source_in_a_strict_identity_refusal() {
     assert!(!refused.status.success(), "`time` binds the modification time on `query` too");
     let said = stderr_of(&refused);
     assert!(said.contains(&format!("Error: {dump}: the cache at")), "{said}");
-    assert!(said.contains("dump.sql.dtcache"), "the cache is still named: {said}");
+    assert!(said.contains("dump.sql.pgdt"), "the cache is still named: {said}");
 }

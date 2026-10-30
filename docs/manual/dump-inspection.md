@@ -5,7 +5,7 @@ everything `pg_dump` wrote — without decoding any row data. It takes two
 commands, and the split between them is the thing to learn first:
 
 ```sh
-pgdt parse --source mydump.sql   # reads the dump, writes mydump.sql.dtcache
+pgdt parse --source mydump.sql   # reads the dump, writes mydump.sql.pgdt
 pgdt info  --source mydump.sql   # reports what that cache holds
 ```
 
@@ -26,7 +26,7 @@ pgdt parse --source mydump.sql
 ```
 
 It scans the file end to end, writes the cache beside it
-(`mydump.sql.dtcache`), and prints the same listing `info` prints. Pass
+(`mydump.sql.pgdt`), and prints the same listing `info` prints. Pass
 `--dtcache <path>` to put the cache somewhere else — worth doing when the dump
 sits on a read-only mount, since the default location is next to the dump.
 
@@ -82,7 +82,7 @@ called it, as Ctrl-C stops any other command there:
 ```
 $ pgdt parse --source koji.dump
 ^C
-interrupted at byte 41231843328 of 784019857152 — the cache at koji.dump.dtcache holds the scan so far
+interrupted at byte 41231843328 of 784019857152 — the cache at koji.dump.pgdt holds the scan so far
 re-run `pgdt parse --source koji.dump` to continue
 ```
 
@@ -141,7 +141,7 @@ pgdt query --source mydump.sql.xz --table public.widgets
 ```
 
 Everything works exactly as it does on an uncompressed file: the same listing,
-the same cache (written to `mydump.sql.xz.dtcache`), the same rows. Recognition
+the same cache (written to `mydump.sql.xz.pgdt`), the same rows. Recognition
 is by content, not by name, so a compressed dump called something other than
 `.xz` is still read as one, and a file *named* `.xz` that is really plain text
 is still read as plain text.
@@ -356,8 +356,8 @@ before any of it is fetched.
 
 **The cache goes in the working directory.** With a local dump it sits beside
 the file; a URL has no "beside", so the default is the URL's last path segment
-plus `.dtcache`, in whatever directory you ran the command from —
-`https://example.com/dumps/mydump.sql` becomes `./mydump.sql.dtcache`. `--dtcache
+plus `.pgdt`, in whatever directory you ran the command from —
+`https://example.com/dumps/mydump.sql` becomes `./mydump.sql.pgdt`. `--dtcache
 <path>` states somewhere else, and `--dtcache none` turns it off where the
 command allows. A URL that names no object — a bare host, or a path ending in
 `/` — is refused: there is no dump named there to read.
@@ -462,7 +462,7 @@ named, then the cache, what failed and the two modification times it compared
 (seconds and nanoseconds since the Unix epoch, which `date -d @<seconds>` reads
 back), which is more than the diagnostic says. The dump's name leads it because
 a cache's own is not always enough — over HTTP the cache is named after the
-URL's last segment, so `mydump.dtcache` does not say which `mydump` asked for
+URL's last segment, so `mydump.pgdt` does not say which `mydump` asked for
 it. It does need a source to ask about: cache-only
 `info`, with no `--source`, is answering from the cache alone and there is no
 identity there to bind, so the flag is refused as a usage error.
@@ -1551,8 +1551,8 @@ nothing left to report. If you reached for it because the directory beside the
 dump is read-only, put the cache somewhere else instead:
 
 ```sh
-pgdt parse --source /readonly/dump.sql --dtcache ~/dump.dtcache
-pgdt info  --source /readonly/dump.sql --dtcache ~/dump.dtcache
+pgdt parse --source /readonly/dump.sql --dtcache ~/dump.pgdt
+pgdt info  --source /readonly/dump.sql --dtcache ~/dump.pgdt
 ```
 
 ## Reading a partial answer
@@ -1744,17 +1744,17 @@ everything those two format for a human.
 
 ## Inspecting a cache with the dump gone: no `--source`
 
-`pgdt info` can answer entirely from a saved `.dtcache` file, with no dump
+`pgdt info` can answer entirely from a saved `.pgdt` file, with no dump
 file in reach at all — deleted, moved elsewhere, or never local to this
 machine. Drop `--source` and pass `--dtcache <path>` on its own:
 
 ```sh
-pgdt info --dtcache mydump.sql.dtcache
+pgdt info --dtcache mydump.sql.pgdt
 ```
 
 This works for the default listing, `--map` and `--json` alike — whichever one
 you'd run against the live file, partial caches included. It's for exactly the
-sysadmin-facing use case this whole page is about: keep a folder of `.dtcache`
+sysadmin-facing use case this whole page is about: keep a folder of `.pgdt`
 files from dumps you no longer keep around, and still be able to answer "what
 tables did this have," "which roles did it need," "did the schema change since
 last time," without the multi-hundred-gigabyte file itself.

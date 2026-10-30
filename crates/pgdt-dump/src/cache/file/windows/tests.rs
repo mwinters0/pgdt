@@ -82,7 +82,7 @@ async fn a_gzip_cache_holds_each_window_after_the_encoded_file() {
     assert!(windows.len() > 2, "{} checkpoints", windows.len());
     assert!(windows[0].is_empty() && windows[1..].iter().all(|w| !w.is_empty()));
     let (file, _) = cache_of(&dump, CompressionIndex::Gzip(index.clone())).await;
-    let path = dir.path().join("dump.sql.gz.dtcache");
+    let path = dir.path().join("dump.sql.gz.pgdt");
     write(&path, &file);
 
     let bytes = std::fs::read(&path).unwrap();
@@ -118,7 +118,7 @@ async fn a_gzip_cache_holds_each_window_after_the_encoded_file() {
 async fn a_cache_saved_over_itself_keeps_its_windows_and_reads_its_file() {
     let (dir, dump, plaintext, index) = gzip_file();
     let (file, extent) = cache_of(&dump, CompressionIndex::Gzip(index)).await;
-    let path = dir.path().join("dump.sql.gz.dtcache");
+    let path = dir.path().join("dump.sql.gz.pgdt");
     write(&path, &file);
     let first = std::fs::read(&path).unwrap();
 
@@ -145,7 +145,7 @@ async fn a_cache_saved_over_itself_keeps_its_windows_and_reads_its_file() {
 async fn a_failing_window_read_names_the_cache() {
     let (dir, dump, plaintext, index) = gzip_file();
     let (file, _) = cache_of(&dump, CompressionIndex::Gzip(index)).await;
-    let path = dir.path().join("dump.sql.gz.dtcache");
+    let path = dir.path().join("dump.sql.gz.pgdt");
     write(&path, &file);
     let Ok(Ok(loaded)) = read_cache_file(&path) else { panic!("the cache reads back") };
     let header = CACHE_MAGIC.len() + CACHE_FORMAT_VERSION.to_le_bytes().len();

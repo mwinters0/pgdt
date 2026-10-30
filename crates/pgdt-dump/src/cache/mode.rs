@@ -56,7 +56,7 @@ impl CacheMode {
     /// The cache at `cache_path`, or where none is given the default for the
     /// source it is for.
     ///
-    /// **The default is the name of the dump plus `.dtcache`, and only where
+    /// **The default is the name of the dump plus `.pgdt`, and only where
     /// it sits differs.** A local dump's cache sits *beside* it, so the
     /// pairing is the filesystem's. An object fetched over a network has no
     /// beside, so its cache is named after the URL's last path segment and

@@ -2470,10 +2470,10 @@ for i in 1 2 3 4 5; do for f in control $NESTED; do for m in strings typed; do
     -v "$PWD/$B:/pgdt:ro" \
     -v "$D/$f.sql:/dump.sql:ro" \
     "$IMAGE" bash -c \
-    "/pgdt parse --source /dump.sql --dtcache /tmp/x.dtcache --jobs 1 \
+    "/pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt --jobs 1 \
        --statistics-level data --row-group-size 1048576 >/dev/null &&
      time /pgdt query --source /dump.sql --table public.perf \
-       --dtcache /tmp/x.dtcache --statistics none --schema-mode $m --jobs 1 >/dev/null"
+       --dtcache /tmp/x.pgdt --statistics none --schema-mode $m --jobs 1 >/dev/null"
 done; done; done
 ```
 
@@ -4228,7 +4228,7 @@ the disqualification *at* the number rather than once in a preamble.
 | Bytes accounted for | 784,019,857,152 |
 | `UnterminatedCopyBlock` | none |
 
-**The `.dtcache` a run leaves behind dies at the next cache-format bump**, and
+**The `.pgdt` cache a run leaves behind dies at the next cache-format bump**, and
 those are free and frequent pre-1.0 (`decisions.md`, "The compressed source and the cache"). Treat the
 koji cache as a byproduct of a scan run for another reason, never as an asset:
 the cache left by the 2026-08-25 run was unreadable within days. Nothing plans around keeping one alive — inspecting koji at all

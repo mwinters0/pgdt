@@ -245,7 +245,7 @@ async fn an_io_failure_names_its_file_and_says_why_once() {
     let absent = dir.path().join("no-such-dir");
     let not_found = std::fs::File::open(&missing).unwrap_err().to_string();
 
-    let cache = absent.join("dump.sql.dtcache");
+    let cache = absent.join("dump.sql.pgdt");
     for (args, named) in [
         (vec!["parse", "--source", missing.to_str().unwrap()], missing.to_str().unwrap()),
         (

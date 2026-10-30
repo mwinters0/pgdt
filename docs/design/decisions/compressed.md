@@ -207,7 +207,7 @@ precondition on every ranged GET. A source nothing can pin is refused unless `NO
 still reach a caller first); an unpinned run merely warned of.
 
 ### D87 A remote cache is named from the URL, and the origin it records is advisory
-Default `./<last URL segment>.dtcache`; no last segment is refused by name. Another origin is a diagnostic, the stored
+Default `./<last URL segment>.pgdt`; no last segment is refused by name. Another origin is a diagnostic, the stored
 size still refusing (D20), so two same-named dumps of equal size from different hosts in one directory read each other's
 map with a warning the origin makes legible. A local cache records none, its default sitting beside the dump. Rejected:
 a canonical path as a local origin, advisory after every move.

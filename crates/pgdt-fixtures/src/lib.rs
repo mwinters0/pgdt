@@ -137,7 +137,7 @@ pub use refused::{REFUSED_FIELDS, RefusedField, refused_field};
 pub use refused::{past_refused, sweep_request};
 
 /// A private copy of `source` in a fresh tempdir, named `name`, so a test can
-/// freely read and write a colocated `.dtcache` beside it without touching
+/// freely read and write a colocated `.pgdt` cache beside it without touching
 /// the checked-in fixture. The `TempDir` is returned because dropping it
 /// deletes the copy.
 pub fn sandboxed(source: &Path, name: &str) -> (tempfile::TempDir, PathBuf) {

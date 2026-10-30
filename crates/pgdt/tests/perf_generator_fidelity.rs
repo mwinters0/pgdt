@@ -106,7 +106,7 @@ fn the_perf_generator_writes_what_pgdt_reads_back() {
 
     let control = dir.path().join("control.sql");
     generate(&control, &[]);
-    assert_every_column_maps(&control, &dir.path().join("control.dtcache"));
+    assert_every_column_maps(&control, &dir.path().join("control.pgdt"));
     assert_modes_agree(&control);
 
     // The nested columns, which are the reason the two flags exist and are
@@ -114,7 +114,7 @@ fn the_perf_generator_writes_what_pgdt_reads_back() {
     // declaration, is what would silently drop a column to `Utf8View`.
     let nested = dir.path().join("nested.sql");
     generate(&nested, &["--arrays", "--composite"]);
-    assert_every_column_maps(&nested, &dir.path().join("nested.dtcache"));
+    assert_every_column_maps(&nested, &dir.path().join("nested.pgdt"));
     assert_modes_agree(&nested);
 
     // `--composite` alone, because a recorded figure is taken on exactly that
@@ -124,7 +124,7 @@ fn the_perf_generator_writes_what_pgdt_reads_back() {
     // left uncovered rather than guarded on principle.
     let composite = dir.path().join("composite.sql");
     generate(&composite, &["--composite"]);
-    assert_every_column_maps(&composite, &dir.path().join("composite.dtcache"));
+    assert_every_column_maps(&composite, &dir.path().join("composite.pgdt"));
     assert_modes_agree(&composite);
 }
 
@@ -153,7 +153,7 @@ fn the_pruning_generator_writes_the_statistics_its_figure_prices() {
         .status()
         .expect("uv runs");
     assert!(status.success(), "generate_pruning_bench.py failed");
-    let cache = dir.path().join("pruning.dtcache");
+    let cache = dir.path().join("pruning.pgdt");
     let (dump, cache) = (dump.to_str().unwrap(), cache.to_str().unwrap());
     assert_every_column_maps(Path::new(dump), Path::new(cache));
     std::fs::remove_file(cache).unwrap();

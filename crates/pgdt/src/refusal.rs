@@ -19,7 +19,7 @@ use pgdt_io::Origin;
 /// **A cache's own name is not the source's.** Three of the four name the
 /// cache, which settles nothing where that path was *derived*: a remote dump's
 /// default cache is named after the URL's last path segment and sits in the
-/// working directory, so "the cache at `koji.dump.dtcache`" does not say which
+/// working directory, so "the cache at `koji.dump.pgdt`" does not say which
 /// `koji.dump` this run asked for
 /// (`docs/design/decisions.md`, "D87"). The fourth, the in-flight refusal,
 /// names neither, and nor does the back-fill's against a map with no cache

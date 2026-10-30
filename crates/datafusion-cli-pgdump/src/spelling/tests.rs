@@ -30,7 +30,7 @@ fn metadata_level(postgres_invalid_values: PostgresInvalidValues) -> Refusal {
 #[test]
 fn each_refusal_is_spelled_in_its_registration_s_grammar() {
     let lib = |err: pgdt_core::Error| Refusal::Library(err);
-    let cache = || PathBuf::from("koji.dump.dtcache");
+    let cache = || PathBuf::from("koji.dump.pgdt");
     let cases: Vec<(Refusal, Option<&str>, Option<&str>)> = vec![
         (
             Refusal::CacheNotComplete {
@@ -51,11 +51,11 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
                 why: "there is no cache".into(),
             },
             Some(
-                "`pgdt parse --source /d/koji.dump --dtcache koji.dump.dtcache \
+                "`pgdt parse --source /d/koji.dump --dtcache koji.dump.pgdt \
                  --postgres-invalid-values ignore`",
             ),
             Some(
-                "`pgdt parse --source /d/koji.dump --dtcache koji.dump.dtcache \
+                "`pgdt parse --source /d/koji.dump --dtcache koji.dump.pgdt \
                  --postgres-invalid-values ignore`",
             ),
         ),

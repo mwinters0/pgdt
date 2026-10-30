@@ -146,7 +146,7 @@ class Argv(unittest.TestCase):
             (root / "data").mkdir()
             (root / "data/dump.sql").write_text("")
             line = self.line(
-                ["pgdt", "parse", f"--source={root}/data/dump.sql", "--dtcache", f"{root}/out/new.dtcache"],
+                ["pgdt", "parse", f"--source={root}/data/dump.sql", "--dtcache", f"{root}/out/new.pgdt"],
                 cwd=root,
             )
         binds = {line[i + 1] for i, w in enumerate(line) if w == "-v"}

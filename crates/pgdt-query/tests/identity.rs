@@ -994,7 +994,7 @@ async fn an_equal_weak_entity_tag_confirms_nothing() {
     // The live side weak and the cache's strong: the weak one named is the
     // source's, and the cache is not called silent.
     let strong = tempfile::tempdir().unwrap();
-    let path = strong.path().join("strong.dtcache");
+    let path = strong.path().join("strong.pgdt");
     mapped(Arc::new(tagged("\"abc\"")), &path, StrictIdentity::ADVISORY).await.unwrap();
     let err = mapped(Arc::new(tagged("W/\"abc\"")), &path, time).await.unwrap_err();
     let Error::StrictIdentityUnmet { unmet, .. } = &err else {

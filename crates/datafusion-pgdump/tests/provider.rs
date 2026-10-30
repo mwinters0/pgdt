@@ -263,7 +263,7 @@ async fn only_a_complete_cache_opens() {
     let before = std::fs::read(pgdt_dump::cache::colocated_path(&copy)).unwrap();
 
     // A named cache path is the one the pass carries.
-    let elsewhere = dir.path().join("elsewhere.dtcache");
+    let elsewhere = dir.path().join("elsewhere.pgdt");
     let options = PgDumpOptions { cache_path: Some(elsewhere.clone()), ..PgDumpOptions::default() };
     let named = PgDump::open(location, options).await.unwrap_err();
     assert_eq!(passed(&named), pass(Some(elsewhere.clone()), PostgresInvalidValues::Default));

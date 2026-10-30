@@ -47,7 +47,7 @@ async fn watching(source: &dyn ByteRangeSource) -> SourceWatch {
 fn colocated_path_appends_the_cache_suffix() {
     assert_eq!(
         cache::colocated_path(Path::new("/a/b/dump.sql")),
-        PathBuf::from("/a/b/dump.sql.dtcache")
+        PathBuf::from("/a/b/dump.sql.pgdt")
     );
 }
 
@@ -61,10 +61,10 @@ async fn an_unusable_cache_says_which_kind_of_unusable_it_is() {
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(edge_cases()).unwrap();
 
-    let missing = dir.path().join("nonexistent.dtcache");
+    let missing = dir.path().join("nonexistent.pgdt");
     assert_eq!(pgdt_dump::internal::load(&missing, &source).await.unwrap(), CacheStatus::Missing);
 
-    let foreign = dir.path().join("garbage.dtcache");
+    let foreign = dir.path().join("garbage.pgdt");
     std::fs::write(&foreign, b"not a cache file").unwrap();
     assert_eq!(
         pgdt_dump::internal::load(&foreign, &source).await.unwrap(),
@@ -73,7 +73,7 @@ async fn an_unusable_cache_says_which_kind_of_unusable_it_is() {
     assert!(!Unusable::NotACache.overwritable());
 
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    let damaged = dir.path().join("damaged.dtcache");
+    let damaged = dir.path().join("damaged.pgdt");
     pgdt_dump::internal::save(&damaged, &source, &index).await.unwrap();
     let mut bytes = std::fs::read(&damaged).unwrap();
     bytes.truncate(bytes.len() / 2);
@@ -104,7 +104,7 @@ async fn a_cache_from_another_build_is_told_apart_from_foreign_bytes() {
     let dir = tempfile::tempdir().unwrap();
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    let path = dir.path().join("edge_cases.sql.dtcache");
+    let path = dir.path().join("edge_cases.sql.pgdt");
     pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
 
     restamp(&path, CACHE_FORMAT_VERSION - 1);
@@ -130,7 +130,7 @@ async fn saved_index_round_trips_exactly() {
     assert!(index.metadata.is_some());
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dtcache");
+    let path = dir.path().join("edge_cases.sql.pgdt");
     pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
     let loaded = match pgdt_dump::internal::load(&path, &source).await.unwrap() {
         CacheStatus::Loaded(loaded) => {
@@ -165,7 +165,7 @@ async fn saved_index_round_trips_exactly() {
 async fn preamble_only_persists_a_real_unscanned_tail() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(edge_cases()).unwrap());
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dtcache");
+    let path = dir.path().join("edge_cases.sql.pgdt");
     let mode = CacheMode::enabled(path.clone());
 
     preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
@@ -200,7 +200,7 @@ async fn save_overwrites_an_existing_cache() {
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dtcache");
+    let path = dir.path().join("edge_cases.sql.pgdt");
     std::fs::write(&path, b"stale placeholder").unwrap();
     pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
 
@@ -224,7 +224,7 @@ async fn save_propagates_write_failures() {
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("no-such-subdir").join("edge_cases.sql.dtcache");
+    let path = dir.path().join("no-such-subdir").join("edge_cases.sql.pgdt");
     let err = pgdt_dump::internal::save(&path, &source, &index).await.unwrap_err();
     let Error::File { path: named, cause, .. } = &err else { panic!("{err:?}") };
     assert_eq!(named.parent(), path.parent(), "the file beside the cache: {err}");
@@ -245,7 +245,7 @@ async fn size_mismatch_invalidates_the_cache() {
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dtcache");
+    let path = dir.path().join("edge_cases.sql.pgdt");
     pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
 
     let dump_bytes = std::fs::read(edge_cases()).unwrap();
@@ -286,17 +286,17 @@ async fn an_open_names_each_unusable_status() {
         other => panic!("expected the cache refused, got {other:?}"),
     };
 
-    let missing = dir.path().join("nonexistent.dtcache");
+    let missing = dir.path().join("nonexistent.pgdt");
     assert_eq!(held(&CacheMode::enabled(missing), &edge_cases()).await.unwrap(), Held::Missing);
 
-    let foreign = dir.path().join("garbage.dtcache");
+    let foreign = dir.path().join("garbage.pgdt");
     std::fs::write(&foreign, b"not a cache file").unwrap();
     assert_eq!(
         reason(held(&CacheMode::enabled(foreign), &edge_cases()).await),
         Unusable::NotACache
     );
 
-    let stale = dir.path().join("stale.dtcache");
+    let stale = dir.path().join("stale.pgdt");
     pgdt_dump::internal::save(&stale, &source, &index).await.unwrap();
     restamp(&stale, CACHE_FORMAT_VERSION + 1);
     let found = Unusable::UnsupportedVersion { found: CACHE_FORMAT_VERSION + 1 };
@@ -304,7 +304,7 @@ async fn an_open_names_each_unusable_status() {
     let replacing = CacheMode::enabled(&stale).with_overwrite_unusable(true);
     assert_eq!(held(&replacing, &edge_cases()).await.unwrap(), Held::Replacing(found));
 
-    let path = dir.path().join("edge_cases.sql.dtcache");
+    let path = dir.path().join("edge_cases.sql.pgdt");
     pgdt_dump::internal::save(&path, &source, &index).await.unwrap();
     let grown = dir.path().join("grown.sql");
     let mut grown_bytes = std::fs::read(edge_cases()).unwrap();
@@ -434,11 +434,11 @@ fn cache_mode_resolves_the_default_and_an_explicit_path() {
 
     assert_eq!(
         CacheMode::resolve(&dump, None),
-        CacheMode::enabled(PathBuf::from("/a/b/dump.sql.dtcache"))
+        CacheMode::enabled(PathBuf::from("/a/b/dump.sql.pgdt"))
     );
     assert_eq!(
-        CacheMode::resolve(&dump, Some(Path::new("/other/path.dtcache"))),
-        CacheMode::enabled(PathBuf::from("/other/path.dtcache"))
+        CacheMode::resolve(&dump, Some(Path::new("/other/path.pgdt"))),
+        CacheMode::enabled(PathBuf::from("/other/path.pgdt"))
     );
     assert_eq!(
         CacheMode::resolve(&dump, Some(Path::new("none"))),
@@ -570,7 +570,7 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
 async fn an_incomplete_cache_still_opens_as_a_loaded_index() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(edge_cases()).unwrap());
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dtcache");
+    let path = dir.path().join("edge_cases.sql.pgdt");
     let mode = CacheMode::enabled(path.clone());
 
     preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
@@ -595,7 +595,7 @@ async fn an_incomplete_cache_still_opens_as_a_loaded_index() {
 async fn an_offline_load_reports_a_partial_scan_incomplete() {
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(edge_cases()).unwrap());
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dtcache");
+    let path = dir.path().join("edge_cases.sql.pgdt");
     let mode = CacheMode::enabled(path.clone());
     preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
         .await
@@ -625,7 +625,7 @@ async fn an_offline_load_always_pushes_the_cache_offline_diagnostic() {
 
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(edge_cases()).unwrap());
     let dir = tempfile::tempdir().unwrap();
-    let full_path = dir.path().join("full.dtcache");
+    let full_path = dir.path().join("full.pgdt");
     let index = build_index(source.as_ref(), &ScanOptions::default()).await.unwrap();
     pgdt_dump::internal::save(&full_path, source.as_ref(), &index).await.unwrap();
 
@@ -645,7 +645,7 @@ async fn an_offline_load_always_pushes_the_cache_offline_diagnostic() {
         loaded.diagnostics
     );
 
-    let partial_path = dir.path().join("partial.dtcache");
+    let partial_path = dir.path().join("partial.pgdt");
     let mode = CacheMode::enabled(partial_path.clone());
     preamble_only(mode.open_source(Arc::clone(&source)).await.unwrap(), &ScanOptions::default())
         .await
@@ -672,7 +672,7 @@ async fn an_offline_load_always_pushes_the_cache_offline_diagnostic() {
 #[tokio::test]
 async fn an_offline_load_of_a_missing_file_is_missing() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("nonexistent.dtcache");
+    let path = dir.path().join("nonexistent.pgdt");
     assert_eq!(OfflineCache::new(path).load().await.unwrap(), CacheStatus::Missing);
 }
 
@@ -732,7 +732,7 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     assert_eq!(xz_index, plain_index);
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.xz.dtcache");
+    let path = dir.path().join("edge_cases.sql.xz.pgdt");
     pgdt_dump::internal::save(&path, &xz, &xz_index).await.unwrap();
     match pgdt_dump::internal::load(&path, &xz).await.unwrap() {
         CacheStatus::Loaded(LoadedCache {
@@ -824,7 +824,7 @@ async fn a_non_seekable_warning_survives_the_cache_round_trip() {
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("single_block.xz.dtcache");
+    let path = dir.path().join("single_block.xz.pgdt");
     pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
     match pgdt_dump::internal::load(&path, &xz).await.unwrap() {
         CacheStatus::Loaded(LoadedCache {
@@ -851,7 +851,7 @@ async fn map_file_warns_about_a_non_seekable_xz_source_once() {
     let xz: Arc<dyn ByteRangeSource> =
         Arc::new(CompressedFileSource::open(non_seekable.path()).unwrap());
     let dir = tempfile::tempdir().unwrap();
-    let mode = CacheMode::enabled(dir.path().join("single_block.xz.dtcache"));
+    let mode = CacheMode::enabled(dir.path().join("single_block.xz.pgdt"));
     for run in ["cold", "resumed"] {
         let mapped = map_file(
             mode.open_source(Arc::clone(&xz)).await.unwrap(),
@@ -882,7 +882,7 @@ async fn preamble_only_warns_without_duplicating_across_calls() {
     let xz: Arc<dyn ByteRangeSource> =
         Arc::new(CompressedFileSource::open(non_seekable.path()).unwrap());
     let dir = tempfile::tempdir().unwrap();
-    let mode = CacheMode::enabled(dir.path().join("preamble.xz.dtcache"));
+    let mode = CacheMode::enabled(dir.path().join("preamble.xz.pgdt"));
 
     let (_metadata, diagnostics) =
         preamble_only(mode.open_source(Arc::clone(&xz)).await.unwrap(), &ScanOptions::default())
@@ -928,7 +928,7 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.xz.dtcache");
+    let path = dir.path().join("edge_cases.sql.xz.pgdt");
     pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
 
     let opened = CacheMode::enabled(&path).open(&Origin::local(compressed.path())).await.unwrap();
@@ -952,7 +952,7 @@ async fn a_cache_saved_from_a_plain_source_opens_plain() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("edge_cases.sql.dtcache");
+    let path = dir.path().join("edge_cases.sql.pgdt");
     pgdt_dump::internal::save(&path, &plain, &index).await.unwrap();
 
     let opened = CacheMode::enabled(&path).open(&Origin::local(edge_cases())).await.unwrap();
@@ -1002,14 +1002,14 @@ async fn an_open_sizes_the_statistics_the_parse_left() {
 #[tokio::test]
 async fn an_open_settles_nothing_wherever_nothing_is_cached_to_compare() {
     let dir = tempfile::tempdir().unwrap();
-    let missing = CacheMode::enabled(dir.path().join("nothing.dtcache"));
+    let missing = CacheMode::enabled(dir.path().join("nothing.pgdt"));
     let opened = missing.open(&Origin::local(edge_cases())).await.unwrap();
     assert_eq!(opened.cache, Held::Missing);
     assert_eq!(opened.source.compression_index(), None);
 
     let plain = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
-    let path = dir.path().join("edge_cases.sql.dtcache");
+    let path = dir.path().join("edge_cases.sql.pgdt");
     pgdt_dump::internal::save(&path, &plain, &index).await.unwrap();
     let gone = CacheMode::enabled(&path).open(&Origin::local(dir.path().join("gone.sql"))).await;
     assert!(
@@ -1031,7 +1031,7 @@ async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exis
     let compressed = xz_compress(&edge_cases());
     let xz = CompressedFileSource::open(compressed.path()).unwrap();
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
-    let path = dir.path().join("edge_cases.sql.xz.dtcache");
+    let path = dir.path().join("edge_cases.sql.xz.pgdt");
     pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
 
     // The compressed file's own cache, put to the plain file it decompresses
@@ -1079,7 +1079,7 @@ async fn a_load_refuses_a_cache_whose_compression_layer_is_not_the_sources() {
     for (saved_by, loaded_by) in
         [(&xz as &dyn ByteRangeSource, &as_plain as &dyn ByteRangeSource), (&as_plain, &xz)]
     {
-        let path = dir.path().join("layer.dtcache");
+        let path = dir.path().join("layer.pgdt");
         pgdt_dump::internal::save(&path, saved_by, &index).await.unwrap();
         assert!(matches!(
             pgdt_dump::internal::load(&path, saved_by).await.unwrap(),
@@ -1120,7 +1120,7 @@ async fn an_unusable_cache_is_refused_unless_it_may_be_replaced() {
     let other = dir.path().join("other.sql");
     std::fs::write(&other, b"-- a dump of another size\n").unwrap();
     let other_source = LocalFileSource::open(&other).unwrap();
-    let other_path = dir.path().join("other.dtcache");
+    let other_path = dir.path().join("other.pgdt");
     pgdt_dump::internal::save(&other_path, &other_source, &pgdt_model::DumpIndex::default())
         .await
         .unwrap();
@@ -1251,7 +1251,7 @@ async fn an_open_refuses_an_unusable_cache_unless_it_may_be_replaced() {
 
     let other = dir.path().join("other.sql");
     std::fs::write(&other, b"-- a dump of another size\n").unwrap();
-    let other_path = dir.path().join("other.dtcache");
+    let other_path = dir.path().join("other.pgdt");
     let other_source = LocalFileSource::open(&other).unwrap();
     pgdt_dump::internal::save(&other_path, &other_source, &pgdt_model::DumpIndex::default())
         .await
@@ -1305,7 +1305,7 @@ async fn an_open_builds_the_source_on_the_layer_the_cache_settles() {
     let compressed = xz_compress(&edge_cases());
     let origin = Origin::local(compressed.path());
     let xz = CompressedFileSource::open(compressed.path()).unwrap();
-    let path = dir.path().join("layer.dtcache");
+    let path = dir.path().join("layer.pgdt");
     let index = pgdt_model::DumpIndex::default();
 
     pgdt_dump::internal::save(&path, &xz, &index).await.unwrap();
@@ -1362,7 +1362,7 @@ async fn an_open_judges_a_moved_modification_time_as_a_load_does() {
 async fn a_query_stopping_inside_a_block_fails_on_the_block_s_check() {
     let compressed = xz_compress_single_block(&edge_cases());
     let dir = tempfile::tempdir().unwrap();
-    let mode = CacheMode::enabled(dir.path().join("single_block.xz.dtcache"));
+    let mode = CacheMode::enabled(dir.path().join("single_block.xz.pgdt"));
     let intact = CompressedFileSource::open(compressed.path()).unwrap();
     let index = intact.compression_index().unwrap();
     map_file(
@@ -1559,7 +1559,7 @@ mod encoding {
             );
             assert_eq!(source.compression_index().is_some(), name == "xz");
 
-            let path = dir.path().join(format!("{name}.dtcache"));
+            let path = dir.path().join(format!("{name}.pgdt"));
             save(&path, source.as_ref(), &run.index).await.unwrap();
             let whole = CacheFile {
                 container_kind: ContainerKind::Plain,
@@ -1638,7 +1638,7 @@ mod encoding {
         std::fs::write(&dump, &compressed).unwrap();
         let index = pgdt_io::internal::gzip_indexed_in_memory(&compressed, 128 * 1024);
         assert!(index.unit_count() > 2, "{} units", index.unit_count());
-        let mode = CacheMode::enabled(dir.path().join("default.sql.gz.dtcache"));
+        let mode = CacheMode::enabled(dir.path().join("default.sql.gz.pgdt"));
 
         let held = CompressedFileSource::with_index(&dump, CompressionIndex::Gzip(index)).unwrap();
         let run = map_file(
@@ -1691,7 +1691,7 @@ mod encoding {
         let dump = dir.path().join("dump.sql");
         std::fs::copy(statistics_fixture(), &dump).unwrap();
         let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
-        let mode = CacheMode::enabled(dir.path().join("scratch.dtcache"));
+        let mode = CacheMode::enabled(dir.path().join("scratch.pgdt"));
 
         let data = map_file(
             mode.open_source(Arc::clone(&source)).await.unwrap(),
@@ -1718,7 +1718,7 @@ mod encoding {
         for (name, index, refused) in
             [("data", &data.index, true), ("metadata", &metadata.index, false)]
         {
-            let path = dir.path().join(format!("{name}.dtcache"));
+            let path = dir.path().join(format!("{name}.pgdt"));
             let file = CacheFileRef {
                 container_kind: ContainerKind::Plain,
                 compression: None,

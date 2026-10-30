@@ -1,7 +1,7 @@
 //! **The central promise this file exists to assert, on the artifact a user
 //! keeps.**
 //! `--jobs` decides how a dump is read and never what the scan records, so a
-//! partitioned `pgdt parse` and a serial one write the same `.dtcache` — byte
+//! partitioned `pgdt parse` and a serial one write the same `.pgdt` — byte
 //! for byte, over every fixture in the tree
 //! (`docs/design/decisions.md`, "D52").
 //!
@@ -169,9 +169,9 @@ fn every_fixture_parses_to_the_same_cache_at_every_stated_parallelism() {
 
     for (n, fixture) in all_fixtures().iter().enumerate() {
         let reference =
-            cache_of(fixture, &dir.path().join(format!("{n}-serial.dtcache")), &["--jobs", "1"]);
+            cache_of(fixture, &dir.path().join(format!("{n}-serial.pgdt")), &["--jobs", "1"]);
         for (l, leg) in legs.iter().enumerate() {
-            let got = cache_of(fixture, &dir.path().join(format!("{n}-{l}.dtcache")), leg);
+            let got = cache_of(fixture, &dir.path().join(format!("{n}-{l}.pgdt")), leg);
             assert_same_cache(&got, &reference, fixture, leg);
         }
     }
@@ -193,11 +193,11 @@ fn every_fixture_gathers_the_same_statistics_at_every_stated_parallelism() {
     for (n, fixture) in all_fixtures().iter().enumerate() {
         let reference = gathered_cache_of(
             fixture,
-            &dir.path().join(format!("{n}-serial.dtcache")),
+            &dir.path().join(format!("{n}-serial.pgdt")),
             &["--jobs", "1"],
         );
         for (l, leg) in legs.iter().enumerate() {
-            let got = gathered_cache_of(fixture, &dir.path().join(format!("{n}-{l}.dtcache")), leg);
+            let got = gathered_cache_of(fixture, &dir.path().join(format!("{n}-{l}.pgdt")), leg);
             assert_same_cache(&got, &reference, fixture, leg);
         }
     }
@@ -218,11 +218,11 @@ fn every_fixture_backfills_to_the_cache_one_gathering_parse_writes() {
     for (n, fixture) in all_fixtures().iter().enumerate() {
         let reference = gathered_cache_of(
             fixture,
-            &dir.path().join(format!("{n}-gathered.dtcache")),
+            &dir.path().join(format!("{n}-gathered.pgdt")),
             &["--jobs", "1"],
         );
         for (l, (first, second)) in legs.iter().enumerate() {
-            let out = dir.path().join(format!("{n}-{l}-backfilled.dtcache"));
+            let out = dir.path().join(format!("{n}-{l}-backfilled.pgdt"));
             parse_cache(fixture, &out, first, &["--jobs", "1"]);
             let got = gathered_cache_of(fixture, &out, second);
             assert_same_cache(&got, &reference, fixture, second);
@@ -292,10 +292,10 @@ fn a_region_past_the_shipped_chunk_size_writes_the_serial_cache() {
         size - data_offset,
     );
 
-    let reference = cache_of(&dump, &dir.path().join("serial.dtcache"), &["--jobs", "1"]);
+    let reference = cache_of(&dump, &dir.path().join("serial.pgdt"), &["--jobs", "1"]);
     let legs: [&[&str]; 4] = [&[], &["--jobs", "4"], &["--jobs", "8"], &["--jobs", "24"]];
     for (l, leg) in legs.iter().enumerate() {
-        let got = cache_of(&dump, &dir.path().join(format!("leg{l}.dtcache")), leg);
+        let got = cache_of(&dump, &dir.path().join(format!("leg{l}.pgdt")), leg);
         assert_same_cache(&got, &reference, &dump, leg);
     }
 }
@@ -347,7 +347,7 @@ fn an_xz_dump_writes_the_serial_cache_at_every_stated_parallelism() {
         advice.partition_bytes(),
     );
 
-    let reference = cache_of(&xz, &dir.path().join("xz-serial.dtcache"), &["--jobs", "1"]);
+    let reference = cache_of(&xz, &dir.path().join("xz-serial.pgdt"), &["--jobs", "1"]);
     let legs: [&[&str]; 4] = [
         // The recommendation: the cores, capped at the block count.
         &[],
@@ -357,13 +357,12 @@ fn an_xz_dump_writes_the_serial_cache_at_every_stated_parallelism() {
         &["--jobs", "8", "--memory", "1048576"],
     ];
     for (l, leg) in legs.iter().enumerate() {
-        let got = cache_of(&xz, &dir.path().join(format!("xz-{l}.dtcache")), leg);
+        let got = cache_of(&xz, &dir.path().join(format!("xz-{l}.pgdt")), leg);
         assert_same_cache(&got, &reference, &xz, leg);
     }
 
-    let reference =
-        gathered_cache_of(&xz, &dir.path().join("xz-gathered.dtcache"), &["--jobs", "1"]);
-    let got = gathered_cache_of(&xz, &dir.path().join("xz-gathered-8.dtcache"), &["--jobs", "8"]);
+    let reference = gathered_cache_of(&xz, &dir.path().join("xz-gathered.pgdt"), &["--jobs", "1"]);
+    let got = gathered_cache_of(&xz, &dir.path().join("xz-gathered-8.pgdt"), &["--jobs", "8"]);
     assert_same_cache(&got, &reference, &xz, &["--jobs", "8"]);
 }
 
@@ -510,8 +509,8 @@ async fn interrupted_at(dump: &Path, cache: &Path, after: u64) -> pgdt_io::GzipI
 async fn a_gzip_dump_writes_one_cache_however_its_first_pass_ran() {
     let dir = tempfile::tempdir().unwrap();
     let dump = gzip_dump_of(dir.path(), 6, 10 << 20);
-    let reference = cache_of(&dump, &dir.path().join("gz-serial.dtcache"), &["--jobs", "1"]);
-    let saved = pgdt_dump::cache::OfflineCache::new(dir.path().join("gz-serial.dtcache"));
+    let reference = cache_of(&dump, &dir.path().join("gz-serial.pgdt"), &["--jobs", "1"]);
+    let saved = pgdt_dump::cache::OfflineCache::new(dir.path().join("gz-serial.pgdt"));
     let pgdt_dump::cache::CacheStatus::Loaded(saved) = saved.load().await.unwrap() else {
         panic!("a parse saves a cache");
     };
@@ -525,13 +524,13 @@ async fn a_gzip_dump_writes_one_cache_however_its_first_pass_ran() {
 
     let legs: [&[&str]; 3] = [&[], &["--jobs", "8"], &["--jobs", "1", "--chunk-size", "4099"]];
     for (l, leg) in legs.iter().enumerate() {
-        let got = cache_of(&dump, &dir.path().join(format!("gz-{l}.dtcache")), leg);
+        let got = cache_of(&dump, &dir.path().join(format!("gz-{l}.pgdt")), leg);
         assert_same_cache(&got, &reference, &dump, leg);
     }
 
     for (n, after) in [(25u64 << 20), (45 << 20)].into_iter().enumerate() {
         for jobs in ["1", "8"] {
-            let cache = dir.path().join(format!("gz-resumed-{n}-{jobs}.dtcache"));
+            let cache = dir.path().join(format!("gz-resumed-{n}-{jobs}.pgdt"));
             let partial = interrupted_at(&dump, &cache, after).await;
             assert!(!partial.is_complete() && partial.unit_count() >= 1, "stopped at {after}");
             let got = cache_of(&dump, &cache, &["--jobs", jobs]);
@@ -564,7 +563,7 @@ fn a_bgzf_dump_writes_the_serial_cache_at_every_stated_parallelism() {
     assert!(index.unit_count() > 2, "{} units", index.unit_count());
     assert!(index.member_count() > 100 * index.unit_count(), "{} members", index.member_count());
 
-    let reference = cache_of(&dump, &dir.path().join("bgz-serial.dtcache"), &["--jobs", "1"]);
+    let reference = cache_of(&dump, &dir.path().join("bgz-serial.pgdt"), &["--jobs", "1"]);
     let legs: [&[&str]; 3] = [
         &[],
         &["--jobs", "8"],
@@ -572,7 +571,7 @@ fn a_bgzf_dump_writes_the_serial_cache_at_every_stated_parallelism() {
         &["--jobs", "8", "--memory", "1048576"],
     ];
     for (l, leg) in legs.iter().enumerate() {
-        let got = cache_of(&dump, &dir.path().join(format!("bgz-{l}.dtcache")), leg);
+        let got = cache_of(&dump, &dir.path().join(format!("bgz-{l}.pgdt")), leg);
         assert_same_cache(&got, &reference, &dump, leg);
     }
 }

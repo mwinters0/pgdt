@@ -89,7 +89,7 @@ fn as_its_namespace_s_init_an_interrupted_parse_saves_and_exits_130() {
             .map(str::to_owned)
     };
     let dir = tempfile::tempdir().unwrap();
-    let cache = dir.path().join("dump.dtcache");
+    let cache = dir.path().join("dump.pgdt");
     let cache = cache.to_str().unwrap();
 
     let reference = Oracle::serving(dump_bytes()).start();

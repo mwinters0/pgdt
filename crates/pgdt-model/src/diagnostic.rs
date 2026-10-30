@@ -168,7 +168,7 @@ pub enum DiagnosticKind {
     /// (`docs/design/decisions.md`, "D31"). Always `Info` — zero is a normal, reported state (the map
     /// running in header-less degraded mode), not an error.
     TocCoverage { attributed: usize, spans: usize },
-    /// The index was loaded from a retained `.dtcache` with no live dump file
+    /// The index was loaded from a retained `.pgdt` cache with no live dump file
     /// to check it against (`docs/design/decisions.md`,
     /// "The compressed source and the cache") — unverified, there being no
     /// live source to compare its recorded size and mtime with. Pushed unconditionally by

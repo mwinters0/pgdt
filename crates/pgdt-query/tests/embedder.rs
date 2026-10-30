@@ -134,7 +134,7 @@ async fn a_source_is_opened_and_mapped_with_statistics() {
     let dump = map(&path, 2).await;
     let size = std::fs::metadata(&path).unwrap().len();
     assert!(dump.index().is_complete(size));
-    assert!(path.with_extension("sql.dtcache").is_file(), "the pass saves its cache");
+    assert!(path.with_extension("sql.pgdt").is_file(), "the pass saves its cache");
     let table = ordered(&dump);
     assert!(!table.blocks().is_empty());
     assert!(table.blocks().iter().all(|block| block.statistics.is_some()), "{table:?}");
