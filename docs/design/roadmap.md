@@ -17,7 +17,7 @@ reused, including a struck phase's.
 |---|---|---|
 | P1–P7, P9–P17, P19, P20, P25, P27–P31, P35, P36 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
-| P38 — a table reads its descendants; TimescaleDB under its own names | Sketched; grilled, not yet specified | this file, below; [inbox](roadmap-P38-timescaledb-inbox.md) — after P33 |
+| P38 — a table reads its descendants; TimescaleDB under its own names | Specified | [spec](roadmap-P38-descendants.md) — after P33 |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
 | P37 — Parquet export as a Parquet-native writer leaves it | Sketched; not grilled | this file, below; [inbox](roadmap-P37-parquet-export-inbox.md) — the maintainer sets its order |
@@ -742,130 +742,11 @@ are in [its inbox](roadmap-P33-line-bound-inbox.md).
 
 ## P38 — A table reads its descendants; TimescaleDB under its own names
 
-**A dump of a TimescaleDB database is read as TimescaleDB presents it**: a
-hypertable is queried under its own name, its chunks behind it, as a query
-against the server would see it. Detection is automatic and the presentation
-is the default where TimescaleDB is detected; `--no-timescaledb` turns it off
-and shows what pgdt shows today, every chunk table under its own name. **The
-cache holds what both presentations need**, so the choice is made at query time
-without a re-parse. The aim is to state plainly in the README that pgdt
-supports TimescaleDB; where TimescaleDB's features run deeper than one phase
-should reach, the phase draws a ceiling above what the reference dump uses and
-states what is supported and what is not. Datanommer, Fedora's message archive
-(`datanommer2-2026-10-01.dump.xz`, outside the repo), is the reference that
-surfaced the need, as koji is for scale: the requirements, fixtures and
-harnesses stand on their own, and no test assumes the dump exists. Its
-long-line regions are P33's, which runs first.
-
-**A table reads its own rows and every descendant's, for every dump**, as
-`SELECT … FROM parent` does on the server: an `INHERITS` child and an attached
-partition alike, at any depth, each projected to the parent's columns. A
-TimescaleDB chunk is an inheritance child of its hypertable, so this is the
-mechanism P38 builds once rather than a TimescaleDB-only rule, and a
-partitioned root stops reading empty with it. What is TimescaleDB's alone is
-what its catalog adds on top.
-
-**Every chunk stays a table, listed and addressable under its own name**, as
-on the server, where `_timescaledb_internal` holds them; nothing is hidden
-from `information_schema`, `SHOW TABLES`, `pgdt query --table` or `pgdt info`.
-**Today's presentation is SQL's `ONLY`, and the switch back to it is generic**:
-one flag and one `pgdump.` session setting read every table as its own rows,
-inheritance or TimescaleDB alike, session-wide because DataFusion's SQL parses
-no `FROM ONLY`. Its name is the spec's. `--no-timescaledb` exists only if the
-phase finds something TimescaleDB's catalog adds over inheritance, and turns
-off that alone. Neither needs new cache state: parents and attachments are
-persisted already. **The library reads through by default too**: the same name
-means the same rows in `pgdt sql`, `pgdt query` and an embedder's session, the
-library's conservative defaults being for resources, not meaning.
-
-**A descendant is another block to prune, by its statistics alone.** A default
-parse gathers them and they are at least as tight as any declared bound, so
-neither `CHECK` expressions, partition bounds nor TimescaleDB's
-`dimension_slice` are read for pruning; a cold parent query scans every
-descendant, as a cold query scans for every other predicate. **A descendant
-that cannot be read refuses its parent**, with a finding naming it and why: a
-parent answering short of the server is a wrong answer, and the `ONLY` switch
-still reads each readable descendant under its own name. A column the parent
-lacks is projected away before it can refuse anything.
-
-**"Short" is measured against the server this dump restores to**, the only one
-its rows can be checked against. Rows a restore would not hold are no gap:
-a multinode access node's or tiered storage's foreign chunks, and chunk tables
-a `-n`/`-t` dump left out though the catalog lists them, are read as absent,
-with a finding naming what the catalog lists and the file lacks. **A
-compressed chunk's rows are held by a restore, so where pgdt does not decode
-them it refuses wherever they are reached**: the hypertable, and the chunk
-read by its own name, under the `ONLY` switch too — today's empty read of a
-compressed chunk is a silent short answer, not a presentation kept. The
-compressed relation stays readable as the table it is, its `compressed_data`
-as text. So the catalog is read in every TimescaleDB dump and no switch reaches
-that: detection is correctness, not presentation. **P38 does not decode**, so
-it builds no `--no-timescaledb`: the `ONLY` switch is the one way back to
-today's presentation, and the README's list names compressed hypertables
-unsupported. Decoding is the Future item "Compressed TimescaleDB chunks,
-decoded from a clean room".
-
-**pgdt's TimescaleDB code is written from TimescaleDB's Apache-licensed source
-(`src/`, `sql/`), its documentation and the dumps the fixture generator
-produces — never from `tsl/`**, which is under the Timescale License. P38 needs
-nothing from `tsl/`, and a clean room for a decoder is possible later only if
-this has held from the start.
-
-**A continuous aggregate is identified and inspected in `pgdt info`, and read
-no other way**: its view, its materialization hypertable and whether it is
-real-time shown there for an administrator, its rows reachable as the
-materialization hypertable's under that table's name, and the aggregate under
-the view's name named unsupported. Views are general work (the Future item
-"Views read as DataFusion views"), not a TimescaleDB special case.
-
-**`pgdt info` shows the logical model**: each parent with its descendant count
-and rows, and per database a TimescaleDB section — the version, stated or the
-era inferred; each hypertable's dimensions and its chunks counted whole,
-compressed and absent from the file; each continuous aggregate as above. The
-per-block listing stays, chunks folded under their hypertable unless `--map`
-or a verbose flag asks for them: what decides whether a query refuses is what
-an administrator reads first.
-
-**TimescaleDB is detected per database and its catalog read by column name,
-whatever version it states**, so a release whose catalog still carries what
-pgdt reads is read without a pgdt release. Where columns pgdt needs are
-missing, every hypertable of that database refuses with a finding naming the
-catalog's shape, and its chunks read under their own names; a chunk read so
-cannot be checked for compression, and the finding says so rather than a
-second, catalog-free detection path deciding it. **Reading a hypertable is
-oracle-checked**: each pinned TimescaleDB version's fixture restored into the
-same image (`timescaledb_pre_restore()`, `timescaledb_post_restore()`), and
-the hypertable and each chunk read by name compared with pgdt, through the
-existing oracle machinery — the restored server of the rule above, made
-executable.
-
-**A `--load-via-partition-root` dump's partitions refuse under their own
-names, and its root refuses under `ONLY`**, each with a finding naming the
-blocks written through the root: a restore routes those rows into partitions by
-the partition key, which pgdt does not evaluate (I86; the Future item "Rows
-routed to their partitions"). The root read through, the common query, stays
-whole.
-
-**The fixtures pin one TimescaleDB version per dump-visible shape**: each
-catalog era's and compressed-storage form's last release on a PostgreSQL major
-pgdt reads — roughly 2.13, 2.21, 2.27 and 2.28 — and the newest release, which
-moves as the routine `pg_dump` set does; the spec fixes the list. Each holds
-every way its version stores a hypertable's rows: uncompressed, compressed,
-partially compressed, a continuous aggregate, a hash dimension. TimescaleDB 1.x
-runs only on PostgreSQL 12 and older, outside what pgdt reads, and the README's
-list says so. Datanommer's version falls inside the range wherever it lands.
-**The fixture generator is the phase's first slice and its spike**: the
-inbox's dump shapes are read from TimescaleDB's source, not from a dump, and
-the generator's output is what confirms or corrects them before anything reads
-them.
-
-**The README claims "supports TimescaleDB" when every way a dump can store a
-hypertable's rows, across the TimescaleDB versions the fixtures pin, is read
-under the hypertable.** The test is the dump's rows, not TimescaleDB's
-features: policies, jobs and functions are server behaviour with no rows of
-their own and owe a dump reader nothing. A way of storing rows the phase does
-not reach is named in a stated supported/unsupported list instead. Sketched;
-the facts are in [its inbox](roadmap-P38-timescaledb-inbox.md).
+A table reads its own rows and every descendant's, for every dump, as `SELECT
+… FROM parent` does on the server, and a TimescaleDB hypertable is read under
+its own name on top of that, its catalog read to say which children are chunks
+and which rows the file does not hold. It runs after P33. The spec is
+[`roadmap-P38-descendants.md`](roadmap-P38-descendants.md).
 
 ## P32 — The schema model: every object and property a dump declares
 
@@ -1409,8 +1290,9 @@ which is what makes the difference worth minding at the moment one is found.
   from the TimescaleDB binary's observed output — fixtures generated under the
   TSL's internal use — and published papers, its implementer never reading
   `tsl/`, and Timescale's US 10,936,562 cleared before the item takes a phase.
-  The facts P38's inbox holds on the codec layout were read from `tsl/` and are
-  no spec for it. Its oracle is P38's: the restored server decompresses.
+  The survey P38's grilling ran read `tsl/` and is no spec for it
+  (`roadmap-P38-descendants.md`, "Facts the grilling found"). Its oracle is
+  P38's: the restored server decompresses.
 
 - **Rows routed to their partitions.** A `--load-via-partition-root` dump
   writes each partition's rows through its root, and a restore routes each to
