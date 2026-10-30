@@ -63,7 +63,7 @@ Otherwise, this bash snippet will download it to `$PWD`:
 ```bash
 (
   set -o pipefail
-  PGDT_VERSION=0.2.0
+  PGDT_VERSION=0.3.0
   NAME="pgdt-v${PGDT_VERSION}-$(uname -m)-unknown-linux-gnu"
   curl -fsSL "https://github.com/mwinters0/pgdt/releases/download/v${PGDT_VERSION}/${NAME}.tar.xz" \
     | tar -xJ -O "${NAME}/pgdt" \

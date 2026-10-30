@@ -20,7 +20,7 @@ Beside the archives is a `SHA256SUMS`.
 ## Install
 
 ```sh
-v=0.1.0 target=x86_64-unknown-linux-gnu
+v=0.3.0 target=x86_64-unknown-linux-gnu
 base=https://github.com/mwinters0/pgdt/releases/download/v$v
 curl -fLO $base/pgdt-v$v-$target.tar.xz -O $base/SHA256SUMS
 
