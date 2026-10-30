@@ -46,11 +46,11 @@ fn generate(out: &Path, extra: &[&str]) {
 fn assert_every_column_maps(dump: &Path, cache: &Path) {
     let dump = dump.to_str().unwrap();
     let cache = cache.to_str().unwrap();
-    let report = pgdt(&["parse", "--source", dump, "--dtcache", cache]);
+    let report = pgdt(&["parse", "--source", dump, "--cache", cache]);
     if report.contains("columns unmapped") {
         // `--detail` is what names the columns and says why, which is the
         // half a failure needs.
-        let detail = pgdt(&["info", "--dtcache", cache, "--detail"]);
+        let detail = pgdt(&["info", "--cache", cache, "--detail"]);
         panic!(
             "the generator declared a column pgdt does not map, so a typed benchmark is \
              measuring it untyped.\n{detail}"
@@ -67,7 +67,7 @@ fn assert_modes_agree(dump: &Path) {
             dump,
             "--table",
             "public.perf",
-            "--dtcache",
+            "--cache",
             "none",
             "--schema-mode",
             mode,
@@ -157,8 +157,8 @@ fn the_pruning_generator_writes_the_statistics_its_figure_prices() {
     let (dump, cache) = (dump.to_str().unwrap(), cache.to_str().unwrap());
     assert_every_column_maps(Path::new(dump), Path::new(cache));
     std::fs::remove_file(cache).unwrap();
-    pgdt(&["parse", "--source", dump, "--dtcache", cache, "--row-group-size", "1048576"]);
-    let detail = pgdt(&["info", "--dtcache", cache, "--detail"]);
+    pgdt(&["parse", "--source", dump, "--cache", cache, "--row-group-size", "1048576"]);
+    let detail = pgdt(&["info", "--cache", cache, "--detail"]);
     let line = |column: &str| {
         detail
             .lines()
@@ -194,7 +194,7 @@ fn the_pruning_generator_writes_the_statistics_its_figure_prices() {
             dump,
             "--table",
             "public.perf",
-            "--dtcache",
+            "--cache",
             cache,
             "--schema-mode",
             "typed",

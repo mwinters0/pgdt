@@ -46,7 +46,7 @@ fn seekable_xz() -> (tempfile::TempDir, PathBuf) {
 
 fn query(dump: &Path, table: &str, extra: &[&str]) -> Output {
     let mut args =
-        vec!["query", "--source", dump.to_str().unwrap(), "--table", table, "--dtcache", "none"];
+        vec!["query", "--source", dump.to_str().unwrap(), "--table", table, "--cache", "none"];
     args.extend_from_slice(extra);
     run(&args)
 }

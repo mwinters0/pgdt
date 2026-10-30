@@ -103,7 +103,7 @@ const TINY_GROUP: &str = "32";
 /// column at the metadata level, a data-level parse failing on it
 /// (`pgdt_fixtures::sweep_request`).
 fn parse_cache(dump: &Path, out: &Path, statistics: &[&str], extra: &[&str]) -> Vec<u8> {
-    let mut args = vec!["parse", "--source", dump.to_str().unwrap(), "--dtcache"];
+    let mut args = vec!["parse", "--source", dump.to_str().unwrap(), "--cache"];
     args.push(out.to_str().unwrap());
     args.extend_from_slice(statistics);
     let past_refused = refused_field(dump).map(|r| format!("data,{}", r.statistics_level()));

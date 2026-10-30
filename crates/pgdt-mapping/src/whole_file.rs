@@ -488,7 +488,7 @@ async fn map_file_watched(
         // was already consistent at. **The check is this arm's own**: an
         // enabled save makes the same one before it writes, and a disabled
         // cache makes none at all, so leaving it to the save is how a
-        // `--dtcache none` run reached the interrupt below unverified. Only a
+        // `--cache none` run reached the interrupt below unverified. Only a
         // read the leader dispatched unwinds this far; every other one the
         // pass makes is caught at a check point of its own.
         Err(e) if cancelled_read(&e, cancel) => {

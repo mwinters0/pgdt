@@ -1951,11 +1951,11 @@ baseline folded into it.
 | `parse`, system | 18.97 MiB | 53.16 MiB | +10,242 B |
 | `parse`, jemalloc | 28.69 MiB | 60.82 MiB | +9,627 B |
 | `parse --preamble-only` | 30.77 MiB | 34.83 MiB | +1,216 B |
-| `info --dtcache` over the finished cache | 22.73 MiB | 44.41 MiB | +6,495 B |
+| `info --cache` over the finished cache | 22.73 MiB | 44.41 MiB | +6,495 B |
 | `query` (no match), cached | 37.39 MiB | 61.13 MiB | +7,114 B |
-| `query` (no match), `--dtcache none` | 43.16 MiB | 74.75 MiB | +9,465 B |
-| `query` (no match), `--dtcache none`, system | 20.92 MiB | 66.98 MiB | +13,801 B |
-| `query` (no match), `--dtcache none`, jemalloc | 28.73 MiB | 64.09 MiB | +10,595 B |
+| `query` (no match), `--cache none` | 43.16 MiB | 74.75 MiB | +9,465 B |
+| `query` (no match), `--cache none`, system | 20.92 MiB | 66.98 MiB | +13,801 B |
+| `query` (no match), `--cache none`, jemalloc | 28.73 MiB | 64.09 MiB | +10,595 B |
 
 Shared, not measured again — the same binary, command and input:
 - the `parse` reference row at both block counts, from `peak-rss`.
@@ -1966,11 +1966,11 @@ Per-rep readings (MiB, 500 then 4,000):
 - `parse`, system: 18.79, 18.97, 19.09 · 54.71, 53.16, 52.54
 - `parse`, jemalloc: 28.70, 28.37, 28.69 · 60.58, 64.65, 60.82
 - `parse --preamble-only`: 30.82, 30.73, 30.77 · 35.18, 34.83, 34.43
-- `info --dtcache` over the finished cache: 22.73, 22.83, 22.66 · 44.57, 44.41, 44.36
+- `info --cache` over the finished cache: 22.73, 22.83, 22.66 · 44.57, 44.41, 44.36
 - `query` (no match), cached: 37.39, 37.57, 36.92 · 61.13, 60.44, 61.43
-- `query` (no match), `--dtcache none`: 43.22, 43.08, 43.16 · 75.16, 74.75, 74.65
-- `query` (no match), `--dtcache none`, system: 20.92, 20.96, 20.82 · 62.27, 68.77, 66.98
-- `query` (no match), `--dtcache none`, jemalloc: 28.68, 28.73, 29.51 · 64.84, 64.09, 62.74
+- `query` (no match), `--cache none`: 43.22, 43.08, 43.16 · 75.16, 74.75, 74.65
+- `query` (no match), `--cache none`, system: 20.92, 20.96, 20.82 · 62.27, 68.77, 66.98
+- `query` (no match), `--cache none`, jemalloc: 28.68, 28.73, 29.51 · 64.84, 64.09, 62.74
 
 Apparatus over every run in this table: CPU stall ≤0.30%, I/O stall ≤14.61%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.81 GHz, ≤66°C.
 
@@ -2029,7 +2029,7 @@ whose save copies had been a larger share of jemalloc's and mimalloc's slopes
 than of glibc's, and why one transient costs three allocators differently is
 unattributed, being retention, which the counting allocator cannot see.
 
-**Retention is real, and not only where the throttle is off.** `--dtcache none`
+**Retention is real, and not only where the throttle is off.** `--cache none`
 splices per block (`KD5`), and there `system`'s +13,801 B sits **4,336 B above
 mimalloc's +9,465** and 3,206 B above jemalloc's +10,595. Under the throttle
 `system` sits 3,610 B and 615 B above the same two, so this is not the one
@@ -2470,10 +2470,10 @@ for i in 1 2 3 4 5; do for f in control $NESTED; do for m in strings typed; do
     -v "$PWD/$B:/pgdt:ro" \
     -v "$D/$f.sql:/dump.sql:ro" \
     "$IMAGE" bash -c \
-    "/pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt --jobs 1 \
+    "/pgdt parse --source /dump.sql --cache /tmp/x.pgdt --jobs 1 \
        --statistics-level data --row-group-size 1048576 >/dev/null &&
      time /pgdt query --source /dump.sql --table public.perf \
-       --dtcache /tmp/x.pgdt --statistics none --schema-mode $m --jobs 1 >/dev/null"
+       --cache /tmp/x.pgdt --statistics none --schema-mode $m --jobs 1 >/dev/null"
 done; done; done
 ```
 
@@ -4500,7 +4500,7 @@ machine is no more a figure with the cgroup raised than with it tuned.
 The orchestrator compares the two caches itself — `cmp`, with the verdict in
 the log — which is the one place this run is stricter than the wrap script
 above. It still only prints the expected counts beside each leg's tail, and it
-does not read the byte total back at all; that is `pgdt info --dtcache <cache>
+does not read the byte total back at all; that is `pgdt info --cache <cache>
 --detail` afterwards, in a container as every run of a built binary is.
 
 ## The preamble prepass is bounded by the schema, not by the dump
@@ -4633,7 +4633,7 @@ with the cache **disabled entirely** the map is O(blocks²) exactly as it was:
 
 ```sh
 # maps to EOF (the table never matches) and never saves
-/pgdt query --source /dump.sql --table public.nosuchtable --dtcache none --jobs 1
+/pgdt query --source /dump.sql --table public.nosuchtable --cache none --jobs 1
 ```
 
 <!-- figure: map-only — reproduce with `cd scripts && uv run measure.py --figure map-only` -->
@@ -4655,7 +4655,7 @@ seven on the platform allocator: 1.012 / 4.56 / 19.03, 1.004 / 3.98 / 19.07,
 0.984 / 3.86 / 18.37, 1.053 / 4.65 / 19.28, 1.005 / 4.25 / 18.84,
 1.027 / 4.26 / 19.17, 1.070 / 4.35 / 19.68, 0.505 / 2.84 / 17.08 and
 0.490 / 2.43 / 16.34 s.
-`--dtcache none` makes `cache::CacheMode::save` a no-op, so the throttle has no
+`--cache none` makes `cache::CacheMode::save` a no-op, so the throttle has no
 cost to amortize, its gate never closes, and the map is rebuilt at every
 `CopyEnd`. Across the seven the 1000- and 4000-block rows held inside 9% and 7%
 and the 2000-block row moved, 3.86–4.65 s; the last two are not read against

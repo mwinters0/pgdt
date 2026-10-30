@@ -39,7 +39,7 @@ pub(crate) struct QueryArgs {
     /// Cache file path, or `none` to ignore any existing cache and
     /// perform a fresh scan without persisting it.
     #[arg(long)]
-    dtcache: Option<PathBuf>,
+    cache: Option<PathBuf>,
     // Kept out of the help below: `docs/design/decisions.md`, "Predicates".
     /// Single-column filter: `column=value`, `column!=value`,
     /// `column<value`, `column<=value`, `column>value`,
@@ -203,7 +203,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     let QueryArgs {
         source: file,
         table,
-        dtcache,
+        cache,
         filter,
         where_expr,
         column,
@@ -221,7 +221,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     } = args;
     let read = ReadFlags { chunk_size, max_line_bytes };
     let origin = Origin::resolve(&file)?;
-    let mode = cache_mode(&origin, dtcache.as_deref())
+    let mode = cache_mode(&origin, cache.as_deref())
         .with_strict_identity(identity.resolve())
         .with_overwrite_unusable(overwrite.overwrite_unusable_cache);
     // Every term is parsed before the file is opened, so a

@@ -51,11 +51,11 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
                 why: "there is no cache".into(),
             },
             Some(
-                "`pgdt parse --source /d/koji.dump --dtcache koji.dump.pgdt \
+                "`pgdt parse --source /d/koji.dump --cache koji.dump.pgdt \
                  --postgres-invalid-values ignore`",
             ),
             Some(
-                "`pgdt parse --source /d/koji.dump --dtcache koji.dump.pgdt \
+                "`pgdt parse --source /d/koji.dump --cache koji.dump.pgdt \
                  --postgres-invalid-values ignore`",
             ),
         ),

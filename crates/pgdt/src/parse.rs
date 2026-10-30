@@ -40,7 +40,7 @@ pub(crate) struct ParseArgs {
     /// Cache file path, or `none` to disable the cache. Since `parse`'s
     /// whole purpose is to write the cache, `none` is rejected.
     #[arg(long)]
-    dtcache: Option<PathBuf>,
+    cache: Option<PathBuf>,
     // Kept out of the help below: `docs/design/decisions.md`, "D30".
     /// Scan only the dump's preamble — the dump-level header alone, no
     /// per-block listing or row counts — instead of the whole file. Cost
@@ -191,7 +191,7 @@ pub(crate) struct ParseArgs {
 pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> {
     let ParseArgs {
         source: file,
-        dtcache,
+        cache,
         preamble_only: preamble_only_flag,
         chunk_size,
         max_line_bytes,
@@ -212,15 +212,15 @@ pub(crate) async fn run(args: ParseArgs, init: &mut InitShutdown) -> Result<()> 
         row_group_max_rows,
     )?;
     // `parse` scans to persist (`docs/design/decisions.md`, "D61").
-    // Reject `--dtcache none` up front, before paying for a scan we
+    // Reject `--cache none` up front, before paying for a scan we
     // won't be allowed to persist.
     let origin = Origin::resolve(&file)?;
-    let mode = cache_mode(&origin, dtcache.as_deref())
+    let mode = cache_mode(&origin, cache.as_deref())
         .with_strict_identity(identity.resolve())
         .with_overwrite_unusable(overwrite.overwrite_unusable_cache);
     let path = mode
         .require_enabled("parse")
-        .context("`--dtcache none` cannot be combined with `parse`")?
+        .context("`--cache none` cannot be combined with `parse`")?
         .to_path_buf();
     // The dump is opened through its cache once, the cache decoded once
     // and handed to the pass: one that cannot be used is refused here as

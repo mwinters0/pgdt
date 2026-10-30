@@ -78,9 +78,9 @@ fn strict_identity_without_a_source_is_a_usage_error() {
 
     // The same invocation is fine without the flag — cache-only mode is the
     // supported entry point, and it is the *flag* that is refused.
-    run_ok(&["info", "--dtcache", &cache]);
+    run_ok(&["info", "--cache", &cache]);
 
-    let refused = run(&["info", "--dtcache", &cache, "--strict-identity=time"]);
+    let refused = run(&["info", "--cache", &cache, "--strict-identity=time"]);
     assert!(!refused.status.success(), "the flag needs a source to bind");
     let said = stderr_of(&refused);
     assert!(said.contains("--source"), "and the usage error names what is missing: {said}");

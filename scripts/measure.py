@@ -2234,14 +2234,14 @@ class Stager:
             inside([
                 str(self.cfg.bin_pgdt), "parse",
                 "--source", str(path),
-                "--dtcache", str(tmp),
+                "--cache", str(tmp),
                 "--jobs", str(SWEEP_JOBS),
                 *NO_STATISTICS.split(),
             ]),
             quiet=True,
         )  # fmt: skip
         out = run(
-            inside([str(self.cfg.bin_pgdt), "info", "--dtcache", str(tmp), "--json"]), capture=True
+            inside([str(self.cfg.bin_pgdt), "info", "--cache", str(tmp), "--json"]), capture=True
         )
         tmp.unlink(missing_ok=True)
         index = json.loads(out)
@@ -2843,7 +2843,7 @@ GATHER_STATISTICS = f"--statistics-level data --row-group-size {ROW_GROUP_SIZE}"
 #: **The query figures query a data-level cache one untimed `parse` wrote in
 #: the same container**, as `statistics-pruning` does, stating `--statistics
 #: none` so no pruning enters the reading. A query over no cache
-#: (`--dtcache none`) maps inside the timer, timing the census
+#: (`--cache none`) maps inside the timer, timing the census
 #: and the count with the rows, and one over a metadata-level cache reads its
 #: table once more for a census, inside the timer (`NO_STATISTICS`). These are the
 #: prefixes `_script` dispatches on. `query-nomatch*` is not here: it times
@@ -2867,12 +2867,12 @@ DATA_LEVEL_QUERIES: tuple[str, ...] = (
 )
 #: That builder, ahead of the timer.
 DATA_LEVEL_BUILDER = (
-    f"/pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt --jobs {SWEEP_JOBS} "
+    f"/pgdt parse --source /dump.sql --cache /tmp/x.pgdt --jobs {SWEEP_JOBS} "
     f"{GATHER_STATISTICS} >/dev/null && "
 )
 #: What the timed query states: the builder's cache, and no use of its
 #: statistics.
-DATA_LEVEL_QUERY = "--dtcache /tmp/x.pgdt --statistics none"
+DATA_LEVEL_QUERY = "--cache /tmp/x.pgdt --statistics none"
 
 #: Where `Session.prebuild`'s container sees the directory its cache is
 #: written to.
@@ -2882,7 +2882,7 @@ PREBUILT_MOUNT = "/out"
 #: beside the read-only dump. Untimed and run once a sitting, so it is not a
 #: command shape; `test_measure.py` holds it to the warm builder's flags.
 PREBUILT_BUILDER = (
-    f"/pgdt parse --source /dump.sql --dtcache {PREBUILT_MOUNT}/{{name}} "
+    f"/pgdt parse --source /dump.sql --cache {PREBUILT_MOUNT}/{{name}} "
     f"--jobs {SWEEP_JOBS} {GATHER_STATISTICS} >/dev/null"
 )
 
@@ -3153,7 +3153,7 @@ def typed_scan_invocation(dump: str) -> tuple[list[str], list[str]]:
 #: looks, at `SWEEP_JOBS` whatever partition count the query states, so every
 #: row of a figure reads one cache.
 PROVIDER_BUILDER = (
-    f"/pgdt parse --source /dump.sql --dtcache /dump.sql.pgdt --jobs {SWEEP_JOBS} "
+    f"/pgdt parse --source /dump.sql --cache /dump.sql.pgdt --jobs {SWEEP_JOBS} "
     f"{GATHER_STATISTICS} >/dev/null && "
 )
 
@@ -4118,7 +4118,7 @@ def _script(command: str) -> str:
     j = f"--jobs {SWEEP_JOBS}"
     ns = NO_STATISTICS
     if command == "parse":
-        return f"{q} parse --source /dump.sql --dtcache /tmp/x.pgdt {j} {ns} >/dev/null"
+        return f"{q} parse --source /dump.sql --cache /tmp/x.pgdt {j} {ns} >/dev/null"
     if command == "parse-rss":
         # The same `parse` as above, wrapped so the run reports its own peak
         # resident set as well as its wall clock. The redirection is outside
@@ -4126,11 +4126,11 @@ def _script(command: str) -> str:
         # stderr, where bash's `time` report already goes.
         return (
             f"time {PEAK_RSS} /pgdt parse --source /dump.sql "
-            f"--dtcache /tmp/x.pgdt {j} {ns} >/dev/null"
+            f"--cache /tmp/x.pgdt {j} {ns} >/dev/null"
         )
     if command == "parse-preamble":
         return (
-            f"{q} parse --preamble-only --source /dump.sql --dtcache /tmp/x.pgdt "
+            f"{q} parse --preamble-only --source /dump.sql --cache /tmp/x.pgdt "
             f"{j} >/dev/null"
         )
     if command == "parse-preamble-rss":
@@ -4142,7 +4142,7 @@ def _script(command: str) -> str:
         # exactly one block and the two coincide in it.
         return (
             f"time {PEAK_RSS} /pgdt parse --preamble-only "
-            f"--source /dump.sql --dtcache /tmp/x.pgdt {j} >/dev/null"
+            f"--source /dump.sql --cache /tmp/x.pgdt {j} >/dev/null"
         )
     if command == "info-cache-rss":
         # An index *deserialized* rather than built: the second route to the
@@ -4162,31 +4162,31 @@ def _script(command: str) -> str:
         # none**: `info` takes no `--jobs` because it starts no workers, so
         # there is no default for it to inherit.
         return (
-            f"/pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt {j} {ns} >/dev/null && "
-            f"time {PEAK_RSS} /pgdt info --dtcache /tmp/x.pgdt "
+            f"/pgdt parse --source /dump.sql --cache /tmp/x.pgdt {j} {ns} >/dev/null && "
+            f"time {PEAK_RSS} /pgdt info --cache /tmp/x.pgdt "
             ">/dev/null"
         )
     if command in ("query-nomatch-cached-rss", "query-nomatch-rss"):
         # The pair that isolates the un-throttled splice, one flag apart. A
         # table that never matches maps to EOF and renders no row, so what
         # differs between them is the save throttle and nothing else: with a
-        # cache path `parse`'s throttle governs, with `--dtcache none` the
+        # cache path `parse`'s throttle governs, with `--cache none` the
         # whole-list rebuild is paid per block (`KD5`).
         #
-        # `query` rather than `parse` because `parse` refuses `--dtcache none`
+        # `query` rather than `parse` because `parse` refuses `--cache none`
         # outright -- "cache is disabled, but `parse` requires a cache file" --
         # so the un-throttled shape is reachable only through `query`.
         cache = "/tmp/x.pgdt" if command.endswith("cached-rss") else "none"
         return (
             f"time {PEAK_RSS} /pgdt query --source /dump.sql "
-            f"--table public.nosuchtable --dtcache {cache} {j} >/dev/null"
+            f"--table public.nosuchtable --cache {cache} {j} >/dev/null"
         )
     if command == "parse-cache-out":
         # The cache goes to the mounted tmpfs, not the container's own layer,
         # and the removal is outside the timer.
         return (
             "rm -f /out/measure.pgdt; "
-            f"{q} parse --source /dump.sql --dtcache /out/measure.pgdt {j} {ns} >/dev/null"
+            f"{q} parse --source /dump.sql --cache /out/measure.pgdt {j} {ns} >/dev/null"
         )
     if command in ("query-typed", "query-strings"):
         # Over a data-level cache built ahead of the timer (`DATA_LEVEL_QUERIES`).
@@ -4222,7 +4222,7 @@ def _script(command: str) -> str:
     if command == "query-nomatch":
         # Maps to EOF (the table never matches) and never saves.
         return (
-            f"{q} query --source /dump.sql --table public.nosuchtable --dtcache none "
+            f"{q} query --source /dump.sql --table public.nosuchtable --cache none "
             f"{j} >/dev/null"
         )
     if command.startswith(STATISTICS_FAMILY):
@@ -4236,12 +4236,12 @@ def _script(command: str) -> str:
             raise ValueError(f"unknown command shape {command!r}")
         if not suffix:
             return (
-                f"{q} parse --source /dump.sql --dtcache /tmp/x.pgdt {j} {flags[leg]} "
+                f"{q} parse --source /dump.sql --cache /tmp/x.pgdt {j} {flags[leg]} "
                 ">/dev/null"
             )
         return (
             f"time {PEAK_RSS} /pgdt parse --source /dump.sql "
-            f"--dtcache /tmp/x.pgdt {j} {flags[leg]} >/dev/null"
+            f"--cache /tmp/x.pgdt {j} {flags[leg]} >/dev/null"
         )
     if command.startswith(PRUNING_FAMILY):
         # `statistics-pruning`. The builder is outside the timer and states the
@@ -4252,9 +4252,9 @@ def _script(command: str) -> str:
             raise ValueError(f"unknown command shape {command!r}")
         expr = PRUNING_FILTERS[name][0]
         return (
-            f"/pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt {j} "
+            f"/pgdt parse --source /dump.sql --cache /tmp/x.pgdt {j} "
             f"{GATHER_STATISTICS} >/dev/null && "
-            f"{q} query --source /dump.sql --table public.perf --dtcache /tmp/x.pgdt "
+            f"{q} query --source /dump.sql --table public.perf --cache /tmp/x.pgdt "
             f"--schema-mode typed --where '{expr}' --statistics {leg} {j} >/dev/null"
         )
     if command == DYNFILTER_STARTUP:
@@ -4264,7 +4264,7 @@ def _script(command: str) -> str:
         env = [f"{DFCLI_PARTITIONS}={SWEEP_JOBS}"]
         argv = ["--source", f"{DFCLI_CATALOG}=/dump.sql", "--format", "csv", "-q", "-c", STARTUP_SQL]
         return (
-            f"/pgdt parse --source /dump.sql --dtcache /dump.sql.pgdt {j} "
+            f"/pgdt parse --source /dump.sql --cache /dump.sql.pgdt {j} "
             f"{GATHER_STATISTICS} >/dev/null && "
             f"time {dfcli_shell(env, SQL_SHELL, argv)} "
             ">/tmp/result.csv && "
@@ -4282,7 +4282,7 @@ def _script(command: str) -> str:
             raise ValueError(f"unknown command shape {command!r}")
         env, argv = dfcli_invocation(figure, name, leg, "/dump.sql")
         return (
-            f"/pgdt parse --source /dump.sql --dtcache /dump.sql.pgdt {j} "
+            f"/pgdt parse --source /dump.sql --cache /dump.sql.pgdt {j} "
             f"{GATHER_STATISTICS} >/dev/null && "
             f"time {dfcli_shell(env, SQL_SHELL, argv)} "
             f">/tmp/result.csv && {DFCLI_ANSWER}"
@@ -4298,7 +4298,7 @@ def _script(command: str) -> str:
         if int(size) not in CHUNK_SIZES:
             raise ValueError(f"{command!r} names a chunk size the figure does not carry")
         return (
-            f"{q} parse --source /dump.sql --dtcache /tmp/x.pgdt "
+            f"{q} parse --source /dump.sql --cache /tmp/x.pgdt "
             f"--chunk-size {size} {j} {ns} >/dev/null"
         )
     if command.startswith(RESERVE_FAMILY):
@@ -4320,7 +4320,7 @@ def _script(command: str) -> str:
         arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
         return (
             f"time {arena}{PEAK_RSS} /pgdt parse "
-            f"--source /dump.sql --dtcache /tmp/x.pgdt "
+            f"--source /dump.sql --cache /tmp/x.pgdt "
             f"--jobs {RESERVE_JOBS} --memory {stated_allowance(int(budget))} {ns} >/dev/null"
         )
     if command.startswith(RESERVE_FLAGLESS):
@@ -4341,7 +4341,7 @@ def _script(command: str) -> str:
         arena = f"MALLOC_ARENA_MAX={arenas[token]} " if arenas[token] else ""
         return (
             f"time {arena}{PEAK_RSS} /pgdt parse "
-            f"--source /dump.sql --dtcache /tmp/x.pgdt {ns} >/dev/null"
+            f"--source /dump.sql --cache /tmp/x.pgdt {ns} >/dev/null"
         )
     if command.startswith(RESERVE_STEP_FAMILY):
         # The path step: a stated budget either side of `charge_bytes(unit, 1)`
@@ -4354,7 +4354,7 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a budget the figure does not carry")
         return (
             f"time {PEAK_RSS} /pgdt parse "
-            f"--source /dump.sql --dtcache /tmp/x.pgdt "
+            f"--source /dump.sql --cache /tmp/x.pgdt "
             f"--jobs {RESERVE_JOBS} --memory {stated_allowance(int(budget))} {ns} >/dev/null"
         )
     if command == PARALLEL_SCAN:
@@ -4373,7 +4373,7 @@ def _script(command: str) -> str:
         if not jobs.isdigit() or int(jobs) not in GZPASS_JOBS:
             raise ValueError(f"{command!r} names a job count the figure does not carry")
         return (
-            f"{q} parse --source /dump.sql --dtcache /tmp/x.pgdt --jobs {jobs} "
+            f"{q} parse --source /dump.sql --cache /tmp/x.pgdt --jobs {jobs} "
             f"--memory {stated_allowance(GZPASS_BUDGET)} {ns} >/dev/null"
         )
     if command.startswith(GZRSS_FAMILY):
@@ -4383,7 +4383,7 @@ def _script(command: str) -> str:
         if not jobs.isdigit() or int(jobs) not in GZIP_RSS_JOBS:
             raise ValueError(f"{command!r} names a job count the figure does not carry")
         return (
-            f"time {PEAK_RSS} /pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt "
+            f"time {PEAK_RSS} /pgdt parse --source /dump.sql --cache /tmp/x.pgdt "
             f"--jobs {jobs} --memory {stated_allowance(GZPASS_BUDGET)} {ns} >/dev/null"
         )
     if command.startswith(JOBS_AXIS):
@@ -4405,11 +4405,11 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a job count the figure does not carry")
         p = f"--jobs {jobs} --memory {stated_allowance(PARALLEL_BUDGET)}"
         if shape == "parse":
-            return f"{q} parse --source /dump.sql --dtcache /tmp/x.pgdt {p} {ns} >/dev/null"
+            return f"{q} parse --source /dump.sql --cache /tmp/x.pgdt {p} {ns} >/dev/null"
         if shape == "parse-rss":
             return (
                 f"time {PEAK_RSS} /pgdt parse --source /dump.sql "
-                f"--dtcache /tmp/x.pgdt {p} {ns} >/dev/null"
+                f"--cache /tmp/x.pgdt {p} {ns} >/dev/null"
             )
         if shape == PARALLEL_SCAN:
             # The dynamic-filter figures' builder and read-back around
@@ -6881,7 +6881,7 @@ def count_saves(
         contained.argv(
             [
                 "strace", "-f", "-e", "trace=open,openat",
-                str(binary), "parse", "--source", str(dump), "--dtcache", str(cache),
+                str(binary), "parse", "--source", str(dump), "--cache", str(cache),
                 "--jobs", str(SWEEP_JOBS), *NO_STATISTICS.split(),
             ],
             cfg.memory,
@@ -8007,11 +8007,11 @@ _ATTRIBUTION_LEGS: tuple[tuple[str, str, str], ...] = (
     ("`parse`, system", "alloc:system", "parse-rss"),
     ("`parse`, jemalloc", "alloc:jemalloc", "parse-rss"),
     ("`parse --preamble-only`", "pgdt", "parse-preamble-rss"),
-    ("`info --dtcache` over the finished cache", "pgdt", "info-cache-rss"),
+    ("`info --cache` over the finished cache", "pgdt", "info-cache-rss"),
     ("`query` (no match), cached", "pgdt", "query-nomatch-cached-rss"),
-    ("`query` (no match), `--dtcache none`", "pgdt", "query-nomatch-rss"),
-    ("`query` (no match), `--dtcache none`, system", "alloc:system", "query-nomatch-rss"),
-    ("`query` (no match), `--dtcache none`, jemalloc", "alloc:jemalloc", "query-nomatch-rss"),
+    ("`query` (no match), `--cache none`", "pgdt", "query-nomatch-rss"),
+    ("`query` (no match), `--cache none`, system", "alloc:system", "query-nomatch-rss"),
+    ("`query` (no match), `--cache none`, jemalloc", "alloc:jemalloc", "query-nomatch-rss"),
 )
 
 
@@ -15336,7 +15336,7 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
       report the exit status — `nerdctl inspect` reports it either way, for a
       run that finished *or* was signalled.
     * the cgroup limit, which is part of the apparatus.
-    * `--dtcache` under the mounted `/out`. The dump is read-only, so the
+    * `--cache` under the mounted `/out`. The dump is read-only, so the
       colocated default lands in the container's ephemeral layer and is
       destroyed with it — an hour of scanning thrown away with no error, since
       the write itself succeeds.
@@ -15362,7 +15362,7 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
             f"-m {cfg.memory} --memory-swap {cfg.memory} \\\n"
             + mounts
             + f"  {cfg.image} \\\n"
-            f"  sh -c 'exec /pgdt parse --source /dump.sql --dtcache /out/{cache} "
+            f"  sh -c 'exec /pgdt parse --source /dump.sql --cache /out/{cache} "
             f"--jobs {jobs} {NO_STATISTICS} >> /out/{log} 2>&1'"
         )
 
@@ -15404,7 +15404,7 @@ def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> s
             # keep the trailing line-continuation: the mounts run straight on
             # into the image name below.
             mounts.rstrip("\n"),
-            f"  {cfg.image} /pgdt info --dtcache /out/{name}-wrap.pgdt --detail \\",
+            f"  {cfg.image} /pgdt info --cache /out/{name}-wrap.pgdt --detail \\",
             "  | grep -c 'not declared\\|metadata not scanned'",
             "",
             "# leg 2 — resume the identical command, then compare to a full run's cache",
@@ -15565,7 +15565,7 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
         return [
             "parse",
             "--source", str(source),
-            "--dtcache", str(cache),
+            "--cache", str(cache),
             "--jobs", str(SWEEP_JOBS),
             *NO_STATISTICS.split(),
         ]
@@ -15579,7 +15579,7 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
         return [
             "parse",
             "--source", str(source),
-            "--dtcache", str(cache),
+            "--cache", str(cache),
             "--jobs", str(SWEEP_JOBS),
             *flags[leg].split(),
         ]
@@ -15590,7 +15590,7 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
             "query",
             "--source", str(source),
             "--table", "public.perf",
-            "--dtcache", str(cache),
+            "--cache", str(cache),
             "--statistics", "none",
             "--schema-mode", mode,
             "--jobs", str(SWEEP_JOBS),
@@ -15611,7 +15611,7 @@ def profile_builder_argv(command: str, source: Path | str, cache: Path | str) ->
     return [
         "parse",
         "--source", str(source),
-        "--dtcache", str(cache),
+        "--cache", str(cache),
         "--jobs", str(SWEEP_JOBS),
         *GATHER_STATISTICS.split(),
     ]
@@ -15642,7 +15642,7 @@ def release_diff_invocation(
         builder = [
             "parse",
             "--source", str(source),
-            "--dtcache", f"{source}.pgdt",
+            "--cache", f"{source}.pgdt",
             "--jobs", str(SWEEP_JOBS),
             *GATHER_STATISTICS.split(),
         ]
@@ -15812,7 +15812,7 @@ def profile_recipe(cfg: Config) -> str:
     )
     lines += [
         f"rm -f {account_cache}",
-        f"{c} {binary} parse --source {account_dump} --dtcache {account_cache} "
+        f"{c} {binary} parse --source {account_dump} --cache {account_cache} "
         f"--jobs {SWEEP_JOBS} {GATHER_STATISTICS} >/dev/null",
     ]
     for leg in DFCLI_ACCOUNT_LEGS:
@@ -15861,7 +15861,7 @@ def profile_recipe(cfg: Config) -> str:
         )
     for command, label in RELEASE_PROFILE_SHAPES:
         env, argv, builder = release_diff_invocation(command, release_dump, cache)
-        written = builder[builder.index("--dtcache") + 1] if builder else str(cache)
+        written = builder[builder.index("--cache") + 1] if builder else str(cache)
         lines += ["", f"# {label}"]
         for leg in RELEASE_DIFF_LEGS:
             leg_binary = profile_leg_binary(cfg, leg)
@@ -16079,7 +16079,7 @@ def heaptrack_argv(command: str, source: Path | str, cache: Path | str) -> list[
         return [
             "parse",
             "--source", str(source),
-            "--dtcache", str(cache),
+            "--cache", str(cache),
             "--jobs", str(RESERVE_JOBS),
             "--memory", str(stated_allowance(int(budget))),
             *NO_STATISTICS.split(),
@@ -16091,7 +16091,7 @@ def heaptrack_argv(command: str, source: Path | str, cache: Path | str) -> list[
         return [
             "parse",
             "--source", str(source),
-            "--dtcache", str(cache),
+            "--cache", str(cache),
             "--jobs", jobs,
             "--memory", str(stated_allowance(GZPASS_BUDGET)),
             *NO_STATISTICS.split(),
@@ -17153,7 +17153,7 @@ def callgrind_invocation(
         argv = [
             "parse",
             "--source", str(source),
-            "--dtcache", str(cache),
+            "--cache", str(cache),
             "--jobs", str(SWEEP_JOBS),
             *flags[leg].split(),
         ]  # fmt: skip
@@ -17252,7 +17252,7 @@ def callgrind_recipe(cfg: Config) -> str:
     for command, label, memory in COUNT_PAIR_SHAPES:
         allowance = contained.size_bytes(memory or cfg.memory)
         env, argv, builder = callgrind_invocation(command, dump, cache, allowance)
-        written = builder[builder.index("--dtcache") + 1] if builder else str(cache)
+        written = builder[builder.index("--cache") + 1] if builder else str(cache)
         lines += ["", f"# {label}"]
         for rep in range(1, reps + 1):
             order = COUNT_PAIR_LEGS if rep - 1 < (reps + 1) // 2 else COUNT_PAIR_LEGS[::-1]

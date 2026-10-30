@@ -13,13 +13,13 @@ use pgdt_io::Origin;
 
 use crate::parallel::Resolved;
 
-/// The cache a `--dtcache` names for `origin`: the default where it is
+/// The cache a `--cache` names for `origin`: the default where it is
 /// absent, none at all for the literal path `none` — `pgdt`'s spelling, the
 /// library taking every path as given — and any other path as given.
-pub(crate) fn cache_mode(origin: &Origin, dtcache: Option<&Path>) -> CacheMode {
-    match dtcache {
+pub(crate) fn cache_mode(origin: &Origin, cache: Option<&Path>) -> CacheMode {
+    match cache {
         Some(path) if path == Path::new("none") => CacheMode::DISABLED,
-        dtcache => CacheMode::resolve(origin, dtcache),
+        cache => CacheMode::resolve(origin, cache),
     }
 }
 

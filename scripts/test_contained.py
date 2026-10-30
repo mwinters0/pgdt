@@ -22,7 +22,7 @@ import contained
 
 REFUSED = [
     "target/release/pgdt parse --source /dev/shm/pgdt/control.sql",
-    "./target/profiling/pgdt info --dtcache x",
+    "./target/profiling/pgdt info --cache x",
     "FOO=1 time /mnt/x/pgdt parse --source a",
     "env A=1 B=2 runs/pgdt-alloc-system parse --source a",
     "cd .. && timeout 60 ./target/debug/deps/pgdt_gzip_seek-0123abcd",
@@ -146,7 +146,7 @@ class Argv(unittest.TestCase):
             (root / "data").mkdir()
             (root / "data/dump.sql").write_text("")
             line = self.line(
-                ["pgdt", "parse", f"--source={root}/data/dump.sql", "--dtcache", f"{root}/out/new.pgdt"],
+                ["pgdt", "parse", f"--source={root}/data/dump.sql", "--cache", f"{root}/out/new.pgdt"],
                 cwd=root,
             )
         binds = {line[i + 1] for i, w in enumerate(line) if w == "-v"}

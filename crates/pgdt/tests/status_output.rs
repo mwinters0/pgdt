@@ -167,7 +167,7 @@ fn a_fresh_parse_announces_the_preamble_pass_and_the_scan_separately() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
@@ -205,7 +205,7 @@ fn an_uninterrupted_parse_never_looks_like_a_resumed_one() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
@@ -237,7 +237,7 @@ async fn a_genuine_resume_reports_no_preamble_pass_and_names_the_frontier() {
     let cache = write_truncated_cache(&dump, frontier).await;
 
     let out =
-        run(&["parse", "--source", dump.to_str().unwrap(), "--dtcache", cache.to_str().unwrap()]);
+        run(&["parse", "--source", dump.to_str().unwrap(), "--cache", cache.to_str().unwrap()]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stderr = stderr_of(&out);
 
@@ -267,7 +267,7 @@ fn scan_started_names_jobs_and_the_stated_memory_budget_as_a_quantity() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
         "--jobs",
         "4",
@@ -307,7 +307,7 @@ fn scan_started_names_the_default_memory_budget_when_none_was_stated() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
@@ -357,7 +357,7 @@ fn a_scanning_command_reports_the_arrangement_it_resolved() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
@@ -401,7 +401,7 @@ fn a_scanning_command_reports_the_arrangement_it_resolved() {
         "query",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         "none",
         "--table",
         "public.widgets",
@@ -436,7 +436,7 @@ fn the_stated_half_is_reported_before_the_seek_table_walk() {
         "parse",
         "--source",
         xz.to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
         "--memory",
         "268435456",
@@ -464,7 +464,7 @@ fn the_mode_report_marks_a_stated_flag_as_stated() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
         "--jobs",
         "3",
@@ -506,7 +506,7 @@ fn a_stated_memory_budget_at_a_serial_job_count_is_not_marked_default() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
         "--memory",
         "671088640",
@@ -535,7 +535,7 @@ fn no_status_line_ever_prints_nones_or_somes() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
     ]);
     assert!(out.status.success(), "{}", stderr_of(&out));
@@ -556,7 +556,7 @@ fn a_fully_cached_reparse_announces_no_scan() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
     ]);
     assert!(first.status.success(), "{}", stderr_of(&first));
@@ -566,7 +566,7 @@ fn a_fully_cached_reparse_announces_no_scan() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
     ]);
     assert!(second.status.success(), "{}", stderr_of(&second));
@@ -586,7 +586,7 @@ fn info_announces_no_scan() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
     ]);
     assert!(parsed.status.success(), "{}", stderr_of(&parsed));
@@ -595,7 +595,7 @@ fn info_announces_no_scan() {
         "info",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         cache.to_str().unwrap(),
     ]);
     assert!(info.status.success(), "{}", stderr_of(&info));
@@ -616,13 +616,8 @@ fn the_seek_table_walk_is_announced_once_and_only_on_a_fresh_open() {
     let cache_dir = tempfile::tempdir().unwrap();
     let cache = cache_dir.path().join("out.pgdt");
 
-    let first = run(&[
-        "parse",
-        "--source",
-        xz_path.to_str().unwrap(),
-        "--dtcache",
-        cache.to_str().unwrap(),
-    ]);
+    let first =
+        run(&["parse", "--source", xz_path.to_str().unwrap(), "--cache", cache.to_str().unwrap()]);
     assert!(first.status.success(), "{}", stderr_of(&first));
     let first_stderr = stderr_of(&first);
     assert_eq!(first_stderr.matches("seek table build started").count(), 1, "{first_stderr}");
@@ -630,13 +625,8 @@ fn the_seek_table_walk_is_announced_once_and_only_on_a_fresh_open() {
 
     // The cache already covers the file, so this is the "nothing to do" case
     // above and opens through `with_index` regardless — no walk either way.
-    let second = run(&[
-        "parse",
-        "--source",
-        xz_path.to_str().unwrap(),
-        "--dtcache",
-        cache.to_str().unwrap(),
-    ]);
+    let second =
+        run(&["parse", "--source", xz_path.to_str().unwrap(), "--cache", cache.to_str().unwrap()]);
     assert!(second.status.success(), "{}", stderr_of(&second));
     assert!(!stderr_of(&second).contains("seek table build"), "{}", stderr_of(&second));
 }
@@ -668,7 +658,7 @@ fn an_xz_parse_defaults_to_the_cores_and_a_plain_one_to_serial() {
     let cache_dir = tempfile::tempdir().unwrap();
 
     let started_of = |source: &str, cache: PathBuf| -> String {
-        let out = run(&["parse", "--source", source, "--dtcache", cache.to_str().unwrap()]);
+        let out = run(&["parse", "--source", source, "--cache", cache.to_str().unwrap()]);
         assert!(out.status.success(), "{}", stderr_of(&out));
         let stderr = stderr_of(&out);
         main_scan_lines(&stderr)
@@ -713,7 +703,7 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         "parse",
         "--source",
         compressed.to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         dir.path().join("declined.pgdt").to_str().unwrap(),
         "--statistics-level",
         "metadata",
@@ -753,7 +743,7 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         "parse",
         "--source",
         compressed.to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         dir.path().join("afforded.pgdt").to_str().unwrap(),
         "--statistics-level",
         "metadata",
@@ -771,7 +761,7 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
         "parse",
         "--source",
         plain_dump().to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         dir.path().join("plain.pgdt").to_str().unwrap(),
         "--statistics-level",
         "metadata",
@@ -800,7 +790,7 @@ fn a_gathering_parse_is_not_corrected() {
             "parse",
             "--source",
             plain_dump().to_str().unwrap(),
-            "--dtcache",
+            "--cache",
             dir.path().join(format!("{leg}.pgdt")).to_str().unwrap(),
             "--jobs",
             "2",

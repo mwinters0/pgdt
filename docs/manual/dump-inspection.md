@@ -27,7 +27,7 @@ pgdt parse --source mydump.sql
 
 It scans the file end to end, writes the cache beside it
 (`mydump.sql.pgdt`), and prints the same listing `info` prints. Pass
-`--dtcache <path>` to put the cache somewhere else — worth doing when the dump
+`--cache <path>` to put the cache somewhere else — worth doing when the dump
 sits on a read-only mount, since the default location is next to the dump.
 
 **An interrupted parse is not wasted work.** The scan banks its progress at
@@ -181,7 +181,7 @@ files, are already seekable and earn no warning.
 You can also ask a file what shape it is in, at any time and without reading
 it: `pgdt info --detail` prints one line naming the container's blocks,
 streams and largest block. It comes out of the cache, so it costs nothing and
-works from a `--dtcache` alone:
+works from a `--cache` alone:
 
 ```
 $ pgdt info --source mydump.sql.xz --detail
@@ -205,10 +205,10 @@ after that takes it from there. A file compressed in one go with `xz -T0` or
 whatever the file's size.
 
 If the cache stops matching the file it sits beside — you replaced the dump,
-or pointed `--dtcache` at another file's cache — pgdt says so rather than
+or pointed `--cache` at another file's cache — pgdt says so rather than
 quietly working around it. All three commands refuse, `parse` included: a
 cache that does not describe this file describes some *other* file, and
-scanning would write over it. Delete it, or point `--dtcache` somewhere else,
+scanning would write over it. Delete it, or point `--cache` somewhere else,
 and `parse` builds a fresh one — or, where the file really is replaced under
 the same name, pass `--overwrite-unusable-cache` (below).
 
@@ -276,7 +276,7 @@ and `info` says `the total is not known until a scan reaches the end`.
 **The history a read needs is written to disk as the pass goes, not held in
 memory**: to a file with no name, so it is gone with the process whatever
 ends it, made in the cache's directory — beside the dump, or wherever
-`--dtcache` puts it — or, where the cache is turned off, the system's temp
+`--cache` puts it — or, where the cache is turned off, the system's temp
 directory (`TMPDIR`). It grows by up to 32 KiB for each 24 MiB of the dump,
 about a 768th of it — some 1 GB for a 784 GB dump — and the cache a `parse`
 saves holds the same. A run that cannot make that file stops at the first
@@ -357,8 +357,8 @@ before any of it is fetched.
 **The cache goes in the working directory.** With a local dump it sits beside
 the file; a URL has no "beside", so the default is the URL's last path segment
 plus `.pgdt`, in whatever directory you ran the command from —
-`https://example.com/dumps/mydump.sql` becomes `./mydump.sql.pgdt`. `--dtcache
-<path>` states somewhere else, and `--dtcache none` turns it off where the
+`https://example.com/dumps/mydump.sql` becomes `./mydump.sql.pgdt`. `--cache
+<path>` states somewhere else, and `--cache none` turns it off where the
 command allows. A URL that names no object — a bare host, or a path ending in
 `/` — is refused: there is no dump named there to read.
 
@@ -367,7 +367,7 @@ directory, share a cache file. If their sizes differ the second run refuses,
 naming the URL it refused for; if they match, it reads the first one's map and
 says on stderr that the cache was written for a dump fetched from somewhere
 else. `--strict-identity=location` turns that warning into a refusal, and
-`--dtcache <path>` keeps them apart in the first place.
+`--cache <path>` keeps them apart in the first place.
 
 **No credentials are sent, ever.** A URL carrying `user:password@` is refused
 rather than quietly stripped, so nobody is left believing a password went out.
@@ -1521,7 +1521,7 @@ are seven different messages because they mean seven different things:
 | Message | What happened |
 |---|---|
 | `no cache at …` | You have not parsed this file yet. |
-| `… is not a pgdt cache` | Something else is at that path. Check `--dtcache`. |
+| `… is not a pgdt cache` | Something else is at that path. Check `--cache`. |
 | `… is cut short or damaged` | A pgdt cache, but not all of it is there. |
 | `… was written by a different pgdt build` | The cache's format version is not this build's. Pre-1.0 this happens after an upgrade; nothing is migrated. |
 | `… was written for a source of …` | The dump file's size no longer matches. Every offset in the cache could be wrong. |
@@ -1535,7 +1535,7 @@ writing over what they found: each is almost always a wrong path or a file that
 changed, and a cache that does not describe this file is a valid index for
 *some* file. So the last five name three ways out — **remove it, name a
 different cache path, or have a scan replace it**, the last two spelled
-`--dtcache <path>` and `--overwrite-unusable-cache` after the sentence — and
+`--cache <path>` and `--overwrite-unusable-cache` after the sentence — and
 `parse` builds a fresh one once you have taken any of them.
 
 `--overwrite-unusable-cache`, on `parse` and `query`, starts cold over such a
@@ -1545,14 +1545,14 @@ noise. It never replaces something that is not a pgdt cache, which could be
 anything, the dump itself included; and it governs only the cache found at the
 start, a dump that changes while it is being read still stopping the run.
 
-`--dtcache none`, which for `query` means "ignore the cache", is rejected on
+`--cache none`, which for `query` means "ignore the cache", is rejected on
 `info` — with nothing to read and no scan to fall back on, there would be
 nothing left to report. If you reached for it because the directory beside the
 dump is read-only, put the cache somewhere else instead:
 
 ```sh
-pgdt parse --source /readonly/dump.sql --dtcache ~/dump.pgdt
-pgdt info  --source /readonly/dump.sql --dtcache ~/dump.pgdt
+pgdt parse --source /readonly/dump.sql --cache ~/dump.pgdt
+pgdt info  --source /readonly/dump.sql --cache ~/dump.pgdt
 ```
 
 ## Reading a partial answer
@@ -1746,10 +1746,10 @@ everything those two format for a human.
 
 `pgdt info` can answer entirely from a saved `.pgdt` file, with no dump
 file in reach at all — deleted, moved elsewhere, or never local to this
-machine. Drop `--source` and pass `--dtcache <path>` on its own:
+machine. Drop `--source` and pass `--cache <path>` on its own:
 
 ```sh
-pgdt info --dtcache mydump.sql.pgdt
+pgdt info --cache mydump.sql.pgdt
 ```
 
 This works for the default listing, `--map` and `--json` alike — whichever one

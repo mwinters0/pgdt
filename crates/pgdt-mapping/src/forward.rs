@@ -49,7 +49,7 @@ pub(crate) use self::save::SaveThrottle;
 ///
 /// Deficiency register: `deficiency: KD5` — the replacement is a whole-list
 /// clone, so mapping is O(blocks × splices) and O(blocks²) wherever the save
-/// throttle's gate seldom closes, which is every `--dtcache none` scan, a
+/// throttle's gate seldom closes, which is every `--cache none` scan, a
 /// no-op save closing it only for blocks that end within
 /// `forward::save`'s `SAVE_THROTTLE_K` times its own measured duration
 /// (`measurements.md`, `per-block-quadratic`). **(c) unowned**; promoted by a

@@ -163,7 +163,7 @@ async fn strings_mode_never_resolves_types() {
     assert!(resolved.columns().iter().all(|c| *c.resolution() == ColumnResolution::NotDeclared));
 }
 
-/// `--dtcache none` (`CacheMode::DISABLED`) disables persistence, not
+/// `--cache none` (`CacheMode::DISABLED`) disables persistence, not
 /// typing (`docs/design/decisions.md`, "D36") — the preamble is still scanned fresh, so typing works identically
 /// to `CacheMode::Enabled`, just without leaving a cache file behind.
 #[tokio::test]

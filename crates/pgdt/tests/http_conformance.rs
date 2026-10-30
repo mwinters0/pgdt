@@ -207,13 +207,8 @@ fn local_parse() -> String {
     let dir = tempfile::tempdir().unwrap();
     let cache = dir.path().join("local.pgdt");
     let dump = fixtures_root().join(FIXTURE);
-    let out = run_ok(&[
-        "parse",
-        "--source",
-        dump.to_str().unwrap(),
-        "--dtcache",
-        cache.to_str().unwrap(),
-    ]);
+    let out =
+        run_ok(&["parse", "--source", dump.to_str().unwrap(), "--cache", cache.to_str().unwrap()]);
     strip_cache_line(&out)
 }
 
@@ -226,7 +221,7 @@ fn local_query() -> String {
         dump.to_str().unwrap(),
         "--table",
         "public.widgets",
-        "--dtcache",
+        "--cache",
         "none",
         "--no-columns",
     ])
@@ -237,12 +232,12 @@ fn parse_over_a_real_origin_finds_what_a_local_parse_finds() {
     let Some(url) = conformance_url() else { return };
     let dir = tempfile::tempdir().unwrap();
     let cache = cache_in(&dir);
-    let remote = run_ok(&["parse", "--source", &url, "--dtcache", &cache]);
+    let remote = run_ok(&["parse", "--source", &url, "--cache", &cache]);
     assert_eq!(strip_cache_line(&remote), local_parse());
 
     // And the cache that scan left reads back against the same URL, so the
     // origin recorded in it is one the object still matches.
-    let report = run_ok(&["info", "--source", &url, "--dtcache", &cache]);
+    let report = run_ok(&["info", "--source", &url, "--cache", &cache]);
     assert!(report.contains("public.widgets"), "{report}");
 }
 
@@ -255,7 +250,7 @@ fn query_over_a_real_origin_streams_the_same_rows_a_local_query_streams() {
         &url,
         "--table",
         "public.widgets",
-        "--dtcache",
+        "--cache",
         "none",
         "--no-columns",
     ]);
@@ -402,7 +397,7 @@ fn parse_over_a_real_compressed_origin_finds_what_a_local_parse_finds() {
     let Some(url) = conformance_xz_url() else { return };
     let dir = tempfile::tempdir().unwrap();
     let cache = cache_in(&dir);
-    let remote = run_ok(&["parse", "--source", &url, "--dtcache", &cache]);
+    let remote = run_ok(&["parse", "--source", &url, "--cache", &cache]);
     // The listing is the index, and the index is of the plaintext — so the
     // container is not allowed to show in it at all.
     assert_eq!(strip_cache_line(&remote), local_parse());
@@ -410,14 +405,14 @@ fn parse_over_a_real_compressed_origin_finds_what_a_local_parse_finds() {
     // Read back through the cache the scan left, which holds the seek table:
     // this `info` opens the object with the walk already paid, which is the
     // other of `open_remote`'s two `.xz` arms and the one a second run takes.
-    let report = run_ok(&["info", "--source", &url, "--dtcache", &cache]);
+    let report = run_ok(&["info", "--source", &url, "--cache", &cache]);
     assert!(report.contains("public.widgets"), "{report}");
 }
 
 #[test]
 fn query_over_a_real_compressed_origin_streams_the_same_rows_a_local_query_streams() {
     let Some(url) = conformance_xz_url() else { return };
-    // `--dtcache none` pays the walk again and decodes with nothing kept, so
+    // `--cache none` pays the walk again and decodes with nothing kept, so
     // the rows come out of blocks fetched during this run.
     let remote = run_ok(&[
         "query",
@@ -425,7 +420,7 @@ fn query_over_a_real_compressed_origin_streams_the_same_rows_a_local_query_strea
         &url,
         "--table",
         "public.widgets",
-        "--dtcache",
+        "--cache",
         "none",
         "--no-columns",
     ]);

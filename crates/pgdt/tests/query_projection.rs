@@ -26,7 +26,7 @@ fn widgets(extra: &[&str]) -> Output {
         dump.to_str().unwrap(),
         "--table",
         "public.widgets",
-        "--dtcache",
+        "--cache",
         "none",
     ];
     args.extend_from_slice(extra);
@@ -131,7 +131,7 @@ fn projecting_a_column_away_escapes_its_decode_failure() {
             dump.to_str().unwrap(),
             "--table",
             "public.t_numeric",
-            "--dtcache",
+            "--cache",
             "none",
         ];
         args.extend_from_slice(extra);
@@ -170,7 +170,7 @@ fn the_registered_projection_widths_are_executable() {
             dump.to_str().unwrap(),
             "--table",
             "public.perf",
-            "--dtcache",
+            "--cache",
             "none",
             "--schema-mode",
             "typed",

@@ -148,7 +148,7 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
     assert_eq!(table["compressed_file_size"], xz_json["identity"]["LocalFile"]["stored_size"]);
     // The envelope is the cache file's, so the cache alone exports it whole.
     let cache = xz_path.with_extension("xz.pgdt");
-    let out = run(&["info", "--dtcache", cache.to_str().unwrap(), "--json"]);
+    let out = run(&["info", "--cache", cache.to_str().unwrap(), "--json"]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let offline: serde_json::Value = serde_json::from_str(&stdout_of(&out)).unwrap();
     for key in ["format_version", "container_kind", "compression_index", "identity"] {
@@ -168,7 +168,7 @@ fn seekable_xz_parses_to_the_same_index_as_plain() {
 }
 
 /// `info --detail` states the container's shape, and it is answered
-/// from the **cache alone** — `--dtcache` with no `--source` at all, which is
+/// from the **cache alone** — `--cache` with no `--source` at all, which is
 /// the mode a budget decline deliberately cannot be reported in (it depends
 /// on a run's budget, where this is a property of the file). The three
 /// numbers are what a user would otherwise run `xz --list` for, and
@@ -184,7 +184,7 @@ fn info_detail_states_the_container_shape_from_the_cache_alone() {
 
     for args in [
         vec!["info", "--source", xz_path.to_str().unwrap(), "--detail"],
-        vec!["info", "--dtcache", cache.to_str().unwrap(), "--detail"],
+        vec!["info", "--cache", cache.to_str().unwrap(), "--detail"],
     ] {
         let text = stdout_of(&run(&args));
         assert!(text.contains("compression: xz"), "{args:?}: {text}");

@@ -25,8 +25,8 @@ mod text;
 pub(crate) struct InfoArgs {
     /// The dump the cache belongs to — a path or a URL, as `parse`
     /// takes it: its size is checked against the cache's, so a changed
-    /// source is caught. Omit it to answer from `--dtcache` alone —
-    /// cache-only mode, which then requires `--dtcache` and cannot check
+    /// source is caught. Omit it to answer from `--cache` alone —
+    /// cache-only mode, which then requires `--cache` and cannot check
     /// anything.
     #[arg(long)]
     source: Option<String>,
@@ -36,7 +36,7 @@ pub(crate) struct InfoArgs {
     /// omitted — that is the cache-only entry point, and there is nothing
     /// else to answer from.
     #[arg(long, required_unless_present = "source")]
-    dtcache: Option<PathBuf>,
+    cache: Option<PathBuf>,
     /// Also report each `COPY` block's byte offsets and, per column that
     /// has something to say, what it became: the Arrow type it resolved
     /// to, or — for a column that came back as a string for a reason —
@@ -76,7 +76,7 @@ pub(crate) struct InfoArgs {
 
 /// `pgdt info`: report what the cache holds, never scanning.
 pub(crate) async fn run(args: InfoArgs) -> Result<()> {
-    let InfoArgs { source: file, dtcache, detail, map, json, identity } = args;
+    let InfoArgs { source: file, cache, detail, map, json, identity } = args;
     if json && (detail || map) {
         anyhow::bail!(
             "--json already carries everything --detail/--map would add — drop one of them"
@@ -85,12 +85,12 @@ pub(crate) async fn run(args: InfoArgs) -> Result<()> {
     let Some(file) = file else {
         // Cache-only mode (`docs/design/decisions.md`, "D61"): no
         // live dump file at all, so clap already required
-        // `--dtcache` for us — and refused `--strict-identity`, which
+        // `--cache` for us — and refused `--strict-identity`, which
         // has nothing here to bind.
-        let path = dtcache.expect("clap requires --dtcache when --source is omitted");
+        let path = cache.expect("clap requires --cache when --source is omitted");
         return info_offline(&path, detail, map, json).await;
     };
-    // `info` never scans, so `--dtcache none` — "ignore the cache" —
+    // `info` never scans, so `--cache none` — "ignore the cache" —
     // leaves nothing to answer from, and the message names the way
     // out. Formed here rather than in `Error::CacheDisabled` because
     // it interpolates the user's own `--source` path, which the
@@ -99,14 +99,14 @@ pub(crate) async fn run(args: InfoArgs) -> Result<()> {
     // `info` reads nothing of the dump past opening it, so a source no
     // in-flight check can cover is never refused here
     // (`SourceWatch::require_checkable` is where a read begins).
-    let mode = cache_mode(&origin, dtcache.as_deref()).with_strict_identity(identity.resolve());
+    let mode = cache_mode(&origin, cache.as_deref()).with_strict_identity(identity.resolve());
     let path = mode
         .require_enabled("info")
         .with_context(|| {
             format!(
-                "`--dtcache none` cannot be combined with `info`, which never scans — run \
-                 `pgdt parse --source {origin} --dtcache <path>` to build a cache \
-                 somewhere writable, then pass that same `--dtcache <path>` here"
+                "`--cache none` cannot be combined with `info`, which never scans — run \
+                 `pgdt parse --source {origin} --cache <path>` to build a cache \
+                 somewhere writable, then pass that same `--cache <path>` here"
             )
         })?
         .to_path_buf();

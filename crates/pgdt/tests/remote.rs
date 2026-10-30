@@ -359,7 +359,7 @@ fn parse_over_a_url_finds_what_a_local_parse_finds() {
     let oracle = serving_dump();
     let dir = tempfile::tempdir().unwrap();
     let cache = cache_in(&dir);
-    let remote = run_ok(&["parse", "--source", &oracle.url(), "--dtcache", &cache]);
+    let remote = run_ok(&["parse", "--source", &oracle.url(), "--cache", &cache]);
 
     let local_dir = tempfile::tempdir().unwrap();
     let local_cache = local_dir.path().join("local.pgdt");
@@ -368,7 +368,7 @@ fn parse_over_a_url_finds_what_a_local_parse_finds() {
         "parse",
         "--source",
         dump.to_str().unwrap(),
-        "--dtcache",
+        "--cache",
         local_cache.to_str().unwrap(),
     ]);
 
@@ -380,8 +380,8 @@ fn info_reports_the_cache_a_remote_parse_left() {
     let oracle = serving_dump();
     let dir = tempfile::tempdir().unwrap();
     let cache = cache_in(&dir);
-    run_ok(&["parse", "--source", &oracle.url(), "--dtcache", &cache]);
-    let report = run_ok(&["info", "--source", &oracle.url(), "--dtcache", &cache]);
+    run_ok(&["parse", "--source", &oracle.url(), "--cache", &cache]);
+    let report = run_ok(&["info", "--source", &oracle.url(), "--cache", &cache]);
     assert!(report.contains("public.widgets"), "{report}");
 }
 
@@ -395,7 +395,7 @@ fn query_over_a_url_streams_the_same_rows_a_local_query_streams() {
         &oracle.url(),
         "--table",
         "public.widgets",
-        "--dtcache",
+        "--cache",
         "none",
         "--no-columns",
     ]);
@@ -405,7 +405,7 @@ fn query_over_a_url_streams_the_same_rows_a_local_query_streams() {
         dump.to_str().unwrap(),
         "--table",
         "public.widgets",
-        "--dtcache",
+        "--cache",
         "none",
         "--no-columns",
     ]);
@@ -604,7 +604,7 @@ fn a_remote_run_nothing_can_check_is_refused_unless_none_is_stated() {
         vec!["parse", "--source", &url, "--strict-identity=time"],
         vec!["parse", "--source", &url, "--strict-identity"],
         vec!["parse", "--source", &url, "--preamble-only"],
-        vec!["query", "--source", &url, "--table", "public.widgets", "--dtcache", "none"],
+        vec!["query", "--source", &url, "--table", "public.widgets", "--cache", "none"],
     ] {
         let refused = run_in(&dir, &args);
         let said = stderr_of(&refused);
@@ -662,7 +662,7 @@ fn an_interrupt_during_a_remote_read_is_answered_at_once_and_exits_by_signal() {
     let dir = tempfile::tempdir().unwrap();
     let cache = cache_in(&dir);
     let child = common::pgdt()
-        .args(["parse", "--source", &oracle.url(), "--dtcache", &cache])
+        .args(["parse", "--source", &oracle.url(), "--cache", &cache])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -752,7 +752,7 @@ fn a_network_failure_names_the_url_and_the_command_exits_non_zero() {
     let oracle = Oracle::serving(dump_bytes()).not_found_after(1).start();
     let dir = tempfile::tempdir().unwrap();
     let cache = cache_in(&dir);
-    let out = run(&["parse", "--source", &oracle.url(), "--dtcache", &cache]);
+    let out = run(&["parse", "--source", &oracle.url(), "--cache", &cache]);
     assert!(!out.status.success());
     let err = stderr_of(&out);
     assert!(err.contains(&oracle.url()), "{err}");
@@ -760,7 +760,7 @@ fn a_network_failure_names_the_url_and_the_command_exits_non_zero() {
 
 #[test]
 fn a_scheme_this_build_does_not_read_is_refused_before_anything_is_fetched() {
-    let out = run(&["info", "--source", "ftp://example.com/koji.dump", "--dtcache", "x.pgdt"]);
+    let out = run(&["info", "--source", "ftp://example.com/koji.dump", "--cache", "x.pgdt"]);
     assert!(!out.status.success());
     let err = stderr_of(&out);
     assert!(err.contains("`ftp:`"), "{err}");
@@ -961,7 +961,7 @@ fn query_over_a_remote_xz_streams_the_same_rows_the_plain_dump_streams() {
         &xz_url(&oracle),
         "--table",
         "public.widgets",
-        "--dtcache",
+        "--cache",
         "none",
         "--no-columns",
     ]);
@@ -971,7 +971,7 @@ fn query_over_a_remote_xz_streams_the_same_rows_the_plain_dump_streams() {
         dump.to_str().unwrap(),
         "--table",
         "public.widgets",
-        "--dtcache",
+        "--cache",
         "none",
         "--no-columns",
     ]);
@@ -1076,7 +1076,7 @@ fn parse_and_query_over_a_remote_gzip_answer_what_the_local_file_answers() {
             source,
             "--table",
             "public.widgets",
-            "--dtcache",
+            "--cache",
             "none",
             "--no-columns",
         ])
@@ -1161,7 +1161,7 @@ async fn a_remote_bgzf_file_is_read_once_by_a_first_pass_that_builds_the_walk_s_
     assert_eq!(&source.read_range(100, 50).await.unwrap()[..], &expected[100..150]);
 
     let query = |source: &str| {
-        run_ok(&["query", "--source", source, "--table", "public.widgets", "--dtcache", "none"])
+        run_ok(&["query", "--source", source, "--table", "public.widgets", "--cache", "none"])
     };
     assert_eq!(query(&url), query(local.to_str().unwrap()));
 }
@@ -1288,7 +1288,7 @@ fn parse_and_query_over_a_remote_gzip_member_inflate_ahead_and_answer_what_the_l
     let local = local_dir.path().join("dump.sql.gz");
     std::fs::write(&local, &bytes).unwrap();
     let query = |source: &str| {
-        run_ok(&["query", "--source", source, "--table", "public.t1", "--dtcache", "none"])
+        run_ok(&["query", "--source", source, "--table", "public.t1", "--cache", "none"])
     };
     assert_eq!(query(&url), query(local.to_str().unwrap()));
 }

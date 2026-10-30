@@ -296,12 +296,12 @@ fn a_gzip_first_pass_says_whether_it_inflates_in_parallel() {
         let cache = dir.path().join(format!("at-{jobs}.pgdt"));
         let cache_arg = cache.to_str().unwrap();
         let stderr =
-            stderr_ok(&["parse", "--source", gz_arg, "--jobs", jobs, "--dtcache", cache_arg]);
+            stderr_ok(&["parse", "--source", gz_arg, "--jobs", jobs, "--cache", cache_arg]);
         let (started, complete) = first_pass_lines(&stderr);
         assert_eq!((started.len(), complete.len()), (1, 1), "{jobs}: {stderr}");
         assert!(started[0].contains(says), "{jobs}: {stderr}");
         assert_eq!(started[0].contains("workers=3"), jobs == "3", "{jobs}: {stderr}");
-        let info = run_ok(&["info", "--source", gz_arg, "--dtcache", cache_arg, "--detail"]);
+        let info = run_ok(&["info", "--source", gz_arg, "--cache", cache_arg, "--detail"]);
         described.push(info);
     }
     assert_eq!(described[0], described[1]);
@@ -369,7 +369,7 @@ fn a_bgzf_dump_is_walked_at_open_and_reads_as_its_plaintext() {
 
     for table in ["public.widgets", "logs.events", "public.escapes"] {
         let expected = run_ok(&["query", "--source", plain_arg, "--table", table]);
-        let cold = ["query", "--source", bgz_arg, "--table", table, "--dtcache", "none"];
+        let cold = ["query", "--source", bgz_arg, "--table", table, "--cache", "none"];
         assert_eq!(run_ok(&cold), expected, "{table}, cold");
     }
 

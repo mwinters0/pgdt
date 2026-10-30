@@ -85,7 +85,7 @@ fn as_its_namespace_s_init_every_command_ends_on_a_signal() {
 #[test]
 fn as_its_namespace_s_init_an_interrupted_parse_saves_and_exits_130() {
     let args = |url: &str, cache: &str| {
-        ["parse", "--source", url, "--dtcache", cache, "--chunk-size", "512", "--jobs", "1"]
+        ["parse", "--source", url, "--cache", cache, "--chunk-size", "512", "--jobs", "1"]
             .map(str::to_owned)
     };
     let dir = tempfile::tempdir().unwrap();

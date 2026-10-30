@@ -71,9 +71,9 @@ than reading as a phase nobody has sliced.
 
 - **KD5** — a map rebuild is still a whole-list clone, so mapping is O(blocks²)
   wherever the save throttle's gate seldom closes — which is every
-  `--dtcache none` scan, since a no-op save leaves next to nothing to amortize.
+  `--cache none` scan, since a no-op save leaves next to nothing to amortize.
   **(c) unowned**; promoted by a dump with thousands of blocks
-  scanned under `--dtcache none`. Detail: `crates/pgdt-mapping/src/forward.rs`.
+  scanned under `--cache none`. Detail: `crates/pgdt-mapping/src/forward.rs`.
 
 - **KD6** — a conflicting table past a query's stopping point is never seen, so
   `Error::AmbiguousTable` is not raised for it and the query returns the

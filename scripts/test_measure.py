@@ -796,7 +796,7 @@ class DataLevelQueries(unittest.TestCase):
                 self.assertIn(f"--jobs {measure.SWEEP_JOBS} ", builder)
                 self.assertTrue(timed.startswith("time /pgdt query "), timed)
                 self.assertIn(measure.DATA_LEVEL_QUERY, timed)
-                self.assertNotIn("--dtcache none", script)
+                self.assertNotIn("--cache none", script)
 
     def test_every_query_figure_row_is_one_of_them(self):
         specs = [
@@ -816,7 +816,7 @@ class DataLevelQueries(unittest.TestCase):
         # `query-nomatch*` times the map and its saves, which a built cache
         # would leave nothing of.
         uncached = {
-            c for c in measure.command_shapes() if "--dtcache none" in measure._script(c)
+            c for c in measure.command_shapes() if "--cache none" in measure._script(c)
         }
         self.assertEqual(uncached, {"query-nomatch", "query-nomatch-rss"})
 
@@ -906,7 +906,7 @@ class DynamicFilterFigures(unittest.TestCase):
             with self.subTest(command=command):
                 builder, _, timed = measure._script(command).partition(" && ")
                 self.assertTrue(builder.startswith("/pgdt parse --source /dump.sql "))
-                self.assertIn("--dtcache /dump.sql.pgdt ", builder)
+                self.assertIn("--cache /dump.sql.pgdt ", builder)
                 self.assertIn(measure.GATHER_STATISTICS, builder)
                 self.assertTrue(timed.startswith("time "))
                 self.assertIn(f"--source {measure.DFCLI_CATALOG}=/dump.sql ", timed)
@@ -2507,7 +2507,7 @@ class PeakRss(unittest.TestCase):
         # A wrapped `parse`, not a different command: what this figure reports
         # has to be the resident set of the scan the rest of the doc measures.
         script = measure._script("parse-rss")
-        self.assertIn("/pgdt parse --source /dump.sql --dtcache /tmp/x.pgdt", script)
+        self.assertIn("/pgdt parse --source /dump.sql --cache /tmp/x.pgdt", script)
 
     def test_the_redirection_takes_pgdt_s_stdout_and_not_the_reading(self):
         # The reading goes to stderr, where bash's own `time` report goes, so
@@ -7917,8 +7917,8 @@ class KojiRecipe(unittest.TestCase):
         # The dump is mounted read-only, so the colocated default would land in
         # the container's ephemeral layer and die with it — an hour of scanning
         # lost with no error, because the write itself succeeds.
-        self.assertIn("--dtcache /out/", self._recipe())
-        self.assertNotIn("--dtcache /dump.sql", self._recipe())
+        self.assertIn("--cache /out/", self._recipe())
+        self.assertNotIn("--cache /dump.sql", self._recipe())
 
     def test_the_dump_is_read_only(self):
         self.assertIn(":/dump.sql:ro", self._recipe())
@@ -7945,7 +7945,7 @@ class KojiRecipe(unittest.TestCase):
 
     def test_the_wrap_recipe_stops_reports_resumes_and_compares(self):
         wrap = self._recipe(wrap=True)
-        for fragment in ("nerdctl stop", "info --dtcache", "--detail", "cmp "):
+        for fragment in ("nerdctl stop", "info --cache", "--detail", "cmp "):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, wrap)
 
@@ -8204,7 +8204,7 @@ class ProfileRecipe(unittest.TestCase):
         dump = cfg.warm_dir / "dynfilter.sql"
         self.assertIn(f"cp -n {cfg.cache_dir / 'dynfilter.sql'} {dump}", recipe)
         self.assertIn(
-            f"parse --source {dump} --dtcache {dump}.pgdt --jobs {measure.SWEEP_JOBS} "
+            f"parse --source {dump} --cache {dump}.pgdt --jobs {measure.SWEEP_JOBS} "
             f"{measure.GATHER_STATISTICS} >/dev/null",
             recipe,
         )
@@ -9737,7 +9737,7 @@ class ParallelScanThroughputProvider(unittest.TestCase):
                 self.assertNotIn("time ", builder)
                 self.assertIn(measure.GATHER_STATISTICS, builder)
                 self.assertIn(f"--jobs {measure.SWEEP_JOBS} ", builder)
-                self.assertIn("--dtcache /dump.sql.pgdt ", builder)
+                self.assertIn("--cache /dump.sql.pgdt ", builder)
                 self.assertTrue(
                     rest.startswith(
                         f"time {measure.DFCLI_PARTITIONS}={jobs} {measure.SQL_SHELL} "
@@ -9901,7 +9901,7 @@ class ParallelScanThroughputColdNvme(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             session, logged = self._session(tmp)
             session.prebuild(measure._parallel_specs())
-            builds = [m for m in logged if "--dtcache /out/control.sql.pgdt" in m]
+            builds = [m for m in logged if "--cache /out/control.sql.pgdt" in m]
             self.assertEqual(len(builds), 1, logged)
             self.assertNotIn("time ", builds[0])
             dump = session.input_path("control", "cold-nvme-parallel")

@@ -98,7 +98,7 @@ pub(crate) fn about_the_source(err: &pgdt_core::Error) -> bool {
 pub(crate) fn spelling(err: &pgdt_core::Error) -> Option<String> {
     use pgdt_core::Error as Lib;
     let spelled = match err {
-        Lib::CacheDisabled { .. } => "`--dtcache <path>`, not `--dtcache none`".to_string(),
+        Lib::CacheDisabled { .. } => "`--cache <path>`, not `--cache none`".to_string(),
         Lib::SourceChangedWhileRead { .. } | Lib::SourceUncheckable { .. } => {
             "`--strict-identity=none`".to_string()
         }
@@ -108,9 +108,9 @@ pub(crate) fn spelling(err: &pgdt_core::Error) -> Option<String> {
         // A file that is not a pgdt cache names another path alone, no flag
         // replacing it (`docs/design/decisions.md`, "D20").
         Lib::CacheUnusable { unusable, .. } if unusable.overwritable() => {
-            "`--dtcache <path>`; `--overwrite-unusable-cache`".to_string()
+            "`--cache <path>`; `--overwrite-unusable-cache`".to_string()
         }
-        Lib::CacheUnusable { .. } => "`--dtcache <path>`".to_string(),
+        Lib::CacheUnusable { .. } => "`--cache <path>`".to_string(),
         Lib::CachedBlockChanged { path: Some(_), .. } => "`pgdt parse`".to_string(),
         Lib::AmbiguousTable { .. } => "`--database`".to_string(),
         Lib::MetadataNotScanned { .. } => "`pgdt parse`; `--schema-mode strings`".to_string(),

@@ -59,7 +59,7 @@ enum Command {
     /// Scan a dump file and build the structure cache — the only command
     /// that scans ahead of what was asked (`pgdt info` reports from the cache
     /// this leaves; a `query` maps only what its table needs, but persists
-    /// that as it goes unless told `--dtcache none`). Resumes from a matching cache rather than
+    /// that as it goes unless told `--cache none`). Resumes from a matching cache rather than
     /// restarting, and banks its progress at `COPY` block boundaries as it
     /// goes — including on Ctrl-C, which saves what has been scanned and
     /// then ends the process by that signal, or with status 128+n as a

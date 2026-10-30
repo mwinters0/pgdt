@@ -40,7 +40,7 @@ fn query(extra: &[&str]) -> Output {
         "public.long_value",
         "--column",
         "id",
-        "--dtcache",
+        "--cache",
         "none",
     ];
     args.extend_from_slice(extra);

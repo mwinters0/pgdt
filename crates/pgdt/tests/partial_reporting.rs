@@ -134,7 +134,7 @@ async fn info_against_a_changed_file_says_the_file_changed() {
 
 /// **`parse` refuses that same cache rather than scanning over it and
 /// overwriting the file within its first throttled save** — so aiming
-/// `--dtcache` at another file's cache leaves that file's own valid index
+/// `--cache` at another file's cache leaves that file's own valid index
 /// untouched, with the refusal said aloud
 /// (`docs/design/decisions.md`, "D20"). The byte comparison is the
 /// half that would fail silently.
@@ -249,7 +249,7 @@ async fn an_io_failure_names_its_file_and_says_why_once() {
     for (args, named) in [
         (vec!["parse", "--source", missing.to_str().unwrap()], missing.to_str().unwrap()),
         (
-            vec!["parse", "--source", dump.to_str().unwrap(), "--dtcache", cache.to_str().unwrap()],
+            vec!["parse", "--source", dump.to_str().unwrap(), "--cache", cache.to_str().unwrap()],
             absent.to_str().unwrap(),
         ),
     ] {
@@ -294,20 +294,20 @@ async fn info_distinguishes_foreign_bytes_from_another_builds_cache() {
     assert!(stderr_of(&out).contains("written by a different pgdt build"), "{}", stderr_of(&out));
 }
 
-/// `--dtcache none` means "ignore the cache", which leaves
+/// `--cache none` means "ignore the cache", which leaves
 /// `info` with nothing at all to answer from. Rejected up front rather than
 /// silently reporting an empty index — and the message names the way out,
 /// since the usual reason to reach for `none` is a read-only directory beside
-/// the dump, which `parse --dtcache <path>` answers.
+/// the dump, which `parse --cache <path>` answers.
 #[tokio::test]
 async fn info_rejects_a_disabled_cache_and_names_the_remedy() {
     let (_dir, dump) = common::sandboxed(&fixture(16, "types", "default"), "dump.sql");
-    let out = run(&["info", "--source", dump.to_str().unwrap(), "--dtcache", "none"]);
+    let out = run(&["info", "--source", dump.to_str().unwrap(), "--cache", "none"]);
     assert!(!out.status.success());
     let stderr = stderr_of(&out);
     assert!(stderr.contains("never scans"), "{stderr}");
     assert!(stderr.contains("pgdt parse --source"), "{stderr}");
-    assert!(stderr.contains("--dtcache <path>"), "{stderr}");
+    assert!(stderr.contains("--cache <path>"), "{stderr}");
 }
 
 /// `info` reads a cache and stops there — it does not extend, rewrite, or
@@ -387,7 +387,7 @@ async fn cache_only_mode_reports_a_partial_cache() {
     let frontier = block_frontier(&dump, 2).await;
     let (cache_path, _) = write_truncated_cache(&dump, frontier, 1).await;
 
-    let out = run(&["info", "--dtcache", cache_path.to_str().unwrap()]);
+    let out = run(&["info", "--cache", cache_path.to_str().unwrap()]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let text = stdout_of(&out);
     assert!(text.starts_with("Scan completion: "), "{text}");

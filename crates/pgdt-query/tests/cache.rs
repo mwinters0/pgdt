@@ -356,7 +356,7 @@ async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone(
 
     // Grow the dump under its own cache: the file at `path` is now a valid
     // cache for a file that no longer exists, which is what pointing
-    // `--dtcache` at the wrong path produces too.
+    // `--cache` at the wrong path produces too.
     let mut grown = std::fs::read(&dump).unwrap();
     grown.push(b'\n');
     std::fs::write(&dump, &grown).unwrap();

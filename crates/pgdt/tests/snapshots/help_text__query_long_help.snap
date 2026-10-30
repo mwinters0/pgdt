@@ -16,7 +16,7 @@ Options:
           Table name, qualified (`schema.table`) or bare. Taken exactly as given, like `--column`
           and unlike a `--filter` term
 
-      --dtcache <DTCACHE>
+      --cache <CACHE>
           Cache file path, or `none` to ignore any existing cache and perform a fresh scan without
           persisting it
 

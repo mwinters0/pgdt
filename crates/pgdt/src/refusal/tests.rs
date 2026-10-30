@@ -76,7 +76,7 @@ fn each_refusal_names_the_flag_its_remedy_is() {
         }
     };
     let cases: Vec<(pgdt_core::Error, &[&str])> = vec![
-        (pgdt_core::Error::CacheDisabled { operation: "info" }, &["`--dtcache none`"]),
+        (pgdt_core::Error::CacheDisabled { operation: "info" }, &["`--cache none`"]),
         (
             pgdt_core::Error::SourceChangedWhileRead { differences: "its size moved".into() },
             &["`--strict-identity=none`"],
@@ -95,11 +95,11 @@ fn each_refusal_names_the_flag_its_remedy_is() {
         ),
         (
             pgdt_core::Error::CacheUnusable { path: cache(), unusable: Unusable::Unreadable },
-            &["`--overwrite-unusable-cache`", "`--dtcache <path>`"],
+            &["`--overwrite-unusable-cache`", "`--cache <path>`"],
         ),
         (
             pgdt_core::Error::CacheUnusable { path: cache(), unusable: Unusable::NotACache },
-            &["`--dtcache <path>`"],
+            &["`--cache <path>`"],
         ),
         (
             pgdt_core::Error::CachedBlockChanged { path: Some(cache()), header_offset: 4096 },

@@ -236,7 +236,7 @@ async fn an_aborted_run_leaves_the_cache_on_disk_exactly_as_it_was() {
 async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
     let (_dir, dump) = sandboxed();
 
-    // `--dtcache none`: the load is not an observation (nothing is read), so
+    // `--cache none`: the load is not an observation (nothing is read), so
     // the baseline is the only one before the end-of-run check.
     let shifting = Shifting::new(dump.clone(), 1);
     let err = map_file(
@@ -298,7 +298,7 @@ async fn a_run_that_saves_nothing_is_checked_when_it_finishes() {
 /// by another door is still an interrupt (`stream::cancelled_read`), and the
 /// two arms that catch one leave `map_file` without passing the end-of-run
 /// check the polled path takes — so each asks the source itself. Under
-/// `--dtcache none` there is no save to inherit the question from, which is
+/// `--cache none` there is no save to inherit the question from, which is
 /// the case this pins; with a cache enabled the save asks it anyway, except
 /// in the prepass, which saves nothing at all
 /// (`map_file::a_dropped_read_inside_the_prepass_banks_and_writes_nothing`).
@@ -383,7 +383,7 @@ async fn a_failing_read_is_checked_before_it_is_reported() {
     let short =
         |err: &Error| matches!(err, Error::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof);
 
-    // `--dtcache none` observes nothing but the baseline before the read that
+    // `--cache none` observes nothing but the baseline before the read that
     // fails, so the re-check is the first to see the move.
     let map = |source: Shifting, cache: CacheMode| async move {
         map_file(

@@ -152,7 +152,7 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
 fn parse(pass: &MappingPass, data_level: Option<&TableName>) -> String {
     let mut parse = format!("pgdt parse --source {}", pass.location);
     if let Some(path) = &pass.cache_path {
-        parse.push_str(&format!(" --dtcache {}", path.display()));
+        parse.push_str(&format!(" --cache {}", path.display()));
     }
     if pass.goes_past_refused_values() {
         parse.push_str(" --postgres-invalid-values ignore");

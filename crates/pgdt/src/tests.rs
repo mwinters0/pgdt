@@ -36,7 +36,7 @@ const NON_NUMERIC_VALUE_NAMES: &[&str] = &[
     "SOURCE",
     "TABLE",
     "DATABASE",
-    "DTCACHE",
+    "CACHE",
     "FILTER",
     "SCHEMA_MODE",
     "MODE",

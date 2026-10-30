@@ -14,7 +14,7 @@ Options:
       --table <TABLE>                   Table name, qualified (`schema.table`) or bare. Taken
                                         exactly as given, like `--column` and unlike a `--filter`
                                         term
-      --dtcache <DTCACHE>               Cache file path, or `none` to ignore any existing cache and
+      --cache <CACHE>                   Cache file path, or `none` to ignore any existing cache and
                                         perform a fresh scan without persisting it
       --filter <FILTER>                 Single-column filter: `column=value`, `column!=value`,
                                         `column<value`, `column<=value`, `column>value`,

@@ -24,7 +24,7 @@ fn widgets(extra: &[&str]) -> Output {
         dump.to_str().unwrap(),
         "--table",
         "public.widgets",
-        "--dtcache",
+        "--cache",
         "none",
     ];
     args.extend_from_slice(extra);
