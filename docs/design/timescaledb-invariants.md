@@ -20,7 +20,8 @@ documentation, or a dump the fixture generator produced — **never `tsl/`**
 ([`roadmap-P38-descendants.md`](roadmap-P38-descendants.md), "TimescaleDB").
 What only `tsl/` would prove is stated as observed, from a fixture.
 
-**A site relying on an entry carries a `timescaledb: TS<n>` comment**, and the
+**A site relying on an entry carries a `timescaledb: TS<n>` comment**, in a `.rs`
+file or the fixture generator alike, and the
 entry's "Relied on by" names that site's function, as `pg-refuses: I<n>` and
 `scripts/pg_refuses.py` hold `postgres-invariants.md`'s; the script resolving
 them lands with the first site. Until then "Relied on by" names the decision
@@ -65,16 +66,21 @@ a database holding the extension carries their rows as `COPY
 _timescaledb_catalog.<table> (<every column, named>) FROM stdin;`, `regclass`
 values schema-qualified. A dump taken with `--schema` or `--table` dumps no
 extension, and so neither `CREATE EXTENSION timescaledb` nor any catalog row,
-unless `_timescaledb_catalog` is itself selected or (from `pg_dump` 14)
-`--extension` names it. Excluding the chunks' schema keeps the catalog.
+unless `--table` names a catalog table or (from `pg_dump` 14) `--extension`
+names the extension. `--schema=_timescaledb_catalog` does not: the schema is the
+extension's own. Excluding the chunks' schema keeps the catalog.
 
-**Proof.** `sql/pre_install/tables.sql`'s `pg_extension_config_dump` calls.
-PostgreSQL `src/bin/pg_dump/pg_dump.c`: `selectDumpableExtension` (no extension
-when `include_everything` is false), `processExtensionTables` (a configuration
-table of an undumped extension only where its table or schema is selected;
-`COPY`'s explicit column list). Observed: `schema-public.sql` at 13 and 18 holds
-two `COPY` blocks, the hypertables' roots; `exclude-chunks.sql` holds the
-extension and every catalog block.
+**Proof.** `sql/pre_install/tables.sql`'s `pg_extension_config_dump` calls;
+`sql/pre_install/schemas.sql` creates `_timescaledb_catalog`. PostgreSQL
+`src/bin/pg_dump/pg_dump.c`: `selectDumpableExtension` (no extension when
+`include_everything` is false), `selectDumpableNamespace` (an extension's schema
+takes its extension's decision, `checkExtensionMembership`),
+`processExtensionTables` (a configuration table of an undumped extension only
+where its table, or a schema dumping data, is selected; `COPY`'s explicit column
+list). Observed: `schema-public.sql` at 13 and 18 holds two `COPY` blocks, the
+hypertables' roots; `exclude-chunks.sql` holds the extension and every catalog
+block; `-n public -n _timescaledb_catalog` holds no catalog block at 2.13 and
+2.31 (`runs/dwal-ts10-probe/`, machine-local, the `-ha` images' `pg_dump`).
 
 **Scope limit.** With no extension and no catalog in the file, a `--schema`
 dump of a hypertable is two plain tables with rows of their own and no
@@ -209,26 +215,38 @@ fixtures/<major>/timescaledb/default.sql`, and its answers.
 
 ---
 
-## TS8 — The root is dumped, refused rows through 2.22, and omitted by the server's reads after
+## TS8 — The root is dumped, refused rows through 2.22, and held but never read by the server after
 
 **Claim.** A hypertable's root has a `COPY` block. Through 2.22 its
-`ts_insert_blocker` trigger refuses a row reaching it; from 2.23 nothing does,
-and a row there survives a dump and restore. **The server's default reads of
-the hypertable omit the root's rows**: read through at 2.27, 2.28 and 2.31 it
-answers its chunks' rows alone, and `ONLY` it answers the root's row at 2.27
-and none at 2.28 and 2.31. Planning with
-`timescaledb.enable_constraint_exclusion = off` reads it, at 2.31 too.
+`ts_insert_blocker` trigger refuses a row reaching it while the extension is
+inactive; from 2.23 nothing does, and a row there survives a dump and restore.
+**The restore holds it and TimescaleDB's planner never reads it**: read through
+at 2.27, 2.28 and 2.31 it plans the chunks alone, and `ONLY` answers the root's
+row at 2.27 and nothing from 2.28, which plans `ONLY` a hypertable as empty.
+With `timescaledb.enable_constraint_exclusion = off` PostgreSQL's own expansion
+plans the read: through answers the root's row too, and filtered on `tableoid =
+<root>` answers it alone, at every pin from 2.27; `ONLY` stays empty from 2.28.
+Every other answer is unchanged under it. `timescaledb.enable_optimizations =
+off` reads the root too, but at 2.27 it loses a compressed chunk's batches. A
+hypertable with no chunk is planned as empty from 2.28 under either setting;
+`timescaledb.restoring = on` reads its root's rows `ONLY` (2.31).
 
 **Proof.** `sql/updates/2.22.1--2.23.0.sql` drops the trigger from every
-hypertable. Observed: the root's row in `public.metrics`' block at 16, 17 and
-18; their answers; the setting probed by hand on 2.31 over the same restore.
+hypertable; its commit, `64f5cb207`, says the trigger acted only with the
+extension inactive. `src/planner/expand_hypertable.c`, `find_children_chunks`,
+leaves the parent out on that trigger's guarantee, its comment unchanged at
+2.31.0; `src/planner/planner.c` expands a hypertable itself only under both
+settings; 2.28's planner marks an un-inherited hypertable dummy (#9722).
+Observed: the root's row in `public.metrics`' block at 16, 17 and 18; their
+answers; the three settings over each restore
+(`runs/dwal-ts8-probe/results.txt`, machine-local).
 
 **Scope limit.** How a row reaches the root is not claimed; the fixture's comes
 from an insert in restoring mode (`fixture_schema_timescaledb_root_rows.sql`).
 
 **Verified against:** 2.27.2, 2.28.3, 2.31.0; the trigger at 2.13.1 and 2.21.4.
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"The generic mechanism" — a table's rows its own and every descendant's.
+"TimescaleDB" — a root's own rows read, with a finding.
 **Re-verify:** `grep -c ts_insert_blocker fixtures/<major>/timescaledb/default.sql`;
 `grep 'public.metrics' fixtures/<major>/timescaledb/default.answers.tsv | grep -v
 $'\trow\t'`.
@@ -257,9 +275,11 @@ pin's `default.sql` restores with no error.
 chunks it does not hold. Restored, 2.13's server refuses the hypertable read
 through ("relation `<chunk>` not found"); 2.31's restore refuses the catalog's
 rows for them on its foreign keys, and the hypertable reads empty. Neither holds
-the absent chunks' rows.
+the absent chunks' rows. With `timescaledb.enable_constraint_exclusion = off`
+2.13 reads the hypertable as its root's rows, without the error.
 
-**Proof.** Observed: `exclude-chunks.answers.tsv` at 13 and 18.
+**Proof.** Observed: `exclude-chunks.answers.tsv` at 13 and 18; the setting over
+each restore (`runs/dwal-ts10-probe/results.txt`, machine-local).
 
 **Verified against:** 2.13.1, 2.31.0.
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),

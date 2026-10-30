@@ -88,8 +88,8 @@ Spec: [`../design/roadmap-P38-descendants.md`](../design/roadmap-P38-descendants
 - [x] **38.1** Evidence: the TimescaleDB generator at each pin, the `-n public` dumps, the inheritance schema, and each server's answers committed (D71); every shape in the spec's "Facts the grilling found" confirmed or corrected, and `timescaledb-invariants.md` opened with what was confirmed; no pgdt code — [notes](../design/roadmap-P38.1-evidence-notes.md)
 - [ ] **38.2** A table reads its descendants: the walk, a table's blocks across identities projected to the parent's columns, a descendant's refusal refusing its parent, the load-via-root refusals with a `KD<k>` (c); library and every front end, checked against 38.1's plain oracle
 - [ ] **38.3** `--inheritance <descendants|only>`: `QueryOptions`, `pgdump.inheritance`, `--source …:inheritance=`, `pgdt query --inheritance`, each front end's remedy spellings naming it
-- [ ] **38.4** The catalog recorded: the model's rows, the pass recording them, the era recipes and the version fingerprint (cache bump); `pgdt info --json` showing them, each pin's recipe checked against its fixture's catalog
-- [ ] **38.5** Hypertables resolved: compressed and partially compressed chunks refused at the hypertable and by name under both modes with a `KD<k>` (c), dropped rows skipped, absent chunks read as absent with their finding, an unreadable catalog refusing its hypertables; every pin checked against its oracle
+- [ ] **38.4** The catalog recorded: the model's rows, the pass recording them, the era recipes and the version fingerprint (cache bump); `pgdt info --json` showing them, each pin's recipe checked against its fixture's catalog; a `--table` fixture at 13 and 18 reaching detection by the catalog alone; the `timescaledb: TS<n>` markers and their check
+- [ ] **38.5** Hypertables resolved: compressed and partially compressed chunks refused at the hypertable and by name under both modes with a `KD<k>` (c), dropped rows skipped, absent chunks read as absent and a root's own rows read, each with its finding, an unreadable catalog refusing its hypertables; the answers taking each root's own rows as its restore holds them, and every pin checked against them
 - [ ] **38.6** `pgdt info`'s logical model: parents and their descendants, the TimescaleDB section, continuous aggregates, chunks folded
 - [ ] **38.7** The record: the README's supported/unsupported list, the manual, `pg-dump-compatibility.md`'s rows, and the hand run on the reference dump
 
@@ -122,30 +122,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **38.1: the answers are the server's default reads, which omit a hypertable
-  root's rows.** From 2.23 a hypertable's root can hold rows, and at 2.27, 2.28
-  and 2.31 the restored server reads the hypertable through without them, one
-  row short of its own and every descendant's
-  ([`../design/timescaledb-invariants.md`](../design/timescaledb-invariants.md),
-  "TS8"). The answers record that default read, what a user of the restored
-  server meets, so slice 5 checked against them will differ from the spec's
-  generic rule by those rows. Reconsidering means one of: a hypertable's read
-  leaves its root's own rows out, a TimescaleDB exception to "A table's rows are
-  its own and every descendant's" (a spec change); or the answers are taken
-  with `timescaledb.enable_constraint_exclusion = off`, which reads them, and
-  the rule kept.
-- **38.1: `exclude-chunks` stands in for the spec's `-n public` dump.** A
-  `--schema=public` dump holds no extension and no catalog (TS2), so it cannot
-  hold the catalog rows for absent chunks the spec named it for; excluding
-  `_timescaledb_internal` does, at 13 and 18, and `schema-public` is kept as the
-  dump no detection reaches. Restored, the server refuses (2.13) or empties
-  (2.31) such a hypertable rather than reading it short (TS10), where the spec
-  reads it as absent with a finding. Reconsidering means another flag set (`-n
-  public -n _timescaledb_catalog`, detected by its catalog alone), or the
-  absent-chunk rule following the server.
-- **38.1: TimescaleDB sites will carry `timescaledb: TS<n>` markers**, resolved
-  by a script as `pg_refuses.py` resolves `I<n>`'s, written with the first
-  site (38.4) ([`../design/timescaledb-invariants.md`](../design/timescaledb-invariants.md)'s
-  header). The spec left the choice to this slice; the precedent decided it.
-  Reconsidering means no markers, "Relied on by" naming the sites unchecked.

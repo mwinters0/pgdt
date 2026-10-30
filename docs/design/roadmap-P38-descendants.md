@@ -116,9 +116,21 @@ children are chunks and which rows the file does not hold.
   finding's wording instead.
 - **Rows a restore would not hold are read as absent, with a finding**: a
   multinode access node's foreign chunks (2.0–2.13), tiered storage's foreign
-  chunk (OSM), and chunk tables a `-n`/`-t` dump left out though the catalog
-  lists them. The finding names what the catalog lists and the file lacks. A
-  catalog row marking a chunk dropped (`chunk.dropped`, 1.6–2.25) is no chunk.
+  chunk (OSM), and chunk tables a dump left out though its catalog lists them
+  (an excluded chunk schema; `--extension` beside `-n`, TS2). The finding names
+  what the catalog lists and the file lacks. A catalog row marking a chunk
+  dropped (`chunk.dropped`, 1.6–2.25) is no chunk. Rejected: following the
+  server over absent chunks, which refuses the hypertable (2.13) or reads it
+  empty (2.31) from a catalog listing relations the restore lacks, while the
+  restore holds the root's rows (TS10).
+- **A hypertable's root is read with its own rows, and a finding names them**:
+  the hypertable and how many rows its root holds, which TimescaleDB's own
+  reads leave out. From 2.23 nothing refuses a row reaching the root while the
+  extension is inactive, and a restore holds it, but the planner never reads it,
+  read through or, from 2.28, `ONLY` (TS8). The rule is PostgreSQL's, the input
+  contract's; the finding is for whoever compares a count with the server's.
+  Rejected: following the server's reads, short of what the restore holds on a
+  premise upstream left stale, and differing pin by pin.
 - **A compressed chunk's rows refuse wherever they are reached**: the
   hypertable, and the chunk read by its own name, under `--inheritance only`
   too. A restore holds them — compressing a chunk empties it and moves its rows
@@ -192,8 +204,11 @@ children are chunks and which rows the file does not hold.
   uncompressed, compressed and partially compressed chunks, a dropped chunk
   where the version keeps a row for one, a hash dimension, an integer-time
   hypertable, a continuous aggregate, and from 2.23 stray rows in the root. A
-  second dump of 2.13's and the newest's database with `-n public` holds
-  catalog rows for absent chunks. **The server is `timescale/timescaledb-ha`
+  second dump of 2.13's and the newest's database excluding
+  `_timescaledb_internal` holds catalog rows for absent chunks, a `-n public`
+  dump holding no catalog (TS2); a third, selecting `public`, the chunks and
+  the catalog by `--table`, holds the catalog without the extension, the one
+  shape detection by the catalog alone meets. **The server is `timescale/timescaledb-ha`
   at each pin**, the image TimescaleDB's own Docker install page pulls, on
   Ubuntu because it needs glibc 2.33 or later; TimescaleDB's packages are
   glibc builds too, so glibc is upstream's standard configuration and D69's
@@ -206,17 +221,25 @@ children are chunks and which rows the file does not hold.
 - **Reading a hypertable is oracle-checked**, D71's method: each fixture
   restored into its version's server between `timescaledb_pre_restore()` and
   `timescaledb_post_restore()`, and the server's answers — each hypertable,
-  each chunk read by name, each compressed chunk's row count — committed
-  beside the fixture and compared with pgdt's reads and refusals. Generic
+  each chunk read by name, each compressed chunk's row count, and each root's
+  own rows as the restore holds them — committed beside the fixture and
+  compared with pgdt's reads and refusals. A hypertable read through is held to
+  its root's own rows and its present chunks' answers, the server's own read
+  through being short of what the restore holds (TS8, TS10). Generic
   inheritance is checked the same way against a plain server.
 - **What P38 relies on of TimescaleDB is registered**, as `pg_dump`'s is in
   `postgres-invariants.md`: a new assumptions register,
   `timescaledb-invariants.md` (`TS<n>`), each entry proved from the
   Apache-licensed source and re-verified at each new TimescaleDB release,
   with its read-trigger in `CLAUDE.md` beside the other registers'. Slice 1
-  opens it with what the generator confirmed, and decides whether its sites
-  carry markers a `scripts/` check resolves, as `pg_refuses.py` does `I<n>`'s.
-  Rejected: `postgres-invariants.md`, whose trigger is a PostgreSQL release;
+  opens it with what the generator confirmed. **A site relying on an entry
+  carries a `timescaledb: TS<n>` marker**, in a `.rs` file or the fixture
+  generator alike, resolved both ways against the entry's "Relied on by" by a
+  `scripts/` check sharing `pg_refuses.py`'s site resolution, landing with the
+  first site (slice 4): the catalog changes on TimescaleDB's schedule, and the
+  walk at a release finds every site only if they are held to it. Rejected:
+  plain citations, as `RT<n>`'s are, and no markers, each leaving "Relied on
+  by" unchecked; `postgres-invariants.md`, whose trigger is a PostgreSQL release;
   the fixtures alone, which watch only the versions they pin while the catalog
   is read at every version.
 

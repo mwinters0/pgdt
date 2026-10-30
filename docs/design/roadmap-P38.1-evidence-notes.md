@@ -44,8 +44,8 @@ Each is filed at its invariant; what bears on a later slice:
   detected in by either of the spec's two paths, its roots read as plain tables.
 - **The server never answers a hypertable's stray root rows by default**
   (TS8): read through, 128 rows where the root holds a 129th. A table's rows
-  being its own and every descendant's gives 129. Under "Decisions worth another
-  look" in STATUS.
+  being its own and every descendant's gives 129, which the spec keeps, with a
+  finding; slice 5's answers take the root's own rows.
 - **Absent chunks are not read as absent by the server** (TS10): 2.13 refuses
   the hypertable, and 2.31's restore drops their catalog rows and reads it
   empty. The spec's "read as absent, with a finding" answers what neither does.
