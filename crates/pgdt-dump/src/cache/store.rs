@@ -136,11 +136,11 @@ fn status_from_file(file: CacheFile, weak: WeakIdentity, origin: OriginMatch) ->
     let mut index = file.index;
     // `DumpIndex::diagnostics` is `#[serde(skip)]`, so a loaded index arrives
     // with none, and gets what every whole map carries from the persisted
-    // spans, extent and compression index (`pgdt_model::diagnostic`, "Not
+    // map, extent and compression index (`pgdt_model::diagnostic`, "Not
     // persisted"). A map of a source whose end was not known tiles up to its
     // watermark and no further.
     let tiled_to = extent.exact().unwrap_or(index.scanned_through);
-    index.diagnostics = derived_diagnostics(&index.spans, tiled_to, file.compression.as_ref());
+    index.diagnostics = derived_diagnostics(&index, tiled_to, file.compression.as_ref());
     // Derived for the same reason the diagnostics above are: a projection of
     // what the envelope already holds.
     let compression = file.compression.as_ref().map(CompressionShape::of);

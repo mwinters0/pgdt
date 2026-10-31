@@ -4,11 +4,12 @@
 //! compressed chunk's relation a table the dump holds (TS4, TS5), each
 //! dropped row naming no table (TS6), each aggregate's materialization a
 //! hypertable (TS7) — and the release each pin states or its catalog bounds
-//! (TS3), the catalog found with the extension (TS2) or without it; and the
+//! (TS3), the catalog found with the extension (TS2) or without it; the
 //! rows each hypertable's root holds as its restore holds them, its own
-//! block's (TS8).
+//! block's (TS8); and the findings the map carries of both, and of the chunks
+//! a catalog lists that the file lacks (TS10).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use pgdt_dump::cache::{self, CacheMode, Held};
@@ -17,7 +18,7 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, ByteRangeSource, Jobs,
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_mapping::{build_index, map_file};
 use pgdt_model::timescaledb::{Era, Recipe, Release, Resolution, Resolved, TimescaleDb, Version};
-use pgdt_model::{DatabaseMetadata, DumpIndex, PostgresInvalidValues};
+use pgdt_model::{DatabaseMetadata, DiagnosticKind, DumpIndex, PostgresInvalidValues};
 use tokio_util::sync::CancellationToken;
 
 use pgdt_fixtures::{Answer, answers, sandboxed, timescaledb_fixture};
@@ -250,11 +251,77 @@ async fn each_root_holds_its_own_block_s_rows_as_restored() {
     }
 }
 
+/// The map's TimescaleDB findings: each root's own rows, and each
+/// hypertable's absent chunks, by hypertable; every finding of a plain dump's
+/// database, which names none.
+fn findings(index: &DumpIndex) -> (BTreeMap<String, u64>, BTreeMap<String, Vec<String>>) {
+    let (mut rows, mut absent) = (BTreeMap::new(), BTreeMap::new());
+    for diagnostic in &index.diagnostics {
+        match diagnostic.kind() {
+            DiagnosticKind::TimescaleRootRows { database: None, hypertable, rows: n } => {
+                assert!(rows.insert(hypertable.clone(), *n).is_none(), "{hypertable}");
+            }
+            DiagnosticKind::TimescaleChunksAbsent { database: None, hypertable, chunks } => {
+                assert!(
+                    absent.insert(hypertable.clone(), chunks.clone()).is_none(),
+                    "{hypertable}"
+                );
+            }
+            DiagnosticKind::TimescaleCatalogUnreadable { .. } => panic!("{diagnostic:?}"),
+            _ => {}
+        }
+    }
+    (rows, absent)
+}
+
+/// **The map names each root holding rows of its own, and each chunk its
+/// catalog lists that the file lacks**: a root's finding exactly where its
+/// restore holds rows in it, with their count (TS8); a hypertable's absent
+/// chunks every one it lists in a dump excluding the chunks' schema, and
+/// none where the file holds them all (TS10).
+#[tokio::test]
+async fn the_map_names_each_root_s_rows_and_each_absent_chunk() {
+    for (version, flag_set) in FIXTURES {
+        let at = format!("{version} {flag_set}");
+        let index = index_of(version, flag_set).await;
+        let held = answers(&timescaledb_fixture(version, flag_set)).held;
+        let (rows, absent) = findings(&index);
+        let restored: BTreeMap<String, u64> = held
+            .iter()
+            .filter_map(|(root, answer)| match answer {
+                Answer::Rows(rows) if !rows.is_empty() => Some((root.clone(), rows.len() as u64)),
+                Answer::Rows(_) => None,
+                Answer::Error(error) => panic!("{at}: {root} {error}"),
+            })
+            .collect();
+        assert_eq!(rows, restored, "{at}");
+        if flag_set != "exclude-chunks" {
+            assert_eq!(absent, BTreeMap::new(), "{at}");
+            continue;
+        }
+        let db = TimescaleDb::of(&index, None).unwrap();
+        let metrics = resolved(&db).hypertables.iter().find(|h| h.table == "public.metrics");
+        let listed: Vec<String> = metrics
+            .unwrap()
+            .chunks
+            .iter()
+            .filter(|c| !c.dropped)
+            .map(|c| c.table.clone())
+            .collect();
+        assert!(!listed.is_empty(), "{at}");
+        assert_eq!(absent.get("public.metrics"), Some(&listed), "{at}");
+    }
+}
+
 /// A pass cutting blocks among workers reads the catalog's on its own loop,
-/// so it records what the serial pass does, and the cache keeps it.
+/// so it records what the serial pass does, and the cache keeps it; the
+/// findings over it are the serial map's, and a load derives them again.
 #[tokio::test]
 async fn a_parallel_pass_records_the_catalog_and_its_cache_keeps_it() {
-    let serial = TimescaleDb::of(&index_of(18, "default").await, None).unwrap();
+    let serial_index = index_of(18, "default").await;
+    let serial = TimescaleDb::of(&serial_index, None).unwrap();
+    let serial_findings = findings(&serial_index);
+    assert_ne!(serial_findings.0, BTreeMap::new(), "2.31's stray root row");
     let (_dir, dump) = sandboxed(&timescaledb_fixture(18, "default"), "default.sql");
     let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
     source.hint_read_size(64);
@@ -272,8 +339,10 @@ async fn a_parallel_pass_records_the_catalog_and_its_cache_keeps_it() {
     .await
     .unwrap();
     assert_eq!(TimescaleDb::of(&run.index, None).as_ref(), Some(&serial));
+    assert_eq!(findings(&run.index), serial_findings);
     let Held::Loaded(loaded) = mode.open_source(source).await.unwrap().cache else {
         panic!("the pass left a cache")
     };
     assert_eq!(TimescaleDb::of(&loaded.index, None), Some(serial));
+    assert_eq!(findings(&loaded.index), serial_findings, "the load derives them again");
 }

@@ -33,3 +33,45 @@ fn a_tiling_failure_names_each_kind_it_counts() {
          bug, please report it"
     );
 }
+
+/// **A TimescaleDB finding names its database only where the dump does**,
+/// the first absent chunk and how many more, and which tables an unreadable
+/// catalog leaves unread with their descendants.
+#[test]
+fn a_timescaledb_finding_names_what_it_is_about() {
+    let names = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    let absent = <Diagnostic as DiagnosticExt>::timescale_chunks_absent(
+        Some("tsdb".to_owned()),
+        "public.metrics".to_owned(),
+        names(&[
+            "_timescaledb_internal._hyper_1_1_chunk",
+            "_timescaledb_internal._hyper_1_2_chunk",
+        ]),
+    );
+    assert_eq!(
+        absent.message(),
+        "the TimescaleDB catalog of hypertable `public.metrics` in database `tsdb` lists chunk \
+         `_timescaledb_internal._hyper_1_1_chunk` and 1 more that the file does not hold; read \
+         as absent, as a restore of this file lacks them"
+    );
+    let root = <Diagnostic as DiagnosticExt>::timescale_root_rows(None, "public.m".to_owned(), 2);
+    assert!(
+        root.message().starts_with("TimescaleDB hypertable `public.m` holds 2 row(s) in its root")
+    );
+    let unreadable = |hypertables| {
+        <Diagnostic as DiagnosticExt>::timescale_catalog_unreadable(
+            None,
+            names(&["dimension_slice.chunk_id"]),
+            Vec::new(),
+            hypertables,
+        )
+        .message()
+    };
+    assert_eq!(
+        unreadable(Some(names(&["public.m"]))),
+        "the TimescaleDB catalog lacks `dimension_slice.chunk_id`: each hypertable its rows name \
+         is not read with its descendants, and each chunk reads under its own name, unchecked for \
+         compression"
+    );
+    assert!(unreadable(None).contains(": every table with a descendant is not read"));
+}

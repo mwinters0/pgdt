@@ -12,11 +12,8 @@ and `pgdt sql` to the refusal at 18. The split that left the findings to
 
 - **`Verdict`** (`dump/hypertables.rs`) is the catalog's per-read verdict,
   built over `TimescaleDb::of` each time `table_read` runs. Absent chunks,
-  each root's own rows and an unreadable catalog's database are not stated
-  anywhere yet: that is 38.5.2's, and so is the channel. Of the existing four
-  (`pgdt_model::diagnostic`'s module doc), these are properties of the file,
-  `DiagnosticKind`'s kind, derived where `derived_diagnostics` is; a finding
-  per read would be a fifth.
+  each root's own rows and an unreadable catalog's database are the map's
+  diagnostics ([38.5.2's notes](roadmap-P38.5.2-findings-notes.md)).
 - **An absent chunk** is a catalog chunk not `dropped` whose table the DDL
   does not declare; it is no descendant, so nothing reads or refuses it.
   **A root's own rows** are its own block's `row_count`, at every level

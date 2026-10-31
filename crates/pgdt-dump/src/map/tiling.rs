@@ -1,15 +1,15 @@
 //! What every map is checked for and carries, recomputed wherever one is
 //! mapped or loaded: the tiling check and its diagnostic, the TOC-coverage
-//! figure, an unseekable compressed source's warning — the three
-//! [`derived_diagnostics`] — and each span's text read back from the file by
+//! figure, an unseekable compressed source's warning and TimescaleDB's
+//! findings — the [`derived_diagnostics`] — and each span's text read back from the file by
 //! offset (`docs/design/decisions.md`, "D30").
 
 use pgdt_core::Result;
 use pgdt_io::ByteRangeSource;
 use pgdt_model::internal::DiagnosticExt;
 use pgdt_model::{
-    CompressedContainer, Diagnostic, SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody, SpanText,
-    TilingIssue,
+    CompressedContainer, Diagnostic, DumpIndex, SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody,
+    SpanText, TilingIssue,
 };
 
 /// Whether a span of this kind stores its text at all. `Data` spans never do
@@ -144,21 +144,24 @@ fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
 
 /// **What a whole-file map carries that nothing persists**
 /// (`pgdt_model::DumpIndex::diagnostics` is `#[serde(skip)]`): the tiling
-/// check's failure, the TOC-coverage figure and an unseekable compressed
-/// source's warning, each a pure function of the spans, the file's
+/// check's failure, the TOC-coverage figure, an unseekable compressed
+/// source's warning and each TimescaleDB database's findings
+/// ([`pgdt_model::timescaledb::findings`]), each a pure function of the map
+/// `mapped` — its spans, its DDL and its catalog's rows — the file's
 /// addressable `size` and the source's compression `index`. **The one place they are computed**, for
 /// every site a whole map is finished or loaded — `pgdt_mapping::build_index`,
 /// `pgdt_mapping::map_file`, `pgdt_mapping::map_forward` at EOF and
 /// `crate::cache::store::status_from_file` — so no site carries a subset of
 /// what another does.
 pub fn derived_diagnostics(
-    spans: &[Span],
+    mapped: &DumpIndex,
     size: u64,
     index: Option<&pgdt_io::CompressionIndex>,
 ) -> Vec<Diagnostic> {
-    let mut diagnostics = tiling_diagnostics(spans, size);
-    diagnostics.push(toc_coverage_diagnostic(spans));
+    let mut diagnostics = tiling_diagnostics(&mapped.spans, size);
+    diagnostics.push(toc_coverage_diagnostic(&mapped.spans));
     diagnostics.extend(non_seekable_compression_diagnostic(index));
+    diagnostics.extend(pgdt_model::timescaledb::findings(mapped));
     diagnostics
 }
 

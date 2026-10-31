@@ -546,8 +546,7 @@ pub async fn map_forward(
     index.tablespaces.extend(tablespaces);
     index.spans = spans;
     index.scanned_through = size;
-    index.diagnostics =
-        derived_diagnostics(&index.spans, size, source.compression_index().as_ref());
+    index.diagnostics = derived_diagnostics(index, size, source.compression_index().as_ref());
     // deficiency: KD131 — this saves a complete map, its `scanned_through` the
     // file's end, behind `SourceWatch::check` alone: the reads' own checks
     // (`SourceWatch::finish`, a source's `complete_reads`) come only before

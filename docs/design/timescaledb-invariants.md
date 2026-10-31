@@ -202,8 +202,8 @@ false` ("Continuous Aggregates with partials is not supported anymore").
 **Verified against:** the pins; the source at 2.13.1–2.21.4.
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
 "TimescaleDB" — a `chunk.dropped` row is no chunk: `read_chunks` (`pgdt-model`'s
-`timescaledb/recipe.rs`), and none refuses a read, `Verdict::of` (`pgdt-query`'s
-`dump/hypertables.rs`).
+`timescaledb/recipe.rs`), none refuses a read, `Verdict::of` (`pgdt-query`'s
+`dump/hypertables.rs`), and none is absent, `absent_chunks` (`timescaledb/findings.rs`).
 **Re-verify:** `git show <tag>:src/chunk.c | grep -n 'preserve_catalog_row(chunks'`.
 
 ---
@@ -265,7 +265,8 @@ from an insert in restoring mode (`fixture_schema_timescaledb_root_rows.sql`).
 **Verified against:** 2.27.2, 2.28.3, 2.31.0; the trigger and restoring mode at
 2.13.1 and 2.21.4 too.
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"TimescaleDB" — a root's own rows read, with a finding; the answers' *held*
+"TimescaleDB" — a root's own rows read, with a finding, `root_rows` (`pgdt-model`'s
+`timescaledb/findings.rs`); the answers' *held*
 reading of each root, `answer_lines` (`scripts/generate_fixtures.py`).
 **Re-verify:** `grep -c ts_insert_blocker fixtures/<major>/timescaledb/default.sql`;
 `grep 'public.metrics' fixtures/<major>/timescaledb/default.answers.tsv | grep -v
@@ -303,5 +304,6 @@ each restore (`runs/dwal-ts10-probe/results.txt`, machine-local).
 
 **Verified against:** 2.13.1, 2.31.0.
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"TimescaleDB" — absent chunks read as absent, with a finding.
+"TimescaleDB" — absent chunks read as absent, with a finding, `absent_chunks`
+(`pgdt-model`'s `timescaledb/findings.rs`).
 **Re-verify:** `grep -v $'\trow\t' fixtures/{13,18}/timescaledb/exclude-chunks.answers.tsv`.

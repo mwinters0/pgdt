@@ -193,6 +193,29 @@ pub enum DiagnosticKind {
         block_count: usize,
         largest_unit: u64,
     },
+    /// A TimescaleDB hypertable's catalog lists chunks, each `schema.table`,
+    /// whose tables the file does not declare — a dump excluding the chunks'
+    /// schema, or a chunk foreign to the server — read as absent, as a
+    /// restore of the file lacks them (TS10). `database` is the segment's,
+    /// `None` for a plain dump. Pushed by `crate::timescaledb::findings`.
+    TimescaleChunksAbsent { database: Option<String>, hypertable: String, chunks: Vec<String> },
+    /// A TimescaleDB hypertable's root holds `rows` of its own, read with
+    /// its chunks' and alone, which a restore holds and TimescaleDB's own
+    /// reads leave out (TS8): a count here differs from the server's by
+    /// them. Pushed by `crate::timescaledb::findings`, only where `rows > 0`.
+    TimescaleRootRows { database: Option<String>, hypertable: String, rows: u64 },
+    /// A database's TimescaleDB catalog cannot be read by its recipe, for
+    /// the columns it lacks and the fields that do not read, each
+    /// `table.column`: the hypertables its `hypertable` rows name — every
+    /// table with a descendant, where `hypertables` is `None` — refuse a read
+    /// with their descendants, and each chunk reads under its own name,
+    /// unchecked for compression. Pushed by `crate::timescaledb::findings`.
+    TimescaleCatalogUnreadable {
+        database: Option<String>,
+        missing: Vec<String>,
+        malformed: Vec<String>,
+        hypertables: Option<Vec<String>>,
+    },
 }
 
 /// The compressed container a [`DiagnosticKind::NonSeekableCompressedSource`]
@@ -265,12 +288,45 @@ impl Finding for Diagnostic {
                  block ({block_count} unit(s)) — every read inside that unit decodes it from its \
                  start; recompress with `bgzip` or `gzip` for random access"
             ),
+            DiagnosticKind::TimescaleChunksAbsent { database, hypertable, chunks } => format!(
+                "the TimescaleDB catalog of hypertable `{hypertable}`{} lists {} that the file \
+                 does not hold; read as absent, as a restore of this file lacks them",
+                in_database(database),
+                pgdt_core::internal::chunk_list(chunks)
+            ),
+            DiagnosticKind::TimescaleRootRows { database, hypertable, rows } => format!(
+                "TimescaleDB hypertable `{hypertable}`{} holds {rows} row(s) in its root, read \
+                 with its chunks' and alone, as a restore of this file holds them; \
+                 TimescaleDB's own reads leave them out, so the server's counts differ by them",
+                in_database(database)
+            ),
+            DiagnosticKind::TimescaleCatalogUnreadable {
+                database,
+                missing,
+                malformed,
+                hypertables,
+            } => format!(
+                "the TimescaleDB catalog{} {}: {} not read with its descendants, and each \
+                 chunk reads under its own name, unchecked for compression",
+                in_database(database),
+                pgdt_core::internal::catalog_fault(missing, malformed),
+                match hypertables {
+                    Some(_) => "each hypertable its rows name is",
+                    None => "every table with a descendant is",
+                }
+            ),
         }
     }
 
     fn as_any(&self) -> &dyn Any {
         self
     }
+}
+
+/// Where a TimescaleDB finding's database is named, `" in database `<name>`"`;
+/// nothing for a plain dump's, which names none.
+fn in_database(database: &Option<String>) -> String {
+    database.as_ref().map(|name| format!(" in database `{name}`")).unwrap_or_default()
 }
 
 /// `issues` counted by kind, a [`TilingIssue::Discontinuity`] a gap where the
@@ -340,6 +396,18 @@ pub trait DiagnosticExt {
     fn cache_mtime_changed() -> Self;
     fn cache_entity_tag_changed() -> Self;
     fn cache_origin_changed() -> Self;
+    fn timescale_chunks_absent(
+        database: Option<String>,
+        hypertable: String,
+        chunks: Vec<String>,
+    ) -> Self;
+    fn timescale_root_rows(database: Option<String>, hypertable: String, rows: u64) -> Self;
+    fn timescale_catalog_unreadable(
+        database: Option<String>,
+        missing: Vec<String>,
+        malformed: Vec<String>,
+        hypertables: Option<Vec<String>>,
+    ) -> Self;
 }
 
 impl DiagnosticExt for Diagnostic {
@@ -386,6 +454,40 @@ impl DiagnosticExt for Diagnostic {
     /// (`pgdt_dump::cache::OriginMatch`).
     fn cache_origin_changed() -> Self {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheOriginChanged }
+    }
+
+    /// Rows the catalog places that the file lacks: the result matches a
+    /// restore, so `Warning`, not `Error`.
+    fn timescale_chunks_absent(
+        database: Option<String>,
+        hypertable: String,
+        chunks: Vec<String>,
+    ) -> Self {
+        let kind = DiagnosticKind::TimescaleChunksAbsent { database, hypertable, chunks };
+        Self { severity: Severity::Warning, kind }
+    }
+
+    /// A count differing from the server's, which whoever compares the two
+    /// should see.
+    fn timescale_root_rows(database: Option<String>, hypertable: String, rows: u64) -> Self {
+        let kind = DiagnosticKind::TimescaleRootRows { database, hypertable, rows };
+        Self { severity: Severity::Warning, kind }
+    }
+
+    /// The refusals it causes are each read's; this says what the rest read.
+    fn timescale_catalog_unreadable(
+        database: Option<String>,
+        missing: Vec<String>,
+        malformed: Vec<String>,
+        hypertables: Option<Vec<String>>,
+    ) -> Self {
+        let kind = DiagnosticKind::TimescaleCatalogUnreadable {
+            database,
+            missing,
+            malformed,
+            hypertables,
+        };
+        Self { severity: Severity::Warning, kind }
     }
 }
 

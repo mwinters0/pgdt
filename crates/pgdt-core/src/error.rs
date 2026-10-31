@@ -486,9 +486,9 @@ fn offsets(header_offsets: &[u64]) -> String {
     header_offsets.iter().map(u64::to_string).collect::<Vec<_>>().join(", ")
 }
 
-/// The chunks [`Error::CompressedChunks`] names: the first, and how many
-/// more.
-fn chunk_list(chunks: &[String]) -> String {
+/// The chunks [`Error::CompressedChunks`] names, or a TimescaleDB finding
+/// does: the first, and how many more.
+pub fn chunk_list(chunks: &[String]) -> String {
     match chunks {
         [] => "no chunk".to_owned(),
         [one] => format!("chunk `{one}`"),
@@ -497,8 +497,8 @@ fn chunk_list(chunks: &[String]) -> String {
 }
 
 /// What [`Error::TimescaleCatalogUnreadable`]'s catalog lacks or holds
-/// unread.
-fn catalog_fault(missing: &[String], malformed: &[String]) -> String {
+/// unread, and a TimescaleDB finding's.
+pub fn catalog_fault(missing: &[String], malformed: &[String]) -> String {
     let list = |names: &[String]| {
         names.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ")
     };

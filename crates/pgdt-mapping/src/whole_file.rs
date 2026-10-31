@@ -49,8 +49,16 @@ pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) ->
     let mut spans = builder.finish(size);
     let metadata = Some(Arc::new(dump_metadata_from_spans(&spans)));
     attach_text(source, &mut spans).await?;
-    let diagnostics = derived_diagnostics(&spans, size, source.compression_index().as_ref());
-    Ok(DumpIndex { spans, scanned_through: size, metadata, roles, tablespaces, diagnostics })
+    let mut index = DumpIndex {
+        spans,
+        scanned_through: size,
+        metadata,
+        roles,
+        tablespaces,
+        diagnostics: Vec::new(),
+    };
+    index.diagnostics = derived_diagnostics(&index, size, source.compression_index().as_ref());
+    Ok(index)
 }
 
 /// Scan `source` end to end and build its full file map as a span list —
@@ -513,11 +521,7 @@ async fn map_file_watched(
     let size = extent.exact().unwrap_or(index.scanned_through);
     index.metadata = Some(Arc::new(dump_metadata_from_spans(&index.spans)));
     let mut diagnostics = carried;
-    diagnostics.extend(derived_diagnostics(
-        &index.spans,
-        size,
-        source.compression_index().as_ref(),
-    ));
+    diagnostics.extend(derived_diagnostics(&index, size, source.compression_index().as_ref()));
     index.diagnostics = diagnostics;
     let backfill = backfill_statistics(
         source,

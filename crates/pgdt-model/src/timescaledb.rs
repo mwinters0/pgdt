@@ -17,12 +17,14 @@ use serde::Serialize;
 use crate::DumpIndex;
 
 mod catalog;
+mod findings;
 mod recipe;
 mod recorded;
 mod version;
 
 use catalog::Catalog;
 pub use catalog::EXTENSION;
+pub use findings::findings;
 pub use recipe::{Chunk, ContinuousAggregate, Dimension, Hypertable, Resolved, Slice};
 pub use recorded::{CATALOG_SCHEMA, RecordedRows, records_rows};
 pub use version::{Era, Recipe, Release, Version};

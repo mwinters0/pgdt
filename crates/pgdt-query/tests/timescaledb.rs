@@ -19,7 +19,7 @@ use pgdt_core::Error;
 use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::timescaledb::{Resolution, TimescaleDb};
-use pgdt_model::{DatabaseMetadata, DumpIndex};
+use pgdt_model::{DatabaseMetadata, DiagnosticKind, DumpIndex};
 use pgdt_query::{Dump, Inheritance, Table, TableSelector};
 
 use common::{Answer, Answers, Cold, Reading, answers, mapped, read, timescaledb_fixture};
@@ -208,7 +208,8 @@ async fn refusal(dump: &Dump, qualified: &str) -> Option<Error> {
 /// descendants**, naming what it lacks: those its `hypertable` rows name,
 /// and where those do not read, every table with a descendant. Read alone,
 /// each reads its root's own rows, and each chunk reads under its own name,
-/// a compressed one's block unchecked.
+/// a compressed one's block unchecked, as the map's finding of the
+/// catalog says.
 #[tokio::test]
 async fn an_unreadable_catalog_refuses_its_hypertables() {
     let path = timescaledb_fixture(18, "default");
@@ -223,6 +224,16 @@ async fn an_unreadable_catalog_refuses_its_hypertables() {
         let edited = edited(&path, dir.path(), &renames);
         let dump = mapped(source(&edited), &StatisticsRequest::DATA).await;
         let ddl = ddl(dump.index());
+        let finding = dump.index().diagnostics.iter().find_map(|d| match d.kind() {
+            DiagnosticKind::TimescaleCatalogUnreadable {
+                database, missing, hypertables, ..
+            } => Some((database.clone(), missing.clone(), hypertables.clone())),
+            _ => None,
+        });
+        let Some((None, missing, hypertables)) = finding else { panic!("{at}: {finding:?}") };
+        assert!(missing.contains(&"dimension_slice.chunk_id".to_owned()), "{at}: {missing:?}");
+        let named = hypertables.is_some_and(|names| names.contains(&"public.metrics".to_owned()));
+        assert_eq!(named, renames.len() == 1, "{at}");
         for qualified in ["public.metrics", "public.counters"] {
             let refused = refusal(&dump, qualified).await;
             let Some(Error::TimescaleCatalogUnreadable { table, missing, .. }) = refused else {
