@@ -27,10 +27,10 @@ and `pgdt sql` to the refusal at 18. The split that left the findings to
 
 ## Negative results
 
-- **A named hypertable refuses read through under an unreadable catalog
-  whether or not the file holds a chunk of it**, as the spec's "every
-  hypertable of that database refuses" reads; only the fallback, where no
-  name reads, keys on a descendant.
+- **A named hypertable refused read through under an unreadable catalog
+  whether or not the file held a chunk of it**, the wrong contract: since
+  [38.5.4](roadmap-P38.5.4-no-chunk-held-notes.md) one with no chunk held
+  reads, as the fallback's unnamed one does.
 - **The internal compressed hypertables need nothing of their own**: at 2.13
   their compressed relations inherit them and read as their batches; from
   2.21 nothing inherits them and they read as their own empty block, where

@@ -255,6 +255,14 @@ pub enum PlanNoteKind {
     /// block holds them, short of a restore. Beside the map's
     /// `TimescaleCatalogUnreadable` (`docs/design/decisions.md`, "D135").
     CompressionUnchecked { table: String, missing: Vec<String>, malformed: Vec<String> },
+    /// A TimescaleDB hypertable this query reads with its descendants, one
+    /// its database's unreadable catalog names, for what that catalog lacks
+    /// and holds unread, each `table.column`, and the file holds none of its
+    /// chunks: the read holds its root's rows alone, and which chunks the
+    /// file lacks cannot be known, as a readable catalog's
+    /// [`PlanNoteKind::HypertableChunksAbsent`] would say. Beside the map's
+    /// `TimescaleCatalogUnreadable` (`docs/design/decisions.md`, "D135").
+    HypertableChunksUnknown { table: String, missing: Vec<String>, malformed: Vec<String> },
 }
 
 /// One block a [`TableStream`](super::table::TableStream) replayed under an early stop — the filter, or
@@ -391,6 +399,7 @@ impl PlanNote {
             | PlanNoteKind::HypertableRootRows { .. }
             | PlanNoteKind::HypertableChunksAbsent { .. }
             | PlanNoteKind::CompressionUnchecked { .. }
+            | PlanNoteKind::HypertableChunksUnknown { .. }
             | PlanNoteKind::CompressedFirstPass { .. } => None,
         }
     }
@@ -429,7 +438,8 @@ impl Finding for PlanNote {
             | PlanNoteKind::ReadAsNull { .. }
             | PlanNoteKind::HypertableRootRows { .. }
             | PlanNoteKind::HypertableChunksAbsent { .. }
-            | PlanNoteKind::CompressionUnchecked { .. } => Severity::Warning,
+            | PlanNoteKind::CompressionUnchecked { .. }
+            | PlanNoteKind::HypertableChunksUnknown { .. } => Severity::Warning,
         }
     }
 
@@ -555,6 +565,12 @@ impl Finding for PlanNote {
                 "the TimescaleDB catalog of `{table}`'s database {}, so this read is unchecked \
                  for compression: a table it reaches may be a chunk whose rows are compressed, \
                  read as its own block holds them, short of a restore of this file",
+                pgdt_core::internal::catalog_fault(missing, malformed)
+            ),
+            PlanNoteKind::HypertableChunksUnknown { table, missing, malformed } => format!(
+                "the TimescaleDB catalog of hypertable `{table}`'s database {}, and the file \
+                 holds none of its chunks, so this read holds its root's rows alone and which \
+                 of its chunks the file lacks cannot be known",
                 pgdt_core::internal::catalog_fault(missing, malformed)
             ),
         }

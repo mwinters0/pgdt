@@ -5,9 +5,10 @@
 //! whose rows are compressed refused wherever it is reached (`KD159`), the
 //! compressed relation read as its batches; every other table as the server
 //! answers it. Over a complete map and a cold query's pass alike — and over
-//! a catalog that does not read, which refuses its hypertables read with
-//! their descendants. Each read says what the map finds of it: a root's own
-//! rows, absent chunks, a read unchecked for compression (D135).
+//! a catalog that does not read, which refuses its hypertables the file holds
+//! a chunk of read with their descendants. Each read says what the map finds
+//! of it: a root's own rows, absent chunks, a read unchecked for compression,
+//! chunks that cannot be known absent (D135).
 
 mod common;
 
@@ -203,6 +204,7 @@ fn timescaledb_notes(table: &Table, inheritance: Inheritance) -> Option<Vec<Plan
             PlanNoteKind::HypertableRootRows { .. }
                 | PlanNoteKind::HypertableChunksAbsent { .. }
                 | PlanNoteKind::CompressionUnchecked { .. }
+                | PlanNoteKind::HypertableChunksUnknown { .. }
         )
     };
     let notes: Vec<PlanNoteKind> =
@@ -295,8 +297,9 @@ async fn refusal(dump: &Dump, qualified: &str) -> Option<Error> {
 }
 
 /// **A catalog that does not read refuses its hypertables read with their
-/// descendants**, naming what it lacks: those its `hypertable` rows name,
-/// and where those do not read, every table with a descendant. Read alone,
+/// descendants**, naming what it lacks: those its `hypertable` rows name
+/// that the file holds a chunk of, and where those do not read, every table
+/// with a descendant. Read alone,
 /// each reads its root's own rows, and each chunk reads under its own name,
 /// a compressed one's block unchecked, as the map's finding of the
 /// catalog says and each such read says too: a table below a hypertable the
@@ -369,5 +372,58 @@ async fn an_unreadable_catalog_refuses_its_hypertables() {
         let name = dump.tables().iter().find(|n| n.qualified_name() == compressed).unwrap();
         let table = dump.table(&TableSelector::from(name)).unwrap().unwrap();
         assert_eq!(timescaledb_notes(&table, Inheritance::Descendants), Some(vec![]), "{at}");
+    }
+}
+
+/// **A named hypertable the file holds no chunk of reads under an unreadable
+/// catalog**, as a plain table: read with its descendants it holds its
+/// root's own rows, as its restore's `held` answer does, and says which of
+/// its chunks the file lacks cannot be known, beside its root's rows where it
+/// holds any; nothing it reaches may be a chunk. Where even the names do not
+/// read, it is indistinguishable from a plain table and says nothing.
+#[tokio::test]
+async fn an_unreadable_catalogs_named_hypertable_with_no_chunk_held_reads() {
+    let path = timescaledb_fixture(18, "exclude-chunks");
+    let answers = answers(&path);
+    let dir = tempfile::tempdir().unwrap();
+    let slice = "COPY _timescaledb_catalog.dimension_slice (id, chunk_id,";
+    let renamed = "COPY _timescaledb_catalog.dimension_slice (id, chunk_ident,";
+    let hypertable = "COPY _timescaledb_catalog.hypertable (id, schema_name, table_name,";
+    let unnamed = "COPY _timescaledb_catalog.hypertable (id, schema_name, table_label,";
+    for renames in [vec![(slice, renamed)], vec![(slice, renamed), (hypertable, unnamed)]] {
+        let at = format!("{renames:?}");
+        let named = renames.len() == 1;
+        let edited = edited(&path, dir.path(), &renames);
+        let dump = mapped(source(&edited), &StatisticsRequest::DATA).await;
+        let mut rooted = false;
+        for qualified in ["public.metrics", "public.counters"] {
+            let at = format!("{at} {qualified}");
+            assert!(ddl(dump.index()).descendants(qualified).is_empty(), "{at}: a chunk held");
+            let name = dump.tables().iter().find(|n| n.qualified_name() == qualified).unwrap();
+            let table = dump.table(&TableSelector::from(name)).unwrap().unwrap();
+            let read = read(&table, SchemaMode::Strings, Inheritance::Descendants).await;
+            assert_eq!(read.unwrap(), rows(answers.held.get(qualified), &at), "{at}");
+            let held = rows_of_held(&answers, qualified, &at);
+            let mut expected = Vec::new();
+            if named && held > 0 {
+                rooted = true;
+                expected
+                    .push(PlanNoteKind::HypertableRootRows { table: qualified.into(), rows: held });
+            }
+            if named {
+                let notes = timescaledb_notes(&table, Inheritance::Descendants).unwrap();
+                let Some(PlanNoteKind::HypertableChunksUnknown { table, missing, .. }) =
+                    notes.last()
+                else {
+                    panic!("{at}: {notes:?}")
+                };
+                assert_eq!(table, qualified, "{at}");
+                assert!(missing.contains(&"dimension_slice.chunk_id".to_owned()), "{at}");
+                expected.push(notes.last().unwrap().clone());
+            }
+            let notes = timescaledb_notes(&table, Inheritance::Descendants);
+            assert_eq!(notes, Some(expected), "{at}: with its descendants");
+        }
+        assert_eq!(rooted, named, "{at}: no root holding rows said so");
     }
 }

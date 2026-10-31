@@ -32,10 +32,9 @@ a resumed stream alike, and an unreadable catalog's) and `pgdt`'s
 
 ## Negative results
 
-- **No note on any read of a named hypertable for an unreadable catalog**:
-  read with its descendants it refuses (38.5.1's notes), and read alone it
-  reaches no chunk. Slice 38.5.4 is to read one the file holds no chunk of,
-  with a note of its own ([2026-10-31](../status/history/2026-10-31.md), "A
-  named hypertable with no chunk held reads: 38.5.4").
+- **No unreadable catalog's note on a named hypertable read alone**: it
+  reaches no chunk. Read with its descendants where the file holds none of
+  its chunks, it says its own since
+  [38.5.4](roadmap-P38.5.4-no-chunk-held-notes.md).
 - **A note's table is its qualified name alone**, as `ReadAsNull`'s is; a
   front end locating its findings (`Located`) names the database.

@@ -70,8 +70,8 @@ fn a_timescaledb_finding_names_what_it_is_about() {
     assert_eq!(
         unreadable(Some(names(&["public.m"]))),
         "the TimescaleDB catalog lacks `dimension_slice.chunk_id`: each hypertable its rows name \
-         is not read with its descendants, and each chunk reads under its own name, unchecked for \
-         compression"
+         and the file holds a chunk of is not read with its descendants, and each chunk reads \
+         under its own name, unchecked for compression"
     );
     assert!(unreadable(None).contains(": every table with a descendant is not read"));
 }

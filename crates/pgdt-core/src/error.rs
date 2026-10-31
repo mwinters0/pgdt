@@ -308,8 +308,8 @@ pub enum Error {
     )]
     CompressedChunks { table: String, chunks: Vec<String> },
     /// A table read with its descendants that may be a TimescaleDB hypertable
-    /// — its database's catalog naming it one, or, where even that does not
-    /// read, any table with a descendant — whose catalog cannot be read by
+    /// — one with a descendant, its database's catalog naming it one or,
+    /// where even that does not read, any — whose catalog cannot be read by
     /// the recipe its release decides: `missing` names the columns that
     /// recipe needs and the catalog lacks, `malformed` the fields that do not
     /// read, each `table.column`. Which descendants are chunks, and which of

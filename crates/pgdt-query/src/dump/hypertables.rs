@@ -2,7 +2,7 @@
 //! reaches are chunks whose rows the restore holds compressed, which tables
 //! an unreadable catalog leaves unread with their descendants, and what a
 //! read that is made hears of the catalog — its root's own rows, its absent
-//! chunks, a read unchecked for compression
+//! chunks, a read unchecked for compression, chunks it cannot know absent
 //! (`docs/design/roadmap-P38-descendants.md`, "TimescaleDB"). The catalog's
 //! conclusions are the model's ([`TimescaleDb`]); what refuses a read is
 //! decided here, beside the blocks it chooses, over the tables the DDL's walk
@@ -126,9 +126,12 @@ impl Verdict {
     }
 
     /// What the catalog lacks and holds unread, where a read of `table` with
-    /// its descendants is refused for its not reading: `table` is a
-    /// hypertable the catalog's rows name, or, where those do not read, any
-    /// table `has_descendants`.
+    /// its descendants is refused for its not reading: `table`
+    /// `has_descendants`, and is a hypertable the catalog's rows name, or any
+    /// table where those do not read. The refusal guards compression, which a
+    /// read reaching no chunk cannot meet, so a named hypertable the file
+    /// holds no chunk of reads as a plain table, its note saying what is left
+    /// unknown ([`PlanNoteKind::HypertableChunksUnknown`]).
     pub(super) fn unreadable_refusal(
         &self,
         table: &str,
@@ -137,10 +140,8 @@ impl Verdict {
         let Catalog::Unreadable { missing, malformed, hypertables } = &self.catalog else {
             return None;
         };
-        let refuses = match hypertables {
-            Some(names) => names.contains(table),
-            None => has_descendants,
-        };
+        let refuses =
+            has_descendants && hypertables.as_ref().is_none_or(|names| names.contains(table));
         refuses.then_some((missing.as_slice(), malformed.as_slice()))
     }
 
@@ -150,7 +151,9 @@ impl Verdict {
     /// root's own rows where the server's `ONLY` reads none; and under an
     /// unreadable catalog, either way, that a table it reaches may be a
     /// chunk — below a hypertable the catalog's rows name, or below any table
-    /// where they name none — which no check of compression reached. A mode
+    /// where they name none — which no check of compression reached, and read
+    /// with its descendants where it is a hypertable the rows name and has
+    /// none, that which of its chunks the file lacks cannot be known. A mode
     /// whose read refuses never plans, so never raises its notes.
     pub(super) fn notes(
         &self,
@@ -196,6 +199,14 @@ impl Verdict {
                 }
                 if chunk(table) || descendants.iter().any(|descendant| chunk(descendant)) {
                     notes.descendants.push(unchecked());
+                }
+                let named = hypertables.as_ref().is_some_and(|names| names.contains(table));
+                if named && descendants.is_empty() {
+                    notes.descendants.push(note(PlanNoteKind::HypertableChunksUnknown {
+                        table: table.to_owned(),
+                        missing: missing.clone(),
+                        malformed: malformed.clone(),
+                    }));
                 }
             }
         }

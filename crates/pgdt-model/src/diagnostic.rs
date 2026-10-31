@@ -206,10 +206,11 @@ pub enum DiagnosticKind {
     TimescaleRootRows { database: Option<String>, hypertable: String, rows: u64 },
     /// A database's TimescaleDB catalog cannot be read by its recipe, for
     /// the columns it lacks and the fields that do not read, each
-    /// `table.column`: the hypertables its `hypertable` rows name — every
-    /// table with a descendant, where `hypertables` is `None` — refuse a read
-    /// with their descendants, and each chunk reads under its own name,
-    /// unchecked for compression. Pushed by `crate::timescaledb::findings`.
+    /// `table.column`: the hypertables its `hypertable` rows name that the
+    /// file holds a chunk of — every table with a descendant, where
+    /// `hypertables` is `None` — refuse a read with their descendants, and
+    /// each chunk reads under its own name, unchecked for compression.
+    /// Pushed by `crate::timescaledb::findings`.
     TimescaleCatalogUnreadable {
         database: Option<String>,
         missing: Vec<String>,
@@ -311,7 +312,7 @@ impl Finding for Diagnostic {
                 in_database(database),
                 pgdt_core::internal::catalog_fault(missing, malformed),
                 match hypertables {
-                    Some(_) => "each hypertable its rows name is",
+                    Some(_) => "each hypertable its rows name and the file holds a chunk of is",
                     None => "every table with a descendant is",
                 }
             ),
