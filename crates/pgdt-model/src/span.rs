@@ -109,8 +109,7 @@ pub struct SpanText {
 }
 
 /// Per-span cap on stored text (`docs/design/decisions.md`, "D30") — a whole
-/// schema's DDL being small, it bites only on one enormous statement and the
-/// spans after it in its run (`KD31`).
+/// schema's DDL being small, it bites only on one enormous statement.
 pub const SPAN_STORED_TEXT_MAX_BYTES: usize = 64 * 1024;
 
 /// The payload behind [`SpanBody::Data`] — see that variant's docs for why

@@ -20,6 +20,11 @@ fn stores_text(body: &SpanBody) -> bool {
     !matches!(body, SpanBody::Data(_) | SpanBody::Unscanned)
 }
 
+/// Whether a span's bytes exceed what [`SpanText`] stores of them.
+fn over_cap(span: &Span) -> bool {
+    span.end - span.start > SPAN_STORED_TEXT_MAX_BYTES as u64
+}
+
 /// Fill in [`Span::text`] for every span that stores it, reading the bytes
 /// back from `source` by offset — sliced from the file, never accumulated
 /// from [`crate::scan::Event::Line`], which emits nothing for a dollar-quoted
@@ -28,13 +33,10 @@ fn stores_text(body: &SpanBody) -> bool {
 /// Runs as a pass over finished spans rather than as each span closes,
 /// because only the caller owns the source. Contiguous runs of text-storing
 /// spans are coalesced into one `read_range`, so this is one read per gap
-/// between data blocks rather than one per span.
-///
-/// Deficiency register: `deficiency: KD31` — that read is capped at
-/// `SPAN_STORED_TEXT_MAX_BYTES` times the run's span count from the run's start, not per span,
-/// so a span following one longer than the cap can fall past what was read and
-/// be stored empty and `truncated` however short it is. The fix is a run
-/// ending at a span longer than the cap.
+/// between data blocks rather than one per span. A span longer than
+/// [`SPAN_STORED_TEXT_MAX_BYTES`] ends a run and is read alone, capped, so a
+/// multi-gigabyte `Unparsed` region is never pulled into memory whole and
+/// every other run's one read is whole.
 ///
 /// Deficiency register: `deficiency: KD136` — over a fetched compressed
 /// source each run's read is a fetch of the whole unit holding it, after the
@@ -51,21 +53,26 @@ pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Re
             i += 1;
             continue;
         }
-        // Extend over the whole contiguous run of text-storing spans, so one
-        // read serves all of them.
+        // Extend over the contiguous run of text-storing spans no longer than
+        // the cap, so one read serves all of them; a longer span is a run of
+        // its own.
         let mut j = i;
-        while j + 1 < spans.len()
+        while !over_cap(&spans[j])
+            && j + 1 < spans.len()
             && stores_text(&spans[j + 1].body)
             && spans[j + 1].start == spans[j].end
+            && !over_cap(&spans[j + 1])
         {
             j += 1;
         }
         let (run_start, run_end) = (spans[i].start, spans[j].end);
-        // Capped at what the run's spans can store between them, so a
-        // multi-gigabyte `Unparsed` region is never pulled into memory whole
-        // (`KD31`).
-        let want =
-            (run_end - run_start).min(((j - i + 1) * SPAN_STORED_TEXT_MAX_BYTES) as u64) as usize;
+        // A run of several spans is no longer than the cap each, so it is
+        // read whole; a span over the cap is alone and read as far as it.
+        let want = if over_cap(&spans[i]) {
+            SPAN_STORED_TEXT_MAX_BYTES
+        } else {
+            (run_end - run_start) as usize
+        };
         let bytes = source.read_range(run_start, want).await?;
         for span in &mut spans[i..=j] {
             let from = (span.start - run_start) as usize;

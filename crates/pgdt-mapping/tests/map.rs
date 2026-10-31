@@ -547,6 +547,49 @@ async fn text_over_the_cap_is_truncated_and_marked() {
     assert_eq!(spans[0].end, body.len() as u64, "offsets are untouched by the cap");
 }
 
+/// A span over the cap ends its run and is read alone, capped, so the short
+/// spans either side of it, contiguous and text-storing, are each stored whole.
+#[tokio::test]
+async fn a_short_span_beside_one_over_the_cap_is_stored_whole() {
+    use pgdt_dump::attach_text;
+    use pgdt_model::{SPAN_STORED_TEXT_MAX_BYTES, Span};
+
+    let before = "SET client_encoding = 'UTF8';\n";
+    // Longer than the cap times the three spans' count, so one read capped
+    // from the first span's start ends before the last.
+    let long = "x".repeat(SPAN_STORED_TEXT_MAX_BYTES * 4);
+    let after = "SELECT 1;\n";
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("long_then_short.sql");
+    std::fs::write(&path, format!("{before}{long}{after}")).unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+
+    let mut offset = 0;
+    let mut spans: Vec<Span> = [before.len(), long.len(), after.len()]
+        .into_iter()
+        .map(|len| {
+            let span = Span {
+                start: offset,
+                end: offset + len as u64,
+                database: None,
+                text: None,
+                toc: None,
+                toc_owned: false,
+                body: SpanBody::Framing,
+            };
+            offset += len as u64;
+            span
+        })
+        .collect();
+    attach_text(&source, &mut spans).await.unwrap();
+
+    let stored: Vec<_> = spans.iter().map(|s| s.text.as_ref().unwrap()).collect();
+    assert_eq!((stored[0].text.as_str(), stored[0].truncated), (before, false));
+    assert_eq!(stored[1].text.len(), SPAN_STORED_TEXT_MAX_BYTES);
+    assert!(stored[1].truncated);
+    assert_eq!((stored[2].text.as_str(), stored[2].truncated), (after, false));
+}
+
 /// What `Event::DollarQuoteEnd` is for: with no TOC comments, `scan.rs` emits
 /// no `Event::Line` for the line carrying a `CREATE FUNCTION`'s own closing
 /// `;`, so nothing else tells the accumulator the statement has ended

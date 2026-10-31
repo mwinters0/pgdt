@@ -192,11 +192,6 @@ than reading as a phase nobody has sliced.
   **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
   in hand being one. Detail: `crates/pgdt-model/src/catalog.rs`.
 
-- **KD31** — `attach_text` caps a run's one read at `SPAN_STORED_TEXT_MAX_BYTES` per span from
-  the run's start, so a span following one longer than the cap can be stored
-  empty and `truncated` however short it is. **(b) owned by `M270`**. Detail:
-  `crates/pgdt-dump/src/map/tiling.rs`.
-
 - **KD33** — statistics stop where the account fills: nothing releases
   `Term::Retained` while the pass gathers forward, so a dump long enough fills
   its allowance partway through and every block after it declines, leaving statistics a prefix of the
