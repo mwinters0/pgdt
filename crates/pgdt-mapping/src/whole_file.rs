@@ -17,9 +17,7 @@ use pgdt_dump::internal::{derived_diagnostics, scan_preamble};
 use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
 use pgdt_io::{Arrangement, ByteRangeSource, Extent};
 use pgdt_model::internal::IgnoredRefusalsExt;
-use pgdt_model::{
-    Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, PostgresInvalidValues, Span, timescaledb,
-};
+use pgdt_model::{Diagnostic, DumpIndex, DumpMetadata, PostgresInvalidValues, Span, timescaledb};
 use tokio_util::sync::CancellationToken;
 
 use crate::backfill::{
@@ -385,18 +383,8 @@ async fn map_file_watched(
     // The diagnostics about the cache *file* rather than about the map — what
     // the load said about its identity; the rest are the derived ones,
     // recomputed below.
-    let carried: Vec<Diagnostic> = index
-        .diagnostics
-        .drain(..)
-        .filter(|d| {
-            matches!(
-                d.kind(),
-                DiagnosticKind::CacheMtimeChanged
-                    | DiagnosticKind::CacheEntityTagChanged
-                    | DiagnosticKind::CacheOriginChanged
-            )
-        })
-        .collect();
+    let carried: Vec<Diagnostic> =
+        index.diagnostics.drain(..).filter(Diagnostic::is_identity).collect();
     let resumed_from =
         extent.exact().map_or(index.scanned_through, |size| index.scanned_through.min(size));
 

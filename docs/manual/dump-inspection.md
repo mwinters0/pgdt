@@ -430,7 +430,8 @@ file's modification time when it writes the cache. By default that time is
 **advisory**: a dump that was copied to another machine, restored from backup
 or simply `touch`ed still has the same bytes, and refusing to read it would be
 refusing a file that is perfectly good. `parse` and `info` say so in their
-listing and carry on; `query` carries on.
+listing and carry on; `query` says so on stderr, before any row, and carries
+on.
 
 `--strict-identity` turns that into a refusal, for a pipeline where the file
 genuinely should not have moved. It takes a comma-separated selection, and the

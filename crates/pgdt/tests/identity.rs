@@ -104,3 +104,26 @@ fn a_scanning_command_names_the_source_in_a_strict_identity_refusal() {
     assert!(said.contains(&format!("Error: {dump}: the cache at")), "{said}");
     assert!(said.contains("dump.sql.pgdt"), "the cache is still named: {said}");
 }
+
+/// Without the flag a scanning command reads a cache whose modification
+/// signal moved, and says so on stderr, as `info` lists it: the warning is
+/// D21's, the run is not refused, and the rows on stdout are untouched by it.
+/// A cache whose signal agrees says nothing.
+#[test]
+fn query_warns_of_a_moved_signal_and_reads_on() {
+    let (_dir, dump) = sandboxed();
+    let dump = dump.to_str().unwrap();
+    run_ok(&["parse", "--source", dump]);
+    let args = ["query", "--source", dump, "--table", "public.widgets"];
+    let warning = "warning: the dump file's mtime has changed since the cache was saved";
+
+    let quiet = run(&args);
+    assert!(quiet.status.success(), "{}", stderr_of(&quiet));
+    assert!(!stderr_of(&quiet).contains(warning), "nothing moved: {}", stderr_of(&quiet));
+
+    touch_forward(std::path::Path::new(dump));
+    let warned = run(&args);
+    assert!(warned.status.success(), "advisory, not a refusal: {}", stderr_of(&warned));
+    assert!(stderr_of(&warned).contains(warning), "{}", stderr_of(&warned));
+    assert_eq!(warned.stdout, quiet.stdout, "the rows are the same rows, without the warning");
+}

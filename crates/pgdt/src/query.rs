@@ -262,6 +262,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
     let stated = parallel.discover();
     stated.announce();
     let opened = mode.open(&origin).await.map_err(|e| refusal(e, &origin))?;
+    announce_identity(&opened.cache);
     let cached_statistics = match &opened.cache {
         Held::Loaded(loaded) => loaded.index.statistics_heap_bytes(),
         Held::Missing | Held::Disabled | Held::Replacing(_) => 0,
@@ -462,6 +463,19 @@ fn projection(columns: Vec<String>, no_columns: bool) -> Option<Vec<String>> {
         None
     } else {
         Some(columns)
+    }
+}
+
+/// Say, on stderr and before any row, what the load found moved about the
+/// cache's identity and did not refuse — advisory between runs, but warned
+/// on every command reading the cache, as `parse` and `info` list it
+/// (`docs/design/decisions.md`, "D21"). The map's other findings stay
+/// `info`'s (D135).
+fn announce_identity(cache: &Held) {
+    if let Held::Loaded(loaded) = cache {
+        for diagnostic in loaded.index.diagnostics.iter().filter(|d| d.is_identity()) {
+            eprintln!("warning: {}", diagnostic.message());
+        }
     }
 }
 

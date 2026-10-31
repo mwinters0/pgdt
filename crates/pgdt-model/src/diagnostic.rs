@@ -441,6 +441,19 @@ impl Diagnostic {
     pub fn kind(&self) -> &DiagnosticKind {
         &self.kind
     }
+
+    /// Whether it is about the cache's identity rather than the map: a
+    /// modification signal or an origin the load found moved, advisory
+    /// between runs (`docs/design/decisions.md`, "D21") and said by every
+    /// command reading the cache, never persisted.
+    pub fn is_identity(&self) -> bool {
+        matches!(
+            self.kind,
+            DiagnosticKind::CacheMtimeChanged
+                | DiagnosticKind::CacheEntityTagChanged
+                | DiagnosticKind::CacheOriginChanged
+        )
+    }
 }
 
 /// What a crate above calls on [`Diagnostic`] that is not its API: public only
