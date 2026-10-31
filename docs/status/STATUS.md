@@ -95,6 +95,7 @@ Spec: [`../design/roadmap-P38-descendants.md`](../design/roadmap-P38-descendants
 - [x] **38.5** The answers taking each root's own rows as its restore holds them: each TimescaleDB restore's hypertables read `held`, `ONLY` with the planner off (TS8), taken again over the committed dumps by `generate_fixtures.py --answers-only`, and each held to its root's own block at every pin — [notes](../design/roadmap-P38.5-held-notes.md)
 - [x] **38.5.1** Hypertables resolved: compressed and partially compressed chunks refused at the hypertable and by name under both modes with `KD159` (c), dropped rows skipped, absent chunks read as absent and a root's own rows read, an unreadable catalog refusing the hypertables its `hypertable` rows name, else every parent of that database; a chunk's cold pass to the end (`KD160`); every pin checked against 38.5's answers — [notes](../design/roadmap-P38.5.1-hypertables-notes.md)
 - [x] **38.5.2** The hypertables' findings: the chunks the catalog lists and the file lacks, each root's own rows, and an unreadable catalog's database, its chunks read unchecked for compression — [notes](../design/roadmap-P38.5.2-findings-notes.md)
+- [ ] **38.5.3** The hypertables' findings said per read too: each a `Warning` `PlanNote` on a read it bears on, beside its `DiagnosticKind` ([2026-10-31](history/2026-10-31.md), "The hypertables' findings, said per read too: 38.5.3")
 - [ ] **38.6** `pgdt info`'s logical model: parents and their descendants, the TimescaleDB section, continuous aggregates, chunks folded
 - [ ] **38.7** The record: the README's supported/unsupported list, the manual, `pg-dump-compatibility.md`'s rows, both modes in one statement by one dump registered twice (manual and a `pgdt sql` test), and the hand run on the reference dump
 
@@ -127,18 +128,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **38.5.2's findings are the file's, not a read's.** Absent chunks, a
-  root's own rows and an unreadable catalog are three `DiagnosticKind`s on
-  the map (`pgdt_model::timescaledb::findings`), derived with the tiling and
-  coverage findings wherever a whole map is finished or loaded, each a
-  `Warning`, a root raising one only where it holds a row. Why: each is a
-  property of the file whatever is read, which `pgdt_model::diagnostic`'s
-  module doc sends to that channel, and 38.5.1's notes pointed there. The
-  cost: `pgdt query`, which prints no file-level diagnostic, says nothing
-  when it reads a hypertable with absent chunks or root rows, while `pgdt
-  info`, `pgdt parse`, `pgdt sql` and an embedder's sink hear them.
-  Reconsidering would make them per read — a `PlanNote` raised when a read
-  reaches the hypertable, which `pgdt query` and a scan's plan already say —
-  or have `pgdt query` print the file's findings. Notes:
-  [`../design/roadmap-P38.5.2-findings-notes.md`](../design/roadmap-P38.5.2-findings-notes.md).
