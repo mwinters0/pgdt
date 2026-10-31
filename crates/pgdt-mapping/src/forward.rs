@@ -14,10 +14,10 @@ use pgdt_dump::internal::announce_read_loop;
 use pgdt_dump::internal::derived_diagnostics;
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ScanOptions};
 use pgdt_io::{ByteRangeSource, Extent, internal::memory_budget_display};
-use pgdt_model::{DumpIndex, PostgresInvalidValues, Span, SpanBody};
+use pgdt_model::{DumpIndex, PostgresInvalidValues, Span, SpanBody, timescaledb};
 use tokio_util::sync::CancellationToken;
 
-use crate::interior::{CensusPlan, RegionScan, report_shortfall, scan_region};
+use crate::interior::{CensusPlan, RegionOutcome, RegionScan, report_shortfall, scan_region};
 use crate::statistics::account::StatisticsAccount;
 use crate::statistics::gather;
 use crate::statistics::request::StatisticsRequest;
@@ -370,6 +370,13 @@ pub async fn map_forward(
                     if let Some(observer) = observer {
                         builder.observe_block(observer);
                     }
+                    // TimescaleDB's catalog, at every level and read on this
+                    // loop, its rows never handed to the workers
+                    // (`docs/design/decisions.md`, "D133").
+                    let records = timescaledb::records_rows(&header);
+                    if records {
+                        builder.record_rows();
+                    }
                     // **The offer, and this loop is the leader making it**
                     // ([`scan_region`]): everything from
                     // `data_offset` until `\.` is line-structured rows, so
@@ -380,18 +387,23 @@ pub async fn map_forward(
                     // block it closes holds the statistics its pieces
                     // observed, as a declined one does the rows this loop
                     // hands on.
-                    let outcome = scan_region(
-                        source,
-                        scan_options,
-                        cancel,
-                        &header.qualified_name(),
-                        header_offset,
-                        data_offset,
-                        plan,
-                        extent,
-                        builder.block_observer(),
-                    )
-                    .await?;
+                    let outcome = match records {
+                        true => RegionOutcome { scan: RegionScan::Declined, shortfall: None },
+                        false => {
+                            scan_region(
+                                source,
+                                scan_options,
+                                cancel,
+                                &header.qualified_name(),
+                                header_offset,
+                                data_offset,
+                                plan,
+                                extent,
+                                builder.block_observer(),
+                            )
+                            .await?
+                        }
+                    };
                     report_shortfall(&mut shortfall_reported, outcome.shortfall);
                     match outcome.scan {
                         RegionScan::Closed(interior) => {

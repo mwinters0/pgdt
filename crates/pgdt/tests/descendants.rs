@@ -3,11 +3,12 @@
 //! (`docs/design/decisions.md`, "D130", "D131", "D132"): a partition written
 //! through its root refused by `query` and left out of `sql`'s catalog
 //! (`KD158`), the remedy spelled in each front end's words, and a partitioned
-//! table read alone reading none (I93).
+//! table read alone reading none (I93); and `pgdt info --json` stating what a
+//! TimescaleDB database's catalog concludes.
 
 mod common;
 
-use common::{Answer, Reading, answers, inheritance_fixture, run, sandboxed};
+use common::{Answer, Reading, answers, inheritance_fixture, run, sandboxed, timescaledb_fixture};
 
 const FLAG_SETS: [&str; 2] = ["default", "load-via-partition-root"];
 
@@ -114,4 +115,30 @@ fn pgdt_sql_spells_a_partition_read_alone_as_its_option() {
     let said = text(&out.stdout) + &text(&out.stderr);
     assert!(said.contains("partition root `public.reading`"), "{said}");
     assert!(said.contains("(`'pgdump.inheritance' 'descendants'`)"), "{said}");
+}
+
+/// `info --json` states each TimescaleDB database's catalog read by its
+/// recipe, beside the rows the catalog's blocks recorded, whatever level the
+/// parse mapped them at — here a dump holding the catalog without the
+/// extension.
+#[test]
+fn the_json_export_states_a_timescaledb_catalog() {
+    let (_dir, dump) = sandboxed(&timescaledb_fixture(18, "tables"), "dump.sql");
+    let dump = dump.to_str().unwrap();
+    let parse = run(&["parse", "--source", dump, "--statistics-level", "metadata"]);
+    assert!(parse.status.success(), "{}", text(&parse.stderr));
+    let info = run(&["info", "--source", dump, "--json"]);
+    assert!(info.status.success(), "{}", text(&info.stderr));
+    let json: serde_json::Value = serde_json::from_slice(&info.stdout).expect("--json emits JSON");
+    let [db] = json["timescaledb"].as_array().expect("one TimescaleDB database").as_slice() else {
+        panic!("{}", json["timescaledb"])
+    };
+    assert_eq!(db["extension"], false);
+    assert_eq!(db["version"]["source"], "stated");
+    assert_eq!(db["version"]["version"], "2.31.0");
+    assert_eq!(db["resolution"]["state"], "resolved");
+    assert_eq!(db["resolution"]["recipe"], "relid");
+    let hypertables = db["resolution"]["hypertables"].as_array().unwrap();
+    let metrics = hypertables.iter().find(|h| h["table"] == "public.metrics").expect("listed");
+    assert!(metrics["chunks"].as_array().is_some_and(|c| !c.is_empty()));
 }

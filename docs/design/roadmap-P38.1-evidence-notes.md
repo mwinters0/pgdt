@@ -14,7 +14,7 @@ relied on for is [`timescaledb-invariants.md`](timescaledb-invariants.md),
   partition itself list-partitioned with a leaf attached in another column
   order, which `--load-via-partition-root` writes through the top root.
 - **`fixtures/<major>/timescaledb/`** at the five pins, `default` at each and
-  `schema-public` and `exclude-chunks` at 13 and 18
+  `schema-public`, `exclude-chunks` and (38.4's) `tables` at 13 and 18
   (`scripts/fixture_schema_timescaledb.sql`, plus 2.21's hypercore chunk and,
   from 2.27, a row in the root). Regenerate with `cd scripts && uv run
   generate_fixtures.py --schema timescaledb --skip-oracle --skip-floor

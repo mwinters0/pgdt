@@ -395,11 +395,21 @@ TIMESCALEDB_PINS = {
 # The TimescaleDB flag sets, each with the majors it runs at. Past `default`,
 # the two ways a dump leaves chunks out, at the oldest pin and the newest:
 # `--schema=public` drops the extension and its catalog with them, and
-# excluding the chunks' schema keeps the catalog listing chunks the file lacks.
+# excluding the chunks' schema keeps the catalog listing chunks the file lacks;
+# and the one dump holding the catalog without the extension, every table
+# selected by `--table`, which only the catalog's own blocks reveal.
 TIMESCALEDB_FLAG_SETS: dict[str, tuple[tuple[str, ...], list[str]]] = {
     "default": (tuple(TIMESCALEDB_PINS), []),
     "schema-public": (("13", "18"), ["--schema=public"]),
     "exclude-chunks": (("13", "18"), ["--exclude-schema=_timescaledb_internal"]),
+    "tables": (
+        ("13", "18"),
+        [
+            "--table=public.*",
+            "--table=_timescaledb_internal.*",
+            "--table=_timescaledb_catalog.*",
+        ],
+    ),
 }
 
 RESTORED_DB_NAME = "pgdt_restored"
@@ -856,6 +866,7 @@ def write_answers(
     documentation states. Errors the restore met open the file as
     `restore-error` lines, not as a failure: they are what the server holds.
     """
+    # timescaledb: TS9 -- the restore between the two calls, into the pin it was dumped from.
     run(query + ["-d", "postgres", "-c", f"CREATE DATABASE {RESTORED_DB_NAME}"], capture_output=True)
     try:
         errors: list[str] = []

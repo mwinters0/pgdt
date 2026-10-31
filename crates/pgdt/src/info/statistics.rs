@@ -324,6 +324,7 @@ mod tests {
                 ignored_refusals: None,
                 checked_in_full: false,
                 census: Some(pgdt_model::BlockCensus::default()),
+                recorded_rows: None,
             })),
         }
     }

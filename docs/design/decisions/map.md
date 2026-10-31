@@ -60,3 +60,13 @@ verbatim, `None` meaning no clause (I37); a name in one spelling, both sides of 
 `INHERITS` parents, `OF` type and a partition's bound as text (I86). Of what the DDL implies it keeps only a column's
 `NOT NULL`, an enum's label completeness and a collation's `deterministic` (I42). Rejected: a name's parts dequoted
 (`"a.b".c` is `a."b.c"`); references flattened in at the fold, which a later `ADD COLUMN` misses.
+
+### D133 TimescaleDB's catalog rows are recorded as text on their own blocks, on the leader's loop, at every level
+A `_timescaledb_catalog` block a conclusion reads keeps its rows as unescaped text on its `CopyBlock`, recorded by every
+pass at every statistics level and never handed to interior workers; what they conclude is derived per database on
+read (`TimescaleDb::of`), never persisted. Detection is correctness, not presentation, so no level skips it; one owner
+per fact (D34) puts the rows on the block whose span carries the database; a recipe change then moves no cache byte.
+Rejected: a field on `DatabaseMetadata`, which is stated at a database's first block, before its catalog's blocks;
+persisted conclusions, a second copy a recipe fix would strand; re-reading the blocks at need, a second read of a
+source that may be fetched. Reopens: a catalog too large to hold resident. Evidence: `pgdt-mapping`'s
+`tests/timescaledb.rs`.

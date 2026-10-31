@@ -152,6 +152,7 @@ fn a_segment_resumes_from_the_row_its_pause_left() {
         ignored_refusals: None,
         checked_in_full: false,
         census: Some(pgdt_model::BlockCensus::default()),
+        recorded_rows: None,
     };
     let whole = Segment::over(&block, 39..403);
     assert_eq!((whole.start, whole.entry), (10, SegmentEntry::Header));

@@ -18,7 +18,7 @@ use pgdt_dump::{Event, ReadOptions, ScanOptions, scan as scan_events};
 use pgdt_io::{Arrangement, ByteRangeSource, Extent};
 use pgdt_model::internal::IgnoredRefusalsExt;
 use pgdt_model::{
-    Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, PostgresInvalidValues, Span,
+    Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata, PostgresInvalidValues, Span, timescaledb,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -86,6 +86,9 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
                 }
                 let metadata = stated.as_ref().map(|(_, metadata)| metadata);
                 builder.count_block(counter_for(&header, metadata, db.as_deref()));
+                if timescaledb::records_rows(&header) {
+                    builder.record_rows();
+                }
             }
             Event::Row(row) => builder.on_row(row.offset, row.raw),
             Event::CopyEnd(end) => {

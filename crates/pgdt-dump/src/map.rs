@@ -127,6 +127,7 @@ use crate::scan::{CopyEnd, CopyStart};
 use pgdt_core::Result;
 use pgdt_core::internal::StatisticsScope;
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
+use pgdt_model::timescaledb::RecordedRows;
 use pgdt_model::{
     BlockCensus, BlockGathered, CopyBlock, DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody,
     TocHeader,
@@ -249,6 +250,10 @@ pub struct Builder {
     /// pass asked for one ([`Builder::observe_block`]). Handed every row and
     /// finished into [`CopyBlock::statistics`] at its `CopyEnd`.
     pending_observer: Option<Box<dyn BlockObserver>>,
+    /// The open block's rows as text, where the mapping pass asked for them
+    /// ([`Builder::record_rows`]); its [`CopyBlock::recorded_rows`] at its
+    /// `CopyEnd`.
+    pending_rows: Option<RecordedRows>,
     /// The `standard_conforming_strings` the file last stated, which every
     /// statement's [`StatementScan`] lexes under, as the scanner does
     /// (I50). `on` for a builder starting partway through a file, as for
@@ -309,6 +314,7 @@ impl Builder {
             pending_census: None,
             pending_counter: None,
             pending_observer: None,
+            pending_rows: None,
             standard_strings: true,
         }
     }
@@ -790,6 +796,7 @@ impl Builder {
         self.pending_census = census.then(|| BlockCensus::new(event.header.columns.len()));
         self.pending_counter = None;
         self.pending_observer = None;
+        self.pending_rows = None;
         self.pending_data = Some((start, event, self.pending_partition_root.take(), toc));
     }
 
@@ -809,6 +816,17 @@ impl Builder {
         {
             observer.observe_row(offset - start.data_offset, raw);
         }
+        if let Some(rows) = self.pending_rows.as_mut() {
+            rows.observe_row(raw);
+        }
+    }
+
+    /// Record the rows of the `COPY` block [`on_copy_start`](Self::on_copy_start)
+    /// just opened as text: every row [`on_row`](Self::on_row) folds is
+    /// kept, as the block's [`CopyBlock::recorded_rows`]. Never for a block
+    /// whose rows interior workers read, which hand no row here.
+    pub fn record_rows(&mut self) {
+        self.pending_rows = Some(RecordedRows::default());
     }
 
     /// Gather statistics for the `COPY` block [`on_copy_start`](Self::on_copy_start)
@@ -894,6 +912,7 @@ impl Builder {
             ignored_refusals,
             checked_in_full,
             census: self.pending_census.take(),
+            recorded_rows: self.pending_rows.take().map(Box::new),
         };
         debug_assert!(
             block.census.is_none() || self.pending_counter.is_some(),

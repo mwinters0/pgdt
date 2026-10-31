@@ -9,6 +9,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::statistics::deserialize_block_statistics;
+use crate::timescaledb::RecordedRows;
 use crate::{
     ArrayShape, BlockCensus, BlockStatistics, CollationDef, Diagnostic, DumpMetadata,
     IgnoredRefusals, TableDef, TableReference, TypeKind, Unrepresentable,
@@ -311,6 +312,13 @@ pub struct CopyBlock {
     /// (`docs/design/decisions.md`, "D35", "D96"). Recording one puts the
     /// block at the data level.
     pub census: Option<BlockCensus>,
+    /// **The block's rows as text, where a pass records them**: TimescaleDB's
+    /// catalog ([`crate::timescaledb::records_rows`]), recorded at every
+    /// level by every pass that maps the block, and read by
+    /// [`crate::timescaledb::TimescaleDb::of`] (`docs/design/decisions.md`,
+    /// "D133"). `None` for every other block.
+    #[serde(default)]
+    pub recorded_rows: Option<Box<RecordedRows>>,
 }
 
 impl CopyBlock {

@@ -71,6 +71,9 @@ FN_RE = re.compile(
     r"(?:extern\s+\"[^\"]*\"\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)"
 )
 COMMENT_RE = re.compile(r"^\s*(//|#\[|#!\[)")
+#: A Python function, and what may sit between a marker and the `def` it marks.
+DEF_RE = re.compile(r"^(\s*)(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)")
+PY_COMMENT_RE = re.compile(r"^\s*(#|@)")
 #: Files scanned for markers. The checker and its tests quote the marker.
 SKIP = ("scripts/pg_refuses.py", "scripts/test_pg_refuses.py")
 
@@ -84,25 +87,29 @@ class Marker:
     site: str | None
 
 
-def relied_on_by(text: str) -> dict[str, set[str]]:
-    """Each entry's id to the identifiers its "Relied on by" field's code spans hold."""
-    out: dict[str, set[str]] = {}
+def relied_on_by(text: str, heading: re.Pattern[str] = HEADING_RE) -> dict[str, set[str]]:
+    """Each entry's id to the identifiers its "Relied on by" field's code spans
+    hold, an entry opening at a line `heading` matches, its id the first group."""
+    return {id: {i for span in spans for i in IDENT_RE.findall(span)}
+            for id, spans in relied_on_spans(text, heading).items()}
+
+
+def relied_on_spans(text: str, heading: re.Pattern[str] = HEADING_RE) -> dict[str, list[str]]:
+    """Each entry's id to the code spans of its "Relied on by" field, in order."""
+    out: dict[str, list[str]] = {}
     current: str | None = None
     field: list[str] | None = None
 
     def close() -> None:
         if current is not None and field is not None:
-            joined = " ".join(field)
-            idents = out.setdefault(current, set())
-            for span in CODE_SPAN_RE.findall(joined):
-                idents.update(IDENT_RE.findall(span))
+            out.setdefault(current, []).extend(CODE_SPAN_RE.findall(" ".join(field)))
 
     for line in text.splitlines():
-        m = HEADING_RE.match(line)
+        m = heading.match(line)
         if m:
             close()
             current, field = m.group(1), None
-            out.setdefault(current, set())
+            out.setdefault(current, [])
             continue
         if current is None:
             continue
@@ -123,20 +130,23 @@ def _indent(line: str) -> int:
     return len(line) - len(line.lstrip())
 
 
-def site_of(lines: Sequence[str], index: int) -> str | None:
-    """The function the marker on `lines[index]` marks."""
+def site_of(lines: Sequence[str], index: int, python: bool = False) -> str | None:
+    """The function the marker on `lines[index]` marks: in Rust, or in Python
+    where `python`, its `def` and decorators read as a Rust `fn` and its
+    attributes are."""
+    fn_re, comment_re = (DEF_RE, PY_COMMENT_RE) if python else (FN_RE, COMMENT_RE)
     for line in lines[index + 1:]:
-        if not line.strip() or COMMENT_RE.match(line):
+        if not line.strip() or comment_re.match(line):
             continue
-        m = FN_RE.match(line)
+        m = fn_re.match(line)
         if m:
             return m.group(2)
         break
     depth = _indent(lines[index])
     for line in reversed(lines[:index]):
-        if not line.strip() or COMMENT_RE.match(line):
+        if not line.strip() or comment_re.match(line):
             continue
-        m = FN_RE.match(line)
+        m = fn_re.match(line)
         if m and len(m.group(1)) < depth:
             return m.group(2)
     return None

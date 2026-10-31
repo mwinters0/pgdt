@@ -1,9 +1,9 @@
 //! The dump's vocabulary: what a scan finds and the cache persists — the
 //! spans tiling a file and the `COPY` blocks among them, the schema the
 //! preamble declares, what a pass over a block's rows records, its
-//! statistics, and the findings about the file a caller drains. Data, and the
-//! contracts over a block's rows a crate above implements; no I/O, no Arrow
-//! (`docs/design/decisions.md`, "D68", "D74").
+//! statistics, TimescaleDB's catalog, and the findings about the file a
+//! caller drains. Data, and the contracts over a block's rows a crate above
+//! implements; no I/O, no Arrow (`docs/design/decisions.md`, "D68", "D74").
 //!
 //! **This is the cache's format**: an edit here is the edit that asks whether
 //! [`CACHE_FORMAT_VERSION`] bumps.
@@ -15,6 +15,7 @@ mod catalog;
 mod diagnostic;
 mod span;
 mod statistics;
+pub mod timescaledb;
 
 pub use block::{
     ArrayShape, BlockCensus, PG_ARRAY_MAX_DIMS, Unrepresentable, UnrepresentableTier, calendar_end,
@@ -66,4 +67,4 @@ pub mod internal {
 /// `persisted_index_is_pinned_to_the_format_version` pins what every fixture
 /// persists beside this number, as `golden_order_is_pinned_to_the_format_version`
 /// pins the comparison order, and each fails until it is bumped.
-pub const CACHE_FORMAT_VERSION: u32 = 79;
+pub const CACHE_FORMAT_VERSION: u32 = 80;

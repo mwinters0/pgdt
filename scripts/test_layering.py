@@ -28,6 +28,8 @@ BASE: dict[str, str] = {
     "pgdt-codec/src/pgtype.rs": "pub enum TypeOutcome {}\n",
     "pgdt-mapping/src/lib.rs": "pub mod statistics;\n",
     "pgdt-mapping/src/statistics.rs": "pub struct StatisticsRequest;\n",
+    "pgdt-model/src/lib.rs": "pub mod timescaledb;\n",
+    "pgdt-model/src/timescaledb.rs": "pub struct TimescaleDb;\n",
     "pgdt-query/tests/embedder.rs": "use pgdt_query::Dump;\n",
 }
 
@@ -162,7 +164,7 @@ class Purity(unittest.TestCase):
         self.assertEqual(found, ["crates/pgdt-core/src/instrument.rs (pgdt-core) names `tokio` (D74)"])
 
     def test_the_model_does_no_io(self):
-        found = problems({"pgdt-model/src/lib.rs": "use std::fs;\n"})
+        found = problems({"pgdt-model/src/lib.rs": "pub mod timescaledb;\nuse std::fs;\n"})
         self.assertEqual(found, ["crates/pgdt-model/src/lib.rs (pgdt-model) names `std::fs` (D74)"])
 
     def test_the_codec_is_synchronous(self):
@@ -172,6 +174,7 @@ class Purity(unittest.TestCase):
     def test_test_code_and_comments_are_not_production(self):
         files = {
             "pgdt-model/src/lib.rs": """\
+                pub mod timescaledb;
                 // std::fs, in a comment
                 const NOTE: &str = "std::fs";
                 #[cfg(test)]
@@ -186,7 +189,10 @@ class Purity(unittest.TestCase):
         self.assertEqual(problems(files), [])
 
     def test_a_module_the_tree_declares_is_read(self):
-        files = {"pgdt-model/src/lib.rs": "mod block;\n", "pgdt-model/src/block.rs": "use tokio;\n"}
+        files = {
+            "pgdt-model/src/lib.rs": "pub mod timescaledb;\nmod block;\n",
+            "pgdt-model/src/block.rs": "use tokio;\n",
+        }
         self.assertEqual(
             problems(files), ["crates/pgdt-model/src/block.rs (pgdt-model) names `tokio` (D74)"]
         )

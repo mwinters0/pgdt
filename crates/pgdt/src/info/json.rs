@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use pgdt_codec::pgtype::NestedPlan;
 use pgdt_dump::cache::{CacheEnvelope, CompressionShape};
 use pgdt_mapping::StrictUnchecked;
+use pgdt_model::timescaledb::TimescaleDb;
 use pgdt_model::{Diagnostic, DumpIndex};
 
 use super::labels::{arrow_type_label, block_resolutions, block_unchecked, resolution_token};
@@ -39,6 +40,19 @@ struct IndexJson<'a> {
     compression: Option<CompressionShape>,
     diagnostics: &'a [Diagnostic],
     resolution: Vec<BlockResolutionJson<'a>>,
+    /// Per TimescaleDB database, what its catalog concludes — a model
+    /// conclusion the index has no field for, its rows being the catalog
+    /// blocks' `recorded_rows`.
+    timescaledb: Vec<TimescaleJson<'a>>,
+}
+
+/// One database's TimescaleDB catalog, read by its recipe
+/// ([`TimescaleDb::of`]).
+#[derive(serde::Serialize)]
+struct TimescaleJson<'a> {
+    database: Option<&'a str>,
+    #[serde(flatten)]
+    catalog: TimescaleDb,
 }
 
 /// One `COPY` block's resolution, keyed by the block rather than rolled up per
@@ -97,6 +111,13 @@ pub(super) fn print_index_json(
             unchecked: block_unchecked(index, database, block),
         })
         .collect();
+    let databases = index.metadata.iter().flat_map(|metadata| &metadata.databases);
+    let timescaledb = databases
+        .filter_map(|db| {
+            let database = db.name.as_deref();
+            TimescaleDb::of(index, database).map(|catalog| TimescaleJson { database, catalog })
+        })
+        .collect();
     let wrapped = IndexJson {
         envelope,
         index,
@@ -104,6 +125,7 @@ pub(super) fn print_index_json(
         compression,
         diagnostics: &index.diagnostics,
         resolution,
+        timescaledb,
     };
     let mut out = std::io::BufWriter::new(std::io::stdout().lock());
     serde_json::to_writer(&mut out, &wrapped).context("writing the JSON export")?;

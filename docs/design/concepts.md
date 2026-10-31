@@ -196,6 +196,20 @@ file map and the preamble").
   data, which the scanner and the grammar drive and pgdt-query's pass 1
   reads too.
 
+## TimescaleDB's catalog
+
+The rows of a database's `_timescaledb_catalog` blocks, as the dump states
+them, the recipe joining them by era, and what they conclude: the release,
+hypertables, chunks and continuous aggregates
+([`decisions.md`](decisions.md), "D133";
+[`timescaledb-invariants.md`](timescaledb-invariants.md)).
+
+- **pgdt-model** — `timescaledb/`: the rows persisted on their blocks, and
+  the recipes over them, reading no Arrow and doing no I/O, so `pgdt info`
+  and the query layer read one set of conclusions (D74). The mapping pass
+  records the rows as it maps each block, beside the census and the
+  statistics observer it attaches, and keeps them off the interior workers.
+
 ## The cache
 
 Persisting a map and reloading it, the dump it was saved from identified

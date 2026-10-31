@@ -88,6 +88,14 @@ pub fn inheritance_fixture(version: u32, flag_set: &str) -> PathBuf {
     fixture(version, "inheritance", flag_set)
 }
 
+/// Real `pg_dump` output for the `timescaledb` schema, written against a
+/// TimescaleDB server at the pin keyed by `version`
+/// (`scripts/generate_fixtures.py`'s `TIMESCALEDB_PINS`), with the server's
+/// answers beside each dump ([`answers`]).
+pub fn timescaledb_fixture(version: u32, flag_set: &str) -> PathBuf {
+    fixture(version, "timescaledb", flag_set)
+}
+
 /// Real `pg_dump` output for the `statistics` schema: the column shapes
 /// per-row-group statistics are gathered from, and a value longer than a read
 /// chunk.

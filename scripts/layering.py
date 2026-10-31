@@ -130,6 +130,7 @@ NAMESPACES: dict[str, tuple[str, ...]] = {
     "pgdt-dump": ("cache",),
     "pgdt-codec": ("compare", "decode", "grammar", "key", "nested", "pgtype"),
     "pgdt-mapping": ("statistics",),
+    "pgdt-model": ("timescaledb",),
 }
 
 #: The Arrow crates a library below the query layer never depends on (D74):
