@@ -354,6 +354,39 @@ async fn a_dump_with_no_cache_names_the_parse() {
     assert!(said.contains(&format!("pgdt parse --source {}", bare.display())), "{said}");
 }
 
+/// **An error that ends the run is on stderr, and stdout holds none of it**:
+/// a `--source` refused at registration, and a `-c` statement that fails
+/// after one that answered, whose rows stay on stdout alone.
+#[tokio::test]
+async fn an_error_ending_the_run_reaches_stderr_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let bare = dir.path().join("bare.sql");
+    std::fs::copy(fixture("edge_cases"), &bare).unwrap();
+    let out = run(&["-q", "--source", &format!("shop={}", bare.display()), "-c", "SELECT 1"]);
+    assert!(!out.status.success());
+    let said = text(&out.stderr);
+    assert!(said.starts_with("Error: "), "{said}");
+    assert!(said.contains("pgdt parse --source"), "{said}");
+    assert_eq!(text(&out.stdout), "", "{said}");
+
+    let copy =
+        common::parsed_copy(&fixture("edge_cases"), dir.path(), &StatisticsRequest::DATA).await;
+    common::ungathered(&copy).await;
+    let out = run(&[
+        "-q",
+        "--source",
+        &format!("shop={}", copy.display()),
+        "-c",
+        "SELECT count(*) AS n FROM shop.logs.events",
+        "-c",
+        "SELECT * FROM shop.logs.nowhere",
+    ]);
+    assert!(!out.status.success());
+    let said = text(&out.stderr);
+    assert!(said.contains("Error: ") && said.contains("nowhere"), "{said}");
+    assert_eq!(text(&out.stdout).trim(), "n\n3", "{said}");
+}
+
 /// **`--strict-identity` is `pgdt`'s, and binds every registration stating
 /// none of its own**: a dump touched since its parse opens with a warning
 /// unless `time` is stated, and then neither `--source` nor `STORED AS PGDUMP`

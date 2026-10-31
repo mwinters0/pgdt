@@ -446,12 +446,6 @@ than reading as a phase nobody has sliced.
   the provider's scans share no budget, though unstated is not unlimited
   (`../design/roadmap.md`). **(b) owned by `M273`**. Detail: `crates/pgdt-io/src/arrangement.rs`.
 
-- **KD122** — `pgdt sql` prints an error that ends its run, a refused
-  `--source` or a failed `-c` statement, to stdout, as upstream's
-  `datafusion-cli` does, where every other command writes errors to stderr; a
-  redirected run writes the refusal into its output. **(b) owned by `M271`**,
-  the shell departing from upstream's `main` there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
-
 - **KD131** — a complete map is saved before the reads that built it are
   completed: the forward pass's end-of-file save and the back-fill's run
   `SourceWatch::check` alone, so a block a source's `complete_reads` would

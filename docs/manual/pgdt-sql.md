@@ -179,7 +179,9 @@ no other: `pgdump.memory` where a larger allowance raises the budget, with
 more. A plain dump's budget stops rising at 64 MiB whatever the allowance, so
 past that its warnings name the chunk and not `pgdump.memory`.
 
-`-q` keeps these warnings off and leaves errors on.
+`-q` keeps these warnings off and leaves errors on. **An error that ends the
+run is here too**, `Error: …` — a `--source` refused, a `-c` statement that
+fails — so a redirected stdout holds the rows alone.
 
 **What a scan skipped is under `EXPLAIN ANALYZE`**, as the scan node's
 metrics: `row_groups_pruned_statistics`, how many of the row groups `pgdt

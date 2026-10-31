@@ -625,9 +625,8 @@ fn a_remote_run_nothing_can_check_is_refused_unless_none_is_stated() {
     // The fixture names no database, so its catalog is named here.
     let dump = format!("edge={url}");
     let sql = ["sql", "-q", "--source", &dump, "-c", "SELECT 1"];
-    // The shell prints the refusal to stdout (`KD122`).
     let refused = run_in(&dir, &sql);
-    let said = String::from_utf8_lossy(&refused.stdout);
+    let said = stderr_of(&refused);
     assert!(!refused.status.success(), "{said}");
     assert!(said.contains("nothing can tell whether the dump changes"), "{said}");
     run_ok_in(&dir, &[&sql[..], &["--strict-identity=none"]].concat());
