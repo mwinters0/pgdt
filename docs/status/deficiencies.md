@@ -221,14 +221,6 @@ than reading as a phase nobody has sliced.
   tunes the network, which is where the deferred fetch policy belongs.
   Detail: `crates/pgdt-io/src/source/compressed/xz.rs`.
 
-- **KD37** — a cancelled read the leader dispatched inside the statistics
-  back-fill propagates instead of banking: a source answering a cancellation by
-  failing its read ends a `parse` as `Error::ScanCancelled`, saving nothing since
-  the throttle's last save,
-  where the same Ctrl-C during the mapping pass is an interrupted run. **(b)
-  owned by `M269`**, the fix being the arm the mapping pass already carries.
-  Detail: `crates/pgdt-mapping/src/backfill.rs`.
-
 - **KD38** — a pgdump scan planned while others hold the session budget gets
   what they left, so a join's second-planned table can run on one reader while
   the first holds the whole allowance: planning order, which the user does not

@@ -1,9 +1,11 @@
 use super::*;
 use std::num::NonZeroU64;
 
-use pgdt_dump::cache::CacheMode;
+use pgdt_dump::cache::{CacheMode, colocated_path};
 use pgdt_fixtures::{all_fixtures, refused_field, statistics_fixture};
-use pgdt_io::{Allowance, ArrangementRequest, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism};
+use pgdt_io::{
+    Allowance, ArrangementRequest, DEFAULT_MEMORY_BUDGET, Jobs, LocalFileSource, Parallelism,
+};
 use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts};
 use pgdt_model::{ColumnStatistics, GroupSizing};
 
@@ -259,4 +261,113 @@ async fn a_held_column_lacks_bounds_only_where_gathering_keeps_them() {
         None,
         "a column bounded nowhere lacks nothing"
     );
+}
+
+/// A [`ByteRangeSource`] answering a read at or past `trip` as a source whose
+/// wait is a request answers a cancellation: it fires `cancel` and **drops the
+/// read**, failing it with [`Error::ScanCancelled`] instead of handing back
+/// bytes (`docs/design/decisions.md`, "D26").
+struct DropsPast {
+    inner: Arc<dyn ByteRangeSource>,
+    trip: u64,
+    cancel: CancellationToken,
+}
+
+impl ByteRangeSource for DropsPast {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bytes::Bytes>> + Send + '_>>
+    {
+        if offset >= self.trip {
+            self.cancel.cancel();
+            let dropped = Err(Error::ScanCancelled { scanned_through: offset });
+            return Box::pin(std::future::ready(dropped));
+        }
+        self.inner.read_range(offset, len)
+    }
+
+    fn extent(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Extent>> + Send + '_>> {
+        self.inner.extent()
+    }
+
+    fn modified(
+        &self,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Option<std::time::SystemTime>>> + Send + '_>,
+    > {
+        self.inner.modified()
+    }
+
+    /// The three the leader reads, forwarded so the re-read is cut as it would
+    /// be through the file itself: the default `partitions` declines to advise,
+    /// and a source that declines is never split.
+    fn hint_read_size(&self, len: usize) {
+        self.inner.hint_read_size(len);
+    }
+
+    fn partitions(&self, range: std::ops::Range<u64>) -> pgdt_io::Partitioning {
+        self.inner.partitions(range)
+    }
+
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.inner.hint_parallelism(parallelism);
+    }
+}
+
+/// **A read the leader dispatched, dropped by a cancellation, interrupts the
+/// back-fill as the mapping pass's does** (`docs/design/decisions.md`, "D26"):
+/// a block long enough to split is mapped at the metadata level, then asked
+/// for its statistics at four jobs over a source dropping every read of its
+/// rows, the first of them a worker's. The run is interrupted, not an
+/// [`Error::ScanCancelled`]; its cache stays the whole map it was, and the
+/// next run back-fills the block.
+#[tokio::test]
+async fn a_dropped_read_the_leader_dispatched_interrupts_the_backfill() {
+    let mut file = b"COPY public.t (a) FROM stdin;\n".to_vec();
+    let data_offset = file.len() as u64;
+    for i in 0..2000 {
+        file.extend_from_slice(format!("{i}\n").as_bytes());
+    }
+    file.extend_from_slice(b"\\.\n\nSELECT 1;\n");
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("dump.sql");
+    std::fs::write(&dump, &file).unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+    let mode = CacheMode::enabled(colocated_path(&dump));
+    let invalid = PostgresInvalidValues::Default;
+    let serial =
+        Arrangement::resolve(&Allowance::NoneFound, ArrangementRequest::recommended(1, None));
+    let parallel = Arrangement::resolve(
+        &Allowance::NoneFound,
+        ArrangementRequest { jobs: Jobs::Stated(4), ..ArrangementRequest::recommended(4, None) },
+    );
+    let (read, never) = (ReadOptions::default(), CancellationToken::new());
+    let opened = mode.open_source(Arc::clone(&source)).await.unwrap();
+    let bare = map_file(opened, read, &serial, invalid, &StatisticsRequest::METADATA, &never)
+        .await
+        .unwrap();
+    assert!(!bare.interrupted && bare.index.is_complete(file.len() as u64));
+
+    let cancel = CancellationToken::new();
+    let dropping =
+        DropsPast { inner: Arc::clone(&source), trip: data_offset, cancel: cancel.clone() };
+    let opened = mode.open_source(Arc::new(dropping)).await.unwrap();
+    let chunked = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let run = map_file(opened, chunked, &parallel, invalid, &StatisticsRequest::DATA, &cancel)
+        .await
+        .expect("a dropped read is an interrupted run, not an error");
+    assert!(run.interrupted, "a cancelled back-fill says so");
+    assert_eq!((run.lacking_statistics, run.backfilled), (1, 0));
+    assert!(run.index.is_complete(file.len() as u64), "the map is whole; the re-read is not");
+
+    let opened = mode.open_source(Arc::clone(&source)).await.unwrap();
+    let resumed =
+        map_file(opened, read, &serial, invalid, &StatisticsRequest::DATA, &never).await.unwrap();
+    assert!(!resumed.interrupted);
+    assert_eq!((resumed.resumed_from, resumed.backfilled), (file.len() as u64, 1));
+    assert!(resumed.index.blocks().all(|block| block.statistics.is_some()));
 }

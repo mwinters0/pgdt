@@ -54,18 +54,9 @@ pub(crate) enum Backfill {
 /// `statistics` asks for, in file order, storing each block's statistics as it
 /// closes and saving through a [`SaveThrottle`] as [`map_forward`](crate::forward::map_forward) does; an
 /// interrupt saves and stops. Announces how many blocks lacked them and, once
-/// every one is re-read, how many were — and nothing at all when none did.
-///
-/// Deficiency register: `deficiency: KD37` — that is true of the token and of a
-/// dropped read this pass makes itself ([`observe_rows`]), and not of one the
-/// leader dispatched: [`Rereads::reread`]'s [`scan_region`] propagates, so a
-/// source that answers a cancellation by failing its read ends a `parse` as
-/// `Error::ScanCancelled`, banking nothing since the throttle's last save, where the same Ctrl-C during the
-/// mapping pass is an interrupted run ([`cancelled_read`],
-/// `docs/design/decisions.md`, "D26"). The fix is the arm [`map_file`](crate::map_file) already
-/// carries for the pass's own leader reads, here as well. A strict `parse`'s
-/// check of a map short of EOF meets it too, [`map_file`](crate::map_file)
-/// running through here before mapping on.
+/// every one is re-read, how many were — and nothing at all when none did. A
+/// read dropped by the interrupt is the interrupt, whether this pass made it or
+/// the leader dispatched it ([`reread_rows`], [`cancelled_read`]).
 ///
 /// **A block lacking statistics was loaded, or broke a stated maximum**: a
 /// block this pass mapped holds what its own request asked, except for a
@@ -488,7 +479,8 @@ struct BlockReread {
 /// `observer` where there is one, and answer the census and count:
 /// what a back-fill's read (`Rereads::reread`) and a query's census of a block mapped
 /// at the metadata level (`pgdt_query::Table::settle`) both read. `None` is
-/// `cancel` stopping it first, and nothing else answers it; a block no
+/// `cancel` stopping it first, by its flag or by a read it dropped, whichever
+/// reader made that read, and nothing else answers it; a block no
 /// longer ending where the map says is [`Error::CachedBlockChanged`], naming
 /// `cache_path`.
 #[allow(clippy::too_many_arguments)]
@@ -518,7 +510,7 @@ pub async fn reread_rows(
         width: block.header.columns.len(),
         counter: counter_for(&block.header, metadata, database),
     };
-    let outcome = scan_region(
+    let outcome = match scan_region(
         source,
         scan_options,
         cancel,
@@ -529,7 +521,15 @@ pub async fn reread_rows(
         extent,
         observer.as_deref_mut(),
     )
-    .await?;
+    .await
+    {
+        Ok(outcome) => outcome,
+        // A read the leader dispatched, dropped by the interrupt
+        // ([`cancelled_read`]): the same `None` the token answers, as
+        // [`map_file`](crate::map_file) banks the mapping pass's.
+        Err(e) if cancelled_read(&e, cancel) => return Ok(None),
+        Err(e) => return Err(e),
+    };
     report_shortfall(shortfall_reported, outcome.shortfall);
     let (end, census) = match outcome.scan {
         RegionScan::Closed(interior) => (interior.end, interior.census),
