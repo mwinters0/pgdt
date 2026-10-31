@@ -100,7 +100,9 @@ impl ScanBudget {
     /// ([`Allowance::discover`]): the memory limit that binds, else half of
     /// what the machine reports available (`docs/design/roadmap.md`, "A
     /// default runs as fast as the allocation permits"). A host that answers
-    /// neither leaves no allowance, and a scan's recommendation then stands.
+    /// neither leaves no allowance, and its scans draw on
+    /// [`pgdt_io::DEFAULT_MEMORY_BUDGET`] between them instead, an estimate
+    /// with no reserve and no margin ([`Arrangement::resolve`]).
     ///
     /// **The halved figure is carved as an allowance, reserve and margin
     /// included** ([`ArrangementRequest::carve_estimate`]), where `pgdt` caps
@@ -172,12 +174,9 @@ impl ScanBudget {
             carve_estimate: true,
         };
         let parallelism = Arrangement::resolve(&allowance, request).parallelism();
-        // Nothing found is no allowance to draw on: such a scan's
-        // recommendation stands (`KD113`), and it draws nothing.
-        let bytes = match allowance.bytes() {
-            Some(_) => parallelism.memory_bytes().unwrap_or(0),
-            None => 0,
-        };
+        // Nothing found draws on `DEFAULT_MEMORY_BUDGET`, the session's
+        // estimate there (`docs/design/decisions.md`, "D11").
+        let bytes = parallelism.memory_bytes().unwrap_or(0);
         let account =
             BudgetAccount { allowance, pool_limit: pool, resident: held.maps, drawn: held.scans };
         held.scans += bytes;
@@ -339,6 +338,36 @@ mod tests {
         let stated = unfound.draw(24, memory, 0, Some(10 << 30));
         assert_eq!(stated.parallelism().jobs(), 7);
         assert_eq!(unfound.drawn(), 7 * per_worker);
+    }
+
+    /// **With nothing found the session's scans share
+    /// `DEFAULT_MEMORY_BUDGET`**, drawing it down as they draw a carved
+    /// estimate, never each capped at it alone: a second scan gets what the
+    /// first left, the floor's one reader on nothing once it is spent, and
+    /// what a dropped scan drew is returned. What the session holds besides
+    /// its scans comes off no margin, the default having none.
+    #[test]
+    fn with_nothing_found_the_scans_share_the_default_budget() {
+        use pgdt_io::DEFAULT_MEMORY_BUDGET;
+        let per_worker = 24u64 << 20;
+        let memory = Some(WorkerMemory::per_worker(per_worker));
+        let unfound =
+            Arc::new(ScanBudget { allowance: Allowance::NoneFound, held: Mutex::default() });
+        let _map = unfound.hold(1 << 30);
+
+        let first = unfound.draw(24, memory, 1 << 30, None);
+        assert_eq!(first.parallelism(), Parallelism::workers(2, 2 * per_worker));
+        let left = DEFAULT_MEMORY_BUDGET - 2 * per_worker;
+        let second = unfound.draw(24, memory, 0, None);
+        assert_eq!(second.parallelism(), Parallelism::workers(1, left));
+        assert_eq!(unfound.drawn(), DEFAULT_MEMORY_BUDGET);
+        let starved = unfound.draw(4, None, 0, None);
+        assert_eq!(starved.parallelism(), Parallelism::workers(4, 0));
+
+        drop((first, second, starved));
+        assert_eq!(unfound.drawn(), 0);
+        let plain = unfound.draw(4, None, 0, None);
+        assert_eq!(plain.parallelism(), Parallelism::workers(4, DEFAULT_MEMORY_BUDGET));
     }
 
     /// **A draw's allowance says where it came from**: the budget's own —

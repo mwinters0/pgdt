@@ -283,10 +283,12 @@ impl BudgetedPlanNote {
                      {resident} byte(s) and the scans still running had drawn {drawn} byte(s)"
                 )
             }
-            _ => "no allowance was found — no memory limit, and the machine's available memory \
-                     could not be read — so that budget is the library's own and nothing the \
-                     session holds came off it"
-                .to_string(),
+            _ => format!(
+                "no allowance was found — no memory limit, and the machine's available memory \
+                 could not be read — so that budget was drawn from the library's default of \
+                 {} byte(s), of which the scans still running had drawn {drawn} byte(s)",
+                pgdt_io::DEFAULT_MEMORY_BUDGET
+            ),
         };
         let mut keys = Vec::new();
         for lever in &self.note.levers {
@@ -404,11 +406,14 @@ mod tests {
                 allowance: Allowance::NoneFound,
                 pool_limit: 1 << 20,
                 resident: 0,
-                drawn: 0,
+                drawn: 16 << 20,
             },
         };
         let message = unfound.message();
         assert!(message.contains("no allowance was found"), "{message}");
+        let shared = format!("default of {} byte(s)", pgdt_io::DEFAULT_MEMORY_BUDGET);
+        assert!(message.contains(&shared), "{message}");
+        assert!(message.contains(&format!("had drawn {} byte(s)", 16 << 20)), "{message}");
         assert_eq!(keys(&message), [ALLOWANCE], "{message}");
     }
 

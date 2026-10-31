@@ -32,7 +32,9 @@ pub enum Allowance {
     /// (`docs/design/runtime-invariants.md`, `RT8`).
     HalfAvailable(u64),
     /// Nothing: no limit found, and the machine's available memory
-    /// unreadable.
+    /// unreadable — resolved under [`DEFAULT_MEMORY_BUDGET`] as an estimate
+    /// ([`Arrangement::resolve`]), which is no allowance to carve statistics
+    /// from.
     NoneFound,
 }
 
@@ -160,8 +162,11 @@ impl Arrangement {
     /// **An estimate is not an allowance** unless the request says to carve
     /// it: half of what the machine reports available caps the pools with no
     /// reserve and no margin, and nothing drawn or held changes it, the
-    /// halving being the margin there; with nothing found, a recommendation
-    /// stands whole (`KD113`). A source recommending no cost, under no limit,
+    /// halving being the margin there. With `MemAvailable` unreadable too,
+    /// [`DEFAULT_MEMORY_BUDGET`] is the estimate, a cap with no reserve and no
+    /// margin as the halved one is, and carved it is drawn down by what is
+    /// `drawn` alone, the holdings having no margin to come off
+    /// (`docs/design/decisions.md`, "D11"). A source recommending no cost, under no limit,
     /// is [`Parallelism::default`] at a serial count and
     /// [`DEFAULT_MEMORY_BUDGET`] above one — **the composition is not a
     /// `min`**, which would collapse a compressed scan to serial on an
@@ -185,7 +190,12 @@ impl Arrangement {
                 Parallelism::within_shared(asked, worker_memory, *bytes, drawn, held)
             }
             Allowance::HalfAvailable(bytes) => estimated(asked, worker_memory, *bytes),
-            Allowance::NoneFound => estimated(asked, worker_memory, u64::MAX),
+            Allowance::NoneFound if carve_estimate => {
+                let cap = DEFAULT_MEMORY_BUDGET.saturating_sub(drawn);
+                let (jobs, budget) = Parallelism::fit(asked, worker_memory, cap, None);
+                Parallelism::workers(jobs, budget)
+            }
+            Allowance::NoneFound => estimated(asked, worker_memory, DEFAULT_MEMORY_BUDGET),
         };
         let parallelism = match (jobs, carved.memory_bytes()) {
             (Jobs::Stated(stated), Some(bytes)) => Parallelism::workers(stated, bytes),
@@ -239,13 +249,6 @@ fn estimated(jobs: usize, memory: Option<WorkerMemory>, cap: u64) -> Parallelism
             Parallelism::default()
         };
     }
-    // deficiency: KD113 — with `MemAvailable` unreadable the cap is
-    // `u64::MAX`, so the recommendation stands whole, at the count asked for,
-    // and `datafusion-pgdump`'s `ScanBudget`, holding no allowance, lets each
-    // scan resolve alone, sharing nothing. The standing rule is that unstated
-    // is not unlimited (`docs/design/roadmap.md`, "A default runs as fast as
-    // the allocation permits"); the fix is a choice between
-    // `DEFAULT_MEMORY_BUDGET` here and refusing a recommendation.
     let (jobs, budget) = Parallelism::fit(jobs, memory, cap, None);
     Parallelism::workers(jobs, budget)
 }

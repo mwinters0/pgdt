@@ -959,7 +959,8 @@ from the machine's RAM: it takes what the file asks for exactly as above, held
 under half of what the machine reports as available — half rather than all
 because that figure is an estimate two processes reading at once would each see
 the whole of. There is no fifth held back there, so a cache's statistics do not
-lower the workers either.
+lower the workers either. On a host where even that figure cannot be read, what
+the file asks for is held under the 64 MiB default instead.
 
 If that is more than you want a flagless run to take, state `--memory`; a
 number you type wins over anything discovered, in both directions.
@@ -1200,8 +1201,9 @@ takes the CPUs the process was given, where a plain dump would say `jobs=1
 many readers it says so — `(recommended by the source; lowered from 24 by the
 allocation)` — and that lowered number is what will actually run. A
 `--memory` you typed lowers it the same way, and the clause then reads
-`by the stated allowance`, so the number to raise is named rather than left to be
-guessed at. A `--jobs` you typed is printed `(stated)` and is never lowered: it
+`by the stated allowance`; with no limit set it reads `by half of what the
+machine reports available`, or `by the default budget` where that cannot be
+read. So the number to raise is named rather than left to be guessed at. A `--jobs` you typed is printed `(stated)` and is never lowered: it
 says what was asked for, and how much of it the budget delivers is decided
 later.
 
@@ -1220,8 +1222,14 @@ asked for one, and it names its own origin the same way:
 - `(no limit found: what this source asks for)` — the number above: what
   twenty-four readers of this file's 24 MiB blocks want, taken whole because
   nothing capped it.
-- `(default: no limit found)` — 64 MiB, which is what an unlimited host leaves
-  a plain file, whose reads ask for no budget of their own.
+- `(no limit found: half of what the machine reports available, N byte(s))` —
+  what this dump asks for did not fit under that half, so the readers it
+  affords are what will run.
+- `(default: no limit found and the machine's available memory could not be
+  read)` — the same, held under the 64 MiB default.
+- `(default: this source states no charge of its own)` — 64 MiB, which is what
+  a plain file gets without a limit, its reads asking for no budget of their
+  own.
 
 `statistics_bytes` is what a gathering `parse`'s statistics may hold, carved
 from the same allowance once `memory_bytes` is spent, with where the allowance

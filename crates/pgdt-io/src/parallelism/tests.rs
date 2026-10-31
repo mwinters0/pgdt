@@ -191,8 +191,8 @@ fn a_source_that_recommends_nothing_is_capped_at_the_existing_default() {
     assert_eq!(discover_in(root.path(), 1, None).memory_bytes(), Some(DEFAULT_MEMORY_BUDGET));
 }
 
-/// **The composition is not a `min`.** With no limit found there is no cap
-/// from the environment at all, so a source's recommendation stands, where
+/// **The composition is not a `min`.** With no limit found the cap is half of
+/// `MemAvailable`, so a source's recommendation stands where it fits, where
 /// a `min` against [`DEFAULT_MEMORY_BUDGET`] would have collapsed a
 /// compressed scan to serial (`docs/design/decisions.md`, "D3").
 #[test]
@@ -218,14 +218,13 @@ fn no_limit_found_leaves_the_recommendation_uncapped_but_for_memavailable() {
     assert_eq!(squeezed.jobs(), 2);
     assert_eq!(squeezed.memory_bytes(), Some(per_worker * 2));
 
-    // `MemAvailable` unreadable is the one shape with a recommendation and
-    // no ceiling over it: the whole of what the count asks for.
+    // `MemAvailable` unreadable leaves the library's default as the
+    // estimate, which one reader fits under (`docs/design/decisions.md`,
+    // "D11").
     let blind = FakeRoot::new();
     blind.v2("/leaf");
-    assert_eq!(
-        discover_in(blind.path(), 24, Some(WorkerMemory::per_worker(per_worker))).memory_bytes(),
-        Some(per_worker * 24)
-    );
+    let capped = discover_in(blind.path(), 24, Some(WorkerMemory::per_worker(per_worker)));
+    assert_eq!(capped, Parallelism::workers(1, per_worker));
 }
 
 /// **A stated allowance is the discovered limit's own carving**, which is

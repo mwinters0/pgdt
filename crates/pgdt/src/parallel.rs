@@ -223,10 +223,15 @@ impl Discovered<'_> {
         // the allowance came from. With neither, a machine that has said
         // nothing is read at half of what it reports available (`RT8`), and
         // `MemAvailable` unreadable leaves no allowance at all, which declines
-        // nothing (`docs/design/decisions.md`, "D85").
+        // nothing, the library's default capping a source's charge
+        // (`docs/design/decisions.md`, "D11", "D85").
         let allowance = self.args.memory.map_or_else(|| self.found.clone(), Allowance::Stated);
         let request = ArrangementRequest { held, ..ArrangementRequest::of(source, self.args.jobs) };
-        Resolved(Arrangement::resolve(&allowance, request))
+        let arrangement = Arrangement::resolve(&allowance, request);
+        let asks = request.worker_memory.filter(|memory| !memory.is_zero()).map(|memory| {
+            memory.at(arrangement.recommended_jobs().unwrap_or(arrangement.parallelism().jobs()))
+        });
+        Resolved { arrangement, asks }
     }
 
     /// **`query`'s passes, each carved around what it holds**: the mapping
@@ -289,40 +294,53 @@ impl QueryPass {
 /// one downstream (`docs/design/decisions.md`, "D64"); the arrangement carries
 /// it beside.
 #[derive(Debug, Clone)]
-pub(crate) struct Resolved(Arrangement);
+pub(crate) struct Resolved {
+    arrangement: Arrangement,
+    /// What the source's recommended charge spends at the count asked for,
+    /// uncapped, or `None` where it recommends no charge: a budget below it
+    /// is one the allowance or the estimate bound rather than the source.
+    asks: Option<u64>,
+}
 
 impl Resolved {
     pub(crate) fn parallelism(&self) -> Parallelism {
-        self.0.parallelism()
+        self.arrangement.parallelism()
     }
 
     /// The library's arrangement itself, which a gathering pass takes whole
     /// so its parallelism and its statistics allowance stay one carve
     /// (`pgdt_mapping::map_file`).
     pub(crate) fn arrangement(&self) -> &Arrangement {
-        &self.0
+        &self.arrangement
     }
 
-    /// Whether the allowance was typed rather than discovered.
-    fn stated(&self) -> bool {
-        matches!(self.0.allowance(), Allowance::Stated(_) | Allowance::Setting(_))
+    /// Whether the budget is below what the source's charge asks for, so
+    /// the allowance or the estimate rather than the source bound it.
+    fn cut(&self) -> bool {
+        self.asks.is_some_and(|asks| self.parallelism().budget_bytes() < asks)
     }
 
     /// The worker count and its provenance, for a status line.
     ///
     /// **A recommended count reads differently from a stated one**: a
     /// recommendation is printed lowered to what the allowance affords, a
-    /// stated `--jobs` as typed. What did the lowering is named — `by the
-    /// allocation` or `by the stated allowance`, those being different numbers
-    /// to change — with [`Resolved::budget_display`] beside it naming the number
+    /// stated `--jobs` as typed. What did the lowering is named — the stated
+    /// allowance, the allocation, half of what the machine reports available
+    /// or the library's default, each a different number to change — with
+    /// [`Resolved::budget_display`] beside it naming the number
     /// (`docs/design/roadmap.md`, "A default runs as fast as the allocation
     /// permits").
     fn jobs_display(&self) -> String {
         let jobs = self.parallelism().jobs();
-        match self.0.recommended_jobs() {
+        match self.arrangement.recommended_jobs() {
             None => format!("{jobs} (stated)"),
             Some(asked) if asked > jobs => {
-                let by = if self.stated() { "the stated allowance" } else { "the allocation" };
+                let by = match self.arrangement.allowance() {
+                    Allowance::Stated(_) | Allowance::Setting(_) => "the stated allowance",
+                    Allowance::Limit(_) => "the allocation",
+                    Allowance::HalfAvailable(_) => "half of what the machine reports available",
+                    Allowance::NoneFound => "the default budget",
+                };
                 format!("{jobs} (recommended by the source; lowered from {asked} by {by})")
             }
             Some(_) => format!("{jobs} (recommended by the source)"),
@@ -338,35 +356,39 @@ impl Resolved {
     /// beside the budget exactly as a discovered limit is rather than being
     /// abbreviated to `(stated)`.
     ///
-    /// Four spellings: the flag; a discovered limit, named by the file that
-    /// stated it (`memory.high` throttles where `memory.max` kills, and either
-    /// may be an ancestor's); the source's own recommendation; and the
-    /// library's constant, which is what "no limit found" leaves a source that
-    /// recommends nothing, spelled so where that leaves the arrangement serial.
-    ///
-    /// Deficiency register: `deficiency: KD50` — two more ways to a number
-    /// are spelled as the source's recommendation, both on a host stating no
-    /// limit. Half of `MemAvailable`: a source asking for 24 readers, cut to
-    /// 4, prints a budget "what this source asks for" and a count "lowered …
-    /// by the allocation" beside a first line saying nothing enforces one.
-    /// And the library's constant under a stated `--jobs` past one over a
-    /// source recommending nothing, which the library carries as a budget
-    /// rather than as none. Closing it means a spelling of each one's own, on
-    /// this line and on [`Resolved::jobs_display`]'s.
+    /// Six spellings, one per origin that can bind the number: the flag; a
+    /// discovered limit, named by the file that stated it (`memory.high`
+    /// throttles where `memory.max` kills, and either may be an ancestor's);
+    /// and with neither, the source's own recommendation where nothing cut
+    /// it, half of what the machine reports available or the library's
+    /// default where that cut it — the default being the estimate where
+    /// `MemAvailable` cannot be read (`docs/design/decisions.md`, "D11") —
+    /// and the library's default where the source recommends no charge.
     fn budget_display(&self) -> String {
-        let parallelism = self.parallelism();
-        let bytes = parallelism.budget_bytes();
-        match (self.0.allowance(), parallelism.memory_bytes()) {
-            (Allowance::Stated(allowance) | Allowance::Setting(allowance), _) => {
+        let bytes = self.parallelism().budget_bytes();
+        match self.arrangement.allowance() {
+            Allowance::Stated(allowance) | Allowance::Setting(allowance) => {
                 format!("{bytes} (stated: --memory allows {allowance} resident byte(s))")
             }
-            (Allowance::Limit(limit), _) => format!(
+            Allowance::Limit(limit) => format!(
                 "{bytes} (discovered: {} states a limit of {} byte(s))",
                 limit.read_from.display(),
                 limit.bytes
             ),
-            (_, Some(_)) => format!("{bytes} (no limit found: what this source asks for)"),
-            (_, None) => format!("{bytes} (default: no limit found)"),
+            _ if self.asks.is_none() => {
+                format!("{bytes} (default: this source states no charge of its own)")
+            }
+            Allowance::HalfAvailable(half) if self.cut() => format!(
+                "{bytes} (no limit found: half of what the machine reports available, \
+                 {half} byte(s))"
+            ),
+            Allowance::NoneFound if self.cut() => format!(
+                "{bytes} (default: no limit found and the machine's available memory could not \
+                 be read)"
+            ),
+            Allowance::HalfAvailable(_) | Allowance::NoneFound => {
+                format!("{bytes} (no limit found: what this source asks for)")
+            }
         }
     }
 
@@ -390,7 +412,7 @@ impl Resolved {
     /// force after the workers ([`Arrangement::statistics_allowance`]). `None`
     /// — no flag, no limit and no `MemAvailable` — declines nothing.
     pub(crate) fn statistics_allowance(&self) -> Option<u64> {
-        self.0.statistics_allowance()
+        self.arrangement.statistics_allowance()
     }
 
     /// The statistics allowance and where the number behind it came from,
@@ -400,7 +422,7 @@ impl Resolved {
             return "(none: no limit found and the machine's available memory could not be read)"
                 .to_string();
         };
-        let origin = match self.0.allowance() {
+        let origin = match self.arrangement.allowance() {
             Allowance::Stated(_) | Allowance::Setting(_) => "stated",
             Allowance::Limit(_) => "discovered",
             Allowance::HalfAvailable(_) | Allowance::NoneFound => {

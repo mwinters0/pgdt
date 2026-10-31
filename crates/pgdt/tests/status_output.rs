@@ -375,7 +375,10 @@ fn a_scanning_command_reports_the_arrangement_it_resolved() {
     match pgdt_io::discover_memory_limit() {
         None => {
             assert!(stated.contains("no memory limit found"), "{stated}");
-            assert!(resolved.contains("(default: no limit found)"), "{resolved}");
+            assert!(
+                resolved.contains("(default: this source states no charge of its own)"),
+                "{resolved}"
+            );
         }
         Some(limit) => {
             assert!(stated.contains("running inside a stated memory allocation"), "{stated}");

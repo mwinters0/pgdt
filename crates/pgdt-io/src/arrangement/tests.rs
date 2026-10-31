@@ -210,8 +210,9 @@ fn a_holding_lowers_the_count_and_then_the_budget() {
 /// **An estimate caps the pools unless the request carves it**: half of
 /// `MemAvailable` is a cap with no reserve, no margin and no holding, the
 /// halving being the margin there; carved, it is the same number stated.
-/// With nothing found a recommendation stands whole (`KD113`), and nothing
-/// drawn or held moves it.
+/// With `MemAvailable` unreadable `DEFAULT_MEMORY_BUDGET` is the estimate: a
+/// cap nothing drawn or held moves, and carved, one what is drawn comes off,
+/// the holdings having no margin to come off.
 #[test]
 fn an_estimate_is_a_cap_unless_carved() {
     let reader = Some(WorkerMemory::per_worker(READER));
@@ -226,10 +227,29 @@ fn an_estimate_is_a_cap_unless_carved() {
         Arrangement::resolve(&Allowance::Stated(1 << 30), request).parallelism()
     );
 
-    let shared = ArrangementRequest { drawn: 1 << 30, held: 1 << 30, ..lowered_request(reader) };
+    let small = Some(WorkerMemory::per_worker(16 << 20));
+    let shared = ArrangementRequest { drawn: 1 << 30, held: 1 << 30, ..lowered_request(small) };
     let blind = Arrangement::resolve(&Allowance::NoneFound, shared);
-    assert_eq!(blind.parallelism(), Parallelism::workers(24, 24 * READER));
+    assert_eq!(blind.parallelism(), Parallelism::workers(4, DEFAULT_MEMORY_BUDGET));
     assert_eq!(blind.statistics_allowance(), None, "nothing found declines nothing");
+
+    // A reader costing more than the default is the floor, at the default.
+    let wide = Some(WorkerMemory::per_worker(2 * DEFAULT_MEMORY_BUDGET));
+    let one = Arrangement::resolve(&Allowance::NoneFound, lowered_request(wide));
+    assert_eq!(one.parallelism(), Parallelism::workers(1, DEFAULT_MEMORY_BUDGET));
+
+    // Carved, what is drawn comes off it, and what is held does not.
+    let drawn = 16 << 20;
+    let carved = ArrangementRequest { carve_estimate: true, drawn, held: 1 << 30, ..shared };
+    let rest = Arrangement::resolve(&Allowance::NoneFound, carved);
+    assert_eq!(rest.parallelism(), Parallelism::workers(3, DEFAULT_MEMORY_BUDGET - drawn));
+    let spent = ArrangementRequest { drawn: DEFAULT_MEMORY_BUDGET, ..carved };
+    let floor = Arrangement::resolve(&Allowance::NoneFound, spent);
+    assert_eq!(floor.parallelism(), Parallelism::workers(1, 0));
+
+    // A source recommending nothing keeps the library's own default.
+    let plain = Arrangement::resolve(&Allowance::NoneFound, lowered_request(None));
+    assert_eq!(plain.parallelism(), Parallelism::workers(24, DEFAULT_MEMORY_BUDGET));
 }
 
 /// **What others drew comes off this arrangement and its statistics**: a

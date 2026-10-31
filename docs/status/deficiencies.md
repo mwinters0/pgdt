@@ -280,13 +280,6 @@ than reading as a phase nobody has sliced.
   build's. **(b) owned by P23**, which re-takes them, sets both
   constants and runs the blind gate. Detail: `crates/pgdt-io/src/memory.rs`.
 
-- **KD50** — on a host stating no limit, a flagless run cut to half of
-  `MemAvailable` prints its budget as "what this source asks for" and its
-  count as "lowered … by the allocation", beside a first line saying nothing
-  enforces a limit, and a `--jobs` past one over a source recommending nothing
-  prints the library's constant as that source's request too. **(b) owned by
-  `M273`**, with `KD113`. Detail: `crates/pgdt/src/parallel.rs`.
-
 - **KD51** — a remote `.xz` with no cached seek table, from a server stating
   no usable validator, is walked before its run is refused as one nothing can
   check. **(c) unowned**; promoted by a user who meets it on a dump of many
@@ -434,11 +427,6 @@ than reading as a phase nobody has sliced.
   reader saturates the device the split buys nothing, and on a rotational one
   its scattered reads are unread. **(c) unowned**; promoted by a reading of the
   split cold on the HDD. Detail: `crates/datafusion-pgdump/src/table.rs`.
-
-- **KD113** — where a host reports neither a memory limit nor `MemAvailable`,
-  a source's recommended charge stands uncapped, at the count asked for, and
-  the provider's scans share no budget, though unstated is not unlimited
-  (`../design/roadmap.md`). **(b) owned by `M273`**. Detail: `crates/pgdt-io/src/arrangement.rs`.
 
 - **KD131** — a complete map is saved before the reads that built it are
   completed: the forward pass's end-of-file save and the back-fill's run

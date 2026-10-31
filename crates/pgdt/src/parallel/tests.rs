@@ -210,11 +210,16 @@ fn no_limit_found_takes_the_sources_own_answer_under_the_memavailable_cap() {
     assert_eq!(cramped.parallelism().memory_bytes(), Some(4 * READER));
 
     // And a source recommending nothing on an unlimited host is the one
-    // arrangement that states no budget at all — what the status line
-    // renders `(default: no limit found)`.
+    // arrangement that states no budget at all, the library's default.
     let plain = flagless.resolve_under(no_limit(), &Recommends::jobs(1));
     assert_eq!(plain.parallelism(), Parallelism::default());
-    assert_eq!(plain.budget_display(), format!("{} (default: no limit found)", 64 << 20));
+
+    // With `MemAvailable` unreadable too, the library's default caps the
+    // charge (`docs/design/decisions.md`, "D11").
+    let blind = flagless.resolve_under(Allowance::NoneFound, &Recommends::reader(24, READER));
+    assert_eq!(blind.parallelism(), Parallelism::workers(1, READER));
+    let wide = flagless.resolve_under(Allowance::NoneFound, &Recommends::reader(24, 16 << 20));
+    assert_eq!(wide.parallelism(), Parallelism::workers(4, 64 << 20));
 }
 
 /// **An allocation at or under the reserve resolves to a budget of zero,
@@ -488,7 +493,8 @@ fn the_report_says_which_of_the_two_counts_a_reader_is_looking_at() {
     assert_eq!(recommended.parallelism().jobs(), 4);
     assert_eq!(
         recommended.jobs_display(),
-        "4 (recommended by the source; lowered from 24 by the allocation)"
+        "4 (recommended by the source; lowered from 24 by half of what the machine reports \
+         available)"
     );
 
     let asked = ParallelArgs { jobs: Some(24), memory: None };
@@ -500,10 +506,11 @@ fn the_report_says_which_of_the_two_counts_a_reader_is_looking_at() {
     assert_eq!(stated.parallelism().memory_bytes(), recommended.parallelism().memory_bytes());
 }
 
-/// **The budget's provenance has four spellings and each names a different
-/// way of arriving at a number** — the flag, a limit that was read, a
-/// source's own answer under no limit, and the library's constant
-/// (`docs/design/decisions.md`, "D64").
+/// **The budget's provenance has a spelling per origin that can bind it**
+/// — the flag, a limit that was read, a source's own answer nothing cut,
+/// half of `MemAvailable` or the library's default where either cut it, and
+/// the library's default where the source states no charge — and a lowered
+/// count names the same origin (`docs/design/decisions.md`, "D64").
 #[test]
 fn the_budget_line_names_where_its_number_came_from() {
     let reader = Recommends::reader(24, READER);
@@ -527,10 +534,41 @@ fn the_budget_line_names_where_its_number_came_from() {
         flagless.resolve_under(no_limit(), &reader).budget_display(),
         format!("{} (no limit found: what this source asks for)", 24 * READER)
     );
+
+    let halved = flagless.resolve_under(cramped(), &reader);
     assert_eq!(
-        flagless.resolve_under(no_limit(), &plain).budget_display(),
-        format!("{} (default: no limit found)", 64 << 20)
+        halved.budget_display(),
+        format!(
+            "{} (no limit found: half of what the machine reports available, {} byte(s))",
+            4 * READER,
+            256 << 20
+        )
     );
+    assert_eq!(
+        halved.jobs_display(),
+        "4 (recommended by the source; lowered from 24 by half of what the machine reports \
+         available)"
+    );
+
+    let blind = flagless.resolve_under(Allowance::NoneFound, &reader);
+    assert_eq!(
+        blind.budget_display(),
+        format!(
+            "{READER} (default: no limit found and the machine's available memory could not be \
+             read)"
+        )
+    );
+    assert_eq!(
+        blind.jobs_display(),
+        "1 (recommended by the source; lowered from 24 by the default budget)"
+    );
+
+    let unasked = format!("{} (default: this source states no charge of its own)", 64 << 20);
+    assert_eq!(flagless.resolve_under(no_limit(), &plain).budget_display(), unasked);
+    let typed = ParallelArgs { jobs: Some(8), memory: None };
+    let typed = typed.resolve_under(no_limit(), &plain);
+    assert_eq!(typed.parallelism(), Parallelism::workers(8, 64 << 20));
+    assert_eq!(typed.budget_display(), unasked);
 }
 
 /// **The statistics line reads `(none: …)` only where `MemAvailable`

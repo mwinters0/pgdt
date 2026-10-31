@@ -79,8 +79,9 @@ which an `INSERT` run on the NVMe meets (`KD9`) and a default `parse` there may 
 ones no machine is more than one of; an embedder discovers at `/` (`Allowance::discover`) or states an allowance, so the
 root-taking readers are `internal`'s (D106). With no limit found, `pgdt` caps a source recommending a charge at half of
 `MemAvailable` (RT8), untuned, and not one recommending none; a request carving that estimate (`carve_estimate`, the
-provider's) carves half as an allowance, and with `MemAvailable` unreadable nothing caps (`KD113`). Rejected: an env var
-overriding the root; the seam public for tests alone.
+provider's) carves half as an allowance. With `MemAvailable` unreadable `DEFAULT_MEMORY_BUDGET` is the estimate, unstated
+not being unlimited: a cap, which a carving request draws down by what others drew. Rejected: an env var overriding the
+root; the seam public for tests alone; refusing such a recommendation; the default as a cap per scan, which multiplies.
 
 ### D12 Workers are `spawn_blocking`; no runtime flavour is imposed
 The library keeps `tokio` at `rt`+`sync` and imposes no runtime flavour, its work being `spawn_blocking`; `pgdt`'s own

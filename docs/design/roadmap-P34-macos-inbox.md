@@ -12,9 +12,10 @@ delete this file. See `docs/process.md`, "Inboxes: facts filed by destination".
 and the cgroup limit (`crates/pgdt-io/src/memory.rs`, `available_memory_in`,
 `discover_memory_limit_in`; `crates/pgdt-io/src/arrangement.rs`,
 `Allowance::discover`, which `pgdt` and the provider's `ScanBudget` both
-take). On macOS each read fails into `Allowance::NoneFound`: the CLI falls to
-`DEFAULT_MEMORY_BUDGET`, and a source recommending worker memory (`.xz`)
-keeps its whole recommendation under an uncapped bound.
+take). On macOS each read fails into `Allowance::NoneFound`, which caps
+every flagless run at `DEFAULT_MEMORY_BUDGET` and shares it between the
+provider's scans ([`decisions.md`](decisions.md), "D11"), so an ordinary
+`.xz` streams rather than block-decoding.
 Elsewhere the code compiles there: the I/O layer is `std::os::unix`,
 `namespace-init`'s ending signals are `target_os = "linux"` with an empty
 fallback, and `crates/pgdt/src/introspect.rs`'s glibc arms have a non-gnu stub. There
