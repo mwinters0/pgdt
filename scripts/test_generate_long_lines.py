@@ -113,11 +113,28 @@ class GenerateLongLines(unittest.TestCase):
             with self.assertRaises(ValueError):
                 gen.generate(Path(tmp) / "x.sql", "text", 64, gen.MAX_LINES + 1)
 
-    def test_every_mebibyte_length_fills_each_kind(self):
+    def test_every_mebibyte_length_and_the_bound_fill_each_kind(self):
+        # I71's bound, `MaxAllocSize - 1`, is two bytes under a power of two.
         for kind in gen.KINDS:
-            for mib in (1, 32, 512):
-                with self.subTest(kind=kind, mib=mib):
-                    gen.field_bytes(kind, mib * gen.MIB)
+            for line_bytes in (gen.MIB, 32 * gen.MIB, 288 * gen.MIB, 512 * gen.MIB, 0x3FFFFFFE):
+                with self.subTest(kind=kind, line_bytes=line_bytes):
+                    gen.field_bytes(kind, line_bytes)
+
+    def test_the_id_is_nullable_and_every_row_holds_one(self):
+        # `measure.LONG_LINE_SQL` filters on `id IS NOT NULL` so that its
+        # `count(v)` reads every value: a column declared `NOT NULL` lets the
+        # filter be simplified away, and the count be answered from the plan
+        # node's statistics with no row read.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "long.sql"
+            gen.generate(out, "text", 64, 2)
+            ddl = out.read_text().partition("CREATE TABLE")[2].partition(";")[0]
+        self.assertIn("    id integer,\n", ddl)
+        self.assertNotIn("NOT NULL", ddl.upper())
+        self.assertNotIn("PRIMARY KEY", ddl.upper())
+        for row in _generate("text", 64, 2):
+            with self.subTest(row=row[:16]):
+                self.assertNotEqual(row.split(b"\t", 1)[0], b"\\N")
 
     def test_the_table_declares_the_kinds_type(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -131,7 +148,7 @@ class GenerateLongLines(unittest.TestCase):
             [sys.executable, str(Path(gen.__file__)), "--help"], capture_output=True, text=True
         )
         self.assertEqual(out.returncode, 0)
-        self.assertIn("--line-mib", out.stdout)
+        self.assertIn("--line-bytes", out.stdout)
 
 
 if __name__ == "__main__":

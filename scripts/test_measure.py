@@ -5678,27 +5678,44 @@ class LongLineResident(unittest.TestCase):
 
     def test_an_input_a_kind_and_a_length_each_a_cluster(self):
         fig = measure.SELECTABLE_BY_ID[self.FIGURE]
-        self.assertEqual(len(fig.warm_inputs), len(measure.long_lines.KINDS) * 3)
+        lengths = measure.LONG_LINE_LENGTHS
+        self.assertEqual(len(fig.warm_inputs), len(measure.long_lines.KINDS) * len(lengths))
         for kind in measure.long_lines.KINDS:
-            for mib in measure.LONG_LINE_MIB:
-                name = measure.long_line_input(kind, mib)
+            for length, line in lengths:
+                name = measure.long_line_input(kind, length)
                 with self.subTest(input=name):
                     spec = measure.INPUTS[name]
                     self.assertEqual(spec.generator, "generate_long_lines.py")
                     self.assertFalse(spec.scales)
                     args = dict(zip(spec.args[::2], spec.args[1::2]))
                     self.assertEqual(args["--kind"], kind)
-                    self.assertEqual(args["--line-mib"], str(mib))
+                    self.assertEqual(args["--line-bytes"], str(line))
                     self.assertEqual(args["--lines"], str(measure.LONG_LINE_CLUSTER))
-                    self.assertGreater(spec.nominal_bytes, measure.LONG_LINE_CLUSTER * mib << 20)
-                    measure.long_lines.field_bytes(kind, mib << 20)
+                    self.assertGreater(spec.nominal_bytes, measure.LONG_LINE_CLUSTER * line)
+                    measure.long_lines.field_bytes(kind, line)
 
-    def test_the_lengths_are_three_and_under_the_bound(self):
-        # The secant is over the two longest and read at the shortest.
-        short, mid, long = measure.LONG_LINE_MIB
-        self.assertLess(short, mid)
-        self.assertLess(mid, long)
-        self.assertLessEqual(long << 20, measure.LONG_LINE_BOUND)
+    def test_the_lengths_are_the_ladder_one_off_it_and_the_bound(self):
+        lengths = dict(measure.LONG_LINE_LENGTHS)
+        mib = 1 << 20
+        # The ladder a factor of four apart, the secant over its two longest.
+        self.assertEqual([lengths[t] for t in ("32", "128", "512")], [32 * mib, 128 * mib, 512 * mib])
+        self.assertEqual(measure.LONG_LINE_SECANT, ("128", "512"))
+        # Off the ladder: just past a power of two, under the longest.
+        off = lengths["288"]
+        self.assertGreater(off, 256 * mib)
+        self.assertLess(off, 512 * mib)
+        self.assertNotEqual(off & (off - 1), 0)
+        # The longest is the bound itself, read at one worker alone.
+        self.assertEqual(lengths["bound"], measure.LONG_LINE_BOUND)
+        self.assertEqual(max(lengths.values()), measure.LONG_LINE_BOUND)
+        self.assertEqual(measure.LONG_LINE_SERIAL_ONLY, ("bound",))
+        self.assertEqual(measure.long_line_jobs("bound"), (1,))
+        for length in ("32", "128", "288", "512"):
+            self.assertEqual(measure.long_line_jobs(length), measure.LONG_LINE_JOBS)
+        # Row order is length order.
+        self.assertEqual(sorted(lengths.values()), [line for _, line in measure.LONG_LINE_LENGTHS])
+        with self.assertRaises(ValueError):
+            measure.long_line_input("text", "64")
 
     def test_the_cluster_is_the_widest_count(self):
         self.assertEqual(measure.LONG_LINE_CLUSTER, max(measure.LONG_LINE_JOBS))
@@ -5708,14 +5725,52 @@ class LongLineResident(unittest.TestCase):
         # `MaxAllocSize - 1`, `MaxAllocSize` being `0x3fffffff`.
         self.assertEqual(measure.LONG_LINE_BOUND, 0x3FFFFFFF - 1)
 
-    def test_a_kinds_lengths_share_its_sweep(self):
+    def test_the_allowance_holds_the_widest_legs_lines_at_the_whole_value_charge(self):
+        # `PARALLEL_BUDGET`'s readers plus four 512 MiB lines at twice their
+        # bytes, which is more than one line at the bound at twice its bytes.
+        four = 4 * 2 * (512 << 20)
+        self.assertGreater(four, 2 * measure.LONG_LINE_BOUND)
+        self.assertEqual(measure.LONG_LINE_WHOLE_VALUE_CHARGE, 2)
+        self.assertEqual(
+            measure.long_line_allowance(), measure.stated_allowance(measure.PARALLEL_BUDGET + four)
+        )
+
+    def test_a_kind_is_two_sweeps_each_subtraction_inside_one(self):
         fig = measure.SELECTABLE_BY_ID[self.FIGURE]
         for kind in measure.long_lines.KINDS:
-            names = [measure.long_line_input(kind, mib) for mib in measure.LONG_LINE_MIB]
+            both, serial = measure.long_line_groups(kind)
             with self.subTest(kind=kind):
-                self.assertIn(tuple(names), fig.warm_groups)
-                for a, b in zip(names, names[1:]):
+                self.assertEqual(both, ("32", "128", "288", "512"))
+                self.assertEqual(serial, ("512", "bound"))
+                for group in (both, serial):
+                    names = tuple(measure.long_line_input(kind, length) for length in group)
+                    self.assertIn(names, fig.warm_groups)
+                pairs = {
+                    frozenset(s.inputs) for s in fig.subtracts if all(kind in n for n in s.inputs)
+                }
+                name = lambda length: measure.long_line_input(kind, length)  # noqa: E731
+                self.assertEqual(
+                    pairs,
+                    {
+                        frozenset((name("128"), name("512"))),
+                        frozenset((name("128"), name("32"))),
+                        frozenset((name("128"), name("288"))),
+                        frozenset((name("512"), name("bound"))),
+                    },
+                )
+                for a, b in pairs:
                     measure.subtraction_sweep(self.FIGURE, a, b)
+        with self.assertRaises(ValueError):
+            measure.long_line_groups("json")
+
+    def test_each_sweep_fits_the_tmpfs_budget(self):
+        # The bound's cluster beside the secant's longer end is the largest.
+        cfg = measure.Config()
+        for group in measure.SELECTABLE_BY_ID[self.FIGURE].staging_groups:
+            with self.subTest(group=group):
+                self.assertLessEqual(
+                    sum(measure.nominal_size(cfg, name) for name in group), measure.warm_bound(cfg)
+                )
 
     def test_each_parse_states_its_count_allowance_limit_and_request(self):
         for name in ("parse", "strict"):
@@ -5724,9 +5779,7 @@ class LongLineResident(unittest.TestCase):
                     script = measure._script(f"{measure.LONG_RSS_FAMILY}{name}-{jobs}")
                     self.assertTrue(script.startswith(f"time {measure.PEAK_RSS} /pgdt parse "))
                     self.assertIn(f"--jobs {jobs} ", script)
-                    self.assertIn(
-                        f"--memory {measure.stated_allowance(measure.PARALLEL_BUDGET)} ", script
-                    )
+                    self.assertIn(f"--memory {measure.long_line_allowance()} ", script)
                     self.assertIn(f"--max-line-bytes {measure.LONG_LINE_BOUND} ", script)
                     self.assertIn(measure.GATHER_STATISTICS, script)
                     self.assertEqual(
@@ -5757,10 +5810,7 @@ class LongLineResident(unittest.TestCase):
                     )
                 )
                 self.assertEqual(measure._dfcli_partitions(script), {str(jobs)})
-                self.assertIn(
-                    f"SET pgdump.memory = {measure.stated_allowance(measure.PARALLEL_BUDGET)}",
-                    timed,
-                )
+                self.assertIn(f"SET pgdump.memory = {measure.long_line_allowance()}", timed)
                 self.assertIn(f"SET pgdump.max_line_bytes = {measure.LONG_LINE_BOUND}", timed)
                 self.assertIn(measure.LONG_LINE_SQL, timed)
                 self.assertTrue(script.endswith(measure.DFCLI_ANSWER))
@@ -5773,10 +5823,10 @@ class LongLineResident(unittest.TestCase):
 
     def test_every_leg_is_a_shape_and_reads_resident(self):
         specs = measure._long_line_specs()
-        self.assertEqual(
-            len(specs),
-            len(measure.long_lines.KINDS) * 3 * len(measure.LONG_LINE_PASSES) * 2,
-        )
+        passes = len(measure.LONG_LINE_PASSES)
+        # A kind: four lengths at both counts, then the bound and its anchor
+        # at one.
+        self.assertEqual(len(specs), len(measure.long_lines.KINDS) * passes * (4 * 2 + 2))
         for spec in specs:
             with self.subTest(leg=spec.label):
                 self.assertIn(spec.command, measure.command_shapes())
@@ -5784,6 +5834,31 @@ class LongLineResident(unittest.TestCase):
                 self.assertIn("rss", spec.command)
                 self.assertEqual(spec.binary, "dfcli" if "-query-" in spec.command else "pgdt")
         self.assertEqual(len({s.key(self.FIGURE) for s in specs}), len(specs))
+        self.assertEqual(len({s.label for s in specs}), len(specs))
+
+    def test_the_bound_and_its_anchor_are_read_at_one_worker_in_their_own_sweep(self):
+        fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        specs = measure._long_line_specs()
+        placed = dict(
+            (spec.key(self.FIGURE), gi)
+            for gi, part in measure.split_specs(self.FIGURE, specs, fig.staging_groups)
+            for spec in part
+        )
+        for k, kind in enumerate(measure.long_lines.KINDS):
+            bound = measure.long_line_input(kind, "bound")
+            anchor = measure.long_line_input(kind, "512")
+            with self.subTest(kind=kind):
+                serial = [s for s in specs if s.input == bound or s.sweep is not None and s.input == anchor]
+                self.assertEqual(len(serial), 2 * len(measure.LONG_LINE_PASSES))
+                for spec in serial:
+                    self.assertTrue(spec.command.endswith("-1"), spec.command)
+                    self.assertEqual(placed[spec.key(self.FIGURE)], 2 * k + 1)
+                    self.assertEqual(spec.sweep, None if spec.input == bound else 2 * k + 1)
+                # The 512 MiB input's own legs stay in the ladder's sweep.
+                ladder = [s for s in specs if s.input == anchor and s.sweep is None]
+                self.assertEqual(len(ladder), len(measure.LONG_LINE_PASSES) * 2)
+                for spec in ladder:
+                    self.assertEqual(placed[spec.key(self.FIGURE)], 2 * k)
 
     def test_a_count_or_pass_the_figure_does_not_carry_is_refused(self):
         for command in ("long-rss-parse-24", "long-rss-merge-1", "long-rss-query-x"):
@@ -5792,31 +5867,52 @@ class LongLineResident(unittest.TestCase):
                     measure._script(command)
 
     def test_the_answer_is_every_row_of_the_input(self):
-        name = measure.long_line_input("bytea", measure.LONG_LINE_MIB[0])
-        self.assertEqual(
-            measure.long_line_answer(name),
-            2 * measure.long_lines.SHORT_ROWS + measure.LONG_LINE_CLUSTER,
-        )
+        for length, _ in measure.LONG_LINE_LENGTHS:
+            name = measure.long_line_input("bytea", length)
+            with self.subTest(input=name):
+                self.assertEqual(
+                    measure.long_line_answer(name),
+                    2 * measure.long_lines.SHORT_ROWS + measure.LONG_LINE_CLUSTER,
+                )
         with self.assertRaises(ValueError):
             measure.long_line_answer("control")
 
-    def test_the_secant_is_read_at_the_shortest_length(self):
-        short, mid, long = measure.LONG_LINE_MIB
+    def test_the_secant_and_its_residuals(self):
+        mib = 1 << 20
 
-        def kib(mib: float) -> float:
-            return mib * 1024
+        def kib(line: int, fixed: float = 50 * 1024) -> list[float]:
+            # Resident a fixed 50 MiB plus three bytes a line byte, in KiB.
+            return [fixed + 3 * line / 1024] * 3
 
-        # Resident a fixed 50 MiB plus three bytes a line byte: no residual.
-        linear = {m: [kib(50 + 3 * m)] * 3 for m in measure.LONG_LINE_MIB}
-        per_byte, residual = measure.long_line_secant(linear)
+        lo, hi = 128 * mib, 512 * mib
+        per_byte = measure.long_line_secant(kib(lo), kib(hi), hi - lo)
         self.assertAlmostEqual(per_byte, 3.0)
-        self.assertAlmostEqual(residual, 0.0, places=6)
-        # The shortest length holding 10 MiB more than the line predicts.
-        stepped = {**linear, short: [kib(60 + 3 * short)] * 3}
-        self.assertAlmostEqual(measure.long_line_secant(stepped)[1], kib(10), places=6)
+        # Below the secant, past it, and anchored in another sweep whose
+        # level differs: no residual where resident is linear in the line.
+        for at in (32 * mib, 288 * mib, measure.LONG_LINE_BOUND):
+            with self.subTest(at=at):
+                self.assertAlmostEqual(
+                    measure.long_line_residual(per_byte, kib(lo), kib(at), at - lo), 0.0, places=6
+                )
+        shifted = 60 * 1024
+        self.assertAlmostEqual(
+            measure.long_line_residual(
+                per_byte, kib(hi, shifted), kib(measure.LONG_LINE_BOUND, shifted),
+                measure.LONG_LINE_BOUND - hi,
+            ),
+            0.0,
+            places=6,
+        )
+        # A length holding 10 MiB more than the line predicts.
+        stepped = [v + 10 * 1024 for v in kib(288 * mib)]
+        self.assertAlmostEqual(
+            measure.long_line_residual(per_byte, kib(lo), stepped, 288 * mib - lo),
+            10 * 1024,
+            places=6,
+        )
         # The median, not a rep, is what is read.
-        noisy = {**linear, long: [kib(50 + 3 * long), kib(50 + 3 * long), kib(9999)]}
-        self.assertAlmostEqual(measure.long_line_secant(noisy)[0], 3.0)
+        noisy = kib(hi)[:2] + [9999.0 * 1024]
+        self.assertAlmostEqual(measure.long_line_secant(kib(lo), noisy, hi - lo), 3.0)
 
 
 class GzipFirstPass(unittest.TestCase):
@@ -7165,10 +7261,7 @@ class WarmBound(unittest.TestCase):
         # subtraction pairs it with that sweep's other input: a repeat nothing
         # reads is a full-size input's reps spent for no reading.
         paired = {
-            (s.source, name)
-            for fig in measure.EVERY_FIGURE
-            for s in fig.subtracts
-            for name in s.inputs
+            (s.source, frozenset(s.inputs)) for fig in measure.EVERY_FIGURE for s in fig.subtracts
         }
         for fig in measure.EVERY_FIGURE:
             if not fig.warm_groups:
@@ -7186,7 +7279,8 @@ class WarmBound(unittest.TestCase):
                                 any(
                                     measure.subtraction_sweep(fig.id, name, other) == gi
                                     for other in group
-                                    if other != name and (fig.id, other) in paired
+                                    if other != name
+                                    and (fig.id, frozenset((name, other))) in paired
                                 ),
                                 f"{name} is in sweep {gi} beside nothing it is paired with",
                             )
@@ -7208,10 +7302,16 @@ class WarmBound(unittest.TestCase):
                 "gzip-first-pass": tuple(
                     ("control", leg) for leg, _, _ in measure.GZPASS_WRITERS
                 ),
-                # A kind's three lengths together, its secant subtracting them.
+                # A kind's lengths at both counts together, its secant and
+                # residuals subtracting them; then the bound beside the
+                # secant's longer end, the tmpfs holding no more.
                 "long-line-resident": tuple(
-                    tuple(f"long_{kind}_{mib}" for mib in (32, 128, 512))
+                    group
                     for kind in ("text", "escaped", "bytea")
+                    for group in (
+                        tuple(f"long_{kind}_{length}" for length in ("32", "128", "288", "512")),
+                        (f"long_{kind}_512", f"long_{kind}_bound"),
+                    )
                 ),
             },
         )

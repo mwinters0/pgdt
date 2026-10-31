@@ -5,7 +5,7 @@ Backs `docs/design/roadmap-P33-line-bound.md`, "How it is shown": the
 `long-line-resident` figure (`measure.py`) reads what a pass holds resident
 while it holds a line, by pass kind and line length, so its input is a block
 of ordinary short rows around a **cluster of consecutive rows each exactly
-`--line-mib` MiB long, its terminator included** -- I71's measure
+`--line-bytes` long, its terminator included** -- I71's measure
 (`docs/design/postgres-invariants.md`). Consecutive, because the reference
 dump's long lines arrive that way (three to nine over 64 MiB in one chunk), and
 a cluster at least as long as a figure's worker count is what lets each worker
@@ -184,10 +184,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--kind", choices=KINDS, required=True, help="The long values' kind")
     parser.add_argument(
-        "--line-mib",
+        "--line-bytes",
         type=int,
         required=True,
-        help="Each long line's length in MiB, its terminator included",
+        help="Each long line's length in bytes, its terminator included",
     )
     parser.add_argument(
         "--lines", type=int, required=True, help=f"Long lines in the cluster, 1 to {MAX_LINES}"
@@ -196,7 +196,7 @@ def main() -> None:
     args = parser.parse_args()
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    generate(args.out, args.kind, args.line_mib * MIB, args.lines)
+    generate(args.out, args.kind, args.line_bytes, args.lines)
     print(f"wrote {args.out} ({args.out.stat().st_size} bytes)")
 
 

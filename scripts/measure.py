@@ -1735,35 +1735,74 @@ INPUTS["koji_xz"] = InputSpec(
     nominal_bytes=250 * MIB,
 )
 
-#: `long-line-resident`'s line lengths, in MiB, terminator included: a factor
-#: of four apart, so a secant over the two longest is read at the shortest
-#: (`long_line_secant`), and the longest past the reference dump's longest line
-#: (`runs/datanommer-survey/report.md`, machine-local) and half I71's bound.
-#: **Not at the bound**: four workers each holding today's three to four copies
-#: of a 1 GiB line, beside the staged input, would need a container near this
-#: machine's whole memory (`CLAUDE.local.md`), where a kill bars the figure.
-LONG_LINE_MIB: tuple[int, ...] = (32, 128, 512)
+#: The longest line every `long-line-resident` leg states it reads,
+#: `--max-line-bytes` and `pgdump.max_line_bytes`, and the figure's longest
+#: line: I71's bound, `MaxAllocSize - 1`, terminator included
+#: (`docs/design/postgres-invariants.md`). Stated so that no line of the
+#: figure's is refused by today's limit, and so that a leg reads as a pass
+#: reads once the bound is the constant (`roadmap-P33-line-bound.md`, "The
+#: bound is a constant, and the knobs go").
+LONG_LINE_BOUND = 0x3FFF_FFFE
+
+#: `long-line-resident`'s line lengths, each the token its input is named by
+#: and its bytes, terminator included, in the table's row order:
+#:
+#: - **the ladder**, 32, 128 and 512 MiB, a factor of four apart, its secant
+#:   over the two longest (`LONG_LINE_SECANT`), the longest past the reference
+#:   dump's longest line (`runs/datanommer-survey/report.md`, machine-local);
+#: - **288 MiB, off the ladder**, read at both counts: every ladder length is a
+#:   power of two, and an owner doubling its read sees each at one phase of
+#:   its growth, so only a length just past a doubling can show a peak that
+#:   follows the growth rather than the line;
+#: - **the bound itself**, read at one worker alone (`LONG_LINE_SERIAL_ONLY`):
+#:   what one reader holds at the bound is the floor's question
+#:   (`roadmap-P33-line-bound.md`, "The floor is one reader"), the one cell the
+#:   ladder's secant would otherwise extrapolate to.
+LONG_LINE_LENGTHS: tuple[tuple[str, int], ...] = (
+    ("32", 32 * MIB),
+    ("128", 128 * MIB),
+    ("288", 288 * MIB),
+    ("512", 512 * MIB),
+    ("bound", LONG_LINE_BOUND),
+)
+#: The two lengths each pass's secant is taken between (`long_line_secant`);
+#: every other length is a residual against it (`long_line_residual`).
+LONG_LINE_SECANT: tuple[str, str] = ("128", "512")
+#: The lengths read at one worker or partition alone. **Four workers each
+#: holding today's three to four copies of a line at the bound** would need a
+#: container near this machine's whole memory (`CLAUDE.local.md`), where a
+#: kill bars the figure; one fits.
+LONG_LINE_SERIAL_ONLY: tuple[str, ...] = ("bound",)
 #: The long lines in each input's cluster: the four-worker leg's count, so each
-#: worker can hold one at once (`LONG_LINE_JOBS`).
+#: worker can hold one at once (`LONG_LINE_JOBS`). The same at every length,
+#: so two inputs of a kind differ in their lines' length alone.
 LONG_LINE_CLUSTER = 4
 
 
-def long_line_input(kind: str, mib: int) -> str:
-    """The input holding `long_lines`' cluster of `kind` lines of `mib` MiB."""
-    return f"long_{kind}_{mib}"
+def long_line_bytes(length: str) -> int:
+    """The bytes of a line of `LONG_LINE_LENGTHS`' token `length`."""
+    return dict(LONG_LINE_LENGTHS)[length]
+
+
+def long_line_input(kind: str, length: str) -> str:
+    """The input holding `long_lines`' cluster of `kind` lines of `length`, a
+    token of `LONG_LINE_LENGTHS`."""
+    if length not in dict(LONG_LINE_LENGTHS):
+        raise ValueError(f"{length!r} is no line length of long-line-resident")
+    return f"long_{kind}_{length}"
 
 
 #: One input a value kind and a line length (`generate_long_lines.py`), each
 #: a cluster of `LONG_LINE_CLUSTER` lines between short rows. Its nominal is its
 #: cluster and a mebibyte for the rest, which is a few hundred bytes.
 for _kind in long_lines.KINDS:
-    for _mib in LONG_LINE_MIB:
-        INPUTS[long_line_input(_kind, _mib)] = InputSpec(
-            long_line_input(_kind, _mib),
+    for _length, _bytes in LONG_LINE_LENGTHS:
+        INPUTS[long_line_input(_kind, _length)] = InputSpec(
+            long_line_input(_kind, _length),
             "generate_long_lines.py",
-            ("--kind", _kind, "--line-mib", str(_mib), "--lines", str(LONG_LINE_CLUSTER)),
+            ("--kind", _kind, "--line-bytes", str(_bytes), "--lines", str(LONG_LINE_CLUSTER)),
             scales=False,
-            nominal_bytes=LONG_LINE_CLUSTER * _mib * MIB + MIB,
+            nominal_bytes=LONG_LINE_CLUSTER * _bytes + MIB,
         )
 
 
@@ -2576,7 +2615,7 @@ GZRSS_FAMILY = "parse-gzrss-jobs-"
 
 #: The `long-line-resident` figure's command family, `<family><pass>-<jobs>`:
 #: one pass over a cluster of long lines under the peak-resident wrapper, at a
-#: count of `LONG_LINE_JOBS`, under `PARALLEL_BUDGET`'s allowance. Its own
+#: count of `LONG_LINE_JOBS`, under `long_line_allowance`. Its own
 #: prefix, exempted from `SWEEP_JOBS` as `GZRSS_FAMILY` is, its counts being
 #: its axis; a gathering family (`GATHERING_FAMILIES`), a default parse being
 #: one of its passes.
@@ -2595,19 +2634,46 @@ LONG_LINE_PASSES: tuple[tuple[str, str], ...] = (
 #: baseline (`roadmap.md`, "Four workers is the optimization baseline;
 #: twenty-four is the guard"), as the phase's spec names them.
 LONG_LINE_JOBS: tuple[int, ...] = (1, 4)
-#: The longest line every leg states it reads, `--max-line-bytes` and
-#: `pgdump.max_line_bytes`: I71's bound, `MaxAllocSize - 1`, terminator
-#: included (`docs/design/postgres-invariants.md`). Stated so that no line of
-#: the figure's is refused by today's limit, and so that a leg reads as a pass
-#: reads once the bound is the constant (`roadmap-P33-line-bound.md`, "The
-#: bound is a constant, and the knobs go").
-LONG_LINE_BOUND = 0x3FFF_FFFE
 #: The figure's container. **Headroom, not a contract**: no held line is
 #: charged on today's code, so nothing here is held to the allowance it states;
 #: what will be is a held line's draw on the ledger
 #: (`roadmap-P33-line-bound.md`, "A held line is charged, and admitted in file
 #: order"), and a re-take under it is where a gate twin belongs.
 LONG_LINE_MEMORY = "16g"
+#: What the spec charges a held line of a pass decoding whole values, a
+#: query's or a strict parse's, in bytes a line byte
+#: (`roadmap-P33-line-bound.md`, "What a held line costs"): the largest charge
+#: any leg's line will draw.
+LONG_LINE_WHOLE_VALUE_CHARGE = 2
+
+
+def long_line_jobs(length: str) -> tuple[int, ...]:
+    """The counts a line of `length` is read at: `LONG_LINE_JOBS`, or one
+    alone for a length in `LONG_LINE_SERIAL_ONLY`."""
+    return (1,) if length in LONG_LINE_SERIAL_ONLY else LONG_LINE_JOBS
+
+
+def long_line_allowance() -> int:
+    """The `--memory` and `pgdump.memory` every `long-line-resident` leg
+    states: `PARALLEL_BUDGET`'s readers, plus the widest leg's lines held at
+    once at the whole-value charge — a line a worker, at every length and
+    count the figure reads.
+
+    **Sized off the cluster so that it never binds on the lines.** Inert on
+    today's code, which charges no held line. Once the ledger charges one, an
+    allowance with nothing for the lines — `PARALLEL_BUDGET`'s alone — leaves
+    four 512 MiB lines at twice their bytes past what its carve leaves, and the
+    re-take would price waiting and parking, which the floor's tests and the
+    acceptance's hand run own, rather than the charge factors. **One allowance
+    for every leg, stated on both takes**, so the two differ by the code alone,
+    and two lengths of one pass differ by the line alone."""
+    held = max(
+        jobs * LONG_LINE_WHOLE_VALUE_CHARGE * line
+        for length, line in LONG_LINE_LENGTHS
+        for jobs in long_line_jobs(length)
+    )
+    return stated_allowance(PARALLEL_BUDGET + held)
+
 
 #: This machine's hardware threads and physical cores, which the figure's
 #: rows are named by and `gzpass_topology_problem` holds the machine to
@@ -3237,8 +3303,10 @@ PROVIDER_BUILDER = (
 #: **The filter is what keeps the count from being answered**, as
 #: `PARALLEL_SCAN_SQL`'s is: unfiltered, the plan node's exact NULL count
 #: answers `count(v)` with no row read (`docs/design/decisions.md`, "D89"),
-#: and every row holds an `id`. A count rather than a length, DataFusion
-#: measuring no `Binary` value.
+#: and every row holds an `id`. It holds only while `id` is nullable, a
+#: `NOT NULL` column letting the filter be simplified away
+#: (`test_generate_long_lines.py`'s `test_the_id_is_nullable_and_every_row_holds_one`).
+#: A count rather than a length, DataFusion measuring no `Binary` value.
 LONG_LINE_SQL = (
     f"SELECT count(v) FROM {DFCLI_CATALOG}.{long_lines.TABLE} WHERE id IS NOT NULL"
 )
@@ -3262,7 +3330,7 @@ def long_line_invocation(partitions: int, dump: str) -> tuple[list[str], list[st
     env = [f"{DFCLI_PARTITIONS}={partitions}"]
     argv = [
         "--source", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q",
-        "-c", f"SET pgdump.memory = {stated_allowance(PARALLEL_BUDGET)}",
+        "-c", f"SET pgdump.memory = {long_line_allowance()}",
         "-c", f"SET pgdump.max_line_bytes = {LONG_LINE_BOUND}",
         "-c", LONG_LINE_SQL,
     ]
@@ -4499,8 +4567,7 @@ def _script(command: str) -> str:
         )
     if command.startswith(LONG_RSS_FAMILY):
         # `long-line-resident`: one pass at one count under the wrapper, every
-        # leg stating the figure's line limit and `PARALLEL_BUDGET`'s
-        # allowance. The query's builder is outside the timer and the wrapper,
+        # leg stating the figure's line limit and allowance. The query's builder is outside the timer and the wrapper,
         # a process of its own, so neither reads its peak.
         name, _, jobs = command.removeprefix(LONG_RSS_FAMILY).rpartition("-")
         if name not in dict(LONG_LINE_PASSES) or not jobs.isdigit():
@@ -4516,7 +4583,7 @@ def _script(command: str) -> str:
         strict = " --postgres-invalid-values strict" if name == "strict" else ""
         return (
             f"time {PEAK_RSS} /pgdt parse --source /dump.sql --cache /tmp/x.pgdt "
-            f"--jobs {jobs} --memory {stated_allowance(PARALLEL_BUDGET)} "
+            f"--jobs {jobs} --memory {long_line_allowance()} "
             f"--max-line-bytes {LONG_LINE_BOUND} {GATHER_STATISTICS}{strict} >/dev/null"
         )
     if command.startswith(JOBS_AXIS):
@@ -12534,43 +12601,78 @@ def run_dynamic_filter_topk(session: Session) -> str:
 def long_line_answer(name: str) -> int:
     """What `LONG_LINE_SQL` answers over the input `name`: every row of its
     table (`generate_long_lines.row_count`)."""
-    if name not in {long_line_input(k, m) for k in long_lines.KINDS for m in LONG_LINE_MIB}:
+    if name not in {
+        long_line_input(k, length) for k in long_lines.KINDS for length, _ in LONG_LINE_LENGTHS
+    }:
         raise ValueError(f"{name!r} is no input of long-line-resident")
     return long_lines.row_count(LONG_LINE_CLUSTER)
 
 
+def long_line_groups(kind: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """`kind`'s two sweeps, as the lengths' tokens: every length read at both
+    counts, which the secant and its residuals subtract; and the lengths read
+    at one worker alone beside the secant's longer end, their anchor.
+
+    **Two sweeps because the bound's cluster outgrows the tmpfs room beside
+    the ladder** (`warm_bound`): an anchor of the secant's longer end, measured
+    in each, lets the bound's residual subtract within its own sweep and take
+    from the other only the secant, a per-byte rate, never a reading
+    (`Subtraction`)."""
+    if kind not in long_lines.KINDS:
+        raise ValueError(f"{kind!r} is no value kind of long-line-resident")
+    both = tuple(length for length, _ in LONG_LINE_LENGTHS if length not in LONG_LINE_SERIAL_ONLY)
+    return both, (LONG_LINE_SECANT[1], *LONG_LINE_SERIAL_ONLY)
+
+
 def _long_line_specs() -> list[RunSpec]:
-    return [
-        RunSpec(
-            "dfcli" if name == "query" else "pgdt",
-            long_line_input(kind, mib),
-            f"{LONG_RSS_FAMILY}{name}-{jobs}",
-            "warm-parallel",
-            f"{kind}, {mib} MiB lines, {label}, {jobs}{'p' if name == 'query' else 'j'}",
-        )
-        for kind in long_lines.KINDS
-        for mib in LONG_LINE_MIB
-        for name, label in LONG_LINE_PASSES
-        for jobs in LONG_LINE_JOBS
-    ]
+    """Every leg, by kind then sweep: each length of a kind's first sweep at
+    each of its counts, then its second sweep's — the serial-only lengths and
+    their anchor, at one worker, the anchor's legs naming the sweep
+    (`in_sweep`)."""
+    figure = "long-line-resident"
+    specs = []
+    for k, kind in enumerate(long_lines.KINDS):
+        for gi, group in enumerate(long_line_groups(kind)):
+            for length in group:
+                anchor = gi == 1 and length not in LONG_LINE_SERIAL_ONLY
+                jobs_read = (1,) if anchor else long_line_jobs(length)
+                where = (
+                    f"{length} MiB lines" if length.isdigit() else "lines at the bound"
+                ) + (" beside the bound" if anchor else "")
+                for name, label in LONG_LINE_PASSES:
+                    for jobs in jobs_read:
+                        spec = RunSpec(
+                            "dfcli" if name == "query" else "pgdt",
+                            long_line_input(kind, length),
+                            f"{LONG_RSS_FAMILY}{name}-{jobs}",
+                            "warm-parallel",
+                            f"{kind}, {where}, {label}, {jobs}{'p' if name == 'query' else 'j'}",
+                        )
+                        specs.append(in_sweep(figure, spec, 2 * k + gi) if anchor else spec)
+    return specs
 
 
-def long_line_secant(by_mib: Mapping[int, Sequence[float]]) -> tuple[float, float]:
-    """`(per_byte, residual)` over one pass's readings in KiB by line length:
-    the median resident each line byte added between the two longest lengths,
-    and what that secant misses the shortest length's median by, measured less
-    predicted, in KiB.
+def long_line_secant(lo: Sequence[float], hi: Sequence[float], span: int) -> float:
+    """The resident each line byte added between two lengths `span` bytes
+    apart, from one pass's readings in KiB at each: their medians' difference
+    over the span, in bytes a line byte. **A secant over two lengths, not a
+    fit**, read at every other length by `long_line_residual`."""
+    return (median(hi) - median(lo)) * 1024 / span
 
-    **A secant over two lengths, not a fit**, and read at the third, which is
-    inside its data and where the mechanism is simplest
-    (`.claude/skills/evidence/SKILL.md`, rule 2): a residual larger than a
+
+def long_line_residual(
+    per_byte: float, anchor: Sequence[float], at: Sequence[float], span: int
+) -> float:
+    """What a secant of `per_byte` misses a length's median by, measured less
+    predicted, in KiB: the prediction is `anchor`'s median, in the same sweep,
+    plus the secant over the `span` bytes from the anchor's length to this
+    one's, negative below it.
+
+    **Read inside the data, where the mechanism is simplest, and past it**
+    (`.claude/skills/evidence/SKILL.md`, rule 2): a residual larger than the
     shortest line says resident is not linear in the line there, and no factor
     describes it."""
-    short, mid, long = LONG_LINE_MIB
-    lo, hi = median(by_mib[mid]), median(by_mib[long])
-    per_byte = (hi - lo) * 1024 / ((long - mid) * MIB)
-    predicted = lo - per_byte * (mid - short) * MIB / 1024
-    return per_byte, median(by_mib[short]) - predicted
+    return median(at) - (median(anchor) + per_byte * span / 1024)
 
 
 def run_long_line_resident(session: Session) -> str:
@@ -12593,9 +12695,16 @@ def run_long_line_resident(session: Session) -> str:
     - a one-worker default parse whose secant is under one, a line being held
       whole before its row is emitted (`docs/design/decisions.md`, "D23") — an
       instrument not seeing the line, before it is a finding;
-    - a one-worker or one-partition cell whose residual at the shortest length
-      is larger than that line (`long_line_secant`): resident is then not a
-      factor times the line, and no charge factor is read off it;
+    - a one-worker or one-partition cell whose residual at 32 MiB is larger
+      than that line: resident is then not a factor times the line, and no
+      charge factor is read off it;
+    - a residual at 288 MiB differing from the 32 MiB one by more than a
+      32 MiB line, at either count: past a chunk the peak then follows the
+      owner's doubling rather than the line, and a factor read off the
+      power-of-two ladder is a factor of the growth at one phase of it;
+    - a residual at the bound larger than a 32 MiB line: the ladder's secant
+      does not reach the bound, and what one reader holds there, the floor's
+      question, is that row's reading, not a factor times the line;
     - a four-worker secant past four times its one-worker one, more than one
       held line a worker. Between one and four times, the ratio is how many
       lines were held at once, which the leader's cut decides and nothing here
@@ -12613,11 +12722,15 @@ def run_long_line_resident(session: Session) -> str:
     session.sweep(figure, to_sweep, session.cfg.reps(3))
 
     problems = []
-    readings: dict[tuple[str, int, str, int], list[float]] = {}
+    # Keyed by kind, length, pass, count, and whether it is the anchor
+    # measured beside the bound.
+    readings: dict[tuple[str, str, str, int, bool], list[float]] = {}
     for spec in specs:
         name, _, jobs = spec.command.removeprefix(LONG_RSS_FAMILY).rpartition("-")
-        kind, mib = spec.input.split("_")[1], int(spec.input.rpartition("_")[2])
-        readings[(kind, mib, name, int(jobs))] = session.get_rss(figure, spec)
+        _, kind, length = spec.input.split("_")
+        readings[(kind, length, name, int(jobs), spec.sweep is not None)] = session.get_rss(
+            figure, spec
+        )
         report = session.reported.get(spec.key(figure), {})
         if name == "query":
             want = str(long_line_answer(spec.input))
@@ -12634,51 +12747,89 @@ def run_long_line_resident(session: Session) -> str:
     if problems:
         raise RuntimeError(f"{figure} cannot read its legs: " + "; ".join(problems))
 
+    def row_name(length: str) -> str:
+        return f"{length} MiB" if length.isdigit() else f"the bound, {LONG_LINE_BOUND:,} B"
+
+    lo, hi = LONG_LINE_SECANT
     columns = [(name, label, jobs) for name, label in LONG_LINE_PASSES for jobs in LONG_LINE_JOBS]
     headers = [
         "Lines",
         *(f"{label}, {jobs}{'p' if name == 'query' else 'j'}" for name, label, jobs in columns),
     ]
-    rows = [
-        [f"{kind}, {mib} MiB"]
-        + [fmt_mib_median_spread(readings[(kind, mib, name, jobs)]) for name, _, jobs in columns]
-        for kind in long_lines.KINDS
-        for mib in LONG_LINE_MIB
-    ]
+
+    def cell(key: tuple[str, str, str, int, bool]) -> str:
+        return fmt_mib_median_spread(readings[key]) if key in readings else "—"
+
+    rows = []
     secants = []
     for kind in long_lines.KINDS:
+        both, serial = long_line_groups(kind)
+        for length in both:
+            rows.append(
+                [f"{kind}, {row_name(length)}"]
+                + [cell((kind, length, name, jobs, False)) for name, _, jobs in columns]
+            )
+        for length in serial:
+            anchor = length not in LONG_LINE_SERIAL_ONLY
+            rows.append(
+                [f"{kind}, {row_name(length)}" + (", beside the bound" if anchor else "")]
+                + [cell((kind, length, name, jobs, anchor)) for name, _, jobs in columns]
+            )
         cells = [kind]
         for name, _, jobs in columns:
-            per_byte, residual = long_line_secant(
-                {mib: readings[(kind, mib, name, jobs)] for mib in LONG_LINE_MIB}
+            r = {length: readings.get((kind, length, name, jobs, False)) for length in both}
+            per_byte = long_line_secant(
+                r[lo], r[hi], long_line_bytes(hi) - long_line_bytes(lo)
             )
-            cells.append(f"**×{per_byte:.2f}** · {fmt_rss_delta(residual)}")
+            parts = [f"**×{per_byte:.2f}**"] + [
+                f"{length}: "
+                + fmt_rss_delta(
+                    long_line_residual(
+                        per_byte, r[lo], r[length], long_line_bytes(length) - long_line_bytes(lo)
+                    )
+                )
+                for length in both
+                if length not in LONG_LINE_SECANT
+            ]
+            for length in serial:
+                at = readings.get((kind, length, name, jobs, False))
+                if length in LONG_LINE_SERIAL_ONLY and at is not None:
+                    anchor = readings[(kind, hi, name, jobs, True)]
+                    span = long_line_bytes(length) - long_line_bytes(hi)
+                    parts.append(
+                        f"{length}: " + fmt_rss_delta(long_line_residual(per_byte, anchor, at, span))
+                    )
+            cells.append(" · ".join(parts))
         secants.append(cells)
 
-    short, mid, long = LONG_LINE_MIB
-    inputs = [long_line_input(kind, mib) for kind in long_lines.KINDS for mib in LONG_LINE_MIB]
+    inputs = [
+        long_line_input(kind, length) for kind in long_lines.KINDS for length, _ in LONG_LINE_LENGTHS
+    ]
     sizes = ", ".join(
-        f"`{name}` "
-        + _fmt_bytes(file_size(session.cfg, session.input_path(name, "warm-parallel"), name))
-        for name in inputs
+        f"`{name}` " + _fmt_bytes(session.input_size(name, "warm-parallel")) for name in inputs
     )
     notes = (
-        "\n\nEach cell is peak resident set. Every input is one table of "
+        "\n\nEach cell is peak resident set; a length at the bound is read at one worker or "
+        "partition alone. Every input is one table of "
         f"{long_lines.SHORT_ROWS} short rows, a cluster of {LONG_LINE_CLUSTER} consecutive rows "
         "each a line of the length its row names, terminator included, and "
         f"{long_lines.SHORT_ROWS} short rows (`generate_long_lines.py`): `text` decodes to "
         "itself, `escaped` to seven bytes in eight, `bytea` to half. Every leg states "
-        f"`--memory {stated_allowance(PARALLEL_BUDGET)}`, `parallel-peak-rss`'s allowance, and "
-        f"I71's bound as its line limit, `{LONG_LINE_BOUND}`, in a {LONG_LINE_MEMORY} container — "
+        f"`--memory {long_line_allowance()}`, `parallel-peak-rss`'s allowance and four "
+        f"lines held at twice their {hi} MiB, and I71's bound as its line limit, "
+        f"`{LONG_LINE_BOUND}`, in a {LONG_LINE_MEMORY} container — "
         "an apparatus departure from the register's 512 MB, which one held line outgrows. A "
         f"parse states `{GATHER_STATISTICS}`, and the strict one "
         "`--postgres-invalid-values strict` beside it. The query is `pgdt sql`'s "
         f"`{LONG_LINE_SQL}` at the column's count of partitions, over a cache an untimed "
-        "`parse` wrote in the same container, its answer held to the input's rows.\n\n"
+        "`parse` wrote in the same container, its answer held to the input's rows. Each kind "
+        f"is two sweeps: the lengths read at both counts, and the bound beside the {hi} MiB "
+        "input again, its row marked so.\n\n"
         f"Inputs: {sizes}.\n\n"
-        f"**Each pass's secant**: the resident a line byte added between the {mid} MiB and "
-        f"{long} MiB rows, and what it misses the {short} MiB row's median by, measured less "
-        "predicted. At four workers or partitions it sums every line held at once.\n\n"
+        f"**Each pass's secant**: the resident a line byte added between the {lo} MiB and "
+        f"{hi} MiB rows, then what it misses each other length's median by, measured less "
+        f"predicted — the bound's from the {hi} MiB row of its own sweep. At four workers or "
+        "partitions it sums every line held at once.\n\n"
         + md_table(["Kind", *headers[1:]], secants)
         + "\n\nPer-rep readings (peak RSS):\n"
         + "\n".join(
@@ -13485,22 +13636,39 @@ UNTAKEN: list[Figure] = [
             "scripts/generate_long_lines.py",
         ),
         warm_inputs=tuple(
-            long_line_input(kind, mib) for kind in long_lines.KINDS for mib in LONG_LINE_MIB
+            long_line_input(kind, length)
+            for kind in long_lines.KINDS
+            for length, _ in LONG_LINE_LENGTHS
         ),
-        # A kind's lengths share a sweep, its secant subtracting one from
-        # another (`long_line_secant`); a kind a group keeps the tmpfs to one
-        # kind's cluster at a time.
+        # A kind's two sweeps (`long_line_groups`), so the tmpfs holds one
+        # kind's lengths at a time, and the bound's cluster beside the
+        # secant's longer end alone.
         warm_groups=tuple(
-            tuple(long_line_input(kind, mib) for mib in LONG_LINE_MIB) for kind in long_lines.KINDS
+            tuple(long_line_input(kind, length) for length in group)
+            for kind in long_lines.KINDS
+            for group in long_line_groups(kind)
         ),
+        # The secant, each other length's residual against its shorter end,
+        # and the bound's against its longer end, measured beside it.
         subtracts=tuple(
             Subtraction(
                 "long-line-resident",
                 (long_line_input(kind, a), long_line_input(kind, b)),
-                "a pass's secant between two line lengths, and its residual at the shortest",
+                what,
             )
             for kind in long_lines.KINDS
-            for a, b in zip(LONG_LINE_MIB, LONG_LINE_MIB[1:])
+            for a, b, what in (
+                (*LONG_LINE_SECANT, "a pass's secant between two line lengths"),
+                *(
+                    (LONG_LINE_SECANT[0], length, "a pass's residual against its secant")
+                    for length in long_line_groups(kind)[0]
+                    if length not in LONG_LINE_SECANT
+                ),
+                *(
+                    (LONG_LINE_SECANT[1], length, "a pass's residual at the bound, in its sweep")
+                    for length in LONG_LINE_SERIAL_ONLY
+                ),
+            )
         ),
         memory=LONG_LINE_MEMORY,
         run=run_long_line_resident,
