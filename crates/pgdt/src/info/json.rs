@@ -10,6 +10,7 @@ use pgdt_model::timescaledb::TimescaleDb;
 use pgdt_model::{Diagnostic, DumpIndex};
 
 use super::labels::{arrow_type_label, block_resolutions, block_unchecked, resolution_token};
+use super::logical::databases;
 
 /// `--json`'s shape: the whole cache file — the [`DumpIndex`] and the
 /// [`CacheEnvelope`] around it — flattened to one object, plus what the file
@@ -40,15 +41,11 @@ struct IndexJson<'a> {
     compression: Option<CompressionShape>,
     diagnostics: &'a [Diagnostic],
     resolution: Vec<BlockResolutionJson<'a>>,
-    /// Per TimescaleDB database the DDL declares, what its catalog
-    /// concludes — a model conclusion the index has no field for, its rows
-    /// being the catalog blocks' `recorded_rows`.
-    ///
-    /// deficiency: KD162 — a TimescaleDB database only its catalog blocks
-    /// name (TS2) is not here, though the text listing (`logical.rs`'s
-    /// `databases`) and the findings show it: a plain dump's segment ahead
-    /// of a `--create` dump's `\connect`, which the DDL's databases drop, or
-    /// a cache holding no DDL.
+    /// Per TimescaleDB database, what its catalog concludes — a model
+    /// conclusion the index has no field for, its rows being the catalog
+    /// blocks' `recorded_rows` — over the databases the text listing walks
+    /// (`logical.rs`'s `databases`), so one only its catalog blocks name
+    /// (TS2) is here too.
     timescaledb: Vec<TimescaleJson<'a>>,
 }
 
@@ -117,10 +114,9 @@ pub(super) fn print_index_json(
             unchecked: block_unchecked(index, database, block),
         })
         .collect();
-    let databases = index.metadata.iter().flat_map(|metadata| &metadata.databases);
-    let timescaledb = databases
-        .filter_map(|db| {
-            let database = db.name.as_deref();
+    let timescaledb = databases(index)
+        .into_iter()
+        .filter_map(|database| {
             TimescaleDb::of(index, database).map(|catalog| TimescaleJson { database, catalog })
         })
         .collect();

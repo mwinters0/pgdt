@@ -186,6 +186,31 @@ fn the_json_export_states_a_timescaledb_catalog() {
     assert!(metrics["chunks"].as_array().is_some_and(|c| !c.is_empty()));
 }
 
+/// **`info --json` exports every TimescaleDB database the listing shows**,
+/// one only its catalog blocks name (TS2) included: here a plain dump's
+/// segment ahead of a `--create` dump's `\connect`, which the DDL's
+/// databases drop.
+#[test]
+fn the_json_export_states_a_catalog_only_its_blocks_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("dump.sql");
+    let mut bytes = std::fs::read(timescaledb_fixture(18, "tables")).unwrap();
+    bytes.extend(std::fs::read(common::fixture(18, "edge_cases", "create")).unwrap());
+    std::fs::write(&dump, bytes).unwrap();
+    let dump = dump.to_str().unwrap();
+    common::run_ok(&["parse", "--source", dump, "--statistics-level", "metadata"]);
+    let listing = common::run_ok(&["info", "--source", dump]);
+    assert!(listing.contains("TimescaleDB in database "), "{listing}");
+    let info = common::run_ok(&["info", "--source", dump, "--json"]);
+    let json: serde_json::Value = serde_json::from_str(&info).expect("--json emits JSON");
+    let [db] = json["timescaledb"].as_array().expect("one TimescaleDB database").as_slice() else {
+        panic!("{}", json["timescaledb"])
+    };
+    assert_eq!(db["database"], serde_json::Value::Null);
+    assert_eq!(db["version"]["version"], "2.31.0");
+    assert_eq!(db["resolution"]["state"], "resolved");
+}
+
 /// **A hypertable reaching a compressed chunk refuses in each front end**:
 /// `query` naming the chunk, under either mode for the chunk read by its own
 /// name, and `sql` leaving each out of its catalog; read alone, the

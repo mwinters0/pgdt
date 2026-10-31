@@ -19,8 +19,9 @@ use pgdt_model::{CopyBlock, DatabaseMetadata, DumpIndex};
 use super::labels::database_label;
 
 /// The databases the cache knows, in the order the DDL states them and then
-/// any its catalog blocks alone name (TS2), each once.
-fn databases(index: &DumpIndex) -> Vec<Option<&str>> {
+/// any its catalog blocks alone name (TS2), each once — the listing's and
+/// `--json`'s.
+pub(super) fn databases(index: &DumpIndex) -> Vec<Option<&str>> {
     let declared = index.metadata.iter().flat_map(|m| &m.databases).map(|db| db.name.as_deref());
     let catalogued = index
         .blocks_with_database()

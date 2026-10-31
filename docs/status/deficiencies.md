@@ -600,8 +600,3 @@ than reading as a phase nobody has sliced.
   the file's end, even where the chunk's block follows every catalog block
   its verdict reads. **(c) unowned**; promoted by such a query met in use.
   Detail: `crates/pgdt-query/src/dump/settle.rs`.
-
-- **KD162** — `pgdt info --json`'s `timescaledb` leaves out a TimescaleDB
-  database only its catalog blocks name, which the text listing and the
-  findings show. **(b) owned by `M268`**, which names it. Detail:
-  `crates/pgdt/src/info/json.rs`.
