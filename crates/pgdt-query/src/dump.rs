@@ -5,6 +5,7 @@
 //! (`docs/design/decisions.md`, "D90") — or a cold query's one table, mapped
 //! only until it is settled ([`Table::settle`]).
 
+use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 
@@ -16,7 +17,7 @@ use pgdt_io::ByteRangeSource;
 use pgdt_mapping::MapRun;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata, TableName};
 
-use crate::options::QueryOptions;
+use crate::options::{Inheritance, QueryOptions};
 use crate::predicate::{ComparisonNote, column_divergences};
 use crate::stream::{TablePartitions, table_schema};
 use crate::summary::{TableSummary, table_summary};
@@ -24,7 +25,7 @@ use crate::summary::{TableSummary, table_summary};
 mod descendants;
 mod settle;
 
-use self::descendants::{TableRead, ThroughRoot, listed_tables, table_read};
+use self::descendants::{Refusals, TableRead, listed_tables, table_read};
 
 /// A dump and **a map of the whole of it**, complete by construction: built
 /// from an open whose cache reaches the file's end ([`Dump::opened`]), or
@@ -264,7 +265,11 @@ impl fmt::Display for TableSelector {
 /// **It reads its descendants**: its rows are its own and every table's that
 /// inherits from it or is its partition, at any depth, each projected to its
 /// columns, as `SELECT … FROM <table>` reads them on the server
-/// (`docs/design/decisions.md`, "D131").
+/// (`docs/design/decisions.md`, "D131") — or its own alone, as `SELECT …
+/// FROM ONLY <table>` does, where a query's
+/// [`QueryOptions::inheritance`] says so. It holds every block either mode
+/// reads, so one table is read under both (`docs/design/decisions.md`,
+/// "D132").
 ///
 /// **It owns what it plans over**: the dump's source, watch and DDL shared by
 /// `Arc`, and its blocks — every block of the table and of its descendants
@@ -281,8 +286,8 @@ pub struct Table {
     metadata: Option<Arc<DumpMetadata>>,
     name: TableName,
     blocks: Vec<CopyBlock>,
-    /// Why every read of it refuses, where one does.
-    refused: Option<ThroughRoot>,
+    /// Why a read of it refuses under each mode, where one does.
+    refused: Refusals,
 }
 
 impl fmt::Debug for Table {
@@ -301,7 +306,7 @@ impl Table {
     }
 
     /// Every block a read of the table reads, its descendants' included, in
-    /// file order.
+    /// file order: what it holds, whichever mode a query reads it in.
     pub fn blocks(&self) -> &[CopyBlock] {
         &self.blocks
     }
@@ -318,22 +323,44 @@ impl Table {
     /// sets, a projected name no block carries, a typed query of a table the
     /// map holds at the metadata level ([`Error::TableAtMetadataLevel`]), a
     /// table whose rows are written through its partition root
-    /// ([`Error::PartitionThroughRoot`]) — but for the refuse mode's, which
+    /// ([`Error::PartitionThroughRoot`], [`Error::PartitionRootAlone`]) —
+    /// but for the refuse mode's, which
     /// only planning raises, and a projection naming a column twice, which
     /// only planning refuses: here the column comes back twice.
+    ///
+    /// **A table read alone that holds no block of its own** — a
+    /// partitioned table — reads no row, and keeps the schema a read with
+    /// its descendants settles, refusing as that read refuses
+    /// (`docs/design/decisions.md`, "D132").
     pub fn schema(&self, options: &QueryOptions) -> Result<ResolvedSchema> {
-        self.readable()?;
-        let database = self.name.database.as_deref();
-        let table = self.name.qualified_name();
-        table_schema(database, &table, &self.blocks, self.metadata.as_deref(), options)
+        let read = self.read(options)?;
+        self.schema_over(columns_from(&read, &self.blocks), options)
     }
 
-    /// The table's refusal, where every read of it refuses.
-    fn readable(&self) -> Result<()> {
-        match &self.refused {
-            Some(refused) => Err(refused.refusal(&self.name)),
-            None => Ok(()),
+    /// The schema a query of this table under `options` resolves, its
+    /// columns settled from `blocks`.
+    fn schema_over(&self, blocks: &[CopyBlock], options: &QueryOptions) -> Result<ResolvedSchema> {
+        let database = self.name.database.as_deref();
+        let table = self.name.qualified_name();
+        table_schema(database, &table, blocks, self.metadata.as_deref(), options)
+    }
+
+    /// **The blocks a query under `options` reads**: every one under
+    /// [`Inheritance::Descendants`], and under [`Inheritance::Only`] those
+    /// naming the table — or the table's refusal under that mode.
+    fn read(&self, options: &QueryOptions) -> Result<Cow<'_, [CopyBlock]>> {
+        let table = self.name.qualified_name();
+        let own = |block: &CopyBlock| block.header.qualified_name() == table;
+        let holds_own = self.blocks.iter().any(own);
+        if let Some(refused) = self.refused.of(&self.name, options.inheritance, holds_own) {
+            return Err(refused);
         }
+        Ok(match options.inheritance {
+            Inheritance::Only if !self.blocks.iter().all(own) => {
+                Cow::Owned(self.blocks.iter().filter(|block| own(block)).cloned().collect())
+            }
+            Inheritance::Descendants | Inheritance::Only => Cow::Borrowed(&self.blocks),
+        })
     }
 
     /// What the map's statistics say about the whole table, against the
@@ -342,10 +369,11 @@ impl Table {
     /// ([`QueryOptions::statistics_view`]), or that schema's refusal
     /// (`docs/design/decisions.md`, "D89").
     pub fn summary(&self, options: &QueryOptions) -> Result<TableSummary> {
-        let resolved = self.schema(options)?;
+        let read = self.read(options)?;
+        let resolved = self.schema_over(columns_from(&read, &self.blocks), options)?;
         let (database, metadata) = (self.name.database.as_deref(), self.metadata.as_deref());
         let (semantics, reading) = (options.semantics, options.statistics_view());
-        Ok(table_summary(database, &self.blocks, metadata, &resolved, semantics, reading))
+        Ok(table_summary(database, &read, metadata, &resolved, semantics, reading))
     }
 
     /// How each column's comparison in `options`' semantics diverges from
@@ -361,17 +389,34 @@ impl Table {
     /// plan refuses, before a byte is read, and a source the dump's watch
     /// cannot check while it is read (`docs/design/decisions.md`, "D21").
     pub fn plan(&self, read: ReadOptions, options: QueryOptions) -> Result<TablePartitions> {
-        self.readable()?;
-        TablePartitions::new(
+        let blocks = self.read(&options)?;
+        // A table read alone holding no block of its own reads nothing, under
+        // the schema its read with its descendants reports.
+        let schema = match blocks.is_empty() && !self.blocks.is_empty() {
+            true => Some(self.schema_over(&self.blocks, &options)?),
+            false => None,
+        };
+        let partitions = TablePartitions::new(
             Arc::clone(&self.source),
             Arc::clone(&self.watch),
             self.metadata.clone(),
             &self.name,
-            &self.blocks,
+            &blocks,
             read,
             options,
-        )
+        )?;
+        Ok(match schema {
+            Some(schema) => partitions.reporting(schema),
+            None => partitions,
+        })
     }
+}
+
+/// The blocks a table's columns are settled from, for a read of `read`
+/// among `all` it holds: `read`, or `all` where it reads none of them — a
+/// partitioned table read alone (`docs/design/decisions.md`, "D132").
+fn columns_from<'a>(read: &'a [CopyBlock], all: &'a [CopyBlock]) -> &'a [CopyBlock] {
+    if read.is_empty() { all } else { read }
 }
 
 #[cfg(test)]

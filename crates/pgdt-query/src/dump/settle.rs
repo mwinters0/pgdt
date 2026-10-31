@@ -50,6 +50,11 @@ impl Table {
     /// under [`SchemaMode::Strings`] holds none, and its plan under
     /// [`SchemaMode::Typed`] refuses as a complete map's does.
     ///
+    /// **It learns no [`Inheritance`](crate::Inheritance) mode**: a table any
+    /// descendant is declared for is settled with them, so the table it hands
+    /// back is read under either, as a complete map's is
+    /// (`docs/design/decisions.md`, "D132").
+    ///
     /// **`cancel` is the caller's ask that the pass stop**, polled as a
     /// mapping pass polls it (`docs/design/decisions.md`, "D26"): a pass it
     /// stops saves what it holds and answers [`Error::ScanCancelled`], the
@@ -181,7 +186,7 @@ impl ColdPass<'_> {
         let tables = listed_tables(&index);
         let Some(name) = select(&tables, selector)? else { return Ok(None) };
         let mut read = table_read(&index, name);
-        if schema_mode == SchemaMode::Typed && read.refused.is_none() {
+        if schema_mode == SchemaMode::Typed && read.refused.reads_either() {
             let database = name.database.as_deref();
             self.census(metadata.as_deref(), database, &mut read.blocks, source_extent).await?;
         }

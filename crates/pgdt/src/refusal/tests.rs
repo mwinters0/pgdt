@@ -151,6 +151,22 @@ fn each_refusal_names_the_flag_its_remedy_is() {
             &["`--schema-mode typed`"],
         ),
         (
+            pgdt_core::Error::PartitionThroughRoot {
+                table: "public.t_1".into(),
+                root: "public.t".into(),
+                header_offsets: vec![4096],
+                inheritance_only: true,
+            },
+            &["`--inheritance descendants`"],
+        ),
+        (
+            pgdt_core::Error::PartitionRootAlone {
+                table: "public.t".into(),
+                header_offsets: vec![4096, 8192],
+            },
+            &["`--inheritance descendants`"],
+        ),
+        (
             pgdt_core::Error::PredicateValueDecode {
                 column: "mood".into(),
                 op: "=",

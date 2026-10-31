@@ -191,7 +191,7 @@ pub struct Args {
     // here makes an embedder's do.
     #[clap(
         long = "source",
-        value_name = "[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]",
+        value_name = "[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:inheritance=MODE][:strict-identity=TERMS]",
         help = pgdump::SOURCE_HELP,
         value_parser(pgdump::DumpArg::parse)
     )]

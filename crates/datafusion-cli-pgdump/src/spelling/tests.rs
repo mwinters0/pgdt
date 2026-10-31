@@ -194,6 +194,34 @@ fn each_refusal_is_spelled_in_its_registration_s_grammar() {
             Some("`pgdt info --detail`"),
             Some("`pgdt info --detail`"),
         ),
+        (
+            lib(pgdt_core::Error::PartitionThroughRoot {
+                table: "public.t_1".into(),
+                root: "public.t".into(),
+                header_offsets: vec![4096],
+                inheritance_only: true,
+            }),
+            Some("`:inheritance=descendants`"),
+            Some("`'pgdump.inheritance' 'descendants'`"),
+        ),
+        (
+            lib(pgdt_core::Error::PartitionThroughRoot {
+                table: "public.t_1".into(),
+                root: "public.t".into(),
+                header_offsets: vec![4096],
+                inheritance_only: false,
+            }),
+            None,
+            None,
+        ),
+        (
+            lib(pgdt_core::Error::PartitionRootAlone {
+                table: "public.t".into(),
+                header_offsets: vec![4096],
+            }),
+            Some("`:inheritance=descendants`"),
+            Some("`'pgdump.inheritance' 'descendants'`"),
+        ),
         (lib(pgdt_core::Error::CacheDisabled { operation: "open" }), None, None),
     ];
     for (refused, source, statement) in cases {

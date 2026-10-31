@@ -46,7 +46,7 @@ impl ResumeToken {
 
 /// A [`ResumeToken`]'s stamp of the query that produced it: the table, the
 /// projection, the filter terms and their semantics, the schema mode, how a
-/// value its column cannot hold is read and — for a sub-stream of a
+/// value its column cannot hold is read, whose rows the table holds and — for a sub-stream of a
 /// partitioned replay — which partition of how many it came out of
 /// (`docs/design/decisions.md`, "D49"). The hasher's output is not stable
 /// across Rust releases: a token is valid only within its own process.
@@ -92,6 +92,7 @@ pub(super) fn query_fingerprint(
     }
     .hash(&mut hasher);
     options.unrepresentable.hash(&mut hasher);
+    options.inheritance.hash(&mut hasher);
     hasher.finish()
 }
 

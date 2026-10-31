@@ -94,6 +94,10 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
         Lib::TestNeedsDeclaredType { .. } => {
             ("`--source` without `:strings`", "`'pgdump.schema_mode' 'typed'`".to_string())
         }
+        Lib::PartitionThroughRoot { inheritance_only: true, .. }
+        | Lib::PartitionRootAlone { .. } => {
+            ("`:inheritance=descendants`", "`'pgdump.inheritance' 'descendants'`".to_string())
+        }
         // Only a statement names a table by a selector that can match two.
         Lib::AmbiguousTable { .. } => match grammar {
             Grammar::Source => return None,
@@ -133,7 +137,7 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
         | Lib::DuplicateProjectionColumn { .. }
         | Lib::ResumeQueryMismatch
         | Lib::TableColumnsDisagree { .. }
-        | Lib::PartitionThroughRoot { .. }
+        | Lib::PartitionThroughRoot { inheritance_only: false, .. }
         | Lib::MapIncomplete { .. }
         | Lib::FieldRefused { .. }
         | Lib::RowEndingRefused { .. }

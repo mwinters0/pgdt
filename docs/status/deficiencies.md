@@ -582,9 +582,9 @@ than reading as a phase nobody has sliced.
   `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.
 
 - **KD158** — a `--load-via-partition-root` dump's partitions, and every
-  partitioned table below its root, refuse under their own names, the rows
-  being written through the root and routed to a partition only by its
-  bounds, which nothing here evaluates; the root read with its descendants is
-  whole. **(c) unowned**; promoted by
+  partitioned table below its root, refuse under their own names, and the
+  root read alone refuses, the rows being written through the root and
+  routed to a partition only by its bounds, which nothing here evaluates; the
+  root read with its descendants is whole. **(c) unowned**; promoted by
   [`../design/roadmap.md`](../design/roadmap.md)'s Future item "Rows routed to
   their partitions". Detail: `crates/pgdt-query/src/dump/descendants.rs`.

@@ -17,6 +17,7 @@ use namespace_init::InitShutdown;
 use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::cache::StrictIdentity;
 use pgdt_model::{DiagnosticSink, Finding, PostgresInvalidValues, Severity};
+use pgdt_query::Inheritance;
 
 use crate::spelling::Grammar;
 
@@ -69,7 +70,9 @@ pub const SOURCE_HELP: &str = "Register a pg_dump file as catalogs, one per data
     reads such a column as its text, :postgres-invalid-values=ignore reads what PostgreSQL \
     refuses and the default, `default`, refuses too where it can — a float past its type's \
     range as the largest value of its sign and one below it as zero, a `varchar(n)` or \
-    `char(n)` value past its length as written, a NULL in a `NOT NULL` column as NULL — and \
+    `char(n)` value past its length as written, a NULL in a `NOT NULL` column as NULL — \
+    :inheritance=only reads each table's own rows alone, as `FROM ONLY` would, where the \
+    default, `descendants`, reads every table inheriting from it or partitioning it too, and \
     :strict-identity=TERMS states this dump's \
     strictness where --strict-identity would. Repeatable";
 
@@ -81,16 +84,17 @@ pub const STRICT_IDENTITY_HELP: &str = "Bind identity signals, as `--strict-iden
     is refused; `none` binds nothing, that check included, and reads it anyway, and `advisory` is the default, which a dump under a stricter \
     session states to keep that check";
 
-/// One `--source [NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]`.
+/// One `--source [NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:inheritance=MODE][:strict-identity=TERMS]`.
 ///
 /// **`NAME=` is recognised only where what precedes the first `=` could not
 /// be part of a path or a URL** — no `/`, `\`, `.` or `:` — so a URL's query
 /// string is never read as a name; a local path holding `=` is written
 /// `./a=b.sql`. **The suffixes are stripped from the right, in any order**,
 /// each at most once: TERMS hold `,` and never `:`, and MODE is a word of
-/// [`UnrepresentableMode`] for `:unrepresentable=` and of a
+/// [`UnrepresentableMode`] for `:unrepresentable=`, of a
 /// [`PostgresInvalidValues`] a query reads under for
-/// `:postgres-invalid-values=`, in any case, as the library reads them.
+/// `:postgres-invalid-values=` and of an [`Inheritance`] for
+/// `:inheritance=`, in any case, as the library reads them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DumpArg {
     pub name: Option<String>,
@@ -100,6 +104,8 @@ pub struct DumpArg {
     pub unrepresentable: UnrepresentableMode,
     /// How this dump reads a value PostgreSQL refuses for its column's type.
     pub postgres_invalid_values: PostgresInvalidValues,
+    /// Whose rows a table of this dump holds.
+    pub inheritance: Inheritance,
     /// This dump's strictness, where `--strict-identity` gives the default.
     pub strict_identity: Option<StrictIdentity>,
 }
@@ -109,11 +115,13 @@ impl DumpArg {
         const STRICT: &str = ":strict-identity=";
         const UNREPRESENTABLE: &str = ":unrepresentable=";
         const INVALID: &str = ":postgres-invalid-values=";
+        const INHERITANCE: &str = ":inheritance=";
         let mut arg = arg;
         let mut strings = false;
         let mut strict_identity = None;
         let mut unrepresentable = None;
         let mut invalid = None;
+        let mut inheritance = None;
         loop {
             if let Some(rest) = arg.strip_suffix(":strings") {
                 if std::mem::replace(&mut strings, true) {
@@ -139,6 +147,15 @@ impl DumpArg {
                     .map_err(|why| format!("--source {INVALID}{mode}: {why}"))?;
                 if invalid.replace(mode).is_some() {
                     return Err(format!("--source states {INVALID} twice"));
+                }
+                arg = rest;
+            } else if let Some((rest, mode)) =
+                arg.rsplit_once(INHERITANCE).filter(|(_, mode)| !mode.contains(':'))
+            {
+                let mode =
+                    mode.parse().map_err(|why| format!("--source {INHERITANCE}{mode}: {why}"))?;
+                if inheritance.replace(mode).is_some() {
+                    return Err(format!("--source states {INHERITANCE} twice"));
                 }
                 arg = rest;
             } else if let Some((rest, terms)) =
@@ -170,6 +187,7 @@ impl DumpArg {
             schema_mode,
             unrepresentable: unrepresentable.unwrap_or_default(),
             postgres_invalid_values: invalid.unwrap_or_default(),
+            inheritance: inheritance.unwrap_or_default(),
             strict_identity,
         })
     }
@@ -219,6 +237,7 @@ pub async fn register(
             schema_mode: dump.schema_mode,
             unrepresentable: dump.unrepresentable,
             postgres_invalid_values: dump.postgres_invalid_values,
+            inheritance: dump.inheritance,
             strict_identity: dump.strict_identity.unwrap_or(strict_identity),
             spelling: Some(Arc::new(Grammar::Source)),
             ..PgDumpOptions::default()
@@ -240,6 +259,7 @@ mod tests {
             schema_mode,
             unrepresentable: UnrepresentableMode::Null,
             postgres_invalid_values: PostgresInvalidValues::Default,
+            inheritance: Inheritance::Descendants,
             strict_identity: None,
         }
     }
@@ -388,6 +408,47 @@ mod tests {
             "koji.dump:postgres-invalid-values=strict",
             "koji.dump:postgres-invalid-values=",
             "koji.dump:postgres-invalid-values=ignore:postgres-invalid-values=default",
+        ] {
+            assert!(DumpArg::parse(refused).is_err(), "{refused}");
+        }
+    }
+
+    /// **`:inheritance=MODE` is whose rows this dump's tables hold**,
+    /// `descendants` unstated, beside the other suffixes in any order and at
+    /// most once.
+    #[test]
+    fn a_dump_states_whose_rows_its_tables_hold() {
+        let mode = |arg: &str| DumpArg::parse(arg).unwrap().inheritance;
+        assert_eq!(mode("koji.dump"), Inheritance::Descendants);
+        assert_eq!(mode("koji.dump:inheritance=descendants"), Inheritance::Descendants);
+        for arg in [
+            "k=koji.dump:inheritance=only:strings:unrepresentable=text",
+            "k=koji.dump:strings:inheritance=Only:unrepresentable=text",
+            "k=koji.dump:unrepresentable=text:strings:inheritance=ONLY",
+        ] {
+            let parsed = parsed(arg);
+            assert_eq!(
+                (
+                    parsed.name.as_deref(),
+                    parsed.source.as_str(),
+                    parsed.schema_mode,
+                    parsed.unrepresentable,
+                    parsed.inheritance
+                ),
+                (
+                    Some("k"),
+                    "koji.dump",
+                    SchemaMode::Strings,
+                    UnrepresentableMode::Text,
+                    Inheritance::Only
+                ),
+                "{arg}"
+            );
+        }
+        for refused in [
+            "koji.dump:inheritance=children",
+            "koji.dump:inheritance=",
+            "koji.dump:inheritance=only:inheritance=descendants",
         ] {
             assert!(DumpArg::parse(refused).is_err(), "{refused}");
         }

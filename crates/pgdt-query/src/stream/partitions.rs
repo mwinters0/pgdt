@@ -145,6 +145,15 @@ impl TablePartitions {
         })
     }
 
+    /// This plan, reporting `schema` — a plan over no block, of a table read
+    /// alone that holds none of its own, keeping the schema its read with its
+    /// descendants settles (`docs/design/decisions.md`, "D132").
+    pub(crate) fn reporting(mut self, schema: ResolvedSchema) -> Self {
+        debug_assert!(self.matches.is_empty(), "a plan reading blocks reports their schema");
+        Arc::make_mut(&mut self.plan).schema = schema;
+        self
+    }
+
     /// How many sub-streams the plan cut: at least one, and never more than
     /// the parallelism it was planned under allows.
     pub fn len(&self) -> usize {

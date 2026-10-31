@@ -40,7 +40,7 @@ Options:
       --object-store-profiling <OBJECT_STORE_PROFILING>
           Specify the default object_store_profiling mode, defaults to 'disabled'.
           [possible values: disabled, summary, trace] [default: Disabled]
-      --source <[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:strict-identity=TERMS]>
+      --source <[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:inheritance=MODE][:strict-identity=TERMS]>
           Register a pg_dump file as catalogs, one per database it holds, read through the cache
           `pgdt parse` leaves. A database the file names is a catalog of that name, unless NAME= is
           given; NAME= is required for a dump that names no database, and refused for one of
@@ -50,8 +50,10 @@ Options:
           text, :postgres-invalid-values=ignore reads what PostgreSQL refuses and the default,
           `default`, refuses too where it can — a float past its type's range as the largest value
           of its sign and one below it as zero, a `varchar(n)` or `char(n)` value past its length as
-          written, a NULL in a `NOT NULL` column as NULL — and :strict-identity=TERMS states this
-          dump's strictness where --strict-identity would. Repeatable
+          written, a NULL in a `NOT NULL` column as NULL — :inheritance=only reads each table's own
+          rows alone, as `FROM ONLY` would, where the default, `descendants`, reads every table
+          inheriting from it or partitioning it too, and :strict-identity=TERMS states this dump's
+          strictness where --strict-identity would. Repeatable
       --strict-identity[=<TERMS>]
           Bind identity signals, as `--strict-identity` does on `pgdt parse`, `query` and `info`,
           for every --source and STORED AS PGDUMP that states none of its own: `time` refuses a

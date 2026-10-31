@@ -47,9 +47,9 @@ pub(crate) struct TableOptions {
     schema: Option<String>,
     /// `pgdump.database`: its database, where the file holds several.
     database: Option<String>,
-    /// `pgdump.schema_mode`, `pgdump.unrepresentable` and
-    /// `pgdump.postgres_invalid_values`: the dump's modes, each its default
-    /// unstated.
+    /// `pgdump.schema_mode`, `pgdump.unrepresentable`,
+    /// `pgdump.postgres_invalid_values` and `pgdump.inheritance`: the dump's
+    /// modes, each its default unstated.
     open: PgDumpOptions,
     /// `pgdump.strict_identity`: which identity signals bind for this dump,
     /// in `pgdt --strict-identity`'s grammar. Unstated, the factory's.
@@ -95,6 +95,10 @@ impl ExtensionOptions for TableOptions {
                     Err(why) => return plan_err!("pgdump.postgres_invalid_values: {why}"),
                 }
             }
+            "inheritance" => match value.parse() {
+                Ok(mode) => self.open.inheritance = mode,
+                Err(why) => return plan_err!("pgdump.inheritance: {why}"),
+            },
             "strict_identity" => match value.parse() {
                 Ok(strict) => self.strict_identity = Some(strict),
                 Err(why) => return plan_err!("pgdump.strict_identity `{value}`: {why}"),
@@ -103,8 +107,8 @@ impl ExtensionOptions for TableOptions {
                 return plan_err!(
                     "`{key}` is not a PGDUMP option — the options are pgdump.table, \
                      pgdump.schema, pgdump.database, pgdump.schema_mode, \
-                     pgdump.unrepresentable, pgdump.postgres_invalid_values and \
-                     pgdump.strict_identity"
+                     pgdump.unrepresentable, pgdump.postgres_invalid_values, \
+                     pgdump.inheritance and pgdump.strict_identity"
                 );
             }
         }
@@ -141,6 +145,11 @@ impl ExtensionOptions for TableOptions {
                 "postgres_invalid_values",
                 Some(invalid.to_string()),
                 "`default`, a value PostgreSQL refuses for its column's type refused, or `ignore`, a float past its type's range read as the largest of its sign and one below it as zero, a `varchar(n)` or `char(n)` value past its length as written, and a NULL in a `NOT NULL` column as NULL.",
+            ),
+            entry(
+                "inheritance",
+                Some(self.open.inheritance.to_string()),
+                "`descendants`, a table's own rows and every table's inheriting from it or partitioning it, or `only`, its own alone.",
             ),
             entry(
                 "strict_identity",
@@ -265,11 +274,12 @@ pub fn register_table_factory(
 #[cfg(test)]
 mod tests {
     use pgdt_codec::{SchemaMode, UnrepresentableMode};
+    use pgdt_query::Inheritance;
 
     use super::*;
 
-    /// **`pgdump.unrepresentable`'s and `pgdump.postgres_invalid_values`'
-    /// help names every value `set` accepts**, each one set and read back
+    /// **`pgdump.unrepresentable`'s, `pgdump.postgres_invalid_values`' and
+    /// `pgdump.inheritance`'s help names every value `set` accepts**, each one set and read back
     /// before its name is looked for, so the help cannot drop a mode the
     /// option takes; another value is refused.
     #[test]
@@ -277,6 +287,7 @@ mod tests {
         for (key, modes) in [
             ("pgdump.unrepresentable", &["null", "text", "refuse"][..]),
             ("pgdump.postgres_invalid_values", &["default", "ignore"][..]),
+            ("pgdump.inheritance", &["descendants", "only"][..]),
         ] {
             for mode in modes {
                 let mut options = TableOptions::default();
@@ -299,13 +310,20 @@ mod tests {
         options.set("pgdump.schema_mode", "Strings").unwrap();
         options.set("pgdump.unrepresentable", "REFUSE").unwrap();
         options.set("pgdump.postgres_invalid_values", "Ignore").unwrap();
+        options.set("pgdump.inheritance", "ONLY").unwrap();
         assert_eq!(
             (
                 options.open.schema_mode,
                 options.open.unrepresentable,
-                options.open.postgres_invalid_values
+                options.open.postgres_invalid_values,
+                options.open.inheritance,
             ),
-            (SchemaMode::Strings, UnrepresentableMode::Refuse, PostgresInvalidValues::Ignore)
+            (
+                SchemaMode::Strings,
+                UnrepresentableMode::Refuse,
+                PostgresInvalidValues::Ignore,
+                Inheritance::Only
+            )
         );
         let why = PostgresInvalidValues::Strict.queryable().unwrap_err();
         for strict in ["strict", "Strict"] {

@@ -10,7 +10,7 @@ use pgdt_codec::{ResolvedColumn, SchemaMode, UnrepresentableMode};
 use pgdt_dump::cache::Held;
 use pgdt_io::Origin;
 use pgdt_model::{BlockStatistics, Finding, PostgresInvalidValues, Severity};
-use pgdt_query::{QueryOptions, ScanExtent, Table, TableSelector, render_field_into};
+use pgdt_query::{Inheritance, QueryOptions, ScanExtent, Table, TableSelector, render_field_into};
 use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
@@ -173,6 +173,18 @@ pub(crate) struct QueryArgs {
         )
     )]
     postgres_invalid_values: PostgresInvalidValues,
+    /// Whose rows a table holds: `descendants`, the default, reads its own
+    /// and every table's that inherits from it or is its partition, at any
+    /// depth, as `SELECT … FROM` does on the server; `only` reads its own
+    /// alone, as `SELECT … FROM ONLY` does, so a partitioned table reads
+    /// none.
+    #[arg(
+        long,
+        value_name = "MODE",
+        default_value_t,
+        value_parser = ModeParser::every(&Inheritance::ALL)
+    )]
+    inheritance: Inheritance,
     /// Bytes requested per read from the dump — the same knob `parse`
     /// carries, and with the same measured answer behind its default.
     #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
@@ -212,6 +224,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
         schema_mode,
         unrepresentable,
         postgres_invalid_values,
+        inheritance,
         chunk_size,
         max_line_bytes,
         statistics,
@@ -269,6 +282,7 @@ pub(crate) async fn run(args: QueryArgs) -> Result<()> {
         filter,
         projection: projection(column, no_columns),
         use_statistics: statistics == QueryStatistics::All,
+        inheritance,
         ..QueryOptions::default()
     };
     // What the request alone refuses, before the mapping pass reads a

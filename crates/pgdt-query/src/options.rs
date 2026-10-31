@@ -116,6 +116,10 @@ pub struct QueryOptions {
     /// as rows are read, so what it left unread is reported after the fact
     /// ([`crate::stream::TableStream::early_stops`]).
     pub use_statistics: bool,
+    /// Whose rows a read of a table reads: its own and every descendant's,
+    /// by default, as `SELECT … FROM` reads them on the server, or its own
+    /// alone, as `SELECT … FROM ONLY` does ([`Inheritance`]).
+    pub inheritance: Inheritance,
 }
 
 impl Default for QueryOptions {
@@ -131,6 +135,7 @@ impl Default for QueryOptions {
             postgres_invalid_values: PostgresInvalidValues::default(),
             parallelism: Parallelism::default(),
             use_statistics: true,
+            inheritance: Inheritance::default(),
         }
     }
 }
@@ -183,6 +188,53 @@ impl QueryOptions {
             ComparisonSemantics::Postgres => UnrepresentableTier::Format,
             ComparisonSemantics::DataFusion => UnrepresentableTier::Engine,
         }
+    }
+}
+
+/// **Whose rows a read of a table reads** — [`QueryOptions::inheritance`],
+/// named for `pg_inherits`, which records partitions and `INHERITS` children
+/// alike. A table read either way keeps its schema, the one a read with its
+/// descendants reports; what the mode moves is the rows, the statistics
+/// over them and what refuses (`docs/design/decisions.md`, "D131", "D132").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Inheritance {
+    /// Its own rows and every descendant's, at any depth, each projected to
+    /// its columns. The default, in every front end.
+    #[default]
+    Descendants,
+    /// Its own rows alone: the blocks naming it, none of its descendants'.
+    /// A partitioned table holding no block reads none, and a partition root
+    /// whose blocks hold its partitions' rows, written through it, refuses
+    /// ([`pgdt_core::Error::PartitionRootAlone`]).
+    Only,
+}
+
+impl Inheritance {
+    /// Every mode, in the order a front end lists them.
+    pub const ALL: [Self; 2] = [Self::Descendants, Self::Only];
+}
+
+/// A mode's word, which every front end writes and reads it by.
+impl std::fmt::Display for Inheritance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Descendants => "descendants",
+            Self::Only => "only",
+        })
+    }
+}
+
+/// A mode by its word ([`Display`](std::fmt::Display)'s), in any case.
+impl std::str::FromStr for Inheritance {
+    type Err = String;
+
+    fn from_str(text: &str) -> std::result::Result<Self, String> {
+        Self::ALL.into_iter().find(|mode| mode.to_string().eq_ignore_ascii_case(text)).ok_or_else(
+            || {
+                let words: Vec<String> = Self::ALL.iter().map(|mode| format!("`{mode}`")).collect();
+                format!("`{text}` is not one of {}", words.join(", "))
+            },
+        )
     }
 }
 

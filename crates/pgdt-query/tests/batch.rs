@@ -319,6 +319,11 @@ async fn a_resume_token_covers_the_whole_conjunction() {
     let arrow = plan(arrow).await.resume(token.clone(), 1);
     assert!(matches!(arrow, Err(pgdt_core::Error::ResumeQueryMismatch)));
 
+    // And whose rows the table holds, which can change the blocks read.
+    let alone = QueryOptions { inheritance: pgdt_query::Inheritance::Only, ..options.clone() };
+    let alone = plan(alone).await.resume(token.clone(), 1);
+    assert!(matches!(alone, Err(pgdt_core::Error::ResumeQueryMismatch)));
+
     let mut resumed = plan(options).await.resume(token, 1).unwrap();
     assert!(resumed.next().await.unwrap().is_ok(), "the same conjunction resumes");
 }

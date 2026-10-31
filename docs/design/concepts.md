@@ -208,8 +208,9 @@ format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
   provider trait io defines, so io names nothing of the cache (D114).
 - **pgdt-query** — `dump.rs`, `dump/descendants.rs`: the complete dump an
   embedder reads tables through, the tables it lists, a table named by a
-  selector, the blocks a read of it reads — its descendants' included — and
-  its schema, summary and plan; schema resolution, summaries and the replay
+  selector, the blocks a read of it reads — its descendants' included, or
+  its own alone where a query's mode says so — and its schema, summary and
+  plan; schema resolution, summaries and the replay
   are query's, so the handle offering them is too. A cold query's table is
   settled beside it.
 - **datafusion-pgdump** — `dump.rs`: a dump opened through its complete

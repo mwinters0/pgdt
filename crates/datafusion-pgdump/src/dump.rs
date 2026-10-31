@@ -8,7 +8,7 @@ use pgdt_codec::{SchemaMode, UnrepresentableMode};
 use pgdt_dump::cache::{CacheMode, Held, StrictIdentity};
 use pgdt_io::Origin;
 use pgdt_model::{Diagnostic, PostgresInvalidValues, TableName};
-use pgdt_query::Dump;
+use pgdt_query::{Dump, Inheritance};
 
 use crate::budget::{Hold, ScanBudget};
 use crate::error::{Error, MappingPass, Refusal, Speller, Spelling};
@@ -37,6 +37,13 @@ pub struct PgDumpOptions {
     /// says (`docs/design/decisions.md`, "D103"); `Strict`, a parse's
     /// mode, reads as the default does.
     pub postgres_invalid_values: PostgresInvalidValues,
+    /// Whose rows a table of this dump holds: its own and every descendant's,
+    /// by default, or its own alone
+    /// ([`QueryOptions::inheritance`](pgdt_query::QueryOptions::inheritance)).
+    /// A dump's, as its other modes are, so every table of it is listed or
+    /// refused by the mode its scans read in (`docs/design/decisions.md`,
+    /// "D132").
+    pub inheritance: Inheritance,
     /// Which identity signals bind, as `pgdt --strict-identity` states them:
     /// between runs, what the cache is checked against at open; during one,
     /// whether a file changing under a scan fails it, and so whether a source
@@ -82,6 +89,7 @@ pub struct PgDump {
     schema_mode: SchemaMode,
     unrepresentable: UnrepresentableMode,
     postgres_invalid_values: PostgresInvalidValues,
+    inheritance: Inheritance,
     /// The mapping pass that builds this dump's cache, which a refusal names.
     pass: MappingPass,
     /// The front end's spelling, which every refusal of this dump carries.
@@ -158,6 +166,7 @@ impl PgDump {
             schema_mode: options.schema_mode,
             unrepresentable: options.unrepresentable,
             postgres_invalid_values: options.postgres_invalid_values,
+            inheritance: options.inheritance,
             pass,
             speller,
             statistics_bytes,
@@ -216,6 +225,10 @@ impl PgDump {
 
     pub(crate) fn postgres_invalid_values(&self) -> PostgresInvalidValues {
         self.postgres_invalid_values
+    }
+
+    pub(crate) fn inheritance(&self) -> Inheritance {
+        self.inheritance
     }
 
     /// The mapping pass that builds this dump's cache, which a refusal names.

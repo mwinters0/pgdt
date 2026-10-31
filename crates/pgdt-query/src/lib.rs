@@ -15,7 +15,7 @@ mod stream;
 mod summary;
 
 pub use dump::{Dump, Table, TableSelector};
-pub use options::{QueryOptions, ScanExtent};
+pub use options::{Inheritance, QueryOptions, ScanExtent};
 pub use predicate::{ComparisonNote, Expr, Operand, Predicate, PredicateOp, Truth};
 pub use render::{decode_field, render_field, render_field_into};
 pub use stream::{
