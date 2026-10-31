@@ -63,7 +63,7 @@ verbatim, `None` meaning no clause (I37); a name in one spelling, both sides of 
 
 ### D133 TimescaleDB's catalog rows are recorded as text on their own blocks, on the leader's loop, at every level
 A `_timescaledb_catalog` block a conclusion reads keeps its rows as unescaped text on its `CopyBlock`, recorded by every
-pass at every statistics level and never handed to interior workers; what they conclude is derived per database on
+mapping pass at every statistics level, never by an interior worker; what they conclude is derived per database on
 read (`TimescaleDb::of`), never persisted. Detection is correctness, not presentation, so no level skips it; one owner
 per fact (D34) puts the rows on the block whose span carries the database; a recipe change then moves no cache byte.
 Rejected: a field on `DatabaseMetadata`, which is stated at a database's first block, before its catalog's blocks;

@@ -60,7 +60,7 @@ impl<'a> TableStream<'a> {
     /// block has been found, which for a table that never appears in the dump
     /// is forever — but on a stream over a plan's whole table
     /// ([`TablePartitions::in_file_order`](crate::stream::TablePartitions::in_file_order)),
-    /// which holds the plan's from the start.
+    /// which holds the plan's from the start where the plan reads a block.
     pub fn resolved_schema(&self) -> ResolvedSchema {
         self.resolved_schema.lock().unwrap().clone()
     }
@@ -87,8 +87,9 @@ impl<'a> TableStream<'a> {
     /// Facts about *this query's plan* rather than about a column or a
     /// predicate ([`PlanNoteKind`](super::note::PlanNoteKind)): the memory budget in force declining
     /// something or narrowing the batch span, the row groups statistics let
-    /// the replay skip, and each column's values read as NULL
-    /// ([`PlanNoteKind::ReadAsNull`](crate::stream::note::PlanNoteKind::ReadAsNull)). A fourth
+    /// the replay skip, each column's values read as NULL
+    /// ([`PlanNoteKind::ReadAsNull`](crate::stream::note::PlanNoteKind::ReadAsNull)),
+    /// and where a TimescaleDB read differs from the server's. A fourth
     /// channel beside `DumpIndex.diagnostics` (the model), the column records
     /// `ResolvedSchema::columns` holds (the codec) and
     /// [`Self::comparison_notes`] (query).
@@ -96,8 +97,8 @@ impl<'a> TableStream<'a> {
     /// **Settled before any block is read**, from the map and the source's own
     /// advice, and held from the start: a partition's and the whole table's
     /// are the plan's ([`TablePartitions::plan_notes`](crate::stream::TablePartitions::plan_notes)),
-    /// and a resume's the plan's pruning and read-as-NULL notes alone, a
-    /// serial stream noting no budget.
+    /// and a resume's the table's TimescaleDB notes and the plan's pruning
+    /// and read-as-NULL notes alone, a serial stream noting no budget.
     pub fn plan_notes(&self) -> Vec<PlanNote> {
         self.plan_notes.lock().unwrap().clone()
     }

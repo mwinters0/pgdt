@@ -47,10 +47,11 @@ Each flag set of the schemas a table is read with its descendants in
 the server's **answers** over it committed beside the dump, as
 `<flag-set>.answers.tsv` (`write_answers`; docs/design/decisions.md, "D130").
 `--answers-only` takes them again over the committed dumps, dumping nothing, so
-a dump and the answers beside it still come from one run.
+each answer is still its own dump's bytes restored by the server that dumped
+them; the oracles and the floor run as usual unless skipped.
 
 The `timescaledb` schema runs on its own servers, one `timescale/timescaledb-ha`
-pin per routine major (`TIMESCALEDB_PINS`), each dumped by that major's routine
+pin per release it is read at, on five of the routine majors (`TIMESCALEDB_PINS`), each dumped by that major's routine
 `pg_dump` over the host's loopback (docs/design/timescaledb-invariants.md).
 
 Requires `docker` (aliased to `nerdctl` in this environment) runnable via
@@ -1112,7 +1113,8 @@ def _run() -> int:
         action="store_true",
         help="dump nothing: restore each committed dump of the schemas a table "
         "is read with its descendants in and take its answers again, so the "
-        "dumps stay as they are",
+        "dumps stay as they are; the oracles and the floor still run unless "
+        "skipped",
     )
     parser.add_argument(
         "--skip-oracle",

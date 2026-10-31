@@ -1298,8 +1298,8 @@ which is what makes the difference worth minding at the moment one is found.
   writes each partition's rows through its root, and a restore routes each to
   the partition whose bound admits it, comparing the partition key under its
   operator classes and collations (I86). Evaluating bounds so would let a
-  partition read under its own name and the root under `ONLY`, which P38
-  refuses.
+  partition read under its own name, and a partitioned table below the root
+  read with its descendants, which P38 refuses.
 
 - **Caller-supplied type mapping.** Let a caller override the
   PostgreSQL-type→Arrow-type resolution: per column, per declared type, or

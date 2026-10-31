@@ -376,7 +376,7 @@ impl PlanNote {
 
     /// The read-buffer budget this note's [`PlanNote::message`] quotes, where
     /// it quotes one — every kind but [`PlanNoteKind::StatisticsPruned`],
-    /// [`PlanNoteKind::ReadAsNull`] and the three TimescaleDB kinds, whose
+    /// [`PlanNoteKind::ReadAsNull`] and the four TimescaleDB kinds, whose
     /// facts are about what the map holds,
     /// and [`PlanNoteKind::CompressedFirstPass`], about whether the source's
     /// index is complete, which name no budget at all.

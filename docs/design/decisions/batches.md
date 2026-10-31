@@ -48,7 +48,7 @@ pass stopping at the last descendant's block (one may hold none). Code: `dump/de
 ### D132 Whose rows a table holds is chosen per read and stated per dump; a cold pass learns no mode
 `Table` holds every block either mode reads and each mode's refusal, and `QueryOptions::inheritance` chooses at each
 read, so a cold pass settles a parent with its descendants whatever the mode. Read alone, a partitioned table reads none
-(I93), under the schema its read with them settles, or its root's blocks' where that refuses. The provider takes the
+(I93), under the columns of its descendants' blocks, or with none, of its root's blocks. The provider takes the
 mode per dump, as its other modes, its catalog listing a table by what its schema refuses at registration. Rejected: the
 pass learning the mode (a `Table` bound to one, unlike a complete map's); `SET pgdump.inheritance` (listed at
 registration; two registrations read both modes); the declared columns for an empty read (a generated column no block
@@ -69,14 +69,14 @@ A root's own rows, absent chunks and an unreadable catalog are properties of the
 dump's drain hear, and each is also a `Warning` `PlanNote` on a read it bears on, so `pgdt query`, which prints no
 file-level finding, says it where the answer differs from the server's; `ReadAsNull` is the precedent. One function
 counts each for both. Rejected: per read only (`pgdt info` silent); `pgdt query` printing the file's findings, every
-hypertable's, and none on a cold partial map; a note on a hypertable read alone under an unreadable catalog, its
+hypertable's, and none on a cold partial map; an unreadable catalog's note on a hypertable read alone, its
 answer its root's rows either way. Code: `dump/hypertables.rs` (`Verdict::notes`), `timescaledb/findings.rs`.
 Evidence: `tests/timescaledb.rs`.
 
 ### D136 What refuses a read is one finding of the file per root or hypertable, and no read's note
 A partition root its partitions' rows are written through, and a hypertable with compressed chunks the file holds, are
-each one `Warning` finding (D19), derived in the model by what the query layer's refusals read, so `pgdt info` and a
-dump's drain name the partitions and chunks a read refuses by name. No plan note: the read refuses, its error
+each one `Warning` finding (D19), derived in the model by what the query layer's refusals read, so `pgdt info --json`
+and a dump's drain name each partition and chunk a read refuses by name. No plan note: the read refuses, its error
 saying why, where D135's notes are for a read that succeeds unlike the server's. Rejected: a clause on each parent's
 line in `pgdt info` (no leaf named, and `info` reaching the query layer's rules); a finding per refusing table. Code:
 `span.rs` (`DumpIndex::through_roots`), `timescaledb/findings.rs` (`compressed_chunks`), `dump/descendants.rs`.

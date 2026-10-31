@@ -111,9 +111,10 @@ impl Dump {
     }
 
     /// Every table the dump holds rows for, each once, in the order its first
-    /// block appears: each a block holds rows for, and each table one of
-    /// those descends from — a partitioned table, which holds none of its
-    /// own, included (`docs/design/decisions.md`, "D131").
+    /// block, or its first descendant's, appears: each a block holds rows
+    /// for, and each table one of those descends from — a partitioned table,
+    /// which holds none of its own, included (`docs/design/decisions.md`,
+    /// "D131").
     pub fn tables(&self) -> &[TableName] {
         &self.tables
     }
@@ -343,9 +344,8 @@ impl Table {
     ///
     /// **A table read alone that holds no block of its own** — a
     /// partitioned table — reads no row, under the columns the blocks
-    /// holding its descendants' rows name: the schema a read with its
-    /// descendants settles, or where that read refuses, the one the blocks
-    /// written through its root settle (`docs/design/decisions.md`, "D132").
+    /// holding its descendants' rows name: those it holds, or with none,
+    /// those written through its root (`docs/design/decisions.md`, "D132").
     pub fn schema(&self, options: &QueryOptions) -> Result<ResolvedSchema> {
         let read = self.read(options)?;
         self.schema_over(self.columns_from(&read), options)

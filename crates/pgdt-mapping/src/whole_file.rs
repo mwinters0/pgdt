@@ -284,7 +284,8 @@ impl Mapped {
 ///   inherited, being `#[serde(skip)]` — [`map_forward`] recomputes them at
 ///   its own EOF exit too — and what is this function's is keeping what the
 ///   open reported about the cache file's identity ahead of them.
-/// - The cache is saved once more at the end, persisting the finished index.
+/// - The cache is saved once more at the end, persisting the finished index,
+///   unless the back-fill was interrupted.
 ///
 /// **A run interrupted before EOF states none of the three**, and returns
 /// [`MapRun::interrupted`]: a span list cut at a `CopyEnd` watermark is not a

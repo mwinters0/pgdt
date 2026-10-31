@@ -14,9 +14,9 @@ pgdt sql --source shop=shop.sql -c 'SELECT count(*) FROM shop.public.reading'
   declares of its own is left out; the rest come back in the table's column
   order, whatever order the child's `COPY` block lists them in. A child of two
   parents is read under both.
-- **Every table is still listed and read under its own name**, a partition and
-  a TimescaleDB chunk included, as on the server: `SHOW TABLES`,
-  `information_schema`, `pgdt query --table` and `pgdt info` list them all.
+- **Every table is still read under its own name**, a partition and a
+  TimescaleDB chunk included, as on the server, unless it refuses (below):
+  `SHOW TABLES` and `information_schema` list each that reads.
 - **A descendant is another block to prune.** The statistics `pgdt parse`
   records rule its row groups in or out as they do any table's; a partition's
   bounds and a chunk's time range are not read for it. A query run before any
@@ -64,8 +64,9 @@ Both read the one cache `pgdt parse` left beside the dump.
 ## Partitions a dump wrote through their root
 
 `pg_dump --load-via-partition-root` writes each partition's rows under the
-root's name, for a restore to route by the partition key — and `pg_dump`
-does so unasked for a table hash-partitioned on an enum column. pgdt does not
+root's name, for a restore to route by the partition key — and `pg_dump` 16,
+and 13.11, 14.8 and 15.3 onward, does so unasked for a table hash-partitioned
+on an enum column. pgdt does not
 route them, so:
 
 - **the root read with its descendants is whole**: every partition's rows;
@@ -75,14 +76,14 @@ route them, so:
 - **a partitioned table read alone answers no row**, as the server does, since
   none holds rows of its own.
 
-`pgdt info` says so under `diagnostics`, one line per root, naming the
-partitions its blocks hold. In `pgdt sql` a refused table is not listed, and
+`pgdt info` says so under `diagnostics`, one line per root, naming the first
+partition its blocks hold and how many more, `--json` each. In `pgdt sql` a refused table is not listed, and
 attaching the dump names it on stderr.
 
 ## TimescaleDB
 
 A database is read as TimescaleDB's where the dump creates the extension or
-holds its catalog's rows, and its catalog then says which children of a
+holds a block of its catalog, and its catalog then says which children of a
 hypertable are chunks, which are compressed and which the file lacks. Nothing
 turns that reading off; `--inheritance only` reads every table, a hypertable
 included, as its own rows.
@@ -90,16 +91,18 @@ included, as its own rows.
 | A hypertable's rows held as | Read |
 |---|---|
 | Uncompressed chunks | Supported: the hypertable reads them, each chunk under its own name too. |
-| Compressed or partially compressed chunks | **Refused**, at the hypertable and at the chunk by its own name, in either mode, naming each chunk. The relation holding a chunk's compressed rows reads as the table it is, its batches as text. |
-| Chunks the catalog lists and the file lacks — a dump excluding the chunks' schema, a multinode access node's or tiered storage's foreign chunks | Read as absent, as a restore holds none, with a warning naming them. |
+| Compressed or partially compressed chunks | **Refused**, at the hypertable read with its descendants and at the chunk by its own name in either mode, naming the first chunk and how many more. The relation holding a chunk's compressed rows reads as the table it is, its batches as text. |
+| Chunks the catalog lists and the file lacks — a dump excluding the chunks' schema, a multinode access node's or tiered storage's foreign chunks | Read as absent, as a restore holds none, with a warning naming the first and how many more. |
 | Rows in the hypertable's root itself | Read, with a warning: a restore holds them, and TimescaleDB's own reads of the hypertable leave them out, so a count can exceed the server's. |
 | A continuous aggregate | Readable as its materialization hypertable, under that table's name; the aggregate's view reads no way. |
 
 - **The catalog is read by column name**, so a release pgdt has not met reads
   where its catalog holds what pgdt reads. Where it does not, each hypertable
-  the file holds a chunk of refuses read with its descendants, naming what the
-  catalog lacks; its chunks read under their own names, a warning saying they
-  are unchecked for compression. A hypertable none of whose chunks the file
+  the catalog names that the file holds a chunk of refuses read with its
+  descendants, naming what the catalog lacks — or, where the catalog does not
+  even name its hypertables, every table of that database with a descendant
+  does; its chunks read under their own names, a warning saying they are
+  unchecked for compression. A named hypertable none of whose chunks the file
   holds reads its root's rows alone, a warning saying which chunks the file
   lacks cannot be known.
 - **`pgdt info` says what refuses** under `diagnostics`, one line per
@@ -108,7 +111,8 @@ included, as its own rows.
 - **TimescaleDB 1.x is outside what pgdt reads**: it runs on PostgreSQL 12 and
   older, and pgdt reads `pg_dump` 13 onward.
 - `pgdt info` lists each TimescaleDB database ahead of the blocks: its
-  release, each hypertable's chunks counted uncompressed, compressed and
-  absent, and each continuous aggregate; a chunk's block is folded under its
-  hypertable's unless `--detail` asks for each ([dump
-  inspection](dump-inspection.md), "`info`: reporting what is known").
+  release, each hypertable's chunks counted uncompressed, compressed and,
+  where the dump holds the database's DDL, absent, and each continuous
+  aggregate; a chunk's block is folded under its hypertable's, which
+  `--detail` turns off ([dump inspection](dump-inspection.md), "`info`:
+  reporting what is known").

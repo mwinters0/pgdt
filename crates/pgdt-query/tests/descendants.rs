@@ -88,8 +88,9 @@ async fn held_to_answers(path: &Path) -> BTreeMap<Reading, BTreeSet<String>> {
             let options = QueryOptions { schema_mode, inheritance, ..QueryOptions::default() };
             let summary = table.summary(&options).unwrap();
             assert_eq!(summary.rows, expected.len() as u64, "{at}");
-            // A table read alone keeps the schema it reads with its
-            // descendants (`docs/design/decisions.md`, "D132").
+            // A table read alone keeps the columns it reads with its
+            // descendants (`docs/design/decisions.md`, "D132"), and no
+            // descendant here moves a type.
             let through = QueryOptions { inheritance: Inheritance::Descendants, ..options.clone() };
             if let Ok(schema) = table.schema(&through) {
                 assert_eq!(table.schema(&options).unwrap().schema(), schema.schema(), "{at}");

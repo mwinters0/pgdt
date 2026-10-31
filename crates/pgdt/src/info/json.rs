@@ -40,9 +40,10 @@ struct IndexJson<'a> {
     compression: Option<CompressionShape>,
     diagnostics: &'a [Diagnostic],
     resolution: Vec<BlockResolutionJson<'a>>,
-    /// Per TimescaleDB database, what its catalog concludes — a model
-    /// conclusion the index has no field for, its rows being the catalog
-    /// blocks' `recorded_rows`.
+    /// Per TimescaleDB database the DDL declares, what its catalog
+    /// concludes — a model conclusion the index has no field for, its rows
+    /// being the catalog blocks' `recorded_rows`. A database only its
+    /// catalog blocks name (TS2), which the text listing shows, is not here.
     timescaledb: Vec<TimescaleJson<'a>>,
 }
 

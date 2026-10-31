@@ -1369,13 +1369,15 @@ public.events (98765 rows)
   many such tables and the rows it and they hold, a partition's counted even
   where `--load-via-partition-root` wrote them through its root. It is absent
   from a dump with no such table.
-- **`TimescaleDB`** appears once per database holding TimescaleDB's catalog:
-  its release, as the catalog states it or the range its columns allow; a
+- **`TimescaleDB`** appears once per database creating the extension or
+  holding a block of its catalog: its release, as the catalog states it, the
+  range its columns allow, or unknown where they fit no release together; a
   line where the dump holds the catalog without `CREATE EXTENSION`; each
   hypertable, its chunks counted whole and split into those the file holds
   uncompressed, those it holds compressed, which refuse every read reaching
-  them, and those the catalog lists and the file lacks, which read as absent,
-  then its dimensions; and each continuous aggregate, whether it is
+  them, and, where the dump holds the database's DDL, those the catalog lists
+  and the file lacks, which read as absent — an internal hypertable holding
+  compressed chunks' rows counting only those — then its dimensions; and each continuous aggregate, whether it is
   real-time, and the materialization hypertable whose name reads its rows,
   the view itself reading no way. Where the catalog does not read, one line
   says so and names the hypertables its rows still name, `diagnostics`
@@ -1384,6 +1386,8 @@ public.events (98765 rows)
   a TimescaleDB chunk's, and the relation holding a chunk's compressed rows:
   those are folded into one line beneath their hypertable's block, counting
   their blocks and rows, unless `--detail` (or a strict `parse`) lists each.
+  A block stays listed where its hypertable has no block, or where it holds
+  values a `parse` went past.
   Each entry carries its
   row count, the level `parse` recorded it at (see "`--statistics-level`"
   above) and its column list. This is the view to read when you're deciding

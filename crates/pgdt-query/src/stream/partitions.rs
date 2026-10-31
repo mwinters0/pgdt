@@ -146,8 +146,8 @@ impl TablePartitions {
     }
 
     /// This plan, reporting `schema` — a plan over no block, of a table read
-    /// alone that holds none of its own, keeping the schema its read with its
-    /// descendants settles (`docs/design/decisions.md`, "D132").
+    /// alone that holds none of its own, keeping the schema its descendants'
+    /// blocks settle (`docs/design/decisions.md`, "D132").
     pub(crate) fn reporting(mut self, schema: ResolvedSchema) -> Self {
         debug_assert!(self.matches.is_empty(), "a plan reading blocks reports their schema");
         Arc::make_mut(&mut self.plan).schema = schema;
@@ -309,8 +309,9 @@ impl TablePartitions {
     }
 
     /// Publish the plan's schema and comparison notes to `shared` up front,
-    /// as a stream over the whole table holds them before its first poll —
-    /// every block of a table resolving the same ([`ReplayPlan::new`]).
+    /// as a stream over the whole table holds them before its first poll,
+    /// where the plan reads a block — the notes the first block's, whichever
+    /// table's DDL resolved it ([`ReplayPlan::new`]).
     fn publish_plan(&self, shared: &StreamShared) {
         if let Some(planned) = self.plan.blocks.values().next() {
             *shared.resolved_schema.lock().unwrap() = self.plan.schema.clone();

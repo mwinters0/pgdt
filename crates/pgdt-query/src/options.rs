@@ -23,9 +23,11 @@ pub struct QueryOptions {
     /// Which columns to materialize, by name, in the order given. `None`
     /// projects every column of the block; `Some(vec![])` projects none,
     /// which is the `COUNT(*)` shape — every batch then carries a row count
-    /// and no arrays. Names are matched against the block's own column list
+    /// and no arrays. Names are matched against the table's columns
     /// exactly as [`crate::predicate::Predicate::column`] is, so a name the
-    /// block does not carry is `Error::UnknownProjectionColumn` and a
+    /// table does not carry — a descendant's own column among them
+    /// (`docs/design/decisions.md`, "D131") — is
+    /// `Error::UnknownProjectionColumn` and a
     /// repeated name is `Error::DuplicateProjectionColumn`
     /// (`docs/design/decisions.md`, "D119").
     pub projection: Option<Vec<String>>,
@@ -193,9 +195,11 @@ impl QueryOptions {
 
 /// **Whose rows a read of a table reads** — [`QueryOptions::inheritance`],
 /// named for `pg_inherits`, which records partitions and `INHERITS` children
-/// alike. A table read either way keeps its schema, the one a read with its
-/// descendants reports; what the mode moves is the rows, the statistics
-/// over them and what refuses (`docs/design/decisions.md`, "D131", "D132").
+/// alike. A table read either way keeps its columns, the ones a read with
+/// its descendants reports; what the mode moves is the rows, the statistics
+/// over them, what refuses, and what a column's type is settled from the
+/// rows read — an array's dimensions, a column read as its text for a value
+/// its type cannot hold (`docs/design/decisions.md`, "D131", "D132").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Inheritance {
     /// Its own rows and every descendant's, at any depth, each projected to
@@ -247,7 +251,9 @@ pub enum ScanExtent {
     /// block has closed, none of the matching blocks carried a partition-root
     /// marker (I2 — a marked block's name owns further blocks that are *not*
     /// adjacent, so only EOF enumerates them), and the map holds no
-    /// `\connect`, after which a name can be defined again. This is what
+    /// `\connect`, after which a name can be defined again. A table with a
+    /// declared descendant, or with an ancestor in a TimescaleDB database,
+    /// never stops early (`docs/design/decisions.md`, "D131", "D134"). This is what
     /// keeps a query against an early table in a huge dump from costing a
     /// full scan.
     ///

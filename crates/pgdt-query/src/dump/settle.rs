@@ -278,8 +278,9 @@ impl ColdPass<'_> {
 /// which bounds only a catalog stating its release (TS3) with each table its
 /// recipe reads mapped, an inferred era reading every table's columns. It is
 /// a stop decided over the index, beside the block-header [`Target`]
-/// (`docs/design/decisions.md`, "D49"). A file with a `\connect` never stops
-/// early, so pays nothing, and a cached map pays it once. **(c) unowned**;
+/// (`docs/design/decisions.md`, "D49"). A file with a `\connect` before the
+/// chunk's block never stops early, so pays nothing, and a cached map pays it
+/// once. **(c) unowned**;
 /// promoted by a cold query by a chunk's name met in use.
 // timescaledb: TS1 — a chunk is an inheritance child of its hypertable.
 fn reads_descendants(index: &DumpIndex, selector: &TableSelector) -> bool {

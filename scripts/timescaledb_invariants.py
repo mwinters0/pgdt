@@ -8,7 +8,8 @@ fixture generator -- carries a `timescaledb: TS<n>` comment, and the entry's
 "Relied on by" field names it. This holds the two halves to each other, both
 ways:
 
-* every marker sits in a `.rs` or `.py` file, inside or attached to a function;
+* every marker in a tracked `.rs` or `.py` file sits inside or attached to a
+  function, a marker in any other file going unread;
 * every marker names an entry of `timescaledb-invariants.md`;
 * every marker's site is named in that entry's "Relied on by", as a code span
   holding an identifier or a path ending in one (`` `write_answers` ``,

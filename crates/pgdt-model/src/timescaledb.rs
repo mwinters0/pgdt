@@ -50,7 +50,10 @@ pub enum Resolution {
     Resolved(Resolved),
     /// Columns the recipe needs that the catalog does not hold, each
     /// `table.column` — a whole table missing names each column it needed —
-    /// or fields it holds that do not read as their column's type; and the
+    /// or the columns of fields that do not read: a value not of its
+    /// column's type, a NULL or a missing field where one is required, a
+    /// reference to a row the catalog lacks, a `relid` naming no qualified
+    /// table; and the
     /// hypertables its `hypertable` rows name, read by `schema_name` and
     /// `table_name` alone, as `schema.table` — `None` where those do not
     /// read.

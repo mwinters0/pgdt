@@ -247,8 +247,9 @@ impl DatabaseMetadata {
     /// own**, as `SELECT … FROM table` does on the server: each table naming
     /// it among its `INHERITS` parents or as the table it is a partition of,
     /// and each of theirs, at any depth, each once — a child of two parents
-    /// both reach being one descendant. Breadth first, each level in key
-    /// order; `table` itself never, a cycle, which no server holds, ending
+    /// both reach being one descendant. Breadth first, the first level in
+    /// key order and each later one in its parents' order, a parent's
+    /// children in key order; `table` itself never, a cycle, which no server holds, ending
     /// where it returns. Empty for a table nothing declares a child of.
     pub fn descendants(&self, table: &str) -> Vec<&str> {
         let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
