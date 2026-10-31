@@ -115,6 +115,18 @@ pub fn root_rows(index: &DumpIndex, database: Option<&str>, hypertable: &str) ->
 /// read of it says it holds no row of (`docs/design/decisions.md`, "D135").
 /// Where the database's DDL is not held nothing declares them, so a caller
 /// concludes none.
+///
+/// deficiency: KD163 — held means declared, so a dump whose DDL declares no
+/// chunk though it holds their blocks — `--data-only`, whose segment's DDL
+/// holds no table — reports every chunk absent, in this finding and in a
+/// read's note, a hypertable read with its descendants answers its root's
+/// rows alone, its `INHERITS` unknown, and a compressed chunk read by name
+/// refuses while no finding names it, [`compressed_chunks`] keeping the
+/// declared ones. Evidence: `fixtures/13/timescaledb/default.sql` with every
+/// entry but `TABLE DATA` and `SEQUENCE SET` stripped. Closing it means
+/// telling a chunk the file lacks from one it holds undeclared, which reopens
+/// D134's "the DDL's walk". **(c) unowned**; promoted by a data-only
+/// TimescaleDB dump met in use.
 // timescaledb: TS6 — a dropped row names no table, so it is no chunk.
 // timescaledb: TS10 — a restore holds no row of a chunk the file lacks.
 pub fn absent_chunks(ddl: &DatabaseMetadata, hypertable: &Hypertable) -> Vec<String> {
