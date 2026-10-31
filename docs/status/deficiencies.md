@@ -217,7 +217,7 @@ than reading as a phase nobody has sliced.
   Detail: `crates/pgdt-io/src/source/compressed/xz.rs`.
 
 - **KD38** — a pgdump scan planned while others hold the session budget gets
-  what they left, so a join's second-planned table can run on one reader while
+  what they left, so a join's second-planned table can run on nothing while
   the first holds the whole allowance: planning order, which the user does not
   choose, decides a scan's speed. **(c) unowned**; promoted by a measured join
   of two pgdump tables slowed by it. Detail: `crates/datafusion-pgdump/src/budget.rs`.

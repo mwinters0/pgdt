@@ -546,8 +546,8 @@ fill.
 `postgres:16`.
 
 **Relied on by:** [`decisions.md`](decisions.md), "I/O, memory and parallelism" — the no-limit branch of
-the budget default, which caps at half of `MemAvailable`, and the CLI's
-statistics allowance (D85), which takes the same half where no limit is found.
+the budget default, where half of `MemAvailable` caps a source's charge, or, carved, is the allowance,
+and the CLI's statistics allowance (D85), which takes the same half where no limit is found.
 
 **Re-verify:**
 

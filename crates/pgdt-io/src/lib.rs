@@ -38,7 +38,7 @@ pub use source::{REMOTE_READ_TIMEOUT, RemoteSource};
 ///
 /// The memory constants a test reasons in, and discovery against a root a
 /// test built, are here and no embedder's (`docs/design/decisions.md`,
-/// "D11").
+/// "D11"); only this crate's own tests call the second today.
 pub mod internal {
     pub use crate::arrangement::discover_allowance_in;
     pub use crate::memory::{

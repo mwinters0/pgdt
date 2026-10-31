@@ -27,14 +27,15 @@ at its start (`KD1` where none is). A large-object region, a bare `BEGIN;`/`COMM
 scanner (I12). `INSERT` runs fold in `feed_line` with no scanner state, their boundaries resting on no line-anchored
 invariant, the run's end lexed as the scanner lexes; the cuts `KD9` names wait for P8's row reader.
 
-### D34 `DumpIndex` stores no fact twice but sortedness, `metadata` and `scanned_through`; whole-file facts need `is_complete`
+### D34 `DumpIndex` stores no fact twice but sortedness, `metadata`, `scanned_through` and a catalog block's rows; whole-file facts need `is_complete`
 Every fact has one owner: `blocks()` and `metadata` are views over `spans` (`metadata` computed once) and diagnostics
-are never persisted. Whole-file facts (roles, tablespaces, a reported schema) are believed only once `is_complete`; a
-streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in their block behind an `Arc`, so a
-map clone copies a reference (`KD5`), and a row group is a byte range, so no piece needs a global row index. A back-fill
-keeps a block's columns, and its size unless a stated size or bound it did not record moves it, a maximum it breaks
-re-reading it at the size its groups predict. Rejected: `SparseRowIndex`; padded `character` bounds and entries (keyed
-alike, but past the cap); a back-fill dropping only re-read blocks' columns.
+are never persisted; a catalog block's recorded rows repeat its `row_count` (D133). Whole-file facts (roles,
+tablespaces, a reported schema) are believed only once `is_complete`; a streamed schema commits over the blocks it
+replays, ungated (I2). Statistics sit in their block behind an `Arc`, so a map clone copies a reference (`KD5`), and a
+row group is a byte range, so no piece needs a global row index. A back-fill keeps a block's columns, and its size
+unless a stated size or bound it did not record moves it, a maximum it breaks re-reading it at the size its groups
+predict. Rejected: `SparseRowIndex`; padded `character` bounds and entries (keyed alike, but past the cap); a back-fill
+dropping only re-read blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and runs at the data level
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes in the model (I15, I25); min and max depth, or

@@ -1184,7 +1184,8 @@ allocation`, naming the limit in `limit_bytes` and the file that set it in
 process`. That distinction is the whole reason the pair exists — under an
 allocation somebody set, pgdt fills it; with nothing set, pgdt is a guest on a
 machine nobody promised it and stays inside half of what the kernel reports
-free, which can quietly buy fewer readers than the file could have used. Beside
+free, or the library's default where the kernel reports nothing, which can
+quietly buy fewer readers than the file could have used. Beside
 it are your two flags exactly as typed — `jobs_flag` and `memory_flag`,
 reading `(not stated)` where you gave none — which is
 the line to check a value against when a run does something you did not expect.

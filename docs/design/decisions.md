@@ -67,7 +67,7 @@ are `docs/process.md`, "The decision register".
 - **D30** A span is classified by the grammar; the TOC anchors and enriches, never required
 - **D31** `Span::toc` is "belongs to", vetoed after classification; boundary rules that read as bugs
 - **D33** Bulk regions are one span kind; large objects skip at the scanner, `INSERT` runs at the map
-- **D34** `DumpIndex` stores no fact twice but sortedness, `metadata` and `scanned_through`; whole-file facts need `is_complete`
+- **D34** `DumpIndex` stores no fact twice but sortedness, `metadata`, `scanned_through` and a catalog block's rows; whole-file facts need `is_complete`
 - **D35** The census is type-blind, records both dimension bounds, and runs at the data level
 - **D96** The unrepresentable count rides the census, typed by the DDL, in two tiers, under a recorded calendar
 - **D36** The preamble grammar dispatches on fixed keywords and never guesses

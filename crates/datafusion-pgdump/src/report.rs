@@ -216,7 +216,9 @@ impl UncollatedColumns {
 /// half, as `pgdt`'s `plan_note_origin` is `pgdt`'s.
 ///
 /// **Its message is the note's followed by one clause**: the allowance and
-/// its origin, the three holdings that came off it, and the settings that
+/// its origin and the three holdings that came off it — or, where no
+/// allowance was found, the library's default the budget was drawn from and
+/// what the live scans drew of it — and the settings that
 /// would move what the note reports — each a key a user types as it stands,
 /// and one for each lever the note lists ([`PlanNote::levers`]), so a key
 /// inert for this source and budget is never offered: `pgdump.memory` for a

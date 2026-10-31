@@ -76,11 +76,12 @@ Evidence: `tests/timescaledb.rs`.
 ### D136 What refuses a read is one finding of the file per root or hypertable, and no read's note
 A partition root its partitions' rows are written through, and a hypertable with compressed chunks the file holds, are
 each one `Warning` finding (D19), derived in the model by what the query layer's refusals read, so `pgdt info --json`
-and a dump's drain name each partition and chunk a read refuses by name. No plan note: the read refuses, its error
-saying why, where D135's notes are for a read that succeeds unlike the server's. Rejected: a clause on each parent's
-line in `pgdt info` (no leaf named, and `info` reaching the query layer's rules); a finding per refusing table. Code:
-`span.rs` (`DumpIndex::through_roots`), `timescaledb/findings.rs` (`compressed_chunks`), `dump/descendants.rs`.
-Evidence: `tests/descendants.rs`, `tests/timescaledb.rs`.
+and a dump's drain name each leaf partition whose block a root's rows are written through, its TOC entry naming it, and
+each compressed chunk the DDL declares. No plan note: the read refuses, its error saying why, where D135's notes are for
+a read that succeeds unlike the server's. Rejected: a clause on each parent's line in `pgdt info` (no leaf named, and
+`info` reaching the query layer's rules); a finding per refusing table. Code: `span.rs` (`DumpIndex::through_roots`),
+`timescaledb/findings.rs` (`compressed_chunks`), `dump/descendants.rs`. Evidence: `tests/descendants.rs`,
+`tests/timescaledb.rs`.
 
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 Sub-streams are contiguous byte-balanced runs cut through blocks in file order, so concatenating them *is* the serial

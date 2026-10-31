@@ -157,7 +157,7 @@ impl Arrangement {
     /// (`docs/design/decisions.md`, "D83"): [`MEMORY_RESERVE`](crate::internal::MEMORY_RESERVE)
     /// off the top, what is `drawn` off the cap and the margin's ceiling, what
     /// is `held` off the ceiling alone, the count solved against the tighter
-    /// and the budget what that count spends (`Parallelism::within_shared`).
+    /// and its budget held inside it (`Parallelism::within_shared`).
     ///
     /// **An estimate is not an allowance** unless the request says to carve
     /// it: half of what the machine reports available caps the pools with no
@@ -166,8 +166,8 @@ impl Arrangement {
     /// [`DEFAULT_MEMORY_BUDGET`] is the estimate, a cap with no reserve and no
     /// margin as the halved one is, and carved it is drawn down by what is
     /// `drawn` alone, the holdings having no margin to come off
-    /// (`docs/design/decisions.md`, "D11"). A source recommending no cost, under no limit,
-    /// is [`Parallelism::default`] at a serial count and
+    /// (`docs/design/decisions.md`, "D11"). A source recommending no cost, under no limit
+    /// and uncarved, is [`Parallelism::default`] at a serial count and
     /// [`DEFAULT_MEMORY_BUDGET`] above one — **the composition is not a
     /// `min`**, which would collapse a compressed scan to serial on an
     /// unlimited host (`docs/design/decisions.md`, "D3").

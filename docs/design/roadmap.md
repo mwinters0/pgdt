@@ -1397,8 +1397,7 @@ which is what makes the difference worth minding at the moment one is found.
   for its end — its in-flight statistics at the final size from the start. The
   general rule sizes by rows per group at a block's end
   (`crates/pgdt-mapping/src/statistics/density.rs`), because `varchar` and its
-  kin leave a header silent on width; this is the cheaper case beside it, taken
-  once that rule has shipped.
+  kin leave a header silent on width; this is the cheaper case beside it.
 
 - **`RESET` for a provider's session settings, upstream.** It waits on
   DataFusion ([`../status/upstream.md`](../status/upstream.md), "UF3"), and is

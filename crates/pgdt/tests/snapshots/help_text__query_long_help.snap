@@ -184,10 +184,12 @@ Options:
           serially, and an `.xz` one takes the CPUs this process was given, or its own block count
           where that is smaller — lowered again to the number of readers the memory allowance can
           pay for, where that is fewer, whether that allowance was discovered or stated with
-          `--memory`. A count stated here is never lowered that way.
+          `--memory`, or is the library's default where no available memory can be read. A count
+          stated here is never lowered that way.
           
-          **It states what is asked for, not what is delivered.** Two input shapes admit no
-          parallelism whatever this says: a `.xz` file with one block, and an `INSERT` run
+          **It states what is asked for, not what is delivered.** Some input shapes admit no
+          parallelism whatever this says, among them a `.xz` file with one block, a compressed file
+          whose blocks the memory allowance cannot hold, and an `INSERT` run
           (`docs/manual/dump-inspection.md`). And on a plain file the read buffer pool's own depth
           binds before this does: it holds at most four chunks, and a `parse` above `--jobs 4`
           queues the readers past them wherever a read may wait.
@@ -196,7 +198,7 @@ Options:
           once and merged back into file order; a `parse`'s structure scan, which splits the
           interior of every `COPY` block large enough to cut and folds the answers back into one
           block list; and how many decoded `.xz` blocks the source retains: four, or one per
-          would-be reader where that is more.
+          would-be reader where that is more, as far as the budget holds them.
           
           **On `query`, `--memory` has to cover a second cost before this number is delivered at
           all** — see that flag's own doc.
@@ -205,8 +207,9 @@ Options:
           How much memory pgdt may hold resident in total, in bytes — the number you would give the
           container. Left unstated, pgdt reads the memory limit it is running under — the smallest
           cgroup limit that binds — and uses that; where no limit is set it stays inside half the
-          memory the machine reports available. A number typed here replaces whatever was discovered
-          and is carved up exactly as a discovered limit is.
+          memory the machine reports available, or the library's default where that cannot be read.
+          A number typed here replaces whatever was discovered and is carved up exactly as a
+          discovered limit is.
           
           **What it is carved into.** A 384 MiB reserve comes off the top for everything pgdt holds
           that no buffer accounts for — the runtime's threads, the allocator's per-thread arenas,
@@ -242,9 +245,9 @@ Options:
           `.xz`, whose first term already counts a decoded block. At 64 MiB — which is what a plain
           file gets unless a limit or this flag says otherwise — the plain file's sum already
           exceeds the budget, so rather than decline the readers the plan narrows each sub-stream's
-          batch span to seat them: `--jobs N` buys N sub-streams, bought with batch size rather than
-          with buffers. `parse` is unaffected by the second term: it builds no batches, so nothing
-          on that path pins a span.
+          batch span to seat them: `--jobs N` buys sub-streams with batch size rather than with
+          buffers, down to a span of one read chunk, below which the count is cut. `parse` is
+          unaffected by the second term: it builds no batches, so nothing on that path pins a span.
 
   -h, --help
           Print help (see a summary with '-h')

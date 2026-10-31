@@ -77,8 +77,8 @@ fn serial() -> ScanOptions {
 /// **A block past its cap gathers, split by the leader, what the serial pass
 /// gathers, and that is what gathering exactly at the size it reaches
 /// gathers** — every block of every fixture, re-read at a group size of a few
-/// bytes under a cap of two groups, so most blocks merge, many of them
-/// several times over, at chunks the leader cuts inside a group. What reaches the cap
+/// bytes under a cap of two groups, so most blocks merge, at chunks the
+/// leader cuts inside a group. What reaches the cap
 /// under a request is [`StatisticsRequest::backfill`]'s answer, asserted
 /// first.
 #[tokio::test]

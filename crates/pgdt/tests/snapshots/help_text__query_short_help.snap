@@ -122,12 +122,15 @@ Options:
                                         where that is smaller — lowered again to the number of
                                         readers the memory allowance can pay for, where that is
                                         fewer, whether that allowance was discovered or stated with
-                                        `--memory`. A count stated here is never lowered that way
+                                        `--memory`, or is the library's default where no available
+                                        memory can be read. A count stated here is never lowered
+                                        that way
       --memory <BYTES>                  How much memory pgdt may hold resident in total, in bytes —
                                         the number you would give the container. Left unstated, pgdt
                                         reads the memory limit it is running under — the smallest
                                         cgroup limit that binds — and uses that; where no limit is
                                         set it stays inside half the memory the machine reports
-                                        available. A number typed here replaces whatever was
-                                        discovered and is carved up exactly as a discovered limit is
+                                        available, or the library's default where that cannot be
+                                        read. A number typed here replaces whatever was discovered
+                                        and is carved up exactly as a discovered limit is
   -h, --help                            Print help (see more with '--help')

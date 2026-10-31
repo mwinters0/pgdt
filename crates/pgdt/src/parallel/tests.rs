@@ -631,8 +631,8 @@ fn a_plan_note_says_where_the_budget_that_bound_it_came_from() {
 
 /// The budget a flagless resolution lands on **here**, on whatever machine
 /// the suite is running on: `None` — nobody stated one — only where no
-/// memory limit is discovered, and the discovered allowance capped at the
-/// library's own constant where one is.
+/// memory limit is discovered, and the discovered limit less the reserve,
+/// capped at the library's own constant, where one is.
 ///
 /// **The branch is the thing being pinned, not the number**: the answer
 /// depends on the cgroup the test process is in, and a test naming the

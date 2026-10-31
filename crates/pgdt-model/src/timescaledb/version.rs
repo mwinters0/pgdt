@@ -36,7 +36,8 @@ impl fmt::Display for Release {
 }
 
 /// The releases a catalog's shape is consistent with: `from` through
-/// `through`, an open end where nothing it holds has gone since.
+/// `through`, an open end where nothing it holds has gone since and nothing
+/// it lacks has arrived.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct Era {
     pub from: Release,
@@ -49,9 +50,9 @@ pub struct Era {
 pub enum Version {
     /// The `metadata` row `timescaledb_version`, from 2.14 (TS3).
     Stated { version: String },
-    /// No version row: the era the catalog's columns bound (TS3).
+    /// No version row: the era the catalog's columns and tables bound (TS3).
     Inferred { era: Era },
-    /// No version row, and columns no release holds together.
+    /// No version row, and columns and tables no release holds together.
     Unknown,
 }
 
@@ -138,9 +139,10 @@ const TABLE_MARKS: [(&str, Bounds); 3] = [
 
 /// The release `catalog` states, else the era its shape bounds. The DDL's
 /// markers (`ts_insert_blocker`, the function schema, the extension comment)
-/// are not read: they narrow only an era before 2.14, where every era takes
-/// [`Recipe::ChunkConstraint`], so they would move what `pgdt info` shows and
-/// nothing a query reads.
+/// are not read: [`recipe`] reads no era, and none of them moves an era's
+/// start to 2.28, the one bound a query reads ([`Version::at_least`], for a
+/// root's rows read alone), so they would move what `pgdt info` shows and,
+/// short of a dump contradicting its own catalog, nothing a query reads.
 // timescaledb: TS3 — the version row from 2.14, the catalog's columns before it.
 pub(super) fn version(catalog: &Catalog<'_>) -> Version {
     let stated = catalog.rows("metadata").find_map(|row| match row.text("key") {
@@ -177,8 +179,9 @@ pub(super) fn version(catalog: &Catalog<'_>) -> Version {
     }
 }
 
-/// The recipe `version` decides: by the release stated, else by the shape
-/// that tells the three apart — `chunk.relid`, then `dimension_slice.chunk_id`.
+/// The recipe `version` decides: by the release stated where it parses, else
+/// by the shape that tells the three apart — `chunk.relid`, then
+/// `dimension_slice.chunk_id`.
 pub(super) fn recipe(version: &Version, catalog: &Catalog<'_>) -> Recipe {
     let stated = match version {
         Version::Stated { version } => Release::parse(version),

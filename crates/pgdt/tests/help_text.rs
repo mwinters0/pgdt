@@ -11,10 +11,11 @@
 //! **The snapshots are here to make the rendered shape reviewable, not to
 //! assert that the prose is true.** A wording change is expected to move them
 //! and `cargo insta review` is the point at which someone sees the result. What
-//! is asserted outright is [`no_help_page_exceeds_the_wrap_width`], the one
-//! property a snapshot cannot carry: a snapshot taken against an unwrapped page
-//! looks exactly as plausible as one taken against a wrapped page, so dropping
-//! the feature again would be accepted as "the text changed".
+//! is asserted outright is what a snapshot cannot carry:
+//! [`no_help_page_exceeds_the_wrap_width`], since a snapshot taken against an
+//! unwrapped page looks exactly as plausible as one taken against a wrapped
+//! page, so dropping the feature again would be accepted as "the text
+//! changed"; [`no_flag_renders_without_help`]; and [`every_page_renders`].
 //!
 //! `clap` picks the width from the terminal, falling back to `COLUMNS` and then
 //! to its own 100-column default (`clap_builder`'s `help_template::dimensions`).

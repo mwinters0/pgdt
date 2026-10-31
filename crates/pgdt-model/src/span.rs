@@ -123,7 +123,8 @@ pub enum DataBlock {
 }
 
 /// A run of `pg_dump --inserts`/`--column-inserts` output for one table —
-/// `INSERT INTO <table> ...;` statements, one per row, merged into a single
+/// `INSERT INTO <table> ...;` statements, of one row each or, under
+/// `--rows-per-insert`, several, merged into a single
 /// `Data` span instead of one `Unparsed` span per statement. No inner
 /// offsets, nothing reading rows out of this yet
 /// (`docs/design/decisions.md`, "D33").
@@ -453,7 +454,7 @@ pub struct DumpIndex {
     /// eager scan.
     pub scanned_through: u64,
     /// Dump-level preamble metadata — see [`DumpMetadata`]. `None` for a
-    /// `DumpIndex` built by hand, and for a mapping run interrupted before
+    /// `DumpIndex` built by hand without it, and for a mapping run interrupted before
     /// its preamble prepass was whole. A derived
     /// view over `spans` (`pgdt_dump::dump_metadata_from_spans`),
     /// computed once (`docs/design/decisions.md`, "D34"), and shared by `Arc`

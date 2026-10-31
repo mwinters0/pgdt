@@ -1,6 +1,6 @@
 //! The catalog read over hand-built blocks: detection, the version and its
-//! era, each recipe, and a catalog short of a column. The pins' own catalogs
-//! are `pgdt-mapping`'s `tests/timescaledb.rs`.
+//! era, each recipe chosen and two read, and a catalog short of a column. The
+//! pins' own catalogs are `pgdt-mapping`'s `tests/timescaledb.rs`.
 
 use std::sync::Arc;
 

@@ -75,7 +75,7 @@ fn the_density_predicate_is_monotone_in_size() {
 fn a_stated_maximum_stops_the_merging_whatever_the_minimum_asks() {
     assert_eq!(density_merges(vec![1, 1, 1, 1], 5, Some(2)), 1, "one merge fits, two do not");
     assert_eq!(density_merges(vec![1, 1, 1, 1], 5, Some(9)), 2, "the minimum is reached");
-    assert_eq!(density_merges(vec![9, 9, 9, 9], 5, Some(2)), 0, "past the maximum already");
+    assert_eq!(density_merges(vec![9, 9, 9, 9], 20, Some(2)), 0, "past the maximum already");
     assert_eq!(density_merges(vec![1, 1, 1, 1], 5, None), 2, "no maximum stops nothing");
     let mut rng = Rng(0x0020_0050);
     let (mut stopped, mut agreed_with_minimum) = (0, 0);

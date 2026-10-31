@@ -152,8 +152,9 @@ impl ScanBudget {
     ///
     /// Deficiency register: `deficiency: KD38` — first planned, first served:
     /// a join plans both its tables before either runs, so the first can take
-    /// `target_partitions` readers and the whole allowance and the second one
-    /// reader on nothing, the floor spending past the budget by its one slot.
+    /// `target_partitions` readers and the whole allowance and the second
+    /// nothing — one reader where it states a cost per worker, its own count
+    /// where it states none — the pools spending past the budget at their floor.
     /// **(c) unowned.** Closing it means a share fixed before either draws —
     /// the pgdump scans of a physical plan counted and the allowance split
     /// between them — which nothing has yet measured a reason to build.
@@ -343,7 +344,7 @@ mod tests {
     /// **With nothing found the session's scans share
     /// `DEFAULT_MEMORY_BUDGET`**, drawing it down as they draw a carved
     /// estimate, never each capped at it alone: a second scan gets what the
-    /// first left, the floor's one reader on nothing once it is spent, and
+    /// first left, a third nothing once it is spent, and
     /// what a dropped scan drew is returned. What the session holds besides
     /// its scans comes off no margin, the default having none.
     #[test]

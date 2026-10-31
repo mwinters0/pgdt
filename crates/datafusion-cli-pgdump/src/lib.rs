@@ -231,7 +231,7 @@ pub async fn run(args: Args) -> ExitCode {
     if let Err(e) = main_inner(args).await {
         // pgdump: to stderr where upstream's `main` prints to stdout, as every
         // pgdump: `pgdt` command, this shell's findings and upstream's `exec`
-        // pgdump: write errors, so a redirected run's output holds rows alone.
+        // pgdump: write errors, so a redirected run's output holds no error.
         eprintln!("Error: {e}");
         return ExitCode::FAILURE;
     }

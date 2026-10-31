@@ -106,7 +106,7 @@ async fn block_frontier(dump: &Path, n: usize) -> u64 {
     index.blocks().nth(n).expect("the fixture has this many blocks").end_offset
 }
 
-/// `word` opens `line`, loosely enough to survive a subsecond-precision
+/// A timestamp opens `line`, loosely enough to survive a subsecond-precision
 /// change: `YYYY-MM-DDTHH:MM:SS`, then anything, ending `Z` before the first
 /// space — exact enough to catch "not a timestamp at all" without pinning
 /// `tracing_subscriber`'s exact rendering.
@@ -128,7 +128,8 @@ fn preamble_lines(stderr: &str) -> Vec<&str> {
     stderr.lines().filter(|l| l.contains("preamble scan")).collect()
 }
 
-/// Lines reporting the real read loop (`pgdt_mapping`'s `forward::map_forward`) — deliberately
+/// Lines reporting the real read loop (`pgdt_mapping`'s `forward::map_forward`), and the
+/// `scan arrangement` lines beside it — deliberately
 /// excludes anything spelling `"preamble scan"`, since that also contains the
 /// substring `"scan started"`/`"scan complete"` and a test matching on the
 /// bare substring would not be able to tell the two apart, which is
@@ -684,7 +685,8 @@ fn arrangement_lines(stderr: &str) -> Vec<&str> {
 }
 
 /// **`parse` says what ran, not only what was asked for.** A compressed
-/// source whose largest block the budget cannot hold
+/// source whose one reader — a block with the pool's retention, a chunk and
+/// the decoder — the budget cannot hold
 /// reads through the streaming decoder and is therefore serial whatever
 /// `--jobs` says — a decline `query` announces on a plan note and `parse` has
 /// no plan notes to carry. The correction is on the status channel both
@@ -738,7 +740,7 @@ fn a_parse_a_declined_source_runs_serially_says_so_once() {
     let bytes: u64 = tail.split_whitespace().next().expect(line).parse().expect(line);
     assert!(bytes > 2 * 512, "{line}");
 
-    // A budget that affords a whole block corrects nothing: the source would
+    // A budget that affords a whole reader corrects nothing: the source would
     // be split, and this fixture's whole file being shorter than one reader's
     // charge is a fact about where the leader stands rather than about the
     // arrangement.

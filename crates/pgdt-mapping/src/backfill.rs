@@ -51,7 +51,8 @@ pub(crate) enum Backfill {
 }
 
 /// Re-read every block of a map that has reached EOF which lacks what
-/// `statistics` asks for, in file order, storing each block's statistics as it
+/// `statistics` asks for ([`Backfill::Lacking`]), or only those no strict
+/// parse checked ([`Backfill::Unchecked`]), in file order, storing each block's statistics as it
 /// closes and saving through a [`SaveThrottle`] as [`map_forward`](crate::forward::map_forward) does; an
 /// interrupt saves and stops. Announces how many blocks lacked them and, once
 /// every one is re-read, how many were — and nothing at all when none did. A
@@ -196,7 +197,7 @@ pub(crate) fn report_density_shortfall(statistics: &StatisticsRequest, index: &D
 ///
 /// **Every run under an allowance says it, not only the run that declined**: a
 /// block's decline is recorded in the map ([`CopyBlock::statistics_declined`])
-/// and re-read only under a larger allowance, so the run that skips one is the
+/// and re-read only under a larger allowance, or none, so the run that skips one is the
 /// run that has to say what it is leaving and what would fix it
 /// (`docs/design/decisions.md`, "D85"). A pass that gathers nothing says
 /// nothing: the blocks it did not ask about are none of its business.
@@ -227,8 +228,8 @@ pub(crate) fn report_statistics_declines(
     declined
 }
 
-/// **Back-fill one block the map already holds**: re-read it until it holds
-/// what `request` asks of it, and record what each read found in `block` —
+/// **Back-fill one block the map already holds**: re-read it for what
+/// `request` asks of it, and record what each read found in `block` —
 /// what [`map_file`](crate::map_file)'s back-fill does to every block lacking
 /// what its request asks, through the same per-block step. Its columns are
 /// resolved against `metadata`, the map's, whole-file where it can be, in
@@ -236,7 +237,8 @@ pub(crate) fn report_statistics_declines(
 /// ([`DumpIndex::blocks_with_database`](pgdt_model::DumpIndex::blocks_with_database)).
 /// Answers whether it read the block: `false` is a block that holds what was
 /// asked already, or one that declined under an allowance no smaller than
-/// this one, and is left as it was.
+/// this one, and that no strict parse is owed a check of, and is left as it
+/// was.
 ///
 /// **What it asks of the block is the pass's**: whatever `request` lacks
 /// there, gathered beside everything the block already held so nothing is

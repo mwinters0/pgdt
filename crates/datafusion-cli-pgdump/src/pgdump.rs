@@ -2,9 +2,10 @@
 //! the sink printing what a registration finds to stderr, and each
 //! registration's spelling of a refusal's remedy (`crate::spelling`); ending
 //! as its PID namespace's init (`docs/design/decisions.md`, "D26"); and what a
-//! caller composing the CLI reads of it — the copied release's version,
-//! `--source`'s and `--strict-identity`'s help texts, and the introspection
-//! build's report section. It never parses: a dump without a complete cache is
+//! caller composing the CLI reads of it — the copied release's version and
+//! the introspection build's report section — beside `--source`'s and
+//! `--strict-identity`'s help texts, which reach a caller as `Args` renders
+//! them. It never parses: a dump without a complete cache is
 //! refused, spelled with the `pgdt parse` that builds one
 //! (`docs/design/decisions.md`, "D90").
 

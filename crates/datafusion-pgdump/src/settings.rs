@@ -236,7 +236,7 @@ impl ExtensionOptions for PgDumpSettings {
                 "Bytes every pgdump scan of the session may hold resident between them; \
                  unset or 0, the allowance the session's pgdump budget was built with — \
                  unless its embedder stated one, the memory limit found, else half of what \
-                 is available.",
+                 is available, else the library's default, shared between the scans.",
             ),
             entry(
                 "chunk_size",
