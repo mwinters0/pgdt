@@ -122,7 +122,11 @@ const TABLE_MARKS: [(&str, Bounds); 3] = [
     ("chunk_constraint", until(2, 27)),
 ];
 
-/// The release `catalog` states, else the era its shape bounds.
+/// The release `catalog` states, else the era its shape bounds. The DDL's
+/// markers (`ts_insert_blocker`, the function schema, the extension comment)
+/// are not read: they narrow only an era before 2.14, where every era takes
+/// [`Recipe::ChunkConstraint`], so they would move what `pgdt info` shows and
+/// nothing a query reads.
 // timescaledb: TS3 — the version row from 2.14, the catalog's columns before it.
 pub(super) fn version(catalog: &Catalog<'_>) -> Version {
     let stated = catalog.rows("metadata").find_map(|row| match row.text("key") {

@@ -114,7 +114,12 @@ children are chunks and which rows the file does not hold.
   pgdt needs are missing, every hypertable of that database refuses**, with a
   finding naming the catalog's shape, and its chunks read under their own
   names; a chunk read so cannot be checked for compression, and the finding
-  says so. Rejected: refusing a version newer than the newest pinned; falling
+  says so. The hypertables are those the `hypertable` rows name, read by
+  `schema_name` and `table_name` alone; where even those cannot be read, every
+  table of that database with a descendant refuses, a hypertable being
+  indistinguishable from a plain parent. A hypertable none of whose chunks the
+  file holds then reads as a plain table, and the database's finding says its
+  catalog is unreadable. Rejected: refusing a version newer than the newest pinned; falling
   back to plain inheritance with a warning; a second, catalog-free detection
   path (a non-empty relation with `compressed_data` columns), kept to the
   finding's wording instead.

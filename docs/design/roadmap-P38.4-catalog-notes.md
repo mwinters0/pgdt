@@ -15,9 +15,9 @@ resolves both ways. The pins are checked by `pgdt-mapping`'s
   (`Stated`, `Inferred` era, or `Unknown`) and a `Resolution` — `Resolved`
   hypertables, chunks and continuous aggregates, or `Unreadable` naming the
   columns its recipe lacks and the fields that do not parse. 38.5.1 refuses on
-  `Unreadable`; it carries no hypertable list, so which tables that refuses is
-  38.5.1's to settle, the `hypertable` rows' names being readable wherever their
-  columns are.
+  `Unreadable`, which carries no hypertable list yet: which tables it refuses
+  is the spec's, "TimescaleDB", the `hypertable` rows' names read by their own
+  columns.
 - **Internal compressed hypertables are listed**, `internal: true`. Through
   2.28 their chunk rows are the compressed relations; at 2.13 those tables
   inherit the internal hypertable (TS5), so a walk over `INHERITS` meets them.

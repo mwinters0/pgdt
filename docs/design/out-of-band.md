@@ -75,3 +75,4 @@ table as a work queue.
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
 | M266 | | `SET pgdump.<key>` naming a dump's `STORED AS PGDUMP` option where `<key>` is one, instead of listing the four scan settings | | [2026-10-31](../status/history/2026-10-31.md), "`pgdump.inheritance` stays a dump's option" |
+| M267 | | `generate_fixtures.py` regenerating one flag set of a schema at a pin, leaving its siblings' dumps and answers untouched | | [2026-10-31](../status/history/2026-10-31.md), "The 38.4–38.5 round's calls, reviewed" |
