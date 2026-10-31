@@ -59,9 +59,10 @@ A read refuses for each chunk the catalog marks compressed among the table and t
 chunk the file lacks, which a restore lacks too, refuses nothing. In a TimescaleDB database a cold pass settling a table
 with an ancestor runs to the end, any such table possibly a chunk (TS1) whose catalog blocks follow it. Rejected: the
 catalog's own chunk list (a dump excluding the chunks refusing over rows its restore lacks); a chunk's pass stopping at
-its block (its catalog unread, its compressed rows read empty); every table of the database to the end (a plain table's
-cold read the whole dump). Code: `dump/hypertables.rs` (`Verdict`), `dump/settle.rs` (`reads_descendants`). Evidence:
-`tests/timescaledb.rs`.
+its block on `pg_dump`'s name order (any other file, or a chunk's schema sorting first, reading compressed rows short,
+silently); a cold chunk read refused (its remedy reads as far); every table of the database to the end (a plain
+table's cold read whole). Code: `dump/hypertables.rs` (`Verdict`), `dump/settle.rs` (`reads_descendants`, `KD161`).
+Evidence: `tests/timescaledb.rs`.
 
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 Sub-streams are contiguous byte-balanced runs cut through blocks in file order, so concatenating them *is* the serial

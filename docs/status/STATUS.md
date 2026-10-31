@@ -127,15 +127,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **A cold query of a table with an ancestor, in a TimescaleDB database, maps
-  to the file's end** (38.5.1; D134, `KD160`). Any such table may be a chunk,
-  whose catalog blocks — the only thing saying its rows are compressed — may
-  follow its own, so the pass cannot stop at its block without risking a
-  compressed chunk read short. The cost is that a cold `pgdt query --table`
-  of one chunk reads the whole dump, Datanommer's included, where it
-  stopped at the chunk before; a hypertable's already did (D131).
-  Reconsidering means choosing between that cost and a stop that trusts
-  `pg_dump`'s data order (the catalog's schema sorting first), which would
-  become a postgres invariant, or refusing a chunk read cold until its
-  catalog is mapped.

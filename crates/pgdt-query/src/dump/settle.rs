@@ -265,7 +265,21 @@ impl ColdPass<'_> {
 /// precedes the catalog's — its schema sorting before
 /// `_timescaledb_catalog` — settles the chunk before its catalog is read:
 /// compressed, it reads its own block alone where it should refuse
-/// (`KD159`). **(c) unowned**; promoted by such a dump met in use.
+/// (`KD159`). The closure needing no new invariant runs every `INHERITS`
+/// child's cold pass to the end in any database, a chunk being one, which
+/// moves the cost onto every inheritance child. **(c) unowned**; promoted by
+/// such a dump met in use.
+///
+/// deficiency: KD161 — a chunk's cold pass maps to the file's end wherever
+/// its catalog lies, though the catalog precedes it wherever its schema sorts
+/// after `_timescaledb_catalog`. A stop trusting no order is known: once the
+/// chunk's block is mapped and the catalog's verdict can no longer change,
+/// which bounds only a catalog stating its release (TS3) with each table its
+/// recipe reads mapped, an inferred era reading every table's columns. It is
+/// a stop decided over the index, beside the block-header [`Target`]
+/// (`docs/design/decisions.md`, "D49"). A file with a `\connect` never stops
+/// early, so pays nothing, and a cached map pays it once. **(c) unowned**;
+/// promoted by a cold query by a chunk's name met in use.
 // timescaledb: TS1 — a chunk is an inheritance child of its hypertable.
 fn reads_descendants(index: &DumpIndex, selector: &TableSelector) -> bool {
     index.metadata.as_deref().is_some_and(|metadata| {

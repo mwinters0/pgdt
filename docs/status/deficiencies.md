@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD160 -->
-**`KD1`–`KD160` are allocated, and nothing at or below `KD160` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD161 -->
+**`KD1`–`KD161` are allocated, and nothing at or below `KD161` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -602,3 +602,8 @@ than reading as a phase nobody has sliced.
   block where that block precedes the catalog's, so a compressed chunk reads
   its own block short instead of refusing. **(c) unowned**; promoted by such
   a dump met in use. Detail: `crates/pgdt-query/src/dump/settle.rs`.
+
+- **KD161** — a cold query of a TimescaleDB chunk under its own name maps to
+  the file's end, even where the chunk's block follows every catalog block
+  its verdict reads. **(c) unowned**; promoted by such a query met in use.
+  Detail: `crates/pgdt-query/src/dump/settle.rs`.
