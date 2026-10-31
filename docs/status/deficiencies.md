@@ -194,8 +194,7 @@ than reading as a phase nobody has sliced.
 
 - **KD31** — `attach_text` caps a run's one read at `SPAN_STORED_TEXT_MAX_BYTES` per span from
   the run's start, so a span following one longer than the cap can be stored
-  empty and `truncated` however short it is. **(c) unowned**; promoted by a
-  `--map` listing seen to lose a statement's text. Detail:
+  empty and `truncated` however short it is. **(b) owned by `M270`**. Detail:
   `crates/pgdt-dump/src/map/tiling.rs`.
 
 - **KD33** — statistics stop where the account fills: nothing releases
@@ -226,9 +225,8 @@ than reading as a phase nobody has sliced.
   back-fill propagates instead of banking: a source answering a cancellation by
   failing its read ends a `parse` as `Error::ScanCancelled`, saving nothing since
   the throttle's last save,
-  where the same Ctrl-C during the mapping pass is an interrupted run. **(c)
-  unowned**; promoted by a parallel remote `parse` seen to error on Ctrl-C after
-  its map reached EOF, or in a strict one's check of a map short of it, the fix being the arm the mapping pass already carries.
+  where the same Ctrl-C during the mapping pass is an interrupted run. **(b)
+  owned by `M269`**, the fix being the arm the mapping pass already carries.
   Detail: `crates/pgdt-mapping/src/backfill.rs`.
 
 - **KD38** — a pgdump scan planned while others hold the session budget gets
@@ -256,8 +254,7 @@ than reading as a phase nobody has sliced.
 - **KD43** — a stated `--row-group-max-rows` can be passed by a block whose
   last group stands unpaired: at 19, 39, 59… groups one merge can lower the
   90th-percentile group it is read at, so a block already past the maximum
-  merges further past it. **(c) unowned**; promoted by a stated maximum seen
-  to leave a block's groups past it. Detail: `crates/pgdt-mapping/src/statistics/density.rs`.
+  merges further past it. **(b) owned by `M274`**. Detail: `crates/pgdt-mapping/src/statistics/density.rs`.
 
 - **KD53** — a dynamic filter's cut at the first poll is not made where it
   would put two blocks in one sub-stream that nothing proves in a declared
@@ -300,9 +297,8 @@ than reading as a phase nobody has sliced.
   `MemAvailable` prints its budget as "what this source asks for" and its
   count as "lowered … by the allocation", beside a first line saying nothing
   enforces a limit, and a `--jobs` past one over a source recommending nothing
-  prints the library's constant as that source's request too. **(c)
-  unowned**; promoted by a status line read as the source's request where it
-  was the machine's or the library's. Detail: `crates/pgdt/src/parallel.rs`.
+  prints the library's constant as that source's request too. **(b) owned by
+  `M273`**, with `KD113`. Detail: `crates/pgdt/src/parallel.rs`.
 
 - **KD51** — a remote `.xz` with no cached seek table, from a server stating
   no usable validator, is walked before its run is refused as one nothing can
@@ -442,9 +438,8 @@ than reading as a phase nobody has sliced.
 - **KD110** — `datafusion-cli-pgdump`'s exported `Args` prints every flag's
   help but `--source`'s one word to a line, `--source`'s value name being wider
   than the page, in any embedder not setting `next_line_help` as `pgdt sql`
-  does. **(c) unowned**; promoted by the pass
-  over CLI output (`../design/roadmap.md`, "Future — wanted, unscheduled").
-  Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
+  does. **(b) owned by `M272`**, which takes the placeholder the roadmap's
+  pass over CLI output proposes. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
 
 - **KD111** — at 128 MiB blocks and five block-decoding readers, the program
   holds one block unit more than `WorkerMemory`'s charge bills in two reps of
@@ -462,15 +457,13 @@ than reading as a phase nobody has sliced.
 - **KD113** — where a host reports neither a memory limit nor `MemAvailable`,
   a source's recommended charge stands uncapped, at the count asked for, and
   the provider's scans share no budget, though unstated is not unlimited
-  (`../design/roadmap.md`). **(c) unowned**; promoted by such a host reaching a
-  user. Detail: `crates/pgdt-io/src/arrangement.rs`.
+  (`../design/roadmap.md`). **(b) owned by `M273`**. Detail: `crates/pgdt-io/src/arrangement.rs`.
 
 - **KD122** — `pgdt sql` prints an error that ends its run, a refused
   `--source` or a failed `-c` statement, to stdout, as upstream's
   `datafusion-cli` does, where every other command writes errors to stderr; a
-  redirected run writes the refusal into its output. **(c) unowned**; promoted
-  by the maintainer deciding whether the shell departs from upstream's `main`
-  there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
+  redirected run writes the refusal into its output. **(b) owned by `M271`**,
+  the shell departing from upstream's `main` there. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
 
 - **KD131** — a complete map is saved before the reads that built it are
   completed: the forward pass's end-of-file save and the back-fill's run

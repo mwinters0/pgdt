@@ -56,8 +56,8 @@ pub(super) fn max_rows_group(rows: &[u64]) -> u64 {
 /// becomes `[20, 0 × 9]`, whose 90th-percentile group is 0), and stopping at
 /// the first merge that breaks the predicate can miss a coarser size that
 /// would hold it. `an_unpaired_last_group_lets_a_block_past_the_maximum_merge`
-/// pins the example. **(c) unowned**; promoted by a stated maximum seen to
-/// leave a block's groups past it.
+/// pins the example. The fix is the maximum read one rank higher, as the
+/// minimum reads the upper middle group.
 pub(super) fn density_merges(mut rows: Vec<u64>, min_rows: u64, max_rows: Option<u64>) -> u32 {
     let mut merges = 0;
     while rows.len() > 1 && min_rows_group(&rows) < min_rows {

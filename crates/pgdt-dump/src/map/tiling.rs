@@ -33,9 +33,8 @@ fn stores_text(body: &SpanBody) -> bool {
 /// Deficiency register: `deficiency: KD31` — that read is capped at
 /// `SPAN_STORED_TEXT_MAX_BYTES` times the run's span count from the run's start, not per span,
 /// so a span following one longer than the cap can fall past what was read and
-/// be stored empty and `truncated` however short it is. **(c) unowned**;
-/// promoted by a `--map` listing seen to lose a statement's text, the fix
-/// being a read per span past the cap.
+/// be stored empty and `truncated` however short it is. The fix is a run
+/// ending at a span longer than the cap.
 ///
 /// Deficiency register: `deficiency: KD136` — over a fetched compressed
 /// source each run's read is a fetch of the whole unit holding it, after the

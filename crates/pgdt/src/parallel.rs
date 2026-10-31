@@ -351,8 +351,8 @@ impl Resolved {
     /// by the allocation" beside a first line saying nothing enforces one.
     /// And the library's constant under a stated `--jobs` past one over a
     /// source recommending nothing, which the library carries as a budget
-    /// rather than as none. **(c) unowned**; closing it means a spelling of
-    /// each one's own, on this line and on [`Resolved::jobs_display`]'s.
+    /// rather than as none. Closing it means a spelling of each one's own, on
+    /// this line and on [`Resolved::jobs_display`]'s.
     fn budget_display(&self) -> String {
         let parallelism = self.parallelism();
         let bytes = parallelism.budget_bytes();

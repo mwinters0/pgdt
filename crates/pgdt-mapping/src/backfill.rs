@@ -63,10 +63,9 @@ pub(crate) enum Backfill {
 /// `Error::ScanCancelled`, banking nothing since the throttle's last save, where the same Ctrl-C during the
 /// mapping pass is an interrupted run ([`cancelled_read`],
 /// `docs/design/decisions.md`, "D26"). The fix is the arm [`map_file`](crate::map_file) already
-/// carries for the pass's own leader reads, here as well. **(c) unowned**;
-/// promoted by a parallel remote `parse` seen to error on Ctrl-C after its map
-/// reached EOF, or in a strict one's check of a map short of it, which
-/// [`map_file`](crate::map_file) runs through here before mapping on.
+/// carries for the pass's own leader reads, here as well. A strict `parse`'s
+/// check of a map short of EOF meets it too, [`map_file`](crate::map_file)
+/// running through here before mapping on.
 ///
 /// **A block lacking statistics was loaded, or broke a stated maximum**: a
 /// block this pass mapped holds what its own request asked, except for a
