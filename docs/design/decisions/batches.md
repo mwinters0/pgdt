@@ -50,9 +50,9 @@ pass stopping at the last descendant's block (one may hold none). Code: `dump/de
 read, so a cold pass settles a parent with its descendants whatever the mode. Read alone, a table holding no block of
 its own reads none under the schema its read with them settles, refusing as that read does. The provider takes the mode
 per dump, as its other modes, its catalog listing a table by what its schema refuses at registration. Rejected: the
-pass learning the mode (a `Table` bound to one, unlike a complete map's); `SET pgdump.inheritance` (binding at
-registration, not at each scan); the declared columns for an empty read (a generated column no block names). Code:
-`dump.rs` (`Table::read`). Evidence: `tests/descendants.rs`, `pgdt`'s `tests/descendants.rs`.
+pass learning the mode (a `Table` bound to one, unlike a complete map's); `SET pgdump.inheritance` (listed at
+registration; two registrations read both modes); the declared columns for an empty read (a generated column no
+block names). Code: `dump.rs` (`Table::read`). Evidence: `tests/descendants.rs`, `pgdt`'s `tests/descendants.rs`.
 
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 Sub-streams are contiguous byte-balanced runs cut through blocks in file order, so concatenating them *is* the serial

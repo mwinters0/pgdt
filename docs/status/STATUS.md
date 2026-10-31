@@ -89,10 +89,11 @@ Spec: [`../design/roadmap-P38-descendants.md`](../design/roadmap-P38-descendants
 - [x] **38.1** Evidence: the TimescaleDB generator at each pin, the `-n public` dumps, the inheritance schema, and each server's answers committed (D71); every shape in the spec's "Facts the grilling found" confirmed or corrected, and `timescaledb-invariants.md` opened with what was confirmed; no pgdt code — [notes](../design/roadmap-P38.1-evidence-notes.md)
 - [x] **38.2** A table reads its descendants: the walk, a table's blocks across identities projected to the parent's columns, a descendant's refusal refusing its parent, the load-via-root refusals with `KD158` (c); library and every front end, checked against 38.1's plain oracle — [notes](../design/roadmap-P38.2-descendants-notes.md)
 - [x] **38.3** `--inheritance <descendants|only>`: `QueryOptions`, `pgdump.inheritance`, `--source …:inheritance=`, `pgdt query --inheritance`, each front end's remedy spellings naming it — [notes](../design/roadmap-P38.3-inheritance-notes.md)
+- [ ] **38.3.1** A partitioned table read alone answers empty under `--load-via-partition-root`: the root and each partitioned table below it read no row under the declared columns the blocks holding their descendants' rows name, checked against 38.1's `only` oracle; `PartitionRootAlone` and its remedy spellings gone, `KD158` rewritten to the leaves and the read through below the root, the postgres invariant filed
 - [ ] **38.4** The catalog recorded: the model's rows, the pass recording them, the era recipes and the version fingerprint (cache bump); `pgdt info --json` showing them, each pin's recipe checked against its fixture's catalog; a `--table` fixture at 13 and 18 reaching detection by the catalog alone; the `timescaledb: TS<n>` markers and their check
 - [ ] **38.5** Hypertables resolved: compressed and partially compressed chunks refused at the hypertable and by name under both modes with a `KD<k>` (c), dropped rows skipped, absent chunks read as absent and a root's own rows read, each with its finding, an unreadable catalog refusing its hypertables; the answers taking each root's own rows as its restore holds them, and every pin checked against them
 - [ ] **38.6** `pgdt info`'s logical model: parents and their descendants, the TimescaleDB section, continuous aggregates, chunks folded
-- [ ] **38.7** The record: the README's supported/unsupported list, the manual, `pg-dump-compatibility.md`'s rows, and the hand run on the reference dump
+- [ ] **38.7** The record: the README's supported/unsupported list, the manual, `pg-dump-compatibility.md`'s rows, both modes in one statement by one dump registered twice (manual and a `pgdt sql` test), and the hand run on the reference dump
 
 ## Not started
 
@@ -123,20 +124,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`pgdump.inheritance` is a dump's mode, not a `SET` setting** (38.3). The
-  spec names "the `pgdump.inheritance` session setting"; it was built as the
-  `STORED AS PGDUMP` option beside `PgDumpOptions::inheritance` and
-  `:inheritance=`, read at registration like the dump's other modes, because
-  the provider lists a table in its catalog by whether its schema refuses
-  then, and a mode moved by a later `SET` would leave a table listed, or
-  left out, by the other mode (D132). Reconsidering means registration
-  listing each table under both modes, statistics kept per mode, and a rule
-  for which wins between a `SET` and a dump's own `:inheritance=`.
-- **A partitioned table below a `--load-via-partition-root` root refuses
-  read alone** (38.3), where the server answers it with no rows: it holds no
-  block, its descendants' rows are all in blocks naming the root, so nothing
-  settles its schema, and it refuses as its read through does. Reconsidering
-  means settling such a table's columns some other way — from the root's
-  blocks, or from its declared columns once the DDL model tells a generated
-  column apart — and answering it empty.

@@ -585,6 +585,7 @@ than reading as a phase nobody has sliced.
   partitioned table below its root, refuse under their own names, and the
   root read alone refuses, the rows being written through the root and
   routed to a partition only by its bounds, which nothing here evaluates; the
-  root read with its descendants is whole. **(c) unowned**; promoted by
+  root read with its descendants is whole. A partitioned table's refusal read
+  alone closes at slice 38.3.1. **(c) unowned**; promoted by
   [`../design/roadmap.md`](../design/roadmap.md)'s Future item "Rows routed to
   their partitions". Detail: `crates/pgdt-query/src/dump/descendants.rs`.

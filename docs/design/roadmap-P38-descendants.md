@@ -42,12 +42,14 @@ children are chunks and which rows the file does not hold.
   separate switch per kind of descendant.
 - **The switch back to today's presentation is one mode, `--inheritance
   <descendants|only>`**: `pgdt query --inheritance only`, `pgdt sql`'s
-  `--source <path>:inheritance=only`, the `pgdump.inheritance` session setting,
-  and `QueryOptions::inheritance` in the library — the CLI's mode convention
-  (`--schema-mode`, `:unrepresentable=`). `only` reads every table as its own
-  rows, inheritance and TimescaleDB alike. **Session-wide, not per table**,
+  `--source <path>:inheritance=only`, the `STORED AS PGDUMP` option
+  `pgdump.inheritance`, and `QueryOptions::inheritance` in the library — the
+  CLI's mode convention (`--schema-mode`, `:unrepresentable=`), so per dump
+  rather than a `SET` (D132; amended 2026-10-31). `only` reads every table as
+  its own rows, inheritance and TimescaleDB alike. **Not per table in SQL**,
   because DataFusion's SQL parses no `FROM ONLY` (sqlparser 0.62 reads `ONLY`
-  for `ALTER TABLE` and `TRUNCATE`, not a table factor). Named for
+  for `ALTER TABLE` and `TRUNCATE`, not a table factor); one dump registered
+  twice, once in each mode, reads both in one statement. Named for
   `pg_inherits`, which records partitions and inheritance children both.
   Rejected: `--no-timescaledb`, the escape being from PostgreSQL's semantics
   and a partitioned dump needing it as much; a boolean `--only`, against the
@@ -83,15 +85,17 @@ children are chunks and which rows the file does not hold.
   short. Rejected: the original server as reference, which would refuse every
   dump of a database with foreign chunks.
 - **A `--load-via-partition-root` dump's partitions refuse under their own
-  names, and its root refuses under `--inheritance only`**, each with a finding
-  naming the blocks written through the root — whether `pg_dump` was given the
-  flag or forced it (a hash partition key on an enum,
-  `fixture_schema_partitions.sql`). A restore routes those rows into partitions
-  by the partition key under its operator classes and collations (I86), which
-  pgdt does not evaluate. The root read through, the common query, stays whole.
-  Rejected: routing here, a feature of its own (the Future item "Rows routed to
-  their partitions"); today's presentation, a silent short answer for a
-  partition read by name.
+  names**, with a finding naming the blocks written through the root —
+  whether `pg_dump` was given the flag or forced it (a hash partition key on
+  an enum, `fixture_schema_partitions.sql`). A restore routes those rows into
+  partitions by the partition key under its operator classes and collations
+  (I86), which pgdt does not evaluate. The root read through, the common
+  query, stays whole, and **a partitioned table read alone — the root, or one
+  below it — answers no row**, as the server does, a partitioned table holding
+  none of its own (amended 2026-10-31). Rejected: routing here, a feature of
+  its own (the Future item "Rows routed to their partitions"); today's
+  presentation, a silent short answer for a partition read by name; refusing
+  a partitioned table read alone, whose answer is certain.
 
 ### TimescaleDB
 
@@ -309,6 +313,13 @@ what promotes it, registered by the slice that adds the refusal.
 3. **`--inheritance`.** The mode through `QueryOptions`, `pgdump.inheritance`,
    `--source …:inheritance=`, `pgdt query --inheritance`, with each front end's
    remedy spellings naming it.
+   - **3.1, earned: a partitioned table read alone answers empty under
+     load-via-root.** Slice 3 refused the root and each partitioned table
+     below it read alone; each now reads no row under the declared columns the
+     blocks holding its descendants' rows name, `PartitionRootAlone` going,
+     `KD158` narrowed to what needs routing, and a postgres invariant that a
+     partitioned table holds no rows of its own. Before slice 4, so slice 5's
+     refusals are written against the narrowed set.
 4. **The catalog recorded.** The model's rows, the pass recording them, the era
    recipes and the version fingerprint, under a `CACHE_FORMAT_VERSION` bump;
    `pgdt info --json` showing them. No query reads them yet, so each pin's
@@ -323,7 +334,9 @@ what promotes it, registered by the slice that adds the refusal.
    TimescaleDB section, continuous aggregates, chunks folded.
 7. **The record.** The README's supported/unsupported list, the manual,
    [`pg-dump-compatibility.md`](pg-dump-compatibility.md)'s rows for
-   inheritance, partitions and TimescaleDB, and a hand run of
+   inheritance, partitions and TimescaleDB; the manual's way to read both
+   modes in one statement — one dump registered twice, once in each — with a
+   `pgdt sql` test joining the two against both oracles; and a hand run of
    `SELECT count(*) FROM datanommer2.public.messages` on the reference dump
    against its catalog's chunks, its line limit raised past the longest line,
    noted in the slice's notes, not a test.
