@@ -42,8 +42,13 @@ struct IndexJson<'a> {
     resolution: Vec<BlockResolutionJson<'a>>,
     /// Per TimescaleDB database the DDL declares, what its catalog
     /// concludes — a model conclusion the index has no field for, its rows
-    /// being the catalog blocks' `recorded_rows`. A database only its
-    /// catalog blocks name (TS2), which the text listing shows, is not here.
+    /// being the catalog blocks' `recorded_rows`.
+    ///
+    /// deficiency: KD162 — a TimescaleDB database only its catalog blocks
+    /// name (TS2) is not here, though the text listing (`logical.rs`'s
+    /// `databases`) and the findings show it: a plain dump's segment ahead
+    /// of a `--create` dump's `\connect`, which the DDL's databases drop, or
+    /// a cache holding no DDL.
     timescaledb: Vec<TimescaleJson<'a>>,
 }
 

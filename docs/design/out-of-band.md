@@ -76,3 +76,4 @@ table as a work queue.
 |---|---|---|---|---|
 | M266 | | `SET pgdump.<key>` naming a dump's `STORED AS PGDUMP` option where `<key>` is one, instead of listing the four scan settings | | [2026-10-31](../status/history/2026-10-31.md), "`pgdump.inheritance` stays a dump's option" |
 | M267 | | `generate_fixtures.py` regenerating one flag set of a schema at a pin, leaving its siblings' dumps and answers untouched | | [2026-10-31](../status/history/2026-10-31.md), "The 38.4–38.5 round's calls, reviewed" |
+| M268 | | `pgdt info --json`'s `timescaledb` walks the databases the text listing does — the DDL's, then any only catalog blocks name — so a database the listing shows is never missing from the export; accepted by a `pgdt` test over a dump whose TimescaleDB database only its catalog blocks name; closes `KD162` | | [2026-10-31](../status/history/2026-10-31.md), "`KD162` filed and admitted as `M268`" |
