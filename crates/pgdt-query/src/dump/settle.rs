@@ -17,12 +17,13 @@ use pgdt_mapping::internal::{MapStop, Pass, Target, map_forward, reread_rows, sp
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata, TableName};
 use tokio_util::sync::CancellationToken;
 
+use super::descendants::{TableRead, declared_name, listed_tables, table_read};
 use super::{Table, TableSelector, select};
 use crate::options::ScanExtent;
 
-/// What the pass settled: the table, its blocks, and the DDL to type them
-/// against.
-type Settled = (TableName, Vec<CopyBlock>, Option<Arc<DumpMetadata>>);
+/// What the pass settled: the table, what a read of it reads, and the DDL to
+/// type its blocks against.
+type Settled = (TableName, TableRead, Option<Arc<DumpMetadata>>);
 
 impl Table {
     /// **A cold query's one table**: the dump `opened` opened, its map
@@ -69,7 +70,14 @@ impl Table {
         let settled = pass.settle(cache, selector, extent, schema_mode).await;
         let settled = watch.attribute(source.as_ref(), settled).await?;
         let watch = Arc::new(watch);
-        Ok(settled.map(|(name, blocks, metadata)| Table { source, watch, metadata, name, blocks }))
+        Ok(settled.map(|(name, TableRead { blocks, refused }, metadata)| Table {
+            source,
+            watch,
+            metadata,
+            name,
+            blocks,
+            refused,
+        }))
     }
 }
 
@@ -138,8 +146,10 @@ impl ColdPass<'_> {
             selector.selects_block(database, header.schema.as_deref(), &header.table)
         };
         let target: Option<Target<'_>> = match extent {
-            ScanExtent::UntilTargetSettled => Some(&selects),
-            ScanExtent::Full => None,
+            ScanExtent::UntilTargetSettled if !reads_descendants(&index, selector) => {
+                Some(&selects)
+            }
+            ScanExtent::UntilTargetSettled | ScanExtent::Full => None,
         };
         let stop = map_forward(
             source,
@@ -168,19 +178,19 @@ impl ColdPass<'_> {
         // databases errors instead. An ambiguous name among the tables mapped
         // errors before a single row goes out; one past an early stop is never
         // seen (`KD6`).
-        let tables = index.tables();
+        let tables = listed_tables(&index);
         let Some(name) = select(&tables, selector)? else { return Ok(None) };
-        let mut blocks: Vec<CopyBlock> = index.blocks_of(name).cloned().collect();
-        if schema_mode == SchemaMode::Typed {
-            self.census(metadata.as_deref(), name.database.as_deref(), &mut blocks, source_extent)
-                .await?;
+        let mut read = table_read(&index, name);
+        if schema_mode == SchemaMode::Typed && read.refused.is_none() {
+            let database = name.database.as_deref();
+            self.census(metadata.as_deref(), database, &mut read.blocks, source_extent).await?;
         }
         // **A streamed schema needs no completeness test**
         // (`docs/design/decisions.md`, "D34"): the pass has finished and the
         // blocks are fixed, so the census the plan unions over them is the
         // evidence for exactly the rows its streams will hand back
         // (`docs/design/decisions.md`, "D35").
-        Ok(Some((name.clone(), blocks, metadata)))
+        Ok(Some((name.clone(), read, metadata)))
     }
 
     /// **A query's cold semantics over a table the map holds at the metadata
@@ -225,4 +235,20 @@ impl ColdPass<'_> {
         }
         Ok(())
     }
+}
+
+/// Whether a table `selector` selects in the DDL `index` holds has a
+/// descendant, whose blocks may lie anywhere past the table's own, so the
+/// pass settling it runs to the file's end (`docs/design/decisions.md`,
+/// "D131"). A database the map has not reached is a `\connect`'s, which
+/// runs the pass to the end already (`docs/design/decisions.md`, "D49").
+fn reads_descendants(index: &DumpIndex, selector: &TableSelector) -> bool {
+    index.metadata.as_deref().is_some_and(|metadata| {
+        metadata.databases.iter().any(|db| {
+            db.tables.keys().any(|key| {
+                selector.selects(&declared_name(db.name.as_deref(), key))
+                    && !db.descendants(key).is_empty()
+            })
+        })
+    })
 }

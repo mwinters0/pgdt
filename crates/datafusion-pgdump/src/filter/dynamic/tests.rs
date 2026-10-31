@@ -454,6 +454,13 @@ async fn a_translated_dynamic_filter_keeps_every_row_datafusion_keeps() {
         let copy = parsed_copy(&fixture, dir.path(), &tiny_groups()).await;
         let dump = PgDump::open(copy.to_str().unwrap(), PgDumpOptions::default()).await.unwrap();
         for name in dump.tables() {
+            // A partition written through its root is refused (`KD158`).
+            let library = dump.dump().table(&name.into()).unwrap().expect("one of its tables");
+            if let Err(pgdt_core::Error::PartitionThroughRoot { .. }) =
+                library.schema(&QueryOptions::default())
+            {
+                continue;
+            }
             // Only the columns every row decodes are read, so a value the
             // build cannot hold (D96) ends no comparison.
             let mut projection = None;

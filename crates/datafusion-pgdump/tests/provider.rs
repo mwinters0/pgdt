@@ -137,6 +137,16 @@ async fn every_fixture_table_reads_as_the_library_reads_it() {
                 );
                 let expected = library_answer(&copy, table, schema_mode).await;
                 let query = select(&catalog_of(&catalogs, table), table, "*");
+                // A partition written through its root is refused, and its
+                // catalog leaves it unlisted (`KD158`).
+                if expected
+                    .as_ref()
+                    .is_err_and(|e| e.contains("written through its partition root"))
+                {
+                    let unlisted = ctx.sql(&query).await.err().unwrap();
+                    assert!(unlisted.to_string().contains("not found"), "{what}: {unlisted}");
+                    continue;
+                }
                 let plan = ctx.sql(&query).await.unwrap().create_physical_plan().await.unwrap();
                 let got = partition_batches(&ctx, Arc::clone(&plan)).await;
                 match (expected, got) {

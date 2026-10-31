@@ -36,6 +36,15 @@ exhaustive match, operator then operand then children, so an added operator is a
 rather than a `Hash` derived onto the public predicate types; the batching knobs, `postgres_invalid_values` and
 `use_statistics` stay out, no skipped group holding a resumed row.
 
+### D131 A table reads its blocks and every descendant's, projected to its columns; a parent's cold pass runs to the end
+`Table` holds its blocks and those of each table `parents` and `partition_of` reach below it, each resolved under its own
+DDL and projected by name to the table's columns: its own blocks' set, or with none, the declared columns its first
+descendant's block names, every block naming the same of them; a filter or projection naming a descendant's own column
+refuses. A table is listed where a block holds its rows or a descendant's. Rejected: one column set across descendants
+(a child's own column refusing its parent); listing every declared table (a schema-only dump's reading empty); a cold
+pass stopping at the last descendant's block (one may hold none). Code: `dump/descendants.rs`. Evidence:
+`tests/descendants.rs` (D130).
+
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 Sub-streams are contiguous byte-balanced runs cut through blocks in file order, so concatenating them *is* the serial
 replay. A cut's offsets are search bounds, a row straddling one belonging to the earlier piece, and a piece resyncs by a

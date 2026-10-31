@@ -51,6 +51,8 @@ pub(in crate::stream) struct ReplayPlan {
     /// a table's blocks sharing it (`docs/design/decisions.md`, "D49").
     pub(in crate::stream) database: Option<String>,
     pub(in crate::stream) table: TableColumns,
+    /// The schema every batch of the table is reported under ([`read_schema`]).
+    pub(in crate::stream) schema: ResolvedSchema,
     /// Every matched block, resolved and keyed by the
     /// block's `header_offset` — see [`plan_blocks`], which refuses the whole
     /// plan on any block's resolution refusal.
@@ -85,12 +87,14 @@ impl ReplayPlan {
         read: ReadOptions,
         query_options: QueryOptions,
         database: Option<String>,
+        table: &str,
         matches: &[CopyBlock],
         metadata: Option<Arc<DumpMetadata>>,
     ) -> Result<Self> {
-        let (table, blocks) =
-            plan_table(database.as_deref(), matches, &query_options, metadata.as_deref())?;
-        let mut unrepresentable = materialized_unrepresentable(matches, &blocks, &query_options);
+        let (table, blocks, schema) =
+            plan_table(database.as_deref(), table, matches, &query_options, metadata.as_deref())?;
+        let mut unrepresentable =
+            materialized_unrepresentable(&table, matches, &blocks, &query_options);
         if query_options.unrepresentable == UnrepresentableMode::Refuse
             && !unrepresentable.is_empty()
         {
@@ -113,6 +117,7 @@ impl ReplayPlan {
             metadata,
             database,
             table,
+            schema,
             blocks,
             kept,
             stops,
@@ -147,7 +152,8 @@ impl ReplayPlan {
     }
 }
 
-/// What every plan of `matches`, the blocks of one table in `database`, opens with, before anything is read: the
+/// What every plan of `matches`, the blocks a read of `table` in `database`
+/// reads — its own and its descendants' — opens with, before anything is read: the
 /// metadata level refused where a typed plan cannot read it
 /// ([`refuse_metadata_level`]), the table's columns settled
 /// ([`TableColumns::settle`]), and every block resolved against them
@@ -157,14 +163,44 @@ impl ReplayPlan {
 /// one the stream's batches carry.
 pub(in crate::stream) fn plan_table(
     database: Option<&str>,
+    table: &str,
     matches: &[CopyBlock],
     query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
-) -> Result<(TableColumns, BTreeMap<u64, PlannedBlock>)> {
+) -> Result<(TableColumns, BTreeMap<u64, PlannedBlock>, ResolvedSchema)> {
     refuse_metadata_level(matches, query_options)?;
-    let table = TableColumns::settle(database, matches, metadata, query_options)?;
+    let table = TableColumns::settle(database, table, matches, metadata, query_options)?;
     let blocks = plan_blocks(database, matches, query_options, metadata, &table)?;
-    Ok((table, blocks))
+    let schema = read_schema(database, &table, matches, &blocks, query_options, metadata)?;
+    Ok((table, blocks, schema))
+}
+
+/// **The schema a read of the table reports**, whichever block a batch came
+/// from: its first own block's, as planned, or — for a table with none —
+/// what a block of its own listing its columns resolves, so a descendant's
+/// `NOT NULL` the table does not declare is not reported as the table's
+/// (`docs/design/decisions.md`, "D131"). Each block keeps its own for the
+/// rows it reads, a NULL its table's `NOT NULL` refuses refused there.
+fn read_schema(
+    database: Option<&str>,
+    table: &TableColumns,
+    matches: &[CopyBlock],
+    blocks: &BTreeMap<u64, PlannedBlock>,
+    query_options: &QueryOptions,
+    metadata: Option<&DumpMetadata>,
+) -> Result<ResolvedSchema> {
+    let own = matches.iter().find(|b| b.header.qualified_name() == table.name);
+    if let Some(planned) = own.and_then(|own| blocks.get(&own.header_offset)) {
+        return Ok(planned.resolved.clone());
+    }
+    let Some(first) = matches.first() else { return Ok(ResolvedSchema::default()) };
+    let (schema, name) = match table.name.split_once('.') {
+        Some((schema, name)) => (Some(schema.to_string()), name.to_string()),
+        None => (None, table.name.clone()),
+    };
+    let header = CopyHeader { schema, table: name, columns: table.order.clone() };
+    let offset = first.header_offset;
+    Ok(resolve_for_query(&header, offset, database, query_options, metadata, table, None)?.resolved)
 }
 
 /// What [`prune_blocks`] settles for a [`ReplayPlan`].
@@ -264,6 +300,7 @@ struct MaterializedUnrepresentable {
 /// `docs/design/decisions.md`, "D99") and the null mode warns of
 /// ([`read_as_null`]).
 fn materialized_unrepresentable(
+    table: &TableColumns,
     matches: &[CopyBlock],
     blocks: &BTreeMap<u64, PlannedBlock>,
     query_options: &QueryOptions,
@@ -271,11 +308,11 @@ fn materialized_unrepresentable(
     if query_options.schema_mode != SchemaMode::Typed {
         return Vec::new();
     }
-    let (Some(first), Some(planned)) = (matches.first(), blocks.values().next()) else {
+    let Some(planned) = blocks.values().next() else {
         return Vec::new();
     };
     let reach = query_options.unrepresentable_reach();
-    let table = first.header.qualified_name();
+    let table = table.name.clone();
     let fields = planned.resolved.schema().fields();
     let mut found = Vec::new();
     for (i, field) in fields.iter().enumerate() {
@@ -417,8 +454,14 @@ pub(super) fn resolve_for_query(
     )?;
     let unrepresentable = query_reads(header, metadata, database, &full, counts, query_options);
     // Every term's column before anything a term asks
-    // (`docs/design/decisions.md`, "D54").
+    // (`docs/design/decisions.md`, "D54"), and a descendant's own column
+    // none of the table's (`docs/design/decisions.md`, "D131").
     check_columns(&query_options.filter, &full, header_offset)?;
+    let not_the_table_s = |term: &Predicate| !table.order.contains(&term.column);
+    if let Some(term) = query_options.filter.first_term(&not_the_table_s) {
+        let column = term.column.clone();
+        return Err(Error::UnknownPredicateColumn { header_offset, column });
+    }
     let tests = query_tests(header, metadata, database, counts, query_options)?;
     // Against the *unprojected* schema, in the block's own order: a term's
     // index numbers the raw row's fields, and a term may name a column the
@@ -430,6 +473,10 @@ pub(super) fn resolve_for_query(
             .invalid_values(query_options.postgres_invalid_values);
     let notes = filter.comparison_notes();
     let projection = query_options.projection.as_deref().unwrap_or(&table.order);
+    if let Some(column) = projection.iter().find(|name| !table.order.contains(name)) {
+        let column = column.clone();
+        return Err(Error::UnknownProjectionColumn { header_offset, column });
+    }
     let (resolved, field_targets) = project(&full, Some(projection), header_offset)?;
     Ok(PlannedBlock {
         header: header.clone(),
@@ -528,14 +575,15 @@ fn plan_blocks(
 }
 
 /// **One table, one schema**: the column order every batch of a table
-/// carries, whichever of its blocks the rows came from, and the census keyed
-/// to it.
+/// carries, whichever of its blocks — or its descendants' — the rows came
+/// from, and the census keyed to it.
 ///
 /// A table can own several blocks (I2), each listing its columns in its own
 /// leaf's order (I5), so a block's batches are reordered by name into the
 /// table's order — the table's DDL order where the dump declares the table,
 /// the first block's order where it does not — and a table whose blocks name
-/// different *sets* of columns is refused, naming two of them. Neither the
+/// different *sets* of its columns is refused, naming two of them
+/// ([`TableColumns::settle`]). Neither the
 /// order nor the refusal reads [`SchemaMode`], so a table's columns come out
 /// the same with typing on or off (`docs/design/decisions.md`, "D66").
 ///
@@ -553,6 +601,9 @@ fn plan_blocks(
 /// `''` for every value.
 #[derive(Debug, Clone)]
 pub(in crate::stream) struct TableColumns {
+    /// The table read, as [`pgdt_core::CopyHeader::qualified_name`] spells
+    /// it: what a refusal of the table as a whole names.
+    name: String,
     pub(in crate::stream) order: Vec<String>,
     /// One entry per name in `order`, its census unioned over every block
     /// ([`union_census`]).
@@ -568,38 +619,69 @@ pub(in crate::stream) struct TableColumns {
 }
 
 impl TableColumns {
-    /// The table `matches` are the blocks of, in `database` — one `(database, table)`
-    /// target, already narrowed (`docs/design/decisions.md`, "D49") — as
-    /// `query_options` reads it.
+    /// The table `table` in `database`, whose read reads `matches` — one
+    /// `(database, table)` target, already narrowed
+    /// (`docs/design/decisions.md`, "D49") — as `query_options` reads it.
+    ///
+    /// **Its columns are its own blocks'**, which must name one set, and
+    /// every descendant's block must name each of them besides any of its
+    /// own, which are projected away (`docs/design/decisions.md`, "D131").
+    /// **A table with no block of its own** — a partitioned table — takes
+    /// the columns it declares that its first descendant's block names, a
+    /// declared column no block names being one `COPY` does not write, and
+    /// every other descendant's block must name the same of them.
     fn settle(
         database: Option<&str>,
+        table: &str,
         matches: &[CopyBlock],
         metadata: Option<&DumpMetadata>,
         query_options: &QueryOptions,
     ) -> Result<Self> {
+        let name = table.to_string();
         let Some(first) = matches.first() else {
-            return Ok(Self { order: Vec::new(), census: Vec::new(), text: Vec::new() });
+            return Ok(Self { name, order: Vec::new(), census: Vec::new(), text: Vec::new() });
         };
-        fn set(b: &CopyBlock) -> Vec<&String> {
-            let mut names: Vec<&String> = b.header.columns.iter().collect();
+        let declared: Option<Vec<String>> = metadata
+            .and_then(|metadata| database_for_name(metadata, database))
+            .map(|db| db.declared_columns(table))
+            .filter(|columns| !columns.is_empty())
+            .map(|columns| columns.iter().map(|c| c.name.clone()).collect());
+        let own = |b: &&CopyBlock| b.header.qualified_name() == table;
+        let set = |b: &CopyBlock, of: &dyn Fn(&String) -> bool| -> Vec<String> {
+            let mut names: Vec<String> =
+                b.header.columns.iter().filter(|c| of(c)).cloned().collect();
             names.sort();
             names
-        }
-        let first_set = set(first);
-        if let Some(other) = matches.iter().find(|b| set(b) != first_set) {
-            return Err(Error::TableColumnsDisagree {
-                table: first.header.qualified_name(),
-                header_offset: first.header_offset,
-                other_offset: other.header_offset,
-            });
-        }
-        let declared: Option<Vec<&str>> = metadata
-            .and_then(|metadata| database_for_name(metadata, database))
-            .map(|db| db.declared_columns(&first.header.qualified_name()))
-            .map(|columns| columns.iter().map(|c| c.name.as_str()).collect());
-        // Stable, so a name the DDL does not declare keeps the first block's
-        // place for it, after every declared one.
-        let mut order = first.header.columns.clone();
+        };
+        let disagree = |one: &CopyBlock, other: &CopyBlock| Error::TableColumnsDisagree {
+            table: name.clone(),
+            header_offset: one.header_offset,
+            other_offset: other.header_offset,
+        };
+        let mut order = match matches.iter().find(own) {
+            Some(founder) => {
+                let columns = set(founder, &|_| true);
+                let names = |b: &CopyBlock| set(b, &|c| columns.contains(c));
+                let short = |b: &&CopyBlock| match own(b) {
+                    true => set(b, &|_| true) != columns,
+                    false => names(b) != columns,
+                };
+                if let Some(other) = matches.iter().find(short) {
+                    return Err(disagree(founder, other));
+                }
+                founder.header.columns.clone()
+            }
+            None => {
+                let of = |c: &String| declared.as_ref().is_none_or(|d| d.contains(c));
+                let columns = set(first, &of);
+                if let Some(other) = matches.iter().find(|b| set(b, &of) != columns) {
+                    return Err(disagree(first, other));
+                }
+                first.header.columns.iter().filter(|c| of(c)).cloned().collect()
+            }
+        };
+        // Stable, so a name the DDL does not declare keeps the founding
+        // block's place for it, after every declared one.
         let rank = |name: &String| declared.as_ref().and_then(|d| d.iter().position(|c| c == name));
         order.sort_by_key(|name| rank(name).unwrap_or(usize::MAX));
         let census = order.iter().cloned().zip(union_census(&order, matches)).collect();
@@ -614,7 +696,7 @@ impl TableColumns {
             }
             _ => Vec::new(),
         };
-        Ok(Self { order, census, text })
+        Ok(Self { name, order, census, text })
     }
 
     /// Which of `names` the untyped mode reads as text, in `names`' order.
@@ -746,12 +828,13 @@ pub(in crate::stream) struct PlannedReplay {
 pub(in crate::stream) fn plan_replay(
     source: &dyn ByteRangeSource,
     database: Option<String>,
+    table: &str,
     matches: &[CopyBlock],
     metadata: Option<Arc<DumpMetadata>>,
     read: ReadOptions,
     query_options: QueryOptions,
 ) -> Result<PlannedReplay> {
-    let mut plan = ReplayPlan::new(read, query_options, database, matches, metadata)?;
+    let mut plan = ReplayPlan::new(read, query_options, database, table, matches, metadata)?;
     let (groups, mut plan_notes, span, advice) = plan_partitions(
         source,
         matches,

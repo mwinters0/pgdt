@@ -223,3 +223,39 @@ fn a_reference_reaching_nothing_declares_nothing() {
     assert_eq!(db.declared_column("public.b", "y"), None);
     assert_eq!(db.declared_columns("public.b").len(), 1);
 }
+
+/// A table's descendants are its `INHERITS` children and its partitions, at
+/// any depth, a child of two parents reached once; its ancestors the
+/// inverse, the nearest first. Neither holds the table, a cycle included.
+#[test]
+fn descendants_and_ancestors_walk_inheritance_and_partitions() {
+    let mut db = with_tables(
+        &[
+            ("public.animal", &[("id", "integer")], &[], None),
+            ("public.mammal", &[], &["public.animal"], None),
+            ("public.pet", &[("owner", "text")], &[], None),
+            ("public.cat", &[], &["public.mammal", "public.pet"], None),
+            ("kennel.puppy", &[], &["public.mammal"], None),
+            ("public.reading", &[("year", "integer")], &[], None),
+            ("public.reading_2020", &[("year", "integer")], &[], None),
+            ("public.reading_2020_n", &[("year", "integer")], &[], None),
+            ("public.a", &[("x", "integer")], &["public.b"], None),
+            ("public.b", &[], &["public.a"], None),
+        ],
+        Vec::new(),
+    );
+    let of = |parent: &str| Some(PartitionOf { parent: parent.to_string(), bound: None });
+    let tables = &mut db.tables;
+    tables.get_mut("public.reading_2020").unwrap().partition_of = of("public.reading");
+    tables.get_mut("public.reading_2020_n").unwrap().partition_of = of("public.reading_2020");
+    assert_eq!(db.descendants("public.animal"), ["public.mammal", "kennel.puppy", "public.cat"]);
+    assert_eq!(db.descendants("public.pet"), ["public.cat"]);
+    assert_eq!(db.descendants("public.reading"), ["public.reading_2020", "public.reading_2020_n"]);
+    assert_eq!(db.descendants("public.cat"), Vec::<&str>::new());
+    assert_eq!(db.descendants("public.absent"), Vec::<&str>::new());
+    assert_eq!(db.descendants("public.a"), ["public.b"]);
+    assert_eq!(db.ancestors("public.cat"), ["public.mammal", "public.pet", "public.animal"]);
+    assert_eq!(db.ancestors("public.reading_2020_n"), ["public.reading_2020", "public.reading"]);
+    assert_eq!(db.ancestors("public.animal"), Vec::<&str>::new());
+    assert_eq!(db.ancestors("public.b"), ["public.a"]);
+}

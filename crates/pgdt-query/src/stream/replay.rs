@@ -511,7 +511,9 @@ fn activate(
         block.field_targets.clone(),
         block.unrepresentable.clone(),
     );
-    let (resolved, notes) = (block.resolved.clone(), block.notes.clone());
+    // The table's schema, not the block's: a descendant's may declare a
+    // `NOT NULL` the table does not (`docs/design/decisions.md`, "D131").
+    let (resolved, notes) = (plan.schema.clone(), block.notes.clone());
     Ok(((header_offset, header, batcher, Arc::clone(&block.filter), database), resolved, notes))
 }
 

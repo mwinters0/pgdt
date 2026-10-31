@@ -243,6 +243,68 @@ impl DatabaseMetadata {
         self.tables.values().any(|def| def.partition_of.as_ref().is_some_and(|p| p.parent == table))
     }
 
+    /// **Every table whose rows a read of table `table` reads beside its
+    /// own**, as `SELECT … FROM table` does on the server: each table naming
+    /// it among its `INHERITS` parents or as the table it is a partition of,
+    /// and each of theirs, at any depth, each once — a child of two parents
+    /// both reach being one descendant. Breadth first, each level in key
+    /// order; `table` itself never, a cycle, which no server holds, ending
+    /// where it returns. Empty for a table nothing declares a child of.
+    pub fn descendants(&self, table: &str) -> Vec<&str> {
+        let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for (name, def) in &self.tables {
+            for parent in def.parents.iter().chain(def.partition_of.iter().map(|p| &p.parent)) {
+                children.entry(parent.as_str()).or_default().push(name.as_str());
+            }
+        }
+        let mut found: Vec<&str> = Vec::new();
+        let mut next = 0;
+        let mut level: Vec<&str> = children.get(table).cloned().unwrap_or_default();
+        loop {
+            for child in level {
+                if child != table && !found.contains(&child) {
+                    found.push(child);
+                }
+            }
+            if next == found.len() {
+                return found;
+            }
+            level = found[next..]
+                .iter()
+                .flat_map(|t| children.get(t).into_iter().flatten().copied())
+                .collect();
+            next = found.len();
+        }
+    }
+
+    /// **Every table a read of which reads table `table`'s rows**, the
+    /// inverse of [`descendants`](Self::descendants): each `INHERITS` parent
+    /// and the table it is a partition of, where the preamble declares them,
+    /// and each of theirs, at any depth, each once, the nearest first.
+    /// `table` itself never; a cycle ends where it returns.
+    pub fn ancestors(&self, table: &str) -> Vec<&str> {
+        let mut found: Vec<&str> = Vec::new();
+        let mut next = 0;
+        let mut level: Vec<&str> = vec![table];
+        loop {
+            for parent in level.iter().filter_map(|t| self.tables.get(*t)).flat_map(|def| {
+                def.parents.iter().chain(def.partition_of.iter().map(|p| &p.parent))
+            }) {
+                let Some((parent, _)) = self.tables.get_key_value(parent.as_str()) else {
+                    continue;
+                };
+                if parent != table && !found.contains(&parent.as_str()) {
+                    found.push(parent);
+                }
+            }
+            if next == found.len() {
+                return found;
+            }
+            level = found[next..].to_vec();
+            next = found.len();
+        }
+    }
+
     /// The fields of the composite `type_name` names, where it parsed, the
     /// two names compared in their canonical spelling (I29).
     fn composite_fields(&self, type_name: &str) -> Option<&[ColumnDef]> {

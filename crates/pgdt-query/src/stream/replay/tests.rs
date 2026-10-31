@@ -38,6 +38,7 @@ async fn the_filter_is_resolved_once_per_block_at_plan_time() {
             ReadOptions::default(),
             query_options.clone(),
             database.clone(),
+            &first.header.qualified_name(),
             &matches,
             index.metadata.clone(),
         )

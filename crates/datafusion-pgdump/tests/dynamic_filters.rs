@@ -44,7 +44,7 @@ use datafusion::physical_plan::execution_plan::reset_plan_states;
 use datafusion::physical_plan::metrics::MetricValue;
 use datafusion::physical_plan::{ExecutionPlan, ExecutionPlanProperties, collect, displayable};
 use datafusion::prelude::{SessionConfig, SessionContext};
-use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, register_dump};
+use datafusion_pgdump::{PgDump, PgDumpOptions, PgDumpSettings, Refusal, register_dump};
 use pgdt_fixtures::{all_fixtures, fixtures_root, parsed_copy};
 use pgdt_mapping::statistics::{StatisticsRequest, StatisticsSelection, StatisticsSizing};
 use pgdt_model::Finding;
@@ -384,8 +384,15 @@ fn register(ctx: &SessionContext, dump: &Arc<PgDump>) {
     // The catalog is what installs the session's budget and settings.
     register_dump(ctx, Some("dump"), dump, Arc::new(ignore)).unwrap();
     for name in dump.tables() {
-        let table: Arc<dyn TableProvider> =
-            dump.table(&TableSelector::named(&name.table), &name.table, Arc::new(ignore)).unwrap();
+        let table = dump.table(&TableSelector::named(&name.table), &name.table, Arc::new(ignore));
+        // A partition written through its root is refused, as its catalog
+        // leaves it unlisted (`KD158`).
+        if let Err(error) = &table
+            && let Refusal::Library(pgdt_core::Error::PartitionThroughRoot { .. }) = error.refusal()
+        {
+            continue;
+        }
+        let table: Arc<dyn TableProvider> = table.unwrap();
         ctx.register_table(&name.table, table).unwrap();
     }
 }

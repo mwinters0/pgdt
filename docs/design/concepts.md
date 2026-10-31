@@ -188,7 +188,9 @@ extensions, kept as the words written ([`decisions.md`](decisions.md), "The
 file map and the preamble").
 
 - **pgdt-model** — `catalog.rs`: persisted, so never a codec conclusion
-  (D74).
+  (D74); the walks over what it declares — a column through a table's
+  parents, a table's descendants and ancestors — beside it, reading nothing
+  else.
 - **pgdt-dump** — `ddl/`, `preamble.rs`: the statement grammar, applied
   across the whole file, and the prepass reading the region before the first
   data, which the scanner and the grammar drive and pgdt-query's pass 1
@@ -204,10 +206,12 @@ format is pgdt-model's, `CACHE_FORMAT_VERSION` at that crate's root.
   the map's own functions, so the cache sits beside the parsers (D68); its part is opening a source through its cache too, which
   needs the source and the persisted map, both at or below it, and a gzip cache's window section, read through the
   provider trait io defines, so io names nothing of the cache (D114).
-- **pgdt-query** — `dump.rs`: the complete dump an embedder reads tables
-  through, a table named by a selector, and its schema, summary and plan;
-  schema resolution, summaries and the replay are query's, so the handle
-  offering them is too. A cold query's table is settled beside it.
+- **pgdt-query** — `dump.rs`, `dump/descendants.rs`: the complete dump an
+  embedder reads tables through, the tables it lists, a table named by a
+  selector, the blocks a read of it reads — its descendants' included — and
+  its schema, summary and plan; schema resolution, summaries and the replay
+  are query's, so the handle offering them is too. A cold query's table is
+  settled beside it.
 - **datafusion-pgdump** — `dump.rs`: a dump opened through its complete
   cache, with the modes and the budget holds every scan of it reads under
   (D90).
@@ -404,10 +408,11 @@ them ([`decisions.md`](decisions.md), "D105").
 What every crate's tests address the fixtures by: the generated tree and its
 enumerator, the sandboxes a test writes a cache beside, the multi-database
 concatenation, the fields PostgreSQL refuses and how a sweep maps past them, a
-fixture mapped beside its cache, and the hand-written dump
+fixture mapped beside its cache, the server's answers beside a dump, and the
+hand-written dump
 ([`decisions.md`](decisions.md), "D68").
 
-- **pgdt-fixtures** — `lib.rs`, `refused.rs`, `parsed.rs`: a member only a
+- **pgdt-fixtures** — `lib.rs`, `refused.rs`, `parsed.rs`, `answers.rs`: a member only a
   dev-dependency reaches, so every crate's tests share one copy with the graph
   one-way; the sweep's request builders, which name the statistics request,
   and a fixture mapped beside its cache, behind its `mapping` feature.

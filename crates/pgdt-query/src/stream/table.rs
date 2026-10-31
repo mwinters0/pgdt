@@ -229,12 +229,13 @@ impl StreamShared {
 /// column-set check.
 pub(crate) fn table_schema(
     database: Option<&str>,
+    table: &str,
     blocks: &[CopyBlock],
     metadata: Option<&DumpMetadata>,
     query_options: &QueryOptions,
 ) -> Result<ResolvedSchema> {
-    let (_, planned) = plan_table(database, blocks, query_options, metadata)?;
-    Ok(planned.into_values().next().map(|planned| planned.resolved).unwrap_or_default())
+    let (_, _, schema) = plan_table(database, table, blocks, query_options, metadata)?;
+    Ok(schema)
 }
 
 /// Blocking [`Iterator`] wrapper over a [`TableStream`], for sync callers

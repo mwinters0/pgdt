@@ -230,6 +230,7 @@ async fn a_replay_holds_no_block_s_statistics() {
     let PlannedReplay { plan, groups, .. } = plan_replay(
         &source,
         None,
+        &matches[0].header.qualified_name(),
         &matches,
         index.metadata.clone(),
         ReadOptions::default(),

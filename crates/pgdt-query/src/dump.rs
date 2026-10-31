@@ -21,7 +21,10 @@ use crate::predicate::{ComparisonNote, column_divergences};
 use crate::stream::{TablePartitions, table_schema};
 use crate::summary::{TableSummary, table_summary};
 
+mod descendants;
 mod settle;
+
+use self::descendants::{TableRead, ThroughRoot, listed_tables, table_read};
 
 /// A dump and **a map of the whole of it**, complete by construction: built
 /// from an open whose cache reaches the file's end ([`Dump::opened`]), or
@@ -89,7 +92,7 @@ impl Dump {
     }
 
     fn new(source: Arc<dyn ByteRangeSource>, watch: SourceWatch, index: DumpIndex) -> Self {
-        let tables = index.tables();
+        let tables = listed_tables(&index);
         Self { source, watch: Arc::new(watch), index, tables }
     }
 
@@ -105,7 +108,9 @@ impl Dump {
     }
 
     /// Every table the dump holds rows for, each once, in the order its first
-    /// block appears.
+    /// block appears: each a block holds rows for, and each table one of
+    /// those descends from — a partitioned table, which holds none of its
+    /// own, included (`docs/design/decisions.md`, "D131").
     pub fn tables(&self) -> &[TableName] {
         &self.tables
     }
@@ -135,18 +140,21 @@ impl Dump {
     }
 
     /// The one table `selector` selects ([`TableSelector::selects`]), holding
-    /// its blocks and sharing this dump's source, watch and DDL ([`Table`]);
+    /// the blocks a read of it reads — its own and every descendant's — and
+    /// sharing this dump's source, watch and DDL ([`Table`]);
     /// `None` where it selects none, and [`Error::AmbiguousTable`] where it
     /// selects more than one, naming each (`docs/design/decisions.md`,
     /// "D49").
     pub fn table(&self, selector: &TableSelector) -> Result<Option<Table>> {
         let Some(name) = select(&self.tables, selector)? else { return Ok(None) };
+        let TableRead { blocks, refused } = table_read(&self.index, name);
         Ok(Some(Table {
             source: Arc::clone(&self.source),
             watch: Arc::clone(&self.watch),
             metadata: self.index.metadata.clone(),
             name: name.clone(),
-            blocks: self.index.blocks_of(name).cloned().collect(),
+            blocks,
+            refused,
         }))
     }
 }
@@ -253,9 +261,15 @@ impl fmt::Display for TableSelector {
 /// plan under a query's options, each read off the table's blocks and the
 /// dump's DDL and none reading a byte of the dump.
 ///
+/// **It reads its descendants**: its rows are its own and every table's that
+/// inherits from it or is its partition, at any depth, each projected to its
+/// columns, as `SELECT … FROM <table>` reads them on the server
+/// (`docs/design/decisions.md`, "D131").
+///
 /// **It owns what it plans over**: the dump's source, watch and DDL shared by
-/// `Arc`, and its own blocks — every block of the table in the complete map
-/// it was resolved from, cloned once, their statistics shared with that map.
+/// `Arc`, and its blocks — every block of the table and of its descendants
+/// in the complete map it was resolved from, cloned once, their statistics
+/// shared with that map.
 /// So it outlives the [`Dump`] that resolved it, and a plan made from it
 /// reads the source the blocks describe, checked against the baseline the
 /// map was believed under. It is the one `'static` type a complete map and a
@@ -267,6 +281,8 @@ pub struct Table {
     metadata: Option<Arc<DumpMetadata>>,
     name: TableName,
     blocks: Vec<CopyBlock>,
+    /// Why every read of it refuses, where one does.
+    refused: Option<ThroughRoot>,
 }
 
 impl fmt::Debug for Table {
@@ -284,7 +300,8 @@ impl Table {
         &self.name
     }
 
-    /// Every block of the table, in file order.
+    /// Every block a read of the table reads, its descendants' included, in
+    /// file order.
     pub fn blocks(&self) -> &[CopyBlock] {
         &self.blocks
     }
@@ -299,13 +316,24 @@ impl Table {
     /// included: the schema every batch of its plan carries, or the refusal
     /// its plan would raise — a table whose blocks name different column
     /// sets, a projected name no block carries, a typed query of a table the
-    /// map holds at the metadata level ([`Error::TableAtMetadataLevel`]) —
-    /// but for the refuse mode's, which only planning raises, and a projection
-    /// naming a column twice, which only planning refuses: here the column
-    /// comes back twice.
+    /// map holds at the metadata level ([`Error::TableAtMetadataLevel`]), a
+    /// table whose rows are written through its partition root
+    /// ([`Error::PartitionThroughRoot`]) — but for the refuse mode's, which
+    /// only planning raises, and a projection naming a column twice, which
+    /// only planning refuses: here the column comes back twice.
     pub fn schema(&self, options: &QueryOptions) -> Result<ResolvedSchema> {
+        self.readable()?;
         let database = self.name.database.as_deref();
-        table_schema(database, &self.blocks, self.metadata.as_deref(), options)
+        let table = self.name.qualified_name();
+        table_schema(database, &table, &self.blocks, self.metadata.as_deref(), options)
+    }
+
+    /// The table's refusal, where every read of it refuses.
+    fn readable(&self) -> Result<()> {
+        match &self.refused {
+            Some(refused) => Err(refused.refusal(&self.name)),
+            None => Ok(()),
+        }
     }
 
     /// What the map's statistics say about the whole table, against the
@@ -333,6 +361,7 @@ impl Table {
     /// plan refuses, before a byte is read, and a source the dump's watch
     /// cannot check while it is read (`docs/design/decisions.md`, "D21").
     pub fn plan(&self, read: ReadOptions, options: QueryOptions) -> Result<TablePartitions> {
+        self.readable()?;
         TablePartitions::new(
             Arc::clone(&self.source),
             Arc::clone(&self.watch),

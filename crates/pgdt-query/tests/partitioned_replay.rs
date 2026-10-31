@@ -1096,6 +1096,12 @@ async fn a_dump_s_plan_replays_as_the_mapping_pass_would() {
 
     let mut compared = 0;
     for name in dump.tables() {
+        let table = dump.table(&name.into()).unwrap().unwrap();
+        // A partition written through its root refuses, there and cold
+        // alike (`KD158`).
+        if let Err(Error::PartitionThroughRoot { .. }) = table.schema(&options) {
+            continue;
+        }
         let (expected, count) = partitioned_rows(
             Arc::clone(&source),
             &name.qualified_name(),
@@ -1103,7 +1109,6 @@ async fn a_dump_s_plan_replays_as_the_mapping_pass_would() {
             4,
         )
         .await;
-        let table = dump.table(&name.into()).unwrap().unwrap();
         let plan = table.plan(ReadOptions::default(), options.clone()).unwrap();
         assert_eq!(plan.len(), count, "{}", name.qualified_name());
         let schema = table.schema(&options).unwrap();

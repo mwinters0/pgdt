@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD157 -->
-**`KD1`–`KD157` are allocated, and nothing at or below `KD157` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD158 -->
+**`KD1`–`KD158` are allocated, and nothing at or below `KD158` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -580,3 +580,11 @@ than reading as a phase nobody has sliced.
   unowned**; promoted by a reading of a cold `.gz` query's resident under a
   tight `--memory`. Detail:
   `crates/pgdt-io/src/source/compressed/deflate/first_pass.rs`.
+
+- **KD158** — a `--load-via-partition-root` dump's partitions, and every
+  partitioned table below its root, refuse under their own names, the rows
+  being written through the root and routed to a partition only by its
+  bounds, which nothing here evaluates; the root read with its descendants is
+  whole. **(c) unowned**; promoted by
+  [`../design/roadmap.md`](../design/roadmap.md)'s Future item "Rows routed to
+  their partitions". Detail: `crates/pgdt-query/src/dump/descendants.rs`.

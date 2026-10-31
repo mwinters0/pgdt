@@ -133,6 +133,7 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
         | Lib::DuplicateProjectionColumn { .. }
         | Lib::ResumeQueryMismatch
         | Lib::TableColumnsDisagree { .. }
+        | Lib::PartitionThroughRoot { .. }
         | Lib::MapIncomplete { .. }
         | Lib::FieldRefused { .. }
         | Lib::RowEndingRefused { .. }

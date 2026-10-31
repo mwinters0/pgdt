@@ -263,13 +263,27 @@ pub enum Error {
         candidates.join(", ")
     )]
     AmbiguousTable { name: String, candidates: Vec<String> },
-    /// Two of one table's `COPY` blocks name different sets of columns, so no
-    /// one schema holds both without stating values the dump never held. The
-    /// order they name them in may differ; the set may not.
+    /// Two of the `COPY` blocks a table reads — its own, or a descendant's —
+    /// name different sets of its columns, so no one schema holds both
+    /// without stating values the dump never held. The order they name them
+    /// in may differ, and a descendant may name columns of its own besides;
+    /// the set of the table's may not.
     #[error(
-        "table `{table}` is written as COPY blocks naming different columns — the block at offset {header_offset} and the one at offset {other_offset}; one table's blocks must name the same columns"
+        "table `{table}` is read from COPY blocks naming different columns of it — the block at offset {header_offset} and the one at offset {other_offset}; every block a table reads, its descendants' included, must name the same columns of it"
     )]
     TableColumnsDisagree { table: String, header_offset: u64, other_offset: u64 },
+    /// A table read by its own name whose rows, or a descendant's, the dump
+    /// writes through their partition root (`--load-via-partition-root`), in
+    /// blocks naming the root: a restore routes each row to the partition
+    /// whose bound admits it, which is not read here, so the table's rows are
+    /// not told from its siblings'. The root, read with its descendants,
+    /// holds them whole. Raised by `pgdt_query::Table`'s `plan`, `schema`,
+    /// `summary` and `divergences` before a byte is read.
+    #[error(
+        "table `{table}` has rows written through its partition root `{root}`, in the COPY blocks at offsets {}, and which partition a row belongs to is not read — read `{root}`, which holds them with its other partitions' rows",
+        header_offsets.iter().map(u64::to_string).collect::<Vec<_>>().join(", ")
+    )]
+    PartitionThroughRoot { table: String, root: String, header_offsets: Vec<u64> },
     /// A dump read through its map was handed one that stops short of the
     /// source's end, or none, so a table's blocks past that point would be
     /// missing from its rows and its schema without anything saying so. Raised

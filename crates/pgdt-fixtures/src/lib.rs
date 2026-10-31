@@ -1,7 +1,7 @@
 //! The fixture vocabulary every crate's tests speak: where the fixtures are,
 //! the sweep's enumerator, the sandboxes, the multi-database concatenation,
-//! the fields PostgreSQL refuses, a fixture mapped beside its cache, and the
-//! hand-written `edge_cases.sql`.
+//! the fields PostgreSQL refuses, a fixture mapped beside its cache, the
+//! server's answers beside a dump, and the hand-written `edge_cases.sql`.
 //!
 //! Each `tests/*.rs` file is its own crate, so without one shared home every
 //! file that needs a fixture path carries its own copy of one — and copies of
@@ -81,6 +81,13 @@ pub fn partitions_fixture(version: u32, flag_set: &str) -> PathBuf {
     fixture(version, "partitions", flag_set)
 }
 
+/// Real `pg_dump` output for the `inheritance` schema: tables read with
+/// their descendants, `INHERITS` children and partitions both, with the
+/// server's answers beside each dump ([`answers`]).
+pub fn inheritance_fixture(version: u32, flag_set: &str) -> PathBuf {
+    fixture(version, "inheritance", flag_set)
+}
+
 /// Real `pg_dump` output for the `statistics` schema: the column shapes
 /// per-row-group statistics are gathered from, and a value longer than a read
 /// chunk.
@@ -127,9 +134,11 @@ pub fn all_fixtures() -> Vec<PathBuf> {
     out
 }
 
+mod answers;
 #[cfg(feature = "mapping")]
 mod parsed;
 mod refused;
+pub use answers::{Answer, Answers, Reading, answers, answers_path};
 #[cfg(feature = "mapping")]
 pub use parsed::{arranged, parsed_copy, ungathered};
 pub use refused::{REFUSED_FIELDS, RefusedField, refused_field};

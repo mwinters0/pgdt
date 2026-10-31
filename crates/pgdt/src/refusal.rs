@@ -73,6 +73,7 @@ pub(crate) fn about_the_source(err: &pgdt_core::Error) -> bool {
         | Lib::ResumeQueryMismatch
         | Lib::AmbiguousTable { .. }
         | Lib::TableColumnsDisagree { .. }
+        | Lib::PartitionThroughRoot { .. }
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
         | Lib::FieldRefused { .. }
@@ -153,6 +154,7 @@ pub(crate) fn spelling(err: &pgdt_core::Error) -> Option<String> {
         | Lib::DuplicateProjectionColumn { .. }
         | Lib::ResumeQueryMismatch
         | Lib::TableColumnsDisagree { .. }
+        | Lib::PartitionThroughRoot { .. }
         | Lib::MapIncomplete { .. }
         | Lib::FieldRefused { .. }
         | Lib::RowEndingRefused { .. }

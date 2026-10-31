@@ -103,18 +103,13 @@ impl TablePartitions {
         let PlannedReplay { plan, groups, plan_notes, advice } = plan_replay(
             source.as_ref(),
             table.database.clone(),
+            &table.qualified_name(),
             blocks,
             metadata,
             read,
             query_options,
         )?;
-        let resolved = plan
-            .blocks
-            .values()
-            .next()
-            .map(|planned| &planned.resolved)
-            .cloned()
-            .unwrap_or_default();
+        let resolved = plan.schema.clone();
         let reading = plan.query_options.statistics_view();
         let orders = partition_orders(
             blocks,
@@ -164,7 +159,7 @@ impl TablePartitions {
 
     /// The schema every sub-stream's batches carry, known before any is read.
     pub fn resolved_schema(&self) -> ResolvedSchema {
-        self.plan.blocks.values().next().map(|planned| planned.resolved.clone()).unwrap_or_default()
+        self.plan.schema.clone()
     }
 
     /// What the plan settled before any row is read ([`TableStream::plan_notes`]).
@@ -297,7 +292,7 @@ impl TablePartitions {
     /// every block of a table resolving the same ([`ReplayPlan::new`]).
     fn publish_plan(&self, shared: &StreamShared) {
         if let Some(planned) = self.plan.blocks.values().next() {
-            *shared.resolved_schema.lock().unwrap() = planned.resolved.clone();
+            *shared.resolved_schema.lock().unwrap() = self.plan.schema.clone();
             *shared.comparison_notes.lock().unwrap() = planned.notes.clone();
         }
     }

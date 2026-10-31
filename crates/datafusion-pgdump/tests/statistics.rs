@@ -371,10 +371,19 @@ async fn every_aggregate(
         let catalog =
             catalogs.iter().find(|(database, _)| *database == table.database).unwrap().1.clone();
         let from = from(&catalog, table);
+        let provider = dump.table(&TableSelector::from(table), &table.table, Arc::new(ignore));
+        // A partition written through its root is refused, and its catalog
+        // leaves it unlisted (`KD158`).
+        if let Err(error) = &provider
+            && let datafusion_pgdump::Refusal::Library(pgdt_core::Error::PartitionThroughRoot {
+                ..
+            }) = error.refusal()
+        {
+            continue;
+        }
+        let provider = provider.unwrap();
         seen.count |=
             agrees(reading, blind, &format!("SELECT COUNT(*) FROM {from}")).await.answered();
-        let provider =
-            dump.table(&TableSelector::from(table), &table.table, Arc::new(ignore)).unwrap();
         for field in provider.resolved_schema().schema().fields() {
             let column = quoted(field.name());
             // `COUNT(c)` is the table's rows less the column's NULLs, so it
