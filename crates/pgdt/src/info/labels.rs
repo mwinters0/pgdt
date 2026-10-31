@@ -10,6 +10,16 @@ use pgdt_codec::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_mapping::{StrictUnchecked, strict_unchecked};
 use pgdt_model::{ArrayShape, DataBlock, DumpIndex, Span, SpanBody, TableReference, TypeKind};
 
+/// How a database is named in the listing. A `\connect`-less dump has no name
+/// to print, and `(unnamed)` is what the listing calls it — one spelling, so
+/// the metadata header, the block listing and `--map` cannot disagree.
+pub(super) fn database_label(database: Option<&str>) -> &str {
+    match database {
+        Some(name) => name,
+        None => "(unnamed)",
+    }
+}
+
 /// One column's resolution outcome as the stable token `--json` prints
 /// (`docs/design/decisions.md`, "The CLI"); the sentence `info --detail`
 /// prints is the library's, [`ColumnResolution::describe`]. **Both matches are

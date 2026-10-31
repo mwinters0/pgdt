@@ -15,6 +15,7 @@ pub(crate) use text::{print_diagnostics, print_index, print_metadata};
 
 mod json;
 mod labels;
+mod logical;
 mod statistics;
 #[cfg(test)]
 mod tests;
@@ -42,7 +43,9 @@ pub(crate) struct InfoArgs {
     /// to, or — for a column that came back as a string for a reason —
     /// why. A column that is simply text says nothing. Names beneath
     /// each block what a strict parse does not check in it, which the
-    /// listing otherwise counts. Turns the `user-defined types` count
+    /// listing otherwise counts, and lists each TimescaleDB chunk's block,
+    /// which it otherwise folds under its hypertable's. Turns the
+    /// `user-defined types` count
     /// into a listing of the types themselves, on a compressed dump adds
     /// the container's shape, and closes the listing, above its totals,
     /// with the statistics `parse` gathered, per table and column: over

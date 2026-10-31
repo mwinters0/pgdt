@@ -9,20 +9,11 @@ use pgdt_mapping::StrictUnchecked;
 use pgdt_model::{Diagnostic, DumpIndex, DumpMetadata, Finding, Severity};
 
 use super::labels::{
-    arrow_type_label, block_resolutions, block_unchecked, enum_labels, label_list, span_summary,
-    type_kind_summary,
+    arrow_type_label, block_resolutions, block_unchecked, database_label, enum_labels, label_list,
+    span_summary, type_kind_summary,
 };
+use super::logical::{self, Folds};
 use super::statistics;
-
-/// How a database is named in the listing. A `\connect`-less dump has no name
-/// to print, and `(unnamed)` is what the listing calls it — one spelling, so
-/// the metadata header, the block listing and `--map` cannot disagree.
-fn database_label(database: Option<&str>) -> &str {
-    match database {
-        Some(name) => name,
-        None => "(unnamed)",
-    }
-}
 
 /// Prints a `database: <name>` line each time the database changes, and only
 /// when a listing spans more than one.
@@ -153,6 +144,15 @@ pub(crate) fn print_index(
         println!();
     }
 
+    // The logical model, ahead of the blocks: what decides whether a read
+    // refuses is what an administrator reads first.
+    if logical::print_descendants(index) {
+        println!();
+    }
+    if logical::print_timescaledb(index) {
+        println!();
+    }
+
     if map {
         print_map(index);
         println!();
@@ -172,21 +172,35 @@ pub(crate) fn print_index(
     let mut outside_strict = 0usize;
 
     let mut headings = DatabaseHeadings::new(blocks.iter().map(|(database, ..)| *database));
+    // A chunk's block is folded under its hypertable's but where every block
+    // is asked for, its unchecked lines included.
+    let mut folds = match detail || unchecked {
+        true => Folds::none(),
+        false => Folds::of(index, blocks.iter().map(|&(database, block, _)| (database, block))),
+    };
 
     for &(database, block, ref resolved) in &blocks {
+        let held = block_unchecked(index, database, block);
+        outside_strict += usize::from(!held.is_empty());
+        if folds.folds(database, block) {
+            total_columns += resolved.columns().len();
+            total_unmapped += resolved.unmapped_count();
+            continue;
+        }
         headings.before(database);
         println!("{} ({} rows)", block.header.qualified_name(), block.row_count);
+        if let Some(folded) = folds.beneath(database, block) {
+            println!("    {folded}");
+        }
         println!("    level: {}", level_label(block));
         if block.checked_in_full {
             println!("    checked: every value, by a strict parse");
         }
-        let held = block_unchecked(index, database, block);
         if unchecked {
             for line in unchecked_lines(&held) {
                 println!("    unchecked by a strict parse: {line}");
             }
         }
-        outside_strict += usize::from(!held.is_empty());
         for column in block.ignored_refusals.iter().flat_map(|ignored| &ignored.columns) {
             println!("    refused by PostgreSQL: {}", ignored_refusals_line(block, column));
         }

@@ -8,43 +8,10 @@ use std::collections::BTreeSet;
 
 use pgdt_codec::internal::database_for_name;
 use pgdt_core::Error;
-use pgdt_model::{
-    CopyBlock, DataBlock, DatabaseMetadata, DumpIndex, SpanBody, TableName, TocHeader,
-};
+use pgdt_model::{CopyBlock, DatabaseMetadata, DumpIndex, TableName};
 
 use super::hypertables::{ReadNotes, Verdict};
 use crate::options::Inheritance;
-
-/// Every `COPY` block of `index`, in file order, beside the database its span
-/// records and the table it holds rows for, where that is not the one its
-/// header names: the partition a block written through its partition root
-/// holds, which its TOC entry names (I2), or `None` where it carries none.
-fn blocks_held(
-    index: &DumpIndex,
-) -> impl Iterator<Item = (Option<&str>, &CopyBlock, Option<TableName>)> {
-    index.spans.iter().filter_map(|span| match &span.body {
-        SpanBody::Data(DataBlock::Copy(block)) => {
-            let database = span.database.as_deref();
-            let held = block
-                .partition_root
-                .as_ref()
-                .and(span.toc.as_ref())
-                .filter(|toc| toc.kind == "TABLE DATA")
-                .map(|toc| partition_named(database, toc));
-            Some((database, block, held))
-        }
-        _ => None,
-    })
-}
-
-/// The table a `TABLE DATA` entry's header names, in `database`.
-fn partition_named(database: Option<&str>, toc: &TocHeader) -> TableName {
-    TableName {
-        database: database.map(str::to_owned),
-        schema: toc.schema.clone(),
-        table: toc.name.clone(),
-    }
-}
 
 /// The table a key of [`DatabaseMetadata::tables`] names, in `database`: its
 /// schema up to the first `.`, as [`pgdt_core::CopyHeader::matches`] splits a
@@ -72,7 +39,7 @@ fn ddl<'a>(index: &'a DumpIndex, database: Option<&str>) -> Option<&'a DatabaseM
 pub(super) fn listed_tables(index: &DumpIndex) -> Vec<TableName> {
     let mut seen = BTreeSet::new();
     let mut listed = Vec::new();
-    for (database, block, held) in blocks_held(index) {
+    for (database, block, held) in index.blocks_held() {
         let named = TableName::of(database, block);
         for name in std::iter::once(named).chain(held) {
             let declared = ddl(index, database);
@@ -226,7 +193,7 @@ pub(super) fn table_read(index: &DumpIndex, name: &TableName) -> TableRead {
     // Blocks through another root holding this table's rows or a
     // descendant's, and those of them that may hold its own.
     let (mut through_any, mut through_own) = (Vec::new(), Vec::new());
-    for (in_database, block, held) in blocks_held(index) {
+    for (in_database, block, held) in index.blocks_held() {
         if in_database != database {
             continue;
         }

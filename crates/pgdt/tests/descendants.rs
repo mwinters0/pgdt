@@ -3,8 +3,9 @@
 //! (`docs/design/decisions.md`, "D130", "D131", "D132"): a partition written
 //! through its root refused by `query` and left out of `sql`'s catalog
 //! (`KD158`), the remedy spelled in each front end's words, and a partitioned
-//! table read alone reading none (I93); and `pgdt info --json` stating what a
-//! TimescaleDB database's catalog concludes.
+//! table read alone reading none (I93); `pgdt info --json` stating what a
+//! TimescaleDB database's catalog concludes, and its listing opening with the
+//! logical model, a hypertable's chunks folded under it.
 
 mod common;
 
@@ -195,4 +196,153 @@ fn pgdt_query_says_a_hypertable_s_findings() {
         assert!(said.contains(root), "{reading}: {said}");
         assert_eq!(said.contains(absent), absent_said, "{reading}: {said}");
     }
+}
+
+/// The lines of `info`'s section headed `heading`, to the blank line ending it.
+fn section<'a>(listing: &'a str, heading: &str) -> Vec<&'a str> {
+    let mut lines = listing.lines().skip_while(|l| *l != heading);
+    assert!(lines.next().is_some(), "no `{heading}`: {listing}");
+    lines.take_while(|l| !l.is_empty()).collect()
+}
+
+/// **`info` names each table with descendants, how many and their rows**,
+/// each table's rows in all held to its server's answer read with its
+/// descendants, whether a partition's rows are its own blocks' or written
+/// through its root, which a block listing alone cannot say.
+#[test]
+fn info_names_each_table_with_descendants() {
+    let descendants = [
+        ("public.animal", 6),
+        ("public.dog", 1),
+        ("public.mammal", 3),
+        ("public.pet", 1),
+        ("public.reading", 4),
+        ("public.reading_2020", 2),
+    ];
+    for flag_set in FLAG_SETS {
+        let (_dir, dump) = sandboxed(&inheritance_fixture(18, flag_set), "dump.sql");
+        let dump = dump.to_str().unwrap();
+        common::run_ok(&["parse", "--source", dump]);
+        let listing = common::run_ok(&["info", "--source", dump]);
+        let answered = tables(flag_set);
+        let expected: Vec<String> = descendants
+            .iter()
+            .map(|(table, count)| {
+                let rows = answered
+                    .iter()
+                    .find(|(t, reading, _)| t == table && *reading == Reading::Descendants)
+                    .map(|(_, _, rows)| rows.len())
+                    .unwrap();
+                format!("    {table}: {count} descendant(s), {rows} row(s) in all")
+            })
+            .collect();
+        assert_eq!(section(&listing, "tables with descendants:"), expected, "{flag_set}");
+    }
+}
+
+/// **`info` states each TimescaleDB database's release and what its catalog
+/// concludes ahead of the blocks, and folds each chunk's block under its
+/// hypertable's**, a compressed relation's beside them where it is no chunk
+/// of its own (2.29 on), unless `--detail` lists every block; at 2.13 the
+/// release is inferred, and the compressed relations are chunks of an
+/// internal hypertable, folded under it.
+#[test]
+fn info_states_the_timescaledb_catalog_and_folds_chunks() {
+    let (_dir, dump) = sandboxed(&timescaledb_fixture(18, "default"), "dump.sql");
+    let dump = dump.to_str().unwrap();
+    common::run_ok(&["parse", "--source", dump]);
+    let listing = common::run_ok(&["info", "--source", dump]);
+    let catalog = section(&listing, "TimescaleDB: 2.31.0, stated by its catalog");
+    for line in [
+        "    hypertable public.metrics: 6 chunk(s): 2 uncompressed, 4 compressed (2 partially), \
+         0 absent from the file; dimensions time, device (hashed)",
+        "    hypertable public.counters: 3 chunk(s): 3 uncompressed, 0 compressed, 0 absent from \
+         the file; dimensions tick",
+        "    continuous aggregate public.metrics_daily: materialized only, its rows read as \
+         _timescaledb_internal._materialized_hypertable_2; the view is not read",
+        "    continuous aggregate public.metrics_weekly: real-time, its rows read as \
+         _timescaledb_internal._materialized_hypertable_3; the view is not read",
+    ] {
+        assert!(catalog.contains(&line), "{line}: {listing}");
+    }
+    // Before the blocks, which a chunk's no longer lists.
+    let at = listing.find("TimescaleDB: ").unwrap();
+    assert!(listing.find("public.metrics (1 rows)").is_some_and(|block| block > at), "{listing}");
+    assert!(!listing.contains("_hyper_1_2_chunk"), "{listing}");
+    let beneath = listing.lines().skip_while(|l| *l != "public.metrics (1 rows)").nth(1);
+    let folded = "    chunks: 6 block(s), 44 row(s); compressed relations: 4 block(s), 6 row(s) — \
+                  folded, `pgdt info --detail` lists each";
+    assert_eq!(beneath, Some(folded), "{listing}");
+    assert!(listing.contains("\n41 COPY block(s), "), "every block counted: {listing}");
+    let detail = common::run_ok(&["info", "--source", dump, "--detail"]);
+    assert!(detail.contains("\n_timescaledb_internal._hyper_1_2_chunk (0 rows)\n"), "{detail}");
+    assert!(!detail.contains("folded"), "{detail}");
+
+    let (_dir, dump) = sandboxed(&timescaledb_fixture(13, "default"), "dump.sql");
+    let dump = dump.to_str().unwrap();
+    common::run_ok(&["parse", "--source", dump]);
+    let listing = common::run_ok(&["info", "--source", dump]);
+    let catalog = section(&listing, "TimescaleDB: 2.13, inferred from its catalog's columns");
+    let internal = "    hypertable _timescaledb_internal._compressed_hypertable_4: internal, \
+                    holding compressed chunks' rows; 4 chunk(s): 0 absent from the file";
+    assert!(catalog.contains(&internal), "{listing}");
+    let beneath = listing
+        .lines()
+        .skip_while(|l| !l.starts_with("_timescaledb_internal._compressed_hypertable_4 ("))
+        .nth(1);
+    assert!(beneath.is_some_and(|l| l.starts_with("    chunks: 4 block(s), ")), "{listing}");
+}
+
+/// **A chunk the catalog lists and the file lacks is counted absent**, and a
+/// catalog that does not read says so, naming the hypertables its rows name,
+/// its chunks then listed as blocks of their own, there being no chunk list
+/// to fold them by.
+#[test]
+fn info_counts_absent_chunks_and_says_an_unreadable_catalog() {
+    let (_dir, dump) = sandboxed(&timescaledb_fixture(18, "exclude-chunks"), "dump.sql");
+    let dump = dump.to_str().unwrap();
+    common::run_ok(&["parse", "--source", dump]);
+    let listing = common::run_ok(&["info", "--source", dump]);
+    let catalog = section(&listing, "TimescaleDB: 2.31.0, stated by its catalog");
+    let metrics = catalog.iter().find(|l| l.starts_with("    hypertable public.metrics: "));
+    let absent = "6 chunk(s): 0 uncompressed, 0 compressed, 6 absent from the file";
+    assert!(metrics.is_some_and(|l| l.contains(absent)), "{listing}");
+
+    let (dir, dump) = sandboxed(&timescaledb_fixture(18, "default"), "dump.sql");
+    let slice = "COPY _timescaledb_catalog.dimension_slice (id, chunk_id,";
+    let text = std::fs::read_to_string(&dump).unwrap();
+    assert_eq!(text.matches(slice).count(), 1);
+    let edited = dir.path().join("edited.sql");
+    let renamed = "COPY _timescaledb_catalog.dimension_slice (id, chunk_ident,";
+    std::fs::write(&edited, text.replace(slice, renamed)).unwrap();
+    let edited = edited.to_str().unwrap();
+    common::run_ok(&["parse", "--source", edited]);
+    let listing = common::run_ok(&["info", "--source", edited]);
+    let catalog = section(&listing, "TimescaleDB: 2.31.0, stated by its catalog");
+    let unreadable = "    catalog: does not read — `diagnostics:` above says why; its rows name \
+                      hypertable(s) ";
+    let line = catalog.iter().find(|l| l.starts_with(unreadable));
+    assert!(line.is_some_and(|l| l.contains("public.metrics")), "{listing}");
+    assert!(listing.contains("\n_timescaledb_internal._hyper_1_2_chunk (0 rows)\n"), "{listing}");
+}
+
+/// **A catalog held without the extension says so**: a dump selecting tables
+/// by `--table` writes the catalog's blocks and no `CREATE EXTENSION` (TS2),
+/// and its catalog concludes what the whole dump's does.
+#[test]
+fn info_says_a_catalog_held_without_its_extension() {
+    let (_dir, dump) = sandboxed(&timescaledb_fixture(18, "tables"), "dump.sql");
+    let dump = dump.to_str().unwrap();
+    common::run_ok(&["parse", "--source", dump]);
+    let listing = common::run_ok(&["info", "--source", dump]);
+    let catalog = section(&listing, "TimescaleDB: 2.31.0, stated by its catalog");
+    assert_eq!(
+        catalog.first().copied(),
+        Some(
+            "    extension: not created — the catalog alone, as a dump selecting tables by \
+             `--table` writes it"
+        ),
+        "{listing}"
+    );
+    assert!(catalog.iter().any(|l| l.starts_with("    hypertable public.metrics: 6 chunk(s): ")));
 }

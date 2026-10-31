@@ -466,6 +466,32 @@ impl DumpIndex {
         })
     }
 
+    /// Every `COPY` block, in file order, beside the database its span
+    /// records and the table it holds rows for, where that is not the one its
+    /// header names: the partition a block written through its partition root
+    /// holds, which its TOC entry names (I2), or `None` where it carries none.
+    pub fn blocks_held(
+        &self,
+    ) -> impl Iterator<Item = (Option<&str>, &CopyBlock, Option<TableName>)> {
+        self.spans.iter().filter_map(|span| match &span.body {
+            SpanBody::Data(DataBlock::Copy(block)) => {
+                let database = span.database.as_deref();
+                let held = block
+                    .partition_root
+                    .as_ref()
+                    .and(span.toc.as_ref())
+                    .filter(|toc| toc.kind == "TABLE DATA")
+                    .map(|toc| TableName {
+                        database: database.map(str::to_owned),
+                        schema: toc.schema.clone(),
+                        table: toc.name.clone(),
+                    });
+                Some((database, block, held))
+            }
+            _ => None,
+        })
+    }
+
     /// Every table this map holds a `COPY` block for, each once, in the order
     /// its first block appears.
     pub fn tables(&self) -> Vec<TableName> {
