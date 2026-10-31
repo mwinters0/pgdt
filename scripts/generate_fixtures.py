@@ -46,6 +46,8 @@ Each flag set of the schemas a table is read with its descendants in
 (`ANSWERED_SCHEMAS`, and `timescaledb`) is restored into a fresh database and
 the server's **answers** over it committed beside the dump, as
 `<flag-set>.answers.tsv` (`write_answers`; docs/design/decisions.md, "D130").
+`--answers-only` takes them again over the committed dumps, dumping nothing, so
+a dump and the answers beside it still come from one run.
 
 The `timescaledb` schema runs on its own servers, one `timescale/timescaledb-ha`
 pin per routine major (`TIMESCALEDB_PINS`), each dumped by that major's routine
@@ -816,6 +818,25 @@ WHERE c.relkind IN ('r', 'p')
 ORDER BY 1
 """
 
+# Every hypertable a TimescaleDB restore's catalog lists, its internal
+# compressed and materialization hypertables included.
+HYPERTABLES_SQL = """
+SELECT format('%I.%I', schema_name, table_name)
+FROM _timescaledb_catalog.hypertable
+ORDER BY 1
+"""
+
+# How each reading reads a table: the settings it runs under, and the
+# relation it names. `held` is a hypertable root's own rows as its restore
+# holds them, read with TimescaleDB's planner inactive, which reads the root
+# with its chunks or `ONLY` as nothing from 2.28
+# (docs/design/timescaledb-invariants.md, "TS8").
+READINGS = {
+    "descendants": ([], "{}"),
+    "only": ([], "ONLY {}"),
+    "held": (["SET timescaledb.restoring = on"], "ONLY {}"),
+}
+
 # A psql line's location prefix, which moves with the dump's length.
 _PSQL_PREFIX = re.compile(r"^psql:[^:]*:[0-9]+: ")
 
@@ -827,18 +848,20 @@ def psql_errors(stderr: str) -> list[str]:
     return [line for line in lines if line.startswith("ERROR:")]
 
 
+# timescaledb: TS8 -- `held` reads a root with the extension's planner inactive.
 def answer_lines(query: list[str], relation: str, mode: str) -> list[str]:
-    """The server's answer for one table read one way: `rows` and its count
-    and a `row` line per row in `COPY` text, in the text's order, or the one
-    `error` line the server refused it with. Sorted here rather than by the
-    server, which at 2.13 cannot sort a compressed hypertable's rows by their
-    text ("could not find pathkey item to sort")."""
-    source = relation if mode == "descendants" else f"ONLY {relation}"
+    """The server's answer for one table read one way ([`READINGS`]): `rows`
+    and its count and a `row` line per row in `COPY` text, in the text's
+    order, or the one `error` line the server refused it with. Sorted here
+    rather than by the server, which at 2.13 cannot sort a compressed
+    hypertable's rows by their text ("could not find pathkey item to sort")."""
+    settings, source = READINGS[mode]
     result = subprocess.run(
         query
         + ["-d", RESTORED_DB_NAME, "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=terse"]
         + ["-c", "SET TimeZone = 'UTC'"]
-        + ["-c", f"COPY (SELECT t.* FROM {source} AS t) TO STDOUT"],
+        + [arg for setting in settings for arg in ("-c", setting)]
+        + ["-c", f"COPY (SELECT t.* FROM {source.format(relation)} AS t) TO STDOUT"],
         capture_output=True,
         text=True,
     )
@@ -857,7 +880,9 @@ def write_answers(
     for every table it then holds, read with its descendants and `ONLY`: the
     reference a table read with its descendants is checked against, short
     being measured against the server the dump restores to
-    (docs/design/roadmap-P38-descendants.md, "The generic mechanism").
+    (docs/design/roadmap-P38-descendants.md, "The generic mechanism"). A
+    TimescaleDB restore's hypertables are each read `held` too: what its root
+    holds itself, which the server's own reads of it leave out (TS8).
 
     `query` and `restore` are psql command lines reaching the server: the
     restore's is the routine `pg_dump`'s own psql, which reads what it wrote
@@ -899,10 +924,19 @@ def write_answers(
             capture_output=True,
             text=True,
         ).stdout.split()
+        hypertables: list[str] = []
+        if timescaledb:
+            hypertables = run(
+                query + ["-d", RESTORED_DB_NAME, "-A", "-t", "-c", HYPERTABLES_SQL],
+                capture_output=True,
+                text=True,
+            ).stdout.split()
         lines = [f"-\t-\trestore-error\t{error}" for error in errors]
         for relation in tables:
             for mode in ("descendants", "only"):
                 lines += answer_lines(query, relation, mode)
+            if relation in hypertables:
+                lines += answer_lines(query, relation, "held")
     finally:
         run(
             query + ["-d", "postgres", "-c", f"DROP DATABASE IF EXISTS {RESTORED_DB_NAME} WITH (FORCE)"],
@@ -912,11 +946,12 @@ def write_answers(
     print(f"  {out.relative_to(REPO_ROOT)} ({len(tables)} tables, {len(errors)} restore errors)")
 
 
-def generate_timescaledb(version: str, pin: TimescalePin) -> None:
+def generate_timescaledb(version: str, pin: TimescalePin, dumps: bool = True) -> None:
     """The TimescaleDB pin at `version`: its server loaded with
     `fixture_schema_timescaledb.sql` and the pin's own scripts, dumped by the
     routine image's `pg_dump` over the host's loopback, and each flag set's
-    restore answered by the same server."""
+    restore answered by the same server — or, without `dumps`, each committed
+    dump's restore answered, nothing loaded or dumped."""
     routine = ROUTINE_VERSIONS[version]
     print(f"== {version} timescaledb {pin.release} ({pin.image}) ==")
     name = start_container(version, pin.image, name=f"pgdt-fixture-{TIMESCALEDB_SCHEMA}-{version}", memory="1g")
@@ -924,23 +959,25 @@ def generate_timescaledb(version: str, pin: TimescalePin) -> None:
     remote = ["-h", "127.0.0.1", "-p", str(HOST_PORT)]
     try:
         wait_final_server(name)
-        create_database(name)
-        for path in [schema_file(TIMESCALEDB_SCHEMA)] + [SCRIPT_DIR / script for script in pin.scripts]:
-            load_sql(name, DB_NAME, path.read_text())
+        if dumps:
+            create_database(name)
+            for path in [schema_file(TIMESCALEDB_SCHEMA)] + [SCRIPT_DIR / script for script in pin.scripts]:
+                load_sql(name, DB_NAME, path.read_text())
         out_dir = FIXTURES_DIR / version / TIMESCALEDB_SCHEMA
         out_dir.mkdir(parents=True, exist_ok=True)
         for flag_name, (majors, flags) in TIMESCALEDB_FLAG_SETS.items():
             if version not in majors:
                 continue
             out_path = out_dir / f"{flag_name}.sql"
-            dump = run(
-                client + ["pg_dump", *remote, *PG_DUMP_ARGS, *flags, DB_NAME],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-            out_path.write_text(dump.stdout)
-            print(f"  {TIMESCALEDB_SCHEMA}/{flag_name}: {out_path.relative_to(REPO_ROOT)} ({out_path.stat().st_size} bytes)")
+            if dumps:
+                dump = run(
+                    client + ["pg_dump", *remote, *PG_DUMP_ARGS, *flags, DB_NAME],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                )
+                out_path.write_text(dump.stdout)
+                print(f"  {TIMESCALEDB_SCHEMA}/{flag_name}: {out_path.relative_to(REPO_ROOT)} ({out_path.stat().st_size} bytes)")
             write_answers(
                 DOCKER + ["exec", "-i", name, "psql", "-U", DB_USER, "-X", "-q"],
                 client + ["psql", *remote, "-U", DB_USER, "-X", "-q"],
@@ -952,6 +989,21 @@ def generate_timescaledb(version: str, pin: TimescalePin) -> None:
         stop_container(name)
 
 
+def flag_sets(schema: str, version: str) -> list[tuple[str, FlagSet]]:
+    """The flag sets `schema` runs at `version`, each by name: every one but
+    those whose minimum major is above it."""
+    sets = []
+    for flag_name, flag_spec in SCHEMAS[schema].items():
+        if isinstance(flag_spec, tuple):
+            min_version, flags = flag_spec
+            if int(version) < int(min_version):
+                continue
+        else:
+            flags = flag_spec
+        sets.append((flag_name, flags))
+    return sets
+
+
 def generate_for_version(
     version: str,
     image: str,
@@ -960,6 +1012,7 @@ def generate_for_version(
     oracle: bool,
     floor: bool,
     values: bool,
+    answers_only: bool = False,
 ) -> None:
     print(f"== {version} ({image}) ==")
     name = start_container(version, image)
@@ -967,16 +1020,18 @@ def generate_for_version(
         wait_ready(name)
         if floor:
             take_floor(version)
-        if dumps:
+        if answers_only:
+            psql = DOCKER + ["exec", "-i", name, "psql", "-U", DB_USER, "-X", "-q"]
+            for schema in schemas:
+                if schema not in ANSWERED_SCHEMAS:
+                    continue
+                for flag_name, flags in flag_sets(schema, version):
+                    out_path = FIXTURES_DIR / version / schema / f"{flag_name}{output_suffix(flags)}"
+                    write_answers(psql, psql, out_path, answers_path(version, schema, flag_name))
+        elif dumps:
             for schema in schemas:
                 create_fixture_db(name, version, schema)
-                for flag_name, flag_spec in SCHEMAS[schema].items():
-                    if isinstance(flag_spec, tuple):
-                        min_version, flags = flag_spec
-                        if int(version) < int(min_version):
-                            continue
-                    else:
-                        flags = flag_spec
+                for flag_name, flags in flag_sets(schema, version):
                     out_path = dump_flag_set(name, version, schema, flag_name, flags)
                     size = out_path.stat().st_size
                     print(
@@ -1053,6 +1108,13 @@ def _run() -> int:
         "separate pass over the same containers",
     )
     parser.add_argument(
+        "--answers-only",
+        action="store_true",
+        help="dump nothing: restore each committed dump of the schemas a table "
+        "is read with its descendants in and take its answers again, so the "
+        "dumps stay as they are",
+    )
+    parser.add_argument(
         "--skip-oracle",
         action="store_true",
         help="don't regenerate fixtures/<version>/oracle/",
@@ -1089,9 +1151,11 @@ def _run() -> int:
                 oracle=not args.skip_oracle,
                 floor=not args.skip_floor,
                 values=not args.skip_values,
+                answers_only=args.answers_only,
             )
-        if TIMESCALEDB_SCHEMA in schemas and not args.skip_dumps and version in TIMESCALEDB_PINS:
-            generate_timescaledb(version, TIMESCALEDB_PINS[version])
+        dumps = not (args.skip_dumps or args.answers_only)
+        if TIMESCALEDB_SCHEMA in schemas and (dumps or args.answers_only) and version in TIMESCALEDB_PINS:
+            generate_timescaledb(version, TIMESCALEDB_PINS[version], dumps=dumps)
 
     if not args.skip_oracle:
         print("\ncross-major differences:")

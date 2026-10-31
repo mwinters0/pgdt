@@ -26,7 +26,8 @@ relied on for is [`timescaledb-invariants.md`](timescaledb-invariants.md),
   - restore-error` lines. The tables are every one the restore holds but an
   extension's own, so TimescaleDB's catalog is read from the dump, never from
   the answers. Slice 2 holds its reads of `inheritance` and `partitions` to
-  these; slice 5 its reads and refusals of `timescaledb`.
+  these; 38.5.1 its reads and refusals of `timescaledb`, beside the `held`
+  lines 38.5 added.
 - **Slice 2's reference cases**: `public.animal` reads 7 rows through and 1
   `ONLY`; `public.pet`, with no rows of its own, reads `cat`'s; `public.reading`
   reads 4 through its sub-partitioned `reading_2020`. `--load-via-partition-root`
@@ -45,7 +46,7 @@ Each is filed at its invariant; what bears on a later slice:
 - **The server never answers a hypertable's stray root rows by default**
   (TS8): read through, 128 rows where the root holds a 129th. A table's rows
   being its own and every descendant's gives 129, which the spec keeps, with a
-  finding; slice 5's answers take the root's own rows.
+  finding; 38.5's `held` lines are the root's own rows.
 - **Absent chunks are not read as absent by the server** (TS10): 2.13 refuses
   the hypertable, and 2.31's restore drops their catalog rows and reads it
   empty. The spec's "read as absent, with a finding" answers what neither does.

@@ -4,8 +4,11 @@
 //! compressed chunk's relation a table the dump holds (TS4, TS5), each
 //! dropped row naming no table (TS6), each aggregate's materialization a
 //! hypertable (TS7) — and the release each pin states or its catalog bounds
-//! (TS3), the catalog found with the extension (TS2) or without it.
+//! (TS3), the catalog found with the extension (TS2) or without it; and the
+//! rows each hypertable's root holds as its restore holds them, its own
+//! block's (TS8).
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use pgdt_dump::cache::{self, CacheMode, Held};
@@ -17,7 +20,7 @@ use pgdt_model::timescaledb::{Era, Recipe, Release, Resolution, Resolved, Timesc
 use pgdt_model::{DatabaseMetadata, DumpIndex, PostgresInvalidValues};
 use tokio_util::sync::CancellationToken;
 
-use pgdt_fixtures::{sandboxed, timescaledb_fixture};
+use pgdt_fixtures::{Answer, answers, sandboxed, timescaledb_fixture};
 
 /// Each pin's major, the release its catalog states — `None` before the
 /// version row (2.14) — and the recipe that release reads by.
@@ -190,6 +193,60 @@ async fn a_tables_dump_is_detected_by_its_catalog_alone() {
         let default = TimescaleDb::of(&index_of(version, "default").await, None).unwrap();
         assert_eq!(db.version, default.version, "{version}");
         assert_eq!(db.resolution, default.resolution, "{version}");
+    }
+}
+
+/// Every TimescaleDB fixture's flag sets, at the majors each runs at.
+const FIXTURES: [(u32, &str); 11] = [
+    (13, "default"),
+    (13, "exclude-chunks"),
+    (13, "tables"),
+    (15, "default"),
+    (16, "default"),
+    (17, "default"),
+    (18, "default"),
+    (18, "exclude-chunks"),
+    (18, "tables"),
+    (13, "schema-public"),
+    (18, "schema-public"),
+];
+
+/// **A root's rows as its restore holds them are its own block's**: the
+/// answers read one for each hypertable the catalog lists and the DDL
+/// declares, and each is exactly the rows of the block naming the root —
+/// the stray row from 2.27 included, which the server's own reads leave out
+/// (TS8). A dump holding no catalog answers none.
+#[tokio::test]
+async fn each_root_holds_its_own_block_s_rows_as_restored() {
+    for (version, flag_set) in FIXTURES {
+        let at = format!("{version} {flag_set}");
+        let index = index_of(version, flag_set).await;
+        let held = answers(&timescaledb_fixture(version, flag_set)).held;
+        let Some(db) = TimescaleDb::of(&index, None) else {
+            assert!(held.is_empty(), "{at}: {held:?}");
+            continue;
+        };
+        let roots: BTreeSet<&str> = resolved(&db)
+            .hypertables
+            .iter()
+            .map(|h| h.table.as_str())
+            .filter(|table| ddl(&index).tables.contains_key(*table))
+            .collect();
+        assert_eq!(held.keys().map(String::as_str).collect::<BTreeSet<_>>(), roots, "{at}");
+        for (root, answer) in &held {
+            let Answer::Rows(rows) = answer else { panic!("{at}: {root} {answer:?}") };
+            let own: u64 = index
+                .blocks()
+                .filter(|b| b.header.qualified_name() == *root)
+                .map(|b| b.row_count)
+                .sum();
+            assert_eq!(rows.len() as u64, own, "{at}: {root}");
+        }
+        let stray = held.get("public.metrics").map(|answer| match answer {
+            Answer::Rows(rows) => rows.len(),
+            Answer::Error(_) => unreachable!(),
+        });
+        assert_eq!(stray, Some(usize::from(version >= 16)), "{at}: the stray root row");
     }
 }
 

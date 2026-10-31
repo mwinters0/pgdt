@@ -1,7 +1,9 @@
 _timescaledb_internal._compressed_hypertable_4	descendants	error	ERROR:  chunk compress_hyper_4_13_chunk has no dimension slices
 _timescaledb_internal._compressed_hypertable_4	only	rows	0
+_timescaledb_internal._compressed_hypertable_4	held	rows	0
 _timescaledb_internal._compressed_hypertable_7	descendants	error	ERROR:  chunk compress_hyper_7_21_chunk has no dimension slices
 _timescaledb_internal._compressed_hypertable_7	only	rows	0
+_timescaledb_internal._compressed_hypertable_7	held	rows	0
 _timescaledb_internal._hyper_1_2_chunk	descendants	rows	14
 _timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-04 00:00:00+00	1	244
 _timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-04 12:00:00+00	1	256
@@ -531,6 +533,7 @@ _timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-24 00:0
 _timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-24 00:00:00+00	2	2	836
 _timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-24 00:00:00+00	3	2	936
 _timescaledb_internal._materialized_hypertable_2	only	rows	0
+_timescaledb_internal._materialized_hypertable_2	held	rows	0
 _timescaledb_internal._materialized_hypertable_3	descendants	rows	5
 _timescaledb_internal._materialized_hypertable_3	descendants	row	2023-12-25 00:00:00+00	18
 _timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-01 00:00:00+00	42
@@ -538,6 +541,7 @@ _timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-08 00:0
 _timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-15 00:00:00+00	42
 _timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-22 00:00:00+00	18
 _timescaledb_internal._materialized_hypertable_3	only	rows	0
+_timescaledb_internal._materialized_hypertable_3	held	rows	0
 _timescaledb_internal.compress_hyper_4_13_chunk	descendants	rows	1
 _timescaledb_internal.compress_hyper_4_13_chunk	descendants	row	14	1	2024-01-04 00:00:00+00	2024-01-10 12:00:00+00	BAAAArGU8GdQAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYiRc3sAAAAViED8HX/8AAAAAAAAAAA==	AwBAeQAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUA481A849AsEAAAAAAAPMPQAAAA4AAAACAAAAAAAAADUBiIMohkGI0AAAAAAAAAAeAAAAAT4v99/e/f2A3Q==
 _timescaledb_internal.compress_hyper_4_13_chunk	only	rows	1
@@ -571,6 +575,7 @@ public.columnar	descendants	row	2024-01-08 00:00:00+00	1	8
 public.columnar	descendants	row	2024-01-09 00:00:00+00	1	9
 public.columnar	descendants	row	2024-01-10 00:00:00+00	1	10
 public.columnar	only	rows	0
+public.columnar	held	rows	0
 public.counters	descendants	rows	30
 public.counters	descendants	row	0	0
 public.counters	descendants	row	10	1
@@ -603,6 +608,7 @@ public.counters	descendants	row	70	7
 public.counters	descendants	row	80	8
 public.counters	descendants	row	90	9
 public.counters	only	rows	0
+public.counters	held	rows	0
 public.metrics	descendants	rows	128
 public.metrics	descendants	row	2024-01-04 00:00:00+00	1	244
 public.metrics	descendants	row	2024-01-04 00:00:00+00	2	344
@@ -733,3 +739,4 @@ public.metrics	descendants	row	2024-01-24 12:00:00+00	1	736
 public.metrics	descendants	row	2024-01-24 12:00:00+00	2	836
 public.metrics	descendants	row	2024-01-24 12:00:00+00	3	936
 public.metrics	only	rows	0
+public.metrics	held	rows	0

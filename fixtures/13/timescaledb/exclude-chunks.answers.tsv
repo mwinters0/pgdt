@@ -4,5 +4,7 @@
 -	-	restore-error	ERROR:  relation "public.metrics_weekly" does not exist
 public.counters	descendants	error	ERROR:  relation "_timescaledb_internal._hyper_5_17_chunk" not found
 public.counters	only	rows	0
+public.counters	held	rows	0
 public.metrics	descendants	error	ERROR:  relation "_timescaledb_internal._hyper_1_2_chunk" not found
 public.metrics	only	rows	0
+public.metrics	held	rows	0

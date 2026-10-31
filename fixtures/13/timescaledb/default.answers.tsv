@@ -6,6 +6,7 @@ _timescaledb_internal._compressed_hypertable_4	descendants	row	BAAAArIhwUrwAAAAA
 _timescaledb_internal._compressed_hypertable_4	descendants	row	BAAAArIhwUrwAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYz3+pgAAAAVjKeDOn/8AAAAAAAAAAA==	2	AwBAhOAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUBE9A5FA9BEEAAAAAAARQNQAAAA4AAAABAAAAAAAAAAQAI2MkNSNDKAAAAAEyAAO/339794E=	14	10	2024-01-11 00:00:00+00	2024-01-17 12:00:00+00
 _timescaledb_internal._compressed_hypertable_4	descendants	row	BAAAArIhwUrwAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYz3+pgAAAAVjKeDOn/8AAAAAAAAAAA==	3	AwBAiAAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUFA5BE9A1FAEAAAAAAAMQPQAAAA4AAAACAAAAAAAAADUCCGUYiDMIcgAAAAAAAAA7AAAAAgH37399/vYEGQAAAAAAAAAB	14	10	2024-01-11 00:00:00+00	2024-01-17 12:00:00+00
 _timescaledb_internal._compressed_hypertable_4	only	rows	0
+_timescaledb_internal._compressed_hypertable_4	held	rows	0
 _timescaledb_internal._hyper_1_2_chunk	descendants	rows	14
 _timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-04 00:00:00+00	1	244
 _timescaledb_internal._hyper_1_2_chunk	descendants	row	2024-01-04 12:00:00+00	1	256
@@ -519,6 +520,7 @@ _timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-24 00:0
 _timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-24 00:00:00+00	2	2	836
 _timescaledb_internal._materialized_hypertable_2	descendants	row	2024-01-24 00:00:00+00	3	2	936
 _timescaledb_internal._materialized_hypertable_2	only	rows	0
+_timescaledb_internal._materialized_hypertable_2	held	rows	0
 _timescaledb_internal._materialized_hypertable_3	descendants	rows	5
 _timescaledb_internal._materialized_hypertable_3	descendants	row	2023-12-25 00:00:00+00	18
 _timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-01 00:00:00+00	42
@@ -526,6 +528,7 @@ _timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-08 00:0
 _timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-15 00:00:00+00	42
 _timescaledb_internal._materialized_hypertable_3	descendants	row	2024-01-22 00:00:00+00	18
 _timescaledb_internal._materialized_hypertable_3	only	rows	0
+_timescaledb_internal._materialized_hypertable_3	held	rows	0
 _timescaledb_internal.compress_hyper_4_13_chunk	descendants	rows	1
 _timescaledb_internal.compress_hyper_4_13_chunk	descendants	row	BAAAArGU8GdQAAAAAAoO67AAAAAADgAAAAMAAAAAAAAB7gAFYiRc3sAAAAViED8HX/8AAAAAAAAAAA==	1	AwBAeQAAAAAAAAAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAA4AAAABAAAAAAAAAAEAAAAAAAA//wAAAAIUA481A849AsEAAAAAAAPMPQAAAA4AAAACAAAAAAAAADUBiIMohkGI0AAAAAAAAAAeAAAAAT4v99/e/f2A3Q==	14	10	2024-01-04 00:00:00+00	2024-01-10 12:00:00+00
 _timescaledb_internal.compress_hyper_4_13_chunk	only	rows	1
@@ -578,6 +581,7 @@ public.counters	descendants	row	70	7
 public.counters	descendants	row	80	8
 public.counters	descendants	row	90	9
 public.counters	only	rows	0
+public.counters	held	rows	0
 public.metrics	descendants	rows	128
 public.metrics	descendants	row	2024-01-04 00:00:00+00	1	244
 public.metrics	descendants	row	2024-01-04 00:00:00+00	2	344
@@ -708,3 +712,4 @@ public.metrics	descendants	row	2024-01-24 12:00:00+00	1	736
 public.metrics	descendants	row	2024-01-24 12:00:00+00	2	836
 public.metrics	descendants	row	2024-01-24 12:00:00+00	3	936
 public.metrics	only	rows	0
+public.metrics	held	rows	0

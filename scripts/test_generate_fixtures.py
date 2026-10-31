@@ -92,6 +92,11 @@ class CommittedSchemas(unittest.TestCase):
                 for database in cluster.databases:
                     self.assertIn(f'CREATE DATABASE "{database}"', text)
 
+    def test_a_flag_set_runs_from_its_minimum_major(self):
+        self.assertNotIn("stats", dict(gf.flag_sets("objects", "17")))
+        self.assertEqual(dict(gf.flag_sets("objects", "18"))["stats"], ["--statistics"])
+        self.assertEqual(dict(gf.flag_sets("objects", "13"))["verbose"], ["--verbose"])
+
     def test_a_setting_variant_names_one_setting_and_carries_no_flags(self):
         settings = [
             spec
@@ -158,6 +163,16 @@ class Answers(unittest.TestCase):
             gf.psql_errors(stderr),
             ['ERROR:  relation "x" does not exist at character 85', 'ERROR:  schema "public" already exists'],
         )
+
+    def test_only_held_reads_with_the_planner_inactive(self):
+        # A root's own rows as its restore holds them (TS8); the server's two
+        # readings run under its defaults.
+        for mode, (settings, source) in gf.READINGS.items():
+            with self.subTest(mode=mode):
+                expected = ["SET timescaledb.restoring = on"] if mode == "held" else []
+                self.assertEqual(settings, expected)
+                only = "public.metrics" if mode == "descendants" else "ONLY public.metrics"
+                self.assertEqual(source.format("public.metrics"), only)
 
     def test_answers_sit_beside_the_dump(self):
         self.assertEqual(

@@ -14,9 +14,9 @@ resolves both ways. The pins are checked by `pgdt-mapping`'s
   database holds neither the extension nor a catalog block, else the version
   (`Stated`, `Inferred` era, or `Unknown`) and a `Resolution` — `Resolved`
   hypertables, chunks and continuous aggregates, or `Unreadable` naming the
-  columns its recipe lacks and the fields that do not parse. 38.5 refuses on
+  columns its recipe lacks and the fields that do not parse. 38.5.1 refuses on
   `Unreadable`; it carries no hypertable list, so which tables that refuses is
-  38.5's to settle, the `hypertable` rows' names being readable wherever their
+  38.5.1's to settle, the `hypertable` rows' names being readable wherever their
   columns are.
 - **Internal compressed hypertables are listed**, `internal: true`. Through
   2.28 their chunk rows are the compressed relations; at 2.13 those tables

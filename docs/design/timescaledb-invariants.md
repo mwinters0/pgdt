@@ -237,8 +237,10 @@ plans the read: through answers the root's row too, and filtered on `tableoid =
 <root>` answers it alone, at every pin from 2.27; `ONLY` stays empty from 2.28.
 Every other answer is unchanged under it. `timescaledb.enable_optimizations =
 off` reads the root too, but at 2.27 it loses a compressed chunk's batches. A
-hypertable with no chunk is planned as empty from 2.28 under either setting;
-`timescaledb.restoring = on` reads its root's rows `ONLY` (2.31).
+hypertable with no chunk is planned as empty from 2.28 under either setting.
+**With `timescaledb.restoring = on` its planner is inactive at every pin**, so
+`ONLY` a root answers exactly the rows its own block holds, a chunkless one's
+included.
 
 **Proof.** `sql/updates/2.22.1--2.23.0.sql` drops the trigger from every
 hypertable; its commit, `64f5cb207`, says the trigger acted only with the
@@ -246,19 +248,24 @@ extension inactive. `src/planner/expand_hypertable.c`, `find_children_chunks`,
 leaves the parent out on that trigger's guarantee, its comment unchanged at
 2.31.0; `src/planner/planner.c` expands a hypertable itself only under both
 settings; 2.28's planner marks an un-inherited hypertable dummy (#9722).
-Observed: the root's row in `public.metrics`' block at 16, 17 and 18; their
-answers; the three settings over each restore
-(`runs/dwal-ts8-probe/results.txt`, machine-local).
+`src/extension.c`, `ts_extension_is_loaded_and_not_upgrading` (2.21.4 on) and
+`ts_extension_is_loaded` (2.13.1), returns false under `ts_guc_restoring`, and
+every planner hook asks it. Observed: the root's row in `public.metrics`' block
+at 16, 17 and 18; their answers, each hypertable's `held` line its root's block
+at every pin and flag set (`pgdt-mapping`'s `tests/timescaledb.rs`); the three
+settings over each restore (`runs/dwal-ts8-probe/results.txt`, machine-local).
 
 **Scope limit.** How a row reaches the root is not claimed; the fixture's comes
 from an insert in restoring mode (`fixture_schema_timescaledb_root_rows.sql`).
 
-**Verified against:** 2.27.2, 2.28.3, 2.31.0; the trigger at 2.13.1 and 2.21.4.
+**Verified against:** 2.27.2, 2.28.3, 2.31.0; the trigger and restoring mode at
+2.13.1 and 2.21.4 too.
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"TimescaleDB" — a root's own rows read, with a finding.
+"TimescaleDB" — a root's own rows read, with a finding; the answers' *held*
+reading of each root, `answer_lines` (`scripts/generate_fixtures.py`).
 **Re-verify:** `grep -c ts_insert_blocker fixtures/<major>/timescaledb/default.sql`;
 `grep 'public.metrics' fixtures/<major>/timescaledb/default.answers.tsv | grep -v
-$'\trow\t'`.
+$'\trow\t'`; `git show <tag>:src/extension.c | grep -n -A2 'ts_guc_restoring ||'`.
 
 ---
 

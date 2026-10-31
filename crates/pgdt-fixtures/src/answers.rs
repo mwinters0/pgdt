@@ -1,6 +1,8 @@
 //! The server's answers beside a dump: what a restore of it holds per table,
 //! read with its descendants and `ONLY` (`docs/design/decisions.md`,
-//! "D130"), which a table read with its descendants is held to.
+//! "D130"), which a table read with its descendants is held to — and, over a
+//! TimescaleDB restore, each hypertable's root as its restore holds it, which
+//! the server's own reads leave out (TS8).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,7 +28,33 @@ pub enum Answer {
 #[derive(Debug, Clone, Default)]
 pub struct Answers {
     pub tables: BTreeMap<(String, Reading), Answer>,
+    /// Per hypertable, the rows its root holds itself, read `ONLY` with
+    /// TimescaleDB's planner inactive: the generator's `held` lines.
+    pub held: BTreeMap<String, Answer>,
     pub restore_errors: Vec<String>,
+}
+
+/// Which answer a line adds to: a table read one way, or a root as held.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Key {
+    Read(String, Reading),
+    Held(String),
+}
+
+impl Answers {
+    fn slot(&mut self, key: &Key) -> Option<&mut Answer> {
+        match key {
+            Key::Read(table, reading) => self.tables.get_mut(&(table.clone(), *reading)),
+            Key::Held(table) => self.held.get_mut(table),
+        }
+    }
+
+    fn insert(&mut self, key: Key, answer: Answer) {
+        match key {
+            Key::Read(table, reading) => self.tables.insert((table, reading), answer),
+            Key::Held(table) => self.held.insert(table, answer),
+        };
+    }
 }
 
 /// The answers file beside `dump`: `<flag-set>.answers.tsv` for
@@ -42,7 +70,7 @@ pub fn answers(dump: &Path) -> Answers {
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("no answers at {}: {e}", path.display()));
     let mut answers = Answers::default();
-    let mut counts: BTreeMap<(String, Reading), usize> = BTreeMap::new();
+    let mut counts: BTreeMap<Key, usize> = BTreeMap::new();
     for line in text.lines() {
         let mut fields = line.splitn(4, '\t');
         let (table, reading, kind) = (fields.next(), fields.next(), fields.next());
@@ -54,30 +82,30 @@ pub fn answers(dump: &Path) -> Answers {
             answers.restore_errors.push(rest.to_string());
             continue;
         }
-        let reading = match reading {
-            "descendants" => Reading::Descendants,
-            "only" => Reading::Only,
+        let table = table.to_string();
+        let key = match reading {
+            "descendants" => Key::Read(table, Reading::Descendants),
+            "only" => Key::Read(table, Reading::Only),
+            "held" => Key::Held(table),
             other => panic!("{}: unknown reading {other:?}", path.display()),
         };
-        let key = (table.to_string(), reading);
         match kind {
             "rows" => {
                 counts.insert(key.clone(), rest.parse().unwrap());
-                answers.tables.insert(key, Answer::Rows(Vec::new()));
+                answers.insert(key, Answer::Rows(Vec::new()));
             }
-            "row" => match answers.tables.get_mut(&key) {
+            "row" => match answers.slot(&key) {
                 Some(Answer::Rows(rows)) => rows.push(rest.to_string()),
                 _ => panic!("{}: a row before its count: {line:?}", path.display()),
             },
-            "error" => {
-                answers.tables.insert(key, Answer::Error(rest.to_string()));
-            }
+            "error" => answers.insert(key, Answer::Error(rest.to_string())),
             other => panic!("{}: unknown line kind {other:?}", path.display()),
         }
     }
     for (key, count) in counts {
-        let Some(Answer::Rows(rows)) = answers.tables.get(&key) else { unreachable!() };
-        assert_eq!(rows.len(), count, "{}: {key:?}'s rows against its count", path.display());
+        let Some(Answer::Rows(rows)) = answers.slot(&key) else { unreachable!() };
+        let rows = rows.len();
+        assert_eq!(rows, count, "{}: {key:?}'s rows against its count", path.display());
     }
     answers
 }

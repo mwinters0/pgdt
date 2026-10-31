@@ -10,7 +10,7 @@ now expect, under `only`, the leaves alone refused.
 ## What the next slices inherit
 
 - **A read alone refuses only by its own rows**: `Refusals::of` takes no
-  fallback to the descendants' refusal, so 38.5's compressed-chunk refusal,
+  fallback to the descendants' refusal, so 38.5.1's compressed-chunk refusal,
   which refuses under both modes, still goes in both fields, and one that
   refuses only a read through goes in `descendants` alone.
 - **`Table::read` under `only` reads a table's own blocks without
@@ -29,4 +29,4 @@ now expect, under `only`, the leaves alone refused.
 - **No hypertable meets this path**: TimescaleDB never makes a hypertable
   partitioned ([`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
   "TimescaleDB in a dump"), so `has_partitions` is false for every hypertable
-  root and 38.5's refusals join `Refused` unaffected.
+  root and 38.5.1's refusals join `Refused` unaffected.

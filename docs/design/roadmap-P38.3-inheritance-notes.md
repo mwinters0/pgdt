@@ -12,14 +12,14 @@ server's `only` answers as well as its read-through ones, with
 
 - **A refusal is settled per mode, beside the blocks**: `Refusals` in
   `dump/descendants.rs` holds one for a read with descendants and one for a
-  read alone, and `Table::read` picks by `QueryOptions::inheritance`. 38.5's
+  read alone, and `Table::read` picks by `QueryOptions::inheritance`. 38.5.1's
   compressed-chunk refusal refuses under both, so it goes in both fields; its
   unreadable-catalog refusal refuses the hypertable read through, and its
   chunks are read under their own names under either mode.
 - **A partitioned table read alone** reads no row, under the schema its read
   with its descendants settles (38.3.1 for the load-via-root case). A
   hypertable root holds a block of its own, however empty, so `only` reads
-  it as that block (38.5's stray root rows included).
+  it as that block (38.5.1's stray root rows included).
 - **The mode is a dump's in the provider**: `PgDumpOptions::inheritance`,
   `:inheritance=` and the `STORED AS PGDUMP` option `'pgdump.inheritance'`,
   read at registration, so a catalog lists a table by its schema under that

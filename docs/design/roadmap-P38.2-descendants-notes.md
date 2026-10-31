@@ -14,7 +14,7 @@ holding `pgdt query` and `pgdt sql` to the same answers at 18.
   refusal decided there is carried on the `Table` and raised by `schema`,
   `summary`, `divergences` and `plan`, so the table stays listed and
   addressable (the DataFusion catalog then leaves it unlisted with its
-  `RefusedTable` finding, as for any table whose provider refuses). 38.5's
+  `RefusedTable` finding, as for any table whose provider refuses). 38.5.1's
   compressed-chunk and unreadable-catalog refusals belong in `Refused`,
   today the through-root case alone.
 - **Own blocks and descendants' are told apart by the header's name** against
