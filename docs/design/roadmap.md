@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P17, P19, P20, P25, P27–P31, P35, P36, P38 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
+| P33 — every line PostgreSQL writes and reads | **Current** | [spec](roadmap-P33-line-bound.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
 | P37 — Parquet export as a Parquet-native writer leaves it | Sketched; not grilled | this file, below; [inbox](roadmap-P37-parquet-export-inbox.md) — the maintainer sets its order |
@@ -724,20 +724,12 @@ item; see below.
 
 ## P33 — Every line PostgreSQL writes and reads
 
-**What `pg_dump` writes is the floor and what PostgreSQL reads is the
-ceiling, for a `COPY` line as for a value** ("The input contract is valid
-PostgreSQL, not `pg_dump`'s output"; "A literal is guaranteed in `*_out`'s
-form and never read past `*_in`'s"). For a line the two are one bound,
-[`postgres-invariants.md`](postgres-invariants.md), "I71". A line under it is
-read whatever the chunk size, `--jobs`, the leader's split, a compressed
-source's blocks or the resume point; one over it is refused as a line
-PostgreSQL would not read, not as a buffer pgdt would not grow. Memory may
-slow a long line, and never refuses one under the bound. Today
-`max_line_bytes` refuses one past 64 MiB (`KD93`). **This is the answer to
-a user who cannot know a dump needs a longer line**: no setting to discover,
-and no ceiling taken from the hardware, PostgreSQL's being the only one.
-Sketched to corner-avoidance depth. The facts are in
-[its inbox](roadmap-P33-line-bound-inbox.md).
+A `COPY` line is read up to the bound PostgreSQL holds it to,
+[`postgres-invariants.md`](postgres-invariants.md), "I71", whatever the chunk
+size, `--jobs`, the split or the resume point, and refused only past it; memory
+may slow a long line and never refuses one a single reader could hold. No
+setting governs it. The spec is
+[`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md).
 
 ## P32 — The schema model: every object and property a dump declares
 

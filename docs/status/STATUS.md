@@ -83,12 +83,24 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
 "What an instrument can see"). `--count-pair <rev>` counts one change's
 `instructions:u` against the tree's parent and prints the comparison alone.
 
+## P33 progress
+
+Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.md).
+
+- [ ] **33.1** Evidence: the `long-line-resident` generator and figure on today's code, the resident of a held line by pass kind; a `(c)` `KD<k>` for a field refused for its size under a line under the bound; no production code
+- [ ] **33.2** Each line read once: the owner of a line grows it read by read and never re-reads; a segment's row-start search ends at its limit; the growth tests assert no read past the chunk
+- [ ] **33.3** Hold only what is decoded: a pass decoding nothing streams a line; the held line freed after its row and handed to the builder as a block; the replay releasing the chunks under a copied line; `long-line-resident` re-taken
+- [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, an unstated allowance's ledger unlimited; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
+- [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, a line one reader cannot hold refused for memory, its remedy spelled by `pgdt` and the shell
+- [ ] **33.6** The bound: I71's constant on every path, measured exactly; `LineTooLong` naming it; a batch cut before a value would overflow its column's offsets; `--max-line-bytes`, `pgdump.max_line_bytes`, `ReadOptions::max_line_bytes`, their manual section and tests removed; the real-bound test; `KD93` struck
+- [ ] **33.7** Acceptance: `long-line-resident` re-taken and the charge factors confirmed or re-set; the hand run on the reference dump under a `--memory` below its clusters
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** A dump is readable over HTTP, plain, `.xz` and gzip,
+- **P33 is open** (above). A dump is readable over HTTP, plain, `.xz` and gzip,
   with nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in
@@ -98,7 +110,7 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
   source recommends, a memory limit discovered and filled under the reserve
   and the margin, and a `parse` saying what it delivered rather than what it
   was asked for — is in [`../design/decisions.md`](../design/decisions.md).
-  Eleven phases remain sketched — P33, P32, P34, P37, P22, P21, P23, P26,
+  Ten phases remain sketched — P32, P34, P37, P22, P21, P23, P26,
   P18, P8, P24, in the roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each gets its own full grilling when it
   becomes current, and every one that carries an inbox must have it drained as

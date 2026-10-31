@@ -84,3 +84,19 @@ allocators first, an option as a default the environment overrides second
 ([`../status/history/2026-10-05.md`](../status/history/2026-10-05.md),
 "30.7's sitting"). *Contingent on* mimalloc 3.3.2 and the block cache's
 eviction paths as they stand.
+
+---
+
+## The reserve stops absorbing a carried line
+
+**Fact.** Until P33 lands, the line a reader carries across chunks is charged to
+no term and `MEMORY_RESERVE` absorbs it, bounded at 64 MiB by `max_line_bytes`.
+P33 removes that bound and charges a held line to a ledger carved from the
+allowance ([`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md), "A held
+line is charged, and admitted in file order").
+
+**Why P23 cares.** The reserve's premise loses a term it was read over, so
+re-setting it against the `reserve` figure (`KD34`) prices the reserve without
+the carried line.
+
+**Origin.** P33's grilling, 2026-10-31; contingent on P33 landing the ledger.
