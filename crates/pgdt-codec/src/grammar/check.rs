@@ -292,6 +292,11 @@ fn domains_beneath(
 ///
 /// [`PostgresInvalidValues::Strict`]: pgdt_model::PostgresInvalidValues::Strict
 pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
+    // deficiency: KD164 — no check here refuses an array for its size, as
+    // `path_in`'s and `poly_in`'s are refused (`value/geometric.rs`): a line
+    // under I71's bound can hold an `array_in` value whose binary form passes
+    // `MaxAllocSize` (I71's scope limit), which is read as a value, a strict
+    // parse included, where a restore refuses it.
     match plan {
         // `AS_TEXT`'s one member is `json`.
         ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => {

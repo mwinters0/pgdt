@@ -150,6 +150,11 @@ from generate_gzip_input import (
     ZLIBNG_VERSION,
 )
 
+# `long-line-resident`'s value kinds and the answer each query leg is held to,
+# read off the generator that writes them, for the perf generator's reason.
+# Import-safe on the same terms.
+import generate_long_lines as long_lines
+
 # The release build, whose image builds every binary a figure runs and whose
 # base is the image every built binary runs in (`register_image`,
 # `build_in_image`), and which runs a figure's `cargo bench` itself
@@ -1730,6 +1735,37 @@ INPUTS["koji_xz"] = InputSpec(
     nominal_bytes=250 * MIB,
 )
 
+#: `long-line-resident`'s line lengths, in MiB, terminator included: a factor
+#: of four apart, so a secant over the two longest is read at the shortest
+#: (`long_line_secant`), and the longest past the reference dump's longest line
+#: (`runs/datanommer-survey/report.md`, machine-local) and half I71's bound.
+#: **Not at the bound**: four workers each holding today's three to four copies
+#: of a 1 GiB line, beside the staged input, would need a container near this
+#: machine's whole memory (`CLAUDE.local.md`), where a kill bars the figure.
+LONG_LINE_MIB: tuple[int, ...] = (32, 128, 512)
+#: The long lines in each input's cluster: the four-worker leg's count, so each
+#: worker can hold one at once (`LONG_LINE_JOBS`).
+LONG_LINE_CLUSTER = 4
+
+
+def long_line_input(kind: str, mib: int) -> str:
+    """The input holding `long_lines`' cluster of `kind` lines of `mib` MiB."""
+    return f"long_{kind}_{mib}"
+
+
+#: One input a value kind and a line length (`generate_long_lines.py`), each
+#: a cluster of `LONG_LINE_CLUSTER` lines between short rows. Its nominal is its
+#: cluster and a mebibyte for the rest, which is a few hundred bytes.
+for _kind in long_lines.KINDS:
+    for _mib in LONG_LINE_MIB:
+        INPUTS[long_line_input(_kind, _mib)] = InputSpec(
+            long_line_input(_kind, _mib),
+            "generate_long_lines.py",
+            ("--kind", _kind, "--line-mib", str(_mib), "--lines", str(LONG_LINE_CLUSTER)),
+            scales=False,
+            nominal_bytes=LONG_LINE_CLUSTER * _mib * MIB + MIB,
+        )
+
 
 def input_stamp(spec: InputSpec, cfg: Config) -> str:
     """A hash of the generator's source and the arguments it was given.
@@ -2538,6 +2574,41 @@ GZPASS_FAMILY = "parse-gzpass-jobs-"
 #: prefix, as `GZPASS_FAMILY` is.
 GZRSS_FAMILY = "parse-gzrss-jobs-"
 
+#: The `long-line-resident` figure's command family, `<family><pass>-<jobs>`:
+#: one pass over a cluster of long lines under the peak-resident wrapper, at a
+#: count of `LONG_LINE_JOBS`, under `PARALLEL_BUDGET`'s allowance. Its own
+#: prefix, exempted from `SWEEP_JOBS` as `GZRSS_FAMILY` is, its counts being
+#: its axis; a gathering family (`GATHERING_FAMILIES`), a default parse being
+#: one of its passes.
+LONG_RSS_FAMILY = "long-rss-"
+#: The passes, in the table's column order, each with what its column is
+#: called: a parse at the data level, the request stated as every gathering
+#: figure states it (`GATHER_STATISTICS`); the same parse told to check every
+#: field (`--postgres-invalid-values strict`); and a query decoding every
+#: value, the provider's (`long_line_invocation`).
+LONG_LINE_PASSES: tuple[tuple[str, str], ...] = (
+    ("parse", "default parse"),
+    ("strict", "strict parse"),
+    ("query", "query"),
+)
+#: The counts each pass is read at: the serial path and the optimization
+#: baseline (`roadmap.md`, "Four workers is the optimization baseline;
+#: twenty-four is the guard"), as the phase's spec names them.
+LONG_LINE_JOBS: tuple[int, ...] = (1, 4)
+#: The longest line every leg states it reads, `--max-line-bytes` and
+#: `pgdump.max_line_bytes`: I71's bound, `MaxAllocSize - 1`, terminator
+#: included (`docs/design/postgres-invariants.md`). Stated so that no line of
+#: the figure's is refused by today's limit, and so that a leg reads as a pass
+#: reads once the bound is the constant (`roadmap-P33-line-bound.md`, "The
+#: bound is a constant, and the knobs go").
+LONG_LINE_BOUND = 0x3FFF_FFFE
+#: The figure's container. **Headroom, not a contract**: no held line is
+#: charged on today's code, so nothing here is held to the allowance it states;
+#: what will be is a held line's draw on the ledger
+#: (`roadmap-P33-line-bound.md`, "A held line is charged, and admitted in file
+#: order"), and a re-take under it is where a gate twin belongs.
+LONG_LINE_MEMORY = "16g"
+
 #: This machine's hardware threads and physical cores, which the figure's
 #: rows are named by and `gzpass_topology_problem` holds the machine to
 #: before a reading: written down rather than read, so a table names the
@@ -3156,6 +3227,46 @@ PROVIDER_BUILDER = (
     f"/pgdt parse --source /dump.sql --cache /dump.sql.pgdt --jobs {SWEEP_JOBS} "
     f"{GATHER_STATISTICS} >/dev/null && "
 )
+
+#: `long-line-resident`'s query: every value of the table built, one row out.
+#: **The provider's scan, not `pgdt query`'s**, whose printing
+#: renders each value back into a buffer of its own — a CLI's term, which a
+#: charge set for the library must not carry (`measurements.md`, "The
+#: apparatus", on a CLI number sizing no library change), and the reason
+#: `parallel-scan-throughput`'s query legs are the provider's.
+#: **The filter is what keeps the count from being answered**, as
+#: `PARALLEL_SCAN_SQL`'s is: unfiltered, the plan node's exact NULL count
+#: answers `count(v)` with no row read (`docs/design/decisions.md`, "D89"),
+#: and every row holds an `id`. A count rather than a length, DataFusion
+#: measuring no `Binary` value.
+LONG_LINE_SQL = (
+    f"SELECT count(v) FROM {DFCLI_CATALOG}.{long_lines.TABLE} WHERE id IS NOT NULL"
+)
+
+#: The untimed builder of `long-line-resident`'s query legs: `PROVIDER_BUILDER`
+#: with the figure's line limit, which the builder's own scan of the cluster
+#: needs.
+LONG_LINE_BUILDER = (
+    f"/pgdt parse --source /dump.sql --cache /dump.sql.pgdt --jobs {SWEEP_JOBS} "
+    f"--max-line-bytes {LONG_LINE_BOUND} {GATHER_STATISTICS} >/dev/null && "
+)
+
+
+def long_line_invocation(partitions: int, dump: str) -> tuple[list[str], list[str]]:
+    """The environment and arguments one query leg of `long-line-resident`
+    states over the dump at `dump`, at `partitions` as its session's
+    `target_partitions`: the `pgdt` legs' allowance and line limit, each a
+    `SET` ahead of the query in the same process."""
+    if partitions not in LONG_LINE_JOBS:
+        raise ValueError(f"{partitions} is a partition count the figure does not carry")
+    env = [f"{DFCLI_PARTITIONS}={partitions}"]
+    argv = [
+        "--source", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q",
+        "-c", f"SET pgdump.memory = {stated_allowance(PARALLEL_BUDGET)}",
+        "-c", f"SET pgdump.max_line_bytes = {LONG_LINE_BOUND}",
+        "-c", LONG_LINE_SQL,
+    ]
+    return env, argv
 
 #: What the decode figure's container is given, against the register's 512 MB.
 #: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
@@ -4386,6 +4497,28 @@ def _script(command: str) -> str:
             f"time {PEAK_RSS} /pgdt parse --source /dump.sql --cache /tmp/x.pgdt "
             f"--jobs {jobs} --memory {stated_allowance(GZPASS_BUDGET)} {ns} >/dev/null"
         )
+    if command.startswith(LONG_RSS_FAMILY):
+        # `long-line-resident`: one pass at one count under the wrapper, every
+        # leg stating the figure's line limit and `PARALLEL_BUDGET`'s
+        # allowance. The query's builder is outside the timer and the wrapper,
+        # a process of its own, so neither reads its peak.
+        name, _, jobs = command.removeprefix(LONG_RSS_FAMILY).rpartition("-")
+        if name not in dict(LONG_LINE_PASSES) or not jobs.isdigit():
+            raise ValueError(f"unknown command shape {command!r}")
+        if int(jobs) not in LONG_LINE_JOBS:
+            raise ValueError(f"{command!r} names a job count the figure does not carry")
+        if name == "query":
+            env, argv = long_line_invocation(int(jobs), "/dump.sql")
+            return (
+                f"{LONG_LINE_BUILDER}time {dfcli_shell(env, f'{PEAK_RSS} {SQL_SHELL}', argv)} "
+                f">/tmp/result.csv && {DFCLI_ANSWER}"
+            )
+        strict = " --postgres-invalid-values strict" if name == "strict" else ""
+        return (
+            f"time {PEAK_RSS} /pgdt parse --source /dump.sql --cache /tmp/x.pgdt "
+            f"--jobs {jobs} --memory {stated_allowance(PARALLEL_BUDGET)} "
+            f"--max-line-bytes {LONG_LINE_BOUND} {GATHER_STATISTICS}{strict} >/dev/null"
+        )
     if command.startswith(JOBS_AXIS):
         # The three shapes whose worker count is a figure's axis rather than the
         # apparatus's constant. Each `pgdt` one is otherwise the shape it is
@@ -4523,6 +4656,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"{family}{n}" for family in JOBS_AXIS for n in PARALLEL_JOBS),
         *(f"{GZPASS_FAMILY}{n}" for n in GZPASS_JOBS),
         *(f"{GZRSS_FAMILY}{n}" for n in GZIP_RSS_JOBS),
+        *(f"{LONG_RSS_FAMILY}{name}-{n}" for name, _ in LONG_LINE_PASSES for n in LONG_LINE_JOBS),
         *(
             f"{RESERVE_FAMILY}{token}-{budget}"
             for token, _, _ in RESERVE_ARENAS
@@ -4599,7 +4733,11 @@ def worker_count_problems() -> list[str]:
 
 #: The partition count a run of `SQL_SHELL` states: its session's
 #: `target_partitions`, from the environment in front of it.
-_DFCLI_PARTITIONS = re.compile(rf"\b{DFCLI_PARTITIONS}=(\d+) (?:\S+=\S+ )*{re.escape(SQL_SHELL)} ")
+#: A shell under the peak-resident wrapper states its count ahead of the
+#: wrapper, which hands its environment to the shell (`LONG_RSS_FAMILY`).
+_DFCLI_PARTITIONS = re.compile(
+    rf"\b{DFCLI_PARTITIONS}=(\d+) (?:\S+=\S+ )*(?:{re.escape(PEAK_RSS)} )?{re.escape(SQL_SHELL)} "
+)
 
 
 def _dfcli_partitions(script: str) -> set[str] | None:
@@ -4651,6 +4789,7 @@ GATHERING_FAMILIES: tuple[str, ...] = (
     DYNFILTER_FAMILY,
     PARALLEL_SCAN,
     *DATA_LEVEL_QUERIES,
+    LONG_RSS_FAMILY,
 )
 
 
@@ -4666,8 +4805,9 @@ def statistics_flag_problems() -> list[str]:
     `GATHER_STATISTICS` instead**, and only that — the two statistics
     figures', the dynamic-filter figures', whose scans prune by what the
     untimed builder gathered, and the query figures', which read the cache it
-    wrote (`DATA_LEVEL_QUERIES`, `PARALLEL_SCAN`) — and a `parse` of theirs that inherits the
-    request is reported exactly as anyone else's is."""
+    wrote (`DATA_LEVEL_QUERIES`, `PARALLEL_SCAN`), and `long-line-resident`'s, a default
+    parse being one of its passes (`LONG_RSS_FAMILY`) — and a `parse` of theirs that inherits
+    the request is reported exactly as anyone else's is."""
     return [
         command
         for command in command_shapes()
@@ -4719,16 +4859,16 @@ def pinned_count_problems() -> list[str]:
 
     The decode instrument states `--workers`, not `--jobs`, and its counts are
     its own figure's axis; it is exempt for the same reason, by prefix, and so
-    are `gzip-first-pass`'s and `gzip-resident`'s families (`GZPASS_FAMILY`,
-    `GZRSS_FAMILY`). So are the reserve figure's two stated families, whose
+    are `gzip-first-pass`'s, `gzip-resident`'s and `long-line-resident`'s families
+    (`GZPASS_FAMILY`, `GZRSS_FAMILY`, `LONG_RSS_FAMILY`). So are the reserve figure's two stated families, whose
     count is the figure's own constant (`RESERVE_JOBS`), and its flagless one,
     which states nothing and is held to that by `flagless_flag_problems`.
     """
     bad = []
     for command in command_shapes():
         if command in _NO_WORKERS or command.startswith(
-            ("decode-", GZPASS_FAMILY, GZRSS_FAMILY, RESERVE_FAMILY, RESERVE_STEP_FAMILY,
-             *_NO_FLAGS, *JOBS_AXIS)
+            ("decode-", GZPASS_FAMILY, GZRSS_FAMILY, LONG_RSS_FAMILY, RESERVE_FAMILY,
+             RESERVE_STEP_FAMILY, *_NO_FLAGS, *JOBS_AXIS)
         ):
             continue
         stated = set(_WORKER_COUNT.findall(_script(command)))
@@ -5342,6 +5482,16 @@ class Session:
                     "resolved_jobs": jobs,
                     **({} if spec.input == "control" else {"first_pass_workers": jobs}),
                 }
+            if spec.command.startswith(LONG_RSS_FAMILY):
+                # A stand-in answer or resolution, for the same reason: the
+                # figure refuses a query leg answering other than its input's
+                # values, and a parse leg resolving another count.
+                name, _, jobs = spec.command.removeprefix(LONG_RSS_FAMILY).rpartition("-")
+                self._last_stdout = (
+                    {"result_rows": "1", "result_first": str(long_line_answer(spec.input))}
+                    if name == "query"
+                    else {"resolved_jobs": jobs}
+                )
             if spec.command.startswith(GZSPACING_FAMILY):
                 # A stand-in index, for the same reason: the spacing table
                 # divides by the unit count, and refuses stages that disagree
@@ -12378,6 +12528,168 @@ def run_dynamic_filter_topk(session: Session) -> str:
     return _run_dynfilter(session, "dynamic-filter-topk", "topk")
 
 
+# -- what a held line holds resident ----------------------------------------
+
+
+def long_line_answer(name: str) -> int:
+    """What `LONG_LINE_SQL` answers over the input `name`: every row of its
+    table (`generate_long_lines.row_count`)."""
+    if name not in {long_line_input(k, m) for k in long_lines.KINDS for m in LONG_LINE_MIB}:
+        raise ValueError(f"{name!r} is no input of long-line-resident")
+    return long_lines.row_count(LONG_LINE_CLUSTER)
+
+
+def _long_line_specs() -> list[RunSpec]:
+    return [
+        RunSpec(
+            "dfcli" if name == "query" else "pgdt",
+            long_line_input(kind, mib),
+            f"{LONG_RSS_FAMILY}{name}-{jobs}",
+            "warm-parallel",
+            f"{kind}, {mib} MiB lines, {label}, {jobs}{'p' if name == 'query' else 'j'}",
+        )
+        for kind in long_lines.KINDS
+        for mib in LONG_LINE_MIB
+        for name, label in LONG_LINE_PASSES
+        for jobs in LONG_LINE_JOBS
+    ]
+
+
+def long_line_secant(by_mib: Mapping[int, Sequence[float]]) -> tuple[float, float]:
+    """`(per_byte, residual)` over one pass's readings in KiB by line length:
+    the median resident each line byte added between the two longest lengths,
+    and what that secant misses the shortest length's median by, measured less
+    predicted, in KiB.
+
+    **A secant over two lengths, not a fit**, and read at the third, which is
+    inside its data and where the mechanism is simplest
+    (`.claude/skills/evidence/SKILL.md`, rule 2): a residual larger than a
+    shortest line says resident is not linear in the line there, and no factor
+    describes it."""
+    short, mid, long = LONG_LINE_MIB
+    lo, hi = median(by_mib[mid]), median(by_mib[long])
+    per_byte = (hi - lo) * 1024 / ((long - mid) * MIB)
+    predicted = lo - per_byte * (mid - short) * MIB / 1024
+    return per_byte, median(by_mib[short]) - predicted
+
+
+def run_long_line_resident(session: Session) -> str:
+    """Peak resident set of each pass over a cluster of long lines, by value
+    kind, line length and count: what a pass holds beside a line it holds,
+    on code that charges none of it.
+
+    **What it prices is the copies**, the phase's spec's account of today's
+    code ("What a held line costs"): a held line's buffer at its high-water
+    mark, the decoded copy beside it, and the chunks a copied line keeps
+    pinned. The spec sets a held line's charge at once its bytes for a pass
+    keeping clipped heads and twice for one decoding whole values, once those
+    copies go; this figure is read again under that charge, which is what
+    confirms or re-sets it.
+
+    **What would falsify the account**, written before any reading:
+
+    - a one-partition query whose secant is outside three to four bytes a
+      line byte, the spec's figure for what a query holds today;
+    - a one-worker default parse whose secant is under one, a line being held
+      whole before its row is emitted (`docs/design/decisions.md`, "D23") — an
+      instrument not seeing the line, before it is a finding;
+    - a one-worker or one-partition cell whose residual at the shortest length
+      is larger than that line (`long_line_secant`): resident is then not a
+      factor times the line, and no charge factor is read off it;
+    - a four-worker secant past four times its one-worker one, more than one
+      held line a worker. Between one and four times, the ratio is how many
+      lines were held at once, which the leader's cut decides and nothing here
+      assumes.
+
+    **No gate twin**: the container is headroom (`LONG_LINE_MEMORY`). A kill
+    is still a kill, run once on the gate build before the error is raised.
+    **Three reps**, as the other resident figures take: a peak is steady
+    across reps, and the reps catch an outlier.
+    """
+    figure = "long-line-resident"
+    specs = _long_line_specs()
+    to_sweep = [s for s in specs if not session.has(figure, s)]
+    session.build_before_sweep(to_sweep)
+    session.sweep(figure, to_sweep, session.cfg.reps(3))
+
+    problems = []
+    readings: dict[tuple[str, int, str, int], list[float]] = {}
+    for spec in specs:
+        name, _, jobs = spec.command.removeprefix(LONG_RSS_FAMILY).rpartition("-")
+        kind, mib = spec.input.split("_")[1], int(spec.input.rpartition("_")[2])
+        readings[(kind, mib, name, int(jobs))] = session.get_rss(figure, spec)
+        report = session.reported.get(spec.key(figure), {})
+        if name == "query":
+            want = str(long_line_answer(spec.input))
+            if report.get("result_rows") != "1" or report.get("result_first") != want:
+                problems.append(
+                    f"{spec.label}: the query counted {report.get('result_first', 'nothing')} "
+                    f"values where its table holds {want}"
+                )
+        elif report.get("resolved_jobs") != jobs:
+            problems.append(
+                f"{spec.label}: the run resolved {report.get('resolved_jobs', 'no')} worker(s) "
+                f"where the row states {jobs}"
+            )
+    if problems:
+        raise RuntimeError(f"{figure} cannot read its legs: " + "; ".join(problems))
+
+    columns = [(name, label, jobs) for name, label in LONG_LINE_PASSES for jobs in LONG_LINE_JOBS]
+    headers = [
+        "Lines",
+        *(f"{label}, {jobs}{'p' if name == 'query' else 'j'}" for name, label, jobs in columns),
+    ]
+    rows = [
+        [f"{kind}, {mib} MiB"]
+        + [fmt_mib_median_spread(readings[(kind, mib, name, jobs)]) for name, _, jobs in columns]
+        for kind in long_lines.KINDS
+        for mib in LONG_LINE_MIB
+    ]
+    secants = []
+    for kind in long_lines.KINDS:
+        cells = [kind]
+        for name, _, jobs in columns:
+            per_byte, residual = long_line_secant(
+                {mib: readings[(kind, mib, name, jobs)] for mib in LONG_LINE_MIB}
+            )
+            cells.append(f"**×{per_byte:.2f}** · {fmt_rss_delta(residual)}")
+        secants.append(cells)
+
+    short, mid, long = LONG_LINE_MIB
+    inputs = [long_line_input(kind, mib) for kind in long_lines.KINDS for mib in LONG_LINE_MIB]
+    sizes = ", ".join(
+        f"`{name}` "
+        + _fmt_bytes(file_size(session.cfg, session.input_path(name, "warm-parallel"), name))
+        for name in inputs
+    )
+    notes = (
+        "\n\nEach cell is peak resident set. Every input is one table of "
+        f"{long_lines.SHORT_ROWS} short rows, a cluster of {LONG_LINE_CLUSTER} consecutive rows "
+        "each a line of the length its row names, terminator included, and "
+        f"{long_lines.SHORT_ROWS} short rows (`generate_long_lines.py`): `text` decodes to "
+        "itself, `escaped` to seven bytes in eight, `bytea` to half. Every leg states "
+        f"`--memory {stated_allowance(PARALLEL_BUDGET)}`, `parallel-peak-rss`'s allowance, and "
+        f"I71's bound as its line limit, `{LONG_LINE_BOUND}`, in a {LONG_LINE_MEMORY} container — "
+        "an apparatus departure from the register's 512 MB, which one held line outgrows. A "
+        f"parse states `{GATHER_STATISTICS}`, and the strict one "
+        "`--postgres-invalid-values strict` beside it. The query is `pgdt sql`'s "
+        f"`{LONG_LINE_SQL}` at the column's count of partitions, over a cache an untimed "
+        "`parse` wrote in the same container, its answer held to the input's rows.\n\n"
+        f"Inputs: {sizes}.\n\n"
+        f"**Each pass's secant**: the resident a line byte added between the {mid} MiB and "
+        f"{long} MiB rows, and what it misses the {short} MiB row's median by, measured less "
+        "predicted. At four workers or partitions it sums every line held at once.\n\n"
+        + md_table(["Kind", *headers[1:]], secants)
+        + "\n\nPer-rep readings (peak RSS):\n"
+        + "\n".join(
+            f"- {spec.label}: " + ", ".join(fmt_mib(v) for v in session.get_rss(figure, spec))
+            for spec in specs
+        )
+        + "\n"
+    )
+    return md_table(headers, rows) + notes
+
+
 # --------------------------------------------------------------------------
 # The register. Order is run order: a figure that shares a reading comes after
 # the figure that takes it.
@@ -13148,7 +13460,52 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = []
+UNTAKEN: list[Figure] = [
+    # What a pass holds while it holds a long line, by value kind, line length
+    # and count: the parse and its gathering, the strict check, and the
+    # provider's query and replay, which builds the column it reads.
+    Figure(
+        id="long-line-resident",
+        section="What a held line holds resident",
+        stage="warm-parallel",
+        depends=_declare(
+            *RSS_INSTRUMENT,
+            *SCAN,
+            *MAP,
+            *READ,
+            *INTERIOR,
+            *CACHE,
+            *STATISTICS,
+            *UNREPRESENTABLE,
+            *DECODE,
+            *NESTED,
+            *DATAFUSION,
+            # `pgdt sql` is `pgdt`'s: its dispatch and allocator are the binary's.
+            *QUERY_CLI,
+            "scripts/generate_long_lines.py",
+        ),
+        warm_inputs=tuple(
+            long_line_input(kind, mib) for kind in long_lines.KINDS for mib in LONG_LINE_MIB
+        ),
+        # A kind's lengths share a sweep, its secant subtracting one from
+        # another (`long_line_secant`); a kind a group keeps the tmpfs to one
+        # kind's cluster at a time.
+        warm_groups=tuple(
+            tuple(long_line_input(kind, mib) for mib in LONG_LINE_MIB) for kind in long_lines.KINDS
+        ),
+        subtracts=tuple(
+            Subtraction(
+                "long-line-resident",
+                (long_line_input(kind, a), long_line_input(kind, b)),
+                "a pass's secant between two line lengths, and its residual at the shortest",
+            )
+            for kind in long_lines.KINDS
+            for a, b in zip(LONG_LINE_MIB, LONG_LINE_MIB[1:])
+        ),
+        memory=LONG_LINE_MEMORY,
+        run=run_long_line_resident,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
@@ -16395,10 +16752,10 @@ def cmd_check(doc: Path) -> int:
             f"No command shape inherits a worker count: each states `--jobs {SWEEP_JOBS}`, "
             f"or `--workers` for the\ndecode instrument, `PARALLEL_JOBS` for the "
             f"{len(JOBS_AXIS)} families whose axis it is, `GZPASS_JOBS` for the gzip first\n"
-            "pass's, `GZIP_RSS_JOBS` for the gzip resident's, or "
-            f"`--jobs {RESERVE_JOBS}` for "
+            "pass's, `GZIP_RSS_JOBS` for the gzip resident's, `LONG_LINE_JOBS` for the\n"
+            f"long-line resident's, or `--jobs {RESERVE_JOBS}` for "
             "the reserve's stated legs; the reserve's flagless legs state none\nby "
-            "declaration, and `dd` is not a run of ours. Every run of "
+            "declaration, and `dd` is not a run of ours. Every other run of "
             f"`{SQL_SHELL.lstrip('/')}`\nstates `{DFCLI_PARTITIONS}={SWEEP_JOBS}` besides.\n"
         )
     if gathering:

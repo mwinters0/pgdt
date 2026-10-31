@@ -87,7 +87,7 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
 
 Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.md).
 
-- [ ] **33.1** Evidence: the `long-line-resident` generator and figure on today's code, the resident of a held line by pass kind; a `(c)` `KD<k>` for a field refused for its size under a line under the bound; no production code
+- [ ] **33.1** Evidence: the `long-line-resident` generator and figure on today's code, the resident of a held line by pass kind; a `(c)` `KD<k>` for a field refused for its size under a line under the bound; no production code. The generator, the figure registered untaken and the `(c)` entry are landed; the readings remain — [notes](../design/roadmap-P33.1-evidence-notes.md)
 - [ ] **33.2** Each line read once: the owner of a line grows it read by read and never re-reads; a segment's row-start search ends at its limit; the growth tests assert no read past the chunk
 - [ ] **33.3** Hold only what is decoded: a pass decoding nothing streams a line; the held line freed after its row and handed to the builder as a block; the replay releasing the chunks under a copied line; `long-line-resident` re-taken
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, an unstated allowance's ledger unlimited; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
@@ -124,4 +124,16 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`long-line-resident` stops at 512 MiB lines, half I71's bound.** The
+  spec has the figure's input cluster lines near the bound
+  ([`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.md),
+  "How it is shown"); its lengths are 32, 128 and 512 MiB
+  (`measure.LONG_LINE_MIB`), the longest past the reference dump's longest
+  line. Four workers each holding today's three to four copies of a 1 GiB
+  line would need a container near this machine's whole memory, where a kill
+  bars the figure. So the charge factors 33.4 sets are read off a secant
+  ending at half the bound rather than at it. Reconsidering adds a length at
+  the bound, at one worker or under a container sized to the host, and
+  re-registers the figure before its readings.
 

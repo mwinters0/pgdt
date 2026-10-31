@@ -602,6 +602,7 @@ class StatisticsFigures(unittest.TestCase):
                 measure.DYNFILTER_FAMILY,
                 measure.PARALLEL_SCAN,
                 *measure.DATA_LEVEL_QUERIES,
+                measure.LONG_RSS_FAMILY,
             },
         )
         self.assertEqual(
@@ -4667,6 +4668,9 @@ class XzDecodeScaling(unittest.TestCase):
         # Its own allowance, affording twenty-four first pass workers a task
         # each at either chunk length (`GZPASS_BUDGET`).
         "gzip-first-pass",
+        # Four workers each holding a long line and its copies, which no
+        # allowance charges (`LONG_LINE_MEMORY`).
+        "long-line-resident",
     }
 
     def test_every_other_figure_runs_under_the_recorded_memory(self):
@@ -5639,6 +5643,180 @@ class GzipResident(unittest.TestCase):
         self.assertEqual(len(eof), 28)
         self.assertTrue(eof.startswith(generate_gzip_input.BGZF_HEADER))
         self.assertEqual(gzip.decompress(eof), b"")
+
+
+class LongLineResident(unittest.TestCase):
+    """What a pass holds while it holds a long line: three passes at two counts
+    over a cluster of long lines, by value kind and line length."""
+
+    FIGURE = "long-line-resident"
+
+    def test_it_is_untaken_and_borrows_nothing(self):
+        # Standing in no sharing edge is what lets it publish from its own
+        # commit; its readings wait on that commit.
+        fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        self.assertIn(fig, measure.UNTAKEN)
+        self.assertNotIn(fig, measure.FIGURES)
+        self.assertEqual(fig.shares, ())
+        self.assertEqual(fig.stage, "warm-parallel")
+        self.assertEqual(fig.memory, measure.LONG_LINE_MEMORY)
+
+    def test_what_can_move_it_is_declared(self):
+        fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        for path in (
+            "scripts/generate_long_lines.py",
+            *measure.RSS_INSTRUMENT,
+            *measure.SCAN,
+            *measure.INTERIOR,
+            *measure.STATISTICS,
+            *measure.DECODE,
+            *measure.DATAFUSION,
+            *measure.QUERY_CLI,
+        ):
+            with self.subTest(path=path):
+                self.assertIn(path, fig.depends)
+
+    def test_an_input_a_kind_and_a_length_each_a_cluster(self):
+        fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        self.assertEqual(len(fig.warm_inputs), len(measure.long_lines.KINDS) * 3)
+        for kind in measure.long_lines.KINDS:
+            for mib in measure.LONG_LINE_MIB:
+                name = measure.long_line_input(kind, mib)
+                with self.subTest(input=name):
+                    spec = measure.INPUTS[name]
+                    self.assertEqual(spec.generator, "generate_long_lines.py")
+                    self.assertFalse(spec.scales)
+                    args = dict(zip(spec.args[::2], spec.args[1::2]))
+                    self.assertEqual(args["--kind"], kind)
+                    self.assertEqual(args["--line-mib"], str(mib))
+                    self.assertEqual(args["--lines"], str(measure.LONG_LINE_CLUSTER))
+                    self.assertGreater(spec.nominal_bytes, measure.LONG_LINE_CLUSTER * mib << 20)
+                    measure.long_lines.field_bytes(kind, mib << 20)
+
+    def test_the_lengths_are_three_and_under_the_bound(self):
+        # The secant is over the two longest and read at the shortest.
+        short, mid, long = measure.LONG_LINE_MIB
+        self.assertLess(short, mid)
+        self.assertLess(mid, long)
+        self.assertLessEqual(long << 20, measure.LONG_LINE_BOUND)
+
+    def test_the_cluster_is_the_widest_count(self):
+        self.assertEqual(measure.LONG_LINE_CLUSTER, max(measure.LONG_LINE_JOBS))
+        self.assertEqual(measure.LONG_LINE_JOBS, (1, 4))
+
+    def test_the_bound_is_i71s(self):
+        # `MaxAllocSize - 1`, `MaxAllocSize` being `0x3fffffff`.
+        self.assertEqual(measure.LONG_LINE_BOUND, 0x3FFFFFFF - 1)
+
+    def test_a_kinds_lengths_share_its_sweep(self):
+        fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        for kind in measure.long_lines.KINDS:
+            names = [measure.long_line_input(kind, mib) for mib in measure.LONG_LINE_MIB]
+            with self.subTest(kind=kind):
+                self.assertIn(tuple(names), fig.warm_groups)
+                for a, b in zip(names, names[1:]):
+                    measure.subtraction_sweep(self.FIGURE, a, b)
+
+    def test_each_parse_states_its_count_allowance_limit_and_request(self):
+        for name in ("parse", "strict"):
+            for jobs in measure.LONG_LINE_JOBS:
+                with self.subTest(name=name, jobs=jobs):
+                    script = measure._script(f"{measure.LONG_RSS_FAMILY}{name}-{jobs}")
+                    self.assertTrue(script.startswith(f"time {measure.PEAK_RSS} /pgdt parse "))
+                    self.assertIn(f"--jobs {jobs} ", script)
+                    self.assertIn(
+                        f"--memory {measure.stated_allowance(measure.PARALLEL_BUDGET)} ", script
+                    )
+                    self.assertIn(f"--max-line-bytes {measure.LONG_LINE_BOUND} ", script)
+                    self.assertIn(measure.GATHER_STATISTICS, script)
+                    self.assertEqual(
+                        "--postgres-invalid-values strict" in script, name == "strict"
+                    )
+
+    def test_the_strict_parse_differs_by_its_flag_alone(self):
+        for jobs in measure.LONG_LINE_JOBS:
+            with self.subTest(jobs=jobs):
+                default = measure._script(f"{measure.LONG_RSS_FAMILY}parse-{jobs}")
+                strict = measure._script(f"{measure.LONG_RSS_FAMILY}strict-{jobs}")
+                self.assertEqual(
+                    strict.replace(" --postgres-invalid-values strict", ""), default
+                )
+
+    def test_the_query_is_the_providers_under_the_wrapper_after_an_untimed_builder(self):
+        for jobs in measure.LONG_LINE_JOBS:
+            with self.subTest(jobs=jobs):
+                script = measure._script(f"{measure.LONG_RSS_FAMILY}query-{jobs}")
+                builder, _, timed = script.partition(" && time ")
+                self.assertIn("/pgdt parse", builder)
+                self.assertIn(f"--jobs {measure.SWEEP_JOBS} ", builder)
+                self.assertIn(f"--max-line-bytes {measure.LONG_LINE_BOUND} ", builder)
+                self.assertNotIn(measure.PEAK_RSS, builder)
+                self.assertTrue(
+                    timed.startswith(
+                        f"{measure.DFCLI_PARTITIONS}={jobs} {measure.PEAK_RSS} {measure.SQL_SHELL} "
+                    )
+                )
+                self.assertEqual(measure._dfcli_partitions(script), {str(jobs)})
+                self.assertIn(
+                    f"SET pgdump.memory = {measure.stated_allowance(measure.PARALLEL_BUDGET)}",
+                    timed,
+                )
+                self.assertIn(f"SET pgdump.max_line_bytes = {measure.LONG_LINE_BOUND}", timed)
+                self.assertIn(measure.LONG_LINE_SQL, timed)
+                self.assertTrue(script.endswith(measure.DFCLI_ANSWER))
+
+    def test_the_query_counts_under_a_filter_keeping_every_row(self):
+        # Unfiltered, the plan node's NULL count answers it with no row read.
+        self.assertIn("count(v)", measure.LONG_LINE_SQL)
+        self.assertIn("WHERE id IS NOT NULL", measure.LONG_LINE_SQL)
+        self.assertIn(measure.long_lines.TABLE, measure.LONG_LINE_SQL)
+
+    def test_every_leg_is_a_shape_and_reads_resident(self):
+        specs = measure._long_line_specs()
+        self.assertEqual(
+            len(specs),
+            len(measure.long_lines.KINDS) * 3 * len(measure.LONG_LINE_PASSES) * 2,
+        )
+        for spec in specs:
+            with self.subTest(leg=spec.label):
+                self.assertIn(spec.command, measure.command_shapes())
+                # `time_run` reads a peak only off a shape whose name says so.
+                self.assertIn("rss", spec.command)
+                self.assertEqual(spec.binary, "dfcli" if "-query-" in spec.command else "pgdt")
+        self.assertEqual(len({s.key(self.FIGURE) for s in specs}), len(specs))
+
+    def test_a_count_or_pass_the_figure_does_not_carry_is_refused(self):
+        for command in ("long-rss-parse-24", "long-rss-merge-1", "long-rss-query-x"):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    measure._script(command)
+
+    def test_the_answer_is_every_row_of_the_input(self):
+        name = measure.long_line_input("bytea", measure.LONG_LINE_MIB[0])
+        self.assertEqual(
+            measure.long_line_answer(name),
+            2 * measure.long_lines.SHORT_ROWS + measure.LONG_LINE_CLUSTER,
+        )
+        with self.assertRaises(ValueError):
+            measure.long_line_answer("control")
+
+    def test_the_secant_is_read_at_the_shortest_length(self):
+        short, mid, long = measure.LONG_LINE_MIB
+
+        def kib(mib: float) -> float:
+            return mib * 1024
+
+        # Resident a fixed 50 MiB plus three bytes a line byte: no residual.
+        linear = {m: [kib(50 + 3 * m)] * 3 for m in measure.LONG_LINE_MIB}
+        per_byte, residual = measure.long_line_secant(linear)
+        self.assertAlmostEqual(per_byte, 3.0)
+        self.assertAlmostEqual(residual, 0.0, places=6)
+        # The shortest length holding 10 MiB more than the line predicts.
+        stepped = {**linear, short: [kib(60 + 3 * short)] * 3}
+        self.assertAlmostEqual(measure.long_line_secant(stepped)[1], kib(10), places=6)
+        # The median, not a rep, is what is read.
+        noisy = {**linear, long: [kib(50 + 3 * long), kib(50 + 3 * long), kib(9999)]}
+        self.assertAlmostEqual(measure.long_line_secant(noisy)[0], 3.0)
 
 
 class GzipFirstPass(unittest.TestCase):
@@ -7029,6 +7207,11 @@ class WarmBound(unittest.TestCase):
                 # the pass in every sweep.
                 "gzip-first-pass": tuple(
                     ("control", leg) for leg, _, _ in measure.GZPASS_WRITERS
+                ),
+                # A kind's three lengths together, its secant subtracting them.
+                "long-line-resident": tuple(
+                    tuple(f"long_{kind}_{mib}" for mib in (32, 128, 512))
+                    for kind in ("text", "escaped", "bytea")
                 ),
             },
         )

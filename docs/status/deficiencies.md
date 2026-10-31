@@ -24,7 +24,7 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD163 -->
+rather than being deleted. <!-- deficiency-watermark: KD164 -->
 **`KD1`–`KD162` are allocated, and nothing at or below `KD162` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
@@ -564,3 +564,9 @@ than reading as a phase nobody has sliced.
   its descendants as its root's rows alone, and names no compressed chunk a
   read by name refuses. **(c) unowned**; promoted by a data-only TimescaleDB
   dump met in use. Detail: `crates/pgdt-model/src/timescaledb/findings.rs`.
+
+- **KD164** — an array `array_in` refuses for its size, in a line under
+  I71's bound — its binary form past `MaxAllocSize` (I71's scope limit) — is
+  read as a value, a strict parse included, though a restore refuses it.
+  **(c) unowned**; promoted by such a field met in use. Detail:
+  `crates/pgdt-codec/src/grammar/check.rs`.
