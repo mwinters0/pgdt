@@ -206,7 +206,7 @@ our API, CLI, or data until we reach v1.0.
         - [ ] Compressed and partially compressed chunks. Refused, naming them.
         - [ ] Continuous aggregates under their view's name. Readable as their materialization
         hypertable.
-        - TimescaleDB 1.x runs on PostgreSQL 12 and older, before any `pg_dump` we read.
+        - TimescaleDB 1.x is untested: no fixture holds one.
     - Collation
         - [x] `C` / `POSIX`
         - [ ] Everything else.  Text compares bytewise, with a warning.  (See: KD7)

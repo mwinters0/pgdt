@@ -17,7 +17,7 @@ INSTA_UPDATE=always cargo test -p <crate> --test <target>   # accept snapshots (
 python3 scripts/contained.py [--memory 4g] -- <binary> <args>   # any built binary, perf, heaptrack: the image, a limit
 (cd scripts && uv run release.py build --features introspect --target-dir <own>)  # the instrument; never timed
 
-cd scripts && uv run generate_fixtures.py [--version 13|16|18] [--skip-dumps] [--skip-oracle]
+cd scripts && uv run generate_fixtures.py [--version 13..18] [--skip-dumps] [--skip-oracle]
 cd scripts && uv run measure.py --list|--stale|--check|--figure <id>|--all|--render <run-dir>|--count-pair <parent>
 cd scripts && uv run measure.py --koji-recipe [--wrap] | --profile-recipe | --heaptrack-recipe | --callgrind-recipe   # printed, never run
 cd scripts && uv run release.py image|build|bench|suite|notices|run   # the release image; pgdt built in it, held to its glibc; a bench, the suite, the notices, one command there

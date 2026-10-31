@@ -176,8 +176,9 @@ children are chunks and which rows the file does not hold.
   models no views. Rejected: materialized-only aggregates as a special case,
   which is view support by the back door (the Future item "Views read as
   DataFusion views").
-- **TimescaleDB 1.x is outside what pgdt reads**: it runs on PostgreSQL 12 and
-  older, and pgdt reads `pg_dump` 13 onward. The README's list says so.
+- **TimescaleDB 1.x is untested**: a 1.x server runs PostgreSQL 12 or older,
+  which a routine `pg_dump` still dumps, but no fixture holds a 1.x catalog
+  and the release inference starts at 2.0. The README's list says so.
 
 ### What is shown, claimed and checked
 
@@ -204,7 +205,7 @@ children are chunks and which rows the file does not hold.
   rows of their own and owe a dump reader nothing. With compressed chunks
   refused, P38 ends on the list: hypertables over uncompressed chunks
   supported, compressed and partially compressed chunks refused, continuous
-  aggregates readable only as their materialization hypertable, 1.x outside.
+  aggregates readable only as their materialization hypertable, 1.x untested.
 - **The fixtures pin one TimescaleDB version per dump-visible shape**, each
   the last release of its shape on a PostgreSQL major pgdt reads, and the
   newest release, which moves as the routine `pg_dump` set does:

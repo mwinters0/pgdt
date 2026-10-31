@@ -108,8 +108,9 @@ included, as its own rows.
 - **`pgdt info` says what refuses** under `diagnostics`, one line per
   hypertable whose chunks the file holds compressed, beside one per hypertable
   whose chunks it lacks and one per root holding rows of its own.
-- **TimescaleDB 1.x is outside what pgdt reads**: it runs on PostgreSQL 12 and
-  older, and pgdt reads `pg_dump` 13 onward.
+- **TimescaleDB 1.x is untested**: a 1.x server runs PostgreSQL 12 or older,
+  which a routine `pg_dump` still dumps, but no fixture holds a 1.x catalog,
+  and the release pgdt infers from a catalog's columns is read from 2.0 on.
 - `pgdt info` lists each TimescaleDB database ahead of the blocks: its
   release, each hypertable's chunks counted uncompressed, compressed and,
   where the dump holds the database's DDL, absent, and each continuous

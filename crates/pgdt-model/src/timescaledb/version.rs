@@ -83,8 +83,9 @@ pub enum Recipe {
     Relid,
 }
 
-/// The oldest release pgdt reads a catalog of: 1.x runs on PostgreSQL 12
-/// and older, and pgdt reads `pg_dump` 13 onward.
+/// The oldest release pgdt infers a catalog to be: the marks below are read
+/// from 2.0's releases on, and no fixture holds a 1.x catalog, though a 1.x
+/// server is one a routine `pg_dump` dumps.
 const FLOOR: Release = Release::new(2, 0);
 
 /// The releases a shape allows: a first, a last, either open.
