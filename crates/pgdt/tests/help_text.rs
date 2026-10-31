@@ -78,13 +78,8 @@ fn help_page(args: &[&str]) -> String {
 fn no_help_page_exceeds_the_wrap_width() {
     for (name, args) in PAGES {
         for line in help_page(args).lines() {
-            // `clap` never breaks an option's spec, wrapping or not, and
-            // `sql`'s `--source` spells its suffixes in its value name, wider
-            // than the page (`docs/design/decisions.md`, "D67"). That one line
-            // is exempt; every other spec is held to the width.
-            if is_dump_spec(name, line) {
-                continue;
-            }
+            // Every line, an option's spec included: `clap` never breaks a
+            // spec, so a value name wider than the page would fail here.
             // Columns, not bytes: the help text carries em dashes and curly
             // quotes, and a byte count would make this pass or fail on the
             // punctuation.
@@ -97,14 +92,6 @@ fn no_help_page_exceeds_the_wrap_width() {
             );
         }
     }
-}
-
-/// `sql`'s `--source` spec standing alone on its line, on either depth of the
-/// `sql` page: the one line [`no_help_page_exceeds_the_wrap_width`] exempts.
-fn is_dump_spec(page: &str, line: &str) -> bool {
-    page.starts_with("sql_")
-        && is_bare_spec(line)
-        && line.split_whitespace().next() == Some("--source")
 }
 
 /// A line holding an option's spec and nothing else: indented, starting with

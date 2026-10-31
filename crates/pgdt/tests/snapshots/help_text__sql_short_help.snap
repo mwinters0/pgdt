@@ -40,20 +40,22 @@ Options:
       --object-store-profiling <OBJECT_STORE_PROFILING>
           Specify the default object_store_profiling mode, defaults to 'disabled'.
           [possible values: disabled, summary, trace] [default: Disabled]
-      --source <[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:inheritance=MODE][:strict-identity=TERMS]>
+      --source <[NAME=]SOURCE[:SUFFIX]...>
           Register a pg_dump file as catalogs, one per database it holds, read through the cache
           `pgdt parse` leaves. A database the file names is a catalog of that name, unless NAME= is
           given; NAME= is required for a dump that names no database, and refused for one of
-          several. :strings reads every column as its text, :unrepresentable=refuse refuses at
-          planning a query needing the values of a column holding one its type cannot hold, where
-          the default, `null`, reads such a value as NULL and `text` reads such a column as its
-          text, :postgres-invalid-values=ignore reads what PostgreSQL refuses and the default,
-          `default`, refuses too where it can — a float past its type's range as the largest value
-          of its sign and one below it as zero, a `varchar(n)` or `char(n)` value past its length as
-          written, a NULL in a `NOT NULL` column as NULL — :inheritance=only reads each table's own
-          rows alone, as `FROM ONLY` would, where the default, `descendants`, reads every table
-          inheriting from it or partitioning it too, and :strict-identity=TERMS states this dump's
-          strictness where --strict-identity would. Repeatable
+          several. Each SUFFIX is one of five, each given at most once, in any order: :strings reads
+          every column as its text; :unrepresentable=MODE, where `refuse` refuses at planning a
+          query needing the values of a column holding one its type cannot hold, the default,
+          `null`, reads such a value as NULL and `text` reads such a column as its text;
+          :postgres-invalid-values=MODE, where `ignore` reads what PostgreSQL refuses and the
+          default, `default`, refuses too where it can — a float past its type's range as the
+          largest value of its sign and one below it as zero, a `varchar(n)` or `char(n)` value past
+          its length as written, a NULL in a `NOT NULL` column as NULL; :inheritance=MODE, where
+          `only` reads each table's own rows alone, as `FROM ONLY` would, and the default,
+          `descendants`, reads every table inheriting from it or partitioning it too; and
+          :strict-identity=TERMS, which states this dump's strictness where --strict-identity would.
+          Repeatable
       --strict-identity[=<TERMS>]
           Bind identity signals, as `--strict-identity` does on `pgdt parse`, `query` and `info`,
           for every --source and STORED AS PGDUMP that states none of its own: `time` refuses a

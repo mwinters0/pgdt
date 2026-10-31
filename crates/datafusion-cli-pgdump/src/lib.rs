@@ -183,15 +183,11 @@ pub struct Args {
     )]
     object_store_profiling: InstrumentedObjectStoreMode,
 
-    // pgdump: `--source`.
-    // deficiency: KD110 — the value name spells every suffix and is wider than
-    // a 100-column page, so clap sets every other flag's help column past it
-    // and prints that help one word to a line, short and long pages alike,
-    // unless the command sets `next_line_help`, as `pgdt sql` does and nothing
-    // here makes an embedder's do.
+    // pgdump: `--source`, its suffixes named in its help
+    // (`docs/design/decisions.md`, "D67").
     #[clap(
         long = "source",
-        value_name = "[NAME=]SOURCE[:strings][:unrepresentable=MODE][:postgres-invalid-values=MODE][:inheritance=MODE][:strict-identity=TERMS]",
+        value_name = "[NAME=]SOURCE[:SUFFIX]...",
         help = pgdump::SOURCE_HELP,
         value_parser(pgdump::DumpArg::parse)
     )]

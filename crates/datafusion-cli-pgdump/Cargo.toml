@@ -50,5 +50,10 @@ pgdt-query = { path = "../pgdt-query" }
 regex = "1.12"
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
 
+[dev-dependencies]
+# `wrap_help`, as `pgdt` turns it on: `tests/help.rs` renders `Args` wrapped, as an
+# embedder wrapping its help sees it.
+clap = { workspace = true, features = ["wrap_help"] }
+
 [lints]
 workspace = true

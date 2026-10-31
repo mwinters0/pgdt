@@ -41,6 +41,7 @@ never a null. Rejected: Arrow's display; a `bytea`'s form kept per database or f
 The whole cache file, keyed by block, no version of its own, compact and streamed, group values in: a script sums its
 own rollup, a table spanning blocks (I2) with no merge rule but statistics' sums, `--detail`'s alone. Coverage is one
 line at the top, nothing below qualified. No `help` attributes but `sql`'s, upstream's style; pages are snapshotted with
-width and bare-flag assertions. `sql --source`'s value name spells its suffixes past the page, its spec line exempt from
-the width assertion, until one pass over CLI output (`roadmap.md`, "Future — wanted, unscheduled"). Rejected:
-`long_help` per flag; a rollup; that value name cut to a placeholder piecemeal.
+width and bare-flag assertions. `sql --source`'s value name is `[NAME=]SOURCE[:SUFFIX]...`, its paragraph naming each
+suffix, as `query --filter`'s keeps its grammar. Rejected: `long_help` per flag; a rollup; a value name spelling every
+suffix (past the page: an embedder's `Args` without `next_line_help` prints help a word to a line); `OPTION` for
+`SUFFIX`, which `STORED AS PGDUMP`'s `OPTIONS` means.

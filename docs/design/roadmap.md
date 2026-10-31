@@ -1381,14 +1381,7 @@ which is what makes the difference worth minding at the moment one is found.
   embedder implementing a source must depend on `bytes` in step with us.
 
 - **One pass over CLI output, help text included.** Taken as a whole rather
-  than fixed page by page. Known candidates: `pgdt sql`'s `--source` value name,
-  the whole suffix grammar, renders a spec line wider than the 100-column page
-  (`decisions.md`, "D67"), which a placeholder such as
-  `[NAME=]SOURCE[:SUFFIX]...` would fix with its paragraph keeping the grammar,
-  as `query --filter`'s does — `SUFFIX` rather than `OPTION`, which
-  `STORED AS PGDUMP`'s `OPTIONS` already means; with it go `help_text.rs`'s
-  spec-line skip, the reason for `next_line_help` on `pgdt`'s `Sql`, and the
-  page the library's `Args` prints without it (`KD110`).
+  than fixed page by page. No candidate is known at present.
 
 - **Attach-time parse in `pgdt sql`.** Building a missing cache from inside
   the SQL shell instead of refusing and naming `pgdt parse`. It wants `pgdt`'s

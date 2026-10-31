@@ -422,12 +422,6 @@ than reading as a phase nobody has sliced.
   question about the shipped heap a `system` recording cannot answer. Detail:
   `crates/pgdt/src/alloc.rs`.
 
-- **KD110** — `datafusion-cli-pgdump`'s exported `Args` prints every flag's
-  help but `--source`'s one word to a line, `--source`'s value name being wider
-  than the page, in any embedder not setting `next_line_help` as `pgdt sql`
-  does. **(b) owned by `M272`**, which takes the placeholder the roadmap's
-  pass over CLI output proposes. Detail: `crates/datafusion-cli-pgdump/src/lib.rs`.
-
 - **KD111** — at 128 MiB blocks and five block-decoding readers, the program
   holds one block unit more than `WorkerMemory`'s charge bills in two reps of
   three, on every allocator — half of `MEMORY_UNPOOLED_BOUND`; at four readers,

@@ -45,7 +45,7 @@ enum Invocation {
     /// and `--strict-identity` is DataFusion's own, as its CLI ships it —
     /// `--memory-limit` among them, the limit on DataFusion's own memory pool,
     /// which the dumps' scans bill against the allowance they share.
-    #[command(disable_version_flag = true, next_line_help = true, after_help = sql_release())]
+    #[command(disable_version_flag = true, after_help = sql_release())]
     Sql(datafusion_cli_pgdump::Args),
 }
 
