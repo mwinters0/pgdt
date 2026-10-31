@@ -54,6 +54,15 @@ pass learning the mode (a `Table` bound to one, unlike a complete map's); `SET p
 registration; two registrations read both modes); the declared columns for an empty read (a generated column no block
 names). Code: `dump.rs` (`Table::read`). Evidence: `tests/descendants.rs`, `pgdt`'s `tests/descendants.rs`.
 
+### D134 A compressed chunk refuses wherever the DDL's walk reaches it; a chunk's cold pass runs to the end
+A read refuses for each chunk the catalog marks compressed among the table and the descendants the DDL declares, so a
+chunk the file lacks, which a restore lacks too, refuses nothing. In a TimescaleDB database a cold pass settling a table
+with an ancestor runs to the end, any such table possibly a chunk (TS1) whose catalog blocks follow it. Rejected: the
+catalog's own chunk list (a dump excluding the chunks refusing over rows its restore lacks); a chunk's pass stopping at
+its block (its catalog unread, its compressed rows read empty); every table of the database to the end (a plain table's
+cold read the whole dump). Code: `dump/hypertables.rs` (`Verdict`), `dump/settle.rs` (`reads_descendants`). Evidence:
+`tests/timescaledb.rs`.
+
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 Sub-streams are contiguous byte-balanced runs cut through blocks in file order, so concatenating them *is* the serial
 replay. A cut's offsets are search bounds, a row straddling one belonging to the earlier piece, and a piece resyncs by a

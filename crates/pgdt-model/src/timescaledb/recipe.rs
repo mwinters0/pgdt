@@ -318,6 +318,26 @@ pub(super) fn resolve(recipe: Recipe, catalog: &Catalog<'_>) -> Result<Resolved,
     Ok(Resolved { recipe, hypertables, continuous_aggregates })
 }
 
+/// The hypertables `catalog`'s `hypertable` rows name, as `schema.table`, by
+/// those two columns alone: what an unreadable catalog still says of which
+/// tables are hypertables. `None` where it holds no `hypertable` block naming
+/// both, or a row with either NULL.
+pub(super) fn hypertable_names(catalog: &Catalog<'_>) -> Option<Vec<String>> {
+    for column in ["schema_name", "table_name"] {
+        if catalog.has_column("hypertable", column) != Some(true) {
+            return None;
+        }
+    }
+    catalog
+        .rows("hypertable")
+        .map(|row| {
+            let schema = row.text("schema_name").ok()??;
+            let table = row.text("table_name").ok()??;
+            Some(format!("{schema}.{table}"))
+        })
+        .collect()
+}
+
 /// A chunk, its hypertable's id, the id of the chunk row holding its
 /// compressed rows (through 2.28) and its `status` where the catalog has
 /// the column.

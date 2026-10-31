@@ -209,6 +209,10 @@ hypertables, chunks and continuous aggregates
   and the query layer read one set of conclusions (D74). The mapping pass
   records the rows as it maps each block, beside the census and the
   statistics observer it attaches, and keeps them off the interior workers.
+- **pgdt-query** — `dump/hypertables.rs`: the catalog's verdict on a read —
+  the compressed chunks it reaches, the hypertables an unreadable catalog
+  leaves unread with their descendants — beside the walk choosing a
+  table's blocks, where refusals are settled (D134).
 
 ## The cache
 

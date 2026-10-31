@@ -372,6 +372,11 @@ async fn check(
             ..base.clone()
         };
         let reference = attempt_in(dump, plain, database, table, options(false)).await;
+        // A TimescaleDB chunk whose rows are compressed refuses, and so does
+        // every table reading one, whatever the filter (`KD159`).
+        if reference.outcome.as_ref().is_err_and(|e| e.contains("TimescaleDB holds compressed")) {
+            return;
+        }
         let got = attempt_in(dump, gathered, database, table, options(true)).await;
         let (notes, stops) = (&reference.notes, &reference.stops);
         let (pruned_notes, pruned_stops) = (&got.notes, &got.stops);

@@ -293,6 +293,33 @@ pub enum Error {
         header_offsets: Vec<u64>,
         inheritance_only: bool,
     },
+    /// A table whose rows, or a descendant's, include a TimescaleDB chunk's
+    /// that its catalog marks compressed or partially compressed (status bits
+    /// 1 and 8): a restore holds the compressed rows as codec batches in
+    /// another relation, which are not decoded here, so its rows are short of
+    /// the restore's. `chunks` names each, in the order its parent's
+    /// descendants are walked; the table is one of them where it is read by
+    /// its own name, which refuses read alone too. Each compressed relation
+    /// stays readable as its batches. Raised by `pgdt_query::Table`'s `plan`,
+    /// `schema`, `summary` and `divergences` before a byte is read.
+    #[error(
+        "table `{table}` reads rows TimescaleDB holds compressed, of {}, and compressed rows are not decoded — each chunk not compressed reads under its own name, and each compressed relation as its batches",
+        chunk_list(chunks)
+    )]
+    CompressedChunks { table: String, chunks: Vec<String> },
+    /// A table read with its descendants that may be a TimescaleDB hypertable
+    /// — its database's catalog naming it one, or, where even that does not
+    /// read, any table with a descendant — whose catalog cannot be read by
+    /// the recipe its release decides: `missing` names the columns that
+    /// recipe needs and the catalog lacks, `malformed` the fields that do not
+    /// read, each `table.column`. Which descendants are chunks, and which of
+    /// them are compressed, is then unknown. Each reads under its own name,
+    /// and the table alone. Raised where [`Error::CompressedChunks`] is.
+    #[error(
+        "table `{table}` may be a TimescaleDB hypertable, and its database's catalog {} — which of its descendants are compressed chunks is not known, so it is not read with them; each reads under its own name, and the table alone",
+        catalog_fault(missing, malformed)
+    )]
+    TimescaleCatalogUnreadable { table: String, missing: Vec<String>, malformed: Vec<String> },
     /// A dump read through its map was handed one that stops short of the
     /// source's end, or none, so a table's blocks past that point would be
     /// missing from its rows and its schema without anything saying so. Raised
@@ -457,6 +484,29 @@ fn map_total(size: Option<u64>) -> String {
 /// offsets.
 fn offsets(header_offsets: &[u64]) -> String {
     header_offsets.iter().map(u64::to_string).collect::<Vec<_>>().join(", ")
+}
+
+/// The chunks [`Error::CompressedChunks`] names: the first, and how many
+/// more.
+fn chunk_list(chunks: &[String]) -> String {
+    match chunks {
+        [] => "no chunk".to_owned(),
+        [one] => format!("chunk `{one}`"),
+        [first, rest @ ..] => format!("chunk `{first}` and {} more", rest.len()),
+    }
+}
+
+/// What [`Error::TimescaleCatalogUnreadable`]'s catalog lacks or holds
+/// unread.
+fn catalog_fault(missing: &[String], malformed: &[String]) -> String {
+    let list = |names: &[String]| {
+        names.iter().map(|name| format!("`{name}`")).collect::<Vec<_>>().join(", ")
+    };
+    match (missing.is_empty(), malformed.is_empty()) {
+        (false, _) => format!("lacks {}", list(missing)),
+        (true, false) => format!("holds fields that do not read in {}", list(malformed)),
+        (true, true) => "cannot be read".to_owned(),
+    }
 }
 
 /// [`Error::PredicateValueDecode`]'s closing clause: where the rest of an

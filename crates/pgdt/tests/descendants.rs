@@ -142,3 +142,36 @@ fn the_json_export_states_a_timescaledb_catalog() {
     let metrics = hypertables.iter().find(|h| h["table"] == "public.metrics").expect("listed");
     assert!(metrics["chunks"].as_array().is_some_and(|c| !c.is_empty()));
 }
+
+/// **A hypertable reaching a compressed chunk refuses in each front end**:
+/// `query` naming the chunk, under either mode for the chunk read by its own
+/// name, and `sql` leaving each out of its catalog; read alone, the
+/// hypertable reads its root's own rows, as its restore holds them (TS8).
+#[test]
+fn a_compressed_chunk_refuses_in_each_front_end() {
+    let (_dir, dump) = sandboxed(&timescaledb_fixture(18, "default"), "dump.sql");
+    let dump = dump.to_str().unwrap();
+    common::run_ok(&["parse", "--source", dump]);
+    let chunk = "_timescaledb_internal._hyper_1_2_chunk";
+    for (table, reading) in
+        [("public.metrics", "descendants"), (chunk, "descendants"), (chunk, "only")]
+    {
+        let at = format!("{table} {reading}");
+        let out = run(&["query", "--source", dump, "--table", table, "--inheritance", reading]);
+        let said = text(&out.stderr);
+        assert!(!out.status.success(), "{at} read");
+        assert!(said.contains("compressed") && said.contains(chunk), "{at}: {said}");
+        let sql = format!("SELECT count(*) AS n FROM d.{table}");
+        let source = format!("d={dump}:inheritance={reading}");
+        let out = run(&["sql", "--format", "csv", "-q", "--source", &source, "-c", &sql]);
+        let said = text(&out.stdout) + &text(&out.stderr);
+        assert!(said.contains("not found"), "{at}: {said}");
+    }
+    let held = answers(&timescaledb_fixture(18, "default")).held;
+    let Some(Answer::Rows(rows)) = held.get("public.metrics") else { panic!("{held:?}") };
+    let sql = "SELECT count(*) AS n FROM d.public.metrics";
+    let source = format!("d={dump}:inheritance=only");
+    let out = run(&["sql", "--format", "csv", "-q", "--source", &source, "-c", sql]);
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(text(&out.stdout).trim(), format!("n\n{}", rows.len()));
+}

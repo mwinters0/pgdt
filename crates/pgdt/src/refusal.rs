@@ -74,6 +74,8 @@ pub(crate) fn about_the_source(err: &pgdt_core::Error) -> bool {
         | Lib::AmbiguousTable { .. }
         | Lib::TableColumnsDisagree { .. }
         | Lib::PartitionThroughRoot { .. }
+        | Lib::CompressedChunks { .. }
+        | Lib::TimescaleCatalogUnreadable { .. }
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
         | Lib::FieldRefused { .. }
@@ -158,6 +160,8 @@ pub(crate) fn spelling(err: &pgdt_core::Error) -> Option<String> {
         | Lib::ResumeQueryMismatch
         | Lib::TableColumnsDisagree { .. }
         | Lib::PartitionThroughRoot { inheritance_only: false, .. }
+        | Lib::CompressedChunks { .. }
+        | Lib::TimescaleCatalogUnreadable { .. }
         | Lib::MapIncomplete { .. }
         | Lib::FieldRefused { .. }
         | Lib::RowEndingRefused { .. }

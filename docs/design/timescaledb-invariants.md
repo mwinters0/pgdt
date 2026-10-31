@@ -53,7 +53,9 @@ from 2.21 `attach_chunk` adopts any table.
 
 **Verified against:** 2.13.1, 2.21.4, 2.27.2, 2.28.3, 2.31.0 (the pins).
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"The generic mechanism" — a hypertable read through its `INHERITS (…)` children.
+"The generic mechanism" — a hypertable read through its `INHERITS (…)` children;
+a cold query of a table with an ancestor in a TimescaleDB database mapping to the
+file's end, `reads_descendants` (`pgdt-query`'s `dump/settle.rs`).
 **Re-verify:** `git show <tag>:src/chunk.c | grep -n inhRelations`; `grep -c
 'INHERITS (public.metrics)' fixtures/<major>/timescaledb/default.sql` is 6.
 
@@ -144,7 +146,8 @@ at 2.13 the chunks with a `compressed_chunk_id` are `1` and `9`.
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
 "TimescaleDB" — compressed and partially compressed chunks refused:
 `Chunk::compressed`, `Chunk::partially_compressed` and `status_of`
-(`pgdt-model`'s `timescaledb/recipe.rs`).
+(`pgdt-model`'s `timescaledb/recipe.rs`); the chunks refusing a read,
+`Verdict::of` (`pgdt-query`'s `dump/hypertables.rs`).
 **Re-verify:** `git show <tag>:src/chunk.h | grep -n 'define CHUNK_STATUS'`.
 
 ---
@@ -199,7 +202,8 @@ false` ("Continuous Aggregates with partials is not supported anymore").
 **Verified against:** the pins; the source at 2.13.1–2.21.4.
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
 "TimescaleDB" — a `chunk.dropped` row is no chunk: `read_chunks` (`pgdt-model`'s
-`timescaledb/recipe.rs`).
+`timescaledb/recipe.rs`), and none refuses a read, `Verdict::of` (`pgdt-query`'s
+`dump/hypertables.rs`).
 **Re-verify:** `git show <tag>:src/chunk.c | grep -n 'preserve_catalog_row(chunks'`.
 
 ---

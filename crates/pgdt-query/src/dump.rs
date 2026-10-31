@@ -23,6 +23,7 @@ use crate::stream::{TablePartitions, table_schema};
 use crate::summary::{TableSummary, table_summary};
 
 mod descendants;
+mod hypertables;
 mod settle;
 
 use self::descendants::{Refusals, TableRead, listed_tables, table_read};
@@ -328,7 +329,10 @@ impl Table {
     /// sets, a projected name no block carries, a typed query of a table the
     /// map holds at the metadata level ([`Error::TableAtMetadataLevel`]), a
     /// table whose rows are written through its partition root
-    /// ([`Error::PartitionThroughRoot`]) — but for the refuse mode's, which
+    /// ([`Error::PartitionThroughRoot`]), one reaching a TimescaleDB chunk
+    /// whose rows are compressed ([`Error::CompressedChunks`]) or a possible
+    /// hypertable whose catalog does not read
+    /// ([`Error::TimescaleCatalogUnreadable`]) — but for the refuse mode's, which
     /// only planning raises, and a projection naming a column twice, which
     /// only planning refuses: here the column comes back twice.
     ///

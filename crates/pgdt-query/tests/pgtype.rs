@@ -763,7 +763,12 @@ async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
                 ..QueryOptions::default()
             };
             let table = dump.table(&TableName::of(database, block).into()).unwrap().unwrap();
-            let queried = table.schema(&untyped).unwrap();
+            // A TimescaleDB chunk whose rows are compressed refuses, and so
+            // does every table reading one (`KD159`).
+            let queried = match table.schema(&untyped) {
+                Err(pgdt_core::Error::CompressedChunks { .. }) => continue,
+                queried => queried.unwrap(),
+            };
             for column in resolved.columns().iter().chain(queried.columns()) {
                 witnesses.entry(outcome_name(column.resolution())).or_insert_with(|| {
                     format!("{}: {qualified}.{}", path.display(), column.name())

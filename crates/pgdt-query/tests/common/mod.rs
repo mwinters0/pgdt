@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use arrow::array::RecordBatch;
 use arrow::datatypes::{DataType, Field};
+use futures::StreamExt;
 use pgdt_codec::compare::ComparisonPlan;
 use pgdt_codec::internal::column_of;
 use pgdt_codec::pgtype::NestedPlan;
@@ -28,8 +29,8 @@ use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::{DumpIndex, PostgresInvalidValues};
 use pgdt_query::{
-    Dump, QueryOptions, ScanExtent, Table, TablePartitions, TableSelector, TableStream,
-    render_field,
+    Dump, Inheritance, QueryOptions, ScanExtent, Table, TablePartitions, TableSelector,
+    TableStream, render_field,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -140,6 +141,43 @@ impl Cold {
         let plan = self.plan(source, table, options).await?;
         Ok(plan.map(|plan| plan.in_file_order(self.max_rows)))
     }
+}
+
+/// A read of `table` under `schema_mode` and `inheritance`, its rows as the
+/// server's `COPY … TO STDOUT` text, sorted — what an answers file holds of
+/// it ([`answers`]) — or its refusal.
+pub async fn read(
+    table: &Table,
+    schema_mode: SchemaMode,
+    inheritance: Inheritance,
+) -> pgdt_core::Result<Vec<String>> {
+    let options = QueryOptions { schema_mode, inheritance, ..QueryOptions::default() };
+    let plan = table.plan(ReadOptions::default(), options)?;
+    let mut stream = plan.in_file_order(8192);
+    let mut rows = Vec::new();
+    while let Some(batch) = stream.next().await {
+        for row in rows_of(&batch?) {
+            rows.push(row.into_iter().map(copy_text).collect::<Vec<_>>().join("\t"));
+        }
+    }
+    rows.sort();
+    Ok(rows)
+}
+
+/// A field as `COPY … TO STDOUT` writes it in text format.
+fn copy_text(field: Option<String>) -> String {
+    let Some(field) = field else { return "\\N".to_string() };
+    let mut out = String::with_capacity(field.len());
+    for c in field.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Every column of `batch` rendered back to PostgreSQL text via

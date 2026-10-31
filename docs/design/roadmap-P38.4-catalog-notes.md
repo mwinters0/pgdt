@@ -14,10 +14,8 @@ resolves both ways. The pins are checked by `pgdt-mapping`'s
   database holds neither the extension nor a catalog block, else the version
   (`Stated`, `Inferred` era, or `Unknown`) and a `Resolution` — `Resolved`
   hypertables, chunks and continuous aggregates, or `Unreadable` naming the
-  columns its recipe lacks and the fields that do not parse. 38.5.1 refuses on
-  `Unreadable`, which carries no hypertable list yet: which tables it refuses
-  is the spec's, "TimescaleDB", the `hypertable` rows' names read by their own
-  columns.
+  columns its recipe lacks, the fields that do not parse and the hypertables
+  its `hypertable` rows name by their own columns, which 38.5.1 refuses on.
 - **Internal compressed hypertables are listed**, `internal: true`. Through
   2.28 their chunk rows are the compressed relations; at 2.13 those tables
   inherit the internal hypertable (TS5), so a walk over `INHERITS` meets them.

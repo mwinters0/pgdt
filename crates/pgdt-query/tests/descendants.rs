@@ -13,20 +13,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
-use futures::StreamExt;
 use pgdt_codec::SchemaMode;
 use pgdt_core::Error;
 use pgdt_dump::ReadOptions;
 use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::TableName;
-use pgdt_query::{
-    Dump, Expr, Inheritance, Predicate, PredicateOp, QueryOptions, Table, TableSelector,
-};
+use pgdt_query::{Dump, Expr, Inheritance, Predicate, PredicateOp, QueryOptions, TableSelector};
 
 use common::{
-    Answer, Cold, Reading, VERSIONS, answers, inheritance_fixture, mapped, partitions_fixture,
-    rows_of,
+    Answer, Cold, Reading, VERSIONS, answers, inheritance_fixture, mapped, partitions_fixture, read,
 };
 
 const FLAG_SETS: [&str; 2] = ["default", "load-via-partition-root"];
@@ -39,48 +35,12 @@ fn source(path: &Path) -> Arc<dyn ByteRangeSource> {
     Arc::new(LocalFileSource::open(path).unwrap())
 }
 
-/// A field as `COPY … TO STDOUT` writes it in text format.
-fn copy_text(field: Option<String>) -> String {
-    let Some(field) = field else { return "\\N".to_string() };
-    let mut out = String::with_capacity(field.len());
-    for c in field.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '\t' => out.push_str("\\t"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 /// The mode a query reads a table in as the server read it.
 fn inheritance(reading: Reading) -> Inheritance {
     match reading {
         Reading::Descendants => Inheritance::Descendants,
         Reading::Only => Inheritance::Only,
     }
-}
-
-/// A read of `table` under `schema_mode` and `inheritance`, its rows as the
-/// server's `COPY` text, sorted — or its refusal.
-async fn read(
-    table: &Table,
-    schema_mode: SchemaMode,
-    inheritance: Inheritance,
-) -> pgdt_core::Result<Vec<String>> {
-    let options = QueryOptions { schema_mode, inheritance, ..QueryOptions::default() };
-    let plan = table.plan(ReadOptions::default(), options)?;
-    let mut stream = plan.in_file_order(8192);
-    let mut rows = Vec::new();
-    while let Some(batch) = stream.next().await {
-        for row in rows_of(&batch?) {
-            rows.push(row.into_iter().map(copy_text).collect::<Vec<_>>().join("\t"));
-        }
-    }
-    rows.sort();
-    Ok(rows)
 }
 
 /// The listed table `qualified` names, in the one database a plain dump has.

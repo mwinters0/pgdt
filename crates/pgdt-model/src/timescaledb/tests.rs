@@ -210,8 +210,20 @@ fn a_catalog_missing_a_column_its_recipe_reads_is_unreadable() {
             recipe: Recipe::Relid,
             missing: vec!["dimension_slice.chunk_id".to_owned()],
             malformed: vec![],
+            hypertables: Some(vec!["public.metrics".to_owned()]),
         }
     );
+}
+
+/// Where even a hypertable's name does not read, an unreadable catalog names
+/// none.
+#[test]
+fn an_unreadable_catalog_names_its_hypertables_where_their_names_read() {
+    let mut spans = relid_catalog();
+    spans[0] = block("hypertable", "id, schema_name, compression_state", &["1\tpublic\t1"]);
+    let db = TimescaleDb::of(&index(spans, true), None).expect("detected");
+    let Resolution::Unreadable { hypertables, .. } = db.resolution else { panic!("readable") };
+    assert_eq!(hypertables, None);
 }
 
 #[test]

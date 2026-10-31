@@ -137,6 +137,8 @@ fn library(grammar: Grammar, refused: &pgdt_core::Error) -> Option<String> {
         | Lib::ResumeQueryMismatch
         | Lib::TableColumnsDisagree { .. }
         | Lib::PartitionThroughRoot { inheritance_only: false, .. }
+        | Lib::CompressedChunks { .. }
+        | Lib::TimescaleCatalogUnreadable { .. }
         | Lib::MapIncomplete { .. }
         | Lib::FieldRefused { .. }
         | Lib::RowEndingRefused { .. }

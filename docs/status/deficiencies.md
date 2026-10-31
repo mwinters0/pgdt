@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD158 -->
-**`KD1`–`KD158` are allocated, and nothing at or below `KD158` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD160 -->
+**`KD1`–`KD160` are allocated, and nothing at or below `KD160` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -588,3 +588,17 @@ than reading as a phase nobody has sliced.
   read with its descendants is whole. **(c) unowned**; promoted by
   [`../design/roadmap.md`](../design/roadmap.md)'s Future item "Rows routed to
   their partitions". Detail: `crates/pgdt-query/src/dump/descendants.rs`.
+
+- **KD159** — a TimescaleDB chunk whose rows are compressed or partially
+  compressed refuses under its own name, and every table reading it with its
+  descendants refuses, its hypertable among them: the rows a restore holds
+  are codec batches nothing here decodes. **(c) unowned**; promoted by
+  [`../design/roadmap.md`](../design/roadmap.md)'s Future item "Compressed
+  TimescaleDB chunks, decoded from a clean room". Detail:
+  `crates/pgdt-query/src/dump/hypertables.rs`.
+
+- **KD160** — a cold query of a TimescaleDB chunk under its own name, in a
+  dump holding the catalog without the extension, stops at the chunk's
+  block where that block precedes the catalog's, so a compressed chunk reads
+  its own block short instead of refusing. **(c) unowned**; promoted by such
+  a dump met in use. Detail: `crates/pgdt-query/src/dump/settle.rs`.

@@ -14,6 +14,7 @@ use pgdt_dump::internal::{announce_read_loop, scan_preamble};
 use pgdt_dump::{ScanOptions, attach_text};
 use pgdt_io::{ByteRangeSource, Extent};
 use pgdt_mapping::internal::{MapStop, Pass, Target, map_forward, reread_rows, splice};
+use pgdt_model::timescaledb::TimescaleDb;
 use pgdt_model::{CopyBlock, DumpIndex, DumpMetadata, TableName};
 use tokio_util::sync::CancellationToken;
 
@@ -252,14 +253,28 @@ impl ColdPass<'_> {
 /// Whether a table `selector` selects in the DDL `index` holds has a
 /// descendant, whose blocks may lie anywhere past the table's own, so the
 /// pass settling it runs to the file's end (`docs/design/decisions.md`,
-/// "D131"). A database the map has not reached is a `\connect`'s, which
-/// runs the pass to the end already (`docs/design/decisions.md`, "D49").
+/// "D131") — or, in a TimescaleDB database, an ancestor: it may be a chunk,
+/// whose catalog blocks, which say whether its rows are compressed, may lie
+/// past it too (`docs/design/decisions.md`, "D134"). A database the map has
+/// not reached is a `\connect`'s, which runs the pass to the end already
+/// (`docs/design/decisions.md`, "D49").
+///
+/// deficiency: KD160 — a database is TimescaleDB's here by the extension its
+/// DDL creates or a catalog block the map already holds, so a dump holding
+/// the catalog without the extension (`--table`, TS2) whose chunk's block
+/// precedes the catalog's — its schema sorting before
+/// `_timescaledb_catalog` — settles the chunk before its catalog is read:
+/// compressed, it reads its own block alone where it should refuse
+/// (`KD159`). **(c) unowned**; promoted by such a dump met in use.
+// timescaledb: TS1 — a chunk is an inheritance child of its hypertable.
 fn reads_descendants(index: &DumpIndex, selector: &TableSelector) -> bool {
     index.metadata.as_deref().is_some_and(|metadata| {
         metadata.databases.iter().any(|db| {
+            let timescaledb = TimescaleDb::of(index, db.name.as_deref()).is_some();
             db.tables.keys().any(|key| {
                 selector.selects(&declared_name(db.name.as_deref(), key))
-                    && !db.descendants(key).is_empty()
+                    && (!db.descendants(key).is_empty()
+                        || timescaledb && !db.ancestors(key).is_empty())
             })
         })
     })

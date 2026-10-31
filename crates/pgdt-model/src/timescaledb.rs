@@ -48,11 +48,15 @@ pub enum Resolution {
     Resolved(Resolved),
     /// Columns the recipe needs that the catalog does not hold, each
     /// `table.column` — a whole table missing names each column it needed —
-    /// or fields it holds that do not read as their column's type.
+    /// or fields it holds that do not read as their column's type; and the
+    /// hypertables its `hypertable` rows name, read by `schema_name` and
+    /// `table_name` alone, as `schema.table` — `None` where those do not
+    /// read.
     Unreadable {
         recipe: Recipe,
         missing: Vec<String>,
         malformed: Vec<String>,
+        hypertables: Option<Vec<String>>,
     },
 }
 
@@ -72,6 +76,7 @@ impl TimescaleDb {
                 recipe,
                 missing: fault.missing,
                 malformed: fault.malformed,
+                hypertables: recipe::hypertable_names(&catalog),
             },
         };
         Some(TimescaleDb { extension: catalog.extension, version, resolution })

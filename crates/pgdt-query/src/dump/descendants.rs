@@ -12,6 +12,7 @@ use pgdt_model::{
     CopyBlock, DataBlock, DatabaseMetadata, DumpIndex, SpanBody, TableName, TocHeader,
 };
 
+use super::hypertables::Verdict;
 use crate::options::Inheritance;
 
 /// Every `COPY` block of `index`, in file order, beside the database its span
@@ -108,10 +109,11 @@ pub(super) struct TableRead {
 #[derive(Debug, Clone, Default)]
 pub(super) struct Refusals {
     /// Read with its descendants: blocks written through a partition root
-    /// other than it hold its rows or a descendant's.
+    /// other than it hold its rows or a descendant's, a chunk it reaches is
+    /// compressed, or its database's TimescaleDB catalog does not read.
     descendants: Option<Refused>,
-    /// Read alone: such blocks hold its own rows. A partitioned table holds
-    /// none (I93), so it never refuses here.
+    /// Read alone: such blocks hold its own rows — a partitioned table holds
+    /// none (I93), so it never refuses here — or it is a compressed chunk.
     only: Option<Refused>,
 }
 
@@ -132,23 +134,39 @@ impl Refusals {
     }
 }
 
-/// **Blocks written through `root` hold a table's rows, or a
-/// descendant's**, which the partition key's bounds alone tell apart.
+/// **Why a read of a table is refused**, under one mode.
 #[derive(Debug, Clone)]
-struct Refused {
-    root: String,
-    header_offsets: Vec<u64>,
+enum Refused {
+    /// Blocks written through `root` hold its rows, or a descendant's, which
+    /// the partition key's bounds alone tell apart.
+    Through { root: String, header_offsets: Vec<u64> },
+    /// TimescaleDB chunks it reaches hold rows compressed.
+    Compressed { chunks: Vec<String> },
+    /// It may be a hypertable, and its database's catalog does not read.
+    CatalogUnreadable { missing: Vec<String>, malformed: Vec<String> },
 }
 
 impl Refused {
-    /// The refusal of a read of `table` under `inheritance`
-    /// ([`Error::PartitionThroughRoot`]).
+    /// The refusal of a read of `table` under `inheritance`.
     fn refusal(&self, table: &TableName, inheritance: Inheritance) -> Error {
-        Error::PartitionThroughRoot {
-            table: table.qualified_name(),
-            root: self.root.clone(),
-            header_offsets: self.header_offsets.clone(),
-            inheritance_only: inheritance == Inheritance::Only,
+        let table = table.qualified_name();
+        match self {
+            Refused::Through { root, header_offsets } => Error::PartitionThroughRoot {
+                table,
+                root: root.clone(),
+                header_offsets: header_offsets.clone(),
+                inheritance_only: inheritance == Inheritance::Only,
+            },
+            Refused::Compressed { chunks } => {
+                Error::CompressedChunks { table, chunks: chunks.clone() }
+            }
+            Refused::CatalogUnreadable { missing, malformed } => {
+                Error::TimescaleCatalogUnreadable {
+                    table,
+                    missing: missing.clone(),
+                    malformed: malformed.clone(),
+                }
+            }
         }
     }
 
@@ -157,14 +175,21 @@ impl Refused {
     fn through(blocks: &[(String, u64)]) -> Option<Self> {
         let (root, _) = blocks.first()?;
         let header_offsets = blocks.iter().map(|(_, offset)| *offset).collect();
-        Some(Self { root: root.clone(), header_offsets })
+        Some(Self::Through { root: root.clone(), header_offsets })
+    }
+
+    /// Compressed chunks, refusing a read reaching them; `None` where there
+    /// are none.
+    fn compressed(chunks: Vec<String>) -> Option<Self> {
+        (!chunks.is_empty()).then_some(Self::Compressed { chunks })
     }
 }
 
 /// **What a read of `name` reads**: every block of it and of each table its
 /// database declares a descendant of it, in file order — and, for each mode
 /// it may be read in, the blocks written through a partition root that refuse
-/// it ([`Refusals`]).
+/// it, or the TimescaleDB catalog's verdict that does ([`Refusals`],
+/// [`Verdict`]).
 ///
 /// deficiency: KD158 — a `--load-via-partition-root` dump's partitions
 /// refuse under their own names, read with their descendants or alone, and
@@ -221,9 +246,28 @@ pub(super) fn table_read(index: &DumpIndex, name: &TableName) -> TableRead {
             through.push(block.clone());
         }
     }
-    let refused = Refusals {
+    let mut refused = Refusals {
         descendants: Refused::through(&through_any),
         only: Refused::through(&through_own),
     };
+    if let Some(verdict) = Verdict::of(index, database) {
+        // A compressed chunk refuses read by its own name under either mode,
+        // and every table reading it with its descendants.
+        let names: Vec<String> = descendants.iter().map(TableName::qualified_name).collect();
+        let reached = std::iter::once(qualified.as_str()).chain(names.iter().map(String::as_str));
+        let own = verdict.compressed([qualified.as_str()]);
+        refused.only = refused.only.or_else(|| Refused::compressed(own));
+        let reached = verdict.compressed(reached);
+        refused.descendants = refused.descendants.or_else(|| Refused::compressed(reached));
+        if let Verdict::Unreadable { missing, malformed, .. } = &verdict
+            && verdict.unreadable_refuses(&qualified, !descendants.is_empty())
+        {
+            let unreadable = Refused::CatalogUnreadable {
+                missing: missing.clone(),
+                malformed: malformed.clone(),
+            };
+            refused.descendants = refused.descendants.or(Some(unreadable));
+        }
+    }
     TableRead { blocks, through, refused }
 }

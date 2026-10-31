@@ -137,12 +137,14 @@ async fn every_fixture_table_reads_as_the_library_reads_it() {
                 );
                 let expected = library_answer(&copy, table, schema_mode).await;
                 let query = select(&catalog_of(&catalogs, table), table, "*");
-                // A partition written through its root is refused, and its
-                // catalog leaves it unlisted (`KD158`).
-                if expected
-                    .as_ref()
-                    .is_err_and(|e| e.contains("written through its partition root"))
-                {
+                // A partition written through its root is refused, and so is
+                // a TimescaleDB chunk whose rows are compressed and each table
+                // reading one, its catalog leaving each unlisted (`KD158`,
+                // `KD159`).
+                if expected.as_ref().is_err_and(|e| {
+                    e.contains("written through its partition root")
+                        || e.contains("TimescaleDB holds compressed")
+                }) {
                     let unlisted = ctx.sql(&query).await.err().unwrap();
                     assert!(unlisted.to_string().contains("not found"), "{what}: {unlisted}");
                     continue;

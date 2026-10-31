@@ -372,12 +372,14 @@ async fn every_aggregate(
             catalogs.iter().find(|(database, _)| *database == table.database).unwrap().1.clone();
         let from = from(&catalog, table);
         let provider = dump.table(&TableSelector::from(table), &table.table, Arc::new(ignore));
-        // A partition written through its root is refused, and its catalog
-        // leaves it unlisted (`KD158`).
+        // A partition written through its root is refused, and so is a
+        // TimescaleDB chunk whose rows are compressed and each table reading
+        // one, its catalog leaving each unlisted (`KD158`, `KD159`).
         if let Err(error) = &provider
-            && let datafusion_pgdump::Refusal::Library(pgdt_core::Error::PartitionThroughRoot {
-                ..
-            }) = error.refusal()
+            && let datafusion_pgdump::Refusal::Library(
+                pgdt_core::Error::PartitionThroughRoot { .. }
+                | pgdt_core::Error::CompressedChunks { .. },
+            ) = error.refusal()
         {
             continue;
         }

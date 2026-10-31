@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D133 -->
+<!-- decision-watermark: D134 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -89,6 +89,7 @@ are `docs/process.md`, "The decision register".
 - **D49** One target per query, the early stop conservative, and `ResumeToken` opaque, fingerprinting the query
 - **D131** A table reads its blocks and every descendant's, projected to its columns; a parent's cold pass runs to the end
 - **D132** Whose rows a table holds is chosen per read and stated per dump; a cold pass learns no mode
+- **D134** A compressed chunk refuses wherever the DDL's walk reaches it; a chunk's cold pass runs to the end
 - **D51** A segment's offsets are search bounds, and a resync is a real read
 - **D52** The worker is fused, and the earliest failing piece is the error
 - **D93** A dynamic filter's rows are evaluated only under `pgdump.dynamic_filter_rows`, off by default; its state is read at each group entered and each chunk
