@@ -179,7 +179,7 @@ concurrency on real data, not only by one line at a time.
 Datanommer `.xz`, at the `jobs=24` the source recommended and the
 `memory_bytes=1435474688` carved from a 12 GiB container limit, finished with
 no refusal and no kill, and `SELECT count(*)` over its cache answered the
-catalog's rows (`roadmap-P38.7-record-notes.md`, "The hand run on the reference
+catalog's rows (`roadmap-P38-descendants-notes.md`, "The hand run on the reference
 dump"; `runs/p38.7-datanommer-count-20261031-1224/parse.log`). No resident-set
 reading was taken: it shows the clustered lines above fitting under that limit
 once, not by what margin, nor under a smaller one.

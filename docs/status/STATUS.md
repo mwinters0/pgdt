@@ -83,30 +83,12 @@ apparatus gate and no marker ([`../design/measurements.md`](../design/measuremen
 "What an instrument can see"). `--count-pair <rev>` counts one change's
 `instructions:u` against the tree's parent and prints the comparison alone.
 
-## P38 progress
-
-Spec: [`../design/roadmap-P38-descendants.md`](../design/roadmap-P38-descendants.md).
-
-- [x] **38.1** Evidence: the TimescaleDB generator at each pin, the `-n public` dumps, the inheritance schema, and each server's answers committed (D71); every shape in the spec's "Facts the grilling found" confirmed or corrected, and `timescaledb-invariants.md` opened with what was confirmed; no pgdt code — [notes](../design/roadmap-P38.1-evidence-notes.md)
-- [x] **38.2** A table reads its descendants: the walk, a table's blocks across identities projected to the parent's columns, a descendant's refusal refusing its parent, the load-via-root refusals with `KD158` (c); library and every front end, checked against 38.1's plain oracle — [notes](../design/roadmap-P38.2-descendants-notes.md)
-- [x] **38.3** `--inheritance <descendants|only>`: `QueryOptions`, `pgdump.inheritance`, `--source …:inheritance=`, `pgdt query --inheritance`, each front end's remedy spellings naming it — [notes](../design/roadmap-P38.3-inheritance-notes.md)
-- [x] **38.3.1** A partitioned table read alone answers empty under `--load-via-partition-root`: the root and each partitioned table below it read no row under the declared columns the blocks holding their descendants' rows name, checked against 38.1's `only` oracle; `PartitionRootAlone` and its remedy spellings gone, `KD158` rewritten to the leaves and the read through below the root, the postgres invariant filed (I93) — [notes](../design/roadmap-P38.3.1-partitioned-alone-notes.md)
-- [x] **38.4** The catalog recorded: the model's rows, the pass recording them, the era recipes and the version fingerprint (cache bump); `pgdt info --json` showing them, each pin's recipe checked against its fixture's catalog; a `--table` fixture at 13 and 18 reaching detection by the catalog alone; the `timescaledb: TS<n>` markers and their check — [notes](../design/roadmap-P38.4-catalog-notes.md)
-- [x] **38.5** The answers taking each root's own rows as its restore holds them: each TimescaleDB restore's hypertables read `held`, `ONLY` with the planner off (TS8), taken again over the committed dumps by `generate_fixtures.py --answers-only`, and each held to its root's own block at every pin — [notes](../design/roadmap-P38.5-held-notes.md)
-- [x] **38.5.1** Hypertables resolved: compressed and partially compressed chunks refused at the hypertable and by name under both modes with `KD159` (c), dropped rows skipped, absent chunks read as absent and a root's own rows read, an unreadable catalog refusing the hypertables its `hypertable` rows name, else every parent of that database; a chunk's cold pass to the end (`KD160`); every pin checked against 38.5's answers — [notes](../design/roadmap-P38.5.1-hypertables-notes.md)
-- [x] **38.5.2** The hypertables' findings: the chunks the catalog lists and the file lacks, each root's own rows, and an unreadable catalog's database, its chunks read unchecked for compression — [notes](../design/roadmap-P38.5.2-findings-notes.md)
-- [x] **38.5.3** The hypertables' findings said per read too: each a `Warning` `PlanNote` on a read it bears on, beside its `DiagnosticKind` — [notes](../design/roadmap-P38.5.3-per-read-notes.md)
-- [x] **38.5.4** An unreadable catalog's named hypertable the file holds no chunk of reads as a plain table, its read noting that which chunks the file lacks cannot be known — [notes](../design/roadmap-P38.5.4-no-chunk-held-notes.md)
-- [x] **38.6** `pgdt info`'s logical model: parents and their descendants, the TimescaleDB section, continuous aggregates, chunks folded — [notes](../design/roadmap-P38.6-logical-model-notes.md)
-- [x] **38.6.1** What refuses a read, found: a `Warning` finding per partition root whose partitions' rows were written through it and per hypertable with compressed chunks the file holds, each derived in the model and read by the query layer's refusals, printed by `pgdt info` — [notes](../design/roadmap-P38.6.1-refusal-findings-notes.md)
-- [x] **38.7** The record: the README's supported/unsupported list, the manual, `pg-dump-compatibility.md`'s rows, both modes in one statement by one dump registered twice (manual and a `pgdt sql` test), and the hand run on the reference dump — [notes](../design/roadmap-P38.7-record-notes.md)
-
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdt info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P38 is open** (above). A dump is readable over HTTP, plain, `.xz` and gzip,
+- **No phase is open.** A dump is readable over HTTP, plain, `.xz` and gzip,
   with nothing about the network's speed priced
   (`KD35`, `KD36`). What statistics may hold resident is bounded and their
   coverage is not (`KD33`, `KD34`), both owned by P23, whose sketch in

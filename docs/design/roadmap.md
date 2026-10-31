@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P7, P9–P17, P19, P20, P25, P27–P31, P35, P36 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P38 — a table reads its descendants; TimescaleDB under its own names | **Current** | [spec](roadmap-P38-descendants.md); progress in [`../status/STATUS.md`](../status/STATUS.md) |
+| P38 — a table reads its descendants; TimescaleDB under its own names | **Complete** | [spec](roadmap-P38-descendants.md); [notes](roadmap-P38-descendants-notes.md) |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
@@ -742,11 +742,12 @@ Sketched to corner-avoidance depth. The facts are in
 
 ## P38 — A table reads its descendants; TimescaleDB under its own names
 
-A table reads its own rows and every descendant's, for every dump, as `SELECT
-… FROM parent` does on the server, and a TimescaleDB hypertable is read under
-its own name on top of that, its catalog read to say which children are chunks
-and which rows the file does not hold. The spec is
-[`roadmap-P38-descendants.md`](roadmap-P38-descendants.md).
+**Complete.** A table reads its own rows and every descendant's, for every
+dump, as `SELECT … FROM parent` does on the server, and a TimescaleDB
+hypertable is read under its own name on top of that, its catalog read to say
+which children are chunks and which rows the file does not hold. The spec is
+[`roadmap-P38-descendants.md`](roadmap-P38-descendants.md), and what it leaves
+the next phase its [notes](roadmap-P38-descendants-notes.md).
 
 ## P32 — The schema model: every object and property a dump declares
 
