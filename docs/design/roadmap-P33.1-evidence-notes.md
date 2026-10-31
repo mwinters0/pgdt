@@ -35,9 +35,18 @@ measurement cache; its length is unmeasured, so it is launched detached per
   started` line is the builder's, at one worker, so `resolved_jobs` is read
   for the parse legs alone; how many lines the four-partition leg held at
   once is its secant against the one-partition one, not an assumption.
-- **The smoke run's parses stated `memory_bytes=67108864` under `--memory
-  2550136832`**, over an 8 MiB file. What a 2 GiB input's run states is a
-  column to read before a cell, `.claude/skills/evidence/SKILL.md`, rule 4.
+- **A parse's `memory_bytes=67108864` under `--memory 2550136832` is the
+  carve, not an anomaly**: a plain source asks no charge, so its read-buffer
+  budget stays `DEFAULT_MEMORY_BUDGET` under any allowance (D83; asserted by
+  `status_output.rs`'s
+  `a_stated_memory_budget_at_a_serial_job_count_is_not_marked_default`). It
+  bounds chunks, never a held line, which nothing charges today.
+- **The figure is re-registered before its readings**
+  ([2026-10-31](../status/history/2026-10-31.md), "P33.1: the figure re-shaped
+  before its readings"): a length at I71's bound at one worker, 288 MiB at
+  both counts, each a cluster of four, an allowance sized off the cluster in
+  place of `PARALLEL_BUDGET`'s, stated on both takes, and a test holding `id`
+  nullable.
 - **No gate twin**: no held line is charged today, so no cell is held to its
   allowance (`LONG_LINE_MEMORY`). The re-take under the ledger is where one
   belongs.
@@ -50,5 +59,3 @@ measurement cache; its length is unmeasured, so it is launched detached per
   every row rather than summing their lengths.
 - **Not `pgdt query`**: its printing renders each value into a buffer of its
   own, a CLI's term no library charge may carry.
-- **No 1 GiB leg**, which is the entry under STATUS's "Decisions worth another
-  look".
