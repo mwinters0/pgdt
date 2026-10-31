@@ -62,8 +62,7 @@ pub(super) struct Gatherer {
     /// The most rows a merge here may put in the finished block's
     /// 90th-percentile group; `None` for an exact size and for a piece. Not a
     /// ceiling: a block already past it at the size it gathered from merges
-    /// nothing, where its groups pair evenly ([`density_merges`]), and
-    /// finishes over it, the re-read in
+    /// nothing ([`density_merges`]) and finishes over it, the re-read in
     /// [`crate::statistics::StatisticsRequest::backfill`] being what brings it
     /// back within one.
     max_rows: Option<u64>,

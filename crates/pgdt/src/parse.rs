@@ -140,8 +140,8 @@ pub(crate) struct ParseArgs {
     )]
     row_group_min_rows: Option<u64>,
     /// The most rows a row group of statistics should hold under the
-    /// default group size, read at the 90th-percentile group so that at
-    /// most a tenth of them hold more. There is no default: stated, it
+    /// default group size, read at the 90th-percentile group so that
+    /// fewer than a tenth of them hold more. There is no default: stated, it
     /// stops the doubling `--row-group-min-rows` would otherwise do, it
     /// lifts the 4,096-group ceiling, and a table too dense to meet it at
     /// 1 MiB a group is read a second time, at the finer size its groups

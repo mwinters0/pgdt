@@ -67,12 +67,10 @@ fn the_density_predicate_is_monotone_in_size() {
 }
 
 /// **A stated maximum stops the merging, whatever the minimum asks.** A
-/// block already past the maximum at the size it holds, its groups pairing
-/// evenly, merges nothing — nothing here makes a block finer. Past the
-/// maximum, a size whose groups all pair stays past it at the next: of `G`
-/// groups, `⌊G/10⌋+1` past it leave at least `⌊G/20⌋+1` pairs past it. A
-/// size whose last group stands unpaired is exempt, and can let one merge
-/// through (`an_unpaired_last_group_lets_a_block_past_the_maximum_merge`).
+/// block already past the maximum at the size it holds merges nothing —
+/// nothing here makes a block finer. Past the maximum, every size stays past
+/// it at the next, a last group standing unpaired included, so the sweep
+/// holds every level of the ladder.
 #[test]
 fn a_stated_maximum_stops_the_merging_whatever_the_minimum_asks() {
     assert_eq!(density_merges(vec![1, 1, 1, 1], 5, Some(2)), 1, "one merge fits, two do not");
@@ -97,11 +95,11 @@ fn a_stated_maximum_stops_the_merging_whatever_the_minimum_asks() {
         assert!(merges <= alone, "round {round}: a maximum never merges further");
         stopped += usize::from(merges < alone);
         agreed_with_minimum += usize::from(merges == alone);
-        // Monotone from every level past the maximum whose groups pair.
+        // Monotone from every level past the maximum.
         let mut level = rows.clone();
         while level.len() > 1 {
             let coarser: Vec<u64> = level.chunks(2).map(|pair| pair.iter().sum()).collect();
-            if level.len().is_multiple_of(2) && max_rows_group(&level) > max_rows {
+            if max_rows_group(&level) > max_rows {
                 assert!(
                     max_rows_group(&coarser) > max_rows,
                     "round {round}: {rows:?} came back within {max_rows} from {level:?}"
@@ -114,14 +112,32 @@ fn a_stated_maximum_stops_the_merging_whatever_the_minimum_asks() {
     assert!(agreed_with_minimum > 300, "only {agreed_with_minimum} rounds reached it");
 }
 
-/// **`KD43`, pinned**: nineteen groups, two of them past a maximum of 5,
-/// put the block past it, and the merge that pairs them leaves ten whose
-/// 90th-percentile group is empty, so the merge goes through and the block
-/// holds a group of 20. Closing the deficiency makes this block merge
-/// nothing, and flips the assertion.
+/// **A last group standing unpaired cannot lower the group the maximum is
+/// read at**: nineteen groups, two of them past a maximum of 5, put the block
+/// past it, and the merge that pairs them leaves ten groups of which one, the
+/// group of 20, is past it — a tenth, which the nearest-rank 90th percentile
+/// would have let through. So the block merges nothing.
 #[test]
-fn an_unpaired_last_group_lets_a_block_past_the_maximum_merge() {
+fn an_unpaired_last_group_lets_no_block_past_the_maximum_merge() {
     let rows: Vec<u64> = [10, 10].into_iter().chain([0; 17]).collect();
     assert!(max_rows_group(&rows) > 5, "the block is past the maximum as gathered");
-    assert_eq!(density_merges(rows, 1, Some(5)), 1);
+    let coarser: Vec<u64> = rows.chunks(2).map(|pair| pair.iter().sum()).collect();
+    assert_eq!(coarser, [20, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(max_rows_group(&coarser), 20, "one group in ten past it is past it");
+    assert_eq!(density_merges(rows, 1, Some(5)), 0);
+}
+
+/// **The maximum is read at the 90th-percentile group, one rank above the
+/// nearest rank where the count is a multiple of ten**: of `G` groups,
+/// `⌈G/10⌉` holding 9 rows and the rest none read as 9, one fewer as 0 — so
+/// fewer than a tenth of the groups may hold more than the maximum.
+#[test]
+fn the_maximum_is_read_where_fewer_than_a_tenth_hold_more() {
+    for groups in 1..=60usize {
+        let past = groups.div_ceil(10);
+        let rows: Vec<u64> = (0..groups).map(|group| u64::from(group < past) * 9).collect();
+        assert_eq!(max_rows_group(&rows), 9, "{groups} groups, {past} past");
+        let fewer: Vec<u64> = (0..groups).map(|group| u64::from(group + 1 < past) * 9).collect();
+        assert_eq!(max_rows_group(&fewer), 0, "{groups} groups, {} past", past - 1);
+    }
 }

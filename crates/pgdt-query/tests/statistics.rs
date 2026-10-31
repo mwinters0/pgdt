@@ -1386,12 +1386,12 @@ async fn a_stated_minimum_rereads_a_block_sized_under_another() {
 }
 
 /// The rows the 90th-percentile group of `statistics` holds — the group a
-/// stated maximum is read at, the `⌈9G/10⌉`-th smallest — written here rather
-/// than read from the library.
+/// stated maximum is read at, the `⌈9(G−1)/10⌉+1`-th smallest — written here
+/// rather than read from the library.
 fn densest_group(statistics: &BlockStatistics) -> u64 {
     let mut rows: Vec<u64> = statistics.groups.iter().map(|group| group.rows).collect();
     rows.sort_unstable();
-    rows[(9 * rows.len()).div_ceil(10) - 1]
+    rows[(9 * (rows.len() - 1)).div_ceil(10)]
 }
 
 /// A dump of two `COPY` blocks, each over a mebibyte so that the default group

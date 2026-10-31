@@ -56,10 +56,12 @@ another worker holds; walking every block; proportional slack. Reopens: a leg pa
 ### D82 A block merges pairwise, exactly, between its minimum and its maximum, never mid-scan while a piece lives
 Pairwise and exact, so serial, split and stated gathering agree: a bytewise group keeps its extremes' heads till
 `finish` clips them. Mid-scan a block merges only while no piece it made lives; at `finish` one still alive joins
-nothing more. The minimum reads the upper middle group, monotone in size. Rejected: merging stored bounds; coarsening a
-piece at its join; waiting, as closing does, for an even count, which a window's join can leave odd and the block past
-its cap; the nearest-rank median; the cap yielding to a stated maximum block by block, which the leader's split would
-decide; a floor under the coarsening, a constant nothing prices. Code: `Gatherer::fit_cap`, `density.rs`.
+nothing more. The minimum reads the upper middle group, the maximum the 90th percentile a rank above nearest at a
+multiple of ten groups, so each is monotone in size. Rejected: merging stored bounds; coarsening a piece at its join;
+waiting, as closing does, for an even count, which a window's join can leave odd and the block past its cap; the
+nearest-rank median and 90th percentile, which an odd tail breaks; the cap yielding to a stated maximum block by block,
+which the leader's split would decide; a floor under the coarsening, a constant nothing prices. Code:
+`Gatherer::fit_cap`, `density.rs`.
 
 ### D85 Statistics are billed against the margin, and a block that cannot fit declines
 `statistics_allowance` is what the arrangement leaves under `margin_allowance`, carved after the workers, whose count is

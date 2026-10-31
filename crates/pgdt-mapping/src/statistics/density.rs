@@ -22,13 +22,15 @@ pub(super) fn min_rows_group(rows: &[u64]) -> u64 {
     nth_smallest(rows, rows.len() / 2)
 }
 
-/// **The group a density maximum is read at**: the 90th-percentile one by
-/// nearest rank, the `⌈9G/10⌉`-th smallest of `G` groups' rows, so that at most
-/// a tenth of the groups hold more than the maximum. Near enough a bound for a
-/// person who asked for one, without one dense stretch multiplying a whole
-/// block's groups. Panics on no groups.
+/// **The group a density maximum is read at**: the 90th-percentile one, the
+/// `⌈9(G−1)/10⌉+1`-th smallest of `G` groups' rows, so that fewer than a tenth
+/// of the groups hold more than the maximum. Near enough a bound for a person
+/// who asked for one, without one dense stretch multiplying a whole block's
+/// groups. Reading it one rank above the nearest-rank `⌈9G/10⌉`-th where `G` is
+/// a multiple of ten is what makes the predicate monotone in size
+/// ([`density_merges`]). Panics on no groups.
 pub(super) fn max_rows_group(rows: &[u64]) -> u64 {
-    nth_smallest(rows, (9 * rows.len()).div_ceil(10) - 1)
+    nth_smallest(rows, (9 * (rows.len() - 1)).div_ceil(10))
 }
 
 /// How many times a block whose groups hold `rows` merges pairwise before its
@@ -45,19 +47,14 @@ pub(super) fn max_rows_group(rows: &[u64]) -> u64 {
 ///
 /// **`max_rows` stops the merging first**, wherever the next size would put
 /// more than that many rows in its 90th-percentile group ([`max_rows_group`]):
-/// so a stated maximum outranks the minimum. Nothing here can make a block
-/// *finer*: a block breaking `max_rows` at the size it gathered from is
-/// re-read instead ([`StatisticsRequest::backfill`](crate::statistics::StatisticsRequest::backfill)).
-///
-/// deficiency: KD43 — the maximum's predicate is monotone in size only where
-/// every group pairs. A last odd group stands alone, so a pairwise sum can
-/// rank below the parts it replaces: at 19, 39, 59… groups a block already
-/// past the maximum can merge once (`[10, 10, 0 × 17]` under a maximum of 5
-/// becomes `[20, 0 × 9]`, whose 90th-percentile group is 0), and stopping at
-/// the first merge that breaks the predicate can miss a coarser size that
-/// would hold it. `an_unpaired_last_group_lets_a_block_past_the_maximum_merge`
-/// pins the example. The fix is the maximum read one rank higher, as the
-/// minimum reads the upper middle group.
+/// so a stated maximum outranks the minimum. That predicate is monotone in size
+/// too: a block is past the maximum where `⌈G/10⌉` of its `G` groups hold more,
+/// a merged group holds more wherever either part did, so at least `⌈G/20⌉`
+/// pairs do, which is `⌈⌈G/2⌉/10⌉` — the same predicate at the coarser size,
+/// a last odd group included. So the first size past it ends the ladder, no
+/// coarser one coming back within it. Nothing here can make a block *finer*: a
+/// block breaking `max_rows` at the size it gathered from is re-read instead
+/// ([`StatisticsRequest::backfill`](crate::statistics::StatisticsRequest::backfill)).
 pub(super) fn density_merges(mut rows: Vec<u64>, min_rows: u64, max_rows: Option<u64>) -> u32 {
     let mut merges = 0;
     while rows.len() > 1 && min_rows_group(&rows) < min_rows {

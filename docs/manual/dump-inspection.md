@@ -691,8 +691,8 @@ keeps fewer, fuller groups, which a query skips less precisely.
 
 **`--row-group-max-rows` asks for the other side of that trade**, and there is
 no default: state it and no group size is chosen that would put more than that
-many rows in the 90th-percentile group, so at most a tenth of a table's groups
-hold more. It wins wherever it and `--row-group-min-rows` cannot both be met,
+many rows in the 90th-percentile group, so fewer than a tenth of a table's
+groups hold more. It wins wherever it and `--row-group-min-rows` cannot both be met,
 and it lifts the 4,096-group ceiling as well — you asked for the groups, so
 nothing quietly takes them away, and a table dense enough to need many of them
 costs the memory and the cache space they take. A table too dense to meet it at
