@@ -31,8 +31,8 @@ unowned` and naming what promotes it; no `KD<k>` was owned by P38. `M266` and
   hypertables alone, `schema-public` none.
 - **A dump and its answers come from one run.** A full regeneration re-dumps,
   and chunk `creation_time`s and OIDs drift run to run, so a new flag set at a
-  pin is generated with its siblings' regenerated dumps reverted by hand
-  (`M267`). `partitions`' regeneration moved `feel`'s, `shuffle`'s and
+  pin is generated alone, `--schema <schema> --version <major> --flag-set
+  <name>`, its siblings' dumps and answers untouched. `partitions`' regeneration moved `feel`'s, `shuffle`'s and
   `spread`'s rows between their partitions' blocks (D69).
 - **Not fixtured**: multinode foreign chunks (2.0–2.13) and tiered storage's
   foreign chunk, both read from source alone; an Apache-edition build; an

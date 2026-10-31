@@ -9,10 +9,14 @@ flag set is, which a run would only show as a load failure or a missing file.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import re
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest import mock
 
 import generate_fixtures as gf
 
@@ -126,6 +130,84 @@ class CommittedSchemas(unittest.TestCase):
         for flags in ([], ["--no-toast-compression"], gf.Dumpall(("--clean",)), gf.Setting("a", "b")):
             with self.subTest(flags=flags):
                 self.assertEqual(gf.output_suffix(flags), ".sql")
+
+
+class OneFlagSet(unittest.TestCase):
+    def test_only_narrows_a_schema_to_the_sets_it_names_at_their_majors(self):
+        only = frozenset({"stats", "verbose"})
+        self.assertEqual([name for name, _ in gf.flag_sets("objects", "18", only)], ["verbose", "stats"])
+        self.assertEqual([name for name, _ in gf.flag_sets("objects", "17", only)], ["verbose"])
+        self.assertEqual(gf.flag_sets("partitions", "18", only), [])
+
+    def test_the_timescaledb_sets_are_named_at_their_pins(self):
+        only = frozenset({"tables"})
+        self.assertEqual(gf.run_flag_sets(gf.TIMESCALEDB_SCHEMA, "18", only), ["tables"])
+        self.assertEqual(gf.run_flag_sets(gf.TIMESCALEDB_SCHEMA, "16", only), [])
+        self.assertEqual(gf.run_flag_sets(gf.TIMESCALEDB_SCHEMA, "14"), [])
+        self.assertEqual(
+            gf.run_flag_sets(gf.TIMESCALEDB_SCHEMA, "13"), list(gf.TIMESCALEDB_FLAG_SETS)
+        )
+
+    def test_a_set_no_named_schema_runs_at_a_named_version_is_unrun(self):
+        self.assertEqual(gf.unrun_flag_sets(["stats"], ["objects"], ["17"]), ["stats"])
+        self.assertEqual(gf.unrun_flag_sets(["stats"], ["objects"], ["17", "18"]), [])
+        self.assertEqual(gf.unrun_flag_sets(["tables"], [gf.TIMESCALEDB_SCHEMA], ["16"]), ["tables"])
+        self.assertEqual(
+            gf.unrun_flag_sets(["tables", "stats"], [gf.TIMESCALEDB_SCHEMA, "objects"], ["18"]), []
+        )
+        self.assertEqual(gf.unrun_flag_sets(["nonesuch"], list(gf.SCHEMAS), ["18"]), ["nonesuch"])
+
+    def refused(self, *argv: str) -> str:
+        # Refused by the parser, before any container is started.
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(sys, "argv", ["generate_fixtures.py", *argv]),
+            mock.patch.object(gf, "generate_for_version") as routine,
+            mock.patch.object(gf, "generate_timescaledb") as timescaledb,
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit),
+        ):
+            gf._run()
+        routine.assert_not_called()
+        timescaledb.assert_not_called()
+        return stderr.getvalue()
+
+    def test_a_flag_set_needs_a_schema_and_dumps_and_a_set_that_runs(self):
+        self.assertIn("needs --schema", self.refused("--flag-set", "default"))
+        self.assertIn(
+            "--skip-dumps takes none",
+            self.refused("--schema", "types", "--flag-set", "default", "--skip-dumps"),
+        )
+        self.assertIn(
+            "stats", self.refused("--schema", "objects", "--version", "17", "--flag-set", "stats")
+        )
+
+    def test_a_run_reaches_only_the_versions_its_sets_run_at(self):
+        with (
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "generate_fixtures.py",
+                    "--schema",
+                    gf.TIMESCALEDB_SCHEMA,
+                    "--flag-set",
+                    "tables",
+                    "--skip-oracle",
+                    "--skip-floor",
+                    "--skip-values",
+                ],
+            ),
+            mock.patch.object(gf, "generate_for_version") as routine,
+            mock.patch.object(gf, "generate_timescaledb") as timescaledb,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(gf._run(), 0)
+        routine.assert_not_called()
+        self.assertEqual(
+            [(c.args[0], c.kwargs["only"]) for c in timescaledb.call_args_list],
+            [("13", frozenset({"tables"})), ("18", frozenset({"tables"}))],
+        )
 
 
 class TimescalePins(unittest.TestCase):

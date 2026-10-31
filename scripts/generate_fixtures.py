@@ -50,6 +50,12 @@ the server's **answers** over it committed beside the dump, as
 each answer is still its own dump's bytes restored by the server that dumped
 them; the oracles and the floor run as usual unless skipped.
 
+`--flag-set` narrows a run to the named flag sets of the schemas `--schema`
+names (`run_flag_sets`), so one flag set is regenerated, or answered again,
+with every sibling's dump and answers left as committed: a full regeneration
+re-dumps, and what drifts run to run -- a chunk's `creation_time`, an OID --
+would move every one of them.
+
 The `timescaledb` schema runs on its own servers, one `timescale/timescaledb-ha`
 pin per release it is read at, on five of the routine majors (`TIMESCALEDB_PINS`), each dumped by that major's routine
 `pg_dump` over the host's loopback (docs/design/timescaledb-invariants.md).
@@ -947,12 +953,15 @@ def write_answers(
     print(f"  {out.relative_to(REPO_ROOT)} ({len(tables)} tables, {len(errors)} restore errors)")
 
 
-def generate_timescaledb(version: str, pin: TimescalePin, dumps: bool = True) -> None:
+def generate_timescaledb(
+    version: str, pin: TimescalePin, dumps: bool = True, only: frozenset[str] | None = None
+) -> None:
     """The TimescaleDB pin at `version`: its server loaded with
     `fixture_schema_timescaledb.sql` and the pin's own scripts, dumped by the
     routine image's `pg_dump` over the host's loopback, and each flag set's
     restore answered by the same server — or, without `dumps`, each committed
-    dump's restore answered, nothing loaded or dumped."""
+    dump's restore answered, nothing loaded or dumped. With `only`, the flag
+    sets it names alone."""
     routine = ROUTINE_VERSIONS[version]
     print(f"== {version} timescaledb {pin.release} ({pin.image}) ==")
     name = start_container(version, pin.image, name=f"pgdt-fixture-{TIMESCALEDB_SCHEMA}-{version}", memory="1g")
@@ -967,7 +976,7 @@ def generate_timescaledb(version: str, pin: TimescalePin, dumps: bool = True) ->
         out_dir = FIXTURES_DIR / version / TIMESCALEDB_SCHEMA
         out_dir.mkdir(parents=True, exist_ok=True)
         for flag_name, (majors, flags) in TIMESCALEDB_FLAG_SETS.items():
-            if version not in majors:
+            if version not in majors or (only is not None and flag_name not in only):
                 continue
             out_path = out_dir / f"{flag_name}.sql"
             if dumps:
@@ -990,11 +999,15 @@ def generate_timescaledb(version: str, pin: TimescalePin, dumps: bool = True) ->
         stop_container(name)
 
 
-def flag_sets(schema: str, version: str) -> list[tuple[str, FlagSet]]:
+def flag_sets(
+    schema: str, version: str, only: frozenset[str] | None = None
+) -> list[tuple[str, FlagSet]]:
     """The flag sets `schema` runs at `version`, each by name: every one but
-    those whose minimum major is above it."""
+    those whose minimum major is above it, and with `only`, those it names."""
     sets = []
     for flag_name, flag_spec in SCHEMAS[schema].items():
+        if only is not None and flag_name not in only:
+            continue
         if isinstance(flag_spec, tuple):
             min_version, flags = flag_spec
             if int(version) < int(min_version):
@@ -1003,6 +1016,26 @@ def flag_sets(schema: str, version: str) -> list[tuple[str, FlagSet]]:
             flags = flag_spec
         sets.append((flag_name, flags))
     return sets
+
+
+def run_flag_sets(schema: str, version: str, only: frozenset[str] | None = None) -> list[str]:
+    """The names of the flag sets `schema` runs at `version` ([`flag_sets`]),
+    the `timescaledb` schema's at its pins included."""
+    if schema == TIMESCALEDB_SCHEMA:
+        return [
+            flag_name
+            for flag_name, (majors, _) in TIMESCALEDB_FLAG_SETS.items()
+            if version in majors and (only is None or flag_name in only)
+        ]
+    return [flag_name for flag_name, _ in flag_sets(schema, version, only)]
+
+
+def unrun_flag_sets(names: list[str], schemas: list[str], versions: list[str]) -> list[str]:
+    """Each of `names` that no schema of `schemas` runs at any of `versions`:
+    a `--flag-set` that would regenerate nothing, refused rather than
+    reported done."""
+    ran = {name for schema in schemas for version in versions for name in run_flag_sets(schema, version)}
+    return [name for name in names if name not in ran]
 
 
 def generate_for_version(
@@ -1014,6 +1047,7 @@ def generate_for_version(
     floor: bool,
     values: bool,
     answers_only: bool = False,
+    only: frozenset[str] | None = None,
 ) -> None:
     print(f"== {version} ({image}) ==")
     name = start_container(version, image)
@@ -1026,13 +1060,15 @@ def generate_for_version(
             for schema in schemas:
                 if schema not in ANSWERED_SCHEMAS:
                     continue
-                for flag_name, flags in flag_sets(schema, version):
+                for flag_name, flags in flag_sets(schema, version, only):
                     out_path = FIXTURES_DIR / version / schema / f"{flag_name}{output_suffix(flags)}"
                     write_answers(psql, psql, out_path, answers_path(version, schema, flag_name))
         elif dumps:
             for schema in schemas:
+                if not flag_sets(schema, version, only):
+                    continue
                 create_fixture_db(name, version, schema)
-                for flag_name, flags in flag_sets(schema, version):
+                for flag_name, flags in flag_sets(schema, version, only):
                     out_path = dump_flag_set(name, version, schema, flag_name, flags)
                     size = out_path.stat().st_size
                     print(
@@ -1117,6 +1153,16 @@ def _run() -> int:
         "skipped",
     )
     parser.add_argument(
+        "--flag-set",
+        action="append",
+        dest="flag_sets",
+        metavar="NAME",
+        help="limit to the named flag set(s) of the schemas --schema names, "
+        "which it requires: every other dump and its answers stay as "
+        "committed; with --answers-only, the named sets' answers alone are "
+        "taken again; the oracles and the floor still run unless skipped",
+    )
+    parser.add_argument(
         "--skip-oracle",
         action="store_true",
         help="don't regenerate fixtures/<version>/oracle/",
@@ -1141,9 +1187,21 @@ def _run() -> int:
             "--skip-dumps, --skip-oracle, --skip-floor and --skip-values together "
             "leave nothing to do"
         )
+    only = frozenset(args.flag_sets) if args.flag_sets else None
+    if only is not None:
+        if not args.schemas:
+            parser.error("--flag-set names a schema's flag sets, so it needs --schema")
+        if args.skip_dumps:
+            parser.error("--flag-set selects dumps to take, and --skip-dumps takes none")
+        if unrun := unrun_flag_sets(args.flag_sets, schemas, versions):
+            parser.error(
+                f"no schema named runs flag set(s) {', '.join(unrun)} at the versions selected"
+            )
 
-    routine = [schema for schema in schemas if schema in SCHEMAS]
     for version in versions:
+        routine = [
+            schema for schema in schemas if schema in SCHEMAS and (only is None or flag_sets(schema, version, only))
+        ]
         if routine or not (args.skip_oracle and args.skip_floor and args.skip_values):
             generate_for_version(
                 version,
@@ -1154,10 +1212,14 @@ def _run() -> int:
                 floor=not args.skip_floor,
                 values=not args.skip_values,
                 answers_only=args.answers_only,
+                only=only,
             )
         dumps = not (args.skip_dumps or args.answers_only)
-        if TIMESCALEDB_SCHEMA in schemas and (dumps or args.answers_only) and version in TIMESCALEDB_PINS:
-            generate_timescaledb(version, TIMESCALEDB_PINS[version], dumps=dumps)
+        timescaledb = TIMESCALEDB_SCHEMA in schemas and version in TIMESCALEDB_PINS
+        if timescaledb and only is not None:
+            timescaledb = bool(run_flag_sets(TIMESCALEDB_SCHEMA, version, only))
+        if timescaledb and (dumps or args.answers_only):
+            generate_timescaledb(version, TIMESCALEDB_PINS[version], dumps=dumps, only=only)
 
     if not args.skip_oracle:
         print("\ncross-major differences:")
