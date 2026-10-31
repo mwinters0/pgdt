@@ -180,7 +180,8 @@ async fn the_read_settings_reach_the_scan() {
 
 /// **The settings are the session's, listed by `SHOW ALL`, and a value
 /// `pgdt` would refuse is refused by `SET`**, save the `0` that un-states an
-/// allowance — as is a key that is none of them. `STORED AS PGDUMP` alone
+/// allowance — as is a key that is none of them, a `STORED AS PGDUMP`
+/// option as that statement's. `STORED AS PGDUMP` alone
 /// installs them too.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_settings_are_listed_and_checked() {
@@ -203,6 +204,8 @@ async fn the_settings_are_listed_and_checked() {
     ] {
         assert!(run(&ctx, bad).await.is_err(), "{bad}");
     }
+    let why = run(&ctx, "SET pgdump.inheritance = 'only'").await.unwrap_err().to_string();
+    assert!(why.contains("`pgdump.inheritance` is a `STORED AS PGDUMP` option"), "{why}");
 }
 
 /// **A table registered by hand reads the settings of a session

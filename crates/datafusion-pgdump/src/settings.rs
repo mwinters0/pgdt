@@ -108,6 +108,32 @@ impl ConfigExtension for PgDumpSettings {
     const PREFIX: &'static str = "pgdump";
 }
 
+/// Every setting's key, without its `pgdump.`.
+const SETTINGS: [&str; 4] = ["memory", "chunk_size", "max_line_bytes", "dynamic_filter_rows"];
+
+/// Every key `CREATE EXTERNAL TABLE … STORED AS PGDUMP` takes, without its
+/// `pgdump.`: listed here, below the factory reading them, so `SET` can refuse
+/// one as that statement's option rather than as no key at all.
+pub(crate) const TABLE_OPTIONS: [&str; 8] = [
+    "table",
+    "schema",
+    "database",
+    "schema_mode",
+    "unrepresentable",
+    "postgres_invalid_values",
+    "inheritance",
+    "strict_identity",
+];
+
+/// `keys` with their `pgdump.`, as a refusal lists them.
+pub(crate) fn listed(keys: &[&str]) -> String {
+    let keys: Vec<String> = keys.iter().map(|key| format!("pgdump.{key}")).collect();
+    match keys.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => keys.concat(),
+    }
+}
+
 /// A whole number of bytes `key` may be set to, zero included.
 fn whole(key: &str, value: &str) -> Result<u64> {
     match value.trim().parse::<u64>() {
@@ -157,7 +183,9 @@ impl ExtensionOptions for PgDumpSettings {
     }
 
     /// `key` arrives without its `pgdump.` from `ConfigOptions::set`, which is
-    /// what `SET` reaches; a whole key is taken too.
+    /// what `SET` reaches; a whole key is taken too. A key `STORED AS PGDUMP`
+    /// takes is refused as that statement's option, read where a table is
+    /// registered (`docs/design/decisions.md`, "D132").
     fn set(&mut self, key: &str, value: &str) -> Result<()> {
         let field = key.strip_prefix("pgdump.").unwrap_or(key);
         match field {
@@ -177,10 +205,18 @@ impl ExtensionOptions for PgDumpSettings {
                     false => RowEvaluation::Off,
                 };
             }
+            _ if TABLE_OPTIONS.contains(&field) => {
+                return plan_err!(
+                    "`pgdump.{field}` is a `STORED AS PGDUMP` option, not a session setting: it is \
+                     stated where the table is registered, as `OPTIONS ('pgdump.{field}' …)`, and \
+                     `SET` reaches only {}",
+                    listed(&SETTINGS)
+                );
+            }
             _ => {
                 return plan_err!(
-                    "`pgdump.{field}` is not a pgdump setting — the settings are pgdump.memory, \
-                     pgdump.chunk_size, pgdump.max_line_bytes and pgdump.dynamic_filter_rows"
+                    "`pgdump.{field}` is not a pgdump setting — the settings are {}",
+                    listed(&SETTINGS)
                 );
             }
         }
@@ -280,6 +316,33 @@ mod tests {
         let unstated = PgDumpSettings { memory: None, ..stated };
         assert_eq!(options.extensions.get::<PgDumpSettings>(), Some(&unstated));
         assert!(options.entries().iter().any(|e| e.key == "pgdump.memory" && e.value.is_none()));
+    }
+
+    /// **A key `STORED AS PGDUMP` takes is refused as that statement's
+    /// option**, naming where it is stated, and any other key as no setting,
+    /// each refusal listing every setting `entries` lists.
+    #[test]
+    fn a_table_option_is_refused_as_one() {
+        let mut options = ConfigOptions::new();
+        options.extensions.insert(PgDumpSettings::default());
+        let settings = listed(&SETTINGS);
+        for field in TABLE_OPTIONS {
+            let why = options.set(&format!("pgdump.{field}"), "only").unwrap_err().to_string();
+            assert!(
+                why.contains(&format!("`pgdump.{field}` is a `STORED AS PGDUMP` option")),
+                "{why}"
+            );
+            assert!(why.contains(&format!("OPTIONS ('pgdump.{field}' …)")), "{why}");
+            assert!(why.contains(&settings), "{why}");
+        }
+        let why = options.set("pgdump.jobs", "4").unwrap_err().to_string();
+        assert!(why.contains("`pgdump.jobs` is not a pgdump setting"), "{why}");
+        assert!(why.contains(&settings), "{why}");
+        assert_eq!(options.extensions.get::<PgDumpSettings>(), Some(&PgDumpSettings::default()));
+
+        let keys: Vec<String> =
+            PgDumpSettings::default().entries().into_iter().map(|entry| entry.key).collect();
+        assert_eq!(keys, SETTINGS.map(|key| format!("pgdump.{key}")));
     }
 
     /// Unstated, the allowance is the budget's own, the reads are the

@@ -23,6 +23,7 @@ use crate::budget::ScanBudget;
 use crate::dump::{PgDump, PgDumpOptions};
 use crate::error::Spelling;
 use crate::session::install;
+use crate::settings::{TABLE_OPTIONS, listed};
 
 /// The word after `STORED AS`, as DataFusion keys a table factory by it.
 pub const PGDUMP_FILE_TYPE: &str = "PGDUMP";
@@ -105,10 +106,8 @@ impl ExtensionOptions for TableOptions {
             },
             _ => {
                 return plan_err!(
-                    "`{key}` is not a PGDUMP option — the options are pgdump.table, \
-                     pgdump.schema, pgdump.database, pgdump.schema_mode, \
-                     pgdump.unrepresentable, pgdump.postgres_invalid_values, \
-                     pgdump.inheritance and pgdump.strict_identity"
+                    "`{key}` is not a PGDUMP option — the options are {}",
+                    listed(&TABLE_OPTIONS)
                 );
             }
         }
@@ -330,5 +329,17 @@ mod tests {
             let err = options.set("pgdump.postgres_invalid_values", strict).unwrap_err();
             assert!(err.to_string().contains(&why), "{err}");
         }
+    }
+
+    /// **[`TABLE_OPTIONS`] is every option `set` takes and `entries` lists**,
+    /// so `SET` refuses each as this statement's, and an unknown one is
+    /// refused listing them.
+    #[test]
+    fn the_option_keys_are_the_options() {
+        let listed_keys: Vec<String> =
+            TableOptions::default().entries().into_iter().map(|entry| entry.key).collect();
+        assert_eq!(listed_keys, TABLE_OPTIONS.map(|key| format!("pgdump.{key}")));
+        let why = TableOptions::default().set("pgdump.memory", "1").unwrap_err().to_string();
+        assert!(why.contains(&listed(&TABLE_OPTIONS)), "{why}");
     }
 }

@@ -292,7 +292,9 @@ pgdump.memory = 0` returns to the limit found, as `SET
 datafusion.execution.target_partitions = 0` returns to the machine's cores;
 `RESET` does not, reaching only DataFusion's own settings. The other two may
 not be `0`, and neither may `pgdt --memory`, which returns to the limit found
-by being left off.
+by being left off. A dump's modes are not settings: `SET pgdump.inheritance`,
+or any other [`STORED AS PGDUMP` option](#create-external-table--stored-as-pgdump-one-table),
+is refused as that statement's option, stated where a dump is attached.
 
 **`pgdump.dynamic_filter_rows` trades one kind of query against another.**
 Off, a scan still skips the row groups such a narrowing rules out and stops
