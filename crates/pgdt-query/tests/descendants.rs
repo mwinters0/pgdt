@@ -18,7 +18,7 @@ use pgdt_core::Error;
 use pgdt_dump::ReadOptions;
 use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_model::TableName;
+use pgdt_model::{DiagnosticKind, TableName};
 use pgdt_query::{Dump, Expr, Inheritance, Predicate, PredicateOp, QueryOptions, TableSelector};
 
 use common::{
@@ -59,6 +59,7 @@ async fn held_to_answers(path: &Path) -> BTreeMap<Reading, BTreeSet<String>> {
     let answers = answers(path);
     assert!(answers.restore_errors.is_empty(), "{}: {:?}", path.display(), answers.restore_errors);
     let dump = mapped(source(path), &StatisticsRequest::DATA).await;
+    let (through, named) = through_root_findings(&dump);
     let mut refused: BTreeMap<Reading, BTreeSet<String>> = BTreeMap::new();
     for ((qualified, reading), answer) in &answers.tables {
         let Answer::Rows(expected) = answer else {
@@ -74,8 +75,11 @@ async fn held_to_answers(path: &Path) -> BTreeMap<Reading, BTreeSet<String>> {
             let at = format!("{} {qualified} {reading:?} {schema_mode:?}", path.display());
             match read(&table, schema_mode, inheritance).await {
                 Ok(rows) => assert_eq!(&rows, expected, "{at}"),
-                Err(Error::PartitionThroughRoot { table, .. }) => {
+                Err(Error::PartitionThroughRoot { table, root, header_offsets, .. }) => {
                     assert_eq!(&table, qualified);
+                    let found = through.get(&root).unwrap_or_else(|| panic!("{at}: no finding"));
+                    let named = header_offsets.iter().all(|offset| found.contains(offset));
+                    assert!(named, "{at}: {header_offsets:?} beyond {found:?}");
                     refused.entry(*reading).or_default().insert(table);
                     continue;
                 }
@@ -92,7 +96,41 @@ async fn held_to_answers(path: &Path) -> BTreeMap<Reading, BTreeSet<String>> {
             }
         }
     }
+    // A finding names every partition refused alone, and a root above every
+    // table refused with its descendants.
+    let at = path.display();
+    assert_eq!(refused.get(&Reading::Only).cloned().unwrap_or_default(), named, "{at}");
+    let ddl = &dump.index().metadata.as_ref().unwrap().databases[0];
+    for table in refused.get(&Reading::Descendants).into_iter().flatten() {
+        let below = through.keys().any(|root| ddl.descendants(root).contains(&table.as_str()));
+        assert!(below, "{at}: {table} is below no root a finding names: {through:?}");
+    }
     refused
+}
+
+/// **The map's finding of each partition root rows are written through**:
+/// each root's blocks' offsets, which are exactly those of the blocks
+/// marked written through it, and every partition the findings name.
+fn through_root_findings(dump: &Dump) -> (BTreeMap<String, Vec<u64>>, BTreeSet<String>) {
+    let (mut through, mut named) = (BTreeMap::new(), BTreeSet::new());
+    for diagnostic in &dump.index().diagnostics {
+        let DiagnosticKind::PartitionsThroughRoot { database, root, header_offsets, partitions } =
+            diagnostic.kind()
+        else {
+            continue;
+        };
+        assert_eq!(*database, None, "{root}");
+        let marked: Vec<u64> = dump
+            .index()
+            .blocks()
+            .filter(|b| b.partition_root.is_some() && b.header.qualified_name() == *root)
+            .map(|b| b.header_offset)
+            .collect();
+        assert_eq!(*header_offsets, marked, "{root}");
+        named.extend(partitions.clone().unwrap_or_else(|| panic!("{root}: a TOC names each")));
+        assert!(through.insert(root.clone(), header_offsets.clone()).is_none(), "{root}");
+    }
+    (through, named)
 }
 
 /// The tables `names` names, each `public.`.

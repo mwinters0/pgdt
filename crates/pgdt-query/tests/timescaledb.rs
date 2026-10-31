@@ -168,6 +168,51 @@ async fn each_hypertable_reads_as_its_restore_holds_it() {
     }
 }
 
+/// **What a compressed chunk refuses is the map's finding**, found by one
+/// derivation: each hypertable with a compressed chunk the file holds is
+/// named with exactly those chunks, refuses read with its descendants naming
+/// them, and each refuses read by its own name under either mode; a chunk
+/// refused by its own name is one a finding names. A dump holding none of
+/// its chunks finds none, and every other finds one.
+#[tokio::test]
+async fn what_a_compressed_chunk_refuses_is_the_map_s_finding() {
+    for (version, flag_set) in FIXTURES {
+        let at = format!("{version} {flag_set}");
+        let path = timescaledb_fixture(version, flag_set);
+        let dump = mapped(source(&path), &StatisticsRequest::DATA).await;
+        let mut found = BTreeSet::new();
+        for diagnostic in &dump.index().diagnostics {
+            let DiagnosticKind::TimescaleChunksCompressed { database, hypertable, chunks } =
+                diagnostic.kind()
+            else {
+                continue;
+            };
+            assert_eq!(*database, None, "{at}");
+            let refused = refusal(&dump, hypertable).await;
+            let Some(Error::CompressedChunks { chunks: reached, .. }) = refused else {
+                panic!("{at}: {hypertable} {refused:?}")
+            };
+            let reached: BTreeSet<&String> = reached.iter().collect();
+            assert_eq!(reached, chunks.iter().collect(), "{at}: {hypertable}");
+            for chunk in chunks {
+                let name = dump.tables().iter().find(|n| n.qualified_name() == *chunk);
+                let table = dump.table(&TableSelector::from(name.expect(chunk))).unwrap().unwrap();
+                for inheritance in [Inheritance::Descendants, Inheritance::Only] {
+                    let read = read(&table, SchemaMode::Strings, inheritance).await;
+                    assert!(matches!(read, Err(Error::CompressedChunks { .. })), "{at}: {chunk}");
+                }
+                assert!(found.insert(chunk.clone()), "{at}: {chunk} found twice");
+            }
+        }
+        let (_, compressed) = catalog(dump.index());
+        let held: BTreeSet<String> =
+            compressed.into_iter().filter(|c| ddl(dump.index()).tables.contains_key(c)).collect();
+        assert_eq!(found, held, "{at}");
+        let chunkless = matches!(flag_set, "exclude-chunks" | "schema-public");
+        assert_eq!(found.is_empty(), chunkless, "{at}");
+    }
+}
+
 /// A cold query's pass refuses, reads and notes as a complete map's table
 /// does: a chunk runs it to the end, its catalog's blocks being anywhere past
 /// it.

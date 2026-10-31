@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::diagnostic::DiagnosticExt;
 use crate::statistics::deserialize_block_statistics;
 use crate::timescaledb::RecordedRows;
 use crate::{
@@ -405,6 +406,44 @@ impl TableName {
     }
 }
 
+/// **A partition root blocks are written through** (I2), and those blocks
+/// ([`DumpIndex::through_roots`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThroughRoot<'a> {
+    /// The root, which every one of its blocks' headers names, in its
+    /// database.
+    pub root: TableName,
+    /// Each block written through it, in file order, beside the partition
+    /// it holds where its TOC entry names one (`KD1` names where none does).
+    pub blocks: Vec<(&'a CopyBlock, Option<TableName>)>,
+}
+
+impl ThroughRoot<'_> {
+    /// **Its finding**: the root, its blocks' offsets, and the partitions
+    /// they hold, each once in file order — `None` where a block's TOC entry
+    /// names none, so any partition below the root may hold its rows.
+    pub fn finding(&self) -> Diagnostic {
+        let header_offsets = self.blocks.iter().map(|(block, _)| block.header_offset).collect();
+        let mut partitions: Option<Vec<String>> = Some(Vec::new());
+        for (_, held) in &self.blocks {
+            let (Some(listed), Some(held)) = (partitions.as_mut(), held) else {
+                partitions = None;
+                break;
+            };
+            let held = held.qualified_name();
+            if !listed.contains(&held) {
+                listed.push(held);
+            }
+        }
+        Diagnostic::partitions_through_root(
+            self.root.database.clone(),
+            self.root.qualified_name(),
+            header_offsets,
+            partitions,
+        )
+    }
+}
+
 /// The full file map discovered in a dump, in file order
 /// (`docs/design/decisions.md`, "D34"). [`DumpIndex::blocks`] is a derived
 /// filter over it, not a second stored structure.
@@ -490,6 +529,30 @@ impl DumpIndex {
             }
             _ => None,
         })
+    }
+
+    /// **Every partition root blocks are written through** (I2), each once,
+    /// in the order its first such block appears, beside those blocks: what
+    /// a read of each partition below it refuses on, which partition a row
+    /// belongs to not being read, and what its finding names
+    /// ([`ThroughRoot::finding`], `docs/design/decisions.md`, "D136").
+    pub fn through_roots(&self) -> Vec<ThroughRoot<'_>> {
+        let mut roots: Vec<ThroughRoot<'_>> = Vec::new();
+        for (database, block, held) in self.blocks_held() {
+            if block.partition_root.is_none() {
+                continue;
+            }
+            let root = TableName::of(database, block);
+            let at = match roots.iter().position(|through| through.root == root) {
+                Some(at) => at,
+                None => {
+                    roots.push(ThroughRoot { root, blocks: Vec::new() });
+                    roots.len() - 1
+                }
+            };
+            roots[at].blocks.push((block, held));
+        }
+        roots
     }
 
     /// Every table this map holds a `COPY` block for, each once, in the order

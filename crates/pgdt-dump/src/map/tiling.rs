@@ -1,7 +1,8 @@
 //! What every map is checked for and carries, recomputed wherever one is
 //! mapped or loaded: the tiling check and its diagnostic, the TOC-coverage
-//! figure, an unseekable compressed source's warning and TimescaleDB's
-//! findings — the [`derived_diagnostics`] — and each span's text read back from the file by
+//! figure, an unseekable compressed source's warning, the partition roots
+//! rows are written through and TimescaleDB's findings — the
+//! [`derived_diagnostics`] — and each span's text read back from the file by
 //! offset (`docs/design/decisions.md`, "D30").
 
 use pgdt_core::Result;
@@ -145,8 +146,9 @@ fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
 /// **What a whole-file map carries that nothing persists**
 /// (`pgdt_model::DumpIndex::diagnostics` is `#[serde(skip)]`): the tiling
 /// check's failure, the TOC-coverage figure, an unseekable compressed
-/// source's warning and each TimescaleDB database's findings
-/// ([`pgdt_model::timescaledb::findings`]), each a pure function of the map
+/// source's warning, each partition root's blocks written through it
+/// ([`pgdt_model::ThroughRoot::finding`]) and each TimescaleDB database's
+/// findings ([`pgdt_model::timescaledb::findings`]), each a pure function of the map
 /// `mapped` — its spans, its DDL and its catalog's rows — the file's
 /// addressable `size` and the source's compression `index`. **The one place they are computed**, for
 /// every site a whole map is finished or loaded — `pgdt_mapping::build_index`,
@@ -161,6 +163,7 @@ pub fn derived_diagnostics(
     let mut diagnostics = tiling_diagnostics(&mapped.spans, size);
     diagnostics.push(toc_coverage_diagnostic(&mapped.spans));
     diagnostics.extend(non_seekable_compression_diagnostic(index));
+    diagnostics.extend(mapped.through_roots().iter().map(pgdt_model::ThroughRoot::finding));
     diagnostics.extend(pgdt_model::timescaledb::findings(mapped));
     diagnostics
 }

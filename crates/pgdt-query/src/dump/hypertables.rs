@@ -26,7 +26,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use pgdt_model::timescaledb::{Release, Resolution, TimescaleDb, absent_chunks, root_rows};
+use pgdt_model::timescaledb::{
+    Release, Resolution, TimescaleDb, absent_chunks, compressed_chunks, root_rows,
+};
 use pgdt_model::{DatabaseMetadata, DumpIndex};
 
 use crate::options::Inheritance;
@@ -63,10 +65,9 @@ enum Catalog {
 impl Verdict {
     /// The verdict of database `database`'s catalog, its DDL `ddl`, `None`
     /// where the database is not TimescaleDB's ([`TimescaleDb::of`]). The
-    /// root rows and absent chunks are counted as the map's findings count
-    /// them ([`root_rows`], [`absent_chunks`]), none absent without the DDL.
-    // timescaledb: TS4 — bits 1 and 8 mark a chunk whose rows are compressed.
-    // timescaledb: TS6 — a dropped row names no table, so it is no chunk.
+    /// compressed chunks, root rows and absent chunks are found as the map's
+    /// findings find them ([`compressed_chunks`], [`root_rows`],
+    /// [`absent_chunks`]), none absent without the DDL.
     // timescaledb: TS8 — from 2.28 `ONLY` a hypertable reads empty on the server.
     pub(super) fn of(
         index: &DumpIndex,
@@ -93,13 +94,7 @@ impl Verdict {
                         (!absent.is_empty()).then(|| (hypertable.table.clone(), absent))
                     })
                     .collect();
-                let compressed = hypertables
-                    .iter()
-                    .flat_map(|hypertable| &hypertable.chunks)
-                    .filter(|chunk| !chunk.dropped)
-                    .filter(|chunk| chunk.compressed() || chunk.partially_compressed())
-                    .map(|chunk| chunk.table.clone())
-                    .collect();
+                let compressed = hypertables.iter().flat_map(compressed_chunks).collect();
                 Catalog::Resolved { compressed, absent }
             }
             Resolution::Unreadable { missing, malformed, hypertables, .. } => {

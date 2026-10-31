@@ -75,3 +75,45 @@ fn a_timescaledb_finding_names_what_it_is_about() {
     );
     assert!(unreadable(None).contains(": every table with a descendant is not read"));
 }
+
+/// **What refuses a read is named by its finding**: a partition root's
+/// blocks by offset and the partitions they hold, or every one below it
+/// where a block's TOC entry names none; a hypertable's compressed chunks,
+/// the first and how many more.
+#[test]
+fn a_refusal_s_finding_names_what_refuses() {
+    let names = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+    let through = |partitions| {
+        <Diagnostic as DiagnosticExt>::partitions_through_root(
+            Some("app".to_owned()),
+            "public.reading".to_owned(),
+            vec![120, 480],
+            partitions,
+        )
+        .message()
+    };
+    assert_eq!(
+        through(Some(names(&["public.reading_2021", "public.reading_2020_north"]))),
+        "partition root `public.reading` in database `app` has its partitions' rows written \
+         through it, in the COPY blocks at offsets 120, 480, and which partition a row belongs \
+         to is not read: each partition they hold, `public.reading_2021` and 1 more, refuses \
+         read under its own name, with its descendants or alone, as does each partitioned table \
+         below `public.reading` read with its descendants; `public.reading` read with its \
+         descendants holds them whole"
+    );
+    assert!(through(None).contains("is not read: each partition below it refuses read"));
+    let compressed = <Diagnostic as DiagnosticExt>::timescale_chunks_compressed(
+        None,
+        "public.metrics".to_owned(),
+        names(&[
+            "_timescaledb_internal._hyper_1_2_chunk",
+            "_timescaledb_internal._hyper_1_3_chunk",
+        ]),
+    );
+    assert_eq!(compressed.severity(), Severity::Warning);
+    assert!(compressed.message().starts_with(
+        "TimescaleDB hypertable `public.metrics` has chunk `_timescaledb_internal._hyper_1_2_chunk` \
+         and 1 more whose rows are compressed, which are not decoded: `public.metrics` refuses \
+         read with its descendants"
+    ));
+}

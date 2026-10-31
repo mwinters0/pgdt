@@ -193,18 +193,22 @@ pub(super) fn table_read(index: &DumpIndex, name: &TableName) -> TableRead {
     // Blocks through another root holding this table's rows or a
     // descendant's, and those of them that may hold its own.
     let (mut through_any, mut through_own) = (Vec::new(), Vec::new());
-    for (in_database, block, held) in index.blocks_held() {
-        if in_database != database {
+    for (in_database, block) in index.blocks_with_database() {
+        if in_database == database && reads(&TableName::of(in_database, block)) {
+            blocks.push(block.clone());
+        }
+    }
+    // The roots the map's findings name, read by the same derivation.
+    for root in index.through_roots() {
+        if root.root.database.as_deref() != database || reads(&root.root) {
             continue;
         }
-        let named = TableName::of(in_database, block);
-        if reads(&named) {
-            blocks.push(block.clone());
-        } else if block.partition_root.is_some()
-            && held.as_ref().map_or_else(|| below(&named), reads)
-        {
-            let at = (named.qualified_name(), block.header_offset);
-            let own = match &held {
+        for (block, held) in &root.blocks {
+            if !held.as_ref().map_or_else(|| below(&root.root), reads) {
+                continue;
+            }
+            let at = (root.root.qualified_name(), block.header_offset);
+            let own = match held {
                 Some(held) => held == name,
                 None => !partitioned,
             };
@@ -212,9 +216,13 @@ pub(super) fn table_read(index: &DumpIndex, name: &TableName) -> TableRead {
                 through_own.push(at.clone());
             }
             through_any.push(at);
-            through.push(block.clone());
+            through.push((*block).clone());
         }
     }
+    // In file order, whichever root each is written through.
+    through.sort_by_key(|block| block.header_offset);
+    through_any.sort_by_key(|(_, offset)| *offset);
+    through_own.sort_by_key(|(_, offset)| *offset);
     let mut refused = Refusals {
         descendants: Refused::through(&through_any),
         only: Refused::through(&through_own),

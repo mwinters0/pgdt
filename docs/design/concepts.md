@@ -161,8 +161,10 @@ The spans tiling a dump and the `COPY` blocks among them, the builder that
 extends a map, and what is found wrong with the file
 ([`decisions.md`](decisions.md), "The file map and the preamble").
 
-- **pgdt-model** — `span.rs`: what the cache persists (D68); `diagnostic.rs`:
-  what is found wrong with the file, recomputed on load rather than persisted.
+- **pgdt-model** — `span.rs`: what the cache persists (D68), and the
+  partition roots blocks are written through, which a read's refusals and
+  the map's findings both read (D136); `diagnostic.rs`: what is found wrong
+  with the file, recomputed on load rather than persisted.
 - **pgdt-dump** — `map/`: building a map — where a statement ends, a comment
   block read, and what every map is checked for and carries.
 
@@ -209,8 +211,8 @@ hypertables, chunks and continuous aggregates
   and the query layer read one set of conclusions (D74). The mapping pass
   records the rows as it maps each block, beside the census and the
   statistics observer it attaches, and keeps them off the interior workers.
-  What they say of the file — a root's own rows, absent chunks, a catalog
-  that does not read — is the map's diagnostics, derived with the rest.
+  What they say of the file — compressed chunks, a root's own rows, absent
+  chunks, a catalog that does not read — is the map's diagnostics, derived with the rest.
 - **pgdt-query** — `dump/hypertables.rs`: the catalog's verdict on a read —
   the compressed chunks it reaches, the hypertables an unreadable catalog
   leaves unread with their descendants, and the map's findings said as the

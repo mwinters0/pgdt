@@ -73,6 +73,15 @@ hypertable's, and none on a cold partial map; a note on a hypertable read alone 
 answer its root's rows either way. Code: `dump/hypertables.rs` (`Verdict::notes`), `timescaledb/findings.rs`.
 Evidence: `tests/timescaledb.rs`.
 
+### D136 What refuses a read is one finding of the file per root or hypertable, and no read's note
+A partition root its partitions' rows are written through, and a hypertable with compressed chunks the file holds, are
+each one `Warning` finding (D19), derived in the model by what the query layer's refusals read, so `pgdt info` and a
+dump's drain name the partitions and chunks a read refuses by name. No plan note: the read refuses, its error
+saying why, where D135's notes are for a read that succeeds unlike the server's. Rejected: a clause on each parent's
+line in `pgdt info` (no leaf named, and `info` reaching the query layer's rules); a finding per refusing table. Code:
+`span.rs` (`DumpIndex::through_roots`), `timescaledb/findings.rs` (`compressed_chunks`), `dump/descendants.rs`.
+Evidence: `tests/descendants.rs`, `tests/timescaledb.rs`.
+
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 Sub-streams are contiguous byte-balanced runs cut through blocks in file order, so concatenating them *is* the serial
 replay. A cut's offsets are search bounds, a row straddling one belonging to the earlier piece, and a piece resyncs by a

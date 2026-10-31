@@ -146,8 +146,8 @@ at 2.13 the chunks with a `compressed_chunk_id` are `1` and `9`.
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
 "TimescaleDB" — compressed and partially compressed chunks refused:
 `Chunk::compressed`, `Chunk::partially_compressed` and `status_of`
-(`pgdt-model`'s `timescaledb/recipe.rs`); the chunks refusing a read,
-`Verdict::of` (`pgdt-query`'s `dump/hypertables.rs`).
+(`pgdt-model`'s `timescaledb/recipe.rs`); the chunks refusing a read and
+their finding, `compressed_chunks` (`timescaledb/findings.rs`).
 **Re-verify:** `git show <tag>:src/chunk.h | grep -n 'define CHUNK_STATUS'`.
 
 ---
@@ -202,8 +202,8 @@ false` ("Continuous Aggregates with partials is not supported anymore").
 **Verified against:** the pins; the source at 2.13.1–2.21.4.
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
 "TimescaleDB" — a `chunk.dropped` row is no chunk: `read_chunks` (`pgdt-model`'s
-`timescaledb/recipe.rs`), none refuses a read, `Verdict::of` (`pgdt-query`'s
-`dump/hypertables.rs`), and none is absent, `absent_chunks` (`timescaledb/findings.rs`).
+`timescaledb/recipe.rs`), none refuses a read, `compressed_chunks`, and none is absent,
+`absent_chunks` (both `timescaledb/findings.rs`).
 **Re-verify:** `git show <tag>:src/chunk.c | grep -n 'preserve_catalog_row(chunks'`.
 
 ---

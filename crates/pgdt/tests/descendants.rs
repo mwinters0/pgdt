@@ -240,6 +240,38 @@ fn info_names_each_table_with_descendants() {
     }
 }
 
+/// **`info` says what refuses a read, among its diagnostics**: the partition
+/// root a `--load-via-partition-root` dump writes its partitions' rows
+/// through, naming the partitions refused by name, and a hypertable's
+/// compressed chunks, naming the first; a dump writing every row to its own
+/// table says neither.
+#[test]
+fn info_says_what_refuses_a_read() {
+    let through = "    [warning] partition root `public.reading` has its partitions' rows \
+                   written through it, in the COPY blocks at offsets ";
+    for flag_set in FLAG_SETS {
+        let (_dir, dump) = sandboxed(&inheritance_fixture(18, flag_set), "dump.sql");
+        let dump = dump.to_str().unwrap();
+        common::run_ok(&["parse", "--source", dump]);
+        let listing = common::run_ok(&["info", "--source", dump]);
+        let found = section(&listing, "diagnostics:");
+        let line = found.iter().find(|l| l.starts_with(through));
+        assert_eq!(line.is_some(), flag_set != "default", "{flag_set}: {listing}");
+        if let Some(line) = line {
+            assert!(line.contains("each partition they hold, `public.reading_"), "{line}");
+        }
+    }
+    let (_dir, dump) = sandboxed(&timescaledb_fixture(18, "default"), "dump.sql");
+    let dump = dump.to_str().unwrap();
+    common::run_ok(&["parse", "--source", dump]);
+    let listing = common::run_ok(&["info", "--source", dump]);
+    let compressed = "    [warning] TimescaleDB hypertable `public.metrics` has chunk \
+                      `_timescaledb_internal._hyper_1_";
+    let found = section(&listing, "diagnostics:");
+    let line = found.iter().find(|l| l.starts_with(compressed));
+    assert!(line.is_some_and(|l| l.contains("and 3 more whose rows are compressed")), "{listing}");
+}
+
 /// **`info` states each TimescaleDB database's release and what its catalog
 /// concludes ahead of the blocks, and folds each chunk's block under its
 /// hypertable's**, a compressed relation's beside them where it is no chunk
@@ -268,7 +300,7 @@ fn info_states_the_timescaledb_catalog_and_folds_chunks() {
     // Before the blocks, which a chunk's no longer lists.
     let at = listing.find("TimescaleDB: ").unwrap();
     assert!(listing.find("public.metrics (1 rows)").is_some_and(|block| block > at), "{listing}");
-    assert!(!listing.contains("_hyper_1_2_chunk"), "{listing}");
+    assert!(!listing.contains("\n_timescaledb_internal._hyper_1_2_chunk ("), "{listing}");
     let beneath = listing.lines().skip_while(|l| *l != "public.metrics (1 rows)").nth(1);
     let folded = "    chunks: 6 block(s), 44 row(s); compressed relations: 4 block(s), 6 row(s) — \
                   folded, `pgdt info --detail` lists each";

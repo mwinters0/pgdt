@@ -1,6 +1,7 @@
 //! **What each TimescaleDB database's catalog says about the file**, as the
-//! map's diagnostics carry it: the chunks a hypertable's catalog lists that
-//! the file lacks, each root's own rows, and a catalog that does not read
+//! map's diagnostics carry it: the chunks the file holds whose rows are
+//! compressed, the chunks a hypertable's catalog lists that the file lacks,
+//! each root's own rows, and a catalog that does not read
 //! (`docs/design/roadmap-P38-descendants.md`, "TimescaleDB"). Properties of
 //! the file rather than of one read, so on the file-level channel
 //! ([`crate::diagnostic`]'s module doc), derived wherever a whole map is
@@ -41,8 +42,9 @@ pub fn findings(index: &DumpIndex) -> Vec<Diagnostic> {
     findings
 }
 
-/// One database's findings: under a readable catalog each hypertable's root
-/// rows and absent chunks; under one that does not read, the catalog's own
+/// One database's findings: under a readable catalog each hypertable's
+/// compressed chunks, root rows and absent chunks; under one that does not
+/// read, the catalog's own
 /// finding and the root rows of each hypertable its rows still name.
 fn of_database(
     index: &DumpIndex,
@@ -60,6 +62,17 @@ fn of_database(
     match resolution {
         Resolution::Resolved(resolved) => {
             for hypertable in &resolved.hypertables {
+                // A compressed chunk the file lacks refuses nothing (D134).
+                let held = |chunk: &String| ddl.is_none_or(|ddl| ddl.tables.contains_key(chunk));
+                let compressed: Vec<String> =
+                    compressed_chunks(hypertable).into_iter().filter(held).collect();
+                findings.extend((!compressed.is_empty()).then(|| {
+                    Diagnostic::timescale_chunks_compressed(
+                        database.clone(),
+                        hypertable.table.clone(),
+                        compressed,
+                    )
+                }));
                 findings.extend(root_rows(&hypertable.table));
                 let absent = ddl.map(|ddl| absent_chunks(ddl, hypertable)).unwrap_or_default();
                 findings.extend((!absent.is_empty()).then(|| {
@@ -81,6 +94,21 @@ fn of_database(
         }
     }
     findings
+}
+
+/// **The chunks of `hypertable` whose rows are compressed or partially
+/// compressed**, each `schema.table`, its dropped rows left out: what a read
+/// reaching one refuses on, and, of those the file holds, what its finding
+/// lists (`docs/design/decisions.md`, "D134", "D136").
+// timescaledb: TS4 — bits 1 and 8 mark a chunk whose rows are compressed.
+// timescaledb: TS6 — a dropped row names no table, so it is no chunk.
+pub fn compressed_chunks(hypertable: &Hypertable) -> Vec<String> {
+    hypertable
+        .chunks
+        .iter()
+        .filter(|chunk| !chunk.dropped && (chunk.compressed() || chunk.partially_compressed()))
+        .map(|chunk| chunk.table.clone())
+        .collect()
 }
 
 /// **The rows `hypertable`'s root holds of its own**, every block of it in

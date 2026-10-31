@@ -193,6 +193,29 @@ pub enum DiagnosticKind {
         block_count: usize,
         largest_unit: u64,
     },
+    /// A partition root's partitions' rows are written through it
+    /// (`--load-via-partition-root`, or forced, I2), in the `COPY` blocks
+    /// whose headers' offsets are `header_offsets`, and which partition a row
+    /// belongs to is not read: each partition they hold, `partitions` —
+    /// `None` where a block's TOC entry names none, so any below the root —
+    /// refuses read under its own name, with its descendants or alone, and
+    /// each partitioned table below the root read with its descendants; the
+    /// root read with its descendants holds them whole (`KD158`). `database`
+    /// is the segment's, `None` for a plain dump. Pushed for each
+    /// `crate::DumpIndex::through_roots`, by `crate::ThroughRoot::finding`.
+    PartitionsThroughRoot {
+        database: Option<String>,
+        root: String,
+        header_offsets: Vec<u64>,
+        partitions: Option<Vec<String>>,
+    },
+    /// A TimescaleDB hypertable has chunks the file holds whose rows its
+    /// catalog marks compressed or partially compressed, each `schema.table`
+    /// (TS4), which are not decoded: the hypertable refuses read with its
+    /// descendants, and each of them read by its own name, with its
+    /// descendants or alone (`KD159`). Pushed by
+    /// `crate::timescaledb::findings`.
+    TimescaleChunksCompressed { database: Option<String>, hypertable: String, chunks: Vec<String> },
     /// A TimescaleDB hypertable's catalog lists chunks, each `schema.table`,
     /// whose tables the file does not declare — a dump excluding the chunks'
     /// schema, or a chunk foreign to the server — read as absent, as a
@@ -289,6 +312,33 @@ impl Finding for Diagnostic {
                  block ({block_count} unit(s)) — every read inside that unit decodes it from its \
                  start; recompress with `bgzip` or `gzip` for random access"
             ),
+            DiagnosticKind::PartitionsThroughRoot {
+                database,
+                root,
+                header_offsets,
+                partitions,
+            } => format!(
+                "partition root `{root}`{} has its partitions' rows written through it, in the \
+                 COPY blocks at offsets {}, and which partition a row belongs to is not read: \
+                 {} refuses read under its own name, with its descendants or alone, as does \
+                 each partitioned table below `{root}` read with its descendants; `{root}` read \
+                 with its descendants holds them whole",
+                in_database(database),
+                header_offsets.iter().map(u64::to_string).collect::<Vec<_>>().join(", "),
+                match partitions {
+                    Some(partitions) =>
+                        format!("each partition they hold, {},", listed(partitions)),
+                    None => "each partition below it".to_owned(),
+                }
+            ),
+            DiagnosticKind::TimescaleChunksCompressed { database, hypertable, chunks } => format!(
+                "TimescaleDB hypertable `{hypertable}`{} has {} whose rows are compressed, which \
+                 are not decoded: `{hypertable}` refuses read with its descendants, and each of \
+                 them read by its own name, with its descendants or alone; each other chunk \
+                 reads under its own name, and `{hypertable}` alone as its root's own rows",
+                in_database(database),
+                pgdt_core::internal::chunk_list(chunks)
+            ),
             DiagnosticKind::TimescaleChunksAbsent { database, hypertable, chunks } => format!(
                 "the TimescaleDB catalog of hypertable `{hypertable}`{} lists {} that the file \
                  does not hold; read as absent, as a restore of this file lacks them",
@@ -324,10 +374,20 @@ impl Finding for Diagnostic {
     }
 }
 
-/// Where a TimescaleDB finding's database is named, `" in database `<name>`"`;
+/// Where a finding's database is named, `" in database `<name>`"`;
 /// nothing for a plain dump's, which names none.
 fn in_database(database: &Option<String>) -> String {
     database.as_ref().map(|name| format!(" in database `{name}`")).unwrap_or_default()
+}
+
+/// The tables `names` lists, each `schema.table`: the first, and how many
+/// more.
+fn listed(names: &[String]) -> String {
+    match names {
+        [] => "none".to_owned(),
+        [one] => format!("`{one}`"),
+        [first, rest @ ..] => format!("`{first}` and {} more", rest.len()),
+    }
 }
 
 /// `issues` counted by kind, a [`TilingIssue::Discontinuity`] a gap where the
@@ -397,6 +457,17 @@ pub trait DiagnosticExt {
     fn cache_mtime_changed() -> Self;
     fn cache_entity_tag_changed() -> Self;
     fn cache_origin_changed() -> Self;
+    fn partitions_through_root(
+        database: Option<String>,
+        root: String,
+        header_offsets: Vec<u64>,
+        partitions: Option<Vec<String>>,
+    ) -> Self;
+    fn timescale_chunks_compressed(
+        database: Option<String>,
+        hypertable: String,
+        chunks: Vec<String>,
+    ) -> Self;
     fn timescale_chunks_absent(
         database: Option<String>,
         hypertable: String,
@@ -455,6 +526,29 @@ impl DiagnosticExt for Diagnostic {
     /// (`pgdt_dump::cache::OriginMatch`).
     fn cache_origin_changed() -> Self {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheOriginChanged }
+    }
+
+    /// Reads that refuse, each saying why: the file is still read, so
+    /// `Warning`, as every finding of what a read answers.
+    fn partitions_through_root(
+        database: Option<String>,
+        root: String,
+        header_offsets: Vec<u64>,
+        partitions: Option<Vec<String>>,
+    ) -> Self {
+        let kind =
+            DiagnosticKind::PartitionsThroughRoot { database, root, header_offsets, partitions };
+        Self { severity: Severity::Warning, kind }
+    }
+
+    /// Reads that refuse, as [`DiagnosticExt::partitions_through_root`]'s.
+    fn timescale_chunks_compressed(
+        database: Option<String>,
+        hypertable: String,
+        chunks: Vec<String>,
+    ) -> Self {
+        let kind = DiagnosticKind::TimescaleChunksCompressed { database, hypertable, chunks };
+        Self { severity: Severity::Warning, kind }
     }
 
     /// Rows the catalog places that the file lacks: the result matches a
