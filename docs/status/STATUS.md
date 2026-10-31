@@ -98,6 +98,7 @@ Spec: [`../design/roadmap-P38-descendants.md`](../design/roadmap-P38-descendants
 - [x] **38.5.3** The hypertables' findings said per read too: each a `Warning` `PlanNote` on a read it bears on, beside its `DiagnosticKind` — [notes](../design/roadmap-P38.5.3-per-read-notes.md)
 - [x] **38.5.4** An unreadable catalog's named hypertable the file holds no chunk of reads as a plain table, its read noting that which chunks the file lacks cannot be known — [notes](../design/roadmap-P38.5.4-no-chunk-held-notes.md)
 - [x] **38.6** `pgdt info`'s logical model: parents and their descendants, the TimescaleDB section, continuous aggregates, chunks folded — [notes](../design/roadmap-P38.6-logical-model-notes.md)
+- [ ] **38.6.1** What refuses a read, found: a `Warning` finding per partition root whose partitions' rows were written through it and per hypertable with compressed chunks the file holds, each derived in the model and read by the query layer's refusals, printed by `pgdt info` ([2026-10-31](history/2026-10-31.md), "What refuses a read is a finding `pgdt info` prints")
 - [ ] **38.7** The record: the README's supported/unsupported list, the manual, `pg-dump-compatibility.md`'s rows, both modes in one statement by one dump registered twice (manual and a `pgdt sql` test), and the hand run on the reference dump
 
 ## Not started
@@ -130,14 +131,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`pgdt info`'s `tables with descendants` says no refusal** (38.6). Each
-  parent's line counts its descendants and the rows they hold, though a read
-  of it may refuse: a hypertable reaching a compressed chunk (`KD159`), or,
-  under `--load-via-partition-root`, a partitioned table below the root read
-  with its descendants (`KD158`). The TimescaleDB section's compressed count
-  says the first; nothing `info` prints says the second. Saying either per
-  parent means `info` settling the query layer's refusals
-  (`pgdt-query`'s `dump/descendants.rs`, `Refusals`) over the cache, where
-  D61 has it report the cache and never a `Dump`, so the line reads the
-  model's conclusions alone. Reconsidering adds a refusal clause per parent,
-  the refusal rules then owned below the query layer or reached by `info`.

@@ -189,6 +189,14 @@ children are chunks and which rows the file does not hold.
   unless `--map` or `--detail` asks for them. What decides whether a query
   refuses is what an administrator reads first. Rejected: a TimescaleDB section
   over today's flat listing, thousands of chunk lines at Datanommer's scale.
+- **What refuses a read is a finding of the file**, one per partition root whose
+  partitions' rows were written through it and one per hypertable with
+  compressed chunks the file holds, each a `Warning` naming what refuses under
+  which mode, derived in the model and read by the query layer's refusals, so
+  `pgdt info` and an embedder's dump-level drain hear them (amended
+  2026-10-31). No per-read note: the read they bear on refuses, saying why.
+  Rejected: a refusal clause on each parent's line, which names no leaf
+  partition read by name and has `info` reach the query layer's rules.
 - **The README claims "supports TimescaleDB" when every way a dump can store
   a hypertable's rows, across the pinned versions, is read under the
   hypertable**, and states a supported/unsupported list otherwise. The test is
@@ -341,6 +349,9 @@ what promotes it, registered by the slice that adds the refusal.
    every pin checked against its oracle.
 6. **`pgdt info`'s logical model.** Parents and their descendants, the
    TimescaleDB section, continuous aggregates, chunks folded.
+   - **6.1, earned: what refuses a read, found.** Slice 6 said no refusal; the
+     through-root and compressed-chunk findings above, before slice 7 records
+     them.
 7. **The record.** The README's supported/unsupported list, the manual,
    [`pg-dump-compatibility.md`](pg-dump-compatibility.md)'s rows for
    inheritance, partitions and TimescaleDB; the manual's way to read both

@@ -39,10 +39,12 @@ TimescaleDB section and the folding at 2.31 and 2.13, over `exclude-chunks`,
 
 ## Negative results
 
-- **A parent's line says nothing about refusals**, for a compressed chunk
-  (`KD159`) or a table written through its root (`KD158`): `info` reports
-  the cache and builds no `Dump` (D61), and the refusals are the query
-  layer's. Under STATUS's "Decisions worth another look".
+- **A parent's line counts what the file holds and says no refusal**, even
+  where a read of it refuses (`KD158`, `KD159`): the count stays true, and
+  what refuses is a file-level finding (38.6.1). A clause or marker per line
+  was rejected, naming no leaf partition read by name; a rewording guarding
+  against reading the count as an answer waits on 38.7's hand run showing it
+  misread.
 - **A through-root block counted by its header name leaves a partitioned
   table below the root holding no row**, its partitions' rows all counted to
   the root; hence `blocks_held`.
