@@ -94,9 +94,7 @@ pub fn declared_column<'m>(
     qualified: &str,
     name: &str,
 ) -> Option<&'m ColumnDef> {
-    metadata
-        .and_then(|m| m.databases.iter().find(|db| db.name.as_deref() == database))
-        .and_then(|db| db.declared_column(qualified, name))
+    metadata.and_then(|m| m.database(database)).and_then(|db| db.declared_column(qualified, name))
 }
 
 /// Whether `column`'s bounds, row order and dictionary were gathered under the

@@ -190,9 +190,11 @@ extensions, kept as the words written ([`decisions.md`](decisions.md), "The
 file map and the preamble").
 
 - **pgdt-model** — `catalog.rs`: persisted, so never a codec conclusion
-  (D74); the walks over what it declares — a column through a table's
+  (D74); a database's DDL by name, every reader of a block's DDL finding it
+  there, and the walks over what it declares — a column through a table's
   parents, a table's descendants and ancestors — beside it, reading nothing
-  else.
+  else. The databases a dump holds are the map's (`DumpIndex::databases`),
+  which a listing and the TimescaleDB findings both walk.
 - **pgdt-dump** — `ddl/`, `preamble.rs`: the statement grammar, applied
   across the whole file, and the prepass reading the region before the first
   data, which the scanner and the grammar drive and pgdt-query's pass 1

@@ -434,7 +434,7 @@ than reading as a phase nobody has sliced.
   against the first's DDL, so a column the second retyped is typed as the
   first declared it and a table only the second declares is `NotDeclared`,
   with no error. **(c) unowned**; promoted by a same-name concatenation
-  reaching a user. Detail: `crates/pgdt-codec/src/resolve.rs`.
+  reaching a user. Detail: `crates/pgdt-model/src/catalog.rs`.
 
 - **KD134** — a parallel interior region fails on what follows its block — a
   line of `max_line_bytes` or more, a corrupt unit, a failed fetch — where the

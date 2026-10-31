@@ -35,7 +35,7 @@ pub mod internal {
         OrderKey, Side, compare_keys, compare_keys_stored, field_key, literal_key, order_key,
         read_key,
     };
-    pub use crate::resolve::{column_of, database_for_name, read_as_text, schema_of};
+    pub use crate::resolve::{column_of, read_as_text, schema_of};
     pub use crate::unrepresentable::{
         ColumnTier, UnrepresentableRead, column_tiers, counter_for, unrepresentable_reads,
         unrepresentable_tests,

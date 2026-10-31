@@ -18,9 +18,8 @@
 
 use std::collections::BTreeSet;
 
-use pgdt_codec::internal::database_for_name;
 use pgdt_core::Error;
-use pgdt_model::{CopyBlock, DatabaseMetadata, DumpIndex, TableName};
+use pgdt_model::{CopyBlock, DumpIndex, TableName};
 
 use super::hypertables::{ReadNotes, Verdict};
 use crate::options::Inheritance;
@@ -36,11 +35,6 @@ pub(super) fn declared_name(database: Option<&str>, key: &str) -> TableName {
     TableName { database: database.map(str::to_owned), schema, table }
 }
 
-/// The DDL of `database`, where `index` holds it.
-fn ddl<'a>(index: &'a DumpIndex, database: Option<&str>) -> Option<&'a DatabaseMetadata> {
-    index.metadata.as_deref().and_then(|metadata| database_for_name(metadata, database))
-}
-
 /// **Every table `index` lists, each once**: each table a block holds rows
 /// for — the one its header names, and the partition a block written
 /// through its root holds — each preceded by every ancestor its database
@@ -54,7 +48,7 @@ pub(super) fn listed_tables(index: &DumpIndex) -> Vec<TableName> {
     for (database, block, held) in index.blocks_held() {
         let named = TableName::of(database, block);
         for name in std::iter::once(named).chain(held) {
-            let declared = ddl(index, database);
+            let declared = index.ddl(database);
             let ancestors = declared.map(|db| db.ancestors(&name.qualified_name()));
             for ancestor in ancestors.into_iter().flatten().rev() {
                 let ancestor = declared_name(database, ancestor);
@@ -184,7 +178,7 @@ impl Refused {
 pub(super) fn table_read(index: &DumpIndex, name: &TableName) -> TableRead {
     let database = name.database.as_deref();
     let qualified = name.qualified_name();
-    let declared = ddl(index, database);
+    let declared = index.ddl(database);
     let descendants: Vec<TableName> = declared
         .map(|db| db.descendants(&qualified))
         .into_iter()

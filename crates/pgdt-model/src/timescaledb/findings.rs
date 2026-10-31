@@ -11,34 +11,17 @@
 use crate::diagnostic::{Diagnostic, DiagnosticExt};
 use crate::{DatabaseMetadata, DumpIndex};
 
-use super::recorded::CATALOG_SCHEMA;
 use super::{Hypertable, Resolution, TimescaleDb};
 
-/// Every TimescaleDB database's findings in `index`, the databases in the
-/// order the DDL states them and then any whose catalog blocks alone detect
-/// it (TS2), each database's in its hypertables' `id` order, or where its
-/// catalog does not read, that finding first and then its `hypertable`
-/// rows' order.
+/// Every TimescaleDB database's findings in `index`, the databases in
+/// [`DumpIndex::databases`]' order, each database's in its hypertables' `id`
+/// order, or where its catalog does not read, that finding first and then
+/// its `hypertable` rows' order.
 pub fn findings(index: &DumpIndex) -> Vec<Diagnostic> {
-    let mut databases: Vec<Option<&str>> = Vec::new();
-    let declared = index.metadata.iter().flat_map(|metadata| &metadata.databases);
-    let catalogued = index
-        .blocks_with_database()
-        .filter(|(_, block)| block.header.schema.as_deref() == Some(CATALOG_SCHEMA))
-        .map(|(database, _)| database);
-    for database in declared.map(|db| db.name.as_deref()).chain(catalogued) {
-        if !databases.contains(&database) {
-            databases.push(database);
-        }
-    }
     let mut findings = Vec::new();
-    for database in databases {
+    for database in index.databases() {
         let Some(timescaledb) = TimescaleDb::of(index, database) else { continue };
-        let ddl = index
-            .metadata
-            .iter()
-            .flat_map(|metadata| &metadata.databases)
-            .find(|db| db.name.as_deref() == database);
+        let ddl = index.ddl(database);
         findings.extend(of_database(index, database, ddl, timescaledb.resolution));
     }
     findings

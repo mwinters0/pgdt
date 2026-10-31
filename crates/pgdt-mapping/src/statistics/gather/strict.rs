@@ -5,7 +5,6 @@
 use std::sync::Arc;
 
 use pgdt_codec::ResolvedSchema;
-use pgdt_codec::internal::database_for_name;
 use pgdt_codec::internal::{field_refused, grammar_refuses};
 use pgdt_codec::{
     compare::ComparisonPlan,
@@ -30,8 +29,7 @@ pub(super) fn field_checks(
     resolved: &ResolvedSchema,
 ) -> Arc<[Option<FieldCheck>]> {
     let qualified = header.qualified_name();
-    let types =
-        metadata.and_then(|m| database_for_name(m, database)).map_or(&[][..], |db| &db.types[..]);
+    let types = metadata.and_then(|m| m.database(database)).map_or(&[][..], |db| &db.types[..]);
     header
         .columns
         .iter()
@@ -151,7 +149,7 @@ pub fn strict_unchecked(
 ) -> StrictUnchecked {
     let header = &block.header;
     let qualified = header.qualified_name();
-    let db = metadata.and_then(|m| database_for_name(m, database));
+    let db = metadata.and_then(|m| m.database(database));
     let routed =
         block.partition_root.is_some() || db.is_some_and(|db| db.has_partitions(&qualified));
     let routed_through = routed.then(|| qualified.clone());

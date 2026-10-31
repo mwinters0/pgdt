@@ -17,6 +17,24 @@ pub struct DumpMetadata {
     pub databases: Vec<DatabaseMetadata>,
 }
 
+impl DumpMetadata {
+    /// The database named `database` — an exact match on
+    /// [`DatabaseMetadata::name`], never a guess; `None` matches the unnamed
+    /// database a plain (non-`\connect`) dump produces. A block's span records
+    /// its database's name, which is what makes the exact match possible.
+    pub fn database(&self, database: Option<&str>) -> Option<&DatabaseMetadata> {
+        // deficiency: KD133 — the first segment of a name answers for every
+        // segment of it: two concatenated dumps of one database are two
+        // entries, so a block of the second resolves against the first's DDL —
+        // a column the second retyped typed as the first declared it, a table
+        // only the second declares `NotDeclared` — with no error, every reader
+        // of a block's DDL reaching this lookup. The fix is metadata keyed by
+        // the segment a block belongs to rather than by its name. **(c)
+        // unowned**; promoted by a same-name concatenation reaching a user.
+        self.databases.iter().find(|db| db.name.as_deref() == database)
+    }
+}
+
 /// One database's preamble, in DDL order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatabaseMetadata {

@@ -12,8 +12,8 @@ use crate::diagnostic::DiagnosticExt;
 use crate::statistics::deserialize_block_statistics;
 use crate::timescaledb::RecordedRows;
 use crate::{
-    ArrayShape, BlockCensus, BlockStatistics, CollationDef, Diagnostic, DumpMetadata,
-    IgnoredRefusals, TableDef, TableReference, TypeKind, Unrepresentable,
+    ArrayShape, BlockCensus, BlockStatistics, CollationDef, DatabaseMetadata, Diagnostic,
+    DumpMetadata, IgnoredRefusals, TableDef, TableReference, TypeKind, Unrepresentable,
 };
 use pgdt_core::CopyHeader;
 
@@ -485,6 +485,34 @@ pub struct DumpIndex {
 }
 
 impl DumpIndex {
+    /// The DDL of `database`, where the map holds it
+    /// ([`DumpMetadata::database`](crate::DumpMetadata::database)).
+    pub fn ddl(&self, database: Option<&str>) -> Option<&DatabaseMetadata> {
+        self.metadata.as_deref().and_then(|metadata| metadata.database(database))
+    }
+
+    /// The databases the map holds, each once: every one the DDL names, in
+    /// the order it states them, then any a block holds rows in that it does
+    /// not — the unnamed database of a plain dump, or one whose catalog blocks
+    /// alone name it (TS2). So an unnamed database is one only where a block
+    /// is in it: the stretch of a `pg_dumpall` file before its first
+    /// `\connect`, holding roles and no table, is not one.
+    pub fn databases(&self) -> Vec<Option<&str>> {
+        let named = self
+            .metadata
+            .iter()
+            .flat_map(|metadata| &metadata.databases)
+            .filter_map(|db| db.name.as_deref().map(Some));
+        let holding = self.blocks_with_database().map(|(database, _)| database);
+        let mut databases = Vec::new();
+        for database in named.chain(holding) {
+            if !databases.contains(&database) {
+                databases.push(database);
+            }
+        }
+        databases
+    }
+
     /// The `COPY` blocks among `spans`, in file order — a filtered view, not
     /// a stored field, so a block's byte offsets have exactly one owner
     /// (`docs/design/decisions.md`, "D34").

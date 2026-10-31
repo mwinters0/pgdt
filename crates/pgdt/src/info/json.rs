@@ -10,7 +10,6 @@ use pgdt_model::timescaledb::TimescaleDb;
 use pgdt_model::{Diagnostic, DumpIndex};
 
 use super::labels::{arrow_type_label, block_resolutions, block_unchecked, resolution_token};
-use super::logical::databases;
 
 /// `--json`'s shape: the whole cache file — the [`DumpIndex`] and the
 /// [`CacheEnvelope`] around it — flattened to one object, plus what the file
@@ -114,7 +113,8 @@ pub(super) fn print_index_json(
             unchecked: block_unchecked(index, database, block),
         })
         .collect();
-    let timescaledb = databases(index)
+    let timescaledb = index
+        .databases()
         .into_iter()
         .filter_map(|database| {
             TimescaleDb::of(index, database).map(|catalog| TimescaleJson { database, catalog })

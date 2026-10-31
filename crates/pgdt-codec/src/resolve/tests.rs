@@ -483,7 +483,7 @@ fn diagnostic_carries_the_declared_string_when_present() {
     assert_eq!(resolved.columns[1].declared(), None);
 }
 
-/// `database_for_name` selects by the attributed database's *name*, not by
+/// `DumpMetadata::database` selects by the attributed database's *name*, not by
 /// which database's DDL mentions the table first — asserted by giving two
 /// databases different declared types for the same qualified table name.
 /// The caller knows which database applies from the matched `CopyBlock`'s

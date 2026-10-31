@@ -21,13 +21,8 @@ pub(super) struct Catalog<'a> {
 impl<'a> Catalog<'a> {
     // timescaledb: TS2 — detected by the extension or by the catalog's own blocks.
     pub(super) fn of(index: &'a DumpIndex, database: Option<&str>) -> Option<Self> {
-        let extension = index
-            .metadata
-            .as_ref()
-            .and_then(|metadata| {
-                metadata.databases.iter().find(|db| db.name.as_deref() == database)
-            })
-            .is_some_and(|db| db.extensions.iter().any(|e| e.name == EXTENSION));
+        let extension =
+            index.ddl(database).is_some_and(|db| db.extensions.iter().any(|e| e.name == EXTENSION));
         let mut tables: BTreeMap<&str, Vec<&CopyBlock>> = BTreeMap::new();
         for (db, block) in index.blocks_with_database() {
             if db == database && block.header.schema.as_deref() == Some(CATALOG_SCHEMA) {

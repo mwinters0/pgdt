@@ -1,41 +1,23 @@
 //! **The logical model the listing opens with**: each table a read takes
 //! descendants' rows into, and per TimescaleDB database what its catalog
 //! concludes — the release, each hypertable's dimensions and chunks counted
-//! whole, compressed and absent from the file, each continuous aggregate —
-//! and the chunks the block listing folds under their hypertable, what
-//! decides whether a query refuses being what an administrator reads first.
-//! Not a TimescaleDB section over a flat listing, which at a reference
-//! dump's scale is thousands of chunk lines. Every conclusion is the model's — [`DatabaseMetadata::descendants`],
-//! [`TimescaleDb::of`], [`absent_chunks`] — counted here over the blocks the
-//! cache holds, never a `Dump`'s (`docs/design/decisions.md`, "D61").
+//! whole, compressed and absent from the file, each continuous aggregate — and
+//! the chunks the block listing folds under their hypertable, what decides
+//! whether a query refuses being what an administrator reads first. Not a
+//! TimescaleDB section over a flat listing, which at a reference dump's scale
+//! is thousands of chunk lines. Every conclusion is the model's —
+//! [`DatabaseMetadata::descendants`], [`TimescaleDb::of`], [`absent_chunks`] —
+//! counted here over the blocks the cache holds, never a `Dump`'s
+//! (`docs/design/decisions.md`, "D61").
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use pgdt_model::timescaledb::{
-    CATALOG_SCHEMA, ContinuousAggregate, Hypertable, Resolution, TimescaleDb, Version,
-    absent_chunks,
+    ContinuousAggregate, Hypertable, Resolution, TimescaleDb, Version, absent_chunks,
 };
 use pgdt_model::{CopyBlock, DatabaseMetadata, DumpIndex};
 
 use super::labels::database_label;
-
-/// The databases the cache knows, in the order the DDL states them and then
-/// any its catalog blocks alone name (TS2), each once — the listing's and
-/// `--json`'s.
-pub(super) fn databases(index: &DumpIndex) -> Vec<Option<&str>> {
-    let declared = index.metadata.iter().flat_map(|m| &m.databases).map(|db| db.name.as_deref());
-    let catalogued = index
-        .blocks_with_database()
-        .filter(|(_, block)| block.header.schema.as_deref() == Some(CATALOG_SCHEMA))
-        .map(|(database, _)| database);
-    let mut databases = Vec::new();
-    for database in declared.chain(catalogued) {
-        if !databases.contains(&database) {
-            databases.push(database);
-        }
-    }
-    databases
-}
 
 /// The rows each table holds in `database`, by qualified name: each block's
 /// counted to the table it holds rows for — a block written through its
@@ -189,7 +171,7 @@ fn aggregate_line(aggregate: &ContinuousAggregate) -> String {
 /// concludes or that it does not read, the diagnostics above saying why.
 /// Returns whether it printed.
 pub(super) fn print_timescaledb(index: &DumpIndex) -> bool {
-    let databases = databases(index);
+    let databases = index.databases();
     let multi = databases.len() > 1;
     let mut printed = false;
     for database in databases {
@@ -201,11 +183,7 @@ pub(super) fn print_timescaledb(index: &DumpIndex) -> bool {
             println!();
         }
         printed = true;
-        let ddl = index
-            .metadata
-            .iter()
-            .flat_map(|m| &m.databases)
-            .find(|db| db.name.as_deref() == database);
+        let ddl = index.ddl(database);
         let within =
             if multi { format!(" in database {}", database_label(database)) } else { "".into() };
         println!("TimescaleDB{within}: {}", version_label(&version));
@@ -291,7 +269,7 @@ impl Folds {
         blocks: impl Iterator<Item = (Option<&'a str>, &'a CopyBlock)> + Clone,
     ) -> Self {
         let mut members = BTreeMap::new();
-        for database in databases(index) {
+        for database in index.databases() {
             let Some(TimescaleDb { resolution: Resolution::Resolved(resolved), .. }) =
                 TimescaleDb::of(index, database)
             else {

@@ -8,7 +8,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use pgdt_codec::compare::ComparisonSemantics;
-use pgdt_codec::internal::{database_for_name, read_as_text, schema_of};
+use pgdt_codec::internal::{read_as_text, schema_of};
 use pgdt_codec::{ResolvedSchema, SchemaMode, resolve_columns};
 use pgdt_codec::{
     UnrepresentableMode,
@@ -647,7 +647,7 @@ impl TableColumns {
             return Ok(Self { name, order: Vec::new(), census: Vec::new(), text: Vec::new() });
         };
         let declared: Option<Vec<String>> = metadata
-            .and_then(|metadata| database_for_name(metadata, database))
+            .and_then(|metadata| metadata.database(database))
             .map(|db| db.declared_columns(table))
             .filter(|columns| !columns.is_empty())
             .map(|columns| columns.iter().map(|c| c.name.clone()).collect());

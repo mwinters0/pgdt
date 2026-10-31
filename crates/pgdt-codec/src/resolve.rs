@@ -15,9 +15,7 @@ use arrow_schema::{DataType, Field, FieldRef, Schema, SchemaRef};
 use crate::compare::{CompareKind, ComparisonPlan, ComparisonSemantics, comparison_for};
 use crate::declared::domain_not_null;
 use crate::pgtype::{NestedPlan, TypeOutcome, resolve_declared_type, with_extension};
-use pgdt_model::{
-    ArrayShape, DatabaseMetadata, DumpMetadata, Finding, PG_ARRAY_MAX_DIMS, Severity,
-};
+use pgdt_model::{ArrayShape, DumpMetadata, Finding, PG_ARRAY_MAX_DIMS, Severity};
 
 /// Whether a query resolves column types at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -376,27 +374,6 @@ pub fn schema_of(columns: Vec<ResolvedColumn>) -> ResolvedSchema {
     ResolvedSchema { schema: Arc::new(Schema::new(fields)), columns }
 }
 
-/// Find the database named `database` in `metadata.databases` — an exact
-/// match on [`pgdt_model::DatabaseMetadata::name`], never a guess.
-/// `database: None` matches the single unnamed database a plain (non-`\connect`)
-/// dump produces.
-///
-/// Per-block attribution is what makes the exact match possible.
-pub fn database_for_name<'a>(
-    metadata: &'a DumpMetadata,
-    database: Option<&str>,
-) -> Option<&'a DatabaseMetadata> {
-    // deficiency: KD133 — the first segment of a name answers for every
-    // segment of it: two concatenated dumps of one database are two entries,
-    // so a block of the second resolves against the first's DDL — a column
-    // the second retyped typed as the first declared it, a table only the
-    // second declares `NotDeclared` — with no error, the gatherer and the
-    // replay plan reaching the same lookup. The fix is metadata keyed by the
-    // segment a block belongs to rather than by its name. **(c) unowned**;
-    // promoted by a same-name concatenation reaching a user.
-    metadata.databases.iter().find(|db| db.name.as_deref() == database)
-}
-
 /// What the array-shape census says one column's Arrow type should be.
 enum ShapeVerdict {
     /// Nothing in the census contradicts what the DDL resolved to.
@@ -514,7 +491,7 @@ pub fn resolve_columns(
 ) -> ResolvedSchema {
     let db = match mode {
         SchemaMode::Strings => None,
-        SchemaMode::Typed => metadata.and_then(|m| database_for_name(m, database)),
+        SchemaMode::Typed => metadata.and_then(|m| m.database(database)),
     };
     // Metadata exists, but not for *this* block's database, so "not declared"
     // would be a different, final claim. `metadata: None` is a caller with no

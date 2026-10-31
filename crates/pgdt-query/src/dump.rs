@@ -119,28 +119,12 @@ impl Dump {
         &self.tables
     }
 
-    /// The databases the file holds: each `\connect`ed database by name, in
-    /// file order, then `None` for one no `\connect` names — a plain
-    /// single-database dump taken without `--create` — where it holds a
-    /// table, one holding none yielding no entry. The stretch of a
-    /// `pg_dumpall` file before its first `\connect`, which holds roles and
-    /// no table, is not one.
+    /// The databases the file holds ([`DumpIndex::databases`]): each
+    /// `\connect`ed database by name, in file order, then `None` for one no
+    /// `\connect` names — a plain single-database dump taken without
+    /// `--create` — where a block is in it.
     pub fn databases(&self) -> Vec<Option<String>> {
-        let mut names: Vec<Option<String>> = Vec::new();
-        let declared = self
-            .index
-            .metadata
-            .iter()
-            .flat_map(|m| &m.databases)
-            .map(|db| &db.name)
-            .filter(|name| name.is_some());
-        let holding = self.tables.iter().map(|t| &t.database);
-        for name in declared.chain(holding) {
-            if !names.contains(name) {
-                names.push(name.clone());
-            }
-        }
-        names
+        self.index.databases().into_iter().map(|database| database.map(str::to_owned)).collect()
     }
 
     /// The one table `selector` selects ([`TableSelector::selects`]), holding
