@@ -266,7 +266,8 @@ from an insert in restoring mode (`fixture_schema_timescaledb_root_rows.sql`).
 2.13.1 and 2.21.4 too.
 **Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
 "TimescaleDB" — a root's own rows read, with a finding, `root_rows` (`pgdt-model`'s
-`timescaledb/findings.rs`); the answers' *held*
+`timescaledb/findings.rs`), and said by a read alone from 2.28, `Verdict::of` (`pgdt-query`'s
+`dump/hypertables.rs`); the answers' *held*
 reading of each root, `answer_lines` (`scripts/generate_fixtures.py`).
 **Re-verify:** `grep -c ts_insert_blocker fixtures/<major>/timescaledb/default.sql`;
 `grep 'public.metrics' fixtures/<major>/timescaledb/default.answers.tsv | grep -v

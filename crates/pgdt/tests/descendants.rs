@@ -175,3 +175,24 @@ fn a_compressed_chunk_refuses_in_each_front_end() {
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(text(&out.stdout).trim(), format!("n\n{}", rows.len()));
 }
+
+/// **`pgdt query` says what the map finds of a hypertable it reads**, though
+/// it prints no file-level finding (D135): read with its descendants, the
+/// rows its root holds and the chunks the file lacks; read alone at 2.31,
+/// whose `ONLY` reads it empty (TS8), its root's rows alone.
+#[test]
+fn pgdt_query_says_a_hypertable_s_findings() {
+    let (_dir, dump) = sandboxed(&timescaledb_fixture(18, "exclude-chunks"), "dump.sql");
+    let dump = dump.to_str().unwrap();
+    let root =
+        "warning: this read of TimescaleDB hypertable `public.metrics` includes the 1 row(s)";
+    let absent = "warning: this read of TimescaleDB hypertable `public.metrics` holds no row of";
+    for (reading, absent_said) in [("descendants", true), ("only", false)] {
+        let args = ["query", "--source", dump, "--table", "public.metrics", "--inheritance"];
+        let out = run(&[&args[..], &[reading]].concat());
+        let said = text(&out.stderr);
+        assert!(out.status.success(), "{reading}: {said}");
+        assert!(said.contains(root), "{reading}: {said}");
+        assert_eq!(said.contains(absent), absent_said, "{reading}: {said}");
+    }
+}

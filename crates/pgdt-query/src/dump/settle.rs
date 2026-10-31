@@ -76,7 +76,7 @@ impl Table {
         let settled = pass.settle(cache, selector, extent, schema_mode).await;
         let settled = watch.attribute(source.as_ref(), settled).await?;
         let watch = Arc::new(watch);
-        Ok(settled.map(|(name, TableRead { blocks, through, refused }, metadata)| Table {
+        Ok(settled.map(|(name, TableRead { blocks, through, refused, notes }, metadata)| Table {
             source,
             watch,
             metadata,
@@ -84,6 +84,7 @@ impl Table {
             blocks,
             through,
             refused,
+            notes,
         }))
     }
 }

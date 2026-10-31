@@ -154,6 +154,18 @@ impl TablePartitions {
         self
     }
 
+    /// This plan, raising `notes` ahead of its own — what the table's read
+    /// hears of TimescaleDB's catalog, settled with the table rather than the
+    /// plan (`docs/design/decisions.md`, "D135") — on every stream of it, a
+    /// resumed one included.
+    pub(crate) fn noting(mut self, notes: &[PlanNote]) -> Self {
+        if !notes.is_empty() {
+            Arc::make_mut(&mut self.plan).table_notes = notes.to_vec();
+            self.plan_notes.splice(0..0, notes.iter().cloned());
+        }
+        self
+    }
+
     /// How many sub-streams the plan cut: at least one, and never more than
     /// the parallelism it was planned under allows.
     pub fn len(&self) -> usize {

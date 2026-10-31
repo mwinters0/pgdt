@@ -231,6 +231,30 @@ pub enum PlanNoteKind {
         values: u64,
         semantics: ComparisonSemantics,
     },
+    /// A TimescaleDB hypertable this query reads holds `rows` in its root,
+    /// which the read includes, as a restore of the file holds them, and
+    /// TimescaleDB's own read of it leaves out (TS8): raised read with its
+    /// descendants, and read alone at a release whose `ONLY` reads a
+    /// hypertable empty. Beside the map's `TimescaleRootRows`, counted by one
+    /// function (`pgdt_model::timescaledb::root_rows`), and like
+    /// [`PlanNoteKind::ReadAsNull`] **a property of the table raised per
+    /// read** (`docs/design/decisions.md`, "D135").
+    HypertableRootRows { table: String, rows: u64 },
+    /// A TimescaleDB hypertable this query reads with its descendants has
+    /// `chunks`, each `schema.table`, which its catalog lists and the file
+    /// does not hold, so the read holds no row of theirs, as a restore of the
+    /// file holds none (TS10). Beside the map's `TimescaleChunksAbsent`,
+    /// listed by one function (`pgdt_model::timescaledb::absent_chunks`;
+    /// `docs/design/decisions.md`, "D135").
+    HypertableChunksAbsent { table: String, chunks: Vec<String> },
+    /// The TimescaleDB catalog of the database this query reads in does not
+    /// read, for what it lacks and holds unread, each `table.column`, and
+    /// the read reaches a table that may be a chunk — below a hypertable the
+    /// catalog's rows name, or below any table where they name none — so it
+    /// is unchecked for compression: such a chunk's rows are read as its own
+    /// block holds them, short of a restore. Beside the map's
+    /// `TimescaleCatalogUnreadable` (`docs/design/decisions.md`, "D135").
+    CompressionUnchecked { table: String, missing: Vec<String>, malformed: Vec<String> },
 }
 
 /// One block a [`TableStream`](super::table::TableStream) replayed under an early stop — the filter, or
@@ -343,8 +367,9 @@ impl PlanNote {
     }
 
     /// The read-buffer budget this note's [`PlanNote::message`] quotes, where
-    /// it quotes one — every kind but [`PlanNoteKind::StatisticsPruned`] and
-    /// [`PlanNoteKind::ReadAsNull`], whose facts are about what the map holds,
+    /// it quotes one — every kind but [`PlanNoteKind::StatisticsPruned`],
+    /// [`PlanNoteKind::ReadAsNull`] and the three TimescaleDB kinds, whose
+    /// facts are about what the map holds,
     /// and [`PlanNoteKind::CompressedFirstPass`], about whether the source's
     /// index is complete, which name no budget at all.
     ///
@@ -363,6 +388,9 @@ impl PlanNote {
             | PlanNoteKind::BatchSpanNarrowed { memory_bytes, .. } => Some(*memory_bytes),
             PlanNoteKind::StatisticsPruned { .. }
             | PlanNoteKind::ReadAsNull { .. }
+            | PlanNoteKind::HypertableRootRows { .. }
+            | PlanNoteKind::HypertableChunksAbsent { .. }
+            | PlanNoteKind::CompressionUnchecked { .. }
             | PlanNoteKind::CompressedFirstPass { .. } => None,
         }
     }
@@ -384,8 +412,10 @@ impl Finding for PlanNote {
     /// to seat the readers asked for (`docs/design/decisions.md`, "D84"),
     /// where the `Warning` beside it is what says a count still came up short,
     /// and a first pass indexing its source — and `Warning` for every note
-    /// saying the budget in force declined something asked of it, and for
-    /// values read as NULL. Derived from the kind, as
+    /// saying the budget in force declined something asked of it, for
+    /// values read as NULL, and for a read whose answer differs from the
+    /// server's or is unchecked against TimescaleDB's catalog, as each one's
+    /// file-level finding is. Derived from the kind, as
     /// a `ResolvedColumn`'s is from its resolution, so a caller printing it and one
     /// draining it into a sink cannot disagree.
     fn severity(&self) -> Severity {
@@ -396,7 +426,10 @@ impl Finding for PlanNote {
             PlanNoteKind::ParallelismBudgetLimited { .. }
             | PlanNoteKind::CompressedBlockPathDeclined { .. }
             | PlanNoteKind::AllocationBelowFloor { .. }
-            | PlanNoteKind::ReadAsNull { .. } => Severity::Warning,
+            | PlanNoteKind::ReadAsNull { .. }
+            | PlanNoteKind::HypertableRootRows { .. }
+            | PlanNoteKind::HypertableChunksAbsent { .. }
+            | PlanNoteKind::CompressionUnchecked { .. } => Severity::Warning,
         }
     }
 
@@ -508,6 +541,22 @@ impl Finding for PlanNote {
                      represent, read as NULL — {term} tells them from the NULLs the dump holds"
                 )
             }
+            PlanNoteKind::HypertableRootRows { table, rows } => format!(
+                "this read of TimescaleDB hypertable `{table}` includes the {rows} row(s) its \
+                 root holds of its own, as a restore of this file holds them; TimescaleDB's own \
+                 read of it leaves them out, so the server's answer lacks them"
+            ),
+            PlanNoteKind::HypertableChunksAbsent { table, chunks } => format!(
+                "this read of TimescaleDB hypertable `{table}` holds no row of {}, which its \
+                 catalog lists and the file does not hold, as a restore of this file holds none",
+                pgdt_core::internal::chunk_list(chunks)
+            ),
+            PlanNoteKind::CompressionUnchecked { table, missing, malformed } => format!(
+                "the TimescaleDB catalog of `{table}`'s database {}, so this read is unchecked \
+                 for compression: a table it reaches may be a chunk whose rows are compressed, \
+                 read as its own block holds them, short of a restore of this file",
+                pgdt_core::internal::catalog_fault(missing, malformed)
+            ),
         }
     }
 

@@ -64,6 +64,14 @@ silently); a cold chunk read refused (its remedy reads as far); every table of t
 table's cold read whole). Code: `dump/hypertables.rs` (`Verdict`), `dump/settle.rs` (`reads_descendants`, `KD161`).
 Evidence: `tests/timescaledb.rs`.
 
+### D135 A hypertable's findings are the file's diagnostics and each read's notes both
+A root's own rows, absent chunks and an unreadable catalog are properties of the file (D19), what `pgdt info` and a
+dump's drain hear, and each is also a `Warning` `PlanNote` on a read it bears on, so `pgdt query`, which prints no
+file-level finding, says it where the answer differs from the server's; `ReadAsNull` is the precedent. One function
+counts each for both. Rejected: per read only (`pgdt info` silent); `pgdt query` printing the file's findings, every
+hypertable's, and none on a cold partial map. Code: `dump/hypertables.rs` (`Verdict::notes`),
+`timescaledb/findings.rs`. Evidence: `tests/timescaledb.rs`.
+
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 Sub-streams are contiguous byte-balanced runs cut through blocks in file order, so concatenating them *is* the serial
 replay. A cut's offsets are search bounds, a row straddling one belonging to the earlier piece, and a piece resyncs by a

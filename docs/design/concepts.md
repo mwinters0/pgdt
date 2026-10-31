@@ -213,8 +213,9 @@ hypertables, chunks and continuous aggregates
   that does not read — is the map's diagnostics, derived with the rest.
 - **pgdt-query** — `dump/hypertables.rs`: the catalog's verdict on a read —
   the compressed chunks it reaches, the hypertables an unreadable catalog
-  leaves unread with their descendants — beside the walk choosing a
-  table's blocks, where refusals are settled (D134).
+  leaves unread with their descendants, and the map's findings said as the
+  read's plan notes — beside the walk choosing a table's blocks, where
+  refusals are settled (D134, D135).
 
 ## The cache
 

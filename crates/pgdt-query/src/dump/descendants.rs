@@ -12,7 +12,7 @@ use pgdt_model::{
     CopyBlock, DataBlock, DatabaseMetadata, DumpIndex, SpanBody, TableName, TocHeader,
 };
 
-use super::hypertables::Verdict;
+use super::hypertables::{ReadNotes, Verdict};
 use crate::options::Inheritance;
 
 /// Every `COPY` block of `index`, in file order, beside the database its span
@@ -101,6 +101,8 @@ pub(super) struct TableRead {
     pub(super) through: Vec<CopyBlock>,
     /// Why a read of it cannot be made, under each mode, where it cannot.
     pub(super) refused: Refusals,
+    /// What a read of it hears of TimescaleDB's catalog, under each mode.
+    pub(super) notes: ReadNotes,
 }
 
 /// **Why a read of a table refuses**, under each [`Inheritance`] mode: a
@@ -189,7 +191,7 @@ impl Refused {
 /// database declares a descendant of it, in file order — and, for each mode
 /// it may be read in, the blocks written through a partition root that refuse
 /// it, or the TimescaleDB catalog's verdict that does ([`Refusals`],
-/// [`Verdict`]).
+/// [`Verdict`]), and what a read of it hears of that catalog ([`ReadNotes`]).
 ///
 /// deficiency: KD158 — a `--load-via-partition-root` dump's partitions
 /// refuse under their own names, read with their descendants or alone, and
@@ -250,7 +252,8 @@ pub(super) fn table_read(index: &DumpIndex, name: &TableName) -> TableRead {
         descendants: Refused::through(&through_any),
         only: Refused::through(&through_own),
     };
-    if let Some(verdict) = Verdict::of(index, database) {
+    let mut notes = ReadNotes::default();
+    if let Some(verdict) = Verdict::of(index, database, declared) {
         // A compressed chunk refuses read by its own name under either mode,
         // and every table reading it with its descendants.
         let names: Vec<String> = descendants.iter().map(TableName::qualified_name).collect();
@@ -259,15 +262,16 @@ pub(super) fn table_read(index: &DumpIndex, name: &TableName) -> TableRead {
         refused.only = refused.only.or_else(|| Refused::compressed(own));
         let reached = verdict.compressed(reached);
         refused.descendants = refused.descendants.or_else(|| Refused::compressed(reached));
-        if let Verdict::Unreadable { missing, malformed, .. } = &verdict
-            && verdict.unreadable_refuses(&qualified, !descendants.is_empty())
+        if let Some((missing, malformed)) =
+            verdict.unreadable_refusal(&qualified, !descendants.is_empty())
         {
             let unreadable = Refused::CatalogUnreadable {
-                missing: missing.clone(),
-                malformed: malformed.clone(),
+                missing: missing.to_vec(),
+                malformed: malformed.to_vec(),
             };
             refused.descendants = refused.descendants.or(Some(unreadable));
         }
+        notes = verdict.notes(&qualified, &names, declared);
     }
-    TableRead { blocks, through, refused }
+    TableRead { blocks, through, refused, notes }
 }

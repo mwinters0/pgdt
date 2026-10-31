@@ -15,7 +15,8 @@ pub struct Release {
 }
 
 impl Release {
-    const fn new(major: u32, minor: u32) -> Self {
+    /// Release `major.minor`.
+    pub const fn new(major: u32, minor: u32) -> Self {
         Release { major, minor }
     }
 
@@ -52,6 +53,18 @@ pub enum Version {
     Inferred { era: Era },
     /// No version row, and columns no release holds together.
     Unknown,
+}
+
+impl Version {
+    /// Whether the release is known to be `release` or later: the one stated,
+    /// or every one of the era its shape bounds. An unknown release is none.
+    pub fn at_least(&self, release: Release) -> bool {
+        match self {
+            Version::Stated { version } => Release::parse(version).is_some_and(|r| r >= release),
+            Version::Inferred { era } => era.from >= release,
+            Version::Unknown => false,
+        }
+    }
 }
 
 /// The way a chunk is joined to its table, its ranges and its compressed

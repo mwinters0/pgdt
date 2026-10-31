@@ -69,6 +69,10 @@ pub(in crate::stream) struct ReplayPlan {
     /// Each materialized column's values read as NULL
     /// ([`PlanNoteKind::ReadAsNull`]).
     read_as_null: Vec<PlanNote>,
+    /// What the table's read hears of TimescaleDB's catalog, the
+    /// [`Table`](crate::Table)'s to settle and empty until it does
+    /// (`TablePartitions::noting`).
+    pub(in crate::stream) table_notes: Vec<PlanNote>,
     /// At least the rows the replay can emit ([`Pruned::rows`]).
     pub(in crate::stream) kept_rows: u64,
     /// At least the text bytes the replay emits of each projected field
@@ -123,6 +127,7 @@ impl ReplayPlan {
             stops,
             pruned,
             read_as_null,
+            table_notes: Vec::new(),
             kept_rows,
             kept_value_bytes,
         })
@@ -133,7 +138,7 @@ impl ReplayPlan {
     /// ([`TableStream::plan_notes`](crate::stream::table::TableStream::plan_notes))
     /// bar what cutting it into sub-streams adds.
     pub(in crate::stream) fn notes(&self) -> impl Iterator<Item = PlanNote> + '_ {
-        self.read_as_null.iter().chain(&self.pruned).cloned()
+        self.table_notes.iter().chain(&self.read_as_null).chain(&self.pruned).cloned()
     }
 
     /// The segments that replay `block` whole, or the runs of groups its

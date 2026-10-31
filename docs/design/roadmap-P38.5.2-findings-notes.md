@@ -22,8 +22,8 @@ catalog's finding).
   listing, `pgdt sql` at registration (its warnings on stderr), and an
   embedder's sink through the provider's registration. **`pgdt query`
   prints no file-level diagnostic** (`announce_comparisons`' doc in
-  `crates/pgdt/src/query.rs`), so a hypertable read there says nothing of
-  its root's rows or absent chunks.
+  `crates/pgdt/src/query.rs`); each read hears them as its plan's notes
+  instead ([38.5.3's notes](roadmap-P38.5.3-per-read-notes.md)).
 - **Absent chunks** are every non-dropped catalog chunk the database's DDL
   does not declare, internal hypertables' included: a dump excluding
   `_timescaledb_internal` names the materialization and compressed

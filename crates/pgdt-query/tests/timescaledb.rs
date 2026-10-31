@@ -6,7 +6,8 @@
 //! compressed relation read as its batches; every other table as the server
 //! answers it. Over a complete map and a cold query's pass alike — and over
 //! a catalog that does not read, which refuses its hypertables read with
-//! their descendants.
+//! their descendants. Each read says what the map finds of it: a root's own
+//! rows, absent chunks, a read unchecked for compression (D135).
 
 mod common;
 
@@ -16,11 +17,12 @@ use std::sync::Arc;
 
 use pgdt_codec::SchemaMode;
 use pgdt_core::Error;
+use pgdt_dump::ReadOptions;
 use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::statistics::StatisticsRequest;
-use pgdt_model::timescaledb::{Resolution, TimescaleDb};
+use pgdt_model::timescaledb::{Release, Resolution, TimescaleDb};
 use pgdt_model::{DatabaseMetadata, DiagnosticKind, DumpIndex};
-use pgdt_query::{Dump, Inheritance, Table, TableSelector};
+use pgdt_query::{Dump, Inheritance, PlanNoteKind, QueryOptions, Table, TableSelector};
 
 use common::{Answer, Answers, Cold, Reading, answers, mapped, read, timescaledb_fixture};
 
@@ -165,22 +167,110 @@ async fn each_hypertable_reads_as_its_restore_holds_it() {
     }
 }
 
-/// A cold query's pass refuses and reads as a complete map's table does: a
-/// chunk runs it to the end, its catalog's blocks being anywhere past it.
+/// A cold query's pass refuses, reads and notes as a complete map's table
+/// does: a chunk runs it to the end, its catalog's blocks being anywhere past
+/// it.
 #[tokio::test]
 async fn a_cold_query_reads_a_hypertable_and_its_chunks() {
     for version in [13, 18] {
         let path = timescaledb_fixture(version, "default");
         let answers = answers(&path);
-        let index = mapped(source(&path), &StatisticsRequest::DATA).await.index().clone();
+        let dump = mapped(source(&path), &StatisticsRequest::DATA).await;
         for (qualified, reading_) in answers.tables.keys() {
             let at = format!("{version} {qualified} {reading_:?} cold");
-            let expected = expected(&index, &answers, qualified, *reading_, &at);
+            let expected = expected(dump.index(), &answers, qualified, *reading_, &at);
             let table = Cold::default().table(source(&path), qualified, SchemaMode::Typed).await;
             let table = table.unwrap().unwrap_or_else(|| panic!("{at}: not found"));
             assert_eq!(reading(&table, SchemaMode::Typed, *reading_, &at).await, expected, "{at}");
+            let name = dump.tables().iter().find(|n| n.qualified_name() == *qualified).unwrap();
+            let whole = dump.table(&TableSelector::from(name)).unwrap().unwrap();
+            let mode = inheritance(*reading_);
+            let said = timescaledb_notes(&table, mode);
+            assert_eq!(said, timescaledb_notes(&whole, mode), "{at}: notes");
         }
     }
+}
+
+/// The TimescaleDB kinds among the notes a plan of `table` under
+/// `inheritance` raises, `None` where it refuses; a stream resumed from the
+/// plan's start raising the same.
+fn timescaledb_notes(table: &Table, inheritance: Inheritance) -> Option<Vec<PlanNoteKind>> {
+    let options = QueryOptions { inheritance, ..QueryOptions::default() };
+    let plan = table.plan(ReadOptions::default(), options).ok()?;
+    let ours = |kind: &PlanNoteKind| {
+        matches!(
+            kind,
+            PlanNoteKind::HypertableRootRows { .. }
+                | PlanNoteKind::HypertableChunksAbsent { .. }
+                | PlanNoteKind::CompressionUnchecked { .. }
+        )
+    };
+    let notes: Vec<PlanNoteKind> =
+        plan.plan_notes().iter().map(|n| n.kind.clone()).filter(ours).collect();
+    let token = plan.in_file_order(8192).resume_token();
+    let resumed = plan.resume(token, 8192).unwrap().plan_notes();
+    let resumed: Vec<PlanNoteKind> = resumed.into_iter().map(|n| n.kind).filter(ours).collect();
+    assert_eq!(resumed, notes, "{} {inheritance:?}: resumed", table.name().qualified_name());
+    Some(notes)
+}
+
+/// **Each read says what the map finds of it**, counted alike (D135): a
+/// hypertable read with its descendants the rows its root holds, which its
+/// restore's `held` answer holds, and the chunks its catalog lists that the
+/// file lacks; read alone its root's rows where the release's `ONLY` reads
+/// it empty (TS8); every other read, nothing. Over every fixture, each
+/// finding said by some read.
+#[tokio::test]
+async fn each_read_says_what_the_map_finds_of_it() {
+    let mut said = BTreeSet::new();
+    for (version, flag_set) in FIXTURES {
+        let path = timescaledb_fixture(version, flag_set);
+        let answers = answers(&path);
+        let dump = mapped(source(&path), &StatisticsRequest::DATA).await;
+        let index = dump.index();
+        let empty_alone =
+            TimescaleDb::of(index, None).is_some_and(|db| db.version.at_least(Release::new(2, 28)));
+        for (qualified, reading_) in answers.tables.keys() {
+            let at = format!("{version} {flag_set} {qualified} {reading_:?}");
+            let name = dump.tables().iter().find(|n| n.qualified_name() == *qualified);
+            let table = dump.table(&TableSelector::from(name.expect(&at))).unwrap().unwrap();
+            let Some(notes) = timescaledb_notes(&table, inheritance(*reading_)) else { continue };
+            let mut expected = Vec::new();
+            for diagnostic in &index.diagnostics {
+                match diagnostic.kind() {
+                    DiagnosticKind::TimescaleRootRows { hypertable, rows, .. }
+                        if hypertable == qualified =>
+                    {
+                        let held = rows_of_held(&answers, qualified, &at);
+                        assert_eq!(*rows, held, "{at}: the root's rows against its restore");
+                        if *reading_ == Reading::Descendants || empty_alone {
+                            let (table, rows) = (qualified.clone(), *rows);
+                            expected.push(PlanNoteKind::HypertableRootRows { table, rows });
+                            said.insert(("root", *reading_));
+                        }
+                    }
+                    DiagnosticKind::TimescaleChunksAbsent { hypertable, chunks, .. }
+                        if hypertable == qualified && *reading_ == Reading::Descendants =>
+                    {
+                        let (table, chunks) = (qualified.clone(), chunks.clone());
+                        expected.push(PlanNoteKind::HypertableChunksAbsent { table, chunks });
+                        said.insert(("absent", *reading_));
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(notes, expected, "{at}");
+        }
+    }
+    let all = [("absent", Reading::Descendants), ("root", Reading::Descendants)];
+    let all = all.into_iter().chain([("root", Reading::Only)]).collect::<BTreeSet<_>>();
+    assert_eq!(said, all);
+}
+
+/// How many rows hypertable `qualified`'s root holds as its restore holds
+/// them.
+fn rows_of_held(answers: &Answers, qualified: &str, at: &str) -> u64 {
+    rows(answers.held.get(qualified), at).len() as u64
 }
 
 /// `path`'s dump with each of `renames` applied to the one line it is found
@@ -209,7 +299,8 @@ async fn refusal(dump: &Dump, qualified: &str) -> Option<Error> {
 /// and where those do not read, every table with a descendant. Read alone,
 /// each reads its root's own rows, and each chunk reads under its own name,
 /// a compressed one's block unchecked, as the map's finding of the
-/// catalog says.
+/// catalog says and each such read says too: a table below a hypertable the
+/// catalog's rows name, or below any table where they name none.
 #[tokio::test]
 async fn an_unreadable_catalog_refuses_its_hypertables() {
     let path = timescaledb_fixture(18, "default");
@@ -245,13 +336,38 @@ async fn an_unreadable_catalog_refuses_its_hypertables() {
             let table = dump.table(&TableSelector::from(name)).unwrap().unwrap();
             let alone = read(&table, SchemaMode::Strings, Inheritance::Only).await.unwrap();
             assert_eq!(alone, rows(answers.held.get(qualified), &at), "{at}: {qualified}");
+            // Read alone, a named hypertable says its root's rows, 2.31's
+            // `ONLY` reading it empty, and nothing of compression.
+            let held = rows_of_held(&answers, qualified, &at);
+            let root = PlanNoteKind::HypertableRootRows { table: qualified.into(), rows: held };
+            let expected = match named && held > 0 {
+                true => vec![root],
+                false => Vec::new(),
+            };
+            let notes = timescaledb_notes(&table, Inheritance::Only);
+            assert_eq!(notes, Some(expected), "{at}: {qualified} alone");
             for chunk in ddl.descendants(qualified) {
                 assert_eq!(refusal(&dump, chunk).await.map(|e| e.to_string()), None, "{at}");
+                let name = dump.tables().iter().find(|n| n.qualified_name() == chunk).unwrap();
+                let table = dump.table(&TableSelector::from(name)).unwrap().unwrap();
+                for inheritance in [Inheritance::Descendants, Inheritance::Only] {
+                    let notes = timescaledb_notes(&table, inheritance).unwrap();
+                    let [PlanNoteKind::CompressionUnchecked { table, missing, .. }] = &notes[..]
+                    else {
+                        panic!("{at}: {chunk} {inheritance:?}: {notes:?}")
+                    };
+                    assert_eq!(table, chunk, "{at}");
+                    assert!(missing.contains(&"dimension_slice.chunk_id".to_owned()), "{at}");
+                }
             }
         }
         // A compressed relation inherits nothing at 2.31, so it is no
-        // hypertable's descendant and reads.
+        // hypertable's descendant and reads, and nothing it reaches may be a
+        // chunk.
         let compressed = "_timescaledb_internal._hyper_1_2_chunk_compressed";
         assert!(refusal(&dump, compressed).await.is_none(), "{at}");
+        let name = dump.tables().iter().find(|n| n.qualified_name() == compressed).unwrap();
+        let table = dump.table(&TableSelector::from(name)).unwrap().unwrap();
+        assert_eq!(timescaledb_notes(&table, Inheritance::Descendants), Some(vec![]), "{at}");
     }
 }

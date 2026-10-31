@@ -27,6 +27,7 @@ mod hypertables;
 mod settle;
 
 use self::descendants::{Refusals, TableRead, listed_tables, table_read};
+use self::hypertables::ReadNotes;
 
 /// A dump and **a map of the whole of it**, complete by construction: built
 /// from an open whose cache reaches the file's end ([`Dump::opened`]), or
@@ -149,7 +150,7 @@ impl Dump {
     /// "D49").
     pub fn table(&self, selector: &TableSelector) -> Result<Option<Table>> {
         let Some(name) = select(&self.tables, selector)? else { return Ok(None) };
-        let TableRead { blocks, through, refused } = table_read(&self.index, name);
+        let TableRead { blocks, through, refused, notes } = table_read(&self.index, name);
         Ok(Some(Table {
             source: Arc::clone(&self.source),
             watch: Arc::clone(&self.watch),
@@ -158,6 +159,7 @@ impl Dump {
             blocks,
             through,
             refused,
+            notes,
         }))
     }
 }
@@ -294,6 +296,9 @@ pub struct Table {
     through: Vec<CopyBlock>,
     /// Why a read of it refuses under each mode, where one does.
     refused: Refusals,
+    /// What a read of it hears of TimescaleDB's catalog under each mode,
+    /// raised by its plan ([`Table::plan`]).
+    notes: ReadNotes,
 }
 
 impl fmt::Debug for Table {
@@ -409,10 +414,14 @@ impl Table {
 
     /// The partitioned replay of this table under `options`, each piece read
     /// with `read` ([`TablePartitions`]): planned now, reading nothing, its
-    /// partitions streamed when the caller runs them. Refuses what a query's
+    /// partitions streamed when the caller runs them, its notes led by what
+    /// the read hears of TimescaleDB's catalog — a hypertable's root's own
+    /// rows and absent chunks, or a read unchecked for compression
+    /// (`docs/design/decisions.md`, "D135"). Refuses what a query's
     /// plan refuses, before a byte is read, and a source the dump's watch
     /// cannot check while it is read (`docs/design/decisions.md`, "D21").
     pub fn plan(&self, read: ReadOptions, options: QueryOptions) -> Result<TablePartitions> {
+        let inheritance = options.inheritance;
         let blocks = self.read(&options)?;
         // A table read alone holding no block of its own reads nothing, under
         // the schema [`Self::schema`] reports.
@@ -430,6 +439,7 @@ impl Table {
             read,
             options,
         )?;
+        let partitions = partitions.noting(self.notes.of(inheritance));
         Ok(match schema {
             Some(schema) => partitions.reporting(schema),
             None => partitions,
