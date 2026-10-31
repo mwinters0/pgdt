@@ -36,15 +36,11 @@ pub use source::{REMOTE_READ_TIMEOUT, RemoteSource};
 /// because a crate boundary forced it, and named here so a caller reaching
 /// past the API names the word.
 ///
-/// The memory constants a test reasons in, and discovery against a root a
-/// test built, are here and no embedder's (`docs/design/decisions.md`,
-/// "D11"); only this crate's own tests call the second today.
+/// The memory constants a test reasons in are here and no embedder's;
+/// discovery against a root a test built is this crate's own
+/// (`docs/design/decisions.md`, "D11").
 pub mod internal {
-    pub use crate::arrangement::discover_allowance_in;
-    pub use crate::memory::{
-        MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MEMORY_UNPOOLED_BOUND, available_memory_in,
-        discover_memory_limit_in,
-    };
+    pub use crate::memory::{MEMORY_MARGIN_PERCENT, MEMORY_RESERVE, MEMORY_UNPOOLED_BOUND};
     pub use crate::parallelism::{memory_budget_display, worker_count};
     pub use crate::partition::cut;
     /// A gzip file's complete index, built by a forward pass over the file

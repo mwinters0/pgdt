@@ -21,7 +21,7 @@ are `docs/process.md`, "The decision register".
 - **D7** `partitions()` says where and at what cost, never whether
 - **D8** The cut is one unit wide, sized apart from the charge
 - **D10** mmap, `fadvise` and double-buffered readahead are refused
-- **D11** Limit discovery takes a root; the seam is `internal`'s
+- **D11** Limit discovery takes a root; the seam is crate-private
 - **D12** Workers are `spawn_blocking`; no runtime flavour is imposed
 - **D13** The allocator is the binary's choice; the one binary composes DataFusion's CLI and links mimalloc
 

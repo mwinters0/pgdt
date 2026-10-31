@@ -74,14 +74,15 @@ probed: rotational detection is masked in containers and undefined over LVM/NFS.
 which an `INSERT` run on the NVMe meets (`KD9`) and a default `parse` there may (P23). Evidence: `scan-throughput-*`,
 `chunk-size`, `allocator`.
 
-### D11 Limit discovery takes a root; the seam is `internal`'s
+### D11 Limit discovery takes a root; the seam is crate-private
 `discover_memory_limit_in` reads the cgroup limit (RT3, RT5) under a filesystem root, because the arms worth pinning are
 ones no machine is more than one of; an embedder discovers at `/` (`Allowance::discover`) or states an allowance, so the
-root-taking readers are `internal`'s (D106). With no limit found, `pgdt` caps a source recommending a charge at half of
+root-taking readers are crate-private (D106). With no limit found, `pgdt` caps a source recommending a charge at half of
 `MemAvailable` (RT8), untuned, and not one recommending none; a request carving that estimate (`carve_estimate`, the
-provider's) carves half as an allowance. With `MemAvailable` unreadable `DEFAULT_MEMORY_BUDGET` is the estimate, unstated
-not being unlimited: a cap, which a carving request draws down by what others drew. Rejected: an env var overriding the
-root; the seam public for tests alone; refusing such a recommendation; the default as a cap per scan, which multiplies.
+provider's) carves half as an allowance. With `MemAvailable` unreadable `DEFAULT_MEMORY_BUDGET` is the estimate,
+unstated not being unlimited: a cap, which a carving request draws down by what others drew. Rejected: an env var
+overriding the root; the seam public for tests alone; refusing such a recommendation; the default as a cap per scan,
+which multiplies.
 
 ### D12 Workers are `spawn_blocking`; no runtime flavour is imposed
 The library keeps `tokio` at `rt`+`sync` and imposes no runtime flavour, its work being `spawn_blocking`; `pgdt`'s own

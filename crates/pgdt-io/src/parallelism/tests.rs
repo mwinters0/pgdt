@@ -1,7 +1,8 @@
 use std::num::NonZeroUsize;
 use std::path::Path;
 
-use crate::internal::{MEMORY_MARGIN_PERCENT, MEMORY_UNPOOLED_BOUND, discover_allowance_in};
+use crate::arrangement::discover_allowance_in;
+use crate::internal::{MEMORY_MARGIN_PERCENT, MEMORY_UNPOOLED_BOUND};
 use crate::source::pool::POOL_DEPTH;
 use crate::test_support::*;
 use crate::*;

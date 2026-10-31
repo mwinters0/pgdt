@@ -352,7 +352,7 @@ pub struct MemoryLimit {
     /// and every ancestor cgroup.
     pub bytes: u64,
     /// The file that stated it, as reached: under
-    /// [`discover_memory_limit_in`]'s root rather than absolute, so a fixture
+    /// `discover_memory_limit_in`'s root rather than absolute, so a fixture
     /// tree's answer names the fixture.
     pub read_from: PathBuf,
 }
@@ -379,11 +379,11 @@ pub fn discover_memory_limit() -> Option<MemoryLimit> {
 /// [`discover_memory_limit`] against an arbitrary filesystem root.
 ///
 /// **The seam the arms a test must drive need, no machine having more than
-/// one of them** (`docs/design/decisions.md`, "D11"): `internal`'s, as are
+/// one of them** (`docs/design/decisions.md`, "D11"): crate-private, as are
 /// [`available_memory_in`] and
-/// [`discover_allowance_in`](crate::arrangement::discover_allowance_in) beside it, so the resolution can
-/// be pinned against a v1 hierarchy, an unlimited one and a below-reserve one
-/// (`crates/pgdt-io/tests/data/runtime/`). The memory controller lives in exactly one
+/// [`discover_allowance_in`](crate::arrangement::discover_allowance_in)
+/// beside it, so the resolution can be pinned against a v1 hierarchy, an
+/// unlimited one and a below-reserve one (`crates/pgdt-io/tests/data/runtime/`). The memory controller lives in exactly one
 /// hierarchy at a time (`RT6`), so a v1 shape cannot be produced beside a v2
 /// one on the same host.
 ///
@@ -391,7 +391,7 @@ pub fn discover_memory_limit() -> Option<MemoryLimit> {
 /// `/` is the real reading and anything else is a tree somebody built. What a
 /// fixture tree establishes is that this reader handles the shape `RT4`
 /// describes, not that a kernel still produces it.
-pub fn discover_memory_limit_in(root: &Path) -> Option<MemoryLimit> {
+pub(crate) fn discover_memory_limit_in(root: &Path) -> Option<MemoryLimit> {
     let cgroups = std::fs::read_to_string(root.join("proc/self/cgroup")).ok()?;
     match memory_hierarchy(&cgroups) {
         MemoryHierarchy::V1(path) => {
@@ -424,7 +424,7 @@ pub fn available_memory() -> Option<u64> {
 /// [`available_memory`] against an arbitrary filesystem root, for the same
 /// reason [`discover_memory_limit_in`] takes one: the no-limit branch is
 /// otherwise only exercisable on a machine that has no limit.
-pub fn available_memory_in(root: &Path) -> Option<u64> {
+pub(crate) fn available_memory_in(root: &Path) -> Option<u64> {
     let text = std::fs::read_to_string(root.join("proc/meminfo")).ok()?;
     let line = text.lines().find_map(|line| line.strip_prefix("MemAvailable:"))?;
     let mut fields = line.split_whitespace();

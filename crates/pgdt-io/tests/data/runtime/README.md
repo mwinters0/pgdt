@@ -2,7 +2,7 @@
 
 Filesystem trees shaped like a Linux one, for driving memory-limit discovery
 against environments this machine cannot be put into. Each directory is a
-**root**: `pgdt_io::internal::discover_memory_limit_in`, `available_memory_in`
+**root**: pgdt-io's crate-private `discover_memory_limit_in`, `available_memory_in`
 and `discover_allowance_in` join every path they read onto it, so a root of `/`
 is the real reading and one of these is a tree somebody built
 (`docs/design/runtime-invariants.md`, `RT1`–`RT8`).

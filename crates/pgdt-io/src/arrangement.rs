@@ -62,7 +62,7 @@ impl Allowance {
 
 /// [`Allowance::discover`] against an arbitrary filesystem root, the seam
 /// [`discover_memory_limit_in`] is (`docs/design/decisions.md`, "D11").
-pub fn discover_allowance_in(root: &Path) -> Allowance {
+pub(crate) fn discover_allowance_in(root: &Path) -> Allowance {
     match discover_memory_limit_in(root) {
         Some(limit) => Allowance::Limit(limit),
         None => match available_memory_in(root) {
