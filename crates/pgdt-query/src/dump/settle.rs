@@ -75,12 +75,13 @@ impl Table {
         let settled = pass.settle(cache, selector, extent, schema_mode).await;
         let settled = watch.attribute(source.as_ref(), settled).await?;
         let watch = Arc::new(watch);
-        Ok(settled.map(|(name, TableRead { blocks, refused }, metadata)| Table {
+        Ok(settled.map(|(name, TableRead { blocks, through, refused }, metadata)| Table {
             source,
             watch,
             metadata,
             name,
             blocks,
+            through,
             refused,
         }))
     }
@@ -188,7 +189,13 @@ impl ColdPass<'_> {
         let mut read = table_read(&index, name);
         if schema_mode == SchemaMode::Typed && read.refused.reads_either() {
             let database = name.database.as_deref();
-            self.census(metadata.as_deref(), database, &mut read.blocks, source_extent).await?;
+            // A table holding no block settles its columns, read alone, from
+            // the blocks written through its root (`Table::schema`).
+            let blocks = match read.blocks.is_empty() {
+                true => &mut read.through,
+                false => &mut read.blocks,
+            };
+            self.census(metadata.as_deref(), database, blocks, source_extent).await?;
         }
         // **A streamed schema needs no completeness test**
         // (`docs/design/decisions.md`, "D34"): the pass has finished and the

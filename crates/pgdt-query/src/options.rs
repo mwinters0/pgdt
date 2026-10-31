@@ -203,9 +203,8 @@ pub enum Inheritance {
     #[default]
     Descendants,
     /// Its own rows alone: the blocks naming it, none of its descendants'.
-    /// A partitioned table holding no block reads none, and a partition root
-    /// whose blocks hold its partitions' rows, written through it, refuses
-    /// ([`pgdt_core::Error::PartitionRootAlone`]).
+    /// A partitioned table reads none, a partition root's blocks holding its
+    /// partitions' rows written through it included.
     Only,
 }
 

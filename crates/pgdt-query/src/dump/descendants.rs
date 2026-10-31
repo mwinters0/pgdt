@@ -94,6 +94,10 @@ pub(super) fn listed_tables(index: &DumpIndex) -> Vec<TableName> {
 pub(super) struct TableRead {
     /// Its own blocks and every descendant's, in file order.
     pub(super) blocks: Vec<CopyBlock>,
+    /// The blocks written through a partition root above it that hold its
+    /// descendants' rows, in file order: what a partitioned table below its
+    /// root, holding no block, settles its columns from when read alone.
+    pub(super) through: Vec<CopyBlock>,
     /// Why a read of it cannot be made, under each mode, where it cannot.
     pub(super) refused: Refusals,
 }
@@ -106,27 +110,18 @@ pub(super) struct Refusals {
     /// Read with its descendants: blocks written through a partition root
     /// other than it hold its rows or a descendant's.
     descendants: Option<Refused>,
-    /// Read alone: such blocks hold its own rows, or its own blocks, naming
-    /// it as their partition root, hold its partitions'.
+    /// Read alone: such blocks hold its own rows. A partitioned table holds
+    /// none (I93), so it never refuses here.
     only: Option<Refused>,
 }
 
 impl Refusals {
     /// The refusal of a read of `table` under `inheritance`, where it
-    /// refuses — `holds_own` saying whether it holds a block of its own. One
-    /// read alone holding none takes the schema its read with its descendants
-    /// settles, so it refuses as that read does too
-    /// (`docs/design/decisions.md`, "D132").
-    pub(super) fn of(
-        &self,
-        table: &TableName,
-        inheritance: Inheritance,
-        holds_own: bool,
-    ) -> Option<Error> {
+    /// refuses.
+    pub(super) fn of(&self, table: &TableName, inheritance: Inheritance) -> Option<Error> {
         let refused = match inheritance {
             Inheritance::Descendants => self.descendants.as_ref(),
-            Inheritance::Only if holds_own => self.only.as_ref(),
-            Inheritance::Only => self.only.as_ref().or(self.descendants.as_ref()),
+            Inheritance::Only => self.only.as_ref(),
         };
         refused.map(|refused| refused.refusal(table, inheritance))
     }
@@ -137,33 +132,23 @@ impl Refusals {
     }
 }
 
-/// **Why a read of a table cannot tell its rows from others'**, the
-/// partition key's bounds alone telling them apart.
+/// **Blocks written through `root` hold a table's rows, or a
+/// descendant's**, which the partition key's bounds alone tell apart.
 #[derive(Debug, Clone)]
-enum Refused {
-    /// Blocks written through `root` hold the table's rows, or a
-    /// descendant's.
-    ThroughRoot { root: String, header_offsets: Vec<u64> },
-    /// The table is a partition root whose own blocks hold its partitions'
-    /// rows, written through it.
-    RootAlone { header_offsets: Vec<u64> },
+struct Refused {
+    root: String,
+    header_offsets: Vec<u64>,
 }
 
 impl Refused {
     /// The refusal of a read of `table` under `inheritance`
-    /// ([`Error::PartitionThroughRoot`], [`Error::PartitionRootAlone`]).
+    /// ([`Error::PartitionThroughRoot`]).
     fn refusal(&self, table: &TableName, inheritance: Inheritance) -> Error {
-        let table = table.qualified_name();
-        match self {
-            Self::ThroughRoot { root, header_offsets } => Error::PartitionThroughRoot {
-                table,
-                root: root.clone(),
-                header_offsets: header_offsets.clone(),
-                inheritance_only: inheritance == Inheritance::Only,
-            },
-            Self::RootAlone { header_offsets } => {
-                Error::PartitionRootAlone { table, header_offsets: header_offsets.clone() }
-            }
+        Error::PartitionThroughRoot {
+            table: table.qualified_name(),
+            root: self.root.clone(),
+            header_offsets: self.header_offsets.clone(),
+            inheritance_only: inheritance == Inheritance::Only,
         }
     }
 
@@ -172,7 +157,7 @@ impl Refused {
     fn through(blocks: &[(String, u64)]) -> Option<Self> {
         let (root, _) = blocks.first()?;
         let header_offsets = blocks.iter().map(|(_, offset)| *offset).collect();
-        Some(Self::ThroughRoot { root: root.clone(), header_offsets })
+        Some(Self { root: root.clone(), header_offsets })
     }
 }
 
@@ -181,59 +166,64 @@ impl Refused {
 /// it may be read in, the blocks written through a partition root that refuse
 /// it ([`Refusals`]).
 ///
-/// deficiency: KD158 — a `--load-via-partition-root` dump's partitions, and
-/// each partitioned table below its root, refuse under their own names
-/// (`Error::PartitionThroughRoot`), and the root read alone refuses
-/// (`Error::PartitionRootAlone`): a restore routes each row to the
+/// deficiency: KD158 — a `--load-via-partition-root` dump's partitions
+/// refuse under their own names, read with their descendants or alone, and
+/// each partitioned table below its root refuses read with its descendants
+/// (`Error::PartitionThroughRoot`): a restore routes each row to the
 /// partition whose bound admits it, comparing the partition key under its
 /// operator classes and collations (I86), which nothing here evaluates. The
-/// root read with its descendants is whole. **(c) unowned**; promoted by
-/// `roadmap.md`'s Future item "Rows routed to their partitions".
+/// root read with its descendants is whole, and a partitioned table read
+/// alone reads no row (I93). **(c) unowned**; promoted by `roadmap.md`'s
+/// Future item "Rows routed to their partitions".
 pub(super) fn table_read(index: &DumpIndex, name: &TableName) -> TableRead {
     let database = name.database.as_deref();
     let qualified = name.qualified_name();
-    let descendants: Vec<TableName> = ddl(index, database)
+    let declared = ddl(index, database);
+    let descendants: Vec<TableName> = declared
         .map(|db| db.descendants(&qualified))
         .into_iter()
         .flatten()
         .map(|key| declared_name(database, key))
         .collect();
+    // A partitioned table holds no row of its own, wherever a block written
+    // through its root may hold its partitions' (I93).
+    let partitioned = declared.is_some_and(|db| db.has_partitions(&qualified));
     let reads = |table: &TableName| table == name || descendants.contains(table);
     // A block a TOC entry names no partition for (`KD1`) may hold any of its
     // root's partitions' rows.
     let below = |root: &TableName| {
-        ddl(index, database)
+        declared
             .is_some_and(|db| db.descendants(&root.qualified_name()).contains(&qualified.as_str()))
     };
-    let mut blocks = Vec::new();
+    let (mut blocks, mut through) = (Vec::new(), Vec::new());
     // Blocks through another root holding this table's rows or a
     // descendant's, and those of them that may hold its own.
-    let (mut through, mut through_own) = (Vec::new(), Vec::new());
-    // Its own blocks, naming it as the root they were written through.
-    let mut as_root = Vec::new();
+    let (mut through_any, mut through_own) = (Vec::new(), Vec::new());
     for (in_database, block, held) in blocks_held(index) {
         if in_database != database {
             continue;
         }
         let named = TableName::of(in_database, block);
         if reads(&named) {
-            if &named == name && block.partition_root.is_some() {
-                as_root.push(block.header_offset);
-            }
             blocks.push(block.clone());
         } else if block.partition_root.is_some()
             && held.as_ref().map_or_else(|| below(&named), reads)
         {
             let at = (named.qualified_name(), block.header_offset);
-            if held.as_ref().is_none_or(|held| held == name) {
+            let own = match &held {
+                Some(held) => held == name,
+                None => !partitioned,
+            };
+            if own {
                 through_own.push(at.clone());
             }
-            through.push(at);
+            through_any.push(at);
+            through.push(block.clone());
         }
     }
-    let only = Refused::through(&through_own).or_else(|| {
-        let header_offsets = as_root;
-        (!header_offsets.is_empty()).then_some(Refused::RootAlone { header_offsets })
-    });
-    TableRead { blocks, refused: Refusals { descendants: Refused::through(&through), only } }
+    let refused = Refusals {
+        descendants: Refused::through(&through_any),
+        only: Refused::through(&through_own),
+    };
+    TableRead { blocks, through, refused }
 }

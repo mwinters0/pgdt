@@ -160,13 +160,6 @@ fn each_refusal_names_the_flag_its_remedy_is() {
             &["`--inheritance descendants`"],
         ),
         (
-            pgdt_core::Error::PartitionRootAlone {
-                table: "public.t".into(),
-                header_offsets: vec![4096, 8192],
-            },
-            &["`--inheritance descendants`"],
-        ),
-        (
             pgdt_core::Error::PredicateValueDecode {
                 column: "mood".into(),
                 op: "=",

@@ -1,9 +1,9 @@
 //! `pgdt query` and `pgdt sql` read a table with its descendants, and alone,
 //! held to the server's answers over a restore of the same dump
 //! (`docs/design/decisions.md`, "D130", "D131", "D132"): a partition written
-//! through its root refused by `query` and left out of `sql`'s catalog, and
-//! its root too when read alone (`KD158`), the remedy spelled in each front
-//! end's words.
+//! through its root refused by `query` and left out of `sql`'s catalog
+//! (`KD158`), the remedy spelled in each front end's words, and a partitioned
+//! table read alone reading none (I93).
 
 mod common;
 
@@ -38,14 +38,12 @@ fn tables(flag_set: &str) -> Vec<(String, Reading, Vec<String>)> {
 }
 
 /// The tables a `--load-via-partition-root` dump of this schema refuses
-/// under their own names: every one below the root, whose rows are written
-/// through it, and read alone the root too.
+/// under their own names: every leaf below the root, whose rows are written
+/// through it, and read with its descendants the partitioned table between.
 fn through_root(flag_set: &str, table: &str, reading: Reading) -> bool {
-    let below = ["public.reading_2020", "public.reading_2020_north"]
-        .into_iter()
-        .chain(["public.reading_2020_south", "public.reading_2021"]);
-    let root = (reading == Reading::Only).then_some("public.reading");
-    flag_set != "default" && below.chain(root).any(|t| t == table)
+    let leaves = ["public.reading_2020_north", "public.reading_2020_south", "public.reading_2021"];
+    let between = (reading == Reading::Descendants).then_some("public.reading_2020");
+    flag_set != "default" && leaves.into_iter().chain(between).any(|t| t == table)
 }
 
 #[test]
@@ -100,16 +98,17 @@ fn pgdt_sql_reads_a_table_s_descendants() {
     }
 }
 
-/// **A partition root read alone through `STORED AS PGDUMP` refuses**, its
-/// remedy spelled as the statement's option.
+/// **A partition written through its root, read alone through `STORED AS
+/// PGDUMP`, refuses**, its remedy — the root read with its descendants —
+/// spelled as the statement's option.
 #[test]
-fn pgdt_sql_spells_a_root_read_alone_as_its_option() {
+fn pgdt_sql_spells_a_partition_read_alone_as_its_option() {
     let (_dir, dump) = sandboxed(&inheritance_fixture(18, "load-via-partition-root"), "dump.sql");
     let dump = dump.to_str().unwrap();
     common::run_ok(&["parse", "--source", dump]);
     let create = format!(
         "CREATE EXTERNAL TABLE r STORED AS PGDUMP LOCATION '{dump}' \
-         OPTIONS ('pgdump.table' 'reading', 'pgdump.inheritance' 'only')"
+         OPTIONS ('pgdump.table' 'reading_2021', 'pgdump.inheritance' 'only')"
     );
     let out = run(&["sql", "-q", "-c", &create]);
     let said = text(&out.stdout) + &text(&out.stderr);

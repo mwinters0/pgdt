@@ -16,19 +16,18 @@ server's `only` answers as well as its read-through ones, with
   compressed-chunk refusal refuses under both, so it goes in both fields; its
   unreadable-catalog refusal refuses the hypertable read through, and its
   chunks are read under their own names under either mode.
-- **A table read alone holding no block of its own** — a partitioned table —
-  reads no row under the schema its read with its descendants settles, and
-  refuses as that read does. A hypertable root holds a block of its own,
-  however empty, so `only` reads it as that block (38.5's stray root rows
-  included).
+- **A partitioned table read alone** reads no row, under the schema its read
+  with its descendants settles (38.3.1 for the load-via-root case). A
+  hypertable root holds a block of its own, however empty, so `only` reads
+  it as that block (38.5's stray root rows included).
 - **The mode is a dump's in the provider**: `PgDumpOptions::inheritance`,
   `:inheritance=` and the `STORED AS PGDUMP` option `'pgdump.inheritance'`,
   read at registration, so a catalog lists a table by its schema under that
   mode. There is no `SET pgdump.inheritance` (D132).
 - **A refusal raised under `only` names the descendants mode as its
-  remedy**: `PartitionThroughRoot { inheritance_only: true }` and
-  `PartitionRootAlone`, spelled `--inheritance descendants`,
-  `:inheritance=descendants` and `'pgdump.inheritance' 'descendants'`.
+  remedy**: `PartitionThroughRoot { inheritance_only: true }`, spelled
+  `--inheritance descendants`, `:inheritance=descendants` and
+  `'pgdump.inheritance' 'descendants'`.
 - **The manual is untouched**: `--inheritance`, `:inheritance=` and
   `'pgdump.inheritance'` are documented in the binaries' help alone until
   38.7 writes the manual.
@@ -39,7 +38,3 @@ server's `only` answers as well as its read-through ones, with
   the metadata level under a typed query, re-reads its descendants for their
   census, under `only` too, the table it hands back being read under either
   mode (D132).
-- **A `--load-via-partition-root` partitioned table below its root
-  (`reading_2020`) refuses read alone**, where the server answers it with no
-  rows: its rows are all in blocks naming the root, so no block of its own or
-  a descendant's settles its schema.

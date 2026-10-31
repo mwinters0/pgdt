@@ -5872,3 +5872,54 @@ grep -n "oprname => '<', oprleft => 'any\(multi\)\?range'" src/include/catalog/p
 The first shows both casts implicit, `bpchar`'s through `text(bpchar)`; the
 second that function bound to `rtrim1`; the rest each refusal and the two
 polymorphic operators.
+
+---
+
+## I93 — A partitioned table holds no row of its own, and a load-via-root header always names one
+
+**Claim.** A partitioned table has no storage: every row loaded into it is
+routed to a partition, so `SELECT … FROM ONLY <partitioned table>` answers no
+row on any restore. A table with a partition attached is partitioned, and so
+is the table a `--load-via-partition-root` block's header names, that being
+the topmost ancestor of a partition.
+
+**Proof.** `RELKIND_HAS_STORAGE` (`src/include/catalog/pg_class.h`) excludes
+`RELKIND_PARTITIONED_TABLE`; a row inserted into one is routed by
+`ExecFindPartition` (`src/backend/executor/execPartition.c`), which raises `no
+partition of relation … found for row` rather than keep it. Attaching a
+partition refuses a parent that is not `RELKIND_PARTITIONED_TABLE`
+(`tablecmds.c`, `"%s" is not partitioned`), and a partition takes no
+`INHERITS` parent nor gives one (`cannot inherit from partition`, `cannot
+inherit from partitioned table`). `pg_dump` writes the header of a
+load-via-root block from `getRootTableInfo`, which walks `parents[0]` while
+`ispartition`, ending at a partitioned table, and writes no `TABLE DATA` for
+a partitioned table (`/* Skip partitioned tables (data in partitions) */`,
+I2).
+
+**Observed.** The answers committed beside `fixtures/<major>/inheritance/`
+and `partitions/` at every routine major (D130): `SELECT … FROM ONLY` of
+`reading`, `reading_2020` and each `partitions` root answers no row, in both
+flag sets.
+
+**Scope limit.** Declarative partitioning; an `INHERITS` parent holds rows of
+its own and is outside it.
+
+**Verified against:** v13.23, v18.6 (source); 13–18 (observed, the oracle).
+
+**Relied on by:** `pgdt-query`'s `dump/descendants.rs`, `table_read`, a
+partitioned table never refused read alone; `dump.rs`, `Table::read`, a
+load-via-root block's rows never its header's table's own.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n -A6 'define RELKIND_HAS_STORAGE' src/include/catalog/pg_class.h
+grep -n 'no partition of relation' src/backend/executor/execPartition.c
+grep -n 'is not partitioned"\|cannot inherit from partition' src/backend/commands/tablecmds.c
+grep -n -A15 '^getRootTableInfo' src/bin/pg_dump/pg_dump.c
+grep -n -A2 'Skip partitioned tables' src/bin/pg_dump/pg_dump.c
+```
+
+The first lists no partitioned table, the second shows the refusal, the third
+both checks, the fourth the walk ending at a non-partition.

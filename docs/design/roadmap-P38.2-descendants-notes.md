@@ -15,13 +15,12 @@ holding `pgdt query` and `pgdt sql` to the same answers at 18.
   `summary`, `divergences` and `plan`, so the table stays listed and
   addressable (the DataFusion catalog then leaves it unlisted with its
   `RefusedTable` finding, as for any table whose provider refuses). 38.5's
-  compressed-chunk and unreadable-catalog refusals belong beside
-  `ThroughRoot`.
+  compressed-chunk and unreadable-catalog refusals belong in `Refused`,
+  today the through-root case alone.
 - **Own blocks and descendants' are told apart by the header's name** against
   the table's (`TableColumns::settle`, `read_schema`), never stored. 38.3's
-  `only` is the table's own blocks alone; a root under `only` holds its
-  partitions' rows in its own blocks wherever one carries `partition_root`,
-  which is the root's refusal the spec names.
+  `only` is the table's own blocks alone, a root's carrying `partition_root`
+  holding its partitions' rows rather than its own (38.3.1).
 - **A cold query's pass takes no `QueryOptions`** (D48): it runs to the end
   for any table the DDL gives a descendant (`reads_descendants` in
   `dump/settle.rs`), whatever the mode. Under 38.3's `only` that end is not

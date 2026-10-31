@@ -148,13 +148,14 @@ impl Dump {
     /// "D49").
     pub fn table(&self, selector: &TableSelector) -> Result<Option<Table>> {
         let Some(name) = select(&self.tables, selector)? else { return Ok(None) };
-        let TableRead { blocks, refused } = table_read(&self.index, name);
+        let TableRead { blocks, through, refused } = table_read(&self.index, name);
         Ok(Some(Table {
             source: Arc::clone(&self.source),
             watch: Arc::clone(&self.watch),
             metadata: self.index.metadata.clone(),
             name: name.clone(),
             blocks,
+            through,
             refused,
         }))
     }
@@ -286,6 +287,10 @@ pub struct Table {
     metadata: Option<Arc<DumpMetadata>>,
     name: TableName,
     blocks: Vec<CopyBlock>,
+    /// The blocks written through a partition root above it holding its
+    /// descendants' rows, which a read of it alone settles its columns from
+    /// where it holds no other.
+    through: Vec<CopyBlock>,
     /// Why a read of it refuses under each mode, where one does.
     refused: Refusals,
 }
@@ -323,18 +328,18 @@ impl Table {
     /// sets, a projected name no block carries, a typed query of a table the
     /// map holds at the metadata level ([`Error::TableAtMetadataLevel`]), a
     /// table whose rows are written through its partition root
-    /// ([`Error::PartitionThroughRoot`], [`Error::PartitionRootAlone`]) —
-    /// but for the refuse mode's, which
+    /// ([`Error::PartitionThroughRoot`]) — but for the refuse mode's, which
     /// only planning raises, and a projection naming a column twice, which
     /// only planning refuses: here the column comes back twice.
     ///
     /// **A table read alone that holds no block of its own** — a
-    /// partitioned table — reads no row, and keeps the schema a read with
-    /// its descendants settles, refusing as that read refuses
-    /// (`docs/design/decisions.md`, "D132").
+    /// partitioned table — reads no row, under the columns the blocks
+    /// holding its descendants' rows name: the schema a read with its
+    /// descendants settles, or where that read refuses, the one the blocks
+    /// written through its root settle (`docs/design/decisions.md`, "D132").
     pub fn schema(&self, options: &QueryOptions) -> Result<ResolvedSchema> {
         let read = self.read(options)?;
-        self.schema_over(columns_from(&read, &self.blocks), options)
+        self.schema_over(self.columns_from(&read), options)
     }
 
     /// The schema a query of this table under `options` resolves, its
@@ -347,12 +352,15 @@ impl Table {
 
     /// **The blocks a query under `options` reads**: every one under
     /// [`Inheritance::Descendants`], and under [`Inheritance::Only`] those
-    /// naming the table — or the table's refusal under that mode.
+    /// holding the table's own rows — naming it, and not as the partition
+    /// root its partitions' rows were written through (I93) — or the
+    /// table's refusal under that mode.
     fn read(&self, options: &QueryOptions) -> Result<Cow<'_, [CopyBlock]>> {
         let table = self.name.qualified_name();
-        let own = |block: &CopyBlock| block.header.qualified_name() == table;
-        let holds_own = self.blocks.iter().any(own);
-        if let Some(refused) = self.refused.of(&self.name, options.inheritance, holds_own) {
+        let own = |block: &CopyBlock| {
+            block.header.qualified_name() == table && block.partition_root.is_none()
+        };
+        if let Some(refused) = self.refused.of(&self.name, options.inheritance) {
             return Err(refused);
         }
         Ok(match options.inheritance {
@@ -363,6 +371,18 @@ impl Table {
         })
     }
 
+    /// **The blocks the table's columns are settled from**, for a read of
+    /// `read`: `read`, or where it reads none — a partitioned table read
+    /// alone — every block it holds, or with none, those written through its
+    /// root (`docs/design/decisions.md`, "D132").
+    fn columns_from<'a>(&'a self, read: &'a [CopyBlock]) -> &'a [CopyBlock] {
+        match (read.is_empty(), self.blocks.is_empty()) {
+            (false, _) => read,
+            (true, false) => &self.blocks,
+            (true, true) => &self.through,
+        }
+    }
+
     /// What the map's statistics say about the whole table, against the
     /// schema `options` resolves, in the semantics its comparisons answer in
     /// and in the view it reads a value its column's type cannot hold in
@@ -370,7 +390,7 @@ impl Table {
     /// (`docs/design/decisions.md`, "D89").
     pub fn summary(&self, options: &QueryOptions) -> Result<TableSummary> {
         let read = self.read(options)?;
-        let resolved = self.schema_over(columns_from(&read, &self.blocks), options)?;
+        let resolved = self.schema_over(self.columns_from(&read), options)?;
         let (database, metadata) = (self.name.database.as_deref(), self.metadata.as_deref());
         let (semantics, reading) = (options.semantics, options.statistics_view());
         Ok(table_summary(database, &read, metadata, &resolved, semantics, reading))
@@ -391,9 +411,10 @@ impl Table {
     pub fn plan(&self, read: ReadOptions, options: QueryOptions) -> Result<TablePartitions> {
         let blocks = self.read(&options)?;
         // A table read alone holding no block of its own reads nothing, under
-        // the schema its read with its descendants reports.
-        let schema = match blocks.is_empty() && !self.blocks.is_empty() {
-            true => Some(self.schema_over(&self.blocks, &options)?),
+        // the schema [`Self::schema`] reports.
+        let columns = self.columns_from(&blocks);
+        let schema = match blocks.is_empty() && !columns.is_empty() {
+            true => Some(self.schema_over(columns, &options)?),
             false => None,
         };
         let partitions = TablePartitions::new(
@@ -410,13 +431,6 @@ impl Table {
             None => partitions,
         })
     }
-}
-
-/// The blocks a table's columns are settled from, for a read of `read`
-/// among `all` it holds: `read`, or `all` where it reads none of them — a
-/// partitioned table read alone (`docs/design/decisions.md`, "D132").
-fn columns_from<'a>(read: &'a [CopyBlock], all: &'a [CopyBlock]) -> &'a [CopyBlock] {
-    if read.is_empty() { all } else { read }
 }
 
 #[cfg(test)]

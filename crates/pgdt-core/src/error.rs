@@ -293,16 +293,6 @@ pub enum Error {
         header_offsets: Vec<u64>,
         inheritance_only: bool,
     },
-    /// A partition root read alone, `pgdt_query::Inheritance::Only`, whose
-    /// blocks hold its partitions' rows, written through it
-    /// (`--load-via-partition-root`): a partitioned table holds no row of its
-    /// own, and these blocks' rows are not its. Read with its descendants, it
-    /// holds them whole. Raised where [`Self::PartitionThroughRoot`] is.
-    #[error(
-        "partition root `{table}` holds its partitions' rows in the COPY blocks at offsets {}, written through it, and none of its own, so a read of its own rows alone would answer theirs — read it in the descendants inheritance mode, which holds them whole",
-        offsets(header_offsets)
-    )]
-    PartitionRootAlone { table: String, header_offsets: Vec<u64> },
     /// A dump read through its map was handed one that stops short of the
     /// source's end, or none, so a table's blocks past that point would be
     /// missing from its rows and its schema without anything saying so. Raised
@@ -463,8 +453,8 @@ fn map_total(size: Option<u64>) -> String {
     }
 }
 
-/// The `COPY` blocks [`Error::PartitionThroughRoot`] and
-/// [`Error::PartitionRootAlone`] name, by their headers' offsets.
+/// The `COPY` blocks [`Error::PartitionThroughRoot`] names, by their headers'
+/// offsets.
 fn offsets(header_offsets: &[u64]) -> String {
     header_offsets.iter().map(u64::to_string).collect::<Vec<_>>().join(", ")
 }

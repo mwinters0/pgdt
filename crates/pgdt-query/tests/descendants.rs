@@ -4,7 +4,8 @@
 //! children and partitions alike, listed and read as `SELECT … FROM <table>`
 //! and `SELECT … FROM ONLY <table>` read it — over a complete map and by a
 //! cold query's pass — or refused where a `--load-via-partition-root` dump
-//! writes its rows through its root (`KD158`).
+//! writes its rows through its root (`KD158`), a partitioned table read alone
+//! reading none (I93).
 
 mod common;
 
@@ -113,10 +114,7 @@ async fn held_to_answers(path: &Path) -> BTreeMap<Reading, BTreeSet<String>> {
             let at = format!("{} {qualified} {reading:?} {schema_mode:?}", path.display());
             match read(&table, schema_mode, inheritance).await {
                 Ok(rows) => assert_eq!(&rows, expected, "{at}"),
-                Err(
-                    Error::PartitionThroughRoot { table, .. }
-                    | Error::PartitionRootAlone { table, .. },
-                ) => {
+                Err(Error::PartitionThroughRoot { table, .. }) => {
                     assert_eq!(&table, qualified);
                     refused.entry(*reading).or_default().insert(table);
                     continue;
@@ -156,20 +154,20 @@ fn expected(descendants: &[&str], only: &[&str]) -> BTreeMap<Reading, BTreeSet<S
 /// child of two parents read under both, a child's own column projected
 /// away, and a partitioned table, which holds no block, read through a
 /// partition itself partitioned, and read alone as empty — and under
-/// `--load-via-partition-root` every partition below the root refuses while
-/// the root reads whole; read alone, the root refuses too, and so does a
-/// partitioned table below it, which holds no block to settle its schema from.
+/// `--load-via-partition-root` every table below the root refuses read with
+/// its descendants while the root reads whole; read alone, each leaf
+/// refuses, and the root and the partitioned table below it read empty
+/// (I93).
 #[tokio::test]
 async fn an_inherited_table_reads_its_descendants_as_its_restore_does() {
     let leaves = ["reading_2020_north", "reading_2020_south", "reading_2021"];
     let below_root: Vec<&str> = leaves.iter().copied().chain(["reading_2020"]).collect();
-    let alone: Vec<&str> = below_root.iter().copied().chain(["reading"]).collect();
     for version in VERSIONS {
         for flag_set in FLAG_SETS {
             let refused = held_to_answers(&inheritance_fixture(version, flag_set)).await;
             let expected = match flag_set {
                 "default" => expected(&[], &[]),
-                _ => expected(&below_root, &alone),
+                _ => expected(&below_root, &leaves),
             };
             assert_eq!(refused, expected, "{version} {flag_set}");
         }
@@ -177,26 +175,23 @@ async fn an_inherited_table_reads_its_descendants_as_its_restore_does() {
 }
 
 /// The partitions schema: each root reads its partitions, and alone reads
-/// none, and the only tables refused are partitions whose rows `pg_dump`
-/// wrote through their root — by the flag, or forced for a hash key on an
-/// enum — and, read alone, those roots.
+/// none, those whose partitions' rows `pg_dump` wrote through them included
+/// (I93), and the only tables refused, either way, are partitions whose rows
+/// it wrote through their root — by the flag, or forced for a hash key on an
+/// enum.
 #[tokio::test]
 async fn a_partitioned_table_reads_its_partitions_as_its_restore_does() {
     let forced = ["feel_a", "feel_z", "shuffle_a", "shuffle_z", "spread_a", "spread_z"];
-    let forced_roots = ["feel", "shuffle", "spread"];
-    let (by_flag, by_flag_root) = (["evt_a", "evt_z"], ["evt"]);
+    let by_flag = ["evt_a", "evt_z"];
     for version in VERSIONS {
         for flag_set in FLAG_SETS {
             let path = partitions_fixture(version, flag_set);
             let refused = held_to_answers(&path).await;
             let mut through: Vec<&str> = forced.to_vec();
-            let mut roots: Vec<&str> = forced_roots.to_vec();
             if flag_set != "default" {
                 through.extend(by_flag);
-                roots.extend(by_flag_root);
             }
-            let alone: Vec<&str> = through.iter().chain(&roots).copied().collect();
-            assert_eq!(refused, expected(&through, &alone), "{version} {flag_set}");
+            assert_eq!(refused, expected(&through, &through), "{version} {flag_set}");
         }
     }
 }
@@ -219,7 +214,7 @@ async fn a_cold_query_reads_a_table_s_descendants() {
                 let at = format!("{version} {flag_set} {qualified} {reading:?}");
                 match read(&table, SchemaMode::Typed, inheritance(*reading)).await {
                     Ok(rows) => assert_eq!(&rows, expected, "{at}"),
-                    Err(Error::PartitionThroughRoot { .. } | Error::PartitionRootAlone { .. }) => {
+                    Err(Error::PartitionThroughRoot { .. }) => {
                         assert_ne!(flag_set, "default", "{at}");
                     }
                     Err(error) => panic!("{at}: {error}"),

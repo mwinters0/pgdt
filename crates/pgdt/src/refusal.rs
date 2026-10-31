@@ -74,7 +74,6 @@ pub(crate) fn about_the_source(err: &pgdt_core::Error) -> bool {
         | Lib::AmbiguousTable { .. }
         | Lib::TableColumnsDisagree { .. }
         | Lib::PartitionThroughRoot { .. }
-        | Lib::PartitionRootAlone { .. }
         | Lib::MetadataNotScanned { .. }
         | Lib::FieldDecode { .. }
         | Lib::FieldRefused { .. }
@@ -124,8 +123,9 @@ pub(crate) fn spelling(err: &pgdt_core::Error) -> Option<String> {
             "`--unrepresentable null`; `--unrepresentable text`".to_string()
         }
         Lib::TestNeedsDeclaredType { .. } => "`--schema-mode typed`".to_string(),
-        Lib::PartitionThroughRoot { inheritance_only: true, .. }
-        | Lib::PartitionRootAlone { .. } => "`--inheritance descendants`".to_string(),
+        Lib::PartitionThroughRoot { inheritance_only: true, .. } => {
+            "`--inheritance descendants`".to_string()
+        }
         // The rest of an enum's labels are in its declaration, which `info
         // --detail` prints.
         Lib::PredicateValueDecode { unlisted, .. } if *unlisted > 0 => {
