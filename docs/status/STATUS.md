@@ -99,7 +99,7 @@ Spec: [`../design/roadmap-P38-descendants.md`](../design/roadmap-P38-descendants
 - [x] **38.5.4** An unreadable catalog's named hypertable the file holds no chunk of reads as a plain table, its read noting that which chunks the file lacks cannot be known — [notes](../design/roadmap-P38.5.4-no-chunk-held-notes.md)
 - [x] **38.6** `pgdt info`'s logical model: parents and their descendants, the TimescaleDB section, continuous aggregates, chunks folded — [notes](../design/roadmap-P38.6-logical-model-notes.md)
 - [x] **38.6.1** What refuses a read, found: a `Warning` finding per partition root whose partitions' rows were written through it and per hypertable with compressed chunks the file holds, each derived in the model and read by the query layer's refusals, printed by `pgdt info` — [notes](../design/roadmap-P38.6.1-refusal-findings-notes.md)
-- [ ] **38.7** The record: the README's supported/unsupported list, the manual, `pg-dump-compatibility.md`'s rows, both modes in one statement by one dump registered twice (manual and a `pgdt sql` test), and the hand run on the reference dump
+- [x] **38.7** The record: the README's supported/unsupported list, the manual, `pg-dump-compatibility.md`'s rows, both modes in one statement by one dump registered twice (manual and a `pgdt sql` test), and the hand run on the reference dump — [notes](../design/roadmap-P38.7-record-notes.md)
 
 ## Not started
 

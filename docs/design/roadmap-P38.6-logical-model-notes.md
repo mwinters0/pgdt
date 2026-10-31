@@ -43,8 +43,10 @@ TimescaleDB section and the folding at 2.31 and 2.13, over `exclude-chunks`,
   where a read of it refuses (`KD158`, `KD159`): the count stays true, and
   what refuses is a file-level finding (38.6.1). A clause or marker per line
   was rejected, naming no leaf partition read by name; a rewording guarding
-  against reading the count as an answer waits on 38.7's hand run showing it
-  misread.
+  against reading the count as an answer waits on someone misreading it, the
+  CLI-feedback pass's to hear (`STATUS.md`, "Not started"). 38.7's hand run
+  could not show it: nothing on the reference dump refuses, so its line is
+  the count's answer.
 - **A through-root block counted by its header name leaves a partitioned
   table below the root holding no row**, its partitions' rows all counted to
   the root; hence `blocks_held`.

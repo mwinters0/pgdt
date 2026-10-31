@@ -67,6 +67,12 @@ which is left out and named on stderr with why
   `:postgres-invalid-values=default`, refuses a query reading one
   ([`type-handling.md`](type-handling.md), "When a value does not match its
   type"). The cache it reads is the one a `pgdt parse` told the same leaves.
+- **`:inheritance=only` reads each table's own rows alone**, as `FROM ONLY`
+  does, where the default, `:inheritance=descendants`, reads a table with
+  every `INHERITS` child's and partition's, a TimescaleDB hypertable with its
+  chunks'. To read both ways in one statement, attach the dump twice, once in
+  each ([tables with descendants](descendants.md), "Both in one statement:
+  the dump registered twice").
 - **`:strict-identity=TERMS` is this dump's `--strict-identity`**
   ([below](#--strict-identity-when-a-moved-file-should-stop-the-session)),
   in place of the session's. The suffixes may come in any order, and a mode
@@ -92,6 +98,7 @@ CREATE EXTERNAL TABLE build STORED AS PGDUMP LOCATION 'koji.dump'
 | `pgdump.schema_mode` | `typed` (the default), or `strings` for every column as its text. |
 | `pgdump.unrepresentable` | `null` (the default), reading a value a typed column cannot hold as NULL, `text`, reading a column holding one as its text, or `refuse`. |
 | `pgdump.postgres_invalid_values` | `default`, refusing a value PostgreSQL refuses for its column's type, or `ignore`, reading it as `:postgres-invalid-values=ignore` does. |
+| `pgdump.inheritance` | `descendants` (the default), reading the table with its descendants' rows, or `only`, its own alone ([tables with descendants](descendants.md)). |
 | `pgdump.strict_identity` | This dump's `--strict-identity` terms, in place of the session's (below). |
 
 A mode is read in any case, `Strings` as `strings`, and

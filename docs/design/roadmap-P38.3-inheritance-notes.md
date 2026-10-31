@@ -28,9 +28,8 @@ server's `only` answers as well as its read-through ones, with
   remedy**: `PartitionThroughRoot { inheritance_only: true }`, spelled
   `--inheritance descendants`, `:inheritance=descendants` and
   `'pgdump.inheritance' 'descendants'`.
-- **The manual is untouched**: `--inheritance`, `:inheritance=` and
-  `'pgdump.inheritance'` are documented in the binaries' help alone until
-  38.7 writes the manual.
+- **The manual's account is [`../manual/descendants.md`](../manual/descendants.md)**,
+  `--inheritance`, `:inheritance=` and `'pgdump.inheritance'` among it.
 
 ## Negative results
 

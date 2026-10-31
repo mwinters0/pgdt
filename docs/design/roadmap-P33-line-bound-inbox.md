@@ -170,3 +170,25 @@ hundreds of MiB at once, so the admission rule for long lines is exercised by
 concurrency on real data, not only by one line at a time.
 
 **Origin.** The 2026-10-30 session that sketched P38, from the same pass.
+
+---
+
+## The reference dump reads whole at the source's worker count, its limit raised
+
+**Fact.** A data-level `pgdt parse --max-line-bytes 536870912` of the whole
+Datanommer `.xz`, at the `jobs=24` the source recommended and the
+`memory_bytes=1435474688` carved from a 12 GiB container limit, finished with
+no refusal and no kill, and `SELECT count(*)` over its cache answered the
+catalog's rows (`roadmap-P38.7-record-notes.md`, "The hand run on the reference
+dump"; `runs/p38.7-datanommer-count-20261031-1224/parse.log`). No resident-set
+reading was taken: it shows the clustered lines above fitting under that limit
+once, not by what margin, nor under a smaller one.
+
+**Why P33 cares.** Whatever charge the phase gives a carried line decides how
+many workers this run still admits inside that allowance, a change a user of
+the reference workload sees; this is today's uncharged outcome to set it
+against, and the run the phase re-takes with an instrument if the charge needs
+a price.
+
+**Origin.** 38.7's hand run, 2026-10-31; contingent on a release build at
+`334ed472` and one run.

@@ -196,6 +196,17 @@ our API, CLI, or data until we reach v1.0.
         `--postgres-invalid-values strict` checks every field and names what it cannot (see: [type
         handling](docs/manual/type-handling.md#when-a-value-does-not-match-its-type))
         - [ ] Common extension types, e.g. PostGIS
+    - Tables with descendants (see: [tables with descendants](docs/manual/descendants.md))
+        - [x] A table reads its own rows and every `INHERITS` child's and partition's, at any depth, as
+        on the server; `--inheritance only` reads its own alone
+        - [ ] A `--load-via-partition-root` dump's partitions read by their own names. The root reads
+        them all; each partition refuses.
+    - TimescaleDB 2.x
+        - [x] Hypertables over uncompressed chunks, under the hypertable's name
+        - [ ] Compressed and partially compressed chunks. Refused, naming them.
+        - [ ] Continuous aggregates under their view's name. Readable as their materialization
+        hypertable.
+        - TimescaleDB 1.x runs on PostgreSQL 12 and older, before any `pg_dump` we read.
     - Collation
         - [x] `C` / `POSIX`
         - [ ] Everything else.  Text compares bytewise, with a warning.  (See: KD7)
@@ -265,6 +276,7 @@ For humans:
     - [Dump inspection](docs/manual/dump-inspection.md)
     - [Type handling](docs/manual/type-handling.md)
     - [SQL over a dump](docs/manual/pgdt-sql.md)
+    - [Tables with descendants: inheritance, partitions and TimescaleDB](docs/manual/descendants.md)
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — setting a machine up to work on this: building, testing, and the debug-symbol setup a readable profile depends on.
 
 Mostly for LLMs:

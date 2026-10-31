@@ -3,7 +3,8 @@
 //! (`docs/design/decisions.md`, "D130", "D131", "D132"): a partition written
 //! through its root refused by `query` and left out of `sql`'s catalog
 //! (`KD158`), the remedy spelled in each front end's words, and a partitioned
-//! table read alone reading none (I93); `pgdt info --json` stating what a
+//! table read alone reading none (I93), and both modes read in one statement
+//! by one dump attached twice; `pgdt info --json` stating what a
 //! TimescaleDB database's catalog concludes, and its listing opening with the
 //! logical model, a hypertable's chunks folded under it.
 
@@ -97,6 +98,47 @@ fn pgdt_sql_reads_a_table_s_descendants() {
             assert!(out.status.success(), "{at}: {}", text(&out.stderr));
             assert_eq!(text(&out.stdout).trim(), format!("n\n{}", expected.len()), "{at}");
         }
+    }
+}
+
+/// **Both modes in one statement are one dump attached twice**, once in each
+/// (`docs/manual/descendants.md`, "Both in one statement: the dump registered
+/// twice"): a join of each table's count under one catalog and under the
+/// other holds each side to its own oracle, and a table either refuses is in
+/// neither catalog.
+#[test]
+fn pgdt_sql_reads_both_modes_by_one_dump_attached_twice() {
+    for flag_set in FLAG_SETS {
+        let (_dir, dump) = sandboxed(&inheritance_fixture(18, flag_set), "dump.sql");
+        let dump = dump.to_str().unwrap();
+        common::run_ok(&["parse", "--source", dump]);
+        let whole = format!("whole={dump}");
+        let own = format!("own={dump}:inheritance=only");
+        let all = tables(flag_set);
+        let count = |table: &str, reading| {
+            all.iter().find(|(t, r, _)| t == table && *r == reading).map(|(_, _, rows)| rows.len())
+        };
+        let mut differ = 0;
+        for (table, _, _) in all.iter().filter(|(_, r, _)| *r == Reading::Descendants) {
+            let either = [Reading::Descendants, Reading::Only];
+            if either.into_iter().any(|r| through_root(flag_set, table, r)) {
+                continue;
+            }
+            let sql = format!(
+                "SELECT w.n AS whole, o.n AS own \
+                 FROM (SELECT count(*) AS n FROM whole.{table}) w \
+                 CROSS JOIN (SELECT count(*) AS n FROM own.{table}) o"
+            );
+            let args = ["sql", "--format", "csv", "-q", "--source", &whole, "--source", &own];
+            let out = run(&[&args[..], &["-c", &sql]].concat());
+            let at = format!("{flag_set} {table}");
+            assert!(out.status.success(), "{at}: {}", text(&out.stdout) + &text(&out.stderr));
+            let expected = (count(table, Reading::Descendants), count(table, Reading::Only));
+            let (Some(through), Some(alone)) = expected else { panic!("{at}: {expected:?}") };
+            assert_eq!(text(&out.stdout).trim(), format!("whole,own\n{through},{alone}"), "{at}");
+            differ += usize::from(through != alone);
+        }
+        assert!(differ > 0, "{flag_set}: no table's two answers differ");
     }
 }
 
