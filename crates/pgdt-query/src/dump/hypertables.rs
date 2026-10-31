@@ -3,7 +3,7 @@
 //! an unreadable catalog leaves unread with their descendants, and what a
 //! read that is made hears of the catalog — its root's own rows, its absent
 //! chunks, a read unchecked for compression, chunks it cannot know absent
-//! (`docs/design/roadmap-P38-descendants.md`, "TimescaleDB"). The catalog's
+//! (`docs/design/decisions.md`, "D137"). The catalog's
 //! conclusions are the model's ([`TimescaleDb`]); what refuses a read is
 //! decided here, beside the blocks it chooses, over the tables the DDL's walk
 //! reaches (`docs/design/decisions.md`, "D134"), and what it hears is the

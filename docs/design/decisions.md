@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D136 -->
+<!-- decision-watermark: D137 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -92,6 +92,7 @@ are `docs/process.md`, "The decision register".
 - **D134** A compressed chunk refuses wherever the DDL's walk reaches it; a chunk's cold pass runs to the end
 - **D135** A hypertable's findings are the file's diagnostics and each read's notes both
 - **D136** What refuses a read is one finding of the file per root or hypertable, and no read's note
+- **D137** TimescaleDB is read from its Apache source alone, its catalog by column name at any release; no chunk is decoded
 - **D51** A segment's offsets are search bounds, and a resync is a real read
 - **D52** The worker is fused, and the earliest failing piece is the error
 - **D93** A dynamic filter's rows are evaluated only under `pgdump.dynamic_filter_rows`, off by default; its state is read at each group entered and each chunk

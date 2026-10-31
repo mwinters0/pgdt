@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P7, P9–P17, P19, P20, P25, P27–P31, P35, P36 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
-| P38 — a table reads its descendants; TimescaleDB under its own names | **Complete** | [spec](roadmap-P38-descendants.md); [notes](roadmap-P38-descendants-notes.md) |
+| P1–P7, P9–P17, P19, P20, P25, P27–P31, P35, P36, P38 | **Struck** at a keystone review | [`decisions.md`](decisions.md); git holds the specs |
 | P33 — every line PostgreSQL writes and reads | Sketched; not grilled | this file, below; [inbox](roadmap-P33-line-bound-inbox.md) — the maintainer sets its order |
 | P32 — the schema model: every object and property a dump declares | Sketched; not grilled | this file, below; [inbox](roadmap-P32-schema-model-inbox.md) — the maintainer sets its order |
 | P34 — macOS | Sketched; not grilled | this file, below; [inbox](roadmap-P34-macos-inbox.md) — the maintainer sets its order |
@@ -740,15 +739,6 @@ and no ceiling taken from the hardware, PostgreSQL's being the only one.
 Sketched to corner-avoidance depth. The facts are in
 [its inbox](roadmap-P33-line-bound-inbox.md).
 
-## P38 — A table reads its descendants; TimescaleDB under its own names
-
-**Complete.** A table reads its own rows and every descendant's, for every
-dump, as `SELECT … FROM parent` does on the server, and a TimescaleDB
-hypertable is read under its own name on top of that, its catalog read to say
-which children are chunks and which rows the file does not hold. The spec is
-[`roadmap-P38-descendants.md`](roadmap-P38-descendants.md), and what it leaves
-the next phase its [notes](roadmap-P38-descendants-notes.md).
-
 ## P32 — The schema model: every object and property a dump declares
 
 **pgdt's aim is to capture every object and property a dump declares**, not
@@ -1280,27 +1270,27 @@ which is what makes the difference worth minding at the moment one is found.
   the view is queried under its name: a PostgreSQL SQL body read by
   DataFusion's planner, with what it calls — `time_bucket` and the other
   functions a TimescaleDB continuous aggregate's view names — reached or
-  refused. Surfaced by P38, which reads a continuous aggregate's rows only as
+  refused. pgdt reads a continuous aggregate's rows only as
   its materialization hypertable's and identifies the aggregate in
   `pgdt info`.
 
 - **Compressed TimescaleDB chunks, decoded from a clean room.** A compressed
-  chunk's rows are base64 codec batches in another relation, and P38 refuses
-  them. The codecs are Timescale License source (`tsl/src/compression/`), so a
+  chunk's rows are base64 codec batches in another relation, and pgdt refuses
+  them (D137). The codecs are Timescale License source (`tsl/src/compression/`), so a
   decoder in this Apache-2.0 tree is written only in a clean room: its spec
   from the TimescaleDB binary's observed output — fixtures generated under the
   TSL's internal use — and published papers, its implementer never reading
   `tsl/`, and Timescale's US 10,936,562 cleared before the item takes a phase.
-  The survey P38's grilling ran read `tsl/` and is no spec for it
-  (`roadmap-P38-descendants.md`, "Facts the grilling found"). Its oracle is
-  P38's: the restored server decompresses.
+  The survey behind D137, machine-local at
+  `runs/p38-timescaledb-survey/report.md`, read `tsl/` and is no spec for it.
+  Its oracle is D130's: the restored server decompresses.
 
 - **Rows routed to their partitions.** A `--load-via-partition-root` dump
   writes each partition's rows through its root, and a restore routes each to
   the partition whose bound admits it, comparing the partition key under its
   operator classes and collations (I86). Evaluating bounds so would let a
   partition read under its own name, and a partitioned table below the root
-  read with its descendants, which P38 refuses.
+  read with its descendants, which pgdt refuses (`KD158`).
 
 - **Caller-supplied type mapping.** Let a caller override the
   PostgreSQL-type→Arrow-type resolution: per column, per declared type, or

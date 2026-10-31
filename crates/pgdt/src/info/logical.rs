@@ -2,9 +2,10 @@
 //! descendants' rows into, and per TimescaleDB database what its catalog
 //! concludes — the release, each hypertable's dimensions and chunks counted
 //! whole, compressed and absent from the file, each continuous aggregate —
-//! and the chunks the block listing folds under their hypertable
-//! (`docs/design/roadmap-P38-descendants.md`, "What is shown, claimed and
-//! checked"). Every conclusion is the model's — [`DatabaseMetadata::descendants`],
+//! and the chunks the block listing folds under their hypertable, what
+//! decides whether a query refuses being what an administrator reads first.
+//! Not a TimescaleDB section over a flat listing, which at a reference
+//! dump's scale is thousands of chunk lines. Every conclusion is the model's — [`DatabaseMetadata::descendants`],
 //! [`TimescaleDb::of`], [`absent_chunks`] — counted here over the blocks the
 //! cache holds, never a `Dump`'s (`docs/design/decisions.md`, "D61").
 
@@ -172,7 +173,9 @@ fn hypertable_line(hypertable: &Hypertable, ddl: Option<&DatabaseMetadata>) -> S
 
 /// One continuous aggregate's line: whether it is real-time, and the one way
 /// its rows are read — as its materialization hypertable's, the view itself
-/// read no way (`docs/design/roadmap-P38-descendants.md`, "TimescaleDB").
+/// read no way, pgdt modelling no views: reading a materialized-only
+/// aggregate under its own name would be view support by the back door
+/// (`docs/design/roadmap.md`'s Future item "Views read as DataFusion views").
 fn aggregate_line(aggregate: &ContinuousAggregate) -> String {
     let kind = if aggregate.materialized_only { "materialized only" } else { "real-time" };
     let rows = match &aggregate.materialization {

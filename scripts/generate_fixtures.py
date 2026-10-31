@@ -372,11 +372,16 @@ class TimescalePin:
 
 TIMESCALEDB_SCHEMA = "timescaledb"
 
-# One TimescaleDB release per dump-visible shape, each on its own routine
-# major, whose `pg_dump` writes the fixture against the pin's server so the
-# dump is the same producer's output as every other
-# (docs/design/roadmap-P38-descendants.md, "What is shown, claimed and
-# checked"). The last is the newest release and moves as the routine set does.
+# One TimescaleDB release per dump-visible shape (TS3), each the last of its
+# shape on a routine major, whose `pg_dump` writes the fixture against the
+# pin's server so the dump is the same producer's output as every other. The
+# last is the newest release and moves as the routine set does. 2.27 is where
+# the first recipe holds with `chunk.dropped` gone, so the catalog read by
+# column name meets a missing column; 2.14 and 2.25 change nothing pgdt reads.
+# The server is `timescaledb-ha`, TimescaleDB's own Docker image, on Ubuntu
+# for its glibc, as TimescaleDB's packages are glibc builds (D69 needs no
+# exception); a pin with no `-ha` tag takes TimescaleDB's Debian packages on
+# the routine image, and one with neither goes to the maintainer.
 TIMESCALEDB_PINS = {
     "13": TimescalePin("2.13.1", "timescale/timescaledb-ha:pg13.13-ts2.13.1"),
     "15": TimescalePin(
@@ -887,7 +892,7 @@ def write_answers(
     for every table it then holds, read with its descendants and `ONLY`: the
     reference a table read with its descendants is checked against, short
     being measured against the server the dump restores to
-    (docs/design/roadmap-P38-descendants.md, "The generic mechanism"). A
+    (docs/design/decisions.md, "D130"). A
     TimescaleDB restore's hypertables are each read `held` too: what its root
     holds itself, which the server's own reads of it leave out (TS8).
 

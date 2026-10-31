@@ -1,5 +1,5 @@
 -- Inheritance fixture schema: a table read with its descendants
--- (`docs/design/roadmap-P38-descendants.md`, "The generic mechanism"), the
+-- (`docs/design/decisions.md`, "D131"), the
 -- shapes `INHERITS` and declarative partitioning give a parent's rows that
 -- `fixture_schema_partitions.sql` does not. Each flag set's restore is
 -- answered by the server per table, read through and `ONLY`

@@ -3,6 +3,18 @@
 //! lists — each a block holds rows for, and each declared ancestor of one —
 //! and the blocks a read of one reads, its own and every descendant's, or
 //! why it is refused, read with them or alone.
+//!
+//! **The rule is PostgreSQL's, every descendant's alike**, not TimescaleDB's
+//! alone, which would leave a partitioned root empty. A descendant is one
+//! more block to prune by its statistics, at least as tight as any declared
+//! bound (I86), so no `CHECK`, partition bound or `dimension_slice` is read
+//! for pruning: that would be a second proof path serving only the cold and
+//! declined cases, reopened only by a figure showing a cold parent query
+//! matters. A descendant that cannot be read refuses its parent rather than
+//! the rest being read and the gap reported, a short answer being a wrong
+//! one. Every table, a chunk included, stays listed under its own name, as
+//! on the server: leaving chunks out would make the catalog disagree with
+//! the server's.
 
 use std::collections::BTreeSet;
 

@@ -1,6 +1,6 @@
 -- TimescaleDB fixture schema: every way a pinned TimescaleDB version stores a
--- hypertable's rows, for `docs/design/roadmap-P38-descendants.md`'s
--- "What is shown, claimed and checked". Loaded into
+-- hypertable's rows, each oracle-checked (`docs/design/decisions.md`,
+-- "D130"). Loaded into
 -- `timescale/timescaledb-ha` at each pin (`generate_fixtures.py`'s
 -- `TIMESCALEDB_PINS`) and dumped by the routine `postgres:` image's `pg_dump`.
 -- Written from TimescaleDB's Apache-licensed `sql/` and its documentation.

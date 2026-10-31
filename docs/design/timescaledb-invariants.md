@@ -17,7 +17,7 @@ new tag.
 
 **Every proof is TimescaleDB's Apache-licensed source** (`src/`, `sql/`), its
 documentation, or a dump the fixture generator produced — **never `tsl/`**
-([`roadmap-P38-descendants.md`](roadmap-P38-descendants.md), "TimescaleDB").
+([`decisions.md`](decisions.md), "D137").
 What only `tsl/` would prove is stated as observed, from a fixture.
 
 **A site relying on an entry carries a `timescaledb: TS<n>` comment**, in a `.rs`
@@ -52,10 +52,10 @@ are chunks: a chunk's schema and prefix are `create_hypertable` arguments, and
 from 2.21 `attach_chunk` adopts any table.
 
 **Verified against:** 2.13.1, 2.21.4, 2.27.2, 2.28.3, 2.31.0 (the pins).
-**Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"The generic mechanism" — a hypertable read through its `INHERITS (…)` children;
-a cold query of a table with an ancestor in a TimescaleDB database mapping to the
-file's end, `reads_descendants` (`pgdt-query`'s `dump/settle.rs`).
+**Relied on by:** [`decisions.md`](decisions.md), "D131" — a hypertable read
+through its `INHERITS (…)` children; a cold query of a table with an ancestor in
+a TimescaleDB database mapping to the file's end, `reads_descendants`
+(`pgdt-query`'s `dump/settle.rs`).
 **Re-verify:** `git show <tag>:src/chunk.c | grep -n inhRelations`; `grep -c
 'INHERITS (public.metrics)' fixtures/<major>/timescaledb/default.sql` is 6.
 
@@ -91,10 +91,9 @@ children, and is not recognisable as TimescaleDB's from its rows; through 2.22
 its root still carries the `ts_insert_blocker` trigger (TS8).
 
 **Verified against:** the pins; PostgreSQL 13.23 and 18.6's `pg_dump`.
-**Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"TimescaleDB" — detection per database, and the catalog read by column name:
-`records_rows` and `Catalog::of` (`pgdt-model`'s `timescaledb/recorded.rs` and
-`timescaledb/catalog.rs`).
+**Relied on by:** [`decisions.md`](decisions.md), "D133" — detection per
+database, and the catalog read by column name: `records_rows` and `Catalog::of`
+(`pgdt-model`'s `timescaledb/recorded.rs` and `timescaledb/catalog.rs`).
 **Re-verify:** `git show <tag>:sql/pre_install/tables.sql | grep -n
 pg_extension_config_dump`; `grep -c '^COPY' fixtures/{13,18}/timescaledb/schema-public.sql` is 2.
 
@@ -104,14 +103,13 @@ pg_extension_config_dump`; `grep -c '^COPY' fixtures/{13,18}/timescaledb/schema-
 
 **Claim.** From 2.14 the dump's `_timescaledb_catalog.metadata` block holds
 `timescaledb_version` (its filter `WHERE key <> 'uuid'`, so `install_timestamp`
-and `exported_uuid` too); through 2.13 it holds `exported_uuid` alone. The
-pins' catalog blocks differ in exactly the columns
-[`roadmap-P38-descendants.md`](roadmap-P38-descendants.md), "TimescaleDB in a
-dump" lists for them: `chunk.dropped` and `hypertable.replication_factor` and
-the multinode tables at 2.13; `compression_settings` with `compress_relid` at
-2.21; `dropped` gone and `chunk_constraint` present at 2.27; `chunk_constraint`
-gone and `dimension_slice.chunk_id` at 2.28; `chunk.relid` at 2.31. Every pin's
-`COMMENT ON EXTENSION timescaledb` ends `(Community Edition)`.
+and `exported_uuid` too); through 2.13 it holds `exported_uuid` alone. The pins'
+catalog blocks differ in exactly these columns: `chunk.dropped` and
+`hypertable.replication_factor` and the multinode tables at 2.13;
+`compression_settings` with `compress_relid` at 2.21; `dropped` gone and
+`chunk_constraint` present at 2.27; `chunk_constraint` gone and
+`dimension_slice.chunk_id` at 2.28; `chunk.relid` at 2.31. Every pin's `COMMENT
+ON EXTENSION timescaledb` ends `(Community Edition)`.
 
 **Proof.** `sql/pre_install/tables.sql` at 2.13.1 and 2.14.0: the `metadata`
 filter; at each pin, the tables' columns. `sql/metadata.sql`. Observed in each
@@ -123,9 +121,9 @@ otherwise than a fresh install's (`sql/updates/2.25.2--2.26.0.sql` rebuilds
 `chunk`); every pin is a fresh install.
 
 **Verified against:** the pins.
-**Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"TimescaleDB" — the version decides the recipe, a fingerprint before 2.14:
-`version` (`pgdt-model`'s `timescaledb/version.rs`).
+**Relied on by:** [`decisions.md`](decisions.md), "D137" — the version decides
+the recipe, a fingerprint before 2.14: `version` (`pgdt-model`'s
+`timescaledb/version.rs`).
 **Re-verify:** `git show <tag>:sql/pre_install/tables.sql | grep -n -A2
 "config_dump('_timescaledb_catalog.metadata'"`; `awk '/^COPY
 _timescaledb_catalog.metadata/,/^\\\./' fixtures/<major>/timescaledb/default.sql`.
@@ -143,11 +141,11 @@ four compressed `metrics` chunks are `1` and `9` at 2.21, 2.27, 2.28 and 2.31;
 at 2.13 the chunks with a `compressed_chunk_id` are `1` and `9`.
 
 **Verified against:** the pins.
-**Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"TimescaleDB" — compressed and partially compressed chunks refused:
-`Chunk::compressed`, `Chunk::partially_compressed` and `status_of`
-(`pgdt-model`'s `timescaledb/recipe.rs`); the chunks refusing a read and
-their finding, `compressed_chunks` (`timescaledb/findings.rs`).
+**Relied on by:** [`decisions.md`](decisions.md), "D134" — compressed and
+partially compressed chunks refused: `Chunk::compressed`,
+`Chunk::partially_compressed` and `status_of` (`pgdt-model`'s
+`timescaledb/recipe.rs`); the chunks refusing a read and their finding,
+`compressed_chunks` (`timescaledb/findings.rs`).
 **Re-verify:** `git show <tag>:src/chunk.h | grep -n 'define CHUNK_STATUS'`.
 
 ---
@@ -173,12 +171,12 @@ INHERIT` of the compressed relations). The rest observed: each pin's
 through, 0 `ONLY`; 2.21's `columnar` chunk an empty block, 7 rows read through).
 
 **Scope limit.** The batches' format is not claimed and is not read
-([`roadmap-P38-descendants.md`](roadmap-P38-descendants.md), "TimescaleDB").
+([`decisions.md`](decisions.md), "D137").
 
 **Verified against:** the pins.
-**Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"TimescaleDB" — compressed rows refused wherever reached; a chunk's compressed
-relation joined by `resolve` (`pgdt-model`'s `timescaledb/recipe.rs`).
+**Relied on by:** [`decisions.md`](decisions.md), "D134" — compressed rows
+refused wherever reached; a chunk's compressed relation joined by `resolve`
+(`pgdt-model`'s `timescaledb/recipe.rs`).
 **Re-verify:** `grep -n -A3 'CREATE TABLE _timescaledb_internal.*compress'
 fixtures/<major>/timescaledb/default.sql`, and the chunk's two answer lines.
 
@@ -200,10 +198,10 @@ preserves the row at 2.13.1 and 2.14.0, `if (has_continuous_aggs &&
 false` ("Continuous Aggregates with partials is not supported anymore").
 
 **Verified against:** the pins; the source at 2.13.1–2.21.4.
-**Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"TimescaleDB" — a `chunk.dropped` row is no chunk: `read_chunks` (`pgdt-model`'s
-`timescaledb/recipe.rs`), none refuses a read, `compressed_chunks`, and none is absent,
-`absent_chunks` (both `timescaledb/findings.rs`).
+**Relied on by:** [`decisions.md`](decisions.md), "D134" — a `chunk.dropped` row
+is no chunk: `read_chunks` (`pgdt-model`'s `timescaledb/recipe.rs`), none
+refuses a read, `compressed_chunks`, and none is absent, `absent_chunks` (both
+`timescaledb/findings.rs`).
 **Re-verify:** `git show <tag>:src/chunk.c | grep -n 'preserve_catalog_row(chunks'`.
 
 ---
@@ -220,9 +218,9 @@ pin: `metrics_daily` and `metrics_weekly` as `_materialized_hypertable_2` and
 `_3`, 81 and 5 rows read through, none `ONLY`.
 
 **Verified against:** the pins.
-**Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"TimescaleDB" — an aggregate's rows read as its materialization hypertable's:
-`continuous_aggregates` (`pgdt-model`'s `timescaledb/recipe.rs`).
+**Relied on by:** [`decisions.md`](decisions.md), "D131" — an aggregate's rows
+read as its materialization hypertable's: `continuous_aggregates`
+(`pgdt-model`'s `timescaledb/recipe.rs`).
 **Re-verify:** `grep -n '^COPY _timescaledb_catalog.continuous_agg '
 fixtures/<major>/timescaledb/default.sql`, and its answers.
 
@@ -264,11 +262,11 @@ from an insert in restoring mode (`fixture_schema_timescaledb_root_rows.sql`).
 
 **Verified against:** 2.27.2, 2.28.3, 2.31.0; the trigger and restoring mode at
 2.13.1 and 2.21.4 too.
-**Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"TimescaleDB" — a root's own rows read, with a finding, `root_rows` (`pgdt-model`'s
-`timescaledb/findings.rs`), and said by a read alone from 2.28, `Verdict::of` (`pgdt-query`'s
-`dump/hypertables.rs`); the answers' *held*
-reading of each root, `answer_lines` (`scripts/generate_fixtures.py`).
+**Relied on by:** [`decisions.md`](decisions.md), "D135" — a root's own rows
+read, with a finding, `root_rows` (`pgdt-model`'s `timescaledb/findings.rs`),
+and said by a read alone from 2.28, `Verdict::of` (`pgdt-query`'s
+`dump/hypertables.rs`); the answers' *held* reading of each root, `answer_lines`
+(`scripts/generate_fixtures.py`).
 **Re-verify:** `grep -c ts_insert_blocker fixtures/<major>/timescaledb/default.sql`;
 `grep 'public.metrics' fixtures/<major>/timescaledb/default.answers.tsv | grep -v
 $'\trow\t'`; `git show <tag>:src/extension.c | grep -n -A2 'ts_guc_restoring ||'`.
@@ -304,7 +302,7 @@ the absent chunks' rows. With `timescaledb.enable_constraint_exclusion = off`
 each restore (`runs/dwal-ts10-probe/results.txt`, machine-local).
 
 **Verified against:** 2.13.1, 2.31.0.
-**Relied on by:** [`roadmap-P38-descendants.md`](roadmap-P38-descendants.md),
-"TimescaleDB" — absent chunks read as absent, with a finding, `absent_chunks`
-(`pgdt-model`'s `timescaledb/findings.rs`).
+**Relied on by:** [`decisions.md`](decisions.md), "D135" — absent chunks read as
+absent, with a finding, `absent_chunks` (`pgdt-model`'s
+`timescaledb/findings.rs`).
 **Re-verify:** `grep -v $'\trow\t' fixtures/{13,18}/timescaledb/exclude-chunks.answers.tsv`.

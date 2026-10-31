@@ -111,14 +111,14 @@ read on every major.
 
 ## A user cannot know a dump needs a longer line, except by failing
 
-**Fact.** The maintainer's account of Datanommer, Fedora's message archive
-(`roadmap.md`, "P38 — A table reads its descendants; TimescaleDB under its own
-names"): in some regions, mostly rows inserted after 2020, an inserting program's
+**Fact.** The maintainer's account of Datanommer, Fedora's message archive, a
+2.43 TiB TimescaleDB dump of `pg_dump` 13.23, read under its hypertable's name
+(D131): in some regions, mostly rows inserted after 2020, an inserting program's
 defect left text truncated at the longest value the PostgreSQL of the time
 allowed, so lines run past `max_line_bytes`' default and the dump is read only
-after raising it. Nothing tells the user that, or the value that suffices,
-short of raising it and running again. Dumps needing a raised limit are
-little exercised by the suite.
+after raising it. Nothing tells the user that, or the value that suffices, short
+of raising it and running again. Dumps needing a raised limit are little
+exercised by the suite.
 
 A full pass over the dump (machine-local report:
 `runs/datanommer-survey/report.md`) measured its data lines: 32,664 over
@@ -135,7 +135,7 @@ only a field's tail would show.
 I71's bound with no setting at all, and the reference dump for the phase's
 long-line paths; the requirements and fixtures stand without it.
 
-**Origin.** The 2026-10-30 session that sketched P38.
+**Origin.** 2026-10-30, the maintainer.
 
 ---
 
@@ -154,7 +154,7 @@ a line the parse read can be refused by a query with a smaller one.
 names, reproduced in code; whatever the phase leaves of the knob decides
 whether any of these survive.
 
-**Origin.** The 2026-10-30 session that sketched P38, from a read of the code.
+**Origin.** 2026-10-30, from a read of the code.
 
 ---
 
@@ -169,7 +169,7 @@ two of them 462 MB.
 hundreds of MiB at once, so the admission rule for long lines is exercised by
 concurrency on real data, not only by one line at a time.
 
-**Origin.** The 2026-10-30 session that sketched P38, from the same pass.
+**Origin.** 2026-10-30, from the same pass.
 
 ---
 
@@ -178,9 +178,12 @@ concurrency on real data, not only by one line at a time.
 **Fact.** A data-level `pgdt parse --max-line-bytes 536870912` of the whole
 Datanommer `.xz`, at the `jobs=24` the source recommended and the
 `memory_bytes=1435474688` carved from a 12 GiB container limit, finished with
-no refusal and no kill, and `SELECT count(*)` over its cache answered the
-catalog's rows (`roadmap-P38-descendants-notes.md`, "The hand run on the reference
-dump"; `runs/p38.7-datanommer-count-20261031-1224/parse.log`). No resident-set
+no refusal and no kill, and `SELECT count(*) FROM datanommer2.public.messages`
+over its cache answered the catalog's chunks' rows, 530,657,112, `pgdt info`
+agreeing (`runs/p38.7-datanommer-count-20261031-1224/`: `run.sh`, `parse.log`,
+`info.txt`, `count.csv`). The data-level cache it wrote is kept beside the link
+it read through, `/mnt/ssd/fedora/scratch/pgdump_query/datanommer/`, for any
+later hand run on the dump. No resident-set
 reading was taken: it shows the clustered lines above fitting under that limit
 once, not by what margin, nor under a smaller one.
 
@@ -190,5 +193,5 @@ the reference workload sees; this is today's uncharged outcome to set it
 against, and the run the phase re-takes with an instrument if the charge needs
 a price.
 
-**Origin.** 38.7's hand run, 2026-10-31; contingent on a release build at
+**Origin.** The hand run of 2026-10-31; contingent on a release build at
 `334ed472` and one run.

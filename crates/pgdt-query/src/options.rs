@@ -200,6 +200,14 @@ impl QueryOptions {
 /// over them, what refuses, and what a column's type is settled from the
 /// rows read — an array's dimensions, a column read as its text for a value
 /// its type cannot hold (`docs/design/decisions.md`, "D131", "D132").
+///
+/// **One mode, per dump, `Descendants` everywhere by default**, the library
+/// included: the same name means the same rows in every front end, the
+/// library's conservative defaults being for resources, not meaning. Not a
+/// `--no-timescaledb`, the escape being from PostgreSQL's semantics, which a
+/// partitioned dump needs as much; not a boolean `--only`, against the front
+/// ends' mode convention; and not per table in SQL, DataFusion's SQL parsing
+/// no `FROM ONLY` — one dump registered twice, once in each mode, reads both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Inheritance {
     /// Its own rows and every descendant's, at any depth, each projected to

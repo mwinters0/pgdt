@@ -2,7 +2,7 @@
 //! map's diagnostics carry it: the chunks the file holds whose rows are
 //! compressed, the chunks a hypertable's catalog lists that the file lacks,
 //! each root's own rows, and a catalog that does not read
-//! (`docs/design/roadmap-P38-descendants.md`, "TimescaleDB"). Properties of
+//! (`docs/design/decisions.md`, "D135", "D136"). Properties of
 //! the file rather than of one read, so on the file-level channel
 //! ([`crate::diagnostic`]'s module doc), derived wherever a whole map is
 //! finished or loaded, beside the refusals a read settles over the same

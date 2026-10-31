@@ -83,6 +83,16 @@ a read that succeeds unlike the server's. Rejected: a clause on each parent's li
 `timescaledb/findings.rs` (`compressed_chunks`), `dump/descendants.rs`. Evidence: `tests/descendants.rs`,
 `tests/timescaledb.rs`.
 
+### D137 TimescaleDB is read from its Apache source alone, its catalog by column name at any release; no chunk is decoded
+pgdt's TimescaleDB code is written from its Apache-licensed `src/` and `sql/`, its docs and the generator's dumps, never
+`tsl/`: a later clean-room decoder needs that held from the start. The catalog is read by column name at any release,
+its recipe chosen by release or shape (TS3), so a release keeping what pgdt reads needs no pgdt release and one lacking
+it refuses its hypertables. Rejected: refusing a release past the newest pin; plain inheritance with a warning over an
+unreadable catalog; detection without the catalog (`compressed_data` columns); decoding chunks in tree (Timescale
+License codecs, US 10,936,562) or never; `--no-timescaledb`, nothing to switch off. Reopens: `roadmap.md`'s Future item
+"Compressed TimescaleDB chunks, decoded from a clean room". Code: `timescaledb/version.rs`, `dump/hypertables.rs`.
+Evidence: TS2, TS3.
+
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 Sub-streams are contiguous byte-balanced runs cut through blocks in file order, so concatenating them *is* the serial
 replay. A cut's offsets are search bounds, a row straddling one belonging to the earlier piece, and a piece resyncs by a

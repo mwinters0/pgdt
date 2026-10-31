@@ -69,8 +69,7 @@ impl Version {
 }
 
 /// The way a chunk is joined to its table, its ranges and its compressed
-/// relation, as the catalog's shape changed
-/// (`docs/design/roadmap-P38-descendants.md`, "TimescaleDB in a dump").
+/// relation, as the catalog's shape changed (TS3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Recipe {

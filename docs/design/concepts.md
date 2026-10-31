@@ -208,7 +208,9 @@ hypertables, chunks and continuous aggregates
 
 - **pgdt-model** — `timescaledb/`: the rows persisted on their blocks, and
   the recipes over them, reading no Arrow and doing no I/O, so `pgdt info`
-  and the query layer read one set of conclusions (D74). The mapping pass
+  and the query layer read one set of conclusions (D74): not beside
+  resolution in pgdt-query, which `info` would reach into, nor a crate of
+  their own, a seam with nothing on its other side. The mapping pass
   records the rows as it maps each block, beside the census and the
   statistics observer it attaches, and keeps them off the interior workers.
   What they say of the file — compressed chunks, a root's own rows, absent
