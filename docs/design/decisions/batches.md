@@ -69,8 +69,9 @@ A root's own rows, absent chunks and an unreadable catalog are properties of the
 dump's drain hear, and each is also a `Warning` `PlanNote` on a read it bears on, so `pgdt query`, which prints no
 file-level finding, says it where the answer differs from the server's; `ReadAsNull` is the precedent. One function
 counts each for both. Rejected: per read only (`pgdt info` silent); `pgdt query` printing the file's findings, every
-hypertable's, and none on a cold partial map. Code: `dump/hypertables.rs` (`Verdict::notes`),
-`timescaledb/findings.rs`. Evidence: `tests/timescaledb.rs`.
+hypertable's, and none on a cold partial map; a note on a hypertable read alone under an unreadable catalog, its
+answer its root's rows either way. Code: `dump/hypertables.rs` (`Verdict::notes`), `timescaledb/findings.rs`.
+Evidence: `tests/timescaledb.rs`.
 
 ### D51 A segment's offsets are search bounds, and a resync is a real read
 Sub-streams are contiguous byte-balanced runs cut through blocks in file order, so concatenating them *is* the serial

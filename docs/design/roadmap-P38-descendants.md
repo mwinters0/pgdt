@@ -111,18 +111,22 @@ children are chunks and which rows the file does not hold.
   relation ("Facts the grilling found"): the `metadata` row from 2.14, a
   fingerprint of the catalog's columns before it. A release whose catalog
   still carries what pgdt reads is read without a pgdt release. **Where columns
-  pgdt needs are missing, every hypertable of that database refuses**, with a
-  finding naming the catalog's shape, and its chunks read under their own
-  names; a chunk read so cannot be checked for compression, and the finding
-  says so. The hypertables are those the `hypertable` rows name, read by
-  `schema_name` and `table_name` alone; where even those cannot be read, every
-  table of that database with a descendant refuses, a hypertable being
-  indistinguishable from a plain parent. A hypertable none of whose chunks the
-  file holds then reads as a plain table, and the database's finding says its
-  catalog is unreadable. Rejected: refusing a version newer than the newest pinned; falling
+  pgdt needs are missing, every hypertable of that database the file holds a
+  chunk of refuses**, with a finding naming the catalog's shape, and its chunks
+  read under their own names; a chunk read so cannot be checked for
+  compression, and the finding says so. The hypertables are those the
+  `hypertable` rows name, read by `schema_name` and `table_name` alone; where
+  even those cannot be read, every table of that database with a descendant
+  refuses, a hypertable being indistinguishable from a plain parent. Either
+  way a hypertable none of whose chunks the file holds reads as a plain table,
+  and the database's finding says its catalog is unreadable; one the rows name
+  says on that read that which chunks the file lacks cannot be known (amended
+  2026-10-31). Rejected: refusing a version newer than the newest pinned; falling
   back to plain inheritance with a warning; a second, catalog-free detection
   path (a non-empty relation with `compressed_data` columns), kept to the
-  finding's wording instead.
+  finding's wording instead; refusing a named hypertable the file holds no
+  chunk of, the refusal guarding compression no chunk is reached to meet, and
+  a readable catalog's absent chunks reading as absent rather than refusing.
 - **Rows a restore would not hold are read as absent, with a finding**: a
   multinode access node's foreign chunks (2.0–2.13), tiered storage's foreign
   chunk (OSM), and chunk tables a dump left out though its catalog lists them

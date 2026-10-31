@@ -96,6 +96,7 @@ Spec: [`../design/roadmap-P38-descendants.md`](../design/roadmap-P38-descendants
 - [x] **38.5.1** Hypertables resolved: compressed and partially compressed chunks refused at the hypertable and by name under both modes with `KD159` (c), dropped rows skipped, absent chunks read as absent and a root's own rows read, an unreadable catalog refusing the hypertables its `hypertable` rows name, else every parent of that database; a chunk's cold pass to the end (`KD160`); every pin checked against 38.5's answers — [notes](../design/roadmap-P38.5.1-hypertables-notes.md)
 - [x] **38.5.2** The hypertables' findings: the chunks the catalog lists and the file lacks, each root's own rows, and an unreadable catalog's database, its chunks read unchecked for compression — [notes](../design/roadmap-P38.5.2-findings-notes.md)
 - [x] **38.5.3** The hypertables' findings said per read too: each a `Warning` `PlanNote` on a read it bears on, beside its `DiagnosticKind` — [notes](../design/roadmap-P38.5.3-per-read-notes.md)
+- [ ] **38.5.4** An unreadable catalog's named hypertable the file holds no chunk of reads as a plain table, its read noting that which chunks the file lacks cannot be known ([2026-10-31](history/2026-10-31.md), "A named hypertable with no chunk held reads: 38.5.4")
 - [ ] **38.6** `pgdt info`'s logical model: parents and their descendants, the TimescaleDB section, continuous aggregates, chunks folded
 - [ ] **38.7** The record: the README's supported/unsupported list, the manual, `pg-dump-compatibility.md`'s rows, both modes in one statement by one dump registered twice (manual and a `pgdt sql` test), and the hand run on the reference dump
 
@@ -128,19 +129,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **An unreadable catalog's note is raised on no read of a named hypertable**
-  (38.5.3). The review settling the slice listed, among the reads that say
-  an unreadable catalog, "a named hypertable read as a plain table, the file
-  holding none of its chunks"; no such read is made. Read with its
-  descendants a named hypertable refuses whether or not the file holds a
-  chunk of it (`Verdict::unreadable_refusal`, `dump/hypertables.rs`; 38.5.1's
-  notes, "Negative results"), and read alone it reaches no chunk, so nothing
-  in it is unchecked for compression, which the note's sentence says. So
-  `CompressionUnchecked` is raised on a read reaching a table below a
-  hypertable the catalog names, or below any table where none is named, and
-  nowhere else. Reconsidering means one of two things. A named hypertable
-  none of whose chunks the file holds could read with its descendants as a
-  plain table, narrowing 38.5.1's refusal, with the note on that read. Or
-  the note could go on every read alone of a named hypertable, its sentence
-  saying something other than compression.
