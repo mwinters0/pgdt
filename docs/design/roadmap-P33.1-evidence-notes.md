@@ -1,11 +1,10 @@
 # P33.1 notes — the evidence
 
-**`long-line-resident` is taken at `36888923` and folded in**
-([`measurements.md`](measurements.md), "What a held line holds resident"),
-which says what its readings mean against the falsifiers written before them;
-`KD164` is filed. The launch's log is
+**`long-line-resident` was taken at `36888923`**, its readings read against
+the falsifiers written before them; `KD164` is filed. The launch's log is
 `runs/long-line-resident-20261101-0015/`, the sitting's tables and readings
-`runs/measure-20261101T001136/`.
+`runs/measure-20261101T001136/`; [`measurements.md`](measurements.md), "What a
+held line holds resident" carries 33.3's re-take, read against this sitting.
 
 - **Fifteen inputs, one value kind and one line length each**
   (`generate_long_lines.py`, `measure.LONG_LINE_LENGTHS`): a cluster of four
@@ -37,13 +36,12 @@ which says what its readings mean against the falsifiers written before them;
   one-worker cells price the serial loop's carry (`ChunkCarry`, two buffers
   each kept at a whole line's pages) and the four-worker ones the leader's
   regions. 33.2 and 33.3 change both; neither column stands in for the other.
-- **Unattributed, each named in the figure's reading**: the rest of a
-  one-worker parse's four bytes a line byte past the carry's two buffers and
-  a growth's copy; the term a one-partition query holds from 128 MiB and not
-  at 32 MiB; a four-partition query holding past four times its one-partition
-  secant over text and bytea; and the half-line-to-line spread between two
-  sweeps of one leg. A heaptrack recording at one worker over `long_text_512`
-  is the instrument for the first.
+- **Unattributed, and still present at 33.3's re-take**: the byte a line
+  byte a one-worker parse holds past the carry's buffers and a growth's copy.
+  A heaptrack recording at one worker over `long_text_512` is the instrument.
+  The three other terms this sitting left unattributed — a one-partition
+  query's from 128 MiB, a four-partition query's past four one-partition ones,
+  the spread between two sweeps of one leg — are absent from the re-take.
 - **A query leg's partition count is checked by nothing.** Its `scan
   started` line is the builder's, at one worker, so `resolved_jobs` is read
   for the parse legs alone.

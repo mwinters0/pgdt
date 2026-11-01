@@ -40,9 +40,8 @@ slice changes reads, not what is held, and `long-line-resident` is re-taken at
   then, as the serial loop's does for the whole pass.
 - **A worker on a block at the metadata level is handed no census and no
   observer** (`scan_piece`), the leader's case of the pass 33.3.1 streams.
-- **The leader's four-worker readings in `long-line-resident` were taken over
-  the doubled re-read** this slice removes — one read buffer of up to twice
-  the line, where the worker now holds the carry's two `Vec`s, grown by
-  `Vec`'s doubling as the serial loop's are. Nothing says which holds more
-  resident; 33.3's re-take reads the four-worker column over both of its
-  changes at once, and this slice alone over none.
+- **A worker's carry holds more resident than the doubled re-read** this
+  slice removed: 33.3's re-take, over both slices' changes at once, has a
+  four-worker parse holding about what a one-worker one does, where 33.1's
+  held less ([`measurements.md`](measurements.md), "What a held line holds
+  resident"). No reading isolates this slice's half.

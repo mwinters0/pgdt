@@ -2,11 +2,11 @@
 
 **The line a carry pass scans is frozen for its row and dropped after it, and
 a replay keeps it as one of its batch's blocks and holds no read chunk under
-it.** The figure's re-take is what remains: `long-line-resident` is taken from
-the commit carrying this change, never from a tree carrying it uncommitted
-(`measurements.md`, "A figure may be published outside the sweep"), by a
-detached `cd scripts && uv run measure.py --figure long-line-resident`, which
-took about twenty minutes at 33.1.
+it.** `long-line-resident` is re-taken at `6dd4523c`, the commit carrying the
+code, and folded in ([`measurements.md`](measurements.md), "What a held line
+holds resident"), which reads it against the account below and the figure's
+falsifiers. The launch's log is `runs/long-line-resident-20261101-0308/`, the
+sitting's tables and readings `runs/measure-20261101T031755/`.
 
 - **`ChunkCarry` freezes the completed line** (`pgdt-dump`'s
   `scan/chunked.rs`): a line no chunk has ended grows in a `Vec` where it
@@ -44,6 +44,33 @@ An account from the code, written before the readings (`.claude/skills/evidence/
 - **Four workers or partitions** are read against their own one-worker
   column, not against these predictions (33.1's notes: the two loops
   differ).
+
+## What the re-take found against it
+
+- **The carry's second buffer is gone, and a third byte a line byte is not
+  attributed.** A one-worker parse fell by about a line, not to the account's
+  two; a one-partition query over text holds what that parse holds, so the
+  term is on the read path the two share, not a copy the query makes. The
+  account's two candidates — the allocator keeping a freed line, a term outside
+  the carry — are not told apart by resident set; a heaptrack recording of one
+  worker's default parse over `long_text_512` is the instrument.
+- **A decoded copy does not add to the peak as the account sums it**: escaped
+  text's adds less than its predicted term on the ladder and at the bound,
+  bytea's less at the bound and more on the ladder. Unattributed.
+- **The step term a one-partition query held from 128 MiB and not at 32 MiB
+  is gone**, and so is a four-partition query's excess past four
+  one-partition ones; 33.2 and 33.3 both lie between the sittings.
+
+## What the later slices inherit
+
+- **What one reader holds at the bound is about three lines** over every kind
+  and pass (`measurements.md`, "What a held line holds resident"), the floor's
+  reading (33.5); the spec's charge — a held line once, twice where it is
+  decoded — is short of it by the unattributed term; 33.7 confirms or re-sets
+  the factors.
+- **A four-worker parse holds about what a one-worker one does** since its
+  worker carries its line in `ChunkCarry`, where at 33.1 it held less: the
+  ledger (33.4) charges a worker's held line as the serial loop's.
 
 ## What 33.3.1 inherits
 
