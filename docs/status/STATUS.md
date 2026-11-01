@@ -95,7 +95,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.10** A held line grows outside the allocator: past its chunk it moves to a mapping of its own, grown by remapping and unmapped after its row, as the spec's "What a held line costs" states (D139); a one-worker parse at the bound holding the line plus the base at mimalloc's shipped purge delay, the falsifier, which held; the probe's leg timing the same line grown by remapping against one written into a mapping sized for it, whose gap is material and is the page size backing each, closed by 33.12 — [notes](../design/roadmap-P33.10-mapping-notes.md)
 - [x] **33.12** A held line grows in huge-page steps: its mapping kept aligned to a huge page and grown ahead of its bytes by less than one step, the PMD huge page where at most 2 MiB and the base page elsewhere, moved only to an aligned address it chooses, asking for no huge pages, as the spec's "What a held line costs" states; the probe's growth leg reaching the sized leg's write and drop with `AnonHugePages` near the line's length, across a move, the falsifier, which held with the host's huge pages compacted, no move losing its alignment, and the parse leg's peak at one line, the base and less than one step; no parse timing — [notes](../design/roadmap-P33.12-steps-notes.md)
 - [x] **33.11** Each block's longest line: its start and its length recorded by every pass mapping the block, `CACHE_FORMAT_VERSION` bumped, `pgdt info` showing it, as the spec's "A held line is charged, and admitted in file order" states (D140); shown by `--detail` and `--json` — [notes](../design/roadmap-P33.11-longest-notes.md)
-- [ ] **33.9** One decoded copy: a query's escaped text and hex bytea value, and a strict parse's bytea check, held beside their line with at most one decoded copy, as the spec's "What a held line costs" states
+- [x] **33.9** One decoded copy: a query's escaped text and hex bytea value, and a strict parse's bytea check, held beside their line with at most one decoded copy, as the spec's "What a held line costs" states (D141) — [notes](../design/roadmap-P33.9-copy-notes.md)
 - [ ] **33.3.2** A replay reading no field streams a line: the carry counts a streamed row's fields against its header's width, and a replay whose batch and filters read no field counts a row that outgrows its chunk without holding its bytes, as the spec's "A pass holds a line only where it decodes it" states
 - [ ] **33.3.3** A query's census streams a line: a cold query's mapping pass censuses a row that outgrows its chunk field by field as it goes by, holding only a counted container's field, as the spec's "A census holds only the fields it decodes" states
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, an unstated allowance's ledger unlimited; a read over mapped blocks carving its longest line's charge before a reader starts; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
@@ -132,4 +132,24 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **33.9 left a data-level parse's statistics copying an escaped field whole.**
+  `ColumnGatherer::observe` (`statistics/gather/column.rs`) unescapes every
+  field before its bounds clip a head, so a parse at the data level, default or
+  strict, holds one copy of an escaped text or `bytea` field beside its line;
+  `decoded_copies.rs`'s strict test peaks at it. The spec's "What a held line
+  costs" charges a default parse once, for the held line alone, and 33.8 saw no
+  copy there under mimalloc's retention. Left because the row named a query and
+  a strict check, and the gatherer's per-field reads (tier, sum, bounds, value
+  bytes) all take the unescaped text. Reconsidering: the gatherer reading a
+  head off the escaped field as the census reads its shape, a slice before
+  33.4, or a default parse charged twice its line.
+- **33.9 left a filter term's key a copy beside the batch's.** A term over a
+  long field unescapes it and keys it — a `bytea` decoded beside its unescaped
+  text, a text copied for an ordering term (`predicate/eval.rs`,
+  `key/order.rs`) — dropped before the row is pushed, so a query filtering on
+  such a column briefly holds one and a half to two copies beside its line,
+  where the spec states one. Left because the row named a batch's values.
+  Reconsidering: a term keying a field off `Unescaped` as the batcher now
+  decodes one, or the charge counting a filter's key.
 

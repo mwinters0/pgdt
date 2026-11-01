@@ -66,8 +66,9 @@ from the SSD rather than tmpfs, on the shipped build at `6dd4523c` and the
 
 ## What the later slices inherit
 
-- **The spec's "at most one decoded copy" is not yet true** of escaped text,
-  bytea, or a strict bytea check; that removal is admitted as 33.9 (`STATUS.md`).
+- **The spec's "at most one decoded copy" was not true** of escaped text,
+  bytea, or a strict bytea check; 33.9 removed the copies
+  ([`roadmap-P33.9-copy-notes.md`](roadmap-P33.9-copy-notes.md)).
 - **The capacity, the growth's copy and the retention are gone for a line past
   its chunk**, which grows in a mapping of its own at exactly its length
   ([`roadmap-P33.10-mapping-notes.md`](roadmap-P33.10-mapping-notes.md)); a

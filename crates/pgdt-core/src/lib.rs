@@ -22,7 +22,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// because a crate boundary forced it, and named here so a caller reaching
 /// past the API names the word.
 pub mod internal {
-    pub use crate::copy::{RawRow, RowSplit, hex_val, validated_prefix};
+    pub use crate::copy::{RawRow, RowSplit, Unescaped, hex_val, unescaped, validated_prefix};
     pub use crate::error::{OVERWRITE_WAYS_OUT, catalog_fault, chunk_list};
     pub use crate::identifier::{Cursor, canonical_type_name, parse_type_name};
     pub use crate::instrument::decode::DecodeCounter;

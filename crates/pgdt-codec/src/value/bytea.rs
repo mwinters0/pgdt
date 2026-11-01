@@ -1,6 +1,8 @@
 //! `bytea`: both input forms read, the hex form written, and why `byteain`
 //! refuses a text.
 
+use pgdt_core::internal::Unescaped;
+
 use crate::decode::Unread;
 use crate::value::digits::HEX_NIBBLE;
 use crate::value::digits::push_hex_pair;
@@ -42,32 +44,102 @@ pub fn bytea_unread(s: &str) -> Unread {
 /// not the doubled-backslash form COPY escaping writes to disk.
 pub fn decode_bytea(s: &str) -> Option<Vec<u8>> {
     match s.strip_prefix("\\x") {
-        Some(hex) => decode_bytea_hex(hex),
+        Some(hex) => {
+            let mut out = Vec::new();
+            push_hex(hex.as_bytes(), &mut out).then_some(out)
+        }
         None => decode_bytea_escape(s, usize::MAX),
     }
 }
 
-/// The hex pairs after the `\x`.
-fn decode_bytea_hex(hex: &str) -> Option<Vec<u8>> {
-    let b = hex.as_bytes();
-    if !b.len().is_multiple_of(2) {
-        return None;
+/// [`decode_bytea`] over a field's bytes as [`Unescaped`] reads them,
+/// appended to `out`: the value's one decoded copy, written where its caller
+/// keeps it, with no unescaped text of the field made first
+/// (`docs/design/decisions.md`, "D141"). `false`, `out` as it was, where
+/// `decode_bytea` reads no value from the field's text.
+pub fn decode_bytea_into(text: Unescaped<'_>, out: &mut Vec<u8>) -> bool {
+    read_unescaped(text, Some(out))
+}
+
+/// Whether [`decode_bytea`] reads a value from a field's bytes as
+/// [`Unescaped`] reads them, holding none of them.
+pub fn bytea_reads(text: Unescaped<'_>) -> bool {
+    read_unescaped(text, None)
+}
+
+/// [`decode_bytea_into`], or with no `out` [`bytea_reads`]. The hex form
+/// `pg_dump` writes, `\x` and pairs no escape spells, is read as a slice;
+/// any other spelling a byte at a time, twice where it is kept — once to
+/// count it, so `out` grows once, and once to write it.
+fn read_unescaped(text: Unescaped<'_>, out: Option<&mut Vec<u8>>) -> bool {
+    let mut probe = text.clone();
+    if probe.next() == Some(b'\\')
+        && probe.next() == Some(b'x')
+        && let Some(hex) = probe.rest_if_plain()
+    {
+        return match out {
+            Some(out) => push_hex(hex, out),
+            None => hex.len().is_multiple_of(2) && hex.iter().all(|&b| HEX_NIBBLE[b as usize] < 16),
+        };
+    }
+    let mut len = 0usize;
+    if !read_bytea(text.clone(), |_| len += 1) {
+        return false;
+    }
+    if let Some(out) = out {
+        out.reserve(len);
+        read_bytea(text, |byte| out.push(byte));
+    }
+    true
+}
+
+/// The hex pairs after the `\x`, appended to `out`, which is left as it was
+/// where they are not pairs.
+fn push_hex(hex: &[u8], out: &mut Vec<u8>) -> bool {
+    if !hex.len().is_multiple_of(2) {
+        return false;
     }
     // The whole field is one `bytea` value, so validity is accumulated and
     // tested once rather than branched on per pair; a bad nibble poisons the
-    // high bits of `bad` and the vector is dropped unread.
-    let mut out = Vec::with_capacity(b.len() / 2);
+    // high bits of `bad` and what was pushed is dropped unread.
+    out.reserve(hex.len() / 2);
+    let at = out.len();
     let mut bad = 0u8;
-    for [first, second] in b.as_chunks::<2>().0 {
+    for [first, second] in hex.as_chunks::<2>().0 {
         let hi = HEX_NIBBLE[*first as usize];
         let lo = HEX_NIBBLE[*second as usize];
         bad |= hi | lo;
         out.push(hi << 4 | lo);
     }
     if bad & 0xF0 != 0 {
-        return None;
+        out.truncate(at);
+        return false;
     }
-    Some(out)
+    true
+}
+
+/// Either form a byte at a time, each byte it reads handed to `emit`:
+/// [`decode_bytea`]'s grammar over bytes that need not lie in one slice.
+fn read_bytea(mut text: impl Iterator<Item = u8>, emit: impl FnMut(u8)) -> bool {
+    let first = text.next();
+    let second = if first == Some(b'\\') { text.next() } else { None };
+    if second == Some(b'x') {
+        return read_hex(text, emit);
+    }
+    read_escape(first.into_iter().chain(second).chain(text), emit)
+}
+
+/// The hex pairs after the `\x`, a byte at a time.
+fn read_hex(mut text: impl Iterator<Item = u8>, mut emit: impl FnMut(u8)) -> bool {
+    loop {
+        let Some(first) = text.next() else { return true };
+        let Some(second) = text.next() else { return false };
+        let (hi, lo) = (HEX_NIBBLE[first as usize], HEX_NIBBLE[second as usize]);
+        if (hi | lo) & 0xF0 != 0 {
+            return false;
+        }
+        emit(hi << 4 | lo);
+    }
 }
 
 /// `byteaout`'s `escape` form, and no wider (`docs/design/decisions.md`,
@@ -76,31 +148,41 @@ fn decode_bytea_hex(hex: &str) -> Option<Vec<u8>> {
 /// kept, the whole text still checked, so a caller wanting a value's head
 /// pays for no more of it.
 pub fn decode_bytea_escape(s: &str, limit: usize) -> Option<Vec<u8>> {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len().min(limit));
-    let mut at = 0;
-    while let Some(&first) = b.get(at) {
-        let (byte, width) = match first {
-            b'\\' => match b.get(at + 1..at + 4) {
-                _ if b.get(at + 1) == Some(&b'\\') => (b'\\', 2),
-                Some(&[o1 @ b'0'..=b'3', o2 @ b'0'..=b'7', o3 @ b'0'..=b'7']) => {
-                    let byte = (o1 - b'0') << 6 | (o2 - b'0') << 3 | (o3 - b'0');
-                    if ESCAPE_PRINTS_ITSELF.contains(&byte) {
-                        return None;
-                    }
-                    (byte, 4)
-                }
-                _ => return None,
-            },
-            byte if ESCAPE_PRINTS_ITSELF.contains(&byte) => (byte, 1),
-            _ => return None,
-        };
+    let mut out = Vec::with_capacity(s.len().min(limit));
+    let reads = read_escape(s.bytes(), |byte| {
         if out.len() < limit {
             out.push(byte);
         }
-        at += width;
+    });
+    reads.then_some(out)
+}
+
+/// [`decode_bytea_escape`]'s grammar, each byte it reads handed to `emit`.
+fn read_escape(mut text: impl Iterator<Item = u8>, mut emit: impl FnMut(u8)) -> bool {
+    while let Some(first) = text.next() {
+        let byte = match first {
+            b'\\' => match text.next() {
+                Some(b'\\') => b'\\',
+                Some(o1 @ b'0'..=b'3') => {
+                    let (Some(o2 @ b'0'..=b'7'), Some(o3 @ b'0'..=b'7')) =
+                        (text.next(), text.next())
+                    else {
+                        return false;
+                    };
+                    let byte = (o1 - b'0') << 6 | (o2 - b'0') << 3 | (o3 - b'0');
+                    if ESCAPE_PRINTS_ITSELF.contains(&byte) {
+                        return false;
+                    }
+                    byte
+                }
+                _ => return false,
+            },
+            byte if ESCAPE_PRINTS_ITSELF.contains(&byte) => byte,
+            _ => return false,
+        };
+        emit(byte);
     }
-    Some(out)
+    true
 }
 
 /// The bytes `byteaout`'s `escape` form writes as themselves, `\` aside.

@@ -89,3 +89,58 @@ fn a_bytea_is_refused_only_where_byteain_refuses_it() {
         }
     }
 }
+
+/// **A field read still escaped reads what its unescaped text reads**
+/// (`decode_bytea_into`, `bytea_reads`), whichever way `COPY` spells it —
+/// as `pg_dump` writes it, or each byte as an octal or hex escape, so the
+/// hex form's slice path and the byte-at-a-time path both answer — and
+/// appends after what `out` held, leaving it as it was where it reads none.
+#[test]
+fn a_field_read_escaped_reads_what_its_text_reads() {
+    use pgdt_core::escape_field;
+    use pgdt_core::internal::unescaped;
+
+    let mut texts = vec![
+        "\\x".to_string(),
+        "\\xdeadbeef00ff".into(),
+        "\\xDeAd".into(),
+        "\\xabc".into(),
+        "\\xgg".into(),
+        "\\x ab".into(),
+        "\\X41".into(),
+        "abc".into(),
+        "\\000\\\\\\177A".into(),
+        "\\101".into(),
+        "a\\".into(),
+        "\\".into(),
+        "".into(),
+        "tab\there".into(),
+    ];
+    texts.push(render_bytea_escape(&(0..=u8::MAX).collect::<Vec<u8>>()));
+    texts.push(render_bytea(&(0..=u8::MAX).collect::<Vec<u8>>()));
+    for text in &texts {
+        let want = decode_bytea(text);
+        let pg_dump = escape_field(Some(text));
+        let octal: Vec<u8> = text.bytes().flat_map(|b| format!("\\{b:03o}").into_bytes()).collect();
+        // The hex escape takes up to two digits, so a byte spelled `\xNN`
+        // stands alone whatever follows it.
+        let hex: Vec<u8> = text.bytes().flat_map(|b| format!("\\x{b:02x}").into_bytes()).collect();
+        for field in [pg_dump, octal, hex] {
+            let shown = String::from_utf8_lossy(&field).into_owned();
+            let mut out = b"kept".to_vec();
+            let read = decode_bytea_into(unescaped(&field).unwrap(), &mut out);
+            assert_eq!(bytea_reads(unescaped(&field).unwrap()), read, "{shown}");
+            match &want {
+                Some(want) => {
+                    assert!(read, "{shown}");
+                    assert_eq!(&out[..4], b"kept", "{shown}");
+                    assert_eq!(&out[4..], &want[..], "{shown}");
+                }
+                None => {
+                    assert!(!read, "{shown}");
+                    assert_eq!(out, b"kept", "{shown}");
+                }
+            }
+        }
+    }
+}

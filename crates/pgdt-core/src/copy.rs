@@ -7,9 +7,11 @@
 //!
 //! [`unescape_field`]/[`escape_field`] are the one place in the codebase that
 //! converts between a field's on-disk COPY-escaped bytes and its unescaped
-//! text — see `docs/design/decisions.md`, "D74". [`pgdt_codec::decode`] (the codec) never
-//! sees escaped bytes at all: it takes `unescape_field`'s already-unescaped
-//! `&str` output and works purely in "unescaped text vs. Arrow value" terms.
+//! text — see `docs/design/decisions.md`, "D74", [`Unescaped`] holding the
+//! escapes for both. [`pgdt_codec::decode`] (the codec) never sees escaped
+//! bytes at all: it takes `unescape_field`'s already-unescaped `&str` output,
+//! or a `bytea` field's bytes as [`unescaped`] reads them, and works purely in
+//! "unescaped text vs. Arrow value" terms.
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -402,74 +404,108 @@ fn unescape_validated_field(field: &str) -> Result<Option<Cow<'_, str>>> {
 /// carry.
 fn unescape_owned(field: &[u8]) -> Result<String> {
     let mut out = Vec::with_capacity(field.len());
-    let mut i = 0;
-    while i < field.len() {
-        let b = field[i];
-        if b != b'\\' {
-            out.push(b);
-            i += 1;
-            continue;
-        }
-        i += 1;
-        let Some(&esc) = field.get(i) else {
-            // Trailing lone backslash: PostgreSQL's COPY would reject the
-            // line, but emitting it literally loses less than failing.
-            out.push(b'\\');
-            break;
-        };
-        i += 1;
-        match esc {
-            b'b' => out.push(0x08),
-            b'f' => out.push(0x0c),
-            b'n' => out.push(b'\n'),
-            b'r' => out.push(b'\r'),
-            b't' => out.push(b'\t'),
-            b'v' => out.push(0x0b),
-            // Lowercase only, matching PostgreSQL: `\X` falls through to the
-            // "stands for itself" rule below.
-            b'x' => {
-                let mut val: u32 = 0;
-                let mut digits = 0;
-                while digits < 2 {
-                    match field.get(i).and_then(|&b| hex_val(b)) {
-                        Some(d) => {
-                            val = val * 16 + d;
-                            i += 1;
-                            digits += 1;
-                        }
-                        None => break,
-                    }
-                }
-                if digits == 0 {
-                    // `\x` with no hex digits is just a literal `x`.
-                    out.push(esc);
-                } else {
-                    out.push(val as u8);
-                }
-            }
-            b'0'..=b'7' => {
-                let mut val: u32 = u32::from(esc - b'0');
-                let mut digits = 1;
-                while digits < 3 {
-                    match field.get(i).filter(|&&b| (b'0'..=b'7').contains(&b)) {
-                        Some(&b) => {
-                            val = val * 8 + u32::from(b - b'0');
-                            i += 1;
-                            digits += 1;
-                        }
-                        None => break,
-                    }
-                }
-                out.push(val as u8);
-            }
-            // Includes `\\`, and PostgreSQL's permissive "any other character
-            // stands for itself" rule.
-            other => out.push(other),
-        }
-    }
-
+    out.extend(Unescaped { field, at: 0 });
     String::from_utf8(out)
         .map_err(|e| Error::InvalidUtf8 { valid_up_to: e.utf8_error().valid_up_to() })
+}
+
+/// The bytes one still-escaped COPY TEXT field stands for, unescaped one at a
+/// time as they are read, or `None` for SQL `NULL` (the field `\N`): what
+/// [`unescape_field`] returns, its UTF-8 check aside, for a reader that needs
+/// no copy of the field to read it.
+pub fn unescaped(field: &[u8]) -> Option<Unescaped<'_>> {
+    (field != COPY_TEXT_NULL_MARKER).then_some(Unescaped { field, at: 0 })
+}
+
+/// The unescaped bytes of a field ([`unescaped`]); the one statement of COPY
+/// TEXT's escapes, which [`unescape_field`] collects.
+#[derive(Debug, Clone)]
+pub struct Unescaped<'a> {
+    field: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Unescaped<'a> {
+    /// The bytes not yet read, where none of them is escaped, so each stands
+    /// for itself: a reader takes them as a slice rather than one at a time.
+    pub fn rest_if_plain(&self) -> Option<&'a [u8]> {
+        let rest = &self.field[self.at..];
+        (!rest.contains(&b'\\')).then_some(rest)
+    }
+
+    /// The `\x` escape's value, its one or two hex digits read, or a literal
+    /// `x` where none follows.
+    fn hex_escape(&mut self) -> u8 {
+        let mut val: u32 = 0;
+        let mut digits = 0;
+        while digits < 2 {
+            match self.field.get(self.at).and_then(|&b| hex_val(b)) {
+                Some(d) => {
+                    val = val * 16 + d;
+                    self.at += 1;
+                    digits += 1;
+                }
+                None => break,
+            }
+        }
+        if digits == 0 { b'x' } else { val as u8 }
+    }
+
+    /// An octal escape's value, `first` its first digit and up to two more
+    /// read.
+    fn octal_escape(&mut self, first: u8) -> u8 {
+        let mut val: u32 = u32::from(first - b'0');
+        let mut digits = 1;
+        while digits < 3 {
+            match self.field.get(self.at).filter(|&&b| (b'0'..=b'7').contains(&b)) {
+                Some(&b) => {
+                    val = val * 8 + u32::from(b - b'0');
+                    self.at += 1;
+                    digits += 1;
+                }
+                None => break,
+            }
+        }
+        val as u8
+    }
+}
+
+impl Iterator for Unescaped<'_> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<u8> {
+        let b = *self.field.get(self.at)?;
+        self.at += 1;
+        if b != b'\\' {
+            return Some(b);
+        }
+        let Some(&esc) = self.field.get(self.at) else {
+            // Trailing lone backslash: PostgreSQL's COPY would reject the
+            // line, but emitting it literally loses less than failing.
+            return Some(b'\\');
+        };
+        self.at += 1;
+        Some(match esc {
+            b'b' => 0x08,
+            b'f' => 0x0c,
+            b'n' => b'\n',
+            b'r' => b'\r',
+            b't' => b'\t',
+            b'v' => 0x0b,
+            // Lowercase only, matching PostgreSQL: `\X` falls through to the
+            // "stands for itself" rule below.
+            b'x' => self.hex_escape(),
+            b'0'..=b'7' => self.octal_escape(esc),
+            // Includes `\\`, and PostgreSQL's permissive "any other character
+            // stands for itself" rule.
+            other => other,
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rest = self.field.len() - self.at;
+        (rest.div_ceil(4), Some(rest))
+    }
 }
 
 /// Re-apply COPY TEXT escaping to already-unescaped text — the exact inverse
@@ -659,6 +695,41 @@ mod tests {
         assert_eq!(decode("\\xz"), Some("xz".to_string()));
         // PostgreSQL accepts only lowercase `\x`, so `\X41` is `X41`.
         assert_eq!(decode("\\X41"), Some("X41".to_string()));
+    }
+
+    /// `unescaped` reads what `unescape_field` returns, a byte at a time,
+    /// the size hint bounding it, and hands over a rest holding no escape
+    /// whole.
+    #[test]
+    fn unescaped_reads_what_unescape_field_returns() {
+        for field in [
+            "",
+            "plain",
+            "\\\\x00ff",
+            "\\x41\\x42",
+            "\\x4",
+            "\\xz",
+            "\\X41",
+            "\\101\\1013",
+            "\\7",
+            "a\\tb\\nc\\rd\\be\\ff\\vg",
+            "\\q",
+            "trailing\\",
+            "\\\\\\\\",
+        ] {
+            let read: Vec<u8> = unescaped(field.as_bytes()).expect(field).collect();
+            assert_eq!(read, decode(field).expect(field).into_bytes(), "{field:?}");
+            let (lower, upper) = unescaped(field.as_bytes()).unwrap().size_hint();
+            assert!(lower <= read.len() && upper >= Some(read.len()), "{field:?}");
+        }
+        assert!(unescaped(b"\\N").is_none());
+        let mut bytea = unescaped(b"\\\\xdead").unwrap();
+        assert_eq!(bytea.rest_if_plain(), None);
+        assert_eq!((bytea.next(), bytea.next()), (Some(b'\\'), Some(b'x')));
+        assert_eq!(bytea.rest_if_plain(), Some(&b"dead"[..]));
+        let mut spelled = unescaped(b"\\\\x\\x64ead").unwrap();
+        spelled.nth(1);
+        assert_eq!(spelled.rest_if_plain(), None);
     }
 
     #[test]

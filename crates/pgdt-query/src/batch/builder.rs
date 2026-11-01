@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use arrow::array::builder::{
-    BinaryBuilder, BooleanBuilder, Date32Builder, Decimal128Builder, Decimal256Builder,
-    FixedSizeBinaryBuilder, Float32Builder, Float64Builder, Int16Builder, Int32Builder,
-    Int64Builder, IntervalMonthDayNanoBuilder, StringDictionaryBuilder, StringViewBuilder,
+    BooleanBuilder, Date32Builder, Decimal128Builder, Decimal256Builder, FixedSizeBinaryBuilder,
+    Float32Builder, Float64Builder, Int16Builder, Int32Builder, Int64Builder,
+    IntervalMonthDayNanoBuilder, StringDictionaryBuilder, StringViewBuilder,
     Time64MicrosecondBuilder, TimestampMicrosecondBuilder, UInt32Builder,
 };
 use arrow::array::{ArrayRef, ListArray, StructArray};
@@ -23,6 +23,8 @@ use pgdt_codec::nested::{
 };
 use pgdt_codec::pgtype::{NestedPlan, Position};
 use pgdt_model::PostgresInvalidValues;
+
+use super::bytea::ByteaBuilder;
 
 /// One column's typed builder, chosen from a [`pgdt_codec::ResolvedSchema`]
 /// field's [`DataType`] — the complete set [`pgdt_codec::pgtype::resolve_declared_type`]
@@ -65,7 +67,8 @@ pub(crate) enum ColumnBuilder {
         precision: u16,
     },
     FixedSizeBinary16(FixedSizeBinaryBuilder),
-    Binary(BinaryBuilder),
+    /// `bytea`, decoded into the column in place (`docs/design/decisions.md`, "D141").
+    Binary(ByteaBuilder),
     Dictionary(StringDictionaryBuilder<Int32Type>),
     /// `List<T>` filled from an `array_out` literal. Nested `Array`s are the
     /// multi-dimensional case.
@@ -254,7 +257,7 @@ pub(crate) fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> Col
         DataType::FixedSizeBinary(16) => {
             ColumnBuilder::FixedSizeBinary16(FixedSizeBinaryBuilder::new(16))
         }
-        DataType::Binary => ColumnBuilder::Binary(BinaryBuilder::new()),
+        DataType::Binary => ColumnBuilder::Binary(ByteaBuilder::new()),
         DataType::Dictionary(k, v) if **k == DataType::Int32 && **v == DataType::Utf8 => {
             ColumnBuilder::Dictionary(StringDictionaryBuilder::new())
         }
@@ -531,7 +534,7 @@ pub(crate) fn append_typed(
             b.append_value(bytes).expect("decode_uuid always produces exactly 16 bytes");
         }
         ColumnBuilder::Binary(b) => {
-            b.append_value(decode::decode_bytea(text).ok_or_else(fail)?);
+            b.append_value(&decode::decode_bytea(text).ok_or_else(fail)?);
         }
         // deficiency: KD88 — the text is appended whatever it is, so a label
         // the column's enum does not declare, which `enum_in` refuses (I70),

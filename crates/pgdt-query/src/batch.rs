@@ -10,6 +10,7 @@
 //! a byte range of the original field ([`builder`]).
 
 mod builder;
+mod bytea;
 mod chunks;
 
 #[cfg(test)]
@@ -23,8 +24,8 @@ use arrow::array::{ArrayRef, RecordBatch, RecordBatchOptions};
 use arrow::datatypes::SchemaRef;
 
 use pgdt_codec::ResolvedSchema;
-use pgdt_codec::internal::UnrepresentableRead;
-use pgdt_core::internal::{RawRow, RowSplit};
+use pgdt_codec::internal::{UnrepresentableRead, decode_bytea_into};
+use pgdt_core::internal::{RawRow, RowSplit, unescaped};
 use pgdt_core::{Error, Result};
 use pgdt_model::PostgresInvalidValues;
 
@@ -248,6 +249,16 @@ impl RowBatcher {
         chunks: &mut RetainedChunks,
     ) -> Result<()> {
         let field_len = field.len();
+        // A `bytea` is decoded from its field into its column, no unescaped
+        // text of it made (`docs/design/decisions.md`, "D141"); a NULL, or a
+        // field that reads as no value, goes on below, as any type's does.
+        if let ColumnBuilder::Binary(b) = &mut self.columns[col]
+            && self.unrepresentable[col].is_none()
+            && let Some(text) = unescaped(&row.bytes()[field.clone()])
+            && b.append_with(|values| decode_bytea_into(text, values))
+        {
+            return Ok(());
+        }
         let decoded = row.decode(field)?;
         // Disjoint-field borrow: `columns[col]` is mutated below while
         // `schema`/`table`/`declared_types` are only ever read, on the

@@ -105,11 +105,18 @@ impl RetainedChunks {
     }
 }
 
+/// Arrow's largest data block, `GenericByteViewBuilder`'s private
+/// `MAX_BLOCK_SIZE`: a value longer is given a block of its own by
+/// `append_value` too, so handing it the decoded text as that block changes
+/// no layout and drops a copy (`docs/design/decisions.md`, "D141").
+const OWN_BLOCK_PAST: usize = 2 << 20;
+
 /// Append one already-decoded field to a `Utf8View` column, beside the raw
 /// field's offset and length. The caller decodes, so the escaping rules live
 /// in one place; a `Cow::Borrowed` result (no escapes present, already UTF-8
-/// checked) is what makes the field eligible for a zero-copy view —
-/// everything else is copied.
+/// checked) is what makes the field eligible for a zero-copy view, and an
+/// owned one past [`OWN_BLOCK_PAST`] becomes a block of its own — everything
+/// else is copied.
 pub(super) fn push_utf8view_field(
     builder: &mut StringViewBuilder,
     col: usize,
@@ -119,6 +126,16 @@ pub(super) fn push_utf8view_field(
     chunks: &mut RetainedChunks,
 ) {
     match text {
+        Cow::Owned(s) if s.len() > OWN_BLOCK_PAST => {
+            let len = s.len();
+            let block = builder.append_block(Buffer::from_vec(s.into_bytes()));
+            // SAFETY: the block is the whole of a `String`, so the range is in
+            // bounds and UTF-8; `append_block` has asserted it under 4 GiB.
+            #[allow(unsafe_code)]
+            unsafe {
+                builder.append_view_unchecked(block, 0, len as u32)
+            };
+        }
         Cow::Owned(s) => builder.append_value(s),
         Cow::Borrowed(s) => {
             let view = chunks

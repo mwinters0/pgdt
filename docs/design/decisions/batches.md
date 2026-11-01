@@ -12,6 +12,15 @@ Every arm but a top-level `Utf8View` copies, and a batch's views pin the chunks 
 sparse. A source retaining by partition is charged no span (`RetainedUnit`), unsound where a query's cut spans several
 units (`KD23`). Rejected: compacting views past a selectivity threshold. Evidence: `parallel-peak-rss`.
 
+### D141 A long value is decoded once beside its line: a `bytea` into its column, an escaped text as its own block
+A `bytea` is decoded from its field as `Unescaped` reads it, straight into its column's one buffer, and a strict parse
+checks one holding none of it; an escaped text past Arrow's largest view block is handed to its column as that block.
+So a value read from a held line has at most one decoded copy beside the line. Rejected: Arrow's `BinaryBuilder`, which
+takes a value only whole and reserves nothing, so a decode into it stages a copy or grows by doubling; `BinaryView` for
+`bytea`, a type the floor does not yield (D38); a block per escaped text of any length, fragmenting a batch's buffers.
+A batch's buffer growing past a value is its span's, which the replay is charged (D84). Code: `batch/bytea.rs`,
+`batch/chunks.rs` (`OWN_BLOCK_PAST`), `value/bytea.rs` (`decode_bytea_into`). Evidence: `tests/decoded_copies.rs`.
+
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
 `max_source_span` is a ceiling: a partitioned replay derives the span it charges from the budget and the reader count,
 narrowing the span before it cuts the count, never below the announced read chunk (`ReadOptions::chunk_size_bytes`, the
