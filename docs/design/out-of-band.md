@@ -75,3 +75,4 @@ table as a work queue.
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
 | M275 | 2026-10-31 | `pgdt query` warns on stderr, before any row, of each identity diagnostic its cache's load raised — a moved modification signal or another origin — which D21 calls warned and `parse`, `info` and `pgdt sql` already say; `Diagnostic::is_identity` names the three kinds the mapping pass also carries; accepted by `identity.rs`'s `query_warns_of_a_moved_signal_and_reads_on`, failing without the warning | | [2026-10-31](../status/history/2026-10-31.md), "`M275`: `query` warns of a moved identity" |
+| M276 | | The codec's `date`, timestamp and `interval` decoders refuse a literal past the buffer PostgreSQL parses one in (`date_in`, the timestamp inputs, `interval_in`), marked `pg-refuses:` with its invariant, so 33.3.3's census head for a counted scalar is exact | P33 | [2026-11-01](../status/history/2026-11-01.md), "P33.3.1 split: what streams after it" |

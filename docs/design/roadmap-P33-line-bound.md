@@ -32,9 +32,39 @@ nothing left for it to lift.
 
 **A pass that decodes no field of a line streams it**: it finds the line's end
 and counts the row without holding its bytes. That is a metadata-level parse, a
-query's census, a piece's resync and a segment's row-start search, each then
-flat in memory at any line length. **A pass that decodes a line holds it whole**
+query's census, a replay whose batch and filters read no field, a piece's resync
+and a segment's row-start search, each then flat in memory at any line length.
+**A query is charged for the table it reads, its cache cold or warm**: its
+mapping pass censuses every block it maps (`decisions.md`, "D35"), and a census
+holding its lines would charge a cold query, and refuse it, for a table it never
+reads. **A pass that decodes a line holds it whole**
 (`decisions.md`, "D23") and is charged for it, below.
+
+**A census holds only the fields it decodes.** Its row streams, folded field by
+field as its bytes go by and counted against its header's width as a held row is
+(`decisions.md`, "D28"): the array-shape census as one fold over byte ranges,
+answering exactly what it answers over a whole field, the slice path being that
+fold fed once; a counted scalar from a head no longer than the longest literal
+its tier test answers for; and a counted container — an array, record, range or
+multirange over a counted leaf — whole, its field and not its line held and
+charged as a held line is. The head is exact because the codec's datetime
+decoders refuse a literal past the buffer PostgreSQL parses one in, as
+`date_in`, the timestamp inputs and `interval_in` do (`M276`). Rejected: a
+block holding its lines wherever its counter tests a container, which holds a
+long `text` line for a short `timestamptz[]` beside it; a clipped head for the
+shape census, which moves a `text` column's persisted census for no array's
+sake; streaming a container's elements or a scalar's grammar, a second parser
+beside each decoder.
+
+**Where it lives**: the carry counts a streamed row's fields and hands each
+byte range, its field's index beside it, to a fold its reader supplies —
+scanning, no decoding (`pgdt-dump`'s `scan/chunked.rs`, D74); the census's fold
+over them, `observe_row` that fold fed once, and `FieldCount` saying per column
+whether a head or the whole field is kept, are model's (`block.rs`), the answer
+the codec's (`unrepresentable.rs`), as `concepts.md`, "What a pass records of a
+block's rows", places the census. A replay decides as a row outgrows its chunk,
+under the dynamic state it last read, which its contract allows
+(`DynamicFilter`).
 
 Rejected: streaming field by field in a gathering parse, which keeps only the
 heads statistics clip (`decisions.md`, "D76"). It decodes a value the pass never

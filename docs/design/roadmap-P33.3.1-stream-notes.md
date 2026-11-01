@@ -4,8 +4,8 @@
 outgrows its chunk**: a metadata-level parse holds no line at any length,
 serially and in its interior workers ([`decisions.md`](decisions.md), "D138").
 A piece's resync and a segment's row-start search already held nothing (the
-33.2 notes). A query's census holds what it held: it reads its rows' fields,
-and streaming it is 33.3.2, below. No figure was taken: no leg of
+33.2 notes). A replay reading no field and a query's census hold what they
+held: streaming them is 33.3.2's and 33.3.3's, below. No figure was taken: no leg of
 `long-line-resident` is a metadata-level parse.
 
 - **`ChunkCarry` streams, the serial loop and the worker alike**
@@ -28,25 +28,22 @@ and streaming it is 33.3.2, below. No figure was taken: no leg of
   one's at every chunk size, and `a_row_ending_found_in_pieces_is_the_whole_lines`
   holds the ending found a run at a time to `RowEnding::of`.
 
-## What 33.3.2 inherits
+## What 33.3.2 and 33.3.3 inherit
 
+- **A replay reading no field takes its row whole**: `pgdt-query`'s replay
+  skips a row's validation where its batch, filter and dynamic filter read no
+  field, and the batcher's `push_row` still splits it, the one field-count
+  check (D28), which a streamed row needs counted as it goes by.
 - **A census reads every field of a row**: `BlockCensusExt::observe_row`
   splits a row holding a `{` or `[`, or one whose block counts a column, and
-  `FieldCount::tier` decodes a counted field whole. Streaming it reads each
-  field's head as the row goes by, and needs the counter's answer for a field
-  longer than any head it keeps; `StreamedLine` is where a row's fields would
-  be folded as its bytes go by. STATUS's "Decisions worth another look" holds
-  whether that is worth building.
+  `FieldCount::tier` decodes a counted field whole. `StreamedLine` is where a
+  row's fields would be folded as its bytes go by.
 - **A query's mapping pass censuses every block it maps**
   (`forward.rs`, `Pass::Query`), so a cold query holds each long line of a
   table it does not read, which its replay never would.
 
 ## Negative results
 
-- **A replay decoding no field still holds its line**: `pgdt-query`'s replay
-  skips a row's validation where its batch, filter and dynamic filter read no
-  field, and still takes the row whole; it was not streamed, the spec naming
-  no replay among the passes that stream.
 - **No count pair was taken**: the row path changed (`Endings::hold` lifted
   out of `CopyScanner::next_event`, a `PassEnd` from `ChunkEvents::end_pass`),
   and P33's spec adopts no pricing of a hot-path change
