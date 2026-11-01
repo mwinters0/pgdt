@@ -151,11 +151,30 @@ the binary lowering mimalloc's purge delay, which removes the retention alone,
 for every buffer the process frees, at an unmeasured cost (`KD148`'s class).
 **It moves there when it outgrows its chunk**, where its draw begins, so a line
 no chunk outgrows never leaves the carry, and **it grows by remapping, never by
-a copy**: its commit and address space are its bytes. That is Linux's
+a copy, in huge-page steps, its mapping kept aligned to a huge page** so the
+kernel can back it with transparent huge pages: its commit, address space and
+resident set are its bytes and less than one step more, which its charge
+carries. **The step is the kernel's PMD huge page where that is at most 2 MiB**
+— a 4 KiB base page, on x86-64 or arm64 — and the base page elsewhere, growing
+as an exact mapping does: a step is slack every held line is charged, so it
+stays small beside a line of at least one chunk, and a kernel whose huge page
+passes the ceiling faults in base pages large enough that the gap the step
+closes is mostly gone. **The mapping asks for no huge pages** (`MADV_HUGEPAGE`):
+whether a step is backed by one is the host's THP policy, so under `madvise` or
+`never` it is faulted in base pages as an exact one is. That is Linux's
 (`decisions.md`, "D104"); macOS, which has no `mremap`, is P34's. Rejected:
-reserving I71's bound of address space per held line, which never moves it but
-which a strict overcommit or an address-space limit counts in full, refusing a
-line under the bound for memory it never touches.
+growing it to exactly its bytes, whose mapping always ends at its last byte and
+so is faulted and freed in base pages, the whole of its gap to a line mapped at
+its length (`roadmap-P33.10-mapping-notes.md`, "What the readings found");
+mapping each held line at its block's longest line, which a block's first read
+cannot know and a strict overcommit counts whole for every line it holds;
+reserving I71's bound of address space per held line, which never moves it and,
+reserved inaccessible and made writable step by step, commits only what it
+writes, but which an address-space limit counts in full, refusing a line under
+the bound for memory it never touches; the PMD huge page whatever its size, up
+to 512 MiB of slack a line on a 64 KiB-page kernel; asking for huge pages, which
+under the kernel's default defrag compacts memory at the fault, an unmeasured
+stall on a fragmented host, and overrides a policy that is the host's.
 
 **The charge is in bytes, never in blocks.** A held line copies out of the
 chunks it crosses, so on a compressed source it pins only its current chunk's

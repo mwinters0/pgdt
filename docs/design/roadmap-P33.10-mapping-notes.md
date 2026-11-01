@@ -42,11 +42,10 @@ change, built in the image.
 
 ## What the later slices inherit
 
-- **The choice the gap files is the arrangement's (33.4), and is not yet
-  made**: a mapping sized from the block's longest line (33.11) is huge-page
-  backed and costs commit, not resident, up front; a growth keeping huge pages
-  would cost up to one huge page past the bytes written. STATUS's "Decisions
-  worth another look" holds it.
+- **The gap is closed by the growth, not by the arrangement**: 33.12 grows a
+  held line in huge-page steps, its mapping kept aligned (the spec's "What a
+  held line costs"), so 33.4's charge carries less than one huge page past a
+  held line's bytes and sizes nothing from its block's longest line.
 - **A draw in bytes held is the line**: a frozen mapped line is a `Bytes` of
   exactly its length, wherever a batch keeps it. A line no longer than its
   chunk is still the allocator's, inside the reader's chunk term.
