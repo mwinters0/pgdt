@@ -91,10 +91,11 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.2** Each line read once: the owner of a line grows it read by read and never re-reads; a segment's row-start search ends at its limit; the growth tests assert no read past the chunk — [notes](../design/roadmap-P33.2-read-once-notes.md)
 - [x] **33.3** Hold only what is decoded: the held line freed after its row and handed to the builder as a block; the replay releasing the chunks under a copied line; `long-line-resident` re-taken, at `6dd4523c` ([`measurements.md`](../design/measurements.md), "What a held line holds resident") — [notes](../design/roadmap-P33.3-hold-notes.md)
 - [x] **33.8** Attribution, ahead of 33.3.1: the third byte a line byte is mimalloc's retention of the line's outgrown buffers, gone at `MIMALLOC_PURGE_DELAY=0`, beside the growth's copy at its last doubling; a one-partition query copies escaped text twice and hex bytea three times beside the line, a strict parse's bytea twice; no production code — [notes](../design/roadmap-P33.8-attribution-notes.md)
-- [ ] **33.3.1** A pass decoding nothing streams a line: it finds the line's end and counts the row without holding its bytes, flat in memory at any line length
+- [x] **33.3.1** A pass reading no row streams it: a block whose rows nothing reads past their count — a metadata-level parse, serially and in its interior workers — finds a row's end and counts it without holding its bytes once it outgrows its chunk, flat in memory at any line length (D138); a query's census is 33.3.2's — [notes](../design/roadmap-P33.3.1-stream-notes.md)
 - [ ] **33.10** A held line grows outside the allocator: past its chunk it moves to a mapping of its own, grown by remapping and unmapped after its row, as the spec's "What a held line costs" states; a one-worker parse at the bound holding the line plus the base at mimalloc's shipped purge delay, the falsifier; the probe's leg timing the same line grown by remapping against one written into a mapping sized for it, whose material gap files the choice for the arrangement and whose absence is a negative result
 - [ ] **33.11** Each block's longest line: its start and its length recorded by every pass mapping the block, `CACHE_FORMAT_VERSION` bumped, `pgdt info` showing it, as the spec's "A held line is charged, and admitted in file order" states
 - [ ] **33.9** One decoded copy: a query's escaped text and hex bytea value, and a strict parse's bytea check, held beside their line with at most one decoded copy, as the spec's "What a held line costs" states
+- [ ] **33.3.2** A query's census streams a line: a cold query's mapping pass censuses and counts a row that outgrows its chunk from its fields' heads as it goes by, holding none of its bytes, as the spec's "A pass holds a line only where it decodes it" states
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, an unstated allowance's ledger unlimited; a read over mapped blocks carving its longest line's charge before a reader starts; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
 - [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, a line one reader cannot hold refused for memory, and a read over mapped blocks whose longest line one reader cannot hold refused before it reads a byte, its remedy spelled by `pgdt` and the shell
 - [ ] **33.6** The bound: I71's constant on every path, measured exactly; `LineTooLong` naming it; a batch cut before a value would overflow its column's offsets; `--max-line-bytes`, `pgdump.max_line_bytes`, `ReadOptions::max_line_bytes`, their manual section and tests removed; the real-bound test; `KD93` struck
@@ -129,4 +130,18 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **33.3.1 streams no census; 33.3.2 would.** The spec's "A pass holds a line
+  only where it decodes it" counts a query's census among the passes that
+  stream, but a census reads its rows' fields — `ArrayShape::observe` each
+  field's head, and `FieldCount::tier` a counted field (a `date`, a timestamp)
+  whole — so 33.3.1 streams only rows nothing reads, and the census's half is
+  admitted as 33.3.2, placed after 33.9 and before 33.4, so the ledger is built
+  knowing which passes hold. What it buys: a cold query's mapping pass censuses
+  every block it maps (`forward.rs`, `Pass::Query`), so it holds each long line
+  of a table it does not read; the queried table's is held by its replay either
+  way. What it costs: a census folded field by field as the row streams, and an
+  answer for a counted field longer than the head it keeps. Reconsidering:
+  striking the census from the spec's list withdraws 33.3.2, and 33.4 then
+  charges a cold query's mapping pass for the lines its census holds.
 

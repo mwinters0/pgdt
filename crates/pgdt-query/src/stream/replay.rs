@@ -376,6 +376,8 @@ pub(super) fn replay<'a>(
                         // header itself, which arrives as `CopyStart`.
                         Event::Line(_) | Event::DollarQuoteEnd(_) => {}
                         Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
+                        // A replay reads its rows, so it streams none.
+                        Event::StreamedRow(_) => unreachable!("a replay streams no row"),
                     }
                     // The line just consumed ended at or past this
                     // segment's limit, so it was its last. Checked after

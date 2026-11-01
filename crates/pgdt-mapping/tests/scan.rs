@@ -72,6 +72,7 @@ async fn render(path: &Path, chunk_size: usize) -> String {
             // DDL/comment/meta-command lines outside a COPY block —
             // `crate::map::Builder`'s input, not the scanner's own concern.
             Event::Line(_) | Event::DollarQuoteEnd(_) => {}
+            Event::StreamedRow(_) => unreachable!("this scan streams no row"),
             Event::LargeObjectStart(start) => {
                 let _ = writeln!(out, "LOSTART @{}", start.start_offset);
             }
@@ -230,7 +231,7 @@ async fn copy_text_escaping_round_trips_through_postgres() {
                     }
                     checked += 1;
                 }
-                Event::Row(_) => {}
+                Event::Row(_) | Event::StreamedRow(_) => {}
                 Event::Line(_) | Event::DollarQuoteEnd(_) => {}
                 Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
             }

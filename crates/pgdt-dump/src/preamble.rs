@@ -75,7 +75,7 @@ pub async fn scan_preamble(
         // Never actually reached: `CopyStart` above always breaks first. Kept
         // explicit rather than a bare `_` so a new `Event` variant fails to
         // compile here instead of silently falling through.
-        Event::Row(_) | Event::CopyEnd(_) => ControlFlow::Continue(()),
+        Event::Row(_) | Event::StreamedRow(_) | Event::CopyEnd(_) => ControlFlow::Continue(()),
     })
     .await?;
     // Where the scan stopped for a `COPY` block, or the end it reached.

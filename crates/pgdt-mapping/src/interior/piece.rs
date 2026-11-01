@@ -20,7 +20,9 @@
 use std::sync::Arc;
 
 use pgdt_core::{Result, RowEndingRefusal};
-use pgdt_dump::internal::{ChunkCarry, ChunkPass, CopyScannerExt, PieceEndings, RowEnding};
+use pgdt_dump::internal::{
+    ChunkCarry, ChunkPass, CopyScannerExt, PieceEndings, RowEnding, StreamedLine,
+};
 use pgdt_dump::{CopyEnd, CopyScanner, Event};
 use pgdt_model::internal::BlockCensusExt;
 use pgdt_model::{
@@ -193,8 +195,10 @@ pub(super) fn scan_piece(
                 break;
             }
             // Unreachable: the scanner is in its `InCopy` state from the first
-            // byte and leaves it only on the terminator, which breaks above.
-            Event::CopyStart(_)
+            // byte and leaves it only on the terminator, which breaks above,
+            // and a row is streamed by `scan_read`, never by the scanner.
+            Event::StreamedRow(_)
+            | Event::CopyStart(_)
             | Event::Line(_)
             | Event::DollarQuoteEnd(_)
             | Event::LargeObjectStart(_)
@@ -221,6 +225,22 @@ pub(super) fn scan_piece(
     })
 }
 
+/// The piece a row streamed from `base` stands for ([`StreamedLine`]), as
+/// [`scan_piece`] answers a span holding that row alone: one row, its ending
+/// recorded, through its LF — or, where the file's end ended it, nothing
+/// consumed, a piece never claiming end of file.
+fn streamed_piece(base: u64, line: StreamedLine) -> PieceScan {
+    let ended = line.terminated();
+    PieceScan {
+        rows: u64::from(ended),
+        census: BlockCensus::default(),
+        terminator: None,
+        through: if ended { base + line.bytes() } else { base },
+        endings: PieceEndings { first: ended.then_some((line.ending(), base)), mismatch: None },
+        next: PieceEntry::RowStart,
+    }
+}
+
 /// What one read of a piece answered: its scans in file order, whether the
 /// piece is finished, and how what follows it must enter.
 #[derive(Debug)]
@@ -244,6 +264,11 @@ pub(super) struct ReadScan {
 /// whether `chunk` ends the file, which alone hands an unfinished line to
 /// the scanner — never consumed, a [`scan_piece`] never claiming end of
 /// file.
+///
+/// **A block at the metadata level, with no observer, streams its rows**:
+/// a row outgrowing its read is counted without its bytes being kept
+/// ([`ChunkCarry`]), a piece of its own ([`streamed_piece`]), so the worker
+/// holds no line at any length.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn scan_read(
     carry: &mut ChunkCarry,
@@ -257,7 +282,19 @@ pub(super) fn scan_read(
 ) -> Result<ReadScan> {
     let line_base = offset - carry.carried() as u64;
     let mut passes = carry.absorb(chunk, eof);
+    passes.streams(census.is_none() && observer.is_none());
     let mut scans = Vec::new();
+    if let Some(line) = passes.streamed() {
+        debug_assert_eq!(entry, PieceEntry::RowStart, "a resync carries no line");
+        let scan = streamed_piece(line_base, line);
+        let done = scan.through > limit;
+        if scan.through > line_base || eof {
+            scans.push(scan);
+        }
+        if done {
+            return Ok(ReadScan { scans, done, next: entry });
+        }
+    }
     for pass in [ChunkPass::Carry, ChunkPass::InPlace] {
         let (span, _) = passes.span(pass);
         if span.is_empty() {

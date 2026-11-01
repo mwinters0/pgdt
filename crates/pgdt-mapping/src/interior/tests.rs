@@ -1,7 +1,8 @@
-use super::piece::scan_piece;
+use super::piece::{scan_piece, scan_read};
 use super::*;
 use pgdt_core::Error;
 use pgdt_dump::internal::Builder;
+use pgdt_dump::internal::ChunkCarry;
 use pgdt_dump::{CopyScanner, Event};
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_fixtures::{edge_cases, fixture};
@@ -69,6 +70,7 @@ fn reference(file: &[u8]) -> Vec<Reference> {
                 builder.count_block(Arc::new(Infinities));
             }
             Event::Row(row) => builder.on_row(row.offset, row.raw),
+            Event::StreamedRow(_) => unreachable!("one buffer streams no row"),
             Event::CopyEnd(end) => builder.on_copy_end(end).expect("nothing gathers here"),
             Event::Line(line) => builder.feed_line(line.offset, line.raw),
             Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
@@ -989,6 +991,59 @@ async fn a_split_block_refuses_the_row_a_serial_scan_refuses() {
                     }
                     (_, other) => panic!("{context}: {other:?}"),
                 }
+            }
+        }
+    }
+}
+
+/// Every read of a piece from `start` to `limit`, in `chunk`-byte reads of
+/// `file` as `scan_partition` makes them, and the scans they answered.
+fn read_piece(
+    file: &[u8],
+    start: u64,
+    limit: u64,
+    chunk: usize,
+    census: Option<&CensusPlan>,
+) -> Vec<PieceScan> {
+    let mut carry = ChunkCarry::default();
+    let (mut at, mut entry, mut out) = (start as usize, PieceEntry::RowStart, Vec::new());
+    while at < file.len() {
+        let end = (at + chunk).min(file.len());
+        let eof = end == file.len();
+        let read =
+            scan_read(&mut carry, &file[at..end], at as u64, eof, entry, limit, census, None)
+                .expect("a piece records its endings rather than refusing them");
+        out.extend(read.scans);
+        if read.done || eof {
+            break;
+        }
+        entry = read.next;
+        at = end;
+    }
+    out
+}
+
+/// **A worker on a block at the metadata level streams a row it would
+/// hold**: its scans of a block whose rows run many reads long — through
+/// their ending, whatever it is, and wherever the piece's limit falls — are
+/// those a worker censusing them answers, censuses aside.
+#[test]
+fn a_metadata_level_worker_streams_what_it_would_hold() {
+    let value = "x".repeat(300);
+    for ending in ["\n", "\r\n", "\rx\n"] {
+        let header = "COPY public.t (a) FROM stdin;\n";
+        let file =
+            format!("{header}a{ending}{value}{ending}\\\\{value}\\\r{value}{ending}b{ending}\\.\n")
+                .into_bytes();
+        let start = header.len() as u64;
+        for chunk in [1usize, 2, 3, 5, 64, 299] {
+            for limit in [start + 1, start + 40, start + 330, start + 700, file.len() as u64] {
+                let streamed = read_piece(&file, start, limit, chunk, None);
+                let mut held = read_piece(&file, start, limit, chunk, plan(Some(1)).as_ref());
+                for scan in &mut held {
+                    scan.census = BlockCensus::default();
+                }
+                assert_eq!(streamed, held, "{ending:?} rows, chunk {chunk}, limit {limit}");
             }
         }
     }

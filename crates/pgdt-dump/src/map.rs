@@ -821,6 +821,16 @@ impl Builder {
         }
     }
 
+    /// Whether [`on_row`](Self::on_row) reads the open `COPY` block's rows:
+    /// it does where the block is censused, observed or recorded, and
+    /// otherwise only counts them, so its reader may stream them
+    /// ([`crate::ChunkEvents::stream_rows`]).
+    pub fn reads_rows(&self) -> bool {
+        self.pending_census.is_some()
+            || self.pending_observer.is_some()
+            || self.pending_rows.is_some()
+    }
+
     /// Record the rows of the `COPY` block [`on_copy_start`](Self::on_copy_start)
     /// just opened as text: every row [`on_row`](Self::on_row) folds is
     /// kept, as the block's [`CopyBlock::recorded_rows`]. Never for a block

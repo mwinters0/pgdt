@@ -8,7 +8,7 @@ use std::ops::ControlFlow;
 
 use bytes::Bytes;
 
-use super::{CopyScanner, Event};
+use super::{CopyScanner, EndingScan, Event, RowEnding};
 use pgdt_core::{Error, Result};
 use pgdt_io::{
     ByteRangeSource, Extent, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
@@ -69,6 +69,14 @@ pub enum ChunkPass {
 /// scanner can neither consume nor emit anything from; handing it over anyway
 /// would search the carried line again from its first byte at every chunk it
 /// spans, quadratic in the line.
+///
+/// **A row whose reader reads nothing past its count is streamed instead**
+/// ([`streams`](Passes::streams)): once such a row outgrows the chunk it
+/// began in, the carry keeps no byte of it, only what its end needs — its
+/// length and how it ends ([`StreamedLine`]) — and the chunk that ends it, or
+/// the file's end, hands it to the carry pass in place of a held line. So a
+/// pass decoding no field holds no line at any length
+/// (`docs/design/decisions.md`, "D138").
 #[derive(Debug, Default)]
 pub struct ChunkCarry {
     /// The line being carried, extended by [`absorb`](Self::absorb) with the
@@ -89,13 +97,65 @@ pub struct ChunkCarry {
     /// absorbed — the chunk held none — so its carry pass has nothing to scan
     /// unless the file ends here.
     unfinished: bool,
+    /// Whether the line carried into the next chunk is a row whose reader
+    /// reads none of its bytes, so it may be streamed.
+    streams: bool,
+    /// The row being streamed, no chunk having ended it yet.
+    streamed: Option<StreamedLine>,
+    /// The streamed row the current chunk ended, or the file's end did,
+    /// which its carry pass hands out.
+    ended: Option<StreamedLine>,
 }
+
+/// A row a read loop reads through without holding ([`ChunkCarry`]): what
+/// its end needs of the bytes that went by.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StreamedLine {
+    /// The row's bytes so far, an LF that ends it included.
+    len: u64,
+    /// How the bytes before its LF end.
+    ending: EndingScan,
+    /// Whether an LF has ended it, rather than the file's end or nothing yet.
+    terminated: bool,
+}
+
+impl StreamedLine {
+    /// The row's bytes, its LF included where one ended it.
+    pub fn bytes(&self) -> u64 {
+        self.len
+    }
+
+    /// How the row ends, as [`RowEnding::of`] reads its bytes before the LF.
+    pub fn ending(&self) -> RowEnding {
+        self.ending.ending()
+    }
+
+    /// Whether an LF ended the row: `false` only for one the file's end did.
+    pub fn terminated(&self) -> bool {
+        self.terminated
+    }
+
+    /// Fold in the row's next bytes, `bytes` of a chunk up to and including
+    /// the LF ending it where `terminated`.
+    fn read(&mut self, bytes: &[u8], terminated: bool) {
+        let before = if terminated { &bytes[..bytes.len() - 1] } else { bytes };
+        self.ending.feed(before);
+        self.len += bytes.len() as u64;
+        self.terminated = terminated;
+    }
+}
+
+/// The longest row a carry holds though it may stream it: a line no longer
+/// can be the terminator, `\.` before a CR, which only the scanner tells
+/// from a row.
+const STREAM_AFTER_BYTES: usize = b"\\.\r".len();
 
 impl ChunkCarry {
     /// [`Passes::carried`], between two chunks: the bytes ahead of the next
     /// chunk that its carry pass begins with.
     pub fn carried(&self) -> usize {
-        self.held.len() - self.line_used + self.line.len() + self.tail.len()
+        let streamed = self.streamed.map_or(0, |line| line.len as usize);
+        self.held.len() - self.line_used + self.line.len() + self.tail.len() + streamed
     }
 
     /// The bytes this carry keeps allocated between two chunks: the buffers
@@ -128,14 +188,39 @@ impl ChunkCarry {
         // The last carry pass's line, freed here unless a batch kept it.
         self.held = Bytes::new();
         self.line_used = 0;
-        if self.line.is_empty() {
+        self.ended = None;
+        if let Some(mut line) = self.streamed.take() {
+            let newline = memchr::memchr(b'\n', chunk);
+            self.split = newline.map_or(chunk.len(), |nl| nl + 1);
+            self.unfinished = newline.is_none();
+            line.read(&chunk[..self.split], newline.is_some());
+            if newline.is_some() || eof {
+                self.ended = Some(line);
+            } else {
+                self.streamed = Some(line);
+            }
+        } else if self.line.is_empty() {
             self.split = 0;
             self.unfinished = false;
         } else {
             let newline = memchr::memchr(b'\n', chunk);
             self.split = newline.map_or(chunk.len(), |nl| nl + 1);
             self.unfinished = newline.is_none();
-            self.line.extend_from_slice(&chunk[..self.split]);
+            // A row outgrowing its chunk, which its reader does not read, is
+            // streamed from here: its bytes are folded in, not kept.
+            if self.unfinished
+                && !eof
+                && self.streams
+                && self.line.len() + chunk.len() > STREAM_AFTER_BYTES
+            {
+                let mut line = StreamedLine::default();
+                line.read(&self.line, false);
+                line.read(chunk, false);
+                self.line.clear();
+                self.streamed = Some(line);
+            } else {
+                self.line.extend_from_slice(&chunk[..self.split]);
+            }
         }
         // Nothing in an unfinished line is consumable before the end of the
         // file, so it is not searched again (the type's docs), and it grows on
@@ -145,13 +230,17 @@ impl ChunkCarry {
         if !line_waits && !self.line.is_empty() {
             self.held = Bytes::from(std::mem::take(&mut self.line));
         }
-        let Self { line, held, line_used, tail, split, .. } = self;
+        let streaming = self.streamed.map_or(0, |line| line.len as usize);
+        let Self { line, held, line_used, tail, split, streams, ended, .. } = self;
         let (line, held): (&'a [u8], &'a Bytes) = (line, held);
         Passes {
             line: if line_waits { line } else { held },
             held,
             rest: &chunk[*split..],
             line_waits,
+            ended: *ended,
+            streaming,
+            streams,
             // The carry pass runs to the true end of the file only when
             // nothing of the chunk is left over for the in-place pass.
             line_eof: eof && *split == chunk.len(),
@@ -170,10 +259,15 @@ pub struct Passes<'a> {
     held: &'a Bytes,
     rest: &'a [u8],
     line_waits: bool,
+    /// The streamed row this chunk ended, which the carry pass hands out.
+    ended: Option<StreamedLine>,
+    /// Bytes of a row still being streamed.
+    streaming: usize,
     line_eof: bool,
     eof: bool,
     line_used: &'a mut usize,
     tail: &'a mut Vec<u8>,
+    streams: &'a mut bool,
 }
 
 impl<'a> Passes<'a> {
@@ -184,11 +278,25 @@ impl<'a> Passes<'a> {
         self.held
     }
 
+    /// The streamed row this chunk's carry pass hands out in place of a held
+    /// line: one this chunk ended, or the file's end.
+    pub fn streamed(&self) -> Option<StreamedLine> {
+        self.ended
+    }
+
+    /// Say whether the line this chunk leaves for the next is a row whose
+    /// reader reads none of its bytes, which the carry may then stream once
+    /// it outgrows its chunk. A row of a block whose rows are read is never
+    /// streamed.
+    pub fn streams(&mut self, streams: bool) {
+        *self.streams = streams;
+    }
+
     /// The bytes `pass` scans, and whether they run to the true end of the
-    /// file.
+    /// file. A carry pass handing out a streamed row scans nothing.
     pub fn span(&self, pass: ChunkPass) -> (&'a [u8], bool) {
         match pass {
-            ChunkPass::Carry if self.line_waits => (&[], false),
+            ChunkPass::Carry if self.line_waits || self.ended.is_some() => (&[], false),
             ChunkPass::Carry => (self.line, self.line_eof),
             ChunkPass::InPlace => {
                 // **The carry is spent here whenever this span has anything in
@@ -224,7 +332,7 @@ impl<'a> Passes<'a> {
     /// is a single line's prefix, so a file whose lines fit stays flat here
     /// however large it is.
     pub fn carried(&self) -> usize {
-        self.line.len() - *self.line_used + self.tail.len()
+        self.line.len() - *self.line_used + self.tail.len() + self.streaming
     }
 }
 
@@ -404,14 +512,26 @@ impl<'a> ChunkEvents<'a> {
             if !matches!(next, Ok(None)) {
                 return next;
             }
-            if !self.end_pass()? {
-                return Ok(None);
+            match self.end_pass()? {
+                PassEnd::Next => {}
+                PassEnd::Streamed(row) => return Ok(Some(row)),
+                PassEnd::Done => return Ok(None),
             }
         }
     }
 
-    /// Record what the pass just run out consumed, and move to the next:
-    /// `true` where one follows, `false` once both have run out.
+    /// Stream the rows of the block the last event opened: its reader reads
+    /// none past its count, so a row that outgrows its chunk is counted
+    /// without its bytes being held and handed out as an
+    /// [`Event::StreamedRow`], flat in memory at any length. Called on its
+    /// [`Event::CopyStart`]; the block's end undoes it.
+    pub fn stream_rows(&mut self) {
+        self.scanner.stream_rows();
+    }
+
+    /// Record what the pass just run out consumed, and move to the next —
+    /// handing out the streamed row a carry pass stands for first — or say
+    /// both have run out.
     ///
     /// Fallible, a long line refused where the chunk leaves it: checked by
     /// `next_chunk` instead, it would move for a loop leaving between chunks
@@ -419,17 +539,23 @@ impl<'a> ChunkEvents<'a> {
     /// nor does a further attribute or cold continuation split the switch,
     /// its saving resting on inlining (`docs/design/decisions.md`, "D108").
     #[cold]
-    fn end_pass(&mut self) -> Result<bool> {
+    fn end_pass(&mut self) -> Result<PassEnd<'a>> {
         let used = self.scanner.take_consumed();
         match self.pass {
             Some(ChunkPass::Carry) => {
                 self.passes.consumed(ChunkPass::Carry, used);
                 (self.span, self.span_eof) = self.passes.span(ChunkPass::InPlace);
                 self.pass = Some(ChunkPass::InPlace);
-                Ok(true)
+                match self.passes.streamed() {
+                    Some(line) => Ok(PassEnd::Streamed(
+                        self.scanner.streamed_row(line.bytes(), line.ending())?,
+                    )),
+                    None => Ok(PassEnd::Next),
+                }
             }
             Some(ChunkPass::InPlace) => {
                 self.passes.consumed(ChunkPass::InPlace, used);
+                self.passes.streams(self.scanner.streams_rows());
                 (self.span, self.span_eof) = (&[], false);
                 self.pass = None;
                 *self.open = false;
@@ -439,9 +565,9 @@ impl<'a> ChunkEvents<'a> {
                         limit: self.max_line_bytes,
                     });
                 }
-                Ok(false)
+                Ok(PassEnd::Done)
             }
-            None => Ok(false),
+            None => Ok(PassEnd::Done),
         }
     }
 
@@ -482,11 +608,22 @@ impl<'a> ChunkEvents<'a> {
     }
 }
 
+/// What [`ChunkEvents::end_pass`] moved to.
+enum PassEnd<'a> {
+    /// The next pass, to be scanned.
+    Next,
+    /// The streamed row the carry pass stands for, ahead of the in-place
+    /// pass.
+    Streamed(Event<'a>),
+    /// Both passes have run out.
+    Done,
+}
+
 /// The longest line a scan carries across a chunk boundary unless a caller
 /// says otherwise ([`ReadOptions::max_line_bytes`], which says where a line
-/// is measured). A row is held whole before it is emitted, so this and the
-/// chunk size bound what one row may cost in memory; a dump holding larger
-/// values states a larger limit.
+/// is measured). A row a pass reads is held whole before it is emitted, so
+/// this and the chunk size bound what one row may cost in memory; a dump
+/// holding larger values states a larger limit.
 pub const SCAN_LINE_DEFAULT_MAX_BYTES: usize = 64 << 20;
 
 /// **How a chunked read loop reads**: the chunk it asks of the source and the
@@ -500,10 +637,11 @@ pub struct ReadOptions {
     /// Hard cap on a line carried across a chunk boundary. One still
     /// incomplete at a chunk's end and longer than this is rejected rather
     /// than buffered without bound; a line whole inside one chunk, or ended
-    /// by the last, is not measured. The scanner cannot emit a row until it
-    /// has the whole line, so this is the only thing standing between a
-    /// malformed input and unbounded memory growth. Defaults to
-    /// [`SCAN_LINE_DEFAULT_MAX_BYTES`].
+    /// by the last, is not measured. The scanner cannot emit a row a pass
+    /// reads until it has the whole line, so this is the only thing standing
+    /// between a malformed input and unbounded memory growth; a row it
+    /// streams ([`ChunkCarry`]) holds nothing and is measured alike. Defaults
+    /// to [`SCAN_LINE_DEFAULT_MAX_BYTES`].
     // deficiency: KD93 — a line PostgreSQL writes and reads, up to I71's
     // bound, is refused past this limit; and a line is measured only where a
     // read ends inside it, so one up to a chunk past the limit is read or

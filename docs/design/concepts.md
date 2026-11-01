@@ -152,9 +152,9 @@ plain-format dump, and the chunked read loop every serial pass drives it
 through ([`decisions.md`](decisions.md), "The scanner").
 
 - **pgdt-dump** — `scan.rs`: the state machine; `scan/chunked.rs`: the read
-  loop, its carried line and line limit, and the preamble scan over it; the
-  carry is also an interior worker's over its piece. No decoding and no Arrow
-  (D74).
+  loop, its carried line or streamed row and line limit, and the preamble scan
+  over it; the carry is also an interior worker's over its piece. No decoding
+  and no Arrow (D74).
 
 ## The file map
 

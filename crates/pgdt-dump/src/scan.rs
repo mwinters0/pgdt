@@ -35,7 +35,7 @@ use pgdt_core::{Error, Result, RowEndingRefusal};
 
 pub use self::chunked::{
     ChunkCarry, ChunkEvents, ChunkPass, ChunkedScanner, Passes, ReadOptions,
-    SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, announce_read_loop, scan,
+    SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, StreamedLine, announce_read_loop, scan,
 };
 
 /// The start of a COPY data block.
@@ -62,6 +62,20 @@ pub struct Row<'a> {
     /// (I91). Fields are still delimiter-separated and still escaped; use
     /// [`pgdt_core::split_fields`] and [`pgdt_core::unescape_field`].
     pub raw: &'a [u8],
+}
+
+/// One data row a read loop counted without holding its bytes: a row of a
+/// block whose rows are streamed ([`ChunkEvents::stream_rows`]) that
+/// outgrew the chunk it began in. Every other row of such a block is still a
+/// [`Row`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamedRow {
+    /// Absolute file offset of the row's first byte.
+    pub offset: u64,
+    /// Zero-based index of the row within its COPY block.
+    pub index: u64,
+    /// The row's bytes, its line ending included.
+    pub len: u64,
 }
 
 /// The end of a COPY data block.
@@ -144,6 +158,7 @@ pub struct DollarQuoteEnd {
 pub enum Event<'a> {
     CopyStart(Box<CopyStart>),
     Row(Row<'a>),
+    StreamedRow(StreamedRow),
     CopyEnd(CopyEnd),
     Line(Line<'a>),
     DollarQuoteEnd(DollarQuoteEnd),
@@ -194,9 +209,10 @@ impl RowEnding {
             // be refused where PostgreSQL reads it. Not refused as a
             // shortfall: that would fail the whole parse, and this match is
             // PostgreSQL's refusals alone. Reading one needs rows framed by
-            // CR in the leader's resync (`pgdt_mapping`'s `interior::scan_piece`) and a query
-            // segment's (`pgdt_query`'s `first_row_start`) too, each of which
-            // searches for an LF such a block's interior does not hold.
+            // CR in the leader's resync (`pgdt_mapping`'s `interior::scan_piece`), a query
+            // segment's (`pgdt_query`'s `first_row_start`) and a streamed row's
+            // (`ChunkCarry`) too, each of which searches for an LF such a
+            // block's interior does not hold.
             (Self::Cr, _) => None,
             (block, row) if block == row => None,
             (Self::CrLf, Self::Lf) => Some(RowEndingRefusal::LiteralNewline),
@@ -210,6 +226,47 @@ impl RowEnding {
 /// ending (I91).
 fn escaped(line: &[u8], at: usize) -> bool {
     line[..at].iter().rev().take_while(|&&b| b == b'\\').count() % 2 == 1
+}
+
+/// [`RowEnding::of`] found a read at a time, over a row no buffer holds
+/// whole: fed each run of the row's bytes before its LF in order, it answers
+/// what `of` answers of their concatenation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct EndingScan {
+    /// Whether the bytes fed so far end in an odd run of backslashes, which
+    /// escapes a CR the next run opens with.
+    odd: bool,
+    /// The first unescaped CR fed, and whether it is the last byte fed.
+    cr: Option<bool>,
+}
+
+impl EndingScan {
+    /// Fold the row's next `bytes` in.
+    pub(crate) fn feed(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.cr = match self.cr {
+            Some(_) => Some(false),
+            None => memchr::memchr_iter(b'\r', bytes)
+                .find(|&at| {
+                    let run = bytes[..at].iter().rev().take_while(|&&b| b == b'\\').count();
+                    (run + usize::from(run == at && self.odd)) % 2 == 0
+                })
+                .map(|at| at + 1 == bytes.len()),
+        };
+        let run = bytes.iter().rev().take_while(|&&b| b == b'\\').count();
+        self.odd = if run == bytes.len() { self.odd ^ (run % 2 == 1) } else { run % 2 == 1 };
+    }
+
+    /// How the row fed so far ends.
+    pub(crate) fn ending(&self) -> RowEnding {
+        match self.cr {
+            None => RowEnding::Lf,
+            Some(true) => RowEnding::CrLf,
+            Some(false) => RowEnding::Cr,
+        }
+    }
 }
 
 /// The rows of one piece of a block's interior, as their endings stand
@@ -264,6 +321,39 @@ enum Endings {
     Recorded(PieceEndings),
 }
 
+impl Endings {
+    /// Hold row `rows` of the open block, at `line_offset`, ending as
+    /// `ending`, to its block's first row's ending.
+    #[inline(always)]
+    fn hold(&mut self, ending: RowEnding, rows: u64, line_offset: u64) -> Result<()> {
+        match self {
+            Endings::Unchecked => {}
+            Endings::Refused { table, first } => match *first {
+                None => *first = Some(ending),
+                Some(block) => {
+                    if let Some(refusal) = ending.refused_in(block) {
+                        return Err(Error::RowEndingRefused {
+                            table: std::mem::take(table),
+                            line: rows + 1,
+                            line_offset,
+                            refusal,
+                        });
+                    }
+                }
+            },
+            Endings::Recorded(piece) => match piece.first {
+                None => piece.first = Some((ending, line_offset)),
+                Some((first, _)) => {
+                    if piece.mismatch.is_none() && ending != first {
+                        piece.mismatch = Some((rows, line_offset, ending));
+                    }
+                }
+            },
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 enum State {
     Outside,
@@ -304,6 +394,10 @@ pub struct CopyScanner {
     /// How the open block's rows are held to its first row's ending; read
     /// only while `state` is `InCopy`.
     endings: Endings,
+    /// Whether the open block's rows are streamed
+    /// ([`ChunkEvents::stream_rows`]): `false` outside a block, and at every
+    /// header until its reader says otherwise.
+    streams_rows: bool,
 }
 
 impl Default for CopyScanner {
@@ -320,6 +414,7 @@ impl CopyScanner {
             state: State::Outside,
             lexer: Lexer::new(),
             endings: Endings::Unchecked,
+            streams_rows: false,
         }
     }
 
@@ -347,7 +442,14 @@ impl CopyScanner {
             Some((header_offset, rows)) => State::InCopy { rows, header_offset },
             None => State::Outside,
         };
-        Self { base: offset, pos: 0, state, lexer: Lexer::new(), endings: Endings::Unchecked }
+        Self {
+            base: offset,
+            pos: 0,
+            state,
+            lexer: Lexer::new(),
+            endings: Endings::Unchecked,
+            streams_rows: false,
+        }
     }
 
     /// The same scanner, lexing under the `standard_conforming_strings` a
@@ -381,6 +483,37 @@ impl CopyScanner {
             State::InCopy { rows, .. } => Some(rows),
             State::Outside | State::InLargeObjectRegion { .. } => None,
         }
+    }
+
+    /// Whether the open block's rows are streamed: set by
+    /// [`stream_rows`](Self::stream_rows), cleared as the block ends.
+    pub(crate) fn streams_rows(&self) -> bool {
+        self.streams_rows
+    }
+
+    /// Stream the open block's rows: its reader reads none past its count,
+    /// so a read loop may count a row without holding its bytes
+    /// ([`ChunkEvents::stream_rows`]). Undone by the block's end.
+    pub(crate) fn stream_rows(&mut self) {
+        debug_assert!(self.in_copy_block(), "rows streamed outside a block");
+        self.streams_rows = self.in_copy_block();
+    }
+
+    /// Consume a row of the open block its read loop counted without holding
+    /// it ([`StreamedLine`]): `len` bytes from [`position`](Self::position),
+    /// which stands at a buffer's start, ending as `ending`, which is held
+    /// to the block's first row's ending as a row's is. Never the
+    /// terminator: a loop streams only a line longer than `\.` with a CR.
+    pub(crate) fn streamed_row(&mut self, len: u64, ending: RowEnding) -> Result<Event<'static>> {
+        debug_assert_eq!(self.pos, 0, "a streamed row is consumed between two buffers");
+        let State::InCopy { rows, header_offset } = self.state else {
+            unreachable!("a row streamed outside a block");
+        };
+        let line_offset = self.position();
+        self.endings.hold(ending, rows, line_offset)?;
+        self.base += len;
+        self.state = State::InCopy { rows: rows + 1, header_offset };
+        Ok(Event::StreamedRow(StreamedRow { offset: line_offset, index: rows, len }))
     }
 
     /// Bytes of the buffer consumed so far. Resets the scanner's buffer
@@ -486,6 +619,7 @@ impl CopyScanner {
                     // `BEGIN;` aside (below).
                     if let Some(header) = parse_copy_header(line) {
                         self.state = State::InCopy { rows: 0, header_offset: line_offset };
+                        self.streams_rows = false;
                         self.endings =
                             Endings::Refused { table: header.qualified_name(), first: None };
                         return Ok(Some(Event::CopyStart(Box::new(CopyStart {
@@ -519,6 +653,7 @@ impl CopyScanner {
                     // of rows (I91); here it ends the block all the same.
                     if is_terminator(line) {
                         self.state = State::Outside;
+                        self.streams_rows = false;
                         return Ok(Some(Event::CopyEnd(CopyEnd {
                             terminator_offset: line_offset,
                             end_offset: self.position(),
@@ -526,30 +661,7 @@ impl CopyScanner {
                         })));
                     }
                     let ending = if holds_cr { RowEnding::of(unstripped) } else { RowEnding::Lf };
-                    match &mut self.endings {
-                        Endings::Unchecked => {}
-                        Endings::Refused { table, first } => match *first {
-                            None => *first = Some(ending),
-                            Some(block) => {
-                                if let Some(refusal) = ending.refused_in(block) {
-                                    return Err(Error::RowEndingRefused {
-                                        table: std::mem::take(table),
-                                        line: rows + 1,
-                                        line_offset,
-                                        refusal,
-                                    });
-                                }
-                            }
-                        },
-                        Endings::Recorded(piece) => match piece.first {
-                            None => piece.first = Some((ending, line_offset)),
-                            Some((first, _)) => {
-                                if piece.mismatch.is_none() && ending != first {
-                                    piece.mismatch = Some((rows, line_offset, ending));
-                                }
-                            }
-                        },
-                    }
+                    self.endings.hold(ending, rows, line_offset)?;
                     // A CR a backslash escapes is the last field's byte; one
                     // ending a bare-CR block's line is stripped (`KD101`).
                     let raw = match unstripped.split_last() {

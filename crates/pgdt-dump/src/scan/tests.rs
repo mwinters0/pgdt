@@ -148,3 +148,39 @@ fn the_rows_a_restore_reads_are_read_without_their_endings() {
     let resumed = CopyScanner::resume(0, Some((0, 1)));
     assert_eq!(rows_of(resumed, interior, 3).unwrap(), [&b"1"[..], b"2", b"3"].map(<[u8]>::to_vec));
 }
+
+/// **A row's ending found a read at a time is the one its whole line has**,
+/// however its bytes are cut: every line of up to six bytes over a
+/// backslash, a CR and a byte that is neither, fed in every split into three
+/// runs.
+#[test]
+fn a_row_ending_found_in_pieces_is_the_whole_lines() {
+    let alphabet = *b"\\\ra";
+    let mut lines = vec![Vec::new()];
+    for _ in 0..6 {
+        let longer: Vec<Vec<u8>> = lines
+            .iter()
+            .filter(|line| line.len() == lines.last().unwrap().len())
+            .flat_map(|line| {
+                alphabet.iter().map(move |&b| {
+                    let mut next = line.clone();
+                    next.push(b);
+                    next
+                })
+            })
+            .collect();
+        lines.extend(longer);
+    }
+    for line in &lines {
+        let whole = RowEnding::of(line);
+        for a in 0..=line.len() {
+            for b in a..=line.len() {
+                let mut scan = EndingScan::default();
+                for run in [&line[..a], &line[a..b], &line[b..]] {
+                    scan.feed(run);
+                }
+                assert_eq!(scan.ending(), whole, "{line:?} cut at {a} and {b}");
+            }
+        }
+    }
+}

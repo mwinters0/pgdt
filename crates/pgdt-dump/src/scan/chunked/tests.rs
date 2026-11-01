@@ -1,5 +1,5 @@
 use super::*;
-use crate::scan::Row;
+use crate::scan::{Row, StreamedRow};
 
 /// What [`drive`] saw: the events rendered as text, the high-water mark of
 /// the carry, and the bytes handed to the scanner over every pass.
@@ -424,4 +424,159 @@ fn the_carry_keeps_no_line_past_its_row() {
     }
     assert!(after_row.is_some());
     assert!(longest > len, "the line was carried whole while it grew");
+}
+
+/// What a read loop streaming every block's rows — or, with `stream` off,
+/// holding them — answers of `file` in `read`'s chunks: every event, a row
+/// rendered as its index, its offset and where the scanner stands past it,
+/// so a held row and a streamed one read alike; how many rows were
+/// streamed; and the most the carry kept allocated between two chunks.
+struct Streamed {
+    events: Result<Vec<String>>,
+    streamed: usize,
+    allocated: usize,
+}
+
+fn stream(file: &[u8], read: ReadOptions, stream: bool) -> Streamed {
+    let mut out = Streamed { events: Ok(Vec::new()), streamed: 0, allocated: 0 };
+    let mut events = Vec::new();
+    let mut chunked = ChunkedScanner::new(CopyScanner::new(), file.len() as u64, read);
+    let mut read_pos = 0usize;
+    let ran: Result<()> = (|| loop {
+        let want = read.chunk_size_bytes.min(file.len() - read_pos);
+        let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]));
+        read_pos += want;
+        while let Some(event) = chunk.next_event()? {
+            let past = chunk.scanner().position();
+            events.push(match event {
+                Event::Row(Row { offset, index, .. }) => format!("row {index}@{offset}..{past}"),
+                Event::StreamedRow(StreamedRow { offset, index, len }) => {
+                    assert_eq!(offset + len, past, "a streamed row's length");
+                    out.streamed += 1;
+                    format!("row {index}@{offset}..{past}")
+                }
+                Event::CopyStart(start) => {
+                    if stream {
+                        chunk.stream_rows();
+                    }
+                    format!("{:?}", Event::CopyStart(start))
+                }
+                other => format!("{other:?}"),
+            });
+        }
+        out.allocated = out.allocated.max(chunked.carry.allocated());
+        if chunked.at_end() {
+            return Ok(());
+        }
+    })();
+    out.events = ran.map(|()| events);
+    out
+}
+
+/// A block of short rows around rows many chunks long — one in each of the
+/// three endings, a backslash before the chunk boundary and a CR escaped
+/// across one among them — and the DDL after it.
+fn streamable(len: usize, block_ending: &str, long_ending: &str) -> Vec<u8> {
+    let value = "x".repeat(len);
+    let mut file = b"COPY public.t (a, b) FROM stdin;\n".to_vec();
+    for row in [
+        format!("1\tshort{block_ending}"),
+        format!("2\t{value}{long_ending}"),
+        format!("3\t\\\\{value}\\\r{value}{block_ending}"),
+        format!("4\tab{block_ending}"),
+        format!("5\t{value}\\\\{block_ending}"),
+    ] {
+        file.extend_from_slice(row.as_bytes());
+    }
+    file.extend_from_slice(format!("\\.{block_ending}\nSELECT 1;\n").as_bytes());
+    file
+}
+
+/// **A streamed row reads as the row it stands for**: whatever its ending,
+/// wherever the chunk boundaries fall, a read loop streaming a block's rows
+/// answers the events — rows by index, offset and end — and the refusals of
+/// one holding them, a terminator split across chunks included, and streams
+/// each row that outgrows its chunk.
+#[test]
+fn a_streamed_row_reads_as_the_row_it_stands_for() {
+    for (block, long) in
+        [("\n", "\n"), ("\r\n", "\r\n"), ("\n", "\r\n"), ("\r\n", "\n"), ("\n", "\r\rx\n")]
+    {
+        let file = streamable(200, block, long);
+        for chunk_size in [1usize, 2, 3, 4, 5, 7, 13, 64, 199, 4096] {
+            let read = options(chunk_size);
+            let held = stream(&file, read, false);
+            let streamed = stream(&file, read, true);
+            let context = format!("{block:?} block, {long:?} row, chunk {chunk_size}");
+            match (&held.events, &streamed.events) {
+                (Ok(held), Ok(got)) => assert_eq!(got, held, "{context}"),
+                (Err(held), Err(got)) => {
+                    assert_eq!(format!("{got:?}"), format!("{held:?}"), "{context}");
+                }
+                (held, got) => panic!("{context}: held {held:?}, streamed {got:?}"),
+            }
+            assert_eq!(held.streamed, 0, "{context}");
+            if chunk_size <= 64 && streamed.events.is_ok() {
+                assert!(streamed.streamed >= 3, "{context}: {} streamed", streamed.streamed);
+            }
+        }
+    }
+}
+
+/// **A streamed row holds nothing**: a block whose rows run to many chunks
+/// keeps a few chunks allocated between two chunks at any line length,
+/// where holding them keeps the line.
+#[test]
+fn a_streamed_row_holds_nothing_at_any_length() {
+    let chunk_size = 64;
+    for len in [1 << 10, 1 << 16, 1 << 20] {
+        let file = streamable(len, "\n", "\n");
+        let held = stream(&file, options(chunk_size), false);
+        let streamed = stream(&file, options(chunk_size), true);
+        assert_eq!(streamed.events.unwrap(), held.events.unwrap());
+        assert!(held.allocated > len, "{len}: held {}", held.allocated);
+        assert!(streamed.allocated <= 4 * chunk_size, "{len}: streamed {}", streamed.allocated);
+    }
+}
+
+/// **A streamed row past the limit is refused as a held one is**, at its
+/// start where a chunk leaves it; and one the file ends inside a block in
+/// is the block's refusal, as a held one is.
+#[test]
+fn a_streamed_row_is_refused_where_a_held_one_is() {
+    let file = streamable(200, "\n", "\n");
+    let row_start = file.windows(2).position(|w| w == b"2\t").unwrap() as u64;
+    for chunk_size in [5usize, 40, 64] {
+        let limit = ReadOptions { max_line_bytes: 100, ..options(chunk_size) };
+        for streams in [false, true] {
+            match stream(&file, limit, streams).events {
+                Err(Error::LineTooLong { offset, limit: 100 }) => assert_eq!(offset, row_start),
+                other => panic!("chunk {chunk_size}, streamed {streams}: {other:?}"),
+            }
+        }
+    }
+
+    let mut file = b"COPY public.t (a) FROM stdin;\n1\n".to_vec();
+    file.extend_from_slice("x".repeat(300).as_bytes());
+    for chunk_size in [1usize, 7, 64] {
+        let got = stream(&file, options(chunk_size), true);
+        assert!(
+            matches!(got.events, Err(Error::UnterminatedCopyBlock { header_offset: 0 })),
+            "chunk {chunk_size}: {:?}",
+            got.events
+        );
+        assert_eq!(got.streamed, usize::from(chunk_size < 300), "chunk {chunk_size}");
+    }
+}
+
+/// **A block's end undoes its streaming**: a line after its terminator that
+/// outgrows its chunk is carried whole, as every line outside a block is.
+#[test]
+fn a_line_after_a_streamed_block_is_held() {
+    let file = long_lines(1 << 12);
+    let held = stream(&file, options(64), false);
+    let streamed = stream(&file, options(64), true);
+    assert_eq!(streamed.events.unwrap(), held.events.unwrap());
+    assert_eq!(streamed.streamed, 1, "the row alone");
+    assert!(streamed.allocated > 1 << 12, "the last line held, {}", streamed.allocated);
 }

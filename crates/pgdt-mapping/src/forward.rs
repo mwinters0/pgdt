@@ -377,6 +377,12 @@ pub async fn map_forward(
                     if records {
                         builder.record_rows();
                     }
+                    // A block whose rows are only counted holds none of
+                    // them: a row outgrowing its chunk is streamed
+                    // (`pgdt_dump::ChunkEvents::stream_rows`).
+                    if !builder.reads_rows() {
+                        chunk.stream_rows();
+                    }
                     // **The offer, and this loop is the leader making it**
                     // ([`scan_region`]): everything from
                     // `data_offset` until `\.` is line-structured rows, so
@@ -470,6 +476,9 @@ pub async fn map_forward(
                 // (`docs/design/decisions.md`, "D35", "D96") and a
                 // gathering block's statistics.
                 Event::Row(row) => builder.on_row(row.offset, row.raw),
+                // A row of a block whose rows are only counted, which the
+                // scanner counted.
+                Event::StreamedRow(_) => debug_assert!(!builder.reads_rows()),
                 Event::CopyEnd(end) => {
                     let targets = std::mem::take(&mut open_block_targets);
                     let end_offset = end.end_offset;

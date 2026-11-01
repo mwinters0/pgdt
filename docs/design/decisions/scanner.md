@@ -15,6 +15,15 @@ Outside one every line is lexed as psql lexes it (I50), one beginning inside a s
 dollar-quoted body never structure (I1). Rejected: tracking `$` alone, or quotes too (a `$$` in a name or comment hid
 every block).
 
+### D138 A row its reader only counts is streamed once it outgrows its chunk
+A block whose rows nothing reads past their count — no census, observer or record: a metadata-level parse and its
+interior workers — streams them: a row no chunk ends is folded into a `StreamedLine`, its length and ending (I91), not
+carried, and handed out as `Event::StreamedRow`, so the pass holds no line at any length. One a chunk ends, or no
+longer than `\.` and a CR, stays a `Row`. The state is `ChunkCarry`'s, shared by the serial loop and a worker, whose
+scanner is new each span; a block holds unless its reader says otherwise. Rejected: a `Row` with an empty `raw`, which
+a reader decoding it cannot tell from an empty row; streaming in the scanner, which a worker's spans would lose.
+Reopens: a census reading a bounded head of each field. Evidence: `crates/pgdt-mapping/tests/streamed_line.rs`.
+
 ### D25 Parallelize what is CPU-bound
 One core's rate against the device's offer decides each kind of work (decode, extraction, discovery) per source; D2
 holds the answers, D7 who asks, D52 the worker. Readings that disagree reopen it. Evidence: `xz-decode-scaling`,

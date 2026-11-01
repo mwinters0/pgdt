@@ -17,7 +17,7 @@ pub use preamble::preamble_only;
 pub use scan::{
     ChunkEvents, ChunkedScanner, CopyEnd, CopyScanner, CopyStart, DollarQuoteEnd, Event,
     LargeObjectEnd, LargeObjectStart, Line, ReadOptions, Row, SCAN_LINE_DEFAULT_MAX_BYTES,
-    ScanOptions, scan,
+    ScanOptions, StreamedRow, scan,
 };
 
 /// What a crate above reaches that is not this crate's API: public only
@@ -39,6 +39,7 @@ pub mod internal {
     pub use crate::map::{Builder, derived_diagnostics};
     pub use crate::preamble::scan_preamble;
     pub use crate::scan::{
-        ChunkCarry, ChunkPass, CopyScannerExt, Passes, PieceEndings, RowEnding, announce_read_loop,
+        ChunkCarry, ChunkPass, CopyScannerExt, Passes, PieceEndings, RowEnding, StreamedLine,
+        announce_read_loop,
     };
 }
