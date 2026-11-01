@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 use pgdt_core::{Result, RowEndingRefusal};
-use pgdt_dump::internal::{CopyScannerExt, PieceEndings, RowEnding};
+use pgdt_dump::internal::{ChunkCarry, ChunkPass, CopyScannerExt, PieceEndings, RowEnding};
 use pgdt_dump::{CopyEnd, CopyScanner, Event};
 use pgdt_model::internal::BlockCensusExt;
 use pgdt_model::{
@@ -219,6 +219,71 @@ pub(super) fn scan_piece(
         endings: scanner.piece_endings(),
         next: PieceEntry::RowStart,
     })
+}
+
+/// What one read of a piece answered: its scans in file order, whether the
+/// piece is finished, and how what follows it must enter.
+#[derive(Debug)]
+pub(super) struct ReadScan {
+    pub scans: Vec<PieceScan>,
+    /// The piece read the line ending at or past its limit, found the
+    /// terminator, or — resyncing — found no row start before its limit.
+    pub done: bool,
+    pub next: PieceEntry,
+}
+
+/// Scan `chunk`, the piece's bytes from absolute offset `offset`, after the
+/// line `carry` holds from the read before: that line completed by the
+/// chunk's first line-terminated prefix, then the rest of the chunk where it
+/// lies, each a [`scan_piece`] of its own, and what the chunk leaves
+/// unconsumed carried into the next read (`ChunkCarry`).
+///
+/// **So a piece reads each of its bytes once**: a line longer than a read
+/// grows read by read in the carry, its bytes searched for a newline only as
+/// each read brings them, and is scanned once a read ends it. `eof` is
+/// whether `chunk` ends the file, which alone hands an unfinished line to
+/// the scanner — never consumed, a [`scan_piece`] never claiming end of
+/// file.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn scan_read(
+    carry: &mut ChunkCarry,
+    chunk: &[u8],
+    offset: u64,
+    eof: bool,
+    mut entry: PieceEntry,
+    limit: u64,
+    census: Option<&CensusPlan>,
+    mut observer: Option<&mut PieceObserver>,
+) -> Result<ReadScan> {
+    let line_base = offset - carry.carried() as u64;
+    let mut passes = carry.absorb(chunk, eof);
+    let mut scans = Vec::new();
+    for pass in [ChunkPass::Carry, ChunkPass::InPlace] {
+        let (span, _) = passes.span(pass);
+        if span.is_empty() {
+            continue;
+        }
+        let base = match pass {
+            ChunkPass::Carry => line_base,
+            ChunkPass::InPlace => offset + (chunk.len() - span.len()) as u64,
+        };
+        let scan = scan_piece(span, base, entry, limit, census, observer.as_deref_mut())?;
+        // A resync that found no line boundary short of the limit has none
+        // in the piece at all: whatever row runs through it is an earlier
+        // piece's.
+        let done = scan.terminator.is_some()
+            || scan.through > limit
+            || (scan.next == PieceEntry::Resync && scan.through >= limit);
+        passes.consumed(pass, (scan.through - base) as usize);
+        entry = scan.next;
+        if scan.through > base || done || eof {
+            scans.push(scan);
+        }
+        if done {
+            return Ok(ReadScan { scans, done, next: entry });
+        }
+    }
+    Ok(ReadScan { scans, done: false, next: entry })
 }
 
 /// **The block's rows held to its first row's ending, piece by piece in file

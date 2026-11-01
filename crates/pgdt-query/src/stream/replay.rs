@@ -150,13 +150,18 @@ pub(super) fn replay<'a>(
                     SegmentEntry::Header => CopyScanner::resume(segment.start, None),
                     SegmentEntry::Interior => {
                         // Where this piece's first row starts — and whether
-                        // it has one at all. A piece whose search lands past
-                        // its own limit had two cuts fall inside one row: the
-                        // row belongs to the piece before it.
-                        let row_start =
-                            first_row_start(source, segment.start, seg_end, read)
-                                .await?
-                                .filter(|&start| start <= seg_limit && start < seg_end);
+                        // it has one at all. A row starting past its limit is
+                        // the next piece's, so the search ends there: a piece
+                        // finding none had two cuts fall inside one row,
+                        // which belongs to the piece before it.
+                        let row_start = first_row_start(
+                            source,
+                            segment.start,
+                            seg_limit.min(seg_end),
+                            read.chunk_size_bytes,
+                        )
+                        .await?
+                        .filter(|&start| start <= seg_limit && start < seg_end);
                         // No header line is in range, so the schema comes off
                         // the map's own copy of it.
                         let (opened, resolved, notes) = activate(

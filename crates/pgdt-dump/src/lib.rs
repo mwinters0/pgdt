@@ -38,5 +38,7 @@ pub mod internal {
     pub use crate::cache::store::{load, load_offline, save};
     pub use crate::map::{Builder, derived_diagnostics};
     pub use crate::preamble::scan_preamble;
-    pub use crate::scan::{CopyScannerExt, PieceEndings, RowEnding, announce_read_loop};
+    pub use crate::scan::{
+        ChunkCarry, ChunkPass, CopyScannerExt, Passes, PieceEndings, RowEnding, announce_read_loop,
+    };
 }

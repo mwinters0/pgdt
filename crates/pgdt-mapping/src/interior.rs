@@ -18,6 +18,7 @@
 use std::ops::Range;
 
 use pgdt_core::{Error, Result};
+use pgdt_dump::internal::ChunkCarry;
 use pgdt_dump::{CopyEnd, ScanOptions};
 use pgdt_io::{
     ByteRangeSource, Extent, PartitionRead, Partitioning, WaitPolicy,
@@ -30,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 mod piece;
 
 use self::piece::{
-    BlockEndings, PieceEntry, PieceObserver, PieceScan, empty_census, merge, scan_piece,
+    BlockEndings, PieceEntry, PieceObserver, PieceScan, empty_census, merge, scan_read,
 };
 pub(crate) use self::piece::{CensusPlan, Interior};
 
@@ -322,8 +323,8 @@ fn shortfall(
 /// **A window is `workers` partitions wide**, so the memory the region holds
 /// at its peak is the worker count times what the source said one costs — the
 /// per-worker term `Parallelism::memory_bytes` was solved against to reach
-/// that count — while no line outgrows its chunk, a worker's read growing up
-/// to `max_line_bytes` uncharged where one does. **On a boundaried source, wide in the source's partitions, not
+/// that count — while no line outgrows its chunk, a worker's carried line
+/// growing up to `max_line_bytes` uncharged where one does. **On a boundaried source, wide in the source's partitions, not
 /// in its charge** (`Partitioning::window_end`, and
 /// `docs/design/decisions.md`, "D8"): the charge covers a block unit, a chunk
 /// and a decoder, so sizing the window by it would offer `cut` more boundaries
@@ -452,15 +453,13 @@ async fn run_region(
     Ok(None)
 }
 
-/// One worker: read a piece and parse it, repeating from where the parse
-/// stopped until the piece has consumed the line that ends at or past its
-/// limit.
+/// One worker: read a piece and parse it, a read at a time, until the piece
+/// has consumed the line that ends at or past its limit.
 ///
 /// **How the piece is read is the source's own statement**
 /// ([`pgdt_io::PartitionRead`]). A
 /// plain file is read [`pgdt_io::PartitionRead::Chunked`], so
-/// `pgdt_io`'s `BufferPool` pools every chunk-long buffer a worker takes — a
-/// read grown past a chunk to finish a longer line is not pooled; a
+/// `pgdt_io`'s `BufferPool` pools every buffer a worker takes; a
 /// block-decoding file is read [`pgdt_io::PartitionRead::Whole`], whose
 /// *first* read of a piece is one of that source's own units; each
 /// continuation read is a chunk, so the unit bounds the whole piece only
@@ -473,14 +472,16 @@ async fn run_region(
 /// That bounds the buffer; it does not make a wider cut safe, which wants a
 /// read clipped to the next boundary (`docs/design/decisions.md`, "D8").
 ///
-/// **The reads repeat until the piece has passed its limit**, which no read
-/// inside it can do: the line ending at or past `range.end` needs bytes past
-/// it, so the last read of a piece straddles the boundary and is scanned as a
-/// piece of its own — chunk-sized unless a longer line grows it, which is why a partition's stated
-/// footprint carries a chunk buffer beside whatever the source retains
-/// (`ByteRangeSource::partitions`). Handing back several [`PieceScan`]s keeps
-/// [`merge`]'s fold the only fold. **Exactly one read is alive at a time**,
-/// which is what makes [`WaitPolicy::MayWait`] safe here
+/// **Each read begins where the last ended**, so a piece reads each of its
+/// bytes once: what a read leaves unconsumed — the start of a line it does
+/// not end — is carried into the next ([`scan_read`]), a line longer than a
+/// read growing there read by read under the line limit the serial loop
+/// holds it to. The last read of a piece straddles its limit, the line
+/// ending at or past it needing bytes past it, which is why a partition's
+/// stated footprint carries a chunk buffer beside whatever the source
+/// retains (`ByteRangeSource::partitions`). Handing back several
+/// [`PieceScan`]s keeps [`merge`]'s fold the only fold. **Exactly one read is
+/// alive at a time**, which is what makes [`WaitPolicy::MayWait`] safe here
 /// (`docs/design/decisions.md`, "D5").
 #[allow(clippy::too_many_arguments)]
 async fn scan_partition(
@@ -496,55 +497,49 @@ async fn scan_partition(
     let limit = range.end;
     let mut out = Vec::new();
     let mut entry = entry;
-    let mut start = range.start;
+    let mut carry = ChunkCarry::default();
+    let mut at = range.start;
     let mut want = match read {
         PartitionRead::Whole { unit } => range.end.saturating_sub(range.start).min(unit).max(1),
         PartitionRead::Chunked => (options.read.chunk_size_bytes as u64).max(1),
     };
 
-    while start < size {
-        let end = (start + want).min(size);
-        let len = usize::try_from(end - start).unwrap_or(usize::MAX);
-        let bytes = source.read_range(start, len).await?;
-        // The observer goes to the blocking pool with the bytes and comes back
-        // with the scan, one read of the piece at a time.
+    while at < size {
+        let end = (at + want).min(size);
+        let len = usize::try_from(end - at).unwrap_or(usize::MAX);
+        let bytes = source.read_range(at, len).await?;
+        let eof = end >= size;
+        // The observer and the carry go to the blocking pool with the bytes
+        // and come back with the scan, one read of the piece at a time.
         let plan = census.clone();
-        let (scan, returned) = tokio::task::spawn_blocking(move || {
-            let scan = scan_piece(&bytes, start, entry, limit, plan.as_ref(), piece.as_mut());
-            (scan, piece)
+        let (scanned, returned, carried) = tokio::task::spawn_blocking(move || {
+            let scanned =
+                scan_read(&mut carry, &bytes, at, eof, entry, limit, plan.as_ref(), piece.as_mut());
+            (scanned, piece, carry)
         })
         .await
         .map_err(Error::join)?;
-        piece = returned;
-        let scan = scan?;
+        (piece, carry) = (returned, carried);
+        let scanned = scanned?;
+        out.extend(scanned.scans);
         // Finished when it has read the line ending at or past its limit,
         // found the terminator, or run out of file — the last being the
         // leader's to turn into an error.
-        let done = scan.terminator.is_some() || scan.through > limit || end >= size;
-        let advanced = scan.through > start;
-        let (next_start, next_entry) = (scan.through, scan.next);
-        if advanced || done {
-            out.push(scan);
-        }
-        if done {
+        if scanned.done || eof {
             break;
         }
-        if advanced {
-            start = next_start;
-            entry = next_entry;
-            want = options.read.chunk_size_bytes as u64;
-        } else {
-            // Not one line boundary in `want` bytes. Growing rather than
-            // failing lets a legitimately long row through; `max_line_bytes`
-            // is the same ceiling the serial loop enforces.
-            if want >= options.read.max_line_bytes as u64 {
-                return Err(Error::LineTooLong {
-                    offset: start,
-                    limit: options.read.max_line_bytes,
-                });
-            }
-            want = (want * 2).min(options.read.max_line_bytes as u64);
+        // The limit the serial loop holds a carried line to
+        // (`ReadOptions::max_line_bytes`), measured where a read ends inside
+        // it.
+        if carry.carried() > options.read.max_line_bytes {
+            return Err(Error::LineTooLong {
+                offset: end - carry.carried() as u64,
+                limit: options.read.max_line_bytes,
+            });
         }
+        entry = scanned.next;
+        at = end;
+        want = (options.read.chunk_size_bytes as u64).max(1);
     }
     Ok((out, piece))
 }

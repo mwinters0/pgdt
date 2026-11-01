@@ -18,7 +18,7 @@ use pgdt_io::{
 /// Which of a chunk's two spans is being scanned. The carry pass comes first:
 /// the straddling line, then the rest of the chunk in place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChunkPass {
+pub enum ChunkPass {
     /// The line straddling the chunk's front edge — what was carried over
     /// from the previous chunk, completed by this one's first line-terminated
     /// prefix. The only bytes a read loop copies.
@@ -27,7 +27,10 @@ enum ChunkPass {
     InPlace,
 }
 
-/// The one line a chunked read loop has to carry across a chunk boundary.
+/// The one line a chunked read loop has to carry across a chunk boundary —
+/// [`ChunkedScanner`]'s, and an interior worker's over its piece
+/// (`pgdt_mapping`'s `scan_partition`), so each reads a line once, read by
+/// read, and never again from its start.
 ///
 /// [`CopyScanner`] consumes whole lines, so whatever a chunk leaves
 /// unconsumed is always a **single unterminated line** — never more, since
@@ -58,7 +61,7 @@ enum ChunkPass {
 /// would search the carried line again from its first byte at every chunk it
 /// spans, quadratic in the line.
 #[derive(Debug, Default)]
-struct ChunkCarry {
+pub struct ChunkCarry {
     /// The current chunk's carry pass: the line carried in, extended by
     /// [`absorb`](Self::absorb) with the chunk bytes that complete it. Never
     /// written while the chunk is scanned.
@@ -77,9 +80,9 @@ struct ChunkCarry {
 }
 
 impl ChunkCarry {
-    /// [`Passes::carried`], between two chunks.
-    #[cfg(test)]
-    fn len(&self) -> usize {
+    /// [`Passes::carried`], between two chunks: the bytes ahead of the next
+    /// chunk that its carry pass begins with.
+    pub fn carried(&self) -> usize {
         self.line.len() - self.line_used + self.tail.len()
     }
 
@@ -89,7 +92,7 @@ impl ChunkCarry {
     /// With nothing carried the in-place pass begins at `0` — the chunk is
     /// scanned whole, where it lies. With a carry and no newline anywhere in
     /// `chunk`, it begins at `chunk.len()`, and the carry is left unfinished.
-    fn absorb<'a>(&'a mut self, chunk: &'a [u8], eof: bool) -> Passes<'a> {
+    pub fn absorb<'a>(&'a mut self, chunk: &'a [u8], eof: bool) -> Passes<'a> {
         // The line carried in is whichever pass left one, never both
         // (`Passes::span`'s assertion): an unfinished line stays where it
         // lies, and a tail the in-place pass left becomes the line.
@@ -129,7 +132,7 @@ impl ChunkCarry {
 
 /// One absorbed chunk's two spans, and where each pass's unconsumed bytes go.
 #[derive(Debug)]
-struct Passes<'a> {
+pub struct Passes<'a> {
     line: &'a [u8],
     rest: &'a [u8],
     line_waits: bool,
@@ -142,7 +145,7 @@ struct Passes<'a> {
 impl<'a> Passes<'a> {
     /// The bytes `pass` scans, and whether they run to the true end of the
     /// file.
-    fn span(&self, pass: ChunkPass) -> (&'a [u8], bool) {
+    pub fn span(&self, pass: ChunkPass) -> (&'a [u8], bool) {
         match pass {
             ChunkPass::Carry if self.line_waits => (&[], false),
             ChunkPass::Carry => (self.line, self.line_eof),
@@ -168,7 +171,7 @@ impl<'a> Passes<'a> {
     /// Record that the scanner consumed `used` bytes of `pass`'s span. After
     /// the in-place pass this is what makes the next chunk's carry: the tail
     /// the scanner could not finish, which is at most one line.
-    fn consumed(&mut self, pass: ChunkPass, used: usize) {
+    pub fn consumed(&mut self, pass: ChunkPass, used: usize) {
         match pass {
             ChunkPass::Carry => *self.line_used = used,
             ChunkPass::InPlace => self.tail.extend_from_slice(&self.rest[used..]),
@@ -179,7 +182,7 @@ impl<'a> Passes<'a> {
     /// what they used. This is what [`ReadOptions::max_line_bytes`] bounds: it
     /// is a single line's prefix, so a file whose lines fit stays flat here
     /// however large it is.
-    fn carried(&self) -> usize {
+    pub fn carried(&self) -> usize {
         self.line.len() - *self.line_used + self.tail.len()
     }
 }
@@ -318,7 +321,7 @@ impl ChunkedScanner {
     /// Bytes carried into the next chunk.
     #[cfg(test)]
     pub(super) fn carried(&self) -> usize {
-        self.carry.len()
+        self.carry.carried()
     }
 }
 

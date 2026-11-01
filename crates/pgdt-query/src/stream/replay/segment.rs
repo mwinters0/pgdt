@@ -3,8 +3,7 @@
 
 use std::ops::Range;
 
-use pgdt_core::{Error, Result};
-use pgdt_dump::ReadOptions;
+use pgdt_core::Result;
 use pgdt_io::ByteRangeSource;
 use pgdt_model::CopyBlock;
 
@@ -115,15 +114,21 @@ impl Segment {
 /// which it would read as the block's terminator; I7's guarantee is about a
 /// *line start*, so it covers a scanner started here and not one started
 /// mid-row.
+///
+/// **A segment searches only to its own limit**, as a piece of the leader's
+/// split does: a row starting past it is the next segment's, so one holding
+/// none is empty and reads nothing more, the segment before it reading
+/// through the line — and refusing it where it passes the line limit. The
+/// search holds one read of `chunk_size` bytes at a time.
 pub(in crate::stream) async fn first_row_start(
     source: &dyn ByteRangeSource,
     from: u64,
     end: u64,
-    read: ReadOptions,
+    chunk_size: usize,
 ) -> Result<Option<u64>> {
     let mut pos = from;
     while pos < end {
-        let want = read.chunk_size_bytes.min((end - pos) as usize);
+        let want = chunk_size.max(1).min((end - pos) as usize);
         let bytes = source.read_range(pos, want).await?;
         if bytes.is_empty() {
             return Ok(None);
@@ -132,9 +137,6 @@ pub(in crate::stream) async fn first_row_start(
             return Ok(Some(pos + nl as u64 + 1));
         }
         pos += bytes.len() as u64;
-        if pos - from > read.max_line_bytes as u64 {
-            return Err(Error::LineTooLong { offset: from, limit: read.max_line_bytes });
-        }
     }
     Ok(None)
 }

@@ -1,3 +1,4 @@
+use super::piece::scan_piece;
 use super::*;
 use pgdt_core::Error;
 use pgdt_dump::internal::Builder;
@@ -327,7 +328,7 @@ fn a_cut_inside_a_row_whose_tail_is_a_backslash_dot_is_resynced_past() {
 /// chunk size every block here sits inside one partition and the scheduler
 /// declines it. Announcing 8 bytes as the read size makes the source
 /// advise 64-byte partitions, which is what exercises the window loop, the
-/// tail read and the growth path at all. **It is bounded below by the
+/// tail read and a line carried across a worker's reads at all. **It is bounded below by the
 /// smallest region any fixture here ends with**: [`scan_region`]'s floor
 /// is one whole partition, so a larger partition would decline a trailing
 /// block and the sweeps below, which assert a closed region and a non-empty
@@ -442,17 +443,18 @@ impl pgdt_io::ByteRangeSource for Recording {
     }
 }
 
-/// **No first read a worker makes at an offset on a
-/// `PartitionRead::Chunked` source exceeds `ReadOptions::chunk_size_bytes`** — the
-/// first read of a piece as much as the tail; a read grown to finish a
-/// longer line is held to `max_line_bytes` alone. It is what keeps every
-/// buffer such a worker takes but a grown one a *pooled* one
-/// (`pgdt_io`'s `BufferPool::keeps` admits the announced length and nothing
-/// longer). It is **not** source-agnostic: the block-decoding path reads a
-/// piece whole, where the bound that binds is the source's own unit
+/// **No read a worker makes on a `PartitionRead::Chunked` source exceeds
+/// `ReadOptions::chunk_size_bytes`** — the first read of a piece, the tail
+/// read past its limit and every read finishing a longer line alike, a line
+/// longer than a read growing in the worker's carry rather than in its reads
+/// ([`a_worker_reads_a_line_longer_than_a_read_once`]). It is what keeps
+/// every buffer such a worker takes a *pooled* one (`pgdt_io`'s
+/// `BufferPool::keeps` admits the announced length and nothing longer). It
+/// is **not** source-agnostic: the block-decoding path reads a piece whole,
+/// where the bound that binds is the source's own unit
 /// ([`no_read_a_worker_makes_exceeds_the_stated_unit`]) — evidence
-/// `parallel-peak-rss`. The
-/// assertion is on the reads the leader issued, not on the advice.
+/// `parallel-peak-rss`. The assertion is on the reads the leader issued, not
+/// on the advice.
 #[tokio::test]
 async fn no_read_a_worker_makes_exceeds_the_chunk_size() {
     let path = edge_cases();
@@ -484,26 +486,11 @@ async fn no_read_a_worker_makes_exceeds_the_chunk_size() {
             }
             let reads = source.reads.lock().unwrap();
             assert!(!reads.is_empty(), "a scheduled region reads something");
-            // **The first read at any offset is the one this is about.**
-            // The growth path is the one legitimate way past the chunk and
-            // is never the first read at its offset, while a piece's own
-            // opening read is unless the piece before it read from that
-            // offset too, which then holds it to the growth ceiling alone
-            // — so the invariant needs no arithmetic on the lengths.
-            let mut seen: Vec<u64> = Vec::new();
             for &(offset, len) in reads.iter() {
-                if seen.contains(&offset) {
-                    assert!(
-                        len <= options.read.max_line_bytes,
-                        "a {len}-byte read at {offset} is past the growth ceiling"
-                    );
-                    continue;
-                }
-                seen.push(offset);
                 assert!(
                     len <= options.read.chunk_size_bytes,
-                    "the first read at {offset} under {jobs} jobs is {len} bytes, past the \
-                     {}-byte chunk",
+                    "the read at {offset} under {jobs} jobs is {len} bytes, past the {}-byte \
+                     chunk",
                     options.read.chunk_size_bytes
                 );
             }
@@ -566,21 +553,12 @@ async fn no_read_a_worker_makes_exceeds_the_stated_unit() {
             }
             let reads = source.reads.lock().unwrap();
             assert!(!reads.is_empty(), "a scheduled region reads something");
-            // Same shape as the chunked bound above: a repeat at one
-            // offset is the growth retry, ceilinged at `max_line_bytes`.
-            let mut seen: Vec<u64> = Vec::new();
+            // A piece's first read is a unit at most and every later one a
+            // chunk, which is below it here.
             for &(offset, len) in reads.iter() {
-                if seen.contains(&offset) {
-                    assert!(
-                        len <= options.read.max_line_bytes,
-                        "a {len}-byte read at {offset} is past the growth ceiling"
-                    );
-                    continue;
-                }
-                seen.push(offset);
                 assert!(
                     len as u64 <= UNIT,
-                    "the first read at {offset} under {jobs} jobs is {len} bytes, past the \
+                    "the read at {offset} under {jobs} jobs is {len} bytes, past the \
                      {UNIT}-byte unit"
                 );
             }
@@ -801,8 +779,8 @@ async fn a_block_the_file_ends_inside_is_unterminated() {
     );
 }
 
-/// A row longer than the tail read is read by growing the read, bounded by
-/// the same ceiling the serial loop enforces.
+/// A row longer than the tail read is carried across the worker's reads,
+/// bounded by the same ceiling the serial loop enforces.
 #[tokio::test]
 async fn a_row_longer_than_a_tail_read_is_still_one_row() {
     let wide = "x".repeat(4096);
@@ -832,6 +810,120 @@ async fn a_row_longer_than_a_tail_read_is_still_one_row() {
         .unwrap();
         assert_eq!(got.scan, RegionScan::Closed(block.interior.clone()), "{jobs} jobs");
     }
+}
+
+/// A block of one short row, a `LONG`-byte row and another short row, written
+/// under `dir` and opened behind a [`Recording`]: the file, the block's data
+/// offset, and the source.
+const LONG: usize = 4096;
+
+fn long_line(dir: &std::path::Path) -> (Vec<u8>, u64, Recording) {
+    let header = "COPY public.t (a) FROM stdin;\n";
+    let file = format!("{header}a\n{}\nb\n\\.\n", "x".repeat(LONG)).into_bytes();
+    let path = dir.join("long.sql");
+    std::fs::write(&path, &file).unwrap();
+    let inner = LocalFileSource::open(&path).unwrap();
+    let source = Recording { inner, reads: std::sync::Mutex::new(Vec::new()), unit: None };
+    (file, header.len() as u64, source)
+}
+
+/// Every read follows the one before it, so a piece's reads cover its bytes
+/// once, and none is longer than `chunk`.
+fn assert_read_once(reads: &[(u64, usize)], from: u64, chunk: usize) {
+    let mut at = from;
+    for &(offset, len) in reads {
+        assert_eq!(offset, at, "a read at {offset} where the last ended at {at}: {reads:?}");
+        assert!(len <= chunk, "a {len}-byte read at {offset}, past the {chunk}-byte chunk");
+        at += len as u64;
+    }
+}
+
+/// **The owner of a line longer than a read reads it once**: the
+/// line grows in the worker's carry read by read, each read beginning
+/// where the last ended and none past the chunk, and is one row once a read
+/// ends it.
+#[tokio::test]
+async fn a_worker_reads_a_line_longer_than_a_read_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let (file, data_offset, source) = long_line(dir.path());
+    let options = scheduled(&source.inner, 2);
+    let (scans, _) = scan_partition(
+        &source,
+        &options,
+        PartitionRead::Chunked,
+        PieceEntry::RowStart,
+        data_offset..data_offset + 16,
+        plan(Some(1)),
+        file.len() as u64,
+        None,
+    )
+    .await
+    .unwrap();
+    let past_long = data_offset + 2 + LONG as u64 + 1;
+    assert_eq!(scans.iter().map(|scan| scan.rows).sum::<u64>(), 2, "`a` and the long row");
+    assert_eq!(scans.last().map(|scan| scan.through), Some(past_long));
+    let reads = source.reads.lock().unwrap();
+    assert_read_once(&reads, data_offset, options.read.chunk_size_bytes);
+    let read: usize = reads.iter().map(|&(_, len)| len).sum();
+    assert!(
+        read as u64 <= past_long - data_offset + options.read.chunk_size_bytes as u64,
+        "{read} bytes read for a piece ending at {past_long}"
+    );
+}
+
+/// **A piece inside a line searches its own range and no further**, holding
+/// nothing: it owns no row, the line's owner reading through it.
+#[tokio::test]
+async fn a_piece_inside_a_line_reads_its_own_range_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let (file, data_offset, source) = long_line(dir.path());
+    let options = scheduled(&source.inner, 2);
+    let start = data_offset + 2 + 64;
+    let limit = start + 64;
+    let (scans, _) = scan_partition(
+        &source,
+        &options,
+        PartitionRead::Chunked,
+        PieceEntry::Resync,
+        start..limit,
+        plan(Some(1)),
+        file.len() as u64,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(scans.iter().map(|scan| scan.rows).sum::<u64>(), 0);
+    let last = scans.last().unwrap();
+    assert_eq!((last.through, last.next), (limit, PieceEntry::Resync));
+    let reads = source.reads.lock().unwrap();
+    assert_read_once(&reads, start, options.read.chunk_size_bytes);
+    assert_eq!(reads.iter().map(|&(_, len)| len as u64).sum::<u64>(), limit - start);
+}
+
+/// A line its worker carries past the line limit is refused at the line's
+/// start, as the serial loop refuses it.
+#[tokio::test]
+async fn a_worker_refuses_a_line_past_the_limit_at_its_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let (file, data_offset, source) = long_line(dir.path());
+    let mut options = scheduled(&source.inner, 2);
+    options.read.max_line_bytes = 64;
+    let refused = scan_partition(
+        &source,
+        &options,
+        PartitionRead::Chunked,
+        PieceEntry::RowStart,
+        data_offset..data_offset + 16,
+        plan(Some(1)),
+        file.len() as u64,
+        None,
+    )
+    .await
+    .map(|_| ());
+    assert!(
+        matches!(refused, Err(Error::LineTooLong { offset, limit: 64 }) if offset == data_offset + 2),
+        "{refused:?}"
+    );
 }
 
 /// **A split block refuses the row a serial scan refuses** (I91): the

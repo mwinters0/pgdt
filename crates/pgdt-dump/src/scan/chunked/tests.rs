@@ -64,7 +64,7 @@ fn carrying(line: &[u8]) -> ChunkCarry {
     let mut passes = carry.absorb(line, false);
     passes.consumed(ChunkPass::Carry, 0);
     passes.consumed(ChunkPass::InPlace, 0);
-    assert_eq!(carry.len(), line.len());
+    assert_eq!(carry.carried(), line.len());
     carry
 }
 

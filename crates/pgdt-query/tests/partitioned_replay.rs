@@ -1137,3 +1137,94 @@ async fn a_dump_s_plan_replays_as_the_mapping_pass_would() {
     let refused = dump_over(source, &partial, dir.path()).await.err().unwrap();
     assert!(matches!(refused, Error::MapIncomplete { scanned_through: 1, .. }), "{refused}");
 }
+
+/// The local file underneath, every read it answers recorded as `(offset,
+/// len)`; its advice is forwarded, a source declining to advise being never
+/// cut.
+struct Recording {
+    inner: LocalFileSource,
+    reads: std::sync::Mutex<Vec<(u64, usize)>>,
+}
+
+impl ByteRangeSource for Recording {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdt_core::Result<bytes::Bytes>> + Send + '_>,
+    > {
+        self.reads.lock().unwrap().push((offset, len));
+        self.inner.read_range(offset, len)
+    }
+    fn extent(
+        &self,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>,
+    > {
+        self.inner.extent()
+    }
+    fn modified(
+        &self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = pgdt_core::Result<Option<std::time::SystemTime>>>
+                + Send
+                + '_,
+        >,
+    > {
+        self.inner.modified()
+    }
+    fn hint_read_size(&self, len: usize) {
+        self.inner.hint_read_size(len);
+    }
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.inner.hint_parallelism(parallelism);
+    }
+    fn partitions(&self, range: std::ops::Range<u64>) -> pgdt_io::Partitioning {
+        self.inner.partitions(range)
+    }
+}
+
+/// **A segment inside a line searches for its first row only to its own
+/// limit**: the line's owner reads it once, each segment cut inside it
+/// reads its own bytes and owns no row, so the replay reads the line about
+/// twice however many segments it is cut into — where a search run on to the
+/// line's end reads it once more for each — and answers the serial rows.
+#[tokio::test]
+async fn a_segment_inside_a_line_reads_only_to_its_limit() {
+    const LONG: usize = 16 << 10;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("long.sql");
+    let mut file = b"COPY public.t (a) FROM stdin;\na\n".to_vec();
+    file.extend(std::iter::repeat_n(b'x', LONG));
+    file.extend_from_slice(b"\nb\n\\.\n");
+    std::fs::write(&path, &file).unwrap();
+
+    let chunk = 64usize;
+    let scan = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: chunk, ..ReadOptions::default() },
+        ..ScanOptions::default()
+    };
+    let options = QueryOptions {
+        schema_mode: pgdt_codec::SchemaMode::Strings,
+        parallelism: Parallelism::workers(16, 1 << 30),
+        max_source_span: None,
+        ..QueryOptions::default()
+    };
+    let source = Arc::new(Recording {
+        inner: LocalFileSource::open(&path).unwrap(),
+        reads: std::sync::Mutex::new(Vec::new()),
+    });
+    let cold = Cold { scan, ..Cold::default() };
+    let expected = serial_rows_in(&cold, source.clone(), "public.t", options.clone()).await;
+    assert_eq!(expected.len(), 3, "`a`, the long row and `b`");
+
+    let plan = plan_of(source.clone(), "public.t", scan, options).await;
+    assert!(plan.len() > 4, "the line is cut into several segments: {}", plan.len());
+    source.reads.lock().unwrap().clear();
+    assert_eq!(drained(&plan, 8192).await, expected);
+    let read: usize = source.reads.lock().unwrap().iter().map(|&(_, len)| len).sum();
+    let bound = 2 * file.len() + plan.len() * chunk;
+    assert!(read <= bound, "{read} bytes read replaying a {}-byte file, past {bound}", file.len());
+}
