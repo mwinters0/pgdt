@@ -38,7 +38,7 @@ held line holds resident" carries 33.3's re-take, read against this sitting.
   regions. 33.2 and 33.3 change both; neither column stands in for the other.
 - **Unattributed, and still present at 33.3's re-take**: the byte a line
   byte a one-worker parse holds past the carry's buffers and a growth's copy.
-  A heaptrack recording at one worker over `long_text_512` is the instrument.
+  The instrument is the 33.3 notes', "What the re-take found against it".
   The three other terms this sitting left unattributed — a one-partition
   query's from 128 MiB, a four-partition query's past four one-partition ones,
   the spread between two sweeps of one leg — are absent from the re-take.

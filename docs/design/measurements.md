@@ -4359,9 +4359,9 @@ the two, so a difference between them is priced to both, never to one.
   unattributed**, the byte `36888923`'s reading left past the carry's two
   buffers and the growth's copy, still there with one of them gone. The notes
   name its two candidates, an allocator keeping the freed line resident and a
-  term outside the carry, which this figure cannot tell apart; a heaptrack
-  recording of one worker's default parse over `long_text_512`, which counts
-  live allocations rather than pages, would.
+  term outside the carry, which this figure cannot tell apart; the instrument
+  that would, and why it is not heaptrack, is the notes', "What the re-take
+  found against it".
 - **A one-partition query over text holds what a parse does**, ×3.02 against
   the account's two: the third byte is on the path the two share, not a copy
   the query makes. Escaped text's decoded copy adds ×0.08 to text's secant and

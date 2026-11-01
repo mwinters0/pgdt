@@ -90,6 +90,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.1** Evidence: the `long-line-resident` generator and figure on today's code, the resident of a held line by pass kind; a `(c)` `KD<k>` for a field refused for its size under a line under the bound; no production code. Taken at `36888923` ([`measurements.md`](../design/measurements.md), "What a held line holds resident"); `KD164` filed — [notes](../design/roadmap-P33.1-evidence-notes.md)
 - [x] **33.2** Each line read once: the owner of a line grows it read by read and never re-reads; a segment's row-start search ends at its limit; the growth tests assert no read past the chunk — [notes](../design/roadmap-P33.2-read-once-notes.md)
 - [x] **33.3** Hold only what is decoded: the held line freed after its row and handed to the builder as a block; the replay releasing the chunks under a copied line; `long-line-resident` re-taken, at `6dd4523c` ([`measurements.md`](../design/measurements.md), "What a held line holds resident") — [notes](../design/roadmap-P33.3-hold-notes.md)
+- [ ] **33.8** Attribution, ahead of 33.3.1: the term a one-worker parse and a one-partition query over text hold past the 33.3 account, and where a decoded copy enters a one-partition query's peak over escaped text and bytea, read by the `introspect` build's live peak against mimalloc's committed one and placed by heaptrack where live; no production code. A live copy's removal is then a slice, mimalloc's retention a grilling
 - [ ] **33.3.1** A pass decoding nothing streams a line: it finds the line's end and counts the row without holding its bytes, flat in memory at any line length
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, an unstated allowance's ledger unlimited; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
 - [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, a line one reader cannot hold refused for memory, its remedy spelled by `pgdt` and the shell
@@ -126,20 +127,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **33.3 is ticked with a byte a line byte unattributed.** Its re-take
-  ([`../design/measurements.md`](../design/measurements.md), "What a held line
-  holds resident") has a one-worker parse, and a one-partition query over
-  text, holding about a line more than the slice's account predicted
-  ([`../design/roadmap-P33.3-hold-notes.md`](../design/roadmap-P33.3-hold-notes.md),
-  "What the re-take found against it"). The term is a live buffer on the read
-  path the two share, a copy the spec's "What a held line costs" means to
-  remove before the charge is set, or the allocator keeping a freed line's
-  pages, which no charge should carry; resident set cannot tell them apart.
-  The call: the row asks for the figure re-taken, which it is, so the box is
-  ticked and the attribution left to the instrument the notes name, a
-  heaptrack recording of one worker's default parse over `long_text_512`,
-  rather than run inside this round. Reconsidering means attributing it before
-  33.4 sets the charge — as an out-of-band row or an earned `33.3.2` — so a
-  removable copy is not charged into the ledger; leaving it, 33.7 confirms or
-  re-sets the factors with the term unnamed.
 

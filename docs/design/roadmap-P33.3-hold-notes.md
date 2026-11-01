@@ -52,8 +52,17 @@ An account from the code, written before the readings (`.claude/skills/evidence/
   two; a one-partition query over text holds what that parse holds, so the
   term is on the read path the two share, not a copy the query makes. The
   account's two candidates — the allocator keeping a freed line, a term outside
-  the carry — are not told apart by resident set; a heaptrack recording of one
-  worker's default parse over `long_text_512` is the instrument.
+  the carry — are not told apart by resident set. **The instrument is the
+  `introspect` build** over `long_text_512` at one worker, under the figure's
+  container and `--memory`: its `live_peak_bytes` books a `realloc` by its
+  difference, so it holds the program's live bytes alone, and
+  `mimalloc_committed_peak_bytes` adds the growth's copy and what mimalloc kept
+  after a free; the copy is the block outgrown, under a line, so a gap past a
+  line is retention, and a live peak past a line a live term. **heaptrack only places a live term**: it records the
+  `system` build, under which glibc grows a block past its 32 MiB mmap threshold
+  by `mremap` and unmaps it on free, so neither the growth's copy nor mimalloc's
+  retention — mimalloc 2.3 grows by allocating, copying and freeing, and purges a
+  freed block after a delay — exists there to see.
 - **A decoded copy does not add to the peak as the account sums it**: escaped
   text's adds less than its predicted term on the ladder and at the bound,
   bytea's less at the bound and more on the ladder. Unattributed.
