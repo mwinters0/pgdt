@@ -133,10 +133,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **33.11 shows a block's longest line under `pgdt info --detail`, not in the
-  default listing.** The spec says only that `pgdt info` shows it. It is a
-  byte offset and a length, so it sits with the four offset lines `--detail`
-  already adds, and the default listing — read when deciding what to query —
-  stays as it was. Reconsidering moves one `println!` in
-  `crates/pgdt/src/info/text.rs` out of the `detail` arm and its sentence in
-  `docs/manual/dump-inspection.md`; nothing persisted changes.
