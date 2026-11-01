@@ -269,6 +269,49 @@ fn an_interval_interval_in_refuses_is_refused() {
     }
 }
 
+/// **A text past its input function's work buffer is refused, and one at its
+/// edge read** (I83, I84): `ParseDateTime` holds every byte but a space and
+/// a terminator per field, so a part's leading zeros, which the readers take
+/// at any length, run a text out of it. Each edge is where
+/// [`datetime_reads`] and [`interval_reads`] put it, which hold the reader to
+/// the server's grammar either side.
+#[test]
+fn a_text_past_its_work_buffer_is_refused() {
+    use crate::compare::CompareKind;
+    use crate::key::order::field_key;
+    type Reader = fn(&str) -> Read<()>;
+    let date: Reader = |s| date_days(s).map(drop);
+    let time: Reader = |s| time_of_day_micros(s).map(drop);
+    let timetz: Reader = |s| field_key(&CompareKind::TimeTz, s).map(drop);
+    let timestamp: Reader = |s| timestamp_micros_wide(s, false).map(drop);
+    let timestamptz: Reader = |s| timestamp_micros_wide(s, true).map(drop);
+    let interval: Reader = |s| interval_parts(s).map(drop);
+    // A reader, the input whose buffer it is held to, a value, and the
+    // longest text of the value the buffer holds.
+    let cases: [(Reader, Option<DateTimeInput>, &str, usize); 8] = [
+        (date, Some(DateTimeInput::Date), "2020-01-01", 128),
+        (date, Some(DateTimeInput::Date), "2020-01-01 BC", 128),
+        (time, Some(DateTimeInput::Time), "12:00:00", 128),
+        (timetz, Some(DateTimeInput::TimeTz), "12:00:00+00", 127),
+        (timestamp, Some(DateTimeInput::Timestamp), "2020-01-01 12:00:00", 152),
+        (timestamptz, Some(DateTimeInput::TimestampTz), "2020-01-01 12:00:00-05 BC", 151),
+        (interval, None, "1 day", 255),
+        (interval, None, "1 year -12:00:00", 255),
+    ];
+    for (read, input, value, edge) in cases {
+        let reads = |s: &str| match input {
+            Some(input) => datetime_reads(input, s),
+            None => interval_reads(s, None),
+        };
+        let at_edge = format!("{}{value}", "0".repeat(edge - value.len()));
+        let past = format!("0{at_edge}");
+        assert_eq!(read(&at_edge), Ok(()), "{value} at {edge}");
+        assert!(reads(&at_edge), "{value} at {edge}");
+        assert_eq!(read(&past), Err(Unread::Refused), "{value} past {edge}");
+        assert!(!reads(&past), "{value} past {edge}");
+    }
+}
+
 /// A unit `interval_out` never writes is outside the grammar — the same
 /// refusal the ordering path makes, reached through the decoder that
 /// shares its walk.

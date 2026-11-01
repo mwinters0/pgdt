@@ -17,7 +17,7 @@ use crate::value::bytea::{bytea_unread, decode_bytea};
 use crate::value::datetime::grammar::DateTimeInput;
 use crate::value::datetime::{
     date_days, datetime_read, extract_offset, interval_parts, interval_read, interval_span,
-    parse_time_of_day, time_of_day_micros, timestamp_postgres_micros,
+    parse_time_of_day, time_of_day_micros, timestamp_postgres_micros, within_workbuf,
 };
 use crate::value::float::{float_field, float_in};
 use crate::value::int::{int_in, oid_unread};
@@ -191,6 +191,8 @@ pub fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
 fn timetz_key(text: &str) -> Read<OrderKey> {
     let (time_only, displayed) = extract_offset(text)?;
     let (seconds, micros) = parse_time_of_day(time_only)?;
+    // pg-refuses: I83 — past `timetz_in`'s work buffer.
+    within_workbuf(text, DateTimeInput::TimeTz.workbuf())?;
     let zone = -displayed;
     // Both parts are bounded above, so neither sum can overflow.
     let utc = seconds * 1_000_000 + micros + zone * 1_000_000;

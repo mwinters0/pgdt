@@ -6,7 +6,9 @@
 
 pub(crate) mod grammar;
 
-use self::grammar::{DateTimeInput, datetime_reads, interval_reads};
+use self::grammar::{
+    DateTimeInput, INTERVAL_WORKBUF, datetime_reads, interval_reads, parse_date_time_splits,
+};
 use crate::declared::IntervalQualifier;
 use crate::decode::{Read, Unread};
 use crate::value::digits::{push_fraction, push_two, push_year};
@@ -17,6 +19,8 @@ use crate::value::digits::{push_fraction, push_two, push_year};
 /// holds.
 pub fn time_of_day_micros(s: &str) -> Read<i64> {
     let (seconds, micros) = parse_time_of_day(s)?;
+    // pg-refuses: I83 — past `time_in`'s work buffer.
+    within_workbuf(s, DateTimeInput::Time.workbuf())?;
     Ok(seconds * 1_000_000 + micros)
 }
 
@@ -116,6 +120,24 @@ fn unsigned_part(s: &str) -> Option<i64> {
     })
 }
 
+/// [`Unread::Refused`] for a text a reader here read a value from that
+/// `ParseDateTime` cannot hold in the `buflen`-byte work buffer its input
+/// function hands it: the readers take a part's leading zeros at any length
+/// (`0…02020-01-01`), where the server's buffer ends.
+///
+/// Such a text parts its fields by one space each, but for a zone's sign,
+/// which opens one more, and every byte but a space is held with a terminator
+/// per field: so it needs at most its length and two bytes, and only a longer
+/// one is put to [`parse_date_time_splits`], whose only refusal of it can then
+/// be the buffer's.
+pub(crate) fn within_workbuf(s: &str, buflen: usize) -> Read<()> {
+    if s.len() + 2 <= buflen || parse_date_time_splits(s, buflen) {
+        Ok(())
+    } else {
+        Err(Unread::Refused)
+    }
+}
+
 /// `JULIAN_MAXYEAR`, the year `IS_VALID_JULIAN` refuses from (its June, which
 /// the day ranges below lie well short of): every year a date or timestamp
 /// holds is below it, and a year bounded by it cannot overflow
@@ -209,6 +231,8 @@ pub(crate) fn date_days(s: &str) -> Read<i32> {
     if !(DATE_MIN_DAYS..DATE_END_DAYS).contains(&days) {
         return Err(Unread::Refused);
     }
+    // pg-refuses: I83 — past `date_in`'s work buffer.
+    within_workbuf(s, DateTimeInput::Date.workbuf())?;
     Ok(i32::try_from(days).expect("a date's range is an i32 of days"))
 }
 
@@ -386,6 +410,9 @@ pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Read<i128> {
     if !(i128::from(MIN_TIMESTAMP)..i128::from(END_TIMESTAMP)).contains(&postgres) {
         return Err(Unread::Refused);
     }
+    // pg-refuses: I83 — past the timestamp inputs' work buffer.
+    let input = if with_tz { DateTimeInput::TimestampTz } else { DateTimeInput::Timestamp };
+    within_workbuf(s, input.workbuf())?;
     Ok(utc)
 }
 
@@ -558,6 +585,10 @@ pub(crate) fn interval_parts(text: &str) -> Read<(i32, i32, i64)> {
     let [years, months, days] = counts.map(|count| i64::from(count.unwrap_or(0)));
     // pg-refuses: I62 — `itmin2interval`'s month total past `int32`.
     let months = i32::try_from(years * 12 + months).map_err(|_| Unread::Refused)?;
+    // pg-refuses: I84 — past `interval_in`'s work buffer. Its ISO 8601 reading
+    // of the text, tried on a bad format, wants a leading `P`, which no text
+    // read here opens with.
+    within_workbuf(text, INTERVAL_WORKBUF)?;
     Ok((months, i32::try_from(days).expect("a day count is an i32"), time))
 }
 

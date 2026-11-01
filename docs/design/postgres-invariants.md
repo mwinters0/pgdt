@@ -5415,13 +5415,18 @@ and server).
 
 **Relied on by:** `value::datetime::grammar::datetime_reads`, which refuses a field of the
 five types only where no major reads it under any of these settings, a reader
-in `decode` having read no value from it.
+in `decode` having read no value from it; and `value::datetime::date_days`,
+`value::datetime::time_of_day_micros`, `value::datetime::timestamp_micros_wide` and
+`key::order::timetz_key`, which refuse a text they read a value from past its
+input's work buffer, a part's leading zeros running it out.
 
 **Re-verify.**
 
 ```sh
 cd /mnt/wd12t/upstream/postgres/release-v<N>
 grep -n 'case DTK_YEAR:\|reject consecutive unhandled units\|strspn(str, "0123456789.")\|TimeZoneAbbrevIsKnown(lowtoken' src/backend/utils/adt/datetime.c
+grep -n 'char.*workbuf\[' src/backend/utils/adt/date.c src/backend/utils/adt/timestamp.c
+grep -n 'define MAXDATELEN\|define MAXDATEFIELDS' src/include/utils/datetime.h
 awk '/^tm2timestamp\(/,/^}/' src/backend/utils/adt/timestamp.c | grep -n 'pg_mul_s64_overflow\|date < -1'
 kw=$(awk '/^static const datetkn datetktbl\[\]/,/^};/' src/backend/utils/adt/datetime.c | grep -o '{"[a-z0-9]*"' | tr -d '{"')
 grep -ho '^[A-Za-z]\+' src/timezone/tznames/* | tr A-Z a-z | sort -u | grep -Fx -f <(echo "$kw")
@@ -5429,8 +5434,10 @@ find /usr/share/zoneinfo -type f ! -path '*/posix/*' ! -path '*/right/*' -exec z
 ```
 
 The first prints the labelled year to v15, the unit checks from v16, the
-digit check from v18 and the session zone's lookup from v18; the second
-`date < -1` to v17 and the checked product from v18. The last two print each
+digit check from v18 and the session zone's lookup from v18; the next two the
+work buffers, `MAXDATELEN + 1` in `date.c`'s three inputs, `MAXDATELEN +
+MAXDATEFIELDS` in the timestamps' and `interval_in`'s 256 (I84), over `128` and
+`25`; the one after `date < -1` to v17 and the checked product from v18. The last two print each
 keyword a shipped abbreviation file names, `sat` alone and matching
 `value::datetime::grammar::SHADOWED_KEYWORDS`, and each the installed tzdata uses as an
 abbreviation in force, none; `zdump` rather than `tzdata.zi`, whose `%s`
@@ -5482,7 +5489,8 @@ and server).
 
 **Relied on by:** `value::datetime::grammar::interval_reads`, which refuses an `interval`
 field only where no major reads it under any style and its column's
-qualifier (`declared::IntervalQualifier`).
+qualifier (`declared::IntervalQualifier`); and `value::datetime::interval_parts`,
+which refuses a text it reads a value from past the work buffer.
 
 **Re-verify.**
 

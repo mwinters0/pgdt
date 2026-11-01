@@ -81,6 +81,20 @@ pub(crate) enum DateTimeInput {
     TimestampTz,
 }
 
+impl DateTimeInput {
+    /// The work buffer its input function hands `ParseDateTime`, in bytes
+    /// (I83).
+    pub(crate) const fn workbuf(self) -> usize {
+        match self {
+            DateTimeInput::Date | DateTimeInput::Time | DateTimeInput::TimeTz => MAXDATELEN + 1,
+            DateTimeInput::Timestamp | DateTimeInput::TimestampTz => MAXDATELEN + MAXDATEFIELDS,
+        }
+    }
+}
+
+/// `interval_in`'s work buffer for `ParseDateTime`, in bytes (I84).
+pub(crate) const INTERVAL_WORKBUF: usize = 256;
+
 const MAXDATEFIELDS: usize = 25;
 const MAXDATELEN: usize = 128;
 const TOKMAXLEN: usize = 10;
@@ -337,11 +351,7 @@ pub(crate) fn datetime_reads(input: DateTimeInput, text: &str) -> bool {
     if b.iter().any(|&c| c == 0 || c >= 0x80) {
         return true;
     }
-    let buflen = match input {
-        DateTimeInput::Date | DateTimeInput::Time | DateTimeInput::TimeTz => MAXDATELEN + 1,
-        DateTimeInput::Timestamp | DateTimeInput::TimestampTz => MAXDATELEN + MAXDATEFIELDS,
-    };
-    let Some(fields) = parse_date_time(b, buflen) else {
+    let Some(fields) = parse_date_time(b, input.workbuf()) else {
         return false;
     };
     MAJORS.iter().any(|&major| {
@@ -372,7 +382,7 @@ pub(crate) fn interval_reads(text: &str, qualifier: Option<IntervalQualifier>) -
         return true;
     }
     let range = qualifier.map_or(INTERVAL_FULL_RANGE, IntervalQualifier::range);
-    let fields = parse_date_time(b, 256);
+    let fields = parse_date_time(b, INTERVAL_WORKBUF);
     MAJORS.iter().any(|&major| {
         [false, true].iter().any(|&sql_standard| {
             if major >= Major::V15 {
@@ -622,6 +632,12 @@ enum Ftype {
 struct Field {
     ftype: Ftype,
     text: Vec<u8>,
+}
+
+/// Whether `ParseDateTime` splits `text` within a work buffer of `buflen`
+/// bytes ([`parse_date_time`]).
+pub(crate) fn parse_date_time_splits(text: &str, buflen: usize) -> bool {
+    parse_date_time(text.as_bytes(), buflen).is_some()
 }
 
 /// `ParseDateTime` into a work buffer of `buflen` bytes, every field and its
