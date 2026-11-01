@@ -36,9 +36,9 @@ held line holds resident" carries 33.3's re-take, read against this sitting.
   one-worker cells price the serial loop's carry (`ChunkCarry`, two buffers
   each kept at a whole line's pages) and the four-worker ones the leader's
   regions. 33.2 and 33.3 change both; neither column stands in for the other.
-- **Unattributed, and still present at 33.3's re-take**: the byte a line
-  byte a one-worker parse holds past the carry's buffers and a growth's copy.
-  The instrument is the 33.3 notes', "What the re-take found against it".
+- **The byte a line byte a one-worker parse holds past the carry's buffers and
+  a growth's copy**, still present at 33.3's re-take, is mimalloc's retention
+  (the 33.8 notes).
   The three other terms this sitting left unattributed — a one-partition
   query's from 128 MiB, a four-partition query's past four one-partition ones,
   the spread between two sweeps of one leg — are absent from the re-take.

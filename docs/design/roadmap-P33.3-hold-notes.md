@@ -47,25 +47,12 @@ An account from the code, written before the readings (`.claude/skills/evidence/
 
 ## What the re-take found against it
 
-- **The carry's second buffer is gone, and a third byte a line byte is not
-  attributed.** A one-worker parse fell by about a line, not to the account's
-  two; a one-partition query over text holds what that parse holds, so the
-  term is on the read path the two share, not a copy the query makes. The
-  account's two candidates — the allocator keeping a freed line, a term outside
-  the carry — are not told apart by resident set. **The instrument is the
-  `introspect` build** over `long_text_512` at one worker, under the figure's
-  container and `--memory`: its `live_peak_bytes` books a `realloc` by its
-  difference, so it holds the program's live bytes alone, and
-  `mimalloc_committed_peak_bytes` adds the growth's copy and what mimalloc kept
-  after a free; the copy is the block outgrown, under a line, so a gap past a
-  line is retention, and a live peak past a line a live term. **heaptrack only places a live term**: it records the
-  `system` build, under which glibc grows a block past its 32 MiB mmap threshold
-  by `mremap` and unmaps it on free, so neither the growth's copy nor mimalloc's
-  retention — mimalloc 2.3 grows by allocating, copying and freeing, and purges a
-  freed block after a delay — exists there to see.
-- **A decoded copy does not add to the peak as the account sums it**: escaped
-  text's adds less than its predicted term on the ladder and at the bound,
-  bytea's less at the bound and more on the ladder. Unattributed.
+- **The carry's second buffer is gone, and a third byte a line byte
+  remained**: a one-worker parse fell by about a line, not to the account's
+  two, and a one-partition query over text holds what that parse holds. 33.8
+  names it, mimalloc's retention of the line's outgrown buffers, and names
+  where a decoded copy enters a query's peak
+  ([`roadmap-P33.8-attribution-notes.md`](roadmap-P33.8-attribution-notes.md)).
 - **The step term a one-partition query held from 128 MiB and not at 32 MiB
   is gone**, and so is a four-partition query's excess past four
   one-partition ones; 33.2 and 33.3 both lie between the sittings.
@@ -75,7 +62,7 @@ An account from the code, written before the readings (`.claude/skills/evidence/
 - **What one reader holds at the bound is about three lines** over every kind
   and pass (`measurements.md`, "What a held line holds resident"), the floor's
   reading (33.5); the spec's charge — a held line once, twice where it is
-  decoded — is short of it by the unattributed term; 33.7 confirms or re-sets
+  decoded — is short of it by the terms 33.8 names; 33.7 confirms or re-sets
   the factors.
 - **A four-worker parse holds about what a one-worker one does** since its
   worker carries its line in `ChunkCarry`, where at 33.1 it held less: the

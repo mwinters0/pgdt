@@ -1165,8 +1165,10 @@ being linked without `override`. They are reported together as `key=value`
 lines in the file `PGDT_INTROSPECT_OUT` names — unset meaning no report at all,
 so the instrument writes to no stream. **The process has two heaps, and the
 report labels which each family covers**: the counter and mimalloc see Rust's
-`GlobalAlloc`, so the gap between their high-waters is mimalloc's bookkeeping
-and retention, and glibc sees C alone, so `liblzma`'s dictionaries are there
+`GlobalAlloc`, so the gap between their high-waters bounds mimalloc's
+bookkeeping and retention — a purge releases pages and leaves `committed` as it
+was, so resident beside a run at `MIMALLOC_PURGE_DELAY=0` is what measures
+retention — and glibc sees C alone, so `liblzma`'s dictionaries are there
 and nowhere else; only the two allocators' sum is the heap. A report labelling
 glibc `whole-process` was taken with the counter over glibc, the Rust heap
 inside it, and is read as one heap. How to build it and what each
@@ -4356,20 +4358,22 @@ the two, so a difference between them is priced to both, never to one.
   ×3.59. From `36888923`'s ×4.01, ×3.73 and ×4.18 it fell by a line over text and
   bytea and by about half one over escaped text — the carry's second buffer. The
   account's growing line and its last doubling's copy are two; **the third is
-  unattributed**, the byte `36888923`'s reading left past the carry's two
-  buffers and the growth's copy, still there with one of them gone. The notes
-  name its two candidates, an allocator keeping the freed line resident and a
-  term outside the carry, which this figure cannot tell apart; the instrument
-  that would, and why it is not heaptrack, is the notes', "What the re-take
-  found against it".
+  mimalloc's retention** of the line's outgrown buffers, which it purges no
+  sooner than a second after their free, by when the line has outgrown more
+  ([`roadmap-P33.8-attribution-notes.md`](roadmap-P33.8-attribution-notes.md)).
+  The account that sums is the line `L` plus its buffer's final capacity `C`,
+  the line's `Vec` doubling from a chunk and its remainder, so `C` is about
+  `2L` at every ladder length and the bound and about 1.78 lines at 288 MiB:
+  over text, `L + C` falls short of the one-worker cells by 23.44, 23.27,
+  27.38, 27.02 and 29.84 MiB from 32 MiB to the bound, the process's base.
 - **A one-partition query over text holds what a parse does**, ×3.02 against
   the account's two: the third byte is on the path the two share, not a copy
   the query makes. Escaped text's decoded copy adds ×0.08 to text's secant and
   0.38 of a line at the bound; bytea's half-line copy adds ×1.03 on the ladder
-  and 0.10 of a line at the bound. Where a copy enters the peak is
-  unattributed: a peak is the larger of the line's growth and its decode, not
-  their sum, only where the growth's buffers are gone before the decode, which
-  nothing here shows.
+  and 0.10 of a line at the bound. **A copy adds only past what retention
+  holds**, the decode's buffers landing in the outgrown ones: escaped text is
+  copied twice and hex bytea three times beside the held line, which only a
+  purge on free shows whole (the 33.8 notes).
 - **A four-worker parse now holds about what a one-worker one does**: ×2.80 to
   ×3.67, where `36888923`'s held ×1.37 to ×2.34 — at 512 MiB over text, 1820.66
   against 716.75 MiB. Its worker carries a line in the serial loop's carry since

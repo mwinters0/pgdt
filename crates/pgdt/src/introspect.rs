@@ -26,9 +26,12 @@
 //!   counter stands in front of: `committed` and `reserved`, each now and at
 //!   its high-water, plus the raw JSON `mi_stats_get_json` returns. On an
 //!   overcommitting kernel mimalloc counts an arena's slices as committed when
-//!   it first hands them out and uncounts them when it purges, so the gap
-//!   between `mimalloc_committed_peak_bytes` and `live_peak_bytes` is
-//!   mimalloc's bookkeeping and retention, each a high-water of its own.
+//!   it first hands them out and **keeps counting them when it purges**, which
+//!   releases their pages by `MADV_DONTNEED` and leaves them marked committed
+//!   (`_mi_prim_decommit`), so the gap between
+//!   `mimalloc_committed_peak_bytes` and `live_peak_bytes` bounds mimalloc's
+//!   bookkeeping and retention rather than measuring them: resident beside a
+//!   run at `MIMALLOC_PURGE_DELAY=0` is what tells retention apart.
 //! * **`mallinfo_*`** — glibc's own view at exit, of what reached C `malloc`:
 //!   `arena` (arena-backed bytes obtained from the OS), `hblkhd`
 //!   (mmap-backed), `uordblks` (in use) and `fordblks` (freed, held, still
@@ -338,8 +341,9 @@ mod enabled {
     /// and is counted in `live_*`, not in the C `malloc` scope.
     const SCOPE_NOTE: &str = concat!(
         "# `live_*` counts only what passed through Rust's `GlobalAlloc`, and\n",
-        "# `mimalloc_*` is the heap that serves it: their gap is mimalloc's\n",
-        "# bookkeeping and retention. `mallinfo_*` and `malloc_*` are glibc's\n",
+        "# `mimalloc_*` is the heap that serves it: their gap bounds mimalloc's\n",
+        "# bookkeeping and retention, a purge leaving `committed` as it was.\n",
+        "# `mallinfo_*` and `malloc_*` are glibc's\n",
         "# view of what reached C `malloc` and nothing else: `liblzma` is the\n",
         "# active `.xz` backend and allocates its dictionary and state\n",
         "# (`xz_seek::Layout::decoder_bytes`) a reader there, which the counter\n",
