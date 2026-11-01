@@ -92,9 +92,11 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.3** Hold only what is decoded: the held line freed after its row and handed to the builder as a block; the replay releasing the chunks under a copied line; `long-line-resident` re-taken, at `6dd4523c` ([`measurements.md`](../design/measurements.md), "What a held line holds resident") — [notes](../design/roadmap-P33.3-hold-notes.md)
 - [x] **33.8** Attribution, ahead of 33.3.1: the third byte a line byte is mimalloc's retention of the line's outgrown buffers, gone at `MIMALLOC_PURGE_DELAY=0`, beside the growth's copy at its last doubling; a one-partition query copies escaped text twice and hex bytea three times beside the line, a strict parse's bytea twice; no production code — [notes](../design/roadmap-P33.8-attribution-notes.md)
 - [ ] **33.3.1** A pass decoding nothing streams a line: it finds the line's end and counts the row without holding its bytes, flat in memory at any line length
+- [ ] **33.10** A held line grows outside the allocator: past its chunk it moves to a mapping of its own, grown by remapping and unmapped after its row, as the spec's "What a held line costs" states; a one-worker parse at the bound holding the line plus the base at mimalloc's shipped purge delay, the falsifier; the probe's leg timing the same line grown by remapping against one written into a mapping sized for it, whose material gap files the choice for the arrangement and whose absence is a negative result
+- [ ] **33.11** Each block's longest line: its start and its length recorded by every pass mapping the block, `CACHE_FORMAT_VERSION` bumped, `pgdt info` showing it, as the spec's "A held line is charged, and admitted in file order" states
 - [ ] **33.9** One decoded copy: a query's escaped text and hex bytea value, and a strict parse's bytea check, held beside their line with at most one decoded copy, as the spec's "What a held line costs" states
-- [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, an unstated allowance's ledger unlimited; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
-- [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, a line one reader cannot hold refused for memory, its remedy spelled by `pgdt` and the shell
+- [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, an unstated allowance's ledger unlimited; a read over mapped blocks carving its longest line's charge before a reader starts; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
+- [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, a line one reader cannot hold refused for memory, and a read over mapped blocks whose longest line one reader cannot hold refused before it reads a byte, its remedy spelled by `pgdt` and the shell
 - [ ] **33.6** The bound: I71's constant on every path, measured exactly; `LineTooLong` naming it; a batch cut before a value would overflow its column's offsets; `--max-line-bytes`, `pgdump.max_line_bytes`, `ReadOptions::max_line_bytes`, their manual section and tests removed; the real-bound test; `KD93` struck
 - [ ] **33.7** Acceptance: `long-line-resident` re-taken and the charge factors confirmed or re-set; the hand run on the reference dump under a `--memory` below its clusters
 
@@ -127,23 +129,4 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **mimalloc's retention of a long line's outgrown buffers is charged and
-  released by nothing** (33.8). Each buffer a held line outgrows stays
-  resident until mimalloc purges it, no sooner than its `purge_delay` of
-  1000 ms after the free, so a one-reader pass holds about a line more than
-  the line and its growth's copy, by how fast the line grows; at
-  `MIMALLOC_PURGE_DELAY=0` it is gone. The call, ahead of 33.4's factors:
-  whether the ledger charges it, `pgdt` lowers the delay or collects after a
-  long line — D13 rejects a library constant set for one allocator's term and
-  reopens on a mimalloc option — or the growth stops outgrowing buffers (the
-  next entry). Left alone, the factors 33.7 confirms are short by up to a line.
-- **A held line's growth peaks at up to twice the line, and pins that
-  allocation** (33.8). `ChunkCarry` grows the line in a doubling `Vec`, so at
-  its last doubling the outgrown buffer and its successor are resident
-  together, and the frozen line is the whole capacity, up to twice the line,
-  of which only the line is resident. The spec's charge — the held line, twice
-  where decoded — names neither. The call: whether 33.4 charges the growth's
-  peak and draws in bytes held or allocated, or a slice changes how the line
-  grows first; 33.3.1 rewrites the carry for a pass decoding nothing only.
 

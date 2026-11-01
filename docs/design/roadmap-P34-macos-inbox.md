@@ -72,3 +72,21 @@ or whether the logical count is accepted there.
 **Origin.** `gzip-first-pass`, 2026-10-27. Contingent on no re-take of
 `gzip-first-pass` finding an upper count beating the physical count on a file
 it or the physical count lifts (`decisions.md`, "D2").
+
+---
+
+## A held line grows by `mremap`, which macOS lacks
+
+**Fact.** A `COPY` line that outgrows its chunk grows in an anonymous mapping of
+its own, by `mremap` (`roadmap-P33-line-bound.md`, "What a held line costs").
+macOS has no `mremap`. The rejected alternative there, a reservation of I71's
+bound of address space per held line touched as it grows, never moves the line
+and needs no remap, at the cost of counting the whole bound against any
+address-space or strict-commit limit.
+
+**Why P34 cares.** A macOS build needs a shape for the held line that keeps
+P33's charge in bytes held — a reservation, a copy-on-growth with its peak
+charged, or another — and the decision is P34's.
+
+**Origin.** P33's `/dwal` over 33.8, 2026-11-01. *Contingent on* P33's slice
+33.10 landing the `mremap` shape.

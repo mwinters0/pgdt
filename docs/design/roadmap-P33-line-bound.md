@@ -66,6 +66,18 @@ the concurrency clustered lines offer (three to nine lines over 64 MiB in one
 Datanommer chunk); an uncharged carry under the reserve, which is today's and
 which `MEMORY_RESERVE` absorbs only while a line is bounded at 64 MiB.
 
+**A block's longest line is recorded in the map**, its start and its length as
+I71 measures it, by every pass that maps the block, which finds each line's end
+whether or not it holds the line. It is a fact of the dump, never a charge, which
+is the pass's and the build's, and `pgdt info` shows it. **A read over mapped
+blocks plans with it**: its arrangement carves the charge of the longest line it
+will meet into the ledger before a reader starts, so that line is admitted
+without waiting, and a read whose longest line one reader could not hold is
+refused before it reads a byte, naming that line's start. Every query has it,
+the provider reading only a complete map (`decisions.md`, "D90"); a mapping pass
+meets its lines unknown, and for it, and for held lines that coincide, the
+ledger's waiting is what holds.
+
 **A waiter keeps what it holds until the earliest waiter needs it.** When the
 earliest waiting line cannot be admitted, later holders give theirs up, the
 latest in the file first, until it can; a reader that gave its line up re-reads
@@ -95,6 +107,25 @@ clipped heads (`decisions.md`, "D76"), draws once. Whether that matches what is
 resident is a reading, an evidence slice's on the reference dump's clustered
 lines, never an argued constant. Rejected: one factor for every pass, which
 charges a default parse for a copy it never makes.
+
+**A line that outgrows its chunk grows outside the allocator**, in memory the
+carry holds for it alone: once there it never moves, so no growth holds it
+twice; what it holds allocated is what it has written; and dropping it after its
+row returns its pages at once. So the charge is in bytes held, on every
+allocator. Rejected: growing it through the global allocator and charging what
+that allocator keeps — capacity up to twice the line, the outgrown buffer beside
+its successor at the last doubling, and under mimalloc each outgrown buffer
+resident until its purge — a factor of one allocator's habits, over-charging
+every other (`decisions.md`, "D13") and varying with how fast the line grows;
+the binary lowering mimalloc's purge delay, which removes the retention alone,
+for every buffer the process frees, at an unmeasured cost (`KD148`'s class).
+**It moves there when it outgrows its chunk**, where its draw begins, so a line
+no chunk outgrows never leaves the carry, and **it grows by remapping, never by
+a copy**: its commit and address space are its bytes. That is Linux's
+(`decisions.md`, "D104"); macOS, which has no `mremap`, is P34's. Rejected:
+reserving I71's bound of address space per held line, which never moves it but
+which a strict overcommit or an address-space limit counts in full, refusing a
+line under the bound for memory it never touches.
 
 **The charge is in bytes, never in blocks.** A held line copies out of the
 chunks it crosses, so on a compressed source it pins only its current chunk's
@@ -144,7 +175,7 @@ a ledger without limit, whose draws never wait.
 Rejected: refusing when the carve's leftover and the lines others give up fall
 short, under which a line read at `--jobs 1` is refused at `--jobs 24`; a
 ledger reserved for one line at the bound in every carve, which costs readers
-on every dump holding no long line.
+on every dump holding no long line, where the map's longest line costs nothing.
 
 ## Where it lives
 
@@ -165,6 +196,9 @@ edge, pgdt-dump depending on pgdt-io already.
   pgdt-query's `replay/segment.rs`.
 - **The offset cut** — pgdt-query's `batch.rs`, "Arrow batches", beside the
   flush triggers it joins.
+- **The longest line** — pgdt-model's `CopyBlock`, recorded by pgdt-mapping's
+  passes; `Arrangement::resolve` is handed its charge as a number, pgdt-io
+  seeing no model.
 - **The refusals** — pgdt-core's `error.rs`: `LineTooLong` loses its limit and
   names I71's bound; a line outgrowing the allowance is a refusal of its own,
   naming the line's start, the bytes it needs and the allowance, which
