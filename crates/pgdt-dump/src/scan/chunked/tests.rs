@@ -397,7 +397,10 @@ fn a_held_line_is_handed_out_at_its_start() {
 /// while it carries one, by the line.
 #[test]
 fn the_carry_keeps_no_line_past_its_row() {
-    let len = 1 << 16;
+    // Past two of a mapping's steps, where its whole steps fall short of a
+    // doubling's capacity.
+    let step = LineMapping::step();
+    let len = 2 * step + step / 4;
     // The block alone, without the long line after it.
     let mut file = long_lines(len);
     file.truncate(file.windows(3).position(|w| w == b"\\.\n").unwrap() + 3);
@@ -425,9 +428,10 @@ fn the_carry_keeps_no_line_past_its_row() {
     }
     assert!(after_row.is_some());
     assert!(longest > len, "the line was carried whole while it grew");
-    // Past its chunk it grew in a mapping of its own, holding what it wrote
-    // rather than a doubling's capacity (`line.rs`).
-    assert!(longest <= len + 4 * chunk_size, "{longest} bytes held for a {len}-byte line");
+    // Past its chunk it grew in a mapping of its own, holding the steps it
+    // wrote rather than a doubling's capacity (`line.rs`).
+    let held = len.next_multiple_of(step) + 4 * chunk_size;
+    assert!(longest <= held, "{longest} bytes held for a {len}-byte line");
 }
 
 /// What a read loop streaming every block's rows — or, with `stream` off,

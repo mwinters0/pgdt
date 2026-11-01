@@ -1460,10 +1460,11 @@ down and the pool's drop still waiting with no timeout.
 
 ## RT29 — `mremap` grows an anonymous mapping by moving its pages, and `munmap` returns them at once
 
-**Claim.** On Linux, `mremap(old, old_size, new_size, MREMAP_MAYMOVE)` on a
-private anonymous mapping keeps every page already written, at the address it
+**Claim.** On Linux, `mremap(old, old_size, new_size, flags)` growing a
+private anonymous mapping — in place, or moved by `MREMAP_MAYMOVE` with or
+without `MREMAP_FIXED` — keeps every page already written, at the address it
 returns, without copying their bytes — it changes the mapping between virtual
-addresses and pages, moving the mapping where it cannot grow in place — and a
+addresses and pages — and a
 page of the mapping is resident only once written; `munmap` frees the
 mapping's pages when it returns, with no delay a later call must reach. So a
 line grown that way holds its written pages and no outgrown copy, and none
@@ -1477,11 +1478,10 @@ demand), `munmap(2)`. Observed by `runs/p33.10-line-mapping/` (`probe.sh`,
 about one line plus the process's base.
 
 **Scope limit.** Linux alone: macOS has no `mremap` (P34). Resident is counted
-in pages, and where transparent huge pages back the mapping, in up to one huge
-page past the bytes written; which size backs it is the kernel's, and here a
-mapping made at a line's length is backed by huge pages where one grown from a
-chunk by remaps is not (the probe's `growth-thp.out`). A strict overcommit (`vm.overcommit_memory = 2`)
-charges the mapped length, which the grower keeps at the bytes written.
+in pages, and where transparent huge pages back the mapping, in huge pages;
+what keeps them across a growth is RT30's. A strict overcommit
+(`vm.overcommit_memory = 2`) charges the mapped length, which the grower keeps
+under one step past the bytes written.
 
 **Verified against:** Linux 7.2.9 (x86-64), man-pages 6.19.
 
@@ -1497,3 +1497,55 @@ cd runs/p33.10-line-mapping && bash probe.sh parse
 
 The search shows `mremap(2)` still describing a remap, not a copy; the probe's
 peak stays near one line plus the base, as its falsifiers state.
+
+## RT30 — a PMD-aligned anonymous mapping keeps its transparent huge pages across `mremap`
+
+**Claim.** On Linux built with transparent huge pages,
+`/sys/kernel/mm/transparent_hugepage/hpage_pmd_size` names the PMD huge page
+in bytes. Under THP `enabled = always`, a fault in a private anonymous mapping
+at an address whose PMD-aligned huge page lies wholly inside the mapping is
+backed by a huge page where one is free. `mremap` moving such a mapping
+between two PMD-aligned addresses moves each huge PMD whole rather than
+splitting it; with `MREMAP_FIXED` it first unmaps whatever the target held;
+and without `MREMAP_MAYMOVE` it fails with `ENOMEM` where it cannot grow in
+place, changing nothing. So a mapping kept aligned to the PMD huge page and
+grown in whole ones is backed and freed in huge pages, moved or not.
+
+**Proof.** Upstream source, `mm/mremap.c` at Linux's `master` of 2026-11-01:
+`move_page_tables` moves a huge PMD by `move_pgt_entry(…, HPAGE_PMD, …)` only
+when `get_extent` returns `HPAGE_PMD_SIZE`, which needs both addresses on a
+PMD boundary, and calls `split_huge_pmd` otherwise; `mremap_to` calls
+`do_munmap` on the target first; `expand_vma` returns `-ENOMEM` without
+`MREMAP_MAYMOVE`. Documentation: `Documentation/admin-guide/mm/transhuge.rst`
+(`hpage_pmd_size`; the `enabled` policy). Observed by
+`runs/p33.12-line-steps/` (`probe.sh`, `log`): a line grown by
+`LineMapping` and moved three to eight times is backed by huge pages as fully
+as one written into a mapping sized for it, at every length the probe reads.
+
+**Scope limit.** Whether a step is backed by a huge page is the host's: under
+`madvise` or `never`, faulted in base pages; under `always`, only where a free
+2 MiB block exists, `defrag`'s policy deciding whether the fault compacts for
+one (the probe's `buddyinfo-after-growth.txt`: short of a 1 GiB line's 512
+blocks, both legs fell back alike, and after `vm.compact_memory` both were
+backed whole). A PMD huge page past 2 MiB (a 16 KiB or
+64 KiB base-page arm64 kernel) is not stepped in (D139).
+
+**Verified against:** Linux 7.2.9 (x86-64), `mm/mremap.c` at `master`,
+2026-11-01.
+
+**Relied on by:** [`decisions.md`](decisions.md), "D139" — a carried line's
+steps and alignment (`crates/pgdt-dump/src/scan/chunked/line.rs`, `step`,
+`LineMapping::move_to_grow`).
+
+**Re-verify:**
+
+```sh
+cat /sys/kernel/mm/transparent_hugepage/hpage_pmd_size
+curl -s https://raw.githubusercontent.com/torvalds/linux/master/mm/mremap.c \
+  | grep -nE 'extent == HPAGE_PMD_SIZE|split_huge_pmd|do_munmap\(mm, vrm->new_addr|MREMAP_MAYMOVE\)\)'
+cd runs/p33.12-line-steps && bash probe.sh growth
+```
+
+The searches show a huge PMD still moved whole at a full extent and split
+otherwise; the probe's `remap` leg stays as fully backed as `sized`, as its
+falsifiers state.

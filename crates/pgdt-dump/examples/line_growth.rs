@@ -12,9 +12,11 @@
 //! chunk and extended a chunk at a time, as a carry grows a line past its
 //! chunk; and **`sized`**, the same chunks written into a mapping of the
 //! line's length. Each prints the time to write the line and the time to drop
-//! it, page faults in both, and how much of the process's anonymous memory
-//! transparent huge pages back before the drop (`/proc/self/smaps_rollup`'s
-//! `AnonHugePages`); the chunk is `pgdt_io`'s default read unless stated.
+//! it, how many times the line moved while it was written and whether it
+//! ended on a step's boundary ([`LineMapping::step`]), the bytes mapped, and
+//! how much of the process's anonymous memory transparent huge pages back
+//! before the drop (`/proc/self/smaps_rollup`'s `AnonHugePages`); the chunk is
+//! `pgdt_io`'s default read unless stated.
 
 use std::time::Instant;
 
@@ -41,19 +43,25 @@ fn main() {
                 let capacity = if leg == "sized" { len } else { chunk.min(len) };
                 let started = Instant::now();
                 let mut line = LineMapping::reserving(capacity, &bytes[..chunk.min(len)]);
+                let mut moves = 0usize;
                 while line.as_ref().len() < len {
                     let more = chunk.min(len - line.as_ref().len());
+                    let at = line.as_ref().as_ptr();
                     line.extend(&bytes[..more]);
+                    moves += usize::from(line.as_ref().as_ptr() != at);
                 }
                 let written = started.elapsed();
-                assert_eq!(line.mapped(), len);
+                let step = LineMapping::step();
+                assert_eq!(line.mapped(), len.next_multiple_of(step));
+                let aligned = (line.as_ref().as_ptr() as usize).is_multiple_of(step);
+                let mapped = line.mapped();
                 let huge = anon_huge_kib();
                 let started = Instant::now();
                 drop(line);
                 let dropped = started.elapsed();
                 println!(
                     "leg={leg} len={len} chunk={chunk} rep={rep} write_ms={:.3} drop_ms={:.3} \
-                     anon_huge_kib={huge}",
+                     moves={moves} aligned={aligned} mapped={mapped} anon_huge_kib={huge}",
                     written.as_secs_f64() * 1e3,
                     dropped.as_secs_f64() * 1e3,
                 );

@@ -65,8 +65,9 @@ pub enum ChunkPass {
 /// (`docs/design/decisions.md`, "D23").
 ///
 /// **A line that outgrows its chunk moves to a mapping of its own**
-/// ([`LineMapping`]), grown by remapping and unmapped once its last reference
-/// drops, so it holds what it has written whatever the allocator keeps; a
+/// ([`LineMapping`]), grown by remapping in huge-page steps and unmapped once
+/// its last reference drops, so it holds what it has written and less than
+/// one step whatever the allocator keeps; a
 /// line no longer than a chunk stays in the carry's buffer
 /// (`docs/design/decisions.md`, "D139").
 ///

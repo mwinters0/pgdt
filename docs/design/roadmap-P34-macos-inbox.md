@@ -78,11 +78,12 @@ it or the physical count lifts (`decisions.md`, "D2").
 ## A held line grows by `mremap`, which macOS lacks
 
 **Fact.** A `COPY` line that outgrows its chunk grows in an anonymous mapping of
-its own, by `mremap` (`roadmap-P33-line-bound.md`, "What a held line costs").
-macOS has no `mremap`. The rejected alternative there, a reservation of I71's
-bound of address space per held line touched as it grows, never moves the line
-and needs no remap, at the cost of counting the whole bound against any
-address-space or strict-commit limit. Off Linux, `LineMapping`
+its own, by `mremap` in huge-page steps, its start kept aligned to one
+(`roadmap-P33-line-bound.md`, "What a held line costs"). macOS has no
+`mremap`. The rejected alternative there, a reservation of I71's bound of
+address space per held line made writable as it grows, never moves the line
+and needs no remap, at the cost of counting the whole bound against an
+address-space limit. Off Linux, `LineMapping`
 (`crates/pgdt-dump/src/scan/chunked/line.rs`) is a `Vec` today, so a macOS
 build compiles and holds the line through the allocator.
 

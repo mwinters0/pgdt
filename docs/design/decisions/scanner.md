@@ -24,13 +24,14 @@ scanner is new each span; a block holds unless its reader says otherwise. Reject
 a reader decoding it cannot tell from an empty row; streaming in the scanner, which a worker's spans would lose.
 Reopens: a census reading a bounded head of each field. Evidence: `crates/pgdt-mapping/tests/streamed_line.rs`.
 
-### D139 A line past its chunk grows in a mapping of its own, by `mremap`
-A carried line longer than its read's chunk leaves the carry's `Vec` for an anonymous mapping (`LineMapping`), grown to
-exactly the bytes written by `mremap`, which moves pages and copies none, and unmapped with its last `Bytes`: it holds
-what it wrote on every allocator, its commit its bytes. Rejected: growing through the global allocator and charging what
-it keeps (a doubling's capacity; mimalloc's copying `realloc` and unpurged buffers; D13); lowering mimalloc's purge delay
-(`KD148`'s class); reserving I71's bound per line, counted whole by a strict overcommit or an address-space limit. Linux's;
-elsewhere a `Vec` (P34). Reopens: a material gap to a mapping sized for its line. Evidence: RT29;
+### D139 A line past its chunk grows in a mapping of its own, by `mremap`, in huge-page steps
+A carried line longer than its chunk leaves the carry's `Vec` for an anonymous mapping (`LineMapping`), grown by
+`mremap` in steps of the PMD huge page where at most `STEP_CEILING` (else the base page), its start aligned to one,
+moved only to an aligned range it reserved, and unmapped with its last `Bytes`: commit and resident are its bytes and
+under a step, on any allocator, and THP can back a step across a move. Rejected: growing through the allocator (a
+doubling's capacity; mimalloc's unpurged buffers; D13; `KD148`); exact growth, faulted in base pages; mapping a line at
+its block's longest; I71's bound reserved per line, counted whole by an address-space limit; a larger PMD page;
+`MADV_HUGEPAGE`. Linux's; else a `Vec` (P34). Reopens: a material gap to a sized mapping. Evidence: RT29, RT30;
 `the_carry_keeps_no_line_past_its_row`.
 
 ### D25 Parallelize what is CPU-bound
