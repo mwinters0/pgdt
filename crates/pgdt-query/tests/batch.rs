@@ -541,10 +541,10 @@ async fn a_none_source_span_leaves_the_block_as_one_batch() {
     assert_eq!(rows.len(), 132);
 }
 
-/// Fields eligible for a zero-copy view (no escapes) are only zero-copy when
-/// they land fully inside one read chunk; a small `chunk_size` forces most
-/// fields — and the multi-byte escaped ones — through every code path
-/// (zero-copy view, chunk-straddling copy, and decode-then-copy). The
+/// Fields eligible for a zero-copy view (no escapes) are viewed in the read
+/// chunk or the carried line they lie in; a small `chunk_size` forces most
+/// fields — and the multi-byte escaped ones — through every code path (a view
+/// into a chunk, a view into a carried line, and decode-then-copy). The
 /// decoded result must be identical regardless.
 #[tokio::test]
 async fn batch_contents_are_independent_of_chunk_size() {
@@ -620,4 +620,109 @@ async fn escapes_table_round_trips_through_postgres_batched() {
             }
         }
     }
+}
+
+/// An in-memory file whose every read hands out bytes it counts while they
+/// are alive, so a test can see how many reads a loop still holds.
+struct LiveReads {
+    file: bytes::Bytes,
+    live: Arc<std::sync::atomic::AtomicUsize>,
+    /// The most reads alive at once, sampled at each read.
+    most: std::sync::atomic::AtomicUsize,
+}
+
+/// One read's bytes, counted alive until the last reference to them drops.
+struct LiveRead {
+    bytes: Vec<u8>,
+    live: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl AsRef<[u8]> for LiveRead {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+impl Drop for LiveRead {
+    fn drop(&mut self) {
+        self.live.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl ByteRangeSource for LiveReads {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> std::pin::Pin<Box<dyn Future<Output = pgdt_core::Result<bytes::Bytes>> + Send + '_>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let alive = self.live.fetch_add(1, SeqCst) + 1;
+        self.most.fetch_max(alive, SeqCst);
+        let at = offset as usize;
+        let read = LiveRead { bytes: self.file[at..at + len].to_vec(), live: self.live.clone() };
+        Box::pin(async move { Ok(bytes::Bytes::from_owner(read)) })
+    }
+
+    fn extent(
+        &self,
+    ) -> std::pin::Pin<Box<dyn Future<Output = pgdt_core::Result<pgdt_io::Extent>> + Send + '_>>
+    {
+        let len = self.file.len() as u64;
+        Box::pin(async move { Ok(pgdt_io::Extent::Exact(len)) })
+    }
+
+    fn modified(
+        &self,
+    ) -> std::pin::Pin<
+        Box<dyn Future<Output = pgdt_core::Result<Option<std::time::SystemTime>>> + Send + '_>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+/// **A value many chunks long is a view into the line the carry held, and
+/// the chunks it was copied out of are released as it grows**: the replay
+/// keeps the carried line as a block of the batch rather than copying the
+/// value out of it, and holds no read under a line it has copied.
+#[tokio::test]
+async fn a_long_value_is_a_view_into_its_carried_line() {
+    use arrow::array::{AsArray, ByteView};
+
+    let value = "x".repeat(64 << 10);
+    let line = format!("2\t{value}\n");
+    let file = format!("COPY public.t (a, b) FROM stdin;\n1\tshort\n{line}3\tshort\n\\.\n");
+    let chunk_size = 1 << 10;
+    let source = Arc::new(LiveReads {
+        file: bytes::Bytes::from(file),
+        live: Arc::default(),
+        most: Default::default(),
+    });
+    let scan = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: chunk_size, ..ReadOptions::default() },
+        ..Default::default()
+    };
+    let cold = Cold { scan, ..Cold::default() };
+    let mut stream =
+        cold.stream(source.clone(), "public.t", QueryOptions::default()).await.unwrap().unwrap();
+    let batch = stream.next().await.expect("one batch").unwrap();
+    assert!(stream.next().await.is_none());
+    assert_eq!(
+        rows_of(&batch),
+        [
+            vec![Some("1".into()), Some("short".into())],
+            vec![Some("2".into()), Some(value.clone())],
+            vec![Some("3".into()), Some("short".into())],
+        ]
+    );
+
+    let column = batch.column(1).as_string_view();
+    let view = ByteView::from(column.views()[1]);
+    assert_eq!(column.data_buffers()[view.buffer_index as usize].len(), line.len());
+    assert_eq!(view.offset, 2, "the value's place in its line");
+    drop(batch);
+
+    // The line runs sixty-four reads; a read loop holds the one it scans and
+    // the one before, whose carry the line is.
+    let most = source.most.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(most <= 3, "{most} reads alive at once");
 }

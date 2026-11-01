@@ -34,12 +34,12 @@ slice changes reads, not what is held, and `long-line-resident` is re-taken at
 ## What the later slices inherit
 
 - **The serial loop and the worker hold a line in one type**, `ChunkCarry`,
-  so 33.3's streaming of a line no pass decodes, and its freeing after the row,
-  are one change for both. A worker's carry lives as long as its piece, a
+  so 33.3.1's streaming of a line no pass decodes, and 33.3's freeing after
+  the row, are each one change for both. A worker's carry lives as long as its piece, a
   window at most, and keeps both buffers at the longest line it carried until
   then, as the serial loop's does for the whole pass.
 - **A worker on a block at the metadata level is handed no census and no
-  observer** (`scan_piece`), the leader's case of the pass 33.3 streams.
+  observer** (`scan_piece`), the leader's case of the pass 33.3.1 streams.
 - **The leader's four-worker readings in `long-line-resident` were taken over
   the doubled re-read** this slice removes — one read buffer of up to twice
   the line, where the worker now holds the carry's two `Vec`s, grown by

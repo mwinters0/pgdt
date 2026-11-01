@@ -230,10 +230,16 @@ pub(super) fn replay<'a>(
                     }
                 }
                 let mut chunk = chunked.next_chunk(source).await?;
+                // The carried line first, being earlier in the file: a row of
+                // the carry pass lies whole in it and in no read chunk.
+                if let Some((start, line)) = chunk.held() {
+                    chunks.retain(start, line);
+                }
                 let (offset, bytes) = chunk.read();
                 if !bytes.is_empty() {
                     chunks.retain(offset, bytes);
                 }
+                let chunk_end = offset + bytes.len() as u64;
                 // The rows of the span being scanned, validated as UTF-8 in one
                 // pass rather than one `from_utf8` per field, and where the span
                 // starts, which turns a row's file offset into a position in
@@ -402,11 +408,13 @@ pub(super) fn replay<'a>(
                     }
                 }
 
-                // Everything before the scanner's new position has already had
-                // its chance to be referenced by a zero-copy view, so it is
-                // safe to drop. Which chunks that releases is
-                // `RetainedChunks`' rule, not this loop's.
-                chunks.release_through(chunked.scanner().position());
+                // Every row of the chunk has had its chance to be referenced
+                // by a zero-copy view, and what it leaves unconsumed is copied
+                // into the carry, so nothing read so far is needed again —
+                // a line many chunks long releases each as it is copied.
+                // Which chunks that releases is `RetainedChunks`' rule, not
+                // this loop's.
+                chunks.release_through(chunk_end);
 
                 if past_limit || chunked.at_end() {
                     break;

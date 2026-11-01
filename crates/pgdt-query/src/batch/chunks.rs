@@ -61,8 +61,9 @@ impl RetainedChunks {
         Self { chunks: VecDeque::new() }
     }
 
-    /// Retain one read chunk, `start` being the absolute file offset of its
-    /// first byte.
+    /// Retain one read chunk, or a carried line, `start` being the absolute
+    /// file offset of its first byte. Retained in file order of their ends,
+    /// so a carried line goes ahead of the chunk that completed it.
     ///
     /// **This is the one place a read chunk becomes an `arrow::Buffer`.** The
     /// `Bytes` is cloned rather than consumed because the caller still scans
@@ -76,14 +77,17 @@ impl RetainedChunks {
         });
     }
 
-    /// Drop every chunk the scanner has walked entirely past — viewing
-    /// happens synchronously as rows are pushed, so everything before `floor`
-    /// has had its chance.
+    /// Drop every chunk ending at or before `floor` — viewing happens
+    /// synchronously as rows are pushed, so a chunk whose rows have all been
+    /// pushed has had its chance. A view already taken keeps its buffer in
+    /// the batch; this drops only the read loop's reference.
     ///
-    /// **The chunk the scanner is inside is retained**: `end() <= floor`
-    /// holds only past a chunk's last byte, and the row straddling the next
-    /// boundary is carried rather than scanned, so it cannot arrive needing a
-    /// chunk that has gone.
+    /// **A read loop releases a chunk once its events run out**, not once the
+    /// scanner is past it: what a chunk leaves unconsumed is copied into the
+    /// carry, which is retained as a buffer of its own
+    /// ([`pgdt_dump::ChunkEvents::held`]), so the row straddling the next
+    /// boundary never needs a chunk under it, and a line many chunks long
+    /// pins none of them while it grows.
     pub(crate) fn release_through(&mut self, floor: u64) {
         while self.chunks.front().is_some_and(|c| c.end() <= floor) {
             self.chunks.pop_front();
@@ -137,9 +141,9 @@ pub(super) fn push_utf8view_field(
                         builder.append_view_unchecked(block, local_offset, len)
                     };
                 }
-                // The field's bytes straddle two read chunks (rare: at most
-                // one field per chunk boundary) or its chunk was already
-                // evicted. Either way, a copy is unavoidable.
+                // No retained buffer holds the field whole: a read loop
+                // retains the carried line beside the chunk, so only a row
+                // pushed from bytes it never retained gets here.
                 None => builder.append_value(s),
             }
         }

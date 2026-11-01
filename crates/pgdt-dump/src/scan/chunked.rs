@@ -51,6 +51,15 @@ pub enum ChunkPass {
 /// next chunk's carry; [`absorb`](Self::absorb) swaps them rather than
 /// copying one into the other.
 ///
+/// **The line a carry pass scans is frozen and freed after its row**, never
+/// kept at its high-water mark: [`absorb`](Self::absorb) hands the completed
+/// line over as [`Bytes`] of the allocation it grew in, which a replay keeps
+/// as one of its batch's blocks, so an unescaped value inside it is a view
+/// rather than a copy ([`Passes::held`]), and the next chunk's absorb drops
+/// this carry's reference. A pass whose lines run long holds one line's bytes,
+/// not the longest line's twice for the rest of the pass
+/// (`docs/design/decisions.md`, "D23").
+///
 /// The degenerate case is a chunk containing no newline at all: the whole of
 /// it joins the carry, the in-place pass empty wherever there is a carry to
 /// join — one arriving with none is handed over whole, finds no newline and
@@ -62,11 +71,14 @@ pub enum ChunkPass {
 /// spans, quadratic in the line.
 #[derive(Debug, Default)]
 pub struct ChunkCarry {
-    /// The current chunk's carry pass: the line carried in, extended by
-    /// [`absorb`](Self::absorb) with the chunk bytes that complete it. Never
-    /// written while the chunk is scanned.
+    /// The line being carried, extended by [`absorb`](Self::absorb) with the
+    /// chunk bytes that complete it, and grown chunk by chunk while no chunk
+    /// does. Never written while the chunk is scanned.
     line: Vec<u8>,
-    /// How much of `line` the carry pass consumed.
+    /// The current chunk's carry pass: `line` frozen once a chunk completes
+    /// it or the file ends, empty while it waits.
+    held: Bytes,
+    /// How much of `held` the carry pass consumed.
     line_used: usize,
     /// What the in-place pass left unconsumed: the start of the next chunk's
     /// line.
@@ -83,7 +95,14 @@ impl ChunkCarry {
     /// [`Passes::carried`], between two chunks: the bytes ahead of the next
     /// chunk that its carry pass begins with.
     pub fn carried(&self) -> usize {
-        self.line.len() - self.line_used + self.tail.len()
+        self.held.len() - self.line_used + self.line.len() + self.tail.len()
+    }
+
+    /// The bytes this carry keeps allocated between two chunks: the buffers
+    /// it reuses and the line it still references.
+    #[cfg(test)]
+    pub(super) fn allocated(&self) -> usize {
+        self.line.capacity() + self.tail.capacity() + self.held.len()
     }
 
     /// Take onto the carry whatever prefix of `chunk` completes the line it
@@ -95,14 +114,19 @@ impl ChunkCarry {
     pub fn absorb<'a>(&'a mut self, chunk: &'a [u8], eof: bool) -> Passes<'a> {
         // The line carried in is whichever pass left one, never both
         // (`Passes::span`'s assertion): an unfinished line stays where it
-        // lies, and a tail the in-place pass left becomes the line.
-        if self.line_used < self.line.len() {
+        // lies, what a carry pass left of its line is taken back, and a tail
+        // the in-place pass left becomes the line.
+        if self.line_used < self.held.len() {
             debug_assert!(self.tail.is_empty(), "both passes left a line over");
-            self.line.drain(..self.line_used);
-        } else {
-            self.line.clear();
+            debug_assert!(self.line.is_empty(), "a held line beside a waiting one");
+            self.line.extend_from_slice(&self.held[self.line_used..]);
+        } else if self.line.is_empty() {
             std::mem::swap(&mut self.line, &mut self.tail);
+        } else {
+            debug_assert!(self.tail.is_empty(), "both passes left a line over");
         }
+        // The last carry pass's line, freed here unless a batch kept it.
+        self.held = Bytes::new();
         self.line_used = 0;
         if self.line.is_empty() {
             self.split = 0;
@@ -113,13 +137,21 @@ impl ChunkCarry {
             self.unfinished = newline.is_none();
             self.line.extend_from_slice(&chunk[..self.split]);
         }
-        let Self { line, line_used, tail, split, unfinished } = self;
+        // Nothing in an unfinished line is consumable before the end of the
+        // file, so it is not searched again (the type's docs), and it grows on
+        // where it lies; one the carry pass scans is frozen, its allocation
+        // handed over whole.
+        let line_waits = self.unfinished && !eof;
+        if !line_waits && !self.line.is_empty() {
+            self.held = Bytes::from(std::mem::take(&mut self.line));
+        }
+        let Self { line, held, line_used, tail, split, .. } = self;
+        let (line, held): (&'a [u8], &'a Bytes) = (line, held);
         Passes {
-            line,
+            line: if line_waits { line } else { held },
+            held,
             rest: &chunk[*split..],
-            // Nothing in an unfinished line is consumable before the end of
-            // the file, so it is not searched again (the type's docs).
-            line_waits: *unfinished && !eof,
+            line_waits,
             // The carry pass runs to the true end of the file only when
             // nothing of the chunk is left over for the in-place pass.
             line_eof: eof && *split == chunk.len(),
@@ -134,6 +166,8 @@ impl ChunkCarry {
 #[derive(Debug)]
 pub struct Passes<'a> {
     line: &'a [u8],
+    /// `line` frozen, where the carry pass scans it.
+    held: &'a Bytes,
     rest: &'a [u8],
     line_waits: bool,
     line_eof: bool,
@@ -143,6 +177,13 @@ pub struct Passes<'a> {
 }
 
 impl<'a> Passes<'a> {
+    /// The line the carry pass scans, as the allocation holding it — empty
+    /// where there is none, or it waits for a chunk to end it. A replay keeps
+    /// it beside the chunks its views point into.
+    pub fn held(&self) -> &'a Bytes {
+        self.held
+    }
+
     /// The bytes `pass` scans, and whether they run to the true end of the
     /// file.
     pub fn span(&self, pass: ChunkPass) -> (&'a [u8], bool) {
@@ -271,6 +312,9 @@ impl ChunkedScanner {
     pub(super) fn feed(&mut self, bytes: Bytes) -> ChunkEvents<'_> {
         debug_assert!(!self.open, "a chunk was left before its events ran out");
         let offset = self.read_pos;
+        // Where the line carried in starts: the scanner stands at the first
+        // byte the last chunk's passes left unconsumed.
+        let line_start = self.scanner.position();
         self.read_pos += bytes.len() as u64;
         let eof = self.at_end();
         self.chunk = bytes;
@@ -285,6 +329,7 @@ impl ChunkedScanner {
             span_eof,
             chunk: &self.chunk,
             offset,
+            line_start,
             max_line_bytes: self.max_line_bytes,
             open: &mut self.open,
         }
@@ -339,6 +384,8 @@ pub struct ChunkEvents<'a> {
     span_eof: bool,
     chunk: &'a Bytes,
     offset: u64,
+    /// The file offset of the carried line's first byte.
+    line_start: u64,
     max_line_bytes: usize,
     open: &'a mut bool,
 }
@@ -407,6 +454,16 @@ impl<'a> ChunkEvents<'a> {
     /// loop keeping zero-copy views into the chunk retains.
     pub fn read(&self) -> (u64, &'a Bytes) {
         (self.offset, self.chunk)
+    }
+
+    /// The line this chunk's carry pass scans, as the allocation holding it,
+    /// and the file offset of its first byte — `None` where the pass scans
+    /// nothing. A loop keeping zero-copy views retains it as it does
+    /// [`read`](Self::read)'s chunk, and it is the only buffer a row of the
+    /// carry pass lies whole in.
+    pub fn held(&self) -> Option<(u64, &'a Bytes)> {
+        let held = self.passes.held();
+        (!held.is_empty()).then_some((self.line_start, held))
     }
 
     /// The span the last event was scanned out of, and the file offset of its

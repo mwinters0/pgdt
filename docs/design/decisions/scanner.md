@@ -7,12 +7,13 @@ refused. `pgdt-dump`'s `scan` and `pgdt-query`'s batch path.
 
 ### D23 The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
 `CopyScanner` is a synchronous state machine over a caller-owned buffer, so a chunk is scanned where it lies, only the
-line straddling its edge copied (rejected: a growing buffer, copying every byte twice). `max_line_bytes` is its one
-memory bound, and past it a line errors, never truncates (`KD93`). Only a line matching the whole `COPY … FROM stdin;`
-grammar, or a bare `BEGIN;` (D33), is structural; inside a block only an exact `\.` line and a row's ending are read
-(I7, I91). Outside one every line is lexed as psql lexes it (I50), and a line beginning inside a string, identifier,
-comment or dollar-quoted body is never structure (I1). Rejected: tracking `$` alone, or quotes too (a `$$` in a name or
-comment hid every block).
+line straddling its edge copied (rejected: a growing buffer, copying every byte twice), and that line frozen for its
+row, a replay's block, then dropped (rejected: reusing its buffer, holding the longest line's bytes all pass). Past
+`max_line_bytes` a line errors, never truncates (`KD93`). Only a line matching the whole `COPY … FROM stdin;` grammar,
+or a bare `BEGIN;` (D33), is structural; inside a block only an exact `\.` line and a row's ending are read (I7, I91).
+Outside one every line is lexed as psql lexes it (I50), one beginning inside a string, identifier, comment or
+dollar-quoted body never structure (I1). Rejected: tracking `$` alone, or quotes too (a `$$` in a name or comment hid
+every block).
 
 ### D25 Parallelize what is CPU-bound
 One core's rate against the device's offer decides each kind of work (decode, extraction, discovery) per source; D2

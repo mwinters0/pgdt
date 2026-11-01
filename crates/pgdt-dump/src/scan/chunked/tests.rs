@@ -363,3 +363,65 @@ async fn a_scan_finds_an_open_end_where_a_read_answers_short() {
         assert_eq!(answers[0], answers[1], "chunk {chunk_size}");
     }
 }
+
+/// **The line a carry pass scans is handed out at its start**, as the bytes
+/// the pass scans, so a replay can keep it as a block its views point into;
+/// a chunk with nothing carried, or whose carried line waits, hands out none.
+#[test]
+fn a_held_line_is_handed_out_at_its_start() {
+    let file = long_lines(100);
+    let row_start = file.windows(2).position(|w| w == b"2\t").unwrap();
+    let row_end = row_start + file[row_start..].iter().position(|&b| b == b'\n').unwrap() + 1;
+    let mut held = Vec::new();
+    feed_all(CopyScanner::new(), &file, options(16), |chunk, event| {
+        if let Event::Row(Row { offset, raw, .. }) = event
+            && offset == row_start as u64
+        {
+            let (start, line) = chunk.held().expect("the row arrives on the carry");
+            assert_eq!(start, offset);
+            assert_eq!(&line[..raw.len()], raw);
+            held.push(line.len());
+        }
+    })
+    .unwrap();
+    assert_eq!(held, [row_end - row_start]);
+
+    let mut carry = ChunkCarry::default();
+    assert!(carry.absorb(b"one\ntwo\n", false).held().is_empty());
+    let mut carry = carrying(b"abc");
+    assert!(carry.absorb(b"defghi", false).held().is_empty());
+}
+
+/// **A carry keeps no line past its row**: after a line many chunks long,
+/// what it holds allocated is bounded by the chunk, not by the line.
+#[test]
+fn the_carry_keeps_no_line_past_its_row() {
+    let len = 1 << 16;
+    // The block alone, without the long line after it.
+    let mut file = long_lines(len);
+    file.truncate(file.windows(3).position(|w| w == b"\\.\n").unwrap() + 3);
+    let chunk_size = 64;
+    let mut chunked =
+        ChunkedScanner::new(CopyScanner::new(), file.len() as u64, options(chunk_size));
+    let mut read_pos = 0usize;
+    let mut longest = 0;
+    let mut after_row = None;
+    while !chunked.at_end() {
+        let want = chunk_size.min(file.len() - read_pos);
+        let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]));
+        read_pos += want;
+        let mut long_row = false;
+        while let Some(event) = chunk.next_event().unwrap() {
+            long_row |= matches!(event, Event::Row(Row { raw, .. }) if raw.len() > len);
+        }
+        let allocated = chunked.carry.allocated();
+        longest = longest.max(allocated);
+        if long_row {
+            after_row = Some(read_pos);
+        } else if after_row.is_some_and(|at| read_pos > at) {
+            assert!(allocated <= 4 * chunk_size, "{allocated} bytes kept after the row");
+        }
+    }
+    assert!(after_row.is_some());
+    assert!(longest > len, "the line was carried whole while it grew");
+}
