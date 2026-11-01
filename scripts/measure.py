@@ -1769,9 +1769,10 @@ LONG_LINE_LENGTHS: tuple[tuple[str, int], ...] = (
 #: every other length is a residual against it (`long_line_residual`).
 LONG_LINE_SECANT: tuple[str, str] = ("128", "512")
 #: The lengths read at one worker or partition alone. **Four workers each
-#: holding today's three to four copies of a line at the bound** would need a
-#: container near this machine's whole memory (`CLAUDE.local.md`), where a
-#: kill bars the figure; one fits.
+#: holding what one holds at the bound** (`docs/design/measurements.md`, "What
+#: a held line holds resident") would need, on the widest pass, a container
+#: past `contained.MAX_FRACTION` of this machine's memory, which it refuses;
+#: one fits.
 LONG_LINE_SERIAL_ONLY: tuple[str, ...] = ("bound",)
 #: The long lines in each input's cluster: the four-worker leg's count, so each
 #: worker can hold one at once (`LONG_LINE_JOBS`). The same at every length,
@@ -13584,34 +13585,6 @@ FIGURES: list[Figure] = [
         memory=GZPASS_MEMORY,
         run=run_gzip_first_pass,
     ),
-]
-
-FIGURES_BY_ID = {f.id: f for f in FIGURES}
-
-#: Instruments that are **built but whose figure has not been taken**.
-#:
-#: A sweep does not run these and the doc carries no table *of this harness's*
-#: for them, which is why they sit outside `ALL_FIGURES`: the marker
-#: reconciliation would otherwise demand a section with no numbers under it.
-#: `--figure <id>` still selects one, which is how the reading gets taken — and
-#: taking it moves the entry into `FIGURES`, where the doc-side checks start
-#: applying.
-#:
-#: The distinction is worth a list rather than a comment because *built* and
-#: *taken* fail differently. An instrument nobody built is work; an instrument
-#: built and never run is a claim nobody checked, and it is invisible unless
-#: something names it.
-#:
-#: **Empty is the healthy state, not a disused mechanism.** A figure published
-#: outside a stamped sweep declares inside its own
-#: marker the commit it was taken at, and a sitting run from a working tree
-#: carrying its own uncommitted apparatus has no such commit to name — so an
-#: instrument built ahead of that commit waits here rather than in `FIGURES`.
-#: *Rejected:* `composite-isolated`, which isolated one column by declaring it
-#: two ways over byte-identical rows — `projection-widths` makes the same
-#: isolation a subtraction between two adjacent rows of one table over one
-#: file.
-UNTAKEN: list[Figure] = [
     # What a pass holds while it holds a long line, by value kind, line length
     # and count: the parse and its gathering, the strict check, and the
     # provider's query and replay, which builds the column it reads.
@@ -13674,6 +13647,33 @@ UNTAKEN: list[Figure] = [
         run=run_long_line_resident,
     ),
 ]
+
+FIGURES_BY_ID = {f.id: f for f in FIGURES}
+
+#: Instruments that are **built but whose figure has not been taken**.
+#:
+#: A sweep does not run these and the doc carries no table *of this harness's*
+#: for them, which is why they sit outside `ALL_FIGURES`: the marker
+#: reconciliation would otherwise demand a section with no numbers under it.
+#: `--figure <id>` still selects one, which is how the reading gets taken — and
+#: taking it moves the entry into `FIGURES`, where the doc-side checks start
+#: applying.
+#:
+#: The distinction is worth a list rather than a comment because *built* and
+#: *taken* fail differently. An instrument nobody built is work; an instrument
+#: built and never run is a claim nobody checked, and it is invisible unless
+#: something names it.
+#:
+#: **Empty is the healthy state, not a disused mechanism.** A figure published
+#: outside a stamped sweep declares inside its own
+#: marker the commit it was taken at, and a sitting run from a working tree
+#: carrying its own uncommitted apparatus has no such commit to name — so an
+#: instrument built ahead of that commit waits here rather than in `FIGURES`.
+#: *Rejected:* `composite-isolated`, which isolated one column by declaring it
+#: two ways over byte-identical rows — `projection-widths` makes the same
+#: isolation a subtraction between two adjacent rows of one table over one
+#: file.
+UNTAKEN: list[Figure] = []
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

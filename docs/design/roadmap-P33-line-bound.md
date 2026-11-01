@@ -85,7 +85,8 @@ the buffer is freed after its row rather than kept at its high-water mark. A
 query then holds the line and at most one decoded copy — about the line for an
 unescaped value, twice it for an escaped one, one and a half for hex bytea and up
 to twice it for `bytea_output = escape`'s form, which no dump pins (I4) —
-where today it holds three to four times it.
+where today it holds three to five times it ([`measurements.md`](measurements.md),
+"What a held line holds resident").
 
 **The charge is the held line plus the bound its decode adds**: every decode
 shortens a value, so a pass that decodes a whole value — a query, a strict

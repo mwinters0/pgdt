@@ -5651,12 +5651,13 @@ class LongLineResident(unittest.TestCase):
 
     FIGURE = "long-line-resident"
 
-    def test_it_is_untaken_and_borrows_nothing(self):
+    def test_it_is_taken_and_borrows_nothing(self):
         # Standing in no sharing edge is what lets it publish from its own
-        # commit; its readings wait on that commit.
+        # commit, outside a sweep; taken, it is in `FIGURES`, where the
+        # doc-side checks apply.
         fig = measure.SELECTABLE_BY_ID[self.FIGURE]
-        self.assertIn(fig, measure.UNTAKEN)
-        self.assertNotIn(fig, measure.FIGURES)
+        self.assertIn(fig, measure.FIGURES)
+        self.assertNotIn(fig, measure.UNTAKEN)
         self.assertEqual(fig.shares, ())
         self.assertEqual(fig.stage, "warm-parallel")
         self.assertEqual(fig.memory, measure.LONG_LINE_MEMORY)
