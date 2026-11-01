@@ -26,7 +26,7 @@ use pgdt_dump::internal::{
 use pgdt_dump::{CopyEnd, CopyScanner, Event};
 use pgdt_model::internal::BlockCensusExt;
 use pgdt_model::{
-    BlockCensus,
+    BlockCensus, LongestLine,
     internal::{BlockObserver, FieldCount},
 };
 
@@ -77,6 +77,9 @@ pub(super) struct PieceScan {
     /// How this piece's rows end against each other, which [`BlockEndings`]
     /// holds against the block's first row.
     pub endings: PieceEndings,
+    /// The longest of the rows this piece owns, which [`merge`] folds in file
+    /// order into the block's.
+    pub longest_line: Option<LongestLine>,
     /// How a piece continuing from [`PieceScan::through`] must enter.
     ///
     /// **[`PieceEntry::RowStart`] almost always, and the exception is why this
@@ -146,6 +149,7 @@ pub(super) fn scan_piece(
         terminator: None,
         through,
         endings: PieceEndings::default(),
+        longest_line: None,
         next,
     };
 
@@ -221,6 +225,7 @@ pub(super) fn scan_piece(
         terminator,
         through: scanner.position(),
         endings: scanner.piece_endings(),
+        longest_line: scanner.longest_line(),
         next: PieceEntry::RowStart,
     })
 }
@@ -237,6 +242,7 @@ fn streamed_piece(base: u64, line: StreamedLine) -> PieceScan {
         terminator: None,
         through: if ended { base + line.bytes() } else { base },
         endings: PieceEndings { first: ended.then_some((line.ending(), base)), mismatch: None },
+        longest_line: ended.then_some(LongestLine { offset: base, len: line.bytes() }),
         next: PieceEntry::RowStart,
     }
 }
@@ -369,21 +375,24 @@ pub(super) fn empty_census(plan: Option<&CensusPlan>) -> BlockCensus {
 /// `None` where none of them did: the leader's window did not reach the end of
 /// the block and must hand out more of the interior.
 ///
-/// **The fold is order-dependent only in where it stops.** Row counts and
-/// unrepresentable counts sum and censuses union, `ArrayShape`'s merge being
-/// a bounded semilattice. What the
-/// order decides is which pieces are *in* the fold, everything past the
-/// terminator not being part of the block at all.
+/// **The fold is order-dependent in where it stops, and in which of two
+/// lines as long is the longest.** Row counts and unrepresentable counts sum
+/// and censuses union, `ArrayShape`'s merge being a bounded semilattice. What
+/// the order decides is which pieces are *in* the fold, everything past the
+/// terminator not being part of the block at all, and that the earliest of
+/// the longest lines stands ([`LongestLine::fold`]).
 pub(super) fn merge(pieces: &[PieceScan]) -> Option<Interior> {
     let mut census = BlockCensus::default();
     let mut row_count = 0u64;
+    let mut longest_line = None;
     for piece in pieces {
         census.merge(&piece.census);
         row_count += piece.rows;
+        longest_line = LongestLine::fold(longest_line, piece.longest_line);
         if let Some((terminator_offset, end_offset)) = piece.terminator {
             return Some(Interior {
                 census,
-                end: CopyEnd { terminator_offset, end_offset, row_count },
+                end: CopyEnd { terminator_offset, end_offset, row_count, longest_line },
             });
         }
     }

@@ -71,7 +71,7 @@ fn reference(file: &[u8]) -> Vec<Reference> {
             }
             Event::Row(row) => builder.on_row(row.offset, row.raw),
             Event::StreamedRow(_) => unreachable!("one buffer streams no row"),
-            Event::CopyEnd(end) => builder.on_copy_end(end).expect("nothing gathers here"),
+            Event::CopyEnd(end) => builder.on_copy_end(*end).expect("nothing gathers here"),
             Event::Line(line) => builder.feed_line(line.offset, line.raw),
             Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
             Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
@@ -94,6 +94,7 @@ fn reference(file: &[u8]) -> Vec<Reference> {
                         terminator_offset: block.terminator_offset,
                         end_offset: block.end_offset,
                         row_count: block.row_count,
+                        longest_line: block.longest_line,
                     },
                 },
             }),

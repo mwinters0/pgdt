@@ -71,3 +71,11 @@ Rejected: a field on `DatabaseMetadata`, which is stated at a database's first b
 persisted conclusions, a second copy a recipe fix would strand; re-reading the blocks at need, a second read of a
 source that may be fetched. Reopens: a catalog too large to hold resident. Evidence: `pgdt-mapping`'s
 `tests/timescaledb.rs`.
+
+### D140 A block's longest line is recorded in the map, its start and length, by every pass mapping it
+Each `CopyBlock` keeps its longest data line (`LongestLine`): its start and its length as I71 measures one, ending
+included, the earliest of the longest. Every mapping pass records it at every level — the scanner folds each row, held
+or streamed (D138), the interior's pieces fold theirs in file order — finding each line's end whether or not it holds
+it. A fact of the dump's bytes, which a read over mapped blocks plans its charge from; a back-fill holds it to the
+record as it does the row count. Rejected: persisting the charge, which moves with the build; recording it at the data
+level only, which a metadata-level parse finds for free. Evidence: `pgdt-mapping`'s `tests/longest_line.rs`.

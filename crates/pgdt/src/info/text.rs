@@ -258,6 +258,9 @@ pub(crate) fn print_index(
             println!("    data offset:   {}", block.data_offset);
             println!("    terminator:    {}", block.terminator_offset);
             println!("    end offset:    {}", block.end_offset);
+            if let Some(line) = block.longest_line {
+                println!("    longest line:  {} bytes at {}", line.len, line.offset);
+            }
         }
     }
 

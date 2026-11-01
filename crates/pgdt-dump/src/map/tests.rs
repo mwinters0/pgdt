@@ -120,7 +120,9 @@ fn a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes() {
     builder.count_block(Arc::new(NoCount));
     let terminator_offset = header_offset + 48;
     let end_offset = terminator_offset + 3;
-    builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 }).unwrap();
+    builder
+        .on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None })
+        .unwrap();
     let spans = builder.finish(end_offset);
 
     assert_eq!(spans[0].start, 0);
@@ -334,7 +336,9 @@ fn a_data_span_carries_the_toc_header_its_data_for_name_comment_parsed_to() {
     builder.count_block(Arc::new(NoCount));
     let terminator_offset = header_offset + 48;
     let end_offset = terminator_offset + 3;
-    builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 }).unwrap();
+    builder
+        .on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None })
+        .unwrap();
 
     let spans = builder.finish(end_offset);
     assert_eq!(spans.len(), 1);
@@ -483,7 +487,9 @@ fn a_copy_block_with_no_comment_of_its_own_resets_inheritance() {
     builder.count_block(Arc::new(NoCount));
     let terminator_offset = header_offset + 48;
     let end_offset = terminator_offset + 3;
-    builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 }).unwrap();
+    builder
+        .on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None })
+        .unwrap();
     offset = end_offset;
     builder.feed_line(offset, b"CREATE EXTENSION pgcrypto;");
 
@@ -728,7 +734,9 @@ fn snapshot_tiles_the_prefix_seen_so_far_at_every_copy_end() {
     builder.count_block(Arc::new(NoCount));
     let terminator_offset = header_offset + 48;
     let end_offset = terminator_offset + 3;
-    builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 }).unwrap();
+    builder
+        .on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1, longest_line: None })
+        .unwrap();
     offset = end_offset;
 
     let snapshot = builder.snapshot(end_offset);

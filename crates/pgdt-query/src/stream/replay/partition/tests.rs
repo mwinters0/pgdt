@@ -151,6 +151,7 @@ fn a_plan_note_lists_only_the_levers_that_move_it() {
         checked_in_full: false,
         census: Some(pgdt_model::BlockCensus::default()),
         recorded_rows: None,
+        longest_line: None,
     };
     // Nothing is read: the plan prices the chunk the source was last told.
     let planned = |chunk: usize, parallelism, span| {
@@ -256,6 +257,7 @@ fn the_count_note_offers_the_chunk_only_where_the_span_sits_on_it() {
         checked_in_full: false,
         census: Some(pgdt_model::BlockCensus::default()),
         recorded_rows: None,
+        longest_line: None,
     };
     let chunk = 1 << 20;
     let plan = |chunk: usize, budget: u64, span: usize| {
@@ -314,6 +316,7 @@ fn sub_streams_get_contiguous_runs_balanced_by_bytes() {
         checked_in_full: false,
         census: Some(pgdt_model::BlockCensus::default()),
         recorded_rows: None,
+        longest_line: None,
     };
     let piece = |start: u64, limit: u64| Segment {
         block: block.clone(),

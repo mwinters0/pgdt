@@ -124,7 +124,7 @@ fn span(body: SpanBody) -> pgdt_model::Span {
 }
 
 fn dummy_data_span() -> pgdt_model::Span {
-    span(SpanBody::Data(pgdt_model::DataBlock::Copy(pgdt_model::CopyBlock {
+    span(SpanBody::Data(pgdt_model::DataBlock::Copy(Box::new(pgdt_model::CopyBlock {
         header: pgdt_core::CopyHeader {
             schema: None,
             table: "placeholder".to_string(),
@@ -142,7 +142,8 @@ fn dummy_data_span() -> pgdt_model::Span {
         checked_in_full: false,
         census: Some(pgdt_model::BlockCensus::default()),
         recorded_rows: None,
-    })))
+        longest_line: None,
+    }))))
 }
 
 #[test]

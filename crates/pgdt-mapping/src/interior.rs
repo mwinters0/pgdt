@@ -24,6 +24,7 @@ use pgdt_io::{
     ByteRangeSource, Extent, PartitionRead, Partitioning, WaitPolicy,
     internal::{cut, worker_count},
 };
+use pgdt_model::LongestLine;
 use pgdt_model::internal::BlockCensusExt;
 use pgdt_model::internal::BlockObserver;
 use tokio_util::sync::CancellationToken;
@@ -344,6 +345,7 @@ async fn run_region(
     mut observer: Option<&mut (dyn BlockObserver + 'static)>,
 ) -> Result<Option<Interior>> {
     let mut rows = 0u64;
+    let mut longest_line = None;
     let mut census = empty_census(plan.as_ref());
     let mut frontier = data_offset;
     let mut entry = PieceEntry::RowStart;
@@ -429,11 +431,16 @@ async fn run_region(
             census.merge(&interior.census);
             return Ok(Some(Interior {
                 census,
-                end: CopyEnd { row_count: rows + interior.end.row_count, ..interior.end },
+                end: CopyEnd {
+                    row_count: rows + interior.end.row_count,
+                    longest_line: LongestLine::fold(longest_line, interior.end.longest_line),
+                    ..interior.end
+                },
             }));
         }
         for piece in &scans {
             rows += piece.rows;
+            longest_line = LongestLine::fold(longest_line, piece.longest_line);
             census.merge(&piece.census);
         }
         // The last piece's `through` is where the window's last complete line

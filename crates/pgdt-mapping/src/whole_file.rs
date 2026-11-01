@@ -100,7 +100,7 @@ async fn eager_pass(source: &dyn ByteRangeSource, options: &ScanOptions) -> Resu
             // Every block here is censused, so no row is streamed.
             Event::StreamedRow(_) => unreachable!("an eager pass streams no row"),
             Event::CopyEnd(end) => {
-                if let Err(e) = builder.on_copy_end(end) {
+                if let Err(e) = builder.on_copy_end(*end) {
                     failed = Some(e);
                     return std::ops::ControlFlow::Break(());
                 }

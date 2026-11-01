@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D139 -->
+<!-- decision-watermark: D140 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -74,6 +74,7 @@ are `docs/process.md`, "The decision register".
 - **D96** The unrepresentable count rides the census, typed by the DDL, in two tiers, under a recorded calendar
 - **D36** The preamble grammar dispatches on fixed keywords and never guesses
 - **D133** TimescaleDB's catalog rows are recorded as text on their own blocks, on the leader's loop, at every level
+- **D140** A block's longest line is recorded in the map, its start and length, by every pass mapping it
 
 ## Type resolution and decoders
 [`decisions/types.md`](decisions/types.md)

@@ -462,8 +462,8 @@ async fn preamble_only_moved_to_parse_and_leaves_a_cache_info_reads() {
 // ---------------------------------------------------------------------------
 
 /// The indented lines `info --detail` prints under each block, grouped by
-/// block in file order — minus the four byte-offset lines and the column
-/// summary, which are not per-column resolution.
+/// block in file order — minus the four byte-offset lines, the longest line
+/// and the column summary, which are not per-column resolution.
 ///
 /// An enum's `labels:` continuation line is kept, with its extra indent
 /// intact, because it is per-column resolution too — the export states those
@@ -476,8 +476,14 @@ async fn preamble_only_moved_to_parse_and_leaves_a_cache_info_reads() {
 /// header above every block line, so no block is open to collect it; the
 /// `statistics:` section below the last block closes it.
 fn detail_column_lines(text: &str) -> Vec<Vec<String>> {
-    const NOT_A_COLUMN: [&str; 5] =
-        ["columns:", "header offset:", "data offset:", "terminator:", "end offset:"];
+    const NOT_A_COLUMN: [&str; 6] = [
+        "columns:",
+        "header offset:",
+        "data offset:",
+        "terminator:",
+        "end offset:",
+        "longest line:",
+    ];
     let mut blocks: Vec<Vec<String>> = Vec::new();
     for line in text.lines().take_while(|l| !l.starts_with("statistics:")) {
         if let Some(rest) = line.strip_prefix("    ") {
@@ -549,6 +555,59 @@ async fn the_json_export_and_the_detail_listing_agree_column_for_column() {
         }
     }
     assert!(checked > 10, "sanity: this fixture exercises a real spread of outcomes");
+}
+
+/// **Each block's longest line, as `--detail` and `--json` both state it**:
+/// its length and start, line ending included, under every block holding a
+/// row, the same in either rendering (`docs/design/decisions.md`, "D140").
+/// The fixture's `long_value` table holds a value longer than a read chunk,
+/// which is its block's longest line.
+#[tokio::test]
+async fn info_states_each_blocks_longest_line() {
+    let (_dir, dump) = common::sandboxed(&fixture(16, "statistics", "default"), "dump.sql");
+    assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
+    let detail = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--detail"]));
+    let json: serde_json::Value = serde_json::from_str(&stdout_of(&run(&[
+        "info",
+        "--source",
+        dump.to_str().unwrap(),
+        "--json",
+    ])))
+    .expect("--json emits JSON");
+
+    let from_json: Vec<(String, String)> = json["spans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|span| span["body"]["Data"]["Copy"].as_object())
+        .filter_map(|block| {
+            let line = block["longest_line"].as_object()?;
+            let header = &block["header"];
+            let table = match header["schema"].as_str() {
+                Some(schema) => format!("{schema}.{}", header["table"].as_str().unwrap()),
+                None => header["table"].as_str().unwrap().to_owned(),
+            };
+            Some((table, format!("longest line:  {} bytes at {}", line["len"], line["offset"])))
+        })
+        .collect();
+    let mut table = String::new();
+    let mut from_detail = Vec::new();
+    for line in detail.lines().take_while(|l| !l.starts_with("statistics:")) {
+        if let Some(name) = line.strip_suffix(" rows)").and_then(|l| l.rsplit_once(" (")) {
+            table = name.0.to_owned();
+        } else if let Some(rest) = line.strip_prefix("    ")
+            && rest.starts_with("longest line:")
+        {
+            from_detail.push((table.clone(), rest.to_owned()));
+        }
+    }
+    assert_eq!(from_detail, from_json, "one line per block holding a row, in file order");
+    let (_, long) = from_detail
+        .iter()
+        .find(|(table, _)| table == "public.long_value")
+        .expect("the long value's block states its longest line");
+    let len: u64 = long.split_whitespace().nth(2).unwrap().parse().unwrap();
+    assert!(len > 1 << 19, "the long value is the block's longest line: {long}");
 }
 
 /// **Which columns carry labels, and how they are spelled.** The cross-check

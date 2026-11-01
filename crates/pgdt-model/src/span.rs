@@ -115,9 +115,13 @@ pub const SPAN_STORED_TEXT_MAX_BYTES: usize = 64 * 1024;
 /// The payload behind [`SpanBody::Data`] — see that variant's docs for why
 /// one `Data` span kind covers all three producers despite them not sharing a
 /// shape.
+///
+/// [`CopyBlock`] is boxed because it alone would set the size of every span
+/// of a map, most of which are statements; a box costs an allocation a block
+/// and moves no cache byte.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataBlock {
-    Copy(CopyBlock),
+    Copy(Box<CopyBlock>),
     InsertRun(InsertRun),
     LargeObjects(LargeObjectRegion),
 }
@@ -320,6 +324,37 @@ pub struct CopyBlock {
     /// "D133"). `None` for every other block.
     #[serde(default)]
     pub recorded_rows: Option<Box<RecordedRows>>,
+    /// **The block's longest data line**, recorded at every level by every
+    /// pass that maps the block, which finds each line's end whether or not
+    /// it holds the line; `None` for a block holding no row. A fact of the
+    /// dump's bytes, never what reading the line costs
+    /// (`docs/design/decisions.md`, "D140").
+    pub longest_line: Option<LongestLine>,
+}
+
+/// **A `COPY` block's longest data line**: where it starts and its length as
+/// I71 measures a line, its line ending included — the earliest of them where
+/// several are as long (`docs/design/decisions.md`, "D140").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LongestLine {
+    /// Absolute file offset of the line's first byte.
+    pub offset: u64,
+    /// The line's bytes, its line ending included.
+    pub len: u64,
+}
+
+impl LongestLine {
+    /// The longer of `earlier` and `later`, which follows it in the file, and
+    /// `earlier` where they are as long — so lines folded in file order, a
+    /// row or a piece of the block at a time, answer what one serial read of
+    /// the block answers.
+    pub fn fold(earlier: Option<Self>, later: Option<Self>) -> Option<Self> {
+        match (earlier, later) {
+            (Some(earlier), Some(later)) if later.len <= earlier.len => Some(earlier),
+            (earlier, None) => earlier,
+            (_, later) => later,
+        }
+    }
 }
 
 impl CopyBlock {
@@ -518,7 +553,7 @@ impl DumpIndex {
     /// (`docs/design/decisions.md`, "D34").
     pub fn blocks(&self) -> impl Iterator<Item = &CopyBlock> {
         self.spans.iter().filter_map(|s| match &s.body {
-            SpanBody::Data(DataBlock::Copy(block)) => Some(block),
+            SpanBody::Data(DataBlock::Copy(block)) => Some(&**block),
             _ => None,
         })
     }
@@ -528,7 +563,7 @@ impl DumpIndex {
     /// stored (`docs/design/decisions.md`, "D34").
     pub fn blocks_with_database(&self) -> impl Iterator<Item = (Option<&str>, &CopyBlock)> {
         self.spans.iter().filter_map(|s| match &s.body {
-            SpanBody::Data(DataBlock::Copy(block)) => Some((s.database.as_deref(), block)),
+            SpanBody::Data(DataBlock::Copy(block)) => Some((s.database.as_deref(), &**block)),
             _ => None,
         })
     }
@@ -553,7 +588,7 @@ impl DumpIndex {
                         schema: toc.schema.clone(),
                         table: toc.name.clone(),
                     });
-                Some((database, block, held))
+                Some((database, &**block, held))
             }
             _ => None,
         })

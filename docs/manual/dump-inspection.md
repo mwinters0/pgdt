@@ -1426,8 +1426,10 @@ public.events (98765 rows)
   closes with a line counting them, which, where the lines are not printed,
   points at `pgdt info --detail`.
 
-Add `--detail` to also see each block's byte offsets and, per column that has
-something to say, what it became: the Arrow type it resolved to, or — for a
+Add `--detail` to also see each block's byte offsets, its longest line —
+`longest line: <bytes> bytes at <offset>`, its length counting its line ending,
+the first of them where several are as long, and no line for a block holding no
+row — and, per column that has something to say, what it became: the Arrow type it resolved to, or — for a
 column that came back as a string for a reason — why (see [type
 handling](type-handling.md) for what "resolved"
 means and why a column sometimes isn't). A column that is simply text says
@@ -1773,7 +1775,9 @@ that an ignoring `parse` went past in the block, as `columns`, one per column
 holding one in header order: `first` (its row's `offset` from the block's
 data, its `COPY` `line`, its `column` by position in the header, its
 `declared_type` and `value`) and `count`. **`checked_in_full`** is `true` for a
-block a strict `parse` checked every value of.
+block a strict `parse` checked every value of. **`longest_line`** is the
+block's longest line as `--detail` states it, its `offset` and its `len`, or
+`null` for a block holding no row.
 
 **This is a raw dump of pgdt's internal representation, not a designed API.**
 There's no schema, no compatibility promise across versions, no version field

@@ -545,8 +545,8 @@ pub async fn reread_rows(
             }
         }
     };
-    let recorded = (block.terminator_offset, block.end_offset, block.row_count);
-    if (end.terminator_offset, end.end_offset, end.row_count) != recorded {
+    let recorded = (block.terminator_offset, block.end_offset, block.row_count, block.longest_line);
+    if (end.terminator_offset, end.end_offset, end.row_count, end.longest_line) != recorded {
         return Err(moved());
     }
     Ok(Some(census))
@@ -591,7 +591,7 @@ async fn observe_rows(
                         observer.observe_row(row.offset - block.data_offset, row.raw);
                     }
                 }
-                Event::CopyEnd(end) => return Ok(Some((end, census))),
+                Event::CopyEnd(end) => return Ok(Some((*end, census))),
                 // A scanner inside a block's rows emits nothing else
                 // before its `CopyEnd`.
                 _ => {}

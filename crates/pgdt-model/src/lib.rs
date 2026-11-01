@@ -29,8 +29,9 @@ pub use diagnostic::{
     TilingIssue, drain,
 };
 pub use span::{
-    CopyBlock, DataBlock, DumpIndex, InsertRun, LargeObjectRegion, SPAN_STORED_TEXT_MAX_BYTES,
-    Span, SpanBody, SpanText, TableName, ThroughRoot, TocHeader, union_census,
+    CopyBlock, DataBlock, DumpIndex, InsertRun, LargeObjectRegion, LongestLine,
+    SPAN_STORED_TEXT_MAX_BYTES, Span, SpanBody, SpanText, TableName, ThroughRoot, TocHeader,
+    union_census,
 };
 pub use statistics::{
     BlockGathered, BlockStatistics, Bounds, BoundsSet, ColumnDictionary, ColumnRefusals,
@@ -67,4 +68,4 @@ pub mod internal {
 /// `persisted_index_is_pinned_to_the_format_version` pins what every fixture
 /// persists beside this number, as `golden_order_is_pinned_to_the_format_version`
 /// pins the comparison order, and each fails until it is bumped.
-pub const CACHE_FORMAT_VERSION: u32 = 83;
+pub const CACHE_FORMAT_VERSION: u32 = 84;

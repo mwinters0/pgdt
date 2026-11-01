@@ -32,6 +32,7 @@ mod chunked;
 use crate::lex::{Lexer, Region, standard_conforming_strings};
 use pgdt_core::{CopyHeader, is_terminator, parse_copy_header};
 use pgdt_core::{Error, Result, RowEndingRefusal};
+use pgdt_model::LongestLine;
 
 pub use self::chunked::{
     ChunkCarry, ChunkEvents, ChunkPass, ChunkedScanner, LineMapping, Passes, ReadOptions,
@@ -87,6 +88,10 @@ pub struct CopyEnd {
     pub end_offset: u64,
     /// Number of data rows in the block.
     pub row_count: u64,
+    /// The block's longest data line, `None` where it holds no row
+    /// ([`pgdt_model::CopyBlock::longest_line`]) — of the rows read since a
+    /// resume, for a scanner resumed inside the block.
+    pub longest_line: Option<LongestLine>,
 }
 
 /// One line encountered outside a COPY block that is neither a COPY header
@@ -149,17 +154,18 @@ pub struct DollarQuoteEnd {
 
 /// An event emitted while scanning.
 ///
-/// [`CopyStart`] is boxed because it alone would set the enum's size, and
-/// every event is moved several times on its way out of a read loop. The box
-/// costs one allocation a block and keeps every event's move to a [`Row`]'s
-/// length. It is on the variant, not a `Box<CopyHeader>` in [`CopyStart`]:
-/// the enum's size is the problem, and a public field keeps no indirection.
+/// [`CopyStart`] and [`CopyEnd`] are boxed because either would set the
+/// enum's size, and every event is moved several times on its way out of a
+/// read loop. Each box costs one allocation a block and keeps every event's
+/// move to a [`Row`]'s length. It is on the variant, not a `Box<CopyHeader>`
+/// in [`CopyStart`]: the enum's size is the problem, and a public field keeps
+/// no indirection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event<'a> {
     CopyStart(Box<CopyStart>),
     Row(Row<'a>),
     StreamedRow(StreamedRow),
-    CopyEnd(CopyEnd),
+    CopyEnd(Box<CopyEnd>),
     Line(Line<'a>),
     DollarQuoteEnd(DollarQuoteEnd),
     LargeObjectStart(LargeObjectStart),
@@ -287,6 +293,7 @@ pub struct PieceEndings {
 pub trait CopyScannerExt {
     fn recording_endings(self) -> Self;
     fn piece_endings(&self) -> PieceEndings;
+    fn longest_line(&self) -> Option<LongestLine>;
 }
 
 impl CopyScannerExt for CopyScanner {
@@ -304,6 +311,13 @@ impl CopyScannerExt for CopyScanner {
             Endings::Recorded(piece) => piece.clone(),
             Endings::Unchecked | Endings::Refused { .. } => PieceEndings::default(),
         }
+    }
+
+    /// The longest row consumed since the scanner was resumed or entered the
+    /// open block at its header — or the block it last closed, until another
+    /// opens — which a piece of the interior folds into its block's.
+    fn longest_line(&self) -> Option<LongestLine> {
+        self.longest
     }
 }
 
@@ -398,6 +412,9 @@ pub struct CopyScanner {
     /// ([`ChunkEvents::stream_rows`]): `false` outside a block, and at every
     /// header until its reader says otherwise.
     streams_rows: bool,
+    /// The open block's longest row so far, held or streamed, which its
+    /// [`CopyEnd`] states; reset at each header and by a resume.
+    longest: Option<LongestLine>,
 }
 
 impl Default for CopyScanner {
@@ -415,6 +432,7 @@ impl CopyScanner {
             lexer: Lexer::new(),
             endings: Endings::Unchecked,
             streams_rows: false,
+            longest: None,
         }
     }
 
@@ -449,6 +467,7 @@ impl CopyScanner {
             lexer: Lexer::new(),
             endings: Endings::Unchecked,
             streams_rows: false,
+            longest: None,
         }
     }
 
@@ -511,6 +530,8 @@ impl CopyScanner {
         };
         let line_offset = self.position();
         self.endings.hold(ending, rows, line_offset)?;
+        self.longest =
+            LongestLine::fold(self.longest, Some(LongestLine { offset: line_offset, len }));
         self.base += len;
         self.state = State::InCopy { rows: rows + 1, header_offset };
         Ok(Event::StreamedRow(StreamedRow { offset: line_offset, index: rows, len }))
@@ -620,6 +641,7 @@ impl CopyScanner {
                     if let Some(header) = parse_copy_header(line) {
                         self.state = State::InCopy { rows: 0, header_offset: line_offset };
                         self.streams_rows = false;
+                        self.longest = None;
                         self.endings =
                             Endings::Refused { table: header.qualified_name(), first: None };
                         return Ok(Some(Event::CopyStart(Box::new(CopyStart {
@@ -654,11 +676,12 @@ impl CopyScanner {
                     if is_terminator(line) {
                         self.state = State::Outside;
                         self.streams_rows = false;
-                        return Ok(Some(Event::CopyEnd(CopyEnd {
+                        return Ok(Some(Event::CopyEnd(Box::new(CopyEnd {
                             terminator_offset: line_offset,
                             end_offset: self.position(),
                             row_count: rows,
-                        })));
+                            longest_line: self.longest,
+                        }))));
                     }
                     let ending = if holds_cr { RowEnding::of(unstripped) } else { RowEnding::Lf };
                     self.endings.hold(ending, rows, line_offset)?;
@@ -668,6 +691,10 @@ impl CopyScanner {
                         Some((b'\r', head)) if !escaped(unstripped, head.len()) => head,
                         _ => unstripped,
                     };
+                    // Its length as I71 measures it, the line ending
+                    // included (`docs/design/decisions.md`, "D140").
+                    let measured = LongestLine { offset: line_offset, len: advance as u64 };
+                    self.longest = LongestLine::fold(self.longest, Some(measured));
                     self.state = State::InCopy { rows: rows + 1, header_offset };
                     return Ok(Some(Event::Row(Row { offset: line_offset, index: rows, raw })));
                 }

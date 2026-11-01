@@ -923,6 +923,7 @@ impl Builder {
             checked_in_full,
             census: self.pending_census.take(),
             recorded_rows: self.pending_rows.take().map(Box::new),
+            longest_line: end.longest_line,
         };
         debug_assert!(
             block.census.is_none() || self.pending_counter.is_some(),
@@ -930,7 +931,7 @@ impl Builder {
         );
         self.pending_counter = None;
         let owned = toc.is_some();
-        self.push_span(start, SpanBody::Data(DataBlock::Copy(block)), toc, owned);
+        self.push_span(start, SpanBody::Data(DataBlock::Copy(Box::new(block))), toc, owned);
         Ok(())
     }
 

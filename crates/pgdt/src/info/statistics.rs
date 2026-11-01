@@ -311,7 +311,7 @@ mod tests {
             text: None,
             toc: None,
             toc_owned: false,
-            body: SpanBody::Data(DataBlock::Copy(CopyBlock {
+            body: SpanBody::Data(DataBlock::Copy(Box::new(CopyBlock {
                 header,
                 header_offset: 0,
                 data_offset: 0,
@@ -325,7 +325,8 @@ mod tests {
                 checked_in_full: false,
                 census: Some(pgdt_model::BlockCensus::default()),
                 recorded_rows: None,
-            })),
+                longest_line: None,
+            }))),
         }
     }
 

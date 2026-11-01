@@ -41,6 +41,7 @@ fn block(table: &str, columns: &str, rows: &[&str]) -> Span {
         checked_in_full: false,
         census: None,
         recorded_rows,
+        longest_line: None,
     };
     Span {
         start: 0,
@@ -49,7 +50,7 @@ fn block(table: &str, columns: &str, rows: &[&str]) -> Span {
         text: None,
         toc: None,
         toc_owned: false,
-        body: SpanBody::Data(DataBlock::Copy(block)),
+        body: SpanBody::Data(DataBlock::Copy(Box::new(block))),
     }
 }
 

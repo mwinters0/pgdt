@@ -495,7 +495,7 @@ pub async fn map_forward(
                         file_end,
                         target,
                         targets,
-                        end,
+                        *end,
                     )
                     .await?
                     {
