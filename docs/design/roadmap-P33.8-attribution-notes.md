@@ -68,13 +68,10 @@ from the SSD rather than tmpfs, on the shipped build at `6dd4523c` and the
 
 - **The spec's "at most one decoded copy" is not yet true** of escaped text,
   bytea, or a strict bytea check; that removal is admitted as 33.9 (`STATUS.md`).
-- **The ledger (33.4) holds an allocation of up to twice the line it carries**:
-  the frozen line is the `Vec`'s whole allocation, kept as a batch's block, of
-  which only the line is resident. A draw in bytes held is the line; one in
-  bytes allocated is up to twice it.
-- **The growth's copy and the retention are neither charged nor removed by the
-  spec**: STATUS's "Decisions worth another look" holds both, ahead of 33.4's
-  factors and 33.7's confirmation.
+- **The capacity, the growth's copy and the retention are gone for a line past
+  its chunk**, which grows in a mapping of its own at exactly its length
+  ([`roadmap-P33.10-mapping-notes.md`](roadmap-P33.10-mapping-notes.md)); a
+  decoded copy is still the allocator's, and 33.9's.
 - **33.3.1 rewrites the carry a streamed pass grows its line in**; a pass that
   decodes still grows it as above.
 

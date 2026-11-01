@@ -4,10 +4,14 @@
 //! [`ChunkedScanner`] — the preamble scan here ([`scan`]), `pgdt_mapping`'s
 //! forward pass and statistics back-fill, and `pgdt_query`'s replay.
 
+mod line;
+
 use std::ops::ControlFlow;
 
 use bytes::Bytes;
 
+use self::line::CarriedLine;
+pub use self::line::LineMapping;
 use super::{CopyScanner, EndingScan, Event, RowEnding};
 use pgdt_core::{Error, Result};
 use pgdt_io::{
@@ -60,6 +64,12 @@ pub enum ChunkPass {
 /// not the longest line's twice for the rest of the pass
 /// (`docs/design/decisions.md`, "D23").
 ///
+/// **A line that outgrows its chunk moves to a mapping of its own**
+/// ([`LineMapping`]), grown by remapping and unmapped once its last reference
+/// drops, so it holds what it has written whatever the allocator keeps; a
+/// line no longer than a chunk stays in the carry's buffer
+/// (`docs/design/decisions.md`, "D139").
+///
 /// The degenerate case is a chunk containing no newline at all: the whole of
 /// it joins the carry, the in-place pass empty wherever there is a carry to
 /// join — one arriving with none is handed over whole, finds no newline and
@@ -77,12 +87,12 @@ pub enum ChunkPass {
 /// the file's end, hands it to the carry pass in place of a held line. So a
 /// pass decoding no field holds no line at any length
 /// (`docs/design/decisions.md`, "D138").
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ChunkCarry {
     /// The line being carried, extended by [`absorb`](Self::absorb) with the
     /// chunk bytes that complete it, and grown chunk by chunk while no chunk
     /// does. Never written while the chunk is scanned.
-    line: Vec<u8>,
+    line: CarriedLine,
     /// The current chunk's carry pass: `line` frozen once a chunk completes
     /// it or the file ends, empty while it waits.
     held: Bytes,
@@ -151,6 +161,22 @@ impl StreamedLine {
 const STREAM_AFTER_BYTES: usize = b"\\.\r".len();
 
 impl ChunkCarry {
+    /// A carry for a read loop asking for `chunk_size` bytes a read: a line
+    /// longer than that leaves its buffer for a mapping of its own.
+    pub fn new(chunk_size: usize) -> Self {
+        Self {
+            line: CarriedLine::new(chunk_size),
+            held: Bytes::new(),
+            line_used: 0,
+            tail: Vec::new(),
+            split: 0,
+            unfinished: false,
+            streams: false,
+            streamed: None,
+            ended: None,
+        }
+    }
+
     /// [`Passes::carried`], between two chunks: the bytes ahead of the next
     /// chunk that its carry pass begins with.
     pub fn carried(&self) -> usize {
@@ -162,7 +188,7 @@ impl ChunkCarry {
     /// it reuses and the line it still references.
     #[cfg(test)]
     pub(super) fn allocated(&self) -> usize {
-        self.line.capacity() + self.tail.capacity() + self.held.len()
+        self.line.allocated() + self.tail.capacity() + self.held.len()
     }
 
     /// Take onto the carry whatever prefix of `chunk` completes the line it
@@ -179,9 +205,9 @@ impl ChunkCarry {
         if self.line_used < self.held.len() {
             debug_assert!(self.tail.is_empty(), "both passes left a line over");
             debug_assert!(self.line.is_empty(), "a held line beside a waiting one");
-            self.line.extend_from_slice(&self.held[self.line_used..]);
+            self.line.extend(&self.held[self.line_used..]);
         } else if self.line.is_empty() {
-            std::mem::swap(&mut self.line, &mut self.tail);
+            self.line.swap_in(&mut self.tail);
         } else {
             debug_assert!(self.tail.is_empty(), "both passes left a line over");
         }
@@ -214,12 +240,12 @@ impl ChunkCarry {
                 && self.line.len() + chunk.len() > STREAM_AFTER_BYTES
             {
                 let mut line = StreamedLine::default();
-                line.read(&self.line, false);
+                line.read(self.line.bytes(), false);
                 line.read(chunk, false);
                 self.line.clear();
                 self.streamed = Some(line);
             } else {
-                self.line.extend_from_slice(&chunk[..self.split]);
+                self.line.extend(&chunk[..self.split]);
             }
         }
         // Nothing in an unfinished line is consumable before the end of the
@@ -228,11 +254,11 @@ impl ChunkCarry {
         // handed over whole.
         let line_waits = self.unfinished && !eof;
         if !line_waits && !self.line.is_empty() {
-            self.held = Bytes::from(std::mem::take(&mut self.line));
+            self.held = self.line.freeze();
         }
         let streaming = self.streamed.map_or(0, |line| line.len as usize);
         let Self { line, held, line_used, tail, split, streams, ended, .. } = self;
-        let (line, held): (&'a [u8], &'a Bytes) = (line, held);
+        let (line, held): (&'a [u8], &'a Bytes) = (line.bytes(), held);
         Passes {
             line: if line_waits { line } else { held },
             held,
@@ -386,7 +412,7 @@ impl ChunkedScanner {
         Self {
             read_pos: scanner.position(),
             scanner,
-            carry: ChunkCarry::default(),
+            carry: ChunkCarry::new(read.chunk_size_bytes),
             chunk: Bytes::new(),
             end,
             chunk_size: read.chunk_size_bytes,
@@ -466,7 +492,7 @@ impl ChunkedScanner {
     pub fn skip_to(&mut self, at: u64) {
         self.scanner =
             CopyScanner::resume(at, None).with_standard_strings(self.scanner.standard_strings());
-        self.carry = ChunkCarry::default();
+        self.carry = ChunkCarry::new(self.chunk_size);
         self.read_pos = at;
         self.open = false;
     }

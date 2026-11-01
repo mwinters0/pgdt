@@ -153,8 +153,9 @@ through ([`decisions.md`](decisions.md), "The scanner").
 
 - **pgdt-dump** — `scan.rs`: the state machine; `scan/chunked.rs`: the read
   loop, its carried line or streamed row and line limit, and the preamble scan
-  over it; the carry is also an interior worker's over its piece. No decoding
-  and no Arrow (D74).
+  over it; the carry is also an interior worker's over its piece;
+  `scan/chunked/line.rs`: the carried line, in a mapping of its own once it
+  outgrows its chunk (D139). No decoding and no Arrow (D74).
 
 ## The file map
 

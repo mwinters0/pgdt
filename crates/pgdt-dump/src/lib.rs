@@ -2,8 +2,6 @@
 //! grammar, the map builder, the preamble's prepass, and persisting and
 //! reloading the model (`docs/design/decisions.md`, "D68"). No Arrow (D74).
 
-#![forbid(unsafe_code)]
-
 pub mod cache;
 mod ddl;
 mod lex;
@@ -39,7 +37,7 @@ pub mod internal {
     pub use crate::map::{Builder, derived_diagnostics};
     pub use crate::preamble::scan_preamble;
     pub use crate::scan::{
-        ChunkCarry, ChunkPass, CopyScannerExt, Passes, PieceEndings, RowEnding, StreamedLine,
-        announce_read_loop,
+        ChunkCarry, ChunkPass, CopyScannerExt, LineMapping, Passes, PieceEndings, RowEnding,
+        StreamedLine, announce_read_loop,
     };
 }

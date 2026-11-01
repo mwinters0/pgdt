@@ -3764,6 +3764,7 @@ dependencies = [
  "bytes",
  "flate2",
  "futures",
+ "libc",
  "memchr",
  "pgdt-core",
  "pgdt-io",

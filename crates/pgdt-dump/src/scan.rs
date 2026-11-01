@@ -34,7 +34,7 @@ use pgdt_core::{CopyHeader, is_terminator, parse_copy_header};
 use pgdt_core::{Error, Result, RowEndingRefusal};
 
 pub use self::chunked::{
-    ChunkCarry, ChunkEvents, ChunkPass, ChunkedScanner, Passes, ReadOptions,
+    ChunkCarry, ChunkEvents, ChunkPass, ChunkedScanner, LineMapping, Passes, ReadOptions,
     SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, StreamedLine, announce_read_loop, scan,
 };
 

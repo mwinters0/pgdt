@@ -92,7 +92,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.3** Hold only what is decoded: the held line freed after its row and handed to the builder as a block; the replay releasing the chunks under a copied line; `long-line-resident` re-taken, at `6dd4523c` ([`measurements.md`](../design/measurements.md), "What a held line holds resident") — [notes](../design/roadmap-P33.3-hold-notes.md)
 - [x] **33.8** Attribution, ahead of 33.3.1: the third byte a line byte is mimalloc's retention of the line's outgrown buffers, gone at `MIMALLOC_PURGE_DELAY=0`, beside the growth's copy at its last doubling; a one-partition query copies escaped text twice and hex bytea three times beside the line, a strict parse's bytea twice; no production code — [notes](../design/roadmap-P33.8-attribution-notes.md)
 - [x] **33.3.1** A pass reading no row streams it: a block whose rows nothing reads past their count — a metadata-level parse, serially and in its interior workers — finds a row's end and counts it without holding its bytes once it outgrows its chunk, flat in memory at any line length (D138); a query's census is 33.3.2's — [notes](../design/roadmap-P33.3.1-stream-notes.md)
-- [ ] **33.10** A held line grows outside the allocator: past its chunk it moves to a mapping of its own, grown by remapping and unmapped after its row, as the spec's "What a held line costs" states; a one-worker parse at the bound holding the line plus the base at mimalloc's shipped purge delay, the falsifier; the probe's leg timing the same line grown by remapping against one written into a mapping sized for it, whose material gap files the choice for the arrangement and whose absence is a negative result
+- [x] **33.10** A held line grows outside the allocator: past its chunk it moves to a mapping of its own, grown by remapping and unmapped after its row, as the spec's "What a held line costs" states (D139); a one-worker parse at the bound holding the line plus the base at mimalloc's shipped purge delay, the falsifier, which held; the probe's leg timing the same line grown by remapping against one written into a mapping sized for it, whose gap is material and is the page size backing each, filed for the arrangement below — [notes](../design/roadmap-P33.10-mapping-notes.md)
 - [ ] **33.11** Each block's longest line: its start and its length recorded by every pass mapping the block, `CACHE_FORMAT_VERSION` bumped, `pgdt info` showing it, as the spec's "A held line is charged, and admitted in file order" states
 - [ ] **33.9** One decoded copy: a query's escaped text and hex bytea value, and a strict parse's bytea check, held beside their line with at most one decoded copy, as the spec's "What a held line costs" states
 - [ ] **33.3.2** A replay reading no field streams a line: the carry counts a streamed row's fields against its header's width, and a replay whose batch and filters read no field counts a row that outgrows its chunk without holding its bytes, as the spec's "A pass holds a line only where it decodes it" states
@@ -131,3 +131,18 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **A grown line misses the huge pages a sized one gets** (33.10). The probe
+  (`runs/p33.10-line-mapping/growth-thp.out`) has the line grown by `mremap`
+  from one chunk faulted and freed in 4 KiB pages, where one mapped at its
+  length is backed whole by transparent huge pages: about twice the write and
+  some twenty-five times the drop, together some 180 ms a line at I71's bound
+  against a parse's 1.7–2.4 s. The call made: the gap is filed as material and
+  the code left as D139 states it, mapped at exactly the bytes written. That
+  falsifies the 2026-11-01 entry's premise that sizing up front "saves only the
+  remaps, faults being the same either way", so the choice it set for 33.4 —
+  size from the block's longest line (33.11) by the commit policy — now has a
+  rival, untried: a growth the kernel backs with huge pages, mapped in
+  huge-page steps at up to one huge page past the bytes written, amending the
+  spec's "its commit and address space are its bytes". Deciding
+  changes what 33.4's carve sizes and whether D139's exactness is kept.

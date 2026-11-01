@@ -25,6 +25,11 @@ serde = { workspace = true, features = ["derive"] }
 tokio = { workspace = true, features = ["rt", "sync"] }
 tracing = { workspace = true }
 
+# A line past its chunk grows in a mapping of its own (`scan/chunked/line.rs`,
+# `docs/design/decisions.md`, "D139"): `mremap` is Linux's.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 # A gzip file to cache, written by an encoder not ours, and its index built in
 # memory at a spacing the test states (`pgdt_io::internal::gzip_indexed_in_memory`).

@@ -1457,3 +1457,43 @@ grep -n 'self.shutdown(None)' "$src/blocking/pool.rs"
 The tests pass only while each runtime's drop returns with the kept thread
 left unretired; the searches show both flavours still shutting their tasks
 down and the pool's drop still waiting with no timeout.
+
+## RT29 — `mremap` grows an anonymous mapping by moving its pages, and `munmap` returns them at once
+
+**Claim.** On Linux, `mremap(old, old_size, new_size, MREMAP_MAYMOVE)` on a
+private anonymous mapping keeps every page already written, at the address it
+returns, without copying their bytes — it changes the mapping between virtual
+addresses and pages, moving the mapping where it cannot grow in place — and a
+page of the mapping is resident only once written; `munmap` frees the
+mapping's pages when it returns, with no delay a later call must reach. So a
+line grown that way holds its written pages and no outgrown copy, and none
+past its drop.
+
+**Proof.** Documentation: man-pages 6.19, `mremap(2)` ("changes the mapping
+between virtual addresses and memory pages. This can be used to implement a
+very efficient realloc(3)"), `mmap(2)` (`MAP_ANONYMOUS`, zero-filled on
+demand), `munmap(2)`. Observed by `runs/p33.10-line-mapping/` (`probe.sh`,
+`log`): a one-worker parse over four consecutive lines of I71's bound peaks at
+about one line plus the process's base.
+
+**Scope limit.** Linux alone: macOS has no `mremap` (P34). Resident is counted
+in pages, and where transparent huge pages back the mapping, in up to one huge
+page past the bytes written; which size backs it is the kernel's, and here a
+mapping made at a line's length is backed by huge pages where one grown from a
+chunk by remaps is not (the probe's `growth-thp.out`). A strict overcommit (`vm.overcommit_memory = 2`)
+charges the mapped length, which the grower keeps at the bytes written.
+
+**Verified against:** Linux 7.2.9 (x86-64), man-pages 6.19.
+
+**Relied on by:** [`decisions.md`](decisions.md), "D139" — a carried line
+past its chunk (`crates/pgdt-dump/src/scan/chunked/line.rs`, `LineMapping`).
+
+**Re-verify:**
+
+```sh
+man 2 mremap | col -b | grep -n 'efficient realloc'
+cd runs/p33.10-line-mapping && bash probe.sh parse
+```
+
+The search shows `mremap(2)` still describing a remap, not a copy; the probe's
+peak stays near one line plus the base, as its falsifiers state.

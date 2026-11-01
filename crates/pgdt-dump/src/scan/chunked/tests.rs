@@ -60,7 +60,7 @@ fn drive(file: &[u8], chunk_size: usize) -> Driven {
 /// A carry holding `line`, reached the way a read loop reaches one: a chunk
 /// the scanner could not finish, whose tail it kept.
 fn carrying(line: &[u8]) -> ChunkCarry {
-    let mut carry = ChunkCarry::default();
+    let mut carry = ChunkCarry::new(4);
     let mut passes = carry.absorb(line, false);
     passes.consumed(ChunkPass::Carry, 0);
     passes.consumed(ChunkPass::InPlace, 0);
@@ -211,7 +211,7 @@ fn skip_to_reads_on_from_a_line_past_the_carry() {
 /// prefix is taken and the in-place span is the chunk itself.
 #[test]
 fn an_empty_carry_copies_nothing() {
-    let mut carry = ChunkCarry::default();
+    let mut carry = ChunkCarry::new(4);
     let passes = carry.absorb(b"one\ntwo\n", false);
     assert_eq!(passes.span(ChunkPass::Carry).0, b"");
     assert_eq!(passes.span(ChunkPass::InPlace).0, b"one\ntwo\n");
@@ -386,14 +386,15 @@ fn a_held_line_is_handed_out_at_its_start() {
     .unwrap();
     assert_eq!(held, [row_end - row_start]);
 
-    let mut carry = ChunkCarry::default();
+    let mut carry = ChunkCarry::new(4);
     assert!(carry.absorb(b"one\ntwo\n", false).held().is_empty());
     let mut carry = carrying(b"abc");
     assert!(carry.absorb(b"defghi", false).held().is_empty());
 }
 
 /// **A carry keeps no line past its row**: after a line many chunks long,
-/// what it holds allocated is bounded by the chunk, not by the line.
+/// what it holds allocated is bounded by the chunk, not by the line, and
+/// while it carries one, by the line.
 #[test]
 fn the_carry_keeps_no_line_past_its_row() {
     let len = 1 << 16;
@@ -424,6 +425,9 @@ fn the_carry_keeps_no_line_past_its_row() {
     }
     assert!(after_row.is_some());
     assert!(longest > len, "the line was carried whole while it grew");
+    // Past its chunk it grew in a mapping of its own, holding what it wrote
+    // rather than a doubling's capacity (`line.rs`).
+    assert!(longest <= len + 4 * chunk_size, "{longest} bytes held for a {len}-byte line");
 }
 
 /// What a read loop streaming every block's rows — or, with `stream` off,

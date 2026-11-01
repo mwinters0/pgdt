@@ -497,7 +497,7 @@ async fn scan_partition(
     let limit = range.end;
     let mut out = Vec::new();
     let mut entry = entry;
-    let mut carry = ChunkCarry::default();
+    let mut carry = ChunkCarry::new(options.read.chunk_size_bytes);
     let mut at = range.start;
     let mut want = match read {
         PartitionRead::Whole { unit } => range.end.saturating_sub(range.start).min(unit).max(1),

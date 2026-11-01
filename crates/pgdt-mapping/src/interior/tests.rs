@@ -1005,7 +1005,7 @@ fn read_piece(
     chunk: usize,
     census: Option<&CensusPlan>,
 ) -> Vec<PieceScan> {
-    let mut carry = ChunkCarry::default();
+    let mut carry = ChunkCarry::new(chunk);
     let (mut at, mut entry, mut out) = (start as usize, PieceEntry::RowStart, Vec::new());
     while at < file.len() {
         let end = (at + chunk).min(file.len());

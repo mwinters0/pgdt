@@ -24,6 +24,15 @@ scanner is new each span; a block holds unless its reader says otherwise. Reject
 a reader decoding it cannot tell from an empty row; streaming in the scanner, which a worker's spans would lose.
 Reopens: a census reading a bounded head of each field. Evidence: `crates/pgdt-mapping/tests/streamed_line.rs`.
 
+### D139 A line past its chunk grows in a mapping of its own, by `mremap`
+A carried line longer than its read's chunk leaves the carry's `Vec` for an anonymous mapping (`LineMapping`), grown to
+exactly the bytes written by `mremap`, which moves pages and copies none, and unmapped with its last `Bytes`: it holds
+what it wrote on every allocator, its commit its bytes. Rejected: growing through the global allocator and charging what
+it keeps (a doubling's capacity; mimalloc's copying `realloc` and unpurged buffers; D13); lowering mimalloc's purge delay
+(`KD148`'s class); reserving I71's bound per line, counted whole by a strict overcommit or an address-space limit. Linux's;
+elsewhere a `Vec` (P34). Reopens: a material gap to a mapping sized for its line. Evidence: RT29;
+`the_carry_keeps_no_line_past_its_row`.
+
 ### D25 Parallelize what is CPU-bound
 One core's rate against the device's offer decides each kind of work (decode, extraction, discovery) per source; D2
 holds the answers, D7 who asks, D52 the worker. Readings that disagree reopen it. Evidence: `xz-decode-scaling`,
@@ -40,9 +49,10 @@ own; `Option<&CancellationToken>` or a `Stop` trait inside the passes; `exit(128
 
 ### D27 UTF-8 is validated once per chunk; `unsafe` is denied everywhere and allowed at the site that needs it
 One SIMD validation of the largest line-terminated prefix per chunk, not one `from_utf8` per field, skipped where
-nothing is decoded; the escaped path still validates (`\xNN` synthesizes bytes). In D68's seven crates the one site is
+nothing is decoded; the escaped path still validates (`\xNN` synthesizes bytes). In D68's seven crates the sites are
 `append_view_unchecked` (`batch/chunks.rs`), its bounds from the `contains` that produced its coordinates and its
-validity from the decode's borrowed arm (D46); `pgdt-gzip-seek`'s zlib module is the other shipped site (UF4). The workspace
+validity from the decode's borrowed arm (D46), and `LineMapping`'s system calls (D139); `pgdt-gzip-seek`'s zlib module is
+the other shipped site (UF4). The workspace
 denies `unsafe` in every target and each root forbids it unless a site of its production tree allows it
 (`scripts/layering.py`). Four `unsafe` attempts lost to the safe shape.
 

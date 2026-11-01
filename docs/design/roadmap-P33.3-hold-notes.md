@@ -59,11 +59,11 @@ An account from the code, written before the readings (`.claude/skills/evidence/
 
 ## What the later slices inherit
 
-- **What one reader holds at the bound is about three lines** over every kind
-  and pass (`measurements.md`, "What a held line holds resident"), the floor's
-  reading (33.5); the spec's charge — a held line once, twice where it is
-  decoded — is short of it by the terms 33.8 names; 33.7 confirms or re-sets
-  the factors.
+- **What one reader held at the bound at `6dd4523c` was about three lines**
+  over every kind and pass (`measurements.md`, "What a held line holds
+  resident"), short of the spec's charge by the terms 33.8 names; a parse's are
+  gone since 33.10 ([`roadmap-P33.10-mapping-notes.md`](roadmap-P33.10-mapping-notes.md)),
+  and 33.7 confirms or re-sets the factors.
 - **A four-worker parse holds about what a one-worker one does** since its
   worker carries its line in `ChunkCarry`, where at 33.1 it held less: the
   ledger (33.4) charges a worker's held line as the serial loop's.
