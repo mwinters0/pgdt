@@ -152,7 +152,8 @@ plain-format dump, and the chunked read loop every serial pass drives it
 through ([`decisions.md`](decisions.md), "The scanner").
 
 - **pgdt-dump** — `scan.rs`: the state machine; `scan/chunked.rs`: the read
-  loop, its carried line or streamed row and line limit, and the preamble scan
+  loop, its carried line or streamed row and line limit, a streamed row's
+  fields handed to its reader's fold (`FieldFold`), and the preamble scan
   over it; the carry is also an interior worker's over its piece;
   `scan/chunked/line.rs`: the carried line, in a mapping of its own grown in
   huge-page steps once it outgrows its chunk (D139). No decoding and no Arrow (D74).
@@ -254,7 +255,9 @@ above implements ([`decisions.md`](decisions.md), "D35", "D74").
 
 - **pgdt-model** — `block.rs`: persisted, and a contract over the data is
   model wherever its implementor sits (D74); how a row is folded in is
-  model's too, read by every pass that records, each above it.
+  model's too, a held row whole and a streamed one field by field as its
+  bytes go by (`CensusFold`, which pgdt-dump hands its carry as a
+  `FieldFold`, D138), read by every pass that records, each above it.
 - **pgdt-codec** — `unrepresentable.rs`: told from a field's text against an
   Arrow type, so codec's.
 

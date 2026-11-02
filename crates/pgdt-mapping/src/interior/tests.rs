@@ -8,7 +8,7 @@ use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_fixtures::{edge_cases, fixture};
 use pgdt_io::{ByteRangeSource, PartitionRead};
 use pgdt_io::{LocalFileSource, Parallelism};
-use pgdt_model::internal::FieldCount;
+use pgdt_model::internal::{FieldCount, Kept};
 use pgdt_model::{BlockCensus, UnrepresentableTier};
 use pgdt_model::{DataBlock, SpanBody};
 use std::sync::Arc;
@@ -34,6 +34,10 @@ impl FieldCount for Infinities {
 
     fn tier(&self, _column: usize, field: &[u8]) -> Option<UnrepresentableTier> {
         (field == b"infinity").then_some(UnrepresentableTier::Format)
+    }
+
+    fn keeps(&self, _column: usize) -> Kept {
+        Kept::Head(b"infinity".len())
     }
 }
 
@@ -1007,13 +1011,23 @@ fn read_piece(
     census: Option<&CensusPlan>,
 ) -> Vec<PieceScan> {
     let mut carry = ChunkCarry::new(chunk);
+    let mut fold = census.map(CensusPlan::fold);
     let (mut at, mut entry, mut out) = (start as usize, PieceEntry::RowStart, Vec::new());
     while at < file.len() {
         let end = (at + chunk).min(file.len());
         let eof = end == file.len();
-        let read =
-            scan_read(&mut carry, &file[at..end], at as u64, eof, entry, limit, census, None)
-                .expect("a piece records its endings rather than refusing them");
+        let read = scan_read(
+            &mut carry,
+            fold.as_mut(),
+            &file[at..end],
+            at as u64,
+            eof,
+            entry,
+            limit,
+            census,
+            None,
+        )
+        .expect("a piece records its endings rather than refusing them");
         out.extend(read.scans);
         if read.done || eof {
             break;
@@ -1022,6 +1036,45 @@ fn read_piece(
         at = end;
     }
     out
+}
+
+/// **A worker censusing a block streams a row and censuses it as one
+/// held**: every piece of a block whose long rows hold array literals, a
+/// counted `infinity` among them and a field cut by a CR, read in reads of
+/// every size, censuses what one scan of the piece's span whole does.
+#[test]
+fn a_censusing_worker_streams_a_row_and_censuses_it_as_held() {
+    let long = "x".repeat(300);
+    for ending in ["\n", "\r\n"] {
+        let header = "COPY public.t (a, b, c) FROM stdin;\n";
+        let rows = [
+            format!("{{{{{long}}}}}\tinfinity\t[0:1]={{1,2}}"),
+            format!("infinity\t{long}\t{{}}\textra\t{{{{1}}}}"),
+            // A CR a backslash escapes is its field's own byte, in the
+            // middle and at the end of the line.
+            format!("{long}infinity\t\\\r\t{{1}}\\\r"),
+            "a\t{2}\tinfinity".to_owned(),
+        ];
+        let body: String = rows.iter().map(|row| format!("{row}{ending}")).collect();
+        let file = format!("{header}{body}\\.\n").into_bytes();
+        let start = header.len() as u64;
+        let plan = plan(Some(3));
+        let whole = scan_piece(
+            &file[start as usize..],
+            start,
+            PieceEntry::RowStart,
+            file.len() as u64,
+            plan.as_ref(),
+            None,
+        )
+        .expect("one span");
+        for chunk in [1usize, 2, 3, 5, 64, 299, 301] {
+            let scans = read_piece(&file, start, file.len() as u64, chunk, plan.as_ref());
+            let interior = merge(&scans).expect("the terminator");
+            assert_eq!(interior.census, whole.census, "{ending:?} rows, chunk {chunk}");
+            assert_eq!(interior.end.row_count, 4, "{ending:?} rows, chunk {chunk}");
+        }
+    }
 }
 
 /// **A worker on a block at the metadata level streams a row it would

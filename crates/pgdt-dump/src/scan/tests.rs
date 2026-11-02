@@ -14,7 +14,8 @@ fn each_event(
     let mut read_pos = 0usize;
     loop {
         let want = chunk_size.min(file.len() - read_pos);
-        let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]));
+        let mut chunk =
+            chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]), None);
         read_pos += want;
         while let Some(event) = chunk.next_event()? {
             on_event(event);

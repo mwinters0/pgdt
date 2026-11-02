@@ -7,7 +7,8 @@
 pub(crate) mod grammar;
 
 use self::grammar::{
-    DateTimeInput, INTERVAL_WORKBUF, datetime_reads, interval_reads, parse_date_time_splits,
+    DateTimeInput, INTERVAL_WORKBUF, MAXDATEFIELDS, datetime_reads, interval_reads,
+    parse_date_time_splits,
 };
 use crate::declared::IntervalQualifier;
 use crate::decode::{Read, Unread};
@@ -136,6 +137,16 @@ pub(crate) fn within_workbuf(s: &str, buflen: usize) -> Read<()> {
     } else {
         Err(Unread::Refused)
     }
+}
+
+/// **The longest text a reader here reads a value from**, under an input
+/// function's `buflen`-byte work buffer: [`within_workbuf`] lets through only
+/// a text whose bytes but its spaces `ParseDateTime` holds in fewer than
+/// `buflen`, and these readers read a space only as the one between two of
+/// its fields, of which there are at most `MAXDATEFIELDS`. What a count
+/// needs of a field (`crate::unrepresentable`).
+pub(crate) const fn longest_read(buflen: usize) -> usize {
+    buflen + MAXDATEFIELDS
 }
 
 /// `JULIAN_MAXYEAR`, the year `IS_VALID_JULIAN` refuses from (its June, which

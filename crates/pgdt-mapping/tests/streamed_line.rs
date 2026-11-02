@@ -1,9 +1,10 @@
 //! What a mapping pass holds for a row many chunks long: none of it where
 //! the row's block is at the metadata level, the pass streaming the row
 //! (`pgdt_dump::ChunkEvents::stream_rows`), serially and in an interior
-//! worker alike, and the row's bytes where the block is censused — in a
-//! mapping of the line's own, outside the allocator
-//! (`docs/design/decisions.md`, "D139").
+//! worker alike, and the row's bytes where the block's statistics are
+//! gathered — in a mapping of the line's own, outside the allocator
+//! (`docs/design/decisions.md`, "D139"). A census alone holds only the
+//! fields it decodes (`pgdt-query`'s `streamed_census.rs`).
 //!
 //! **This binary installs a global allocator recording the largest single
 //! allocation**, which is why it is a test file of its own, and reads the

@@ -123,7 +123,7 @@ use crate::ddl::{
     parse_qualified_name,
 };
 use crate::lex::standard_conforming_strings;
-use crate::scan::{CopyEnd, CopyStart};
+use crate::scan::{CopyEnd, CopyStart, FieldFold};
 use pgdt_core::Result;
 use pgdt_core::internal::StatisticsScope;
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
@@ -131,7 +131,7 @@ use pgdt_model::timescaledb::RecordedRows;
 use pgdt_model::{
     BlockCensus, BlockGathered, CopyBlock, DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody,
     TocHeader,
-    internal::{BlockObserver, FieldCount},
+    internal::{BlockObserver, CensusFold, FieldCount},
 };
 
 /// Accumulator state between one span boundary and the next.
@@ -246,6 +246,10 @@ pub struct Builder {
     /// What the open block's values are counted against
     /// ([`Builder::count_block`]); a censused block counts nothing without it.
     pending_counter: Option<Arc<dyn FieldCount>>,
+    /// The open block's census and count over the rows its reader streams
+    /// ([`Builder::row_fold`]), unioned into `pending_census` at its end:
+    /// there for a censused block once it is counted.
+    pending_fold: Option<CensusFold>,
     /// The statistics observer for the open `COPY` block, when the mapping
     /// pass asked for one ([`Builder::observe_block`]). Handed every row and
     /// finished into [`CopyBlock::statistics`] at its `CopyEnd`.
@@ -259,6 +263,23 @@ pub struct Builder {
     /// (I50). `on` for a builder starting partway through a file, as for
     /// the scanner resumed beside it.
     standard_strings: bool,
+}
+
+/// A census's fold over a streamed row's fields is the carry's fold
+/// (`docs/design/decisions.md`, "D138"): the trait is the scanner's, the
+/// census the model's.
+impl FieldFold for CensusFold {
+    fn holds(&self, field: usize) -> bool {
+        CensusFold::holds(self, field)
+    }
+
+    fn fold(&mut self, field: usize, bytes: &[u8], ends: bool) {
+        CensusFold::fold(self, field, bytes, ends);
+    }
+
+    fn end_row(&mut self, fields: usize) {
+        CensusFold::end_row(self, fields);
+    }
 }
 
 /// The table an `INSERT INTO <table> ...` line targets, if `line` is one —
@@ -313,6 +334,7 @@ impl Builder {
             governing_toc: None,
             pending_census: None,
             pending_counter: None,
+            pending_fold: None,
             pending_observer: None,
             pending_rows: None,
             standard_strings: true,
@@ -795,6 +817,7 @@ impl Builder {
         };
         self.pending_census = census.then(|| BlockCensus::new(event.header.columns.len()));
         self.pending_counter = None;
+        self.pending_fold = None;
         self.pending_observer = None;
         self.pending_rows = None;
         self.pending_data = Some((start, event, self.pending_partition_root.take(), toc));
@@ -821,14 +844,22 @@ impl Builder {
         }
     }
 
-    /// Whether [`on_row`](Self::on_row) reads the open `COPY` block's rows:
-    /// it does where the block is censused, observed or recorded, and
-    /// otherwise only counts them, so its reader may stream them
-    /// ([`crate::ChunkEvents::stream_rows`]).
+    /// Whether [`on_row`](Self::on_row) reads the open `COPY` block's rows
+    /// whole: it does where the block is observed or recorded, and otherwise
+    /// counts them and censuses their fields, so its reader may stream them
+    /// ([`crate::ChunkEvents::stream_rows`]), the census folding a streamed
+    /// row's fields ([`row_fold`](Self::row_fold)).
     pub fn reads_rows(&self) -> bool {
-        self.pending_census.is_some()
+        (self.pending_census.is_some() && self.pending_fold.is_none())
             || self.pending_observer.is_some()
             || self.pending_rows.is_some()
+    }
+
+    /// What the open block's census folds a streamed row's fields into
+    /// ([`FieldFold`]), its reader handing them over as they go by — `None`
+    /// for a block censusing nothing.
+    pub fn row_fold(&mut self) -> Option<&mut dyn FieldFold> {
+        self.pending_fold.as_mut().map(|fold| fold as &mut dyn FieldFold)
     }
 
     /// Record the rows of the `COPY` block [`on_copy_start`](Self::on_copy_start)
@@ -852,6 +883,10 @@ impl Builder {
     /// (`docs/design/decisions.md`, "D96"). A block at the metadata level
     /// ignores it.
     pub fn count_block(&mut self, counter: Arc<dyn FieldCount>) {
+        self.pending_fold = self
+            .pending_census
+            .as_ref()
+            .map(|census| CensusFold::new(census.shapes.len(), Arc::clone(&counter)));
         self.pending_counter = Some(counter);
     }
 
@@ -921,7 +956,12 @@ impl Builder {
             statistics_declined,
             ignored_refusals,
             checked_in_full,
-            census: self.pending_census.take(),
+            census: self.pending_census.take().map(|mut census| {
+                if let Some(mut fold) = self.pending_fold.take() {
+                    census.merge(&fold.take());
+                }
+                census
+            }),
             recorded_rows: self.pending_rows.take().map(Box::new),
             longest_line: end.longest_line,
         };
@@ -930,6 +970,7 @@ impl Builder {
             "a censused block is counted too (D96)"
         );
         self.pending_counter = None;
+        self.pending_fold = None;
         let owned = toc.is_some();
         self.push_span(start, SpanBody::Data(DataBlock::Copy(Box::new(block))), toc, owned);
         Ok(())

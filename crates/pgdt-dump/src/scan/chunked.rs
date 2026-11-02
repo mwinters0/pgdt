@@ -87,8 +87,11 @@ pub enum ChunkPass {
 /// began in, the carry keeps no byte of it, only what its end needs — its
 /// length and how it ends — and its fields' count ([`StreamedLine`]), which
 /// a reader holds to its header's width; and the chunk that ends it, or
-/// the file's end, hands it to the carry pass in place of a held line. So a
-/// pass decoding no field holds no line at any length
+/// the file's end, hands it to the carry pass in place of a held line. A
+/// reader folding some of its fields ([`FieldFold`]) is handed each run of
+/// a field's bytes as they go by, and a field it holds whole once, grown as
+/// a long line is. So a pass decoding no field holds no line at any length,
+/// and a census holds only the fields it decodes
 /// (`docs/design/decisions.md`, "D138").
 #[derive(Debug)]
 pub struct ChunkCarry {
@@ -111,13 +114,30 @@ pub struct ChunkCarry {
     /// unless the file ends here.
     unfinished: bool,
     /// Whether the line carried into the next chunk is a row whose reader
-    /// reads none of its bytes, so it may be streamed.
+    /// holds none of its bytes, so it may be streamed.
     streams: bool,
     /// The row being streamed, no chunk having ended it yet.
     streamed: Option<StreamedLine>,
     /// The streamed row the current chunk ended, or the file's end did,
     /// which its carry pass hands out.
     ended: Option<StreamedLine>,
+    /// The field of a streamed row its fold holds whole, until it ends.
+    field: CarriedLine,
+}
+
+/// **What a reader folds a streamed row's fields into**, as its bytes go by
+/// ([`ChunkCarry`]): each run of a field's bytes in order, its index
+/// beside it, a delimiter never among them — scanning, no decoding. The
+/// carry strips the row's line ending as a [`Row`](super::Row)'s `raw`
+/// strips it, so a fold sees the bytes a held row's fields hold.
+pub trait FieldFold: Send {
+    /// Whether field `field` is wanted whole: the carry then holds it and
+    /// hands it over once, as its last bytes.
+    fn holds(&self, field: usize) -> bool;
+    /// The next `bytes` of field `field`, `ends` where they are its last.
+    fn fold(&mut self, field: usize, bytes: &[u8], ends: bool);
+    /// The row ends, `fields` wide, its last field's end folded already.
+    fn end_row(&mut self, fields: usize);
 }
 
 /// A row a read loop reads through without holding ([`ChunkCarry`]): what
@@ -134,11 +154,15 @@ pub struct StreamedLine {
     /// `pgdt_core::split_fields` counts them, so a reader holding the row to
     /// its header's width needs none of its bytes.
     fields: usize,
+    /// Whether the bytes folded so far stop short of a CR no backslash
+    /// escapes, the last byte read: the row's own if more follow it, and
+    /// stripped if the row ends there, as a held row's is.
+    cr: bool,
 }
 
 impl Default for StreamedLine {
     fn default() -> Self {
-        Self { len: 0, ending: EndingScan::default(), terminated: false, fields: 1 }
+        Self { len: 0, ending: EndingScan::default(), terminated: false, fields: 1, cr: false }
     }
 }
 
@@ -166,13 +190,82 @@ impl StreamedLine {
     }
 
     /// Fold in the row's next bytes, `bytes` of a chunk up to and including
-    /// the LF ending it where `terminated`.
-    fn read(&mut self, bytes: &[u8], terminated: bool) {
+    /// the LF ending it where `terminated`, handing its fields' to `fold`.
+    fn read<'f>(
+        &mut self,
+        bytes: &[u8],
+        terminated: bool,
+        fold: Option<&mut (dyn FieldFold + 'f)>,
+        field: &mut CarriedLine,
+    ) {
         let before = if terminated { &bytes[..bytes.len() - 1] } else { bytes };
+        match fold {
+            Some(fold) => self.fold(before, fold, field),
+            None => self.fields += delimiters(before),
+        }
         self.ending.feed(before);
-        self.fields += delimiters(before);
         self.len += bytes.len() as u64;
         self.terminated = terminated;
+    }
+
+    /// Hand `before`'s fields to `fold`, a CR ending them held back until
+    /// the next byte says whether it ends the row.
+    fn fold(&mut self, before: &[u8], fold: &mut dyn FieldFold, field: &mut CarriedLine) {
+        if before.is_empty() {
+            return;
+        }
+        if std::mem::take(&mut self.cr) {
+            self.fold_run(b"\r", fold, field);
+        }
+        let run = match before.split_last() {
+            Some((b'\r', head)) if !self.ending.escapes(head) => {
+                self.cr = true;
+                head
+            }
+            _ => before,
+        };
+        self.fold_run(run, fold, field);
+    }
+
+    /// Hand `run`'s fields to `fold`, counting its delimiters.
+    fn fold_run(&mut self, run: &[u8], fold: &mut dyn FieldFold, field: &mut CarriedLine) {
+        let mut start = 0;
+        for tab in memchr::memchr_iter(b'\t', run) {
+            self.fold_field(&run[start..tab], true, fold, field);
+            self.fields += 1;
+            start = tab + 1;
+        }
+        self.fold_field(&run[start..], false, fold, field);
+    }
+
+    /// Hand `fold` the next `bytes` of the row's current field, holding a
+    /// field it holds whole until `ends`.
+    fn fold_field(
+        &self,
+        bytes: &[u8],
+        ends: bool,
+        fold: &mut dyn FieldFold,
+        field: &mut CarriedLine,
+    ) {
+        let index = self.fields - 1;
+        if fold.holds(index) {
+            field.extend(bytes);
+            if ends {
+                fold.fold(index, field.bytes(), true);
+                field.clear();
+            }
+        } else if ends || !bytes.is_empty() {
+            fold.fold(index, bytes, ends);
+        }
+    }
+
+    /// End the row for `fold`: a CR held back is its ending, stripped.
+    fn end<'f>(&mut self, fold: Option<&mut (dyn FieldFold + 'f)>, field: &mut CarriedLine) {
+        if let Some(fold) = fold {
+            self.cr = false;
+            self.fold_field(&[], true, fold, field);
+            fold.end_row(self.fields);
+        }
     }
 }
 
@@ -195,6 +288,7 @@ impl ChunkCarry {
             streams: false,
             streamed: None,
             ended: None,
+            field: CarriedLine::new(chunk_size),
         }
     }
 
@@ -206,19 +300,25 @@ impl ChunkCarry {
     }
 
     /// The bytes this carry keeps allocated between two chunks: the buffers
-    /// it reuses and the line it still references.
+    /// it reuses, the line it still references and the field it holds.
     #[cfg(test)]
     pub(super) fn allocated(&self) -> usize {
-        self.line.allocated() + self.tail.capacity() + self.held.len()
+        self.line.allocated() + self.tail.capacity() + self.held.len() + self.field.allocated()
     }
 
     /// Take onto the carry whatever prefix of `chunk` completes the line it
-    /// holds, and hand out the chunk's two passes.
+    /// holds, and hand out the chunk's two passes; a row it streams hands
+    /// its fields to `fold`, where its reader folds them.
     ///
     /// With nothing carried the in-place pass begins at `0` — the chunk is
     /// scanned whole, where it lies. With a carry and no newline anywhere in
     /// `chunk`, it begins at `chunk.len()`, and the carry is left unfinished.
-    pub fn absorb<'a>(&'a mut self, chunk: &'a [u8], eof: bool) -> Passes<'a> {
+    pub fn absorb<'a>(
+        &'a mut self,
+        chunk: &'a [u8],
+        eof: bool,
+        mut fold: Option<&mut dyn FieldFold>,
+    ) -> Passes<'a> {
         // The line carried in is whichever pass left one, never both
         // (`Passes::span`'s assertion): an unfinished line stays where it
         // lies, what a carry pass left of its line is taken back, and a tail
@@ -240,8 +340,14 @@ impl ChunkCarry {
             let newline = memchr::memchr(b'\n', chunk);
             self.split = newline.map_or(chunk.len(), |nl| nl + 1);
             self.unfinished = newline.is_none();
-            line.read(&chunk[..self.split], newline.is_some());
+            line.read(
+                &chunk[..self.split],
+                newline.is_some(),
+                fold.as_deref_mut(),
+                &mut self.field,
+            );
             if newline.is_some() || eof {
+                line.end(fold.as_deref_mut(), &mut self.field);
                 self.ended = Some(line);
             } else {
                 self.streamed = Some(line);
@@ -261,8 +367,8 @@ impl ChunkCarry {
                 && self.line.len() + chunk.len() > STREAM_AFTER_BYTES
             {
                 let mut line = StreamedLine::default();
-                line.read(self.line.bytes(), false);
-                line.read(chunk, false);
+                line.read(self.line.bytes(), false, fold.as_deref_mut(), &mut self.field);
+                line.read(chunk, false, fold, &mut self.field);
                 self.line.clear();
                 self.streamed = Some(line);
             } else {
@@ -332,9 +438,10 @@ impl<'a> Passes<'a> {
     }
 
     /// Say whether the line this chunk leaves for the next is a row whose
-    /// reader reads none of its bytes, which the carry may then stream once
-    /// it outgrows its chunk. A row of a block whose rows are read is never
-    /// streamed.
+    /// reader holds none of its bytes — it reads none, or folds its fields
+    /// as they go by ([`FieldFold`]) — which the carry may then stream once
+    /// it outgrows its chunk. A row of a block whose rows are read whole is
+    /// never streamed.
     pub fn streams(&mut self, streams: bool) {
         *self.streams = streams;
     }
@@ -446,6 +553,16 @@ impl ChunkedScanner {
     /// read, so the last line is still scanned to the end — and hand out its
     /// events. A read's error is returned as the source gave it.
     pub async fn next_chunk(&mut self, source: &dyn ByteRangeSource) -> Result<ChunkEvents<'_>> {
+        self.next_chunk_folding(source, None).await
+    }
+
+    /// [`next_chunk`](Self::next_chunk), handing the fields of a row the
+    /// open block streams to `fold`, its reader's ([`FieldFold`]).
+    pub async fn next_chunk_folding(
+        &mut self,
+        source: &dyn ByteRangeSource,
+        fold: Option<&mut dyn FieldFold>,
+    ) -> Result<ChunkEvents<'_>> {
         let bytes = match self.end {
             Some(end) => {
                 let want = self.chunk_size.min((end - self.read_pos) as usize);
@@ -459,12 +576,16 @@ impl ChunkedScanner {
                 bytes
             }
         };
-        Ok(self.feed(bytes))
+        Ok(self.feed(bytes, fold))
     }
 
     /// Hand out the events of `bytes`, the source's bytes from where the last
-    /// chunk ended.
-    pub(super) fn feed(&mut self, bytes: Bytes) -> ChunkEvents<'_> {
+    /// chunk ended, a streamed row's fields to `fold`.
+    pub(super) fn feed(
+        &mut self,
+        bytes: Bytes,
+        fold: Option<&mut dyn FieldFold>,
+    ) -> ChunkEvents<'_> {
         debug_assert!(!self.open, "a chunk was left before its events ran out");
         let offset = self.read_pos;
         // Where the line carried in starts: the scanner stands at the first
@@ -474,7 +595,7 @@ impl ChunkedScanner {
         let eof = self.at_end();
         self.chunk = bytes;
         self.open = true;
-        let passes = self.carry.absorb(&self.chunk, eof);
+        let passes = self.carry.absorb(&self.chunk, eof, fold);
         let (span, span_eof) = passes.span(ChunkPass::Carry);
         ChunkEvents {
             scanner: &mut self.scanner,
@@ -568,10 +689,11 @@ impl<'a> ChunkEvents<'a> {
     }
 
     /// Say whether the open block's rows are streamed: where `streams`, its
-    /// reader reads none of a row past its count and its fields' count, so a
-    /// row that outgrows its chunk is counted without its bytes being held
-    /// and handed out as an [`Event::StreamedRow`], flat in memory at any
-    /// length. Asked of the line this chunk leaves for the next, so a reader
+    /// reader reads none of a row past its count and its fields' count, or
+    /// folds its fields as they go by ([`ChunkedScanner::next_chunk_folding`]),
+    /// so a row that outgrows its chunk is counted without its bytes being
+    /// held and handed out as an [`Event::StreamedRow`], flat in memory at
+    /// any length but for a field its fold holds whole. Asked of the line this chunk leaves for the next, so a reader
     /// whose answer moves says so before each chunk's events run out; a
     /// block's header and its end undo it.
     pub fn stream_rows(&mut self, streams: bool) {

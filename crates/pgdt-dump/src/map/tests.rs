@@ -2,7 +2,8 @@ use super::*;
 use pgdt_core::CopyHeader;
 use pgdt_model::{
     CompressedContainer, DataBlock, DiagnosticKind, Finding, Span, SpanBody, TocHeader, TypeKind,
-    UnrepresentableTier, internal::FieldCount,
+    UnrepresentableTier,
+    internal::{FieldCount, Kept},
 };
 
 /// A block's count where no column is tested: what a `COPY` with no DDL
@@ -16,6 +17,10 @@ impl FieldCount for NoCount {
 
     fn tier(&self, _column: usize, _field: &[u8]) -> Option<UnrepresentableTier> {
         None
+    }
+
+    fn keeps(&self, _column: usize) -> Kept {
+        Kept::Nothing
     }
 }
 

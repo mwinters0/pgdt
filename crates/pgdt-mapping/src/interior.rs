@@ -505,6 +505,7 @@ async fn scan_partition(
     let mut out = Vec::new();
     let mut entry = entry;
     let mut carry = ChunkCarry::new(options.read.chunk_size_bytes);
+    let mut fold = census.as_ref().map(CensusPlan::fold);
     let mut at = range.start;
     let mut want = match read {
         PartitionRead::Whole { unit } => range.end.saturating_sub(range.start).min(unit).max(1),
@@ -516,17 +517,27 @@ async fn scan_partition(
         let len = usize::try_from(end - at).unwrap_or(usize::MAX);
         let bytes = source.read_range(at, len).await?;
         let eof = end >= size;
-        // The observer and the carry go to the blocking pool with the bytes
-        // and come back with the scan, one read of the piece at a time.
+        // The observer, the carry and its fold go to the blocking pool with
+        // the bytes and come back with the scan, one read of the piece at a
+        // time.
         let plan = census.clone();
-        let (scanned, returned, carried) = tokio::task::spawn_blocking(move || {
-            let scanned =
-                scan_read(&mut carry, &bytes, at, eof, entry, limit, plan.as_ref(), piece.as_mut());
-            (scanned, piece, carry)
+        let (scanned, returned, carried, folded) = tokio::task::spawn_blocking(move || {
+            let scanned = scan_read(
+                &mut carry,
+                fold.as_mut(),
+                &bytes,
+                at,
+                eof,
+                entry,
+                limit,
+                plan.as_ref(),
+                piece.as_mut(),
+            );
+            (scanned, piece, carry, fold)
         })
         .await
         .map_err(Error::join)?;
-        (piece, carry) = (returned, carried);
+        (piece, carry, fold) = (returned, carried, folded);
         let scanned = scanned?;
         out.extend(scanned.scans);
         // Finished when it has read the line ending at or past its limit,

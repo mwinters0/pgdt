@@ -21,7 +21,8 @@ fn feed_all(
     let mut read_pos = 0usize;
     loop {
         let want = read.chunk_size_bytes.min(file.len() - read_pos);
-        let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]));
+        let mut chunk =
+            chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]), None);
         read_pos += want;
         while let Some(event) = chunk.next_event()? {
             on_event(&chunk, event);
@@ -44,7 +45,8 @@ fn drive(file: &[u8], chunk_size: usize) -> Driven {
     let mut read_pos = 0usize;
     loop {
         let want = chunk_size.min(file.len() - read_pos);
-        let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]));
+        let mut chunk =
+            chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]), None);
         read_pos += want;
         driven.scanned += chunk.scanned();
         while let Some(event) = chunk.next_event().unwrap() {
@@ -61,7 +63,7 @@ fn drive(file: &[u8], chunk_size: usize) -> Driven {
 /// the scanner could not finish, whose tail it kept.
 fn carrying(line: &[u8]) -> ChunkCarry {
     let mut carry = ChunkCarry::new(4);
-    let mut passes = carry.absorb(line, false);
+    let mut passes = carry.absorb(line, false, None);
     passes.consumed(ChunkPass::Carry, 0);
     passes.consumed(ChunkPass::InPlace, 0);
     assert_eq!(carry.carried(), line.len());
@@ -193,13 +195,13 @@ fn skip_to_reads_on_from_a_line_past_the_carry() {
     let reference = &reference[reference.len() - 2..];
     let mut chunked = ChunkedScanner::new(CopyScanner::new(), file.len() as u64, options(5));
     // Leave a line carried, as a chunk ends mid-row.
-    let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[..5]));
+    let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[..5]), None);
     while chunk.next_event().unwrap().is_some() {}
     assert!(chunked.carried() > 0);
     chunked.skip_to(at);
     assert_eq!(chunked.carried(), 0);
     let mut events = Vec::new();
-    let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[at as usize..]));
+    let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[at as usize..]), None);
     while let Some(event) = chunk.next_event().unwrap() {
         events.push(format!("{event:?}"));
     }
@@ -212,7 +214,7 @@ fn skip_to_reads_on_from_a_line_past_the_carry() {
 #[test]
 fn an_empty_carry_copies_nothing() {
     let mut carry = ChunkCarry::new(4);
-    let passes = carry.absorb(b"one\ntwo\n", false);
+    let passes = carry.absorb(b"one\ntwo\n", false, None);
     assert_eq!(passes.span(ChunkPass::Carry).0, b"");
     assert_eq!(passes.span(ChunkPass::InPlace).0, b"one\ntwo\n");
 }
@@ -223,7 +225,7 @@ fn an_empty_carry_copies_nothing() {
 fn a_carry_takes_only_the_prefix_that_completes_its_line() {
     let mut carry = carrying(b"abc");
 
-    let mut passes = carry.absorb(b"def\nghi\njkl", false);
+    let mut passes = carry.absorb(b"def\nghi\njkl", false, None);
     let (span, _) = passes.span(ChunkPass::Carry);
     assert_eq!(span, b"abcdef\n");
     // The scanner would consume that whole line, which is the protocol's
@@ -239,7 +241,7 @@ fn a_carry_takes_only_the_prefix_that_completes_its_line() {
 fn a_chunk_with_no_newline_joins_the_carry_whole() {
     let mut carry = carrying(b"abc");
 
-    let mut passes = carry.absorb(b"defghi", false);
+    let mut passes = carry.absorb(b"defghi", false, None);
     assert_eq!(passes.carried(), 9);
     assert_eq!(passes.span(ChunkPass::Carry).0, b"");
     assert_eq!(passes.span(ChunkPass::InPlace).0, b"");
@@ -247,12 +249,12 @@ fn a_chunk_with_no_newline_joins_the_carry_whole() {
     // The chunk that finishes the line hands the whole of it over once.
     passes.consumed(ChunkPass::Carry, 0);
     passes.consumed(ChunkPass::InPlace, 0);
-    let passes = carry.absorb(b"jk\nl", false);
+    let passes = carry.absorb(b"jk\nl", false, None);
     assert_eq!(passes.span(ChunkPass::Carry).0, b"abcdefghijk\n");
 
     // At the end of the file the unfinished line is handed over after all.
     let mut carry = carrying(b"abc");
-    let passes = carry.absorb(b"defghi", true);
+    let passes = carry.absorb(b"defghi", true, None);
     assert_eq!(passes.span(ChunkPass::Carry).0, b"abcdefghi");
 }
 
@@ -262,13 +264,13 @@ fn a_chunk_with_no_newline_joins_the_carry_whole() {
 #[test]
 fn the_carry_pass_is_eof_only_when_the_chunk_is_exhausted() {
     let mut carry = carrying(b"abc");
-    let mut passes = carry.absorb(b"def\nghi", true);
+    let mut passes = carry.absorb(b"def\nghi", true, None);
     assert!(!passes.span(ChunkPass::Carry).1);
     passes.consumed(ChunkPass::Carry, passes.line.len());
     assert!(passes.span(ChunkPass::InPlace).1);
 
     let mut carry = carrying(b"abc");
-    let passes = carry.absorb(b"defghi", true);
+    let passes = carry.absorb(b"defghi", true, None);
     assert!(passes.span(ChunkPass::Carry).1);
 }
 
@@ -387,9 +389,9 @@ fn a_held_line_is_handed_out_at_its_start() {
     assert_eq!(held, [row_end - row_start]);
 
     let mut carry = ChunkCarry::new(4);
-    assert!(carry.absorb(b"one\ntwo\n", false).held().is_empty());
+    assert!(carry.absorb(b"one\ntwo\n", false, None).held().is_empty());
     let mut carry = carrying(b"abc");
-    assert!(carry.absorb(b"defghi", false).held().is_empty());
+    assert!(carry.absorb(b"defghi", false, None).held().is_empty());
 }
 
 /// **A carry keeps no line past its row**: after a line many chunks long,
@@ -412,7 +414,8 @@ fn the_carry_keeps_no_line_past_its_row() {
     let mut after_row = None;
     while !chunked.at_end() {
         let want = chunk_size.min(file.len() - read_pos);
-        let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]));
+        let mut chunk =
+            chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]), None);
         read_pos += want;
         let mut long_row = false;
         while let Some(event) = chunk.next_event().unwrap() {
@@ -437,34 +440,82 @@ fn the_carry_keeps_no_line_past_its_row() {
 /// What a read loop streaming every block's rows — or, with `stream` off,
 /// holding them — answers of `file` in `read`'s chunks: every event, a row
 /// rendered as its index, its offset, where the scanner stands past it and
-/// its fields, so a held row and a streamed one read alike; how many rows
-/// were streamed; and the most the carry kept allocated between two chunks.
+/// its fields — a streamed row's as its fold was handed them — so a held row
+/// and a streamed one read alike; how many rows were streamed; and the most
+/// the carry kept allocated between two chunks.
 struct Streamed {
     events: Result<Vec<String>>,
     streamed: usize,
     allocated: usize,
 }
 
+/// A fold recording each streamed row's fields as it was handed them,
+/// holding the field `holds` names whole.
+#[derive(Default)]
+struct Recorder {
+    holds: Option<usize>,
+    rows: std::collections::VecDeque<Vec<Vec<u8>>>,
+    row: Vec<Vec<u8>>,
+}
+
+impl FieldFold for Recorder {
+    fn holds(&self, field: usize) -> bool {
+        self.holds == Some(field)
+    }
+
+    fn fold(&mut self, field: usize, bytes: &[u8], ends: bool) {
+        if field == self.row.len() {
+            self.row.push(Vec::new());
+        }
+        assert_eq!(field + 1, self.row.len(), "fields are handed over in order");
+        if self.holds(field) {
+            assert!(ends && self.row[field].is_empty(), "a held field is handed over once");
+        }
+        self.row[field].extend_from_slice(bytes);
+    }
+
+    fn end_row(&mut self, fields: usize) {
+        assert_eq!(fields, self.row.len(), "every field ended");
+        self.rows.push_back(std::mem::take(&mut self.row));
+    }
+}
+
+/// A row's fields as a rendering shows them.
+fn render_fields<'a>(fields: impl Iterator<Item = &'a [u8]>) -> String {
+    let fields: Vec<String> = fields.map(|f| String::from_utf8_lossy(f).into_owned()).collect();
+    format!("{} fields {:?}", fields.len(), fields.join("|"))
+}
+
 fn stream(file: &[u8], read: ReadOptions, stream: bool) -> Streamed {
+    stream_holding(file, read, stream, None)
+}
+
+/// [`stream`], its fold holding field `holds` whole.
+fn stream_holding(file: &[u8], read: ReadOptions, stream: bool, holds: Option<usize>) -> Streamed {
     let mut out = Streamed { events: Ok(Vec::new()), streamed: 0, allocated: 0 };
     let mut events = Vec::new();
+    let mut fold = Recorder { holds, ..Recorder::default() };
     let mut chunked = ChunkedScanner::new(CopyScanner::new(), file.len() as u64, read);
     let mut read_pos = 0usize;
     let ran: Result<()> = (|| loop {
         let want = read.chunk_size_bytes.min(file.len() - read_pos);
-        let mut chunk = chunked.feed(Bytes::copy_from_slice(&file[read_pos..read_pos + want]));
+        let bytes = Bytes::copy_from_slice(&file[read_pos..read_pos + want]);
+        let mut chunk = chunked.feed(bytes, Some(&mut fold));
         read_pos += want;
         while let Some(event) = chunk.next_event()? {
             let past = chunk.scanner().position();
             events.push(match event {
                 Event::Row(Row { offset, index, raw }) => {
-                    let fields = pgdt_core::split_fields(raw).count();
-                    format!("row {index}@{offset}..{past}, {fields} fields")
+                    let fields = render_fields(pgdt_core::split_fields(raw));
+                    format!("row {index}@{offset}..{past}, {fields}")
                 }
                 Event::StreamedRow(StreamedRow { offset, index, len, fields }) => {
                     assert_eq!(offset + len, past, "a streamed row's length");
                     out.streamed += 1;
-                    format!("row {index}@{offset}..{past}, {fields} fields")
+                    let folded = fold.rows.pop_front().expect("the fold ended the row");
+                    assert_eq!(folded.len(), fields, "the fold's fields are the row's");
+                    let fields = render_fields(folded.iter().map(Vec::as_slice));
+                    format!("row {index}@{offset}..{past}, {fields}")
                 }
                 Event::CopyStart(start) => {
                     chunk.stream_rows(stream);
@@ -484,7 +535,8 @@ fn stream(file: &[u8], read: ReadOptions, stream: bool) -> Streamed {
 
 /// A block of short rows around rows many chunks long — one in each of the
 /// three endings, a backslash before the chunk boundary and a CR escaped
-/// across one among them, and one whose delimiters lie among its long
+/// across one among them, one ending in a CR a backslash escapes, the last
+/// field's own byte, and one whose delimiters lie among its long
 /// values, a tab a backslash precedes among them, so its fields are counted
 /// across chunk boundaries — and the DDL after it.
 fn streamable(len: usize, block_ending: &str, long_ending: &str) -> Vec<u8> {
@@ -497,6 +549,7 @@ fn streamable(len: usize, block_ending: &str, long_ending: &str) -> Vec<u8> {
         format!("4\tab{block_ending}"),
         format!("5\t{value}\\\\{block_ending}"),
         format!("6\t{value}\t\t{value}\\\t{value}\t{block_ending}"),
+        format!("7\t{value}\\\r{block_ending}"),
     ] {
         file.extend_from_slice(row.as_bytes());
     }
@@ -506,9 +559,11 @@ fn streamable(len: usize, block_ending: &str, long_ending: &str) -> Vec<u8> {
 
 /// **A streamed row reads as the row it stands for**: whatever its ending,
 /// wherever the chunk boundaries fall, a read loop streaming a block's rows
-/// answers the events — rows by index, offset and end — and the refusals of
-/// one holding them, a terminator split across chunks included, and streams
-/// each row that outgrows its chunk.
+/// answers the events — rows by index, offset, end and fields, a streamed
+/// row's as its fold was handed them, a held field whole and its ending
+/// stripped as a held row's is — and the refusals of one holding them, a
+/// terminator split across chunks included, and streams each row that
+/// outgrows its chunk.
 #[test]
 fn a_streamed_row_reads_as_the_row_it_stands_for() {
     for (block, long) in
@@ -518,7 +573,7 @@ fn a_streamed_row_reads_as_the_row_it_stands_for() {
         for chunk_size in [1usize, 2, 3, 4, 5, 7, 13, 64, 199, 4096] {
             let read = options(chunk_size);
             let held = stream(&file, read, false);
-            let streamed = stream(&file, read, true);
+            let streamed = stream_holding(&file, read, true, Some(1));
             let context = format!("{block:?} block, {long:?} row, chunk {chunk_size}");
             match (&held.events, &streamed.events) {
                 (Ok(held), Ok(got)) => assert_eq!(got, held, "{context}"),

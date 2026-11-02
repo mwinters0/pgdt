@@ -95,7 +95,7 @@ impl DateTimeInput {
 /// `interval_in`'s work buffer for `ParseDateTime`, in bytes (I84).
 pub(crate) const INTERVAL_WORKBUF: usize = 256;
 
-const MAXDATEFIELDS: usize = 25;
+pub(crate) const MAXDATEFIELDS: usize = 25;
 const MAXDATELEN: usize = 128;
 const TOKMAXLEN: usize = 10;
 

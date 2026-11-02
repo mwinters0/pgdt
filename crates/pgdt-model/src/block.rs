@@ -4,6 +4,8 @@
 //! block's rows that counts it, which the parsers call and a crate above
 //! implements ([`FieldCount`]).
 
+use std::sync::Arc;
+
 use pgdt_core::split_fields;
 use serde::{Deserialize, Serialize};
 
@@ -48,40 +50,117 @@ impl ArrayShape {
         self.lower_bound_prefix |= other.lower_bound_prefix;
     }
 
-    /// Fold one still-COPY-escaped field into this column's census. The
-    /// field is not decoded first: neither `{` nor the `[lb:ub]=` prefix is
-    /// in COPY TEXT's escape set (I15). A field that does not open with `{`,
-    /// past any `[lb:ub]=` prefix, contributes nothing; one that does counts
-    /// whatever its column's type, the census being type-blind (D35) and read
-    /// only for a column resolved to an array.
-    ///
-    /// Dimensionality is the **leading brace run** (I25): `array_out` opens
-    /// with exactly `ndim` braces and force-quotes any element containing a
-    /// `{`, so no element can extend the run.
+    /// Fold one still-COPY-escaped field into this column's census: the
+    /// [`ShapeFold`] a streamed field is folded by, fed the field once.
     fn observe(&mut self, field: &[u8]) {
-        let mut rest = field;
-        if rest.first() == Some(&b'[') {
-            // `[lb:ub]…=` — the prefix runs to the `=` that introduces the
-            // value proper. A prefix always has a real array after it
-            // (`array_out` writes a bare `{}` before it formats dimensions);
-            // anything else here is not array output and is left alone.
-            let Some(eq) = rest.iter().position(|&b| b == b'=') else { return };
-            if rest.get(eq + 1) != Some(&b'{') {
-                return;
-            }
-            self.lower_bound_prefix = true;
-            rest = &rest[eq + 1..];
+        let mut fold = ShapeFold::default();
+        fold.feed(field);
+        self.apply(fold);
+    }
+
+    /// Fold in what `fold` found of one field.
+    fn apply(&mut self, fold: ShapeFold) {
+        self.lower_bound_prefix |= fold.prefix;
+        if let Some(depth) = fold.depth() {
+            let (min, max) = self.dims.unwrap_or((depth, depth));
+            self.dims = Some((min.min(depth), max.max(depth)));
         }
-        if rest.first() != Some(&b'{') {
-            return;
+    }
+}
+
+/// **One field's contribution to its column's [`ArrayShape`], folded over
+/// its bytes in order however they are split** — a held row's field fed
+/// once, a streamed row's a run at a time — answering what the census
+/// answers of the whole field (`docs/design/decisions.md`, "D35").
+///
+/// The field is not decoded first: neither `{` nor the `[lb:ub]=` prefix is
+/// in COPY TEXT's escape set (I15). A field that does not open with `{`,
+/// past any `[lb:ub]=` prefix, contributes nothing; one that does counts
+/// whatever its column's type, the census being type-blind (D35) and read
+/// only for a column resolved to an array.
+///
+/// Dimensionality is the **leading brace run** (I25): `array_out` opens
+/// with exactly `ndim` braces and force-quotes any element containing a
+/// `{`, so no element can extend the run. The empty array, `{}`, fits any
+/// depth and constrains neither bound.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct ShapeFold {
+    state: ShapeState,
+    /// Whether a `[lb:ub]=` prefix with a real array after it was read: a
+    /// prefix always has one (`array_out` writes a bare `{}` before it
+    /// formats dimensions), and anything else is not array output.
+    prefix: bool,
+}
+
+/// How far into its field a [`ShapeFold`] has read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum ShapeState {
+    /// No byte yet.
+    #[default]
+    Start,
+    /// Inside a `[`-opened prefix, looking for the `=` that ends it.
+    Prefix,
+    /// Just past the prefix's `=`, which a `{` must follow.
+    Equals,
+    /// In the leading brace run, this many braces long, saturating.
+    Braces(u8),
+    /// `{}` so far: the empty array, unless another byte follows.
+    Empty,
+    /// The brace run ended at this depth.
+    Done(u8),
+    /// The field is no array literal.
+    Nothing,
+}
+
+impl ShapeFold {
+    /// Fold in the field's next `bytes`.
+    fn feed(&mut self, mut bytes: &[u8]) {
+        while let Some((&byte, rest)) = bytes.split_first() {
+            self.state = match self.state {
+                ShapeState::Start => match byte {
+                    b'[' => ShapeState::Prefix,
+                    b'{' => ShapeState::Braces(1),
+                    _ => ShapeState::Nothing,
+                },
+                // The first `=` ends the prefix, found without a byte loop
+                // over a long field that opens with `[`.
+                ShapeState::Prefix => match memchr::memchr(b'=', bytes) {
+                    Some(at) => {
+                        bytes = &bytes[at + 1..];
+                        self.state = ShapeState::Equals;
+                        continue;
+                    }
+                    None => return,
+                },
+                ShapeState::Equals if byte == b'{' => {
+                    self.prefix = true;
+                    ShapeState::Braces(1)
+                }
+                ShapeState::Equals => ShapeState::Nothing,
+                ShapeState::Braces(depth) if byte == b'{' => {
+                    ShapeState::Braces(depth.saturating_add(1))
+                }
+                ShapeState::Braces(1) if byte == b'}' => ShapeState::Empty,
+                ShapeState::Braces(depth) => ShapeState::Done(depth),
+                ShapeState::Empty => ShapeState::Done(1),
+                ShapeState::Done(_) | ShapeState::Nothing => return,
+            };
+            bytes = rest;
         }
-        // The empty array fits any depth, so it constrains neither bound.
-        if rest == b"{}" {
-            return;
+    }
+
+    /// The field's dimensionality, once it has ended: `None` for one that
+    /// is no array literal, and for the empty array.
+    fn depth(&self) -> Option<u8> {
+        match self.state {
+            ShapeState::Braces(depth) | ShapeState::Done(depth) => Some(depth),
+            _ => None,
         }
-        let depth = rest.iter().take_while(|&&b| b == b'{').count().min(u8::MAX as usize) as u8;
-        let (min, max) = self.dims.unwrap_or((depth, depth));
-        self.dims = Some((min.min(depth), max.max(depth)));
+    }
+
+    /// Whether the field contributes to its column's shape.
+    fn contributes(&self) -> bool {
+        self.prefix || self.depth().is_some()
     }
 }
 
@@ -205,7 +284,8 @@ impl BlockCensusExt for BlockCensus {
     /// that turns out to have more fields than the header named — a malformed
     /// row, which the mapping pass does not refuse — and each field `counter`
     /// tests into the unrepresentable count. Every pass recording a census
-    /// calls it: the serial mapping pass, an interior worker and a re-read.
+    /// calls it for a row it holds — the serial mapping pass, an interior
+    /// worker and a re-read — and folds one it streams by [`CensusFold`].
     ///
     /// The row is rejected wholesale before it is split where neither needs
     /// it: an array literal always contains a `{`, the only other thing that
@@ -226,11 +306,7 @@ impl BlockCensusExt for BlockCensus {
                 }
                 self.shapes[i].observe(field);
             }
-            if let Some(tier) = counter.tier(i, field)
-                && let Some(count) = self.unrepresentable.get_mut(i)
-            {
-                count.add(tier);
-            }
+            self.count(i, counter.tier(i, field));
         }
     }
 
@@ -252,6 +328,18 @@ impl BlockCensusExt for BlockCensus {
     }
 }
 
+impl BlockCensus {
+    /// Count one value of column `column` past `tier`, a column past the
+    /// header counting nothing.
+    fn count(&mut self, column: usize, tier: Option<UnrepresentableTier>) {
+        if let Some(tier) = tier
+            && let Some(count) = self.unrepresentable.get_mut(column)
+        {
+            count.add(tier);
+        }
+    }
+}
+
 /// **What a data-level block's values are counted against**: whether a field
 /// holds a value no Arrow type of its column's could hold, and past which
 /// limit (`docs/design/decisions.md`, "D96"). Defined here and implemented by
@@ -264,6 +352,128 @@ pub trait FieldCount: Send + Sync {
     /// The tier `field` — column `column`'s still-escaped bytes — is past,
     /// `None` for a value its column holds and for a column past the header.
     fn tier(&self, column: usize, field: &[u8]) -> Option<UnrepresentableTier>;
+    /// What of column `column`'s field [`tier`](Self::tier) needs, so a row
+    /// no reader holds whole keeps only that much of it as it goes by
+    /// ([`CensusFold`]).
+    fn keeps(&self, column: usize) -> Kept;
+}
+
+/// **What a count needs of one column's field** ([`FieldCount::keeps`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kept {
+    /// None of it: no field of the column is past a tier.
+    Nothing,
+    /// Its first this many bytes, still escaped: no field longer is past a
+    /// tier, so a field that outgrows its head counts nothing — a counted
+    /// scalar, whose tier test answers for literals no longer than a bound.
+    Head(usize),
+    /// All of it — a counted container, whose worst leaf may lie anywhere
+    /// in it.
+    Whole,
+}
+
+/// **A block's census and count folded over rows no reader holds whole**:
+/// each field's bytes handed in order as they go by, however they are split,
+/// and folded as [`BlockCensusExt::observe_row`] folds a held row's — the
+/// shape census by the same [`ShapeFold`], and the count from what
+/// [`FieldCount::keeps`] says of the field: nothing, a head, or the field
+/// whole, which its reader holds and hands over once
+/// (`docs/design/decisions.md`, "D138"). What it answers is unioned into
+/// the block's own ([`BlockCensusExt::merge`]).
+pub struct CensusFold {
+    census: BlockCensus,
+    width: usize,
+    counter: Arc<dyn FieldCount>,
+    /// The field being folded: its shape so far, and its head where its
+    /// column keeps one.
+    shape: ShapeFold,
+    head: Vec<u8>,
+    /// Whether the field outgrew its head, so it counts nothing.
+    outgrown: bool,
+    /// Whether the row so far holds a `{` or a `[`, which grows the shape
+    /// census to its width as a held row's does.
+    shaped: bool,
+}
+
+impl std::fmt::Debug for CensusFold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CensusFold").field("census", &self.census).finish_non_exhaustive()
+    }
+}
+
+impl CensusFold {
+    /// Nothing folded yet, for a block `width` columns wide counted against
+    /// `counter`.
+    pub fn new(width: usize, counter: Arc<dyn FieldCount>) -> Self {
+        Self {
+            census: BlockCensus::new(width),
+            width,
+            counter,
+            shape: ShapeFold::default(),
+            head: Vec::new(),
+            outgrown: false,
+            shaped: false,
+        }
+    }
+
+    /// Whether column `column`'s field is folded whole: its reader holds it
+    /// and hands it over once, as its last bytes.
+    pub fn holds(&self, column: usize) -> bool {
+        self.counter.keeps(column) == Kept::Whole
+    }
+
+    /// Fold in `bytes`, the next of field `column` of the row being folded,
+    /// a delimiter never among them; `ends` where they are its last. A field
+    /// [`holds`](Self::holds) says is held is handed over whole, once.
+    pub fn fold(&mut self, column: usize, bytes: &[u8], ends: bool) {
+        self.shaped |= memchr::memchr2(b'{', b'[', bytes).is_some();
+        self.shape.feed(bytes);
+        let kept = self.counter.keeps(column);
+        if let Kept::Head(bound) = kept
+            && !self.outgrown
+        {
+            if self.head.len() + bytes.len() > bound {
+                self.outgrown = true;
+                self.head.clear();
+            } else {
+                self.head.extend_from_slice(bytes);
+            }
+        }
+        if !ends {
+            debug_assert!(kept != Kept::Whole, "a held field handed over in pieces");
+            return;
+        }
+        let shape = std::mem::take(&mut self.shape);
+        if shape.contributes() {
+            if column >= self.census.shapes.len() {
+                self.census.shapes.resize(column + 1, ArrayShape::default());
+            }
+            self.census.shapes[column].apply(shape);
+        }
+        let tier = match kept {
+            Kept::Nothing => None,
+            Kept::Head(_) if self.outgrown => None,
+            Kept::Head(_) => self.counter.tier(column, &self.head),
+            Kept::Whole => self.counter.tier(column, bytes),
+        };
+        self.census.count(column, tier);
+        self.head.clear();
+        self.outgrown = false;
+    }
+
+    /// End the row being folded, `fields` fields wide, its last field's
+    /// end folded already.
+    pub fn end_row(&mut self, fields: usize) {
+        if std::mem::take(&mut self.shaped) && fields > self.census.shapes.len() {
+            self.census.shapes.resize(fields, ArrayShape::default());
+        }
+    }
+
+    /// What the rows folded since the last take answered, leaving nothing
+    /// folded.
+    pub fn take(&mut self) -> BlockCensus {
+        std::mem::replace(&mut self.census, BlockCensus::new(self.width))
+    }
 }
 
 #[cfg(test)]
@@ -321,6 +531,76 @@ mod tests {
         let shape = shape_of(&["[1:2][0:1]={{1,2},{3,4}}"]);
         assert!(shape.lower_bound_prefix);
         assert_eq!(shape.dims, Some((2, 2)));
+    }
+
+    /// Counts a first column's `inf` past the format, from a head as long,
+    /// and a second's fields holding `inf` anywhere past the engine, whole.
+    struct Infs;
+
+    impl FieldCount for Infs {
+        fn counts_any(&self) -> bool {
+            true
+        }
+
+        fn tier(&self, column: usize, field: &[u8]) -> Option<UnrepresentableTier> {
+            match column {
+                0 => (field == b"inf").then_some(UnrepresentableTier::Format),
+                1 => field.windows(3).any(|w| w == b"inf").then_some(UnrepresentableTier::Engine),
+                _ => None,
+            }
+        }
+
+        fn keeps(&self, column: usize) -> Kept {
+            match column {
+                0 => Kept::Head(3),
+                1 => Kept::Whole,
+                _ => Kept::Nothing,
+            }
+        }
+    }
+
+    /// **A row folded a run at a time is censused as one held whole**:
+    /// every row below, its fields fed in runs of every length, answers
+    /// `observe_row`'s census and count — a shape split inside its prefix
+    /// or its brace run, a head outgrown, a row wider than its header, a
+    /// row holding no array.
+    #[test]
+    fn a_row_folded_in_runs_is_censused_as_one_held_whole() {
+        let rows: [&[u8]; 9] = [
+            b"inf\tinf\t{{1,2}}",
+            b"infinity\txinfx\t[0:1][1:2]={{1,2},{3,4}}\textra\t{x}",
+            b"{}\t{}\t[1:2]=x",
+            b"[1:0]={}\t\\N\t{\"{a}\"}",
+            b"in\tf\t\t",
+            b"plain\trow\tof\ttext",
+            b"{{{{{{{\t[\t[a=b]",
+            b"",
+            b"inf",
+        ];
+        for run in 1..=12 {
+            let mut held = BlockCensus::new(3);
+            let mut fold = CensusFold::new(3, Arc::new(Infs));
+            for raw in rows {
+                held.observe_row(&Infs, raw);
+                let fields: Vec<&[u8]> = split_fields(raw).collect();
+                for (column, field) in fields.iter().enumerate() {
+                    if fold.holds(column) {
+                        fold.fold(column, field, true);
+                        continue;
+                    }
+                    let mut pieces = field.chunks(run).peekable();
+                    if pieces.peek().is_none() {
+                        fold.fold(column, &[], true);
+                    }
+                    while let Some(piece) = pieces.next() {
+                        fold.fold(column, piece, pieces.peek().is_none());
+                    }
+                }
+                fold.end_row(fields.len());
+            }
+            assert_eq!(fold.take(), held, "runs of {run}");
+            assert_eq!(fold.take(), BlockCensus::new(3), "a take leaves nothing folded");
+        }
     }
 
     /// Combining blocks is min-of-mins, max-of-maxes, and a prefix anywhere

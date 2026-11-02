@@ -35,8 +35,8 @@ use pgdt_core::{Error, Result, RowEndingRefusal};
 use pgdt_model::LongestLine;
 
 pub use self::chunked::{
-    ChunkCarry, ChunkEvents, ChunkPass, ChunkedScanner, LineMapping, Passes, ReadOptions,
-    SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, StreamedLine, announce_read_loop, scan,
+    ChunkCarry, ChunkEvents, ChunkPass, ChunkedScanner, FieldFold, LineMapping, Passes,
+    ReadOptions, SCAN_LINE_DEFAULT_MAX_BYTES, ScanOptions, StreamedLine, announce_read_loop, scan,
 };
 
 /// The start of a COPY data block.
@@ -266,6 +266,13 @@ impl EndingScan {
         };
         let run = bytes.iter().rev().take_while(|&&b| b == b'\\').count();
         self.odd = if run == bytes.len() { self.odd ^ (run % 2 == 1) } else { run % 2 == 1 };
+    }
+
+    /// Whether a backslash escapes the byte after `head`, the row's next
+    /// bytes not yet fed.
+    pub(crate) fn escapes(&self, head: &[u8]) -> bool {
+        let run = head.iter().rev().take_while(|&&b| b == b'\\').count();
+        (run + usize::from(run == head.len() && self.odd)) % 2 == 1
     }
 
     /// How the row fed so far ends.
@@ -514,8 +521,9 @@ impl CopyScanner {
     }
 
     /// Say whether the open block's rows are streamed: where `streams`, its
-    /// reader reads none past their count and their fields', so a read loop
-    /// may count a row without holding its bytes
+    /// reader holds none of a row's bytes — it counts it and its fields, or
+    /// folds them as they go by — so a read loop may count a row without
+    /// holding its bytes
     /// ([`ChunkEvents::stream_rows`]). Undone by the block's end.
     pub(crate) fn stream_rows(&mut self, streams: bool) {
         debug_assert!(!streams || self.in_copy_block(), "rows streamed outside a block");
@@ -581,8 +589,9 @@ impl CopyScanner {
             // deficiency: KD104 — a backslash before a raw LF makes it data,
             // the row running on past it, as one before a raw tab makes that
             // data too (I91); here every LF ends a row, and `split_fields`
-            // splits, and a streamed row's count counts (`delimiters`), at
-            // every tab. `pg_dump` escapes both (I15).
+            // splits, and a streamed row's count counts (`delimiters`) and
+            // its fold folds (`FieldFold`), at every tab. `pg_dump` escapes
+            // both (I15).
             let (line, advance, holds_cr) = match self.state {
                 State::InCopy { .. } => match memchr::memchr2(b'\n', b'\r', rest) {
                     Some(nl) if rest[nl] == b'\n' => (&rest[..nl], nl + 1, false),

@@ -43,7 +43,7 @@ pub use statistics::{
 /// because a crate boundary forced it, and named here so a caller reaching
 /// past the API names the word.
 pub mod internal {
-    pub use crate::block::{BlockCensusExt, FieldCount, UnrepresentableExt};
+    pub use crate::block::{BlockCensusExt, CensusFold, FieldCount, Kept, UnrepresentableExt};
     pub use crate::catalog::{DatabaseMetadataExt, TableDefExt};
     pub use crate::diagnostic::DiagnosticExt;
     pub use crate::statistics::{

@@ -15,15 +15,15 @@ Outside one every line is lexed as psql lexes it (I50), one beginning inside a s
 dollar-quoted body never structure (I1). Rejected: tracking `$` alone, or quotes too (a `$$` in a name or comment hid
 every block).
 
-### D138 A row its reader only counts is streamed once it outgrows its chunk
-A block whose rows nothing reads past their count and width streams them — a metadata-level parse and its workers (no
-census, observer or record), and a replay whose batch, filter, stop and dynamic filter read no field, asked each chunk
-under the state last read, a kept row never wrong (`DynamicFilter`): a row no chunk ends is folded into a
-`StreamedLine` — length, ending (I91), fields — and handed out as `Event::StreamedRow`, holding no line. One a chunk
-ends, or no longer than `\.` and a CR, stays a `Row`. The state is `ChunkCarry`'s, the serial loop's and a worker's.
-Rejected: a `Row` with an empty `raw`, which a decoder cannot tell from an empty row; streaming in the scanner, which a
-worker's spans would lose. Reopens: a census reading a bounded head of each field. Evidence: `streamed_line.rs`,
-`streamed_replay.rs`.
+### D138 A row its reader holds no byte of is streamed once it outgrows its chunk
+A block whose rows nothing reads whole streams them — a metadata-level parse, a census alone (a query's pass), serial or
+in workers, and a replay whose batch, filter, stop and dynamic filter read no field, asked each chunk under the state
+last read (`DynamicFilter`): a row no chunk ends is folded into a `StreamedLine` — length, ending (I91), fields — and
+handed out as `Event::StreamedRow`. A census folds each field's runs (`FieldFold`, `CensusFold`): the shape census
+exactly, a counted scalar from the head its tier test is bounded by (`Kept::Head`), a counted container whole, held as
+a line. Rejected: a `Row` with an empty `raw`; streaming in the scanner (a worker's spans); holding a block's lines
+where it counts a container. Reopens: a codec whose decoders stream. Evidence: `streamed_line.rs`,
+`streamed_replay.rs`, `streamed_census.rs`.
 ### D139 A line past its chunk grows in a mapping of its own, by `mremap`, in huge-page steps
 A carried line longer than its chunk leaves the carry's `Vec` for an anonymous mapping (`LineMapping`), grown by
 `mremap` in steps of the PMD huge page where at most `STEP_CEILING` (else the base page), its start aligned to one,

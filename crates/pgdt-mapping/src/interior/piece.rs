@@ -21,13 +21,13 @@ use std::sync::Arc;
 
 use pgdt_core::{Result, RowEndingRefusal};
 use pgdt_dump::internal::{
-    ChunkCarry, ChunkPass, CopyScannerExt, PieceEndings, RowEnding, StreamedLine,
+    ChunkCarry, ChunkPass, CopyScannerExt, FieldFold, PieceEndings, RowEnding, StreamedLine,
 };
 use pgdt_dump::{CopyEnd, CopyScanner, Event};
 use pgdt_model::internal::BlockCensusExt;
 use pgdt_model::{
     BlockCensus, LongestLine,
-    internal::{BlockObserver, FieldCount},
+    internal::{BlockObserver, CensusFold, FieldCount},
 };
 
 /// Where a piece's first byte sits relative to the rows.
@@ -51,6 +51,13 @@ pub(super) enum PieceEntry {
 pub(crate) struct CensusPlan {
     pub width: usize,
     pub counter: Arc<dyn FieldCount>,
+}
+
+impl CensusPlan {
+    /// The census a worker folds the rows it streams into.
+    pub(super) fn fold(&self) -> CensusFold {
+        CensusFold::new(self.width, Arc::clone(&self.counter))
+    }
 }
 
 /// What one worker found in its piece of a `COPY` block's interior.
@@ -232,13 +239,14 @@ pub(super) fn scan_piece(
 
 /// The piece a row streamed from `base` stands for ([`StreamedLine`]), as
 /// [`scan_piece`] answers a span holding that row alone: one row, its ending
-/// recorded, through its LF — or, where the file's end ended it, nothing
-/// consumed, a piece never claiming end of file.
-fn streamed_piece(base: u64, line: StreamedLine) -> PieceScan {
+/// recorded, through its LF, and censused as `fold` folded it — or, where the
+/// file's end ended it, nothing consumed, a piece never claiming end of file.
+fn streamed_piece(base: u64, line: StreamedLine, fold: Option<&mut CensusFold>) -> PieceScan {
     let ended = line.terminated();
+    let census = fold.map(CensusFold::take).filter(|_| ended);
     PieceScan {
         rows: u64::from(ended),
-        census: BlockCensus::default(),
+        census: census.unwrap_or_default(),
         terminator: None,
         through: if ended { base + line.bytes() } else { base },
         endings: PieceEndings { first: ended.then_some((line.ending(), base)), mismatch: None },
@@ -271,13 +279,16 @@ pub(super) struct ReadScan {
 /// the scanner — never consumed, a [`scan_piece`] never claiming end of
 /// file.
 ///
-/// **A block at the metadata level, with no observer, streams its rows**:
-/// a row outgrowing its read is counted without its bytes being kept
-/// ([`ChunkCarry`]), a piece of its own ([`streamed_piece`]), so the worker
-/// holds no line at any length.
+/// **A block with no observer streams its rows**: a row outgrowing its read
+/// is counted without its bytes being kept ([`ChunkCarry`]), its fields
+/// folded into `fold` where the block is censused — its census, which
+/// [`CensusPlan`] makes — a piece of its own ([`streamed_piece`]), so the
+/// worker holds no line at any length, and a census only the fields it
+/// decodes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn scan_read(
     carry: &mut ChunkCarry,
+    mut fold: Option<&mut CensusFold>,
     chunk: &[u8],
     offset: u64,
     eof: bool,
@@ -287,12 +298,14 @@ pub(super) fn scan_read(
     mut observer: Option<&mut PieceObserver>,
 ) -> Result<ReadScan> {
     let line_base = offset - carry.carried() as u64;
-    let mut passes = carry.absorb(chunk, eof);
-    passes.streams(census.is_none() && observer.is_none());
+    debug_assert_eq!(census.is_some(), fold.is_some(), "a census folds what a piece streams");
+    let mut passes =
+        carry.absorb(chunk, eof, fold.as_deref_mut().map(|fold| fold as &mut dyn FieldFold));
+    passes.streams(observer.is_none());
     let mut scans = Vec::new();
     if let Some(line) = passes.streamed() {
         debug_assert_eq!(entry, PieceEntry::RowStart, "a resync carries no line");
-        let scan = streamed_piece(line_base, line);
+        let scan = streamed_piece(line_base, line, fold);
         let done = scan.through > limit;
         if scan.through > line_base || eof {
             scans.push(scan);

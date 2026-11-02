@@ -28,12 +28,14 @@ use arrow_schema::DataType;
 use crate::nested::{RangeLiteral, decode_array, decode_multirange, decode_range, decode_record};
 use crate::pgtype::{NestedPlan, RANGE_STRUCT_FIELDS};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
+use crate::value::datetime::grammar::{DateTimeInput, INTERVAL_WORKBUF};
 use crate::value::datetime::{
-    civil_from_days, decode_date32, interval_parts, timestamp_micros_wide,
+    civil_from_days, decode_date32, interval_parts, longest_read, timestamp_micros_wide,
 };
 use pgdt_core::{CopyHeader, unescape_field};
 use pgdt_model::{
-    DumpMetadata, Unrepresentable, UnrepresentableTier, calendar_end, internal::FieldCount,
+    DumpMetadata, Unrepresentable, UnrepresentableTier, calendar_end,
+    internal::{FieldCount, Kept},
 };
 
 use UnrepresentableTier::{Engine, Format};
@@ -104,6 +106,25 @@ impl Leaf {
             _ => Leaf::Held,
         };
         if leaf.holds_everything() { Leaf::Held } else { leaf }
+    }
+
+    /// **The longest text a scalar leaf's test finds past a tier**, which
+    /// [`Counter::tier_of`] holds it to, so a field's head is all a count
+    /// needs of it: a spelling's own length, or the longest a reader reads
+    /// ([`longest_read`]), a reader refusing a literal past its input
+    /// function's work buffer (I83, I84). `None` for a container, whose worst
+    /// leaf may lie anywhere in it.
+    fn longest_counted(&self) -> Option<usize> {
+        Some(match self {
+            Leaf::Held => 0,
+            Leaf::Date => longest_read(DateTimeInput::Date.workbuf()),
+            Leaf::Timestamp { with_tz: false } => longest_read(DateTimeInput::Timestamp.workbuf()),
+            Leaf::Timestamp { with_tz: true } => longest_read(DateTimeInput::TimestampTz.workbuf()),
+            Leaf::Time => "24:00:00".len(),
+            Leaf::Interval => longest_read(INTERVAL_WORKBUF),
+            Leaf::Decimal => "NaN".len(),
+            Leaf::Array(_) | Leaf::Record(_) | Leaf::Range(_) | Leaf::Multirange(_) => return None,
+        })
     }
 
     fn holds_everything(&self) -> bool {
@@ -387,8 +408,13 @@ impl Counter {
     }
 
     /// The tier `text`, one value of `leaf`, is past — a container's worst
-    /// leaf's, the format spec's dominating.
+    /// leaf's, the format spec's dominating. A scalar's text longer than its
+    /// [`Leaf::longest_counted`] is past none, by construction rather than
+    /// by its reader alone.
     fn tier_of(&self, leaf: &Leaf, text: &str) -> Option<UnrepresentableTier> {
+        if leaf.longest_counted().is_some_and(|longest| text.len() > longest) {
+            return None;
+        }
         let worst = |tiers: &mut dyn Iterator<Item = Option<UnrepresentableTier>>| {
             let mut worst = None;
             for tier in tiers.flatten() {
@@ -521,9 +547,24 @@ fn interval(text: &str) -> Option<UnrepresentableTier> {
     micros.checked_mul(1_000).is_none().then_some(Format)
 }
 
+/// The most still-escaped bytes COPY TEXT spends on one byte, an octal
+/// `\ooo` or a hex `\xhh` escape (`pgdt_core::unescaped`): a field longer
+/// than this many times a text's length unescapes to a longer text.
+const ESCAPED_BYTES_PER_BYTE: usize = 4;
+
 impl FieldCount for Counter {
     fn counts_any(&self) -> bool {
         self.columns.iter().any(|leaf| *leaf != Leaf::Held)
+    }
+
+    /// A scalar's head: every field unescaping to a text its test counts.
+    fn keeps(&self, column: usize) -> Kept {
+        match self.columns.get(column) {
+            None | Some(Leaf::Held) => Kept::Nothing,
+            Some(leaf) => leaf
+                .longest_counted()
+                .map_or(Kept::Whole, |longest| Kept::Head(longest * ESCAPED_BYTES_PER_BYTE)),
+        }
     }
 
     fn tier(&self, column: usize, field: &[u8]) -> Option<UnrepresentableTier> {
@@ -650,6 +691,64 @@ mod tests {
         let intervals = Leaf::Array(Box::new(Leaf::Interval));
         assert_eq!(tier(intervals, "{\"1 day\",\"2562047:47:16.854776\"}"), Some(Format));
     }
+
+    /// **A scalar is counted from a head of its field**: the longest text
+    /// each reader reads, its parts padded with zeros until the reader
+    /// refuses it for its work buffer, is within the bound its test is held
+    /// to — so the bound changes no count — and that text escaped byte by
+    /// byte is within the head its column keeps, and counted from it.
+    #[test]
+    fn a_scalar_is_counted_from_a_head_of_its_field() {
+        use crate::value::datetime::grammar::MAXDATEFIELDS;
+        use crate::value::datetime::{date_days, interval_parts};
+        let reads = |leaf: &Leaf, text: &str| match leaf {
+            Leaf::Date => date_days(text).is_ok(),
+            Leaf::Timestamp { with_tz } => timestamp_micros_wide(text, *with_tz).is_ok(),
+            Leaf::Interval => interval_parts(text).is_ok(),
+            _ => unreachable!(),
+        };
+        for (leaf, text, past) in [
+            (Leaf::Date, "2000-01-01 BC", None),
+            (Leaf::Date, "262143-01-01", Some(Engine)),
+            (Leaf::Timestamp { with_tz: false }, "2000-01-01 00:00:00 BC", None),
+            (Leaf::Timestamp { with_tz: true }, "2000-01-01 00:00:00+00 BC", None),
+            (Leaf::Timestamp { with_tz: true }, "262143-01-01 00:00:00+00", Some(Engine)),
+            (Leaf::Interval, "1 years 1 mons 1 days 2562047:47:16.854776", Some(Format)),
+        ] {
+            let longest = leaf.longest_counted().expect("a scalar");
+            let read = (0..)
+                .map(|zeros| {
+                    // Zeros where the reader takes a part at any length:
+                    // the year, and an interval's hours.
+                    let at = if leaf == Leaf::Interval { text.rfind(' ').unwrap() + 1 } else { 0 };
+                    format!("{}{}{}", &text[..at], "0".repeat(zeros), &text[at..])
+                })
+                .take_while(|padded| reads(&leaf, padded))
+                .last()
+                .unwrap_or_else(|| panic!("{text} is read"));
+            // Within the spaces the bound allows of the buffer, so the padding
+            // stopped at the buffer.
+            assert!(read.len() + MAXDATEFIELDS + MAX_SPACES >= longest, "{read}: stopped short");
+            assert!(read.len() <= longest, "{read}: {} bytes past {longest}", read.len());
+            let escaped: String = read.bytes().map(|b| format!("\\{b:03o}")).collect();
+            let Kept::Head(head) = counter(leaf.clone()).keeps(0) else { panic!("a head") };
+            assert!(escaped.len() <= head, "{read}");
+            assert_eq!(counter(leaf.clone()).tier(0, escaped.as_bytes()), past, "{read}");
+        }
+        for (leaf, kept) in [
+            (Leaf::Time, Kept::Head(32)),
+            (Leaf::Decimal, Kept::Head(12)),
+            (Leaf::Held, Kept::Nothing),
+            (Leaf::Array(Box::new(Leaf::Date)), Kept::Whole),
+        ] {
+            assert_eq!(counter(leaf).keeps(0), kept);
+        }
+        assert_eq!(counter(Leaf::Date).keeps(1), Kept::Nothing, "a column past the header");
+    }
+
+    /// The most spaces a text the tests above pad holds, so the padding is
+    /// seen to reach its reader's work buffer.
+    const MAX_SPACES: usize = 8;
 
     /// **A column of nothing its type cannot hold splits no row**, however
     /// deep the container.

@@ -280,7 +280,8 @@ pub async fn map_forward(
             cache.save(watch, source, index).await?;
             return Ok(MapStop::Interrupted);
         }
-        let mut chunk = match chunked.next_chunk(source).await {
+        // A row the open block streams hands its fields to its census.
+        let mut chunk = match chunked.next_chunk_folding(source, builder.row_fold()).await {
             Ok(chunk) => chunk,
             // The check point above, reached through the read rather than
             // through the token ([`cancelled_read`]): the same chunk and the
@@ -377,9 +378,10 @@ pub async fn map_forward(
                     if records {
                         builder.record_rows();
                     }
-                    // A block whose rows are only counted holds none of
-                    // them: a row outgrowing its chunk is streamed
-                    // (`pgdt_dump::ChunkEvents::stream_rows`).
+                    // A block whose rows are only counted and censused
+                    // holds none of them: a row outgrowing its chunk is
+                    // streamed (`pgdt_dump::ChunkEvents::stream_rows`), its
+                    // census holding only the fields it decodes.
                     chunk.stream_rows(!builder.reads_rows());
                     // **The offer, and this loop is the leader making it**
                     // ([`scan_region`]): everything from
@@ -474,8 +476,8 @@ pub async fn map_forward(
                 // (`docs/design/decisions.md`, "D35", "D96") and a
                 // gathering block's statistics.
                 Event::Row(row) => builder.on_row(row.offset, row.raw),
-                // A row of a block whose rows are only counted, which the
-                // scanner counted.
+                // A row of a block whose rows are only counted and
+                // censused, which the scanner counted and the census folded.
                 Event::StreamedRow(_) => debug_assert!(!builder.reads_rows()),
                 Event::CopyEnd(end) => {
                     let targets = std::mem::take(&mut open_block_targets);

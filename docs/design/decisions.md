@@ -56,7 +56,7 @@ are `docs/process.md`, "The decision register".
 ## The scanner
 [`decisions/scanner.md`](decisions/scanner.md)
 - **D23** The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
-- **D138** A row its reader only counts is streamed once it outgrows its chunk
+- **D138** A row its reader holds no byte of is streamed once it outgrows its chunk
 - **D139** A line past its chunk grows in a mapping of its own, by `mremap`, in huge-page steps
 - **D25** Parallelize what is CPU-bound
 - **D26** Cancellation is `map_file`'s argument, polled per chunk or leader window by the mapping passes alone
