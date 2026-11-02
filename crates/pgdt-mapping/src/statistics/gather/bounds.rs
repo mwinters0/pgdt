@@ -3,7 +3,6 @@
 //! column's values kept apart where it differs (`docs/design/decisions.md`,
 //! "D76", "D97").
 
-use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::mem::{self, size_of};
 #[cfg(feature = "test-support")]
@@ -11,9 +10,10 @@ use std::sync::Arc;
 
 use pgdt_codec::compare::CompareKind;
 use pgdt_codec::{
-    decode::{Unread, decode_bytea, decode_bytea_escape, render_bytea},
+    decode::{Unread, decode_bytea, render_bytea},
     internal::{
-        OrderKey, bytea_unread, char_typmod_refuses, compare_keys_stored, field_key, order_key,
+        OrderKey, bytea_escape_head, bytea_unread, char_typmod_refuses, compare_keys_stored,
+        field_key, order_key,
     },
 };
 use pgdt_model::{
@@ -22,7 +22,7 @@ use pgdt_model::{
 };
 
 use super::charge::{push_charged, reserve_charged};
-use super::clip::{CLIP_BYTES, Clipped, text_prefix};
+use super::clip::{CLIP_BYTES, Clipped, Field, Head, text_prefix};
 use super::order::ViewOrders;
 use crate::statistics::account::Charge;
 #[cfg(feature = "test-support")]
@@ -68,19 +68,59 @@ enum Canonical {
 impl Canonical {
     /// The text whose bytes order `text` among its column's values, `None`
     /// where this kind cannot place it.
-    fn of(self, text: &str) -> Option<Cow<'_, str>> {
-        match self {
-            Self::Text { .. } => Some(Cow::Borrowed(text)),
-            Self::PaddedText { .. } => Some(Cow::Borrowed(text.trim_end_matches(' '))),
-            Self::Bytea => match text.strip_prefix("\\x") {
-                Some(hex) => (hex.len() % 2 == 0
-                    && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
-                .then_some(Cow::Borrowed(text)),
-                None => decode_bytea_escape(text, BYTEA_ESCAPE_HEAD_BYTES)
-                    .map(|head| Cow::Owned(render_bytea(&head))),
+    fn of<'a>(self, text: Field<'a>) -> Option<Canon<'a>> {
+        Some(Canon::Head(match (self, text) {
+            (Self::Text { .. }, Field::Whole(text)) => Head::whole(text),
+            (Self::Text { .. }, Field::Long(long)) => long.head(),
+            (Self::PaddedText { .. }, Field::Whole(text)) => {
+                Head::whole(text.trim_end_matches(' '))
+            }
+            (Self::PaddedText { .. }, Field::Long(long)) => {
+                match long.head.get(..long.read.trimmed) {
+                    // A blank is one byte, so the trimmed text ends on a character.
+                    Some(trimmed) => Head::whole(trimmed),
+                    None => Head { text: &long.head, len: long.read.trimmed },
+                }
+            }
+            (Self::Bytea, text) if canonical_hex(text.bytes()) => match text {
+                Field::Whole(text) => Head::whole(text),
+                Field::Long(long) => long.head(),
             },
+            (Self::Bytea, text) => {
+                let head = bytea_escape_head(text.bytes(), BYTEA_ESCAPE_HEAD_BYTES)?;
+                return Some(Canon::Rendered(render_bytea(&head)));
+            }
+        }))
+    }
+}
+
+/// A value's text in [`Canonical`] form: a head of its field, or a `bytea`'s
+/// `escape` form rendered as hex.
+enum Canon<'a> {
+    Head(Head<'a>),
+    Rendered(String),
+}
+
+impl Canon<'_> {
+    fn head(&self) -> Head<'_> {
+        match self {
+            Self::Head(head) => *head,
+            Self::Rendered(text) => Head::whole(text),
         }
     }
+}
+
+/// Whether `text` is `bytea`'s hex form as `byteaout` writes it, which
+/// orders as the bytes do: `\x` and lowercase hex pairs.
+fn canonical_hex(mut text: impl Iterator<Item = u8>) -> bool {
+    if text.next() != Some(b'\\') || text.next() != Some(b'x') {
+        return false;
+    }
+    let mut digits = 0usize;
+    text.all(|b| {
+        digits += 1;
+        matches!(b, b'0'..=b'9' | b'a'..=b'f')
+    }) && digits.is_multiple_of(2)
 }
 
 /// How many of an `escape` value's bytes [`Canonical::of`] renders: enough
@@ -347,10 +387,22 @@ impl BoundsGatherer {
     /// [`Refused`]**, where keying it, placing a `bytea` or holding a text to
     /// its length finds that; no other value is, one this build cannot read
     /// losing the group's bounds and its block's order.
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn observe(
         &mut self,
         group: &mut GroupBounds,
         text: &str,
+        tier: Option<UnrepresentableTier>,
+    ) -> Result<(), Refused> {
+        self.observe_field(group, Field::Whole(text), tier)
+    }
+
+    /// [`Self::observe`] over a field as gathering reads it, a long one off
+    /// its bytes (`docs/design/decisions.md`, "D142").
+    pub(super) fn observe_field(
+        &mut self,
+        group: &mut GroupBounds,
+        text: Field<'_>,
         tier: Option<UnrepresentableTier>,
     ) -> Result<(), Refused> {
         match &self.order {
@@ -359,35 +411,44 @@ impl BoundsGatherer {
                 let canonical = *canonical;
                 if let Canonical::Text { length: Some(length) }
                 | Canonical::PaddedText { length: Some(length) } = canonical
-                    && char_typmod_refuses(text, length)
+                    && match text {
+                        Field::Whole(text) => char_typmod_refuses(text, length),
+                        Field::Long(long) => long.read.typmod_refuses(length),
+                    }
                 {
                     self.lose_value(group, None);
                     return Err(Refused);
                 }
-                let Some(text) = canonical.of(text) else {
+                let Some(canon) = canonical.of(text) else {
                     self.lose_value(group, None);
                     return match canonical {
-                        Canonical::Bytea if bytea_unread(text) == Unread::Refused => Err(Refused),
+                        Canonical::Bytea if bytea_unread(text.bytes()) == Unread::Refused => {
+                            Err(Refused)
+                        }
                         _ => Ok(()),
                     };
                 };
-                let text = text.as_ref();
+                let head = canon.head();
                 let GroupBounds::Bytewise { min, max, .. } = group else {
                     unreachable!("a bytewise order keeps bytewise bounds")
                 };
-                if min.as_ref().is_none_or(|m| m.locate(text) == Some(Ordering::Less)) {
-                    *min = Some(Clipped::of(text));
+                if min.as_ref().is_none_or(|m| m.locate(head) == Some(Ordering::Less)) {
+                    *min = Some(Clipped::of(head));
                 }
-                if max.as_ref().is_none_or(|m| m.locate(text) == Some(Ordering::Greater)) {
-                    *max = Some(Clipped::of(text));
+                if max.as_ref().is_none_or(|m| m.locate(head) == Some(Ordering::Greater)) {
+                    *max = Some(Clipped::of(head));
                 }
-                self.rows.place_bytewise(text);
+                self.rows.place_bytewise(head);
             }
             Order::Keyed(kind) => {
-                if text.len() > DICTIONARY_ENTRY_MAX_BYTES {
-                    self.lose_value(group, tier);
-                    return Ok(());
-                }
+                // A long field is past the cap, which keys no value.
+                let text = match text {
+                    Field::Whole(text) if text.len() <= DICTIONARY_ENTRY_MAX_BYTES => text,
+                    _ => {
+                        self.lose_value(group, tier);
+                        return Ok(());
+                    }
+                };
                 let key = match field_key(kind, text) {
                     Ok(key) => key,
                     Err(unread) => {

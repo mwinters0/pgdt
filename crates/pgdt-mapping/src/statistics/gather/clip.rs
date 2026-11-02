@@ -3,11 +3,117 @@
 
 use std::cmp::Ordering;
 
+use pgdt_codec::internal::{TextFold, TextRead};
+use pgdt_core::internal::Unescaped;
 use pgdt_model::DICTIONARY_ENTRY_MAX_BYTES;
 
 /// How much of a bytewise value is kept: past the cap by one character's
 /// width, so a kept head longer than the cap says its value is too.
 pub(super) const CLIP_BYTES: usize = DICTIONARY_ENTRY_MAX_BYTES + char::MAX.len_utf8();
+
+/// **A bytewise value as its bounds read it**: its length, and a head of it
+/// on a character boundary — the whole value, or at least [`CLIP_BYTES`] of
+/// it, which is all a stored bound and a row order read
+/// (`docs/design/decisions.md`, "D76", "D142").
+#[derive(Clone, Copy)]
+pub(super) struct Head<'a> {
+    pub(super) text: &'a str,
+    pub(super) len: usize,
+}
+
+impl<'a> Head<'a> {
+    pub(super) fn whole(text: &'a str) -> Self {
+        Self { text, len: text.len() }
+    }
+}
+
+/// **A field's text as gathering reads it** (`docs/design/decisions.md`,
+/// "D142"): whole, or, where it is long and escaped, read off its bytes.
+#[derive(Clone, Copy)]
+pub(super) enum Field<'a> {
+    Whole(&'a str),
+    /// Longer than [`LONG_FIELD_HEAD`], so longer than anything a statistic
+    /// keeps whole.
+    Long(&'a LongText<'a>),
+}
+
+impl Field<'_> {
+    /// The text's length in bytes.
+    pub(super) fn len(&self) -> usize {
+        match self {
+            Self::Whole(text) => text.len(),
+            Self::Long(long) => long.read.len,
+        }
+    }
+
+    /// The text's bytes, read again.
+    pub(super) fn bytes(&self) -> FieldBytes<'_> {
+        match self {
+            Self::Whole(text) => FieldBytes::Whole(text.bytes()),
+            Self::Long(long) => FieldBytes::Long(long.bytes.clone()),
+        }
+    }
+}
+
+/// [`Field::bytes`].
+pub(super) enum FieldBytes<'a> {
+    Whole(std::str::Bytes<'a>),
+    Long(Unescaped<'a>),
+}
+
+impl Iterator for FieldBytes<'_> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<u8> {
+        match self {
+            Self::Whole(bytes) => bytes.next(),
+            Self::Long(bytes) => bytes.next(),
+        }
+    }
+}
+
+/// How much of a long field [`LongText`] keeps: at least [`CLIP_BYTES`] on
+/// a character boundary, a character being at most four bytes. An escaped
+/// field longer than this is read as one ([`LongText::read`]).
+pub(super) const LONG_FIELD_HEAD: usize = CLIP_BYTES + 3;
+
+/// **A long escaped field read off its bytes, never unescaped whole**
+/// (`docs/design/decisions.md`, "D142"): its head, and what a statistic or
+/// a refusal reads of the rest ([`TextRead`]) — a `bytea`'s form, which only
+/// its own kind reads, being read again from `bytes`.
+pub(super) struct LongText<'a> {
+    pub(super) bytes: Unescaped<'a>,
+    /// Its first [`LONG_FIELD_HEAD`] bytes, cut back to a character boundary.
+    pub(super) head: String,
+    pub(super) read: TextRead,
+}
+
+impl<'a> LongText<'a> {
+    /// `bytes` read once, `None` where they are not UTF-8.
+    pub(super) fn read(bytes: Unescaped<'a>) -> Option<Self> {
+        let mut head = Vec::with_capacity(LONG_FIELD_HEAD);
+        let read = TextFold::read(bytes.clone(), |byte| {
+            if head.len() < LONG_FIELD_HEAD {
+                head.push(byte);
+            }
+        })?;
+        if let Err(cut) = std::str::from_utf8(&head) {
+            head.truncate(cut.valid_up_to());
+        }
+        let head = String::from_utf8(head).expect("a prefix of UTF-8 cut at a character");
+        Some(Self { bytes, head, read })
+    }
+
+    /// The text, where its head is all of it.
+    pub(super) fn whole(&self) -> Option<&str> {
+        (self.head.len() == self.read.len).then_some(&self.head)
+    }
+
+    /// The text as its bounds read it.
+    pub(super) fn head(&self) -> Head<'_> {
+        Head { text: &self.head, len: self.read.len }
+    }
+}
 
 /// A bytewise value's first [`CLIP_BYTES`], which is all a stored bound is
 /// taken from (`docs/design/decisions.md`, "D76").
@@ -28,17 +134,17 @@ pub(super) struct Clipped {
 }
 
 impl Clipped {
-    pub(super) fn of(text: &str) -> Self {
-        let head = text_prefix(text, CLIP_BYTES);
-        Self { head: head.to_owned(), whole: head.len() == text.len() }
+    pub(super) fn of(text: Head<'_>) -> Self {
+        let head = text_prefix(text.text, CLIP_BYTES);
+        Self { head: head.to_owned(), whole: head.len() == text.len }
     }
 
     /// Where `text` orders against the value this was clipped from, `None`
     /// when `text` begins with a head that is not the whole value. Two such
     /// values share every byte a stored bound reads, so either stands for
     /// the other in the group's bounds; only their row order is unknown.
-    pub(super) fn locate(&self, text: &str) -> Option<Ordering> {
-        self.locate_bytes(text.as_bytes(), text.len())
+    pub(super) fn locate(&self, text: Head<'_>) -> Option<Ordering> {
+        self.locate_bytes(text.text.as_bytes(), text.len)
     }
 
     /// [`Self::locate`] for a text known by its length and its first

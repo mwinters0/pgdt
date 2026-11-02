@@ -1,6 +1,7 @@
 //! What decoding one long value holds beside its line: one decoded copy, in
-//! a query over escaped text and over `bytea`, and none in a strict parse's
-//! check of a `bytea` (`docs/design/decisions.md`, "D141").
+//! a query over escaped text and over `bytea` (`docs/design/decisions.md`,
+//! "D141"), and none in a parse, its statistics and a strict parse's check
+//! reading an escaped field off its bytes ("D142").
 //!
 //! **This binary installs a global allocator tracking the bytes live**, and
 //! their peak, which is why it is a test file of its own. A line past its
@@ -161,10 +162,31 @@ async fn a_bytea_is_one_copy() {
     }
 }
 
+/// How far the allocator's peak rose past what was live as a whole-file
+/// parse of `path` began, gathering statistics at the data level and
+/// reading values as `invalid` says, or the parse's error.
+async fn parse(path: &Path, invalid: PostgresInvalidValues) -> pgdt_core::Result<usize> {
+    let opened = CacheMode::DISABLED.open_source(source(path)).await.unwrap();
+    let read = ReadOptions { chunk_size_bytes: CHUNK, ..ReadOptions::default() };
+    let before = window();
+    let run = map_file(
+        opened,
+        read,
+        &common::arranged(1),
+        invalid,
+        &StatisticsRequest::DATA,
+        &CancellationToken::new(),
+    )
+    .await?;
+    let peak = PEAK.load(Ordering::Relaxed) - before;
+    assert!(run.index.is_complete(std::fs::metadata(path).unwrap().len()));
+    Ok(peak)
+}
+
 /// **A strict parse checks a `bytea` holding none of it**: a field of
-/// sixteen MiB is checked with no unescaped text or decoded value of it
-/// allocated, the line past its chunk outside the allocator; the one copy
-/// the parse holds is its statistics' unescaped text of the field.
+/// sixteen MiB is checked, and its statistics gathered, with no unescaped
+/// text or decoded value of it allocated, the line past its chunk outside
+/// the allocator.
 #[tokio::test]
 async fn a_strict_bytea_check_holds_no_copy() {
     let dir = tempfile::tempdir().unwrap();
@@ -175,20 +197,30 @@ async fn a_strict_bytea_check_holds_no_copy() {
     }
     let path = dump(dir.path(), "bytea", "\\\\x00", &field);
 
-    let opened = CacheMode::DISABLED.open_source(source(&path)).await.unwrap();
-    let read = ReadOptions { chunk_size_bytes: CHUNK, ..ReadOptions::default() };
-    let before = window();
-    let run = map_file(
-        opened,
-        read,
-        &common::arranged(1),
-        PostgresInvalidValues::Strict,
-        &StatisticsRequest::DATA,
-        &CancellationToken::new(),
-    )
-    .await
-    .unwrap();
-    let peak = PEAK.load(Ordering::Relaxed) - before;
-    assert!(run.index.is_complete(std::fs::metadata(&path).unwrap().len()));
-    assert!(peak < field.len() + bytes / 4, "{peak} bytes allocated at the peak");
+    let peak = parse(&path, PostgresInvalidValues::Strict).await.unwrap();
+    assert!(peak < bytes / 4, "{peak} bytes allocated at the peak");
+}
+
+/// **A parse holds no copy of an escaped text**: a value of eight MiB
+/// carrying an escape every few bytes is gathered, and checked against its
+/// typmod by a strict parse, with none of it allocated; one past its typmod
+/// is refused all the same.
+#[tokio::test]
+async fn a_parse_holds_no_copy_of_an_escaped_text() {
+    let dir = tempfile::tempdir().unwrap();
+    // `character varying`'s longest typmod, in characters.
+    let typmod = 10_485_760usize;
+    let escaped = |chars: usize| "abcde\\t".repeat(chars / 6);
+    for declared in ["text".to_string(), format!("character varying({typmod})")] {
+        let long = 8usize << 20;
+        let path = dump(dir.path(), &declared, "short", escaped(long).as_bytes());
+        for invalid in [PostgresInvalidValues::Default, PostgresInvalidValues::Strict] {
+            let peak = parse(&path, invalid).await.unwrap();
+            assert!(peak < long / 4, "{declared}, {invalid:?}: {peak} bytes allocated at the peak");
+        }
+    }
+    let past = escaped(typmod + (1 << 20));
+    let path = dump(dir.path(), &format!("character varying({typmod})"), "short", past.as_bytes());
+    let refused = parse(&path, PostgresInvalidValues::Strict).await.unwrap_err();
+    assert!(matches!(refused, pgdt_core::Error::FieldRefused { .. }), "{refused:?}");
 }

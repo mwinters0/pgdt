@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D141 -->
+<!-- decision-watermark: D142 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -123,6 +123,7 @@ are `docs/process.md`, "The decision register".
 [`decisions/statistics.md`](decisions/statistics.md)
 - **D75** Pruning takes only what each operator family proves
 - **D76** Gathering never keys a bytewise value; a bound past the cap is a prefix and a successor
+- **D142** A long escaped field is gathered and checked off its bytes, never unescaped whole
 - **D77** The statistics request is the mapping pass's argument, and the metadata level is a selection
 - **D78** Statistics share the cache file, its identity and its `CACHE_FORMAT_VERSION`
 - **D79** Bounds go in each order a semantics compares by exactly, a dictionary where it equates exactly

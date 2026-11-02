@@ -20,6 +20,15 @@ bound reads, so bounds stay valid and only row order is lost (`Unsorted`); a tru
 Rejected: the byte successor for text, which can end mid-character. Reopens: P26. Evidence: `bounds/tests.rs`'s
 `a_long_texts_stored_bounds_are_on_the_right_side_of_it`.
 
+### D142 A long escaped field is gathered and checked off its bytes, never unescaped whole
+Past `LONG_FIELD_HEAD`, an escaped field of a column keeping no sum and counting no unrepresentable value is read as
+`Unescaped` yields it: a head, its length, where its trailing blanks begin and its characters before them, a `bytea`'s
+form read again from its bytes; a strict parse holds a text to its typmod the same way. Every statistic of it keeps a
+head (D76), so what a parse holds of a value is its line. Rejected: unescaping the field whole, a copy as long as the
+value beside its line; reading every field so, which pays for nothing under the head. A column summing, or counting
+unrepresentable values, still unescapes, its values written by no `pg_dump` with an escape. Code: `gather/clip.rs`
+(`LongText`), `value/text.rs` (`TextFold`). Evidence: `tests/decoded_copies.rs`, `gather/tests.rs`.
+
 ### D77 The statistics request is the mapping pass's argument, and the metadata level is a selection
 `map_file` takes a `&StatisticsRequest` and no query entry point does, as with the cancellation (D26), so no option a
 query is handed reads as a request it ignores; a query's pass censuses every block and gathers nothing, which no

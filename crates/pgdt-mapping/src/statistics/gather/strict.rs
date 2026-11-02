@@ -5,13 +5,13 @@
 use std::sync::Arc;
 
 use pgdt_codec::ResolvedSchema;
-use pgdt_codec::internal::{bytea_reads, field_refused, grammar_refuses};
+use pgdt_codec::internal::{TextFold, bytea_reads, field_refused, grammar_refuses, text_typmod};
 use pgdt_codec::{
     compare::{CompareKind, ComparisonPlan},
     grammar::{TextGrammar, Unchecked},
     internal::{column_grammar, unchecked_positions},
 };
-use pgdt_core::internal::unescaped;
+use pgdt_core::internal::{Unescaped, unescaped};
 use pgdt_core::{CopyHeader, split_fields, unescape_field};
 use pgdt_model::{CopyBlock, DumpMetadata, FieldRefusal};
 
@@ -45,8 +45,10 @@ pub(super) fn field_checks(
                 || !matches!(plan, ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_));
             let bytea = grammar.is_none()
                 && matches!(plan, ComparisonPlan::Compared { kind: CompareKind::Bytea, .. });
+            let typmod = grammar.is_none().then(|| text_typmod(plan)).flatten();
             (reads || not_null).then(|| FieldCheck {
                 bytea,
+                typmod,
                 plan: plan.clone(),
                 grammar,
                 declared_type,
@@ -218,6 +220,16 @@ pub(super) struct FieldCheck {
     /// Whether `plan` reads a `bytea`, which is checked where it lies before
     /// it is unescaped ([`check_row`]).
     bytea: bool,
+    /// Where `plan` refuses a field only past a text's typmod, its length
+    /// ([`text_typmod`]), which is checked where the field lies.
+    typmod: Option<Option<u32>>,
+}
+
+/// Whether a text whose bytes `text` reads is refused past `length`
+/// characters; a field that is not UTF-8 is no value, which no `*_in` is
+/// handed ([`check_row`]).
+fn typmod_refuses(text: Unescaped<'_>, length: u32) -> bool {
+    TextFold::read(text, |_| {}).is_some_and(|read| read.typmod_refuses(length))
 }
 
 /// The first field of the row at `offset`, the `line`-th the observer was
@@ -234,6 +246,16 @@ pub(super) fn check_row(
         // (`docs/design/decisions.md`, "D141"); a NULL, or one it reads no
         // value from, is answered below, which says whether it is refused.
         if check.bytea && unescaped(field).is_some_and(bytea_reads) {
+            continue;
+        }
+        // So is a text, which is refused only past its typmod, its
+        // characters counted off its bytes (D142) where its escaped length,
+        // no shorter than its text, is past it.
+        if let Some(length) = check.typmod
+            && let Some(text) = unescaped(field)
+            && !length
+                .is_some_and(|length| field.len() > length as usize && typmod_refuses(text, length))
+        {
             continue;
         }
         // A NULL is refused only by a `NOT NULL`, and a field that is not

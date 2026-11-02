@@ -77,13 +77,13 @@ fn a_bytea_is_refused_only_where_byteain_refuses_it() {
         match server {
             None => {
                 assert_eq!(decode_bytea(text), None, "{text:?}");
-                assert_eq!(bytea_unread(text), Unread::Refused, "{text:?}");
+                assert_eq!(bytea_unread(text.bytes()), Unread::Refused, "{text:?}");
             }
             Some(value) => {
                 let want = decode_bytea(value).unwrap();
                 match decode_bytea(text) {
                     Some(read) => assert_eq!(read, want, "{text:?}"),
-                    None => assert_eq!(bytea_unread(text), Unread::Unparsed, "{text:?}"),
+                    None => assert_eq!(bytea_unread(text.bytes()), Unread::Unparsed, "{text:?}"),
                 }
             }
         }

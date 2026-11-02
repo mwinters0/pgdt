@@ -11,7 +11,7 @@ use pgdt_model::{
     internal::{text_heap, vec_heap},
 };
 
-use super::clip::{CLIP_BYTES, Clipped};
+use super::clip::{CLIP_BYTES, Clipped, Head};
 
 /// A column's row order over the rows observed so far: the block's
 /// [`Sortedness`] once every row is in.
@@ -86,13 +86,13 @@ impl RowOrder {
     }
 
     /// Place a bytewise value after the one placed before it.
-    fn place_bytewise(&mut self, text: &str) {
+    fn place_bytewise(&mut self, text: Head<'_>) {
         let step = match &self.previous {
             Some(Previous::Bytewise(previous)) => Some(previous.locate(text)),
             Some(Previous::Keyed(_)) => unreachable!("a bytewise order places no key"),
             None => {
-                let prefix = text.as_bytes()[..text.len().min(CLIP_BYTES)].to_vec();
-                self.first = Some(FirstValue::Bytewise { prefix, len: text.len() });
+                let prefix = text.text.as_bytes()[..text.text.len().min(CLIP_BYTES)].to_vec();
+                self.first = Some(FirstValue::Bytewise { prefix, len: text.len });
                 None
             }
         };
@@ -179,7 +179,7 @@ impl ViewOrders {
 
     /// Place `text`, a bytewise kind's canonical value: its type holds every
     /// value, so the plain order is the only one.
-    pub(super) fn place_bytewise(&mut self, text: &str) {
+    pub(super) fn place_bytewise(&mut self, text: Head<'_>) {
         self.plain.place_bytewise(text);
     }
 

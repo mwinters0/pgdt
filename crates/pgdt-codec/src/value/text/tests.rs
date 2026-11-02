@@ -29,3 +29,39 @@ fn a_character_field_is_refused_only_past_its_length_but_for_blanks() {
     }
     assert!(char_typmod_refuses("ab", 1) && !char_typmod_refuses("a ", 1));
 }
+
+/// **A text folded a run at a time reads as it does whole**
+/// (`docs/design/decisions.md`, "D142"): its length, where its trailing
+/// blanks begin and its characters before them, whichever bytes the runs
+/// end between — a character's included — and a text that is not UTF-8
+/// found as one across any cut.
+#[test]
+fn a_text_folded_in_runs_reads_as_it_does_whole() {
+    let folded = |runs: &[&[u8]]| {
+        let mut fold = TextFold::default();
+        for run in runs {
+            fold.push(run);
+        }
+        fold.finish()
+    };
+    for text in ["", "abc", "abc   ", "\u{e9}\u{e9} \u{e9}  ", "\u{10FFFF}a ", "  ", " \u{e9}"] {
+        let trimmed = text.trim_end_matches(' ');
+        let whole = TextRead {
+            len: text.len(),
+            trimmed: trimmed.len(),
+            trimmed_chars: trimmed.chars().count(),
+        };
+        let b = text.as_bytes();
+        for first in 0..=b.len() {
+            for second in first..=b.len() {
+                let runs = [&b[..first], &b[first..second], &b[second..]];
+                assert_eq!(folded(&runs), Some(whole), "{text:?} cut at {first} and {second}");
+            }
+        }
+    }
+    for bad in [&[0xc3u8, 0x28][..], &[b'a', 0xff, b'b'], &[b'a', 0xe2, 0x82]] {
+        for cut in 0..=bad.len() {
+            assert_eq!(folded(&[&bad[..cut], &bad[cut..]]), None, "{bad:?} cut at {cut}");
+        }
+    }
+}

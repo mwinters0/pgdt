@@ -297,22 +297,39 @@ pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
     // under I71's bound can hold an `array_in` value whose binary form passes
     // `MaxAllocSize` (I71's scope limit), which is read as a value, a strict
     // parse included, where a restore refuses it.
+    if let Some(length) = text_typmod(plan) {
+        return length.is_some_and(|length| char_typmod_refuses(text, length));
+    }
     match plan {
         // `AS_TEXT`'s one member is `json`.
         ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => {
             !json_in(text)
         }
-        // Every text within its length is a value of these, and keying one
-        // copies it.
-        ComparisonPlan::Compared {
-            kind: CompareKind::Text { length, .. } | CompareKind::PaddedText { length },
-            ..
-        } => length.is_some_and(|length| char_typmod_refuses(text, length)),
         ComparisonPlan::Compared { kind, .. } => {
             matches!(field_key(kind, text), Err(Unread::Refused))
         }
         ComparisonPlan::Nested(nested) => checked_key(nested, text).is_err(),
         ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_) => false,
+    }
+}
+
+/// **Where [`field_refused`] refuses a field of a column compared by `plan`
+/// only past a text's typmod**, the typmod's length, `Some(None)` for a text
+/// it refuses nothing of: a character type, but `json`, which is held as its
+/// text. Every text within its length is a value of these, so a strict parse
+/// reads one off its field's bytes, counting its characters with no copy of
+/// it made ([`TextRead::typmod_refuses`]; `docs/design/decisions.md`,
+/// "D142").
+///
+/// [`TextRead::typmod_refuses`]: crate::value::text::TextRead::typmod_refuses
+pub fn text_typmod(plan: &ComparisonPlan) -> Option<Option<u32>> {
+    match plan {
+        ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => None,
+        ComparisonPlan::Compared {
+            kind: CompareKind::Text { length, .. } | CompareKind::PaddedText { length },
+            ..
+        } => Some(*length),
+        _ => None,
     }
 }
 

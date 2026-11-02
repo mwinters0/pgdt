@@ -12,25 +12,39 @@ use crate::value::digits::push_hex_pair;
 /// pairs, any byte the `escape` form writes escaped written as itself, or the
 /// reverse (`docs/design/decisions.md`, "D55").
 // pg-refuses: I69 — every refusal here is `byteain`'s.
-pub fn bytea_unread(s: &str) -> Unread {
-    let b = s.as_bytes();
-    let reads = match b.strip_prefix(b"\\x") {
+pub fn bytea_unread(text: impl Iterator<Item = u8>) -> Unread {
+    // A byte at a time, so a field is answered as `Unescaped` reads it with
+    // no copy of it (`docs/design/decisions.md`, "D142").
+    let mut text = text.peekable();
+    let opened = text.next_if_eq(&b'\\').is_some();
+    let reads = if opened && text.next_if_eq(&b'x').is_some() {
         // `hex_decode_safe`: a blank between pairs, never inside one.
-        Some(hex) => {
-            let mut digits = hex.iter().filter(|&&c| !matches!(c, b' ' | b'\n' | b'\t' | b'\r'));
-            let mut pairs = hex.split(|&c| matches!(c, b' ' | b'\n' | b'\t' | b'\r'));
-            digits.all(u8::is_ascii_hexdigit) && pairs.all(|run| run.len() % 2 == 0)
+        let mut run = 0usize;
+        loop {
+            match text.next() {
+                None => break run.is_multiple_of(2),
+                Some(b' ' | b'\n' | b'\t' | b'\r') if run.is_multiple_of(2) => run = 0,
+                Some(c) if c.is_ascii_hexdigit() => run += 1,
+                Some(_) => break false,
+            }
         }
-        None => {
-            let mut at = 0;
-            loop {
-                match b.get(at..) {
-                    Some([]) | None => break true,
-                    Some([b'\\', b'0'..=b'3', b'0'..=b'7', b'0'..=b'7', ..]) => at += 4,
-                    Some([b'\\', b'\\', ..]) => at += 2,
-                    Some([b'\\', ..]) => break false,
-                    Some(_) => at += 1,
-                }
+    } else {
+        // A `\` taken looking for the `x` is the escape form's first byte.
+        let mut text = opened.then_some(b'\\').into_iter().chain(text);
+        loop {
+            match text.next() {
+                None => break true,
+                Some(b'\\') => match text.next() {
+                    Some(b'\\') => {}
+                    Some(b'0'..=b'3') => {
+                        let octal = |c: Option<u8>| matches!(c, Some(b'0'..=b'7'));
+                        if !(octal(text.next()) && octal(text.next())) {
+                            break false;
+                        }
+                    }
+                    _ => break false,
+                },
+                Some(_) => {}
             }
         }
     };
@@ -148,8 +162,14 @@ fn read_hex(mut text: impl Iterator<Item = u8>, mut emit: impl FnMut(u8)) -> boo
 /// kept, the whole text still checked, so a caller wanting a value's head
 /// pays for no more of it.
 pub fn decode_bytea_escape(s: &str, limit: usize) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(s.len().min(limit));
-    let reads = read_escape(s.bytes(), |byte| {
+    bytea_escape_head(s.bytes(), limit)
+}
+
+/// [`decode_bytea_escape`] over a text's bytes a byte at a time, as
+/// [`Unescaped`] reads a field's (`docs/design/decisions.md`, "D142").
+pub fn bytea_escape_head(text: impl Iterator<Item = u8>, limit: usize) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(text.size_hint().0.min(limit));
+    let reads = read_escape(text, |byte| {
         if out.len() < limit {
             out.push(byte);
         }

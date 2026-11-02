@@ -11,6 +11,7 @@ use arrow_schema::DataType;
 use pgdt_codec::compare::{CompareKind, ComparisonPlan, ComparisonSemantics};
 use pgdt_codec::internal::ColumnTier;
 use pgdt_codec::pgtype::NestedPlan;
+use pgdt_core::internal::unescaped;
 use pgdt_core::unescape_field;
 use pgdt_model::internal::UnrepresentableExt;
 use pgdt_model::{
@@ -21,6 +22,7 @@ use pgdt_model::{
 
 use super::bounds::{BoundsGatherer, GroupBounds, Refused, merge_adjacent};
 use super::charge::{grown_map_heap, map_heap, push_charged, reserve_charged};
+use super::clip::{Field, LONG_FIELD_HEAD, LongText};
 use crate::statistics::account::{Charge, STATISTICS_ACCOUNT_CHARGE_STEP};
 use crate::statistics::stored::Summand;
 
@@ -214,75 +216,106 @@ impl ColumnGatherer {
     /// and [`Self::invalid`] refuses it.
     pub(super) fn observe(&mut self, field: &[u8]) -> Result<Observed, Refused> {
         let before = self.open_heap();
-        let mut ignored = false;
-        match unescape_field(field) {
-            // A NULL its `NOT NULL` refuses and that is gone past is counted,
-            // the read taking it as the NULL it is: no statistic contradicts
-            // it (D103).
-            Ok(None) => {
-                if self.not_null {
-                    if self.invalid != PostgresInvalidValues::Ignore {
-                        return Err(Refused);
-                    }
-                    ignored = true;
-                }
-                self.group.nulls += 1;
-                return Ok(Observed { grew: 0, ignored });
+        // A long escaped field is read off its bytes, never unescaped whole,
+        // where nothing the column keeps reads past its head
+        // (`docs/design/decisions.md`, "D142").
+        let long = (field.len() > LONG_FIELD_HEAD
+            && self.summand.is_none()
+            && self.tier.is_none()
+            && field.contains(&b'\\'))
+        .then(|| unescaped(field).map(LongText::read));
+        let ignored = match long {
+            Some(Some(Some(long))) => match long.whole() {
+                Some(text) => self.observe_text(Field::Whole(text))?,
+                None => self.observe_text(Field::Long(&long))?,
+            },
+            Some(Some(None)) => {
+                self.observe_not_text(field);
+                false
             }
-            Ok(Some(text)) => {
-                let tier = self.tier.as_ref().and_then(|tier| tier.of(&text));
-                if let Some(tier) = tier {
-                    self.group.unrepresentable.add(tier);
-                }
-                self.group.value_bytes += text.len() as u64;
-                // A value the type cannot hold is left out, as a NULL is: the
-                // sum is of the values the type holds, read only in a view
-                // taking the rest as NULL (`docs/design/decisions.md`, "D98").
-                if let Some(summand) = self.summand.filter(|_| tier.is_none()) {
-                    self.group.sum = self
-                        .group
-                        .sum
-                        .zip(summand.value(&text))
-                        .map(|(sum, value)| sum.wrapping_add(value));
-                }
-                let mut refused = false;
-                for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
-                    if let (Some(bounds), Some(group)) = (bounds, group) {
-                        refused |= bounds.observe(group, &text, tier).is_err();
-                    }
-                }
-                if refused {
-                    if self.invalid != PostgresInvalidValues::Ignore {
-                        return Err(Refused);
-                    }
-                    // Ignored: no statistic a read could contradict (D103).
-                    ignored = true;
-                    self.group.sum = None;
-                    for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
-                        if let (Some(bounds), Some(group)) = (bounds, group) {
-                            bounds.lose_value(group, tier);
+            _ => match unescape_field(field) {
+                // A NULL its `NOT NULL` refuses and that is gone past is
+                // counted, the read taking it as the NULL it is: no
+                // statistic contradicts it (D103).
+                Ok(None) => {
+                    let mut ignored = false;
+                    if self.not_null {
+                        if self.invalid != PostgresInvalidValues::Ignore {
+                            return Err(Refused);
                         }
+                        ignored = true;
                     }
-                    self.group.lose_texts();
-                } else if let Some(dictionary) = &self.dictionary {
-                    dictionary.observe(&mut self.group, &text);
+                    self.group.nulls += 1;
+                    return Ok(Observed { grew: 0, ignored });
                 }
-            }
-            // Not text at all, so neither a key nor an entry: the group can
-            // cover the row with neither, and the block's order is lost. No
-            // decoding is longer than the escaped field, and nothing sums it.
-            Err(_) => {
-                self.group.value_bytes += field.len() as u64;
-                self.group.sum = None;
-                for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
-                    if let (Some(bounds), Some(group)) = (bounds, group) {
-                        bounds.lose_value(group, None);
-                    }
+                Ok(Some(text)) => self.observe_text(Field::Whole(&text))?,
+                Err(_) => {
+                    self.observe_not_text(field);
+                    false
                 }
-                self.group.lose_texts();
+            },
+        };
+        Ok(Observed { grew: self.open_heap() as i64 - before as i64, ignored })
+    }
+
+    /// [`Self::observe`] of a field that is text, answering whether it went
+    /// past a value PostgreSQL refuses.
+    fn observe_text(&mut self, text: Field<'_>) -> Result<bool, Refused> {
+        let tier = match text {
+            Field::Whole(text) => self.tier.as_ref().and_then(|tier| tier.of(text)),
+            Field::Long(_) => None,
+        };
+        if let Some(tier) = tier {
+            self.group.unrepresentable.add(tier);
+        }
+        self.group.value_bytes += text.len() as u64;
+        // A value the type cannot hold is left out, as a NULL is: the
+        // sum is of the values the type holds, read only in a view
+        // taking the rest as NULL (`docs/design/decisions.md`, "D98").
+        if let (Some(summand), Field::Whole(text)) = (self.summand.filter(|_| tier.is_none()), text)
+        {
+            self.group.sum =
+                self.group.sum.zip(summand.value(text)).map(|(sum, value)| sum.wrapping_add(value));
+        }
+        let mut refused = false;
+        for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
+            if let (Some(bounds), Some(group)) = (bounds, group) {
+                refused |= bounds.observe_field(group, text, tier).is_err();
             }
         }
-        Ok(Observed { grew: self.open_heap() as i64 - before as i64, ignored })
+        if !refused {
+            if let Some(dictionary) = &self.dictionary {
+                dictionary.observe(&mut self.group, text);
+            }
+            return Ok(false);
+        }
+        if self.invalid != PostgresInvalidValues::Ignore {
+            return Err(Refused);
+        }
+        // Ignored: no statistic a read could contradict (D103).
+        self.group.sum = None;
+        for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
+            if let (Some(bounds), Some(group)) = (bounds, group) {
+                bounds.lose_value(group, tier);
+            }
+        }
+        self.group.lose_texts();
+        Ok(true)
+    }
+
+    /// [`Self::observe`] of a field that is not text at all, so neither a key
+    /// nor an entry: the group can cover the row with neither, and the
+    /// block's order is lost. No decoding is longer than the escaped field,
+    /// and nothing sums it.
+    fn observe_not_text(&mut self, field: &[u8]) {
+        self.group.value_bytes += field.len() as u64;
+        self.group.sum = None;
+        for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
+            if let (Some(bounds), Some(group)) = (bounds, group) {
+                bounds.lose_value(group, None);
+            }
+        }
+        self.group.lose_texts();
     }
 
     /// Close the open group, and move what it changed onto `charge` before
@@ -591,9 +624,17 @@ impl DictionaryGatherer {
 
     /// Add `text` to `group`'s distinct texts, which a cap passed leaves
     /// `None`.
-    pub(super) fn observe(&self, group: &mut GroupState, text: &str) {
+    pub(super) fn observe(&self, group: &mut GroupState, text: Field<'_>) {
         let Some(texts) = &mut group.texts else { return };
-        let text = if self.padded { text.trim_end_matches(' ') } else { text };
+        let text = match text {
+            Field::Whole(text) if self.padded => text.trim_end_matches(' '),
+            Field::Whole(text) => text,
+            // A long text is past the cap unless all but its head is blanks.
+            Field::Long(long) => match long.head.get(..long.read.trimmed) {
+                Some(trimmed) if self.padded => trimmed,
+                _ => return group.lose_texts(),
+            },
+        };
         if texts.iter().any(|seen| seen == text) {
             return;
         }

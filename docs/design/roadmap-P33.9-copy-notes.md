@@ -37,10 +37,6 @@ allocator tracks the bytes live, the line past its chunk being outside it
   in the same batch grows it, copying it; a line past the span cap ends its
   batch first, and the growth is the span's (D84). `decoded_copies.rs` reads
   under a span cap below its line for that reason.
-- **A data-level parse holds one copy of an escaped field beside its line**,
-  strict or not: `ColumnGatherer::observe` unescapes a whole field before its
-  statistics clip a head (`statistics/gather/column.rs`). The strict test's
-  peak is that copy. Its removal is 33.13.
 - **A filter term's key is a copy beside the batch's**, made and dropped per
   term: an escaped field unescaped, then keyed — a `bytea` decoded beside its
   unescaped text, a text copied for an ordering term. Its removal is 33.14.

@@ -360,7 +360,7 @@ pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
         // Every refusal of the reader is `uuid_in`'s (I64).
         CompareKind::Uuid => OrderKey::Bytes(decode_uuid(text).ok_or(Unread::Refused)?.to_vec()),
         CompareKind::Bytea => {
-            OrderKey::Bytes(decode_bytea(text).ok_or_else(|| bytea_unread(text))?)
+            OrderKey::Bytes(decode_bytea(text).ok_or_else(|| bytea_unread(text.bytes()))?)
         }
         // A field past its typmod's length is refused, and one within it is
         // keyed as written. A literal is coerced with no typmod

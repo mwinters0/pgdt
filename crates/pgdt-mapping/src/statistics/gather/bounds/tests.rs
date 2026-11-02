@@ -1,10 +1,11 @@
 use super::{BYTEA_ESCAPE_HEAD_BYTES, BoundsGatherer, bytea_upper, text_upper};
 use crate::statistics::account::{Charge, Term};
-use crate::statistics::gather::clip::text_prefix;
-use crate::statistics::test_support::{Rng, join_type, value};
+use crate::statistics::gather::clip::{Field, LongText, text_prefix};
+use crate::statistics::test_support::{Rng, copy_escaped, join_type, long_value, value};
 use pgdt_codec::compare::CompareKind;
 use pgdt_codec::decode::{decode_bytea, render_bytea};
 use pgdt_codec::internal::{OrderKey, compare_keys, order_key};
+use pgdt_core::internal::unescaped;
 use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts, UnrepresentableExt};
 use pgdt_model::{
     ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, Sortedness, Unrepresentable, UnrepresentableTier,
@@ -385,4 +386,52 @@ fn a_bytea_column_gathers_alike_in_either_output_form() {
         ordered += usize::from(hex.sortedness != Sortedness::Unsorted);
     }
     assert!(bounded > 300 && ordered > 50, "{bounded} groups bounded, {ordered} ordered");
+}
+
+/// **A long escaped field read off its bytes is bounded, ordered and refused
+/// as its text unescaped whole is** (`docs/design/decisions.md`, "D142") —
+/// over groups of long values of each bytewise kind, with and without a
+/// typmod, and a keyed one: long heads shared, a `character` long only by
+/// its blanks, a `bytea` in each form and refused.
+#[test]
+fn a_long_field_read_off_its_bytes_is_bounded_as_its_text() {
+    let mut rng = Rng(0x10f6);
+    let kinds = [
+        CompareKind::Text { length: None, varying: true },
+        CompareKind::Text { length: Some(1500), varying: true },
+        CompareKind::PaddedText { length: None },
+        CompareKind::PaddedText { length: Some(1500) },
+        CompareKind::Bytea,
+        CompareKind::Int { bytes: 8 },
+    ];
+    let (mut long, mut refused) = (0usize, 0usize);
+    let mut charge = Charge::new(Arc::default(), Term::Gathering);
+    for round in 0..300 {
+        let kind = &kinds[round % kinds.len()];
+        let mut whole = BoundsGatherer::new(kind.clone());
+        let mut read = BoundsGatherer::new(kind.clone());
+        for _ in 0..1 + rng.below(4) {
+            let (mut a, mut b) = (whole.fresh_group(), read.fresh_group());
+            for _ in 0..rng.below(8) {
+                let value = long_value(&mut rng, kind);
+                let field = copy_escaped(&value);
+                let text = LongText::read(unescaped(&field).unwrap()).expect("UTF-8");
+                let field = match text.whole() {
+                    Some(text) => Field::Whole(text),
+                    None => {
+                        long += 1;
+                        Field::Long(&text)
+                    }
+                };
+                let expected = whole.observe(&mut a, &value, None).is_err();
+                refused += usize::from(expected);
+                let got = read.observe_field(&mut b, field, None).is_err();
+                assert_eq!(got, expected, "{kind:?}: {value:?}");
+            }
+            whole.close_group(a, &mut charge);
+            read.close_group(b, &mut charge);
+        }
+        assert_eq!(read.finish(), whole.finish(), "round {round}");
+    }
+    assert!(long > 400 && refused > 50, "{long} long fields, {refused} refused");
 }

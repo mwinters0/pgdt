@@ -3,7 +3,7 @@ use super::column::ColumnGatherer;
 use super::gatherer::{Gatherer, Sizing};
 use crate::statistics::account::{Charge, StatisticsAccount, StatisticsTerms, Term};
 use crate::statistics::test_support::{
-    Rng, chosen_merges, chosen_merges_between, join_type, value,
+    Rng, chosen_merges, chosen_merges_between, copy_escaped, join_type, long_value, value,
 };
 use pgdt_codec::compare::{CompareKind, ComparisonPlan};
 use pgdt_codec::decode::render_bytea;
@@ -750,4 +750,77 @@ fn a_vector_grows_into_the_capacity_it_is_charged() {
         assert_eq!(charge.charged().0, vec_heap(&groups) + vec_heap(&bounds), "push {i}");
     }
     assert!(growths > 10, "only {growths} growths");
+}
+
+/// **A block of long escaped fields gathers what it gathers written with no
+/// escape** (`docs/design/decisions.md`, "D142"): the plain fields are
+/// unescaped whole, borrowed, and the escaped ones read off their bytes —
+/// over text columns with and without a typmod, `character` ones long only
+/// by their blanks among them, so dictionaries, refusals and row orders are
+/// all reached.
+#[test]
+fn long_escaped_fields_gather_what_they_gather_written_plain() {
+    let kinds = [
+        CompareKind::Text { length: None, varying: true },
+        CompareKind::Text { length: Some(1500), varying: true },
+        CompareKind::PaddedText { length: None },
+        CompareKind::PaddedText { length: Some(1500) },
+    ];
+    let columns = || -> Vec<Option<ColumnGatherer>> {
+        kinds
+            .iter()
+            .map(|kind| {
+                let plan = ComparisonPlan::Compared { kind: kind.clone(), divergence: None };
+                let data_type = join_type(kind);
+                Some(ColumnGatherer::new(
+                    None,
+                    None,
+                    plan.bounds_kinds(),
+                    &plan,
+                    &NestedPlan::Scalar,
+                    &data_type,
+                    pgdt_codec::internal::scalar_tier(&data_type),
+                    PostgresInvalidValues::Ignore,
+                ))
+            })
+            .collect()
+    };
+    let gathered = |lines: &[Vec<u8>], offsets: &[u64], end: u64, group_size: u64| {
+        let charge = Charge::new(Arc::default(), Term::Gathering);
+        let mut gatherer = Gatherer::block(sized(group_size, None, None), columns(), charge);
+        for (line, &offset) in lines.iter().zip(offsets) {
+            gatherer.observe_row(offset, line);
+        }
+        Box::new(gatherer).finish(end).gathered().expect("an unbounded account declines nothing")
+    };
+    let mut rng = Rng(0x10f7);
+    let mut dictionaries = 0;
+    for round in 0..40 {
+        let rows = 1 + rng.below(60) as usize;
+        let values: Vec<Vec<String>> = (0..rows)
+            .map(|_| kinds.iter().map(|kind| long_value(&mut rng, kind)).collect())
+            .collect();
+        let line = |row: &[String], field: fn(&str) -> Vec<u8>| {
+            row.iter().map(|v| field(v)).collect::<Vec<_>>().join(&b'\t')
+        };
+        let plain: Vec<Vec<u8>> =
+            values.iter().map(|row| line(row, |v| v.as_bytes().to_vec())).collect();
+        let escaped: Vec<Vec<u8>> = values.iter().map(|row| line(row, copy_escaped)).collect();
+        let mut offsets = Vec::with_capacity(rows);
+        let mut end = 0u64;
+        for line in &plain {
+            offsets.push(end);
+            end += line.len() as u64 + 1;
+        }
+        let group_size = [4096u64, 16384, 1 << 20][rng.below(3) as usize];
+        let expected = gathered(&plain, &offsets, end, group_size);
+        dictionaries += expected
+            .columns
+            .iter()
+            .flatten()
+            .filter(|c| c.dictionary.as_ref().is_some_and(|d| d.groups.iter().any(Option::is_some)))
+            .count();
+        assert_eq!(gathered(&escaped, &offsets, end, group_size), expected, "round {round}");
+    }
+    assert!(dictionaries > 5, "{dictionaries} dictionaries kept");
 }
