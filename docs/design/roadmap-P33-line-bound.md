@@ -37,8 +37,10 @@ and a segment's row-start search, each then flat in memory at any line length.
 **A query is charged for the table it reads, its cache cold or warm**: its
 mapping pass censuses every block it maps (`decisions.md`, "D35"), and a census
 holding its lines would charge a cold query, and refuse it, for a table it never
-reads. **A pass that decodes a line holds it whole**
-(`decisions.md`, "D23") and is charged for it, below.
+reads. **A query, decoding a line into its batch, holds it whole**
+(`decisions.md`, "D23") and is charged for it, below. Reopens: readers that
+resume across a line's runs, which a gathering parse's streaming builds (below)
+— a query's own tree, grilled apart from a parse's.
 
 **A census holds only the fields it decodes.** Its row streams, folded field by
 field as its bytes go by and counted against its header's width as a held row is
@@ -46,31 +48,56 @@ field as its bytes go by and counted against its header's width as a held row is
 answering exactly what it answers over a whole field, the slice path being that
 fold fed once; a counted scalar from a head no longer than the longest literal
 its tier test answers for; and a counted container — an array, record, range or
-multirange over a counted leaf — whole, its field and not its line held and
-charged as a held line is. The head is exact because the codec's datetime
+multirange over a counted leaf — through the resumable readers a gathering parse
+reads with (below), holding nothing that grows with it, so a mapping pass, parse
+or census, holds no field and a cold query is charged only for the lines its
+replay decodes. The head is exact because the codec's datetime
 decoders refuse a literal past the buffer PostgreSQL parses one in, as
 `date_in`, the timestamp inputs and `interval_in` do (`M276`). Rejected: a
 block holding its lines wherever its counter tests a container, which holds a
 long `text` line for a short `timestamptz[]` beside it; a clipped head for the
 shape census, which moves a `text` column's persisted census for no array's
-sake; streaming a container's elements or a scalar's grammar, a second parser
-beside each decoder.
+sake; holding a counted container whole, which charges a cold query over a
+`text` column for a long `int4range[]` field beside it that it never reads.
 
 **Where it lives**: the carry counts a streamed row's fields and hands each
 byte range, its field's index beside it, to a fold its reader supplies —
 scanning, no decoding (`pgdt-dump`'s `scan/chunked.rs`, D74); the census's fold
 over them, `observe_row` that fold fed once, and `FieldCount` saying per column
-whether a head or the whole field is kept, are model's (`block.rs`), the answer
+whether a head is kept, are model's (`block.rs`), the answer
 the codec's (`unrepresentable.rs`), as `concepts.md`, "What a pass records of a
 block's rows", places the census. A replay decides as a row outgrows its chunk,
 under the dynamic state it last read, which its contract allows
 (`DynamicFilter`).
 
-Rejected: streaming field by field in a gathering parse, which keeps only the
-heads statistics clip (`decisions.md`, "D76"). It decodes a value the pass never
-sees whole, and a value refused by its `*_in` — strict mode's check, a json or
-array value — needs the whole value, so it needs a streaming input function
-throughout the codec. Reopens: a codec whose decoders stream.
+**A gathering parse streams a line too**, strict or not: every statistic it
+gathers and every check it makes is fed its field's runs as they go by and keeps
+a bounded state per column — a head (`decisions.md`, "D76"), a length, a fold's
+carried state — so a parse holds nothing that grows with a field, draws nothing
+past its chunk term and is never refused for memory. Each reader resumes across
+runs with one grammar per type, a slice being one run, and **looks no further
+ahead than a fixed bound**, carrying what lies past it as state — a whitespace
+run as its counts, a `bytea` read once for both its answers. The one state that
+grows with a field is a `json` value's open containers, a bit a level and so at
+most an eighth of it, uncharged: PostgreSQL bounds that depth only by
+`max_stack_depth`, a setting, and nothing refuses one here
+([`postgres-invariants.md`](postgres-invariants.md), "I72"). Rejected: holding the
+line, which charges a parse for values it reads only to keep heads of, on the
+dumps whose long lines cluster three to nine in a chunk; holding whole each field
+whose reader can only pull, as the census holds a container, a second rule a user
+cannot see and on a long `jsonb` field the line again; a fork keeping its runs
+back to where it forked, a line's worth on one whitespace run; charging the
+depth bits, the ledger back for a parse over no document a dump holds; refusing
+past a depth, which PostgreSQL does not. Reopens: no resumable reader keeping
+one grammar per type, which a second parser would not answer.
+
+**Where it lives**: `BlockObserver` is a fold over a row's field runs, as the
+census's is — pgdt-model's (`statistics.rs`), implemented by pgdt-mapping's
+gatherer and strict check, adapted to the carry's fold by `map.rs` beside the
+census's — a held row being that fold fed once, so a data-level parse reads
+rows through the path a metadata-level one streams them on. Rejected: a
+streaming observer beside `observe_row`, two routes into one column's
+statistics.
 
 ## A held line is charged, and admitted in file order
 
@@ -146,7 +173,7 @@ over an array or `jsonb` is a tree of tens of bytes an element; refusing an
 ordering term over a long `jsonb` or multirange, which a key of positions reads.
 
 **The charge is the held line plus the bound its decode adds**: a parse, strict
-or not, reads its values and draws once; a query draws once plus its batch's
+or not, streams and draws nothing (above); a query draws once plus its batch's
 decode, bounded by the largest **decode factor** among the columns it reads —
 the most its column's Arrow type and plan hold per text byte, known from the
 schema before a reader starts — and by each ordering term's **key factor** over
@@ -264,6 +291,10 @@ edge, pgdt-dump depending on pgdt-io already.
 - **The held line and the line streamed** — pgdt-dump's `scan/chunked.rs`,
   the carry and its draws; the resync where it is, pgdt-mapping's interior and
   pgdt-query's `replay/segment.rs`.
+- **The resumable readers** — pgdt-codec's, the unescaper with them, each fed a
+  field's runs as the carry's fold hands them over. Rejected: a reader pulling
+  its source's next chunk itself, a codec walk driving pgdt-dump's reader, its
+  tab split, CR hold and chunk retention beneath it (`decisions.md`, "D74").
 - **The offset cut** — pgdt-query's `batch.rs`, "Arrow batches", beside the
   flush triggers it joins.
 - **The longest line** — pgdt-model's `CopyBlock`, recorded by pgdt-mapping's
@@ -273,7 +304,7 @@ edge, pgdt-dump depending on pgdt-io already.
   which write the Arrow form it bounds, and a key factor beside pgdt-codec's
   normalized keys; pgdt-query folds them over a query's columns and terms and
   hands `Arrangement::resolve` one number beside the longest line, a parse
-  handing one. Rejected: a per-type table in pgdt-codec, stating a fact about
+  handing none. Rejected: a per-type table in pgdt-codec, stating a fact about
   pgdt-query's builders a crate away.
 - **The refusals** — pgdt-core's `error.rs`: `LineTooLong` loses its limit and
   names I71's bound; a line outgrowing the allowance is a refusal of its own,
@@ -324,9 +355,13 @@ query over an `int8[]` of single digits, the largest decode factor, and an
 ordering filter over a `jsonb` object, a key factor, from the slice that
 computes them on; a factor no leg reads would be an argued constant. It is taken on today's code first, pricing
 the copies, and re-taken once the ledger lands, confirming the factors or
-re-setting them. **The acceptance is a hand run on the reference dump** under a
-stated `--memory` below what its clusters hold at once: read with no setting,
-slowed and not refused, recorded in `runs/` and the day's history entry. The
+re-setting them, and showing a parse flat in its line length. **The
+acceptance is two hand runs on the reference dump**, read with no setting and
+recorded in `runs/` and the day's history entry: a data-level, strict parse
+under a stated `--memory` below its longest line, flat and never slowed for
+memory; and a query whose batch reads its long field under a `--memory` below
+what its clusters hold at once, slowed and not refused, the one reading of the
+ledger over a real dump. The
 dump is machine-local and not ours, so it is never in `measure.py`. Today's
 uncharged outcome to set it against is a whole data-level parse at 24 workers
 under a 12 GiB container limit with the limit raised to 512 MiB, read without
