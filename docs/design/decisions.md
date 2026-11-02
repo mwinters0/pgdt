@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D142 -->
+<!-- decision-watermark: D143 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -83,6 +83,7 @@ are `docs/process.md`, "The decision register".
 - **D40** The comparison is decided per declared type, in the same arm
 - **D43** `NestedPlan` travels beside the `DataType`; the census speaks after the DDL and moves the pair
 - **D45** Strict decoders apart from permissive parsers; decode and render allocate only what they return
+- **D143** An input grammar is a walk over a forward byte source, read a part at a time
 
 ## Batches, streams and the leader
 [`decisions/batches.md`](decisions/batches.md)

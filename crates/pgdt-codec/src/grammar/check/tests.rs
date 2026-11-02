@@ -391,3 +391,147 @@ fn a_base_type_s_array_beneath_a_container_is_split_at_its_delimiter() {
         assert_eq!(field_refused(&plan, text), expected, "{field} {text:?}");
     }
 }
+
+/// **A walked check refuses exactly what a check over the keys refused**
+/// (`refused`, `checked_key`), over nested literals built from each
+/// container's grammar with leaves read and refused by their types, and a
+/// field walked as `COPY` wrote it — every byte escaped some way — refused
+/// exactly where its unescaped text is.
+#[test]
+fn a_walked_check_refuses_what_the_keys_refused() {
+    let types = vec![
+        TypeDef {
+            name: "public.pair".into(),
+            kind: TypeKind::Composite {
+                fields: Some(vec![
+                    ColumnDef::new("a", "smallint"),
+                    ColumnDef::new("b", "character varying(2)"),
+                    ColumnDef::new("c", "public.nn"),
+                ]),
+            },
+        },
+        TypeDef {
+            name: "public.deep".into(),
+            kind: TypeKind::Composite {
+                fields: Some(vec![
+                    ColumnDef::new("p", "public.pair[]"),
+                    ColumnDef::new("j", "json"),
+                    ColumnDef::new("b", "jsonb"),
+                    ColumnDef::new("r", "int4range"),
+                ]),
+            },
+        },
+        not_null_domain("public.nn", "integer"),
+    ];
+    let declared = [
+        "smallint[]",
+        "character varying(2)[]",
+        "public.nn[]",
+        "public.pair",
+        "public.pair[]",
+        "public.deep",
+        "public.deep[]",
+        "int4range",
+        "int4range[]",
+        "int4multirange",
+        "int2vector",
+        "json[]",
+        "jsonb[]",
+        "bytea[]",
+        "text[]",
+        "box[]",
+        "point[]",
+    ];
+    let mut rng = Rng(0x5eed_0004);
+    let (mut refusals, mut reads) = (0, 0);
+    for _ in 0..20_000 {
+        let text = literal(&mut rng, 2);
+        for declared in declared {
+            let plan = comparison_for(declared, None, &types, &[]);
+            let ComparisonPlan::Nested(nested) = &plan else { continue };
+            let keyed = checked_key(nested, &text).is_err();
+            assert_eq!(field_refused(&plan, &text), keyed, "{declared} {text:?}");
+            refusals += usize::from(keyed);
+            reads += usize::from(!keyed);
+            let escaped = pgdt_core::escape_field(Some(&text));
+            let walked = pgdt_core::internal::unescaped(&escaped).unwrap();
+            assert_eq!(walk_refused(&plan, walked), keyed, "{declared} {escaped:?}");
+        }
+    }
+    // Both answers are reached, at every depth.
+    assert!(refusals > 10_000 && reads > 10_000, "{refusals} refusals, {reads} reads");
+    // Every escape `COPY` reads, octal and hex among them, reads as its byte.
+    let plan = comparison_for("smallint[]", None, &types, &[]);
+    for (field, refused) in [
+        (&b"{1,\\0627}"[..], false),
+        (b"{1,\\x32}", false),
+        (b"{1,\\x37\\x30000}", true),
+        (b"\\{1,2\\}", false),
+        (b"{1\\t,2}", false),
+        (b"{1\\,2}", false),
+        (b"{1\\\\,2}", true),
+    ] {
+        let walked = pgdt_core::internal::unescaped(field).unwrap();
+        assert_eq!(walk_refused(&plan, walked), refused, "{field:?}");
+    }
+}
+
+/// A deterministic 64-bit LCG, so a failure is reproducible from the seed.
+struct Rng(u64);
+
+impl Rng {
+    fn below(&mut self, n: usize) -> usize {
+        self.0 =
+            self.0.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        ((self.0 >> 11) % n as u64) as usize
+    }
+}
+
+/// The leaves [`literal`] builds from: values some leaf type reads and
+/// others refuse.
+const LEAVES: &[&str] = &[
+    "1",
+    "70000",
+    "-7",
+    "ab",
+    "abc",
+    "",
+    "NULL",
+    "x",
+    "\\\\x0f",
+    "\\\\x0",
+    "[1,2]",
+    "[1,",
+    "{}",
+    "(1,2)",
+    "(1,2),(3,4)",
+    "\\\"a\\\"",
+    "\"\\u0000\"",
+    "é",
+    "1 ",
+    " 1",
+];
+
+/// A nested literal `depth` levels deep at most, each level an array split
+/// at `,` or `;`, a record or a range, each part quoted or bare.
+fn literal(rng: &mut Rng, depth: usize) -> String {
+    if depth == 0 || rng.below(4) == 0 {
+        return LEAVES[rng.below(LEAVES.len())].to_string();
+    }
+    let parts: Vec<String> = (0..rng.below(4))
+        .map(|_| {
+            let part = literal(rng, depth - 1);
+            if rng.below(2) == 0 {
+                format!("\"{}\"", part.replace('\\', "\\\\").replace('"', "\\\""))
+            } else {
+                part
+            }
+        })
+        .collect();
+    match rng.below(4) {
+        0 => format!("({})", parts.join(",")),
+        1 => format!("[{})", parts.join(",")),
+        2 => format!("{{{}}}", parts.join(";")),
+        _ => format!("{{{}}}", parts.join(",")),
+    }
+}

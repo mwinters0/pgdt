@@ -5,7 +5,9 @@
 use std::sync::Arc;
 
 use pgdt_codec::ResolvedSchema;
-use pgdt_codec::internal::{TextFold, bytea_reads, field_refused, grammar_refuses, text_typmod};
+use pgdt_codec::internal::{
+    TextFold, bytea_reads, field_refused, grammar_refuses, text_typmod, walk_refused, walks,
+};
 use pgdt_codec::{
     compare::{CompareKind, ComparisonPlan},
     grammar::{TextGrammar, Unchecked},
@@ -46,9 +48,11 @@ pub(super) fn field_checks(
             let bytea = grammar.is_none()
                 && matches!(plan, ComparisonPlan::Compared { kind: CompareKind::Bytea, .. });
             let typmod = grammar.is_none().then(|| text_typmod(plan)).flatten();
+            let walks = grammar.is_none() && walks(plan);
             (reads || not_null).then(|| FieldCheck {
                 bytea,
                 typmod,
+                walks,
                 plan: plan.clone(),
                 grammar,
                 declared_type,
@@ -223,6 +227,9 @@ pub(super) struct FieldCheck {
     /// Where `plan` refuses a field only past a text's typmod, its length
     /// ([`text_typmod`]), which is checked where the field lies.
     typmod: Option<Option<u32>>,
+    /// Whether `plan` reads a nested, `json` or `jsonb` value, which is
+    /// walked where it lies ([`walks`]).
+    walks: bool,
 }
 
 /// Whether a text whose bytes `text` reads is refused past `length`
@@ -255,6 +262,16 @@ pub(super) fn check_row(
             && let Some(text) = unescaped(field)
             && !length
                 .is_some_and(|length| field.len() > length as usize && typmod_refuses(text, length))
+        {
+            continue;
+        }
+        // So is a nested, `json` or `jsonb` value, walked a part at a time
+        // with no tree of it built (D143); one refused is unescaped to name
+        // it, and a field that is not UTF-8 is no value, which no `*_in` is
+        // handed.
+        if check.walks
+            && let Some(text) = unescaped(field)
+            && !(walk_refused(&check.plan, text.clone()) && TextFold::read(text, |_| {}).is_some())
         {
             continue;
         }

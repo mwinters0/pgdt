@@ -1,7 +1,8 @@
 //! What decoding one long value holds beside its line: one decoded copy, in
 //! a query over escaped text and over `bytea` (`docs/design/decisions.md`,
 //! "D141"), and none in a parse, its statistics and a strict parse's check
-//! reading an escaped field off its bytes ("D142").
+//! reading an escaped field off its bytes ("D142"), a strict parse walking a
+//! nested, `json` or `jsonb` value a part at a time ("D143").
 //!
 //! **This binary installs a global allocator tracking the bytes live**, and
 //! their peak, which is why it is a test file of its own. A line past its
@@ -79,9 +80,20 @@ fn window() -> usize {
 /// A dump of `public.t (a integer, b <declared>)` whose second row's `b` is
 /// `field`, as written to disk, between two short rows holding `short`.
 fn dump(dir: &Path, declared: &str, short: &str, field: &[u8]) -> std::path::PathBuf {
+    dump_after(dir, "", declared, short, field)
+}
+
+/// [`dump`], `preamble` written ahead of the table.
+fn dump_after(
+    dir: &Path,
+    preamble: &str,
+    declared: &str,
+    short: &str,
+    field: &[u8],
+) -> std::path::PathBuf {
     let path = dir.join("long.sql");
     let mut file = format!(
-        "CREATE TABLE public.t (\n    a integer,\n    b {declared}\n);\n\n\
+        "{preamble}CREATE TABLE public.t (\n    a integer,\n    b {declared}\n);\n\n\
          COPY public.t (a, b) FROM stdin;\n1\t{short}\n2\t"
     )
     .into_bytes();
@@ -223,4 +235,46 @@ async fn a_parse_holds_no_copy_of_an_escaped_text() {
     let path = dump(dir.path(), &format!("character varying({typmod})"), "short", past.as_bytes());
     let refused = parse(&path, PostgresInvalidValues::Strict).await.unwrap_err();
     assert!(matches!(refused, pgdt_core::Error::FieldRefused { .. }), "{refused:?}");
+}
+
+/// **A strict parse walks a nested, `json` or `jsonb` value holding no tree
+/// of it**: an array of many short elements, an array and a composite of
+/// escaped texts, and a `json` and a `jsonb` document of escaped strings,
+/// each of eight MiB, are checked, and gathered, with none of them
+/// allocated; one an element of which its type refuses is refused all the
+/// same.
+#[tokio::test]
+async fn a_strict_parse_holds_no_tree_of_a_nested_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let long = 8usize << 20;
+    let repeat = |part: &str, closing: &str| {
+        let mut field = part.repeat(long / part.len());
+        field.push_str(closing);
+        field
+    };
+    let pair = "CREATE TYPE public.pair AS (\n    n integer,\n    s text\n);\n\n";
+    for (preamble, declared, short, field) in [
+        ("", "smallint[]", "{1}", format!("{{{}}}", repeat("7,", "7"))),
+        ("", "text[]", "{a}", format!("{{{}}}", repeat("\"ab\\\\\"cd\",", "x"))),
+        (pair, "public.pair", "(1,a)", format!("(1,\"{}\")", repeat("ab\\\\\"cd", ""))),
+        ("", "json", "1", format!("[{}]", repeat("\"a\\\\nb\",", "1"))),
+        ("", "jsonb", "1", format!("[{}]", repeat("\"a\\\\nb\",", "1"))),
+    ] {
+        let path = dump_after(dir.path(), preamble, declared, short, field.as_bytes());
+        for invalid in [PostgresInvalidValues::Default, PostgresInvalidValues::Strict] {
+            let peak = parse(&path, invalid).await.unwrap();
+            assert!(peak < long / 4, "{declared}, {invalid:?}: {peak} bytes allocated at the peak");
+        }
+    }
+    for (declared, short, field) in [
+        ("smallint[]", "{1}", format!("{{{}}}", repeat("7,", "70000"))),
+        ("jsonb", "1", format!("[{}]", repeat("\"a\\\\nb\",", "\"\\\\u0000\""))),
+    ] {
+        let path = dump(dir.path(), declared, short, field.as_bytes());
+        let refused = parse(&path, PostgresInvalidValues::Strict).await.unwrap_err();
+        assert!(
+            matches!(refused, pgdt_core::Error::FieldRefused { .. }),
+            "{declared}: {refused:?}"
+        );
+    }
 }

@@ -1,6 +1,7 @@
 //! Whether PostgreSQL refuses a field: a column's grammars, what a strict
 //! parse leaves unchecked, and the refusal checks dispatched through the
-//! readers an order key is built by ([`checked_key`]).
+//! readers an order key is built by, a nested value's walked a part at a time
+//! through its containers' input grammars ([`refused`]).
 
 use pgdt_model::{TypeDef, TypeKind};
 
@@ -15,13 +16,18 @@ use crate::decode::{Read, Unread};
 use crate::grammar::input::{Geometric, TextGrammar, text_grammar};
 use crate::key::order::{OrderKey, field_key};
 use crate::value::bit::bit_in;
+use crate::value::bytea::{bytea_unread, read_bytea};
 use crate::value::geometric::{box_in, circle_in, line_in, lseg_in, path_in, point_in, poly_in};
-use crate::value::json::json_in;
+use crate::value::json::{json_in, json_reads, jsonb_reads};
 use crate::value::nested;
 use crate::value::nested::key::{
     NestedKey, RangeBoundKey, RangeKey, canonical_multirange, make_range,
 };
-use crate::value::text::char_typmod_refuses;
+use crate::value::nested::{
+    Refused, Walked, walk_array, walk_int2vector, walk_multirange, walk_record,
+};
+use crate::value::source::{Bytes, Source, bytes, collect};
+use crate::value::text::{TextFold, char_typmod_refuses};
 
 /// **Why a strict parse checks nothing of a value, or of a position within
 /// one**: what PostgreSQL refuses there is decided by something besides the
@@ -281,14 +287,17 @@ fn domains_beneath(
 /// every field by ([`PostgresInvalidValues::Strict`]). A scalar is [`field_key`]'s refusal;
 /// a nested value is read as the server reads one on its way in, through each
 /// container's input grammar, every element as a field of its own type and a
-/// range's bounds in order ([`checked_key`]). `json`, held as its text, is
-/// read by `json_in`'s grammar ([`json_in`](crate::value::json::json_in)), and a position holding
+/// range's bounds in order. `json`, held as its text, is read by `json_in`'s
+/// grammar ([`json_in`](crate::value::json::json_in)), and a position holding
 /// a type ordered by nothing by its [`TextGrammar`] where it has one; any
 /// other plan naming no type this build reads by — another held as its text,
 /// or a range declaring its own canonical function — refuses nothing, no
 /// reader here decoding its fields. A column whose own type is ordered by
 /// nothing is [`ComparisonPlan::Refused`] and is read by [`grammar_refuses`]
 /// instead.
+///
+/// A nested, `json` or `jsonb` value is walked off its bytes ([`walks`]), as
+/// [`walk_refused`] reads one.
 ///
 /// [`PostgresInvalidValues::Strict`]: pgdt_model::PostgresInvalidValues::Strict
 pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
@@ -300,17 +309,119 @@ pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
     if let Some(length) = text_typmod(plan) {
         return length.is_some_and(|length| char_typmod_refuses(text, length));
     }
+    if walks(plan) {
+        return walk_refused(plan, text.bytes());
+    }
     match plan {
-        // `AS_TEXT`'s one member is `json`.
-        ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => {
-            !json_in(text)
-        }
         ComparisonPlan::Compared { kind, .. } => {
             matches!(field_key(kind, text), Err(Unread::Refused))
         }
-        ComparisonPlan::Nested(nested) => checked_key(nested, text).is_err(),
-        ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_) => false,
+        ComparisonPlan::Nested(_) | ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_) => {
+            false
+        }
     }
+}
+
+/// **Whether [`field_refused`] reads a field of a column compared by `plan`
+/// a byte at a time**, holding no copy of it and no tree
+/// (`docs/design/decisions.md`, "D143"): a nested value, `json` and `jsonb`.
+pub fn walks(plan: &ComparisonPlan) -> bool {
+    matches!(
+        plan,
+        ComparisonPlan::Nested(_)
+            | ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. }
+            | ComparisonPlan::Compared { kind: CompareKind::Jsonb, .. }
+    )
+}
+
+/// **[`field_refused`] of the text `text` yields**, a field of a column
+/// whose plan [`walks`], its bytes read as they come — `COPY`'s, as
+/// `Unescaped` reads them — and each element of a nested value read off them
+/// in its turn, through the walk of its container's input grammar, as a
+/// field of its own type (`docs/design/decisions.md`, "D143"). The bytes are
+/// read as a text's, UTF-8; a caller whose bytes may not be asks
+/// [`TextFold`] apart, a field that is not being no value at all.
+pub fn walk_refused(plan: &ComparisonPlan, text: impl Iterator<Item = u8> + Clone) -> bool {
+    let text = &mut Bytes(text);
+    match plan {
+        // `AS_TEXT`'s one member is `json`.
+        ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => {
+            !json_reads(text)
+        }
+        ComparisonPlan::Compared { kind: CompareKind::Jsonb, .. } => {
+            jsonb_reads(text) == Err(Unread::Refused)
+        }
+        ComparisonPlan::Nested(nested) => refused(nested, text).is_err(),
+        _ => false,
+    }
+}
+
+/// **Whether a marked check refuses the nested field `text` reads**, as
+/// [`checked_key`] does, read off it a part at a time with no key built and
+/// no part held past its turn: an element, a field, a member range — whose
+/// two bounds are what `range_in` compares — each checked as it is walked,
+/// its container's grammar read through to its end.
+fn refused<'a>(plan: &NestedCompare, text: &mut dyn Source<'a>) -> Walked {
+    let refuses = |refused: bool| if refused { Err(Refused) } else { Ok(()) };
+    match plan {
+        NestedCompare::Leaf { kind, .. } => leaf_refused(kind, text),
+        // `json`, the one position diverging `AsText` (`NestedCompare::Uncomparable`).
+        NestedCompare::Uncomparable { divergence: Some(ComparisonDivergence::AsText), .. } => {
+            refuses(!json_reads(text))
+        }
+        NestedCompare::Uncomparable { grammar: Some(grammar), .. } => {
+            refuses(grammar_refuses(*grammar, &collect(text).ok_or(Refused)?))
+        }
+        NestedCompare::Uncomparable { .. } => Ok(()),
+        NestedCompare::Array { element, .. } => {
+            let Some(delimiter) = array_delimiter(&element.plan) else { return Ok(()) };
+            walk_array(text, delimiter, &mut |(), value| match value {
+                Some(value) => refused(&element.plan, value),
+                None => refuses(element.not_null),
+            })
+            .map(drop)
+        }
+        NestedCompare::Int2Vector { .. } => walk_int2vector(text, &mut |_| Ok(())),
+        NestedCompare::Record { fields: plans, .. } => {
+            walk_record(text, plans.len(), &mut |k, value| {
+                let (_, field) = &plans[k];
+                match value {
+                    Some(value) => refused(&field.plan, value),
+                    None => refuses(field.not_null),
+                }
+            })
+        }
+        NestedCompare::Range { bound, discrete, .. } => {
+            let literal = nested::read_range(text).ok_or(Refused)?;
+            checked_range(bound, &literal, *discrete).map(drop).map_err(|_| Refused)
+        }
+        // `multirange_in` refuses nothing past its members' `range_in`.
+        NestedCompare::Multirange { bound, discrete, .. } => walk_multirange(text, &mut |member| {
+            checked_range(bound, &member, *discrete).map(drop).map_err(|_| Refused)
+        }),
+    }
+}
+
+/// [`refused`] of a leaf: a text held to its typmod by its characters, and
+/// a `bytea` and a `jsonb`, read a byte at a time; any other scalar is
+/// collected — its own text, no longer than it — for [`field_key`].
+fn leaf_refused(kind: &CompareKind, text: &mut dyn Source<'_>) -> Walked {
+    let refused = match kind {
+        CompareKind::Text { length, .. } | CompareKind::PaddedText { length } => length
+            .is_some_and(|length| {
+                TextFold::read(bytes(text), |_| {}).is_some_and(|read| read.typmod_refuses(length))
+            }),
+        CompareKind::Bytea => {
+            !read_bytea(bytes(&mut *text.fork()), |_| {})
+                && bytea_unread(bytes(text)) == Unread::Refused
+        }
+        CompareKind::Jsonb => jsonb_reads(text) == Err(Unread::Refused),
+        kind => {
+            let value = collect(text).ok_or(Refused)?;
+            matches!(field_key(kind, &value), Err(Unread::Refused))
+        }
+    };
+    if refused { Err(Refused) } else { Ok(()) }
 }
 
 /// **Where [`field_refused`] refuses a field of a column compared by `plan`
@@ -355,7 +466,7 @@ pub fn grammar_refuses(grammar: TextGrammar, text: &str) -> bool {
             let element = Position { plan: element, not_null };
             let array =
                 NestedCompare::Array { declared: "box[]".into(), element: Box::new(element) };
-            checked_key(&array, text).is_ok()
+            refused(&array, &mut Bytes(text.bytes())).is_ok()
         }
         TextGrammar::RefusesAll => false,
         TextGrammar::RefusesNothing => true,
@@ -377,7 +488,8 @@ fn array_delimiter(element: &NestedCompare) -> Option<u8> {
     (delimiter.is_ascii_graphic() && !b"{}\"\\".contains(&delimiter)).then_some(delimiter)
 }
 
-/// A nested field's key, built as
+/// A range bound's key, for [`refused`] to compare a range's two by: a
+/// nested field's key, built as
 /// [`nested_key`](crate::value::nested::key::nested_key) builds a literal's —
 /// each container read by its input grammar, the one `COPY` reads a field by —
 /// with every element read as a field: `Err` where a marked check on the way

@@ -134,7 +134,7 @@ fn push_hex(hex: &[u8], out: &mut Vec<u8>) -> bool {
 
 /// Either form a byte at a time, each byte it reads handed to `emit`:
 /// [`decode_bytea`]'s grammar over bytes that need not lie in one slice.
-fn read_bytea(mut text: impl Iterator<Item = u8>, emit: impl FnMut(u8)) -> bool {
+pub(crate) fn read_bytea(mut text: impl Iterator<Item = u8>, emit: impl FnMut(u8)) -> bool {
     let first = text.next();
     let second = if first == Some(b'\\') { text.next() } else { None };
     if second == Some(b'x') {

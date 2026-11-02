@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 use crate::decode::{Read, Unread};
 use crate::value::first_difference;
 use crate::value::numeric::{NUMERIC_DSCALE_MAX, NUMERIC_INTEGER_DIGITS_MAX, NumericKey};
+use crate::value::source::{Bytes, Source};
 
 /// Whether `json_in` reads `text`, which it stores as written: one JSON value
 /// in RFC 8259's grammar, with blanks of `' '`, `\t`, `\n` and `\r` around
@@ -18,154 +19,284 @@ use crate::value::numeric::{NUMERIC_DSCALE_MAX, NUMERIC_INTEGER_DIGITS_MAX, Nume
 /// Iterative, over a stack of the containers open, so no depth refuses: the
 /// server's recursion is bounded by its `max_stack_depth`, a setting of the
 /// server restoring the dump (I72).
-// pg-refuses: I72 — every refusal here is `json_in`'s.
 pub(crate) fn json_in(text: &str) -> bool {
-    let b = text.as_bytes();
-    let mut at = 0;
-    // The containers open around the value being read, innermost last:
-    // `true` for an object.
-    let mut open: Vec<bool> = Vec::new();
-    loop {
-        // A value is expected at `at`.
-        json_blanks(b, &mut at);
-        let ok = match b.get(at) {
-            Some(b'{') => {
-                at += 1;
-                json_blanks(b, &mut at);
-                if b.get(at) == Some(&b'}') {
-                    at += 1;
-                    true
-                } else {
-                    if !json_member_key(b, &mut at) {
-                        return false;
+    walk_json(&mut Bytes(text.bytes()), false).is_ok()
+}
+
+/// **Whether `json_in` reads the text `text` reads** ([`json_in`]), walked off
+/// its bytes, holding no copy of it (`docs/design/decisions.md`, "D143").
+pub(crate) fn json_reads(text: &mut dyn Source<'_>) -> bool {
+    walk_json(text, false).is_ok()
+}
+
+/// **Whether `jsonb_in` reads the text `text` reads**, walked off its bytes
+/// with no document built (`docs/design/decisions.md`, "D143"): what
+/// [`parse_jsonb`] answers of it, a document read as `Ok`. It is
+/// [`json_in`]'s grammar with [`JsonCursor`]'s refusals beside it, each
+/// counted only where the cursor would reach it — before a value nested past
+/// [`JSONB_MAX_DEPTH`], which stops the cursor where `json_in` reads on.
+pub(crate) fn jsonb_reads(text: &mut dyn Source<'_>) -> Read<()> {
+    walk_json(text, true)
+}
+
+/// [`json_in`]'s walk, and with `jsonb` [`jsonb_reads`]'s.
+// pg-refuses: I72 — every refusal here is `json_in`'s.
+fn walk_json(text: &mut dyn Source<'_>, jsonb: bool) -> Read<()> {
+    let mut walk = JsonWalk { jsonb, deep: false, open: Vec::new(), depth: 0 };
+    if !walk.document(text) {
+        return Err(Unread::Refused);
+    }
+    if walk.deep { Err(Unread::Unparsed) } else { Ok(()) }
+}
+
+/// Where a [`walk_json`] stands.
+struct JsonWalk {
+    /// Whether `jsonb_in`'s refusals are read beside `json_in`'s grammar.
+    jsonb: bool,
+    /// Whether a value nested past [`JSONB_MAX_DEPTH`] has been reached,
+    /// where [`JsonCursor`] stops.
+    deep: bool,
+    /// The containers open around the value being read, innermost last, a
+    /// bit each: set for an object.
+    open: Vec<u64>,
+    depth: usize,
+}
+
+impl JsonWalk {
+    /// Whether a refusal of `jsonb_in`'s own is read here: in a `jsonb`, as
+    /// far as [`JsonCursor`] reads.
+    fn marks(&self) -> bool {
+        self.jsonb && !self.deep
+    }
+
+    fn push(&mut self, object: bool) {
+        let (word, bit) = (self.depth / 64, self.depth % 64);
+        if word == self.open.len() {
+            self.open.push(0);
+        }
+        self.open[word] = self.open[word] & !(1 << bit) | u64::from(object) << bit;
+        self.depth += 1;
+    }
+
+    /// The innermost container open, `true` for an object.
+    fn top(&self) -> Option<bool> {
+        let at = self.depth.checked_sub(1)?;
+        Some(self.open[at / 64] >> (at % 64) & 1 == 1)
+    }
+
+    /// One document, every token of it.
+    fn document(&mut self, b: &mut dyn Source<'_>) -> bool {
+        loop {
+            // A value is expected here, which the cursor counts its depth at.
+            json_blanks(b);
+            if self.jsonb && self.depth >= JSONB_MAX_DEPTH {
+                self.deep = true;
+            }
+            let ok = match b.peek() {
+                Some(b'{') => {
+                    b.next();
+                    json_blanks(b);
+                    if b.eat(b'}') {
+                        true
+                    } else {
+                        if !self.member_key(b) {
+                            return false;
+                        }
+                        self.push(true);
+                        continue;
                     }
-                    open.push(true);
-                    continue;
+                }
+                Some(b'[') => {
+                    b.next();
+                    json_blanks(b);
+                    if b.eat(b']') {
+                        true
+                    } else {
+                        self.push(false);
+                        continue;
+                    }
+                }
+                Some(b'"') => self.string(b),
+                Some(b'-' | b'0'..=b'9') => self.number(b),
+                Some(b't') => b"true".iter().all(|&byte| b.next() == Some(byte)),
+                Some(b'f') => b"false".iter().all(|&byte| b.next() == Some(byte)),
+                Some(b'n') => b"null".iter().all(|&byte| b.next() == Some(byte)),
+                _ => false,
+            };
+            if !ok {
+                return false;
+            }
+            // A value has been read: close what it ends, or go on to the next.
+            loop {
+                json_blanks(b);
+                let Some(object) = self.top() else { return b.next().is_none() };
+                match b.next() {
+                    Some(b',') => {
+                        if object && !self.member_key(b) {
+                            return false;
+                        }
+                        break;
+                    }
+                    Some(b'}') if object => self.depth -= 1,
+                    Some(b']') if !object => self.depth -= 1,
+                    _ => return false,
                 }
             }
-            Some(b'[') => {
-                at += 1;
-                json_blanks(b, &mut at);
-                if b.get(at) == Some(&b']') {
-                    at += 1;
-                    true
-                } else {
-                    open.push(false);
-                    continue;
-                }
-            }
-            Some(b'"') => json_string(b, &mut at),
-            Some(b'-' | b'0'..=b'9') => json_number(b, &mut at),
-            _ => ["true", "false", "null"].iter().any(|word| {
-                let found = b[at..].starts_with(word.as_bytes());
-                at += if found { word.len() } else { 0 };
-                found
-            }),
-        };
-        if !ok {
+        }
+    }
+
+    /// An object member's key and its `:`, blanks around each.
+    fn member_key(&mut self, b: &mut dyn Source<'_>) -> bool {
+        json_blanks(b);
+        if !(b.peek() == Some(b'"') && self.string(b)) {
             return false;
         }
-        // A value has been read: close what it ends, or go on to the next.
+        json_blanks(b);
+        b.eat(b':')
+    }
+
+    /// `json_lex_string` without de-escaping, its opening `"` next; in a
+    /// `jsonb`, [`JsonCursor::unicode_escape`]'s refusals beside it.
+    fn string(&mut self, b: &mut dyn Source<'_>) -> bool {
+        b.next();
+        // A high surrogate read, which a low one must follow at once.
+        let mut high = false;
         loop {
-            json_blanks(b, &mut at);
-            let Some(&object) = open.last() else { return at == b.len() };
-            match b.get(at) {
-                Some(b',') => {
-                    at += 1;
-                    if object && !json_member_key(b, &mut at) {
-                        return false;
+            let byte = b.next();
+            if high && byte != Some(b'\\') && self.marks() {
+                return false;
+            }
+            match byte {
+                Some(b'"') => return true,
+                Some(b'\\') => match b.next() {
+                    Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') if high => {
+                        if self.marks() {
+                            return false;
+                        }
+                        high = false;
                     }
-                    break;
-                }
-                Some(b'}') if object => {
-                    at += 1;
-                    open.pop();
-                }
-                Some(b']') if !object => {
-                    at += 1;
-                    open.pop();
-                }
-                _ => return false,
+                    Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') => {}
+                    Some(b'u') => {
+                        let mut code = 0u32;
+                        for _ in 0..4 {
+                            let Some(digit) = b.next().and_then(|d| char::from(d).to_digit(16))
+                            else {
+                                return false;
+                            };
+                            code = code << 4 | digit;
+                        }
+                        if self.marks() && !unicode_escape_read(code, &mut high) {
+                            return false;
+                        }
+                    }
+                    _ => return false,
+                },
+                Some(0x00..=0x1f) | None => return false,
+                Some(_) => {}
             }
         }
+    }
+
+    /// `json_lex_number`: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`. A
+    /// letter, digit or `_` right after it would join the token in the
+    /// server's lexer and fail it; here it fails as the next token, which no
+    /// position takes. In a `jsonb`, [`JsonCursor::number`]'s bounds beside it.
+    fn number(&mut self, b: &mut dyn Source<'_>) -> bool {
+        let mut digits = NumberDigits::default();
+        b.eat(b'-');
+        match b.next() {
+            Some(b'0') => digits.push(b'0'),
+            Some(first @ b'1'..=b'9') => {
+                digits.push(first);
+                while let Some(digit) = b.peek().filter(u8::is_ascii_digit) {
+                    b.next();
+                    digits.push(digit);
+                }
+            }
+            _ => return false,
+        }
+        let int = digits.count;
+        if b.eat(b'.') {
+            if !b.peek().is_some_and(|d| d.is_ascii_digit()) {
+                return false;
+            }
+            while let Some(digit) = b.peek().filter(u8::is_ascii_digit) {
+                b.next();
+                digits.push(digit);
+            }
+        }
+        let frac = digits.count - int;
+        let mut exponent: Option<i64> = Some(0);
+        if matches!(b.peek(), Some(b'e' | b'E')) {
+            b.next();
+            let negative = b.eat(b'-');
+            if !negative {
+                b.eat(b'+');
+            }
+            if !b.peek().is_some_and(|d| d.is_ascii_digit()) {
+                return false;
+            }
+            while let Some(digit) = b.peek().filter(u8::is_ascii_digit) {
+                b.next();
+                exponent =
+                    exponent.and_then(|e| e.checked_mul(10)?.checked_add(i64::from(digit - b'0')));
+            }
+            exponent = exponent.map(|e| if negative { -e } else { e });
+        }
+        !self.marks() || exponent.is_some_and(|e| numeric_stores(int, frac, e, digits.first))
+    }
+}
+
+/// The digits of a JSON number's integer and fraction, as a count and where
+/// the first that is not a zero lies.
+#[derive(Default)]
+struct NumberDigits {
+    count: usize,
+    first: Option<usize>,
+}
+
+impl NumberDigits {
+    fn push(&mut self, digit: u8) {
+        if digit != b'0' && self.first.is_none() {
+            self.first = Some(self.count);
+        }
+        self.count += 1;
     }
 }
 
 /// `json_lex`'s blanks.
-fn json_blanks(b: &[u8], at: &mut usize) {
-    while matches!(b.get(*at), Some(b' ' | b'\t' | b'\n' | b'\r')) {
-        *at += 1;
-    }
+fn json_blanks(b: &mut dyn Source<'_>) {
+    b.skip_while(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r'));
 }
 
-/// An object member's key and its `:`, blanks around each.
-fn json_member_key(b: &[u8], at: &mut usize) -> bool {
-    json_blanks(b, at);
-    if !(b.get(*at) == Some(&b'"') && json_string(b, at)) {
+/// Whether a `jsonb` reads a `\u` escape naming `code`, `high` saying a high
+/// surrogate came just before it and set where `code` is one
+/// ([`JsonCursor::unicode_escape`]).
+// pg-refuses: I41 — `\u0000`, and a surrogate out of its pair.
+fn unicode_escape_read(code: u32, high: &mut bool) -> bool {
+    let low = (0xdc00..0xe000).contains(&code);
+    if std::mem::take(high) {
+        return low;
+    }
+    *high = (0xd800..0xdc00).contains(&code);
+    code != 0 && !low
+}
+
+/// **Whether `numeric_in` stores a JSON number** whose integer part has `int`
+/// digits, its fraction `frac`, its exponent `exponent`, and `first` its first
+/// digit that is not a zero, counted over both parts: the exponent and the
+/// display scale it leaves within the storage format's, and the weight
+/// counted from that first digit.
+// pg-refuses: I63 — an exponent past `PG_INT32_MAX / 2`, or a display
+// scale or a weight past the storage format's.
+fn numeric_stores(int: usize, frac: usize, exponent: i64, first: Option<usize>) -> bool {
+    let (Ok(int), Ok(frac)) = (i64::try_from(int), i64::try_from(frac)) else { return false };
+    if exponent.abs() > NUMERIC_EXPONENT_MAX || frac - exponent > NUMERIC_DSCALE_MAX as i64 {
         return false;
     }
-    json_blanks(b, at);
-    let colon = b.get(*at) == Some(&b':');
-    *at += usize::from(colon);
-    colon
-}
-
-/// `json_lex_string` without de-escaping, its opening `"` at `at`.
-fn json_string(b: &[u8], at: &mut usize) -> bool {
-    *at += 1;
-    loop {
-        match b.get(*at) {
-            Some(b'"') => {
-                *at += 1;
-                return true;
-            }
-            Some(b'\\') => match b.get(*at + 1) {
-                Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') => *at += 2,
-                Some(b'u') => match b.get(*at + 2..*at + 6) {
-                    Some(hex) if hex.iter().all(u8::is_ascii_hexdigit) => *at += 6,
-                    _ => return false,
-                },
-                _ => return false,
-            },
-            Some(0x00..=0x1f) | None => return false,
-            Some(_) => *at += 1,
-        }
-    }
-}
-
-/// `json_lex_number`: `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`. A
-/// letter, digit or `_` right after it would join the token in the server's
-/// lexer and fail it; here it fails as the next token, which no position takes.
-fn json_number(b: &[u8], at: &mut usize) -> bool {
-    let digits = |at: &mut usize| {
-        let start = *at;
-        while b.get(*at).is_some_and(u8::is_ascii_digit) {
-            *at += 1;
-        }
-        *at > start
-    };
-    *at += usize::from(b.get(*at) == Some(&b'-'));
-    match b.get(*at) {
-        Some(b'0') => *at += 1,
-        Some(b'1'..=b'9') => {
-            digits(at);
-        }
-        _ => return false,
-    }
-    if b.get(*at) == Some(&b'.') {
-        *at += 1;
-        if !digits(at) {
-            return false;
-        }
-    }
-    if matches!(b.get(*at), Some(b'e' | b'E')) {
-        *at += 1;
-        *at += usize::from(matches!(b.get(*at), Some(b'+' | b'-')));
-        if !digits(at) {
-            return false;
-        }
-    }
-    true
+    // A zero has no weight, and is stored whatever its exponent moves.
+    let Some(first) = first.and_then(|first| i64::try_from(first).ok()) else { return true };
+    int + exponent - first <= NUMERIC_INTEGER_DIGITS_MAX as i64
 }
 
 /// One `jsonb` value, in the shape PostgreSQL stores and compares one in.
@@ -549,23 +680,17 @@ impl<'a> JsonCursor<'a> {
         // The display scale is the fraction's digits less the exponent, and
         // the weight counts from the first non-zero digit: a zero has none,
         // and is stored whatever its exponent moves.
-        // pg-refuses: I63 — an exponent past `PG_INT32_MAX / 2`, or a display
-        // scale or a weight past the storage format's.
-        if exponent.abs() > NUMERIC_EXPONENT_MAX
-            || i64::try_from(frac.len()).ok()? - exponent > NUMERIC_DSCALE_MAX as i64
-        {
-            return None;
-        }
         let digits = format!("{int}{frac}");
-        let Some(first) = digits.bytes().position(|b| b != b'0') else {
-            return Some(NumericKey::from_parts(false, "", ""));
-        };
-        // Where the point lands, counted in digits from the left of
-        // `int ++ frac`. The two bounds above bound the padding either side.
-        let point = i64::try_from(int.len()).ok()? + exponent;
-        if point - i64::try_from(first).ok()? > NUMERIC_INTEGER_DIGITS_MAX as i64 {
+        let first = digits.bytes().position(|b| b != b'0');
+        if !numeric_stores(int.len(), frac.len(), exponent, first) {
             return None;
         }
+        if first.is_none() {
+            return Some(NumericKey::from_parts(false, "", ""));
+        }
+        // Where the point lands, counted in digits from the left of
+        // `int ++ frac`. The bounds above bound the padding either side.
+        let point = i64::try_from(int.len()).ok()? + exponent;
         let width = i64::try_from(digits.len()).ok()?;
         Some(match point {
             _ if point <= 0 => {

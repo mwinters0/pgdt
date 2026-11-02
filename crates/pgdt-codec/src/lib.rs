@@ -28,6 +28,7 @@ pub mod internal {
     pub use crate::compare::divergence::datafusion_position_divergences;
     pub use crate::grammar::check::{
         column_grammar, field_refused, grammar_refuses, text_typmod, unchecked_positions,
+        walk_refused, walks,
     };
     pub use crate::key::equality::{Equality, Spellings, literal_equality};
     pub use crate::key::form::{accepted_form, nested_accepted_form, unlisted_labels};

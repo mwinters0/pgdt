@@ -18,6 +18,7 @@ pub(crate) mod libc;
 pub(crate) mod nested;
 pub(crate) mod network;
 pub(crate) mod numeric;
+pub(crate) mod source;
 pub(crate) mod text;
 pub(crate) mod uuid;
 

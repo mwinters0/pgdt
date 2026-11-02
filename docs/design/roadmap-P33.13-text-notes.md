@@ -39,17 +39,19 @@ alone changed.
 - **A column summing, or counting unrepresentable values, still unescapes a
   long escaped field whole** (`ColumnGatherer::observe`): a sum needs the
   whole integer's digits and a container's tier its elements. No `pg_dump`
-  writes an escape in such a column, so no dump in hand pays it; the row
-  closes it with the element walk.
+  writes an escape in such a column, so no dump in hand pays it; 33.13.2
+  closes it with the output grammar's walk.
 - **A strict parse's check of a nested, `json` or `jsonb` value, and of any
   other scalar, still unescapes it and builds what `checked_key` and
-  `field_key` build**; the row's walk is what removes them.
+  `field_key` build**; the row's walk is what removes them, 33.13.1's for a
+  nested, `json` or `jsonb` value
+  ([`roadmap-P33.13.1-walk-notes.md`](roadmap-P33.13.1-walk-notes.md)).
 
 ## What 33.4 inherits
 
 - **A parse holds its line and no copy of a text, `character` or `bytea`
-  value read from it**, gathering or strict; it does hold an escaped
-  nested, `json` or `jsonb` value's copy until 33.13.1.
+  value read from it**, gathering or strict; what it holds of a nested,
+  `json` or `jsonb` value is in 33.13.1's notes.
 
 ## Negative results
 
