@@ -293,6 +293,14 @@ impl ResolvedExpr {
         Ok(self.eval(false, raw_row, split, table, row_offset)?.is_true())
     }
 
+    /// [`Self::matches`] of a row this tree reads no field of
+    /// ([`Self::reads_fields`]), which a replay counts without holding its
+    /// bytes: the answer is the tree's alone, the same for every row.
+    pub(crate) fn matches_unread(&self, table: &str, row_offset: u64) -> Result<bool> {
+        debug_assert!(!self.reads_fields(), "a filter reading a field was asked of no row");
+        self.matches(RawRow::unchecked(&[]), &mut RowSplit::default(), table, row_offset)
+    }
+
     /// Kleene evaluation, left to right, stopping as soon as **the root's**
     /// value is determined.
     ///

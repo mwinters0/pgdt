@@ -169,7 +169,7 @@ impl RowBatcher {
     /// **The whole row is walked whatever the projection is.** Skipping is
     /// per column — `RawRow::decode` and the builder append — never an early
     /// stop at the last projected field, because this is the system's only
-    /// field-count check: the sole site that raises
+    /// field-count check, beside a counted row's: the sole site that raises
     /// `Error::ColumnCountMismatch`, the mapping pass never erroring on a
     /// count (`docs/design/decisions.md`, "D28").
     ///
@@ -195,17 +195,7 @@ impl RowBatcher {
         let expected = self.field_targets.len();
         let ends: &[usize] =
             if expected == 0 && raw.is_empty() { &[] } else { split.complete(raw) };
-        let found = ends.len();
-        if found != expected {
-            return Err(Error::ColumnCountMismatch {
-                header_offset,
-                row_offset,
-                expected,
-                // Saturated one past the width, though the split counted
-                // every field of the row.
-                found: if found > expected { expected + 1 } else { found },
-            });
-        }
+        self.hold_to_width(header_offset, row_offset, ends.len())?;
         let mut pos = 0usize;
         for (col, &end) in ends.iter().enumerate() {
             if let Some(target) = self.field_targets[col] {
@@ -221,13 +211,55 @@ impl RowBatcher {
             }
             pos = end + 1;
         }
+        self.count_row(row_offset, row_offset + raw.len() as u64);
+        Ok(())
+    }
+
+    /// Append one row its read loop counted without holding its bytes, its
+    /// `fields` counted as they went by (`pgdt_dump::StreamedRow`), `len`
+    /// bytes long with its line ending: a batcher decoding no field takes it
+    /// as [`push_row`](Self::push_row) takes a row, held to the block's
+    /// width alike (`docs/design/decisions.md`, "D28").
+    pub(crate) fn push_counted_row(
+        &mut self,
+        header_offset: u64,
+        row_offset: u64,
+        fields: usize,
+        len: u64,
+    ) -> Result<()> {
+        debug_assert!(!self.decodes_fields, "a row whose fields decode was counted");
+        self.hold_to_width(header_offset, row_offset, fields)?;
+        self.count_row(row_offset, row_offset + len);
+        Ok(())
+    }
+
+    /// Refuse a row of `found` fields unless the block's own column list is
+    /// that wide: the one width check a row meets, whether its fields were
+    /// split or counted.
+    #[inline]
+    fn hold_to_width(&self, header_offset: u64, row_offset: u64, found: usize) -> Result<()> {
+        let expected = self.field_targets.len();
+        if found != expected {
+            return Err(Error::ColumnCountMismatch {
+                header_offset,
+                row_offset,
+                expected,
+                // Saturated one past the width, though every field of the row
+                // was counted.
+                found: if found > expected { expected + 1 } else { found },
+            });
+        }
+        Ok(())
+    }
+
+    /// Take a row from `row_offset` to `row_end` into the batch and its span.
+    #[inline]
+    fn count_row(&mut self, row_offset: u64, row_end: u64) {
         self.rows_in_batch += 1;
-        let row_end = row_offset + raw.len() as u64;
         self.span = Some(match self.span {
             Some((start, _)) => (start, row_end),
             None => (row_offset, row_end),
         });
-        Ok(())
     }
 
     /// Append one field's text to projected column `col`, a NULL its

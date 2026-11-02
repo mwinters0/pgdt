@@ -380,9 +380,7 @@ pub async fn map_forward(
                     // A block whose rows are only counted holds none of
                     // them: a row outgrowing its chunk is streamed
                     // (`pgdt_dump::ChunkEvents::stream_rows`).
-                    if !builder.reads_rows() {
-                        chunk.stream_rows();
-                    }
+                    chunk.stream_rows(!builder.reads_rows());
                     // **The offer, and this loop is the leader making it**
                     // ([`scan_region`]): everything from
                     // `data_offset` until `\.` is line-structured rows, so

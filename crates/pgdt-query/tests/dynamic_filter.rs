@@ -819,3 +819,44 @@ async fn a_row_the_state_rejects_is_dropped_before_it_decodes() {
     let on_v = Moving::constant(term("v", PredicateOp::Gt, "100"));
     assert_eq!(read_both(&dump, &index, Some(on_v)).await, Err(refused));
 }
+
+/// **A row a state reading a field evaluates is held, though nothing is
+/// projected**: `public.t`'s twenty rows, each many of the replay's chunks
+/// long, are counted with no column read, and under `id > 10`, its rows
+/// evaluated, the ten it rejects are dropped as a held row is, rather than
+/// streamed past the state and kept.
+#[tokio::test]
+async fn a_row_the_state_reads_is_held_though_no_column_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("long.sql");
+    let long = "x".repeat(4096);
+    let rows: String = (1..=20).map(|id| format!("{id}\t{long}\n")).collect();
+    std::fs::write(
+        &path,
+        format!(
+            "CREATE TABLE public.t (\n    id integer,\n    v text\n);\n\n\
+             COPY public.t (id, v) FROM stdin;\n{rows}\\.\n"
+        ),
+    )
+    .unwrap();
+    let index = mapped(&path, 1 << 20).await;
+    let name = index.tables().into_iter().find(|t| t.qualified_name() == "public.t").unwrap();
+    let table = opened(&path).await.table(&name.into()).unwrap().unwrap();
+    let options = QueryOptions { projection: Some(Vec::new()), ..QueryOptions::default() };
+    let read = ReadOptions { chunk_size_bytes: 64, ..ReadOptions::default() };
+    let plan = Arc::new(table.plan(read, options).unwrap());
+
+    for (dynamic, rows, dropped) in
+        [(None, 20, 0), (Some(Moving::constant(term("id", PredicateOp::Gt, "10"))), 10, 10)]
+    {
+        let mut stream = match dynamic {
+            Some(filter) => plan.under(filter, RowEvaluation::On).stream(0, 64),
+            None => plan.stream(0, 64),
+        };
+        let mut counted = 0;
+        while let Some(batch) = stream.next().await {
+            counted += batch.unwrap().num_rows();
+        }
+        assert_eq!((counted, stream.dynamic_filter_pruned_rows()), (rows, dropped));
+    }
+}

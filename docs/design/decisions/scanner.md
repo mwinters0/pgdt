@@ -16,14 +16,14 @@ dollar-quoted body never structure (I1). Rejected: tracking `$` alone, or quotes
 every block).
 
 ### D138 A row its reader only counts is streamed once it outgrows its chunk
-A block whose rows nothing reads past their count — no census, observer or record: a metadata-level parse and its
-interior workers — streams them: a row no chunk ends is folded into a `StreamedLine`, its length and ending (I91), not
-carried, and handed out as `Event::StreamedRow`, so the pass holds no line at any length. One a chunk ends, or no
-longer than `\.` and a CR, stays a `Row`. The state is `ChunkCarry`'s, shared by the serial loop and a worker, whose
-scanner is new each span; a block holds unless its reader says otherwise. Rejected: a `Row` with an empty `raw`, which
-a reader decoding it cannot tell from an empty row; streaming in the scanner, which a worker's spans would lose.
-Reopens: a census reading a bounded head of each field. Evidence: `crates/pgdt-mapping/tests/streamed_line.rs`.
-
+A block whose rows nothing reads past their count and width streams them — a metadata-level parse and its workers (no
+census, observer or record), and a replay whose batch, filter, stop and dynamic filter read no field, asked each chunk
+under the state last read, a kept row never wrong (`DynamicFilter`): a row no chunk ends is folded into a
+`StreamedLine` — length, ending (I91), fields — and handed out as `Event::StreamedRow`, holding no line. One a chunk
+ends, or no longer than `\.` and a CR, stays a `Row`. The state is `ChunkCarry`'s, the serial loop's and a worker's.
+Rejected: a `Row` with an empty `raw`, which a decoder cannot tell from an empty row; streaming in the scanner, which a
+worker's spans would lose. Reopens: a census reading a bounded head of each field. Evidence: `streamed_line.rs`,
+`streamed_replay.rs`.
 ### D139 A line past its chunk grows in a mapping of its own, by `mremap`, in huge-page steps
 A carried line longer than its chunk leaves the carry's `Vec` for an anonymous mapping (`LineMapping`), grown by
 `mremap` in steps of the PMD huge page where at most `STEP_CEILING` (else the base page), its start aligned to one,
@@ -60,8 +60,8 @@ denies `unsafe` in every target and each root forbids it unless a site of its pr
 ### D28 One row split, shared unconditionally
 One `RowSplit` per row, memoized and shared unconditionally by the filter's terms and the batcher, extending only as
 deep as asked. Rejected: a term-count gate; a second `push_row` for the unfiltered path (a second `push_field` site
-defeats inlining); stopping the walk at the last projected column, `push_row` being the only `ColumnCountMismatch` site.
-Evidence: `predicate-terms`.
+defeats inlining); stopping the walk at the last projected column, the batcher's width check — a split row's, or a
+streamed one's count (D138) — being the only `ColumnCountMismatch` site. Evidence: `predicate-terms`.
 
 ### D29 Refused micro-optimizations on the row path
 Pre-sized Arrow builders (a one-row batch fills thousands of slots); a viewing builder for nested `Utf8View` (the prize

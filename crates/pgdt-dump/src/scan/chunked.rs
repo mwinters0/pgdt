@@ -13,6 +13,7 @@ use bytes::Bytes;
 use self::line::CarriedLine;
 pub use self::line::LineMapping;
 use super::{CopyScanner, EndingScan, Event, RowEnding};
+use pgdt_core::internal::delimiters;
 use pgdt_core::{Error, Result};
 use pgdt_io::{
     ByteRangeSource, Extent, Parallelism, SCAN_CHUNK_DEFAULT_SIZE_BYTES, WaitPolicy,
@@ -84,7 +85,8 @@ pub enum ChunkPass {
 /// **A row whose reader reads nothing past its count is streamed instead**
 /// ([`streams`](Passes::streams)): once such a row outgrows the chunk it
 /// began in, the carry keeps no byte of it, only what its end needs — its
-/// length and how it ends ([`StreamedLine`]) — and the chunk that ends it, or
+/// length and how it ends — and its fields' count ([`StreamedLine`]), which
+/// a reader holds to its header's width; and the chunk that ends it, or
 /// the file's end, hands it to the carry pass in place of a held line. So a
 /// pass decoding no field holds no line at any length
 /// (`docs/design/decisions.md`, "D138").
@@ -119,8 +121,8 @@ pub struct ChunkCarry {
 }
 
 /// A row a read loop reads through without holding ([`ChunkCarry`]): what
-/// its end needs of the bytes that went by.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// its end needs of the bytes that went by, and how many fields they held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamedLine {
     /// The row's bytes so far, an LF that ends it included.
     len: u64,
@@ -128,6 +130,16 @@ pub struct StreamedLine {
     ending: EndingScan,
     /// Whether an LF has ended it, rather than the file's end or nothing yet.
     terminated: bool,
+    /// The fields its bytes so far hold: one past its delimiters, as
+    /// `pgdt_core::split_fields` counts them, so a reader holding the row to
+    /// its header's width needs none of its bytes.
+    fields: usize,
+}
+
+impl Default for StreamedLine {
+    fn default() -> Self {
+        Self { len: 0, ending: EndingScan::default(), terminated: false, fields: 1 }
+    }
 }
 
 impl StreamedLine {
@@ -146,11 +158,19 @@ impl StreamedLine {
         self.terminated
     }
 
+    /// The row's fields, as `pgdt_core::split_fields` counts its line's: a
+    /// raw tab is a delimiter wherever it lies, and neither a CR nor an LF
+    /// is one.
+    pub fn fields(&self) -> usize {
+        self.fields
+    }
+
     /// Fold in the row's next bytes, `bytes` of a chunk up to and including
     /// the LF ending it where `terminated`.
     fn read(&mut self, bytes: &[u8], terminated: bool) {
         let before = if terminated { &bytes[..bytes.len() - 1] } else { bytes };
         self.ending.feed(before);
+        self.fields += delimiters(before);
         self.len += bytes.len() as u64;
         self.terminated = terminated;
     }
@@ -547,13 +567,15 @@ impl<'a> ChunkEvents<'a> {
         }
     }
 
-    /// Stream the rows of the block the last event opened: its reader reads
-    /// none past its count, so a row that outgrows its chunk is counted
-    /// without its bytes being held and handed out as an
-    /// [`Event::StreamedRow`], flat in memory at any length. Called on its
-    /// [`Event::CopyStart`]; the block's end undoes it.
-    pub fn stream_rows(&mut self) {
-        self.scanner.stream_rows();
+    /// Say whether the open block's rows are streamed: where `streams`, its
+    /// reader reads none of a row past its count and its fields' count, so a
+    /// row that outgrows its chunk is counted without its bytes being held
+    /// and handed out as an [`Event::StreamedRow`], flat in memory at any
+    /// length. Asked of the line this chunk leaves for the next, so a reader
+    /// whose answer moves says so before each chunk's events run out; a
+    /// block's header and its end undo it.
+    pub fn stream_rows(&mut self, streams: bool) {
+        self.scanner.stream_rows(streams);
     }
 
     /// Record what the pass just run out consumed, and move to the next —
@@ -574,9 +596,11 @@ impl<'a> ChunkEvents<'a> {
                 (self.span, self.span_eof) = self.passes.span(ChunkPass::InPlace);
                 self.pass = Some(ChunkPass::InPlace);
                 match self.passes.streamed() {
-                    Some(line) => Ok(PassEnd::Streamed(
-                        self.scanner.streamed_row(line.bytes(), line.ending())?,
-                    )),
+                    Some(line) => Ok(PassEnd::Streamed(self.scanner.streamed_row(
+                        line.bytes(),
+                        line.ending(),
+                        line.fields(),
+                    )?)),
                     None => Ok(PassEnd::Next),
                 }
             }

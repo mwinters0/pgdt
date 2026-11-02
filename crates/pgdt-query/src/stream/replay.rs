@@ -31,6 +31,7 @@ use super::resume::{InCopyResume, ResumeToken};
 use super::table::StreamShared;
 use crate::batch::{RetainedChunks, RowBatcher};
 use crate::predicate::{ComparisonNote, ResolvedExpr};
+use crate::prune::SortedStop;
 
 /// Pass 2, for one sub-stream: replay `segments` in file order, in batches of
 /// at most `max_rows` rows and whatever else `plan.query_options` bounds them
@@ -50,6 +51,11 @@ use crate::predicate::{ComparisonNote, ResolvedExpr};
 /// dropped where it rejects it ([`DynamicRead::rejects`]). A block sorted on a
 /// bound the state requires stops at its first row past it, as under a static
 /// filter's.
+///
+/// **A row nothing here reads a field of is streamed** once it outgrows its
+/// chunk ([`reads_no_field`]): counted and held to its block's width, its
+/// bytes never held, so a replay reading no field holds no line at any
+/// length (`docs/design/decisions.md`, "D138").
 #[allow(clippy::too_many_arguments)]
 pub(super) fn replay<'a>(
     source: &'a dyn ByteRangeSource,
@@ -230,6 +236,13 @@ pub(super) fn replay<'a>(
                     }
                 }
                 let mut chunk = chunked.next_chunk(source).await?;
+                // Whether the line this chunk leaves for the next may be
+                // streamed, under the dynamic state just read.
+                if let Some(opened) = active.as_ref()
+                    && chunk.scanner().in_copy_block()
+                {
+                    chunk.stream_rows(reads_no_field(opened, stop, dynamic.as_ref()));
+                }
                 // The carried line first, being earlier in the file: a row of
                 // the carry pass lies whole in it and in no read chunk.
                 if let Some((start, line)) = chunk.held() {
@@ -249,8 +262,9 @@ pub(super) fn replay<'a>(
                 let mut validated: Option<(u64, &str)> = None;
                 while let Some(event) = chunk.next_event()? {
                     // Whether the scanner now stands at a row's start
-                    // inside the block's data.
-                    let at_row = matches!(event, Event::CopyStart(_) | Event::Row(_));
+                    // inside the block's data, and whether a row was taken.
+                    let counted = matches!(event, Event::Row(_) | Event::StreamedRow(_));
+                    let at_row = counted || matches!(event, Event::CopyStart(_));
                     match event {
                         Event::CopyStart(start) => {
                             let (opened, resolved, notes) = activate(
@@ -262,6 +276,7 @@ pub(super) fn replay<'a>(
                             )?;
                             *shared.comparison_notes.lock().unwrap() = notes;
                             *shared.resolved_schema.lock().unwrap() = resolved;
+                            chunk.stream_rows(reads_no_field(&opened, stop, dynamic.as_ref()));
                             active = Some(opened);
                         }
                         Event::Row(row) => {
@@ -341,18 +356,23 @@ pub(super) fn replay<'a>(
                                         &mut chunks,
                                     )?;
                                 }
-                                if batcher.should_flush() {
-                                    let begins_at = batcher
-                                        .batch_start()
-                                        .unwrap_or_else(|| chunk.scanner().position());
-                                    let batch = batcher.flush()?;
-                                    chunks.invalidate_block_cache();
-                                    rows_emitted += batch.num_rows() as u64;
-                                    *shared.batch_offset.lock().unwrap() = begins_at;
-                                    *shared.position.lock().unwrap() =
-                                        snapshot(chunk.scanner(), &active, rows_emitted, fingerprint);
-                                    yield batch;
-                                }
+                            }
+                        }
+                        // A row nothing here reads a field of, counted as
+                        // it went by (`reads_no_field`): its filter's answer
+                        // is the tree's alone, and its fields are held to
+                        // the block's width as a held row's are.
+                        Event::StreamedRow(row) => {
+                            if let Some((header_offset, _, batcher, filter, _)) =
+                                active.as_mut()
+                                && filter.matches_unread(batcher.table(), row.offset)?
+                            {
+                                batcher.push_counted_row(
+                                    *header_offset,
+                                    row.offset,
+                                    row.fields,
+                                    row.len,
+                                )?;
                             }
                         }
                         Event::CopyEnd(_) => {
@@ -376,8 +396,20 @@ pub(super) fn replay<'a>(
                         // header itself, which arrives as `CopyStart`.
                         Event::Line(_) | Event::DollarQuoteEnd(_) => {}
                         Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
-                        // A replay reads its rows, so it streams none.
-                        Event::StreamedRow(_) => unreachable!("a replay streams no row"),
+                    }
+                    if counted
+                        && let Some((_, _, batcher, _, _)) = active.as_mut()
+                        && batcher.should_flush()
+                    {
+                        let begins_at =
+                            batcher.batch_start().unwrap_or_else(|| chunk.scanner().position());
+                        let batch = batcher.flush()?;
+                        chunks.invalidate_block_cache();
+                        rows_emitted += batch.num_rows() as u64;
+                        *shared.batch_offset.lock().unwrap() = begins_at;
+                        *shared.position.lock().unwrap() =
+                            snapshot(chunk.scanner(), &active, rows_emitted, fingerprint);
+                        yield batch;
                     }
                     // The line just consumed ended at or past this
                     // segment's limit, so it was its last. Checked after
@@ -453,6 +485,25 @@ pub(super) fn replay<'a>(
             }
         }
     }
+}
+
+/// Whether a row of `active`'s block may be streamed — counted, once it
+/// outgrows its chunk, without its bytes being held: nothing the replay asks
+/// of it reads a field — not its batch, its filter or its block's sorted
+/// `stop`, nor `dynamic` under the state it last read. A state that moves to
+/// one reading a field while a row streams leaves that row kept and unstopped,
+/// which a dynamic filter's contract allows, a row it keeps never being wrong
+/// (`docs/design/decisions.md`, "D138").
+fn reads_no_field(
+    active: &Active,
+    stop: Option<&SortedStop>,
+    dynamic: Option<&DynamicRead>,
+) -> bool {
+    let (_, _, batcher, filter, _) = active;
+    !batcher.decodes_fields()
+        && !filter.reads_fields()
+        && stop.is_none()
+        && dynamic.is_none_or(|dynamic| !dynamic.reads_fields() && dynamic.stop().is_none())
 }
 
 /// Add `unread` to the entry of `early_stops` for the block at

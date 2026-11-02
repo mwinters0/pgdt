@@ -130,6 +130,13 @@ pub fn split_fields(line: &[u8]) -> impl Iterator<Item = &[u8]> {
     field_ranges(line).map(|r| &line[r])
 }
 
+/// The field delimiters in `bytes`, any run of a row's line: the row holds
+/// one more field than its line holds delimiters, as [`split_fields`] splits
+/// it — what a reader counting a row it never holds whole sums run by run.
+pub fn delimiters(bytes: &[u8]) -> usize {
+    memchr::memchr_iter(COPY_TEXT_DELIMITER, bytes).count()
+}
+
 /// The same split as [`split_fields`], as **ranges** into the line.
 ///
 /// A caller holding the row as `&str` as well as `&[u8]` — which is what

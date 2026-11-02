@@ -77,6 +77,9 @@ pub struct StreamedRow {
     pub index: u64,
     /// The row's bytes, its line ending included.
     pub len: u64,
+    /// The row's fields, as [`pgdt_core::split_fields`] counts its line's,
+    /// so a reader holds it to its header's width as it holds a [`Row`].
+    pub fields: usize,
 }
 
 /// The end of a COPY data block.
@@ -510,20 +513,27 @@ impl CopyScanner {
         self.streams_rows
     }
 
-    /// Stream the open block's rows: its reader reads none past its count,
-    /// so a read loop may count a row without holding its bytes
+    /// Say whether the open block's rows are streamed: where `streams`, its
+    /// reader reads none past their count and their fields', so a read loop
+    /// may count a row without holding its bytes
     /// ([`ChunkEvents::stream_rows`]). Undone by the block's end.
-    pub(crate) fn stream_rows(&mut self) {
-        debug_assert!(self.in_copy_block(), "rows streamed outside a block");
-        self.streams_rows = self.in_copy_block();
+    pub(crate) fn stream_rows(&mut self, streams: bool) {
+        debug_assert!(!streams || self.in_copy_block(), "rows streamed outside a block");
+        self.streams_rows = streams && self.in_copy_block();
     }
 
     /// Consume a row of the open block its read loop counted without holding
     /// it ([`StreamedLine`]): `len` bytes from [`position`](Self::position),
-    /// which stands at a buffer's start, ending as `ending`, which is held
-    /// to the block's first row's ending as a row's is. Never the
-    /// terminator: a loop streams only a line longer than `\.` with a CR.
-    pub(crate) fn streamed_row(&mut self, len: u64, ending: RowEnding) -> Result<Event<'static>> {
+    /// which stands at a buffer's start, of `fields` fields, ending as
+    /// `ending`, which is held to the block's first row's ending as a row's
+    /// is. Never the terminator: a loop streams only a line longer than `\.`
+    /// with a CR.
+    pub(crate) fn streamed_row(
+        &mut self,
+        len: u64,
+        ending: RowEnding,
+        fields: usize,
+    ) -> Result<Event<'static>> {
         debug_assert_eq!(self.pos, 0, "a streamed row is consumed between two buffers");
         let State::InCopy { rows, header_offset } = self.state else {
             unreachable!("a row streamed outside a block");
@@ -534,7 +544,7 @@ impl CopyScanner {
             LongestLine::fold(self.longest, Some(LongestLine { offset: line_offset, len }));
         self.base += len;
         self.state = State::InCopy { rows: rows + 1, header_offset };
-        Ok(Event::StreamedRow(StreamedRow { offset: line_offset, index: rows, len }))
+        Ok(Event::StreamedRow(StreamedRow { offset: line_offset, index: rows, len, fields }))
     }
 
     /// Bytes of the buffer consumed so far. Resets the scanner's buffer
@@ -571,7 +581,8 @@ impl CopyScanner {
             // deficiency: KD104 — a backslash before a raw LF makes it data,
             // the row running on past it, as one before a raw tab makes that
             // data too (I91); here every LF ends a row, and `split_fields`
-            // splits at every tab. `pg_dump` escapes both (I15).
+            // splits, and a streamed row's count counts (`delimiters`), at
+            // every tab. `pg_dump` escapes both (I15).
             let (line, advance, holds_cr) = match self.state {
                 State::InCopy { .. } => match memchr::memchr2(b'\n', b'\r', rest) {
                     Some(nl) if rest[nl] == b'\n' => (&rest[..nl], nl + 1, false),

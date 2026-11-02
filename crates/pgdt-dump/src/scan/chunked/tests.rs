@@ -436,9 +436,9 @@ fn the_carry_keeps_no_line_past_its_row() {
 
 /// What a read loop streaming every block's rows — or, with `stream` off,
 /// holding them — answers of `file` in `read`'s chunks: every event, a row
-/// rendered as its index, its offset and where the scanner stands past it,
-/// so a held row and a streamed one read alike; how many rows were
-/// streamed; and the most the carry kept allocated between two chunks.
+/// rendered as its index, its offset, where the scanner stands past it and
+/// its fields, so a held row and a streamed one read alike; how many rows
+/// were streamed; and the most the carry kept allocated between two chunks.
 struct Streamed {
     events: Result<Vec<String>>,
     streamed: usize,
@@ -457,16 +457,17 @@ fn stream(file: &[u8], read: ReadOptions, stream: bool) -> Streamed {
         while let Some(event) = chunk.next_event()? {
             let past = chunk.scanner().position();
             events.push(match event {
-                Event::Row(Row { offset, index, .. }) => format!("row {index}@{offset}..{past}"),
-                Event::StreamedRow(StreamedRow { offset, index, len }) => {
+                Event::Row(Row { offset, index, raw }) => {
+                    let fields = pgdt_core::split_fields(raw).count();
+                    format!("row {index}@{offset}..{past}, {fields} fields")
+                }
+                Event::StreamedRow(StreamedRow { offset, index, len, fields }) => {
                     assert_eq!(offset + len, past, "a streamed row's length");
                     out.streamed += 1;
-                    format!("row {index}@{offset}..{past}")
+                    format!("row {index}@{offset}..{past}, {fields} fields")
                 }
                 Event::CopyStart(start) => {
-                    if stream {
-                        chunk.stream_rows();
-                    }
+                    chunk.stream_rows(stream);
                     format!("{:?}", Event::CopyStart(start))
                 }
                 other => format!("{other:?}"),
@@ -483,7 +484,9 @@ fn stream(file: &[u8], read: ReadOptions, stream: bool) -> Streamed {
 
 /// A block of short rows around rows many chunks long — one in each of the
 /// three endings, a backslash before the chunk boundary and a CR escaped
-/// across one among them — and the DDL after it.
+/// across one among them, and one whose delimiters lie among its long
+/// values, a tab a backslash precedes among them, so its fields are counted
+/// across chunk boundaries — and the DDL after it.
 fn streamable(len: usize, block_ending: &str, long_ending: &str) -> Vec<u8> {
     let value = "x".repeat(len);
     let mut file = b"COPY public.t (a, b) FROM stdin;\n".to_vec();
@@ -493,6 +496,7 @@ fn streamable(len: usize, block_ending: &str, long_ending: &str) -> Vec<u8> {
         format!("3\t\\\\{value}\\\r{value}{block_ending}"),
         format!("4\tab{block_ending}"),
         format!("5\t{value}\\\\{block_ending}"),
+        format!("6\t{value}\t\t{value}\\\t{value}\t{block_ending}"),
     ] {
         file.extend_from_slice(row.as_bytes());
     }
