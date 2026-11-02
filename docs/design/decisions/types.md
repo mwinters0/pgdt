@@ -47,7 +47,7 @@ returns, a nested element borrowing unless it carried an escape. Rejected: a `St
 `array_in`'s, `record_in`'s, `range_in`'s, `multirange_in`'s and `int2vectorin`'s grammars, and `json_in`'s with
 `jsonb_in`'s refusals beside it, are walks over a `Source`, each part read off its container's bytes as the grammar
 finds it; `parse_*` collect them and a strict check reads them, so a nested, `json` or `jsonb` field is checked off
-`Unescaped` holding no copy, no key and no part past its turn, but a range's two bounds, which `range_in` compares.
+`Unescaped` holding no copy, no key and no part past its turn, but a scalar part's text and a range's two bounds.
 Rejected: checking a key built and dropped, a tree of tens of bytes an element; a source generic over its container's,
 which instantiates without bound; a check walk beside each scanner, two grammars for one. Code: `value/source.rs`
 (`Source`, `Part`), `nested/input.rs`, `json.rs` (`walk_json`), `grammar/check.rs` (`refused`). Evidence:

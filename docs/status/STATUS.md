@@ -99,8 +99,9 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.3.2** A replay reading no field streams a line: the carry counts a streamed row's fields against its header's width, and a replay whose batch and filters read no field counts a row that outgrows its chunk without holding its bytes, as the spec's "A pass holds a line only where it decodes it" states (D138) — [notes](../design/roadmap-P33.3.2-replay-notes.md)
 - [x] **33.3.3** A query's census streams a line: a cold query's mapping pass censuses a row that outgrows its chunk field by field as it goes by, holding only a counted container's field, as the spec's "A census holds only the fields it decodes" states (D138) — [notes](../design/roadmap-P33.3.3-census-notes.md)
 - [x] **33.13** A parse holds no copy of a text it reads: the statistics gatherer reading a long escaped field off `Unescaped` where its column keeps no sum and counts no unrepresentable value, and the strict check holding a text to its typmod off it, as the spec's "What a held line costs" states (D142); an allocation test failing on its parent — [notes](../design/roadmap-P33.13-text-notes.md)
-- [x] **33.13.1** A strict check holds no tree of a value it reads: the input grammars as walks yielding each part one at a time, `parse_*` their collectors; the strict check walking a nested, `json` and `jsonb` value's validity off `Unescaped` with no copy and no tree, as the spec's "What a held line costs" states (D143); an allocation test failing on its parent — [notes](../design/roadmap-P33.13.1-walk-notes.md)
-- [ ] **33.13.2** A parse draws once: the output grammars' walk yielding a nested literal's elements one at a time; the statistics gatherer reading a long field of a column it sums or counts unrepresentable values of off `Unescaped`; a parse drawing once, as the spec's "What a held line costs" states; an allocation test failing on its parent
+- [x] **33.13.1** A strict check holds no tree of a value it reads: the input grammars as walks yielding each part one at a time, `parse_*` their collectors; the strict check walking a nested, `json` and `jsonb` value's containers off `Unescaped` with no copy of the field and no tree (D143); an allocation test failing on its parent — [notes](../design/roadmap-P33.13.1-walk-notes.md)
+- [ ] **33.13.3** A strict check holds no scalar's text: every scalar reader reading a byte source forward and holding only what its answer needs, a `&str` one source among them, so a strict check reads a scalar position, a range's bounds and a scalar column's escaped field off `Unescaped`, and walks a nested `box[]` over `;`, as the spec's "What a held line costs" states; an allocation test failing on its parent over a long `polygon[]`, `bit varying[]` and zero-padded `numeric[]` element
+- [ ] **33.13.2** A parse draws once: the output grammars' walk yielding a nested literal's elements one at a time; the statistics gatherer reading a long field of a column it sums or counts unrepresentable values of off `Unescaped`; a parse drawing once, as the spec's "What a held line costs" states; an allocation test failing on its parent; waits on the spec's rejection of a gathering parse streamed, whose reopen 33.13.3 meets, re-grilled
 - [ ] **33.14** A filter term holds no copy: a text, `character` and `bytea` term comparing off `Unescaped`, an array, record and range ordering term as the walk reads it, as the spec's "What a held line costs" states; an allocation test failing on its parent
 - [ ] **33.15** A normalized type's key is positions: a `jsonb` object's and a multirange's ordering key holding its pairs' positions and its members' bounds, and its key factor, as the spec's "What a held line costs" states; an allocation test failing on its parent
 - [ ] **33.16** A nested value decodes into its builders, and a query has one factor: no staging of a nested value's elements, a decode factor beside each builder, pgdt-query folding a query's into one number, as the spec's "What a held line costs" and "Where it lives" state; `long-line-resident`'s `int8[]` query and `jsonb` filter legs, as its "How it is shown" states; an allocation test failing on its parent
@@ -138,16 +139,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **33.13.1: a strict check collects a scalar's text.** A scalar position of
-  a nested value other than a typmod'd text or a `bytea` is read whole into a
-  `String` for `field_key`, as are a range's two bounds, and a scalar
-  column's escaped field is unescaped as before; only a text's typmod, a
-  `bytea`, `json` and `jsonb` are read a byte at a time (D143). So a strict
-  parse holds the longest such part beside its line: a `numeric` element,
-  bounded by its type, a `path` or `polygon` one, bounded only by
-  `MaxAllocSize`, or a hand-written blank-padded scalar. Made so because no
-  other scalar `*_in` reads a long text, and the spec's "A census holds only the fields it decodes" rejects a
-  scalar's grammar streamed, "a second parser beside each decoder".
-  Reconsidering means 33.13.2's "a parse drawing once" either charges that
-  part or has each scalar reader take a byte source.

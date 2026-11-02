@@ -38,25 +38,33 @@ holding its field's tree, many times the field.
   `walks` off `Unescaped`, unescaping it only to name it once refused, and
   asks a refused one's bytes for UTF-8 apart.
 
+## What 33.13.3 inherits
+
+- **A strict check still collects a scalar part's text**: a scalar position
+  other than a text or `bytea` (`leaf_refused`), one a `TextGrammar` reads
+  (`refused`) and a range's two bounds (`read_range`), each into a `String`
+  grown through the global allocator; a scalar column's escaped field is
+  unescaped whole as before. Such a part is bounded only by its line: every
+  number's `*_in` takes leading zeros and blanks at any length, a date's
+  `ParseDateTime` skips blanks outside its work buffer, and `pg_dump` itself
+  writes a `polygon`, `path` or `bit varying` element of any length.
+- **A `box[]` nested in a composite is collected whole**
+  (`TextGrammar::BoxArray`, `refused`), a container D143's walk was owed.
+
 ## What 33.13.2 inherits
 
 - **A column summing, or counting unrepresentable values, still unescapes a
   long escaped field whole** (`ColumnGatherer::observe`, D142): a container's
   tier walks `decode_*`, the output grammar, which is still the slice
   scanners, so its walk is 33.13.2's — the walk 33.14 and 33.16 consume.
-- **A part a walk hands its caller is read, not held, only where the caller
-  folds it**: a strict check collects a scalar leaf other than a text or
-  `bytea` — its own text, as `field_key` reads it — and a range's two bounds,
-  each no longer than itself, so an array of one long such element holds that
-  element. A scalar field at the top of a column still unescapes where it is
-  escaped, as before.
 - **`walk_json`'s stack** of open containers holds a bit a level, so a document
   nested as deep as its line is long holds an eighth of it.
 
 ## What 33.4 inherits
 
 - **A strict parse holds its line and no copy or tree of a nested, `json` or
-  `jsonb` value**, but the parts above; a parse whose column sums or counts
+  `jsonb` value**, but the scalar parts and the nested `box[]` 33.13.3
+  inherits; a parse whose column sums or counts
   unrepresentable values still holds an escaped value's copy until 33.13.2.
 
 ## Negative results
