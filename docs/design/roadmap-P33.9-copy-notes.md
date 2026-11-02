@@ -40,11 +40,10 @@ allocator tracks the bytes live, the line past its chunk being outside it
 - **A data-level parse holds one copy of an escaped field beside its line**,
   strict or not: `ColumnGatherer::observe` unescapes a whole field before its
   statistics clip a head (`statistics/gather/column.rs`). The strict test's
-  peak is that copy. It is under STATUS's "Decisions worth another look".
+  peak is that copy. Its removal is 33.13.
 - **A filter term's key is a copy beside the batch's**, made and dropped per
   term: an escaped field unescaped, then keyed — a `bytea` decoded beside its
-  unescaped text, a text copied for an ordering term. Also under "Decisions
-  worth another look".
+  unescaped text, a text copied for an ordering term. Its removal is 33.14.
 
 ## Negative results
 

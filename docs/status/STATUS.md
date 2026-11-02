@@ -98,6 +98,10 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.9** One decoded copy: a query's escaped text and hex bytea value, and a strict parse's bytea check, held beside their line with at most one decoded copy, as the spec's "What a held line costs" states (D141) — [notes](../design/roadmap-P33.9-copy-notes.md)
 - [ ] **33.3.2** A replay reading no field streams a line: the carry counts a streamed row's fields against its header's width, and a replay whose batch and filters read no field counts a row that outgrows its chunk without holding its bytes, as the spec's "A pass holds a line only where it decodes it" states
 - [ ] **33.3.3** A query's census streams a line: a cold query's mapping pass censuses a row that outgrows its chunk field by field as it goes by, holding only a counted container's field, as the spec's "A census holds only the fields it decodes" states
+- [ ] **33.13** A parse holds no copy of a value it reads: a nested literal's walk yielding its elements one at a time; the statistics gatherer reading a long field off `Unescaped`; the strict check walking a text's typmod and a nested and `jsonb` value's validity with no tree; a parse drawing once, as the spec's "What a held line costs" states; an allocation test failing on its parent
+- [ ] **33.14** A filter term holds no copy: a text, `character` and `bytea` term comparing off `Unescaped`, an array, record and range ordering term as the walk reads it, as the spec's "What a held line costs" states; an allocation test failing on its parent
+- [ ] **33.15** A normalized type's key is positions: a `jsonb` object's and a multirange's ordering key holding its pairs' positions and its members' bounds, and its key factor, as the spec's "What a held line costs" states; an allocation test failing on its parent
+- [ ] **33.16** A nested value decodes into its builders, and a query has one factor: no staging of a nested value's elements, a decode factor beside each builder, pgdt-query folding a query's into one number, as the spec's "What a held line costs" and "Where it lives" state; `long-line-resident`'s `int8[]` query and `jsonb` filter legs, as its "How it is shown" states; an allocation test failing on its parent
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, an unstated allowance's ledger unlimited; a read over mapped blocks carving its longest line's charge before a reader starts; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
 - [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, a line one reader cannot hold refused for memory, and a read over mapped blocks whose longest line one reader cannot hold refused before it reads a byte, its remedy spelled by `pgdt` and the shell
 - [ ] **33.6** The bound: I71's constant on every path, measured exactly; `LineTooLong` naming it; a batch cut before a value would overflow its column's offsets; `--max-line-bytes`, `pgdump.max_line_bytes`, `ReadOptions::max_line_bytes`, their manual section and tests removed; the real-bound test; `KD93` struck
@@ -132,24 +136,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **33.9 left a data-level parse's statistics copying an escaped field whole.**
-  `ColumnGatherer::observe` (`statistics/gather/column.rs`) unescapes every
-  field before its bounds clip a head, so a parse at the data level, default or
-  strict, holds one copy of an escaped text or `bytea` field beside its line;
-  `decoded_copies.rs`'s strict test peaks at it. The spec's "What a held line
-  costs" charges a default parse once, for the held line alone, and 33.8 saw no
-  copy there under mimalloc's retention. Left because the row named a query and
-  a strict check, and the gatherer's per-field reads (tier, sum, bounds, value
-  bytes) all take the unescaped text. Reconsidering: the gatherer reading a
-  head off the escaped field as the census reads its shape, a slice before
-  33.4, or a default parse charged twice its line.
-- **33.9 left a filter term's key a copy beside the batch's.** A term over a
-  long field unescapes it and keys it — a `bytea` decoded beside its unescaped
-  text, a text copied for an ordering term (`predicate/eval.rs`,
-  `key/order.rs`) — dropped before the row is pushed, so a query filtering on
-  such a column briefly holds one and a half to two copies beside its line,
-  where the spec states one. Left because the row named a batch's values.
-  Reconsidering: a term keying a field off `Unescaped` as the batcher now
-  decodes one, or the charge counting a filter's key.
-

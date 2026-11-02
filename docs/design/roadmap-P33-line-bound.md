@@ -123,20 +123,41 @@ waits, which still wedges on two lines that each began short and grew.
 design can remove is sized for waste. The held line's buffer is handed to the
 Arrow builder as a block, as a chunk is, so an unescaped value spanning chunks
 is not copied again; the replay releases the chunks under a line it has copied;
-the buffer is freed after its row rather than kept at its high-water mark. A
-query then holds the line and at most one decoded copy — about the line for an
-unescaped value, twice it for an escaped one, one and a half for hex bytea and up
-to twice it for `bytea_output = escape`'s form, which no dump pins (I4) —
-where today it holds three to five times it ([`measurements.md`](measurements.md),
-"What a held line holds resident").
+the buffer is freed after its row rather than kept at its high-water mark.
+**What only reads a value holds nothing that grows with it**: a filter's term,
+a strict parse's check and a parse's statistics walk the field as `COPY`'s
+unescaped bytes as they go — a comparison stopping at its first difference, a
+check holding no tree, statistics keeping a head (`decisions.md`, "D76") —
+so the one decoded copy a value has is its batch's. **But an ordering key over
+a value the server normalizes** — a `jsonb` object, whose pairs it sorts and
+de-duplicates, a multirange, whose members it sorts and merges — holds the
+least that order needs: each pair's position in the field, sorted, its value
+walked from there, and each member's bounds. **A nested value is decoded
+straight into its builders** as its walk reads each element, with no staging of
+its elements, a field refused whole by truncating them back. A query then holds the
+line and that copy — about the line for an unescaped value, twice it for an
+escaped one, one and a half for hex bytea and up to twice it for
+`bytea_output = escape`'s form, which no dump pins (I4) — where today it holds
+three to five times it ([`measurements.md`](measurements.md), "What a held line
+holds resident"). Rejected: an unescaped value shared between a filter and its
+batch, which still copies for every row the filter drops and ties the predicate
+to the batcher's buffers; a key built whole for a value only compared, which
+over an array or `jsonb` is a tree of tens of bytes an element; refusing an
+ordering term over a long `jsonb` or multirange, which a key of positions reads.
 
-**The charge is the held line plus the bound its decode adds**: every decode
-shortens a value, so a pass that decodes a whole value — a query, a strict
-parse — draws twice the held bytes, and a default parse, whose statistics keep
-clipped heads (`decisions.md`, "D76"), draws once. Whether that matches what is
-resident is a reading, an evidence slice's on the reference dump's clustered
-lines, never an argued constant. Rejected: one factor for every pass, which
-charges a default parse for a copy it never makes.
+**The charge is the held line plus the bound its decode adds**: a parse, strict
+or not, reads its values and draws once; a query draws once plus its batch's
+decode, bounded by the largest **decode factor** among the columns it reads —
+the most its column's Arrow type and plan hold per text byte, known from the
+schema before a reader starts — and by each ordering term's **key factor** over
+a normalized type, what its positions hold per text byte. A decode factor is one
+for text and `bytea`, every decode of them shortening a value, and more for an
+array of fixed-width elements, whose `{1,2}` spends two text bytes on each
+eight-byte `int8`. Whether that
+matches what is resident is a reading, an evidence slice's on the reference
+dump's clustered lines, never an argued constant. Rejected: one factor for
+every pass, which charges a parse for a copy it never makes; one factor for
+every query, which charges a query over text for `int8[]`'s.
 
 **A line that outgrows its chunk grows outside the allocator**, in memory the
 carry holds for it alone: once there it never moves, so no growth holds it
@@ -248,6 +269,12 @@ edge, pgdt-dump depending on pgdt-io already.
 - **The longest line** — pgdt-model's `CopyBlock`, recorded by pgdt-mapping's
   passes; `Arrangement::resolve` is handed its charge as a number, pgdt-io
   seeing no model.
+- **The factors** — a decode factor beside each of pgdt-query's builders,
+  which write the Arrow form it bounds, and a key factor beside pgdt-codec's
+  normalized keys; pgdt-query folds them over a query's columns and terms and
+  hands `Arrangement::resolve` one number beside the longest line, a parse
+  handing one. Rejected: a per-type table in pgdt-codec, stating a fact about
+  pgdt-query's builders a crate away.
 - **The refusals** — pgdt-core's `error.rs`: `LineTooLong` loses its limit and
   names I71's bound; a line outgrowing the allowance is a refusal of its own,
   naming the line's start, the bytes it needs and the allowance, which
@@ -292,7 +319,10 @@ an asserted constant alone, which prove nothing about the wiring.
 length — default parse, strict parse, a query over text, escaped text and
 bytea, serial and at four workers (`roadmap.md`, "Four workers is the
 optimization baseline; twenty-four is the guard") — over a generated input
-clustering lines near the bound. It is taken on today's code first, pricing
+clustering lines near the bound. **A factor above one has a leg of its own**: a
+query over an `int8[]` of single digits, the largest decode factor, and an
+ordering filter over a `jsonb` object, a key factor, from the slice that
+computes them on; a factor no leg reads would be an argued constant. It is taken on today's code first, pricing
 the copies, and re-taken once the ledger lands, confirming the factors or
 re-setting them. **The acceptance is a hand run on the reference dump** under a
 stated `--memory` below what its clusters hold at once: read with no setting,
