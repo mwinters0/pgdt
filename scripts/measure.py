@@ -8571,7 +8571,9 @@ def resumable_verdict(rows: Sequence[ResumableRow]) -> str:
     within its noise of today's pull on every one-run row, the field as a
     reader meets it on nearly every line, and the push machine otherwise. A
     row fed a byte a run prices a resumption and decides nothing, today's pull
-    resuming at none."""
+    resuming at none. *Rejected:* those rows deciding too — a field reaches its
+    reader split only where the carry's `FieldFold` splits it, once a chunk, so
+    they price a boundary a field almost never crosses."""
     deciding = [row for row in rows if row.feed == "whole"]
     if not deciding:
         raise ValueError("no one-run row to decide by")

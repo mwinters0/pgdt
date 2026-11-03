@@ -27,8 +27,12 @@ the slice's deliverable, and the form 33.18 builds in.
   of the pull's two timings — `pull` first in the group and `pull_again`
   last — by no more than the larger of what separates those two and the
   intervals' half-widths summed; every one-run row within takes the `async`
-  form, any row past it the push machine. That definition is the entry under
-  STATUS's "Decisions worth another look".
+  form, any row past it the push machine. The maintainer has since settled
+  a layout term in the noise and a `push` taken only where it pays, both
+  landing before the readings
+  ([`../status/history/2026-11-03.md`](../status/history/2026-11-03.md),
+  "`resumable-reader-micro`'s noise and verdict, settled with the
+  maintainer").
 - **The bench refuses to time a form disagreeing with another**
   (`agreement`): every timed literal over each feed, and hand-written cases
   of each refusal the walks make, nested plans two deep among them. Run once
@@ -36,6 +40,11 @@ the slice's deliverable, and the form 33.18 builds in.
   expected answer was falsified by hand.
 
 ## What the readings round inherits
+
+- **The instrument changes before any reading**: a second leg built with
+  `-C llvm-args=-align-all-functions=6` in its own target dir, `release.Bench`
+  gaining the rustflags it lacks, and the verdict reading the `push` column —
+  as the history entry above settles.
 
 - **The pull leg is a restatement, frozen at this commit**: the figure
   declares the bench's files alone, so a change to `value/source.rs` or
@@ -51,6 +60,12 @@ the slice's deliverable, and the form 33.18 builds in.
   rule 4): the push column beside the two being decided, the run-boundary
   lines under the table, and the two pull timings' gap, which is the
   sitting's own drift.
+- **For 33.18, should `push` win**: only one-run rows decide because a field
+  crosses a run boundary once a chunk, and `Unescaped` yields bytes, so an
+  escape makes no boundary for a pulled or `async` source. A `push` machine
+  fed a span per escape would meet an escape-dense field as many runs, which
+  the byte-a-run rows price; an unescaper filling a fixed scratch buffer meets
+  it as few.
 
 ## Negative results
 

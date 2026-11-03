@@ -100,7 +100,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.3.3** A query's census streams a line: a cold query's mapping pass censuses a row that outgrows its chunk field by field as it goes by, holding only a counted container's field, as the spec's "A census holds only the fields it decodes" states (D138) — [notes](../design/roadmap-P33.3.3-census-notes.md)
 - [x] **33.13** A parse holds no copy of a text it reads: the statistics gatherer reading a long escaped field off `Unescaped` where its column keeps no sum and counts no unrepresentable value, and the strict check holding a text to its typmod off it, as the spec's "What a held line costs" states (D142); an allocation test failing on its parent — [notes](../design/roadmap-P33.13-text-notes.md)
 - [x] **33.13.1** A strict check holds no tree of a value it reads: the input grammars as walks yielding each part one at a time, `parse_*` their collectors; the strict check walking a nested, `json` and `jsonb` value's containers off `Unescaped` with no copy of the field and no tree (D143); an allocation test failing on its parent — [notes](../design/roadmap-P33.13.1-walk-notes.md)
-- [ ] **33.17** Evidence: a resumable reader priced — today's pull walk against a hand-written push state machine and an `async` walk over a byte source, on `nested-decode-micro` and a scalar micro, a short field and one fed over runs; the `async` walk chosen if within the figure's noise of today's pull, else the push machine, as the spec's "A pass holds a line only where it decodes it" requires; no production code. The bench and `resumable-reader-micro`, registered untaken, are landed; the readings remain — [notes](../design/roadmap-P33.17-form-notes.md)
+- [ ] **33.17** Evidence: a resumable reader priced — today's pull walk against a hand-written push state machine and an `async` walk over a byte source, on `nested-decode-micro` and a scalar micro, a short field and one fed over runs; the `async` walk chosen if within its noise of today's pull on every one-run row, that noise widened by how far the gap moves under a second code layout, and the push machine only where it is cheaper than the `async` walk past their noise, as the spec's "A pass holds a line only where it decodes it" requires; no production code. The bench and `resumable-reader-micro`, registered untaken, are landed; the layout leg and the verdict's `push` comparison, then the readings, remain — [notes](../design/roadmap-P33.17-form-notes.md)
 - [ ] **33.18** The input walks resume: `Unescaped`, `Source`, the input grammars' walks and `TextFold` in 33.17's form, each fed a field's runs and looking no further ahead than a fixed bound — an unquoted element's whitespace run carried as its counts, a `bytea` read once for both its answers — as the spec's "A pass holds a line only where it decodes it" states; an allocation test feeding a field over runs, failing on its parent
 - [ ] **33.13.3** A strict check holds no scalar's text: every scalar reader reading a byte source forward and holding only what its answer needs, a `&str` one source among them, so a strict check reads a scalar position, a range's bounds and a scalar column's escaped field off `Unescaped`, and walks a nested `box[]` over `;`, as the spec's "What a held line costs" states; an allocation test failing on its parent over a long `polygon[]`, `bit varying[]` and zero-padded `numeric[]` element; every scalar reader resuming on 33.18's source
 - [ ] **33.13.2** A gatherer's sum and tier hold no copy: the output grammars' walk in 33.17's form, yielding a nested literal's elements one at a time; the statistics gatherer reading a long field of a column it sums or counts unrepresentable values of over it, holding a bounded state, as the spec's "What a held line costs" states; an allocation test failing on its parent
@@ -143,20 +143,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`resumable-reader-micro`'s noise, and which rows decide.** The spec
-  chooses the `async` walk "if within the figure's noise of today's pull"
-  without saying what the noise is or which legs it binds
-  ([`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.md),
-  "A pass holds a line only where it decodes it"). The renderer states it
-  ahead of the readings (`measure.ResumableRow.noise_ns`): the larger of the
-  gap between the pull's two timings in one sitting, first and last in the
-  group, and the pull's and the `async` walk's 95% intervals' half-widths
-  summed; and only the one-run rows decide, the byte-a-run rows pricing a
-  resumption today's pull never makes. Taken so because a field reaches its
-  reader as one run on nearly every line, and the within-sitting scatter is
-  the one this sitting can see. Reconsidering means a noise taken across
-  sittings — `nested-decode-micro`'s `decode` column has moved for reasons of
-  its own between stamps — which loosens the criterion toward the `async`
-  form, or the byte-a-run rows deciding too, which tightens it toward push;
-  either is one edit in `measure.py` before the readings, none after.
