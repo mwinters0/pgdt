@@ -5,7 +5,7 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 31 figures below come from that sitting.** The other 8 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzip-first-pass` (`055c8d27`), `gzip-resident` (`055c8d27`), `gzseek-backend` (`39744f33`), `gzseek-spacing` (`4691536e`), `inflate-throughput` (`d2cf15c4`), `long-line-resident` (`6dd4523c`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`).
+**Session stamp.** Every figure below — every section carrying a `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on 2026-10-06, against commit `3a34f062`, under the `mimalloc` allocator and glibc 2.41. **23 of the 32 figures below come from that sitting.** The other 9 carry their own sitting commits inside their markers, and every reader of this stamp argues from those instead: `gzip-first-pass` (`055c8d27`), `gzip-resident` (`055c8d27`), `gzseek-backend` (`39744f33`), `gzseek-spacing` (`4691536e`), `inflate-throughput` (`d2cf15c4`), `long-line-resident` (`6dd4523c`), `parallel-scan-throughput` (`de2f6076`), `release-profile` (`ef442ad6`), `resumable-reader-micro` (`0fd33bd3`).
 One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -2271,6 +2271,81 @@ because a rounded ratio is how a table acquires a number nobody can reproduce.
 The bench alone is `cd scripts && uv run release.py bench --package pgdt-codec
 --bench decoders --filter nested`, which runs `cargo bench` in the image and
 leaves criterion's output under `target/release-image/target/criterion/`.
+
+## Which form a resumable reader takes
+
+<!-- figure: resumable-reader-micro — taken at `0fd33bd3` — under glibc 2.41 — reproduce with `cd scripts && uv run measure.py --figure resumable-reader-micro` -->
+
+Each row is one literal over one feed, every form's criterion median in the shipped build. **The criterion, stated before the readings**: a one-run row's `async` walk is within its noise of today's pull where it is slower than the pull's two timings' mean by no more than the larger of what separates those two timings and the medians' 95% intervals' half-widths summed, widened by how far that gap moves in the same bench built with every function aligned to 64 bytes. The `async` walk is taken if every one-run row is within; otherwise the push machine, if on every row that is not it is cheaper than the `async` walk by more than their noise, formed alike and widened by how far `push` − `async` moves between the builds; otherwise the `async` walk. A row fed a byte a run decides nothing: today's pull resumes at no run, and reads one chaining them.
+
+| Literal | Bytes | Feed | `pull` | `pull` again | `async` | `push` | `async` − `pull` | Noise | Within | `push` − `async` | Noise | Pays |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bigint` | 11 | one run | 35 ns | 33 ns | 69 ns | 49 ns | +35 ns | 6 ns | **no** | -19 ns | 8 ns | yes |
+| `bigint` | 11 | a run a byte | 49 ns | 48 ns | 129 ns | 52 ns | +81 ns | 4 ns | — | -78 ns | 15 ns | — |
+| `integer[]`, 4 elements | 49 | one run | 533 ns | 539 ns | 652 ns | 460 ns | +116 ns | 69 ns | **no** | -193 ns | 69 ns | yes |
+| `integer[]`, 4 elements | 49 | a run a byte | 753 ns | 801 ns | 1.48 µs | 490 ns | +702 ns | 189 ns | — | -989 ns | 217 ns | — |
+| `integer[]`, 50 elements | 601 | one run | 6.21 µs | 6.22 µs | 7.47 µs | 5.58 µs | +1262 ns | 561 ns | **no** | -1891 ns | 412 ns | yes |
+| `integer[]`, 50 elements | 601 | a run a byte | 8.70 µs | 9.36 µs | 16.64 µs | 5.96 µs | +7604 ns | 1.23 µs | — | -10677 ns | 1.22 µs | — |
+| two-field composite | 42 | one run | 328 ns | 331 ns | 357 ns | 262 ns | +28 ns | 30 ns | yes | -95 ns | 11 ns | yes |
+| two-field composite | 42 | a run a byte | 396 ns | 400 ns | 877 ns | 288 ns | +479 ns | 55 ns | — | -589 ns | 57 ns | — |
+
+The layout leg's gaps, every function aligned to 64 bytes, which the noise's layout term is each gap's distance from:
+- `bigint`, one run: `async` − `pull` +31 ns, `push` − `async` -14 ns
+- `bigint`, a run a byte: `async` − `pull` +81 ns, `push` − `async` -66 ns
+- `integer[]`, 4 elements, one run: `async` − `pull` +54 ns, `push` − `async` -130 ns
+- `integer[]`, 4 elements, a run a byte: `async` − `pull` +569 ns, `push` − `async` -821 ns
+- `integer[]`, 50 elements, one run: `async` − `pull` +719 ns, `push` − `async` -1511 ns
+- `integer[]`, 50 elements, a run a byte: `async` − `pull` +7031 ns, `push` − `async` -10115 ns
+- two-field composite, one run: `async` − `pull` +55 ns, `push` − `async` -87 ns
+- two-field composite, a run a byte: `async` − `pull` +456 ns, `push` − `async` -567 ns
+
+What a run boundary costs, a byte-a-run row less its one-run row over the boundaries it adds:
+- `bigint`: `async` 6.0 ns, `push` 0.2 ns, `pull` over the chained runs 1.4 ns
+- `integer[]`, 4 elements: `async` 17.2 ns, `push` 0.6 ns, `pull` over the chained runs 5.0 ns
+- `integer[]`, 50 elements: `async` 15.3 ns, `push` 0.6 ns, `pull` over the chained runs 4.7 ns
+- two-field composite: `async` 12.7 ns, `push` 0.6 ns, `pull` over the chained runs 1.7 ns
+
+**The `async` walk is past its noise of today's pull on `int8`, `array_4`, `array_50`, and the push machine cheaper than it past theirs on each**, so the input walks resume as hand-written push machines.
+
+**What this says.** The push machine is cheaper than the `async` walk on every
+row, past their noise on every one-run row, and the `async` walk is past its
+noise of today's pull on every one-run row but the composite's, so the verdict
+follows the criterion without a call. Read the other columns too:
+
+- **The push machine is cheaper than today's pull** on every row but the
+  scalar's one run, where it costs more than the pull's two timings.
+  Unattributed: a run boundary costs it almost nothing (below), so not its
+  entry; every byte it reads passes its machine's `match` and its leaf's,
+  and nothing here separates that from the rest of the gap.
+- **A run boundary costs the push machine under a nanosecond** on every
+  literal, against several nanoseconds to over a dozen for the `async` walk,
+  whose `Pending` unwinds every frame of its future and re-enters it — so the
+  push machine fed a run a byte is still cheaper than the `async` walk fed one
+  run, on every literal.
+- **The layout leg moves the arrays' gaps by hundreds of nanoseconds**, the
+  largest term in their noise, and every `push` − `async` gap is negative in
+  both builds. The pull's two timings agree within a few percent on every
+  row, furthest apart on the arrays fed a run a byte, which decide nothing.
+- **Unattributed: the pull leg's per-element slope is several times
+  `nested-decode-micro`'s**, about 123 ns an element between the two arrays
+  against that figure's 32 ns. That figure was taken at `3a34f062`, before
+  the input grammars became walks, and the pull leg restates today's walk with its
+  per-part `dyn FnMut` and a boxed fork per unquoted element; nothing here
+  separates the restatement's cost, today's walk's own and the stale
+  reading. It moves no verdict: `push` − `async` reads no pull timing, and a
+  pull dearer than today's only narrows the `async` walk's gap.
+
+Apparatus: this figure runs no `pgdt` and reads no file, so it carries none of
+the stall, temperature or device gates the sweep's tables do. It is
+`benches/resumable/`'s one group, built and run in the release image
+(`release.py bench`) under `pgdt`'s allocator, twice: the shipped build, which
+every gap is read off, and the same bench under `-C
+llvm-args=-align-all-functions=6` in a target dir of its own, which only widens
+a noise. The bench refuses to time a form answering otherwise than another.
+
+```sh
+cd scripts && uv run measure.py --figure resumable-reader-micro
+```
 
 ## A typed query over nested columns costs 6.6 µs a row more than a string one
 

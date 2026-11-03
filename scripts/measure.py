@@ -13343,6 +13343,21 @@ FIGURES: list[Figure] = [
         ),
         run=run_nested_decode_micro,
     ),
+    # Which form a resumable reader takes: one reader as today's pull walk, an
+    # `async` walk and a hand-written push machine, over `nested-decode-micro`'s
+    # literals and a scalar, one run and a run a byte.
+    Figure(
+        id="resumable-reader-micro",
+        section="Which form a resumable reader takes",
+        stage="criterion",
+        depends=(
+            "crates/pgdt-codec/benches/resumable/main.rs",
+            "crates/pgdt-codec/benches/resumable/pull.rs",
+            "crates/pgdt-codec/benches/resumable/walk.rs",
+            "crates/pgdt-codec/benches/resumable/push.rs",
+        ),
+        run=run_resumable_reader_micro,
+    ),
     # `depends` carries the scan path as well as the decode one, which no other
     # query figure does: the zero-column row is an absolute reading of replay
     # with nothing decoded, so a change in what replay costs moves it directly
@@ -13965,23 +13980,7 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = [
-    # Which form a resumable reader takes: one reader as today's pull walk, an
-    # `async` walk and a hand-written push machine, over `nested-decode-micro`'s
-    # literals and a scalar, one run and a run a byte.
-    Figure(
-        id="resumable-reader-micro",
-        section="Which form a resumable reader takes",
-        stage="criterion",
-        depends=(
-            "crates/pgdt-codec/benches/resumable/main.rs",
-            "crates/pgdt-codec/benches/resumable/pull.rs",
-            "crates/pgdt-codec/benches/resumable/walk.rs",
-            "crates/pgdt-codec/benches/resumable/push.rs",
-        ),
-        run=run_resumable_reader_micro,
-    ),
-]
+UNTAKEN: list[Figure] = []
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
