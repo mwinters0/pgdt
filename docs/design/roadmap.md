@@ -27,6 +27,7 @@ reused, including a struck phase's.
 | P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
 | P24 — Python bindings | Sketched; not grilled | this file, below; [inbox](roadmap-P24-python-inbox.md) |
+| P39 — PostgreSQL as a front end | Sketched; not grilled | this file, below; [inbox](roadmap-P39-postgres-extension-inbox.md) |
 
 **A row's state is one of `Sketched`, `Specified`, `Current`, `Complete` or
 `Struck`**, and the prose after it is a caption. Two of them are set in the same
@@ -46,7 +47,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P38`** — nothing at or below it
+centering"). **Phase numbering continues from `P39`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -1063,6 +1064,29 @@ member, sketched to corner-avoidance depth: the surface the library presents
 an embedder, which `datafusion-pgdump` is the first to use, is what this phase
 presents, and what concerns Python alone is in [its
 inbox](roadmap-P24-python-inbox.md).
+
+## P39 — PostgreSQL as a front end
+
+A PostgreSQL extension, built with `pgrx` as a new workspace member, that lets
+the server query a parsed dump's tables and plan with the map's statistics, as
+`datafusion-pgdump` lets DataFusion. Sketched to corner-avoidance depth. The
+likely shape is a foreign data wrapper, whose callbacks the DataFusion
+adapter's parts map onto: `IMPORT FOREIGN SCHEMA` the catalog, the size and
+path estimates the statistics, pushed-down quals the filter, an upper-relation
+path an aggregate the statistics answer, a parallel-aware scan the partitioned
+replay. It reads a complete cache and never maps, as the provider does
+([`decisions.md`](decisions.md), "D90"). It follows P24, whose grilling settles
+the embedder surface both bindings stand on.
+
+What makes it more than a third adapter is that its front end is the dump's
+source. The comparison semantics is PostgreSQL's, so a pruned block is rows
+the server would have kept unless the library proves otherwise; a field's text
+is the input to the type's own `*_in`, so values need not pass through Arrow
+("A literal is guaranteed in `*_out`'s form and never read past `*_in`'s");
+and a backend is one thread, which alone may call the server. Its crate is an
+`unsafe` root (D27), and its artifact a library per PostgreSQL major beside
+D104's binary. What current work could foreclose is in [its
+inbox](roadmap-P39-postgres-extension-inbox.md).
 
 ## Out-of-band work
 
