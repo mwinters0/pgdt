@@ -13,7 +13,7 @@ use pgdt_codec::{
     grammar::{TextGrammar, Unchecked},
     internal::{column_grammar, unchecked_positions},
 };
-use pgdt_core::internal::{Unescaped, unescaped};
+use pgdt_core::internal::{Unescaped, printout_head, unescaped};
 use pgdt_core::{CopyHeader, split_fields, unescape_field};
 use pgdt_model::{CopyBlock, DumpMetadata, FieldRefusal};
 
@@ -266,8 +266,8 @@ pub(super) fn check_row(
             continue;
         }
         // So is a nested, `json` or `jsonb` value, walked a part at a time
-        // with no tree of it built (D143); one refused is unescaped to name
-        // it, and a field that is not UTF-8 is no value, which no `*_in` is
+        // with no tree of it built (D143); one refused is answered below,
+        // and a field that is not UTF-8 is no value, which no `*_in` is
         // handed.
         if check.walks
             && let Some(text) = unescaped(field)
@@ -287,7 +287,8 @@ pub(super) fn check_row(
                 if !refused {
                     continue;
                 }
-                Some(text.into_owned())
+                // Named as a restore's error quotes it (I94).
+                printout_head(field)
             }
             _ => continue,
         };

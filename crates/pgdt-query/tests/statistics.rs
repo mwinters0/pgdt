@@ -1733,7 +1733,7 @@ async fn a_parse_fails_at_the_first_field_postgresql_refuses() {
 /// group each sits in keeps no bounds or dictionary of its column, nor the
 /// column a sum, so no statistic says what a read of it would not: every other
 /// group keeps its own (`docs/design/decisions.md`, "D103"). **The block
-/// records what it went past per column**, each column's first in full and a
+/// records what it went past per column**, each column's first, quoted, and a
 /// count, alike in every arrangement.
 #[tokio::test]
 async fn a_parse_ignoring_refused_fields_keeps_no_statistic_of_one() {
@@ -1909,6 +1909,73 @@ async fn a_parse_refusing_fields_fails_with_what_an_ignoring_parse_recorded() {
     )
     .await;
     assert_eq!(block(&again.index, "public.t"), &recorded);
+}
+
+/// **A refused field is quoted as a restore's error quotes it** (I94): its
+/// first 100 bytes, unescaped and clipped to whole characters, then `...` —
+/// by a default parse, by a strict one, and in the record an ignoring parse
+/// keeps, which a refusing parse over its cache fails with.
+#[tokio::test]
+async fn a_refused_field_is_quoted_by_its_head_as_a_restore_quotes_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("quoted.sql");
+    let mut text = String::from("CREATE TABLE public.t (\n    v character varying(3)\n);\n\n");
+    text.push_str("COPY public.t (v) FROM stdin;\n");
+    for i in 0..40 {
+        text.push_str(&if i == 30 { format!("\\t{}\n", "é".repeat(150)) } else { "ab\n".into() });
+    }
+    text.push_str("\\.\n\nSELECT 1;\n");
+    std::fs::write(&dump, &text).unwrap();
+    // `\t` is one byte and `é` two, so the 100th byte ends inside one.
+    let quoted = format!("\t{}...", "é".repeat(49));
+    let named = |refused: &pgdt_core::Error, at: &str| match refused {
+        pgdt_core::Error::FieldRefused { line, value, .. } => {
+            assert_eq!((*line, value.as_str()), (31, quoted.as_str()), "{at}")
+        }
+        other => panic!("{at}: expected the field refused, got {other:?}"),
+    };
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&dump).unwrap());
+    let checked = [
+        (PostgresInvalidValues::Default, StatisticsRequest::DATA),
+        (PostgresInvalidValues::Strict, StatisticsRequest::METADATA),
+    ];
+    for (invalid, wanted) in checked {
+        let run = map_file(
+            CacheMode::DISABLED.open_source(source.clone()).await.unwrap(),
+            ReadOptions::default(),
+            &arranged(1),
+            invalid,
+            &wanted,
+            &CancellationToken::new(),
+        )
+        .await;
+        named(&run.expect_err("the field is refused"), &format!("{invalid:?}"));
+    }
+
+    let ignoring = PostgresInvalidValues::Ignore;
+    let mapped = mapped_into_cache(
+        &dump,
+        ReadOptions::default(),
+        &arranged(1),
+        ignoring,
+        &StatisticsRequest::DATA,
+    )
+    .await;
+    let recorded = block(&mapped.index, "public.t").ignored_refusals.clone().unwrap();
+    assert_eq!(recorded.columns[0].first.value.as_deref(), Some(quoted.as_str()));
+    let run = map_file(
+        CacheMode::enabled(cache::colocated_path(&dump)).open_source(source).await.unwrap(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+        &CancellationToken::new(),
+    )
+    .await;
+    let Err(pgdt_core::Error::FieldRefusedRecorded { refused, .. }) = run else {
+        panic!("expected the recorded refusal, got {run:?}");
+    };
+    named(&refused, "recorded");
 }
 
 /// **A recorded refusal fails exactly the refusing parses tracking its
@@ -2158,7 +2225,13 @@ async fn a_strict_parse_refuses_the_fields_a_default_one_leaves_to_a_query() {
             .await
             {
                 Err(pgdt_core::Error::FieldRefused { column: named, line, value, .. }) => {
-                    assert_eq!((named.as_str(), line, value.as_str()), (names[column], 301, field));
+                    // Quoted as the restore's error quotes it (I94), each
+                    // field here ASCII.
+                    let quoted = match field.get(..100) {
+                        Some(head) if field.len() > 100 => format!("{head}..."),
+                        _ => field.to_string(),
+                    };
+                    assert_eq!((named.as_str(), line, value), (names[column], 301, quoted));
                 }
                 other => panic!("{at}: expected the strict parse to refuse it, got {other:?}"),
             }

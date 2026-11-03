@@ -371,7 +371,8 @@ pub enum Error {
     /// count from the block's first data line (`copyfrom.c`'s
     /// `CopyFromErrorCallback`), a text row being one line — and by its byte
     /// offset in the file beside it, which is what a dump this size is
-    /// seeked by.
+    /// seeked by. `value` is quoted as that error quotes it, its first 100
+    /// bytes and `...` where longer (I94).
     #[error(
         "COPY {table}, line {line}, column {column}: `{value}` is refused by PostgreSQL as a `{declared_type}` value — restoring this dump fails this table's COPY there, and so does this read; the line is at offset {line_offset}"
     )]

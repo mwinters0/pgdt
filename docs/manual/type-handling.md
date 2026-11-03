@@ -203,7 +203,9 @@ restore of that dump fails the table's `COPY`. pgdt refuses it too, rather than
 guess which value was meant: a `parse` gathering statistics for the column fails
 there, as the restore would, naming the table, the column, the line — numbered
 as the restore's own error numbers it, from 1 at the block's first row, and by
-its byte offset — and the value, and a query reading the column refuses it. `real`'s
+its byte offset — and the value, quoted as the restore's error quotes it, its
+first hundred bytes and `...` where it is longer, and a query reading the column
+refuses it. `real`'s
 largest value rounds past itself the same way at `--extra-float-digits=-2`,
 and at no other setting.
 

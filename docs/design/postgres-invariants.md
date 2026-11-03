@@ -5932,3 +5932,46 @@ grep -n -A2 'Skip partitioned tables' src/bin/pg_dump/pg_dump.c
 
 The first lists no partitioned table, the second shows the refusal, the third
 both checks, the fourth the walk ending at a non-partition.
+
+## I94 — A restore's error quotes a field by its first 100 bytes, clipped to whole characters, `...` after
+
+**Claim.** Where a `COPY` row's field is refused, the restore's error context
+quotes the field's text — unescaped, as its input function was handed it —
+whole up to 100 bytes, and past that its longest head of whole characters
+within 100 bytes followed by `...`. A NULL is quoted as `null input`.
+
+**Proof.** `CopyFromErrorCallback` quotes `cur_attval`, the de-escaped field
+`NextCopyFrom` hands the input function, through `limit_printout_length`
+(`CopyLimitPrintoutLength` from v17): `MAX_COPY_DATA_DISPLAY` 100, the string
+returned whole where `strlen` is within it, else clipped by `pg_mbcliplen`,
+which in a multibyte encoding takes characters while the next fits within the
+limit, and `"..."` appended. `src/backend/commands/copyfrom.c` (`copy.c` at
+v13); `pg_encoding_mbcliplen` in `src/backend/utils/mb/mbutils.c`.
+
+**Observed.** postgres:13.23, 16.15 and 18.6 in a UTF-8 database: a `COPY`
+into a `varchar(3)` of `\t` and 150 `é` is refused, its context quoting 102
+bytes, the tab, 49 `é` and `...`.
+
+**Scope limit.** A UTF-8 database, the only encoding pgdt reads
+(`pg-dump-compatibility.md`); a single-byte encoding clips at 100 bytes.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+v13.23, v16.15, v18.6 (observed).
+
+**Relied on by:** `pgdt-core`'s `copy.rs`, `printout_head`, which
+`FieldRefusal::value` and so `Error::FieldRefused` and
+`ColumnRefusals::first` quote by.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+f=src/backend/commands/copyfrom.c; [ -f $f ] || f=src/backend/commands/copy.c
+grep -n -A20 'define MAX_COPY_DATA_DISPLAY' $f
+grep -n 'PrintoutLength(cstate->cur_attval)\|printout_length(cstate->cur_attval)' $f
+grep -n -A20 '^pg_encoding_mbcliplen' src/backend/utils/mb/mbutils.c
+```
+
+The first shows the limit, the fast path, the clip and `...`; the second the
+field quoted through it; the third the clip ending before a character that
+would pass the limit.

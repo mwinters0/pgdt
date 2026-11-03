@@ -424,6 +424,24 @@ pub fn unescaped(field: &[u8]) -> Option<Unescaped<'_>> {
     (field != COPY_TEXT_NULL_MARKER).then_some(Unescaped { field, at: 0 })
 }
 
+/// The most bytes of a field's text a restore's error quotes (`copyfrom.c`'s
+/// `MAX_COPY_DATA_DISPLAY`, I94).
+pub const MAX_COPY_DATA_DISPLAY: usize = 100;
+
+/// A field's text as a restore's error quotes it, or `None` for SQL `NULL`:
+/// whole up to [`MAX_COPY_DATA_DISPLAY`] bytes, and past that its longest
+/// head of whole characters within them followed by `...` (I94). Read off the
+/// field's head, so a field of any length costs one bounded buffer.
+pub fn printout_head(field: &[u8]) -> Option<String> {
+    let head: Vec<u8> = unescaped(field)?.take(MAX_COPY_DATA_DISPLAY + 1).collect();
+    // A field a refusal names is UTF-8; the head can end inside a character.
+    let text = head.utf8_chunks().next().map_or("", |chunk| chunk.valid());
+    if head.len() <= MAX_COPY_DATA_DISPLAY {
+        return Some(text.to_owned());
+    }
+    Some(format!("{}...", &text[..text.floor_char_boundary(MAX_COPY_DATA_DISPLAY)]))
+}
+
 /// The unescaped bytes of a field ([`unescaped`]); the one statement of COPY
 /// TEXT's escapes, which [`unescape_field`] collects.
 #[derive(Debug, Clone)]
@@ -908,5 +926,28 @@ mod tests {
             RawRow::validated(row).decode(0..1).unwrap_err().to_string(),
             RawRow::unchecked(row.as_bytes()).decode(0..1).unwrap_err().to_string()
         );
+    }
+
+    /// **A field is quoted as `limit_printout_length` quotes it** (I94): whole
+    /// to 100 bytes of its text, and past them clipped to the last whole
+    /// character within them, `...` after, counted in unescaped bytes.
+    #[test]
+    fn a_field_is_quoted_by_its_head_as_a_restore_quotes_it() {
+        let quoted = |field: &str| printout_head(field.as_bytes());
+        assert_eq!(quoted("\\N"), None);
+        assert_eq!(quoted(""), Some(String::new()));
+        let hundred = "a".repeat(100);
+        assert_eq!(quoted(&hundred), Some(hundred.clone()));
+        assert_eq!(quoted(&format!("{hundred}b")), Some(format!("{hundred}...")));
+        // Escaped, 100 bytes unescaped from 200 written: whole.
+        assert_eq!(quoted(&"\\t".repeat(100)), Some("\t".repeat(100)));
+        assert_eq!(quoted(&"\\t".repeat(101)), Some(format!("{}...", "\t".repeat(100))));
+        // `é` is two bytes, so a byte before them puts 100 mid-character.
+        let accented = format!("a{}", "é".repeat(60));
+        assert_eq!(quoted(&accented), Some(format!("a{}...", "é".repeat(49))));
+        let snowmen = "☃".repeat(40);
+        assert_eq!(quoted(&snowmen), Some(format!("{}...", "☃".repeat(33))));
+        let octal = format!("\\303\\251{}", "é".repeat(49));
+        assert_eq!(quoted(&octal), Some("é".repeat(50)));
     }
 }
