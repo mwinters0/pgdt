@@ -202,6 +202,122 @@ class Criterion(unittest.TestCase):
                 measure.criterion_median_ns(Path(tmp), "nested/array_4/decode")
 
 
+class ResumableReader(unittest.TestCase):
+    """`resumable-reader-micro`: which form a resumable reader takes. Its
+    verdict is the deliverable, so what decides it is pinned here before any
+    reading exists: the one-run rows alone, and a noise the `async` walk is
+    read against that is the wider of the pull's own scatter and the
+    intervals."""
+
+    @staticmethod
+    def _est(median, half=0.0):
+        return measure.Estimate(median, median - half, median + half)
+
+    def _row(self, literal="array_4", feed="whole", pull=100.0, again=100.0, walk=100.0,
+             push=90.0, half=0.0):
+        return measure.ResumableRow(
+            literal, feed, 49, self._est(pull, half), self._est(again, half),
+            self._est(walk, half), self._est(push, half),
+        )  # fmt: skip
+
+    def _rows(self, **whole):
+        return [
+            self._row(literal=literal, feed=feed, **(whole if feed == "whole" else {}))
+            for literal, _, _ in measure.RESUMABLE_LITERALS
+            for feed, _ in measure.RESUMABLE_FEEDS
+        ]
+
+    def test_the_estimate_is_criterions_median_and_its_interval(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp) / "x" / "new"
+            d.mkdir(parents=True)
+            (d / "benchmark.json").write_text(json.dumps({"full_id": "resumable/int8/pull/whole"}))
+            (d / "estimates.json").write_text(json.dumps({"median": {
+                "point_estimate": 20.0,
+                "confidence_interval": {"lower_bound": 19.0, "upper_bound": 22.0},
+            }}))  # fmt: skip
+            got = measure.criterion_estimate(Path(tmp), "resumable/int8/pull/whole")
+        self.assertEqual(got, measure.Estimate(20.0, 19.0, 22.0))
+        self.assertEqual(got.half_width, 1.5)
+
+    def test_noise_is_the_wider_of_the_pulls_scatter_and_the_intervals(self):
+        # The two pull timings 10 ns apart, intervals of ±2: the scatter wins.
+        self.assertEqual(self._row(pull=95.0, again=105.0, half=2.0).noise_ns, 10.0)
+        # Timings agreeing, intervals of ±3: the pull's and the walk's summed.
+        self.assertEqual(self._row(half=3.0).noise_ns, 6.0)
+
+    def test_async_within_its_noise_of_the_pull_is_the_async_form(self):
+        rows = self._rows(walk=104.0, half=2.0)
+        self.assertTrue(all(row.async_within for row in rows))
+        self.assertIn("resume as `async` walks", measure.resumable_verdict(rows))
+
+    def test_async_past_its_noise_on_one_literal_is_the_push_form(self):
+        rows = self._rows(half=2.0)
+        rows[2] = self._row(literal="array_4", walk=105.0, half=2.0)
+        verdict = measure.resumable_verdict(rows)
+        self.assertIn("hand-written push machines", verdict)
+        self.assertIn("`array_4`", verdict)
+
+    def test_a_row_fed_a_byte_a_run_decides_nothing(self):
+        rows = [
+            self._row(literal=literal, feed=feed, walk=1000.0 if feed == "bytes" else 100.0)
+            for literal, _, _ in measure.RESUMABLE_LITERALS
+            for feed, _ in measure.RESUMABLE_FEEDS
+        ]
+        self.assertIn("resume as `async` walks", measure.resumable_verdict(rows))
+        self.assertNotIn("**no**", measure.render_resumable(rows).split("| a run a byte |")[1])
+
+    def test_no_one_run_row_is_no_verdict(self):
+        with self.assertRaises(ValueError):
+            measure.resumable_verdict([self._row(feed="bytes")])
+
+    def test_every_id_the_figure_reads_is_one_the_bench_times(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for n, (literal, _, _) in enumerate(measure.RESUMABLE_LITERALS):
+                for feed, _ in measure.RESUMABLE_FEEDS:
+                    for form in measure.RESUMABLE_FORMS:
+                        d = root / f"{n}_{literal}_{form}_{feed}" / "new"
+                        d.mkdir(parents=True)
+                        full_id = f"resumable/{literal}/{form}/{feed}"
+                        (d / "benchmark.json").write_text(json.dumps({"full_id": full_id}))
+                        (d / "estimates.json").write_text(json.dumps({"median": {
+                            "point_estimate": 50.0,
+                            "confidence_interval": {"lower_bound": 49.0, "upper_bound": 51.0},
+                        }}))  # fmt: skip
+            rows = measure.resumable_rows(root)
+        self.assertEqual(len(rows), len(measure.RESUMABLE_LITERALS) * len(measure.RESUMABLE_FEEDS))
+        table = measure.render_resumable(rows)
+        self.assertIn("resume as `async` walks", table)
+        # The renderer's ids are the bench's: each literal, form and feed is
+        # spelled in its source, and each literal's byte count is its text's.
+        bench = (measure.REPO / "crates/pgdt-codec/benches/resumable/main.rs").read_text()
+        for literal, _, _ in measure.RESUMABLE_LITERALS:
+            self.assertIn(f'"{literal}",', bench)
+        for form in measure.RESUMABLE_FORMS:
+            self.assertIn(f'"{form}"', bench)
+        for feed, _ in measure.RESUMABLE_FEEDS:
+            self.assertIn(f'("{feed}", ', bench)
+        self.assertIn('"-1234567890".to_owned()', bench)
+        self.assertEqual(dict((lit, n) for lit, _, n in measure.RESUMABLE_LITERALS)["int8"], 11)
+
+    def test_a_dry_run_records_where_it_would_run_and_runs_nothing(self):
+        cfg = measure.Config(dry_run=True)
+        session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+        with unittest.mock.patch.object(measure.release, "ensure_image") as built:
+            got = measure.run_resumable_reader_micro(session)
+        built.assert_not_called()
+        self.assertIn("dry run", got)
+        self.assertEqual(
+            session.places["resumable-reader-micro"],
+            {measure.release.image_tag(measure.release.image_inputs())},
+        )
+        self.assertEqual(
+            measure.RESUMABLE_BENCH.step(),
+            ["bench", "--package=pgdt-codec", "--bench=resumable", "--filter=resumable"],
+        )
+
+
 class BenchConstants(unittest.TestCase):
     """The micro table's byte counts are computed from the bench's own literal
     shape, so they cannot drift out of agreement with it silently."""

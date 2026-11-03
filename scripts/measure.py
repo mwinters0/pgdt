@@ -1453,6 +1453,36 @@ def criterion_median_ns(criterion_root: Path, full_id: str) -> float:
     raise FileNotFoundError(f"no criterion benchmark {full_id!r} under {criterion_root}")
 
 
+@dataclass(frozen=True)
+class Estimate:
+    """A criterion median and its bootstrapped 95% confidence interval, in
+    nanoseconds."""
+
+    median: float
+    lower: float
+    upper: float
+
+    @property
+    def half_width(self) -> float:
+        return (self.upper - self.lower) / 2
+
+
+def criterion_estimate(criterion_root: Path, full_id: str) -> Estimate:
+    """`criterion_median_ns`'s median with the interval criterion states
+    beside it, out of the same `estimates.json`."""
+    for bench in sorted(criterion_root.glob("*/new/benchmark.json")):
+        meta = json.loads(bench.read_text())
+        if meta.get("full_id") == full_id:
+            median = json.loads((bench.parent / "estimates.json").read_text())["median"]
+            interval = median["confidence_interval"]
+            return Estimate(
+                float(median["point_estimate"]),
+                float(interval["lower_bound"]),
+                float(interval["upper_bound"]),
+            )
+    raise FileNotFoundError(f"no criterion benchmark {full_id!r} under {criterion_root}")
+
+
 # --------------------------------------------------------------------------
 # Inputs: generated once onto the SSD, copied into tmpfs for warm figures.
 # --------------------------------------------------------------------------
@@ -8462,6 +8492,162 @@ def run_nested_decode_micro(session: Session) -> str:
     return table + notes
 
 
+# -- the resumable reader --------------------------------------------------
+
+#: `resumable-reader-micro`'s program: `benches/resumable/`'s one group, one
+#: reader in three forms over each literal and feed.
+RESUMABLE_BENCH = release.Bench("pgdt-codec", "resumable", "resumable")
+
+#: The bench's literals, in its order: `nested-decode-micro`'s three and a
+#: scalar, each with its label and its byte count, computed as that figure's
+#: are rather than remembered.
+RESUMABLE_LITERALS = (
+    ("int8", "`bigint`", len("-1234567890")),
+    ("array_4", "`integer[]`, 4 elements", array_literal_bytes(4)),
+    ("array_50", "`integer[]`, 50 elements", array_literal_bytes(50)),
+    ("record_2", "two-field composite", len(_RECORD_LITERAL)),
+)
+
+#: The feeds: the field as one run, and as a run a byte.
+RESUMABLE_FEEDS = (("whole", "one run"), ("bytes", "a run a byte"))
+
+#: The forms, as the bench's ids name them; `pull_again` is `pull` timed again
+#: last, after every other form.
+RESUMABLE_FORMS = ("pull", "async", "push", "pull_again")
+
+
+@dataclass(frozen=True)
+class ResumableRow:
+    """One literal over one feed, every form's estimate."""
+
+    literal: str
+    feed: str
+    nbytes: int
+    pull: Estimate
+    pull_again: Estimate
+    async_: Estimate
+    push: Estimate
+
+    @property
+    def pull_ns(self) -> float:
+        """Today's pull, read as the mean of its two timings."""
+        return (self.pull.median + self.pull_again.median) / 2
+
+    @property
+    def noise_ns(self) -> float:
+        """**What the `async` walk is read against**: the larger of what
+        separates the pull form's two timings in this sitting, and the two
+        medians' 95% intervals' half-widths summed, the wider of the pull's
+        two. Stated before any reading was taken
+        (`docs/design/roadmap-P33-line-bound.md`, "A pass holds a line only
+        where it decodes it")."""
+        pull_half = max(self.pull.half_width, self.pull_again.half_width)
+        return max(abs(self.pull.median - self.pull_again.median), pull_half + self.async_.half_width)
+
+    @property
+    def async_within(self) -> bool:
+        return self.async_.median - self.pull_ns <= self.noise_ns
+
+
+def resumable_rows(root: Path) -> list[ResumableRow]:
+    """Every literal and feed's row, read out of criterion's estimates."""
+    rows = []
+    for literal, _, nbytes in RESUMABLE_LITERALS:
+        for feed, _ in RESUMABLE_FEEDS:
+            est = {
+                form: criterion_estimate(root, f"resumable/{literal}/{form}/{feed}")
+                for form in RESUMABLE_FORMS
+            }
+            rows.append(
+                ResumableRow(
+                    literal, feed, nbytes, est["pull"], est["pull_again"], est["async"], est["push"]
+                )
+            )
+    return rows
+
+
+def resumable_verdict(rows: Sequence[ResumableRow]) -> str:
+    """**The form the input walks resume in**: the `async` walk where it is
+    within its noise of today's pull on every one-run row, the field as a
+    reader meets it on nearly every line, and the push machine otherwise. A
+    row fed a byte a run prices a resumption and decides nothing, today's pull
+    resuming at none."""
+    deciding = [row for row in rows if row.feed == "whole"]
+    if not deciding:
+        raise ValueError("no one-run row to decide by")
+    beyond = [row.literal for row in deciding if not row.async_within]
+    if not beyond:
+        return (
+            "**The `async` walk is within its noise of today's pull on every one-run row**, "
+            "so the input walks resume as `async` walks."
+        )
+    return (
+        "**The `async` walk is past its noise of today's pull on "
+        f"{', '.join(f'`{literal}`' for literal in beyond)}**, so the input walks resume as "
+        "hand-written push machines."
+    )
+
+
+def render_resumable(rows: Sequence[ResumableRow]) -> str:
+    labels = {literal: label for literal, label, _ in RESUMABLE_LITERALS}
+    feeds = dict(RESUMABLE_FEEDS)
+    criterion = (
+        "Each row is one literal over one feed, every form's criterion median. **The "
+        "criterion, stated before the readings**: a one-run row's `async` walk is within its "
+        "noise of today's pull where it is slower than the pull's two timings' mean by no "
+        "more than the larger of what separates those two timings and the medians' 95% "
+        "intervals' half-widths summed; the `async` walk is taken if every one-run row is, "
+        "and the push machine otherwise. A row fed a byte a run decides nothing: today's pull "
+        "resumes at no run, and reads one chaining them.\n\n"
+    )
+    table = md_table(
+        ["Literal", "Bytes", "Feed", "`pull`", "`pull` again", "`async`", "`push`", "Noise",
+         "`async` − `pull`", "Within"],
+        [
+            [
+                labels[row.literal],
+                str(row.nbytes),
+                feeds[row.feed],
+                _fmt_ns(row.pull.median),
+                _fmt_ns(row.pull_again.median),
+                _fmt_ns(row.async_.median),
+                _fmt_ns(row.push.median),
+                _fmt_ns(row.noise_ns),
+                f"{row.async_.median - row.pull_ns:+.0f} ns",
+                ("yes" if row.async_within else "**no**") if row.feed == "whole" else "—",
+            ]
+            for row in rows
+        ],
+    )  # fmt: skip
+    whole = {row.literal: row for row in rows if row.feed == "whole"}
+    resumption = "\n".join(
+        f"- {labels[row.literal]}: `async` "
+        f"{(row.async_.median - whole[row.literal].async_.median) / (row.nbytes - 1):.1f} ns, "
+        f"`push` {(row.push.median - whole[row.literal].push.median) / (row.nbytes - 1):.1f} ns, "
+        f"`pull` over the chained runs "
+        f"{(row.pull_ns - whole[row.literal].pull_ns) / (row.nbytes - 1):.1f} ns"
+        for row in rows
+        if row.feed == "bytes"
+    )
+    return (
+        criterion
+        + table
+        + "\nWhat a run boundary costs, a byte-a-run row less its one-run row over the "
+        "boundaries it adds:\n"
+        + resumption
+        + "\n\n"
+        + resumable_verdict(rows)
+        + "\n"
+    )
+
+
+def run_resumable_reader_micro(session: Session) -> str:
+    root = bench_in_image(session, "resumable-reader-micro", RESUMABLE_BENCH) / "resumable"
+    if session.cfg.dry_run:
+        return "(dry run: criterion not executed)"
+    return render_resumable(resumable_rows(root))
+
+
 # -- the allocator ----------------------------------------------------------
 
 #: The three headline shapes, over the control file, warm, each paired with
@@ -13673,7 +13859,23 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: two ways over byte-identical rows — `projection-widths` makes the same
 #: isolation a subtraction between two adjacent rows of one table over one
 #: file.
-UNTAKEN: list[Figure] = []
+UNTAKEN: list[Figure] = [
+    # Which form a resumable reader takes: one reader as today's pull walk, an
+    # `async` walk and a hand-written push machine, over `nested-decode-micro`'s
+    # literals and a scalar, one run and a run a byte.
+    Figure(
+        id="resumable-reader-micro",
+        section="Which form a resumable reader takes",
+        stage="criterion",
+        depends=(
+            "crates/pgdt-codec/benches/resumable/main.rs",
+            "crates/pgdt-codec/benches/resumable/pull.rs",
+            "crates/pgdt-codec/benches/resumable/walk.rs",
+            "crates/pgdt-codec/benches/resumable/push.rs",
+        ),
+        run=run_resumable_reader_micro,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

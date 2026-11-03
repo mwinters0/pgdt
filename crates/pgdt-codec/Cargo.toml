@@ -40,5 +40,11 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 name = "decoders"
 harness = false
 
+# One reader in three forms, pull, `async` and push, priced against each other
+# (`benches/resumable/main.rs`; `scripts/measure.py`'s `resumable-reader-micro`).
+[[bench]]
+name = "resumable"
+harness = false
+
 [lints]
 workspace = true
