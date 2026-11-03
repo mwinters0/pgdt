@@ -1,13 +1,15 @@
 # P33.17 notes — which form a resumable reader takes
 
-**The instrument is landed and `resumable-reader-micro` is registered
-untaken** (`measure.UNTAKEN`). The readings are the next round's: a figure is
-taken from a commit, never from a tree carrying its own apparatus
-([`measurements.md`](measurements.md), "A figure may be published outside the
-sweep"), so they are `cd scripts && uv run measure.py --figure
-resumable-reader-micro` at the commit carrying this — `cargo bench` in the
-release image, 32 criterion benches at its default sampling, minutes rather
-than the half hour past which a job is handed off. The verdict it prints is
+**The instrument is landed, its layout leg and `push` comparison with it,
+and `resumable-reader-micro` is registered untaken** (`measure.UNTAKEN`). The
+readings are the next round's: a figure is taken from a commit, never from a
+tree carrying its own apparatus ([`measurements.md`](measurements.md), "A
+figure may be published outside the sweep"), so they are `cd scripts && uv
+run measure.py --figure resumable-reader-micro` at the commit carrying this —
+`cargo bench` in the release image twice, 32 criterion benches each at its
+default sampling, the layout leg's first a cold build of the bench's tree in
+a target dir of its own, minutes rather than the half hour past which a job
+is handed off. The verdict it prints is
 the slice's deliverable, and the form 33.18 builds in.
 
 - **One reader, three forms** (`crates/pgdt-codec/benches/resumable/`):
@@ -22,17 +24,24 @@ the slice's deliverable, and the form 33.18 builds in.
   the second as one iterator chaining the runs, which prices a run boundary
   it never resumes at.
 - **The criterion is in the renderer before any reading**
-  (`measure.ResumableRow.noise_ns`, `resumable_verdict`): a one-run row's
-  `async` median is within its noise of the pull's where it exceeds the mean
-  of the pull's two timings — `pull` first in the group and `pull_again`
-  last — by no more than the larger of what separates those two and the
-  intervals' half-widths summed; every one-run row within takes the `async`
-  form, any row past it the push machine. The maintainer has since settled
-  a layout term in the noise and a `push` taken only where it pays, both
-  landing before the readings
+  (`measure.ResumableRow`, `resumable_verdict`): a one-run row's `async`
+  median is within its noise of the pull's where it exceeds the mean of the
+  pull's two timings — `pull` first in the group and `pull_again` last — by
+  no more than the larger of what separates those two and the intervals'
+  half-widths summed, widened by how far `async − pull` moves in the layout
+  leg. Every one-run row within takes the `async` form; past it on some, the
+  push machine only if it beats the `async` walk past a noise formed alike on
+  each of those, else the `async` walk
   ([`../status/history/2026-11-03.md`](../status/history/2026-11-03.md),
   "`resumable-reader-micro`'s noise and verdict, settled with the
   maintainer").
+- **The layout leg** (`RESUMABLE_ALIGNED_BENCH`) is the same bench under
+  `-C llvm-args=-align-all-functions=6`, run after the shipped one in its own
+  target dir, `image/resumable-aligned` under the allocator legs' root
+  (`image_target_dir`); `release.Bench` carries the flags as `Build` does,
+  and refuses them in the release state's target dir. Every gap is read off
+  the shipped build; the leg only widens a noise. The flag is accepted by the
+  pinned rustc; the leg has not yet been built.
 - **The bench refuses to time a form disagreeing with another**
   (`agreement`): every timed literal over each feed, and hand-written cases
   of each refusal the walks make, nested plans two deep among them. Run once
@@ -40,11 +49,6 @@ the slice's deliverable, and the form 33.18 builds in.
   expected answer was falsified by hand.
 
 ## What the readings round inherits
-
-- **The instrument changes before any reading**: a second leg built with
-  `-C llvm-args=-align-all-functions=6` in its own target dir, `release.Bench`
-  gaining the rustflags it lacks, and the verdict reading the `push` column —
-  as the history entry above settles.
 
 - **The pull leg is a restatement, frozen at this commit**: the figure
   declares the bench's files alone, so a change to `value/source.rs` or

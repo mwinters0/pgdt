@@ -735,14 +735,18 @@ class Bench:
     The register runs one as a figure's program (`scripts/measure.py`,
     `NESTED_BENCH`), so it takes what a `Build` does -- the image's compiler,
     `--locked`, the explicit `--target` -- and shares the release state's
-    target directory with the shipped build. criterion writes its estimates
-    under that directory (`criterion_root`), which is where a figure reads
-    them back on the host."""
+    target directory with the shipped build, but where it states `rustflags`.
+    criterion writes its estimates under that directory (`criterion_root`),
+    which is where a figure reads them back on the host."""
 
     package: str
     bench: str
     #: criterion's filter: which of the bench's benchmark ids run.
     filter: str | None = None
+    #: `RUSTFLAGS` for this bench alone, in a target directory of its own, as
+    #: a `Build`'s: a layout leg's function alignment (`scripts/measure.py`,
+    #: `RESUMABLE_ALIGNED_BENCH`).
+    rustflags: str = ""
 
     def cargo_argv(self, *, no_run: bool = False) -> list[str]:
         """The bench run; `no_run` builds it and names its executable on
@@ -763,7 +767,16 @@ class Bench:
     def step(self) -> list[str]:
         """The `bench` step running this bench."""
         argv = ["bench", f"--package={self.package}", f"--bench={self.bench}"]
-        return [*argv, f"--filter={self.filter}"] if self.filter is not None else argv
+        if self.filter is not None:
+            argv.append(f"--filter={self.filter}")
+        if self.rustflags:
+            argv.append(f"--rustflags={self.rustflags}")
+        return argv
+
+    def env(self) -> dict[str, str] | None:
+        """The environment its cargo runs under: the step's own, `RUSTFLAGS`
+        set where it states them."""
+        return {**os.environ, "RUSTFLAGS": self.rustflags} if self.rustflags else None
 
 
 def bench_executables(messages: str, bench: str) -> list[Path]:
@@ -786,9 +799,10 @@ def bench_executables(messages: str, bench: str) -> list[Path]:
     return found
 
 
-def run_step(argv: Sequence[str]) -> None:
-    print(f"$ {shlex.join(argv)}", file=sys.stderr, flush=True)
-    subprocess.run(argv, cwd=REPO, check=True)
+def run_step(argv: Sequence[str], env: Mapping[str, str] | None = None) -> None:
+    shown = f"RUSTFLAGS={shlex.quote(env['RUSTFLAGS'])} " if env and "RUSTFLAGS" in env else ""
+    print(f"$ {shown}{shlex.join(argv)}", file=sys.stderr, flush=True)
+    subprocess.run(argv, cwd=REPO, check=True, env=env)
 
 
 #: What a `cmake`-driven build script leaves in its `OUT_DIR`.
@@ -861,8 +875,11 @@ def step_build(builds: Sequence[Build]) -> int:
 def step_bench(bench: Bench) -> int:
     """The bench built, its executable held to the floor, and then run."""
     argv = bench.cargo_argv(no_run=True)
-    print(f"$ {shlex.join(argv)}", file=sys.stderr, flush=True)
-    built = subprocess.run(argv, cwd=REPO, check=True, capture_output=True, text=True).stdout
+    shown = f"RUSTFLAGS={shlex.quote(bench.rustflags)} " if bench.rustflags else ""
+    print(f"$ {shown}{shlex.join(argv)}", file=sys.stderr, flush=True)
+    built = subprocess.run(
+        argv, cwd=REPO, check=True, capture_output=True, text=True, env=bench.env()
+    ).stdout
     executables = bench_executables(built, bench.bench)
     if not executables:
         raise ReleaseError(f"cargo built no executable for the bench {bench.bench!r}")
@@ -875,7 +892,7 @@ def step_bench(bench: Bench) -> int:
             print(f"  {line}", flush=True)
     if failed:
         return 1
-    run_step(bench.cargo_argv())
+    run_step(bench.cargo_argv(), bench.env())
     return 0
 
 
@@ -1266,6 +1283,14 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--package", required=True, help="the package carrying the bench")
     r.add_argument("--bench", required=True, help="the bench target")
     r.add_argument("--filter", help="criterion's filter: which benchmark ids run")
+    r.add_argument(
+        "--rustflags", default="",
+        help="RUSTFLAGS for this bench alone; give it a --target-dir of its own",
+    )  # fmt: skip
+    r.add_argument(
+        "--target-dir", type=Path,
+        help="a host cargo target directory of its own, in place of the release state's",
+    )  # fmt: skip
     r.add_argument("--inside", action="store_true", help="run here: this is the image")
     n = sub.add_parser(
         "notices", help=f"each target's {NOTICES_NAME}, from cargo-about, under release/about.toml"
@@ -1311,13 +1336,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for t in (args.target or TARGETS)
             ]
             target = args.target_dir
+            if args.inside and args.release:
+                raise ReleaseError(f"--release is the host's; inside, {RELEASE_VARIABLE} names the version")
+        bench: Bench | None = None
+        if args.cmd == "bench":
+            bench = Bench(args.package, args.bench, args.filter, args.rustflags)
+            target = args.target_dir
+        if args.cmd in ("build", "bench"):
             if args.rustflags and target is None and not args.inside:
                 raise ReleaseError("--rustflags rebuilds the release state's binaries; give it a --target-dir")
             if args.inside and target is not None:
                 raise ReleaseError("--target-dir is the host's; inside, CARGO_TARGET_DIR names it")
-            if args.inside and args.release:
-                raise ReleaseError(f"--release is the host's; inside, {RELEASE_VARIABLE} names the version")
-        bench = Bench(args.package, args.bench, args.filter) if args.cmd == "bench" else None
         command: list[str] = []
         if args.cmd == "run":
             command = args.command[1:] if args.command[:1] == ["--"] else args.command

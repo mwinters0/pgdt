@@ -924,12 +924,42 @@ class ThisRepo(unittest.TestCase):
 
     def test_a_bench_step_round_trips_through_the_command_line(self):
         for bench in (release.Bench("pgdt-codec", "decoders", "nested"),
-                      release.Bench("pgdt-query", "whole_file")):
+                      release.Bench("pgdt-query", "whole_file"),
+                      release.Bench("pgdt-codec", "resumable", "resumable",
+                                    "-C llvm-args=-align-all-functions=6")):
             seen = []
             with unittest.mock.patch.object(release, "ready_inside"), \
                     unittest.mock.patch.object(release, "step_bench", lambda b: seen.append(b) or 0):
                 self.assertEqual(release.main([*bench.step(), "--inside"]), 0)
             self.assertEqual(seen, [bench])
+
+    def test_a_bench_s_rustflags_reach_both_cargo_runs_and_only_beside_a_target_dir_of_their_own(self):
+        bench = release.Bench("pgdt-codec", "resumable", "resumable", "-C llvm-args=-align-all-functions=6")
+        self.assertEqual(
+            bench.cargo_argv(), release.Bench("pgdt-codec", "resumable", "resumable").cargo_argv()
+        )
+        built = json.dumps({
+            "reason": "compiler-artifact",
+            "target": {"name": "resumable", "kind": ["bench"]},
+            "executable": "/t/resumable-0a1b",
+        })  # fmt: skip
+        flags = []
+
+        def fake(argv, **kw):
+            flags.append((kw.get("env") or {}).get("RUSTFLAGS"))
+            return subprocess.CompletedProcess(argv, 0, stdout=built)
+
+        with unittest.mock.patch.object(release.subprocess, "run", fake), \
+                unittest.mock.patch.object(release, "readelf_of", lambda b: ""), \
+                unittest.mock.patch.object(release, "image_floor", lambda t: (2, 41)), \
+                unittest.mock.patch.object(release, "check_floor", lambda *a: (True, [])), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(release.step_bench(bench), 0)
+        self.assertEqual(flags, [bench.rustflags, bench.rustflags])
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            code = release.main([*bench.step()])
+        self.assertEqual(code, 2)
+        self.assertIn("--target-dir", err.getvalue())
 
     def test_a_bench_s_executable_is_read_out_of_cargo_s_messages(self):
         def artifact(name, kind, executable):
