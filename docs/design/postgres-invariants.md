@@ -5960,7 +5960,8 @@ v13.23, v16.15, v18.6 (observed).
 
 **Relied on by:** `pgdt-core`'s `copy.rs`, `printout_head`, which
 `FieldRefusal::value` and so `Error::FieldRefused` and
-`ColumnRefusals::first` quote by.
+`ColumnRefusals::first` quote by, and `printout`, its unescaped text's
+counterpart, which `Error::FieldDecode` quotes by.
 
 **Re-verify.**
 

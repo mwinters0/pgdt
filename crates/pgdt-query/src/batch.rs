@@ -25,7 +25,7 @@ use arrow::datatypes::SchemaRef;
 
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::internal::{UnrepresentableRead, decode_bytea_into};
-use pgdt_core::internal::{RawRow, RowSplit, unescaped};
+use pgdt_core::internal::{RawRow, RowSplit, printout, unescaped};
 use pgdt_core::{Error, Result};
 use pgdt_model::PostgresInvalidValues;
 
@@ -319,21 +319,20 @@ impl RowBatcher {
         // The scan's own path for a text column: a view into the retained
         // read buffer where it can be one, ahead of `append_typed`'s copy,
         // which also answers the text its length typmod refuses.
-        let appended = match builder {
-            ColumnBuilder::Utf8View(b, length)
-                if !text_refused(&text, *length, options.postgres_invalid_values) =>
-            {
-                push_utf8view_field(b, col, field_offset, field_len, text, chunks);
-                Ok(())
+        if let ColumnBuilder::Utf8View(b, length) = builder
+            && !text_refused(&text, *length, options.postgres_invalid_values)
+        {
+            push_utf8view_field(b, col, field_offset, field_len, text, chunks);
+            return Ok(());
+        }
+        append_typed(builder, &text, options.postgres_invalid_values).map_err(|()| {
+            Error::FieldDecode {
+                table: table.clone(),
+                column: schema.field(col).name().clone(),
+                line_offset: row_offset,
+                declared_type: declared_types[col].clone().unwrap_or_default(),
+                value: printout(&text),
             }
-            _ => append_typed(builder, &text, options.postgres_invalid_values),
-        };
-        appended.map_err(|value| Error::FieldDecode {
-            table: table.clone(),
-            column: schema.field(col).name().clone(),
-            line_offset: row_offset,
-            declared_type: declared_types[col].clone().unwrap_or_default(),
-            value,
         })
     }
 

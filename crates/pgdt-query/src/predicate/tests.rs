@@ -681,6 +681,19 @@ fn an_undecodable_field_is_a_field_decode_error() {
     );
 }
 
+/// **A term's decode error quotes its field's head**, as the typed build
+/// path's does (I94): a field past 100 bytes is named by its first 100 and
+/// `...`, not whole.
+#[test]
+fn a_long_undecodable_field_is_quoted_by_its_head() {
+    let field = format!("1{}", "x".repeat(300));
+    let err = ordered("integer", DataType::Int32, PredicateOp::Gt, "0", &field).unwrap_err();
+    match err {
+        Error::FieldDecode { value, .. } => assert_eq!(value, format!("{}...", &field[..100])),
+        other => panic!("expected FieldDecode, got {other:?}"),
+    }
+}
+
 /// A literal that is not a value of the column's type is refused when the
 /// block's schema resolves, once rather than per row.
 #[test]

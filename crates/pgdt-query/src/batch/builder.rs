@@ -308,9 +308,9 @@ pub(super) fn append_null(builder: &mut ColumnBuilder) {
 /// `Utf8View` here copies (`docs/design/decisions.md`, "D29";
 /// `measurements.md`, `nested-decode-micro`).
 ///
-/// The error is unit rather than the offending text: `Error::FieldDecode`
-/// reports the *field*'s value, so [`append_typed`] attributes a failure deep
-/// inside a nested literal to the whole literal. `not_null` is the
+/// The error is unit, as [`append_typed`]'s is: `Error::FieldDecode`
+/// quotes the *field*, so a failure deep inside a nested literal is the
+/// whole literal's. `not_null` is the
 /// position's ([`Position::not_null`]): a NULL there is refused but under
 /// `ignore`, as `array_in` and `record_in` refuse it (I76).
 fn append_nested(
@@ -325,7 +325,7 @@ fn append_nested(
             append_null(builder);
             Ok(())
         }
-        Some(text) => append_typed(builder, text, invalid).map_err(|_| ()),
+        Some(text) => append_typed(builder, text, invalid),
     }
 }
 
@@ -395,8 +395,9 @@ pub(super) fn text_refused(
 
 /// Decode `text` (already COPY-unescaped) per `builder`'s type and append it,
 /// via `pgdt_codec::decode`'s per-type decoders and `pgdt_codec::nested`'s literal
-/// codecs. `Err(text)` on a decode failure — the caller wraps it into
-/// `Error::FieldDecode` with the table/column/row context. A
+/// codecs. `Err` on a decode failure, unit as [`append_nested`]'s is — the
+/// caller wraps it into `Error::FieldDecode` with the table/column/row
+/// context and the field's quote, so no copy of `text` is made here. A
 /// `ColumnBuilder::Utf8View` copies `text`, refused where its length typmod
 /// refuses it ([`text_refused`]); the scan's `push_field` takes its zero-copy
 /// path ahead of this one, which needs the raw field's byte offset
@@ -406,22 +407,21 @@ pub(crate) fn append_typed(
     builder: &mut ColumnBuilder,
     text: &str,
     invalid: PostgresInvalidValues,
-) -> std::result::Result<(), String> {
-    let fail = || text.to_string();
+) -> std::result::Result<(), ()> {
     match builder {
         ColumnBuilder::Utf8View(b, length) => {
             if text_refused(text, *length, invalid) {
-                return Err(fail());
+                return Err(());
             }
             b.append_value(text);
         }
         ColumnBuilder::Array(parts) => {
-            let literal = decode_array(text).ok_or_else(fail)?;
+            let literal = decode_array(text).ok_or(())?;
             if literal.is_decorated() {
                 // Arrow lists are 0-based and have no lower bound, so an
                 // `[lb:ub]=` value's index origin has nowhere to go. Failing
                 // is the recoverable outcome; dropping the prefix is not.
-                return Err(fail());
+                return Err(());
             }
             if literal.elements.is_empty() {
                 // `{}` is what `array_out` emits for a zero-element array of
@@ -432,18 +432,17 @@ pub(crate) fn append_typed(
                 return Ok(());
             }
             if literal.ndim() != array_depth(parts) {
-                return Err(fail());
+                return Err(());
             }
-            append_array_level(parts, &literal.dims, &mut literal.elements.iter(), invalid)
-                .map_err(|()| fail())?;
+            append_array_level(parts, &literal.dims, &mut literal.elements.iter(), invalid)?;
         }
         ColumnBuilder::Multirange(parts) => {
-            let members = decode_multirange(text).ok_or_else(fail)?;
+            let members = decode_multirange(text).ok_or(())?;
             for member in &members {
                 let ColumnBuilder::Range(range) = &mut *parts.child else {
                     unreachable!("a multirange's child is always the range struct")
                 };
-                append_range(range, member, invalid).map_err(|()| fail())?;
+                append_range(range, member, invalid)?;
             }
             parts.offsets.push(builder_len(&parts.child) as i32);
             parts.validity.push(true);
@@ -452,7 +451,7 @@ pub(crate) fn append_typed(
         // is the only NULL in COPY TEXT, so `''` fills a zero-length list
         // rather than collapsing into the null beside it.
         ColumnBuilder::Int2Vector(parts) => {
-            let values = decode_int2vector(text).ok_or_else(fail)?;
+            let values = decode_int2vector(text).ok_or(())?;
             let ColumnBuilder::Int16(child) = &mut *parts.child else {
                 unreachable!("an int2vector's child is always Int16")
             };
@@ -463,14 +462,14 @@ pub(crate) fn append_typed(
             parts.validity.push(true);
         }
         ColumnBuilder::Record(parts) => {
-            let literal = decode_record(text).ok_or_else(fail)?;
+            let literal = decode_record(text).ok_or(())?;
             if parts.children.is_empty() {
                 // A zero-field composite is written `()`, and so is a
                 // one-field composite holding NULL — the literal cannot tell
                 // them apart, so `decode_record` reports the only thing the
                 // text supports and the declared field list decides (I23).
                 if literal.fields != [None] {
-                    return Err(fail());
+                    return Err(());
                 }
                 parts.validity.push(true);
                 return Ok(());
@@ -478,63 +477,63 @@ pub(crate) fn append_typed(
             // A composite's field count comes from its `CREATE TYPE`; a
             // literal that disagrees is not a value of this type.
             if literal.fields.len() != parts.children.len() {
-                return Err(fail());
+                return Err(());
             }
             for ((child, &not_null), field) in
                 parts.children.iter_mut().zip(&parts.not_null).zip(&literal.fields)
             {
-                append_nested(child, field.as_deref(), not_null, invalid).map_err(|()| fail())?;
+                append_nested(child, field.as_deref(), not_null, invalid)?;
             }
             parts.validity.push(true);
         }
         ColumnBuilder::Range(parts) => {
-            let literal = decode_range(text).ok_or_else(fail)?;
-            append_range(parts, &literal, invalid).map_err(|()| fail())?;
+            let literal = decode_range(text).ok_or(())?;
+            append_range(parts, &literal, invalid)?;
         }
-        ColumnBuilder::Bool(b) => b.append_value(decode::decode_bool(text).ok_or_else(fail)?),
-        ColumnBuilder::Int16(b) => b.append_value(text.parse::<i16>().map_err(|_| fail())?),
-        ColumnBuilder::Int32(b) => b.append_value(text.parse::<i32>().map_err(|_| fail())?),
-        ColumnBuilder::Int64(b) => b.append_value(text.parse::<i64>().map_err(|_| fail())?),
+        ColumnBuilder::Bool(b) => b.append_value(decode::decode_bool(text).ok_or(())?),
+        ColumnBuilder::Int16(b) => b.append_value(text.parse::<i16>().map_err(drop)?),
+        ColumnBuilder::Int32(b) => b.append_value(text.parse::<i32>().map_err(drop)?),
+        ColumnBuilder::Int64(b) => b.append_value(text.parse::<i64>().map_err(drop)?),
         // `u32`: `oidout` writes `%u`, so a field carrying a sign is the file
         // contradicting its own DDL, same as any other undecodable field.
-        ColumnBuilder::UInt32(b) => b.append_value(text.parse::<u32>().map_err(|_| fail())?),
+        ColumnBuilder::UInt32(b) => b.append_value(text.parse::<u32>().map_err(drop)?),
         ColumnBuilder::Float32(b) => {
-            b.append_value(float_field(text, invalid).ok_or_else(fail)?);
+            b.append_value(float_field(text, invalid).ok_or(())?);
         }
         ColumnBuilder::Float64(b) => {
-            b.append_value(float_field(text, invalid).ok_or_else(fail)?);
+            b.append_value(float_field(text, invalid).ok_or(())?);
         }
-        ColumnBuilder::Date32(b) => b.append_value(decode::decode_date32(text).ok_or_else(fail)?),
+        ColumnBuilder::Date32(b) => b.append_value(decode::decode_date32(text).ok_or(())?),
         ColumnBuilder::TimestampMicro { builder, has_tz } => {
-            builder.append_value(decode::decode_timestamp_micros(text, *has_tz).ok_or_else(fail)?);
+            builder.append_value(decode::decode_timestamp_micros(text, *has_tz).ok_or(())?);
         }
         ColumnBuilder::Time64Micro(b) => {
-            b.append_value(decode::decode_time64_micros(text).ok_or_else(fail)?);
+            b.append_value(decode::decode_time64_micros(text).ok_or(())?);
         }
         // The two value classes with no `MonthDayNano` encoding — v17's
         // infinities and a time part past `2562047:47:16.854775807` — fail
         // here, the same way `date`'s infinities and `numeric(p,s)`'s `NaN`
         // do.
         ColumnBuilder::IntervalMonthDayNano(b) => {
-            let (months, days, nanoseconds) = decode::decode_interval(text).ok_or_else(fail)?;
+            let (months, days, nanoseconds) = decode::decode_interval(text).ok_or(())?;
             b.append_value(IntervalMonthDayNano { months, days, nanoseconds });
         }
         ColumnBuilder::Decimal128 { builder, scale, precision } => {
             let unscaled = decode::typmod_unscaled_digits(text, *precision, i16::from(*scale))
-                .map_err(|_| fail())?;
-            builder.append_value(unscaled.parse::<i128>().map_err(|_| fail())?);
+                .map_err(drop)?;
+            builder.append_value(unscaled.parse::<i128>().map_err(drop)?);
         }
         ColumnBuilder::Decimal256 { builder, scale, precision } => {
             let unscaled = decode::typmod_unscaled_digits(text, *precision, i16::from(*scale))
-                .map_err(|_| fail())?;
-            builder.append_value(arrow::datatypes::i256::from_string(&unscaled).ok_or_else(fail)?);
+                .map_err(drop)?;
+            builder.append_value(arrow::datatypes::i256::from_string(&unscaled).ok_or(())?);
         }
         ColumnBuilder::FixedSizeBinary16(b) => {
-            let bytes = decode::decode_uuid(text).ok_or_else(fail)?;
+            let bytes = decode::decode_uuid(text).ok_or(())?;
             b.append_value(bytes).expect("decode_uuid always produces exactly 16 bytes");
         }
         ColumnBuilder::Binary(b) => {
-            b.append_value(&decode::decode_bytea(text).ok_or_else(fail)?);
+            b.append_value(&decode::decode_bytea(text).ok_or(())?);
         }
         // deficiency: KD88 — the text is appended whatever it is, so a label
         // the column's enum does not declare, which `enum_in` refuses (I70),
@@ -608,7 +607,8 @@ pub(crate) fn column_of(
 ) -> std::result::Result<ArrayRef, String> {
     let mut builder = new_column_builder(data_type, plan);
     for text in values {
-        append_typed(&mut builder, text, PostgresInvalidValues::Default)?;
+        append_typed(&mut builder, text, PostgresInvalidValues::Default)
+            .map_err(|()| text.to_string())?;
     }
     Ok(finish_column(&mut builder))
 }

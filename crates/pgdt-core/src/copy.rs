@@ -439,7 +439,23 @@ pub fn printout_head(field: &[u8]) -> Option<String> {
     if head.len() <= MAX_COPY_DATA_DISPLAY {
         return Some(text.to_owned());
     }
-    Some(format!("{}...", &text[..text.floor_char_boundary(MAX_COPY_DATA_DISPLAY)]))
+    Some(clipped(text))
+}
+
+/// An already unescaped text as a restore's error quotes it, as
+/// [`printout_head`] quotes a field (I94), copying no more of it than the
+/// quote holds.
+pub fn printout(text: &str) -> String {
+    if text.len() <= MAX_COPY_DATA_DISPLAY {
+        return text.to_owned();
+    }
+    clipped(text)
+}
+
+/// A text past [`MAX_COPY_DATA_DISPLAY`] bytes as its quote: its longest head
+/// of whole characters within them, and `...`.
+fn clipped(text: &str) -> String {
+    format!("{}...", &text[..text.floor_char_boundary(MAX_COPY_DATA_DISPLAY)])
 }
 
 /// The unescaped bytes of a field ([`unescaped`]); the one statement of COPY
@@ -949,5 +965,22 @@ mod tests {
         assert_eq!(quoted(&snowmen), Some(format!("{}...", "☃".repeat(33))));
         let octal = format!("\\303\\251{}", "é".repeat(49));
         assert_eq!(quoted(&octal), Some("é".repeat(50)));
+    }
+
+    /// **An unescaped text is quoted as its field is** (I94): `printout`
+    /// over the text a field stands for is `printout_head` over the field.
+    #[test]
+    fn a_text_is_quoted_as_its_field_is() {
+        let hundred = "a".repeat(100);
+        for (field, text) in [
+            (String::new(), String::new()),
+            (hundred.clone(), hundred.clone()),
+            (format!("{hundred}b"), format!("{hundred}b")),
+            ("\\t".repeat(101), "\t".repeat(101)),
+            (format!("a{}", "é".repeat(60)), format!("a{}", "é".repeat(60))),
+            ("☃".repeat(40), "☃".repeat(40)),
+        ] {
+            assert_eq!(Some(printout(&text)), printout_head(field.as_bytes()), "{text:?}");
+        }
     }
 }

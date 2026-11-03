@@ -43,7 +43,8 @@ fn build(
     for value in values {
         match value {
             None => append_null(&mut builder),
-            Some(text) => append_typed(&mut builder, text, PostgresInvalidValues::Default)?,
+            Some(text) => append_typed(&mut builder, text, PostgresInvalidValues::Default)
+                .map_err(|()| text.to_string())?,
         }
     }
     Ok(finish_column(&mut builder))
@@ -251,7 +252,7 @@ fn a_null_at_a_not_null_position_is_refused_but_under_ignore() {
     ]);
     let read = |data_type: &DataType, plan: &NestedPlan, value, invalid| {
         let mut builder = new_column_builder(data_type, plan);
-        append_typed(&mut builder, value, invalid).map_err(drop)
+        append_typed(&mut builder, value, invalid)
     };
     for (data_type, plan, refused, read_as_written) in [
         (list_of(DataType::Int32), elements.clone(), "{1,NULL}", "{1,2}"),

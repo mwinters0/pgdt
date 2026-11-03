@@ -350,7 +350,9 @@ pub enum Error {
     /// A field a query decodes that does not parse as its column's mapped
     /// type. The line is named by its byte offset in the file alone: a query
     /// reading from a kept row group or a parallel partition starts mid-block,
-    /// with no count of the rows before it to number the line by.
+    /// with no count of the rows before it to number the line by. `value`
+    /// is quoted as [`Self::FieldRefused`]'s is, its first 100 bytes and
+    /// `...` where longer (I94).
     #[error(
         "{table}.{column}: the line at offset {line_offset} holds `{value}`, which does not parse as its mapped type `{declared_type}` — read this column verbatim in the strings schema mode"
     )]

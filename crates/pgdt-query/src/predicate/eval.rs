@@ -7,7 +7,7 @@ use pgdt_codec::internal::{
 };
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::timed_span;
-use pgdt_core::internal::{RawRow, RowSplit};
+use pgdt_core::internal::{RawRow, RowSplit, printout};
 use pgdt_core::{Error, Result};
 use pgdt_core::{instrument::EvaluationPart as Part, internal::timed};
 use pgdt_model::PostgresInvalidValues;
@@ -54,9 +54,9 @@ impl ResolvedTerm {
     }
 
     /// The `Error::FieldDecode` a comparing term raises over a `value` that
-    /// is not of its column's type. A value of the type its column's Arrow
-    /// type cannot hold keys in PostgreSQL's order, or is read as NULL, and
-    /// never reaches here (`docs/design/decisions.md`, "D56", "D98").
+    /// is not of its column's type, quoted as the typed build path quotes
+    /// it. A value of the type its column's Arrow type cannot hold keys in
+    /// PostgreSQL's order, or is read as NULL, and never reaches here (`docs/design/decisions.md`, "D56", "D98").
     fn field_decode(&self, table: &str, row_offset: u64, value: Option<&str>) -> Error {
         let compared = self.compared.as_ref().expect("an operator taking no value decodes nothing");
         Error::FieldDecode {
@@ -64,7 +64,7 @@ impl ResolvedTerm {
             column: compared.column.clone(),
             line_offset: row_offset,
             declared_type: compared.declared_type.clone(),
-            value: value.unwrap_or_default().to_string(),
+            value: value.map(printout).unwrap_or_default(),
         }
     }
 

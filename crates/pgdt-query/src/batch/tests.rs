@@ -70,6 +70,27 @@ fn an_unprojected_field_is_walked_but_never_decoded() {
     assert_eq!(rendered(&batch), vec![Some("77".to_string()), Some("88".to_string())]);
 }
 
+/// **A decode error quotes its field's head** as a refusal does (I94): a
+/// field past 100 bytes is named by its first 100 and `...`, not whole.
+#[test]
+fn a_long_field_s_decode_error_quotes_its_head() {
+    let mut batcher = one_column_batcher_fed_by(Default::default(), vec![Some(0)], DataType::Int32);
+    let field = format!("1{}", "x".repeat(300));
+    let err = batcher
+        .push_row(
+            0,
+            0,
+            RawRow::unchecked(field.as_bytes()),
+            &mut RowSplit::default(),
+            &mut RetainedChunks::new(),
+        )
+        .unwrap_err();
+    match err {
+        Error::FieldDecode { value, .. } => assert_eq!(value, format!("{}...", &field[..100])),
+        other => panic!("expected FieldDecode, got {other:?}"),
+    }
+}
+
 /// A row is checked against the **block's** field count, not the
 /// projection's width — `push_row` is the system's only field-count
 /// check, and a projection must not weaken it.
