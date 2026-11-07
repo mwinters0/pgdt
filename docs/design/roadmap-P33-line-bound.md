@@ -76,8 +76,12 @@ a bounded state per column — a head (`decisions.md`, "D76"), a length, a fold'
 carried state — so a parse holds nothing that grows with a field, draws nothing
 past its chunk term and is never refused for memory. Each reader resumes across
 runs with one grammar per type, a slice being one run, and **looks no further
-ahead than a fixed bound**, carrying what lies past it as state — a whitespace
-run as its counts, a `bytea` read once for both its answers. The one state that
+ahead than a fixed bound**, carrying what lies past it as state — a `bytea`
+read once for both its answers — and **reads an unquoted element's whitespace
+run on into its part**, rewound where the run turns out trailing: the container
+marks its part where the run starts, the part restoring what it held there, and
+a refusal met inside the run stands only where it turns out interior, as `{1\v}`
+is a valid `json[]`. The one state that
 grows with a field is a `json` value's open containers, a bit a level and so at
 most an eighth of it, uncharged: PostgreSQL bounds that depth only by
 `max_stack_depth`, a setting, and nothing refuses one here
@@ -86,7 +90,10 @@ line, which charges a parse for values it reads only to keep heads of, on the
 dumps whose long lines cluster three to nine in a chunk; holding whole each field
 whose reader can only pull, as the census holds a container, a second rule a user
 cannot see and on a long `jsonb` field the line again; a fork keeping its runs
-back to where it forked, a line's worth on one whitespace run; charging the
+back to where it forked, a line's worth on one whitespace run, and the run held
+until its end decides it, as its bytes or their run lengths, the same on a run
+alternating its bytes, which no `pg_dump` writes and a restore reads; a rewind
+in each leaf reader, one per type where `Parts` has a few implementors; charging the
 depth bits, the ledger back for a parse over no document a dump holds; refusing
 past a depth, which PostgreSQL does not. Reopens: no resumable reader keeping
 one grammar per type, which a second parser would not answer.
@@ -292,7 +299,10 @@ edge, pgdt-dump depending on pgdt-io already.
   the carry and its draws; the resync where it is, pgdt-mapping's interior and
   pgdt-query's `replay/segment.rs`.
 - **The resumable readers** — pgdt-codec's, the unescaper with them, each fed a
-  field's runs as the carry's fold hands them over. Rejected: a reader pulling
+  field's runs as the carry's fold hands them over. The mark and the rewind are
+  `Parts`'s (`value/source.rs`), the trait a container's walk hands its parts
+  through, each implementor restoring its own state or truncating what it
+  collected, a query's builder among them. Rejected: a reader pulling
   its source's next chunk itself, a codec walk driving pgdt-dump's reader, its
   tab split, CR hold and chunk retention beneath it (`decisions.md`, "D74").
 - **The offset cut** — pgdt-query's `batch.rs`, "Arrow batches", beside the

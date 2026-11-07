@@ -584,8 +584,9 @@ than reading as a phase nobody has sliced.
   **(c) unowned**; promoted by a caller rendering such an array. Detail:
   `crates/pgdt-query/src/render.rs`.
 
-- **KD167** — an unquoted array element whose whitespace run alternates its
-  bytes carries a count per change while its walk waits to learn whether the
-  run is interior, so a reader fed it holds state growing with the run.
-  **(c) unowned**; promoted by such a field met in use. Detail:
+- **KD167** — an unquoted array element whose whitespace run, inside it or
+  after `NULL`, alternates its bytes carries a count per change while its walk
+  waits to learn whether the run is interior or the `NULL` a marker, so a
+  reader fed it holds state growing with the run.
+  **(b) owned by P33**, whose 33.21 reads the run on into its part. Detail:
   `crates/pgdt-codec/src/value/source.rs`.

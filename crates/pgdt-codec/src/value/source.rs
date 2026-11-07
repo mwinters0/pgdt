@@ -32,10 +32,10 @@ pub(crate) trait Parts<K: Copy = ()> {
 /// byte after it: a run of one byte is one count however long.
 // deficiency: KD167 — a run alternating its bytes is a count per change, so a
 // field written as one unquoted element whose whitespace alternates `' '`
-// and `'\t'` carries state growing with it: no `pg_dump` writes one, `array_out`
-// quoting every element holding whitespace. Bounded by reading the run on
-// into the part and rewinding it where it turns out trailing, which every
-// part's reader would offer. **(c) unowned**; promoted by such a field met in use.
+// and `'\t'`, inside it or after `NULL`, carries state growing with it: no
+// `pg_dump` writes one, `array_out` quoting every element holding whitespace.
+// **(b) owned by P33**, reading the run on into its part and `Parts` rewinding
+// it where it trails.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct Blanks {
     runs: Vec<(u8, u32)>,
