@@ -140,7 +140,8 @@ impl Clipped {
     }
 
     /// Where `text` orders against the value this was clipped from, `None`
-    /// when `text` begins with a head that is not the whole value. Two such
+    /// when `text` runs past a head that is not the whole value and agrees
+    /// with it. Two such
     /// values share every byte a stored bound reads, so either stands for
     /// the other in the group's bounds; only their row order is unknown.
     pub(super) fn locate(&self, text: Head<'_>) -> Option<Ordering> {

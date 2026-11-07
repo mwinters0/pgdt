@@ -8,7 +8,9 @@
 //! A source is `dyn`, as today's is — a part's source wraps its container's,
 //! to a depth the plan sets at run time — so its methods poll rather than
 //! being `async fn`s, which no trait object can hold; a [`Lexer`] is
-//! resumable to match, its one carried byte an escape. A container nested in
+//! resumable to match, carrying across a suspension what a byte left
+//! pending — an escape, a quote awaiting its double, the `NULL` letters and
+//! a whitespace run held. A container nested in
 //! a container is read through a boxed future, the one recursion an `async
 //! fn` cannot hold inline; a leaf is read in place. Neither fork is here: the
 //! `NULL` test holds the letters it has read, and an unquoted element's

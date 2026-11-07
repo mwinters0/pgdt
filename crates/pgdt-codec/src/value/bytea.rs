@@ -9,8 +9,9 @@ use crate::value::digits::push_hex_pair;
 
 /// Why [`decode_bytea`] read no value from `s`: `byteain`
 /// refuses it, or reads a spelling this build does not — a blank between hex
-/// pairs, any byte the `escape` form writes escaped written as itself, or the
-/// reverse (`docs/design/decisions.md`, "D55").
+/// pairs, any byte the `escape` form writes escaped written as itself, the
+/// reverse, or a byte escaped otherwise than `byteaout` escapes it — `\134`
+/// for `\\` (`docs/design/decisions.md`, "D55").
 // pg-refuses: I69 — every refusal here is `byteain`'s.
 pub fn bytea_unread(text: impl Iterator<Item = u8>) -> Unread {
     // A byte at a time, so a field is answered as `Unescaped` reads it with

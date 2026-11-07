@@ -1,7 +1,8 @@
 //! The nested literal codec: array, composite (record), range, multirange and
 //! `int2vector` literals, in both directions — as PostgreSQL's `*_out`
 //! functions write them inside a single `COPY` field, and as its `*_in`
-//! functions read what a user typed.
+//! functions read them — a filter's literal, and a field a strict parse
+//! checks.
 //!
 //! Pure, synchronous, no I/O and no Arrow (`docs/design/decisions.md`, "D74").
 //! Like `crate::decode`, every function here works on the *already
@@ -15,11 +16,12 @@
 //!
 //! **`decode_*` and `parse_*` are two scanners, not one with a flag**
 //! (`docs/design/decisions.md`, "D45"): the first reads a dump and cannot
-//! loosen, the second reads a filter's literal and cannot tighten.
+//! loosen, the second reads what the server's `*_in` would and cannot
+//! tighten.
 //!
 //! Both produce the three literal types this module defines, holding the
 //! parts as they were written: [`output`] reads and writes what a dump
-//! holds, and [`input`] reads what a user typed. [`key`] orders either.
+//! holds, and [`input`] reads what `*_in` reads. [`key`] orders either.
 
 mod input;
 pub(crate) mod key;
@@ -41,7 +43,7 @@ pub use output::{
 };
 
 /// `array_isspace`, and `isspace()` in the C locale: the same six characters,
-/// which is why one predicate serves all three forms.
+/// which is why one predicate serves every grammar here.
 fn is_space(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c)
 }
@@ -89,16 +91,18 @@ impl ArrayLiteral<'_> {
 }
 
 /// The elements of one array literal, row-major and flattened across every
-/// dimension. Borrowed from the literal wherever no escape had to be undone —
-/// see [`ArrayLiteral`], whose field this is.
+/// dimension. Borrowed from the literal by `decode_*` wherever no escape had
+/// to be undone, and owned by `parse_*` — see [`ArrayLiteral`], whose field
+/// this is.
 type Elements<'a> = Vec<Option<Cow<'a, str>>>;
 
 /// A `record_out` literal: one entry per declared field of the composite, in
 /// declaration order. `None` is SQL NULL, which a record spells as nothing at
 /// all between its separators — `("")` is the empty string, `()` is NULL.
 ///
-/// Arity is not checked here: this module does not know the composite's
-/// declared field list. The caller joins the two.
+/// `decode_record` checks no arity, not knowing the composite's declared
+/// field list, and its caller joins the two; `parse_record` is handed the
+/// count and refuses any other.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordLiteral {
     pub fields: Vec<Option<String>>,

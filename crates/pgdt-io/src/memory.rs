@@ -130,7 +130,7 @@ pub const MEMORY_MARGIN_PERCENT: u64 = 20;
 pub const MEMORY_UNPOOLED_BOUND: u64 = 256 << 20;
 
 /// The most a resolved arrangement may be **charged** under an `allowance` —
-/// a discovered limit or a stated `--memory` — if its predicted resident is to
+/// any but none found — if its predicted resident is to
 /// leave [`MEMORY_MARGIN_PERCENT`] of it unused: `(100 − margin)% of
 /// allowance`, less [`MEMORY_UNPOOLED_BOUND`].
 ///
@@ -151,7 +151,7 @@ pub(super) fn margin_allowance(allowance: u64) -> u64 {
 /// **What a resolved arrangement leaves for a mapping pass's statistics**
 /// ([`Arrangement::statistics_allowance`](crate::Arrangement::statistics_allowance)): the
 /// bytes `pgdt_mapping`'s `StatisticsAccount` may hold under `allowance` —
-/// a discovered limit or a stated `--memory` — once `budget`, the read-buffer
+/// any but none found, half of what is available included — once `budget`, the read-buffer
 /// budget that arrangement resolved to, comes off [`margin_allowance`]'s
 /// ceiling, which already stands [`MEMORY_UNPOOLED_BOUND`] below its fraction
 /// of the allowance.

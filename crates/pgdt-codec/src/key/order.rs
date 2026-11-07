@@ -41,8 +41,9 @@ fn jsonb_key(text: &str) -> Read<OrderKey> {
 }
 
 /// One side of an ordering comparison, decoded from text per the column's
-/// [`CompareKind`]. Both sides of any one comparison come from the same kind,
-/// so a *finite* variant mismatch is unreachable by construction.
+/// [`CompareKind`]. Both sides of a comparison [`compare_keys`] makes come
+/// from the same kind, so a *finite* variant mismatch is unreachable there;
+/// `order_keys` orders two that may not share one.
 ///
 /// Three variants are not values of the column's Arrow type at all:
 /// `infinity`, `-infinity` and `numeric`'s `NaN` are legal values of their
@@ -213,7 +214,8 @@ fn network_key(text: &str, cidr: bool) -> Read<OrderKey> {
 }
 
 /// Decode one already-COPY-unescaped value into a comparable key. `None` when
-/// the text is not a value of that type — for a *field* `Error::FieldDecode`,
+/// the text is not a value of that type, or one this build does not read
+/// ([`field_key`]'s `Unparsed`) — for a *field* `Error::FieldDecode`,
 /// for the filter's own literal `Error::PredicateValueDecode`, raised before
 /// a row is read.
 ///

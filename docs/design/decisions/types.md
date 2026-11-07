@@ -36,19 +36,21 @@ after the DDL, never instead of it, and is a parameter of resolution so no calle
 apart from `NotDeclared`: same output, opposite advice. Rejected: widening `builtin_scalar`'s tuple; `Field` metadata.
 
 ### D45 Strict decoders apart from permissive parsers; decode and render allocate only what they return
-`decode_*` reads what a dump holds and cannot loosen, each the inverse of its `render_*`; `parse_*` reads what a user
-typed and cannot tighten: two scanners, not one with a flag, each transcribing the newest major and under-accepting
-(I35, I44). Wrong depth, `[lb:ub]=` or a field-count mismatch is refused, never reshaped; a value no text form spells is
-`FieldRender`, never rounded (I40). A renderer writes into its caller's buffer and a decoder allocates only what it
-returns, a nested element borrowing unless it carried an escape. Rejected: a `String` per rendered field
-(`tests/render_allocations.rs` pins the count). Evidence: `nested-decode-micro`.
+`decode_*` reads what a dump holds and cannot loosen, each the inverse of its `render_*`; `parse_*` reads what `*_in`
+reads — a filter's literal, a strictly checked field — and cannot tighten: two scanners, not one with a flag, each
+transcribing the newest major and under-accepting (I35, I44). Wrong depth, `[lb:ub]=` or a field-count mismatch is
+refused, never reshaped; a value no text form spells is never rounded (I40), and `FieldRender` where its renderer tells
+(`KD166`). A renderer writes into its caller's buffer, an integer, boolean, text, date, time, timestamp or array with no
+`String` between (`tests/render_allocations.rs` pins the count), and a decoder allocates only what it returns, an
+array's element borrowing unless it carried an escape. Rejected: a `String` per rendered field. Evidence:
+`nested-decode-micro`.
 
 ### D143 An input grammar is a walk over a forward byte source, read a part at a time
 `array_in`'s, `record_in`'s, `range_in`'s, `multirange_in`'s and `int2vectorin`'s grammars, and `json_in`'s with
-`jsonb_in`'s refusals beside it, are walks over a `Source`, each part read off its container's bytes as the grammar
-finds it; `parse_*` collect them and a strict check reads them, so a nested, `json` or `jsonb` field is checked off
-`Unescaped` holding no copy, no key and no part past its turn, but a scalar part's text and a range's two bounds.
-Rejected: checking a key built and dropped, a tree of tens of bytes an element; a source generic over its container's,
-which instantiates without bound; a check walk beside each scanner, two grammars for one. Code: `value/source.rs`
-(`Source`, `Part`), `nested/input.rs`, `json.rs` (`walk_json`), `grammar/check.rs` (`refused`). Evidence:
-`input/differential.rs`, `tests/decoded_copies.rs`.
+`jsonb_in`'s refusals beside it, are walks over a `Source`, each part read off its container's bytes as found; `parse_*`
+collect the nested ones and a strict check reads all, holding no copy and no tree of a field off `Unescaped`, only a
+scalar part's text and key and a range's bounds and theirs. `parse_jsonb` is `JsonCursor`'s, held to the walk by a
+differential test. Rejected: a value's key tree built and dropped, tens of bytes an element; a source generic over its
+container's, instantiating without bound; a check walk beside each nested scanner. Code: `value/source.rs` (`Source`,
+`Part`), `nested/input.rs`, `json.rs` (`walk_json`), `grammar/check.rs` (`refused`). Evidence: `input/differential.rs`,
+`tests/decoded_copies.rs`.

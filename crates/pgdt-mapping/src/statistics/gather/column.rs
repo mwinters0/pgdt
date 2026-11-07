@@ -30,8 +30,9 @@ use crate::statistics::stored::Summand;
 pub(super) struct Observed {
     /// What the column's heap grew by.
     pub(super) grew: i64,
-    /// Whether the field is one its type's `*_in` refuses, kept out of the
-    /// group's statistics rather than stopping the block.
+    /// Whether the field is one its type's `*_in` refuses, kept out of every
+    /// statistic a read could contradict (D103) rather than stopping the
+    /// block.
     pub(super) ignored: bool,
 }
 
@@ -60,7 +61,7 @@ pub(super) struct ColumnGatherer {
     /// The column over a piece's held first group ([`Gatherer::head`](super::gatherer::Gatherer::head)).
     head: Option<GroupState>,
     /// Whether a field its type's `*_in` refuses stops the block, or is kept
-    /// out of the group's statistics ([`Self::observe`]).
+    /// out of every statistic a read could contradict ([`Self::observe`]).
     invalid: PostgresInvalidValues,
     /// Whether the column's declaration makes it `NOT NULL`, so a NULL is
     /// refused as such a field is (I76).

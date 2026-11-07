@@ -323,7 +323,8 @@ pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
 }
 
 /// **Whether [`field_refused`] reads a field of a column compared by `plan`
-/// a byte at a time**, holding no copy of it and no tree
+/// a byte at a time**, holding no copy of it and no tree but a range
+/// bound's
 /// (`docs/design/decisions.md`, "D143"): a nested value, `json` and `jsonb`.
 pub fn walks(plan: &ComparisonPlan) -> bool {
     matches!(
@@ -357,10 +358,11 @@ pub fn walk_refused(plan: &ComparisonPlan, text: impl Iterator<Item = u8> + Clon
 }
 
 /// **Whether a marked check refuses the nested field `text` reads**, as
-/// [`checked_key`] does, read off it a part at a time with no key built and
-/// no part held past its turn: an element, a field, a member range — whose
-/// two bounds are what `range_in` compares — each checked as it is walked,
-/// its container's grammar read through to its end.
+/// [`checked_key`] does, read off it a part at a time: an element, a field,
+/// a member range — whose two bounds are what `range_in` compares — each
+/// checked as it is walked, its container's grammar read through to its
+/// end. Only a scalar part's text and key and a range's bounds and their
+/// keys are built, each dropped in its turn.
 fn refused<'a>(plan: &NestedCompare, text: &mut dyn Source<'a>) -> Walked {
     let refuses = |refused: bool| if refused { Err(Refused) } else { Ok(()) };
     match plan {

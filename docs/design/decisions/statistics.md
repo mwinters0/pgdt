@@ -55,12 +55,12 @@ zeros; the zeros told apart in the key, which every term equates; a kind or DDL 
 plan and semantics, which map onto no set uniformly. Code: `bounds_kinds`, `bounds_set_keyed_by`, `compare_keys_stored`.
 
 ### D81 The statistics account sums allocation sizes as they change; an instrument scope checks it
-Each term is the allocator's request — capacity, a table's layout (RT11, RT12) — under one lock, a vector or map charged
-ahead of its growth, in flight made when short, unmade when over. Rejected: a per-group bound, bytes never held; growth
-charged after it; atomic terms, a moving charge read in neither; in-flight growth unmade both ways, faulting a table
-another worker holds; walking every block; proportional slack. Reopens: a leg past its tolerance
-(`statistics_account.rs`); an unseen term growing with the dump; the lock in `statistics-gathering`. Code:
-`statistics::account::Charge`.
+Each term is the allocator's request — capacity, a table's layout (RT11, RT12) — under one lock, a closed group's vector
+or map charged ahead of its growth and an open group's growth within a step of it (`STATISTICS_ACCOUNT_CHARGE_STEP`), in
+flight made when short, unmade when over. Rejected: a per-group bound, bytes never held; all growth charged after it;
+atomic terms, a moving charge read in neither; in-flight growth unmade both ways, faulting a table another worker holds;
+walking every block; proportional slack. Reopens: a leg past its tolerance (`statistics_account.rs`); an unseen term
+growing with the dump; the lock in `statistics-gathering`. Code: `statistics::account::Charge`.
 
 ### D82 A block merges pairwise, exactly, between its minimum and its maximum, never mid-scan while a piece lives
 Pairwise and exact, so serial, split and stated gathering agree: a bytewise group keeps its extremes' heads till
@@ -99,8 +99,8 @@ short of what `:strings` emits; sizing `:strings` by bounds and type widths, an 
 
 ### D97 A group keeps a view per tier only where it holds such a value, the values its type holds the base
 A column whose type cannot hold every value counts them per group and bounds and orders the values it holds; a group
-holding one past a tier also keeps that tier's extremes and order apart, allocated at its first such value, so a
-`StatisticsView` folds in the tiers it takes, exactly across pieces and merges (D82), believed only under D78's DDL.
-Every value PostgreSQL admits keys, a timestamp from PostgreSQL's epoch (I49). Rejected: every value's bounds and the
-count alone; a set per view per column from its first row; an `i128` timestamp key from 1970. Code:
+holding one past a tier also keeps that tier's extremes apart, allocated at its first such value, and its block that
+tier's order, so a `StatisticsView` folds in the tiers it takes, exactly across pieces and merges (D82), believed only
+under D78's DDL. Every value PostgreSQL admits keys, a timestamp from PostgreSQL's epoch (I49). Rejected: every value's
+bounds and the count alone; a set per view per column from its first row; an `i128` timestamp key from 1970. Code:
 `gather::bounds::KeyedGroup`, `gather::order::ViewOrders`. Evidence: `each_view_bounds_and_orders_the_values_it_takes`.

@@ -1,7 +1,8 @@
 //! The type families: everything PostgreSQL says about one type — its
 //! reader, its renderer, its refusal classifier and its key type — in one
 //! module a family, which the `decode`, `nested` and `key` namespaces declare
-//! from. A scalar family reads no `crate::key`: `OrderKey` holds the
+//! from, beside `source`, the byte source the input grammars walk. A scalar
+//! family reads no `crate::key`: `OrderKey` holds the
 //! families' key types, so building one is the key's dispatch over them; the
 //! nested family's keys (`nested/key.rs`) are built through that dispatch.
 

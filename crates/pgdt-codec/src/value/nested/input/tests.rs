@@ -50,7 +50,7 @@ fn an_unquoted_null_is_sql_null_unless_an_escape_disqualifies_it() {
     assert_eq!(array_elements("{NuLl}"), vec![None]);
     assert_eq!(array_elements("{\"null\"}"), vec![some("null")]);
     // The escape makes it a string even though the bytes still spell
-    // `NULL`, which is what `escaped` is for.
+    // `NULL`: the marker's match reads the raw bytes, which a `\` fails.
     assert_eq!(array_elements(r"{N\ULL}"), vec![some("NULL")]);
     assert_eq!(render_array(&parse_array(r"{N\ULL}").unwrap()), "{\"NULL\"}");
 }

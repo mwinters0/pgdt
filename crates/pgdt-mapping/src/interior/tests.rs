@@ -335,7 +335,7 @@ fn a_cut_inside_a_row_whose_tail_is_a_backslash_dot_is_resynced_past() {
 /// chunk size every block here sits inside one partition and the scheduler
 /// declines it. Announcing 8 bytes as the read size makes the source
 /// advise 64-byte partitions, which is what exercises the window loop, the
-/// tail read and a line carried across a worker's reads at all. **It is bounded below by the
+/// tail read and a line carried across a worker's reads at all. **It is bounded above by the
 /// smallest region any fixture here ends with**: [`scan_region`]'s floor
 /// is one whole partition, so a larger partition would decline a trailing
 /// block and the sweeps below, which assert a closed region and a non-empty
@@ -1077,8 +1077,8 @@ fn a_censusing_worker_streams_a_row_and_censuses_it_as_held() {
     }
 }
 
-/// **A worker on a block at the metadata level streams a row it would
-/// hold**: its scans of a block whose rows run many reads long — through
+/// **A worker on a block at the metadata level streams a row as a censusing
+/// one does**: its scans of a block whose rows run many reads long — through
 /// their ending, whatever it is, and wherever the piece's limit falls — are
 /// those a worker censusing them answers, censuses aside.
 #[test]

@@ -10,9 +10,10 @@ unrepresentable count record for a typed query to read back. `pgdt-dump`'s `map`
 A span is classified by the statement grammar and the TOC comment is enrichment: TOC-driven segmentation is unsound on
 non-`pg_dump` input and a dollar-quoted body can hold a TOC-shaped line (I3), so a TOC block anchors a span where one
 exists and the grammar closes every statement without one. A tiling hole is `TilingBroken`, never a refusal. The
-preamble prepass (byte 0 to the first `COPY` header, I1) runs ahead of either mapping entry point's pass unless the
-cache holds it, so a scan stopped anywhere, its first chunk included, still states the first database's DDL. Span text
-is sliced from the file after building, never accumulated, and `Data` spans store none. Evidence: `preamble-prepass`.
+preamble prepass (byte 0 to the first `COPY` block's TOC comment or header, I1) runs ahead of either mapping entry
+point's pass unless the cache holds it, so a scan stopped anywhere, its first chunk included, still states the first
+database's DDL. Span text is sliced from the file after building, never accumulated, and `Data` spans store none.
+Evidence: `preamble-prepass`.
 
 ### D31 `Span::toc` is "belongs to", vetoed after classification; boundary rules that read as bugs
 Follow-ons inherit `governing_toc` (else coverage reads half on healthy input) and `toc_owned` counts objects; `Framing`
@@ -27,15 +28,15 @@ at its start (`KD1` where none is). A large-object region, a bare `BEGIN;`/`COMM
 scanner (I12). `INSERT` runs fold in `feed_line` with no scanner state, their boundaries resting on no line-anchored
 invariant, the run's end lexed as the scanner lexes; the cuts `KD9` names wait for P8's row reader.
 
-### D34 `DumpIndex` stores no fact twice but sortedness, `metadata`, `scanned_through` and a catalog block's rows; whole-file facts need `is_complete`
-Every fact has one owner: `blocks()` and `metadata` are views over `spans` (`metadata` computed once) and diagnostics
-are never persisted; a catalog block's recorded rows repeat its `row_count` (D133). Whole-file facts (roles,
-tablespaces, a reported schema) are believed only once `is_complete`; a streamed schema commits over the blocks it
-replays, ungated (I2). Statistics sit in their block behind an `Arc`, so a map clone copies a reference (`KD5`), and a
-row group is a byte range, so no piece needs a global row index. A back-fill keeps a block's columns, and its size
-unless a stated size or bound it did not record moves it, a maximum it breaks re-reading it at the size its groups
-predict. Rejected: `SparseRowIndex`; padded `character` bounds and entries (keyed alike, but past the cap); a back-fill
-dropping only re-read blocks' columns.
+### D34 `DumpIndex` stores no fact twice but sortedness, `metadata`, `scanned_through`, roles, tablespaces and a block's row count; whole-file facts need `is_complete`
+Every fact has one owner, `blocks()` and `metadata` views over `spans` (`metadata` computed once) and diagnostics never
+persisted, but these: a catalog block's recorded rows (D133) and a gathered block's groups repeat its `row_count`, and
+`roles` and `tablespaces` the TOC names. Whole-file facts (roles, tablespaces, a reported schema) are believed only once
+`is_complete`; a streamed schema commits over the blocks it replays, ungated (I2). Statistics sit in their block behind
+an `Arc` (`KD5`), a row group a byte range, so no piece needs a global row index. A back-fill keeps a block's columns,
+and its size unless a stated size or bound it did not record moves it, a maximum it breaks re-reading it at the size its
+groups predict. Rejected: `SparseRowIndex`; padded `character` bounds and entries; a back-fill dropping only re-read
+blocks' columns.
 
 ### D35 The census is type-blind, records both dimension bounds, and runs at the data level
 `ArrayShape::observe` reads the leading brace run off still-escaped bytes in the model (I15, I25); min and max depth, or
@@ -59,8 +60,9 @@ composite's field list is all-or-nothing, `record_out` being positional (I23); a
 segment is not a database (I9). The model keeps the dump's text (D74): a declared type as its words; a collation clause
 verbatim, `None` meaning no clause (I37); a name in one spelling, both sides of a lookup compared in it (I29);
 `INHERITS` parents, `OF` type and a partition's bound as text (I86). Of what the DDL implies it keeps only a column's
-`NOT NULL`, an enum's label completeness and a collation's `deterministic` (I42). Rejected: a name's parts dequoted
-(`"a.b".c` is `a."b.c"`); references flattened in at the fold, which a later `ADD COLUMN` misses.
+`NOT NULL`, an enum's label completeness, a collation's `deterministic` (I42) and a base type's `typdelim`, `,` unstated
+(I22). Rejected: a name's parts dequoted (`"a.b".c` is `a."b.c"`); references flattened in at the fold, which a later
+`ADD COLUMN` misses.
 
 ### D133 TimescaleDB's catalog rows are recorded as text on their own blocks, on the leader's loop, at every level
 A `_timescaledb_catalog` block a conclusion reads keeps its rows as unescaped text on its `CopyBlock`, recorded by every

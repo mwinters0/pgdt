@@ -92,7 +92,8 @@ pub async fn scan_preamble(
 /// when present, falling back to a fresh [`scan_preamble`] otherwise and
 /// persisting the result when the cache is enabled (a no-op when it isn't —
 /// see [`CacheMode::save`]). Bounded to the file's first `COPY` block
-/// regardless of dump size (I1), independent of `build_index`'s full
+/// regardless of dump size (I1) — a dump holding none, `--inserts`', is read
+/// to its end — independent of `build_index`'s full
 /// structural scan.
 ///
 /// **It reads the cache `opened` decoded** ([`CacheMode::open`]), whose

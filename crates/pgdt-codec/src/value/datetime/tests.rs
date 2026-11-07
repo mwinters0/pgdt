@@ -37,7 +37,7 @@ fn the_date_range_constants_are_julian_days_from_1970() {
 /// **A date is bounded part by part as `ValidateDate` bounds it, and to
 /// `IS_VALID_DATE`'s range** (I61). Each refusal was cast on PostgreSQL
 /// 16; the shortfalls beside them are spellings the server reads by
-/// `DateOrder` or as a day of the year, which this build does not (D55).
+/// `DateOrder`, which this build does not (D55).
 #[test]
 fn a_date_the_calendar_does_not_hold_is_refused() {
     for text in [
@@ -59,7 +59,8 @@ fn a_date_the_calendar_does_not_hold_is_refused() {
     ] {
         assert_eq!(decode_date32(text), None, "{text}");
     }
-    // Shortfalls: the server reads each.
+    // Shortfalls: the server reads the first two. `2020-001-05` it refuses
+    // too, its day of the year filling the date (`DecodeNumberField`).
     for text in ["20-01-01", "1-01-01", "2020-001-05"] {
         assert_eq!(decode_date32(text), None, "{text}");
     }
@@ -327,7 +328,8 @@ fn interval_refuses_spellings_interval_out_never_writes() {
 /// field counts microseconds, so a nanosecond count with a remainder is
 /// not an `interval` at all. `decode_interval` cannot produce one, which
 /// is why the whole-microsecond neighbours are asserted beside it —
-/// truncating would have written `00:00:00.000001` for all three.
+/// truncating would have written a whole-microsecond neighbour's text for
+/// each.
 #[test]
 fn render_refuses_a_sub_microsecond_nanosecond_count() {
     assert_eq!(render_interval(0, 0, 1), None);

@@ -1,8 +1,8 @@
 //! What the process can say about its own memory, when it is built to say it.
 //!
-//! **Off by default and never in a shipped binary.** The whole module is
-//! behind the `introspect` Cargo feature; without it every item here is a
-//! no-op that compiles to nothing. With it, `pgdt`
+//! **Off by default and never in a shipped binary.** Its working half is
+//! behind the `introspect` Cargo feature; without it every function here
+//! does nothing. With it, `pgdt`
 //! installs a counting `#[global_allocator]` over `mimalloc::MiMalloc` and
 //! writes, on the way out, what the program held, what mimalloc was holding
 //! for it, and what glibc was holding for the C code beside it.
@@ -169,9 +169,10 @@ mod enabled {
     pub struct Counting;
 
     /// `Relaxed` throughout: the counters guard no other memory, so nothing
-    /// here orders anything else. Every value `LIVE` takes is one
-    /// `fetch_add`'s result, which that thread then hands to `fetch_max`, so
-    /// `PEAK` is the counter's high-water however allocations interleave.
+    /// here orders anything else. Every value `LIVE` rises to is one
+    /// `fetch_add`'s result, which that thread then hands to `fetch_max`, a
+    /// `fetch_sub` never setting a high, so `PEAK` is the counter's
+    /// high-water however allocations interleave.
     fn took(bytes: usize) {
         let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
         PEAK.fetch_max(live, Ordering::Relaxed);

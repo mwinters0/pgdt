@@ -7,8 +7,8 @@
 //!
 //! [`unescape_field`]/[`escape_field`] are the one place in the codebase that
 //! converts between a field's on-disk COPY-escaped bytes and its unescaped
-//! text — see `docs/design/decisions.md`, "D74", [`Unescaped`] holding the
-//! escapes for both. [`pgdt_codec::decode`] (the codec) never sees escaped
+//! text — see `docs/design/decisions.md`, "D74", [`Unescaped`] reading the
+//! escapes and `escape_field` writing them. [`pgdt_codec::decode`] (the codec) never sees escaped
 //! bytes at all: it takes `unescape_field`'s already-unescaped `&str` output,
 //! or a `bytea` field's bytes as [`unescaped`] reads them, and works purely in
 //! "unescaped text vs. Arrow value" terms.
@@ -458,7 +458,7 @@ fn clipped(text: &str) -> String {
     format!("{}...", &text[..text.floor_char_boundary(MAX_COPY_DATA_DISPLAY)])
 }
 
-/// The unescaped bytes of a field ([`unescaped`]); the one statement of COPY
+/// The unescaped bytes of a field ([`unescaped`]); the one reading of COPY
 /// TEXT's escapes, which [`unescape_field`] collects.
 #[derive(Debug, Clone)]
 pub struct Unescaped<'a> {

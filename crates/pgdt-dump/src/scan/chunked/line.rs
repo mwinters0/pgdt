@@ -8,8 +8,9 @@ use bytes::Bytes;
 /// The line being carried across chunk boundaries: a `Vec` the carry reuses
 /// while the line is no longer than `outgrows` bytes, a chunk's, and a
 /// [`LineMapping`] from the extension that takes it past them, so a line
-/// that outgrows its chunk holds what it has written and no more, whatever
-/// the global allocator keeps.
+/// that outgrows its chunk holds what it has written and less than one step
+/// more, beside the buffer the carry keeps for the next, whatever the global
+/// allocator keeps.
 #[derive(Debug)]
 pub(super) struct CarriedLine {
     /// The line while it fits its chunk; empty once it is mapped.
@@ -100,7 +101,8 @@ impl CarriedLine {
 /// stays resident beside its successor, and nothing waits on an allocator's
 /// purge (`docs/design/runtime-invariants.md`, "RT29"). **It grows in steps
 /// of [`step`], its start kept aligned to one**, so its commit, address space
-/// and resident set are what it has written and less than one step more, and
+/// and resident set are what it was reserved for or has written, whichever
+/// is longer, and less than one step more, and
 /// the kernel can back each step it fills with a transparent huge page and
 /// keep it across a move (RT30). A mapping it cannot make or grow is an
 /// allocation failure, aborting as a `Vec`'s does.
@@ -216,8 +218,8 @@ fn mapping_failed(len: usize) -> ! {
 }
 
 // This crate's `unsafe` (`docs/design/decisions.md`, "D27"): the base page's
-// `sysconf`, and `mmap`, `mremap` and `munmap` over a mapping `LineMapping`
-// alone owns.
+// `sysconf`; `mmap`, `mremap` and `munmap` over a mapping `LineMapping` alone
+// owns, the copy into it and the slice over it; and its `Send` and `Sync`.
 
 /// The base page, which every mapping's length and address are whole
 /// multiples of.

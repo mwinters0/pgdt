@@ -169,8 +169,9 @@ impl RowBatcher {
     /// **The whole row is walked whatever the projection is.** Skipping is
     /// per column — `RawRow::decode` and the builder append — never an early
     /// stop at the last projected field, because this is the system's only
-    /// field-count check, beside a counted row's: the sole site that raises
-    /// `Error::ColumnCountMismatch`, the mapping pass never erroring on a
+    /// field-count check, beside a counted row's: the two raise
+    /// `Error::ColumnCountMismatch` alone, through `hold_to_width`, the mapping
+    /// pass never erroring on a
     /// count (`docs/design/decisions.md`, "D28").
     ///
     /// **The walk is `split`'s**, which the caller has already offered to the

@@ -92,7 +92,7 @@ pub(super) struct Gatherer {
     open: Option<OpenGroup>,
     /// Whether any column is tracked, so a row is worth splitting.
     splits: bool,
-    /// Whether this observer gathers statistics at all, which a [`checker`](super::strict::checker)
+    /// Whether this observer gathers statistics at all, which a [`checker`](super::checker)
     /// does not: it opens no group, never declines, and answers
     /// [`BlockGathered::Checked`].
     pub(super) gathers: bool,

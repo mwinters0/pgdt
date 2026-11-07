@@ -24,12 +24,13 @@
 //! terminating `;` — and it filters TOC-shaped lines inside such a body out
 //! before any event reaches this module (I3).
 //!
-//! Two fallbacks complete a statement no TOC header closes, on any input:
+//! Three fallbacks complete a statement no TOC header closes, on any input:
 //! [`crate::scan::Event::DollarQuoteEnd`], which
 //! [`Builder::on_dollar_quote_end`] treats as completing whatever statement
 //! is in flight, and [`statement::statement_complete`] at a
-//! statement's terminating `;`, whether or not it is its own TOC entry. The lines themselves stay
-//! unsurfaced either way.
+//! statement's terminating `;`, whether or not it is its own TOC entry, and a
+//! `--` line outside a quote, a TOC header's among them. The dollar-quoted
+//! lines themselves stay unsurfaced either way.
 //!
 //! **Consequence: no "grouping".** A definition and its ungrouped trailing
 //! statement tile as two adjacent spans rather than one, both carrying the
@@ -63,9 +64,10 @@
 //!
 //! - **TOC enrichment.** [`Span::toc`] is filled by [`parse_toc_header_line`]
 //!   whenever a comment block's TOC-Name line parses (I3, I16), unless the
-//!   statement it heads classifies as `Framing`, whose header is vetoed, or it
+//!   statement it heads classifies as `Framing`, whose header is vetoed, it
 //!   heads a large-object entry after a merged region's first, whose header is
-//!   harvested and kept by no span. The
+//!   harvested and kept by no span, or the block is dropped unclosed
+//!   (`KD106`). The
 //!   verbose `-- TOC entry N (class C OID O)` / `-- Dependencies: ...` lines
 //!   that can precede the Name line are ordinary comment lines to this parser.
 //!
@@ -464,9 +466,10 @@ impl Builder {
             Mode::Idle => {}
             Mode::Comment { start, saw_name, server_version, pg_dump_version, toc } => {
                 if start < end {
-                    // Only reachable for a comment block with no closing
-                    // non-`--` line — never observed in a well-formed
-                    // `pg_dump` file. No statement follows, so a TOC entry's
+                    // Reachable for a comment block with no closing
+                    // non-`--` line — every `pg_dumpall` file's last, and a
+                    // plain `pg_dump` file's from a minor writing no
+                    // `\unrestrict` after it. No statement follows, so a TOC entry's
                     // block is a span alone (`close_comment`), owning its
                     // header only where it parsed.
                     let owned = toc.is_some();
@@ -1068,11 +1071,14 @@ impl Builder {
     /// no-op if `self.mode` is anything else.
     fn close_insert_run(&mut self) {
         // deficiency: KD106 — `on_copy_start` and `on_large_object_start` call
-        // this after their own `mem::replace` has left `self.mode` `Idle`, so
-        // a run either one interrupts is dropped: its bytes extend the span
-        // before it, or lie in none where the run opened the map, and no
-        // `InsertRun` counts its rows. `pg_dump` follows every
-        // run with the next entry's TOC comment, which `step` closes it on.
+        // this after their own `mem::replace` has left `self.mode` `Idle`, and
+        // `on_dollar_quote_end` closes nothing but a statement, so a run any of
+        // them interrupts is dropped — and a comment block the last does, its
+        // TOC header reaching no span: its bytes extend the span before it, or
+        // lie in none where it opened the map, and no `InsertRun` counts a
+        // dropped run's rows. `pg_dump` follows every run with the next entry's
+        // TOC comment, which `step` closes it on, and opens no statement with
+        // a dollar quote on its first line.
         if let Mode::InsertRun { start, table, row_count, toc, toc_owned, .. } =
             std::mem::replace(&mut self.mode, Mode::Idle)
         {

@@ -2,8 +2,9 @@
 //! at a time, as PostgreSQL's incremental JSON parser is
 //! (`src/common/jsonapi.c`, `pg_parse_json_incremental`). Each container is
 //! a frame holding where its grammar stands and the slot its current part is
-//! read into: a leaf in place, a nested container boxed, built once per
-//! value and reset per part. A byte that ends a part is handed back to its
+//! read into: a leaf in place, a nested container boxed, an array's built
+//! once per value and reset per element, a record's built per field. A byte
+//! that ends a part is handed back to its
 //! container, which reads it again in the stage the part's end left it in.
 //! Nothing looks ahead: the `NULL` test is a stage holding the letters read,
 //! a whitespace run is carried as [`Blanks`], and a `"` inside a record's

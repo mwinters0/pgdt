@@ -42,17 +42,17 @@ mod pull;
 mod push;
 mod walk;
 
-/// `pgdt`'s allocator, as `benches/decoders.rs` declares it: every form
-/// allocates something — a fork, a boxed future, a frame — and the binary's
-/// heap is what times it.
+/// `pgdt`'s allocator, as `benches/decoders.rs` declares it: what a form
+/// allocates — `pull`'s forks, an array's dimensions, a nested container's
+/// boxed future or frame — is timed against the binary's heap.
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// **What a reader is asked to read a field as**, chosen at run time.
 #[derive(Debug, Clone)]
 pub(crate) enum Plan {
-    /// A decimal integer, `pg_strtoint*`'s, within `i64::from(bound)`'s
-    /// magnitude of zero — `i32::MAX` for `int4`.
+    /// A decimal integer, `pg_strtoint*`'s, within `min..=max` — `int4`'s
+    /// range for `int4`.
     Int { min: i64, max: i64 },
     /// A text, read to its end.
     Text,

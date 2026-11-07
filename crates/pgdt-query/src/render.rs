@@ -95,6 +95,13 @@ pub fn decode_field(column: &ResolvedColumn, text: &str) -> Option<ArrayRef> {
 ///
 /// **An error may leave a partial value behind**, so the discipline this asks
 /// for is not to publish a buffer an error came out of.
+///
+/// deficiency: KD166 — `Error::FieldRender` is raised only for an
+/// `int2vector`'s NULL element and an `interval` with a sub-microsecond part:
+/// a `time` past `24:00:00`, or a `date` or timestamp outside PostgreSQL's
+/// range, is written as computed (`25:00:00`), a text its `*_in` refuses. No
+/// batch a dump decodes holds one; a caller's own array can. **(c)
+/// unowned**; promoted by a caller rendering such an array.
 pub fn render_field_into(
     array: &dyn Array,
     row: usize,

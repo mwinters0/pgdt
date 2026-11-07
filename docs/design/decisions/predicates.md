@@ -26,11 +26,12 @@ a typo. Reopens: a planner or rewrite, where a reading shows it pays. Evidence: 
 ### D55 A literal is read in the type's `*_out` form at least and its `*_in` grammar at most
 Floor and ceiling are `roadmap.md`'s, "A literal is guaranteed in `*_out`'s form and never read past `*_in`'s". A reader
 keeps its narrow grammar, a nested literal's leaves too, and a port of `*_in`'s classifies only what it fails
-(`decode::Unread`): a field fails a parse only at a `pg-refuses` check. A reader past the ceiling is replaced by its
-port (`network_in`). `JSONB_MAX_DEPTH` is fixed (a stack overflow aborts). Zone names are open (tzdata grows unbidden),
-abbreviations those PostgreSQL ships (I83). Rejected: failing every field read as no value; widening a canonicalized
-kind's reader (`=` misses another spelling, `KD82`; `macaddr`'s one bounds set, D79, splits); for a narrowed `*_in`, the
-dump's own major's; a server's own abbreviation file (forgoes I61's era edge); the tzdata at hand.
+(`decode::Unread`): a field's text fails a parse only at a `pg-refuses` check, a NULL at its `NOT NULL` (I76). A reader
+past the ceiling is replaced by its port (`network_in`). `JSONB_MAX_DEPTH` is fixed (a stack overflow aborts). Zone
+names are open (tzdata grows unbidden), abbreviations those PostgreSQL ships (I83). Rejected: failing every field read
+as no value; widening a canonicalized kind's reader (`=` misses another spelling, `KD82`; `macaddr`'s one bounds set,
+D79, splits); for a narrowed `*_in`, the dump's own major's; a server's own abbreviation file (forgoes I61's era edge);
+the tzdata at hand.
 
 ### D56 Special values are a rank in the key; equality has three canonicalizations, by injectivity of `*_out`
 `infinity`/`NaN` are a rank in PostgreSQL's order, compared before the value; `OrderKey` derives no `Ord`. Rejected:

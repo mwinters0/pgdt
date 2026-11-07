@@ -1,8 +1,8 @@
 use super::*;
 
 /// The note a name that was not found earns when it looks quoted —
-/// `--column` and `--table` take their names verbatim, so the quote marks
-/// were part of what was looked for.
+/// `--column` and `--table` keep their names' quote marks, so they were part
+/// of what was looked for.
 #[test]
 fn a_quoted_looking_name_earns_the_verbatim_note() {
     let note = quoted_name_note("--column", "\"id\"").expect("a quoted-looking name");

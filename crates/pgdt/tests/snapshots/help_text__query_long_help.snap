@@ -13,8 +13,8 @@ Options:
           cache alone — row data is never cached — so this is always required
 
       --table <TABLE>
-          Table name, qualified (`schema.table`) or bare. Taken exactly as given, like `--column`
-          and unlike a `--filter` term
+          Table name, qualified (`schema.table`, split at its first `.`) or bare. Its quote marks
+          are kept, like `--column`'s and unlike a `--filter` term's
 
       --cache <CACHE>
           Cache file path, or `none` to ignore any existing cache and perform a fresh scan without

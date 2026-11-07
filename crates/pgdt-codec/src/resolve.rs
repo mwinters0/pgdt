@@ -431,7 +431,7 @@ fn shape_verdict(shape: ArrayShape) -> ShapeVerdict {
 /// fixture's `t_composite_matrix` alone fills (`tests/pruning.rs`,
 /// `crates/datafusion-pgdump/tests/statistics.rs`).
 ///
-/// **The plan reaching here is always `Array(non-array)`.** The one declared
+/// **An array plan past the first line is always `Array(non-array)`.** The one declared
 /// shape that resolves to a nested `Array` — an array whose element type is
 /// itself an array, whose literal is one brace deep and whose census therefore
 /// reads `(1, 1)` (I26) — is refused at resolution

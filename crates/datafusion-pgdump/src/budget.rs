@@ -12,7 +12,8 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, Parallelism, Wor
 /// them, and how much of it the scans running now have drawn.
 ///
 /// **One object per session**, set on its [`datafusion::prelude::SessionConfig`]
-/// as an extension, the way DataFusion holds its own bounded shared objects:
+/// as an extension — a session built without one sharing the process's
+/// (`ScanBudget::of`) — the way DataFusion holds its own bounded shared objects:
 /// a scan planned while others are live draws what they leave rather than the
 /// whole, so a join of two dumps' tables is bounded by one number.
 /// *Rejected: a budget per registered table*, which no DataFusion source has
@@ -31,8 +32,10 @@ use pgdt_io::{Allowance, Arrangement, ArrangementRequest, Jobs, Parallelism, Wor
 /// --memory-limit` grants DataFusion's own operators, in the same container —
 /// and the statistics each dump registered against this budget holds in its
 /// resident map, billed as `pgdt` bills the statistics a cache hands a mapping
-/// pass ([`pgdt_model::DumpIndex::statistics_heap_bytes`]). Both come off
-/// the margin's ceiling alone, as [`ArrangementRequest::held`]:
+/// pass ([`pgdt_model::DumpIndex::statistics_heap_bytes`]). Where an
+/// allowance was found, both come off the margin's ceiling alone, as
+/// [`ArrangementRequest::held`]; with none found there is no margin and they
+/// come off nothing:
 /// the cap is the reserve's, standing for the scans' own excess over their
 /// budgets, and neither holding is any of it. So they lower a scan's count
 /// first, and whatever of them the ceiling's room cannot absorb at that count

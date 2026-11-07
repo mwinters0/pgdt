@@ -122,7 +122,8 @@ beside it, which is safe to delete. `pgdt info` states how far the cache goes.
 If you only want the header block — server and `pg_dump` versions, extension
 and user-defined-type counts — `--preamble-only` stops at the start of the
 first table's data instead of reading the whole file. Its cost does not depend
-on the dump's size: preamble-only on a 5KB dump and on a 500GB one take the
+on the dump's size where its data is `COPY` blocks, as it is unless `pg_dump`
+was told `--inserts`: preamble-only on a 5KB dump and on a 500GB one take the
 same time, because `pg_dump` always writes every `CREATE EXTENSION`/`CREATE
 TYPE` ahead of any table's data.
 
@@ -1145,9 +1146,9 @@ $ pgdt parse --source koji.dump.xz
 2026-07-23T14:02:11.104297118Z  INFO no memory limit found: nothing is enforcing one on this process jobs_flag=(not stated) memory_flag=(not stated)
 2026-07-23T14:02:11.104382771Z  INFO seek table build started path=koji.dump.xz
 2026-07-23T14:03:36.881940552Z  INFO seek table build complete path=koji.dump.xz streams=31150 blocks=31150
-2026-07-23T14:03:36.881975330Z  INFO resolved the arrangement jobs=24 (recommended by the source) memory_bytes=1435282176 (no limit found: what this source asks for) statistics_bytes=25087383552 (half of what the machine reports available)
+2026-07-23T14:03:36.881975330Z  INFO resolved the arrangement jobs=24 (recommended by the source) memory_bytes=1435282176 (no limit found: what this source asks for) statistics_bytes=25087383568 (half of what the machine reports available)
 2026-07-23T14:03:36.882015206Z  INFO preamble scan started bytes=784019857152 chunk_size=1048576 jobs=24 memory_bytes=1435282176
-2026-07-23T14:03:36.891402337Z  INFO preamble scan complete bytes=98304 reached_eof=false
+2026-07-23T14:03:36.891402337Z  INFO preamble scan complete bytes=1048576 reached_eof=false
 2026-07-23T14:03:36.891455118Z  INFO scan started bytes=784019857152 resumed_from=98304 chunk_size=1048576 jobs=24 memory_bytes=1435282176
 2026-07-23T14:47:52.317660814Z  INFO scan complete bytes=784019857152 reached_eof=true
 ```

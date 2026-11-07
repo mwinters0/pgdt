@@ -252,7 +252,7 @@ pub fn calendar_end() -> i32 {
 /// array-shape census and the unrepresentable count, one entry each per
 /// column in `header.columns` order — the data level's two query affordances
 /// (`docs/design/decisions.md`, "D35", "D96"). The census grows for a row
-/// wider than its header, which a query refuses; the count never does, a
+/// wider than its header holding a `{` or `[`, which a query refuses; the count never does, a
 /// column past the header having no declared type to be tested against. A
 /// column that saw no array-shaped literal holds the default shape, and both
 /// are empty only for a header naming no columns.
@@ -281,8 +281,8 @@ impl BlockCensusExt for BlockCensus {
 
     /// Fold one data row of a `COPY` block in: its fields into the
     /// array-shape census, one [`ArrayShape`] per column, growing it for a row
-    /// that turns out to have more fields than the header named — a malformed
-    /// row, which the mapping pass does not refuse — and each field `counter`
+    /// holding a `{` or `[` that turns out to have more fields than the header
+    /// named — a malformed row, which the mapping pass does not refuse — and each field `counter`
     /// tests into the unrepresentable count. Every pass recording a census
     /// calls it for a row it holds — the serial mapping pass, an interior
     /// worker and a re-read — and folds one it streams by [`CensusFold`].
@@ -311,7 +311,7 @@ impl BlockCensusExt for BlockCensus {
     }
 
     /// Fold another piece's, or another read's, census of the same block in —
-    /// length-tolerant, since a row wider than its header grows the census.
+    /// length-tolerant, since a row wider than its header may grow the census.
     fn merge(&mut self, other: &BlockCensus) {
         if other.shapes.len() > self.shapes.len() {
             self.shapes.resize(other.shapes.len(), ArrayShape::default());
@@ -560,7 +560,7 @@ mod tests {
     }
 
     /// **A row folded a run at a time is censused as one held whole**:
-    /// every row below, its fields fed in runs of every length, answers
+    /// every row below, its fields fed in runs of each length to 12, answers
     /// `observe_row`'s census and count — a shape split inside its prefix
     /// or its brace run, a head outgrown, a row wider than its header, a
     /// row holding no array.

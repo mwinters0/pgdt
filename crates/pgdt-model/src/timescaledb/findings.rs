@@ -121,7 +121,7 @@ pub fn root_rows(index: &DumpIndex, database: Option<&str>, hypertable: &str) ->
 /// holds no table — reports every chunk absent, in this finding and in a
 /// read's note, a hypertable read with its descendants answers its root's
 /// rows alone, its `INHERITS` unknown, and a compressed chunk read by name
-/// refuses while no finding names it, [`compressed_chunks`] keeping the
+/// refuses while no finding names it, `of_database` keeping the
 /// declared ones. Evidence: `fixtures/13/timescaledb/default.sql` with every
 /// entry but `TABLE DATA` and `SEQUENCE SET` stripped. Closing it means
 /// telling a chunk the file lacks from one it holds undeclared, which reopens

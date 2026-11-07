@@ -14,8 +14,9 @@
 //! part of seven digits or more, and a `date` or timestamp year at or past the
 //! calendar's end — and only those last two, rare by construction, take the
 //! arithmetic that says which side of the bound they fall.
-//! A value that does not decode is not counted, and refuses wherever it is
-//! decoded: text its PostgreSQL type would not read is outside the input
+//! A leaf that does not decode is not counted — a container holding one is
+//! counted by its other leaves — and refuses wherever it is decoded: text its
+//! PostgreSQL type would not read is outside the input
 //! contract, and a nested array `KD2` leaves on the optimistic path is that
 //! deficiency's. It is not decoded in a column the untyped mode reads as its
 //! text, nor in a container the null mode takes as NULL whole for another

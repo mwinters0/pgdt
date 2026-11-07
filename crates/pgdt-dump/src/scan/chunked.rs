@@ -83,8 +83,9 @@ pub enum ChunkPass {
 /// spans, quadratic in the line.
 ///
 /// **A row whose reader reads nothing past its count is streamed instead**
-/// ([`streams`](Passes::streams)): once such a row outgrows the chunk it
-/// began in, the carry keeps no byte of it, only what its end needs — its
+/// ([`streams`](Passes::streams)): once a whole chunk after the one it began
+/// in passes without ending such a row, the carry keeps no byte of it, only
+/// what its end needs — its
 /// length and how it ends — and its fields' count ([`StreamedLine`]), which
 /// a reader holds to its header's width; and the chunk that ends it, or
 /// the file's end, hands it to the carry pass in place of a held line. A
@@ -359,8 +360,8 @@ impl ChunkCarry {
             let newline = memchr::memchr(b'\n', chunk);
             self.split = newline.map_or(chunk.len(), |nl| nl + 1);
             self.unfinished = newline.is_none();
-            // A row outgrowing its chunk, which its reader does not read, is
-            // streamed from here: its bytes are folded in, not kept.
+            // A row a whole chunk passes inside, which its reader does not
+            // read, is streamed from here: its bytes are folded in, not kept.
             if self.unfinished
                 && !eof
                 && self.streams
@@ -440,7 +441,7 @@ impl<'a> Passes<'a> {
     /// Say whether the line this chunk leaves for the next is a row whose
     /// reader holds none of its bytes — it reads none, or folds its fields
     /// as they go by ([`FieldFold`]) — which the carry may then stream once
-    /// it outgrows its chunk. A row of a block whose rows are read whole is
+    /// a whole chunk passes inside it. A row of a block whose rows are read whole is
     /// never streamed.
     pub fn streams(&mut self, streams: bool) {
         *self.streams = streams;
@@ -691,8 +692,8 @@ impl<'a> ChunkEvents<'a> {
     /// Say whether the open block's rows are streamed: where `streams`, its
     /// reader reads none of a row past its count and its fields' count, or
     /// folds its fields as they go by ([`ChunkedScanner::next_chunk_folding`]),
-    /// so a row that outgrows its chunk is counted without its bytes being
-    /// held and handed out as an [`Event::StreamedRow`], flat in memory at
+    /// so a row a whole chunk passes inside is counted without its bytes
+    /// being held and handed out as an [`Event::StreamedRow`], flat in memory at
     /// any length but for a field its fold holds whole. Asked of the line this chunk leaves for the next, so a reader
     /// whose answer moves says so before each chunk's events run out; a
     /// block's header and its end undo it.

@@ -106,7 +106,7 @@ pub(super) fn replay<'a>(
             _ => (None, None),
         };
         // One buffer for the whole replay: every row of a block has the same
-        // width, so after the first it never grows again.
+        // width, so it grows only at a block wider than any before.
         let mut split = RowSplit::default();
 
         // Every block holding a stop gets its entry up front, so a drained
@@ -487,8 +487,8 @@ pub(super) fn replay<'a>(
     }
 }
 
-/// Whether a row of `active`'s block may be streamed — counted, once it
-/// outgrows its chunk, without its bytes being held: nothing the replay asks
+/// Whether a row of `active`'s block may be streamed — counted, once a
+/// whole chunk passes inside it, without its bytes being held: nothing the replay asks
 /// of it reads a field — not its batch, its filter or its block's sorted
 /// `stop`, nor `dynamic` under the state it last read. A state that moves to
 /// one reading a field while a row streams leaves that row kept and unstopped,

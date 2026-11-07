@@ -23,13 +23,14 @@ straight-through one, which is what makes an interrupted `parse` saved work. Rej
 the map); a `--restart` flag.
 
 ### D64 An omitted `--jobs` asks the source; provenance is the CLI's fact
-Absence recommends (the source's `default_workers`), a stated count is never lowered, zero is refused; whether a number
-was typed or discovered rides the `Arrangement`'s `Allowance`, never `Parallelism`, which every pool reads. The flags
-and the limit are announced before the open, the arrangement after it, since a fresh `.xz` walks footers first; the
-limit is read once, so the limit announced is the one carved. Status goes to one stderr subscriber, no terminal
-detection; its durations are no figures. An index build is announced by its source: at `info` where its cost is the
-scan's own (a local walk; a gzip first pass, saying why the scan is one reader), at `warn` before a cost beyond it (a
-fetched `.xz` walk). Rejected: the first pass's reason in the arrangement's lines (codec knowledge in the arrangement).
+Absence recommends (the source's `default_workers`), a stated count is never lowered at resolution, zero is refused;
+whether a number was typed or discovered rides the `Arrangement`'s `Allowance`, never `Parallelism`, which every pool
+reads. The flags and the limit are announced before the open, the arrangement after it, since a fresh `.xz` walks
+footers first; the limit is read once, so the limit announced is the one carved. Status goes to one stderr subscriber,
+no terminal detection; its durations are no figures. An index build is announced by its source: at `info` where its cost
+is the scan's own (a local walk; a gzip first pass, saying why the scan is one reader), at `warn` before a cost beyond
+it (a fetched `.xz` walk). Rejected: the first pass's reason in the arrangement's lines (codec knowledge in the
+arrangement).
 
 ### D66 Output of what `pg_dump` writes is byte-identical whether typing is on or off, but for a value its type cannot hold or an `escape` `bytea`
 Every value renders back to its `*_out` text, which is what `pg_dump` wrote — a hand-written spelling `*_out` never

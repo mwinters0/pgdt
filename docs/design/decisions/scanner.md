@@ -11,11 +11,11 @@ line straddling its edge copied (rejected: a growing buffer, copying every byte 
 row, a replay's block, then dropped (rejected: reusing its buffer, holding the longest line's bytes all pass). Past
 `max_line_bytes` a line errors, never truncates (`KD93`). Only a line matching the whole `COPY … FROM stdin;` grammar,
 or a bare `BEGIN;` (D33), is structural; inside a block only an exact `\.` line and a row's ending are read (I7, I91).
-Outside one every line is lexed as psql lexes it (I50), one beginning inside a string, identifier, comment or
-dollar-quoted body never structure (I1). Rejected: tracking `$` alone, or quotes too (a `$$` in a name or comment hid
-every block).
+Outside one and the large-object region a line is lexed as psql lexes it (I50), one beginning inside a string,
+identifier, comment or dollar-quoted body never structure (I1). Rejected: tracking `$` alone, or quotes too (a `$$` in a
+name or comment hid every block).
 
-### D138 A row its reader holds no byte of is streamed once it outgrows its chunk
+### D138 A row its reader holds no byte of is streamed once a whole chunk passes inside it
 A block whose rows nothing reads whole streams them — a metadata-level parse, a census alone (a query's pass), serial or
 in workers, and a replay whose batch, filter, stop and dynamic filter read no field, asked each chunk under the state
 last read (`DynamicFilter`): a row no chunk ends is folded into a `StreamedLine` — length, ending (I91), fields — and
@@ -39,7 +39,7 @@ One core's rate against the device's offer decides each kind of work (decode, ex
 holds the answers, D7 who asks, D52 the worker. Readings that disagree reopen it. Evidence: `xz-decode-scaling`,
 `parallel-scan-throughput`, `scan-throughput-*`.
 
-### D26 Cancellation is `map_file`'s argument, polled per chunk or leader window by the mapping passes alone
+### D26 Cancellation is `map_file`'s argument, polled per chunk, closed block or leader window by the mapping passes alone
 A block can be hundreds of gigabytes, so block-boundary cancellation is a hang. A mapping pass (`map_file`,
 `Table::settle`) takes a `tokio_util` `CancellationToken` as a required argument, polls it (D63) and keeps what it
 banked; a query's streams take none, a dropped stream being their cancellation (D90). The preamble scan polls none: a
@@ -52,10 +52,10 @@ own; `Option<&CancellationToken>` or a `Stop` trait inside the passes; `exit(128
 One SIMD validation of the largest line-terminated prefix per chunk, not one `from_utf8` per field, skipped where
 nothing is decoded; the escaped path still validates (`\xNN` synthesizes bytes). In D68's seven crates the sites are
 `append_view_unchecked` (`batch/chunks.rs`), its bounds from the `contains` that produced its coordinates and its
-validity from the decode's borrowed arm (D46), and `LineMapping`'s system calls (D139); `pgdt-gzip-seek`'s zlib module is
-the other shipped site (UF4). The workspace
-denies `unsafe` in every target and each root forbids it unless a site of its production tree allows it
-(`scripts/layering.py`). Four `unsafe` attempts lost to the safe shape.
+validity from the decode's borrowed arm (D46), and `LineMapping`'s system calls and the memory they map (D139);
+`pgdt-gzip-seek`'s zlib module is the other shipped site (UF4). The workspace denies `unsafe` in every target and each
+root forbids it unless a site of its production tree allows it (`scripts/layering.py`). Four `unsafe` attempts lost to
+the safe shape.
 
 ### D28 One row split, shared unconditionally
 One `RowSplit` per row, memoized and shared unconditionally by the filter's terms and the batcher, extending only as

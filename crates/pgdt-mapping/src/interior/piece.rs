@@ -139,8 +139,9 @@ impl PieceObserver {
 /// the header's column list, and a row wider than it grows it
 /// (`BlockCensusExt::observe_row`); `None` is a block at the metadata level, whose
 /// rows are counted and split into fields by a strict parse alone (`docs/design/decisions.md`, "D35"). Every row the piece owns is handed to `observer`, where the block
-/// gathers statistics. **Synchronous and free of I/O**: this is the body a
-/// `spawn_blocking` task runs, once per read of the piece, so it takes a slice
+/// gathers statistics. **Synchronous and free of I/O**: [`scan_read`], which
+/// a `spawn_blocking` task runs once per read of the piece, calls it on each
+/// span of the read it holds, so it takes a slice
 /// rather than a source (`docs/design/decisions.md`, "D52").
 pub(super) fn scan_piece(
     bytes: &[u8],

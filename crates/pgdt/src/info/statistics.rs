@@ -54,7 +54,7 @@ pub struct ColumnStatisticsSummary<'a> {
     /// NULLs, gathering bounding a group by the values it observes alone, so
     /// an all-NULL column reads bounds in none of its groups.
     pub groups_with_bounds: u64,
-    /// Of those, the groups carrying a dictionary.
+    /// Of the groups holding a row, those carrying a dictionary.
     pub groups_with_dictionary: u64,
     /// The gathering blocks that keep bounds for the column, by its row order
     /// over each; all zero where no block keeps bounds.

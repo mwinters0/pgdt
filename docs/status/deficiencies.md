@@ -24,8 +24,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD164 -->
-**`KD1`–`KD162` are allocated, and nothing at or below `KD162` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD166 -->
+**`KD1`–`KD166` are allocated, and nothing at or below `KD166` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -381,10 +381,12 @@ than reading as a phase nobody has sliced.
   `pg_dump` ends every line with an LF. **(c) unowned**; promoted by a
   hand-written dump holding one. Detail: `crates/pgdt-dump/src/scan.rs`.
 
-- **KD106** — an `INSERT` run that a `COPY` header or a large object's
-  `BEGIN;` follows with no TOC comment between them is dropped rather than
-  closed: its bytes extend the span before it, or lie in none where the run opened
-  the map, and no `InsertRun` counts its rows; `pg_dump` follows every run with the next entry's TOC comment. **(c) unowned**; promoted
+- **KD106** — an `INSERT` run that a `COPY` header, a large object's
+  `BEGIN;` or a dollar-quoted line follows with no TOC comment between, or a
+  comment block a dollar-quoted line follows, is dropped rather than closed:
+  its bytes extend the span before it, or lie in none where it opened the
+  map, no `InsertRun` counts the run's rows and the block's TOC header
+  reaches no span; `pg_dump` writes neither. **(c) unowned**; promoted
   by a hand-written dump holding one. Detail: `crates/pgdt-dump/src/map.rs`.
 
 - **KD107** — a block's recorded first refused field, under
@@ -570,3 +572,14 @@ than reading as a phase nobody has sliced.
   read as a value, a strict parse included, though a restore refuses it.
   **(c) unowned**; promoted by such a field met in use. Detail:
   `crates/pgdt-codec/src/grammar/check.rs`.
+
+- **KD165** — a `--table` name holding a `.` cannot be asked for, `pgdt
+  query` splitting it at its first `.`, and quoted, its note says it was
+    matched literally. **(c) unowned**; promoted by such a table met in use.
+  Detail: `crates/pgdt/src/query.rs`.
+
+- **KD166** — a value no text form spells — a `time` past `24:00:00`, a
+  `date` or timestamp past PostgreSQL's range — is rendered rather than
+  refused as `FieldRender`; only a caller's own array holds one.
+  **(c) unowned**; promoted by a caller rendering such an array. Detail:
+  `crates/pgdt-query/src/render.rs`.

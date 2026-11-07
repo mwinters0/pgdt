@@ -618,7 +618,7 @@ async fn close_copy_block(
     builder.on_copy_end(end)?;
     // The second of the guard's two check points (`docs/design/decisions.md`,
     // "D63"): the two together bound the response by the shorter of a chunk
-    // and a block.
+    // and a block, or by a leader window while a region is cut.
     let cancelled = cancel.is_cancelled();
     let due = throttle.due();
     // **The splice rides the throttle's gate** (`docs/design/decisions.md`,

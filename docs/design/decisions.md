@@ -56,10 +56,10 @@ are `docs/process.md`, "The decision register".
 ## The scanner
 [`decisions/scanner.md`](decisions/scanner.md)
 - **D23** The scanner never owns the bytes it scans, and only the whole `COPY` grammar is structural
-- **D138** A row its reader holds no byte of is streamed once it outgrows its chunk
+- **D138** A row its reader holds no byte of is streamed once a whole chunk passes inside it
 - **D139** A line past its chunk grows in a mapping of its own, by `mremap`, in huge-page steps
 - **D25** Parallelize what is CPU-bound
-- **D26** Cancellation is `map_file`'s argument, polled per chunk or leader window by the mapping passes alone
+- **D26** Cancellation is `map_file`'s argument, polled per chunk, closed block or leader window by the mapping passes alone
 - **D27** UTF-8 is validated once per chunk; `unsafe` is denied everywhere and allowed at the site that needs it
 - **D28** One row split, shared unconditionally
 - **D29** Refused micro-optimizations on the row path
@@ -69,7 +69,7 @@ are `docs/process.md`, "The decision register".
 - **D30** A span is classified by the grammar; the TOC anchors and enriches, never required
 - **D31** `Span::toc` is "belongs to", vetoed after classification; boundary rules that read as bugs
 - **D33** Bulk regions are one span kind; large objects skip at the scanner, `INSERT` runs at the map
-- **D34** `DumpIndex` stores no fact twice but sortedness, `metadata`, `scanned_through` and a catalog block's rows; whole-file facts need `is_complete`
+- **D34** `DumpIndex` stores no fact twice but sortedness, `metadata`, `scanned_through`, roles, tablespaces and a block's row count; whole-file facts need `is_complete`
 - **D35** The census is type-blind, records both dimension bounds, and runs at the data level
 - **D96** The unrepresentable count rides the census, typed by the DDL, in two tiers, under a recorded calendar
 - **D36** The preamble grammar dispatches on fixed keywords and never guesses

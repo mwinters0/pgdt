@@ -1,7 +1,7 @@
 //! **Each block's longest line is recorded by every pass that maps it**
 //! (`docs/design/decisions.md`, "D140"): its start and its length, line ending
 //! included, the earliest of the longest where several tie — at the metadata
-//! level, whose pass streams a row that outgrows its chunk, and at the data
+//! level, whose pass streams a row a whole chunk passes inside, and at the data
 //! level, whose pass holds it; serially and in the interior workers; and by
 //! `build_map`'s eager pass. Each is held to the lines read off the file's
 //! bytes directly.

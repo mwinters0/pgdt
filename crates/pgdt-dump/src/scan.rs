@@ -22,7 +22,8 @@
 //!   other leading-backslash line) are ordinary [`Event::Line`]s: outside a
 //!   block only a line matching the full `COPY ... FROM stdin;` grammar, or a
 //!   bare `BEGIN;` opening the large-object region, is structural.
-//! * Outside a block every line is lexed ([`crate::lex`]), and only a line
+//! * Outside a block and the large-object region every line is lexed
+//!   ([`crate::lex`]), and only a line
 //!   that begins between tokens and touches no dollar-quoted body can be
 //!   structural: one that begins inside a string, a quoted identifier or a
 //!   comment is that region's content.
@@ -66,8 +67,8 @@ pub struct Row<'a> {
 }
 
 /// One data row a read loop counted without holding its bytes: a row of a
-/// block whose rows are streamed ([`ChunkEvents::stream_rows`]) that
-/// outgrew the chunk it began in. Every other row of such a block is still a
+/// block whose rows are streamed ([`ChunkEvents::stream_rows`]) that a
+/// whole chunk after the one it began in passed inside. Every other row of such a block is still a
 /// [`Row`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamedRow {

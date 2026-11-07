@@ -44,10 +44,10 @@ floored at one slot; a unit the budget cannot hold is refused, never shrunk (`Bl
 `reserve`, `parallel-peak-rss`.
 
 ### D5 A wait is a permission the read loop grants
-`NeverWait` is the default and allocates past the budget. Only `interior::scan_region` grants `MayWait`, and restores it
-on exit: each leader worker holds one read, so a blocked one waits on a sibling that finishes. A loop retaining into a
-batch holds the buffers it would wait on, and the block pool never waits whatever the loop said. Rejected: gating on
-`Parallelism`.
+`NeverWait` is the default and allocates past the budget. Only `interior::scan_region` grants `MayWait`, restoring it on
+exit, and each top-level loop announces `NeverWait` (`announce_read_loop`), a dropped region's included: each leader
+worker holds one read, so a blocked one waits on a sibling that finishes. A loop retaining into a batch holds the
+buffers it would wait on, and the block pool never waits whatever the loop said. Rejected: gating on `Parallelism`.
 
 ### D6 `ByteRangeSource` mirrors `object_store` and is dyn-compatible
 `read_range`/`extent`/`modified` mirror `object_store`'s `get_range`/`head`, so a remote source is additive behind a
@@ -57,8 +57,9 @@ Rejected: generics per command; `enum AnySource`; `size()` beside a flag each si
 an `Unscanned` tail to the bound, which each save re-reads, or open-ended, a case for every span consumer.
 
 ### D7 `partitions()` says where and at what cost, never whether
-The same file is worth cutting for extraction and not for discovery, so the caller decides. The scheduler's only refusal
-is a memory floor against the file's remainder, erring serial (`KD22`). Rejected: `Anywhere` as "stay serial".
+The same file is worth cutting for extraction and not for discovery, so the caller decides. Past a region of open
+extent, which it never cuts, the scheduler's only refusal is a memory floor against the file's remainder, erring serial
+(`KD22`). Rejected: `Anywhere` as "stay serial".
 
 ### D8 The cut is one unit wide, sized apart from the charge
 `BOUNDARIED_PARTITION_UNITS = 1`, and the cut (`window_end`) is sized apart from the charge (`partition_bytes`), so a

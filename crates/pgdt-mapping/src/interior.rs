@@ -11,7 +11,8 @@
 //! back into the block's totals, is [`piece`]'s.
 //!
 //! **[`map_forward`](crate::forward::map_forward) is the leader.** Its
-//! `CopyStart` arm offers each open region to [`scan_region`] and closes one
+//! `CopyStart` arm offers each open region but a TimescaleDB catalog
+//! block's (`docs/design/decisions.md`, "D133") to [`scan_region`] and closes one
 //! it took through the same path a serial `CopyEnd` takes, then puts the
 //! serial scanner back down past it.
 
@@ -188,8 +189,9 @@ pub(crate) fn report_shortfall(flag: &mut bool, shortfall: Option<Shortfall>) {
 /// than in a branch
 /// (`docs/design/decisions.md`, "D25").
 ///
-/// **The one rule of its own it applies is a floor**, and it is derived rather than
-/// chosen: cutting spends a whole reader's worth of the caller's budget on
+/// **Past a region of open extent, which it never cuts, the one rule of its
+/// own it applies is a floor**, and it is derived rather than chosen: cutting
+/// spends a whole reader's worth of the caller's budget on
 /// each piece and charges the scheduling besides, so what is cut must be worth
 /// at least one `partition_bytes()`. The region's extent is not known here —
 /// finding it *is* the work — so the bound available is what is left of the
@@ -248,7 +250,9 @@ pub(crate) async fn scan_region(
     // (`docs/design/decisions.md`, "D5"). Each worker holds exactly one read
     // at a time, so a worker blocked for a slot is always waiting on a sibling
     // that will finish. **It is restored on the way out**: this loop runs
-    // inside a top-level one and must leave the source as it found it.
+    // inside a top-level one and must leave the source as it found it, and
+    // each top-level loop announces `NeverWait` afresh, which covers a region
+    // dropped mid-await.
     source.hint_parallelism(options.parallelism);
     source.hint_wait_policy(WaitPolicy::MayWait);
     let scanned = run_region(

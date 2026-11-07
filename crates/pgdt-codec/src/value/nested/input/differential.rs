@@ -204,8 +204,9 @@ fn int2vector(rng: &mut Rng) -> String {
         .collect()
 }
 
-/// **Each grammar's own literals, two thirds well-formed and the rest
-/// damaged at one byte**, which is where the accepting branches beside the
+/// **Each grammar's own literals, two in three built from its tokens and
+/// the rest with one character replaced by a token's**, which is where the
+/// accepting branches beside the
 /// refusing ones are exercised.
 #[test]
 fn the_walks_read_built_literals_as_the_scanners_did() {

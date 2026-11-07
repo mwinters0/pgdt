@@ -1,6 +1,7 @@
-//! A strict parse's check (`docs/design/decisions.md`, "D103"): the observer
-//! that checks every field of a block against its type's `*_in` and its
-//! column's `NOT NULL`, and the listing of what it does not check.
+//! A strict parse's check (`docs/design/decisions.md`, "D103"): what the
+//! observer [`checker`](super::checker) builds checks every field of a block
+//! by — its type's `*_in` and its column's `NOT NULL` — and the listing of
+//! what it does not check.
 
 use std::sync::Arc;
 

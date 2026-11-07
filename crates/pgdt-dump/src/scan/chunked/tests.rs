@@ -562,8 +562,8 @@ fn streamable(len: usize, block_ending: &str, long_ending: &str) -> Vec<u8> {
 /// answers the events — rows by index, offset, end and fields, a streamed
 /// row's as its fold was handed them, a held field whole and its ending
 /// stripped as a held row's is — and the refusals of one holding them, a
-/// terminator split across chunks included, and streams each row that
-/// outgrows its chunk.
+/// terminator split across chunks included, and streams each row a whole
+/// chunk passes inside.
 #[test]
 fn a_streamed_row_reads_as_the_row_it_stands_for() {
     for (block, long) in

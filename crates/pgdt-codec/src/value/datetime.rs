@@ -377,7 +377,8 @@ pub(crate) fn extract_offset(s: &str) -> Read<(&str, i64)> {
     let hh = unsigned_part(hours).ok_or(unparsed)?;
     let mut part = || parts.next().map_or(Some(0), unsigned_part).ok_or(unparsed);
     let (mm, ss) = (part()?, part()?);
-    // pg-refuses: I61 — `MAX_TZDISP_HOUR`, and a minute or second past 59.
+    // pg-refuses: I61 — `MAX_TZDISP_HOUR`, and a minute or second past 59;
+    // each put to the grammar by `datetime_read`.
     if hh > 15 || mm > 59 || ss > 59 {
         return Err(Unread::Refused);
     }
@@ -397,7 +398,7 @@ pub fn decode_timestamp_micros(s: &str, with_tz: bool) -> Option<i64> {
 }
 
 /// [`decode_timestamp_micros`] before it narrows to `i64`: microseconds from
-/// the 1970 UTC epoch for any finite value the grammar reads and PostgreSQL's
+/// the 1970 UTC epoch for any finite value it reads and PostgreSQL's
 /// range holds, so a value past what `Timestamp(Microsecond)` holds is told
 /// from one that does not parse (`crate::unrepresentable`).
 pub(crate) fn timestamp_micros_wide(s: &str, with_tz: bool) -> Read<i128> {
@@ -544,9 +545,10 @@ fn interval_time_micros(text: &str) -> Read<i64> {
 /// The three parts of an `interval`'s text as PostgreSQL's `Interval` struct
 /// holds them: whole months (a `year` part folded in at twelve each), whole
 /// days, and the time tail in **microseconds**. The *comparison* built on
-/// this fuses all three into a 128-bit span (`interval_cmp_value`, I40),
-/// where the *decode* widens the time to Arrow's nanoseconds — one walk, two
-/// consumers, and neither step belongs to it.
+/// this fuses all three into a 128-bit span (`interval_cmp_value`, I40), or
+/// under `CompareKind::IntervalFields` compares them in turn, where the
+/// *decode* widens the time to Arrow's nanoseconds — one walk, three
+/// consumers, and none of their steps belongs to it.
 ///
 /// **The grammar covers `interval_out`'s under `IntervalStyle = postgres`**,
 /// which `pg_dump` pins on its own connection (I4): an optional
@@ -582,7 +584,8 @@ pub(crate) fn interval_parts(text: &str) -> Read<(i32, i32, i64)> {
             }
         };
         // pg-refuses: I62 — a unit given twice, and a count past `int32`
-        // but not past `i64`, which is unparsed.
+        // but not past `i64`, which is unparsed; each put to the grammar by
+        // `interval_read`.
         if counts[unit].is_some() {
             return Err(Unread::Refused);
         }

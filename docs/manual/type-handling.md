@@ -571,8 +571,9 @@ b'` is the equality it reads as, and a column whose name really is
 (y)'"` is an equality against `x in (y)` — quoted, since a paren in a value is
 otherwise refused (below).
 
-**`--column` and `--table` take their names exactly as given** — there is no
-quoting to strip there, because the shell has already delimited the argument.
+**`--column` and `--table` take their names exactly as given**, `--table`
+splitting at its first `.` into a schema and a table — there is no quoting to
+strip there, because the shell has already delimited the argument.
 `--column '"name"'` looks for a column whose name really does begin and end
 with a quote mark, and says so when it does not find one.
 

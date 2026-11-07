@@ -1,7 +1,8 @@
 //! A text read forward a byte at a time, as a walk over a literal reads one:
 //! a field's bytes as `COPY`'s escapes stand for them, or one part of a
 //! literal as its container's grammar reads it — an element, a field, a
-//! bound — so a walk holds no copy of the text it reads
+//! bound — so a walk holds no copy of the text it reads, a range's two
+//! bounds aside
 //! (`docs/design/decisions.md`, "D143").
 
 /// **A text read forward a byte at a time**, with one byte of lookahead and

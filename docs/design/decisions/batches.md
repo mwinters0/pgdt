@@ -14,12 +14,13 @@ units (`KD23`). Rejected: compacting views past a selectivity threshold. Evidenc
 
 ### D141 A long value is decoded once beside its line: a `bytea` into its column, an escaped text as its own block
 A `bytea` is decoded from its field as `Unescaped` reads it, straight into its column's one buffer, and a strict parse
-checks one holding none of it; an escaped text past Arrow's largest view block is handed to its column as that block.
-So a value read from a held line has at most one decoded copy beside the line. Rejected: Arrow's `BinaryBuilder`, which
-takes a value only whole and reserves nothing, so a decode into it stages a copy or grows by doubling; `BinaryView` for
-`bytea`, a type the floor does not yield (D38); a block per escaped text of any length, fragmenting a batch's buffers.
-A batch's buffer growing past a value is its span's, which the replay is charged (D84). Code: `batch/bytea.rs`,
-`batch/chunks.rs` (`OWN_BLOCK_PAST`), `value/bytea.rs` (`decode_bytea_into`). Evidence: `tests/decoded_copies.rs`.
+checks one holding none of it; an escaped text past Arrow's largest view block is handed to its column as that block. So
+a long `bytea` or escaped text read from a held line has one decoded copy beside the line. Rejected: Arrow's
+`BinaryBuilder`, which reserves nothing and cannot abandon a value written in pieces, so a decode into it stages a copy
+or grows by doubling; `BinaryView` for `bytea`, a type the floor does not yield (D38); a block per escaped text of any
+length, fragmenting a batch's buffers. A batch's buffer growing past a value is its span's, which the replay is charged
+(D84). Code: `batch/bytea.rs`, `batch/chunks.rs` (`OWN_BLOCK_PAST`), `value/bytea.rs` (`decode_bytea_into`). Evidence:
+`tests/decoded_copies.rs`.
 
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
 `max_source_span` is a ceiling: a partitioned replay derives the span it charges from the budget and the reader count,
@@ -85,12 +86,12 @@ Evidence: `tests/timescaledb.rs`.
 ### D136 What refuses a read is one finding of the file per root or hypertable, and no read's note
 A partition root its partitions' rows are written through, and a hypertable with compressed chunks the file holds, are
 each one `Warning` finding (D19), derived in the model by what the query layer's refusals read, so `pgdt info --json`
-and a dump's drain name each leaf partition whose block a root's rows are written through, its TOC entry naming it, and
-each compressed chunk the DDL declares. No plan note: the read refuses, its error saying why, where D135's notes are for
-a read that succeeds unlike the server's. Rejected: a clause on each parent's line in `pgdt info` (no leaf named, and
-`info` reaching the query layer's rules); a finding per refusing table. Code: `span.rs` (`DumpIndex::through_roots`),
-`timescaledb/findings.rs` (`compressed_chunks`), `dump/descendants.rs`. Evidence: `tests/descendants.rs`,
-`tests/timescaledb.rs`.
+and a dump's drain name a root's leaf partitions where every block's TOC entry names one, and each compressed chunk the
+DDL declares, or any the catalog names, no DDL held. No plan note: the read refuses, its error saying why, where D135's
+notes are for a read that succeeds unlike the server's. Rejected: a clause on each parent's line in `pgdt info` (no leaf
+named, and `info` reaching the query layer's rules); a finding per refusing table. Code: `span.rs`
+(`DumpIndex::through_roots`), `timescaledb/findings.rs` (`compressed_chunks`), `dump/descendants.rs`. Evidence:
+`tests/descendants.rs`, `tests/timescaledb.rs`.
 
 ### D137 TimescaleDB is read from its Apache source alone, its catalog by column name at any release; no chunk is decoded
 pgdt's TimescaleDB code is written from its Apache-licensed `src/` and `sql/`, its docs and the generator's dumps, never
@@ -171,8 +172,8 @@ refusing such a cache (D20); `Strict` trusting the record. Defaults: `Null` (D38
 
 ### D119 A projection is the request's names, each once, in its order; the CLI repeats `--column`
 A projection resolves each name against a block's own columns as a predicate's column does, emitting them in the order
-asked; a name the block lacks, or one asked twice, is refused on the request before a byte is read
-(`QueryOptions::validate`), so an embedder and `pgdt` refuse alike. Rejected: a repeat kept, as SQL's select list keeps
-one (a field feeds one built column, and a batch would carry two fields of one name); `--columns a,b`, a column name
-being free to hold a comma, so a list would invent a quoting grammar; `--columns ''` for none, `--no-columns` saying it.
-Code: `QueryOptions::validate`, `project`. Evidence: `crates/pgdt-query/tests/projection.rs`.
+asked; one asked twice is refused on the request (`QueryOptions::validate`) and one the block lacks when the read is
+planned, before a row is replayed, so an embedder and `pgdt` refuse alike. Rejected: a repeat kept, as SQL's select list
+keeps one (a field feeds one built column, and a batch would carry two fields of one name); `--columns a,b`, a column
+name being free to hold a comma, so a list would invent a quoting grammar; `--columns ''` for none, `--no-columns`
+saying it. Code: `QueryOptions::validate`, `project`. Evidence: `crates/pgdt-query/tests/projection.rs`.

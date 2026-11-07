@@ -40,7 +40,8 @@ pub(crate) fn jsonb_reads(text: &mut dyn Source<'_>) -> Read<()> {
 }
 
 /// [`json_in`]'s walk, and with `jsonb` [`jsonb_reads`]'s.
-// pg-refuses: I72 — every refusal here is `json_in`'s.
+// pg-refuses: I72 — every refusal here is `json_in`'s, but those `jsonb`
+// adds, which are `jsonb_in`'s (I41, I63).
 fn walk_json(text: &mut dyn Source<'_>, jsonb: bool) -> Read<()> {
     let mut walk = JsonWalk { jsonb, deep: false, open: Vec::new(), depth: 0 };
     if !walk.document(text) {
@@ -294,7 +295,7 @@ fn numeric_stores(int: usize, frac: usize, exponent: i64, first: Option<usize>) 
     if exponent.abs() > NUMERIC_EXPONENT_MAX || frac - exponent > NUMERIC_DSCALE_MAX as i64 {
         return false;
     }
-    // A zero has no weight, and is stored whatever its exponent moves.
+    // A zero has no weight, so no weight bounds it.
     let Some(first) = first.and_then(|first| i64::try_from(first).ok()) else { return true };
     int + exponent - first <= NUMERIC_INTEGER_DIGITS_MAX as i64
 }
@@ -409,7 +410,8 @@ impl Jsonb {
     }
 }
 
-/// How deep [`parse_jsonb`] will descend before refusing; a fixed number
+/// How deep [`parse_jsonb`] will descend before reading no value
+/// ([`Unread::Unparsed`]) where `json_in` reads the text; a fixed number
 /// rather than a stack-depth check (`docs/design/decisions.md`, "D55").
 /// Nothing a `jsonb_out` field of a real dump holds comes near it.
 const JSONB_MAX_DEPTH: usize = 1000;
@@ -679,7 +681,7 @@ impl<'a> JsonCursor<'a> {
         }
         // The display scale is the fraction's digits less the exponent, and
         // the weight counts from the first non-zero digit: a zero has none,
-        // and is stored whatever its exponent moves.
+        // so only its exponent and display scale bound it.
         let digits = format!("{int}{frac}");
         let first = digits.bytes().position(|b| b != b'0');
         if !numeric_stores(int.len(), frac.len(), exponent, first) {

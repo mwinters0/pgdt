@@ -7,13 +7,13 @@
 //! through separate scanners (`docs/design/decisions.md`, "D45"). **Each
 //! grammar is a walk** over a byte source handing its caller every part as it
 //! reads it, which `parse_*` collect and a strict check reads a field's bytes
-//! by, holding no part past its turn ("D143").
+//! by, holding no part past its turn but a range's two bounds ("D143").
 //!
-//! **They are four grammars, not one**, and whitespace is where they first
+//! **They are five grammars, not one**, and whitespace is where they first
 //! disagree: `array_in` drops unquoted whitespace around an element, while
 //! `record_in` and `range_in` keep every byte of it, so `( 1 , a )` into a
 //! composite is a two-field value whose second field is `" a "`. One predicate
-//! still serves all four, because `array_isspace`, `scanner_isspace` and the C
+//! still serves all five, because `array_isspace`, `scanner_isspace` and the C
 //! locale's `isspace` are the same six characters.
 //!
 //! The result is the same `ArrayLiteral`/`RecordLiteral`/`RangeLiteral` the
@@ -370,9 +370,9 @@ pub fn parse_array(s: &str) -> Option<ArrayLiteral<'_>> {
 /// collected.
 pub fn parse_array_delimited(s: &str, delim: u8) -> Option<ArrayLiteral<'_>> {
     let mut elements = Vec::new();
-    // Owned unconditionally: `array_in` trims, unescapes and re-cases, so an
-    // element here is rarely the bytes the user typed, and this grammar reads
-    // one literal per query.
+    // Owned unconditionally: `array_in` trims and unescapes, so an element
+    // here is rarely the bytes the user typed, and a strict check walks a
+    // field's array rather than collecting it.
     let shape = walk_array(&mut Bytes(s.bytes()), delim, &mut |(), element| {
         elements.push(match element {
             Some(element) => Some(Cow::Owned(collect(element).ok_or(Refused)?)),

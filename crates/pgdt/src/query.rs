@@ -32,8 +32,9 @@ pub(crate) struct QueryArgs {
     /// so this is always required.
     #[arg(long)]
     source: String,
-    /// Table name, qualified (`schema.table`) or bare. Taken exactly as
-    /// given, like `--column` and unlike a `--filter` term.
+    /// Table name, qualified (`schema.table`, split at its first `.`) or
+    /// bare. Its quote marks are kept, like `--column`'s and unlike a
+    /// `--filter` term's.
     #[arg(long)]
     table: String,
     /// Cache file path, or `none` to ignore any existing cache and
@@ -406,8 +407,14 @@ fn no_rows(table: &str, origin: &Origin) -> Result<()> {
 }
 
 /// The sentence a name that was not found earns when it opens and closes with
-/// a matching quote: `--column` and `--table` take their names exactly as
-/// given, so the quote marks were part of what was looked for.
+/// a matching quote: `--column` and `--table` keep their names' quote marks,
+/// so they were part of what was looked for — `--table` splitting at its
+/// first `.` all the same.
+///
+/// deficiency: KD165 — a `--table` name holding a `.` cannot be asked for,
+/// [`table_selector`] splitting it at its first `.` into a schema and a
+/// table, and where such a name is quoted this note says it was matched
+/// literally. **(c) unowned**; promoted by such a table met in use.
 ///
 /// **Only a `--filter` term has quoting to strip**, a term being one string
 /// to split into three parts; the shell has already delimited a `--column`
