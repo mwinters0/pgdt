@@ -2,7 +2,8 @@
 //! a query over escaped text and over `bytea` (`docs/design/decisions.md`,
 //! "D141"), and none in a parse, its statistics and a strict parse's check
 //! reading an escaped field off its bytes ("D142"), a strict parse walking a
-//! nested, `json` or `jsonb` value a part at a time ("D143").
+//! nested, `json` or `jsonb` value a part at a time ("D143"), and a strict
+//! check fed its field over runs holding none of it ("D144").
 //!
 //! **This binary installs a global allocator tracking the bytes live**, and
 //! their peak, which is why it is a test file of its own. A line past its
@@ -22,6 +23,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use arrow::array::{AsArray, RecordBatch};
 use common::Cold;
 use futures::StreamExt;
+use pgdt_codec::compare::comparison_for;
+use pgdt_codec::internal::FieldWalk;
 use pgdt_dump::cache::CacheMode;
 use pgdt_dump::{ReadOptions, ScanOptions};
 use pgdt_io::{ByteRangeSource, LocalFileSource};
@@ -276,5 +279,70 @@ async fn a_strict_parse_holds_no_tree_of_a_nested_value() {
             matches!(refused, pgdt_core::Error::FieldRefused { .. }),
             "{declared}: {refused:?}"
         );
+    }
+}
+
+/// The run a field is fed over in [`fed_over_runs`], far below each field.
+const RUN: usize = 64 << 10;
+
+/// Whether a strict check refuses the field a column declared `declared`
+/// holds as `head`, `piece` `count` times and `tail`, unescaped, fed it as
+/// `COPY` writes it in runs of [`RUN`] bytes, each made and dropped in its
+/// turn as a line's chunks go by; and how far the allocator's peak rose past
+/// what was live as the check began.
+fn fed_over_runs(
+    declared: &str,
+    head: &str,
+    piece: &str,
+    count: usize,
+    tail: &str,
+) -> (bool, usize) {
+    let plan = comparison_for(declared, None, &[], &[]);
+    let escaped = |text: &str| pgdt_core::escape_field(Some(text));
+    let (head, piece, tail) = (escaped(head), escaped(piece), escaped(tail));
+    let mut bytes =
+        head.iter().chain(std::iter::repeat_n(&piece, count).flatten()).chain(&tail).copied();
+    let before = window();
+    let mut walk = FieldWalk::new(&plan);
+    loop {
+        let run: Vec<u8> = bytes.by_ref().take(RUN).collect();
+        if run.is_empty() {
+            break;
+        }
+        walk.run(&run);
+    }
+    let refused = walk.finish();
+    (refused, PEAK.load(Ordering::Relaxed) - before)
+}
+
+/// **A strict check fed its field over runs holds none of it**: an array of
+/// many short elements, one of escaped texts, one whose unquoted element
+/// holds a long whitespace run, an array of ranges, a `jsonb` and a `json`
+/// of escaped strings, a `bytea` and a long escaped text under its typmod,
+/// each of eight MiB, are checked a run at a time with no more allocated
+/// than a run and the readers' own state; an element its type refuses is
+/// refused all the same.
+#[test]
+fn a_strict_check_fed_over_runs_holds_no_field() {
+    let long = 8usize << 20;
+    let typmod = "character varying(10485760)";
+    let typmod_array = format!("{typmod}[]");
+    for (declared, head, piece, tail, refused) in [
+        ("smallint[]", "{", "7,", "7}", false),
+        ("smallint[]", "{", "7,", "70000}", true),
+        ("text[]", "{", "\"ab\\\\\\\"c\td\",", "x}", false),
+        (typmod_array.as_str(), "{a", " ", "b}", false),
+        ("int4range[]", "{", "\"[1,2)\",", "\"(,3]\"}", false),
+        ("jsonb", "[", "\"a\\nb\",", "1]", false),
+        ("jsonb", "[", "\"a\\nb\",", "\"\\u0000\"]", true),
+        ("json", "[", "\"a\\nb\",", "1]", false),
+        ("bytea", "\\x", "a1", "", false),
+        ("bytea", "\\x", "a1", "z", true),
+        (typmod, "", "ab\tc", "", false),
+    ] {
+        let count = long / piece.len();
+        let (was_refused, peak) = fed_over_runs(declared, head, piece, count, tail);
+        assert_eq!(was_refused, refused, "{declared} {piece:?}");
+        assert!(peak < 4 * RUN, "{declared} {piece:?}: {peak} bytes allocated at the peak");
     }
 }

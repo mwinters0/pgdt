@@ -1,11 +1,11 @@
-//! **The `async` form: today's walk compiled into a state machine.** The
+//! **The `async` form: the pull walk compiled into a state machine.** The
 //! walks are [`super::pull`]'s, each an `async fn` awaiting its next byte; a
 //! source is polled for it, and the field's runs are `Pending` once the run
 //! it was fed is read, so the walk suspends where it stands and resumes on
 //! the next run (`read_field`, driven by a no-op waker, there being nothing
 //! to wake: the caller feeding a run is the wake).
 //!
-//! A source is `dyn`, as today's is — a part's source wraps its container's,
+//! A source is `dyn`, as the pull walk's is — a part's source wraps its container's,
 //! to a depth the plan sets at run time — so its methods poll rather than
 //! being `async fn`s, which no trait object can hold; a [`Lexer`] is
 //! resumable to match, carrying across a suspension what a byte left

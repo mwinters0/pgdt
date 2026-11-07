@@ -45,12 +45,20 @@ refused, never reshaped; a value no text form spells is never rounded (I40), and
 array's element borrowing unless it carried an escape. Rejected: a `String` per rendered field. Evidence:
 `nested-decode-micro`.
 
-### D143 An input grammar is a walk over a forward byte source, read a part at a time
+### D143 An input grammar is a walk, read a part at a time
 `array_in`'s, `record_in`'s, `range_in`'s, `multirange_in`'s and `int2vectorin`'s grammars, and `json_in`'s with
-`jsonb_in`'s refusals beside it, are walks over a `Source`, each part read off its container's bytes as found; `parse_*`
-collect the nested ones and a strict check reads all, holding no copy and no tree of a field off `Unescaped`, only a
-scalar part's text and key and a range's bounds and theirs. `parse_jsonb` is `JsonCursor`'s, held to the walk by a
-differential test. Rejected: a value's key tree built and dropped, tens of bytes an element; a source generic over its
-container's, instantiating without bound; a check walk beside each nested scanner. Code: `value/source.rs` (`Source`,
-`Part`), `nested/input.rs`, `json.rs` (`walk_json`), `grammar/check.rs` (`refused`). Evidence: `input/differential.rs`,
+`jsonb_in`'s refusals beside it, are walks handing their caller each part as read (`Parts`); `parse_*` collect the
+nested ones and a strict check reads all, holding no copy and no tree of a field, only a scalar part's text and key and a
+range's bounds and theirs. `parse_jsonb` is `JsonCursor`'s, held to the walk by a differential test. Rejected: a value's
+key tree built and dropped, tens of bytes an element; a check walk beside each nested scanner. Code: `nested/input/`,
+`json/walk.rs` (`JsonWalk`), `grammar/walk.rs` (`FieldWalk`). Evidence: `input/differential.rs`,
 `tests/decoded_copies.rs`.
+
+### D144 A reader is a push machine fed a field's runs, looking at no byte past the one it reads
+`Unescape`, the input walks (D143), `TextFold` and `ByteaFold` are hand-written state machines fed a field's bytes as
+its runs come, carrying past a run's end only their own state: an escape begun, `NULL`'s letters, a quote awaiting its
+double, a whitespace run as its bytes' run lengths (`Blanks`, `KD167`), a `bytea` read once for whether it decodes and
+whether `byteain` refuses it. Why: `resumable-reader-micro`. Rejected: the `async` walk, past its noise of the pull walk
+where the push machine is below it; a pull walk forking ahead, holding runs back to the fork; a machine generic over its
+parts, instantiating without bound. Code: `value/source.rs`, `nested/input/`, `json/walk.rs`, `bytea.rs`,
+`grammar/walk.rs`, pgdt-core's `Unescape`. Evidence: `check/tests.rs` (`walked_in_runs`), `tests/decoded_copies.rs`.

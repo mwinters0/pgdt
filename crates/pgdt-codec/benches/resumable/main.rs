@@ -4,8 +4,9 @@
 //! (`docs/design/roadmap-P33-line-bound.md`, "A pass holds a line only where
 //! it decodes it").
 //!
-//! - **`pull`** ([`pull`]) — today's shape (`value/source.rs`,
-//!   `value/nested/input.rs`): a walk pulling bytes off a `dyn Source` with a
+//! - **`pull`** ([`pull`]) — the input walks' shape at `0fd33bd3`
+//!   (`value/source.rs`, `value/nested/input.rs` there), since written in the
+//!   push form: a walk pulling bytes off a `dyn Source` with a
 //!   peek and a fork, each part read through a `Part` and its `Lexer`. It
 //!   reads one contiguous field; fed over runs it reads an iterator chaining
 //!   them, which is what it would cost were the runs held, not a resumption.
@@ -20,7 +21,7 @@
 //! fields, an integer as `pg_strtoint*` reads a decimal, and a text as a
 //! count of its bytes, under a plan dispatched at run time as a
 //! `ComparisonPlan`'s depth is. Neither resumable form looks further ahead
-//! than a fixed bound: the two forks of today's walk, the `NULL` test and an
+//! than a fixed bound: the two forks of the pull walk, the `NULL` test and an
 //! unquoted element's whitespace run, become carried state — the letters
 //! read so far, the run as its bytes' run lengths. **An `[m:n]=` decoration,
 //! a radix prefix and the ranges and multiranges are not read**, by any of

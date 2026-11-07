@@ -1,8 +1,8 @@
-//! **The pull form: today's walk**, as `value/source.rs` and
-//! `value/nested/input.rs` write it — `Source`, `Bytes`, `Part`, `Lexer` and
+//! **The pull form: the input walks** as `value/source.rs` and
+//! `value/nested/input.rs` wrote them at `0fd33bd3` — `Source`, `Bytes`, `Part`, `Lexer` and
 //! the array and record walks restated, the decoration and the ranges left
 //! out, and each part read under its plan as a strict check's walk reads it.
-//! Its two forks are today's: the `NULL` test of every unquoted element, and
+//! Its two forks are theirs: the `NULL` test of every unquoted element, and
 //! an unquoted element's whitespace run.
 
 use super::{Answer, IntState, MAXDIM, Plan, Refused, Walked, is_space};

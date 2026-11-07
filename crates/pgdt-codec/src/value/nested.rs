@@ -7,8 +7,8 @@
 //! Pure, synchronous, no I/O and no Arrow (`docs/design/decisions.md`, "D74").
 //! Like `crate::decode`, every function here works on the *already
 //! COPY-unescaped* text `pgdt_core::unescape_field` returns — the input
-//! grammar's walks reading it off a byte source, which may be a field's bytes
-//! as `pgdt_core::Unescaped` reads them ("D143") — and every
+//! grammar's walks fed it a byte at a time, which may be a field's bytes as
+//! `pgdt_core::Unescape` reads its runs ("D143", "D144") — and every
 //! `render_*` is the exact inverse of its `decode_*`: feeding it a value
 //! decoded from real `pg_dump` output reproduces that output byte for byte.
 //! Turning the result back into on-disk bytes is `pgdt_core::escape_field`'s
@@ -29,9 +29,7 @@ mod output;
 
 use std::borrow::Cow;
 
-pub(crate) use input::{
-    Refused, Walked, read_range, walk_array, walk_int2vector, walk_multirange, walk_record,
-};
+pub(crate) use input::{ArrayWalk, Int2VectorWalk, MultirangeWalk, RangeWalk, RecordWalk};
 pub use input::{
     parse_array, parse_array_delimited, parse_int2vector, parse_multirange, parse_range,
     parse_record,

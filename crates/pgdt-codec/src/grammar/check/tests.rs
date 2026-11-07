@@ -2,6 +2,8 @@ use pgdt_model::{ColumnDef, TypeDef, TypeKind};
 
 use super::*;
 use crate::compare::comparison_for;
+use crate::grammar::walk::{checked_key, grammar_refuses};
+use crate::value::json::json_in;
 
 fn ty(name: &str, kind: TypeKind) -> TypeDef {
     TypeDef { name: name.to_string(), kind }
@@ -454,8 +456,7 @@ fn a_walked_check_refuses_what_the_keys_refused() {
             refusals += usize::from(keyed);
             reads += usize::from(!keyed);
             let escaped = pgdt_core::escape_field(Some(&text));
-            let walked = pgdt_core::internal::unescaped(&escaped).unwrap();
-            assert_eq!(walk_refused(&plan, walked), keyed, "{declared} {escaped:?}");
+            assert_eq!(walked_in_runs(&plan, &escaped), keyed, "{declared} {escaped:?}");
         }
     }
     // Both answers are reached, at every depth.
@@ -471,9 +472,101 @@ fn a_walked_check_refuses_what_the_keys_refused() {
         (b"{1\\,2}", false),
         (b"{1\\\\,2}", true),
     ] {
-        let walked = pgdt_core::internal::unescaped(field).unwrap();
-        assert_eq!(walk_refused(&plan, walked), refused, "{field:?}");
+        assert_eq!(walked_in_runs(&plan, field), refused, "{field:?}");
     }
+}
+
+/// **A scalar walked off its bytes is refused as its text is**, whatever
+/// runs `COPY`'s bytes for it are fed in: a `bytea` in either form, read once
+/// for whether it decodes and whether `byteain` refuses it; a text held to
+/// its typmod, a character split across runs among them; a `json` and a
+/// `jsonb`, against the document `parse_jsonb` reads.
+#[test]
+fn a_walked_scalar_is_refused_as_its_text_is() {
+    let bytea = comparison_for("bytea", None, &[], &[]);
+    for text in [
+        "\\x",
+        "\\xdead",
+        "\\xDeAd",
+        "\\xabc",
+        "\\xgg",
+        "\\x ab",
+        "\\xab cd",
+        "\\xa b",
+        "\\X41",
+        "abc",
+        "\\000\\\\\\177A",
+        "\\101",
+        "\\400",
+        "\\08",
+        "a\\",
+        "\\",
+        "",
+        "tab\there",
+        "é",
+    ] {
+        let refused = matches!(field_key(&CompareKind::Bytea, text), Err(Unread::Refused));
+        let escaped = pgdt_core::escape_field(Some(text));
+        assert_eq!(walked_in_runs(&bytea, &escaped), refused, "bytea {text:?}");
+    }
+    for (declared, length) in [("character varying(3)", 3), ("character(2)", 2)] {
+        let plan = comparison_for(declared, None, &[], &[]);
+        for text in ["", "abc", "abcd", "ab  ", "abc ", "éé", "ééé", "éééé", "a\tb", "ab\nc\n"]
+        {
+            let refused = char_typmod_refuses(text, length);
+            let escaped = pgdt_core::escape_field(Some(text));
+            assert_eq!(walked_in_runs(&plan, &escaped), refused, "{declared} {text:?}");
+        }
+    }
+    let (json, jsonb) =
+        (comparison_for("json", None, &[], &[]), comparison_for("jsonb", None, &[], &[]));
+    for text in [
+        "1",
+        "-0",
+        "01",
+        "1.",
+        "1e5",
+        "1e99999999999",
+        "[1, 2]",
+        "{\"a\": [true, null]}",
+        "\"a\\nb\"",
+        "\"\\u0000\"",
+        "\"\\ud800\\udc00\"",
+        "\"\\ud800x\"",
+        "\"é\"",
+        "\"\t\"",
+        "[1,]",
+        "tru",
+        " {} ",
+    ] {
+        let escaped = pgdt_core::escape_field(Some(text));
+        assert_eq!(walked_in_runs(&json, &escaped), !json_in(text), "json {text:?}");
+        let refused = crate::value::json::parse_jsonb(text) == Err(Unread::Refused);
+        assert_eq!(walked_in_runs(&jsonb, &escaped), refused, "jsonb {text:?}");
+    }
+}
+
+/// **A field walked as `COPY` wrote it, `escaped`, is answered alike
+/// whatever runs it is fed in** (`FieldWalk`): whole, in runs of one, two
+/// and three bytes, and cut in two at every byte, each a run's end inside an
+/// escape, a quote, a `NULL`, a whitespace run or a part.
+fn walked_in_runs(plan: &ComparisonPlan, escaped: &[u8]) -> bool {
+    let feed = |runs: &mut dyn Iterator<Item = &[u8]>| {
+        let mut walk = FieldWalk::new(plan);
+        for run in runs {
+            walk.run(run);
+        }
+        walk.finish()
+    };
+    let whole = feed(&mut std::iter::once(escaped));
+    for width in 1..=3 {
+        assert_eq!(feed(&mut escaped.chunks(width)), whole, "{escaped:?} in runs of {width}");
+    }
+    for cut in 0..=escaped.len() {
+        let (head, tail) = escaped.split_at(cut);
+        assert_eq!(feed(&mut [head, tail].into_iter()), whole, "{escaped:?} cut at {cut}");
+    }
+    whole
 }
 
 /// A deterministic 64-bit LCG, so a failure is reproducible from the seed.

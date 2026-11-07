@@ -1,33 +1,21 @@
-//! Whether PostgreSQL refuses a field: a column's grammars, what a strict
-//! parse leaves unchecked, and the refusal checks dispatched through the
-//! readers an order key is built by, a nested value's walked a part at a time
-//! through its containers' input grammars ([`refused`]).
+//! What a strict parse checks a column's fields by: its grammar, whether a
+//! field is refused — a scalar through the reader its order key is built by,
+//! a field read off its bytes by [`FieldWalk`] — and what it leaves
+//! unchecked.
 
 use pgdt_model::{TypeDef, TypeKind};
 
 use crate::compare::{
-    CompareKind, ComparisonDivergence, ComparisonPlan, Discrete, NestedCompare, UnanswerableReason,
+    CompareKind, ComparisonDivergence, ComparisonPlan, NestedCompare, UnanswerableReason,
 };
 use crate::declared::{
-    Position, Visits, array_element, builtin_name, companion_range, domain_terminal, find_type,
-    split_typmod,
+    Visits, array_element, builtin_name, companion_range, domain_terminal, find_type, split_typmod,
 };
-use crate::decode::{Read, Unread};
-use crate::grammar::input::{Geometric, TextGrammar, text_grammar};
-use crate::key::order::{OrderKey, field_key};
-use crate::value::bit::bit_in;
-use crate::value::bytea::{bytea_unread, read_bytea};
-use crate::value::geometric::{box_in, circle_in, line_in, lseg_in, path_in, point_in, poly_in};
-use crate::value::json::{json_in, json_reads, jsonb_reads};
-use crate::value::nested;
-use crate::value::nested::key::{
-    NestedKey, RangeBoundKey, RangeKey, canonical_multirange, make_range,
-};
-use crate::value::nested::{
-    Refused, Walked, walk_array, walk_int2vector, walk_multirange, walk_record,
-};
-use crate::value::source::{Bytes, Source, bytes, collect};
-use crate::value::text::{TextFold, char_typmod_refuses};
+use crate::decode::Unread;
+use crate::grammar::input::{TextGrammar, text_grammar};
+use crate::grammar::walk::FieldWalk;
+use crate::key::order::field_key;
+use crate::value::text::char_typmod_refuses;
 
 /// **Why a strict parse checks nothing of a value, or of a position within
 /// one**: what PostgreSQL refuses there is decided by something besides the
@@ -293,11 +281,11 @@ fn domains_beneath(
 /// other plan naming no type this build reads by — another held as its text,
 /// or a range declaring its own canonical function — refuses nothing, no
 /// reader here decoding its fields. A column whose own type is ordered by
-/// nothing is [`ComparisonPlan::Refused`] and is read by [`grammar_refuses`]
-/// instead.
+/// nothing is [`ComparisonPlan::Refused`] and is read by
+/// [`grammar_refuses`](super::walk::grammar_refuses) instead.
 ///
-/// A nested, `json` or `jsonb` value is walked off its bytes ([`walks`]), as
-/// [`walk_refused`] reads one.
+/// A field whose plan [`walks`] is read off its bytes, as [`FieldWalk`]
+/// reads one.
 ///
 /// [`PostgresInvalidValues::Strict`]: pgdt_model::PostgresInvalidValues::Strict
 pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
@@ -310,7 +298,9 @@ pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
         return length.is_some_and(|length| char_typmod_refuses(text, length));
     }
     if walks(plan) {
-        return walk_refused(plan, text.bytes());
+        let mut walk = FieldWalk::new(plan);
+        walk.text(text.as_bytes());
+        return walk.finish();
     }
     match plan {
         ComparisonPlan::Compared { kind, .. } => {
@@ -323,107 +313,22 @@ pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
 }
 
 /// **Whether [`field_refused`] reads a field of a column compared by `plan`
-/// a byte at a time**, holding no copy of it and no tree but a range
-/// bound's
-/// (`docs/design/decisions.md`, "D143"): a nested value, `json` and `jsonb`.
+/// a byte at a time** ([`FieldWalk`]), holding no copy of it and no tree but
+/// a range bound's (`docs/design/decisions.md`, "D142", "D143"): a nested
+/// value, `json` and `jsonb`, a `bytea`, and a text held to its typmod.
 pub fn walks(plan: &ComparisonPlan) -> bool {
     matches!(
         plan,
         ComparisonPlan::Nested(_)
             | ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. }
-            | ComparisonPlan::Compared { kind: CompareKind::Jsonb, .. }
+            | ComparisonPlan::Compared {
+                kind: CompareKind::Jsonb
+                    | CompareKind::Bytea
+                    | CompareKind::Text { .. }
+                    | CompareKind::PaddedText { .. },
+                ..
+            }
     )
-}
-
-/// **[`field_refused`] of the text `text` yields**, a field of a column
-/// whose plan [`walks`], its bytes read as they come — `COPY`'s, as
-/// `Unescaped` reads them — and each element of a nested value read off them
-/// in its turn, through the walk of its container's input grammar, as a
-/// field of its own type (`docs/design/decisions.md`, "D143"). The bytes are
-/// read as a text's, UTF-8; a caller whose bytes may not be asks
-/// [`TextFold`] apart, a field that is not being no value at all.
-pub fn walk_refused(plan: &ComparisonPlan, text: impl Iterator<Item = u8> + Clone) -> bool {
-    let text = &mut Bytes(text);
-    match plan {
-        // `AS_TEXT`'s one member is `json`.
-        ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => {
-            !json_reads(text)
-        }
-        ComparisonPlan::Compared { kind: CompareKind::Jsonb, .. } => {
-            jsonb_reads(text) == Err(Unread::Refused)
-        }
-        ComparisonPlan::Nested(nested) => refused(nested, text).is_err(),
-        _ => false,
-    }
-}
-
-/// **Whether a marked check refuses the nested field `text` reads**, as
-/// [`checked_key`] does, read off it a part at a time: an element, a field,
-/// a member range — whose two bounds are what `range_in` compares — each
-/// checked as it is walked, its container's grammar read through to its
-/// end. Only a scalar part's text and key and a range's bounds and their
-/// keys are built, each dropped in its turn.
-fn refused<'a>(plan: &NestedCompare, text: &mut dyn Source<'a>) -> Walked {
-    let refuses = |refused: bool| if refused { Err(Refused) } else { Ok(()) };
-    match plan {
-        NestedCompare::Leaf { kind, .. } => leaf_refused(kind, text),
-        // `json`, the one position diverging `AsText` (`NestedCompare::Uncomparable`).
-        NestedCompare::Uncomparable { divergence: Some(ComparisonDivergence::AsText), .. } => {
-            refuses(!json_reads(text))
-        }
-        NestedCompare::Uncomparable { grammar: Some(grammar), .. } => {
-            refuses(grammar_refuses(*grammar, &collect(text).ok_or(Refused)?))
-        }
-        NestedCompare::Uncomparable { .. } => Ok(()),
-        NestedCompare::Array { element, .. } => {
-            let Some(delimiter) = array_delimiter(&element.plan) else { return Ok(()) };
-            walk_array(text, delimiter, &mut |(), value| match value {
-                Some(value) => refused(&element.plan, value),
-                None => refuses(element.not_null),
-            })
-            .map(drop)
-        }
-        NestedCompare::Int2Vector { .. } => walk_int2vector(text, &mut |_| Ok(())),
-        NestedCompare::Record { fields: plans, .. } => {
-            walk_record(text, plans.len(), &mut |k, value| {
-                let (_, field) = &plans[k];
-                match value {
-                    Some(value) => refused(&field.plan, value),
-                    None => refuses(field.not_null),
-                }
-            })
-        }
-        NestedCompare::Range { bound, discrete, .. } => {
-            let literal = nested::read_range(text).ok_or(Refused)?;
-            checked_range(bound, &literal, *discrete).map(drop).map_err(|_| Refused)
-        }
-        // `multirange_in` refuses nothing past its members' `range_in`.
-        NestedCompare::Multirange { bound, discrete, .. } => walk_multirange(text, &mut |member| {
-            checked_range(bound, &member, *discrete).map(drop).map_err(|_| Refused)
-        }),
-    }
-}
-
-/// [`refused`] of a leaf: a text held to its typmod by its characters, and
-/// a `bytea` and a `jsonb`, read a byte at a time; any other scalar is
-/// collected — its own text, no longer than it — for [`field_key`].
-fn leaf_refused(kind: &CompareKind, text: &mut dyn Source<'_>) -> Walked {
-    let refused = match kind {
-        CompareKind::Text { length, .. } | CompareKind::PaddedText { length } => length
-            .is_some_and(|length| {
-                TextFold::read(bytes(text), |_| {}).is_some_and(|read| read.typmod_refuses(length))
-            }),
-        CompareKind::Bytea => {
-            !read_bytea(bytes(&mut *text.fork()), |_| {})
-                && bytea_unread(bytes(text)) == Unread::Refused
-        }
-        CompareKind::Jsonb => jsonb_reads(text) == Err(Unread::Refused),
-        kind => {
-            let value = collect(text).ok_or(Refused)?;
-            matches!(field_key(kind, &value), Err(Unread::Refused))
-        }
-    };
-    if refused { Err(Refused) } else { Ok(()) }
 }
 
 /// **Where [`field_refused`] refuses a field of a column compared by `plan`
@@ -444,174 +349,6 @@ pub fn text_typmod(plan: &ComparisonPlan) -> Option<Option<u32>> {
         } => Some(*length),
         _ => None,
     }
-}
-
-/// Whether PostgreSQL's input function refuses `text` as a field read by
-/// `grammar`, of a type this build holds as its text and orders by nothing.
-pub fn grammar_refuses(grammar: TextGrammar, text: &str) -> bool {
-    let reads = match grammar {
-        TextGrammar::Bit { varying, length } => bit_in(text, varying, length),
-        TextGrammar::Geometric(Geometric::Point) => point_in(text),
-        TextGrammar::Geometric(Geometric::Line) => line_in(text),
-        TextGrammar::Geometric(Geometric::Lseg) => lseg_in(text),
-        TextGrammar::Geometric(Geometric::Box) => box_in(text),
-        TextGrammar::Geometric(Geometric::Path) => path_in(text),
-        TextGrammar::Geometric(Geometric::Polygon) => poly_in(text),
-        TextGrammar::Geometric(Geometric::Circle) => circle_in(text),
-        TextGrammar::BoxArray { not_null } => {
-            let element = NestedCompare::Uncomparable {
-                declared: "box".into(),
-                divergence: None,
-                grammar: Some(TextGrammar::Geometric(Geometric::Box)),
-                delimiter: Some(b';'),
-            };
-            let element = Position { plan: element, not_null };
-            let array =
-                NestedCompare::Array { declared: "box[]".into(), element: Box::new(element) };
-            refused(&array, &mut Bytes(text.bytes())).is_ok()
-        }
-        TextGrammar::RefusesAll => false,
-        TextGrammar::RefusesNothing => true,
-    };
-    !reads
-}
-
-/// The `typdelim` an array of `element` is split at, which the plan carries
-/// off the preamble (I22) — `None` where the split is not this build's to
-/// make: a delimiter the preamble could not read, and one `array_in` reads
-/// otherwise than [`nested::parse_array_delimited`] models at some supported
-/// major, which is any byte but a visible ASCII one, the space not among them,
-/// other than a brace, a double quote or a backslash.
-fn array_delimiter(element: &NestedCompare) -> Option<u8> {
-    let delimiter = match element {
-        NestedCompare::Uncomparable { delimiter, .. } => (*delimiter)?,
-        _ => b',',
-    };
-    (delimiter.is_ascii_graphic() && !b"{}\"\\".contains(&delimiter)).then_some(delimiter)
-}
-
-/// A range bound's key, for [`refused`] to compare a range's two by: a
-/// nested field's key, built as
-/// [`nested_key`](crate::value::nested::key::nested_key) builds a literal's —
-/// each container read by its input grammar, the one `COPY` reads a field by —
-/// with every element read as a field: `Err` where a marked check on the way
-/// refuses it, and `Ok(None)` where it is read but some part of it has no key
-/// here, a position this build does not order or a spelling it does not read.
-/// **Every element is read whatever an earlier one answered**, so a refusal
-/// anywhere in the value is found.
-fn checked_key(plan: &NestedCompare, text: &str) -> Read<Option<NestedKey>> {
-    let refused = Unread::Refused;
-    Ok(match plan {
-        NestedCompare::Leaf { kind, .. } => match field_key(kind, text) {
-            Ok(key) => Some(NestedKey::Leaf(key)),
-            Err(Unread::Refused) => return Err(refused),
-            Err(Unread::Unparsed) => None,
-        },
-        // `json`, the one position diverging `AsText` (`NestedCompare::Uncomparable`).
-        NestedCompare::Uncomparable { divergence: Some(ComparisonDivergence::AsText), .. }
-            if !json_in(text) =>
-        {
-            return Err(refused);
-        }
-        NestedCompare::Uncomparable { grammar: Some(grammar), .. }
-            if grammar_refuses(*grammar, text) =>
-        {
-            return Err(refused);
-        }
-        NestedCompare::Uncomparable { .. } => None,
-        NestedCompare::Array { element, .. } => {
-            let Some(delimiter) = array_delimiter(&element.plan) else { return Ok(None) };
-            let literal = nested::parse_array_delimited(text, delimiter).ok_or(refused)?;
-            let mut elements = Vec::with_capacity(literal.elements.len());
-            let mut keyed = true;
-            for value in &literal.elements {
-                match value {
-                    Some(value) => match checked_key(&element.plan, value)? {
-                        Some(key) => elements.push(Some(key)),
-                        None => keyed = false,
-                    },
-                    None if element.not_null => return Err(refused),
-                    None => elements.push(None),
-                }
-            }
-            keyed.then_some(NestedKey::Array {
-                elements,
-                dims: literal.dims,
-                lower_bounds: literal.lower_bounds,
-            })
-        }
-        NestedCompare::Int2Vector { .. } => {
-            let values = nested::parse_int2vector(text).ok_or(refused)?;
-            Some(NestedKey::Array {
-                dims: vec![values.len()],
-                elements: values
-                    .into_iter()
-                    .map(|v| Some(NestedKey::Leaf(OrderKey::Int(i64::from(v)))))
-                    .collect(),
-                lower_bounds: vec![0],
-            })
-        }
-        NestedCompare::Record { fields: plans, .. } => {
-            let fields = nested::parse_record(text, plans.len()).ok_or(refused)?.fields;
-            let mut out = Vec::with_capacity(plans.len());
-            let mut keyed = true;
-            for ((_, field), value) in plans.iter().zip(fields) {
-                match value {
-                    Some(value) => match checked_key(&field.plan, &value)? {
-                        Some(key) => out.push(Some(key)),
-                        None => keyed = false,
-                    },
-                    None if field.not_null => return Err(refused),
-                    None => out.push(None),
-                }
-            }
-            keyed.then_some(NestedKey::Record(out))
-        }
-        NestedCompare::Range { bound, discrete, .. } => {
-            let literal = nested::parse_range(text).ok_or(refused)?;
-            checked_range(bound, &literal, *discrete)?
-                .map(|range| NestedKey::Range(Box::new(range)))
-        }
-        NestedCompare::Multirange { bound, discrete, .. } => {
-            let literals = nested::parse_multirange(text).ok_or(refused)?;
-            let mut members = Vec::with_capacity(literals.len());
-            let mut keyed = true;
-            for literal in &literals {
-                match checked_range(bound, literal, *discrete)? {
-                    Some(member) => members.push(member),
-                    None => keyed = false,
-                }
-            }
-            // `multirange_in` refuses nothing past its members' `range_in`.
-            keyed
-                .then(|| canonical_multirange(members, *discrete))
-                .flatten()
-                .map(NestedKey::Multirange)
-        }
-    })
-}
-
-/// The nested keys' `range_key` for [`checked_key`]: both bounds read, then
-/// [`make_range`]'s refusals where both have a key.
-fn checked_range(
-    bound: &NestedCompare,
-    literal: &nested::RangeLiteral,
-    discrete: Option<Discrete>,
-) -> Read<Option<RangeKey>> {
-    let side = |text: &Option<String>, inclusive: bool, lower: bool| {
-        let value = match text {
-            Some(text) => match checked_key(bound, text)? {
-                Some(key) => Some(key),
-                None => return Ok(None),
-            },
-            None => None,
-        };
-        Ok(Some(RangeBoundKey { value, inclusive, lower }))
-    };
-    let lower = side(&literal.lower, literal.lower_inclusive, true)?;
-    let upper = side(&literal.upper, literal.upper_inclusive, false)?;
-    let (Some(lower), Some(upper)) = (lower, upper) else { return Ok(None) };
-    make_range(lower, upper, literal.empty, discrete).map(Some).ok_or(Unread::Refused)
 }
 
 #[cfg(test)]

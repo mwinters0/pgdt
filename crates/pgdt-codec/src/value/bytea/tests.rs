@@ -91,7 +91,7 @@ fn a_bytea_is_refused_only_where_byteain_refuses_it() {
 }
 
 /// **A field read still escaped reads what its unescaped text reads**
-/// (`decode_bytea_into`, `bytea_reads`), whichever way `COPY` spells it —
+/// (`decode_bytea_into`, `ByteaFold`), whichever way `COPY` spells it —
 /// as `pg_dump` writes it, or each byte as an octal or hex escape, so the
 /// hex form's slice path and the byte-at-a-time path both answer — and
 /// appends after what `out` held, leaving it as it was where it reads none.
@@ -129,7 +129,13 @@ fn a_field_read_escaped_reads_what_its_text_reads() {
             let shown = String::from_utf8_lossy(&field).into_owned();
             let mut out = b"kept".to_vec();
             let read = decode_bytea_into(unescaped(&field).unwrap(), &mut out);
-            assert_eq!(bytea_reads(unescaped(&field).unwrap()), read, "{shown}");
+            let mut fold = ByteaFold::default();
+            for byte in unescaped(&field).unwrap() {
+                fold.byte(byte, &mut |_| {});
+            }
+            let folded = fold.end();
+            assert_eq!(folded.is_ok(), read, "{shown}");
+            assert!(read || folded == Err(bytea_unread(text.bytes())), "{shown}");
             match &want {
                 Some(want) => {
                     assert!(read, "{shown}");

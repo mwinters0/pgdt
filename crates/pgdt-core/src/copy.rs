@@ -411,7 +411,7 @@ fn unescape_validated_field(field: &str) -> Result<Option<Cow<'_, str>>> {
 /// carry.
 fn unescape_owned(field: &[u8]) -> Result<String> {
     let mut out = Vec::with_capacity(field.len());
-    out.extend(Unescaped { field, at: 0 });
+    out.extend(Unescaped::over(field));
     String::from_utf8(out)
         .map_err(|e| Error::InvalidUtf8 { valid_up_to: e.utf8_error().valid_up_to() })
 }
@@ -421,7 +421,7 @@ fn unescape_owned(field: &[u8]) -> Result<String> {
 /// [`unescape_field`] returns, its UTF-8 check aside, for a reader that needs
 /// no copy of the field to read it.
 pub fn unescaped(field: &[u8]) -> Option<Unescaped<'_>> {
-    (field != COPY_TEXT_NULL_MARKER).then_some(Unescaped { field, at: 0 })
+    (field != COPY_TEXT_NULL_MARKER).then(|| Unescaped::over(field))
 }
 
 /// The most bytes of a field's text a restore's error quotes (`copyfrom.c`'s
@@ -458,56 +458,26 @@ fn clipped(text: &str) -> String {
     format!("{}...", &text[..text.floor_char_boundary(MAX_COPY_DATA_DISPLAY)])
 }
 
-/// The unescaped bytes of a field ([`unescaped`]); the one reading of COPY
-/// TEXT's escapes, which [`unescape_field`] collects.
+/// The unescaped bytes of a field ([`unescaped`]), read off a field held
+/// whole by [`Unescape`], the one reading of COPY TEXT's escapes, which
+/// [`unescape_field`] collects.
 #[derive(Debug, Clone)]
 pub struct Unescaped<'a> {
     field: &'a [u8],
     at: usize,
+    escape: Unescape,
 }
 
 impl<'a> Unescaped<'a> {
+    fn over(field: &'a [u8]) -> Self {
+        Self { field, at: 0, escape: Unescape::default() }
+    }
+
     /// The bytes not yet read, where none of them is escaped, so each stands
     /// for itself: a reader takes them as a slice rather than one at a time.
     pub fn rest_if_plain(&self) -> Option<&'a [u8]> {
         let rest = &self.field[self.at..];
-        (!rest.contains(&b'\\')).then_some(rest)
-    }
-
-    /// The `\x` escape's value, its one or two hex digits read, or a literal
-    /// `x` where none follows.
-    fn hex_escape(&mut self) -> u8 {
-        let mut val: u32 = 0;
-        let mut digits = 0;
-        while digits < 2 {
-            match self.field.get(self.at).and_then(|&b| hex_val(b)) {
-                Some(d) => {
-                    val = val * 16 + d;
-                    self.at += 1;
-                    digits += 1;
-                }
-                None => break,
-            }
-        }
-        if digits == 0 { b'x' } else { val as u8 }
-    }
-
-    /// An octal escape's value, `first` its first digit and up to two more
-    /// read.
-    fn octal_escape(&mut self, first: u8) -> u8 {
-        let mut val: u32 = u32::from(first - b'0');
-        let mut digits = 1;
-        while digits < 3 {
-            match self.field.get(self.at).filter(|&&b| (b'0'..=b'7').contains(&b)) {
-                Some(&b) => {
-                    val = val * 8 + u32::from(b - b'0');
-                    self.at += 1;
-                    digits += 1;
-                }
-                None => break,
-            }
-        }
-        val as u8
+        (self.escape.state == Escape::Plain && !rest.contains(&b'\\')).then_some(rest)
     }
 }
 
@@ -515,37 +485,146 @@ impl Iterator for Unescaped<'_> {
     type Item = u8;
 
     fn next(&mut self) -> Option<u8> {
-        let b = *self.field.get(self.at)?;
-        self.at += 1;
-        if b != b'\\' {
-            return Some(b);
+        loop {
+            let Some(&byte) = self.field.get(self.at) else { return self.escape.end() };
+            let (out, read) = self.escape.step(byte);
+            self.at += usize::from(read);
+            if out.is_some() {
+                return out;
+            }
         }
-        let Some(&esc) = self.field.get(self.at) else {
-            // Trailing lone backslash: PostgreSQL's COPY would reject the
-            // line, but emitting it literally loses less than failing.
-            return Some(b'\\');
-        };
-        self.at += 1;
-        Some(match esc {
-            b'b' => 0x08,
-            b'f' => 0x0c,
-            b'n' => b'\n',
-            b'r' => b'\r',
-            b't' => b'\t',
-            b'v' => 0x0b,
-            // Lowercase only, matching PostgreSQL: `\X` falls through to the
-            // "stands for itself" rule below.
-            b'x' => self.hex_escape(),
-            b'0'..=b'7' => self.octal_escape(esc),
-            // Includes `\\`, and PostgreSQL's permissive "any other character
-            // stands for itself" rule.
-            other => other,
-        })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         let rest = self.field.len() - self.at;
-        (rest.div_ceil(4), Some(rest))
+        // No escape spells a byte in more than four, and one begun spells
+        // at most one more.
+        (rest.div_ceil(4), Some(rest + 1))
+    }
+}
+
+/// **COPY TEXT's escapes read a run of a field's bytes at a time**, the runs
+/// needing no common slice: what a field's text is, read with no more of it
+/// held than an escape begun at a run's end, so a reader fed the field as its
+/// line goes by holds none of it (`docs/design/decisions.md`, "D144").
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Unescape {
+    state: Escape,
+}
+
+/// Where an [`Unescape`] stands inside an escape.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Escape {
+    #[default]
+    Plain,
+    /// A `\` read.
+    Backslash,
+    /// `\x` and so many hex digits read, their value so far.
+    Hex { digits: u8, value: u8 },
+    /// `\` and so many octal digits read, their value so far.
+    Octal { digits: u8, value: u16 },
+}
+
+impl Unescape {
+    /// Read `run`, the field's next bytes as `COPY` wrote them, handing
+    /// `emit` each stretch of its text they complete in order: a stretch no
+    /// escape spells as a slice of `run`, an escape's byte as a slice of
+    /// one.
+    pub fn run(&mut self, run: &[u8], mut emit: impl FnMut(&[u8])) {
+        let mut at = 0;
+        while at < run.len() {
+            if self.state == Escape::Plain {
+                let plain = memchr::memchr(b'\\', &run[at..]).map_or(run.len(), |n| at + n);
+                if plain > at {
+                    emit(&run[at..plain]);
+                }
+                at = plain;
+                if at == run.len() {
+                    return;
+                }
+            }
+            let (out, read) = self.step(run[at]);
+            at += usize::from(read);
+            if let Some(out) = out {
+                emit(&[out]);
+            }
+        }
+    }
+
+    /// The field has ended: the byte an escape it ended inside stands for,
+    /// handed to `emit`.
+    pub fn finish(&mut self, mut emit: impl FnMut(&[u8])) {
+        if let Some(out) = self.end() {
+            emit(&[out]);
+        }
+    }
+
+    /// Read `byte`: the text's byte it completes, if any, and whether it was
+    /// read, a byte ending a hex or octal escape short being read again as
+    /// the next.
+    fn step(&mut self, byte: u8) -> (Option<u8>, bool) {
+        let (out, read, next) = match self.state {
+            Escape::Plain if byte == b'\\' => (None, true, Escape::Backslash),
+            Escape::Plain => (Some(byte), true, Escape::Plain),
+            Escape::Backslash => match byte {
+                // Lowercase only, matching PostgreSQL: `\X` falls through to
+                // the "stands for itself" rule below.
+                b'x' => (None, true, Escape::Hex { digits: 0, value: 0 }),
+                b'0'..=b'7' => {
+                    (None, true, Escape::Octal { digits: 1, value: u16::from(byte - b'0') })
+                }
+                b'b' => (Some(0x08), true, Escape::Plain),
+                b'f' => (Some(0x0c), true, Escape::Plain),
+                b'n' => (Some(b'\n'), true, Escape::Plain),
+                b'r' => (Some(b'\r'), true, Escape::Plain),
+                b't' => (Some(b'\t'), true, Escape::Plain),
+                b'v' => (Some(0x0b), true, Escape::Plain),
+                // Includes `\\`, and PostgreSQL's permissive "any other
+                // character stands for itself" rule.
+                other => (Some(other), true, Escape::Plain),
+            },
+            Escape::Hex { digits, value } => match hex_val(byte) {
+                Some(digit) => {
+                    let value = value << 4 | digit as u8;
+                    if digits == 1 {
+                        (Some(value), true, Escape::Plain)
+                    } else {
+                        (None, true, Escape::Hex { digits: 1, value })
+                    }
+                }
+                // A `\x` with no hex digit after it is a literal `x`.
+                None => (Some(if digits == 0 { b'x' } else { value }), false, Escape::Plain),
+            },
+            Escape::Octal { digits, value } => match byte {
+                b'0'..=b'7' => {
+                    let value = value * 8 + u16::from(byte - b'0');
+                    if digits == 2 {
+                        (Some(value as u8), true, Escape::Plain)
+                    } else {
+                        (None, true, Escape::Octal { digits: digits + 1, value })
+                    }
+                }
+                _ => (Some(value as u8), false, Escape::Plain),
+            },
+        };
+        self.state = next;
+        (out, read)
+    }
+
+    /// The byte an escape the field ended inside stands for, the escape then
+    /// read.
+    fn end(&mut self) -> Option<u8> {
+        let out = match self.state {
+            Escape::Plain => None,
+            // Trailing lone backslash: PostgreSQL's COPY would reject the
+            // line, but emitting it literally loses less than failing.
+            Escape::Backslash => Some(b'\\'),
+            Escape::Hex { digits: 0, .. } => Some(b'x'),
+            Escape::Hex { value, .. } => Some(value),
+            Escape::Octal { value, .. } => Some(value as u8),
+        };
+        self.state = Escape::Plain;
+        out
     }
 }
 
@@ -771,6 +850,53 @@ mod tests {
         let mut spelled = unescaped(b"\\\\x\\x64ead").unwrap();
         spelled.nth(1);
         assert_eq!(spelled.rest_if_plain(), None);
+    }
+
+    /// **`Unescape` fed a field's bytes over runs reads what `unescape_field`
+    /// returns**, wherever the runs are cut — inside every escape, a run a
+    /// byte long among them.
+    #[test]
+    fn unescape_over_runs_reads_what_unescape_field_returns() {
+        let fields = [
+            "plain",
+            "\\\\x00ff",
+            "\\x41\\x42",
+            "\\x4",
+            "\\x4g",
+            "\\xz",
+            "\\X41",
+            "\\101\\1013",
+            "\\7",
+            "\\77x",
+            "a\\tb\\nc\\rd\\be\\ff\\vg",
+            "\\q",
+            "trailing\\",
+            "\\\\\\\\",
+            "\\x",
+            "\\x\\x41",
+        ];
+        for field in fields {
+            let want = decode(field).expect(field).into_bytes();
+            let bytes = field.as_bytes();
+            for width in 1..=bytes.len().max(1) {
+                let mut escape = Unescape::default();
+                let mut read = Vec::new();
+                for run in bytes.chunks(width) {
+                    escape.run(run, |text| read.extend_from_slice(text));
+                }
+                escape.finish(|text| read.extend_from_slice(text));
+                assert_eq!(read, want, "{field:?} in runs of {width}");
+            }
+            for cut in 0..=bytes.len() {
+                let mut escape = Unescape::default();
+                let mut read = Vec::new();
+                let (head, tail) = bytes.split_at(cut);
+                escape.run(head, |text| read.extend_from_slice(text));
+                escape.run(tail, |text| read.extend_from_slice(text));
+                escape.finish(|text| read.extend_from_slice(text));
+                assert_eq!(read, want, "{field:?} cut at {cut}");
+            }
+        }
     }
 
     #[test]

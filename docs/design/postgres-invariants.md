@@ -2747,7 +2747,7 @@ which `jsonb_in` does not enter.
 **Relied on by.** `key/order.rs`'s `CompareKind::Jsonb` arm and `value/json.rs`'s
 `Jsonb`, `JsonCursor` — whose `number`, `string` and `unicode_escape` refuse
 what the input bullet says `jsonb_in` refuses, as `unicode_escape_read` does
-for `jsonb_reads`, a strict parse's walk — `jsonb_unread`, which refuses
+for `JsonWalk`, a strict parse's walk — `jsonb_unread`, which refuses
 what `json_in` refuses (I72), the grammar being one, and `storage_order` —
 [`decisions.md`](decisions.md), "D55", where
 this is the row that agrees about structure and diverges at a string.
@@ -3102,7 +3102,7 @@ spelling can still differ from what `*_out` would write for the same value.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 observed on 16.15 and 18.6.
 
-**Relied on by:** [`decisions.md`](decisions.md), "D45" — `walk_array`/`walk_record`/`read_range`/`walk_multirange`, which `parse_*` collect and a strict parse walks ("D143"), and which
+**Relied on by:** [`decisions.md`](decisions.md), "D45" — `ArrayWalk::byte`/`RecordWalk::byte`/`RangeWalk::byte`/`MultirangeWalk::byte`, the walks `parse_*` collect and a strict parse walks ("D143"), and which
 implement the **newest** grammar unconditionally, per the union rule.
 
 **Re-verify.** Read the functions:
@@ -3532,7 +3532,7 @@ probe below run against 16.15.
 
 **Relied on by:** [`decisions.md`](decisions.md), "Type resolution and decoders" (the
 `List<Int16>` mapping and `NestedPlan::Int2Vector`), "D45"
-(`value/nested/output.rs`'s `decode_int2vector`/`render_int2vector`, `value/nested/input.rs`'s `walk_int2vector`, which `parse_int2vector` collects) and
+(`value/nested/output.rs`'s `decode_int2vector`/`render_int2vector`, `value/nested/input/int2vector.rs`'s `Int2VectorWalk::byte`, the walk `parse_int2vector` collects) and
 "D55" (`NestedCompare::Int2Vector`, and the
 constant `dims`/`lower_bounds` `nested_key` builds).
 
@@ -4366,7 +4366,7 @@ which spellings it reads is I82.
 **Relied on by:** `value::numeric::numeric_in_stores`, which `key/order.rs` applies to
 a bare `numeric`'s field and to every `numeric` literal in PostgreSQL's
 semantics, `value::numeric::NumericSpelling::stored`, which bounds a field spelled
-otherwise, and `numeric_stores`, by which `JsonCursor::number` and `jsonb_reads` refuse a `jsonb` number so
+otherwise, and `numeric_stores`, by which `JsonCursor::number` and `JsonWalk` refuse a `jsonb` number so
 spelled, field and literal alike.
 
 **Re-verify.**
@@ -4618,8 +4618,8 @@ refuses `\xgg` at all six majors.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `value::bytea::bytea_unread`, which refuses a field and a filter
-literal so spelled.
+**Relied on by:** `value::bytea::ByteaFold::byte`, by which `bytea_unread` and a strict
+parse's walk refuse a field and a filter literal so spelled.
 
 **Re-verify.**
 
@@ -4762,7 +4762,7 @@ no depth is refused here.
 v17's incremental parser and its `JSON_TD_MAX_STACK` are not entered by
 `json_in`.
 
-**Relied on by:** `value::json::walk_json`, the walk `json_in` and `json_reads` read and a
+**Relied on by:** `value::json::JsonWalk::byte`, the walk `json_in` reads by and a
 strict parse checks a `json` field by.
 
 **Re-verify.**

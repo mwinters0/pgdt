@@ -283,8 +283,8 @@ time grammar, nested literals, and whether PostgreSQL refuses a field
   a decoder takes a field and returns a value (D74). A type family is one
   module — its reader, renderer, refusal classifier and key type — and a
   scalar one reads nothing of the order key's dispatch, which the nested
-  family's keys are built through; the byte source an input grammar walks
-  is one module beside them (D143).
+  family's keys are built through; what an input grammar is fed, a byte at
+  a time as a field's runs come, is one module beside them (D143, D144).
 - **pgdt-query** — `render.rs`: a value read back from an Arrow array, and one
   field's text read into the array a batch of its column would hold; reading
   an array is query's (D74), and it is a one-row column, not the batcher's.
@@ -346,7 +346,7 @@ typmod ([`decisions.md`](decisions.md), "D103").
 - **pgdt-codec** — `grammar/`, the namespace declaring the types a strict
   parse's listing and the register's plans carry: what a column's fields are
   read by, and whether PostgreSQL refuses one, dispatching to the readers a
-  key is built by.
+  key is built by, and the check a field is fed in runs (D144).
 
 ## Statistics
 

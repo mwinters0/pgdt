@@ -6,15 +6,13 @@
 use std::sync::Arc;
 
 use pgdt_codec::ResolvedSchema;
-use pgdt_codec::internal::{
-    TextFold, bytea_reads, field_refused, grammar_refuses, text_typmod, walk_refused, walks,
-};
+use pgdt_codec::internal::{FieldWalk, field_refused, grammar_refuses, text_typmod, walks};
 use pgdt_codec::{
-    compare::{CompareKind, ComparisonPlan},
+    compare::ComparisonPlan,
     grammar::{TextGrammar, Unchecked},
     internal::{column_grammar, unchecked_positions},
 };
-use pgdt_core::internal::{Unescaped, printout_head, unescaped};
+use pgdt_core::internal::{printout_head, unescaped};
 use pgdt_core::{CopyHeader, split_fields, unescape_field};
 use pgdt_model::{CopyBlock, DumpMetadata, FieldRefusal};
 
@@ -46,12 +44,9 @@ pub(super) fn field_checks(
             let grammar = column_grammar(plan, &declared_type, types);
             let reads = grammar.is_some()
                 || !matches!(plan, ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_));
-            let bytea = grammar.is_none()
-                && matches!(plan, ComparisonPlan::Compared { kind: CompareKind::Bytea, .. });
             let typmod = grammar.is_none().then(|| text_typmod(plan)).flatten();
             let walks = grammar.is_none() && walks(plan);
             (reads || not_null).then(|| FieldCheck {
-                bytea,
                 typmod,
                 walks,
                 plan: plan.clone(),
@@ -222,22 +217,13 @@ pub(super) struct FieldCheck {
     reads: bool,
     /// Whether a NULL is refused (I76).
     not_null: bool,
-    /// Whether `plan` reads a `bytea`, which is checked where it lies before
-    /// it is unescaped ([`check_row`]).
-    bytea: bool,
     /// Where `plan` refuses a field only past a text's typmod, its length
-    /// ([`text_typmod`]), which is checked where the field lies.
+    /// ([`text_typmod`]).
     typmod: Option<Option<u32>>,
-    /// Whether `plan` reads a nested, `json` or `jsonb` value, which is
-    /// walked where it lies ([`walks`]).
+    /// Whether `plan` reads a field off its bytes where it lies ([`walks`]):
+    /// a `bytea`, a text held to its typmod, a nested, `json` or `jsonb`
+    /// value.
     walks: bool,
-}
-
-/// Whether a text whose bytes `text` reads is refused past `length`
-/// characters; a field that is not UTF-8 is no value, which no `*_in` is
-/// handed ([`check_row`]).
-fn typmod_refuses(text: Unescaped<'_>, length: u32) -> bool {
-    TextFold::read(text, |_| {}).is_some_and(|read| read.typmod_refuses(length))
 }
 
 /// The first field of the row at `offset`, the `line`-th the observer was
@@ -250,31 +236,29 @@ pub(super) fn check_row(
 ) -> Option<FieldRefusal> {
     for (column, (field, check)) in split_fields(raw).zip(checks).enumerate() {
         let Some(check) = check else { continue };
-        // A `bytea` that reads is checked with no unescaped text of it made
-        // (`docs/design/decisions.md`, "D141"); a NULL, or one it reads no
-        // value from, is answered below, which says whether it is refused.
-        if check.bytea && unescaped(field).is_some_and(bytea_reads) {
-            continue;
-        }
-        // So is a text, which is refused only past its typmod, its
-        // characters counted off its bytes (D142) where its escaped length,
-        // no shorter than its text, is past it.
-        if let Some(length) = check.typmod
-            && let Some(text) = unescaped(field)
-            && !length
-                .is_some_and(|length| field.len() > length as usize && typmod_refuses(text, length))
-        {
-            continue;
-        }
-        // So is a nested, `json` or `jsonb` value, walked a part at a time
-        // with no tree of it built (D143); one refused is answered below,
-        // and a field that is not UTF-8 is no value, which no `*_in` is
-        // handed.
-        if check.walks
-            && let Some(text) = unescaped(field)
-            && !(walk_refused(&check.plan, text.clone()) && TextFold::read(text, |_| {}).is_some())
-        {
-            continue;
+        // A field read off its bytes is checked with no unescaped text, copy
+        // or tree of it made, in one reading of each byte (D142–D144) — a
+        // text whose escaped length, no shorter than its text, is within its
+        // typmod read not at all — and named as a restore's error quotes it
+        // (I94) where refused, which a field that is not UTF-8 is not, being
+        // no value, which no `*_in` is handed. A NULL is answered below.
+        if check.walks && unescaped(field).is_some() {
+            let within = |length: Option<u32>| length.is_none_or(|n| field.len() <= n as usize);
+            if check.typmod.is_some_and(within) {
+                continue;
+            }
+            let mut walk = FieldWalk::new(&check.plan);
+            walk.run(field);
+            if !walk.finish() {
+                continue;
+            }
+            return Some(FieldRefusal {
+                offset,
+                line,
+                column,
+                declared_type: check.declared_type.clone(),
+                value: printout_head(field),
+            });
         }
         // A NULL is refused only by a `NOT NULL`, and a field that is not
         // text is no value at all, which no `*_in` is handed.

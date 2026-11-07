@@ -68,7 +68,7 @@ fn a_json_is_refused_only_where_json_in_refuses_it() {
 }
 
 /// **A `jsonb` walked off its bytes is read as its document is parsed**
-/// (`jsonb_reads`, `parse_jsonb`): the same refusal, or the same shortfall
+/// (`JsonWalk`, `parse_jsonb`): the same refusal, or the same shortfall
 /// past `JSONB_MAX_DEPTH`, over documents built from the grammar's tokens
 /// and the refusals `jsonb_in` adds to `json_in`'s, and over nestings either
 /// side of the depth with a refusal before, at and past it.
@@ -118,7 +118,7 @@ fn a_jsonb_walked_is_read_as_its_document_is_parsed() {
         rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
         ((rng >> 11) % n as u64) as usize
     };
-    let walked = |text: &str| jsonb_reads(&mut Bytes(text.bytes()));
+    let walked = |text: &str| walked(text, true);
     let mut read = 0;
     for _ in 0..60_000 {
         let n = below(12) + 1;
