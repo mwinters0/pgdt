@@ -11,7 +11,7 @@ use crate::value::int::int_range;
 /// type's own output form.
 ///
 /// That second half is advice rather than the boundary of what is accepted:
-/// [`order_key`]'s integer arms are `str::parse`, so they take a leading `+`
+/// [`order_key`]'s integer arms read `*_out`'s decimal with a leading `+`
 /// and leading zeros no `*_out` writes, one of the exceptions [`accepted_form`]
 /// lists (`docs/design/decisions.md`, "D55"). There is no per-leaf clause list, [`nested_key`]
 /// answering only "not a value of this type".

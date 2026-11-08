@@ -4,9 +4,9 @@
 //! nested value's walked through each container's, every part checked as a
 //! field of its own type in its turn — with nothing held past a run's end
 //! but each reader's own state (`docs/design/decisions.md`, "D143",
-//! "D144"), a type ordered by nothing by its [`TextGrammar`]'s walk among
-//! them. Beside it, what reads a part whole: a range, by its bounds' keys
-//! ([`checked_key`]).
+//! "D144"), a type ordered by nothing by its [`TextGrammar`]'s walk and a
+//! scalar by its order key's reader ([`KeyRead`]) among them. Beside it, what
+//! reads a part whole: a range, by its bounds' keys ([`checked_key`]).
 
 use pgdt_core::internal::Unescape;
 
@@ -14,7 +14,7 @@ use crate::compare::{CompareKind, ComparisonDivergence, ComparisonPlan, Discrete
 use crate::declared::Position;
 use crate::decode::{Read, Unread};
 use crate::grammar::input::{Geometric, TextGrammar};
-use crate::key::order::{OrderKey, field_key};
+use crate::key::order::{KeyMark, KeyRead, OrderKey, field_key};
 use crate::nested::RangeLiteral;
 use crate::value::bit::BitWalk;
 use crate::value::bytea::ByteaFold;
@@ -34,8 +34,9 @@ use crate::value::text::TextFold;
 /// time — as `COPY` wrote them ([`FieldWalk::run`]) or already unescaped
 /// ([`FieldWalk::text`]) — and answered once it ends ([`FieldWalk::finish`]):
 /// [`field_refused`](super::check::field_refused)'s answer, with no copy of
-/// the field and no tree of it held, but a scalar part's text and a range's
-/// bounds, each in its turn.
+/// the field and no tree of it held, but the text of a scalar part whose key
+/// a slice reader reads ([`KeyRead`]) and a range's bounds, each in its
+/// turn.
 #[derive(Debug)]
 pub struct FieldWalk<'p> {
     escape: Unescape,
@@ -120,12 +121,8 @@ enum Check<'p> {
         walk: JsonWalk,
         jsonb: bool,
     },
-    /// Any other scalar, collected for [`field_key`]: its own text, no
-    /// longer than it.
-    Scalar {
-        kind: &'p CompareKind,
-        text: Vec<u8>,
-    },
+    /// Any other scalar, read by its order key's reader.
+    Scalar(KeyRead<'p>),
     /// A type ordered by nothing, read by its [`TextGrammar`]'s walk.
     Grammar(Grammar),
     /// A type whose input function refuses every value, or none.
@@ -149,7 +146,8 @@ enum Check<'p> {
 
 impl<'p> Check<'p> {
     /// A scalar position compared as `kind`: a text held to its typmod, a
-    /// `bytea` and a `jsonb` read a byte at a time, and any other collected.
+    /// `bytea` and a `jsonb` read a byte at a time, and any other by its
+    /// order key's reader.
     fn leaf(kind: &'p CompareKind) -> Self {
         match kind {
             CompareKind::Text { length, .. } | CompareKind::PaddedText { length } => match length {
@@ -158,7 +156,7 @@ impl<'p> Check<'p> {
             },
             CompareKind::Bytea => Check::Bytea(ByteaFold::default()),
             CompareKind::Jsonb => Check::Json { walk: JsonWalk::new(true), jsonb: true },
-            kind => Check::Scalar { kind, text: Vec::new() },
+            kind => Check::Scalar(KeyRead::new(kind)),
         }
     }
 
@@ -221,7 +219,7 @@ impl<'p> Check<'p> {
             Check::Typmod { text, .. } => *text = TextFold::default(),
             Check::Bytea(fold) => *fold = ByteaFold::default(),
             Check::Json { walk, .. } => walk.start(),
-            Check::Scalar { text, .. } => text.clear(),
+            Check::Scalar(read) => read.start(),
             Check::Grammar(walk) => walk.start(),
             Check::Refuses(_) => {}
             Check::Array(array) => array.0.start(),
@@ -235,13 +233,13 @@ impl<'p> Check<'p> {
     /// What a whitespace run fed from here can move, for
     /// [`Check::rewind`]: bounded by the plan, a collected text by its
     /// length.
-    fn mark(&self) -> Mark {
+    fn mark(&self) -> Mark<'p> {
         match self {
             Check::Nothing => Mark::Nothing,
             Check::Typmod { text, .. } => Mark::Typmod(text.clone()),
             Check::Bytea(fold) => Mark::Bytea(*fold),
             Check::Json { walk, .. } => Mark::Json(walk.mark()),
-            Check::Scalar { text, .. } => Mark::Collected(text.len()),
+            Check::Scalar(read) => Mark::Scalar(read.mark()),
             Check::Grammar(walk) => Mark::Grammar(walk.clone()),
             Check::Refuses(_) => Mark::Nothing,
             Check::Array(array) => Mark::Array(Box::new((array.0.clone(), array.1.check.mark()))),
@@ -261,13 +259,13 @@ impl<'p> Check<'p> {
     /// part it was reading at the mark is restored; and a walk nested in
     /// that part is restored to whether it was itself in a run, so a mark
     /// it took inside this one is never rewound to.
-    fn rewind(&mut self, mark: &Mark) {
+    fn rewind(&mut self, mark: &Mark<'p>) {
         match (self, mark) {
             (Check::Nothing, Mark::Nothing) => {}
             (Check::Typmod { text, .. }, Mark::Typmod(at)) => text.clone_from(at),
             (Check::Bytea(fold), Mark::Bytea(at)) => *fold = *at,
             (Check::Json { walk, .. }, Mark::Json(at)) => walk.rewind(*at),
-            (Check::Scalar { text, .. }, Mark::Collected(at)) => text.truncate(*at),
+            (Check::Scalar(read), Mark::Scalar(at)) => read.rewind(at),
             (Check::Grammar(walk), Mark::Grammar(at)) => walk.clone_from(at),
             (Check::Refuses(_), Mark::Nothing) => {}
             (Check::Array(array), Mark::Array(at)) => {
@@ -297,8 +295,8 @@ impl<'p> Check<'p> {
                 text.push(run);
                 Ok(())
             }
-            Check::Scalar { text: collected, .. } => {
-                collected.extend_from_slice(run);
+            Check::Scalar(read) => {
+                read.run(run);
                 Ok(())
             }
             check => run.iter().try_for_each(|&byte| check.byte(byte)),
@@ -318,8 +316,8 @@ impl<'p> Check<'p> {
                 Ok(())
             }
             Check::Json { walk, .. } => walk.byte(byte),
-            Check::Scalar { text, .. } => {
-                text.push(byte);
+            Check::Scalar(read) => {
+                read.byte(byte);
                 Ok(())
             }
             Check::Grammar(walk) => walk.byte(byte),
@@ -351,10 +349,7 @@ impl<'p> Check<'p> {
             Check::Bytea(fold) => fold.end() == Err(Unread::Refused),
             Check::Json { walk, jsonb: false } => walk.end().is_err(),
             Check::Json { walk, jsonb: true } => walk.end() == Err(Unread::Refused),
-            Check::Scalar { kind, text } => {
-                let value = std::str::from_utf8(text).map_err(|_| Refused)?;
-                matches!(field_key(kind, value), Err(Unread::Refused))
-            }
+            Check::Scalar(read) => read.finish() == Err(Unread::Refused),
             Check::Grammar(walk) => walk.end().is_err(),
             Check::Refuses(refused) => *refused,
             Check::Array(array) => return array.0.end(),
@@ -373,19 +368,18 @@ impl<'p> Check<'p> {
 /// starts ([`Parts::mark`]): each reader's own fixed state, and a collected
 /// text's length, none of it growing with the run.
 #[derive(Debug)]
-enum Mark {
+enum Mark<'p> {
     Nothing,
     Typmod(TextFold),
     Bytea(ByteaFold),
     Json(JsonMark),
-    /// How much text was collected.
-    Collected(usize),
+    Scalar(KeyMark<'p>),
     Grammar(Grammar),
     /// The walk, and its element's check.
-    Array(Box<(ArrayWalk, Mark)>),
+    Array(Box<(ArrayWalk, Mark<'p>)>),
     Int2Vector(Int2VectorWalk),
     /// The walk, the field it was reading and that field's check.
-    Record(Box<(RecordWalk, usize, Option<Mark>)>),
+    Record(Box<(RecordWalk, usize, Option<Mark<'p>>)>),
     Range(RangeMark),
     Multirange(MultirangeMark),
 }
@@ -407,7 +401,7 @@ struct Element<'p> {
     check: Check<'p>,
     not_null: bool,
     /// Where the check stood at the container's last mark.
-    mark: Option<Mark>,
+    mark: Option<Mark<'p>>,
 }
 
 impl<'p> Element<'p> {

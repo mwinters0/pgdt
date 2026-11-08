@@ -4190,9 +4190,9 @@ prefix from v16 — is a spelling, not a range (I80).
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `value::int::int_in`, which refuses a field or a filter
-literal of any of the three types past its column's width, a parse keying the
-field failing on it.
+**Relied on by:** `value::int::IntIn::finish`, which refuses a field or a
+filter literal of any of the three types past its column's width, a parse
+keying the field failing on it.
 
 **Re-verify.**
 
@@ -4410,8 +4410,8 @@ brace, two of each, or a space at either end.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `decode::decode_uuid`, which reads a field and a filter
-literal by this grammar.
+**Relied on by:** `value::uuid::UuidIn::finish`, by which `decode::decode_uuid`
+and the order key read a field and a filter literal.
 
 **Re-verify.**
 
@@ -4445,8 +4445,8 @@ holds in a UTF-8 locale under glibc.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `value::bool::bool_unread`, which refuses a field and a filter
-literal so spelled.
+**Relied on by:** `value::bool::BoolIn::finish`, which refuses a field and a
+filter literal so spelled.
 
 **Re-verify.**
 
@@ -4487,8 +4487,8 @@ server was built against.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `value::int::oid_in`, through which `value::int::oid_unread`
-refuses a field and a filter literal every major refuses.
+**Relied on by:** `value::int::OidBase::value`, through which
+`value::int::OidIn` refuses a field and a filter literal every major refuses.
 
 **Re-verify.**
 
@@ -4658,7 +4658,7 @@ meets; no field is refused here for it.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `key/order.rs`'s `field_key`, which refuses a field naming
+**Relied on by:** `key/order.rs`'s `EnumIn::finish`, which refuses a field naming
 no label of a type whose labels the preamble holds exactly
 (`TypeKind::Enum`'s `exact`), and one of `NAMEDATALEN` bytes or more whatever
 it holds; `grammar::input::text_grammar`, whose `TextGrammar::RefusesAll` refuses
@@ -5226,9 +5226,8 @@ blanks, which every locale a server runs in agrees on below `0x80`.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
 and server).
 
-**Relied on by:** `value::int::int_unread`, which refuses a field of the three
-types its reader does not read where v16's grammar or the width refuses it,
-so only where every major does.
+**Relied on by:** `value::int::IntIn::digits`, which refuses a field of the
+three types where v16's grammar refuses it, so only where every major does.
 
 **Re-verify.**
 
