@@ -16,6 +16,14 @@ pub(crate) type Walked<T = ()> = Result<T, Refused>;
 /// **What a container's walk hands its caller of each part**, `K` naming
 /// which: a part's beginning, its own text a byte at a time as its
 /// container's grammar reads it, and its end — or SQL NULL in its place.
+///
+/// **A whitespace run whose end decides whether it is the part's** — an
+/// unquoted array element's, interior or trailing, or one after `NULL`,
+/// which the byte after it makes a marker or a text — is fed on into the
+/// part from a [`Parts::mark`] and rewound to it where it is not, so the
+/// walk holds nothing of the run, and each implementor restores its own
+/// state, or truncates what it collected, bounded by what it held at the
+/// mark rather than by the run (`docs/design/decisions.md`, "D145").
 pub(crate) trait Parts<K: Copy = ()> {
     /// Part `k` begins; its bytes follow.
     fn begin(&mut self, k: K) -> Walked;
@@ -25,43 +33,14 @@ pub(crate) trait Parts<K: Copy = ()> {
     fn end(&mut self) -> Walked;
     /// Part `k` is SQL NULL.
     fn null(&mut self, k: K) -> Walked;
-}
-
-/// **A whitespace run carried as its bytes' run lengths**, where a reader
-/// learns whether it is a part's interior or its trailing blanks only at the
-/// byte after it: a run of one byte is one count however long.
-// deficiency: KD167 — a run alternating its bytes is a count per change, so a
-// field written as one unquoted element whose whitespace alternates `' '`
-// and `'\t'`, inside it or after `NULL`, carries state growing with it: no
-// `pg_dump` writes one, `array_out` quoting every element holding whitespace.
-// **(b) owned by P33**, reading the run on into its part and `Parts` rewinding
-// it where it trails.
-#[derive(Debug, Default, Clone)]
-pub(crate) struct Blanks {
-    runs: Vec<(u8, u32)>,
-}
-
-impl Blanks {
-    pub(crate) fn push(&mut self, byte: u8) {
-        match self.runs.last_mut() {
-            Some((last, count)) if *last == byte && *count < u32::MAX => *count += 1,
-            _ => self.runs.push((byte, 1)),
-        }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.runs.clear();
-    }
-
-    /// Hand the run to `to`, in order, being a part's interior.
-    pub(crate) fn flush(&mut self, to: &mut dyn FnMut(u8) -> Walked) -> Walked {
-        for (byte, count) in self.runs.drain(..) {
-            for _ in 0..count {
-                to(byte)?;
-            }
-        }
-        Ok(())
-    }
+    /// Remember where the current part stands — or, between parts, that
+    /// none has begun — a whitespace run being fed on from here.
+    fn mark(&mut self);
+    /// Return to the last [`Parts::mark`], the run fed since turning out not
+    /// to be the part's: what it fed forgotten, and a part begun since
+    /// abandoned, a `null` following in its place. A refusal the run met
+    /// goes with it.
+    fn rewind(&mut self);
 }
 
 /// **Letters read against a keyword in any ASCII case**, as `NULL`, `empty`

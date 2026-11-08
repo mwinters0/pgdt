@@ -19,12 +19,14 @@ use crate::nested::RangeLiteral;
 use crate::value::bit::bit_in;
 use crate::value::bytea::ByteaFold;
 use crate::value::geometric::{box_in, circle_in, line_in, lseg_in, path_in, point_in, poly_in};
-use crate::value::json::{JsonWalk, json_in};
+use crate::value::json::{JsonMark, JsonWalk, json_in};
 use crate::value::nested;
 use crate::value::nested::key::{
     NestedKey, RangeBoundKey, RangeKey, canonical_multirange, make_range,
 };
-use crate::value::nested::{ArrayWalk, Int2VectorWalk, MultirangeWalk, RangeWalk, RecordWalk};
+use crate::value::nested::{
+    ArrayWalk, Int2VectorWalk, MultirangeMark, MultirangeWalk, RangeMark, RangeWalk, RecordWalk,
+};
 use crate::value::source::{Parts, Refused, Walked};
 use crate::value::text::TextFold;
 
@@ -176,7 +178,7 @@ impl<'p> Check<'p> {
             NestedCompare::Record { fields, .. } => {
                 let walk = RecordWalk::new(fields.len());
                 let fields = fields.iter().map(|(_, position)| Element::of(position)).collect();
-                Check::Record(Box::new((walk, Fields(fields, 0))))
+                Check::Record(Box::new((walk, Fields { fields, at: 0, marked: 0 })))
             }
             NestedCompare::Range { bound, discrete, .. } => {
                 Check::Range { walk: RangeWalk::default(), bound, discrete: *discrete }
@@ -200,6 +202,61 @@ impl<'p> Check<'p> {
             Check::Record(record) => record.0.start(),
             Check::Range { walk, .. } => walk.start(),
             Check::Multirange { walk, .. } => walk.start(),
+        }
+    }
+
+    /// What a whitespace run fed from here can move, for
+    /// [`Check::rewind`]: bounded by the plan, a collected text by its
+    /// length.
+    fn mark(&self) -> Mark {
+        match self {
+            Check::Nothing => Mark::Nothing,
+            Check::Typmod { text, .. } => Mark::Typmod(text.clone()),
+            Check::Bytea(fold) => Mark::Bytea(*fold),
+            Check::Json { walk, .. } => Mark::Json(walk.mark()),
+            Check::Scalar { text, .. } | Check::Grammar { text, .. } => Mark::Collected(text.len()),
+            Check::Array(array) => Mark::Array(Box::new((array.0.clone(), array.1.check.mark()))),
+            Check::Int2Vector(walk) => Mark::Int2Vector(*walk),
+            Check::Record(record) => {
+                let Fields { fields, at, .. } = &record.1;
+                let field = fields.get(*at).map(|field| field.check.mark());
+                Mark::Record(Box::new((record.0.clone(), *at, field)))
+            }
+            Check::Range { walk, .. } => Mark::Range(walk.mark()),
+            Check::Multirange { walk, .. } => Mark::Multirange(walk.mark()),
+        }
+    }
+
+    /// Return to `mark`, taken of this check. A part a container begins
+    /// inside the run is begun again after it and readied then, so only the
+    /// part it was reading at the mark is restored; and a walk nested in
+    /// that part is restored to whether it was itself in a run, so a mark
+    /// it took inside this one is never rewound to.
+    fn rewind(&mut self, mark: &Mark) {
+        match (self, mark) {
+            (Check::Nothing, Mark::Nothing) => {}
+            (Check::Typmod { text, .. }, Mark::Typmod(at)) => text.clone_from(at),
+            (Check::Bytea(fold), Mark::Bytea(at)) => *fold = *at,
+            (Check::Json { walk, .. }, Mark::Json(at)) => walk.rewind(*at),
+            (Check::Scalar { text, .. } | Check::Grammar { text, .. }, Mark::Collected(at)) => {
+                text.truncate(*at);
+            }
+            (Check::Array(array), Mark::Array(at)) => {
+                array.0.clone_from(&at.0);
+                array.1.check.rewind(&at.1);
+            }
+            (Check::Int2Vector(walk), Mark::Int2Vector(at)) => *walk = *at,
+            (Check::Record(record), Mark::Record(at)) => {
+                let (walk, field, check) = &**at;
+                record.0.clone_from(walk);
+                record.1.at = *field;
+                if let (Some(element), Some(check)) = (record.1.fields.get_mut(*field), check) {
+                    element.check.rewind(check);
+                }
+            }
+            (Check::Range { walk, .. }, Mark::Range(at)) => walk.rewind(*at),
+            (Check::Multirange { walk, .. }, Mark::Multirange(at)) => walk.rewind(*at),
+            _ => unreachable!("a mark is rewound into the check it was taken of"),
         }
     }
 
@@ -283,6 +340,26 @@ impl<'p> Check<'p> {
     }
 }
 
+/// **What a whitespace run can move of a [`Check`]**, saved where the run
+/// starts ([`Parts::mark`]): each reader's own fixed state, and a collected
+/// text's length, none of it growing with the run.
+#[derive(Debug)]
+enum Mark {
+    Nothing,
+    Typmod(TextFold),
+    Bytea(ByteaFold),
+    Json(JsonMark),
+    /// How much text was collected.
+    Collected(usize),
+    /// The walk, and its element's check.
+    Array(Box<(ArrayWalk, Mark)>),
+    Int2Vector(Int2VectorWalk),
+    /// The walk, the field it was reading and that field's check.
+    Record(Box<(RecordWalk, usize, Option<Mark>)>),
+    Range(RangeMark),
+    Multirange(MultirangeMark),
+}
+
 /// Whether a range's two bounds, as `range_in` compares them, refuse it.
 fn range_refused(
     bound: &NestedCompare,
@@ -299,11 +376,13 @@ fn range_refused(
 struct Element<'p> {
     check: Check<'p>,
     not_null: bool,
+    /// Where the check stood at the container's last mark.
+    mark: Option<Mark>,
 }
 
 impl<'p> Element<'p> {
     fn of(position: &'p Position<NestedCompare>) -> Self {
-        Self { check: Check::of(&position.plan), not_null: position.not_null }
+        Self { check: Check::of(&position.plan), not_null: position.not_null, mark: None }
     }
 }
 
@@ -324,28 +403,58 @@ impl Parts for Element<'_> {
     fn null(&mut self, (): ()) -> Walked {
         if self.not_null { Err(Refused) } else { Ok(()) }
     }
+
+    fn mark(&mut self) {
+        self.mark = Some(self.check.mark());
+    }
+
+    fn rewind(&mut self) {
+        if let Some(mark) = &self.mark {
+            self.check.rewind(mark);
+        }
+    }
 }
 
-/// A composite's fields, each its own position's, the one being read last.
+/// A composite's fields, each its own position's.
 #[derive(Debug)]
-struct Fields<'p>(Vec<Element<'p>>, usize);
+struct Fields<'p> {
+    fields: Vec<Element<'p>>,
+    /// The field being read last.
+    at: usize,
+    /// The field being read at the last mark.
+    marked: usize,
+}
 
 impl Parts<usize> for Fields<'_> {
     fn begin(&mut self, k: usize) -> Walked {
-        self.1 = k;
-        self.0[k].begin(())
+        self.at = k;
+        self.fields[k].begin(())
     }
 
     fn byte(&mut self, byte: u8) -> Walked {
-        self.0[self.1].byte(byte)
+        self.fields[self.at].byte(byte)
     }
 
     fn end(&mut self) -> Walked {
-        self.0[self.1].end()
+        self.fields[self.at].end()
     }
 
     fn null(&mut self, k: usize) -> Walked {
-        self.0[k].null(())
+        self.fields[k].null(())
+    }
+
+    fn mark(&mut self) {
+        self.marked = self.at;
+        if let Some(field) = self.fields.get_mut(self.at) {
+            field.mark();
+        }
+    }
+
+    fn rewind(&mut self) {
+        self.at = self.marked;
+        if let Some(field) = self.fields.get_mut(self.at) {
+            field.rewind();
+        }
     }
 }
 

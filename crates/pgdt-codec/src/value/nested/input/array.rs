@@ -1,7 +1,7 @@
 //! `array_in`'s grammar as a walk fed a byte at a time.
 
 use crate::value::nested::is_space;
-use crate::value::source::{Blanks, Parts, Refused, Walked, Word};
+use crate::value::source::{Parts, Refused, Walked, Word};
 
 /// PostgreSQL's `MAXDIM`: the most dimensions an array value may have.
 /// `pgdt_model::PG_ARRAY_MAX_DIMS` is the same number for the shape census;
@@ -21,7 +21,10 @@ pub(crate) struct ArrayShape {
 /// `delim`, handing its caller every element in row-major order as it reads
 /// it: what [`super::parse_array_delimited`] reads, with no element held
 /// past its turn and nothing looked at past the byte it is fed
-/// (`docs/design/decisions.md`, "D143", "D144").
+/// (`docs/design/decisions.md`, "D143", "D144"). A whitespace run whose end
+/// decides whether it is an element's is fed on into the element and
+/// rewound where it is not ([`Parts::mark`], "D145"), so the walk's state is
+/// fixed.
 #[derive(Debug, Clone)]
 pub(crate) struct ArrayWalk {
     delim: u8,
@@ -45,8 +48,6 @@ pub(crate) struct ArrayWalk {
     /// An unquoted element's first letters, read as `NULL`'s.
     null: Word,
     held: [u8; 4],
-    /// A whitespace run inside an unquoted element, or after `NULL`.
-    blanks: Blanks,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,11 +72,21 @@ enum Stage {
     AfterQuoted,
     /// An unquoted element's first letters, so far `NULL`'s.
     Null,
-    /// `NULL` read, a whitespace run after it carried.
-    NullBlanks,
-    Unquoted {
-        escaped: bool,
+    /// `NULL` read, and nothing after it.
+    NullRead,
+    /// `NULL` read and a whitespace run after it, fed on into an element
+    /// begun past a mark, which the run met a refusal in where `refused`.
+    NullBlanks {
+        refused: bool,
     },
+    /// An unquoted element, `run` naming a whitespace run it is in, fed on
+    /// past a mark, by whether a refusal was met in it: a refusal that
+    /// stands only where the run turns out interior.
+    Unquoted {
+        run: Option<bool>,
+    },
+    /// An unquoted element, past a `\`.
+    UnquotedEscaped,
     /// Past the closing brace.
     Trailing,
 }
@@ -142,16 +153,12 @@ impl ArrayWalk {
             count: 0,
             null: Word::new(b"NULL"),
             held: [0; 4],
-            blanks: Blanks::default(),
         }
     }
 
     /// Ready the walk for another literal.
     pub(crate) fn start(&mut self) {
-        let delim = self.delim;
-        let blanks = std::mem::take(&mut self.blanks);
-        *self = Self { blanks, ..Self::new(delim) };
-        self.blanks.clear();
+        *self = Self::new(self.delim);
     }
 
     fn terminates(&self, byte: u8) -> bool {
@@ -212,60 +219,81 @@ impl ArrayWalk {
             Stage::Null if self.null.letter(byte) => {
                 self.held[self.null.read() - 1] = byte;
                 if self.null.done() {
-                    self.stage = Stage::NullBlanks;
+                    self.stage = Stage::NullRead;
                 }
-                Ok(())
-            }
-            Stage::Null => {
-                self.begin_unquoted(parts)?;
-                self.byte(byte, parts)
-            }
-            Stage::NullBlanks if is_space(byte) => {
-                self.blanks.push(byte);
                 Ok(())
             }
             // The `NULL` marker: those four letters in any case, no escape
             // among them, so `{N\ULL}` is the *string* `NULL`, and nothing but
             // whitespace after them.
-            Stage::NullBlanks if self.terminates(byte) => {
-                self.blanks.clear();
-                self.null = Word::new(b"NULL");
-                parts.null(())?;
-                self.element_done()?;
-                self.body(byte, parts)
+            Stage::NullRead if self.terminates(byte) => self.null_element(byte, parts),
+            // Whether a run after `NULL` leaves it the marker only the byte
+            // after the run says, so the run is fed on into an element begun
+            // past a mark, which the marker rewinds.
+            Stage::NullRead if is_space(byte) => {
+                parts.mark();
+                let refused = self.begin_unquoted(parts).and_then(|()| parts.byte(byte)).is_err();
+                self.stage = Stage::NullBlanks { refused };
+                Ok(())
             }
-            Stage::NullBlanks => {
+            Stage::Null | Stage::NullRead => {
                 self.begin_unquoted(parts)?;
                 self.byte(byte, parts)
             }
-            Stage::Unquoted { escaped: true } => {
-                self.stage = Stage::Unquoted { escaped: false };
+            Stage::NullBlanks { refused } if is_space(byte) => {
+                let refused = refused || parts.byte(byte).is_err();
+                self.stage = Stage::NullBlanks { refused };
+                Ok(())
+            }
+            Stage::NullBlanks { .. } if self.terminates(byte) => {
+                parts.rewind();
+                self.null_element(byte, parts)
+            }
+            Stage::NullBlanks { refused } => {
+                self.stage = Stage::Unquoted { run: Some(refused) };
+                self.byte(byte, parts)
+            }
+            Stage::UnquotedEscaped => {
+                self.stage = Stage::Unquoted { run: None };
                 parts.byte(byte)
             }
             // Trailing whitespace is dropped and interior whitespace kept — a
             // run is interior where something but a separator or a brace
-            // follows it — and a `\` escape counts as non-whitespace.
-            Stage::Unquoted { escaped: false } => match byte {
+            // follows it — and a `\` escape counts as non-whitespace. A run
+            // is fed on into the element as it comes, from a mark the
+            // separator or brace rewinds to, and a refusal met in it stands
+            // only where it turns out interior: `{1\v}` is a `json[]`, whose
+            // grammar refuses a `\v` that `array_in` trims.
+            Stage::Unquoted { run } => match byte {
                 byte if self.terminates(byte) => {
-                    self.blanks.clear();
+                    if run.is_some() {
+                        parts.rewind();
+                    }
                     parts.end()?;
                     self.element_done()?;
                     self.body(byte, parts)
                 }
                 byte if is_space(byte) => {
-                    self.blanks.push(byte);
+                    let refused = match run {
+                        None => {
+                            parts.mark();
+                            parts.byte(byte).is_err()
+                        }
+                        Some(refused) => refused || parts.byte(byte).is_err(),
+                    };
+                    self.stage = Stage::Unquoted { run: Some(refused) };
                     Ok(())
                 }
                 // An element is quoted in full or not at all, and a `{` here
                 // is a brace where a value was expected.
                 b'{' | b'"' => Err(Refused),
+                _ if run == Some(true) => Err(Refused),
                 b'\\' => {
-                    self.blanks.flush(&mut |byte| parts.byte(byte))?;
-                    self.stage = Stage::Unquoted { escaped: true };
+                    self.stage = Stage::UnquotedEscaped;
                     Ok(())
                 }
                 byte => {
-                    self.blanks.flush(&mut |byte| parts.byte(byte))?;
+                    self.stage = Stage::Unquoted { run: None };
                     parts.byte(byte)
                 }
             },
@@ -347,17 +375,22 @@ impl ArrayWalk {
         Ok(())
     }
 
-    /// An unquoted element begun: the letters the `NULL` test held, and the
-    /// run after them where it read one, handed on.
+    /// An unquoted element begun: the letters the `NULL` test held handed
+    /// on.
     fn begin_unquoted(&mut self, parts: &mut dyn Parts) -> Walked {
-        parts.begin(())?;
-        for k in 0..self.null.read() {
-            parts.byte(self.held[k])?;
-        }
+        let read = self.null.read();
         self.null = Word::new(b"NULL");
-        self.blanks.flush(&mut |byte| parts.byte(byte))?;
-        self.stage = Stage::Unquoted { escaped: false };
-        Ok(())
+        self.stage = Stage::Unquoted { run: None };
+        parts.begin(())?;
+        self.held[..read].iter().try_for_each(|&byte| parts.byte(byte))
+    }
+
+    /// The `NULL` marker read, `byte` the separator or brace after it.
+    fn null_element(&mut self, byte: u8, parts: &mut dyn Parts) -> Walked {
+        self.null = Word::new(b"NULL");
+        parts.null(())?;
+        self.element_done()?;
+        self.body(byte, parts)
     }
 
     /// The brace structure, as `ReadArrayToken` classifies its tokens.

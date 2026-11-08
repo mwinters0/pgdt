@@ -30,6 +30,14 @@ pub(crate) struct JsonWalk {
     stage: Stage,
 }
 
+/// Where a [`JsonWalk`] stood at a mark ([`JsonWalk::mark`]).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct JsonMark {
+    deep: bool,
+    depth: usize,
+    stage: Stage,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stage {
     /// A value expected, which the cursor counts its depth at.
@@ -199,6 +207,21 @@ impl JsonWalk {
         self.deep = false;
         self.depth = 0;
         self.stage = Stage::Value;
+    }
+
+    /// Where the walk stands, for [`JsonWalk::rewind`] to return to past a
+    /// whitespace run: a blank opens and closes no container, and a byte it
+    /// refuses closes none, so the containers open beneath `depth` are as
+    /// the mark found them.
+    pub(crate) fn mark(&self) -> JsonMark {
+        JsonMark { deep: self.deep, depth: self.depth, stage: self.stage }
+    }
+
+    /// Return to `mark`.
+    pub(crate) fn rewind(&mut self, mark: JsonMark) {
+        self.deep = mark.deep;
+        self.depth = mark.depth;
+        self.stage = mark.stage;
     }
 
     /// Whether a refusal of `jsonb_in`'s own is read here: in a `jsonb`, as

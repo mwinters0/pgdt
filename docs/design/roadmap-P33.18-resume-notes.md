@@ -18,8 +18,8 @@ holding a field's runs only in turn would have to hold the field.
   of its run. `Unescaped`, the iterator a held field is read by, is driven by
   it, so the escapes are read in one place.
 - **What a grammar is fed** (`pgdt-codec`'s `value/source.rs`): `Parts`, what
-  a container's walk hands its caller of each part; `Blanks`, a whitespace
-  run carried as its bytes' run lengths; `Word`, a keyword's letters.
+  a container's walk hands its caller of each part; `Word`, a keyword's
+  letters.
 - **The input walks** (`value/nested/input/`): `ArrayWalk`, `RecordWalk`,
   `RangeWalk`, `MultirangeWalk` and `Int2VectorWalk`, each a state machine
   fed a byte at a time; `quoted.rs` the lexing a field and a bound share;

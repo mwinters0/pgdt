@@ -18,6 +18,14 @@ pub(crate) struct RangeWalk {
     bound: Vec<u8>,
 }
 
+/// Where a [`RangeWalk`] stood at a mark ([`RangeWalk::mark`]): its stage,
+/// and how much of the bound it was reading it had read.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RangeMark {
+    stage: Stage,
+    bound: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stage {
     Lead,
@@ -48,6 +56,19 @@ impl RangeWalk {
     pub(crate) fn start(&mut self) {
         self.stage = Stage::Lead;
         self.bound.clear();
+    }
+
+    /// Where the walk stands, for [`RangeWalk::rewind`] to return to past a
+    /// whitespace run, which ends no bound and starts none of the literal's
+    /// own: a bound's bytes, or skipped.
+    pub(crate) fn mark(&self) -> RangeMark {
+        RangeMark { stage: self.stage, bound: self.bound.len() }
+    }
+
+    /// Return to `mark`.
+    pub(crate) fn rewind(&mut self, mark: RangeMark) {
+        self.stage = mark.stage;
+        self.bound.truncate(mark.bound);
     }
 
     /// Read the literal's next byte.
@@ -203,6 +224,13 @@ pub(crate) struct MultirangeWalk {
     seen: usize,
 }
 
+/// Where a [`MultirangeWalk`] stood at a mark ([`MultirangeWalk::mark`]).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MultirangeMark {
+    stage: MultirangeStage,
+    member: RangeMark,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum MultirangeStage {
     #[default]
@@ -223,6 +251,18 @@ impl MultirangeWalk {
     pub(crate) fn start(&mut self) {
         self.stage = MultirangeStage::Lead;
         self.seen = 0;
+    }
+
+    /// Where the walk stands, for [`MultirangeWalk::rewind`] to return to
+    /// past a whitespace run, which ends no member and starts none.
+    pub(crate) fn mark(&self) -> MultirangeMark {
+        MultirangeMark { stage: self.stage, member: self.member.mark() }
+    }
+
+    /// Return to `mark`.
+    pub(crate) fn rewind(&mut self, mark: MultirangeMark) {
+        self.stage = mark.stage;
+        self.member.rewind(mark.member);
     }
 
     /// Read the literal's next byte, handing `each` a member range it

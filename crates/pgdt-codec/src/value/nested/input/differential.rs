@@ -111,7 +111,7 @@ fn the_walks_read_free_form_literals_as_the_scanners_did() {
 
 /// Whitespace, sometimes, around a part.
 fn blank(rng: &mut Rng) -> &'static str {
-    ["", "", "", " ", "\t", "  "][rng.below(6)]
+    ["", "", "", " ", "\t", "  ", " \t\u{b} "][rng.below(7)]
 }
 
 /// A scalar's text as one of the grammars quotes or escapes it, or leaves it

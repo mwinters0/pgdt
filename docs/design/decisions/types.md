@@ -57,8 +57,18 @@ key tree built and dropped, tens of bytes an element; a check walk beside each n
 ### D144 A reader is a push machine fed a field's runs, looking at no byte past the one it reads
 `Unescape`, the input walks (D143), `TextFold` and `ByteaFold` are hand-written state machines fed a field's bytes as
 its runs come, carrying past a run's end only their own state: an escape begun, `NULL`'s letters, a quote awaiting its
-double, a whitespace run as its bytes' run lengths (`Blanks`, `KD167`), a `bytea` read once for whether it decodes and
-whether `byteain` refuses it. Why: `resumable-reader-micro`. Rejected: the `async` walk, past its noise of the pull walk
-where the push machine is below it; a pull walk forking ahead, holding runs back to the fork; a machine generic over its
-parts, instantiating without bound. Code: `value/source.rs`, `nested/input/`, `json/walk.rs`, `bytea.rs`,
-`grammar/walk.rs`, pgdt-core's `Unescape`. Evidence: `check/tests.rs` (`walked_in_runs`), `tests/decoded_copies.rs`.
+double, a `bytea` read once for whether it decodes and whether `byteain` refuses it. Why: `resumable-reader-micro`.
+Rejected: the `async` walk, past its noise of the pull walk where the push machine is below it; a pull walk forking
+ahead, holding runs back to the fork; a machine generic over its parts, instantiating without bound. Code:
+`value/source.rs`, `nested/input/`, `json/walk.rs`, `bytea.rs`, `grammar/walk.rs`, pgdt-core's `Unescape`. Evidence:
+`check/tests.rs` (`walked_in_runs`), `tests/decoded_copies.rs`.
+
+### D145 A whitespace run whose end decides it is fed on into the part and rewound, never held
+An unquoted array element's whitespace run, and one after `NULL`, is fed on into its part from a mark as it comes, and
+rewound to the mark where the byte after it says the run is not the part's; a refusal met in the run stands only where
+it is interior, `{1\v}` being a `json[]`. The mark and rewind are `Parts`'s, each implementor restoring its own fixed
+state or truncating what it collected. Why: a run may be a line's worth, which a restore reads, and a parse holds
+nothing growing with a field (D144). Rejected: the run held until its end decides it, as its bytes or their run lengths,
+growing on one alternating its bytes; a rewind in each leaf reader, one per type where `Parts` has a few implementors.
+Code: `value/source.rs`, `nested/input/array.rs`, `grammar/walk.rs` (`Mark`). Evidence: `check/tests.rs`,
+`tests/decoded_copies.rs`.

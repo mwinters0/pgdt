@@ -546,6 +546,55 @@ fn a_walked_scalar_is_refused_as_its_text_is() {
     }
 }
 
+/// **A refusal met in an unquoted element's whitespace run stands only
+/// where the run turns out interior**: `array_in` trims a `\v` and `\f`
+/// that `json_in` refuses, so `{1\v}` is a `json[]` and `{1\v2}` is not,
+/// and a run after `NULL` leaves it the marker, refused letters and all,
+/// only where a separator or a brace follows it — a composite's field
+/// inside the element among them, its run kept by `record_in`.
+#[test]
+fn a_refusal_in_a_whitespace_run_stands_only_where_it_is_interior() {
+    let types = vec![
+        not_null_domain("public.nn", "integer"),
+        TypeDef {
+            name: "public.pair".into(),
+            kind: TypeKind::Composite {
+                fields: Some(vec![
+                    ColumnDef::new("a", "smallint"),
+                    ColumnDef::new("b", "character varying(2)"),
+                ]),
+            },
+        },
+    ];
+    let json = comparison_for("json[]", None, &types, &[]);
+    let nn = comparison_for("public.nn[]", None, &types, &[]);
+    let pair = comparison_for("public.pair[]", None, &types, &[]);
+    for (plan, text, refused) in [
+        (&json, "{1\u{b}}", false),
+        (&json, "{1 \u{c}\t,2\u{b}}", false),
+        (&json, "{1\u{b}2}", true),
+        (&json, "{1 \u{b}\\n}", true),
+        (&json, "{NULL\u{b}}", false),
+        (&json, "{NULL\u{b} ,[]}", false),
+        (&json, "{NULL\u{b}x}", true),
+        (&json, "{nULl \t}", false),
+        (&json, "{null \t}", false),
+        (&nn, "{1 \t,NULL\t }", true),
+        (&nn, "{1 \t,2\t }", false),
+        (&nn, "{1 \t2}", true),
+        (&pair, "{(1\\,ab)\t \u{b}}", false),
+        (&pair, "{(1\\,a \t)}", true),
+        (&pair, "{(1\\,a\u{b}) \t,(2\\, )\u{c}}", false),
+        (&pair, "{(1\\,a \t) \t}", true),
+    ] {
+        let escaped = pgdt_core::escape_field(Some(text));
+        assert_eq!(walked_in_runs(plan, &escaped), refused, "{text:?}");
+        assert_eq!(field_refused(plan, text), refused, "{text:?}");
+        let ComparisonPlan::Nested(nested) = plan else { unreachable!("an array's plan") };
+        assert_eq!(checked_key(nested, text).is_err(), refused, "{text:?}");
+    }
+}
+
 /// **A field walked as `COPY` wrote it, `escaped`, is answered alike
 /// whatever runs it is fed in** (`FieldWalk`): whole, in runs of one, two
 /// and three bytes, and cut in two at every byte, each a run's end inside an
@@ -603,6 +652,9 @@ const LEAVES: &[&str] = &[
     "é",
     "1 ",
     " 1",
+    "1\u{b}",
+    "NULL \t",
+    "a \t\u{c}b",
 ];
 
 /// A nested literal `depth` levels deep at most, each level an array split

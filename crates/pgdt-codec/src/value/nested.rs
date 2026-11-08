@@ -29,7 +29,9 @@ mod output;
 
 use std::borrow::Cow;
 
-pub(crate) use input::{ArrayWalk, Int2VectorWalk, MultirangeWalk, RangeWalk, RecordWalk};
+pub(crate) use input::{
+    ArrayWalk, Int2VectorWalk, MultirangeMark, MultirangeWalk, RangeMark, RangeWalk, RecordWalk,
+};
 pub use input::{
     parse_array, parse_array_delimited, parse_int2vector, parse_multirange, parse_range,
     parse_record,

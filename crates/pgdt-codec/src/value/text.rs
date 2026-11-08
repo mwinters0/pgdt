@@ -36,7 +36,7 @@ pub fn char_typmod_refuses(text: &str, length: u32) -> bool {
 /// `character`'s comparison read of it, its length and where its trailing
 /// blanks begin — so a field is answered off its bytes as `Unescaped` reads
 /// them, with no copy of it made (`docs/design/decisions.md`, "D142").
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct TextFold {
     read: TextRead,
     /// Every character seen.

@@ -317,11 +317,12 @@ fn fed_over_runs(
 
 /// **A strict check fed its field over runs holds none of it**: an array of
 /// many short elements, one of escaped texts, one whose unquoted element
-/// holds a long whitespace run, an array of ranges, a `jsonb` and a `json`
-/// of escaped strings, a `bytea` and a long escaped text under its typmod,
-/// each of eight MiB, are checked a run at a time with no more allocated
-/// than a run and the readers' own state; an element its type refuses is
-/// refused all the same.
+/// holds a long whitespace run — alternating its bytes, interior, trailing,
+/// and after `NULL` either way, a `json` element's refused where interior —
+/// an array of ranges, a `jsonb` and a `json` of escaped strings, a `bytea`
+/// and a long escaped text under its typmod, each of eight MiB, are checked
+/// a run at a time with no more allocated than a run and the readers' own
+/// state; an element its type refuses is refused all the same.
 #[test]
 fn a_strict_check_fed_over_runs_holds_no_field() {
     let long = 8usize << 20;
@@ -332,6 +333,12 @@ fn a_strict_check_fed_over_runs_holds_no_field() {
         ("smallint[]", "{", "7,", "70000}", true),
         ("text[]", "{", "\"ab\\\\\\\"c\td\",", "x}", false),
         (typmod_array.as_str(), "{a", " ", "b}", false),
+        (typmod_array.as_str(), "{a", " \t", "b}", false),
+        (typmod_array.as_str(), "{a", " \t", "}", false),
+        (typmod_array.as_str(), "{NULL", " \t", "}", false),
+        (typmod_array.as_str(), "{NULL", " \t", "b}", false),
+        ("json[]", "{1", "\u{b}\t", "}", false),
+        ("json[]", "{1", "\u{b}\t", "2}", true),
         ("int4range[]", "{", "\"[1,2)\",", "\"(,3]\"}", false),
         ("jsonb", "[", "\"a\\nb\",", "1]", false),
         ("jsonb", "[", "\"a\\nb\",", "\"\\u0000\"]", true),

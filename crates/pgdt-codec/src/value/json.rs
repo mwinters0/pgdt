@@ -12,7 +12,7 @@ mod walk;
 
 use walk::{JSONB_MAX_DEPTH, numeric_stores};
 
-pub(crate) use walk::JsonWalk;
+pub(crate) use walk::{JsonMark, JsonWalk};
 
 /// Whether `json_in` reads `text`, which it stores as written: one JSON value
 /// in RFC 8259's grammar, with blanks of `' '`, `\t`, `\n` and `\r` around

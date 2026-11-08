@@ -38,7 +38,7 @@ mod record;
 
 pub(crate) use array::ArrayWalk;
 pub(crate) use int2vector::Int2VectorWalk;
-pub(crate) use range::{MultirangeWalk, RangeWalk};
+pub(crate) use range::{MultirangeMark, MultirangeWalk, RangeMark, RangeWalk};
 pub(crate) use record::RecordWalk;
 
 /// **Every part a walk hands over, collected**: each one's text, `None` for
@@ -47,6 +47,8 @@ pub(crate) use record::RecordWalk;
 struct Collect {
     parts: Vec<Option<String>>,
     part: Vec<u8>,
+    /// How much of the part was collected at the mark.
+    mark: usize,
 }
 
 impl<K: Copy> Parts<K> for Collect {
@@ -69,6 +71,14 @@ impl<K: Copy> Parts<K> for Collect {
     fn null(&mut self, _: K) -> Walked {
         self.parts.push(None);
         Ok(())
+    }
+
+    fn mark(&mut self) {
+        self.mark = self.part.len();
+    }
+
+    fn rewind(&mut self) {
+        self.part.truncate(self.mark);
     }
 }
 
