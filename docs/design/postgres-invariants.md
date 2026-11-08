@@ -4818,8 +4818,8 @@ into a `bit varying(2)` one. `format_type` names columns declared `bit`,
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `value::bit::bit_in`, which a strict parse checks a `bit` or
-`bit varying` field by, through `grammar::input::text_grammar`.
+**Relied on by:** `value::bit::BitWalk::end`, which a strict parse checks a
+`bit` or `bit varying` field by, through `grammar::input::text_grammar`.
 
 **Re-verify.**
 
@@ -4886,11 +4886,10 @@ of megabytes; only arithmetic reaches it.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
 13.23, 16.15 and 18.6 (observed).
 
-**Relied on by:** `value::geometric::point_in`, `value::geometric::line_in`, `value::geometric::lseg_in`,
-`value::geometric::box_in`, `value::geometric::path_in`, `value::geometric::poly_in` and
-`value::geometric::circle_in`, which a strict parse checks a geometric field by, through
-`grammar::input::text_grammar`; `line_in` refusing only where every supported major
-refuses.
+**Relied on by:** `value::geometric::GeometricWalk::end`, `point_in`'s, `line_in`'s, `lseg_in`'s,
+`box_in`'s, `path_in`'s, `poly_in`'s and `circle_in`'s grammars in one walk, which a strict parse checks
+a geometric field by, through `grammar::input::text_grammar`; `line_in`'s refusing only where every
+supported major refuses.
 
 **Re-verify.**
 

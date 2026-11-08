@@ -2,6 +2,10 @@
 //! them: `isspace` and `strtod`. Shared by the families whose input functions
 //! call them.
 
+use std::io::Write;
+
+use crate::value::source::{Refused, Walked};
+
 /// `b[at]` as C reads it, `0` past the end.
 pub(crate) fn c_at(b: &[u8], at: usize) -> u8 {
     b.get(at).copied().unwrap_or(0)
@@ -82,12 +86,8 @@ pub(crate) fn strtod(b: &[u8], at: usize) -> Option<(f64, usize, bool)> {
 /// `double precision`'s range. `None` where no digit follows.
 fn hex_float(b: &[u8], at: usize) -> Option<(f64, usize, bool)> {
     let mut i = at;
-    // The leading significant digits, at most fifteen — sixty bits, past the
-    // fifty-three a double keeps plus a rounding bit — and whether any digit
-    // past them is nonzero; `exponent` is the power of two of
-    // `mantissa`'s last bit.
-    let (mut mantissa, mut kept, mut sticky) = (0u64, 0u32, false);
-    let (mut exponent, mut digits, mut point) = (0i64, 0usize, false);
+    let mut hex = HexDigits::default();
+    let mut point = false;
     loop {
         let c = c_at(b, i);
         if c == b'.' && !point {
@@ -96,70 +96,350 @@ fn hex_float(b: &[u8], at: usize) -> Option<(f64, usize, bool)> {
             continue;
         }
         let Some(digit) = char::from(c).to_digit(16) else { break };
-        digits += 1;
+        hex.digit(digit, point);
         i += 1;
-        if mantissa == 0 && digit == 0 {
-            exponent -= if point { 4 } else { 0 };
-        } else if kept < 15 {
-            mantissa = mantissa << 4 | u64::from(digit);
-            kept += 1;
-            exponent -= if point { 4 } else { 0 };
-        } else {
-            sticky |= digit != 0;
-            exponent += if point { 0 } else { 4 };
-        }
     }
-    if digits == 0 {
+    if hex.digits == 0 {
         return None;
     }
     let mut end = i;
+    let mut power = 0;
     if matches!(c_at(b, i), b'p' | b'P') {
         let sign = usize::from(matches!(c_at(b, i + 1), b'+' | b'-'));
         let run = digit_run(b, i + 1 + sign);
         if run > 0 {
-            // Saturated far past any exponent a double reaches either way.
-            let power = b[i + 1 + sign..i + 1 + sign + run]
+            power = b[i + 1 + sign..i + 1 + sign + run]
                 .iter()
-                .fold(0i64, |n, &d| (n * 10 + i64::from(d - b'0')).min(1 << 40));
-            exponent += if c_at(b, i + 1) == b'-' { -power } else { power };
+                .fold(0i64, |n, &d| saturated_digit(n, d - b'0'));
+            if c_at(b, i + 1) == b'-' {
+                power = -power;
+            }
             end = i + 1 + sign + run;
         }
     }
-    if mantissa == 0 {
-        return Some((0.0, end, false));
+    let (value, out_of_range) = hex.value(power)?;
+    Some((value, end, out_of_range))
+}
+
+/// `n` with the decimal digit `d` appended, saturated far past any exponent
+/// a double reaches either way.
+fn saturated_digit(n: i64, d: u8) -> i64 {
+    (n * 10 + i64::from(d)).min(1 << 40)
+}
+
+/// **A hexadecimal significand as `strtod` reads it**, a digit at a time:
+/// the leading significant digits, at most fifteen — sixty bits, past the
+/// fifty-three a double keeps plus a rounding bit — and whether any digit
+/// past them is nonzero; `exponent` is the power of two of `mantissa`'s last
+/// bit.
+#[derive(Debug, Clone, Copy, Default)]
+struct HexDigits {
+    mantissa: u64,
+    kept: u32,
+    sticky: bool,
+    exponent: i64,
+    digits: usize,
+}
+
+impl HexDigits {
+    /// Read the hex digit `digit`, after the point where `point`.
+    fn digit(&mut self, digit: u32, point: bool) {
+        self.digits += 1;
+        if self.mantissa == 0 && digit == 0 {
+            self.exponent -= if point { 4 } else { 0 };
+        } else if self.kept < 15 {
+            self.mantissa = self.mantissa << 4 | u64::from(digit);
+            self.kept += 1;
+            self.exponent -= if point { 4 } else { 0 };
+        } else {
+            self.sticky |= digit != 0;
+            self.exponent += if point { 0 } else { 4 };
+        }
     }
-    let bits = i64::from(64 - mantissa.leading_zeros());
-    let top = exponent + bits - 1;
-    if top > 1023 {
-        return Some((f64::INFINITY, end, true));
+
+    /// The magnitude times two to `power`, rounded to nearest, ties to even,
+    /// as glibc rounds it, and whether it lies past `double precision`'s
+    /// range.
+    fn value(&self, power: i64) -> Option<(f64, bool)> {
+        let Self { mantissa, sticky, .. } = *self;
+        let exponent = self.exponent + power;
+        if mantissa == 0 {
+            return Some((0.0, false));
+        }
+        let bits = i64::from(64 - mantissa.leading_zeros());
+        let top = exponent + bits - 1;
+        if top > 1023 {
+            return Some((f64::INFINITY, true));
+        }
+        // The bits the result keeps: fifty-three for a normal double, fewer
+        // the further a subnormal's leading bit sits below 2^-1022.
+        let precision = if top >= -1022 { 53 } else { 53 - (-1022 - top) };
+        if precision < 0 {
+            return Some((0.0, true));
+        }
+        let shift = bits - precision;
+        let rounded = if shift > 0 {
+            let shift = shift as u32;
+            let (kept, rest, half) =
+                (mantissa >> shift, mantissa & ((1 << shift) - 1), 1u64 << (shift - 1));
+            kept + u64::from(rest > half || (rest == half && (sticky || kept & 1 == 1)))
+        } else {
+            mantissa << (-shift) as u32
+        };
+        if precision < 53 {
+            // `rounded` counts multiples of 2^-1074, a carry into bit 52
+            // being the least normal double, which its bit pattern reads as.
+            let value = f64::from_bits(rounded);
+            return Some((value, value == 0.0));
+        }
+        let (fraction, top) = if rounded == 1 << 53 { (0, top + 1) } else { (rounded, top) };
+        if top > 1023 {
+            return Some((f64::INFINITY, true));
+        }
+        let biased = u64::try_from(top + 1023).ok()?;
+        Some((f64::from_bits(biased << 52 | (fraction & ((1 << 52) - 1))), false))
     }
-    // The bits the result keeps: fifty-three for a normal double, fewer the
-    // further a subnormal's leading bit sits below 2^-1022.
-    let precision = if top >= -1022 { 53 } else { 53 - (-1022 - top) };
-    if precision < 0 {
-        return Some((0.0, end, true));
+}
+
+/// How many significant decimal digits [`Strtod`] keeps: past the 767 that
+/// can decide how a decimal rounds to a double, a digit beyond them deciding
+/// only whether a tie is one, which a nonzero digit appended in their place
+/// answers.
+const KEPT_DIGITS: usize = 800;
+
+/// **A number read as glibc's `strtod` reads it, fed a byte at a time**, for
+/// a grammar reading no byte after a number that could continue one: where
+/// `strtod` would read on into a byte and then leave it unread — an exponent
+/// marker or its sign with no digit after, `0x`'s `x` with no hex digit, a
+/// word's letters past `inf`, a `nan` tag left open — such a grammar refuses
+/// that byte, so the reader refuses there rather than hold what it read
+/// ahead (`docs/design/decisions.md`, "D144", "D146"). What it holds is
+/// fixed: a decimal's leading significant digits ([`KEPT_DIGITS`]), a
+/// hexadecimal's ([`HexDigits`]), and counts.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Strtod {
+    stage: Stage,
+    negative: bool,
+    /// `0.` and a decimal's significant digits after it, as ASCII, the
+    /// first nonzero on: the text its value is parsed from, kept between
+    /// numbers.
+    digits: Vec<u8>,
+    /// A nonzero digit past [`KEPT_DIGITS`].
+    sticky: bool,
+    /// The power of ten of the point after the digits read, before the
+    /// exponent: the value is `0.<digits> × 10^point`.
+    point: i64,
+    /// Whether a mantissa digit was read.
+    any: bool,
+    hex: HexDigits,
+    /// The exponent's digits, saturated, and its sign.
+    exponent: i64,
+    exponent_negative: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Stage {
+    #[default]
+    Start,
+    Signed,
+    /// Decimal digits before any point; `zero` where they are one `0`, which
+    /// `x` makes a hexadecimal prefix.
+    Whole {
+        zero: bool,
+    },
+    Fraction,
+    /// `e` or `E`, then its sign.
+    Marker,
+    MarkerSign,
+    Exponent,
+    /// Past `0x`, before a hex digit, a point read where `point`.
+    HexPrefix {
+        point: bool,
+    },
+    Hex {
+        point: bool,
+    },
+    /// `p` or `P`, then its sign.
+    HexMarker,
+    HexMarkerSign,
+    HexExponent,
+    /// So many letters of `infinity` read.
+    Inf(u8),
+    /// So many letters of `nan` read.
+    Nan(u8),
+    /// Inside `nan(`'s tag.
+    Tag,
+    /// `nan(…)` closed.
+    Tagged,
+}
+
+impl Strtod {
+    /// Whether `byte` begins a number.
+    pub(crate) fn starts(byte: u8) -> bool {
+        matches!(byte, b'0'..=b'9' | b'.' | b'+' | b'-' | b'i' | b'I' | b'n' | b'N')
     }
-    let shift = bits - precision;
-    let rounded = if shift > 0 {
-        let shift = shift as u32;
-        let (kept, rest, half) =
-            (mantissa >> shift, mantissa & ((1 << shift) - 1), 1u64 << (shift - 1));
-        kept + u64::from(rest > half || (rest == half && (sticky || kept & 1 == 1)))
-    } else {
-        mantissa << (-shift) as u32
-    };
-    if precision < 53 {
-        // `rounded` counts multiples of 2^-1074, a carry into bit 52 being
-        // the least normal double, which its bit pattern reads as.
-        let value = f64::from_bits(rounded);
-        return Some((value, end, value == 0.0));
+
+    /// Read `byte`: `Ok(true)` where it is the number's, `Ok(false)` where the
+    /// number ended before it, which it does not read, and `Err` where
+    /// `strtod` reads nothing or would leave a byte read unread.
+    pub(crate) fn byte(&mut self, byte: u8) -> Walked<bool> {
+        let lower = byte.to_ascii_lowercase();
+        let digit = byte.is_ascii_digit();
+        self.stage = match self.stage {
+            Stage::Start if matches!(byte, b'+' | b'-') => {
+                self.negative = byte == b'-';
+                Stage::Signed
+            }
+            Stage::Start | Stage::Signed => match lower {
+                b'0' => {
+                    self.any = true;
+                    Stage::Whole { zero: true }
+                }
+                b'1'..=b'9' => {
+                    self.whole(byte);
+                    Stage::Whole { zero: false }
+                }
+                b'.' => Stage::Fraction,
+                b'i' => Stage::Inf(1),
+                b'n' => Stage::Nan(1),
+                _ => return Err(Refused),
+            },
+            Stage::Whole { zero: true } if lower == b'x' => Stage::HexPrefix { point: false },
+            Stage::Whole { .. } if digit => {
+                self.whole(byte);
+                Stage::Whole { zero: false }
+            }
+            Stage::Whole { .. } if byte == b'.' => Stage::Fraction,
+            Stage::Fraction if digit => {
+                self.fraction(byte);
+                Stage::Fraction
+            }
+            Stage::Whole { .. } | Stage::Fraction if lower == b'e' && self.any => Stage::Marker,
+            Stage::Whole { .. } | Stage::Fraction if self.any => return Ok(false),
+            Stage::Marker if matches!(byte, b'+' | b'-') => {
+                self.exponent_negative = byte == b'-';
+                Stage::MarkerSign
+            }
+            Stage::Marker | Stage::MarkerSign | Stage::Exponent if digit => {
+                self.exponent = saturated_digit(self.exponent, byte - b'0');
+                Stage::Exponent
+            }
+            Stage::Exponent | Stage::Tagged => return Ok(false),
+            Stage::HexPrefix { point } | Stage::Hex { point } if byte.is_ascii_hexdigit() => {
+                let value = char::from(byte).to_digit(16).expect("a hex digit");
+                self.hex.digit(value, point);
+                Stage::Hex { point }
+            }
+            Stage::HexPrefix { point: false } if byte == b'.' => Stage::HexPrefix { point: true },
+            Stage::Hex { point: false } if byte == b'.' => Stage::Hex { point: true },
+            Stage::Hex { .. } if lower == b'p' => Stage::HexMarker,
+            Stage::Hex { .. } => return Ok(false),
+            Stage::HexMarker if matches!(byte, b'+' | b'-') => {
+                self.exponent_negative = byte == b'-';
+                Stage::HexMarkerSign
+            }
+            Stage::HexMarker | Stage::HexMarkerSign | Stage::HexExponent if digit => {
+                self.exponent = saturated_digit(self.exponent, byte - b'0');
+                Stage::HexExponent
+            }
+            Stage::HexExponent => return Ok(false),
+            Stage::Inf(read) if read < 8 && lower == b"infinity"[usize::from(read)] => {
+                Stage::Inf(read + 1)
+            }
+            Stage::Nan(read) if read < 3 && lower == b"nan"[usize::from(read)] => {
+                Stage::Nan(read + 1)
+            }
+            Stage::Nan(3) if byte == b'(' => Stage::Tag,
+            Stage::Inf(3 | 8) | Stage::Nan(3) => return Ok(false),
+            Stage::Tag if byte.is_ascii_alphanumeric() || byte == b'_' => Stage::Tag,
+            Stage::Tag if byte == b')' => Stage::Tagged,
+            _ => return Err(Refused),
+        };
+        Ok(true)
     }
-    let (fraction, top) = if rounded == 1 << 53 { (0, top + 1) } else { (rounded, top) };
-    if top > 1023 {
-        return Some((f64::INFINITY, end, true));
+
+    /// An integer digit, `1` to `9` or after one.
+    fn whole(&mut self, byte: u8) {
+        self.any = true;
+        if self.kept() == 0 && byte == b'0' {
+            return;
+        }
+        self.point = self.point.saturating_add(1);
+        self.keep(byte);
     }
-    let biased = u64::try_from(top + 1023).ok()?;
-    Some((f64::from_bits(biased << 52 | (fraction & ((1 << 52) - 1))), end, false))
+
+    /// A digit after the point.
+    fn fraction(&mut self, byte: u8) {
+        self.any = true;
+        if self.kept() == 0 && byte == b'0' {
+            self.point = self.point.saturating_sub(1);
+            return;
+        }
+        self.keep(byte);
+    }
+
+    /// How many significant digits are kept.
+    fn kept(&self) -> usize {
+        self.digits.len().saturating_sub(2)
+    }
+
+    fn keep(&mut self, byte: u8) {
+        if self.digits.is_empty() {
+            self.digits.extend_from_slice(b"0.");
+        }
+        if self.kept() < KEPT_DIGITS {
+            self.digits.push(byte);
+        } else {
+            self.sticky |= byte != b'0';
+        }
+    }
+
+    /// The number has ended: its value — `Err` where `strtod` reads nothing
+    /// or would leave a byte read unread, or the value lies past `double
+    /// precision`'s range, which `float8in_internal` refuses — and the
+    /// reader readied for the next, its buffer kept.
+    pub(crate) fn finish(&mut self) -> Walked<f64> {
+        let mut digits = std::mem::take(&mut self.digits);
+        let read = std::mem::take(self);
+        let power = read.signed_exponent();
+        let magnitude = match read.stage {
+            Stage::Whole { .. } | Stage::Fraction | Stage::Exponent if read.any => {
+                decimal(&mut digits, read.sticky, read.point, power)
+            }
+            Stage::Hex { .. } | Stage::HexExponent => match read.hex.value(power) {
+                Some((value, false)) => Ok(value),
+                _ => Err(Refused),
+            },
+            Stage::Inf(3 | 8) => Ok(f64::INFINITY),
+            Stage::Nan(3) | Stage::Tagged => Ok(f64::NAN),
+            _ => Err(Refused),
+        };
+        digits.clear();
+        self.digits = digits;
+        magnitude.map(|magnitude| if read.negative { -magnitude } else { magnitude })
+    }
+
+    fn signed_exponent(&self) -> i64 {
+        if self.exponent_negative { -self.exponent } else { self.exponent }
+    }
+}
+
+/// `text`, `0.` and the significant digits, times `10^(point + exponent)`,
+/// a nonzero digit appended where `sticky`, rounded to nearest as glibc
+/// rounds it (I59) — `Err` where it overflows to an infinity or, not being
+/// zero, underflows to it. No digit is zero.
+fn decimal(text: &mut Vec<u8>, sticky: bool, point: i64, exponent: i64) -> Walked<f64> {
+    if text.len() <= 2 {
+        return Ok(0.0);
+    }
+    if sticky {
+        text.push(b'1');
+    }
+    write!(text, "e{}", point.saturating_add(exponent)).map_err(|_| Refused)?;
+    // Rust's parse rounds to nearest as glibc's does (I59).
+    let value: f64 =
+        std::str::from_utf8(text).map_err(|_| Refused)?.parse().map_err(|_| Refused)?;
+    if value.is_infinite() || value == 0.0 { Err(Refused) } else { Ok(value) }
 }
 
 /// C's `isspace` in the server's locale over a byte below `0x80`, which is

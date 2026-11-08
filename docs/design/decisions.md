@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D145 -->
+<!-- decision-watermark: D146 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -86,6 +86,7 @@ are `docs/process.md`, "The decision register".
 - **D143** An input grammar is a walk, read a part at a time
 - **D144** A reader is a push machine fed a field's runs, looking at no byte past the one it reads
 - **D145** A whitespace run whose end decides it is fed on into the part and rewound, never held
+- **D146** A grammar asking of a byte it has not read reads on as each answer; a number never reads ahead
 
 ## Batches, streams and the leader
 [`decisions/batches.md`](decisions/batches.md)

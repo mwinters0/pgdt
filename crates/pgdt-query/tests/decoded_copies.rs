@@ -3,7 +3,8 @@
 //! "D141"), and none in a parse, its statistics and a strict parse's check
 //! reading an escaped field off its bytes ("D142"), a strict parse walking a
 //! nested, `json` or `jsonb` value a part at a time ("D143"), and a strict
-//! check fed its field over runs holding none of it ("D144").
+//! check fed its field over runs holding none of it ("D144"), a type read by
+//! its input grammar alone among them.
 //!
 //! **This binary installs a global allocator tracking the bytes live**, and
 //! their peak, which is why it is a test file of its own. A line past its
@@ -351,5 +352,64 @@ fn a_strict_check_fed_over_runs_holds_no_field() {
         let (was_refused, peak) = fed_over_runs(declared, head, piece, count, tail);
         assert_eq!(was_refused, refused, "{declared} {piece:?}");
         assert!(peak < 4 * RUN, "{declared} {piece:?}: {peak} bytes allocated at the peak");
+    }
+}
+
+/// **A strict check holds no text a grammar reads**: a `polygon[]` element
+/// of many points and a `bit varying[]` element of many bits, each of eight
+/// MiB, are checked a run at a time with no more allocated than a run and
+/// the readers' own state; one its type refuses is refused all the same.
+#[test]
+fn a_strict_check_holds_no_text_a_grammar_reads() {
+    let long = 8usize << 20;
+    for (declared, head, piece, tail, refused) in [
+        ("polygon[]", "{\"", "(1,2),", "(3,4)\"}", false),
+        ("polygon[]", "{\"", "(1,2),", "(3,4\"}", true),
+        ("polygon[]", "{\"", "(1,2),", "(3,4),\"}", true),
+        ("bit varying[]", "{", "10", "1}", false),
+        ("bit varying[]", "{", "10", "2}", true),
+        ("bit varying(8)[]", "{", "10", "1}", true),
+    ] {
+        let count = long / piece.len();
+        let (was_refused, peak) = fed_over_runs(declared, head, piece, count, tail);
+        assert_eq!(was_refused, refused, "{declared} {tail:?}");
+        assert!(peak < 4 * RUN, "{declared} {tail:?}: {peak} bytes allocated at the peak");
+    }
+}
+
+/// **A strict parse reads a column its grammar reads off its bytes**: a
+/// `path` of many points and a `bit varying` of many bits, each of eight
+/// MiB and written with an escape every few bytes, are checked, and
+/// gathered, with none of them allocated; one its type refuses is refused
+/// all the same.
+#[tokio::test]
+async fn a_strict_parse_holds_no_text_of_a_column_a_grammar_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let long = 8usize << 20;
+    let repeat = |piece: &str, closing: &str| {
+        let mut field = piece.repeat(long / piece.len());
+        field.push_str(closing);
+        field
+    };
+    for (declared, short, field) in [
+        ("path", "[(1,2)]", format!("[{}]", repeat("(1,\\t2),", "(3,4)"))),
+        ("bit varying", "1", repeat("1\\x30", "1")),
+    ] {
+        let path = dump(dir.path(), declared, short, field.as_bytes());
+        for invalid in [PostgresInvalidValues::Default, PostgresInvalidValues::Strict] {
+            let peak = parse(&path, invalid).await.unwrap();
+            assert!(peak < long / 4, "{declared}, {invalid:?}: {peak} bytes allocated at the peak");
+        }
+    }
+    for (declared, short, field) in [
+        ("path", "[(1,2)]", format!("[{}]", repeat("(1,\\t2),", "(3,4),"))),
+        ("bit varying(8)", "1", repeat("1\\x30", "1")),
+    ] {
+        let path = dump(dir.path(), declared, short, field.as_bytes());
+        let refused = parse(&path, PostgresInvalidValues::Strict).await.unwrap_err();
+        assert!(
+            matches!(refused, pgdt_core::Error::FieldRefused { .. }),
+            "{declared}: {refused:?}"
+        );
     }
 }

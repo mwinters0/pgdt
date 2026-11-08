@@ -72,3 +72,12 @@ nothing growing with a field (D144). Rejected: the run held until its end decide
 growing on one alternating its bytes; a rewind in each leaf reader, one per type where `Parts` has a few implementors.
 Code: `value/source.rs`, `nested/input/array.rs`, `grammar/walk.rs` (`Mark`). Evidence: `check/tests.rs`,
 `tests/decoded_copies.rs`.
+
+### D146 A grammar asking of a byte it has not read reads on as each answer; a number never reads ahead
+`path_decode` reads a lone `(` as its bracket and `path_in` wraps its points in one only where it is the text's last
+`(`: `GeometricWalk` reads on as both grammars, two at most, keeping the one the last `(` agrees with. `Strtod` refuses
+where `strtod` would read on and leave a byte unread (`1e,`, `0x)`, `infin`), a byte no geometric grammar reads after a
+number, and keeps a decimal's first 800 significant digits and whether one past them is nonzero, all its rounding reads.
+Why: a parse holds nothing growing with a field (D144). Rejected: the text held from the `(` until its end decides, a
+line's worth; a `strtod` backtracking over its read-ahead, which an open `nan(` tag makes a line's worth; every digit
+kept. Code: `geometric/walk.rs`, `libc.rs` (`Strtod`). Evidence: `geometric/differential.rs`, `tests/decoded_copies.rs`.

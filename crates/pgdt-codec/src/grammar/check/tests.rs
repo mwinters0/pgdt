@@ -546,6 +546,64 @@ fn a_walked_scalar_is_refused_as_its_text_is() {
     }
 }
 
+/// **A field read by a grammar is answered as its text is, whatever runs it
+/// is fed in**: each geometric type's and `bit varying`'s, and a `box[]`'s
+/// unquoted element, a whitespace run inside it fed on to `box_in` and one
+/// after it rewound.
+#[test]
+fn a_field_read_by_a_grammar_is_refused_as_its_text_is() {
+    use crate::grammar::input::Geometric;
+    let geometric = [
+        Geometric::Point,
+        Geometric::Line,
+        Geometric::Lseg,
+        Geometric::Box,
+        Geometric::Path,
+        Geometric::Polygon,
+        Geometric::Circle,
+    ];
+    let texts = [
+        "(1,2)",
+        " ( 1 , 2 ) ",
+        "1,2,3,4",
+        "(1,2),(3,4)",
+        "((1,2),(3,4))",
+        "[(1,2),(3,4)]",
+        "[(0,0),(1,1),(2,0)]",
+        "<(1,2),3>",
+        "{1,2,3}",
+        "(nan(a),1),(0x1p3,1e-310)",
+        "(1e400,2)",
+        "(1e,2)",
+        "(1,2) x",
+        "10110",
+        "x1f",
+        "",
+    ];
+    for text in texts {
+        let escaped = pgdt_core::escape_field(Some(text));
+        for kind in geometric {
+            let grammar = TextGrammar::Geometric(kind);
+            let refused = fed_in_runs(&|| FieldWalk::grammar(grammar), &escaped);
+            assert_eq!(refused, grammar_refuses(grammar, text), "{kind:?} {text:?}");
+        }
+        let grammar = TextGrammar::Bit { varying: true, length: Some(5) };
+        let refused = fed_in_runs(&|| FieldWalk::grammar(grammar), &escaped);
+        assert_eq!(refused, grammar_refuses(grammar, text), "bit varying(5) {text:?}");
+    }
+    for (text, refused) in [
+        ("{(1,1), (0,0)\t;(2,2) ,(1,1)}", false),
+        ("{(1,1),(0,0) \t ;  (2,2),(1,1)\u{b}}", false),
+        ("{(1,1),(0,0) (2,2);(2,2),(1,1)}", true),
+        ("{(1,1),(0,0)  x}", true),
+        ("{NULL \t;(1,1),(0,0)}", false),
+    ] {
+        let grammar = TextGrammar::BoxArray { not_null: false };
+        let escaped = pgdt_core::escape_field(Some(text));
+        assert_eq!(fed_in_runs(&|| FieldWalk::grammar(grammar), &escaped), refused, "{text:?}");
+    }
+}
+
 /// **A refusal met in an unquoted element's whitespace run stands only
 /// where the run turns out interior**: `array_in` trims a `\v` and `\f`
 /// that `json_in` refuses, so `{1\v}` is a `json[]` and `{1\v2}` is not,
@@ -600,8 +658,13 @@ fn a_refusal_in_a_whitespace_run_stands_only_where_it_is_interior() {
 /// and three bytes, and cut in two at every byte, each a run's end inside an
 /// escape, a quote, a `NULL`, a whitespace run or a part.
 fn walked_in_runs(plan: &ComparisonPlan, escaped: &[u8]) -> bool {
+    fed_in_runs(&|| FieldWalk::new(plan), escaped)
+}
+
+/// [`walked_in_runs`] for a walk `new` makes.
+fn fed_in_runs<'p>(new: &dyn Fn() -> FieldWalk<'p>, escaped: &[u8]) -> bool {
     let feed = |runs: &mut dyn Iterator<Item = &[u8]>| {
-        let mut walk = FieldWalk::new(plan);
+        let mut walk = new();
         for run in runs {
             walk.run(run);
         }

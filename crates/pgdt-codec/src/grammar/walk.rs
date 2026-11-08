@@ -4,8 +4,8 @@
 //! nested value's walked through each container's, every part checked as a
 //! field of its own type in its turn — with nothing held past a run's end
 //! but each reader's own state (`docs/design/decisions.md`, "D143",
-//! "D144"). Beside it, what reads a part whole: a type ordered by nothing,
-//! by its grammar ([`grammar_refuses`]), and a range, by its bounds' keys
+//! "D144"), a type ordered by nothing by its [`TextGrammar`]'s walk among
+//! them. Beside it, what reads a part whole: a range, by its bounds' keys
 //! ([`checked_key`]).
 
 use pgdt_core::internal::Unescape;
@@ -16,9 +16,9 @@ use crate::decode::{Read, Unread};
 use crate::grammar::input::{Geometric, TextGrammar};
 use crate::key::order::{OrderKey, field_key};
 use crate::nested::RangeLiteral;
-use crate::value::bit::bit_in;
+use crate::value::bit::BitWalk;
 use crate::value::bytea::ByteaFold;
-use crate::value::geometric::{box_in, circle_in, line_in, lseg_in, path_in, point_in, poly_in};
+use crate::value::geometric::GeometricWalk;
 use crate::value::json::{JsonMark, JsonWalk, json_in};
 use crate::value::nested;
 use crate::value::nested::key::{
@@ -47,6 +47,17 @@ pub struct FieldWalk<'p> {
 }
 
 impl<'p> FieldWalk<'p> {
+    /// A walk of a field of a column read by `grammar` in place of its plan,
+    /// which orders it by nothing
+    /// ([`column_grammar`](super::check::column_grammar)).
+    pub fn grammar(grammar: TextGrammar) -> FieldWalk<'static> {
+        FieldWalk::of(Check::grammar(grammar))
+    }
+
+    fn of(check: Check<'p>) -> Self {
+        Self { escape: Unescape::default(), check, text: TextFold::default(), refused: false }
+    }
+
     /// A walk of a field of a column compared by `plan`, whose plan
     /// [`walks`](super::check::walks).
     pub fn new(plan: &'p ComparisonPlan) -> Self {
@@ -59,7 +70,7 @@ impl<'p> FieldWalk<'p> {
             ComparisonPlan::Nested(nested) => Check::of(nested),
             ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_) => Check::Nothing,
         };
-        Self { escape: Unescape::default(), check, text: TextFold::default(), refused: false }
+        Self::of(check)
     }
 
     /// Read the field's next run of bytes, as `COPY` wrote them.
@@ -115,11 +126,10 @@ enum Check<'p> {
         kind: &'p CompareKind,
         text: Vec<u8>,
     },
-    /// A type ordered by nothing, collected for its [`TextGrammar`].
-    Grammar {
-        grammar: TextGrammar,
-        text: Vec<u8>,
-    },
+    /// A type ordered by nothing, read by its [`TextGrammar`]'s walk.
+    Grammar(Grammar),
+    /// A type whose input function refuses every value, or none.
+    Refuses(bool),
     Array(Box<(ArrayWalk, Element<'p>)>),
     Int2Vector(Int2VectorWalk),
     Record(Box<(RecordWalk, Fields<'p>)>),
@@ -164,9 +174,7 @@ impl<'p> Check<'p> {
             NestedCompare::Uncomparable {
                 divergence: Some(ComparisonDivergence::AsText), ..
             } => Check::Json { walk: JsonWalk::new(false), jsonb: false },
-            NestedCompare::Uncomparable { grammar: Some(grammar), .. } => {
-                Check::Grammar { grammar: *grammar, text: Vec::new() }
-            }
+            NestedCompare::Uncomparable { grammar: Some(grammar), .. } => Check::grammar(*grammar),
             NestedCompare::Uncomparable { .. } => Check::Nothing,
             NestedCompare::Array { element, .. } => match array_delimiter(&element.plan) {
                 Some(delimiter) => {
@@ -189,6 +197,23 @@ impl<'p> Check<'p> {
         }
     }
 
+    /// A position read by `grammar`: a `box[]` an array of `box`, split at
+    /// its `;` (I22).
+    fn grammar(grammar: TextGrammar) -> Self {
+        let walk = match grammar {
+            TextGrammar::Bit { varying, length } => Grammar::Bit(BitWalk::new(varying, length)),
+            TextGrammar::Geometric(kind) => Grammar::Geometric(Box::new(GeometricWalk::new(kind))),
+            TextGrammar::BoxArray { not_null } => {
+                let element = Check::grammar(TextGrammar::Geometric(Geometric::Box));
+                let element = Element { check: element, not_null, mark: None };
+                return Check::Array(Box::new((ArrayWalk::new(b';'), element)));
+            }
+            TextGrammar::RefusesAll => return Check::Refuses(true),
+            TextGrammar::RefusesNothing => return Check::Refuses(false),
+        };
+        Check::Grammar(walk)
+    }
+
     /// Ready the check for another part.
     fn start(&mut self) {
         match self {
@@ -196,7 +221,9 @@ impl<'p> Check<'p> {
             Check::Typmod { text, .. } => *text = TextFold::default(),
             Check::Bytea(fold) => *fold = ByteaFold::default(),
             Check::Json { walk, .. } => walk.start(),
-            Check::Scalar { text, .. } | Check::Grammar { text, .. } => text.clear(),
+            Check::Scalar { text, .. } => text.clear(),
+            Check::Grammar(walk) => walk.start(),
+            Check::Refuses(_) => {}
             Check::Array(array) => array.0.start(),
             Check::Int2Vector(walk) => walk.start(),
             Check::Record(record) => record.0.start(),
@@ -214,7 +241,9 @@ impl<'p> Check<'p> {
             Check::Typmod { text, .. } => Mark::Typmod(text.clone()),
             Check::Bytea(fold) => Mark::Bytea(*fold),
             Check::Json { walk, .. } => Mark::Json(walk.mark()),
-            Check::Scalar { text, .. } | Check::Grammar { text, .. } => Mark::Collected(text.len()),
+            Check::Scalar { text, .. } => Mark::Collected(text.len()),
+            Check::Grammar(walk) => Mark::Grammar(walk.clone()),
+            Check::Refuses(_) => Mark::Nothing,
             Check::Array(array) => Mark::Array(Box::new((array.0.clone(), array.1.check.mark()))),
             Check::Int2Vector(walk) => Mark::Int2Vector(*walk),
             Check::Record(record) => {
@@ -238,9 +267,9 @@ impl<'p> Check<'p> {
             (Check::Typmod { text, .. }, Mark::Typmod(at)) => text.clone_from(at),
             (Check::Bytea(fold), Mark::Bytea(at)) => *fold = *at,
             (Check::Json { walk, .. }, Mark::Json(at)) => walk.rewind(*at),
-            (Check::Scalar { text, .. } | Check::Grammar { text, .. }, Mark::Collected(at)) => {
-                text.truncate(*at);
-            }
+            (Check::Scalar { text, .. }, Mark::Collected(at)) => text.truncate(*at),
+            (Check::Grammar(walk), Mark::Grammar(at)) => walk.clone_from(at),
+            (Check::Refuses(_), Mark::Nothing) => {}
             (Check::Array(array), Mark::Array(at)) => {
                 array.0.clone_from(&at.0);
                 array.1.check.rewind(&at.1);
@@ -268,7 +297,7 @@ impl<'p> Check<'p> {
                 text.push(run);
                 Ok(())
             }
-            Check::Scalar { text: collected, .. } | Check::Grammar { text: collected, .. } => {
+            Check::Scalar { text: collected, .. } => {
                 collected.extend_from_slice(run);
                 Ok(())
             }
@@ -289,10 +318,12 @@ impl<'p> Check<'p> {
                 Ok(())
             }
             Check::Json { walk, .. } => walk.byte(byte),
-            Check::Scalar { text, .. } | Check::Grammar { text, .. } => {
+            Check::Scalar { text, .. } => {
                 text.push(byte);
                 Ok(())
             }
+            Check::Grammar(walk) => walk.byte(byte),
+            Check::Refuses(_) => Ok(()),
             Check::Array(array) => {
                 let (walk, element) = &mut **array;
                 walk.byte(byte, element)
@@ -324,10 +355,8 @@ impl<'p> Check<'p> {
                 let value = std::str::from_utf8(text).map_err(|_| Refused)?;
                 matches!(field_key(kind, value), Err(Unread::Refused))
             }
-            Check::Grammar { grammar, text } => {
-                let value = std::str::from_utf8(text).map_err(|_| Refused)?;
-                grammar_refuses(*grammar, value)
-            }
+            Check::Grammar(walk) => walk.end().is_err(),
+            Check::Refuses(refused) => *refused,
             Check::Array(array) => return array.0.end(),
             Check::Int2Vector(walk) => return walk.end(&mut |_| Ok(())),
             Check::Record(record) => return record.0.end(),
@@ -351,6 +380,7 @@ enum Mark {
     Json(JsonMark),
     /// How much text was collected.
     Collected(usize),
+    Grammar(Grammar),
     /// The walk, and its element's check.
     Array(Box<(ArrayWalk, Mark)>),
     Int2Vector(Int2VectorWalk),
@@ -459,36 +489,47 @@ impl Parts<usize> for Fields<'_> {
 }
 
 /// Whether PostgreSQL's input function refuses `text` as a field read by
-/// `grammar`, of a type this build holds as its text and orders by nothing.
+/// `grammar`, of a type this build holds as its text and orders by nothing:
+/// [`FieldWalk::grammar`]'s answer, fed it whole.
 pub fn grammar_refuses(grammar: TextGrammar, text: &str) -> bool {
-    let reads = match grammar {
-        TextGrammar::Bit { varying, length } => bit_in(text, varying, length),
-        TextGrammar::Geometric(Geometric::Point) => point_in(text),
-        TextGrammar::Geometric(Geometric::Line) => line_in(text),
-        TextGrammar::Geometric(Geometric::Lseg) => lseg_in(text),
-        TextGrammar::Geometric(Geometric::Box) => box_in(text),
-        TextGrammar::Geometric(Geometric::Path) => path_in(text),
-        TextGrammar::Geometric(Geometric::Polygon) => poly_in(text),
-        TextGrammar::Geometric(Geometric::Circle) => circle_in(text),
-        TextGrammar::BoxArray { not_null } => {
-            let element = NestedCompare::Uncomparable {
-                declared: "box".into(),
-                divergence: None,
-                grammar: Some(TextGrammar::Geometric(Geometric::Box)),
-                delimiter: Some(b';'),
-            };
-            let element = Position { plan: element, not_null };
-            let array =
-                NestedCompare::Array { declared: "box[]".into(), element: Box::new(element) };
-            let plan = ComparisonPlan::Nested(array);
-            let mut walk = FieldWalk::new(&plan);
-            walk.text(text.as_bytes());
-            !walk.finish()
+    let mut walk = FieldWalk::grammar(grammar);
+    walk.text(text.as_bytes());
+    walk.finish()
+}
+
+/// **A [`TextGrammar`]'s walk** over one part, fed a byte at a time
+/// (`docs/design/decisions.md`, "D144"), its state fixed.
+#[derive(Debug, Clone)]
+enum Grammar {
+    Bit(BitWalk),
+    Geometric(Box<GeometricWalk>),
+}
+
+impl Grammar {
+    fn start(&mut self) {
+        match self {
+            Grammar::Bit(walk) => walk.start(),
+            Grammar::Geometric(walk) => walk.start(),
         }
-        TextGrammar::RefusesAll => false,
-        TextGrammar::RefusesNothing => true,
-    };
-    !reads
+    }
+
+    fn byte(&mut self, byte: u8) -> Walked {
+        match self {
+            Grammar::Bit(walk) => {
+                walk.byte(byte);
+                Ok(())
+            }
+            Grammar::Geometric(walk) => walk.byte(byte),
+        }
+    }
+
+    fn end(&mut self) -> Walked {
+        match self {
+            Grammar::Bit(walk) if walk.end() => Ok(()),
+            Grammar::Bit(_) => Err(Refused),
+            Grammar::Geometric(walk) => walk.end(),
+        }
+    }
 }
 
 /// The `typdelim` an array of `element` is split at, which the plan carries

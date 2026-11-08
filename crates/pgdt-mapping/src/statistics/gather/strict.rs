@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use pgdt_codec::ResolvedSchema;
-use pgdt_codec::internal::{FieldWalk, field_refused, grammar_refuses, text_typmod, walks};
+use pgdt_codec::internal::{FieldWalk, field_refused, text_typmod, walks};
 use pgdt_codec::{
     compare::ComparisonPlan,
     grammar::{TextGrammar, Unchecked},
@@ -45,7 +45,7 @@ pub(super) fn field_checks(
             let reads = grammar.is_some()
                 || !matches!(plan, ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_));
             let typmod = grammar.is_none().then(|| text_typmod(plan)).flatten();
-            let walks = grammar.is_none() && walks(plan);
+            let walks = grammar.is_some() || walks(plan);
             (reads || not_null).then(|| FieldCheck {
                 typmod,
                 walks,
@@ -220,9 +220,9 @@ pub(super) struct FieldCheck {
     /// Where `plan` refuses a field only past a text's typmod, its length
     /// ([`text_typmod`]).
     typmod: Option<Option<u32>>,
-    /// Whether `plan` reads a field off its bytes where it lies ([`walks`]):
-    /// a `bytea`, a text held to its typmod, a nested, `json` or `jsonb`
-    /// value.
+    /// Whether a field is read off its bytes where it lies: by `grammar`, or
+    /// by `plan` where it [`walks`] — a `bytea`, a text held to its typmod, a
+    /// nested, `json` or `jsonb` value.
     walks: bool,
 }
 
@@ -247,7 +247,10 @@ pub(super) fn check_row(
             if check.typmod.is_some_and(within) {
                 continue;
             }
-            let mut walk = FieldWalk::new(&check.plan);
+            let mut walk = match check.grammar {
+                Some(grammar) => FieldWalk::grammar(grammar),
+                None => FieldWalk::new(&check.plan),
+            };
             walk.run(field);
             if !walk.finish() {
                 continue;
@@ -265,11 +268,7 @@ pub(super) fn check_row(
         let value = match unescape_field(field) {
             Ok(None) if check.not_null => None,
             Ok(Some(text)) if check.reads => {
-                let refused = match check.grammar {
-                    Some(grammar) => grammar_refuses(grammar, &text),
-                    None => field_refused(&check.plan, &text),
-                };
-                if !refused {
+                if !field_refused(&check.plan, &text) {
                     continue;
                 }
                 // Named as a restore's error quotes it (I94).

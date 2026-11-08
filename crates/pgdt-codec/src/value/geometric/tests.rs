@@ -1,4 +1,56 @@
 use super::*;
+use crate::grammar::input::Geometric;
+use crate::value::libc::strtod;
+
+/// Whether the input function of `kind` reads `text`, fed whole.
+pub(super) fn reads(kind: Geometric, text: &str) -> bool {
+    let mut walk = GeometricWalk::new(kind);
+    text.bytes().try_for_each(|byte| walk.byte(byte)).and_then(|()| walk.end()).is_ok()
+}
+
+/// Whether `point_in` reads `text`: `x,y`, optionally in parentheses (I74).
+pub(super) fn point_in(text: &str) -> bool {
+    reads(Geometric::Point, text)
+}
+
+/// Whether `lseg_in` reads `text`: two points, in `[…]`, `(…)` or bare
+/// (I74).
+pub(super) fn lseg_in(text: &str) -> bool {
+    reads(Geometric::Lseg, text)
+}
+
+/// Whether `box_in` reads `text`: two points, in `(…)` or bare, never in
+/// `[…]` (I74).
+pub(super) fn box_in(text: &str) -> bool {
+    reads(Geometric::Box, text)
+}
+
+/// Whether `path_in` reads `text`: as many points as its commas say, open in
+/// `[…]` or closed in `(…)`, one more `(…)` allowed around them (I74).
+pub(super) fn path_in(text: &str) -> bool {
+    reads(Geometric::Path, text)
+}
+
+/// Whether `poly_in` reads `text`: as many points as its commas say, in
+/// `(…)` or bare, never in `[…]` (I74).
+pub(super) fn poly_in(text: &str) -> bool {
+    reads(Geometric::Polygon, text)
+}
+
+/// Whether `circle_in` reads `text`: a center and a radius neither negative
+/// nor read past its range, in `<…>`, `(…)` or bare (I74).
+pub(super) fn circle_in(text: &str) -> bool {
+    reads(Geometric::Circle, text)
+}
+
+/// Whether `line_in` reads `text`: `{A,B,C}` with `A` and `B` not both zero,
+/// or two distinct points, as `lseg_in` reads them, whose line it can
+/// construct. **Refused only where every supported major refuses it**
+/// (I74): v13 builds the line from two points by arithmetic v14 changed, and
+/// neither refuses a subset of what the other does.
+pub(super) fn line_in(text: &str) -> bool {
+    reads(Geometric::Line, text)
+}
 
 /// **A geometric field is refused exactly where its input function
 /// refuses it at every supported major** (I74): every case below was cast
