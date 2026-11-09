@@ -380,6 +380,19 @@ refusal and counted against the catalog
 `/mnt/ssd/fedora/scratch/pgdump_query/datanommer/`. No resident reading was
 taken of it.
 
+**A reader moved onto a hot path is priced** ([`decisions.md`](decisions.md),
+"D108"): a slice changing what `field_key` reads a key with, or what a query's
+batch decodes a column with, takes a count pair at its parent and its tree, a
+rise it resolves placed and then reworked or accepted. Rejected: a memory phase
+leaving its readers' speed unpriced, which accepts a cost on the statistics and
+query paths that no reading states.
+
+**A reader made a push machine answers as the one it replaces**: a differential
+test holds it to a test-only copy of its predecessor, a spelling read as
+unparsed staying unparsed, and reading more is a change of its own. Rejected:
+widening what a type reads in the slice that makes it stream, a contract change
+and a cache format's bump inside a review sized for memory.
+
 ## Slices
 
 **The first slice exists to produce evidence**, and the bound is raised last,

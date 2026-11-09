@@ -99,3 +99,13 @@ stores it, a radix one to I63's width in bits. A `&str` is fed the majors only w
 so fixed state cannot hold it. Rejected: the text collected for the slice readers, a field's worth for a padded value.
 Code: `numeric/input.rs` (`NumericIn`), `key/order.rs`. Evidence: `key/order/differential.rs`,
 `tests/decoded_copies.rs`.
+
+### D149 A datetime's push machine is its lexer; its decoders and its key read the bounded fields
+`ParseDateTime`'s lexer is the push machine a date, time, `timetz`, timestamp and `interval` text is fed through (D144),
+skipping a blank or punctuation run as PostgreSQL does; its fields are within the server's workbuf and
+`MAXDATEFIELDS` (I83), beside whether a NUL or non-ASCII byte was met. `datetime/grammar.rs`'s decoders and the value
+readers read its fields, never the text, for a key, the tier and a query's batch alike; `interval`'s ISO 8601
+fallback, reading the raw text, is its own machine. Why: only the lexer's input grows with a field, and PostgreSQL
+splits `ParseDateTime` from `DecodeDateTime` alike. Rejected: the decoders as push machines, rewriting bounded state;
+a head clipped at `longest_read`, refusing a blank-padded value the server reads; the batch on a text reader beside
+it, two grammars (D147).

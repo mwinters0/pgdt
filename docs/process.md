@@ -470,7 +470,9 @@ slice shipped the wrong contract, or a mis-sized one's undelivered part becomes
 its own increment. Prefer earning one over renumbering the tail, which
 invalidates every reference; the mis-sized row is rewritten to the scope that
 landed, the remainder moving to the new rows with the reasoning in a history
-entry. A third-level remainder is the next increment under the same parent:
+entry. **A split sizes its whole remainder**: the undelivered part goes to as
+many review-sized rows as it holds, or the split stops and hands it back, never
+to one row nobody has sized. A third-level remainder is the next increment under the same parent:
 there is no fourth level, and a remainder never takes the next free phase-level
 number, though a slice *admitted* after spec time does. **A phase whose first
 slices exist to produce evidence says so in its spec**, its later numbers being
