@@ -24,8 +24,7 @@ use crate::value::int::{IntIn, OidIn};
 use crate::value::json::{Jsonb, parse_jsonb};
 use crate::value::network::{NetworkKey, macaddr_octets, macaddr_unread, macaddr8_in, network_in};
 use crate::value::numeric::{
-    NumericColumn, NumericKey, decimal_unscaled_digits, numeric_in_stores, numeric_unread,
-    typmod_unscaled_digits,
+    NumericColumn, NumericIn, NumericKey, decimal_unscaled_digits, numeric_in_stores,
 };
 use crate::value::text::char_typmod_refuses;
 use crate::value::uuid::UuidIn;
@@ -265,15 +264,15 @@ pub enum Side {
 /// which fails the parse reading it as a field, or not read here.
 ///
 /// A kind whose reader is a push machine — an integer, `oid`, `boolean`, an
-/// enum, `uuid` — is read by feeding it the text ([`KeyRead`]), the one
-/// grammar a strict check feeds a part's runs to. A literal of an integer in
+/// enum, `uuid`, `numeric` — is read by feeding it the text ([`KeyRead`]),
+/// the one grammar a strict check feeds a part's runs to. A literal of an integer in
 /// DataFusion's semantics is read as an `i64` instead, by [`literal_key`];
 /// one of an `oid` is a `u32`, and the width *is* the refusal: `oidin` reads
 /// `-1` as 4294967295 and this build does not implement that wrap, so a
 /// negative literal is `Error::PredicateValueDecode`.
 pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
     if let Some(mut read) = KeyRead::machine(kind) {
-        read.run(text.as_bytes());
+        read.whole(text.as_bytes());
         return read.finish();
     }
     if let Some(special) = special_order_key(kind, text) {
@@ -285,38 +284,11 @@ pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
         | CompareKind::Int { .. }
         | CompareKind::UnsignedInt
         | CompareKind::Enum { .. }
-        | CompareKind::Uuid => unreachable!("a push machine reads it"),
+        | CompareKind::Uuid
+        | CompareKind::Decimal { .. }
+        | CompareKind::Numeric { .. } => unreachable!("a push machine reads it"),
         CompareKind::Float32 => OrderKey::Float(f64::from(float_in::<f32>(text)?)),
         CompareKind::Float64 => OrderKey::Float(float_in::<f64>(text)?),
-        // A field is put through its typmod, rounded to the scale and refused
-        // past the precision as `COPY` refuses it (I51). A literal is read
-        // exactly, by [`literal_key`].
-        CompareKind::Decimal { precision, scale } => OrderKey::Decimal(
-            i256::from_string(&typmod_unscaled_digits(text, *precision, i16::from(*scale))?)
-                .ok_or(unparsed)?,
-        ),
-        CompareKind::Numeric { typmod: Some(typmod), .. } => {
-            OrderKey::Numeric(NumericKey::from_unscaled(
-                &typmod_unscaled_digits(text, typmod.precision, typmod.scale)?,
-                typmod.scale,
-            ))
-        }
-        // A bare column's field is bounded by `numeric_in` (I63) once read:
-        // the bounds count the digits a grammar with no exponent reads, and
-        // `numeric_in` stores a text whose exponent brings its scale back
-        // within them. A typmod'd one never reaches the bounds, the typmod
-        // rounding first. A literal in PostgreSQL's semantics is bounded by
-        // [`literal_key`].
-        CompareKind::Numeric { infinities: bare, typmod: None } => {
-            let key = NumericKey::parse(text).ok_or_else(|| {
-                let column = if *bare { NumericColumn::Bare } else { NumericColumn::UnreadTypmod };
-                numeric_unread(text, column)
-            })?;
-            if *bare && !numeric_in_stores(text) {
-                return Err(Unread::Refused);
-            }
-            OrderKey::Numeric(key)
-        }
         CompareKind::Date => {
             OrderKey::Int(datetime_read(date_days(text), DateTimeInput::Date, text)?.into())
         }
@@ -509,10 +481,11 @@ pub fn compare_keys_stored(a: &OrderKey, b: &OrderKey) -> Ordering {
 }
 
 /// **An order key read off a text fed a byte at a time**
-/// (`docs/design/decisions.md`, "D144", "D147"): [`field_key`]'s answer, a
-/// `&str` fed whole being one source, a strict check's part fed its runs
-/// another. A kind whose reader is a push machine holds that machine's fixed
-/// state; any other collects its text for `field_key`'s slice reader.
+/// (`docs/design/decisions.md`, "D144", "D147", "D148"): [`field_key`]'s
+/// answer, a `&str` fed whole being one source, a strict check's part fed its
+/// runs another. A kind whose reader is a push machine holds that machine's
+/// state, a `numeric`'s the digits its column reads; any other collects its
+/// text for `field_key`'s slice reader.
 #[derive(Debug, Clone)]
 pub(crate) enum KeyRead<'k> {
     Int {
@@ -523,6 +496,11 @@ pub(crate) enum KeyRead<'k> {
     Bool(BoolIn),
     Enum(EnumIn<'k>),
     Uuid(UuidIn),
+    /// A `numeric`, read as its column reads one.
+    Numeric {
+        kind: &'k CompareKind,
+        read: Box<NumericIn>,
+    },
     /// A kind whose reader takes a slice: its text, no longer than it.
     Collected {
         kind: &'k CompareKind,
@@ -549,6 +527,23 @@ impl<'k> KeyRead<'k> {
                 len: 0,
             }),
             CompareKind::Uuid => KeyRead::Uuid(UuidIn::default()),
+            CompareKind::Decimal { precision, scale } => KeyRead::Numeric {
+                kind,
+                read: Box::new(NumericIn::new(NumericColumn::Typmod {
+                    precision: *precision,
+                    scale: i16::from(*scale),
+                })),
+            },
+            CompareKind::Numeric { infinities: bare, typmod } => {
+                let column = match typmod {
+                    Some(typmod) => {
+                        NumericColumn::Typmod { precision: typmod.precision, scale: typmod.scale }
+                    }
+                    None if *bare => NumericColumn::Bare,
+                    None => NumericColumn::UnreadTypmod,
+                };
+                KeyRead::Numeric { kind, read: Box::new(NumericIn::new(column)) }
+            }
             _ => return None,
         })
     }
@@ -562,6 +557,15 @@ impl<'k> KeyRead<'k> {
             KeyRead::Oid(read) => *read = OidIn::default(),
             KeyRead::Bool(read) => *read = BoolIn::default(),
             KeyRead::Uuid(read) => *read = UuidIn::default(),
+            KeyRead::Numeric { read, .. } => read.start(),
+        }
+    }
+
+    /// Read the whole of a text, this reader having read none of it.
+    pub(crate) fn whole(&mut self, text: &[u8]) {
+        match self {
+            KeyRead::Numeric { read, .. } => read.whole_text(text),
+            reader => reader.run(text),
         }
     }
 
@@ -581,6 +585,7 @@ impl<'k> KeyRead<'k> {
             KeyRead::Bool(read) => read.byte(byte),
             KeyRead::Enum(read) => read.byte(byte),
             KeyRead::Uuid(read) => read.byte(byte),
+            KeyRead::Numeric { read, .. } => read.byte(byte),
             KeyRead::Collected { text, .. } => text.push(byte),
         }
     }
@@ -596,6 +601,7 @@ impl<'k> KeyRead<'k> {
             KeyRead::Enum(read) => OrderKey::Int(read.finish()?),
             // Every refusal of the reader is `uuid_in`'s (I64).
             KeyRead::Uuid(read) => OrderKey::Bytes(read.finish().ok_or(Unread::Refused)?.to_vec()),
+            KeyRead::Numeric { kind, read } => numeric_key(kind, read)?,
             KeyRead::Collected { kind, text } => {
                 let text = std::str::from_utf8(text).map_err(|_| Unread::Refused)?;
                 field_key(kind, text)?
@@ -621,6 +627,31 @@ impl<'k> KeyRead<'k> {
             _ => unreachable!("a mark is rewound into the reader it was taken of"),
         }
     }
+}
+
+/// A `numeric`'s key, read by `read` as a column compared as `kind` reads
+/// one: a special value first ([`special_order_key`]), then a typmod'd
+/// column's field put through its typmod, rounded to the scale and refused
+/// past the precision as `COPY` refuses it (I51), and a bare one's held to
+/// `numeric_in`'s bounds (I63), each spelling `numeric_in` reads and this
+/// build does not unparsed. A literal is read by [`literal_key`].
+fn numeric_key(kind: &CompareKind, read: &NumericIn) -> Read<OrderKey> {
+    if let Some(special) = read.word().and_then(|word| special_order_key(kind, word)) {
+        return Ok(special);
+    }
+    Ok(match kind {
+        CompareKind::Decimal { .. } => {
+            OrderKey::Decimal(i256::from_string(&read.unscaled()?).ok_or(Unread::Unparsed)?)
+        }
+        CompareKind::Numeric { typmod: Some(typmod), .. } => {
+            OrderKey::Numeric(NumericKey::from_unscaled(&read.unscaled()?, typmod.scale))
+        }
+        CompareKind::Numeric { typmod: None, .. } => {
+            let (negative, int, frac) = read.parts()?;
+            OrderKey::Numeric(NumericKey::from_parts(negative, int, frac))
+        }
+        _ => unreachable!("only a `numeric` is read by `NumericIn`"),
+    })
 }
 
 /// What [`KeyRead::mark`] saved.

@@ -3791,8 +3791,8 @@ the precision.
 v13.23 and v14.24 refuse a negative scale at `numerictypmodin`; the
 `maxdigits` check at all six.
 
-**Relied on by:** `decode::typmod_unscaled_digits` and `value::numeric::typmod_round`,
-which put a field through its typmod, rounding half away from zero and
+**Relied on by:** `decode::typmod_unscaled_digits`, `value::numeric::NumericIn::unscaled`
+and `value::numeric::input::typmod_round`, which put a field through its typmod, rounding half away from zero and
 refusing past the precision; `decode::decimal_unscaled_digits`, which takes a filter literal to an
 unscaled integer at the column's scale exactly, and `decode::render_decimal`,
 which takes one back to text; `pgtype::map_numeric`, which widens the precision to a
@@ -4364,9 +4364,9 @@ which spellings it reads is I82.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
 **Relied on by:** `value::numeric::numeric_in_stores`, which `key/order.rs` applies to
-a bare `numeric`'s field and to every `numeric` literal in PostgreSQL's
-semantics, `value::numeric::NumericSpelling::stored`, which bounds a field spelled
-otherwise, and `numeric_stores`, by which `JsonCursor::number` and `JsonWalk` refuse a `jsonb` number so
+every `numeric` literal in PostgreSQL's semantics, `value::numeric::NumericIn::parts`,
+which holds a bare `numeric`'s field to them, `value::numeric::input::Spelling::stored`,
+which bounds a field spelled otherwise, and `numeric_stores`, by which `JsonCursor::number` and `JsonWalk` refuse a `jsonb` number so
 spelled, field and literal alike.
 
 **Re-verify.**
@@ -5326,10 +5326,9 @@ typmod, the cast applying it after, which is not how `COPY` reads a field:
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
 and server).
 
-**Relied on by:** `value::numeric::numeric_spelling_v14` and
-`value::numeric::numeric_spelling_v16`, each reading one side of the change, so that
-`value::numeric::numeric_unread` refuses a field of a `numeric` column its reader
-does not read only where both sides do.
+**Relied on by:** `value::numeric::input::Spelling::byte`, read as v14's and as v16's,
+each reading one side of the change, so that `NumericIn` refuses a field of a
+`numeric` column its grammar does not read only where both sides do.
 
 **Re-verify.**
 

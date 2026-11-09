@@ -1,3 +1,4 @@
+use crate::decode::Unread;
 use arrow_buffer::i256;
 
 use super::*;
@@ -60,7 +61,7 @@ fn nan_numeric_has_no_decimal_representation() {
 /// server refuses `Infinity` under a typmod (I34), and it reads `1e5`,
 /// which this grammar does not (`docs/design/decisions.md`, "D55"), and
 /// refuses `1e8` past the precision as it refuses `.` and the empty text
-/// ([`numeric_unread`]).
+/// ([`NumericIn`]'s majors).
 #[test]
 fn a_field_is_put_through_its_typmod_as_copy_puts_it() {
     let zeros = |n| "0".repeat(n);

@@ -89,3 +89,13 @@ feeds a `&str` whole and a strict check a part's runs; another kind's slice read
 grammar per type (P33's spec). Rejected: Rust's `parse` beside the machine for `*_out`'s spelling, two grammars one test
 holds together; a head clipped before a slice reader, a second grammar for what to clip. Code: `key/order.rs`
 (`KeyRead`), `int.rs`, `bool.rs`, `uuid.rs`. Evidence: `key/order/differential.rs`, `tests/decoded_copies.rs`.
+
+### D148 A `numeric` is read by a push machine holding only the significant digits its column's answer reads
+`numeric_in` is fed a byte at a time (D144, D147) as this build's grammar and v14's and v16's beside it: a leading
+integer zero and a trailing fraction zero are counted, never held; a typmod'd column holds the digits its precision and
+scale round, a bare one I63's, past which each refuses, and a major's spelling no more than decides whether the column
+stores it, a radix one to I63's width in bits. A `&str` is fed the majors only where the grammar fails.
+`typmod_unscaled_digits` and `NumericKey::parse` are it fed whole. Why: one grammar per type; a bare key is its digits,
+so fixed state cannot hold it. Rejected: the text collected for the slice readers, a field's worth for a padded value.
+Code: `numeric/input.rs` (`NumericIn`), `key/order.rs`. Evidence: `key/order/differential.rs`,
+`tests/decoded_copies.rs`.

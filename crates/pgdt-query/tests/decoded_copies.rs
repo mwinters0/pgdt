@@ -406,6 +406,35 @@ fn a_strict_check_holds_no_text_of_a_scalar_it_keys() {
     }
 }
 
+/// **A strict check holds no text of a `numeric`**: an element and a field
+/// of eight MiB of leading zeros, bare and under a typmod, one of eight MiB
+/// of a fraction's zeros, and one of eight MiB of escaped trailing tabs, are
+/// checked a run at a time with no more allocated than a run and the
+/// reader's own state; one its type refuses — not a number, past its
+/// precision, past the storage format's display scale — is refused all the
+/// same.
+#[test]
+fn a_strict_check_holds_no_text_of_a_numeric() {
+    let long = 8usize << 20;
+    for (declared, head, piece, tail, refused) in [
+        ("numeric[]", "{", "0", "1}", false),
+        ("numeric[]", "{", "0", "1x}", true),
+        ("numeric(5,2)[]", "{", "0", "123.456}", false),
+        ("numeric(5,2)[]", "{", "0", "1234.5}", true),
+        ("numeric(38,2)", "", "0", "1.5", false),
+        ("numeric(38,2)", "-", "0", "1e40", true),
+        ("numeric", "0.", "0", "1", true),
+        ("numeric(10,2)", "0.", "0", "1", false),
+        ("numeric", "1", "\t", "", false),
+        ("numeric", "1", "\t", "x", true),
+    ] {
+        let count = long / piece.len();
+        let (was_refused, peak) = fed_over_runs(declared, head, piece, count, tail);
+        assert_eq!(was_refused, refused, "{declared} {tail:?}");
+        assert!(peak < 4 * RUN, "{declared} {tail:?}: {peak} bytes allocated at the peak");
+    }
+}
+
 /// **A strict parse reads a column its grammar reads off its bytes**: a
 /// `path` of many points and a `bit varying` of many bits, each of eight
 /// MiB and written with an escape every few bytes, are checked, and
