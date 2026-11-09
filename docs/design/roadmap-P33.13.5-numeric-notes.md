@@ -50,11 +50,11 @@ collected the part.
 
 ## Negative results
 
-- **No count pair was taken**: `field_key` and the batch's decimal read now
-  feed a machine a byte at a time where a slice reader read a slice — on every
-  data-level parse's bounds, every query's filter and every typed decimal
-  column — and P33's spec adopts no pricing of a hot-path change
-  ([`decisions.md`](decisions.md), "D108").
+- **Its count pair is 33.22's, and resolved no row**: `field_key` and the
+  batch's decimal read now feed a machine a byte at a time where a slice
+  reader read a slice — on every data-level parse's bounds, every query's
+  filter and every typed decimal column
+  ([`roadmap-P33.22-priced-notes.md`](roadmap-P33.22-priced-notes.md)).
 - **A typmod this build does not read holds its key's digits in a strict
   check**, which answers only whether it is refused: the column refuses
   nothing past the grammar, and its key is those digits.

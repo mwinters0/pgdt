@@ -16302,14 +16302,13 @@ PROFILE_BUILD = release.Build(profile="profiling", rustflags="-C force-frame-poi
 DFCLI_INTROSPECT_BUILD = release.Build(features=("introspect",))
 
 
-def contained_prefix(cfg: Config, memory: str) -> str:
+def contained_prefix(cfg: Config, memory: str, *mount: Path) -> str:
     """The head of a printed recipe line run in a container under `memory`
     (`contained.py`), `Config.alloc_build_root` mounted for the binaries built
-    there, which a report reads without its command naming them."""
-    return (
-        f"python3 {REPO / 'scripts/contained.py'} --memory {memory} "
-        f"--mount {cfg.alloc_build_root} --"
-    )
+    there, which a report reads without its command naming them, and each of
+    `mount`, read the same way."""
+    mounts = "".join(f"--mount {m} " for m in (cfg.alloc_build_root, *mount))
+    return f"python3 {REPO / 'scripts/contained.py'} --memory {memory} {mounts}--"
 
 
 def recipe_build_line(build: release.Build, target_dir: Path) -> str:
@@ -17938,6 +17937,20 @@ CALLGRIND = "valgrind"
 #: carves what the counted run discovered rather than this.
 CALLGRIND_MEMORY = "4g"
 
+#: What a counted run is started under, so `pgdt` is not its PID namespace's
+#: init: valgrind runs its guest in its own process, and as init `pgdt` installs
+#: a handler on every ending signal (`namespace-init`), the real-time one valgrind
+#: reserves among them, which it refuses. Not `exec`'d, so `sh` stays the init
+#: and `pgdt` its child, as `pgdt` is a child in the pair's container.
+CALLGRIND_NOT_INIT = "sh -c '\"$@\"; exit $?' sh"
+
+
+def callgrind_prefix(cfg: Config) -> str:
+    """The head of each callgrind recipe line: its limit, and the input
+    cache mounted, which the linked input leads to without a line naming it."""
+    return contained_prefix(cfg, CALLGRIND_MEMORY, cfg.cache_dir)
+
+
 #: Runs per leg. valgrind serializes a process's threads, so two runs of one
 #: binary differ by scheduling alone, and a rise smaller than that spread is not
 #: placed.
@@ -17947,12 +17960,13 @@ CALLGRIND_REPS = 2
 CALLGRIND_TOP = 60
 
 #: Each function's self `Ir` change between two `callgrind_annotate` listings,
-#: parent's first, as `|change| TAB change TAB function`, for `sort -rn`. The
-#: object in brackets is dropped, since each leg's binary has its own path, and
-#: a name met twice is summed. No single quote, as it is printed inside them.
+#: parent's first, as `|change| TAB change TAB function`, for `sort -rn`. A count
+#: is right-aligned to the widest, so it may follow blanks. The object in
+#: brackets is dropped, since each leg's binary has its own path, and a name met
+#: twice is summed. No single quote, as it is printed inside them.
 CALLGRIND_DIFF_AWK = (
     "FNR == 1 { leg++ } / PROGRAM TOTALS$/ { next } "
-    "/^[0-9][0-9,]*  / { n = $1; gsub(/,/, \"\", n); sub(/^[0-9][0-9,]*  /, \"\"); "
+    "/^ *[0-9][0-9,]*  / { n = $1; gsub(/,/, \"\", n); sub(/^ *[0-9][0-9,]*  /, \"\"); "
     "sub(/ \\[[^]]*\\]$/, \"\"); ir[leg, $0] += n; seen[$0] = 1 } "
     "END { for (f in seen) { d = ir[2, f] - ir[1, f]; "
     "if (d != 0) printf \"%.0f\\t%+.0f\\t%s\\n\", (d < 0 ? -d : d), d, f } }"
@@ -18023,7 +18037,7 @@ def callgrind_recipe(cfg: Config) -> str:
 
     The reading is D108's: the totals first, and only where they reproduce
     the pair's median change are the functions read as its place."""
-    c = contained_prefix(cfg, CALLGRIND_MEMORY)
+    c = callgrind_prefix(cfg)
     work = cfg.out_dir / "callgrind-count-pair"
     legs = {leg: count_pair_leg_binary(cfg, leg) for leg in COUNT_PAIR_LEGS}
     dump = work / input_file(COUNT_PAIR_INPUT)
@@ -18095,7 +18109,8 @@ def callgrind_recipe(cfg: Config) -> str:
                 lines += [
                     f"rm -f {written}",
                     *([f"{c} {binary} {' '.join(builder)} >/dev/null"] if builder else []),
-                    f"{c} {' '.join(['env', *env]) + ' ' if env else ''}{CALLGRIND} "
+                    f"{c} {CALLGRIND_NOT_INIT} {' '.join(['env', *env]) + ' ' if env else ''}"
+                    f"{CALLGRIND} "
                     "--tool=callgrind --dump-instr=yes \\",
                     f"  --log-file={run}.log --callgrind-out-file={run}.out \\",
                     f"  {dfcli_shell([], str(binary), argv).lstrip()} >/dev/null 2>{run}.err",

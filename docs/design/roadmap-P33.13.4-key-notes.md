@@ -55,11 +55,11 @@ ones among them, the peak under four runs — which fails on its parent, whose
 
 ## Negative results
 
-- **No count pair was taken**: `field_key` over these five kinds feeds a
+- **Its count pair is 33.22's**: `field_key` over these five kinds feeds a
   machine a byte at a time where `str::parse` and the slice readers read a
   slice — on every data-level parse's bounds and every query's filter — as
-  `decode_uuid` does on a query's `uuid` batch, and P33's spec adopts no
-  pricing of a hot-path change ([`decisions.md`](decisions.md), "D108").
+  `decode_uuid` does on a query's `uuid` batch, and the pair resolved and
+  placed a rise there ([`roadmap-P33.22-priced-notes.md`](roadmap-P33.22-priced-notes.md)).
   33.17 found the push machine dearer than the pull walk on a short scalar
   fed one run ([`roadmap-P33.17-form-notes.md`](roadmap-P33.17-form-notes.md)).
 - **The allocation test reads no enum**: `comparison_for` with no catalog

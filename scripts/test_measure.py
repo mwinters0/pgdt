@@ -9236,7 +9236,7 @@ class CallgrindRecipe(unittest.TestCase):
         # allowance would move the readers and what statistics may hold (D85).
         cfg = measure.Config()
         lines = re.sub(r"\\\n", " ", self._recipe()).splitlines()
-        prefix = measure.contained_prefix(cfg, measure.CALLGRIND_MEMORY)
+        prefix = measure.callgrind_prefix(cfg)
         for command, label, memory in measure.COUNT_PAIR_SHAPES:
             allowance = contained.size_bytes(memory or cfg.memory)
             self.assertGreater(contained.size_bytes(measure.CALLGRIND_MEMORY), allowance)
@@ -9247,6 +9247,7 @@ class CallgrindRecipe(unittest.TestCase):
                 if ln.startswith(prefix) and "callgrind_annotate" not in ln
             ]
             with self.subTest(shape=command):
+                self.assertGreater(len(pgdt_runs), 0)
                 self.assertEqual(len(pgdt_runs) % (2 * measure.CALLGRIND_REPS), 0)
                 for line in pgdt_runs:
                     self.assertTrue(
@@ -9269,6 +9270,38 @@ class CallgrindRecipe(unittest.TestCase):
                         line,
                     )
         self.assertEqual(recipe.splitlines()[-1], f"rm -f {link}")
+
+    def test_the_linked_input_is_mounted(self):
+        # `contained.py` mounts the directory of each path a line names, so
+        # the link's target, which no line names, is mounted by the prefix.
+        cfg = measure.Config()
+        prefix = measure.callgrind_prefix(cfg)
+        self.assertIn(f" --mount {cfg.cache_dir} ", prefix)
+        for line in self._recipe().splitlines():
+            if line.startswith("python3 "):
+                with self.subTest(line=line):
+                    self.assertTrue(line.startswith(prefix), line)
+
+    def test_no_counted_pgdt_is_its_namespaces_init(self):
+        """valgrind's guest is its own process, so a `pgdt` valgrind is
+        started as init installs a handler on every ending signal, and
+        valgrind refuses the real-time one it reserves: the wrapper stays
+        init, never `exec`'d, as the pair's `count-instructions` does."""
+        lines = self._recipe().splitlines()
+        wrapped = f" {measure.CALLGRIND_NOT_INIT} "
+        for i in self._counted(lines):
+            with self.subTest(line=lines[i]):
+                head = lines[i].split(f" {measure.CALLGRIND} --tool=callgrind ", 1)[0]
+                self.assertIn(wrapped, f"{head} ")
+        self.assertNotIn("exec", measure.CALLGRIND_NOT_INIT)
+        # Its child's parent is the wrapper, not the shell that started it:
+        # an `exec`'d wrapper would hand its pid to the child.
+        run = subprocess.run(
+            ["sh", "-c", f"echo $$; {measure.CALLGRIND_NOT_INIT} sh -c 'echo $PPID'; true"],
+            capture_output=True, text=True, check=True,
+        )
+        shell, parent = run.stdout.split()
+        self.assertNotEqual(shell, parent)
 
     def test_every_run_starts_from_no_cache(self):
         # The pair's container starts from none, so a run over a cache the
@@ -9329,18 +9362,19 @@ class CallgrindRecipe(unittest.TestCase):
 
     def test_the_place_is_each_functions_self_ir_change(self):
         """The awk the recipe prints, run on two listings `callgrind_annotate`
-        writes: the object path each leg's binary has dropped, a name met
-        twice summed, the totals left out, an unchanged function absent."""
+        writes: each count right-aligned to the widest, the object path each
+        leg's binary has dropped, a name met twice summed, the totals left out,
+        an unchanged function absent."""
         listing = (
             "--------------------------------------------------------------------------------\n"
             "Ir             \n"
             "{total}  PROGRAM TOTALS\n\n"
             "Ir             file:function\n"
-            "{a}  ???:pgdt_core::copy::unescape_field [{obj}]\n"
-            "1,000  ???:<a::B<C, D> as e::F>::g [{obj}]\n"
-            "{c}  ???:pgdt_codec::key::compare_keys [{obj}]\n"
-            "{c}  ???:pgdt_codec::key::compare_keys [{obj}]\n"
-            "7  ./string/memcmp.S:__memcmp_avx2_movbe [/usr/lib/x86_64-linux-gnu/libc.so.6]\n"
+            "{a:>13}  ???:pgdt_core::copy::unescape_field [{obj}]\n"
+            "        1,000  ???:<a::B<C, D> as e::F>::g [{obj}]\n"
+            "{c:>13}  ???:pgdt_codec::key::compare_keys [{obj}]\n"
+            "{c:>13}  ???:pgdt_codec::key::compare_keys [{obj}]\n"
+            "            7  ./string/memcmp.S:__memcmp_avx2_movbe [/usr/lib/x86_64-linux-gnu/libc.so.6]\n"
         )
         with tempfile.TemporaryDirectory() as tmp:
             parent, tree = Path(tmp) / "p.txt", Path(tmp) / "t.txt"
