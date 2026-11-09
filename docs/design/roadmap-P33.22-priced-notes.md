@@ -54,9 +54,22 @@ function):
 
 **One pair prices all three**: `measure.py --count-pair HEAD` on the
 reworked, uncommitted tree, which `count_pair_refusal` takes as the change
-measured, launched as a long job, and callgrind places what it leaves. **That
-remainder is accepted**, the batch's among it, on D147's "one grammar per
-type", its reason filed with D147; no second rework follows.
+measured, launched as a long job. **That remainder is accepted**, the
+batch's among it, on D147's "one grammar per type", its reason filed with
+D147; no second rework follows.
+
+**The remainder is sized by subtraction and placed by callgrind**, since no
+pair spans `d33fa096` and the rework: its size a row is 33.13.4's median rise
+less the rework pair's median fall, the two pairs' bases differing by
+`f799618c` alone, whose pair resolved no row. Its place is
+`--callgrind-recipe` run with the kept `d33fa096` leg
+(`legs-89cf0a30/pgdt-count-pair-parent`) put where the rework pair's parent
+leg was, a substitution by hand, its total held to that size; the reason filed
+with D147 names the functions it accepts. The kept legs are deletable after.
+
+**D144 gains a clause when the rework lands**: a reader dispatching to
+several machines selects one a run, never a byte, which 33.13.6 to 33.13.8
+build to, their own pairs then pricing only what is new.
 
 ## Negative results
 
