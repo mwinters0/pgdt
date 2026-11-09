@@ -18,7 +18,8 @@ is a stop condition, not a repair job.
 
 **1. Baseline.** Record `git rev-parse HEAD` and that the tree is clean (`git
 status --short`) — a dirty tree means the previous round did not finish, so stop;
-the current text of STATUS's **"Decisions worth another look"**; the unticked
+the current text of STATUS's **"Decisions worth another look"**, stopping if it
+already holds its five, since a round must be able to end in an entry; the unticked
 slice boxes in order; and the rows in `docs/design/out-of-band.md` whose Date is
 empty, noting which name the open phase in `Blocks`. A blocking row is what the
 round picks up ahead of the next slice; with no phase open, the lowest row whose
@@ -61,6 +62,14 @@ Commit even when a stop condition fired for some *other* reason; the one
 exception is that you **never commit a round that failed verification or left its
 box unticked**. A figure the commit leaves red owes nothing
 (`docs/design/measurements.md`, "A stale figure does not oblige a sweep").
+**Every round ends in a commit or an entry under "Decisions worth another
+look"**, so a round you do not commit files one, written by you unless the
+round's own entry already says all of it: the slice or `M<k>`, and that its work
+is in the tree uncommitted; the trigger, quoted — the check's failing line, the
+checklist annotation, or what the subagent said stopped it; what remains; and
+the decision, the maintainer's, whether to commit the tree as it stands, finish
+it or discard it, with the one you would take and why. A round that changed
+nothing and filed nothing owes one too, naming what its subagent reported.
 **Then empty the scratchpad**, which the round's subagent shares with you: it was
 told to empty it (`CLAUDE.md`, "The session scratchpad is not a home"), so what
 is left is named by nothing. Delete it, reporting what went and any round that
@@ -88,7 +97,8 @@ phase was holding open. The tell is that you can name something the phase would
 deliver differently. **When in doubt, stop.** Anything binding **beyond** the
 open phase is never yours (`docs/process.md`, "Working unattended"); amending a
 spec to record a reordering is fine, amending one to change why a decision was
-made is not.
+made is not. **The entry step 4 files for a round it did not commit is never
+yours**: what becomes of an uncommitted tree is what lands.
 
 ## Stop conditions
 
@@ -170,10 +180,10 @@ enough log to show the failure, the state of everything the frontmatter's
 tell you, a diagnosis with its confidence, and the list of what is left to clean
 up. Then a `docs/status/history/<today>.md` entry naming the job, the failure and
 that path, with slice `<N.M>`'s checklist entry annotated as blocked on it —
-`runs/` being gitignored, verify both before you stop. **At the eight-hour
-cutoff** the session ends rather than the job: disarm the cron, leave it running,
-and write the same two pointers plus a final report saying the loop stopped on
-the cutoff.
+`runs/` being gitignored, verify both before you stop, then file step 4's entry
+for the uncommitted round. **At the eight-hour cutoff** the session ends rather
+than the job: disarm the cron, leave it running, and write the same two pointers
+and the entry plus a final report saying the loop stopped on the cutoff.
 
 ## The final report
 
@@ -182,7 +192,8 @@ what landed; why it stopped, quoting the trigger; **every live entry under
 "Decisions worth another look", quoted in full, not only the ones this loop
 added**, saying so if the section is empty; any long job still running, with its
 handoff path, what `check` last said and how to stop it, or a failed one's
-`FAILURE.md` path, diagnosis and leftovers; what is left uncommitted and why; and
+`FAILURE.md` path, diagnosis and leftovers; what is left uncommitted, and the
+entry saying why; and
 what the maintainer should look at first. Never soften a failure into progress,
 or report a round you did not verify yourself.
 

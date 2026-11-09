@@ -21,7 +21,8 @@ diverge. Four of its stop conditions become transitions; nothing else changes.
 not a stop.** Commit the round if it is clean, then dispatch a grillmaster to
 settle the frontier. `gosub`'s step 5 still runs first and is unchanged: an entry
 that is purely in-phase scheduling or labelling is settled and deleted there and
-never reaches this override. When a grillmaster returns having committed its
+never reaches this override, and nor does the entry its step 4 files for a round
+it did not commit, which stays a stop. When a grillmaster returns having committed its
 closures, resume at step 1 of "One round" — a fresh baseline, the ledger having
 possibly grown a blocking row.
 
