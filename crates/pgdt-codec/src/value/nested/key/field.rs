@@ -10,13 +10,14 @@ use std::cmp::Ordering;
 
 use pgdt_model::PostgresInvalidValues;
 
+use super::multirange::order_multirange;
 use super::{
     NestedKey, RangeBoundKey, array_shape, compare_nested, compare_range, compare_slot, make_range,
     nested_key, null_order, position_refuses_null,
 };
 use crate::compare::{CompareKind, Discrete, NestedCompare};
 use crate::declared::Position;
-use crate::key::order::{OrderKey, Side, compare_keys, read_key};
+use crate::key::order::{OrderKey, Side, compare_keys, jsonb_order, read_key};
 use crate::key::runs::FieldOrder;
 use crate::value::nested::{FieldText, walk_array, walk_int2vector, walk_range, walk_record};
 
@@ -24,8 +25,8 @@ use crate::value::nested::{FieldText, walk_array, walk_int2vector, walk_range, w
 /// `invalid`, orders against `bound`, a key of `plan`'s own; `None` where
 /// the field is no value of the type, as [`nested_key`] refuses it.
 ///
-/// A multirange's field is read whole, its members sorted and merged before
-/// any is compared.
+/// A multirange's members are held as their bounds' positions, sorted and
+/// merged before any is compared.
 pub fn nested_field_order(
     plan: &NestedCompare,
     mut text: FieldText<'_>,
@@ -50,9 +51,10 @@ fn order(
             order_range(subtype, *discrete, text, bound, invalid)
         }
         NestedCompare::Int2Vector { .. } => order_int2vector(text, bound),
-        NestedCompare::Leaf { .. }
-        | NestedCompare::Multirange { .. }
-        | NestedCompare::Uncomparable { .. } => {
+        NestedCompare::Multirange { bound: subtype, discrete, .. } => {
+            order_multirange(subtype, *discrete, text, bound, invalid)
+        }
+        NestedCompare::Leaf { .. } | NestedCompare::Uncomparable { .. } => {
             let whole = text.rest()?;
             let key = nested_key(plan, &whole, Side::Field(invalid))?;
             Some(bound.map_or(Ordering::Equal, |bound| compare_nested(&key, bound)))
@@ -75,7 +77,8 @@ fn order_part(
 }
 
 /// A scalar position's text against `bound`, a leaf key: a bytewise kind's
-/// ordered with no key of it built ([`FieldOrder`]), any other's keyed.
+/// ordered with no key of it built ([`FieldOrder`]), a `jsonb`'s by its
+/// pairs' positions ([`jsonb_order`]), any other's keyed.
 fn order_leaf(
     kind: &CompareKind,
     text: &str,
@@ -92,6 +95,9 @@ fn order_leaf(
         CompareKind::Bytea => OrderKey::Bytes(Vec::new()),
         _ => OrderKey::Text(String::new()),
     };
+    if matches!(kind, CompareKind::Jsonb) {
+        return jsonb_order(FieldText::plain(text), bound);
+    }
     if let Some(order) = FieldOrder::new(kind, bound.unwrap_or(&unbounded)) {
         let order = order.of(text)?;
         return Some(if bound.is_some() { order } else { Ordering::Equal });

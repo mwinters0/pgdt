@@ -17,11 +17,13 @@
 //! What a literal of each kind has to look like, for the refusal naming it,
 //! is `form`'s, and how `=`/`!=` compare a field against it, `equality`'s;
 //! a field of a bytewise kind ordered against a bound as its runs come is
-//! `runs`'s; the refusal checks a strict parse dispatches through these readers are
+//! `runs`'s, and what a normalized type's order holds per byte of its text,
+//! `factor`'s; the refusal checks a strict parse dispatches through these readers are
 //! `crate::grammar`'s.
 
 mod emitted;
 pub(crate) mod equality;
+pub(crate) mod factor;
 pub(crate) mod form;
 pub(crate) mod order;
 mod relate;

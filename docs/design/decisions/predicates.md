@@ -96,3 +96,12 @@ first difference. A part's text is borrowed, or collected alone where it carries
 and one decoded copy (D141). Rejected: the field's key tree, tens of bytes an element; stopping at the first difference,
 which answers a field the batch refuses; `decode_*` as the walk's collectors, changing what a batch decodes with (D108).
 Code: `nested/output/walk.rs`, `nested/key/field.rs`. Evidence: `key/field/tests.rs`, `tests/decoded_copies.rs`.
+
+### D152 A normalized type's order holds its pairs' and members' positions, each keyed again as compared
+A `jsonb` term walks its field whole, then compares it holding each object's pairs on the path compared as `u32`
+positions sorted into storage order; a multirange term holds each member as its bounds' positions, sorted and merged as
+the server merges them, a member's range keyed from its text each time it is compared. Each states its key factor
+beside it. Why: a query holds its line and one decoded copy (D141). Rejected: the key tree, tens of bytes a pair or
+member; `usize` positions, twice the factor; a key's length held beside its position, which a sort reading the key
+anyway does not need. Code: `value/json/order.rs`, `nested/key/multirange.rs`, `key/factor.rs`. Evidence:
+`json/order/tests.rs`, `key/field/tests.rs`, `tests/decoded_copies.rs`.

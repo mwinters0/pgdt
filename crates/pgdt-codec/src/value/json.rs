@@ -1,6 +1,7 @@
 //! `json` and `jsonb`: whether `json_in` reads a text, which a strict parse
-//! and a filter's literal call, and the `jsonb` document an order key holds
-//! ([`Jsonb`]), with why its parser reads no value from a text.
+//! and a filter's literal call, the `jsonb` document an order key holds
+//! ([`Jsonb`]), with why its parser reads no value from a text, and a
+//! field's document ordered against one as its positions hold it.
 
 use std::cmp::Ordering;
 
@@ -8,10 +9,12 @@ use crate::decode::{Read, Unread};
 use crate::value::first_difference;
 use crate::value::numeric::NumericKey;
 
+mod order;
 mod walk;
 
 use walk::{JSONB_MAX_DEPTH, numeric_stores};
 
+pub(crate) use order::{JSONB_KEY_FACTOR, jsonb_field_order};
 pub(crate) use walk::{JsonMark, JsonWalk};
 
 /// Whether `json_in` reads `text`, which it stores as written: one JSON value

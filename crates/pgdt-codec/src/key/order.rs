@@ -21,7 +21,8 @@ use crate::value::datetime::{
 };
 use crate::value::float::{float_field, float_in};
 use crate::value::int::{int_in, oid_unread};
-use crate::value::json::{Jsonb, parse_jsonb};
+use crate::value::json::{Jsonb, jsonb_field_order, parse_jsonb};
+use crate::value::nested::FieldText;
 use crate::value::network::{NetworkKey, macaddr_octets, macaddr_unread, macaddr8_in, network_in};
 use crate::value::numeric::{
     NumericColumn, NumericKey, decimal_unscaled_digits, numeric_in_stores, numeric_unread,
@@ -38,6 +39,19 @@ fn jsonb_key(text: &str) -> Read<OrderKey> {
         container @ (Jsonb::Array { .. } | Jsonb::Object(_)) => container,
         scalar => Jsonb::Array { raw_scalar: true, items: vec![scalar] },
     }))
+}
+
+/// How a `jsonb` field read off `text` orders against `bound`, a `jsonb`
+/// key: what [`read_key`] over it and [`compare_keys`] answer, holding the
+/// positions of its objects' pairs rather than its document
+/// (`docs/design/decisions.md`, "D152"); `Equal` where there is no bound,
+/// the field read all the same.
+pub fn jsonb_order(text: FieldText<'_>, bound: Option<&OrderKey>) -> Option<Ordering> {
+    let bound = bound.map(|bound| match bound {
+        OrderKey::Jsonb(bound) => bound,
+        _ => unreachable!("a `jsonb` column's bound is a `jsonb` key"),
+    });
+    jsonb_field_order(text, bound).ok()
 }
 
 /// One side of an ordering comparison, decoded from text per the column's

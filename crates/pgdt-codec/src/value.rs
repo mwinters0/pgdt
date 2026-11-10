@@ -11,6 +11,7 @@ pub(crate) mod bool;
 pub(crate) mod bytea;
 pub(crate) mod datetime;
 pub(crate) mod digits;
+pub(crate) mod factor;
 pub(crate) mod float;
 pub(crate) mod geometric;
 pub(crate) mod int;

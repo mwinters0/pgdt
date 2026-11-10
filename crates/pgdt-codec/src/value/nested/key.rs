@@ -14,8 +14,10 @@ use crate::key::order::{OrderKey, Side, compare_keys, literal_key, read_key};
 use crate::value::{first_difference, nested};
 
 mod field;
+mod multirange;
 
 pub use field::nested_field_order;
+pub(crate) use multirange::MULTIRANGE_KEY_FACTOR;
 
 /// One side of a **nested** comparison, decoded from a container literal per
 /// the column's [`NestedCompare`]. Both sides of any one comparison come from

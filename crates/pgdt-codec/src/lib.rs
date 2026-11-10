@@ -31,10 +31,11 @@ pub mod internal {
     };
     pub use crate::grammar::walk::{FieldWalk, grammar_refuses};
     pub use crate::key::equality::{Equality, SpellingRuns, Spellings, literal_equality};
+    pub use crate::key::factor::{KeyFactor, key_factor, nested_key_factor};
     pub use crate::key::form::{accepted_form, nested_accepted_form, unlisted_labels};
     pub use crate::key::order::{
-        OrderKey, Side, compare_keys, compare_keys_stored, field_key, literal_key, order_key,
-        read_key,
+        OrderKey, Side, compare_keys, compare_keys_stored, field_key, jsonb_order, literal_key,
+        order_key, read_key,
     };
     pub use crate::key::runs::{BytewiseRuns, FieldOrder};
     pub use crate::resolve::{column_of, read_as_text, schema_of};

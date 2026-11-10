@@ -731,6 +731,66 @@ fn an_escaped_field_read_off_its_bytes_answers_as_its_text() {
     }
 }
 
+/// **A `jsonb` term reading an escaped field by its pairs' positions
+/// answers as one reading its text unescaped** (`docs/design/decisions.md`,
+/// "D152"): each ordering and equality operator against objects, arrays
+/// and scalars, over fields `COPY` escapes, fields of nothing but escapes
+/// and plain ones — a field that is no `jsonb` raising the same
+/// `FieldDecode`, and the dynamic filter's `is_false` alike.
+#[test]
+fn an_escaped_jsonb_field_read_by_its_positions_answers_as_its_text() {
+    let comparing: [Comparing; 8] = [
+        PredicateOp::Lt,
+        PredicateOp::Le,
+        PredicateOp::Gt,
+        PredicateOp::Ge,
+        PredicateOp::Eq,
+        PredicateOp::Ne,
+        PredicateOp::IsDistinctFrom,
+        PredicateOp::IsNotDistinctFrom,
+    ];
+    let schema = one_column("jsonb", DataType::Utf8View);
+    let literals = [r#"{"a": "x\ty", "b": 1}"#, "[1, 2]", r#""a\\b""#, "1", "{}"];
+    let fields = [
+        r#"{"b": 1, "a": "x\ty"}"#,
+        r#"{"a": "x\ty", "b": 1, "b": 2}"#,
+        r#"{"a": "x\tz"}"#,
+        "[1, 2]",
+        "[1, 2, 3]",
+        r#""a\\b""#,
+        "1",
+        "1.0",
+        "{}",
+        "{\"a\":\t1}",
+        "{",
+        "[1,]",
+    ];
+    for op in comparing {
+        for literal in literals {
+            let p = Predicate { column: "v".into(), op: op(literal.to_string()) };
+            let term = resolve_term(&p, 0, &schema, 0).unwrap();
+            let expr = ResolvedExpr::Term(term.clone());
+            for field in fields {
+                let unescaped = term.eval_value(Some(field));
+                let written = escape_field(Some(field));
+                let spelled = every_byte_escaped(field.as_bytes());
+                for row in [&written, &spelled] {
+                    let read = answered(&expr, row);
+                    match unescaped {
+                        Some(truth) => assert_eq!(read, Ok(truth), "{literal} {field:?}"),
+                        None => {
+                            let raised = read.expect_err("a field its type does not read");
+                            assert!(raised.contains(field), "{field:?}: {raised}");
+                        }
+                    }
+                    let is_false = term.is_false(RawRow::unchecked(row), &mut RowSplit::default());
+                    assert_eq!(is_false, unescaped == Some(Truth::False), "{field:?}");
+                }
+            }
+        }
+    }
+}
+
 /// **An escaped field whose text is not UTF-8 raises what unescaping it
 /// raises**, read off its bytes or not, and the dynamic filter's
 /// `is_false` keeps its row.

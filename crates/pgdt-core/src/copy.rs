@@ -508,6 +508,20 @@ impl<'a> Unescaped<'a> {
         Self { field, at: 0, escape: Unescape::default() }
     }
 
+    /// The bytes `field` stands for from `offset`, a place in it where the
+    /// spelling of one of its bytes begins, as [`Unescaped::offset`] names
+    /// one: a reader holding a place in a field rather than a copy of it.
+    pub fn resumed(field: &'a [u8], offset: usize) -> Self {
+        Self { field, at: offset, escape: Unescape::default() }
+    }
+
+    /// Where in the field the spelling of the next byte begins, for
+    /// [`Unescaped::resumed`] to read it again from.
+    pub fn offset(&self) -> usize {
+        debug_assert_eq!(self.escape.state, Escape::Plain, "between two bytes no escape is open");
+        self.at
+    }
+
     /// The bytes not yet read, where none of them is escaped, so each stands
     /// for itself: a reader takes them as a slice rather than one at a time.
     pub fn rest_if_plain(&self) -> Option<&'a [u8]> {
@@ -876,6 +890,15 @@ mod tests {
             assert_eq!(read, decode(field).expect(field).into_bytes(), "{field:?}");
             let (lower, upper) = unescaped(field.as_bytes()).unwrap().size_hint();
             assert!(lower <= read.len() && upper >= Some(read.len()), "{field:?}");
+            // Resumed where each byte's spelling begins, the rest is read
+            // again.
+            let mut bytes = unescaped(field.as_bytes()).unwrap();
+            for at in 0..read.len() {
+                let resumed: Vec<u8> =
+                    Unescaped::resumed(field.as_bytes(), bytes.offset()).collect();
+                assert_eq!(resumed, read[at..], "{field:?} from {at}");
+                bytes.next();
+            }
         }
         assert!(unescaped(b"\\N").is_none());
         let mut bytea = unescaped(b"\\\\xdead").unwrap();

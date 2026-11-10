@@ -6,9 +6,10 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::ops::Range;
 
+use pgdt_codec::compare::CompareKind;
 use pgdt_codec::internal::{
     BytewiseRuns, Equality, FieldOrder, FieldText, OrderKey, Side, SpellingRuns, TextFold,
-    compare_keys, compare_nested, nested_field_order, nested_key, read_key,
+    compare_keys, compare_nested, jsonb_order, nested_field_order, nested_key, read_key,
 };
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::timed_span;
@@ -40,9 +41,10 @@ impl ResolvedTerm {
     /// **An escaped field is read off its bytes where the term reads no
     /// more of it than a bound** — a text, `character` or `bytea` ordering,
     /// an `=` against a literal's spellings or trimmed, a NULL test — with
-    /// no copy of it made — and where it orders a nested field, read as the
-    /// output grammars' walk reads it; any other is unescaped first
-    /// (`docs/design/decisions.md`, "D150", "D151").
+    /// no copy of it made — where it orders a nested field, read as the
+    /// output grammars' walk reads it, and where it orders or equates a
+    /// `jsonb` field, by its pairs' positions; any other is unescaped first
+    /// (`docs/design/decisions.md`, "D150", "D151", "D152").
     pub(super) fn eval(
         &self,
         raw_row: RawRow<'_>,
@@ -53,17 +55,20 @@ impl ResolvedTerm {
         let field = timed!(Part::Locate, split.field(raw_row.bytes(), self.index));
         let runs = self.runs();
         let walks = self.walks();
+        let jsonb = self.jsonb();
+        let escaped = runs.is_some() || walks.is_some() || jsonb.is_some();
         let read = match field {
-            Some(f) => timed!(Part::Unescape, read(raw_row, f, runs.is_some() || walks.is_some()))?,
+            Some(f) => timed!(Part::Unescape, read(raw_row, f, escaped))?,
             None => Read::Missing,
         };
         let value = match &read {
             Read::Text(text) => Some(text.as_ref()),
             Read::Escaped(bytes) => {
-                let truth = match (runs, walks) {
-                    (Some(runs), _) => self.eval_runs(runs, bytes)?,
-                    (None, Some(nested)) => self.eval_walk(nested, bytes)?,
-                    (None, None) => {
+                let truth = match (runs, walks, jsonb) {
+                    (Some(runs), ..) => self.eval_runs(runs, bytes)?,
+                    (None, Some(nested), _) => self.eval_walk(nested, bytes)?,
+                    (None, None, Some(bound)) => self.eval_jsonb(bound, bytes)?,
+                    (None, None, None) => {
                         unreachable!("a field is left escaped only for a term reading its runs")
                     }
                 };
@@ -138,16 +143,37 @@ impl ResolvedTerm {
         }
     }
 
+    /// The `jsonb` key this term orders or equates a field against by its
+    /// pairs' positions, off an escaped field's bytes, or `None`: a value
+    /// its type cannot hold, tested or read as NULL, is read whole.
+    fn jsonb(&self) -> Option<&OrderKey> {
+        if self.unrepresentable.is_some() {
+            return None;
+        }
+        match &self.compared.as_ref()?.comparison {
+            Comparison::Ordered { kind: CompareKind::Jsonb, bound }
+            | Comparison::Equal(Equality::Decoded { kind: CompareKind::Jsonb, bound }) => {
+                Some(bound)
+            }
+            _ => None,
+        }
+    }
+
+    /// This term's answer for an escaped `jsonb` field, `bytes` as `COPY`
+    /// wrote them, read off them by its pairs' positions:
+    /// [`Self::eval_value`]'s over its text, and the error unescaping it
+    /// raises where that text is not UTF-8.
+    fn eval_jsonb(&self, bound: &OrderKey, bytes: &[u8]) -> Result<Option<Truth>> {
+        utf8_checked(bytes)?;
+        Ok(timed!(Part::Compare, jsonb_order(FieldText::escaped(bytes), Some(bound)))
+            .map(|ord| self.nested(ord)))
+    }
+
     /// This term's answer for an escaped nested field, `bytes` as `COPY`
     /// wrote them, walked off them: [`Self::eval_value`]'s over its text,
     /// and the error unescaping it raises where that text is not UTF-8.
     fn eval_walk(&self, nested: &NestedComparison, bytes: &[u8]) -> Result<Option<Truth>> {
-        let mut utf8 = TextFold::default();
-        unescape_runs(bytes, |run| utf8.push(run));
-        let valid_up_to = utf8.valid_up_to();
-        if utf8.finish().is_none() {
-            return Err(Error::InvalidUtf8 { valid_up_to });
-        }
+        utf8_checked(bytes)?;
         Ok(timed!(
             Part::Compare,
             nested_field_order(
@@ -160,9 +186,9 @@ impl ResolvedTerm {
         .map(|ord| self.nested(ord)))
     }
 
-    /// The truth of this nested term's operator where the field orders
-    /// `ord` against its bound: two-valued throughout, a NULL *inside* the
-    /// container being a value of it.
+    /// The truth of this nested or `jsonb` term's operator where the field
+    /// orders `ord` against its bound: two-valued throughout, a NULL
+    /// *inside* the container being a value of it.
     fn nested(&self, ord: Ordering) -> Truth {
         Truth::of(match self.op {
             PredicateOp::Lt(_) => ord.is_lt(),
@@ -267,9 +293,13 @@ impl ResolvedTerm {
         // it was when it was a temporary of the comparison.
         Some(Truth::of(match &compared.comparison {
             Comparison::Ordered { kind, bound } => {
-                // A bytewise kind's field is ordered with no key of it built.
+                // A bytewise kind's field is ordered with no key of it
+                // built, and a `jsonb`'s by its pairs' positions (D152).
                 let ord = match FieldOrder::new(kind, bound) {
                     Some(order) => timed!(Part::Compare, order.of(text))?,
+                    None if *kind == CompareKind::Jsonb => {
+                        timed!(Part::Compare, jsonb_order(FieldText::plain(text), Some(bound)))?
+                    }
                     None => {
                         let key = timed!(Part::Key, read_key(kind, text, self.invalid))?;
                         timed!(Part::Compare, compare_keys(&key, bound))
@@ -282,6 +312,10 @@ impl ResolvedTerm {
             }
             Comparison::Equal(Equality::Trimmed(bound)) => {
                 timed!(Part::Compare, text.trim_end_matches(' ') == bound.as_str())
+                    == self.wants_equal()
+            }
+            Comparison::Equal(Equality::Decoded { kind: CompareKind::Jsonb, bound }) => {
+                timed!(Part::Compare, jsonb_order(FieldText::plain(text), Some(bound)))?.is_eq()
                     == self.wants_equal()
             }
             Comparison::Equal(Equality::Decoded { kind, bound }) => {
@@ -315,13 +349,15 @@ impl ResolvedTerm {
         let Some(field) = split.field(raw_row.bytes(), self.index) else { return false };
         let runs = self.runs();
         let walks = self.walks();
-        match read(raw_row, field, runs.is_some() || walks.is_some()) {
+        let jsonb = self.jsonb();
+        match read(raw_row, field, runs.is_some() || walks.is_some() || jsonb.is_some()) {
             Ok(Read::Text(value)) => self.eval_value(Some(&value)) == Some(Truth::False),
             Ok(Read::Escaped(bytes)) => {
-                let truth = match (runs, walks) {
-                    (Some(runs), _) => self.eval_runs(runs, bytes),
-                    (None, Some(nested)) => self.eval_walk(nested, bytes),
-                    (None, None) => return false,
+                let truth = match (runs, walks, jsonb) {
+                    (Some(runs), ..) => self.eval_runs(runs, bytes),
+                    (None, Some(nested), _) => self.eval_walk(nested, bytes),
+                    (None, None, Some(bound)) => self.eval_jsonb(bound, bytes),
+                    (None, None, None) => return false,
                 };
                 matches!(truth, Ok(Some(Truth::False)))
             }
@@ -682,6 +718,18 @@ fn read(raw_row: RawRow<'_>, field: Range<usize>, runs: bool) -> Result<Read<'_>
         RawField::Plain(text) => Read::Text(Cow::Borrowed(text)),
         RawField::Escaped(bytes) => Read::Escaped(bytes),
     })
+}
+
+/// The error unescaping `bytes`, a field as `COPY` wrote it, raises where
+/// its text is not UTF-8, read off them with no copy made.
+fn utf8_checked(bytes: &[u8]) -> Result<()> {
+    let mut utf8 = TextFold::default();
+    unescape_runs(bytes, |run| utf8.push(run));
+    let valid_up_to = utf8.valid_up_to();
+    match utf8.finish() {
+        Some(_) => Ok(()),
+        None => Err(Error::InvalidUtf8 { valid_up_to }),
+    }
 }
 
 /// An escaped field's text, `bytes` unescaped, handed to `run` a stretch

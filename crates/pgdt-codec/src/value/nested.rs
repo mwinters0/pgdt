@@ -37,7 +37,9 @@ pub use input::{
     parse_record,
 };
 pub use output::walk::FieldText;
-pub(crate) use output::walk::{walk_array, walk_int2vector, walk_range, walk_record};
+pub(crate) use output::walk::{
+    walk_array, walk_bracketed, walk_int2vector, walk_multirange, walk_range, walk_record,
+};
 pub use output::{
     decode_array, decode_int2vector, decode_multirange, decode_range, decode_record,
     push_array_null, quote_array_element, render_array, render_int2vector, render_multirange,

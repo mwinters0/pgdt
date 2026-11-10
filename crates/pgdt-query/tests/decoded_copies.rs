@@ -2,11 +2,12 @@
 //! a query over escaped text and over `bytea` (`docs/design/decisions.md`,
 //! "D141"), none in a filter's term reading an escaped field off its bytes
 //! ("D150") or ordering a nested one as the output grammars' walk reads it
-//! ("D151"), and none in a parse, its statistics and a strict parse's check
-//! reading an escaped field off its bytes ("D142"), a strict parse walking a
-//! nested, `json` or `jsonb` value a part at a time ("D143"), and a strict
-//! check fed its field over runs holding none of it ("D144"), a type read by
-//! its input grammar alone among them.
+//! ("D151"), a normalized one's positions alone ("D152"), and none in a
+//! parse, its statistics and a strict parse's check reading an escaped field
+//! off its bytes ("D142"), a strict parse walking a nested, `json` or
+//! `jsonb` value a part at a time ("D143"), and a strict check fed its field
+//! over runs holding none of it ("D144"), a type read by its input grammar
+//! alone among them.
 //!
 //! **This binary installs a global allocator tracking the bytes live**, and
 //! their peak, which is why it is a test file of its own. A line past its
@@ -280,6 +281,76 @@ async fn a_nested_term_holds_no_tree() {
             let kept = batches.iter().map(RecordBatch::num_rows).sum::<usize>();
             assert_eq!(kept, *rows, "{declared} {op:?}");
             assert!(peak < long / 4, "{declared} {op:?}: {peak} bytes allocated at the peak");
+        }
+    }
+}
+
+/// **A normalized term holds its positions and no tree**
+/// (`docs/design/decisions.md`, "D152"): a `jsonb` object holding one of
+/// many pairs whose keys carry an escape, written out of storage order as
+/// `COPY` escapes it, and an `int4multirange` of many members written out
+/// of order, each of eight MiB, are ordered and compared by a query reading
+/// neither into its batch, holding no more than its key factor says beside
+/// the line; the rows each keeps are the server's.
+#[tokio::test]
+async fn a_normalized_term_holds_its_positions() {
+    use PredicateOp::{Eq, Gt, Lt};
+    use pgdt_codec::compare::CompareKind;
+    use pgdt_codec::internal::key_factor;
+    let dir = tempfile::tempdir().unwrap();
+    let long = 8usize << 20;
+    let pairs = long / 16;
+    let mut object = "{\"b\": 1, \"a\": {".to_string();
+    for i in (1..=pairs).rev() {
+        object.push_str(&format!("\"k\\t{i:07}\": 1, "));
+    }
+    object.push_str("\"k\\t0000000\": 1}}");
+    let members = long / 18;
+    let mut multirange = "{".to_string();
+    for i in (1..=members).rev() {
+        multirange.push_str(&format!("[{},{}),", 2 * i, 2 * i + 1));
+    }
+    multirange.push_str("[0,1)}");
+    let short_object = r#"{"a": {}, "b": 1}"#;
+    let objects = [
+        (Gt(short_object.into()), 1),
+        (Eq(short_object.into()), 2),
+        (Lt(r#"{"a": {"k": 1}, "b": 1}"#.into()), 2),
+    ];
+    let ranges =
+        [(Gt("{[0,1)}".into()), 1), (Eq("{[0,1)}".into()), 2), (Lt("{[0,1),[2,3)}".into()), 2)];
+    let jsonb = key_factor(&CompareKind::Jsonb).unwrap();
+    let multiranges = pgdt_codec::internal::nested_key_factor(&match comparison_for(
+        "int4multirange",
+        None,
+        &[],
+        &[],
+    ) {
+        pgdt_codec::compare::ComparisonPlan::Nested(plan) => plan,
+        other => panic!("{other:?}"),
+    })
+    .unwrap();
+    for (declared, short, field, factor, filters) in [
+        ("jsonb", short_object, object, jsonb, &objects[..]),
+        ("int4multirange", "{[0,1)}", multirange, multiranges, &ranges[..]),
+    ] {
+        let field = pgdt_core::escape_field(Some(&field));
+        let short = String::from_utf8(pgdt_core::escape_field(Some(short))).unwrap();
+        let path = dump(dir.path(), declared, &short, &field);
+        let held = factor.of(field.len() as u64) as usize;
+        for (op, rows) in filters {
+            let options = QueryOptions {
+                projection: Some(vec!["a".to_string()]),
+                filter: Expr::Term(Predicate { column: "b".into(), op: op.clone() }),
+                ..QueryOptions::default()
+            };
+            let (batches, peak) = query_with(&path, options).await;
+            let kept = batches.iter().map(RecordBatch::num_rows).sum::<usize>();
+            assert_eq!(kept, *rows, "{declared} {op:?}");
+            assert!(
+                peak < held + long / 16,
+                "{declared} {op:?}: {peak} bytes allocated at the peak"
+            );
         }
     }
 }

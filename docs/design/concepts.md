@@ -305,8 +305,9 @@ value's text ([`decisions.md`](decisions.md), "Predicates").
   `emitted` the value a key read in DataFusion's semantics hands over in its
   column's emitted type; its `form` is the form a filter's literal has to take,
   what the literal reader reads, its `equality` how `=` compares a field
-  against the literal, and its `runs` a bytewise value ordered against a
-  bound as its text's runs come (D150). The built-in table answering a type's
+  against the literal, its `runs` a bytewise value ordered against a
+  bound as its text's runs come (D150), and its `factor` what a normalized
+  type's order holds per byte of its text, stated beside each such key (D152). The built-in table answering a type's
   comparison beside its Arrow type is the type mapping's (D40).
 - **datafusion-pgdump** — `key.rs`: two of DataFusion's orders related by its
   own coercion, cast and comparison kernel, the only library linking them

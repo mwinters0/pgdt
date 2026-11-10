@@ -1,5 +1,5 @@
 //! **The output grammars as a walk**: an `array_out`, `record_out`,
-//! `range_out` or `int2vectorout` value read a part at a time over its held
+//! `range_out`, `multirange_out` or `int2vectorout` value read a part at a time over its held
 //! field, each part handed to its caller as it is read and none of them kept,
 //! so a reader of it holds no copy and no tree of the value
 //! (`docs/design/decisions.md`, "D151").
@@ -30,9 +30,10 @@ pub struct FieldText<'a> {
 enum Source<'a> {
     /// A text, read in place.
     Plain { text: &'a [u8], at: usize },
-    /// A field holding a `COPY` escape, unescaped a byte at a time, and the
-    /// next byte it stands for.
-    Escaped { bytes: Unescaped<'a>, next: Option<u8> },
+    /// A field holding a `COPY` escape, unescaped a byte at a time, the
+    /// next byte it stands for, and where in the field that byte's spelling
+    /// begins.
+    Escaped { field: &'a [u8], bytes: Unescaped<'a>, next: Option<u8>, next_at: usize },
 }
 
 impl<'a> FieldText<'a> {
@@ -45,25 +46,52 @@ impl<'a> FieldText<'a> {
     pub fn escaped(field: &'a [u8]) -> Self {
         let mut bytes = unescaped(field).expect("a field read as text is no SQL NULL");
         let next = bytes.next();
-        Self { source: Source::Escaped { bytes, next }, token: Vec::new() }
+        Self { source: Source::Escaped { field, bytes, next, next_at: 0 }, token: Vec::new() }
     }
 
-    fn peek(&self) -> Option<u8> {
+    /// The next byte, unread.
+    pub(crate) fn peek(&self) -> Option<u8> {
         match &self.source {
             Source::Plain { text, at } => text.get(*at).copied(),
             Source::Escaped { next, .. } => *next,
         }
     }
 
-    fn bump(&mut self) {
+    /// Read the next byte.
+    pub(crate) fn bump(&mut self) {
         match &mut self.source {
             Source::Plain { at, .. } => *at += 1,
-            Source::Escaped { bytes, next } => *next = bytes.next(),
+            Source::Escaped { bytes, next, next_at, .. } => {
+                *next_at = bytes.offset();
+                *next = bytes.next();
+            }
+        }
+    }
+
+    /// Where the next byte is: its place in a text, or where its spelling
+    /// begins in a field as `COPY` wrote it, which [`FieldText::seek`]
+    /// returns to.
+    pub(crate) fn offset(&self) -> usize {
+        match &self.source {
+            Source::Plain { at, .. } => *at,
+            Source::Escaped { next_at, .. } => *next_at,
+        }
+    }
+
+    /// Read on from `offset`, a place [`FieldText::offset`] named.
+    pub(crate) fn seek(&mut self, offset: usize) {
+        match &mut self.source {
+            Source::Plain { at, .. } => *at = offset,
+            Source::Escaped { field, bytes, next, next_at } => {
+                *bytes = Unescaped::resumed(field, offset);
+                *next_at = offset;
+                *next = bytes.next();
+            }
         }
     }
 
     /// Read `byte` where it is next, answering whether it was.
-    fn eat(&mut self, byte: u8) -> bool {
+    pub(crate) fn eat(&mut self, byte: u8) -> bool {
         let next = self.peek() == Some(byte);
         if next {
             self.bump();
@@ -71,7 +99,7 @@ impl<'a> FieldText<'a> {
         next
     }
 
-    fn at_end(&self) -> bool {
+    pub(crate) fn at_end(&self) -> bool {
         self.peek().is_none()
     }
 
@@ -83,7 +111,7 @@ impl<'a> FieldText<'a> {
                 *at = text.len();
                 std::str::from_utf8(rest).ok().map(Cow::Borrowed)
             }
-            Source::Escaped { bytes, next } => {
+            Source::Escaped { bytes, next, .. } => {
                 let rest: Vec<u8> = next.take().into_iter().chain(bytes.by_ref()).collect();
                 String::from_utf8(rest).ok().map(Cow::Owned)
             }
@@ -319,7 +347,7 @@ pub(crate) struct RangeShape {
 /// `None` an absent one, and what the value states beside them.
 pub(crate) fn walk_range(
     text: &mut FieldText<'_>,
-    mut bound: impl FnMut(bool, Option<&str>) -> Option<()>,
+    bound: impl FnMut(bool, Option<&str>) -> Option<()>,
 ) -> Option<RangeShape> {
     if text.peek() == Some(b'e') {
         let empty = b"empty".iter().all(|&letter| text.eat(letter)) && text.at_end();
@@ -329,6 +357,17 @@ pub(crate) fn walk_range(
             upper_inclusive: false,
         });
     }
+    let shape = walk_bracketed(text, bound)?;
+    text.at_end().then_some(shape)
+}
+
+/// A range written between its brackets, as [`walk_range`] reads one, read
+/// to its closing bracket and what follows it left unread: a multirange's
+/// member ([`walk_multirange`]).
+pub(crate) fn walk_bracketed(
+    text: &mut FieldText<'_>,
+    mut bound: impl FnMut(bool, Option<&str>) -> Option<()>,
+) -> Option<RangeShape> {
     let lower_inclusive = match text.peek()? {
         b'[' => true,
         b'(' => false,
@@ -346,7 +385,34 @@ pub(crate) fn walk_range(
         _ => return None,
     };
     text.bump();
-    text.at_end().then_some(RangeShape { empty: false, lower_inclusive, upper_inclusive })
+    Some(RangeShape { empty: false, lower_inclusive, upper_inclusive })
+}
+
+/// [`decode_multirange`](super::decode_multirange)'s grammar as a walk:
+/// `member` handed the text at each member's opening bracket, to read it by
+/// [`walk_bracketed`], and how many members there were. A member is never
+/// `empty`, which `multirange_out` drops.
+pub(crate) fn walk_multirange<'a>(
+    text: &mut FieldText<'a>,
+    mut member: impl FnMut(&mut FieldText<'a>) -> Option<()>,
+) -> Option<usize> {
+    if !text.eat(b'{') {
+        return None;
+    }
+    let mut count = 0;
+    if !text.eat(b'}') {
+        loop {
+            member(text)?;
+            count += 1;
+            if text.eat(b'}') {
+                break;
+            }
+            if !text.eat(b',') {
+                return None;
+            }
+        }
+    }
+    text.at_end().then_some(count)
 }
 
 /// The longest element [`canonical_int2`] reads, `-32768`.
