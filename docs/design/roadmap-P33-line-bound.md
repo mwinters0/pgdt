@@ -48,17 +48,20 @@ field as its bytes go by and counted against its header's width as a held row is
 answering exactly what it answers over a whole field, the slice path being that
 fold fed once; a counted scalar from a head no longer than the longest literal
 its tier test answers for; and a counted container — an array, record, range or
-multirange over a counted leaf — through the resumable readers a gathering parse
-reads with (below), holding nothing that grows with it, so a mapping pass, parse
-or census, holds no field and a cold query is charged only for the lines its
-replay decodes. The head is exact because the codec's datetime
+multirange over a datetime, `interval` or decimal `numeric` leaf — held whole
+and drawn from the ledger past its chunk term as a query's held line is (below),
+its tier read by `decode_*`, the output grammar, as a gathering parse's is. The
+head is exact because the codec's datetime
 decoders refuse a literal past the buffer PostgreSQL parses one in, as
 `date_in`, the timestamp inputs and `interval_in` do (`M276`). Rejected: a
 block holding its lines wherever its counter tests a container, which holds a
 long `text` line for a short `timestamptz[]` beside it; a clipped head for the
 shape census, which moves a `text` column's persisted census for no array's
-sake; holding a counted container whole, which charges a cold query over a
-`text` column for a long `int4range[]` field beside it that it never reads.
+sake; counting a container through the `*_in` walks a gathering parse streams,
+which read spellings `decode_*` refuses — `{ infinity }` in a `date[]` — so the
+census would count a field the query reading it refuses. Reopens: a cold query
+over a `text` column charged for a long `timestamptz[]` field beside it that it
+never reads — P40's ([`roadmap.md`](roadmap.md), "P40 — Every reader streams").
 
 **Where it lives**: the carry counts a streamed row's fields and hands each
 byte range, its field's index beside it, to a fold its reader supplies —

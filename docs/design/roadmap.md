@@ -1094,9 +1094,10 @@ inbox](roadmap-P39-postgres-extension-inbox.md).
 **A parse holds nothing that grows with any field**, in every spelling
 PostgreSQL's `*_in` reads, so a parse runs under a `--memory` below a long
 line whose long field is a scalar an order key or a query's batch reads: a
-number, a datetime, an `interval`, a network address, or a container of one.
-P33 streams only the types a dump's long fields hold and collects such a
-scalar's text whole, drawing it from the ledger
+number, a datetime, an `interval`, a network address, or a container of one,
+and a cold query's census holds no counted container of a column it never
+reads. P33 streams only the types a dump's long fields hold and collects such a
+scalar's text, and such a container's field, whole, drawing it from the ledger
 ([`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md), "A pass holds a line
 only where it decodes it"). It is wanted only when a dump needs it, and what
 that dump is decides its scope. Its first question is the hot path's: a push
