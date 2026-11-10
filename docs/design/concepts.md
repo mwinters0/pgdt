@@ -256,8 +256,9 @@ above implements ([`decisions.md`](decisions.md), "D35", "D74").
 - **pgdt-model** — `block.rs`: persisted, and a contract over the data is
   model wherever its implementor sits (D74); how a row is folded in is
   model's too, a held row whole and a streamed one field by field as its
-  bytes go by (`CensusFold`, which pgdt-dump hands its carry as a
-  `FieldFold`, D138), read by every pass that records, each above it.
+  bytes go by (`CensusFold`, which pgdt-dump's `RowFold` hands its carry
+  beside the block's observer, D138), read by every pass that records, each
+  above it.
 - **pgdt-codec** — `unrepresentable.rs`: told from a field's text against an
   Arrow type, so codec's.
 
@@ -355,8 +356,8 @@ a table's summary, DataFusion's statistics, `pgdt info --detail`
 ([`decisions.md`](decisions.md), "Statistics").
 
 - **pgdt-model** — `statistics.rs`: the stored shape, persisted, and the
-  contract over a block's rows that answers it, model wherever its
-  implementor sits (D74).
+  contract over a block's rows that answers it, a fold over each field's
+  runs as the census's is, model wherever its implementor sits (D74, D138).
 - **pgdt-mapping** — `statistics.rs`, `statistics/request.rs`,
   `statistics/density.rs`, `statistics/account.rs`, `statistics/stored.rs`,
   `statistics/gather.rs`, `statistics/gather/gatherer.rs`,

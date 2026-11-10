@@ -63,10 +63,12 @@ holding its field's tree, many times the field.
 
 ## What 33.4 inherits
 
-- **A strict parse holds its line and no copy or tree of a nested, `json` or
-  `jsonb` value**, but the scalar parts and the nested `box[]` 33.13.3
-  inherits; a parse whose column sums or counts
-  unrepresentable values holds an escaped value's copy, drawn from the ledger.
+- **A strict parse holds no copy or tree of a nested, `json` or `jsonb`
+  value, and no line of one past its chunk**, but the scalar parts and the
+  nested `box[]` 33.13.3 inherits; a parse whose column sums or counts
+  unrepresentable values holds its field whole, and an escaped value's copy,
+  drawn from the ledger
+  ([`roadmap-P33.19-fold-notes.md`](roadmap-P33.19-fold-notes.md)).
 
 ## Negative results
 

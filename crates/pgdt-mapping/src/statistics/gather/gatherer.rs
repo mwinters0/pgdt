@@ -6,8 +6,8 @@ use std::any::Any;
 use std::mem::{self};
 use std::sync::{Arc, OnceLock};
 
-use pgdt_core::internal::{StatisticsScope, printout_head};
-use pgdt_core::split_fields;
+use pgdt_codec::internal::FieldWalk;
+use pgdt_core::internal::{PRINTOUT_ESCAPED_BYTES, StatisticsScope, printout_head};
 use pgdt_model::internal::IgnoredRefusalsExt;
 use pgdt_model::{
     BlockGathered, BlockStatistics, FieldRefusal, GroupSizing, IgnoredRefusals, RowGroup,
@@ -16,8 +16,9 @@ use pgdt_model::{
 
 use super::bounds::{Refused, merge_adjacent};
 use super::charge::{push_charged, reserve_charged};
+use super::clip::{LONG_FIELD_HEAD, LongRead};
 use super::column::{ColumnGatherer, Observed};
-use super::strict::{FieldCheck, check_row};
+use super::strict::FieldCheck;
 use crate::statistics::account::{Charge, STATISTICS_ACCOUNT_CHARGE_STEP, Term};
 use crate::statistics::density::density_merges;
 use crate::statistics::request::StatisticsBackfill;
@@ -98,9 +99,23 @@ pub(super) struct Gatherer {
     pub(super) gathers: bool,
     columns: Vec<Option<ColumnGatherer>>,
     /// What a strict parse checks every field by, one per column, where this
-    /// observer checks them ([`PostgresInvalidValues::Strict`](pgdt_model::PostgresInvalidValues::Strict)): each row is
+    /// observer checks them ([`PostgresInvalidValues::Strict`](pgdt_model::PostgresInvalidValues::Strict)): each field is
     /// checked before it is gathered, and after a decline too.
     pub(super) checks: Option<Arc<[Option<FieldCheck>]>>,
+    /// Each walking column's walk ([`FieldCheck::walk`]), built at its first
+    /// field and readied as each ends — outside every statistics scope, a
+    /// check being no statistic, so built and freed alike unattributed.
+    walks: Vec<Option<FieldWalk>>,
+    /// Whether each column's field is handed over whole
+    /// ([`BlockObserver::holds`]), fixed for the block whatever it stops,
+    /// and shared with its pieces.
+    holds: Arc<[bool]>,
+    /// Where the row being folded starts, relative to the block's first data
+    /// byte.
+    row_offset: u64,
+    /// The field being handed over a run at a time, between its first run
+    /// and its last.
+    run: Option<RunField>,
     /// What the open groups have grown by since [`Self::charge_held`] last
     /// ran, which it runs again once this passes [`STATISTICS_ACCOUNT_CHARGE_STEP`].
     uncharged: i64,
@@ -142,7 +157,7 @@ impl Gatherer {
         columns: Vec<Option<ColumnGatherer>>,
         charge: Charge,
     ) -> Self {
-        Self {
+        let mut block = Self {
             group_size: sizing.group_size,
             cap: sizing.cap.map(|cap| cap.max(1)),
             min_rows: sizing.min_rows,
@@ -157,6 +172,10 @@ impl Gatherer {
             gathers: true,
             columns,
             checks: None,
+            walks: Vec::new(),
+            holds: Arc::default(),
+            row_offset: 0,
+            run: None,
             uncharged: 0,
             over: false,
             carried: (0, 0),
@@ -165,7 +184,9 @@ impl Gatherer {
             ignored: None,
             rows: 0,
             charge,
-        }
+        };
+        block.fix_holds();
+        block
     }
 
     /// Whether this observer has stopped gathering rows, having declined or
@@ -229,6 +250,164 @@ impl Gatherer {
         if self.over && !self.stopped() && self.gathers {
             let allowance = self.charge.allowance().expect("only an allowance can be passed");
             self.decline(allowance);
+        }
+    }
+
+    /// Fix which columns' fields are handed over whole, once its columns and
+    /// checks are set: a column whose statistics or check read a field whole
+    /// ([`ColumnGatherer::reads_whole`], [`FieldCheck::holds`]).
+    pub(super) fn fix_holds(&mut self) {
+        let checks = self.checks.as_deref().unwrap_or_default();
+        let width = self.columns.len().max(checks.len());
+        self.holds = (0..width)
+            .map(|at| {
+                let gathered = self.columns.get(at).and_then(Option::as_ref);
+                let checked = checks.get(at).and_then(Option::as_ref);
+                gathered.is_some_and(ColumnGatherer::reads_whole)
+                    || checked.is_some_and(FieldCheck::holds)
+            })
+            .collect();
+    }
+
+    /// One field of the row begun, held whole: checked, then gathered.
+    fn field(&mut self, column: usize, field: &[u8]) {
+        let check = self.checks.as_deref().and_then(|checks| checks.get(column)?.as_ref());
+        if let Some(check) = check {
+            let walk = walk_of(&mut self.walks, check, column);
+            if let Some(value) = check.refused(walk, field) {
+                let refusal = check.refusal(self.row_offset, self.rows, column, value);
+                let _attributed = StatisticsScope::enter();
+                return self.refuse(refusal);
+            }
+        }
+        if self.stopped() || !self.gathers {
+            return;
+        }
+        let _attributed = StatisticsScope::enter();
+        let Some(gatherer) = self.columns.get_mut(column).and_then(Option::as_mut) else { return };
+        let observed = gatherer.observe(field);
+        self.observed(column, observed, || printout_head(field));
+    }
+
+    /// The next `bytes` of a field handed over a run at a time, `ends` where
+    /// they are its last: held while they fit its head, and past it read
+    /// as they go by — by its column's statistics and its check — and never
+    /// held (`docs/design/decisions.md`, "D138").
+    fn field_run(&mut self, column: usize, bytes: &[u8], ends: bool) {
+        let mut run = self.run.take().unwrap_or_else(|| RunField::new(column));
+        debug_assert_eq!(run.column, column, "a field's runs are handed over in turn");
+        run.escaped += bytes.len();
+        if !run.outgrown {
+            if run.head.len() + bytes.len() <= RUN_HEAD {
+                run.head.extend_from_slice(bytes);
+                if ends {
+                    self.field(column, &run.head);
+                } else {
+                    self.run = Some(run);
+                }
+                return;
+            }
+            // Outgrown: what it held is read first, and kept as its head.
+            run.outgrown = true;
+            if !self.stopped()
+                && self.gathers
+                && let Some(gatherer) = self.columns.get(column).and_then(Option::as_ref)
+            {
+                let _attributed = StatisticsScope::enter();
+                run.long = Some(gatherer.long());
+            }
+            self.read_run(&mut run, None);
+            let kept = RUN_HEAD - run.head.len();
+            run.head.extend_from_slice(&bytes[..kept]);
+        }
+        self.read_run(&mut run, Some(bytes));
+        if ends {
+            self.end_run(run);
+        } else {
+            self.run = Some(run);
+        }
+    }
+
+    /// Feed `bytes` — or, where `None`, `run`'s head — to what reads a field
+    /// past its head: its column's statistics and its check.
+    fn read_run(&mut self, run: &mut RunField, bytes: Option<&[u8]>) {
+        let bytes = bytes.unwrap_or(&run.head);
+        if let Some(long) = &mut run.long {
+            let _attributed = StatisticsScope::enter();
+            long.run(bytes);
+        }
+        let check = self.checks.as_deref().and_then(|checks| checks.get(run.column)?.as_ref());
+        if let Some(check) = check
+            && let Some(walk) = walk_of(&mut self.walks, check, run.column)
+        {
+            walk.run(bytes);
+        }
+    }
+
+    /// A field read past its head has ended: checked, then gathered, as a
+    /// field held whole is.
+    fn end_run(&mut self, mut run: RunField) {
+        let column = run.column;
+        let check = self.checks.as_deref().and_then(|checks| checks.get(column)?.as_ref());
+        if let Some(check) = check {
+            let walk = walk_of(&mut self.walks, check, column);
+            if let Some(value) = check.refused_read(walk, run.escaped, &run.head) {
+                let refusal = check.refusal(self.row_offset, self.rows, column, value);
+                let _attributed = StatisticsScope::enter();
+                drop(run.long.take());
+                return self.refuse(refusal);
+            }
+        }
+        let _attributed = StatisticsScope::enter();
+        let Some(long) = run.long.take() else { return };
+        let Some(gatherer) = self.columns.get_mut(column).and_then(Option::as_mut) else { return };
+        let observed = gatherer.observe_long(long.finish(), run.escaped);
+        self.observed(column, observed, || printout_head(&run.head));
+    }
+
+    /// Drop a field a row the file's end cut short left being handed over,
+    /// its walk readied for the next.
+    fn abandon_run(&mut self) {
+        let Some(mut run) = self.run.take() else { return };
+        if let Some(Some(walk)) = self.walks.get_mut(run.column) {
+            walk.start();
+        }
+        let _attributed = StatisticsScope::enter();
+        drop(run.long.take());
+    }
+
+    /// What gathering column `column`'s field answered: its growth, and a
+    /// value its type's `*_in` refuses, gone past or refused, quoted as
+    /// `value` quotes the field.
+    fn observed(
+        &mut self,
+        column: usize,
+        observed: Result<Observed, Refused>,
+        value: impl FnOnce() -> Option<String>,
+    ) {
+        let declared = |gatherer: &Self| {
+            let column = gatherer.columns.get(column).and_then(Option::as_ref);
+            column.and_then(|column| column.declared_type.clone()).unwrap_or_default()
+        };
+        let refusal = |gatherer: &Self, value| FieldRefusal {
+            offset: gatherer.row_offset,
+            line: gatherer.rows,
+            column,
+            declared_type: declared(gatherer),
+            value,
+        };
+        match observed {
+            Ok(Observed { grew, ignored }) => {
+                self.uncharged += grew;
+                if ignored {
+                    let refusal = refusal(self, value());
+                    IgnoredRefusals::add(&mut self.ignored, refusal);
+                }
+            }
+            Err(Refused) => {
+                let refusal = refusal(self, value());
+                self.refuse(refusal);
+            }
         }
     }
 
@@ -469,6 +648,53 @@ impl Gatherer {
     }
 }
 
+/// The most of a field handed over in runs that is held: all of it while it
+/// is no longer, read then as a field handed over whole is, and past it its
+/// head — as much as a long text's reading keeps, and as a refusal is quoted
+/// by.
+const RUN_HEAD: usize =
+    if LONG_FIELD_HEAD > PRINTOUT_ESCAPED_BYTES { LONG_FIELD_HEAD } else { PRINTOUT_ESCAPED_BYTES };
+
+/// **A field handed over a run at a time** ([`BlockObserver::fold`]): its
+/// head as `COPY` wrote it, and once it outgrows that, what its column's
+/// statistics read of it as its runs go by, its check's walk being the
+/// column's own.
+struct RunField {
+    column: usize,
+    /// Its first [`RUN_HEAD`] bytes: all of it while it is no longer.
+    head: Vec<u8>,
+    /// Its bytes so far.
+    escaped: usize,
+    /// Whether it outgrew its head, read from there as it goes by.
+    outgrown: bool,
+    /// Its text past its head, as its column's statistics read it — `None`
+    /// for a column gathering nothing. Made, fed and freed in a statistics
+    /// scope, as everything gathering holds is.
+    long: Option<LongRead>,
+}
+
+impl RunField {
+    fn new(column: usize) -> Self {
+        Self { column, head: Vec::new(), escaped: 0, outgrown: false, long: None }
+    }
+}
+
+/// Column `column`'s walk where `check` walks, built at its first field.
+fn walk_of<'w>(
+    walks: &'w mut Vec<Option<FieldWalk>>,
+    check: &FieldCheck,
+    column: usize,
+) -> Option<&'w mut FieldWalk> {
+    if walks.len() <= column {
+        walks.resize_with(column + 1, || None);
+    }
+    let slot = &mut walks[column];
+    if slot.is_none() {
+        *slot = check.walk();
+    }
+    slot.as_mut()
+}
+
 /// Under the instrument, an observer's fields are dropped inside a statistics
 /// scope, so what it frees is attributed as what it allocated was
 /// (`pgdt_core::instrument`); its charge, declared last, is released after.
@@ -479,24 +705,26 @@ impl Drop for Gatherer {
         drop(mem::take(&mut self.columns));
         drop(mem::take(&mut self.groups));
         drop(self.pieces.take());
+        drop(mem::take(&mut self.holds));
+        if let Some(mut run) = self.run.take() {
+            drop(run.long.take());
+        }
         (self.head, self.open) = (None, None);
     }
 }
 
 impl BlockObserver for Gatherer {
-    fn observe_row(&mut self, offset: u64, raw: &[u8]) {
+    fn holds(&self, column: usize) -> bool {
+        self.holds.get(column).copied().unwrap_or(false)
+    }
+
+    fn begin_row(&mut self, offset: u64) {
+        self.abandon_run();
         self.rows += 1;
-        if self.refused.is_some() {
-            return;
-        }
-        // **Checked before it is gathered, and whether or not gathering has
-        // declined**: a strict parse reads every field of every row.
-        let line = self.rows;
-        if let Some(refusal) = self.checks.as_deref().and_then(|c| check_row(c, offset, line, raw))
-        {
-            let _attributed = StatisticsScope::enter();
-            return self.refuse(refusal);
-        }
+        self.row_offset = offset;
+        // **Each field is checked before it is gathered, and whether or not
+        // gathering has declined**: a strict parse reads every field of
+        // every row.
         if self.stopped() || !self.gathers {
             return;
         }
@@ -512,32 +740,25 @@ impl BlockObserver for Gatherer {
                 self.fit_cap(false);
             }
         }
-        if !self.splits {
-            self.decline_if_over();
+    }
+
+    fn fold(&mut self, column: usize, bytes: &[u8], ends: bool) {
+        if self.refused.is_some() {
             return;
         }
-        for (at, (field, column)) in split_fields(raw).zip(self.columns.iter_mut()).enumerate() {
-            let Some(column) = column else { continue };
-            let refusal = |column: &ColumnGatherer| FieldRefusal {
-                offset,
-                line: self.rows,
-                column: at,
-                declared_type: column.declared_type.clone().unwrap_or_default(),
-                value: printout_head(field),
-            };
-            match column.observe(field) {
-                Ok(Observed { grew, ignored }) => {
-                    self.uncharged += grew;
-                    if ignored {
-                        IgnoredRefusals::add(&mut self.ignored, refusal(column));
-                    }
-                }
-                Err(Refused) => {
-                    let refusal = refusal(column);
-                    return self.refuse(refusal);
-                }
-            }
+        if ends && self.run.is_none() {
+            self.field(column, bytes);
+        } else {
+            self.field_run(column, bytes, ends);
         }
+    }
+
+    fn end_row(&mut self, _fields: usize) {
+        debug_assert!(self.run.is_none(), "a row ends with its last field");
+        if self.stopped() || !self.gathers {
+            return;
+        }
+        let _attributed = StatisticsScope::enter();
         if self.uncharged >= STATISTICS_ACCOUNT_CHARGE_STEP as i64 {
             self.charge_held();
         }
@@ -595,6 +816,7 @@ impl BlockObserver for Gatherer {
         piece.piece = true;
         piece.gathers = self.gathers;
         piece.checks = self.checks.clone();
+        piece.holds = Arc::clone(&self.holds);
         // A piece of a block that has already stopped gathers nothing: it
         // still reads its rows for the census and the block's extent, and
         // holds no statistic while it does.

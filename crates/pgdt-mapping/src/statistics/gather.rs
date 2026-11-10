@@ -157,6 +157,7 @@ pub(crate) fn observer_tracking(
     drop((resolved, tiers, qualified));
     let mut gatherer = Gatherer::block(Sizing::of(plan), columns, charge);
     gatherer.checks = checks;
+    gatherer.fix_holds();
     gatherer.charge_held();
     // An account already full declines this block before its first row, so a
     // pass past its allowance gathers no row of any block after it
@@ -197,6 +198,7 @@ pub(crate) fn checker(
     let mut gatherer = Gatherer::block(sizing, Vec::new(), charge);
     gatherer.gathers = false;
     gatherer.checks = Some(checks);
+    gatherer.fix_holds();
     gatherer.charge_held();
     Box::new(gatherer)
 }

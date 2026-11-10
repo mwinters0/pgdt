@@ -52,9 +52,10 @@ leg of `long-line-resident` is a cold query over a table beside the long one.
   carry's `field`, past its chunk in a `LineMapping`, and a draw belongs
   there as it does for `line`. A head (`Kept::Head`, about a kilobyte at
   most) never passes a chunk term.
-- **The passes that still hold a line** are those decoding one: a replay
-  reading a field, a gathering parse (its observer, D76) and a strict one,
-  and TimescaleDB's recorded catalog blocks.
+- **The passes that still hold a line** are those reading a field whole: a
+  replay reading a field, a parse's field its statistics or check reads whole
+  ([`roadmap-P33.19-fold-notes.md`](roadmap-P33.19-fold-notes.md)), and
+  TimescaleDB's recorded catalog blocks.
 
 ## Negative results
 

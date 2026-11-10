@@ -266,6 +266,46 @@ pub fn bytea_escape_head(text: impl Iterator<Item = u8>, limit: usize) -> Option
     fold.end().is_ok().then_some(out)
 }
 
+/// **[`bytea_escape_head`]'s and [`bytea_unread`]'s answers over a text
+/// read a run at a time**, the runs needing no common slice: what a
+/// statistic reads of a long `bytea` as its runs go by, with no copy of it
+/// held (`docs/design/decisions.md`, "D142").
+#[derive(Debug, Clone)]
+pub struct ByteaRuns {
+    escape: ByteaFold,
+    either: ByteaFold,
+    head: Vec<u8>,
+    limit: usize,
+}
+
+impl ByteaRuns {
+    /// Nothing read yet, the `escape` form's head kept to `limit` bytes.
+    pub fn new(limit: usize) -> Self {
+        let (escape, either) = (ByteaFold::escape(), ByteaFold::default());
+        Self { escape, either, head: Vec::new(), limit }
+    }
+
+    /// Read the text's next run.
+    pub fn push(&mut self, run: &[u8]) {
+        let Self { escape, either, head, limit } = self;
+        for &byte in run {
+            escape.byte(byte, &mut |byte| {
+                if head.len() < *limit {
+                    head.push(byte);
+                }
+            });
+            either.byte(byte, &mut |_| {});
+        }
+    }
+
+    /// The text has ended: [`bytea_escape_head`]'s answer, and whether
+    /// [`bytea_unread`] answers [`Unread::Refused`].
+    pub fn finish(mut self) -> (Option<Vec<u8>>, bool) {
+        let head = self.escape.end().is_ok().then_some(self.head);
+        (head, self.either.end() == Err(Unread::Refused))
+    }
+}
+
 /// The bytes `byteaout`'s `escape` form writes as themselves, `\` aside.
 const ESCAPE_PRINTS_ITSELF: std::ops::RangeInclusive<u8> = 0x20..=0x7E;
 

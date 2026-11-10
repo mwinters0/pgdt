@@ -49,9 +49,10 @@ alone changed.
 
 ## What 33.4 inherits
 
-- **A parse holds its line and no copy of a text, `character` or `bytea`
-  value read from it**, gathering or strict; what it holds of a nested,
-  `json` or `jsonb` value is in 33.13.1's notes.
+- **A parse holds no copy of a text, `character` or `bytea` value**,
+  gathering or strict, and no line of one past its chunk
+  ([`roadmap-P33.19-fold-notes.md`](roadmap-P33.19-fold-notes.md)); what it
+  holds of a nested, `json` or `jsonb` value is in 33.13.1's notes.
 
 ## Negative results
 

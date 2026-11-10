@@ -662,7 +662,7 @@ fn walked_in_runs(plan: &ComparisonPlan, escaped: &[u8]) -> bool {
 }
 
 /// [`walked_in_runs`] for a walk `new` makes.
-fn fed_in_runs<'p>(new: &dyn Fn() -> FieldWalk<'p>, escaped: &[u8]) -> bool {
+fn fed_in_runs(new: &dyn Fn() -> FieldWalk, escaped: &[u8]) -> bool {
     let feed = |runs: &mut dyn Iterator<Item = &[u8]>| {
         let mut walk = new();
         for run in runs {

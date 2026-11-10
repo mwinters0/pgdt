@@ -34,7 +34,7 @@ pub mod internal {
     /// watched save.
     #[cfg(any(test, feature = "test-support"))]
     pub use crate::cache::store::{load, load_offline, save};
-    pub use crate::map::{Builder, derived_diagnostics};
+    pub use crate::map::{Builder, RowFold, derived_diagnostics};
     pub use crate::preamble::scan_preamble;
     pub use crate::scan::{
         ChunkCarry, ChunkPass, CopyScannerExt, FieldFold, LineMapping, Passes, PieceEndings,

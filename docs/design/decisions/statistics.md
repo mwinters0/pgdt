@@ -21,13 +21,13 @@ Rejected: the byte successor for text, which can end mid-character. Reopens: P26
 `a_long_texts_stored_bounds_are_on_the_right_side_of_it`.
 
 ### D142 A long escaped field is gathered and checked off its bytes, never unescaped whole
-Past `LONG_FIELD_HEAD`, an escaped field of a column keeping no sum and counting no unrepresentable value is read as
-`Unescaped` yields it: a head, its length, where its trailing blanks begin and its characters before them, a `bytea`'s
-form read again from its bytes; a strict parse holds a text to its typmod the same way. Every statistic of it keeps a
-head (D76), so what a parse holds of a value is its line. Rejected: unescaping the field whole, a copy as long as the
-value beside its line; reading every field so, which pays for nothing under the head. A column summing, or counting
+Past `LONG_FIELD_HEAD`, an escaped field of a column keeping no sum and counting no unrepresentable value is read a run
+at a time, held or streamed (D138): a head, its length, where its trailing blanks begin and its characters before them,
+a `bytea`'s forms beside them (`ByteaRuns`); a strict parse holds a text to its typmod the same way. Every statistic of
+it keeps a head (D76), so a parse holds nothing of such a value. Rejected: unescaping the field whole, a copy as long
+as the value; reading every field so, which pays for nothing under the head. A column summing, or counting
 unrepresentable values, still unescapes, its values written by no `pg_dump` with an escape. Code: `gather/clip.rs`
-(`LongText`), `value/text.rs` (`TextFold`). Evidence: `tests/decoded_copies.rs`, `gather/tests.rs`.
+(`LongRead`), `value/text.rs` (`TextFold`). Evidence: `tests/decoded_copies.rs`, `gather/tests.rs`, `streamed_line.rs`.
 
 ### D77 The statistics request is the mapping pass's argument, and the metadata level is a selection
 `map_file` takes a `&StatisticsRequest` and no query entry point does, as with the cancellation (D26), so no option a

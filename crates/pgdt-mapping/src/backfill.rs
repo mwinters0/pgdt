@@ -9,7 +9,7 @@ use pgdt_codec::internal::counter_for;
 use pgdt_core::internal::StatisticsScope;
 use pgdt_core::{Error, Result};
 use pgdt_dump::cache::{CacheMode, SourceWatch};
-use pgdt_dump::internal::announce_read_loop;
+use pgdt_dump::internal::{RowFold, announce_read_loop};
 use pgdt_dump::{ChunkedScanner, CopyEnd, CopyScanner, Event, ReadOptions, ScanOptions};
 use pgdt_io::{Arrangement, ByteRangeSource, Extent};
 use pgdt_model::internal::{BlockCensusExt, FieldRefusalExt};
@@ -554,7 +554,9 @@ pub async fn reread_rows(
 
 /// Census and count every row of `block` as `plan` says, read serially from
 /// its first data byte to its terminator, handing each to `observer` where
-/// there is one, and answer the `CopyEnd` the scanner met with the census —
+/// there is one — a row outgrowing its chunk streamed, its fields folded
+/// into both as they go by (`docs/design/decisions.md`, "D138") — and answer
+/// the `CopyEnd` the scanner met with the census —
 /// `None` where
 /// `cancel` fired first, read once per chunk as
 /// [`map_forward`](crate::forward::map_forward) reads it.
@@ -570,11 +572,15 @@ async fn observe_rows(
     let scanner = CopyScanner::resume(block.data_offset, Some((block.header_offset, 0)));
     let mut chunked = ChunkedScanner::to_source_end(scanner, extent, read);
     let mut census = BlockCensus::new(plan.width);
+    let mut streamed = plan.fold();
     loop {
         if cancel.is_cancelled() {
             return Ok(None);
         }
-        let mut chunk = match chunked.next_chunk(source).await {
+        let block_observer = observer.as_deref_mut().map(|o| o as &mut dyn BlockObserver);
+        let mut fold = RowFold::new(Some(&mut streamed), block_observer, block.data_offset);
+        let read = chunked.next_chunk_folding(source, fold.as_mut().map(|f| f as _)).await;
+        let mut chunk = match read {
             Ok(chunk) => chunk,
             // The check above, reached through the read rather than
             // through the token ([`cancelled_read`]). This block's re-read
@@ -583,6 +589,7 @@ async fn observe_rows(
             Err(e) if cancelled_read(&e, cancel) => return Ok(None),
             Err(e) => return Err(e),
         };
+        chunk.stream_rows(true);
         while let Some(event) = chunk.next_event()? {
             match event {
                 Event::Row(row) => {
@@ -591,7 +598,10 @@ async fn observe_rows(
                         observer.observe_row(row.offset - block.data_offset, row.raw);
                     }
                 }
-                Event::CopyEnd(end) => return Ok(Some((*end, census))),
+                Event::CopyEnd(end) => {
+                    census.merge(&streamed.take());
+                    return Ok(Some((*end, census)));
+                }
                 // A scanner inside a block's rows emits nothing else
                 // before its `CopyEnd`.
                 _ => {}

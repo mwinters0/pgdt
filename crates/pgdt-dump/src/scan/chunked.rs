@@ -135,6 +135,9 @@ pub trait FieldFold: Send {
     /// Whether field `field` is wanted whole: the carry then holds it and
     /// hands it over once, as its last bytes.
     fn holds(&self, field: usize) -> bool;
+    /// A streamed row begins, its first byte at file offset `offset`, ahead
+    /// of any of its fields' bytes.
+    fn begin_row(&mut self, offset: u64);
     /// The next `bytes` of field `field`, `ends` where they are its last.
     fn fold(&mut self, field: usize, bytes: &[u8], ends: bool);
     /// The row ends, `fields` wide, its last field's end folded already.
@@ -309,7 +312,8 @@ impl ChunkCarry {
 
     /// Take onto the carry whatever prefix of `chunk` completes the line it
     /// holds, and hand out the chunk's two passes; a row it streams hands
-    /// its fields to `fold`, where its reader folds them.
+    /// its fields to `fold`, where its reader folds them, the line carried
+    /// in starting at file offset `line_start`.
     ///
     /// With nothing carried the in-place pass begins at `0` — the chunk is
     /// scanned whole, where it lies. With a carry and no newline anywhere in
@@ -318,6 +322,7 @@ impl ChunkCarry {
         &'a mut self,
         chunk: &'a [u8],
         eof: bool,
+        line_start: u64,
         mut fold: Option<&mut dyn FieldFold>,
     ) -> Passes<'a> {
         // The line carried in is whichever pass left one, never both
@@ -368,6 +373,9 @@ impl ChunkCarry {
                 && self.line.len() + chunk.len() > STREAM_AFTER_BYTES
             {
                 let mut line = StreamedLine::default();
+                if let Some(fold) = fold.as_deref_mut() {
+                    fold.begin_row(line_start);
+                }
                 line.read(self.line.bytes(), false, fold.as_deref_mut(), &mut self.field);
                 line.read(chunk, false, fold, &mut self.field);
                 self.line.clear();
@@ -596,7 +604,7 @@ impl ChunkedScanner {
         let eof = self.at_end();
         self.chunk = bytes;
         self.open = true;
-        let passes = self.carry.absorb(&self.chunk, eof, fold);
+        let passes = self.carry.absorb(&self.chunk, eof, line_start, fold);
         let (span, span_eof) = passes.span(ChunkPass::Carry);
         ChunkEvents {
             scanner: &mut self.scanner,

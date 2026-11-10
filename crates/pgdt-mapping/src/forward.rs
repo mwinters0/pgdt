@@ -280,8 +280,11 @@ pub async fn map_forward(
             cache.save(watch, source, index).await?;
             return Ok(MapStop::Interrupted);
         }
-        // A row the open block streams hands its fields to its census.
-        let mut chunk = match chunked.next_chunk_folding(source, builder.row_fold()).await {
+        // A row the open block streams hands its fields to its census and
+        // its observer.
+        let mut fold = builder.row_fold();
+        let read = chunked.next_chunk_folding(source, fold.as_mut().map(|f| f as _)).await;
+        let mut chunk = match read {
             Ok(chunk) => chunk,
             // The check point above, reached through the read rather than
             // through the token ([`cancelled_read`]): the same chunk and the
@@ -378,10 +381,11 @@ pub async fn map_forward(
                     if records {
                         builder.record_rows();
                     }
-                    // A block whose rows are only counted and censused
+                    // A block whose rows are counted, censused and observed
                     // holds none of them: a row outgrowing its chunk is
                     // streamed (`pgdt_dump::ChunkEvents::stream_rows`), its
-                    // census holding only the fields it decodes.
+                    // census and its observer holding only the fields they
+                    // read whole.
                     chunk.stream_rows(!builder.reads_rows());
                     // **The offer, and this loop is the leader making it**
                     // ([`scan_region`]): everything from
@@ -476,8 +480,8 @@ pub async fn map_forward(
                 // (`docs/design/decisions.md`, "D35", "D96") and a
                 // gathering block's statistics.
                 Event::Row(row) => builder.on_row(row.offset, row.raw),
-                // A row of a block whose rows are only counted and
-                // censused, which the scanner counted and the census folded.
+                // A row of a block whose rows are not recorded, which the
+                // scanner counted and the census and observer folded.
                 Event::StreamedRow(_) => debug_assert!(!builder.reads_rows()),
                 Event::CopyEnd(end) => {
                     let targets = std::mem::take(&mut open_block_targets);

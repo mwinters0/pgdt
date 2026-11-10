@@ -12,8 +12,8 @@ use pgdt_codec::{
     grammar::{TextGrammar, Unchecked},
     internal::{column_grammar, unchecked_positions},
 };
-use pgdt_core::internal::{printout_head, unescaped};
-use pgdt_core::{CopyHeader, split_fields, unescape_field};
+use pgdt_core::internal::{PRINTOUT_ESCAPED_BYTES, printout_head, unescaped};
+use pgdt_core::{CopyHeader, unescape_field};
 use pgdt_model::{CopyBlock, DumpMetadata, FieldRefusal};
 
 use crate::statistics::stored::{declared_column, stored_resolution};
@@ -226,63 +226,89 @@ pub(super) struct FieldCheck {
     walks: bool,
 }
 
-/// The first field of the row at `offset`, the `line`-th the observer was
-/// handed, that its column's check finds refused, in column order.
-pub(super) fn check_row(
-    checks: &[Option<FieldCheck>],
-    offset: u64,
-    line: u64,
-    raw: &[u8],
-) -> Option<FieldRefusal> {
-    for (column, (field, check)) in split_fields(raw).zip(checks).enumerate() {
-        let Some(check) = check else { continue };
+impl FieldCheck {
+    /// Whether a field is read whole, never as its runs go by: one whose
+    /// value `plan` checks, a scalar's text a key reads, and that it does not
+    /// walk.
+    pub(super) fn holds(&self) -> bool {
+        self.reads && !self.walks
+    }
+
+    /// The walk a field of this column is read by, where it walks — one per
+    /// column, readied for each field as the last ends.
+    pub(super) fn walk(&self) -> Option<FieldWalk> {
+        self.walks.then(|| match self.grammar {
+            Some(grammar) => FieldWalk::grammar(grammar),
+            None => FieldWalk::new(&self.plan),
+        })
+    }
+
+    /// The refusal of a field this column's check refuses, quoted as `value`,
+    /// at the row at `offset`, the `line`-th the observer was handed.
+    pub(super) fn refusal(
+        &self,
+        offset: u64,
+        line: u64,
+        column: usize,
+        value: Option<String>,
+    ) -> FieldRefusal {
+        FieldRefusal { offset, line, column, declared_type: self.declared_type.clone(), value }
+    }
+
+    /// Whether this column's check refuses `field`, held whole, `walk` being
+    /// its [`walk`](Self::walk) where it walks: `Some` of the field as a
+    /// restore's error quotes it (I94) where it does.
+    pub(super) fn refused(
+        &self,
+        walk: Option<&mut FieldWalk>,
+        field: &[u8],
+    ) -> Option<Option<String>> {
         // A field read off its bytes is checked with no unescaped text, copy
         // or tree of it made, in one reading of each byte (D142–D144) — a
         // text whose escaped length, no shorter than its text, is within its
         // typmod read not at all — and named as a restore's error quotes it
         // (I94) where refused, which a field that is not UTF-8 is not, being
         // no value, which no `*_in` is handed. A NULL is answered below.
-        if check.walks && unescaped(field).is_some() {
-            let within = |length: Option<u32>| length.is_none_or(|n| field.len() <= n as usize);
-            if check.typmod.is_some_and(within) {
-                continue;
+        if let Some(walk) = walk
+            && unescaped(field).is_some()
+        {
+            if self.within_typmod(field.len()) {
+                return None;
             }
-            let mut walk = match check.grammar {
-                Some(grammar) => FieldWalk::grammar(grammar),
-                None => FieldWalk::new(&check.plan),
-            };
             walk.run(field);
-            if !walk.finish() {
-                continue;
-            }
-            return Some(FieldRefusal {
-                offset,
-                line,
-                column,
-                declared_type: check.declared_type.clone(),
-                value: printout_head(field),
-            });
+            return walk.finish().then(|| printout_head(field));
         }
         // A NULL is refused only by a `NOT NULL`, and a field that is not
         // text is no value at all, which no `*_in` is handed.
-        let value = match unescape_field(field) {
-            Ok(None) if check.not_null => None,
-            Ok(Some(text)) if check.reads => {
-                if !field_refused(&check.plan, &text) {
-                    continue;
-                }
-                // Named as a restore's error quotes it (I94).
-                printout_head(field)
+        match unescape_field(field) {
+            Ok(None) if self.not_null => Some(None),
+            // Named as a restore's error quotes it (I94).
+            Ok(Some(text)) if self.reads && field_refused(&self.plan, &text) => {
+                Some(printout_head(field))
             }
-            _ => continue,
-        };
-        return Some(FieldRefusal {
-            offset,
-            line,
-            column,
-            declared_type: check.declared_type.clone(),
-            value,
-        });
+            _ => None,
+        }
     }
-    None
+
+    /// [`Self::refused`] of a field `escaped` bytes long that `walk` was fed
+    /// as its runs went by — never SQL `NULL`, and never one this column
+    /// [`holds`](Self::holds) — `head` being its first bytes, no fewer than
+    /// [`PRINTOUT_ESCAPED_BYTES`] of them, which it is quoted by.
+    pub(super) fn refused_read(
+        &self,
+        walk: Option<&mut FieldWalk>,
+        escaped: usize,
+        head: &[u8],
+    ) -> Option<Option<String>> {
+        debug_assert!(!self.holds(), "a field read whole");
+        debug_assert!(head.len() >= PRINTOUT_ESCAPED_BYTES.min(escaped), "a head it is quoted by");
+        let refused = walk.is_some_and(|walk| walk.finish());
+        (refused && !self.within_typmod(escaped)).then(|| printout_head(head))
+    }
+
+    /// Whether a field `escaped` bytes long is within this column's text
+    /// typmod, its text being no longer.
+    fn within_typmod(&self, escaped: usize) -> bool {
+        self.typmod.is_some_and(|length| length.is_none_or(|n| escaped <= n as usize))
+    }
 }

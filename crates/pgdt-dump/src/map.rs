@@ -267,20 +267,59 @@ pub struct Builder {
     standard_strings: bool,
 }
 
-/// A census's fold over a streamed row's fields is the carry's fold
-/// (`docs/design/decisions.md`, "D138"): the trait is the scanner's, the
-/// census the model's.
-impl FieldFold for CensusFold {
+/// **What a block folds a streamed row's fields into**: its census and its
+/// statistics observer, each handed every run, a field either wants whole
+/// held for both (`docs/design/decisions.md`, "D138"). The trait is the
+/// scanner's, the census and the observer the model's; the serial pass's
+/// ([`Builder::row_fold`]) and an interior worker's alike.
+pub struct RowFold<'a> {
+    census: Option<&'a mut CensusFold>,
+    /// The observer, and the block's first data byte, which it places a
+    /// row's start against.
+    observer: Option<(&'a mut dyn BlockObserver, u64)>,
+}
+
+impl<'a> RowFold<'a> {
+    /// A fold into `census` and `observer`, either where present, `None`
+    /// where neither is; `observer` places a row against `data_offset`.
+    pub fn new(
+        census: Option<&'a mut CensusFold>,
+        observer: Option<&'a mut dyn BlockObserver>,
+        data_offset: u64,
+    ) -> Option<Self> {
+        (census.is_some() || observer.is_some())
+            .then(|| Self { census, observer: observer.map(|o| (o, data_offset)) })
+    }
+}
+
+impl FieldFold for RowFold<'_> {
     fn holds(&self, field: usize) -> bool {
-        CensusFold::holds(self, field)
+        self.census.as_ref().is_some_and(|census| census.holds(field))
+            || self.observer.as_ref().is_some_and(|(observer, _)| observer.holds(field))
+    }
+
+    fn begin_row(&mut self, offset: u64) {
+        if let Some((observer, data_offset)) = &mut self.observer {
+            observer.begin_row(offset - *data_offset);
+        }
     }
 
     fn fold(&mut self, field: usize, bytes: &[u8], ends: bool) {
-        CensusFold::fold(self, field, bytes, ends);
+        if let Some(census) = &mut self.census {
+            census.fold(field, bytes, ends);
+        }
+        if let Some((observer, _)) = &mut self.observer {
+            observer.fold(field, bytes, ends);
+        }
     }
 
     fn end_row(&mut self, fields: usize) {
-        CensusFold::end_row(self, fields);
+        if let Some(census) = &mut self.census {
+            census.end_row(fields);
+        }
+        if let Some((observer, _)) = &mut self.observer {
+            observer.end_row(fields);
+        }
     }
 }
 
@@ -848,21 +887,23 @@ impl Builder {
     }
 
     /// Whether [`on_row`](Self::on_row) reads the open `COPY` block's rows
-    /// whole: it does where the block is observed or recorded, and otherwise
-    /// counts them and censuses their fields, so its reader may stream them
-    /// ([`crate::ChunkEvents::stream_rows`]), the census folding a streamed
-    /// row's fields ([`row_fold`](Self::row_fold)).
+    /// whole: it does where the block is recorded, and otherwise counts them
+    /// and folds their fields into its census and its observer, so its
+    /// reader may stream them ([`crate::ChunkEvents::stream_rows`]), handing
+    /// a streamed row's fields over as they go by
+    /// ([`row_fold`](Self::row_fold)).
     pub fn reads_rows(&self) -> bool {
         (self.pending_census.is_some() && self.pending_fold.is_none())
-            || self.pending_observer.is_some()
             || self.pending_rows.is_some()
     }
 
-    /// What the open block's census folds a streamed row's fields into
-    /// ([`FieldFold`]), its reader handing them over as they go by — `None`
-    /// for a block censusing nothing.
-    pub fn row_fold(&mut self) -> Option<&mut dyn FieldFold> {
-        self.pending_fold.as_mut().map(|fold| fold as &mut dyn FieldFold)
+    /// What the open block folds a streamed row's fields into ([`RowFold`]),
+    /// its reader handing them over as they go by — `None` for a block
+    /// censusing and observing nothing.
+    pub fn row_fold(&mut self) -> Option<RowFold<'_>> {
+        let data_offset = self.pending_data.as_ref().map_or(0, |(_, start, ..)| start.data_offset);
+        let observer = self.pending_observer.as_deref_mut().map(|o| o as &mut dyn BlockObserver);
+        RowFold::new(self.pending_fold.as_mut(), observer, data_offset)
     }
 
     /// Record the rows of the `COPY` block [`on_copy_start`](Self::on_copy_start)

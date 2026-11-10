@@ -63,7 +63,7 @@ fn drive(file: &[u8], chunk_size: usize) -> Driven {
 /// the scanner could not finish, whose tail it kept.
 fn carrying(line: &[u8]) -> ChunkCarry {
     let mut carry = ChunkCarry::new(4);
-    let mut passes = carry.absorb(line, false, None);
+    let mut passes = carry.absorb(line, false, 0, None);
     passes.consumed(ChunkPass::Carry, 0);
     passes.consumed(ChunkPass::InPlace, 0);
     assert_eq!(carry.carried(), line.len());
@@ -214,7 +214,7 @@ fn skip_to_reads_on_from_a_line_past_the_carry() {
 #[test]
 fn an_empty_carry_copies_nothing() {
     let mut carry = ChunkCarry::new(4);
-    let passes = carry.absorb(b"one\ntwo\n", false, None);
+    let passes = carry.absorb(b"one\ntwo\n", false, 0, None);
     assert_eq!(passes.span(ChunkPass::Carry).0, b"");
     assert_eq!(passes.span(ChunkPass::InPlace).0, b"one\ntwo\n");
 }
@@ -225,7 +225,7 @@ fn an_empty_carry_copies_nothing() {
 fn a_carry_takes_only_the_prefix_that_completes_its_line() {
     let mut carry = carrying(b"abc");
 
-    let mut passes = carry.absorb(b"def\nghi\njkl", false, None);
+    let mut passes = carry.absorb(b"def\nghi\njkl", false, 0, None);
     let (span, _) = passes.span(ChunkPass::Carry);
     assert_eq!(span, b"abcdef\n");
     // The scanner would consume that whole line, which is the protocol's
@@ -241,7 +241,7 @@ fn a_carry_takes_only_the_prefix_that_completes_its_line() {
 fn a_chunk_with_no_newline_joins_the_carry_whole() {
     let mut carry = carrying(b"abc");
 
-    let mut passes = carry.absorb(b"defghi", false, None);
+    let mut passes = carry.absorb(b"defghi", false, 0, None);
     assert_eq!(passes.carried(), 9);
     assert_eq!(passes.span(ChunkPass::Carry).0, b"");
     assert_eq!(passes.span(ChunkPass::InPlace).0, b"");
@@ -249,12 +249,12 @@ fn a_chunk_with_no_newline_joins_the_carry_whole() {
     // The chunk that finishes the line hands the whole of it over once.
     passes.consumed(ChunkPass::Carry, 0);
     passes.consumed(ChunkPass::InPlace, 0);
-    let passes = carry.absorb(b"jk\nl", false, None);
+    let passes = carry.absorb(b"jk\nl", false, 0, None);
     assert_eq!(passes.span(ChunkPass::Carry).0, b"abcdefghijk\n");
 
     // At the end of the file the unfinished line is handed over after all.
     let mut carry = carrying(b"abc");
-    let passes = carry.absorb(b"defghi", true, None);
+    let passes = carry.absorb(b"defghi", true, 0, None);
     assert_eq!(passes.span(ChunkPass::Carry).0, b"abcdefghi");
 }
 
@@ -264,13 +264,13 @@ fn a_chunk_with_no_newline_joins_the_carry_whole() {
 #[test]
 fn the_carry_pass_is_eof_only_when_the_chunk_is_exhausted() {
     let mut carry = carrying(b"abc");
-    let mut passes = carry.absorb(b"def\nghi", true, None);
+    let mut passes = carry.absorb(b"def\nghi", true, 0, None);
     assert!(!passes.span(ChunkPass::Carry).1);
     passes.consumed(ChunkPass::Carry, passes.line.len());
     assert!(passes.span(ChunkPass::InPlace).1);
 
     let mut carry = carrying(b"abc");
-    let passes = carry.absorb(b"defghi", true, None);
+    let passes = carry.absorb(b"defghi", true, 0, None);
     assert!(passes.span(ChunkPass::Carry).1);
 }
 
@@ -389,9 +389,9 @@ fn a_held_line_is_handed_out_at_its_start() {
     assert_eq!(held, [row_end - row_start]);
 
     let mut carry = ChunkCarry::new(4);
-    assert!(carry.absorb(b"one\ntwo\n", false, None).held().is_empty());
+    assert!(carry.absorb(b"one\ntwo\n", false, 0, None).held().is_empty());
     let mut carry = carrying(b"abc");
-    assert!(carry.absorb(b"defghi", false, None).held().is_empty());
+    assert!(carry.absorb(b"defghi", false, 0, None).held().is_empty());
 }
 
 /// **A carry keeps no line past its row**: after a line many chunks long,
@@ -449,11 +449,12 @@ struct Streamed {
     allocated: usize,
 }
 
-/// A fold recording each streamed row's fields as it was handed them,
-/// holding the field `holds` names whole.
+/// A fold recording each streamed row's start and fields as it was handed
+/// them, holding the field `holds` names whole.
 #[derive(Default)]
 struct Recorder {
     holds: Option<usize>,
+    starts: std::collections::VecDeque<u64>,
     rows: std::collections::VecDeque<Vec<Vec<u8>>>,
     row: Vec<Vec<u8>>,
 }
@@ -461,6 +462,11 @@ struct Recorder {
 impl FieldFold for Recorder {
     fn holds(&self, field: usize) -> bool {
         self.holds == Some(field)
+    }
+
+    fn begin_row(&mut self, offset: u64) {
+        assert!(self.row.is_empty(), "a row begins after the last ended");
+        self.starts.push_back(offset);
     }
 
     fn fold(&mut self, field: usize, bytes: &[u8], ends: bool) {
@@ -513,6 +519,7 @@ fn stream_holding(file: &[u8], read: ReadOptions, stream: bool, holds: Option<us
                     assert_eq!(offset + len, past, "a streamed row's length");
                     out.streamed += 1;
                     let folded = fold.rows.pop_front().expect("the fold ended the row");
+                    assert_eq!(fold.starts.pop_front(), Some(offset), "where the row began");
                     assert_eq!(folded.len(), fields, "the fold's fields are the row's");
                     let fields = render_fields(folded.iter().map(Vec::as_slice));
                     format!("row {index}@{offset}..{past}, {fields}")

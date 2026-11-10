@@ -37,30 +37,30 @@ use crate::value::text::TextFold;
 /// the field and no tree of it held, but a scalar part's text and a range's
 /// bounds, each in its turn.
 #[derive(Debug)]
-pub struct FieldWalk<'p> {
+pub struct FieldWalk {
     escape: Unescape,
-    check: Check<'p>,
+    check: Check,
     /// Whether the text is UTF-8: a field that is not is no value, which no
     /// `*_in` is handed.
     text: TextFold,
     refused: bool,
 }
 
-impl<'p> FieldWalk<'p> {
+impl FieldWalk {
     /// A walk of a field of a column read by `grammar` in place of its plan,
     /// which orders it by nothing
     /// ([`column_grammar`](super::check::column_grammar)).
-    pub fn grammar(grammar: TextGrammar) -> FieldWalk<'static> {
+    pub fn grammar(grammar: TextGrammar) -> Self {
         FieldWalk::of(Check::grammar(grammar))
     }
 
-    fn of(check: Check<'p>) -> Self {
+    fn of(check: Check) -> Self {
         Self { escape: Unescape::default(), check, text: TextFold::default(), refused: false }
     }
 
     /// A walk of a field of a column compared by `plan`, whose plan
     /// [`walks`](super::check::walks).
-    pub fn new(plan: &'p ComparisonPlan) -> Self {
+    pub fn new(plan: &ComparisonPlan) -> Self {
         let check = match plan {
             // `AS_TEXT`'s one member is `json`.
             ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => {
@@ -93,20 +93,30 @@ impl<'p> FieldWalk<'p> {
     }
 
     /// The field has ended: whether its check refuses it, it being UTF-8.
-    pub fn finish(mut self) -> bool {
+    /// The walk is readied for its column's next field, so a reader keeps
+    /// one per column, built once ([`Self::start`]).
+    pub fn finish(&mut self) -> bool {
         let mut escape = self.escape;
         escape.finish(|text| self.text(text));
-        if matches!(self.check, Check::Nothing) {
-            return false;
-        }
-        let refused = self.refused || self.check.end().is_err();
-        refused && self.text.finish().is_some()
+        let refused = !matches!(self.check, Check::Nothing)
+            && (self.refused || self.check.end().is_err())
+            && std::mem::take(&mut self.text).finish().is_some();
+        self.start();
+        refused
+    }
+
+    /// Ready the walk for another field, whatever it read of the last.
+    pub fn start(&mut self) {
+        self.escape = Unescape::default();
+        self.check.start();
+        self.text = TextFold::default();
+        self.refused = false;
     }
 }
 
 /// **One part's check**, as its plan's position reads it.
 #[derive(Debug)]
-enum Check<'p> {
+enum Check {
     /// A position whose check refuses nothing, which reads none of it.
     Nothing,
     /// A text held to its typmod by its characters.
@@ -123,34 +133,34 @@ enum Check<'p> {
     /// Any other scalar, collected for [`field_key`]: its own text, no
     /// longer than it.
     Scalar {
-        kind: &'p CompareKind,
+        kind: CompareKind,
         text: Vec<u8>,
     },
     /// A type ordered by nothing, read by its [`TextGrammar`]'s walk.
     Grammar(Grammar),
     /// A type whose input function refuses every value, or none.
     Refuses(bool),
-    Array(Box<(ArrayWalk, Element<'p>)>),
+    Array(Box<(ArrayWalk, Element)>),
     Int2Vector(Int2VectorWalk),
-    Record(Box<(RecordWalk, Fields<'p>)>),
+    Record(Box<(RecordWalk, Fields)>),
     /// A range, whose two bounds are what `range_in` compares.
     Range {
         walk: RangeWalk,
-        bound: &'p NestedCompare,
+        bound: Box<NestedCompare>,
         discrete: Option<Discrete>,
     },
     /// `multirange_in` refuses nothing past its members' `range_in`.
     Multirange {
         walk: MultirangeWalk,
-        bound: &'p NestedCompare,
+        bound: Box<NestedCompare>,
         discrete: Option<Discrete>,
     },
 }
 
-impl<'p> Check<'p> {
+impl Check {
     /// A scalar position compared as `kind`: a text held to its typmod, a
     /// `bytea` and a `jsonb` read a byte at a time, and any other collected.
-    fn leaf(kind: &'p CompareKind) -> Self {
+    fn leaf(kind: &CompareKind) -> Self {
         match kind {
             CompareKind::Text { length, .. } | CompareKind::PaddedText { length } => match length {
                 Some(length) => Check::Typmod { length: *length, text: TextFold::default() },
@@ -158,7 +168,7 @@ impl<'p> Check<'p> {
             },
             CompareKind::Bytea => Check::Bytea(ByteaFold::default()),
             CompareKind::Jsonb => Check::Json { walk: JsonWalk::new(true), jsonb: true },
-            kind => Check::Scalar { kind, text: Vec::new() },
+            kind => Check::Scalar { kind: kind.clone(), text: Vec::new() },
         }
     }
 
@@ -167,7 +177,7 @@ impl<'p> Check<'p> {
     /// own position's check. A position reading no type this build reads by
     /// — another held as its text, an array of a delimiter this build does
     /// not split at — refuses nothing.
-    fn of(plan: &'p NestedCompare) -> Self {
+    fn of(plan: &NestedCompare) -> Self {
         match plan {
             NestedCompare::Leaf { kind, .. } => Check::leaf(kind),
             // `json`, the one position diverging `AsText` (`NestedCompare::Uncomparable`).
@@ -189,9 +199,11 @@ impl<'p> Check<'p> {
                 Check::Record(Box::new((walk, Fields { fields, at: 0, marked: 0 })))
             }
             NestedCompare::Range { bound, discrete, .. } => {
+                let bound = bound.clone();
                 Check::Range { walk: RangeWalk::default(), bound, discrete: *discrete }
             }
             NestedCompare::Multirange { bound, discrete, .. } => {
+                let bound = bound.clone();
                 Check::Multirange { walk: MultirangeWalk::default(), bound, discrete: *discrete }
             }
         }
@@ -335,7 +347,7 @@ impl<'p> Check<'p> {
             }
             Check::Range { walk, .. } => walk.byte(byte),
             Check::Multirange { walk, bound, discrete } => {
-                let (bound, discrete) = (*bound, *discrete);
+                let (bound, discrete) = (&**bound, *discrete);
                 walk.byte(byte, &mut |member| range_refused(bound, &member, discrete))
             }
         }
@@ -403,20 +415,20 @@ fn range_refused(
 /// in its turn by the one check, ready again for the next, and a NULL
 /// refused where the position is `NOT NULL`.
 #[derive(Debug)]
-struct Element<'p> {
-    check: Check<'p>,
+struct Element {
+    check: Check,
     not_null: bool,
     /// Where the check stood at the container's last mark.
     mark: Option<Mark>,
 }
 
-impl<'p> Element<'p> {
-    fn of(position: &'p Position<NestedCompare>) -> Self {
+impl Element {
+    fn of(position: &Position<NestedCompare>) -> Self {
         Self { check: Check::of(&position.plan), not_null: position.not_null, mark: None }
     }
 }
 
-impl Parts for Element<'_> {
+impl Parts for Element {
     fn begin(&mut self, (): ()) -> Walked {
         self.check.start();
         Ok(())
@@ -447,15 +459,15 @@ impl Parts for Element<'_> {
 
 /// A composite's fields, each its own position's.
 #[derive(Debug)]
-struct Fields<'p> {
-    fields: Vec<Element<'p>>,
+struct Fields {
+    fields: Vec<Element>,
     /// The field being read last.
     at: usize,
     /// The field being read at the last mark.
     marked: usize,
 }
 
-impl Parts<usize> for Fields<'_> {
+impl Parts<usize> for Fields {
     fn begin(&mut self, k: usize) -> Walked {
         self.at = k;
         self.fields[k].begin(())

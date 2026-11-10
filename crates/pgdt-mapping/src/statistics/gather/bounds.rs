@@ -12,8 +12,7 @@ use pgdt_codec::compare::CompareKind;
 use pgdt_codec::{
     decode::{Unread, decode_bytea, render_bytea},
     internal::{
-        OrderKey, bytea_escape_head, bytea_unread, char_typmod_refuses, compare_keys_stored,
-        field_key, order_key,
+        OrderKey, bytea_escape_head, char_typmod_refuses, compare_keys_stored, field_key, order_key,
     },
 };
 use pgdt_model::{
@@ -22,7 +21,7 @@ use pgdt_model::{
 };
 
 use super::charge::{push_charged, reserve_charged};
-use super::clip::{CLIP_BYTES, Clipped, Field, Head, text_prefix};
+use super::clip::{BYTEA_ESCAPE_HEAD_BYTES, CanonicalHex, Clipped, Field, Head, text_prefix};
 use super::order::ViewOrders;
 use crate::statistics::account::Charge;
 #[cfg(feature = "test-support")]
@@ -82,13 +81,17 @@ impl Canonical {
                     None => Head { text: &long.head, len: long.read.trimmed },
                 }
             }
-            (Self::Bytea, text) if canonical_hex(text.bytes()) => match text {
-                Field::Whole(text) => Head::whole(text),
-                Field::Long(long) => long.head(),
-            },
-            (Self::Bytea, text) => {
+            (Self::Bytea, Field::Whole(text)) if CanonicalHex::of(text.as_bytes()) => {
+                Head::whole(text)
+            }
+            (Self::Bytea, Field::Long(long)) if long.bytea().canonical_hex => long.head(),
+            (Self::Bytea, Field::Whole(text)) => {
                 let head = bytea_escape_head(text.bytes(), BYTEA_ESCAPE_HEAD_BYTES)?;
                 return Some(Canon::Rendered(render_bytea(&head)));
+            }
+            (Self::Bytea, Field::Long(long)) => {
+                let head = long.bytea().escape_head.as_deref()?;
+                return Some(Canon::Rendered(render_bytea(head)));
             }
         }))
     }
@@ -109,25 +112,6 @@ impl Canon<'_> {
         }
     }
 }
-
-/// Whether `text` is `bytea`'s hex form as `byteaout` writes it, which
-/// orders as the bytes do: `\x` and lowercase hex pairs.
-fn canonical_hex(mut text: impl Iterator<Item = u8>) -> bool {
-    if text.next() != Some(b'\\') || text.next() != Some(b'x') {
-        return false;
-    }
-    let mut digits = 0usize;
-    text.all(|b| {
-        digits += 1;
-        matches!(b, b'0'..=b'9' | b'a'..=b'f')
-    }) && digits.is_multiple_of(2)
-}
-
-/// How many of an `escape` value's bytes [`Canonical::of`] renders: enough
-/// that a value cut there renders past [`CLIP_BYTES`], so its head is the
-/// whole value's and it reads as no whole value, as the value itself does
-/// (`docs/design/decisions.md`, "D76").
-const BYTEA_ESCAPE_HEAD_BYTES: usize = CLIP_BYTES / 2;
 
 pub(super) struct BoundsGatherer {
     order: Order,
@@ -324,6 +308,12 @@ impl BoundsGatherer {
         Self::of(order)
     }
 
+    /// Whether this orders a `bytea` by its form, which a long text's
+    /// reading then reads beside its text ([`LongText`](super::clip::LongText)).
+    pub(super) fn reads_bytea(&self) -> bool {
+        matches!(self.order, Order::Bytewise(Canonical::Bytea))
+    }
+
     fn of(order: Order) -> Self {
         Self {
             order,
@@ -422,9 +412,7 @@ impl BoundsGatherer {
                 let Some(canon) = canonical.of(text) else {
                     self.lose_value(group, None);
                     return match canonical {
-                        Canonical::Bytea if bytea_unread(text.bytes()) == Unread::Refused => {
-                            Err(Refused)
-                        }
+                        Canonical::Bytea if text.bytea_refused() => Err(Refused),
                         _ => Ok(()),
                     };
                 };

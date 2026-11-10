@@ -341,6 +341,12 @@ impl IgnoredRefusalsExt for IgnoredRefusals {
 /// the block's statistics once it closes. Defined here and implemented in mapping,
 /// the shape `docs/design/decisions.md`, "D74" gives a contract over a block's rows.
 ///
+/// **A row is folded field by field, a run of each field's bytes at a time**,
+/// as a reader streaming the row hands them over, with no field held but one
+/// [`Self::holds`] names; a row held whole is that fold fed once
+/// ([`Self::observe_row`]), so a held row and a streamed one are read alike
+/// (`docs/design/decisions.md`, "D138").
+///
 /// **A block the leader splits is observed piece by piece**: each piece's rows
 /// go to an observer [`Self::piece`] made, and the pieces are handed back in
 /// file order to [`Self::absorb`], after which the block's observer answers
@@ -348,10 +354,35 @@ impl IgnoredRefusalsExt for IgnoredRefusals {
 /// which a piece's charge alongside its neighbours' can reach where one
 /// observer's would not (`docs/design/decisions.md`, "D85").
 pub trait BlockObserver: Send {
-    /// One row, `offset` being where its first byte sits relative to the
-    /// block's first data byte, and `raw` the still-escaped line without its
-    /// terminator.
-    fn observe_row(&mut self, offset: u64, raw: &[u8]);
+    /// Whether column `column`'s field is wanted whole: its reader then holds
+    /// it and hands it over once, as its last bytes. Fixed for the block, so
+    /// a field is never handed over partly held.
+    fn holds(&self, column: usize) -> bool;
+
+    /// A row begins, `offset` being where its first byte sits relative to
+    /// the block's first data byte.
+    fn begin_row(&mut self, offset: u64);
+
+    /// The next `bytes` of field `column` of the row begun, still escaped, a
+    /// delimiter never among them; `ends` where they are its last. Fields are
+    /// handed over in order.
+    fn fold(&mut self, column: usize, bytes: &[u8], ends: bool);
+
+    /// The row ends, `fields` wide, its last field's end folded already.
+    fn end_row(&mut self, fields: usize);
+
+    /// One row held whole, `offset` placed as [`Self::begin_row`] places it
+    /// and `raw` the still-escaped line without its terminator: the fold fed
+    /// each field once.
+    fn observe_row(&mut self, offset: u64, raw: &[u8]) {
+        self.begin_row(offset);
+        let mut fields = 0;
+        for (column, field) in pgdt_core::split_fields(raw).enumerate() {
+            self.fold(column, field, true);
+            fields = column + 1;
+        }
+        self.end_row(fields);
+    }
 
     /// The block's statistics, or [`BlockGathered::Declined`] where the
     /// allowance could not hold them before this call; the close it makes is

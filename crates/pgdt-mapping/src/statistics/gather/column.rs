@@ -22,7 +22,7 @@ use pgdt_model::{
 
 use super::bounds::{BoundsGatherer, GroupBounds, Refused, merge_adjacent};
 use super::charge::{grown_map_heap, map_heap, push_charged, reserve_charged};
-use super::clip::{Field, LONG_FIELD_HEAD, LongText};
+use super::clip::{Field, LONG_FIELD_HEAD, LongRead, LongText};
 use crate::statistics::account::{Charge, STATISTICS_ACCOUNT_CHARGE_STEP};
 use crate::statistics::stored::Summand;
 
@@ -211,50 +211,82 @@ impl ColumnGatherer {
         }
     }
 
+    /// Whether a field is read whole, never as its runs go by: a column
+    /// summing, whose sum reads every digit, or counting the values its type
+    /// cannot hold, whose test reads every leaf — what
+    /// [`Self::long`] and [`Self::observe_long`] do not read.
+    pub(super) fn reads_whole(&self) -> bool {
+        self.summand.is_some() || self.tier.is_some()
+    }
+
+    /// A reading of a long field of this column as its runs go by, its
+    /// `bytea` form beside it where its bounds read one.
+    pub(super) fn long(&self) -> LongRead {
+        LongRead::new(self.bounds.iter().flatten().any(BoundsGatherer::reads_bytea))
+    }
+
     /// Observe one field, answering what the column's heap grew by and
     /// whether it went past a value PostgreSQL refuses, or [`Refused`] where
     /// keying it found one, or it is a NULL the column's `NOT NULL` refuses,
     /// and [`Self::invalid`] refuses it.
     pub(super) fn observe(&mut self, field: &[u8]) -> Result<Observed, Refused> {
-        let before = self.open_heap();
         // A long escaped field is read off its bytes, never unescaped whole,
         // where nothing the column keeps reads past its head
         // (`docs/design/decisions.md`, "D142").
-        let long = (field.len() > LONG_FIELD_HEAD
-            && self.summand.is_none()
-            && self.tier.is_none()
-            && field.contains(&b'\\'))
-        .then(|| unescaped(field).map(LongText::read));
-        let ignored = match long {
-            Some(Some(Some(long))) => match long.whole() {
-                Some(text) => self.observe_text(Field::Whole(text))?,
-                None => self.observe_text(Field::Long(&long))?,
-            },
-            Some(Some(None)) => {
-                self.observe_not_text(field);
+        if field.len() > LONG_FIELD_HEAD
+            && !self.reads_whole()
+            && field.contains(&b'\\')
+            && unescaped(field).is_some()
+        {
+            let mut long = self.long();
+            long.run(field);
+            return self.observe_long(long.finish(), field.len());
+        }
+        let before = self.open_heap();
+        let ignored = match unescape_field(field) {
+            // A NULL its `NOT NULL` refuses and that is gone past is
+            // counted, the read taking it as the NULL it is: no
+            // statistic contradicts it (D103).
+            Ok(None) => {
+                let mut ignored = false;
+                if self.not_null {
+                    if self.invalid != PostgresInvalidValues::Ignore {
+                        return Err(Refused);
+                    }
+                    ignored = true;
+                }
+                self.group.nulls += 1;
+                return Ok(Observed { grew: 0, ignored });
+            }
+            Ok(Some(text)) => self.observe_text(Field::Whole(&text))?,
+            Err(_) => {
+                self.observe_not_text(field.len());
                 false
             }
-            _ => match unescape_field(field) {
-                // A NULL its `NOT NULL` refuses and that is gone past is
-                // counted, the read taking it as the NULL it is: no
-                // statistic contradicts it (D103).
-                Ok(None) => {
-                    let mut ignored = false;
-                    if self.not_null {
-                        if self.invalid != PostgresInvalidValues::Ignore {
-                            return Err(Refused);
-                        }
-                        ignored = true;
-                    }
-                    self.group.nulls += 1;
-                    return Ok(Observed { grew: 0, ignored });
-                }
-                Ok(Some(text)) => self.observe_text(Field::Whole(&text))?,
-                Err(_) => {
-                    self.observe_not_text(field);
-                    false
-                }
+        };
+        Ok(Observed { grew: self.open_heap() as i64 - before as i64, ignored })
+    }
+
+    /// [`Self::observe`] of a field read off its bytes as [`Self::long`]
+    /// reads it, never SQL `NULL`: `text`, `None` where it is not UTF-8,
+    /// `escaped` bytes long as `COPY` wrote it. A column that
+    /// [`reads_whole`](Self::reads_whole) is never read so.
+    pub(super) fn observe_long(
+        &mut self,
+        text: Option<LongText>,
+        escaped: usize,
+    ) -> Result<Observed, Refused> {
+        debug_assert!(!self.reads_whole(), "a column reading its field whole");
+        let before = self.open_heap();
+        let ignored = match &text {
+            Some(long) => match long.whole() {
+                Some(text) => self.observe_text(Field::Whole(text))?,
+                None => self.observe_text(Field::Long(long))?,
             },
+            None => {
+                self.observe_not_text(escaped);
+                false
+            }
         };
         Ok(Observed { grew: self.open_heap() as i64 - before as i64, ignored })
     }
@@ -304,12 +336,12 @@ impl ColumnGatherer {
         Ok(true)
     }
 
-    /// [`Self::observe`] of a field that is not text at all, so neither a key
-    /// nor an entry: the group can cover the row with neither, and the
-    /// block's order is lost. No decoding is longer than the escaped field,
-    /// and nothing sums it.
-    fn observe_not_text(&mut self, field: &[u8]) {
-        self.group.value_bytes += field.len() as u64;
+    /// [`Self::observe`] of a field that is not text at all, `escaped` bytes
+    /// long as `COPY` wrote it, so neither a key nor an entry: the group can
+    /// cover the row with neither, and the block's order is lost. No decoding
+    /// is longer than the escaped field, and nothing sums it.
+    fn observe_not_text(&mut self, escaped: usize) {
+        self.group.value_bytes += escaped as u64;
         self.group.sum = None;
         for (bounds, group) in self.bounds.iter_mut().zip(&mut self.group.bounds) {
             if let (Some(bounds), Some(group)) = (bounds, group) {

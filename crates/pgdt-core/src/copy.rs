@@ -428,6 +428,12 @@ pub fn unescaped(field: &[u8]) -> Option<Unescaped<'_>> {
 /// `MAX_COPY_DATA_DISPLAY`, I94).
 pub const MAX_COPY_DATA_DISPLAY: usize = 100;
 
+/// The most of a field's bytes, as `COPY` wrote them, [`printout_head`]
+/// reads: an escape spells a byte in at most four, so a field's first this
+/// many bytes are quoted as the field is, by a reader that keeps no more of
+/// it.
+pub const PRINTOUT_ESCAPED_BYTES: usize = 4 * (MAX_COPY_DATA_DISPLAY + 1);
+
 /// A field's text as a restore's error quotes it, or `None` for SQL `NULL`:
 /// whole up to [`MAX_COPY_DATA_DISPLAY`] bytes, and past that its longest
 /// head of whole characters within them followed by `...` (I94). Read off the
@@ -1091,6 +1097,37 @@ mod tests {
         assert_eq!(quoted(&snowmen), Some(format!("{}...", "☃".repeat(33))));
         let octal = format!("\\303\\251{}", "é".repeat(49));
         assert_eq!(quoted(&octal), Some("é".repeat(50)));
+    }
+
+    /// **A field's first `PRINTOUT_ESCAPED_BYTES` are quoted as it is**,
+    /// however its escapes fall against that cut: plain, every byte spelled
+    /// as a full hex or octal escape or a short hex one, and a short octal
+    /// escape repeated from each offset.
+    #[test]
+    fn a_field_s_head_is_quoted_as_the_field_is() {
+        let text: String = ('a'..='z').cycle().take(300).collect();
+        let mut fields: Vec<Vec<u8>> = vec![text.clone().into_bytes()];
+        for spell in [
+            |b: u8| format!("\\x{b:02x}"),
+            |b: u8| format!("\\{b:03o}"),
+            |b: u8| format!("\\x{:x}", b & 0xf),
+        ] {
+            fields.push(text.bytes().flat_map(|b| spell(b).into_bytes()).collect());
+        }
+        for pad in 0..4 {
+            let mut field = "a".repeat(pad).into_bytes();
+            field.extend("\\12".repeat(150).bytes());
+            fields.push(field);
+        }
+        for field in &fields {
+            let head = &field[..field.len().min(PRINTOUT_ESCAPED_BYTES)];
+            assert_eq!(
+                printout_head(head),
+                printout_head(field),
+                "{:?}",
+                String::from_utf8_lossy(field)
+            );
+        }
     }
 
     /// **An unescaped text is quoted as its field is** (I94): `printout`

@@ -150,3 +150,51 @@ fn a_field_read_escaped_reads_what_its_text_reads() {
         }
     }
 }
+
+/// **A text read a run at a time answers what it answers read whole**
+/// (`ByteaRuns`): its `escape` form's head and whether `byteain` refuses
+/// it, fed whole, in runs of one to three bytes and cut at every byte.
+#[test]
+fn a_bytea_read_in_runs_answers_as_read_whole() {
+    let mut texts: Vec<String> = [
+        "\\x",
+        "\\xdeadbeef",
+        "\\x0",
+        "\\xgg",
+        "abc",
+        "\\000\\\\\\177A",
+        "\\101",
+        "\\400",
+        "a\\",
+        "\\",
+        "",
+        "tab\there",
+        "\\08",
+        "\\1",
+    ]
+    .map(str::to_string)
+    .into();
+    texts.push(render_bytea_escape(&(0..=u8::MAX).collect::<Vec<u8>>()));
+    for text in &texts {
+        for limit in [0, 3, usize::MAX] {
+            let want = (
+                bytea_escape_head(text.bytes(), limit),
+                bytea_unread(text.bytes()) == Unread::Refused,
+            );
+            let fed = |runs: &mut dyn Iterator<Item = &[u8]>| {
+                let mut read = ByteaRuns::new(limit);
+                runs.for_each(|run| read.push(run));
+                read.finish()
+            };
+            let bytes = text.as_bytes();
+            assert_eq!(fed(&mut std::iter::once(bytes)), want, "{text:?}");
+            for width in 1..=3 {
+                assert_eq!(fed(&mut bytes.chunks(width)), want, "{text:?} in runs of {width}");
+            }
+            for cut in 0..=bytes.len() {
+                let (head, tail) = bytes.split_at(cut);
+                assert_eq!(fed(&mut [head, tail].into_iter()), want, "{text:?} cut at {cut}");
+            }
+        }
+    }
+}

@@ -23,7 +23,8 @@ change, built in the image.
   `Vec`'s doubling fails (89,088 bytes on the parent's shape); `streamed_line.rs`
   now reads the peak resident set beside the largest allocation, so a
   metadata-level parse is held to holding nothing near its row where a
-  data-level one holds it resident and allocates nothing near it.
+  data-level one summing its `bigint` holds it resident and allocates nothing
+  near it.
 
 ## What the readings found
 

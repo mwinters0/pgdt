@@ -21,7 +21,8 @@ use std::sync::Arc;
 
 use pgdt_core::{Result, RowEndingRefusal};
 use pgdt_dump::internal::{
-    ChunkCarry, ChunkPass, CopyScannerExt, FieldFold, PieceEndings, RowEnding, StreamedLine,
+    ChunkCarry, ChunkPass, CopyScannerExt, FieldFold, PieceEndings, RowEnding, RowFold,
+    StreamedLine,
 };
 use pgdt_dump::{CopyEnd, CopyScanner, Event};
 use pgdt_model::internal::BlockCensusExt;
@@ -55,7 +56,7 @@ pub(crate) struct CensusPlan {
 
 impl CensusPlan {
     /// The census a worker folds the rows it streams into.
-    pub(super) fn fold(&self) -> CensusFold {
+    pub(crate) fn fold(&self) -> CensusFold {
         CensusFold::new(self.width, Arc::clone(&self.counter))
     }
 }
@@ -280,12 +281,12 @@ pub(super) struct ReadScan {
 /// the scanner — never consumed, a [`scan_piece`] never claiming end of
 /// file.
 ///
-/// **A block with no observer streams its rows**: a row outgrowing its read
-/// is counted without its bytes being kept ([`ChunkCarry`]), its fields
-/// folded into `fold` where the block is censused — its census, which
-/// [`CensusPlan`] makes — a piece of its own ([`streamed_piece`]), so the
-/// worker holds no line at any length, and a census only the fields it
-/// decodes.
+/// **A block streams its rows**: a row outgrowing its read is counted
+/// without its bytes being kept ([`ChunkCarry`]), its fields folded into
+/// `fold` where the block is censused — its census, which [`CensusPlan`]
+/// makes — and into `observer` where it is observed, a piece of its own
+/// ([`streamed_piece`]), so the worker holds no line at any length, and a
+/// census and an observer only the fields they read whole.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn scan_read(
     carry: &mut ChunkCarry,
@@ -300,9 +301,13 @@ pub(super) fn scan_read(
 ) -> Result<ReadScan> {
     let line_base = offset - carry.carried() as u64;
     debug_assert_eq!(census.is_some(), fold.is_some(), "a census folds what a piece streams");
-    let mut passes =
-        carry.absorb(chunk, eof, fold.as_deref_mut().map(|fold| fold as &mut dyn FieldFold));
-    passes.streams(observer.is_none());
+    let data_offset = observer.as_deref().map_or(0, |piece| piece.data_offset);
+    let block =
+        observer.as_deref_mut().map(|piece| piece.observer.as_mut() as &mut dyn BlockObserver);
+    let mut row_fold = RowFold::new(fold.as_deref_mut(), block, data_offset);
+    let row_fold = row_fold.as_mut().map(|fold| fold as &mut dyn FieldFold);
+    let mut passes = carry.absorb(chunk, eof, line_base, row_fold);
+    passes.streams(true);
     let mut scans = Vec::new();
     if let Some(line) = passes.streamed() {
         debug_assert_eq!(entry, PieceEntry::RowStart, "a resync carries no line");

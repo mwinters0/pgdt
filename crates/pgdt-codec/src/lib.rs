@@ -43,7 +43,7 @@ pub mod internal {
     };
     #[cfg(any(test, feature = "test-support"))]
     pub use crate::unrepresentable::{scalar_read, scalar_tier};
-    pub use crate::value::bytea::{bytea_escape_head, bytea_unread, decode_bytea_into};
+    pub use crate::value::bytea::{ByteaRuns, bytea_escape_head, bytea_unread, decode_bytea_into};
     pub use crate::value::digits::push_integer;
     pub use crate::value::float::{Float, float_field};
     pub use crate::value::nested::key::{NestedKey, compare_nested, nested_key};

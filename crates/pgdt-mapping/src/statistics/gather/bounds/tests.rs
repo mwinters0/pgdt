@@ -5,7 +5,6 @@ use crate::statistics::test_support::{Rng, copy_escaped, join_type, long_value, 
 use pgdt_codec::compare::CompareKind;
 use pgdt_codec::decode::{decode_bytea, render_bytea};
 use pgdt_codec::internal::{OrderKey, compare_keys, order_key};
-use pgdt_core::internal::unescaped;
 use pgdt_model::internal::{ColumnStatisticsExt, ColumnStatisticsParts, UnrepresentableExt};
 use pgdt_model::{
     ColumnStatistics, DICTIONARY_ENTRY_MAX_BYTES, Sortedness, Unrepresentable, UnrepresentableTier,
@@ -415,7 +414,8 @@ fn a_long_field_read_off_its_bytes_is_bounded_as_its_text() {
             for _ in 0..rng.below(8) {
                 let value = long_value(&mut rng, kind);
                 let field = copy_escaped(&value);
-                let text = LongText::read(unescaped(&field).unwrap()).expect("UTF-8");
+                let text =
+                    LongText::read(&field, matches!(kind, CompareKind::Bytea)).expect("UTF-8");
                 let field = match text.whole() {
                     Some(text) => Field::Whole(text),
                     None => {

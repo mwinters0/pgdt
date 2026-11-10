@@ -23,8 +23,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// past the API names the word.
 pub mod internal {
     pub use crate::copy::{
-        MAX_COPY_DATA_DISPLAY, RawRow, RowSplit, Unescape, Unescaped, delimiters, hex_val,
-        printout, printout_head, unescaped, validated_prefix,
+        MAX_COPY_DATA_DISPLAY, PRINTOUT_ESCAPED_BYTES, RawRow, RowSplit, Unescape, Unescaped,
+        delimiters, hex_val, printout, printout_head, unescaped, validated_prefix,
     };
     pub use crate::error::{OVERWRITE_WAYS_OUT, catalog_fault, chunk_list};
     pub use crate::identifier::{Cursor, canonical_type_name, parse_type_name};
