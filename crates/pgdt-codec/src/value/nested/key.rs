@@ -13,6 +13,10 @@ use crate::declared::Position;
 use crate::key::order::{OrderKey, Side, compare_keys, literal_key, read_key};
 use crate::value::{first_difference, nested};
 
+mod field;
+
+pub use field::nested_field_order;
+
 /// One side of a **nested** comparison, decoded from a container literal per
 /// the column's [`NestedCompare`]. Both sides of any one comparison come from
 /// the same plan, so a variant mismatch is unreachable by construction.

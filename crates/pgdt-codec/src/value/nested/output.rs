@@ -693,5 +693,7 @@ pub fn render_int2vector(values: &[i16]) -> String {
     out
 }
 
+pub(super) mod walk;
+
 #[cfg(test)]
 mod tests;

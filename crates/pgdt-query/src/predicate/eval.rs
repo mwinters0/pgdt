@@ -7,8 +7,8 @@ use std::cmp::Ordering;
 use std::ops::Range;
 
 use pgdt_codec::internal::{
-    BytewiseRuns, Equality, FieldOrder, OrderKey, Side, SpellingRuns, TextFold, compare_keys,
-    compare_nested, nested_key, read_key,
+    BytewiseRuns, Equality, FieldOrder, FieldText, OrderKey, Side, SpellingRuns, TextFold,
+    compare_keys, compare_nested, nested_field_order, nested_key, read_key,
 };
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::timed_span;
@@ -17,7 +17,9 @@ use pgdt_core::{Error, Result};
 use pgdt_core::{instrument::EvaluationPart as Part, internal::timed};
 use pgdt_model::PostgresInvalidValues;
 
-use super::resolve::{Comparison, Lookup, ResolvedExpr, ResolvedMembership, ResolvedTerm, Texts};
+use super::resolve::{
+    Comparison, Lookup, NestedComparison, ResolvedExpr, ResolvedMembership, ResolvedTerm, Texts,
+};
 use super::{PredicateOp, Truth};
 
 impl ResolvedTerm {
@@ -38,8 +40,9 @@ impl ResolvedTerm {
     /// **An escaped field is read off its bytes where the term reads no
     /// more of it than a bound** — a text, `character` or `bytea` ordering,
     /// an `=` against a literal's spellings or trimmed, a NULL test — with
-    /// no copy of it made; any other is unescaped first
-    /// (`docs/design/decisions.md`, "D150").
+    /// no copy of it made — and where it orders a nested field, read as the
+    /// output grammars' walk reads it; any other is unescaped first
+    /// (`docs/design/decisions.md`, "D150", "D151").
     pub(super) fn eval(
         &self,
         raw_row: RawRow<'_>,
@@ -49,15 +52,21 @@ impl ResolvedTerm {
     ) -> Result<Truth> {
         let field = timed!(Part::Locate, split.field(raw_row.bytes(), self.index));
         let runs = self.runs();
+        let walks = self.walks();
         let read = match field {
-            Some(f) => timed!(Part::Unescape, read(raw_row, f, runs.is_some()))?,
+            Some(f) => timed!(Part::Unescape, read(raw_row, f, runs.is_some() || walks.is_some()))?,
             None => Read::Missing,
         };
         let value = match &read {
             Read::Text(text) => Some(text.as_ref()),
             Read::Escaped(bytes) => {
-                let runs = runs.expect("a field is left escaped only for a term reading its runs");
-                let truth = self.eval_runs(runs, bytes)?;
+                let truth = match (runs, walks) {
+                    (Some(runs), _) => self.eval_runs(runs, bytes)?,
+                    (None, Some(nested)) => self.eval_walk(nested, bytes)?,
+                    (None, None) => {
+                        unreachable!("a field is left escaped only for a term reading its runs")
+                    }
+                };
                 return truth
                     .ok_or_else(|| self.field_decode(table, row_offset, printout_head(bytes)));
             }
@@ -92,8 +101,9 @@ impl ResolvedTerm {
 
     /// What this term reads of a field's unescaped text a run at a time,
     /// holding no more of it than its bound, or `None` where it reads the
-    /// text whole: a key of another kind, a nested value, a value its type
-    /// cannot hold tested or read as NULL.
+    /// text otherwise: a nested value, walked ([`Self::walks`]), and whole a
+    /// key of another kind and a value its type cannot hold tested or read
+    /// as NULL.
     fn runs(&self) -> Option<TermRuns<'_>> {
         if self.unrepresentable.is_some() {
             return None;
@@ -113,6 +123,54 @@ impl ResolvedTerm {
             }
             Comparison::Equal(Equality::Decoded { .. }) | Comparison::Nested(_) => None,
         }
+    }
+
+    /// The nested comparison this term orders a field by as the output
+    /// grammars' walk reads it, off an escaped field's bytes, or `None`:
+    /// a value its type cannot hold, tested or read as NULL, is read whole.
+    fn walks(&self) -> Option<&NestedComparison> {
+        if self.unrepresentable.is_some() {
+            return None;
+        }
+        match &self.compared.as_ref()?.comparison {
+            Comparison::Nested(nested) => Some(nested),
+            _ => None,
+        }
+    }
+
+    /// This term's answer for an escaped nested field, `bytes` as `COPY`
+    /// wrote them, walked off them: [`Self::eval_value`]'s over its text,
+    /// and the error unescaping it raises where that text is not UTF-8.
+    fn eval_walk(&self, nested: &NestedComparison, bytes: &[u8]) -> Result<Option<Truth>> {
+        let mut utf8 = TextFold::default();
+        unescape_runs(bytes, |run| utf8.push(run));
+        let valid_up_to = utf8.valid_up_to();
+        if utf8.finish().is_none() {
+            return Err(Error::InvalidUtf8 { valid_up_to });
+        }
+        Ok(timed!(
+            Part::Compare,
+            nested_field_order(
+                &nested.plan,
+                FieldText::escaped(bytes),
+                &nested.bound,
+                self.invalid
+            )
+        )
+        .map(|ord| self.nested(ord)))
+    }
+
+    /// The truth of this nested term's operator where the field orders
+    /// `ord` against its bound: two-valued throughout, a NULL *inside* the
+    /// container being a value of it.
+    fn nested(&self, ord: Ordering) -> Truth {
+        Truth::of(match self.op {
+            PredicateOp::Lt(_) => ord.is_lt(),
+            PredicateOp::Le(_) => ord.is_le(),
+            PredicateOp::Gt(_) => ord.is_gt(),
+            PredicateOp::Ge(_) => ord.is_ge(),
+            _ => ord.is_eq() == self.wants_equal(),
+        })
     }
 
     /// This term's answer for an escaped field, `bytes` as `COPY` wrote
@@ -230,24 +288,20 @@ impl ResolvedTerm {
                 let key = timed!(Part::Key, read_key(kind, text, self.invalid))?;
                 timed!(Part::Compare, compare_keys(&key, bound)).is_eq() == self.wants_equal()
             }
-            // Two-valued throughout: a NULL *inside* the container is a value
-            // of it, and only the whole field being NULL is unknown — which
-            // was decided above, before any of this runs.
+            // Only the whole field being NULL is unknown, which was decided
+            // above, before any of this runs; read as the output grammars'
+            // walk reads it, with no key of it built (D151).
             Comparison::Nested(nested) => {
-                let ord = {
-                    let key = timed!(
-                        Part::Key,
-                        nested_key(&nested.plan, text, Side::Field(self.invalid))
-                    )?;
-                    timed!(Part::Compare, compare_nested(&key, &nested.bound))
-                };
-                match self.op {
-                    PredicateOp::Lt(_) => ord.is_lt(),
-                    PredicateOp::Le(_) => ord.is_le(),
-                    PredicateOp::Gt(_) => ord.is_gt(),
-                    PredicateOp::Ge(_) => ord.is_ge(),
-                    _ => ord.is_eq() == self.wants_equal(),
-                }
+                let ord = timed!(
+                    Part::Compare,
+                    nested_field_order(
+                        &nested.plan,
+                        FieldText::plain(text),
+                        &nested.bound,
+                        self.invalid
+                    )
+                )?;
+                return Some(self.nested(ord));
             }
         }))
     }
@@ -260,11 +314,16 @@ impl ResolvedTerm {
     pub(crate) fn is_false(&self, raw_row: RawRow<'_>, split: &mut RowSplit) -> bool {
         let Some(field) = split.field(raw_row.bytes(), self.index) else { return false };
         let runs = self.runs();
-        match read(raw_row, field, runs.is_some()) {
+        let walks = self.walks();
+        match read(raw_row, field, runs.is_some() || walks.is_some()) {
             Ok(Read::Text(value)) => self.eval_value(Some(&value)) == Some(Truth::False),
             Ok(Read::Escaped(bytes)) => {
-                let runs = runs.expect("a field is left escaped only for a term reading its runs");
-                matches!(self.eval_runs(runs, bytes), Ok(Some(Truth::False)))
+                let truth = match (runs, walks) {
+                    (Some(runs), _) => self.eval_runs(runs, bytes),
+                    (None, Some(nested)) => self.eval_walk(nested, bytes),
+                    (None, None) => return false,
+                };
+                matches!(truth, Ok(Some(Truth::False)))
             }
             Ok(Read::Null | Read::Missing) | Err(_) => false,
         }

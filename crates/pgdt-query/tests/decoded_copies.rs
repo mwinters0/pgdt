@@ -1,7 +1,8 @@
 //! What decoding one long value holds beside its line: one decoded copy, in
 //! a query over escaped text and over `bytea` (`docs/design/decisions.md`,
 //! "D141"), none in a filter's term reading an escaped field off its bytes
-//! ("D150"), and none in a parse, its statistics and a strict parse's check
+//! ("D150") or ordering a nested one as the output grammars' walk reads it
+//! ("D151"), and none in a parse, its statistics and a strict parse's check
 //! reading an escaped field off its bytes ("D142"), a strict parse walking a
 //! nested, `json` or `jsonb` value a part at a time ("D143"), and a strict
 //! check fed its field over runs holding none of it ("D144"), a type read by
@@ -221,6 +222,54 @@ async fn a_filter_term_holds_no_copy_of_an_escaped_field() {
         ("bytea", "\\\\x00", bytea.as_slice(), &byteas[..]),
     ] {
         let path = dump(dir.path(), declared, short, field);
+        for (op, rows) in filters {
+            let options = QueryOptions {
+                projection: Some(vec!["a".to_string()]),
+                filter: Expr::Term(Predicate { column: "b".into(), op: op.clone() }),
+                ..QueryOptions::default()
+            };
+            let (batches, peak) = query_with(&path, options).await;
+            let kept = batches.iter().map(RecordBatch::num_rows).sum::<usize>();
+            assert_eq!(kept, *rows, "{declared} {op:?}");
+            assert!(peak < long / 4, "{declared} {op:?}: {peak} bytes allocated at the peak");
+        }
+    }
+}
+
+/// **A nested term holds no tree of the field it orders**
+/// (`docs/design/decisions.md`, "D151"): a `bigint[]` of many short
+/// elements, and a `text[]` and a composite array of escaped elements, each
+/// of eight MiB and written as `pg_dump` writes it, are ordered and compared
+/// by a query reading none of them into its batch, with no key of them
+/// built and no copy of them made; the rows each keeps are the server's.
+#[tokio::test]
+async fn a_nested_term_holds_no_tree() {
+    use PredicateOp::{Eq, Gt, Lt, Ne};
+    let dir = tempfile::tempdir().unwrap();
+    let long = 8usize << 20;
+    let array = |element: &str| {
+        let mut text = "{".to_string();
+        text.push_str(&format!("{element},").repeat(long / (element.len() + 1)));
+        text.push_str(element);
+        text.push('}');
+        pgdt_core::escape_field(Some(&text))
+    };
+    let pair = "CREATE TYPE public.pair AS (\n    n integer,\n    s text\n);\n\n";
+    let bigints = [(Gt("{1}".into()), 1), (Lt("{7,8}".into()), 3), (Eq("{1}".into()), 2)];
+    let texts = [
+        (Gt("{a}".into()), 1),
+        (Lt(r#"{"ab\"cd",z}"#.into()), 3),
+        (Eq("{a}".into()), 2),
+        (Ne("{a}".into()), 1),
+    ];
+    let pairs = [(Gt(r#"{"(1,a)"}"#.into()), 1), (Eq(r#"{"(1,a)"}"#.into()), 2)];
+    for (preamble, declared, short, field, filters) in [
+        ("", "bigint[]", "{1}", array("7"), &bigints[..]),
+        ("", "text[]", "{a}", array("\"ab\\\"c\td\""), &texts[..]),
+        (pair, "public.pair[]", r#"{"(1,a)"}"#, array(r#""(1,\"ab\"\"cd\")""#), &pairs[..]),
+    ] {
+        let short = String::from_utf8(pgdt_core::escape_field(Some(short))).unwrap();
+        let path = dump_after(dir.path(), preamble, declared, &short, &field);
         for (op, rows) in filters {
             let options = QueryOptions {
                 projection: Some(vec!["a".to_string()]),

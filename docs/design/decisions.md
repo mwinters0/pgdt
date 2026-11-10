@@ -7,7 +7,7 @@ in its topic's file under `decisions/`, which opens with what the topic is and i
 index and the citation target: cite as `docs/design/decisions.md`, "D12". The rules, the caps and the meter included,
 are `docs/process.md`, "The decision register".
 
-<!-- decision-watermark: D150 -->
+<!-- decision-watermark: D151 -->
 
 ## I/O, memory and parallelism
 [`decisions/io.md`](decisions/io.md)
@@ -123,6 +123,7 @@ are `docs/process.md`, "The decision register".
 - **D101** The unrepresentable test reads the text against the declared type; DataFusion's is a scan's alone
 - **D94** A dynamic filter is translated loosened into the library's tree, never read through `PruningPredicate`
 - **D150** A filter term reads an escaped field off its bytes; a list collects it no further than its longest literal
+- **D151** A nested term orders its field as the output grammars' walk reads it, a part at a time, none kept
 
 ## Statistics
 [`decisions/statistics.md`](decisions/statistics.md)

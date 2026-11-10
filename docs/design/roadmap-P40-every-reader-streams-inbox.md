@@ -67,7 +67,8 @@ spellings `decode_*` refuses (`{ infinity }` in a `date[]`).
 
 **Why P40 cares.** It was 33.13.2: the output grammars' walk resumable, the
 gatherer's sum and tier and the census's count read over it holding a bounded
-state, a range's bounds fed as parts.
+state, a range's bounds fed as parts. The walk exists, pulling a field held
+whole a byte at a time (`nested/output/walk.rs`, D151).
 
 **Origin.** 33.13 and 33.13.1's notes; 33.13.2's row at `49f3cf05`; 33.20,
 struck 2026-11-10.

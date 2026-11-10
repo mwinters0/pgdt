@@ -1145,7 +1145,8 @@ and the whitespace test.
 and both emit loops are character-for-character identical across all three.
 
 **Relied on by:** `decisions.md`, "D45" — the decoder's
-parameterization, and the exactness requirement on render-back.
+parameterization, and the exactness requirement on render-back — and "D151",
+the same grammar walked.
 
 **Re-verify:**
 
@@ -3239,7 +3240,8 @@ the element's own question, one level down, and I32/I37/I43 are where it lives.
 observed in the committed oracle at all six, and the probe below run against
 16.15 and 18.6.
 
-**Relied on by:** `value/nested/key.rs`'s `compare_nested`, and `compare.rs`'s
+**Relied on by:** `value/nested/key.rs`'s `compare_nested`, and
+`value/nested/key/field.rs`'s walk ordering a field as it does, and `compare.rs`'s
 `NestedCompare`, whose `Uncomparable` position is the inheritance rule.
 
 **Re-verify.** Read the functions:
@@ -3534,7 +3536,7 @@ probe below run against 16.15.
 `List<Int16>` mapping and `NestedPlan::Int2Vector`), "D45"
 (`value/nested/output.rs`'s `decode_int2vector`/`render_int2vector`, `value/nested/input/int2vector.rs`'s `Int2VectorWalk::byte`, the walk `parse_int2vector` collects) and
 "D55" (`NestedCompare::Int2Vector`, and the
-constant `dims`/`lower_bounds` `nested_key` builds).
+constant `dims`/`lower_bounds` `nested_key` builds and `order_int2vector` reads).
 
 **Re-verify.** Read the two functions:
 

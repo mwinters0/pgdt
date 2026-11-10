@@ -47,7 +47,10 @@ pub mod internal {
     pub use crate::value::bytea::{ByteaRuns, bytea_escape_head, bytea_unread, decode_bytea_into};
     pub use crate::value::digits::push_integer;
     pub use crate::value::float::{Float, float_field};
-    pub use crate::value::nested::key::{NestedKey, compare_nested, nested_key};
+    pub use crate::value::nested::FieldText;
+    pub use crate::value::nested::key::{
+        NestedKey, compare_nested, nested_field_order, nested_key,
+    };
     pub use crate::value::nested::{push_array_null, quote_array_element};
     pub use crate::value::numeric::{NUMERIC_DSCALE_MAX, NUMERIC_INTEGER_DIGITS_MAX};
     pub use crate::value::text::{TextFold, TextRead, char_typmod_refuses};
