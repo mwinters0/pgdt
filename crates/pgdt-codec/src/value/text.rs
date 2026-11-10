@@ -137,6 +137,13 @@ impl TextFold {
         }
     }
 
+    /// The bytes of whole characters read ahead of the first that is not
+    /// UTF-8, or every byte read: what a `Utf8Error`'s `valid_up_to` says of
+    /// a text [`Self::finish`] answers `None` for.
+    pub fn valid_up_to(&self) -> usize {
+        self.read.len
+    }
+
     /// What was read, `None` where the text is not UTF-8.
     pub fn finish(self) -> Option<TextRead> {
         (!self.invalid && self.partial_len == 0).then_some(self.read)

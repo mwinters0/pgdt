@@ -30,12 +30,13 @@ pub mod internal {
         column_grammar, field_refused, text_typmod, unchecked_positions, walks,
     };
     pub use crate::grammar::walk::{FieldWalk, grammar_refuses};
-    pub use crate::key::equality::{Equality, Spellings, literal_equality};
+    pub use crate::key::equality::{Equality, SpellingRuns, Spellings, literal_equality};
     pub use crate::key::form::{accepted_form, nested_accepted_form, unlisted_labels};
     pub use crate::key::order::{
         OrderKey, Side, compare_keys, compare_keys_stored, field_key, literal_key, order_key,
         read_key,
     };
+    pub use crate::key::runs::{BytewiseRuns, FieldOrder};
     pub use crate::resolve::{column_of, read_as_text, schema_of};
     pub use crate::unrepresentable::{
         ColumnTier, UnrepresentableRead, column_tiers, counter_for, unrepresentable_reads,

@@ -65,3 +65,25 @@ fn a_text_folded_in_runs_reads_as_it_does_whole() {
         }
     }
 }
+
+/// **A text that is not UTF-8 is valid up to where `str::from_utf8` says**,
+/// whichever bytes the runs end between: the error a field's unescape
+/// raises is the fold's to name too.
+#[test]
+fn a_text_folded_in_runs_is_valid_up_to_where_it_is_whole() {
+    for bad in [
+        &[0xc3u8, 0x28][..],
+        &[b'a', 0xff, b'b'],
+        &[b'a', 0xe2, 0x82],
+        "\u{e9}a\u{20ac}".as_bytes(),
+        &[0xe2, 0x82, 0xac, b'x', 0xe2, 0x82, b'y'],
+    ] {
+        let whole = std::str::from_utf8(bad).err().map_or(bad.len(), |e| e.valid_up_to());
+        for cut in 0..=bad.len() {
+            let mut fold = TextFold::default();
+            fold.push(&bad[..cut]);
+            fold.push(&bad[cut..]);
+            assert_eq!(fold.valid_up_to(), whole, "{bad:?} cut at {cut}");
+        }
+    }
+}

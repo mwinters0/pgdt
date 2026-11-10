@@ -374,6 +374,35 @@ impl<'a> RawRow<'a> {
             None => unescape_field(&self.bytes[field]),
         }
     }
+
+    /// The field at `field` as [`Self::decode`] reads it, but an escaped one
+    /// left as `COPY` wrote it, for a reader taking its text off
+    /// [`unescaped`] or [`Unescape`] with no copy of it made: that reader
+    /// checks its UTF-8, which an escape can break.
+    pub fn read(&self, field: Range<usize>) -> Result<RawField<'a>> {
+        let bytes = &self.bytes[field.clone()];
+        if bytes == COPY_TEXT_NULL_MARKER {
+            return Ok(RawField::Null);
+        }
+        if bytes.contains(&b'\\') {
+            return Ok(RawField::Escaped(bytes));
+        }
+        Ok(RawField::Plain(match self.text.and_then(|text| text.get(field)) {
+            Some(text) => text,
+            None => as_utf8(bytes)?,
+        }))
+    }
+}
+
+/// One field of a [`RawRow`] as [`RawRow::read`] finds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawField<'a> {
+    /// SQL `NULL`, the field `\N`.
+    Null,
+    /// A field holding no escape, which is its text.
+    Plain(&'a str),
+    /// A field holding an escape, as `COPY` wrote it.
+    Escaped(&'a [u8]),
 }
 
 /// Decode one still-escaped COPY TEXT field.
@@ -1062,6 +1091,30 @@ mod tests {
                 assert_eq!(unchecked, validated, "{row:?} at {field:?}");
             }
         }
+    }
+
+    /// **`read` is `decode` with an escaped field left unescaped**: a NULL, a
+    /// plain field's text, and an escaped field's bytes, which unescape to
+    /// what `decode` answers, on a validated and an unchecked row alike.
+    #[test]
+    fn a_field_read_raw_is_the_field_decoded() {
+        for row in ROWS {
+            let bytes = row.as_bytes();
+            for field in field_ranges(bytes) {
+                let decoded = RawRow::unchecked(bytes).decode(field.clone()).unwrap();
+                for raw in [RawRow::unchecked(bytes), RawRow::validated(row)] {
+                    let read = match raw.read(field.clone()).unwrap() {
+                        RawField::Null => None,
+                        RawField::Plain(text) => Some(text.to_string()),
+                        RawField::Escaped(escaped) => {
+                            Some(String::from_utf8(unescaped(escaped).unwrap().collect()).unwrap())
+                        }
+                    };
+                    assert_eq!(read.as_deref(), decoded.as_deref(), "{row:?} at {field:?}");
+                }
+            }
+        }
+        assert!(RawRow::unchecked(b"a\xffb").read(0..3).is_err());
     }
 
     #[test]

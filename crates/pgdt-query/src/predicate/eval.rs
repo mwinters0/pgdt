@@ -2,17 +2,22 @@
 //! evaluated over one raw row, or over one value with no row around it, in
 //! SQL's `True`/`False`/`Unknown` domain (`docs/design/decisions.md`, "D54").
 
+use std::borrow::Cow;
+use std::cmp::Ordering;
+use std::ops::Range;
+
 use pgdt_codec::internal::{
-    Equality, OrderKey, Side, compare_keys, compare_nested, nested_key, read_key,
+    BytewiseRuns, Equality, FieldOrder, OrderKey, Side, SpellingRuns, TextFold, compare_keys,
+    compare_nested, nested_key, read_key,
 };
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::timed_span;
-use pgdt_core::internal::{RawRow, RowSplit, printout};
+use pgdt_core::internal::{RawField, RawRow, RowSplit, Unescape, printout, printout_head};
 use pgdt_core::{Error, Result};
 use pgdt_core::{instrument::EvaluationPart as Part, internal::timed};
 use pgdt_model::PostgresInvalidValues;
 
-use super::resolve::{Comparison, Lookup, ResolvedExpr, ResolvedMembership, ResolvedTerm};
+use super::resolve::{Comparison, Lookup, ResolvedExpr, ResolvedMembership, ResolvedTerm, Texts};
 use super::{PredicateOp, Truth};
 
 impl ResolvedTerm {
@@ -29,6 +34,12 @@ impl ResolvedTerm {
     /// unrepresentable tests, which compare nothing, and the two
     /// `IS DISTINCT FROM` forms, which count NULL as a value — so
     /// `IsDistinctFrom` on a NULL field is `True` where `Ne` is `Unknown`.
+    ///
+    /// **An escaped field is read off its bytes where the term reads no
+    /// more of it than a bound** — a text, `character` or `bytea` ordering,
+    /// an `=` against a literal's spellings or trimmed, a NULL test — with
+    /// no copy of it made; any other is unescaped first
+    /// (`docs/design/decisions.md`, "D150").
     pub(super) fn eval(
         &self,
         raw_row: RawRow<'_>,
@@ -37,35 +48,113 @@ impl ResolvedTerm {
         row_offset: u64,
     ) -> Result<Truth> {
         let field = timed!(Part::Locate, split.field(raw_row.bytes(), self.index));
-        let located = field.is_some();
-        let decoded = match field {
-            Some(f) => timed!(Part::Unescape, raw_row.decode(f))?,
-            None => None,
+        let runs = self.runs();
+        let read = match field {
+            Some(f) => timed!(Part::Unescape, read(raw_row, f, runs.is_some()))?,
+            None => Read::Missing,
         };
-        if located
-            && decoded.is_none()
-            && let Some(refused) =
-                null_refused(self.not_null.as_deref(), self.invalid, table, row_offset)
-        {
-            return Err(refused);
-        }
-        self.eval_value(decoded.as_deref())
-            .ok_or_else(|| self.field_decode(table, row_offset, decoded.as_deref()))
+        let value = match &read {
+            Read::Text(text) => Some(text.as_ref()),
+            Read::Escaped(bytes) => {
+                let runs = runs.expect("a field is left escaped only for a term reading its runs");
+                let truth = self.eval_runs(runs, bytes)?;
+                return truth
+                    .ok_or_else(|| self.field_decode(table, row_offset, printout_head(bytes)));
+            }
+            Read::Null => {
+                if let Some(refused) =
+                    null_refused(self.not_null.as_deref(), self.invalid, table, row_offset)
+                {
+                    return Err(refused);
+                }
+                None
+            }
+            Read::Missing => None,
+        };
+        self.eval_value(value)
+            .ok_or_else(|| self.field_decode(table, row_offset, value.map(printout)))
     }
 
-    /// The `Error::FieldDecode` a comparing term raises over a `value` that
-    /// is not of its column's type, quoted as the typed build path quotes
+    /// The `Error::FieldDecode` a comparing term raises over a value that
+    /// is not of its column's type, `quoted` as the typed build path quotes
     /// it. A value of the type its column's Arrow type cannot hold keys in
     /// PostgreSQL's order, or is read as NULL, and never reaches here (`docs/design/decisions.md`, "D56", "D98").
-    fn field_decode(&self, table: &str, row_offset: u64, value: Option<&str>) -> Error {
+    fn field_decode(&self, table: &str, row_offset: u64, quoted: Option<String>) -> Error {
         let compared = self.compared.as_ref().expect("an operator taking no value decodes nothing");
         Error::FieldDecode {
             table: table.to_string(),
             column: compared.column.clone(),
             line_offset: row_offset,
             declared_type: compared.declared_type.clone(),
-            value: value.map(printout).unwrap_or_default(),
+            value: quoted.unwrap_or_default(),
         }
+    }
+
+    /// What this term reads of a field's unescaped text a run at a time,
+    /// holding no more of it than its bound, or `None` where it reads the
+    /// text whole: a key of another kind, a nested value, a value its type
+    /// cannot hold tested or read as NULL.
+    fn runs(&self) -> Option<TermRuns<'_>> {
+        if self.unrepresentable.is_some() {
+            return None;
+        }
+        let Some(compared) = &self.compared else {
+            return self.tested.is_none().then_some(TermRuns::Nothing);
+        };
+        match &compared.comparison {
+            Comparison::Ordered { kind, bound } => {
+                FieldOrder::new(kind, bound).map(TermRuns::Order)
+            }
+            Comparison::Equal(Equality::Canonical(spellings)) => {
+                Some(TermRuns::Spellings(spellings.runs()))
+            }
+            Comparison::Equal(Equality::Trimmed(bound)) => {
+                Some(TermRuns::Trimmed(BytewiseRuns::trimmed(bound.as_bytes())))
+            }
+            Comparison::Equal(Equality::Decoded { .. }) | Comparison::Nested(_) => None,
+        }
+    }
+
+    /// This term's answer for an escaped field, `bytes` as `COPY` wrote
+    /// them, read off them by `runs`: [`Self::eval_value`]'s over its text,
+    /// and the error unescaping it raises where that text is not UTF-8.
+    fn eval_runs(&self, mut runs: TermRuns<'_>, bytes: &[u8]) -> Result<Option<Truth>> {
+        timed!(Part::Compare, {
+            let mut utf8 = TextFold::default();
+            unescape_runs(bytes, |run| {
+                utf8.push(run);
+                runs.push(run);
+            });
+            let valid_up_to = utf8.valid_up_to();
+            if utf8.finish().is_none() {
+                return Err(Error::InvalidUtf8 { valid_up_to });
+            }
+            Ok(match runs {
+                // A non-NULL field, of which a test reading no text reads
+                // nothing: the empty text answers as any would.
+                TermRuns::Nothing => self.eval_value(Some("")),
+                TermRuns::Order(order) => order.finish().map(|ord| self.ordered(ord)),
+                TermRuns::Spellings(spellings) => Some(self.equal(spellings.finish())),
+                TermRuns::Trimmed(trimmed) => Some(self.equal(trimmed.finish().is_eq())),
+            })
+        })
+    }
+
+    /// The truth of this ordering term's operator where the field orders
+    /// `ord` against its bound.
+    fn ordered(&self, ord: Ordering) -> Truth {
+        Truth::of(match self.op {
+            PredicateOp::Lt(_) => ord.is_lt(),
+            PredicateOp::Le(_) => ord.is_le(),
+            PredicateOp::Gt(_) => ord.is_gt(),
+            _ => ord.is_ge(),
+        })
+    }
+
+    /// The truth of this equality term's operator where the field is its
+    /// literal or not.
+    fn equal(&self, equal: bool) -> Truth {
+        Truth::of(equal == self.wants_equal())
     }
 
     /// `value`, or NULL where the query reads it as NULL.
@@ -120,16 +209,15 @@ impl ResolvedTerm {
         // it was when it was a temporary of the comparison.
         Some(Truth::of(match &compared.comparison {
             Comparison::Ordered { kind, bound } => {
-                let ord = {
-                    let key = timed!(Part::Key, read_key(kind, text, self.invalid))?;
-                    timed!(Part::Compare, compare_keys(&key, bound))
+                // A bytewise kind's field is ordered with no key of it built.
+                let ord = match FieldOrder::new(kind, bound) {
+                    Some(order) => timed!(Part::Compare, order.of(text))?,
+                    None => {
+                        let key = timed!(Part::Key, read_key(kind, text, self.invalid))?;
+                        timed!(Part::Compare, compare_keys(&key, bound))
+                    }
                 };
-                match self.op {
-                    PredicateOp::Lt(_) => ord.is_lt(),
-                    PredicateOp::Le(_) => ord.is_le(),
-                    PredicateOp::Gt(_) => ord.is_gt(),
-                    _ => ord.is_ge(),
-                }
+                return Some(self.ordered(ord));
             }
             Comparison::Equal(Equality::Canonical(bound)) => {
                 timed!(Part::Compare, bound.matches(text)) == self.wants_equal()
@@ -171,8 +259,15 @@ impl ResolvedTerm {
     /// evaluation reaches it (`docs/design/decisions.md`, "D54").
     pub(crate) fn is_false(&self, raw_row: RawRow<'_>, split: &mut RowSplit) -> bool {
         let Some(field) = split.field(raw_row.bytes(), self.index) else { return false };
-        let Ok(Some(value)) = raw_row.decode(field) else { return false };
-        self.eval_value(Some(&value)) == Some(Truth::False)
+        let runs = self.runs();
+        match read(raw_row, field, runs.is_some()) {
+            Ok(Read::Text(value)) => self.eval_value(Some(&value)) == Some(Truth::False),
+            Ok(Read::Escaped(bytes)) => {
+                let runs = runs.expect("a field is left escaped only for a term reading its runs");
+                matches!(self.eval_runs(runs, bytes), Ok(Some(Truth::False)))
+            }
+            Ok(Read::Null | Read::Missing) | Err(_) => false,
+        }
     }
 
     /// Whether this term keeps the rows its comparison called equal — `Eq`
@@ -213,6 +308,10 @@ impl ResolvedMembership {
     /// `=` term would: the row's own error where the field does not unescape,
     /// `Error::FieldDecode` where it does not decode. A membership with no
     /// value to compare reads no field.
+    ///
+    /// An escaped field is read off its bytes where the lookup probes for a
+    /// literal's text, collected no further than its longest literal
+    /// (`docs/design/decisions.md`, "D150").
     fn eval(
         &self,
         raw_row: RawRow<'_>,
@@ -222,20 +321,68 @@ impl ResolvedMembership {
     ) -> Result<Truth> {
         let Some(first) = self.terms.first() else { return Ok(self.unmatched()) };
         let field = timed!(Part::Locate, split.field(raw_row.bytes(), self.index));
-        let located = field.is_some();
-        let decoded = match field {
-            Some(field) => timed!(Part::Unescape, raw_row.decode(field))?,
-            None => None,
+        let texts = self.texts();
+        let read = match field {
+            Some(field) => timed!(Part::Unescape, read(raw_row, field, texts.is_some()))?,
+            None => Read::Missing,
         };
-        if located
-            && decoded.is_none()
-            && let Some(refused) =
-                null_refused(self.not_null.as_deref(), self.invalid, table, row_offset)
-        {
-            return Err(refused);
+        let value = match &read {
+            Read::Text(text) => Some(text.as_ref()),
+            Read::Escaped(bytes) => {
+                let (texts, trimmed) =
+                    texts.expect("a field is left escaped only for a lookup reading its runs");
+                return self.eval_runs(texts, trimmed, bytes);
+            }
+            Read::Null => {
+                if let Some(refused) =
+                    null_refused(self.not_null.as_deref(), self.invalid, table, row_offset)
+                {
+                    return Err(refused);
+                }
+                None
+            }
+            Read::Missing => None,
+        };
+        self.eval_value(value)
+            .ok_or_else(|| first.field_decode(table, row_offset, value.map(printout)))
+    }
+
+    /// The literals this membership's lookup probes a field's text for, and
+    /// whether it trims the text's trailing blanks first, or `None` where it
+    /// keys the text or reads it through its terms.
+    fn texts(&self) -> Option<(&Texts, bool)> {
+        if self.unrepresentable.is_some() {
+            return None;
         }
-        self.eval_value(decoded.as_deref())
-            .ok_or_else(|| first.field_decode(table, row_offset, decoded.as_deref()))
+        match &self.lookup {
+            Lookup::Canonical(texts) => Some((texts, false)),
+            Lookup::Trimmed(texts) => Some((texts, true)),
+            Lookup::Decoded { .. } | Lookup::Nested { .. } | Lookup::Each => None,
+        }
+    }
+
+    /// This membership's answer for an escaped field, `bytes` as `COPY`
+    /// wrote them, its text collected no further than `texts`' longest,
+    /// which no longer text equals: [`Self::eval_value`]'s over its text,
+    /// and the error unescaping it raises where that text is not UTF-8.
+    fn eval_runs(&self, texts: &Texts, trimmed: bool, bytes: &[u8]) -> Result<Truth> {
+        timed!(Part::Lookup, {
+            let mut utf8 = TextFold::default();
+            let mut collected = Collected::new(texts.longest(), trimmed);
+            unescape_runs(bytes, |run| {
+                utf8.push(run);
+                collected.push(run);
+            });
+            let valid_up_to = utf8.valid_up_to();
+            if utf8.finish().is_none() {
+                return Err(Error::InvalidUtf8 { valid_up_to });
+            }
+            let found = collected.text().is_some_and(|text| {
+                let text = std::str::from_utf8(text).expect("a text checked UTF-8 whole");
+                texts.contains(text)
+            });
+            Ok(if found { Truth::True } else { self.unmatched() })
+        })
     }
 
     /// Whether every row this membership makes `True` makes `term` `True`
@@ -446,6 +593,115 @@ impl Lookup {
                 false
             }
         })
+    }
+}
+
+/// A located field as a term or a membership reads it.
+enum Read<'a> {
+    /// The row has no such field.
+    Missing,
+    /// SQL `NULL`.
+    Null,
+    /// Its text, unescaped.
+    Text(Cow<'a, str>),
+    /// An escaped field as `COPY` wrote it, left for a reader taking its
+    /// text a run at a time.
+    Escaped(&'a [u8]),
+}
+
+/// The field at `field` of `raw_row`, an escaped one left as `COPY` wrote
+/// it where its reader reads its `runs`, and unescaped otherwise.
+fn read(raw_row: RawRow<'_>, field: Range<usize>, runs: bool) -> Result<Read<'_>> {
+    if !runs {
+        return Ok(match raw_row.decode(field)? {
+            Some(text) => Read::Text(text),
+            None => Read::Null,
+        });
+    }
+    Ok(match raw_row.read(field)? {
+        RawField::Null => Read::Null,
+        RawField::Plain(text) => Read::Text(Cow::Borrowed(text)),
+        RawField::Escaped(bytes) => Read::Escaped(bytes),
+    })
+}
+
+/// An escaped field's text, `bytes` unescaped, handed to `run` a stretch
+/// at a time: a stretch no escape spells as a slice of `bytes`, so none of
+/// it is copied.
+fn unescape_runs(bytes: &[u8], mut run: impl FnMut(&[u8])) {
+    let mut unescape = Unescape::default();
+    unescape.run(bytes, &mut run);
+    unescape.finish(&mut run);
+}
+
+/// What a term reads of a field's unescaped text a run at a time
+/// ([`ResolvedTerm::runs`]).
+enum TermRuns<'t> {
+    /// A NULL test reading no text.
+    Nothing,
+    /// A text, `character` or `bytea` field ordered against its bound.
+    Order(FieldOrder<'t>),
+    /// A field against a literal's `*_out` spellings.
+    Spellings(SpellingRuns<'t>),
+    /// A `character` field, trimmed, against a literal trimmed.
+    Trimmed(BytewiseRuns<'t>),
+}
+
+impl TermRuns<'_> {
+    fn push(&mut self, run: &[u8]) {
+        match self {
+            Self::Nothing => {}
+            Self::Order(order) => order.push(run),
+            Self::Spellings(spellings) => spellings.push(run),
+            Self::Trimmed(trimmed) => trimmed.push(run),
+        }
+    }
+}
+
+/// A field's text collected a run at a time no further than `longest`
+/// bytes, past which no literal of a membership is it, trimmed of its
+/// trailing blanks where the lookup trims.
+struct Collected {
+    text: Vec<u8>,
+    longest: usize,
+    trimmed: bool,
+    /// Blanks read and not yet collected, where `trimmed`: a later
+    /// non-blank collects them, and the text's end drops them.
+    blanks: usize,
+    /// Whether the text ran past `longest`.
+    past: bool,
+}
+
+impl Collected {
+    fn new(longest: usize, trimmed: bool) -> Self {
+        Self { text: Vec::new(), longest, trimmed, blanks: 0, past: false }
+    }
+
+    fn push(&mut self, run: &[u8]) {
+        if self.past {
+            return;
+        }
+        let kept = match run.iter().rposition(|&byte| byte != b' ') {
+            _ if !self.trimmed => run,
+            None => return self.blanks += run.len(),
+            Some(last) => &run[..=last],
+        };
+        let blanks = std::mem::take(&mut self.blanks);
+        if self.text.len() + blanks + kept.len() > self.longest {
+            self.past = true;
+            self.text = Vec::new();
+            return;
+        }
+        self.text.resize(self.text.len() + blanks, b' ');
+        self.text.extend_from_slice(kept);
+        if self.trimmed {
+            self.blanks = run.len() - kept.len();
+        }
+    }
+
+    /// The text collected, or `None` where it ran past `longest`.
+    fn text(&self) -> Option<&[u8]> {
+        (!self.past).then_some(self.text.as_slice())
     }
 }
 

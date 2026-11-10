@@ -56,7 +56,7 @@ holding its field's tree, many times the field.
 - **A column summing, or counting unrepresentable values, still unescapes a
   long escaped field whole** (`ColumnGatherer::observe`, D142): a container's
   tier walks `decode_*`, the output grammar, which is still the slice
-  scanners. Its walk is 33.14's, the first to consume it, and 33.16's; the
+  scanners. Its walk is 33.14.1's, the first to consume it, and 33.16's; the
   gatherer reading over it is P40's.
 - **`walk_json`'s stack** of open containers holds a bit a level, so a document
   nested as deep as its line is long holds an eighth of it.

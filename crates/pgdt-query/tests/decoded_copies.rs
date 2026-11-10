@@ -1,6 +1,7 @@
 //! What decoding one long value holds beside its line: one decoded copy, in
 //! a query over escaped text and over `bytea` (`docs/design/decisions.md`,
-//! "D141"), and none in a parse, its statistics and a strict parse's check
+//! "D141"), none in a filter's term reading an escaped field off its bytes
+//! ("D150"), and none in a parse, its statistics and a strict parse's check
 //! reading an escaped field off its bytes ("D142"), a strict parse walking a
 //! nested, `json` or `jsonb` value a part at a time ("D143"), and a strict
 //! check fed its field over runs holding none of it ("D144"), a type read by
@@ -32,7 +33,7 @@ use pgdt_io::{ByteRangeSource, LocalFileSource};
 use pgdt_mapping::map_file;
 use pgdt_mapping::statistics::StatisticsRequest;
 use pgdt_model::PostgresInvalidValues;
-use pgdt_query::QueryOptions;
+use pgdt_query::{Expr, Predicate, PredicateOp, QueryOptions};
 use tokio_util::sync::CancellationToken;
 
 struct Live;
@@ -117,12 +118,17 @@ fn source(path: &Path) -> Arc<dyn ByteRangeSource> {
 /// cap does: what a `bytea` batch's one buffer copies as it grows past a
 /// value is the span's, which the replay is charged (`decisions.md`, "D84").
 async fn query(path: &Path) -> (Vec<RecordBatch>, usize) {
+    query_with(path, QueryOptions::default()).await
+}
+
+/// [`query`] as `options` ask, under its span cap.
+async fn query_with(path: &Path, options: QueryOptions) -> (Vec<RecordBatch>, usize) {
     let scan = ScanOptions {
         read: ReadOptions { chunk_size_bytes: CHUNK, ..ReadOptions::default() },
         ..ScanOptions::default()
     };
     let cold = Cold { scan, ..Cold::default() };
-    let options = QueryOptions { max_source_span: Some(1 << 20), ..QueryOptions::default() };
+    let options = QueryOptions { max_source_span: Some(1 << 20), ..options };
     let before = window();
     let mut stream = cold.stream(source(path), "public.t", options).await.unwrap().unwrap();
     let mut batches = Vec::new();
@@ -175,6 +181,57 @@ async fn a_bytea_is_one_copy() {
         assert_eq!(column.value(1), value, "spelled: {spell}");
         assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 3);
         assert!(peak < bytes + bytes / 4, "spelled: {spell}: {peak} bytes allocated at the peak");
+    }
+}
+
+/// **A filter term holds no copy of an escaped field it reads**
+/// (`docs/design/decisions.md`, "D150"): a `text` and a `character` of
+/// eight MiB carrying an escape every few bytes, and a `bytea` of eight
+/// MiB, each written as `pg_dump` writes it, are ordered, compared, listed
+/// and tested for NULL by a query reading none of them into its batch,
+/// with none of them allocated; the rows each keeps are the server's.
+#[tokio::test]
+async fn a_filter_term_holds_no_copy_of_an_escaped_field() {
+    use PredicateOp::{Eq, Gt, In, IsNotNull, Lt, Ne};
+    let dir = tempfile::tempdir().unwrap();
+    let long = 8usize << 20;
+    let text = "abcde\\t".repeat(long / 6);
+    let mut bytea = b"\\\\x".to_vec();
+    for i in 0..long {
+        bytea.extend_from_slice(format!("{:02x}", i % 251).as_bytes());
+    }
+    let listed = |values: &[&str]| In(values.iter().map(|v| Some(v.to_string())).collect());
+    let texts = [
+        (Gt("abc".into()), 3),
+        (Lt("abcde\tz".into()), 1),
+        (Eq("short".into()), 2),
+        (Ne("short".into()), 1),
+        (listed(&["short", "x"]), 2),
+        (IsNotNull, 3),
+    ];
+    let byteas = [
+        (Lt("\\x0002".into()), 3),
+        (Gt("\\x00".into()), 1),
+        (Eq("\\x00".into()), 2),
+        (listed(&["\\x00", "\\x01"]), 2),
+    ];
+    for (declared, short, field, filters) in [
+        ("text", "short", text.as_bytes(), &texts[..]),
+        ("character(10485760)", "short", text.as_bytes(), &texts[..]),
+        ("bytea", "\\\\x00", bytea.as_slice(), &byteas[..]),
+    ] {
+        let path = dump(dir.path(), declared, short, field);
+        for (op, rows) in filters {
+            let options = QueryOptions {
+                projection: Some(vec!["a".to_string()]),
+                filter: Expr::Term(Predicate { column: "b".into(), op: op.clone() }),
+                ..QueryOptions::default()
+            };
+            let (batches, peak) = query_with(&path, options).await;
+            let kept = batches.iter().map(RecordBatch::num_rows).sum::<usize>();
+            assert_eq!(kept, *rows, "{declared} {op:?}");
+            assert!(peak < long / 4, "{declared} {op:?}: {peak} bytes allocated at the peak");
+        }
     }
 }
 

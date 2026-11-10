@@ -480,10 +480,10 @@ pub(crate) struct ResolvedMembership {
 pub(super) enum Lookup {
     /// [`Equality::Canonical`]: the literals in every spelling the file
     /// can hold them in, the field probed as it stands.
-    Canonical(std::collections::HashSet<String>),
+    Canonical(Texts),
     /// [`Equality::Trimmed`]: the literals trimmed, the field trimmed
     /// before it is probed.
-    Trimmed(std::collections::HashSet<String>),
+    Trimmed(Texts),
     /// [`Equality::Decoded`]: the literals' keys sorted by
     /// [`compare_keys`](pgdt_codec::internal::compare_keys), the field keyed once and searched for among them.
     Decoded { kind: CompareKind, keys: Vec<OrderKey> },
@@ -491,6 +491,35 @@ pub(super) enum Lookup {
     Nested { plan: NestedCompare, keys: Vec<NestedKey> },
     /// Anything else: each term in list order.
     Each,
+}
+
+/// A membership's literals as a field's text is probed for them, and the
+/// longest, past which no field's text is one: a field read off its bytes
+/// is collected no further (`docs/design/decisions.md`, "D150").
+#[derive(Debug, Clone, Default)]
+pub(super) struct Texts {
+    values: std::collections::HashSet<String>,
+    longest: usize,
+}
+
+impl Texts {
+    /// Whether `text` is one of the literals.
+    pub(super) fn contains(&self, text: &str) -> bool {
+        self.values.contains(text)
+    }
+
+    /// The longest literal's length in bytes.
+    pub(super) fn longest(&self) -> usize {
+        self.longest
+    }
+}
+
+impl FromIterator<String> for Texts {
+    fn from_iter<I: IntoIterator<Item = String>>(values: I) -> Self {
+        let values: std::collections::HashSet<String> = values.into_iter().collect();
+        let longest = values.iter().map(String::len).max().unwrap_or(0);
+        Self { values, longest }
+    }
 }
 
 impl Lookup {

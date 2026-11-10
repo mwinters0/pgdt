@@ -16,7 +16,8 @@
 //!
 //! What a literal of each kind has to look like, for the refusal naming it,
 //! is `form`'s, and how `=`/`!=` compare a field against it, `equality`'s;
-//! the refusal checks a strict parse dispatches through these readers are
+//! a field of a bytewise kind ordered against a bound as its runs come is
+//! `runs`'s; the refusal checks a strict parse dispatches through these readers are
 //! `crate::grammar`'s.
 
 mod emitted;
@@ -24,6 +25,7 @@ pub(crate) mod equality;
 pub(crate) mod form;
 pub(crate) mod order;
 mod relate;
+pub(crate) mod runs;
 
 use std::borrow::Cow;
 use std::cmp::Ordering;

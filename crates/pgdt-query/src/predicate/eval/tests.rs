@@ -626,3 +626,142 @@ fn a_value_outside_any_row_is_answered_as_the_row_holding_it_is() {
     // spelling, so the `None` half is reached rather than vacuous.
     assert!(undecodable >= 3, "only {undecodable} values refused");
 }
+
+/// `text` as `COPY` writes it, every byte spelled as its own octal escape:
+/// a field holding nothing but escapes.
+fn every_byte_escaped(text: &[u8]) -> Vec<u8> {
+    text.iter().flat_map(|byte| format!("\\{byte:03o}").into_bytes()).collect()
+}
+
+/// What `eval` answers over a one-field row holding `field` as `COPY` wrote
+/// it, an error by its message.
+fn answered(expr: &ResolvedExpr, field: &[u8]) -> std::result::Result<Truth, String> {
+    exact_over(expr, field).map_err(|error| error.to_string())
+}
+
+/// **A term reading an escaped field off its bytes answers as one reading
+/// its text unescaped** (`docs/design/decisions.md`, "D150"): a text,
+/// `character` and `bytea` ordering, `=` and `!=` against a literal's
+/// spellings and trimmed, `IS [NOT] DISTINCT FROM`, a NULL test and an
+/// `IN` list over each, over fields `COPY` escapes, fields of nothing but
+/// escapes and plain ones — a field past its typmod raising the same
+/// `FieldDecode`, quoting it alike, and the dynamic filter's `is_false`
+/// alike.
+#[test]
+fn an_escaped_field_read_off_its_bytes_answers_as_its_text() {
+    let comparing: [Comparing; 8] = [
+        PredicateOp::Lt,
+        PredicateOp::Le,
+        PredicateOp::Gt,
+        PredicateOp::Ge,
+        PredicateOp::Eq,
+        PredicateOp::Ne,
+        PredicateOp::IsDistinctFrom,
+        PredicateOp::IsNotDistinctFrom,
+    ];
+    let columns = [
+        ("text", DataType::Utf8View, &["", "a\tb", "ab", "b", "a\\b"][..]),
+        ("character varying(3)", DataType::Utf8View, &["ab", "a\tb", "abc"][..]),
+        ("character(3)", DataType::Utf8View, &["ab", "a\t", "ab "][..]),
+        ("bytea", DataType::Binary, &["\\x6162", "ab", "\\x", "a\\\\b"][..]),
+    ];
+    let fields = [
+        "",
+        "a",
+        "a\tb",
+        "ab",
+        "ab ",
+        "ab  ",
+        "abc",
+        "abcd",
+        "abc \t",
+        "b",
+        "a\\b",
+        "\\x6162",
+        "\\x61",
+        "\\x",
+        "\\x6",
+        "ab\\\\",
+        "a\\\\b",
+        "a\nb\u{e9}",
+        "\u{e9}\u{e9}\u{e9}\u{e9}",
+    ];
+    for (declared, data_type, literals) in columns {
+        let schema = one_column(declared, data_type);
+        let mut exprs = Vec::new();
+        for op in comparing {
+            for literal in literals {
+                let p = Predicate { column: "v".into(), op: op(literal.to_string()) };
+                exprs.push(ResolvedExpr::Term(resolve_term(&p, 0, &schema, 0).unwrap()));
+            }
+        }
+        for op in [PredicateOp::IsNull, PredicateOp::IsNotNull] {
+            let p = Predicate { column: "v".into(), op };
+            exprs.push(ResolvedExpr::Term(resolve_term(&p, 0, &schema, 0).unwrap()));
+        }
+        let list: Vec<Option<&str>> = literals.iter().copied().map(Some).collect();
+        exprs.push(ResolvedExpr::In(membership(&schema, 0, &list).unwrap()));
+        for expr in &exprs {
+            for field in fields {
+                let unescaped = match expr {
+                    ResolvedExpr::Term(term) => term.eval_value(Some(field)),
+                    ResolvedExpr::In(membership) => membership.eval_value(Some(field)),
+                    _ => unreachable!("a leaf"),
+                };
+                let written = escape_field(Some(field));
+                let spelled = every_byte_escaped(field.as_bytes());
+                for row in [&written, &spelled] {
+                    let read = answered(expr, row);
+                    match unescaped {
+                        Some(truth) => assert_eq!(read, Ok(truth), "{declared} {field:?}"),
+                        None => {
+                            let quoted = printout(field);
+                            let raised = read.expect_err("a field its type does not read");
+                            assert!(raised.contains(&quoted), "{declared} {field:?}: {raised}");
+                        }
+                    }
+                    if let ResolvedExpr::Term(term) = expr {
+                        let is_false =
+                            term.is_false(RawRow::unchecked(row), &mut RowSplit::default());
+                        assert_eq!(is_false, unescaped == Some(Truth::False), "{field:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// **An escaped field whose text is not UTF-8 raises what unescaping it
+/// raises**, read off its bytes or not, and the dynamic filter's
+/// `is_false` keeps its row.
+#[test]
+fn an_escaped_field_not_utf8_raises_as_unescaping_it_raises() {
+    let schema = one_column("text", DataType::Utf8View);
+    let p = Predicate { column: "v".into(), op: PredicateOp::Lt("b".into()) };
+    let term = resolve_term(&p, 0, &schema, 0).unwrap();
+    let list = membership(&schema, 0, &[Some("a"), Some("abc")]).unwrap();
+    for field in [&b"a\\377b"[..], b"ab\\xe2\\x82", b"\\303(", b"\\t\\xff"] {
+        let unescaped = RawRow::unchecked(field).decode(0..field.len()).unwrap_err().to_string();
+        let expr = ResolvedExpr::Term(term.clone());
+        assert_eq!(answered(&expr, field), Err(unescaped.clone()), "{field:?}");
+        assert_eq!(answered(&ResolvedExpr::In(list.clone()), field), Err(unescaped), "{field:?}");
+        assert!(!term.is_false(RawRow::unchecked(field), &mut RowSplit::default()));
+    }
+}
+
+/// **A list collects an escaped field no further than its longest
+/// literal**: a field one byte past it matches nothing, a `character`'s
+/// trailing blanks past it matching all the same.
+#[test]
+fn a_list_collects_an_escaped_field_no_further_than_its_longest_literal() {
+    let text = one_column("text", DataType::Utf8View);
+    let list = ResolvedExpr::In(membership(&text, 0, &[Some("a\tb"), Some("c")]).unwrap());
+    assert_eq!(answered(&list, b"a\\tb"), Ok(Truth::True));
+    assert_eq!(answered(&list, b"a\\tbc"), Ok(Truth::False));
+    let padded = one_column("character(8)", DataType::Utf8View);
+    let list = ResolvedExpr::In(membership(&padded, 0, &[Some("a\tb"), Some("c")]).unwrap());
+    let blanks = format!("a\\tb{}", " ".repeat(100));
+    assert_eq!(answered(&list, blanks.as_bytes()), Ok(Truth::True));
+    let inner = format!("a\\t{}b", " ".repeat(100));
+    assert_eq!(answered(&list, inner.as_bytes()), Ok(Truth::False));
+}

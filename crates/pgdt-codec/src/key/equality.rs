@@ -8,6 +8,7 @@
 use crate::compare::{CompareKind, ComparisonSemantics};
 use crate::decode;
 use crate::key::order::{OrderKey, literal_key, special_order_key};
+use crate::key::runs::BytewiseRuns;
 use crate::value::datetime::{
     render_timestamp_postgres_micros, time_of_day_micros, timestamp_postgres_micros,
 };
@@ -173,5 +174,37 @@ impl Spellings {
     /// Whether the field `text` is the literal: one of its spellings exactly.
     pub fn matches(&self, text: &str) -> bool {
         text == self.first || self.other.as_deref() == Some(text)
+    }
+
+    /// [`Self::matches`] over a field's text read a run at a time, holding
+    /// none of it (`docs/design/decisions.md`, "D150").
+    pub fn runs(&self) -> SpellingRuns<'_> {
+        SpellingRuns {
+            first: BytewiseRuns::new(self.first.as_bytes()),
+            other: self.other.as_deref().map(|other| BytewiseRuns::new(other.as_bytes())),
+        }
+    }
+}
+
+/// A field's text read a run at a time against each of a literal's
+/// [`Spellings`].
+#[derive(Debug, Clone)]
+pub struct SpellingRuns<'s> {
+    first: BytewiseRuns<'s>,
+    other: Option<BytewiseRuns<'s>>,
+}
+
+impl SpellingRuns<'_> {
+    /// Read the text's next run.
+    pub fn push(&mut self, run: &[u8]) {
+        self.first.push(run);
+        if let Some(other) = &mut self.other {
+            other.push(run);
+        }
+    }
+
+    /// The text has ended: whether it is one of the spellings exactly.
+    pub fn finish(self) -> bool {
+        self.first.finish().is_eq() || self.other.is_some_and(|other| other.finish().is_eq())
     }
 }

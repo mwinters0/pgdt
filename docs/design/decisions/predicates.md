@@ -80,3 +80,11 @@ decoded to scalars, pruned in DataFusion's semantics, nothing on a `CASE`, a lon
 zero rule, sound only as far as each producer's shape is followed; keeping filters across a reset as Parquet does (a
 recursive query's next iteration needs rows the last ruled out). Reopens: a release whose producers hold with the zeros
 equal, then an `RT<n>`. Code: `filter::dynamic::loosened`.
+
+### D150 A filter term reads an escaped field off its bytes; a list collects it no further than its longest literal
+A text, `character` or `bytea` ordering, an `=` against a literal's `*_out` spellings or trimmed, and a NULL test read an
+escaped field as `Unescape` hands its runs, checked UTF-8 as they go, with no copy made; an `IN` list over the same
+collects its text to the longest literal, past which none is it. Why: a query holds its line and one decoded copy
+(D141). Rejected: unescaping per term, a copy as long as the value; hashing the field a run at a time, binding a set to
+its hasher's chunking; reading a keyed scalar so, which its slice reader reads whole (D144). Code: `predicate/eval.rs`,
+`key/runs.rs` (`FieldOrder`). Evidence: `eval/tests.rs`, `tests/decoded_copies.rs`.
