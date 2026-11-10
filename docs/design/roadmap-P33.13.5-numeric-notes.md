@@ -1,11 +1,16 @@
 # P33.13.5 notes — a strict check holds no text of a `numeric`
 
+**Reverted by 33.23**: the slice readers are back and this code is gone
+([`roadmap-P33.23-revert-notes.md`](roadmap-P33.23-revert-notes.md)); what
+follows is what the slice built, kept for P40, whose inbox carries it
+([`roadmap-P40-every-reader-streams-inbox.md`](roadmap-P40-every-reader-streams-inbox.md)).
+
 **`numeric_in`'s reader is a push machine** fed its text a byte at a time:
 `field_key` feeds it a `&str` whole and a strict check a part's runs. It holds
 the significant digits its column's answer reads and counts every other, so a
 strict check reads a `numeric` position, and a `numeric` column's escaped
 field, holding none of a padded value
-([`decisions.md`](decisions.md), "D148"). The row was split from what its
+(D148, struck by 33.23). The row was split from what its
 checklist line asked of every remaining reader an order key is read by; the
 rest became 33.13.6's, and are P40's
 ([`../status/history/2026-11-08.md`](../status/history/2026-11-08.md)). No
@@ -42,9 +47,8 @@ collected the part.
 
 ## What P40 inherits
 
-- **The remaining scalar readers, and this one, are P40's**: 33.23 puts the
-  slice readers back under P33's re-target, and what each push machine would
-  carry is in [its inbox](roadmap-P40-every-reader-streams-inbox.md).
+- **The remaining scalar readers, and this one, are P40's**: what each push
+  machine would carry is in [its inbox](roadmap-P40-every-reader-streams-inbox.md).
 
 ## Negative results
 

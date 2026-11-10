@@ -52,7 +52,7 @@ pub enum Unread {
     /// A spelling this build reads no value from that the server reads at
     /// some supported major — a shortfall (`docs/design/decisions.md`,
     /// "D55"). Each reader classifies what it fails on by the server's
-    /// grammar (`IntIn`, `float_unread`, `NumericIn`,
+    /// grammar (`int_unread`, `float_unread`, `numeric_unread`,
     /// `crate::value::json`'s `jsonb_unread`, and `crate::value::datetime::grammar` for the
     /// date and time types). No reader is widened to read one: a blank
     /// around a number, a hexadecimal float, `nan(…)`, an exponent in a

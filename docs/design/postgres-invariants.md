@@ -3791,8 +3791,8 @@ the precision.
 v13.23 and v14.24 refuse a negative scale at `numerictypmodin`; the
 `maxdigits` check at all six.
 
-**Relied on by:** `decode::typmod_unscaled_digits`, `value::numeric::NumericIn::unscaled`
-and `value::numeric::input::typmod_round`, which put a field through its typmod, rounding half away from zero and
+**Relied on by:** `decode::typmod_unscaled_digits` and `value::numeric::typmod_round`,
+which put a field through its typmod, rounding half away from zero and
 refusing past the precision; `decode::decimal_unscaled_digits`, which takes a filter literal to an
 unscaled integer at the column's scale exactly, and `decode::render_decimal`,
 which takes one back to text; `pgtype::map_numeric`, which widens the precision to a
@@ -4190,9 +4190,9 @@ prefix from v16 — is a spelling, not a range (I80).
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `value::int::IntIn::finish`, which refuses a field or a
-filter literal of any of the three types past its column's width, a parse
-keying the field failing on it.
+**Relied on by:** `value::int::int_in`, which refuses a field or a filter
+literal of any of the three types past its column's width, a parse keying the
+field failing on it.
 
 **Re-verify.**
 
@@ -4364,9 +4364,9 @@ which spellings it reads is I82.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
 **Relied on by:** `value::numeric::numeric_in_stores`, which `key/order.rs` applies to
-every `numeric` literal in PostgreSQL's semantics, `value::numeric::NumericIn::parts`,
-which holds a bare `numeric`'s field to them, `value::numeric::input::Spelling::stored`,
-which bounds a field spelled otherwise, and `numeric_stores`, by which `JsonCursor::number` and `JsonWalk` refuse a `jsonb` number so
+a bare `numeric`'s field and to every `numeric` literal in PostgreSQL's
+semantics, `value::numeric::NumericSpelling::stored`, which bounds a field spelled
+otherwise, and `numeric_stores`, by which `JsonCursor::number` and `JsonWalk` refuse a `jsonb` number so
 spelled, field and literal alike.
 
 **Re-verify.**
@@ -4410,8 +4410,8 @@ brace, two of each, or a space at either end.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `value::uuid::UuidIn::finish`, by which `decode::decode_uuid`
-and the order key read a field and a filter literal.
+**Relied on by:** `decode::decode_uuid`, which reads a field and a filter
+literal by this grammar.
 
 **Re-verify.**
 
@@ -4445,8 +4445,8 @@ holds in a UTF-8 locale under glibc.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `value::bool::BoolIn::finish`, which refuses a field and a
-filter literal so spelled.
+**Relied on by:** `value::bool::bool_unread`, which refuses a field and a filter
+literal so spelled.
 
 **Re-verify.**
 
@@ -4487,8 +4487,8 @@ server was built against.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `value::int::OidBase::value`, through which
-`value::int::OidIn` refuses a field and a filter literal every major refuses.
+**Relied on by:** `value::int::oid_in`, through which `value::int::oid_unread`
+refuses a field and a filter literal every major refuses.
 
 **Re-verify.**
 
@@ -4658,7 +4658,7 @@ meets; no field is refused here for it.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source).
 
-**Relied on by:** `key/order.rs`'s `EnumIn::finish`, which refuses a field naming
+**Relied on by:** `key/order.rs`'s `field_key`, which refuses a field naming
 no label of a type whose labels the preamble holds exactly
 (`TypeKind::Enum`'s `exact`), and one of `NAMEDATALEN` bytes or more whatever
 it holds; `grammar::input::text_grammar`, whose `TextGrammar::RefusesAll` refuses
@@ -5226,8 +5226,9 @@ blanks, which every locale a server runs in agrees on below `0x80`.
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
 and server).
 
-**Relied on by:** `value::int::IntIn::digits`, which refuses a field of the
-three types where v16's grammar refuses it, so only where every major does.
+**Relied on by:** `value::int::int_unread`, which refuses a field of the three
+types its reader does not read where v16's grammar or the width refuses it,
+so only where every major does.
 
 **Re-verify.**
 
@@ -5326,9 +5327,10 @@ typmod, the cast applying it after, which is not how `COPY` reads a field:
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source
 and server).
 
-**Relied on by:** `value::numeric::input::Spelling::byte`, read as v14's and as v16's,
-each reading one side of the change, so that `NumericIn` refuses a field of a
-`numeric` column its grammar does not read only where both sides do.
+**Relied on by:** `value::numeric::numeric_spelling_v14` and
+`value::numeric::numeric_spelling_v16`, each reading one side of the change, so that
+`value::numeric::numeric_unread` refuses a field of a `numeric` column its reader
+does not read only where both sides do.
 
 **Re-verify.**
 

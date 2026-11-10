@@ -4,8 +4,7 @@
 //! reading an escaped field off its bytes ("D142"), a strict parse walking a
 //! nested, `json` or `jsonb` value a part at a time ("D143"), and a strict
 //! check fed its field over runs holding none of it ("D144"), a type read by
-//! its input grammar alone and a scalar by its order key's reader among
-//! them.
+//! its input grammar alone among them.
 //!
 //! **This binary installs a global allocator tracking the bytes live**, and
 //! their peak, which is why it is a test file of its own. A line past its
@@ -370,63 +369,6 @@ fn a_strict_check_holds_no_text_a_grammar_reads() {
         ("bit varying[]", "{", "10", "1}", false),
         ("bit varying[]", "{", "10", "2}", true),
         ("bit varying(8)[]", "{", "10", "1}", true),
-    ] {
-        let count = long / piece.len();
-        let (was_refused, peak) = fed_over_runs(declared, head, piece, count, tail);
-        assert_eq!(was_refused, refused, "{declared} {tail:?}");
-        assert!(peak < 4 * RUN, "{declared} {tail:?}: {peak} bytes allocated at the peak");
-    }
-}
-
-/// **A strict check holds no text of a scalar its order key's reader reads
-/// as a push machine**: an integer element and field of eight MiB of
-/// leading zeros, an `oid` and a `boolean` element of eight MiB of leading
-/// blanks, and a `uuid` of eight MiB, are checked a run at a time with no
-/// more allocated than a run and the readers' own state; one its type
-/// refuses is refused all the same.
-#[test]
-fn a_strict_check_holds_no_text_of_a_scalar_it_keys() {
-    let long = 8usize << 20;
-    for (declared, head, piece, tail, refused) in [
-        ("bigint[]", "{", "0", "1}", false),
-        ("bigint[]", "{", "0", "1x}", true),
-        ("smallint[]", "{", "0", "70000}", true),
-        ("bigint", "", "0", "1", false),
-        ("integer", "-", "0", "2147483649", true),
-        ("oid[]", "{\"", " ", "7\"}", false),
-        ("oid", "", " ", "7x", true),
-        ("boolean[]", "{\"", " ", "t\"}", false),
-        ("boolean", "", " ", "tx", true),
-        ("uuid", "", "a", "", true),
-    ] {
-        let count = long / piece.len();
-        let (was_refused, peak) = fed_over_runs(declared, head, piece, count, tail);
-        assert_eq!(was_refused, refused, "{declared} {tail:?}");
-        assert!(peak < 4 * RUN, "{declared} {tail:?}: {peak} bytes allocated at the peak");
-    }
-}
-
-/// **A strict check holds no text of a `numeric`**: an element and a field
-/// of eight MiB of leading zeros, bare and under a typmod, one of eight MiB
-/// of a fraction's zeros, and one of eight MiB of escaped trailing tabs, are
-/// checked a run at a time with no more allocated than a run and the
-/// reader's own state; one its type refuses — not a number, past its
-/// precision, past the storage format's display scale — is refused all the
-/// same.
-#[test]
-fn a_strict_check_holds_no_text_of_a_numeric() {
-    let long = 8usize << 20;
-    for (declared, head, piece, tail, refused) in [
-        ("numeric[]", "{", "0", "1}", false),
-        ("numeric[]", "{", "0", "1x}", true),
-        ("numeric(5,2)[]", "{", "0", "123.456}", false),
-        ("numeric(5,2)[]", "{", "0", "1234.5}", true),
-        ("numeric(38,2)", "", "0", "1.5", false),
-        ("numeric(38,2)", "-", "0", "1e40", true),
-        ("numeric", "0.", "0", "1", true),
-        ("numeric(10,2)", "0.", "0", "1", false),
-        ("numeric", "1", "\t", "", false),
-        ("numeric", "1", "\t", "x", true),
     ] {
         let count = long / piece.len();
         let (was_refused, peak) = fed_over_runs(declared, head, piece, count, tail);

@@ -55,9 +55,7 @@ fn an_oid_is_read_as_each_major_reads_it() {
         assert_eq!(oid_in(text.as_bytes(), true, true), v16, "{text:?} from v16");
         assert_eq!(oid_in(text.as_bytes(), false, false), v15, "{text:?} before v16");
         let refused = v16.is_none() && v15.is_none();
-        let mut read = OidIn::default();
-        text.bytes().for_each(|byte| read.byte(byte));
-        assert_eq!(read.finish() == Err(Unread::Refused), refused, "{text:?}");
+        assert_eq!(oid_unread(text) == Unread::Refused, refused, "{text:?}");
     }
     // Before C23, glibc reads no `0b`.
     assert_eq!(oid_in(b"0b101", true, false), None);

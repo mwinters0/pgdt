@@ -1,10 +1,15 @@
 # P33.13.4 notes — a strict check holds no text of a scalar a push machine keys
 
+**Reverted by 33.23**: the slice readers are back and this code is gone
+([`roadmap-P33.23-revert-notes.md`](roadmap-P33.23-revert-notes.md)); what
+follows is what the slice built, kept for P40, whose inbox carries it
+([`roadmap-P40-every-reader-streams-inbox.md`](roadmap-P40-every-reader-streams-inbox.md)).
+
 **An integer's, an `oid`'s, a `boolean`'s, an enum's and a `uuid`'s order key
 is read by a push machine** fed its text a byte at a time: `field_key` feeds
 it a `&str` whole and a strict check a part's runs, so a strict check reads
 such a scalar position, and a scalar column's escaped field, holding none of
-it ([`decisions.md`](decisions.md), "D147"). The row was split from what its
+it (D147, struck by 33.23). The row was split from what its
 checklist line asked of every reader an order key is read by; the rest are
 33.13.5's ([`../status/history/2026-11-08.md`](../status/history/2026-11-08.md)).
 No reading was taken. What proves it is

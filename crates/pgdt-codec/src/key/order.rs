@@ -12,7 +12,7 @@ use pgdt_model::PostgresInvalidValues;
 
 use crate::compare::{CompareKind, ComparisonSemantics};
 use crate::decode::{Read, Unread};
-use crate::value::bool::BoolIn;
+use crate::value::bool::{bool_unread, decode_bool};
 use crate::value::bytea::{bytea_unread, decode_bytea};
 use crate::value::datetime::grammar::DateTimeInput;
 use crate::value::datetime::{
@@ -20,14 +20,15 @@ use crate::value::datetime::{
     parse_time_of_day, time_of_day_micros, timestamp_postgres_micros, within_workbuf,
 };
 use crate::value::float::{float_field, float_in};
-use crate::value::int::{IntIn, OidIn};
+use crate::value::int::{int_in, oid_unread};
 use crate::value::json::{Jsonb, parse_jsonb};
 use crate::value::network::{NetworkKey, macaddr_octets, macaddr_unread, macaddr8_in, network_in};
 use crate::value::numeric::{
-    NumericColumn, NumericIn, NumericKey, decimal_unscaled_digits, numeric_in_stores,
+    NumericColumn, NumericKey, decimal_unscaled_digits, numeric_in_stores, numeric_unread,
+    typmod_unscaled_digits,
 };
 use crate::value::text::char_typmod_refuses;
-use crate::value::uuid::UuidIn;
+use crate::value::uuid::decode_uuid;
 
 /// A `jsonb` comparison key: the document, with a **top-level scalar wrapped
 /// in the one-element pseudo-array PostgreSQL stores it in** (I41). Modelling
@@ -260,35 +261,71 @@ pub enum Side {
     Field(PostgresInvalidValues),
 }
 
+/// `NAMEDATALEN`: `enum_in` refuses a text of this many bytes or more before
+/// looking it up, no label being so long (I70).
+const ENUM_LABEL_LIMIT: usize = 64;
+
 /// [`order_key`], saying why a text has no key: refused by the type's `*_in`,
 /// which fails the parse reading it as a field, or not read here.
-///
-/// A kind whose reader is a push machine — an integer, `oid`, `boolean`, an
-/// enum, `uuid`, `numeric` — is read by feeding it the text ([`KeyRead`]),
-/// the one grammar a strict check feeds a part's runs to. A literal of an integer in
-/// DataFusion's semantics is read as an `i64` instead, by [`literal_key`];
-/// one of an `oid` is a `u32`, and the width *is* the refusal: `oidin` reads
-/// `-1` as 4294967295 and this build does not implement that wrap, so a
-/// negative literal is `Error::PredicateValueDecode`.
 pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
-    if let Some(mut read) = KeyRead::machine(kind) {
-        read.whole(text.as_bytes());
-        return read.finish();
-    }
     if let Some(special) = special_order_key(kind, text) {
         return Ok(special);
     }
     let unparsed = Unread::Unparsed;
     Ok(match kind {
-        CompareKind::Bool
-        | CompareKind::Int { .. }
-        | CompareKind::UnsignedInt
-        | CompareKind::Enum { .. }
-        | CompareKind::Uuid
-        | CompareKind::Decimal { .. }
-        | CompareKind::Numeric { .. } => unreachable!("a push machine reads it"),
+        CompareKind::Bool => OrderKey::Bool(decode_bool(text).ok_or_else(|| bool_unread(text))?),
+        // A literal in DataFusion's semantics is read as an `i64` instead, by
+        // [`literal_key`].
+        CompareKind::Int { bytes } => OrderKey::Int(int_in(text, *bytes)?),
+        // `u32`, and the width *is* the refusal: `oidin` reads `-1` as
+        // 4294967295 and this build does not implement that wrap, so a
+        // negative literal is `Error::PredicateValueDecode`. Every value the
+        // column can hold widens into `i64` unchanged.
+        CompareKind::UnsignedInt => {
+            OrderKey::Int(text.parse::<u32>().map_err(|_| oid_unread(text))?.into())
+        }
         CompareKind::Float32 => OrderKey::Float(f64::from(float_in::<f32>(text)?)),
         CompareKind::Float64 => OrderKey::Float(float_in::<f64>(text)?),
+        // A field is put through its typmod, rounded to the scale and refused
+        // past the precision as `COPY` refuses it (I51). A literal is read
+        // exactly, by [`literal_key`].
+        CompareKind::Decimal { precision, scale } => OrderKey::Decimal(
+            i256::from_string(&typmod_unscaled_digits(text, *precision, i16::from(*scale))?)
+                .ok_or(unparsed)?,
+        ),
+        CompareKind::Numeric { typmod: Some(typmod), .. } => {
+            OrderKey::Numeric(NumericKey::from_unscaled(
+                &typmod_unscaled_digits(text, typmod.precision, typmod.scale)?,
+                typmod.scale,
+            ))
+        }
+        // A bare column's field is bounded by `numeric_in` (I63) once read:
+        // the bounds count the digits a grammar with no exponent reads, and
+        // `numeric_in` stores a text whose exponent brings its scale back
+        // within them. A typmod'd one never reaches the bounds, the typmod
+        // rounding first. A literal in PostgreSQL's semantics is bounded by
+        // [`literal_key`].
+        CompareKind::Numeric { infinities: bare, typmod: None } => {
+            let key = NumericKey::parse(text).ok_or_else(|| {
+                let column = if *bare { NumericColumn::Bare } else { NumericColumn::UnreadTypmod };
+                numeric_unread(text, column)
+            })?;
+            if *bare && !numeric_in_stores(text) {
+                return Err(Unread::Refused);
+            }
+            OrderKey::Numeric(key)
+        }
+        // A label the type does not declare is no value of the column, which
+        // `enum_in` refuses: where the declared labels are all the type
+        // holds, or the text is longer than any label can be, and otherwise
+        // it may be one this build did not read. The linear scan is over a
+        // label list, a handful of entries in practice.
+        // pg-refuses: I70
+        CompareKind::Enum { labels, exact, .. } => {
+            let position = labels.iter().position(|l| l == text);
+            let refused = *exact || text.len() >= ENUM_LABEL_LIMIT;
+            OrderKey::Int(position.ok_or(if refused { Unread::Refused } else { unparsed })? as i64)
+        }
         CompareKind::Date => {
             OrderKey::Int(datetime_read(date_days(text), DateTimeInput::Date, text)?.into())
         }
@@ -322,6 +359,8 @@ pub fn field_key(kind: &CompareKind, text: &str) -> Read<OrderKey> {
             })?)
         }
         CompareKind::Jsonb => jsonb_key(text)?,
+        // Every refusal of the reader is `uuid_in`'s (I64).
+        CompareKind::Uuid => OrderKey::Bytes(decode_uuid(text).ok_or(Unread::Refused)?.to_vec()),
         CompareKind::Bytea => {
             OrderKey::Bytes(decode_bytea(text).ok_or_else(|| bytea_unread(text.bytes()))?)
         }
@@ -480,227 +519,5 @@ pub fn compare_keys_stored(a: &OrderKey, b: &OrderKey) -> Ordering {
     })
 }
 
-/// **An order key read off a text fed a byte at a time**
-/// (`docs/design/decisions.md`, "D144", "D147", "D148"): [`field_key`]'s
-/// answer, a `&str` fed whole being one source, a strict check's part fed its
-/// runs another. A kind whose reader is a push machine holds that machine's
-/// state, a `numeric`'s the digits its column reads; any other collects its
-/// text for `field_key`'s slice reader.
-#[derive(Debug, Clone)]
-pub(crate) enum KeyRead<'k> {
-    Int {
-        bytes: u8,
-        read: IntIn,
-    },
-    Oid(OidIn),
-    Bool(BoolIn),
-    Enum(EnumIn<'k>),
-    Uuid(UuidIn),
-    /// A `numeric`, read as its column reads one.
-    Numeric {
-        kind: &'k CompareKind,
-        read: Box<NumericIn>,
-    },
-    /// A kind whose reader takes a slice: its text, no longer than it.
-    Collected {
-        kind: &'k CompareKind,
-        text: Vec<u8>,
-    },
-}
-
-impl<'k> KeyRead<'k> {
-    /// The reader of `kind`.
-    pub(crate) fn new(kind: &'k CompareKind) -> Self {
-        Self::machine(kind).unwrap_or(KeyRead::Collected { kind, text: Vec::new() })
-    }
-
-    /// The push machine reading `kind`, where its reader is one.
-    pub(crate) fn machine(kind: &'k CompareKind) -> Option<Self> {
-        Some(match kind {
-            CompareKind::Int { bytes } => KeyRead::Int { bytes: *bytes, read: IntIn::default() },
-            CompareKind::UnsignedInt => KeyRead::Oid(OidIn::default()),
-            CompareKind::Bool => KeyRead::Bool(BoolIn::default()),
-            CompareKind::Enum { labels, exact, .. } => KeyRead::Enum(EnumIn {
-                labels,
-                exact: *exact,
-                label: [0; ENUM_LABEL_LIMIT],
-                len: 0,
-            }),
-            CompareKind::Uuid => KeyRead::Uuid(UuidIn::default()),
-            CompareKind::Decimal { precision, scale } => KeyRead::Numeric {
-                kind,
-                read: Box::new(NumericIn::new(NumericColumn::Typmod {
-                    precision: *precision,
-                    scale: i16::from(*scale),
-                })),
-            },
-            CompareKind::Numeric { infinities: bare, typmod } => {
-                let column = match typmod {
-                    Some(typmod) => {
-                        NumericColumn::Typmod { precision: typmod.precision, scale: typmod.scale }
-                    }
-                    None if *bare => NumericColumn::Bare,
-                    None => NumericColumn::UnreadTypmod,
-                };
-                KeyRead::Numeric { kind, read: Box::new(NumericIn::new(column)) }
-            }
-            _ => return None,
-        })
-    }
-
-    /// Ready the reader for another text.
-    pub(crate) fn start(&mut self) {
-        match self {
-            KeyRead::Collected { text, .. } => text.clear(),
-            KeyRead::Enum(read) => read.len = 0,
-            KeyRead::Int { read, .. } => *read = IntIn::default(),
-            KeyRead::Oid(read) => *read = OidIn::default(),
-            KeyRead::Bool(read) => *read = BoolIn::default(),
-            KeyRead::Uuid(read) => *read = UuidIn::default(),
-            KeyRead::Numeric { read, .. } => read.start(),
-        }
-    }
-
-    /// Read the whole of a text, this reader having read none of it.
-    pub(crate) fn whole(&mut self, text: &[u8]) {
-        match self {
-            KeyRead::Numeric { read, .. } => read.whole_text(text),
-            reader => reader.run(text),
-        }
-    }
-
-    /// Read the text's next run.
-    pub(crate) fn run(&mut self, run: &[u8]) {
-        match self {
-            KeyRead::Collected { text, .. } => text.extend_from_slice(run),
-            reader => run.iter().for_each(|&byte| reader.byte(byte)),
-        }
-    }
-
-    /// Read the text's next byte.
-    pub(crate) fn byte(&mut self, byte: u8) {
-        match self {
-            KeyRead::Int { read, .. } => read.byte(byte),
-            KeyRead::Oid(read) => read.byte(byte),
-            KeyRead::Bool(read) => read.byte(byte),
-            KeyRead::Enum(read) => read.byte(byte),
-            KeyRead::Uuid(read) => read.byte(byte),
-            KeyRead::Numeric { read, .. } => read.byte(byte),
-            KeyRead::Collected { text, .. } => text.push(byte),
-        }
-    }
-
-    /// The text has ended: its key, or why it has none. A collected text
-    /// that is not UTF-8 is no value, which no `*_in` is handed.
-    pub(crate) fn finish(&self) -> Read<OrderKey> {
-        Ok(match self {
-            KeyRead::Int { bytes, read } => OrderKey::Int(read.finish(*bytes)?),
-            // Every value the column can hold widens into `i64` unchanged.
-            KeyRead::Oid(read) => OrderKey::Int(read.finish()?.into()),
-            KeyRead::Bool(read) => OrderKey::Bool(read.finish()?),
-            KeyRead::Enum(read) => OrderKey::Int(read.finish()?),
-            // Every refusal of the reader is `uuid_in`'s (I64).
-            KeyRead::Uuid(read) => OrderKey::Bytes(read.finish().ok_or(Unread::Refused)?.to_vec()),
-            KeyRead::Numeric { kind, read } => numeric_key(kind, read)?,
-            KeyRead::Collected { kind, text } => {
-                let text = std::str::from_utf8(text).map_err(|_| Unread::Refused)?;
-                field_key(kind, text)?
-            }
-        })
-    }
-
-    /// What a whitespace run fed from here can move, for
-    /// [`KeyRead::rewind`]: a machine's fixed state, a collected text's
-    /// length.
-    pub(crate) fn mark(&self) -> KeyMark<'k> {
-        match self {
-            KeyRead::Collected { text, .. } => KeyMark::Collected(text.len()),
-            machine => KeyMark::Machine(machine.clone()),
-        }
-    }
-
-    /// Return to `mark`, taken of this reader.
-    pub(crate) fn rewind(&mut self, mark: &KeyMark<'k>) {
-        match (self, mark) {
-            (KeyRead::Collected { text, .. }, KeyMark::Collected(at)) => text.truncate(*at),
-            (reader, KeyMark::Machine(machine)) => reader.clone_from(machine),
-            _ => unreachable!("a mark is rewound into the reader it was taken of"),
-        }
-    }
-}
-
-/// A `numeric`'s key, read by `read` as a column compared as `kind` reads
-/// one: a special value first ([`special_order_key`]), then a typmod'd
-/// column's field put through its typmod, rounded to the scale and refused
-/// past the precision as `COPY` refuses it (I51), and a bare one's held to
-/// `numeric_in`'s bounds (I63), each spelling `numeric_in` reads and this
-/// build does not unparsed. A literal is read by [`literal_key`].
-fn numeric_key(kind: &CompareKind, read: &NumericIn) -> Read<OrderKey> {
-    if let Some(special) = read.word().and_then(|word| special_order_key(kind, word)) {
-        return Ok(special);
-    }
-    Ok(match kind {
-        CompareKind::Decimal { .. } => {
-            OrderKey::Decimal(i256::from_string(&read.unscaled()?).ok_or(Unread::Unparsed)?)
-        }
-        CompareKind::Numeric { typmod: Some(typmod), .. } => {
-            OrderKey::Numeric(NumericKey::from_unscaled(&read.unscaled()?, typmod.scale))
-        }
-        CompareKind::Numeric { typmod: None, .. } => {
-            let (negative, int, frac) = read.parts()?;
-            OrderKey::Numeric(NumericKey::from_parts(negative, int, frac))
-        }
-        _ => unreachable!("only a `numeric` is read by `NumericIn`"),
-    })
-}
-
-/// What [`KeyRead::mark`] saved.
-#[derive(Debug)]
-pub(crate) enum KeyMark<'k> {
-    Machine(KeyRead<'k>),
-    Collected(usize),
-}
-
-/// `NAMEDATALEN`: `enum_in` refuses a text of this many bytes or more before
-/// looking it up, no label being so long (I70).
-pub(crate) const ENUM_LABEL_LIMIT: usize = 64;
-
-/// **`enum_in` fed a text a byte at a time**, holding no more of it than the
-/// longest label: a label the type does not declare is no value of the
-/// column, which `enum_in` refuses where the declared labels are all the type
-/// holds, or the text is longer than any label can be; otherwise it may be
-/// one this build did not read.
-#[derive(Debug, Clone)]
-pub(crate) struct EnumIn<'k> {
-    labels: &'k [String],
-    exact: bool,
-    label: [u8; ENUM_LABEL_LIMIT],
-    /// The text's length, saturating past the limit.
-    len: usize,
-}
-
-impl EnumIn<'_> {
-    fn byte(&mut self, byte: u8) {
-        if let Some(at) = self.label.get_mut(self.len) {
-            *at = byte;
-        }
-        self.len = self.len.saturating_add(1);
-    }
-
-    /// The label's position among the type's, which orders it. The linear
-    /// scan is over a label list, a handful of entries in practice.
-    // pg-refuses: I70
-    fn finish(&self) -> Read<i64> {
-        let text = self.label.get(..self.len);
-        let position = text.and_then(|text| self.labels.iter().position(|l| l.as_bytes() == text));
-        let refused = self.exact || self.len >= ENUM_LABEL_LIMIT;
-        Ok(position.ok_or(if refused { Unread::Refused } else { Unread::Unparsed })? as i64)
-    }
-}
-
-#[cfg(test)]
-mod differential;
-#[cfg(test)]
-mod prior_shape;
 #[cfg(test)]
 mod tests;

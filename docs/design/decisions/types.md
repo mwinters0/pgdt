@@ -48,20 +48,20 @@ array's element borrowing unless it carried an escape. Rejected: a `String` per 
 ### D143 An input grammar is a walk, read a part at a time
 `array_in`'s, `record_in`'s, `range_in`'s, `multirange_in`'s and `int2vectorin`'s grammars, and `json_in`'s with
 `jsonb_in`'s refusals beside it, are walks handing their caller each part as read (`Parts`); `parse_*` collect the
-nested ones and a strict check reads all, holding no copy and no tree of a field, only a range's bounds and their keys
-and the text of a scalar part a slice reader keys (D147). `parse_jsonb` is `JsonCursor`'s, held to the walk by a
-differential test. Rejected: a value's key tree built and dropped, tens of bytes an element; a check walk beside each
-nested scanner. Code: `nested/input/`, `json/walk.rs` (`JsonWalk`), `grammar/walk.rs` (`FieldWalk`). Evidence:
-`input/differential.rs`, `tests/decoded_copies.rs`.
+nested ones and a strict check reads all, holding no copy and no tree of a field, only a scalar part's text and key and a
+range's bounds and theirs. `parse_jsonb` is `JsonCursor`'s, held to the walk by a differential test. Rejected: a value's
+key tree built and dropped, tens of bytes an element; a check walk beside each nested scanner. Code: `nested/input/`,
+`json/walk.rs` (`JsonWalk`), `grammar/walk.rs` (`FieldWalk`). Evidence: `input/differential.rs`,
+`tests/decoded_copies.rs`.
 
-### D144 A reader is a push machine fed a field's runs, looking at no byte past the one it reads
-`Unescape`, the input walks (D143), `TextFold` and `ByteaFold` are hand-written state machines fed a field's bytes as
-its runs come, carrying past a run's end only their own state: an escape begun, `NULL`'s letters, a quote awaiting its
-double, a `bytea` read once for whether it decodes and whether `byteain` refuses it. Why: `resumable-reader-micro`.
-Rejected: the `async` walk, past its noise of the pull walk where the push machine is below it; a pull walk forking
-ahead, holding runs back to the fork; a machine generic over its parts, instantiating without bound. Code:
-`value/source.rs`, `nested/input/`, `json/walk.rs`, `bytea.rs`, `grammar/walk.rs`, pgdt-core's `Unescape`. Evidence:
-`check/tests.rs` (`walked_in_runs`), `tests/decoded_copies.rs`.
+### D144 A long field's reader is a push machine fed its runs, looking at no byte past the one it reads
+`Unescape`, the input walks (D143), `TextFold`, `ByteaFold` and the strict check's grammars (D146) are hand-written
+state machines fed a field's bytes as its runs come, carrying past a run's end only their own state: an escape begun,
+`NULL`'s letters, a quote awaiting its double. A scalar a key or a query's batch reads is collected for its slice
+reader. Why: `resumable-reader-micro`; a dump's long fields are text, `bytea`, `json` and their containers. Rejected:
+the `async` walk, past its noise of the pull walk; a pull walk forking ahead, holding runs back to the fork; a machine
+generic over its parts, instantiating without bound; a machine per keyed scalar, dearer on every short value (D108).
+Code: `value/source.rs`, `nested/input/`, `json/walk.rs`, `grammar/walk.rs`, `Unescape`. Evidence: `check/tests.rs`.
 
 ### D145 A whitespace run whose end decides it is fed on into the part and rewound, never held
 An unquoted array element's whitespace run, and one after `NULL`, is fed on into its part from a mark as it comes, and
@@ -81,21 +81,3 @@ number, and keeps a decimal's first 800 significant digits and whether one past 
 Why: a parse holds nothing growing with a field (D144). Rejected: the text held from the `(` until its end decides, a
 line's worth; a `strtod` backtracking over its read-ahead, which an open `nan(` tag makes a line's worth; every digit
 kept. Code: `geometric/walk.rs`, `libc.rs` (`Strtod`). Evidence: `geometric/differential.rs`, `tests/decoded_copies.rs`.
-
-### D147 An order key is read by its kind's push machine, a `&str` fed whole, with no slice reader beside it
-An integer's, `oid`'s, `boolean`'s, enum's and `uuid`'s key is read by a push machine (D144) of fixed state — a
-saturated magnitude and whether the text is `*_out`'s spelling, an enum's label up to `NAMEDATALEN` — which `field_key`
-feeds a `&str` whole and a strict check a part's runs; another kind's slice reader is fed its collected text. Why: one
-grammar per type (P33's spec). Rejected: Rust's `parse` beside the machine for `*_out`'s spelling, two grammars one test
-holds together; a head clipped before a slice reader, a second grammar for what to clip. Code: `key/order.rs`
-(`KeyRead`), `int.rs`, `bool.rs`, `uuid.rs`. Evidence: `key/order/differential.rs`, `tests/decoded_copies.rs`.
-
-### D148 A `numeric` is read by a push machine holding only the significant digits its column's answer reads
-`numeric_in` is fed a byte at a time (D144, D147) as this build's grammar and v14's and v16's beside it: a leading
-integer zero and a trailing fraction zero are counted, never held; a typmod'd column holds the digits its precision and
-scale round, a bare one I63's, past which each refuses, and a major's spelling no more than decides whether the column
-stores it, a radix one to I63's width in bits. A `&str` is fed the majors only where the grammar fails.
-`typmod_unscaled_digits` and `NumericKey::parse` are it fed whole. Why: one grammar per type; a bare key is its digits,
-so fixed state cannot hold it. Rejected: the text collected for the slice readers, a field's worth for a padded value.
-Code: `numeric/input.rs` (`NumericIn`), `key/order.rs`. Evidence: `key/order/differential.rs`,
-`tests/decoded_copies.rs`.

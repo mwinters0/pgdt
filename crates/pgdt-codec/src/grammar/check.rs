@@ -14,7 +14,7 @@ use crate::declared::{
 use crate::decode::Unread;
 use crate::grammar::input::{TextGrammar, text_grammar};
 use crate::grammar::walk::FieldWalk;
-use crate::key::order::{KeyRead, field_key};
+use crate::key::order::field_key;
 use crate::value::text::char_typmod_refuses;
 
 /// **Why a strict parse checks nothing of a value, or of a position within
@@ -314,24 +314,21 @@ pub fn field_refused(plan: &ComparisonPlan, text: &str) -> bool {
 
 /// **Whether [`field_refused`] reads a field of a column compared by `plan`
 /// a byte at a time** ([`FieldWalk`]), holding no copy of it and no tree but
-/// a range bound's (`docs/design/decisions.md`, "D142"–"D144"): a nested
-/// value, `json` and `jsonb`, a `bytea`, a text held to its typmod, and a
-/// scalar whose order key's reader is a push machine ([`KeyRead`]).
+/// a range bound's (`docs/design/decisions.md`, "D142", "D143"): a nested
+/// value, `json` and `jsonb`, a `bytea`, and a text held to its typmod.
 pub fn walks(plan: &ComparisonPlan) -> bool {
-    match plan {
+    matches!(
+        plan,
         ComparisonPlan::Nested(_)
-        | ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => true,
-        ComparisonPlan::Compared { kind, .. } => {
-            matches!(
-                kind,
-                CompareKind::Jsonb
+            | ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. }
+            | ComparisonPlan::Compared {
+                kind: CompareKind::Jsonb
                     | CompareKind::Bytea
                     | CompareKind::Text { .. }
-                    | CompareKind::PaddedText { .. }
-            ) || KeyRead::machine(kind).is_some()
-        }
-        ComparisonPlan::Refused | ComparisonPlan::Unanswerable(_) => false,
-    }
+                    | CompareKind::PaddedText { .. },
+                ..
+            }
+    )
 }
 
 /// **Where [`field_refused`] refuses a field of a column compared by `plan`
