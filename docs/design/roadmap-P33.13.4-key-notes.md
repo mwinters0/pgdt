@@ -47,11 +47,11 @@ ones among them, the peak under four runs — which fails on its parent, whose
 - **A range's bounds are still collected** (`RangeWalk`, `checked_range`),
   each keyed once it ends; an integer bound is keyed by `IntIn` from there.
 
-## What 33.13.2 inherits
+## What 33.4 inherits
 
 - **A data-level parse of an escaped integer column still unescapes a long
-  field whole**, the column summing (`ColumnGatherer::observe`, D142); its
-  strict check no longer does.
+  field whole**, the column summing (`ColumnGatherer::observe`, D142): a
+  collected scalar's text, drawn from the ledger.
 
 ## Negative results
 

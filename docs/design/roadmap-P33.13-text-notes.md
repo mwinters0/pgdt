@@ -39,8 +39,8 @@ alone changed.
 - **A column summing, or counting unrepresentable values, still unescapes a
   long escaped field whole** (`ColumnGatherer::observe`): a sum needs the
   whole integer's digits and a container's tier its elements. No `pg_dump`
-  writes an escape in such a column, so no dump in hand pays it; 33.13.2
-  closes it with the output grammar's walk.
+  writes an escape in such a column, so no dump in hand pays it; the copy is
+  drawn from the ledger, and P40 owns its removal.
 - **A strict parse's check of a nested, `json` or `jsonb` value, and of any
   other scalar, still unescapes it and builds what `checked_key` and
   `field_key` build**; the row's walk is what removes them, 33.13.1's for a

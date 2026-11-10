@@ -70,11 +70,20 @@ block's rows", places the census. A replay decides as a row outgrows its chunk,
 under the dynamic state it last read, which its contract allows
 (`DynamicFilter`).
 
-**A gathering parse streams a line too**, strict or not: every statistic it
-gathers and every check it makes is fed its field's runs as they go by and keeps
-a bounded state per column — a head (`decisions.md`, "D76"), a length, a fold's
-carried state — so a parse holds nothing that grows with a field, draws nothing
-past its chunk term and is never refused for memory. Each reader resumes across
+**A gathering parse streams a line too**, strict or not, **over the types a
+dump's long fields hold**: `text`, `character`, `bytea`, `json`, `jsonb`, the
+containers whose walks feed their parts — an array, record, range or multirange
+— and the `bit`, `varbit` and geometric readers only a strict parse reads. Every
+statistic it gathers and every check it makes over them is fed its field's runs
+as they go by and keeps a bounded state per column — a head (`decisions.md`,
+"D76"), a length, a fold's carried state — so a parse holds nothing that grows
+with such a field. **A scalar that an order key or a query's batch reads** — an
+integer, `oid`, `boolean`, enum, `uuid`, `numeric`, float, datetime, `interval`
+or network address, bare or as a container's part — **is collected whole and
+read by its slice reader**, the one `field_key` and the batch read it with, and
+that copy is drawn from the ledger past its chunk term as a query's held line is
+(below): a parse is never refused for memory where its line alone could be held.
+Each streamed reader resumes across
 runs with one grammar per type, a slice being one run, and **looks no further
 ahead than a fixed bound**, carrying what lies past it as state — a `bytea`
 read once for both its answers — and **reads an unquoted element's whitespace
@@ -87,16 +96,21 @@ most an eighth of it, uncharged: PostgreSQL bounds that depth only by
 `max_stack_depth`, a setting, and nothing refuses one here
 ([`postgres-invariants.md`](postgres-invariants.md), "I72"). Rejected: holding the
 line, which charges a parse for values it reads only to keep heads of, on the
-dumps whose long lines cluster three to nine in a chunk; holding whole each field
-whose reader can only pull, as the census holds a container, a second rule a user
-cannot see and on a long `jsonb` field the line again; a fork keeping its runs
+dumps whose long lines cluster three to nine in a chunk; holding a long `text`
+or `jsonb` field whole, the line again on the dumps whose long lines are one
+such field; a push machine for every scalar, which costs `field_key` and a
+typed query on every short value for a long scalar no dump in hand holds
+([`roadmap-P33.22-priced-notes.md`](roadmap-P33.22-priced-notes.md)); a fork keeping its runs
 back to where it forked, a line's worth on one whitespace run, and the run held
 until its end decides it, as its bytes or their run lengths, the same on a run
 alternating its bytes, which no `pg_dump` writes and a restore reads; a rewind
 in each leaf reader, one per type where `Parts` has a few implementors; charging the
 depth bits, the ledger back for a parse over no document a dump holds; refusing
 past a depth, which PostgreSQL does not. Reopens: no resumable reader keeping
-one grammar per type, which a second parser would not answer.
+one grammar per type, which a second parser would not answer; a dump whose long
+field is a keyed scalar, or a container of one, that a parse must read under a
+`--memory` below it — P40's ([`roadmap.md`](roadmap.md), "P40 — Every reader
+streams").
 
 **Where it lives**: `BlockObserver` is a fold over a row's field runs, as the
 census's is — pgdt-model's (`statistics.rs`), implemented by pgdt-mapping's
@@ -180,7 +194,8 @@ over an array or `jsonb` is a tree of tens of bytes an element; refusing an
 ordering term over a long `jsonb` or multirange, which a key of positions reads.
 
 **The charge is the held line plus the bound its decode adds**: a parse, strict
-or not, streams and draws nothing (above); a query draws once plus its batch's
+or not, streams its line and draws only for the scalar text it collects, at most
+its line's length (above); a query draws once plus its batch's
 decode, bounded by the largest **decode factor** among the columns it reads —
 the most its column's Arrow type and plan hold per text byte, known from the
 schema before a reader starts — and by each ordering term's **key factor** over
@@ -369,7 +384,7 @@ re-setting them, and showing a parse flat in its line length. **The
 acceptance is two hand runs on the reference dump**, read with no setting and
 recorded in `runs/` and the day's history entry: a data-level, strict parse
 under a stated `--memory` below its longest line, flat and never slowed for
-memory; and a query whose batch reads its long field under a `--memory` below
+memory, its long field a `text` column a parse streams; and a query whose batch reads its long field under a `--memory` below
 what its clusters hold at once, slowed and not refused, the one reading of the
 ledger over a real dump. The
 dump is machine-local and not ours, so it is never in `measure.py`. Today's

@@ -89,7 +89,6 @@ are `docs/process.md`, "The decision register".
 - **D146** A grammar asking of a byte it has not read reads on as each answer; a number never reads ahead
 - **D147** An order key is read by its kind's push machine, a `&str` fed whole, with no slice reader beside it
 - **D148** A `numeric` is read by a push machine holding only the significant digits its column's answer reads
-- **D149** A datetime's push machine is its lexer; its decoders and its key read the bounded fields
 
 ## Batches, streams and the leader
 [`decisions/batches.md`](decisions/batches.md)

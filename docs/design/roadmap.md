@@ -28,6 +28,7 @@ reused, including a struck phase's.
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
 | P24 — Python bindings | Sketched; not grilled | this file, below; [inbox](roadmap-P24-python-inbox.md) |
 | P39 — PostgreSQL as a front end | Sketched; not grilled | this file, below; [inbox](roadmap-P39-postgres-extension-inbox.md) |
+| P40 — every reader streams | Sketched; not grilled | this file, below; [inbox](roadmap-P40-every-reader-streams-inbox.md) — the maintainer sets its order |
 
 **A row's state is one of `Sketched`, `Specified`, `Current`, `Complete` or
 `Struck`**, and the prose after it is a caption. Two of them are set in the same
@@ -47,7 +48,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' decisions are in
 [`decisions.md`](decisions.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P39`** — nothing at or below it
+centering"). **Phase numbering continues from `P40`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -1087,6 +1088,21 @@ and a backend is one thread, which alone may call the server. Its crate is an
 `unsafe` root (D27), and its artifact a library per PostgreSQL major beside
 D104's binary. What current work could foreclose is in [its
 inbox](roadmap-P39-postgres-extension-inbox.md).
+
+## P40 — Every reader streams
+
+**A parse holds nothing that grows with any field**, in every spelling
+PostgreSQL's `*_in` reads, so a parse runs under a `--memory` below a long
+line whose long field is a scalar an order key or a query's batch reads: a
+number, a datetime, an `interval`, a network address, or a container of one.
+P33 streams only the types a dump's long fields hold and collects such a
+scalar's text whole, drawing it from the ledger
+([`roadmap-P33-line-bound.md`](roadmap-P33-line-bound.md), "A pass holds a line
+only where it decodes it"). It is wanted only when a dump needs it, and what
+that dump is decides its scope. Its first question is the hot path's: a push
+machine in place of the slice reader `field_key` and the batch read with was
+measured to cost every short value. Sketched to corner-avoidance depth. The
+facts are in [its inbox](roadmap-P40-every-reader-streams-inbox.md).
 
 ## Out-of-band work
 

@@ -7,7 +7,7 @@ strict check reads a `numeric` position, and a `numeric` column's escaped
 field, holding none of a padded value
 ([`decisions.md`](decisions.md), "D148"). The row was split from what its
 checklist line asked of every remaining reader an order key is read by; the
-rest are 33.13.6's
+rest became 33.13.6's, and are P40's
 ([`../status/history/2026-11-08.md`](../status/history/2026-11-08.md)). No
 reading was taken. What proves it is
 `crates/pgdt-query/tests/decoded_copies.rs`'s
@@ -40,21 +40,19 @@ collected the part.
   length. Two mutations each fail it: v14's exponent bound read as v16's,
   which only a blank after the `e` exposes, and the fraction's cap one short.
 
-## What 33.13.6 inherits
+## What P40 inherits
 
-- **What 33.13.4's notes address to 33.13.5 is 33.13.6's**, `numeric`'s
-  item aside: `Strtod` for `float8in`, a datetime's text bounded but for its
-  blanks, and a range's bounds still collected.
-- **`KeyRead::whole`** is where a machine running a second reading only on
-  failure, as `NumericIn` does, takes a `&str` fed whole.
+- **The remaining scalar readers, and this one, are P40's**: 33.23 puts the
+  slice readers back under P33's re-target, and what each push machine would
+  carry is in [its inbox](roadmap-P40-every-reader-streams-inbox.md).
 
 ## Negative results
 
-- **Its count pair is 33.22's, and resolved no row**: `field_key` and the
+- **Its count pair is 33.22's, and resolved a rise**: `field_key` and the
   batch's decimal read now feed a machine a byte at a time where a slice
   reader read a slice — on every data-level parse's bounds, every query's
-  filter and every typed decimal column
-  ([`roadmap-P33.22-priced-notes.md`](roadmap-P33.22-priced-notes.md)).
+  filter and every typed decimal column — and callgrind places it in
+  `NumericIn` ([`roadmap-P33.22-priced-notes.md`](roadmap-P33.22-priced-notes.md)).
 - **A typmod this build does not read holds its key's digits in a strict
   check**, which answers only whether it is refused: the column refuses
   nothing past the grammar, and its key is those digits.
