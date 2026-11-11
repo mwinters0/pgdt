@@ -1,8 +1,9 @@
 //! **The output grammars as a walk**: an `array_out`, `record_out`,
 //! `range_out`, `multirange_out` or `int2vectorout` value read a part at a time over its held
 //! field, each part handed to its caller as it is read and none of them kept,
-//! so a reader of it holds no copy and no tree of the value
-//! (`docs/design/decisions.md`, "D151").
+//! so a reader of it holds no copy and no tree of the value: a nested term's
+//! order, and a query's batch, decoding each part into its builder
+//! (`docs/design/decisions.md`, "D151", "D153").
 //!
 //! The grammar is `decode_*`'s, token for token: a token is read by
 //! [`scan_token`] itself, and the structure around it as `decode_*` reads it,
@@ -190,9 +191,9 @@ impl<'a> FieldText<'a> {
 /// An `array_out` value's shape, as `decode_array` returns it beside its
 /// elements: one dimension and one lower bound a level, none for `{}`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ArrayShape {
-    pub(crate) dims: Vec<usize>,
-    pub(crate) lower_bounds: Vec<i32>,
+pub struct ArrayShape {
+    pub dims: Vec<usize>,
+    pub lower_bounds: Vec<i32>,
 }
 
 /// The brace walk's state: `ArrayScan`'s, with the elements counted rather
@@ -263,7 +264,7 @@ impl ArrayWalk {
 /// handed to `element` as it is read, row-major — `None` back stopping the
 /// walk, refused — and the value's shape once its text has ended, or `None`
 /// where the text is no `array_out` value.
-pub(crate) fn walk_array(
+pub fn walk_array(
     text: &mut FieldText<'_>,
     mut element: impl FnMut(Option<&str>) -> Option<()>,
 ) -> Option<ArrayShape> {
@@ -313,7 +314,7 @@ pub(crate) fn walk_array(
 /// [`decode_record`](super::decode_record)'s grammar as a walk: each field
 /// handed to `field` as it is read, and how many there were, its arity
 /// unchecked as `decode_record` leaves it.
-pub(crate) fn walk_record(
+pub fn walk_record(
     text: &mut FieldText<'_>,
     mut field: impl FnMut(Option<&str>) -> Option<()>,
 ) -> Option<usize> {
@@ -336,16 +337,16 @@ pub(crate) fn walk_record(
 
 /// What a `range_out` value states beside its bounds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RangeShape {
-    pub(crate) empty: bool,
-    pub(crate) lower_inclusive: bool,
-    pub(crate) upper_inclusive: bool,
+pub struct RangeShape {
+    pub empty: bool,
+    pub lower_inclusive: bool,
+    pub upper_inclusive: bool,
 }
 
 /// [`decode_range`](super::decode_range)'s grammar as a walk: each bound
 /// handed to `bound` as it is read, whether it is the lower beside it and
 /// `None` an absent one, and what the value states beside them.
-pub(crate) fn walk_range(
+pub fn walk_range(
     text: &mut FieldText<'_>,
     bound: impl FnMut(bool, Option<&str>) -> Option<()>,
 ) -> Option<RangeShape> {
@@ -364,7 +365,7 @@ pub(crate) fn walk_range(
 /// A range written between its brackets, as [`walk_range`] reads one, read
 /// to its closing bracket and what follows it left unread: a multirange's
 /// member ([`walk_multirange`]).
-pub(crate) fn walk_bracketed(
+pub fn walk_bracketed(
     text: &mut FieldText<'_>,
     mut bound: impl FnMut(bool, Option<&str>) -> Option<()>,
 ) -> Option<RangeShape> {
@@ -392,7 +393,7 @@ pub(crate) fn walk_bracketed(
 /// `member` handed the text at each member's opening bracket, to read it by
 /// [`walk_bracketed`], and how many members there were. A member is never
 /// `empty`, which `multirange_out` drops.
-pub(crate) fn walk_multirange<'a>(
+pub fn walk_multirange<'a>(
     text: &mut FieldText<'a>,
     mut member: impl FnMut(&mut FieldText<'a>) -> Option<()>,
 ) -> Option<usize> {
@@ -420,7 +421,7 @@ const INT2_SPELLING: usize = 6;
 
 /// [`decode_int2vector`](super::decode_int2vector)'s grammar as a walk: each
 /// element handed to `element` as it is read, and how many there were.
-pub(crate) fn walk_int2vector(
+pub fn walk_int2vector(
     text: &mut FieldText<'_>,
     mut element: impl FnMut(i16) -> Option<()>,
 ) -> Option<usize> {

@@ -1,6 +1,7 @@
 //! What decoding one long value holds beside its line: one decoded copy, in
 //! a query over escaped text and over `bytea` (`docs/design/decisions.md`,
-//! "D141"), none in a filter's term reading an escaped field off its bytes
+//! "D141") and over a nested value, decoded into its builders ("D153"),
+//! none in a filter's term reading an escaped field off its bytes
 //! ("D150") or ordering a nested one as the output grammars' walk reads it
 //! ("D151"), a normalized one's positions alone ("D152"), and none in a
 //! parse, its statistics and a strict parse's check reading an escaped field
@@ -24,7 +25,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use arrow::array::{AsArray, RecordBatch};
+use arrow::array::{Array, AsArray, RecordBatch};
 use common::Cold;
 use futures::StreamExt;
 use pgdt_codec::compare::comparison_for;
@@ -183,6 +184,49 @@ async fn a_bytea_is_one_copy() {
         assert_eq!(column.value(1), value, "spelled: {spell}");
         assert_eq!(batches.iter().map(RecordBatch::num_rows).sum::<usize>(), 3);
         assert!(peak < bytes + bytes / 4, "spelled: {spell}: {peak} bytes allocated at the peak");
+    }
+}
+
+/// **A nested value is decoded into its builders, no element of it staged**
+/// (`docs/design/decisions.md`, "D153"): a `bigint[]` of short elements
+/// written in place and a `text[]` whose every element `COPY` writes with an
+/// escape, each of seven or eight MiB, are read into their batch holding the
+/// builders' Arrow form and no more, never the elements' text beside it or
+/// the field unescaped. Each holds a power of two of elements, and the rows
+/// beside it none, so a builder grown by doubling ends at its last doubling.
+#[tokio::test]
+async fn a_nested_value_decodes_into_its_builders() {
+    let dir = tempfile::tempdir().unwrap();
+    let array = |element: &str, count: usize| {
+        let mut text = "{".to_string();
+        text.push_str(&format!("{element},").repeat(count - 1));
+        text.push_str(element);
+        text.push('}');
+        text
+    };
+    // An `int8` is eight bytes for each element's two, a `text`'s view
+    // sixteen for its seven; each builder's growth holds its last two sizes.
+    let bigints = 4usize << 20;
+    let texts = 1usize << 20;
+    for (declared, text, count, element_bytes) in [
+        ("bigint[]", array("7", bigints), bigints, 8 + 4),
+        ("text[]", array("\"a\tb\"", texts), texts, 16 + 8),
+    ] {
+        let field = pgdt_core::escape_field(Some(&text));
+        let path = dump(dir.path(), declared, "{}", &field);
+        let (batches, peak) = query(&path).await;
+        let rows = batches.iter().map(RecordBatch::num_rows).sum::<usize>();
+        assert_eq!(rows, 3, "{declared}");
+        let longest = batches
+            .iter()
+            .flat_map(|batch| {
+                let list = batch.column(1).as_list::<i32>();
+                (0..list.len()).map(|row| list.value_length(row)).collect::<Vec<_>>()
+            })
+            .max();
+        assert_eq!(longest, Some(count as i32), "{declared}");
+        let bound = count * element_bytes + (1 << 20);
+        assert!(peak < bound, "{declared}: {peak} bytes allocated at the peak, past {bound}");
     }
 }
 

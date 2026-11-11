@@ -1,5 +1,7 @@
 //! The character types: a field against its typmod's length.
 
+use pgdt_core::internal::Unescape;
+
 /// Whether a `character varying(n)` or `character(n)` field, `n` being
 /// `length`, is one `varchar_input` or `bpchar_input` refuses: longer than
 /// `length` characters, with anything but a blank, `0x20`, past them (I75).
@@ -148,6 +150,21 @@ impl TextFold {
     pub fn finish(self) -> Option<TextRead> {
         (!self.invalid && self.partial_len == 0).then_some(self.read)
     }
+}
+
+/// Where an escaped field's text stops being UTF-8 — the bytes of whole
+/// characters ahead of the first that is not, as a `Utf8Error`'s
+/// `valid_up_to` says — or `None` where it is UTF-8 throughout: `field` as
+/// `COPY` wrote it, read a run at a time as `Unescape` hands them, with no
+/// copy of it made. An escape can spell a byte that is not UTF-8 out of
+/// bytes that are.
+pub fn escaped_utf8_error(field: &[u8]) -> Option<usize> {
+    let mut utf8 = TextFold::default();
+    let mut unescape = Unescape::default();
+    unescape.run(field, |run| utf8.push(run));
+    unescape.finish(|run| utf8.push(run));
+    let valid_up_to = utf8.valid_up_to();
+    utf8.finish().is_none().then_some(valid_up_to)
 }
 
 #[cfg(test)]

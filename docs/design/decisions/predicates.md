@@ -94,8 +94,9 @@ An array, record, range or `int2vector` term reads its field by `decode_*`'s gra
 escaped one unescaped as read: each part keyed, compared with the bound's and dropped, and every part read past the
 first difference. A part's text is borrowed, or collected alone where it carries an escape. Why: a query holds its line
 and one decoded copy (D141). Rejected: the field's key tree, tens of bytes an element; stopping at the first difference,
-which answers a field the batch refuses; `decode_*` as the walk's collectors, changing what a batch decodes with (D108).
-Code: `nested/output/walk.rs`, `nested/key/field.rs`. Evidence: `key/field/tests.rs`, `tests/decoded_copies.rs`.
+which answers a field the batch refuses; `decode_*` as the walk's collectors, changing what a census and `nested_key`
+read with (D108). Code: `nested/output/walk.rs`, `nested/key/field.rs`. Evidence: `key/field/tests.rs`,
+`tests/decoded_copies.rs`.
 
 ### D152 A normalized type's order holds its pairs' and members' positions, each keyed again as compared
 A `jsonb` term walks its field whole, then compares it holding each object's pairs on the path compared as `u32`

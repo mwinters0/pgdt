@@ -9,7 +9,8 @@ use std::ops::Range;
 use pgdt_codec::compare::CompareKind;
 use pgdt_codec::internal::{
     BytewiseRuns, Equality, FieldOrder, FieldText, OrderKey, Side, SpellingRuns, TextFold,
-    compare_keys, compare_nested, jsonb_order, nested_field_order, nested_key, read_key,
+    compare_keys, compare_nested, escaped_utf8_error, jsonb_order, nested_field_order, nested_key,
+    read_key,
 };
 #[cfg(feature = "introspect")]
 use pgdt_core::internal::timed_span;
@@ -723,12 +724,9 @@ fn read(raw_row: RawRow<'_>, field: Range<usize>, runs: bool) -> Result<Read<'_>
 /// The error unescaping `bytes`, a field as `COPY` wrote it, raises where
 /// its text is not UTF-8, read off them with no copy made.
 fn utf8_checked(bytes: &[u8]) -> Result<()> {
-    let mut utf8 = TextFold::default();
-    unescape_runs(bytes, |run| utf8.push(run));
-    let valid_up_to = utf8.valid_up_to();
-    match utf8.finish() {
-        Some(_) => Ok(()),
-        None => Err(Error::InvalidUtf8 { valid_up_to }),
+    match escaped_utf8_error(bytes) {
+        Some(valid_up_to) => Err(Error::InvalidUtf8 { valid_up_to }),
+        None => Ok(()),
     }
 }
 

@@ -195,6 +195,48 @@ fn a_two_dimensional_value_fills_two_list_levels() {
     assert_eq!(outer.value(2).len(), 0);
 }
 
+/// **Each dimension's lists are closed once the value has ended**, its
+/// elements having landed in the innermost child as they were read: a
+/// three-dimensional value's every level of lists is as long as its
+/// dimension, and the rows beside it keep their own.
+#[test]
+fn a_three_dimensional_value_closes_every_level() {
+    let plan = NestedPlan::array(NestedPlan::array(NestedPlan::array(NestedPlan::Scalar)));
+    let array = round_trips(
+        list_of(list_of(list_of(DataType::Int32))),
+        plan,
+        &[
+            Some("{{{1,2,3},{4,5,6}},{{7,8,9},{10,11,12}}}"),
+            None,
+            Some("{{{13},{14},{15}}}"),
+            Some("{}"),
+        ],
+    );
+    let outer = array.as_any().downcast_ref::<ListArray>().unwrap();
+    let lens = |list: &ListArray| -> Vec<usize> {
+        (0..list.len()).map(|i| list.value_length(i) as usize).collect()
+    };
+    assert_eq!(lens(outer), [2, 0, 1, 0]);
+    let middle = outer.values().as_any().downcast_ref::<ListArray>().unwrap();
+    assert_eq!(lens(middle), [2, 2, 3]);
+    let inner = middle.values().as_any().downcast_ref::<ListArray>().unwrap();
+    assert_eq!(lens(inner), [3, 3, 3, 3, 1, 1, 1]);
+}
+
+/// A zero-field composite is written `()`, as a one-field composite holding
+/// NULL is, so the declared field list decides (I23): `()` is its one value,
+/// and a field in its text is none of its values.
+#[test]
+fn a_zero_field_composite_reads_only_its_empty_literal() {
+    let data_type = DataType::Struct(Fields::empty());
+    let plan = record(&[]);
+    let array = round_trips(data_type.clone(), plan.clone(), &[Some("()"), None]);
+    assert_eq!(array.null_count(), 1);
+    for value in ["(x)", "(,)", "(\"\")"] {
+        assert_eq!(build(&data_type, &plan, &[Some(value)]).unwrap_err(), value);
+    }
+}
+
 #[test]
 fn a_value_whose_shape_does_not_fit_the_column_is_refused_rather_than_reshaped() {
     let flat = NestedPlan::array(NestedPlan::Scalar);

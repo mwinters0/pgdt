@@ -36,8 +36,8 @@ pub use input::{
     parse_array, parse_array_delimited, parse_int2vector, parse_multirange, parse_range,
     parse_record,
 };
-pub use output::walk::FieldText;
-pub(crate) use output::walk::{
+pub use output::walk::{FieldText, RangeShape};
+pub use output::walk::{
     walk_array, walk_bracketed, walk_int2vector, walk_multirange, walk_range, walk_record,
 };
 pub use output::{

@@ -1,6 +1,7 @@
 //! One column's builder, chosen from its field's Arrow type and nested plan,
 //! and what appends into it: a decoded scalar, a nested literal walked into
-//! its list and struct parts, a NULL, and the text a typmod refuses.
+//! its list and struct parts as the output grammars' walk reads each part,
+//! a NULL, and the text a typmod refuses.
 
 use std::sync::Arc;
 
@@ -17,9 +18,9 @@ use arrow::datatypes::{
 };
 
 use pgdt_codec::decode;
-use pgdt_codec::internal::{char_typmod_refuses, float_field};
-use pgdt_codec::nested::{
-    RangeLiteral, decode_array, decode_int2vector, decode_multirange, decode_range, decode_record,
+use pgdt_codec::internal::{
+    FieldText, RangeShape, char_typmod_refuses, float_field, walk_array, walk_bracketed,
+    walk_int2vector, walk_multirange, walk_range, walk_record,
 };
 use pgdt_codec::pgtype::{NestedPlan, Position};
 use pgdt_model::PostgresInvalidValues;
@@ -329,48 +330,86 @@ fn append_nested(
     }
 }
 
-/// Append one level of an `array_out` value, taking `dims[0]` entries from
-/// `elements`. Recurses for a multi-dimensional value, one `List` level per
-/// dimension.
-fn append_array_level(
+/// The builder an array's elements land in, below every dimension's list,
+/// and whether a NULL there is refused: the innermost list's position's.
+fn array_leaf(parts: &mut ListParts) -> (&mut ColumnBuilder, bool) {
+    let not_null = parts.not_null;
+    match &mut *parts.child {
+        ColumnBuilder::Array(inner) => array_leaf(inner),
+        leaf => (leaf, not_null),
+    }
+}
+
+/// Close `lists` lists at `parts`' level, each of `dims[0]` entries of its
+/// child, and each of those lists' own below them: a rectangular value's
+/// offsets, every one of a level's lists as long as the next.
+fn close_dimensions(parts: &mut ListParts, dims: &[usize], lists: usize) {
+    if let [len, inner @ ..] = dims {
+        if !inner.is_empty()
+            && let ColumnBuilder::Array(child) = &mut *parts.child
+        {
+            close_dimensions(child, inner, lists * len);
+        }
+        let base = *parts.offsets.last().expect("a list's offsets start at [0]") as usize;
+        parts.offsets.extend((1..=lists).map(|list| (base + list * len) as i32));
+        parts.validity.extend(std::iter::repeat_n(true, lists));
+    }
+}
+
+/// Append one `array_out` value read off `text`, each element appended to
+/// the innermost list's child as the walk reads it, and each dimension's
+/// lists closed once the value has ended and its shape is known.
+fn append_array(
     parts: &mut ListParts,
-    dims: &[usize],
-    elements: &mut std::slice::Iter<'_, Option<std::borrow::Cow<'_, str>>>,
+    text: &mut FieldText<'_>,
     invalid: PostgresInvalidValues,
 ) -> std::result::Result<(), ()> {
-    if dims.len() == 1 {
-        for _ in 0..dims[0] {
-            let element = elements.next().ok_or(())?.as_deref();
-            append_nested(&mut parts.child, element, parts.not_null, invalid)?;
-        }
-    } else {
-        for _ in 0..dims[0] {
-            let ColumnBuilder::Array(inner) = &mut *parts.child else {
-                return Err(());
-            };
-            append_array_level(inner, &dims[1..], elements, invalid)?;
-        }
+    let (leaf, not_null) = array_leaf(parts);
+    let shape = walk_array(text, |element| append_nested(leaf, element, not_null, invalid).ok())
+        .ok_or(())?;
+    if shape.dims.is_empty() {
+        // `{}` is what `array_out` emits for a zero-element array of *any*
+        // dimensionality, so it fits this column whatever its resolved
+        // depth.
+        parts.offsets.push(builder_len(&parts.child) as i32);
+        parts.validity.push(true);
+        return Ok(());
     }
-    parts.offsets.push(builder_len(&parts.child) as i32);
-    parts.validity.push(true);
+    // Arrow lists are 0-based and have no lower bound, so an `[lb:ub]=`
+    // value's index origin has nowhere to go. Failing is the recoverable
+    // outcome; dropping the prefix is not.
+    if shape.lower_bounds.iter().any(|lb| *lb != 1) || shape.dims.len() != array_depth(parts) {
+        return Err(());
+    }
+    close_dimensions(parts, &shape.dims, 1);
     Ok(())
 }
 
+/// Append one range whose bounds `read` walks, each handed to the bound's
+/// builder as it is read, and the three flags of the shape it returns: an
+/// `empty` range's bounds, which it never hands over, are NULL.
 fn append_range(
     parts: &mut StructParts,
-    range: &RangeLiteral,
     invalid: PostgresInvalidValues,
+    read: impl FnOnce(&mut dyn FnMut(bool, Option<&str>) -> Option<()>) -> Option<RangeShape>,
 ) -> std::result::Result<(), ()> {
     let [lower, upper, lower_inclusive, upper_inclusive, empty] = &mut parts.children[..] else {
         unreachable!("a range struct always has exactly five children")
     };
-    // An infinite bound, which `range_in` hands no input function.
-    append_nested(lower, range.lower.as_deref(), false, invalid)?;
-    append_nested(upper, range.upper.as_deref(), false, invalid)?;
+    // An infinite bound, which `range_in` hands no input function, is NULL.
+    let shape = read(&mut |is_lower, value| {
+        let bound = if is_lower { &mut *lower } else { &mut *upper };
+        append_nested(bound, value, false, invalid).ok()
+    })
+    .ok_or(())?;
+    if shape.empty {
+        append_null(lower);
+        append_null(upper);
+    }
     for (flag, value) in [
-        (lower_inclusive, range.lower_inclusive),
-        (upper_inclusive, range.upper_inclusive),
-        (empty, range.empty),
+        (lower_inclusive, shape.lower_inclusive),
+        (upper_inclusive, shape.upper_inclusive),
+        (empty, shape.empty),
     ] {
         let ColumnBuilder::Bool(b) = flag else {
             unreachable!("a range struct's three flags are always Boolean")
@@ -379,6 +418,100 @@ fn append_range(
     }
     parts.validity.push(true);
     Ok(())
+}
+
+/// Append one `record_out` value read off `text`, each field appended to
+/// its child as the walk reads it.
+fn append_record(
+    parts: &mut StructParts,
+    text: &mut FieldText<'_>,
+    invalid: PostgresInvalidValues,
+) -> std::result::Result<(), ()> {
+    let StructParts { children, not_null, validity, .. } = parts;
+    let mut at = 0;
+    let count = walk_record(text, |field| {
+        let appended = if children.is_empty() {
+            // A zero-field composite is written `()`, and so is a one-field
+            // composite holding NULL — the literal cannot tell them apart,
+            // so the walk reads the only thing the text supports and the
+            // declared field list decides (I23).
+            (at == 0 && field.is_none()).then_some(())
+        } else {
+            append_nested(children.get_mut(at)?, field, not_null[at], invalid).ok()
+        };
+        at += 1;
+        appended
+    })
+    .ok_or(())?;
+    // A composite's field count comes from its `CREATE TYPE`; a literal that
+    // disagrees is not a value of this type.
+    if count != children.len().max(1) {
+        return Err(());
+    }
+    validity.push(true);
+    Ok(())
+}
+
+/// Append one nested value read off `text` by the output grammars' walk
+/// (`pgdt_codec::internal::walk_array` and its siblings), each part handed
+/// to its builder as it is read, so no element of it is staged
+/// (`docs/design/decisions.md`, "D153"): over a text in place, or a field
+/// as `COPY` wrote it, unescaped as it is read. `Err` as [`append_typed`]'s
+/// is, the builders then holding the parts read before the refusal: a
+/// field refused ends its query, which reads none of them.
+pub(crate) fn append_walked(
+    builder: &mut ColumnBuilder,
+    mut text: FieldText<'_>,
+    invalid: PostgresInvalidValues,
+) -> std::result::Result<(), ()> {
+    let text = &mut text;
+    match builder {
+        ColumnBuilder::Array(parts) => append_array(parts, text, invalid)?,
+        ColumnBuilder::Multirange(parts) => {
+            let ColumnBuilder::Range(range) = &mut *parts.child else {
+                unreachable!("a multirange's child is always the range struct")
+            };
+            walk_multirange(text, |member| {
+                append_range(range, invalid, |bound| walk_bracketed(member, bound)).ok()
+            })
+            .ok_or(())?;
+            parts.offsets.push(builder_len(&parts.child) as i32);
+            parts.validity.push(true);
+        }
+        // An empty vector is the empty *field*, a value and not a NULL: `\N`
+        // is the only NULL in COPY TEXT, so `''` fills a zero-length list
+        // rather than collapsing into the null beside it.
+        ColumnBuilder::Int2Vector(parts) => {
+            let ColumnBuilder::Int16(child) = &mut *parts.child else {
+                unreachable!("an int2vector's child is always Int16")
+            };
+            walk_int2vector(text, |value| {
+                child.append_value(value);
+                Some(())
+            })
+            .ok_or(())?;
+            parts.offsets.push(builder_len(&parts.child) as i32);
+            parts.validity.push(true);
+        }
+        ColumnBuilder::Record(parts) => append_record(parts, text, invalid)?,
+        ColumnBuilder::Range(parts) => {
+            append_range(parts, invalid, |bound| walk_range(text, bound))?
+        }
+        _ => unreachable!("only a nested builder is walked (`is_walked`)"),
+    }
+    Ok(())
+}
+
+/// Whether `builder` takes a nested value, which [`append_walked`] reads.
+pub(crate) fn is_walked(builder: &ColumnBuilder) -> bool {
+    matches!(
+        builder,
+        ColumnBuilder::Array(_)
+            | ColumnBuilder::Multirange(_)
+            | ColumnBuilder::Int2Vector(_)
+            | ColumnBuilder::Record(_)
+            | ColumnBuilder::Range(_)
+    )
 }
 
 /// Whether a text held to `length` — a `character varying(n)`'s or
@@ -394,8 +527,8 @@ pub(super) fn text_refused(
 }
 
 /// Decode `text` (already COPY-unescaped) per `builder`'s type and append it,
-/// via `pgdt_codec::decode`'s per-type decoders and `pgdt_codec::nested`'s literal
-/// codecs. `Err` on a decode failure, unit as [`append_nested`]'s is — the
+/// via `pgdt_codec::decode`'s per-type decoders, a nested value walked
+/// ([`append_walked`]). `Err` on a decode failure, unit as [`append_nested`]'s is — the
 /// caller wraps it into `Error::FieldDecode` with the table/column/row
 /// context and the field's quote, so no copy of `text` is made here. A
 /// `ColumnBuilder::Utf8View` copies `text`, refused where its length typmod
@@ -415,81 +548,11 @@ pub(crate) fn append_typed(
             }
             b.append_value(text);
         }
-        ColumnBuilder::Array(parts) => {
-            let literal = decode_array(text).ok_or(())?;
-            if literal.is_decorated() {
-                // Arrow lists are 0-based and have no lower bound, so an
-                // `[lb:ub]=` value's index origin has nowhere to go. Failing
-                // is the recoverable outcome; dropping the prefix is not.
-                return Err(());
-            }
-            if literal.elements.is_empty() {
-                // `{}` is what `array_out` emits for a zero-element array of
-                // *any* dimensionality, so it fits this column whatever its
-                // resolved depth.
-                parts.offsets.push(builder_len(&parts.child) as i32);
-                parts.validity.push(true);
-                return Ok(());
-            }
-            if literal.ndim() != array_depth(parts) {
-                return Err(());
-            }
-            append_array_level(parts, &literal.dims, &mut literal.elements.iter(), invalid)?;
-        }
-        ColumnBuilder::Multirange(parts) => {
-            let members = decode_multirange(text).ok_or(())?;
-            for member in &members {
-                let ColumnBuilder::Range(range) = &mut *parts.child else {
-                    unreachable!("a multirange's child is always the range struct")
-                };
-                append_range(range, member, invalid)?;
-            }
-            parts.offsets.push(builder_len(&parts.child) as i32);
-            parts.validity.push(true);
-        }
-        // An empty vector is the empty *field*, a value and not a NULL: `\N`
-        // is the only NULL in COPY TEXT, so `''` fills a zero-length list
-        // rather than collapsing into the null beside it.
-        ColumnBuilder::Int2Vector(parts) => {
-            let values = decode_int2vector(text).ok_or(())?;
-            let ColumnBuilder::Int16(child) = &mut *parts.child else {
-                unreachable!("an int2vector's child is always Int16")
-            };
-            for value in values {
-                child.append_value(value);
-            }
-            parts.offsets.push(builder_len(&parts.child) as i32);
-            parts.validity.push(true);
-        }
-        ColumnBuilder::Record(parts) => {
-            let literal = decode_record(text).ok_or(())?;
-            if parts.children.is_empty() {
-                // A zero-field composite is written `()`, and so is a
-                // one-field composite holding NULL — the literal cannot tell
-                // them apart, so `decode_record` reports the only thing the
-                // text supports and the declared field list decides (I23).
-                if literal.fields != [None] {
-                    return Err(());
-                }
-                parts.validity.push(true);
-                return Ok(());
-            }
-            // A composite's field count comes from its `CREATE TYPE`; a
-            // literal that disagrees is not a value of this type.
-            if literal.fields.len() != parts.children.len() {
-                return Err(());
-            }
-            for ((child, &not_null), field) in
-                parts.children.iter_mut().zip(&parts.not_null).zip(&literal.fields)
-            {
-                append_nested(child, field.as_deref(), not_null, invalid)?;
-            }
-            parts.validity.push(true);
-        }
-        ColumnBuilder::Range(parts) => {
-            let literal = decode_range(text).ok_or(())?;
-            append_range(parts, &literal, invalid)?;
-        }
+        ColumnBuilder::Array(_)
+        | ColumnBuilder::Multirange(_)
+        | ColumnBuilder::Int2Vector(_)
+        | ColumnBuilder::Record(_)
+        | ColumnBuilder::Range(_) => append_walked(builder, FieldText::plain(text), invalid)?,
         ColumnBuilder::Bool(b) => b.append_value(decode::decode_bool(text).ok_or(())?),
         ColumnBuilder::Int16(b) => b.append_value(text.parse::<i16>().map_err(drop)?),
         ColumnBuilder::Int32(b) => b.append_value(text.parse::<i32>().map_err(drop)?),

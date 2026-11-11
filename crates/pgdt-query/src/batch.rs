@@ -24,12 +24,12 @@ use arrow::array::{ArrayRef, RecordBatch, RecordBatchOptions};
 use arrow::datatypes::SchemaRef;
 
 use pgdt_codec::ResolvedSchema;
-use pgdt_codec::internal::{UnrepresentableRead, decode_bytea_into};
-use pgdt_core::internal::{RawRow, RowSplit, printout, unescaped};
+use pgdt_codec::internal::{FieldText, UnrepresentableRead, decode_bytea_into, escaped_utf8_error};
+use pgdt_core::internal::{RawField, RawRow, RowSplit, printout, printout_head, unescaped};
 use pgdt_core::{Error, Result};
 use pgdt_model::PostgresInvalidValues;
 
-use self::builder::{append_null, text_refused};
+use self::builder::{append_null, append_walked, is_walked, text_refused};
 use self::chunks::push_utf8view_field;
 use crate::options::QueryOptions;
 
@@ -292,13 +292,29 @@ impl RowBatcher {
         {
             return Ok(());
         }
+        // A nested value is walked off its field into its builders, an
+        // escaped one unescaped as it is read, so no text of it is made
+        // (`docs/design/decisions.md`, "D153"); a NULL goes on below.
+        let walked = is_walked(&self.columns[col]) && self.unrepresentable[col].is_none();
+        let invalid = self.options.postgres_invalid_values;
+        match walked.then(|| row.read(field.clone())).transpose()? {
+            Some(RawField::Escaped(bytes)) => {
+                if let Some(valid_up_to) = escaped_utf8_error(bytes) {
+                    return Err(Error::InvalidUtf8 { valid_up_to });
+                }
+                return append_walked(&mut self.columns[col], FieldText::escaped(bytes), invalid)
+                    .map_err(|()| self.field_decode(col, row_offset, printout_head(bytes)));
+            }
+            Some(RawField::Plain(text)) => {
+                return append_walked(&mut self.columns[col], FieldText::plain(text), invalid)
+                    .map_err(|()| self.field_decode(col, row_offset, Some(printout(text))));
+            }
+            Some(RawField::Null) | None => {}
+        }
         let decoded = row.decode(field)?;
         // Disjoint-field borrow: `columns[col]` is mutated below while
-        // `schema`/`table`/`declared_types` are only ever read, on the
-        // (rare) error path.
-        let Self {
-            schema, table, declared_types, columns, unrepresentable, not_null, options, ..
-        } = self;
+        // `schema`/`table` are only ever read, on the (rare) error path.
+        let Self { schema, table, columns, unrepresentable, not_null, options, .. } = self;
         let builder = &mut columns[col];
         let Some(text) = decoded else {
             if not_null[col] && options.postgres_invalid_values != PostgresInvalidValues::Ignore {
@@ -326,15 +342,21 @@ impl RowBatcher {
             push_utf8view_field(b, col, field_offset, field_len, text, chunks);
             return Ok(());
         }
-        append_typed(builder, &text, options.postgres_invalid_values).map_err(|()| {
-            Error::FieldDecode {
-                table: table.clone(),
-                column: schema.field(col).name().clone(),
-                line_offset: row_offset,
-                declared_type: declared_types[col].clone().unwrap_or_default(),
-                value: printout(&text),
-            }
-        })
+        append_typed(builder, &text, options.postgres_invalid_values)
+            .map_err(|()| self.field_decode(col, row_offset, Some(printout(&text))))
+    }
+
+    /// The `Error::FieldDecode` projected column `col` raises over the
+    /// field of the row at `row_offset` that does not decode, quoted as
+    /// `value` says.
+    fn field_decode(&self, col: usize, row_offset: u64, value: Option<String>) -> Error {
+        Error::FieldDecode {
+            table: self.table.clone(),
+            column: self.schema.field(col).name().clone(),
+            line_offset: row_offset,
+            declared_type: self.declared_types[col].clone().unwrap_or_default(),
+            value: value.unwrap_or_default(),
+        }
     }
 
     /// Finish the in-flight batch. The row count is passed explicitly rather

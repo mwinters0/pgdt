@@ -22,6 +22,15 @@ length, fragmenting a batch's buffers. A batch's buffer growing past a value is 
 (D84). Code: `batch/bytea.rs`, `batch/chunks.rs` (`OWN_BLOCK_PAST`), `value/bytea.rs` (`decode_bytea_into`). Evidence:
 `tests/decoded_copies.rs`.
 
+### D153 A nested value is decoded into its builders as the output grammars' walk reads it, no element staged
+A query's batch reads an array, record, range, multirange or `int2vector` field by `decode_*`'s grammar walked over its
+text, or off its bytes as `COPY` wrote them, unescaped as read: each part is appended to its builder as handed over, and
+an array's lists closed once its shape is known. A refused field leaves the parts read before it in the builders, the
+refusal ending the query. Why: a query holds its line and one decoded copy (D141). Rejected: `decode_*`'s elements, a
+`Cow` and its text an element beside the builders; unescaping the field first, a copy as long as it; builders of our
+own for every leaf type, truncating a refused field's parts, which no reader of the batch ever sees. Code:
+`batch/builder.rs` (`append_walked`), `nested/output/walk.rs`. Evidence: `tests/decoded_copies.rs`, `batch/tests.rs`.
+
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
 `max_source_span` is a ceiling: a partitioned replay derives the span it charges from the budget and the reader count,
 narrowing the span before it cuts the count, never below the announced read chunk (`ReadOptions::chunk_size_bytes`, the

@@ -256,3 +256,131 @@ fn a_none_source_span_leaves_a_batch_unbounded() {
         .unwrap();
     assert!(!batcher.should_flush());
 }
+
+/// A [`RowBatcher`] over one nullable nested column of `data_type`, read by
+/// `plan`, fed by the row's only field.
+fn nested_batcher(data_type: DataType, plan: NestedPlan) -> RowBatcher {
+    use pgdt_codec::ColumnResolution;
+    use pgdt_codec::compare::comparison_for;
+    use pgdt_codec::internal::{column_of, schema_of};
+
+    let resolved = schema_of(vec![column_of(
+        Field::new("v", data_type, true),
+        Some("text[]".into()),
+        ColumnResolution::Mapped,
+        plan,
+        comparison_for("text[]", None, &[], &[]),
+        false,
+    )]);
+    RowBatcher::new(
+        &resolved,
+        "public.t".into(),
+        Default::default(),
+        usize::MAX,
+        vec![Some(0)],
+        Vec::new(),
+    )
+}
+
+/// **A nested field is walked off its bytes as `COPY` wrote them**
+/// (`docs/design/decisions.md`, "D153"): a value whose `COPY` form carries
+/// an escape, outside its quoting and inside it, reads as its text does,
+/// every form's builders filled as the walk hands its parts over.
+#[test]
+fn an_escaped_nested_field_reads_as_its_text() {
+    use pgdt_codec::pgtype::RANGE_STRUCT_FIELDS;
+    use pgdt_core::escape_field;
+    use std::sync::Arc;
+
+    let list = |child: DataType| DataType::List(Arc::new(Field::new("item", child, true)));
+    let range = DataType::Struct(arrow::datatypes::Fields::from(
+        [
+            DataType::Utf8View,
+            DataType::Utf8View,
+            DataType::Boolean,
+            DataType::Boolean,
+            DataType::Boolean,
+        ]
+        .into_iter()
+        .zip(RANGE_STRUCT_FIELDS)
+        .enumerate()
+        .map(|(i, (t, name))| Field::new(name, t, i < 2))
+        .collect::<Vec<_>>(),
+    ));
+    let pair = DataType::Struct(arrow::datatypes::Fields::from(vec![
+        Field::new("x", DataType::Utf8View, true),
+        Field::new("y", list(DataType::Utf8View), true),
+    ]));
+    let text_range = NestedPlan::Range(Box::new(NestedPlan::Scalar));
+    let cases = [
+        (
+            list(DataType::Utf8View),
+            NestedPlan::array(NestedPlan::Scalar),
+            "{\"a\tb\",\"c\\\\d\",\"e\nf\",NULL,plain}",
+        ),
+        (
+            list(list(DataType::Utf8View)),
+            NestedPlan::array(NestedPlan::array(NestedPlan::Scalar)),
+            "{{\"\t\",x},{\"y\\\\\",\"\r\"}}",
+        ),
+        (
+            pair,
+            NestedPlan::record([NestedPlan::Scalar, NestedPlan::array(NestedPlan::Scalar)]),
+            "(\"a\tb\",\"{\"\"c\\\\\\\\d\"\",\"\"e\tf\"\"}\")",
+        ),
+        (range.clone(), text_range.clone(), "[\"a\tb\",\"c\\\\d\")"),
+        (
+            list(range),
+            NestedPlan::Multirange(Box::new(NestedPlan::Scalar)),
+            "{[\"a\t\",b),(c,\"d\\\\\"]}",
+        ),
+    ];
+    for (data_type, plan, text) in cases {
+        let field = escape_field(Some(text));
+        assert!(field.contains(&b'\\'), "{text:?} is written with an escape");
+        let mut batcher = nested_batcher(data_type, plan.clone());
+        batcher
+            .push_row(
+                0,
+                0,
+                RawRow::unchecked(&field),
+                &mut RowSplit::default(),
+                &mut RetainedChunks::new(),
+            )
+            .unwrap();
+        let batch = batcher.flush().unwrap();
+        let read = render_plan(batch.column(0).as_ref(), 0, &plan).expect("renders back");
+        assert_eq!(read.as_deref(), Some(text));
+    }
+}
+
+/// An escaped nested field that does not unescape to UTF-8 raises the row's
+/// own error, and one that is no value of its column quotes its head as a
+/// refusal does (I94).
+#[test]
+fn an_escaped_nested_field_fails_as_its_text_would() {
+    let plan = NestedPlan::array(NestedPlan::Scalar);
+    let list = DataType::List(std::sync::Arc::new(Field::new("item", DataType::Int32, true)));
+    let push = |field: &[u8]| {
+        nested_batcher(list.clone(), plan.clone())
+            .push_row(
+                0,
+                0,
+                RawRow::unchecked(field),
+                &mut RowSplit::default(),
+                &mut RetainedChunks::new(),
+            )
+            .unwrap_err()
+    };
+    match push(b"{1,\\xff}") {
+        Error::InvalidUtf8 { valid_up_to } => assert_eq!(valid_up_to, 3),
+        other => panic!("expected InvalidUtf8, got {other:?}"),
+    }
+    let field = format!("{{1,\\t{}}}", "2,".repeat(100));
+    match push(field.as_bytes()) {
+        Error::FieldDecode { value, .. } => {
+            assert_eq!(value, format!("{{1,\t{}...", &"2,".repeat(100)[..96]));
+        }
+        other => panic!("expected FieldDecode, got {other:?}"),
+    }
+}
