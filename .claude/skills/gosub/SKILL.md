@@ -39,7 +39,9 @@ Date is empty is what it picks up (`go`, "Pick the work").
 > any split and the `<N>.<M>.<K>` it earned; `mise run check`'s summary,
 > verbatim; and the path of any detached job.
 
-**3. Verify independently.** The report is a claim, not evidence: run `mise run
+Arm the watchdog (below) in the same turn.
+
+**3. Verify independently.** Disarm the watchdog first. The report is a claim, not evidence: run `mise run
 check --verify --affected` and re-read the checklist and "Decisions worth
 another look". It reuses the round's run only where that run passed on exactly
 this tree, and runs the checks otherwise, so the evidence is the log it names,
@@ -78,6 +80,32 @@ left more than logs.
 **5. Triage a new "Decisions worth another look" entry** (below). **6. Decide.**
 Stop, or start the next round from step 1.
 
+## The watchdog
+
+A subagent that ends its turn waiting on a `Monitor` is not woken by the
+monitor's event — a Claude Code defect: the event is queued and never
+delivered, though a background `Bash` completion in the same state is. The
+interim notification saying it is *waiting on its own background work* then
+promises a resume that never comes, and the loop waits forever. So every
+subagent this skill dispatches — a round, a long job's result round, a
+capture — runs under a watchdog.
+
+**Arm** it with the dispatch: `CronCreate`, `recurring: false`, minute, hour,
+day and month pinned from `date -d '+50 min' '+%M %H %d %m'`, prompt *Watchdog
+for gosub's subagent on `<slice or M<k>>`. Follow
+`.claude/skills/gosub/SKILL.md`, "The watchdog".* **Disarm** it (`CronDelete`)
+when that subagent's final report arrives — the notification saying it
+finished, never the interim one.
+
+**A fire** means the subagent is still out. `SendMessage` it: *A notification you were waiting on may
+not have reached you. Check what you were waiting on directly — the job, its
+log, its exit file — and carry on from there.* Then re-arm 50 minutes on. A
+subagent waiting legitimately re-checks and waits again, so a fire on a healthy
+round costs one turn. **The third fire stops the loop**: out two and a half
+hours through two nudges, the round is wedged where a nudge does not reach, so
+file step 4's entry for an uncommitted round, saying its subagent may still be
+running.
+
 ## Scheduling and labelling are yours
 
 An entry is yours when it is **purely about where work goes and in what order,
@@ -114,6 +142,7 @@ Any one ends the loop. Report it plainly; do not work around it.
   boundary is always a stop — or, with none open, no row whose Date is empty.
 - **The tree did not change**, or the round ticked nothing and filled no Date.
 - **The round cap is reached.**
+- **The watchdog fires a third time** on one subagent.
 - **The subagent reports it stopped at a boundary** or needs the maintainer.
 - **`repoint.py`'s meter is red.** The live record has outgrown its last blind
   read; a repoint is a round of its own (`.claude/skills/repoint/SKILL.md`),
