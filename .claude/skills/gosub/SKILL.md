@@ -82,29 +82,19 @@ Stop, or start the next round from step 1.
 
 ## The watchdog
 
-A subagent that ends its turn waiting on a `Monitor` is not woken by the
-monitor's event — a Claude Code defect: the event is queued and never
-delivered, though a background `Bash` completion in the same state is. The
-interim notification saying it is *waiting on its own background work* then
-promises a resume that never comes, and the loop waits forever. So every
-subagent this skill dispatches — a round, a long job's result round, a
-capture — runs under a watchdog.
-
-**Arm** it with the dispatch: `CronCreate`, `recurring: false`, minute, hour,
-day and month pinned from `date -d '+50 min' '+%M %H %d %m'`, prompt *Watchdog
-for gosub's subagent on `<slice or M<k>>`. Follow
-`.claude/skills/gosub/SKILL.md`, "The watchdog".* **Disarm** it (`CronDelete`)
-when that subagent's final report arrives — the notification saying it
-finished, never the interim one.
-
-**A fire** means the subagent is still out. `SendMessage` it: *A notification you were waiting on may
-not have reached you. Check what you were waiting on directly — the job, its
-log, its exit file — and carry on from there.* Then re-arm 50 minutes on. A
-subagent waiting legitimately re-checks and waits again, so a fire on a healthy
-round costs one turn. **The third fire stops the loop**: out two and a half
-hours through two nudges, the round is wedged where a nudge does not reach, so
-file step 4's entry for an uncommitted round, saying its subagent may still be
-running.
+A subagent that ends its turn waiting on a `Monitor` is never woken by its
+event — a Claude Code defect; a background `Bash` completion does wake it — so
+the interim *waiting on its own background work* notification promises a resume
+that never comes. So every subagent this skill dispatches runs under a watchdog:
+**arm** it with the dispatch, a one-shot `CronCreate` pinned from `date -d '+50
+min' '+%M %H %d %m'`, prompt *Watchdog for gosub's subagent on `<slice or
+M<k>>`; follow `.claude/skills/gosub/SKILL.md`, "The watchdog".* **Disarm** it
+(`CronDelete`) on that subagent's final report, never the interim one. **A
+fire** `SendMessage`s it — *A notification you were waiting on may not have
+reached you. Check what you were waiting on directly — the job, its log, its
+exit file — and carry on from there.* — and re-arms 50 minutes on. **The third
+fire stops the loop**: file step 4's entry for an uncommitted round, saying its
+subagent may still be running.
 
 ## Scheduling and labelling are yours
 
