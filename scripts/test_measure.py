@@ -1803,12 +1803,29 @@ class CountPair(unittest.TestCase):
         at = measure.image_inputs_at("HEAD")
         self.assertEqual(set(at), set(measure.release.image_inputs()))
 
-    def test_the_shapes_are_the_spec_s_five_each_counted_around_one_pgdt(self):
-        commands = [command for command, _, _ in measure.COUNT_PAIR_SHAPES]
+    def test_the_shapes_are_the_spec_s_five_and_a_nested_decode_each_counted_around_one_pgdt(self):
+        rows = [(command, name) for command, _, _, name in measure.COUNT_PAIR_SHAPES]
+        control = measure.COUNT_PAIR_INPUT
         self.assertEqual(
-            commands,
-            ["parse", "parse-statistics-data", "query-strings", "query-typed", measure.PARALLEL_SCAN],
+            rows,
+            [
+                ("parse", control),
+                ("parse-statistics-data", control),
+                ("query-strings", control),
+                ("query-typed", control),
+                (measure.PARALLEL_SCAN, control),
+                ("query-typed", "arrays"),
+            ],
         )
+        # The control holds no nested column; the one row decoding one reads
+        # an input generated with them.
+        self.assertIn("--arrays", measure.INPUTS["arrays"].args)
+        self.assertNotIn("--arrays", measure.INPUTS[control].args)
+        labels = [label for _, label, _, _ in measure.COUNT_PAIR_SHAPES]
+        self.assertEqual(len(set(labels)), len(labels))
+        rows_named = [measure.count_pair_row(c, n) for c, n in rows]
+        self.assertEqual(len(set(rows_named)), len(rows_named))
+        commands = [command for command, _ in rows]
         shapes = set(measure.command_shapes())
         for command in commands:
             with self.subTest(command=command):
@@ -1821,7 +1838,7 @@ class CountPair(unittest.TestCase):
         self.assertNotIn(measure.PEAK_RSS, gathering)
 
     def test_the_data_level_runs_under_the_statistics_figure_s_limit(self):
-        limits = {command: memory for command, _, memory in measure.COUNT_PAIR_SHAPES}
+        limits = {command: memory for command, _, memory, _ in measure.COUNT_PAIR_SHAPES}
         self.assertEqual(limits.pop("parse-statistics-data"), measure.STATISTICS_MEMORY)
         self.assertEqual(set(limits.values()), {None})
 
@@ -1879,10 +1896,10 @@ class CountPair(unittest.TestCase):
 
     def test_the_table_carries_each_leg_s_range_the_change_and_the_resolution(self):
         counts = {
-            c: {"parent": [1_000_000, 1_000_200], "tree": [1_000_100, 1_000_300]}
-            for c, _, _ in measure.COUNT_PAIR_SHAPES
+            label: {"parent": [1_000_000, 1_000_200], "tree": [1_000_100, 1_000_300]}
+            for _, label, _, _ in measure.COUNT_PAIR_SHAPES
         }
-        counts["query-typed"]["tree"] = [1_010_000, 1_010_400]
+        counts["`query --schema-mode typed`"]["tree"] = [1_010_000, 1_010_400]
         table = measure.count_pair_table(counts)
         self.assertIn(
             "| `query --schema-mode typed` | 1,000,000–1,000,200 | 1,010,000–1,010,400 "
@@ -1894,29 +1911,42 @@ class CountPair(unittest.TestCase):
             "| +100 | +0.010% | unresolved |",
             table,
         )
+        # The same shape over another input is its own row.
+        self.assertIn(
+            "| `query --schema-mode typed` over `arrays` | 1,000,000–1,000,200 | "
+            "1,000,100–1,000,300 | +100 | +0.010% | unresolved |",
+            table,
+        )
 
-    def _pair(self, tmp, answer):
+    def _pair(self, tmp, answer, rev="HEAD", named=None):
         """`cmd_count_pair` with every outside effect stood in: each run's
-        count, and the answer `answer(leg)` gives on its stdout."""
+        count, and the answer `answer(leg)` gives on its stdout. `named` is
+        what `count_pair_named` returns."""
         cfg = self._cfg(tmp)
         ran, out = [], io.StringIO()
+        self.mounted = []
+        self.built = []
 
         def fake_subprocess(argv, **_kw):
-            leg = "parent" if "pgdt-count-pair-parent:/pgdt:ro" in " ".join(argv) else "tree"
+            joined = " ".join(argv)
+            leg = "parent" if "pgdt-count-pair-parent:/pgdt:ro" in joined else "tree"
             ran.append(leg)
+            self.mounted.append(re.search(r"-v (\S+):/dump\.sql:ro", joined).group(1))
             count = (1000 if leg == "parent" else 1001) + ran.count(leg)
             return subprocess.CompletedProcess(argv, 0, answer(leg), f"instructions_u={count}\n")
 
-        def fake_binary(_cfg, leg, tree, _log):
+        def fake_binary(_cfg, leg, tree, _log, target=None):
+            self.built.append((leg, tree, target))
             return cfg.out_dir / f"pgdt-count-pair-{leg}"
 
         git = []
         stager = unittest.mock.Mock()
-        stager.return_value.cold_path.return_value = Path(tmp) / "control.sql"
+        stager.return_value.cold_path.side_effect = lambda name: Path(tmp) / f"{name}.sql"
         patches = (
             unittest.mock.patch.object(measure, "count_pair_parent", return_value=(self.PARENT, True)),
             unittest.mock.patch.object(measure, "count_pair_refusal", return_value=None),
             unittest.mock.patch.object(measure, "count_pair_image_refusal", return_value=None),
+            unittest.mock.patch.object(measure, "count_pair_named", return_value=named),
             unittest.mock.patch.object(measure, "counter_preflight", return_value=[]),
             unittest.mock.patch.object(
                 measure, "ensure_count_instructions_binary", return_value=Path("/c")
@@ -1929,7 +1959,7 @@ class CountPair(unittest.TestCase):
         with contextlib.ExitStack() as stack, contextlib.redirect_stdout(out):
             for patch in patches:
                 stack.enter_context(patch)
-            code = measure.cmd_count_pair("HEAD", cfg)
+            code = measure.cmd_count_pair(rev, cfg)
         return code, ran, git, out.getvalue()
 
     def test_each_shape_is_counted_release_profile_s_reps_on_each_leg_and_the_worktree_goes(self):
@@ -1946,6 +1976,75 @@ class CountPair(unittest.TestCase):
         self.assertIn("| unresolved |", out)
         self.assertIn(f"0 of {len(measure.COUNT_PAIR_SHAPES)} rows resolved.", out)
         self.assertIn("under the 10-minute line", out)
+        # Each row reads its own input, mounted as the dump on both legs.
+        expected = [
+            Path(tmp) / f"{name}.sql"
+            for *_, name in measure.COUNT_PAIR_SHAPES
+            for _ in range(2 * reps)
+        ]
+        self.assertEqual(self.mounted, [str(p) for p in expected])
+        self.assertEqual(self.built[-1], ("tree", measure.REPO, None))
+
+    def test_a_named_change_builds_both_legs_from_checkouts(self):
+        change = "c" * 40
+        with tempfile.TemporaryDirectory() as tmp:
+            with unittest.mock.patch.object(measure, "RELEASE_PROFILE_REPS", 1):
+                code, _, git, out = self._pair(
+                    tmp, lambda _leg: "", rev="p..c", named=(self.PARENT, change, None)
+                )
+            runs = Path(tmp) / "runs"
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [(argv[2], argv[-1] if argv[2] == "add" else Path(argv[-1]).name) for argv in git],
+            [
+                ("add", self.PARENT), ("remove", f"count-pair-worktree-{self.PARENT[:10]}"),
+                ("add", change), ("remove", f"count-pair-worktree-{change[:10]}"),
+            ],
+        )
+        self.assertEqual(
+            self.built,
+            [
+                ("parent", runs / f"count-pair-worktree-{self.PARENT[:10]}", None),
+                # Never where the checkout's tree leg builds, whose older
+                # files would read a checkout's build as fresh.
+                ("tree", runs / f"count-pair-worktree-{change[:10]}", measure.COUNT_PAIR_CHANGE_TARGET),
+            ],
+        )
+        self.assertIn(f"count pair: {self.PARENT[:10]} against {change[:10]}", out)
+
+    def test_a_named_pair_is_refused_unless_one_commit_apart(self):
+        parent, change, other = "a" * 40, "c" * 40, "b" * 40
+
+        def resolving(table):
+            def fake(argv, cwd=None, capture=False, quiet=False):
+                rev = argv[-1].removesuffix("^{commit}")
+                if rev not in table:
+                    raise subprocess.CalledProcessError(1, argv)
+                return table[rev] + "\n"
+            return fake
+
+        names = {"p": parent, "c": change, f"{change}^": parent, "o": other}
+        with unittest.mock.patch.object(measure, "run", resolving(names)):
+            self.assertEqual(measure.count_pair_named("p", "c"), (parent, change, None))
+            refusal = measure.count_pair_named("o", "c")[2]
+            self.assertIn(f"whose parent is {parent[:10]}", refusal)
+            self.assertIn("prices every commit between", refusal)
+            self.assertIn("names no commit", measure.count_pair_named("p", "nope")[2])
+        root = {"p": parent, "c": change}
+        with unittest.mock.patch.object(measure, "run", resolving(root)):
+            self.assertIn("whose parent is none", measure.count_pair_named("p", "c")[2])
+
+    def test_a_named_pair_is_refused_where_either_commit_moves_the_toolchain(self):
+        refusals = {"a" * 40: None, "c" * 40: "moved"}
+        with unittest.mock.patch.object(
+            measure, "count_pair_named", return_value=("a" * 40, "c" * 40, None)
+        ), unittest.mock.patch.object(
+            measure, "count_pair_image_refusal", side_effect=refusals.get
+        ), unittest.mock.patch.object(measure, "count_pair_binary") as binary, \
+             contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(measure.cmd_count_pair("p..c", measure.Config()), 2)
+        binary.assert_not_called()
+        self.assertIn("moved", err.getvalue())
 
     def test_a_resolved_row_is_named_after_the_table(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -9200,7 +9299,7 @@ class CallgrindRecipe(unittest.TestCase):
         """`_script`'s timed line and builder, flag for flag, less the stated
         allowance: a moved flag would place a rise in a workload never
         counted."""
-        for command, _, _ in measure.COUNT_PAIR_SHAPES:
+        for command, _, _, _ in measure.COUNT_PAIR_SHAPES:
             with self.subTest(shape=command):
                 env, argv, builder = measure.callgrind_invocation(
                     command, "/dump.sql", "/tmp/x.pgdt", 1 << 29
@@ -9237,7 +9336,7 @@ class CallgrindRecipe(unittest.TestCase):
         cfg = measure.Config()
         lines = re.sub(r"\\\n", " ", self._recipe()).splitlines()
         prefix = measure.callgrind_prefix(cfg)
-        for command, label, memory in measure.COUNT_PAIR_SHAPES:
+        for command, label, memory, _ in measure.COUNT_PAIR_SHAPES:
             allowance = contained.size_bytes(memory or cfg.memory)
             self.assertGreater(contained.size_bytes(measure.CALLGRIND_MEMORY), allowance)
             row = lines[lines.index(f"# {label}") + 1:]
@@ -9255,21 +9354,29 @@ class CallgrindRecipe(unittest.TestCase):
                         line,
                     )
 
-    def test_the_input_is_the_pairs_unstaged(self):
+    def test_each_row_reads_the_pairs_input_unstaged(self):
         cfg = measure.Config()
         recipe = self._recipe()
-        name = measure.input_file(measure.COUNT_PAIR_INPUT)
-        link = cfg.out_dir / "callgrind-count-pair" / name
-        self.assertIn(f"ln -sf {cfg.cache_dir / name} {link}", recipe)
+        lines = recipe.splitlines()
         self.assertNotIn(str(cfg.warm_dir), recipe)
-        for line in recipe.splitlines():
-            if " parse --source " in line or " query --source " in line or " sql --source " in line:
-                with self.subTest(line=line):
+        links = {}
+        for name in dict.fromkeys(name for *_, name in measure.COUNT_PAIR_SHAPES):
+            file = measure.input_file(name)
+            links[name] = cfg.out_dir / "callgrind-count-pair" / file
+            self.assertIn(f"ln -sf {cfg.cache_dir / file} {links[name]}", recipe)
+        for _, label, _, name in measure.COUNT_PAIR_SHAPES:
+            row = lines[lines.index(f"# {label}") + 1 :]
+            row = row[: next((i for i, ln in enumerate(row) if ln.startswith("# ") or not ln), len(row))]
+            sources = [ln for ln in row if "--source " in ln]
+            with self.subTest(row=label):
+                self.assertGreater(len(sources), 0)
+                for line in sources:
+                    link = links[name]
                     self.assertTrue(
                         f"--source {link} " in line or f"--source {measure.DFCLI_CATALOG}={link} " in line,
                         line,
                     )
-        self.assertEqual(recipe.splitlines()[-1], f"rm -f {link}")
+        self.assertEqual(lines[-len(links):], [f"rm -f {link}" for link in links.values()])
 
     def test_the_linked_input_is_mounted(self):
         # `contained.py` mounts the directory of each path a line names, so
@@ -9325,26 +9432,28 @@ class CallgrindRecipe(unittest.TestCase):
                 measure.COUNT_PAIR_LEGS if rep - 1 < (reps + 1) // 2 else measure.COUNT_PAIR_LEGS[::-1]
             )
         ]
-        for command, _, _ in measure.COUNT_PAIR_SHAPES:
+        for command, _, _, name in measure.COUNT_PAIR_SHAPES:
+            row = measure.count_pair_row(command, name)
             runs = [
-                re.search(rf"/{re.escape(command)}-(\w+)-(\d+)\.out ", lines[i + 1])
+                re.search(rf"/{re.escape(row)}-(\w+)-(\d+)\.out ", lines[i + 1])
                 for i in self._counted(lines)
             ]
             got = [(m.group(1), int(m.group(2))) for m in runs if m]
-            with self.subTest(shape=command):
+            with self.subTest(shape=row):
                 self.assertEqual(got, expected)
 
     def test_each_count_is_annotated_and_its_rows_totals_listed(self):
         cfg = measure.Config()
         recipe = self._recipe()
         work = cfg.out_dir / "callgrind-count-pair"
-        for command, _, _ in measure.COUNT_PAIR_SHAPES:
+        for command, _, _, name in measure.COUNT_PAIR_SHAPES:
+            row = measure.count_pair_row(command, name)
             runs = [
-                work / f"{command}-{leg}-{rep}"
+                work / f"{row}-{leg}-{rep}"
                 for rep in range(1, measure.CALLGRIND_REPS + 1)
                 for leg in measure.COUNT_PAIR_LEGS
             ]
-            with self.subTest(shape=command):
+            with self.subTest(shape=row):
                 for run in runs:
                     self.assertIn(f"--callgrind-out-file={run}.out ", recipe)
                     self.assertIn(
@@ -9357,7 +9466,7 @@ class CallgrindRecipe(unittest.TestCase):
                     f"grep -H 'PROGRAM TOTALS' {' '.join(f'{r}.txt' for r in runs)}\n", recipe
                 )
                 for rep in range(1, measure.CALLGRIND_REPS + 1):
-                    parent, tree = (work / f"{command}-{leg}-{rep}.txt" for leg in measure.COUNT_PAIR_LEGS)
+                    parent, tree = (work / f"{row}-{leg}-{rep}.txt" for leg in measure.COUNT_PAIR_LEGS)
                     self.assertIn(f"  {parent} {tree} | sort -rn | cut -f2- ", recipe)
 
     def test_the_place_is_each_functions_self_ir_change(self):

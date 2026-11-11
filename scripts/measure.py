@@ -66,8 +66,9 @@ every time the tree moves and the pinned side does not; what one mechanism
 costs inside a run is an attribution, read off a profile
 (`docs/design/roadmap.md`, "Attribution is introspective; only the gate is
 blind"), not a second build differenced against the first. The one build of
-another tree, `--count-pair`'s, is of the working tree's parent alone and
-publishes nothing: it prices one slice's change in `instructions:u`.
+another tree, `--count-pair`'s, is of one change's parent alone — the working
+tree's, or a named commit's — and publishes nothing: it prices one slice's
+change in `instructions:u`.
 
 Machine facts stay out of here: every path is an environment variable whose
 default suits the machine CLAUDE.local.md describes, and the procedure lives in
@@ -82,6 +83,7 @@ Usage:
     uv run measure.py --all
     uv run measure.py --stale --since <rev>
     uv run measure.py --count-pair HEAD~1
+    uv run measure.py --count-pair <parent>..<change>
     uv run measure.py --profile-recipe
     uv run measure.py --heaptrack-recipe
     uv run measure.py --callgrind-recipe
@@ -17619,27 +17621,37 @@ def cmd_verify_additive(since: str | None) -> int:
 
 # -- the count pair ---------------------------------------------------------
 
+#: The input a shape reads unless it names another: the register's control
+#: file, at `Config.size_gib`, off the SSD cache. A count is user space alone,
+#: so the device it is read from moves nothing it reports, and nothing is
+#: staged.
+COUNT_PAIR_INPUT = "control"
+
 #: `--count-pair`'s shapes, in its comparison's row order, each with what the
-#: row is called and the container limit it runs under (`None`: the recorded
-#: 512 MB). The hot paths a reshape can move: discovery; the data level, the
-#: only shape reaching statistics gathering, under `statistics-gathering`'s
-#: limit, since the allowance it gathers within is discovered from the
-#: container (D85); both `query` modes; and the provider's typed scan. The
-#: same shapes the register times, so a count here and a figure there are one
+#: row is called, the container limit it runs under (`None`: the recorded
+#: 512 MB) and the input it reads. The hot paths a reshape can move:
+#: discovery; the data level, the only shape reaching statistics gathering,
+#: under `statistics-gathering`'s limit, since the allowance it gathers within
+#: is discovered from the container (D85); both `query` modes; the provider's
+#: typed scan; and the typed `query` over the `arrays` input, the one row
+#: whose batch decodes a nested column, the control holding none. The same
+#: shapes the register times, so a count here and a figure there are one
 #: workload. `pgdt sql`'s runs fall on two counts, so a rise smaller than their
 #: step is unresolved there, and the typed `query` counts the same decode finer.
-COUNT_PAIR_SHAPES: tuple[tuple[str, str, str | None], ...] = (
-    ("parse", "`pgdt parse` at the metadata level", None),
-    (f"{STATISTICS_FAMILY}data", "`pgdt parse` at the data level", STATISTICS_MEMORY),
-    ("query-strings", "`query --schema-mode strings`", None),
-    ("query-typed", "`query --schema-mode typed`", None),
-    (PARALLEL_SCAN, "`pgdt sql -c` — a typed DataFusion scan", None),
+COUNT_PAIR_SHAPES: tuple[tuple[str, str, str | None, str], ...] = (
+    ("parse", "`pgdt parse` at the metadata level", None, COUNT_PAIR_INPUT),
+    (f"{STATISTICS_FAMILY}data", "`pgdt parse` at the data level", STATISTICS_MEMORY, COUNT_PAIR_INPUT),
+    ("query-strings", "`query --schema-mode strings`", None, COUNT_PAIR_INPUT),
+    ("query-typed", "`query --schema-mode typed`", None, COUNT_PAIR_INPUT),
+    (PARALLEL_SCAN, "`pgdt sql -c` — a typed DataFusion scan", None, COUNT_PAIR_INPUT),
+    ("query-typed", "`query --schema-mode typed` over `arrays`", None, "arrays"),
 )
 
-#: The input every shape reads: the register's control file, at
-#: `Config.size_gib`, off the SSD cache. A count is user space alone, so the
-#: device it is read from moves nothing it reports, and nothing is staged.
-COUNT_PAIR_INPUT = "control"
+
+def count_pair_row(command: str, name: str) -> str:
+    """A row's name in a file name: its shape and its input, since one shape
+    reads two inputs."""
+    return f"{command}-{name}"
 
 #: The pair's two legs, in each row's column order.
 COUNT_PAIR_LEGS: tuple[str, ...] = ("parent", "tree")
@@ -17668,13 +17680,8 @@ def count_pair_refusal(rev: str, parent: str, dirty: bool) -> str | None:
     7): two adjacent trees differ by one change, so the difference is that
     change's. Any older commit prices every commit between, under the name of
     the last one, and no reading would look wrong."""
-    try:
-        resolved = run(
-            ["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
-            cwd=REPO,
-            capture=True,
-        ).strip()
-    except subprocess.CalledProcessError:
+    resolved = resolve_commit(rev)
+    if resolved is None:
         return f"{rev!r} names no commit"
     if resolved == parent:
         return None
@@ -17683,6 +17690,41 @@ def count_pair_refusal(rev: str, parent: str, dirty: bool) -> str | None:
         f"{rev} is {resolved[:10]}, but the working tree's parent is {parent[:10]} "
         f"(the change measured is {tree}): a pair across more than one change prices every "
         "commit between under the last one's name"
+    )
+
+
+def resolve_commit(rev: str) -> str | None:
+    """The commit `rev` names, or `None` where it names none."""
+    try:
+        return run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
+            cwd=REPO,
+            capture=True,
+        ).strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
+def count_pair_named(parent_rev: str, change_rev: str) -> tuple[str, str, str | None]:
+    """`--count-pair <parent>..<change>`'s two commits, and why they cannot be
+    the pair's legs, or `None`: a change committed before the instrument
+    pricing it, taken from a checkout of each.
+
+    **The parent and nothing else**, as `count_pair_refusal` holds the tree
+    to: `change`'s first parent must be `parent`, so the pair is one
+    commit's."""
+    parent, change = resolve_commit(parent_rev), resolve_commit(change_rev)
+    for rev, resolved in ((parent_rev, parent), (change_rev, change)):
+        if resolved is None:
+            return "", "", f"{rev!r} names no commit"
+    assert parent is not None and change is not None
+    first = resolve_commit(f"{change}^")
+    if first == parent:
+        return parent, change, None
+    return parent, change, (
+        f"{change_rev} is {change[:10]}, whose parent is "
+        f"{first[:10] if first else 'none'}, not {parent_rev}'s {parent[:10]}: a pair across "
+        "more than one change prices every commit between under the last one's name"
     )
 
 
@@ -17722,20 +17764,23 @@ def count_pair_leg_binary(cfg: Config, leg: str) -> Path:
     return cfg.out_dir / f"pgdt-count-pair-{leg}"
 
 
-def count_pair_binary(cfg: Config, leg: str, tree: Path, log: Callable[[str], None]) -> Path:
+def count_pair_binary(
+    cfg: Config, leg: str, tree: Path, log: Callable[[str], None], target: str | None = None
+) -> Path:
     """One leg of the pair: the shipped build — `release`, at the default
     features — of `tree`, in the release image, in a cargo target directory
-    of its own (`image_target_dir`), so neither leg nor the register's own
-    build ever finds another's output fresh. Copied into `Config.out_dir` and
-    asked which profile built it, for `binary_profile`'s reason."""
-    target = image_target_dir(cfg, f"count-pair-{leg}")
+    of its own (`image_target_dir`, `count-pair-<leg>` unless `target` names
+    another), so neither leg nor the register's own build ever finds
+    another's output fresh. Copied into `Config.out_dir` and asked which
+    profile built it, for `binary_profile`'s reason."""
+    target_dir = image_target_dir(cfg, target or f"count-pair-{leg}")
     out = count_pair_leg_binary(cfg, leg)
     if cfg.dry_run:
-        log(f"  [dry-run] would build the {leg} leg from {tree} into {target}")
+        log(f"  [dry-run] would build the {leg} leg from {tree} into {target_dir}")
         return out
-    log(f"  building the {leg} leg from {tree} into {target}")
+    log(f"  building the {leg} leg from {tree} into {target_dir}")
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
-    built = build_in_image(cfg, release.Build(), target_dir=target, tree=tree)
+    built = build_in_image(cfg, release.Build(), target_dir=target_dir, tree=tree)
     shutil.copyfile(built, out)
     out.chmod(0o755)
     got = binary_profile(out)
@@ -17746,6 +17791,36 @@ def count_pair_binary(cfg: Config, leg: str, tree: Path, log: Callable[[str], No
             "or it counts something else"
         )
     return out
+
+
+#: The target directory a named change's leg builds in: never the tree leg's,
+#: which only the checkout builds in.
+COUNT_PAIR_CHANGE_TARGET = "count-pair-change"
+
+
+def count_pair_checkout_binary(
+    cfg: Config, leg: str, commit: str, log: Callable[[str], None], target: str | None = None
+) -> Path:
+    """One leg built from a detached checkout of `commit` under
+    `Config.out_dir`, added just before its build and removed after it, in
+    `target` (`count_pair_binary`). Its files are written then, so cargo,
+    which reads a source file's mtime against its last build in the kept
+    target directory, every checkout being mounted at one path, never finds
+    a build of another tree fresh. That holds only in a directory no older
+    files build in, so a named change's leg is never built where the
+    checkout's tree leg is (`COUNT_PAIR_CHANGE_TARGET`)."""
+    work = cfg.out_dir / f"count-pair-worktree-{commit[:10]}"
+    if cfg.dry_run:
+        log(f"  [dry-run] would check {commit[:10]} out at {work}")
+        return count_pair_binary(cfg, leg, work, log, target)
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    if work.exists():
+        run(["git", "worktree", "remove", "--force", str(work)], cwd=REPO, quiet=True)
+    run(["git", "worktree", "add", "--detach", str(work), commit], cwd=REPO, quiet=True)
+    try:
+        return count_pair_binary(cfg, leg, work, log, target)
+    finally:
+        run(["git", "worktree", "remove", "--force", str(work)], cwd=REPO, quiet=True)
 
 
 def count_pair_argv(
@@ -17782,12 +17857,13 @@ def count_pair_resolution(parent: Sequence[int], tree: Sequence[int]) -> str:
 
 
 def count_pair_table(counts: Mapping[str, Mapping[str, Sequence[int]]]) -> str:
-    """The comparison: one row per shape, each leg's fewest and most
-    `instructions:u`, the tree's median against the parent's, and whether the
-    two legs' counts meet (`count_pair_resolution`)."""
+    """The comparison: one row per shape, keyed by its label, each leg's
+    fewest and most `instructions:u`, the tree's median against the
+    parent's, and whether the two legs' counts meet
+    (`count_pair_resolution`)."""
     rows = []
-    for command, label, _ in COUNT_PAIR_SHAPES:
-        parent, tree = (counts[command][leg] for leg in COUNT_PAIR_LEGS)
+    for _, label, _, _ in COUNT_PAIR_SHAPES:
+        parent, tree = (counts[label][leg] for leg in COUNT_PAIR_LEGS)
         delta = median(tree) - median(parent)
         rows.append(
             [
@@ -17821,13 +17897,28 @@ def cmd_count_pair(rev: str, cfg: Config) -> int:
     unless `rev` is the tree's parent** (`count_pair_refusal`), or where the
     two would build under different toolchains (`count_pair_image_refusal`).
     The parent is built from a worktree under `Config.out_dir`, removed after;
-    the tree from the checkout itself, uncommitted files included. Ends by
-    saying how many rows resolved and whether the run fit under
-    `DETACH_SECONDS`."""
+    the tree from the checkout itself, uncommitted files included.
+
+    **`<parent>..<change>` prices a committed change instead**, the shapes
+    being the tree's: both legs from checkouts, refused unless `parent` is
+    `change`'s parent (`count_pair_named`) or either would build under
+    another toolchain than the tree's. Ends by saying how many rows resolved
+    and whether the run fit under `DETACH_SECONDS`."""
     started = time.monotonic()
     dry_run = cfg.dry_run
-    parent, dirty = count_pair_parent()
-    for refusal in (count_pair_refusal(rev, parent, dirty), count_pair_image_refusal(parent)):
+    named, _, change_rev = rev.partition("..")
+    if change_rev:
+        parent, change, refusal = count_pair_named(named, change_rev)
+        refusals = [refusal] if refusal else [
+            count_pair_image_refusal(parent), count_pair_image_refusal(change)
+        ]
+        described = change[:10]
+    else:
+        parent, dirty = count_pair_parent()
+        change = None
+        refusals = [count_pair_refusal(rev, parent, dirty), count_pair_image_refusal(parent)]
+        described = "the uncommitted tree" if dirty else f"HEAD ({parent[:10]}..HEAD)"
+    for refusal in refusals:
         if refusal:
             print(f"--count-pair refused: {refusal}.", file=sys.stderr)
             return 2
@@ -17835,45 +17926,36 @@ def cmd_count_pair(rev: str, cfg: Config) -> int:
     def log(msg: str) -> None:
         print(msg, flush=True)
 
-    change = "the uncommitted tree" if dirty else f"HEAD ({parent[:10]}..HEAD)"
-    log(f"count pair: {parent[:10]} against {change}")
+    log(f"count pair: {parent[:10]} against {described}")
     problems = counter_preflight(cfg, log)
     if problems:
         for problem in problems:
             log(f"!! {problem}")
         return 2
     counter = ensure_count_instructions_binary(cfg, log)
-    dump = Stager(cfg, log).cold_path(COUNT_PAIR_INPUT)
+    stager = Stager(cfg, log)
+    dumps = {name: stager.cold_path(name) for *_, name in COUNT_PAIR_SHAPES}
 
-    work = cfg.out_dir / f"count-pair-worktree-{parent[:10]}"
-    binaries: dict[str, Path] = {}
-    if dry_run:
-        log(f"  [dry-run] would check {parent[:10]} out at {work}")
-        binaries["parent"] = count_pair_binary(cfg, "parent", work, log)
-    else:
-        cfg.out_dir.mkdir(parents=True, exist_ok=True)
-        if work.exists():
-            run(["git", "worktree", "remove", "--force", str(work)], cwd=REPO, quiet=True)
-        run(["git", "worktree", "add", "--detach", str(work), parent], cwd=REPO, quiet=True)
-        try:
-            binaries["parent"] = count_pair_binary(cfg, "parent", work, log)
-        finally:
-            run(["git", "worktree", "remove", "--force", str(work)], cwd=REPO, quiet=True)
-    binaries["tree"] = count_pair_binary(cfg, "tree", REPO, log)
+    binaries = {"parent": count_pair_checkout_binary(cfg, "parent", parent, log)}
+    binaries["tree"] = (
+        count_pair_checkout_binary(cfg, "tree", change, log, COUNT_PAIR_CHANGE_TARGET)
+        if change
+        else count_pair_binary(cfg, "tree", REPO, log)
+    )
 
     reps = cfg.reps(RELEASE_PROFILE_REPS)
     counts: dict[str, dict[str, list[int]]] = {}
-    for command, label, memory in COUNT_PAIR_SHAPES:
+    for command, label, memory, name in COUNT_PAIR_SHAPES:
         answers: dict[str, dict[str, str]] = {}
         for rep in range(reps):
             legs = COUNT_PAIR_LEGS if rep < (reps + 1) // 2 else COUNT_PAIR_LEGS[::-1]
             for leg in legs:
-                argv = count_pair_argv(cfg, binaries[leg], counter, dump, command, memory)
-                got = counts.setdefault(command, {}).setdefault(leg, [])
+                argv = count_pair_argv(cfg, binaries[leg], counter, dumps[name], command, memory)
+                got = counts.setdefault(label, {}).setdefault(leg, [])
                 if dry_run:
                     if rep == 0:
                         log("  [dry-run] " + shlex.join(argv))
-                    digest = hashlib.sha256(f"{command}/{leg}/{rep}".encode()).digest()
+                    digest = hashlib.sha256(f"{label}/{leg}/{rep}".encode()).digest()
                     got.append(3_000_000_000 + digest[0] * 1_000_000)
                     continue
                 proc = subprocess.run(argv, text=True, capture_output=True)
@@ -17893,8 +17975,8 @@ def cmd_count_pair(rev: str, cfg: Config) -> int:
     log("\n" + count_pair_table(counts))
     resolved = [
         label
-        for command, label, _ in COUNT_PAIR_SHAPES
-        if count_pair_resolution(*(counts[command][leg] for leg in COUNT_PAIR_LEGS)) != "unresolved"
+        for _, label, _, _ in COUNT_PAIR_SHAPES
+        if count_pair_resolution(*(counts[label][leg] for leg in COUNT_PAIR_LEGS)) != "unresolved"
     ]
     log(
         f"\n{len(resolved)} of {len(COUNT_PAIR_SHAPES)} rows resolved"
@@ -18005,7 +18087,7 @@ def callgrind_invocation(
             *flags[leg].split(),
         ]  # fmt: skip
         return [], [*argv, *stated], None
-    if command not in {c for c, _, _ in COUNT_PAIR_SHAPES}:
+    if command not in {c for c, *_ in COUNT_PAIR_SHAPES}:
         raise ValueError(f"{command!r} is not a `--count-pair` shape")
     builder = profile_builder_argv(command, source, cache)
     return (
@@ -18024,7 +18106,7 @@ def callgrind_recipe(cfg: Config) -> str:
     * **the pair's own binaries, never rebuilt** (`count_pair_leg_binary`).
       The rise being placed was counted in those two files; a rebuild is
       another link, and each is asked that it is the shipped build first.
-    * **the pair's own input, shapes and worker count**: `COUNT_PAIR_INPUT`
+    * **the pair's own inputs, shapes and worker count**: each row's input
       off the SSD cache, unstaged as the pair reads it, and each row
       `_script`'s line (`callgrind_invocation`).
     * **the allowance the pair's container gave**, stated, since this
@@ -18040,7 +18122,8 @@ def callgrind_recipe(cfg: Config) -> str:
     c = callgrind_prefix(cfg)
     work = cfg.out_dir / "callgrind-count-pair"
     legs = {leg: count_pair_leg_binary(cfg, leg) for leg in COUNT_PAIR_LEGS}
-    dump = work / input_file(COUNT_PAIR_INPUT)
+    names = list(dict.fromkeys(name for *_, name in COUNT_PAIR_SHAPES))
+    dumps = {name: work / input_file(name) for name in names}
     cache = work / "x.pgdt"
 
     lines: list[str] = []
@@ -18077,11 +18160,12 @@ def callgrind_recipe(cfg: Config) -> str:
     ]
 
     head(
-        f"The input: the pair's `{COUNT_PAIR_INPUT}`, off the SSD cache and unstaged,",
-        "as the pair reads it. Linked, so a cache the provider writes beside",
-        "the dump lands here rather than in the input cache.",
+        "The inputs: the pair's, off the SSD cache and unstaged, as the pair reads",
+        "them. Linked, so a cache the provider writes beside a dump lands here",
+        "rather than in the input cache.",
     )
-    lines += [f"ln -sf {cfg.cache_dir / input_file(COUNT_PAIR_INPUT)} {dump}", ""]
+    lines += [f"ln -sf {cfg.cache_dir / input_file(name)} {dump}" for name, dump in dumps.items()]
+    lines.append("")
 
     head(
         "One block per row; run only the block of a row the pair resolved. Each run",
@@ -18096,16 +18180,17 @@ def callgrind_recipe(cfg: Config) -> str:
         "called as often is layout (D108).",
     )
     reps = CALLGRIND_REPS
-    for command, label, memory in COUNT_PAIR_SHAPES:
+    for command, label, memory, name in COUNT_PAIR_SHAPES:
         allowance = contained.size_bytes(memory or cfg.memory)
-        env, argv, builder = callgrind_invocation(command, dump, cache, allowance)
+        row_name = count_pair_row(command, name)
+        env, argv, builder = callgrind_invocation(command, dumps[name], cache, allowance)
         written = builder[builder.index("--cache") + 1] if builder else str(cache)
         lines += ["", f"# {label}"]
         for rep in range(1, reps + 1):
             order = COUNT_PAIR_LEGS if rep - 1 < (reps + 1) // 2 else COUNT_PAIR_LEGS[::-1]
             for leg in order:
                 binary = legs[leg]
-                run = work / f"{command}-{leg}-{rep}"
+                run = work / f"{row_name}-{leg}-{rep}"
                 lines += [
                     f"rm -f {written}",
                     *([f"{c} {binary} {' '.join(builder)} >/dev/null"] if builder else []),
@@ -18118,20 +18203,20 @@ def callgrind_recipe(cfg: Config) -> str:
                     f"--auto=no {run}.out > {run}.txt",
                 ]
         runs = " ".join(
-            str(work / f"{command}-{leg}-{rep}.txt")
+            str(work / f"{row_name}-{leg}-{rep}.txt")
             for rep in range(1, reps + 1)
             for leg in COUNT_PAIR_LEGS
         )
         lines += [f"rm -f {written}", f"grep -H 'PROGRAM TOTALS' {runs}"]
         for rep in range(1, reps + 1):
-            parent, tree = (work / f"{command}-{leg}-{rep}.txt" for leg in COUNT_PAIR_LEGS)
+            parent, tree = (work / f"{row_name}-{leg}-{rep}.txt" for leg in COUNT_PAIR_LEGS)
             lines.append(
                 f"awk '{CALLGRIND_DIFF_AWK}' \\\n  {parent} {tree} | sort -rn | cut -f2- "
-                f"| head -n {CALLGRIND_TOP} > {work / f'{command}-place-{rep}.txt'}"
+                f"| head -n {CALLGRIND_TOP} > {work / f'{row_name}-place-{rep}.txt'}"
             )
     lines.append("")
-    head("Tear down: the link, never the input it names.")
-    lines.append(f"rm -f {dump}")
+    head("Tear down: the links, never the inputs they name.")
+    lines += [f"rm -f {dump}" for dump in dumps.values()]
     return "\n".join(lines)
 
 
@@ -18435,7 +18520,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="REV",
         help="the shipped build at REV, which must be the working tree's parent, and at the "
         "tree, each hot-path shape's instructions:u counted release-profile's reps on each, "
-        "each row resolved or not — a slice's price, never a figure",
+        "each row resolved or not — a slice's price, never a figure; PARENT..CHANGE prices "
+        "a committed CHANGE, whose parent PARENT must be, both built from checkouts",
     )
     parser.add_argument("--reps", type=int, help="override every figure's rep count (smoke runs only)")
     parser.add_argument("--dry-run", action="store_true", help="print what would run, measure nothing")

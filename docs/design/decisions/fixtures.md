@@ -37,7 +37,7 @@ the test (it took `24:00:00`). Code: `arrow_holds`, `extremes_problems`. Evidenc
 `every_extreme_is_held_by_arrow_or_recorded`.
 
 ### D108 A hot-path change is priced by `--count-pair`, and a rise it resolves is placed by callgrind, then reworked or accepted
-A hot-path change is priced in `instructions:u` on the shipped build at the tree's parent and at the tree, against its
+A hot-path change is priced in `instructions:u` on the shipped build at its parent and at the change, against its
 own pair's spread, never as a re-taken figure. A resolved rise is placed by callgrind's `Ir` on the two legs, layout
 only where callgrind does not reproduce it or no changed code sits above, then reworked into a shape as clean or
 accepted; none is too small to place. A phase adopts the refusal by its spec. Rejected: one count a leg; determinized

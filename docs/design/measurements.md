@@ -324,8 +324,9 @@ Eighteen standing rules for reading anything below:
   zero-copy views and chunk sizing all are. Inside a figure's container,
   where the host's `perf` does not run, `count-instructions` counts the same
   event in the timed run itself (`release-profile`). `--count-pair <rev>`
-  counts it on the shipped build at the tree's parent and at the tree, which
-  prices one change and publishes nothing; callgrind places a rise the pair
+  counts it on the shipped build at the tree's parent and at the tree, or
+  `<parent>..<change>` at a committed change and its parent, which prices one
+  change and publishes nothing; callgrind places a rise the pair
   resolves (`--callgrind-recipe`; [`decisions.md`](decisions.md), "D108").
 - **A landed lever invalidates the tables that time its path, so a campaign's
   sweep goes last.** This binds by construction rather than by taste: a phase

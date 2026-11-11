@@ -81,7 +81,8 @@ not oblige a sweep").
 none of it; what either produces is a `runs/` artifact with no median, no
 apparatus gate and no marker ([`../design/measurements.md`](../design/measurements.md),
 "What an instrument can see"). `--count-pair <rev>` counts one change's
-`instructions:u` against the tree's parent and prints the comparison alone.
+`instructions:u` against its parent, the tree's or a named commit's, and prints
+the comparison alone.
 
 ## P33 progress
 
@@ -113,7 +114,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.14.1** A nested term holds no tree: an array, record and range ordering term as the output grammars' walk reads it, a nested literal's elements yielded one at a time over its held field, as the spec's "What a held line costs" states (D151); an allocation test failing on its parent — [notes](../design/roadmap-P33.14.1-tree-notes.md)
 - [x] **33.15** A normalized type's key is positions: a `jsonb` object's and a multirange's ordering key holding its pairs' positions and its members' bounds, and its key factor, as the spec's "What a held line costs" states (D152); an allocation test failing on its parent — [notes](../design/roadmap-P33.15-positions-notes.md)
 - [x] **33.16** A nested value decodes into its builders: no staging of a nested value's elements, as the spec's "What a held line costs" states (D153); an allocation test failing on its parent; its count pair, `02cdaa3d` against the tree, resolving a rise on the three query rows, placed by callgrind in `push_field`'s test for a nested column and in register allocation of unchanged code, and accepted (D108) — [notes](../design/roadmap-P33.16-builders-notes.md)
-- [ ] **33.16.3** 33.16's count pair over a nested column: `--count-pair` given a shape reading the `arrays` input, taken at `02cdaa3d` against `067b8f69`, a rise it resolves placed and reworked or accepted, as the spec's "How it is shown" states (D108)
+- [ ] **33.16.3** 33.16's count pair over a nested column: `--count-pair` given a shape reading the `arrays` input, taken at `02cdaa3d` against `067b8f69`, a rise it resolves placed and reworked or accepted, as the spec's "How it is shown" states (D108). Landed: the row, `query --schema-mode typed` over `arrays`, and `--count-pair <parent>..<change>` pricing a committed change from checkouts. The readings remain, as `dbdaead4..067b8f69`: `067b8f69`'s parent is `dbdaead4`, `02cdaa3d` and a skill edit — [notes](../design/roadmap-P33.16.3-nested-notes.md)
 - [ ] **33.16.1** A query has one factor: a decode factor beside each builder, pgdt-query folding a query's decode factors and its ordering terms' key factors into one number, as the spec's "What a held line costs" and "Where it lives" state
 - [ ] **33.16.2** `long-line-resident`'s `int8[]` query and `jsonb` filter legs, as the spec's "How it is shown" states, and their readings at the commit adding them
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, a parse drawing for the scalar text it collects past its chunk term, an unstated allowance's ledger unlimited; a read over mapped blocks carving its longest line's charge before a reader starts; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
