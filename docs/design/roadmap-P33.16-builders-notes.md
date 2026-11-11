@@ -68,7 +68,7 @@ instruction by instruction; the legs kept in
   held line costs" states: every `Err` from `append_typed` and
   `append_walked` ends its query or is read off a builder made for that one
   value, so no reader meets them (D153).
-- **The count pair prices only `push_field`'s dispatch**: its input, the
+- **This pair prices only `push_field`'s dispatch**: its input, the
   brace-free control, holds no nested column, so the walk's speed against the
-  staged elements on a nested column is read by no instrument here; 33.16.3
-  prices it.
+  staged elements on a nested column is 33.16.3's `arrays` row's
+  ([`roadmap-P33.16.3-nested-notes.md`](roadmap-P33.16.3-nested-notes.md)).
