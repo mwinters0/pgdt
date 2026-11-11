@@ -41,7 +41,8 @@ is the whole of it — and `stream/replay/plan/tests.rs`'s
   `Lookup::Nested` key each field whole, which no factor bounds
   ([`roadmap-P33.15-positions-notes.md`](roadmap-P33.15-positions-notes.md)).
 - **A builder's doubling is outside it** (D141's precedent), so at a growth a
-  `bigint[]` column holds its form twice for a moment.
+  `bigint[]` column holds its form twice for a moment, until 33.24 reserves a
+  long nested field's builders to its bound.
 
 ## Negative results
 

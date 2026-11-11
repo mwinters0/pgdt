@@ -186,8 +186,14 @@ least that order needs: each pair's position in the field, sorted, its value
 walked from there, and each member's bounds. **A nested value is decoded
 straight into its builders** as its walk reads each element, with no staging of
 its elements, a refused field ending its query; one a tier test reads
-([`decisions.md`](decisions.md), "D98"), a type that does not grow long, is held
-whole and decoded through its elements, as a scalar a batch reads is. A query then holds the
+([`decisions.md`](decisions.md), "D98") has its leaves tested by the same walk,
+staging nothing, before it is decoded — a second read only in a block counting
+such a value — and the census's and a parse's tier read that walk too. **A
+nested value past its chunk term is decoded into builders reserved to its
+bound**, its batch cut before it so they start empty, each buffer reserved to
+the field's length at that buffer's density, so its copy never grows by
+doubling: what it holds is what is reserved and charged, on every allocator, as
+the held line's is (below). A query then holds the
 line and that copy — about the line for an unescaped value, twice it for an
 escaped one, one and a half for hex bytea and up to twice it for
 `bytea_output = escape`'s form, which no dump pins (I4) — where today it holds
@@ -196,7 +202,14 @@ holds resident"). Rejected: an unescaped value shared between a filter and its
 batch, which still copies for every row the filter drops and ties the predicate
 to the batcher's buffers; a key built whole for a value only compared, which
 over an array or `jsonb` is a tree of tens of bytes an element; refusing an
-ordering term over a long `jsonb` or multirange, which a key of positions reads.
+ordering term over a long `jsonb` or multirange, which a key of positions reads;
+a tested container's elements staged, a 24-byte slot for an element of two
+text bytes, on the ground that its type never grows long, which holds for a
+scalar and not its container; a builder made for the one value and copied in;
+a nested value's builders grown by doubling, as a batch's are within its span
+(D141), which past its chunk term holds the outgrown buffer beside its
+successor and, under mimalloc, keeps it to its purge; every factor above one
+doubled instead, which over-charges an allocator growing in place.
 
 **The charge is the held line plus the bound its decode adds**: a parse, strict
 or not, streams its line and draws only for the scalar text it collects, at most
@@ -380,10 +393,18 @@ an asserted constant alone, which prove nothing about the wiring.
 length — default parse, strict parse, a query over text, escaped text and
 bytea, serial and at four workers (`roadmap.md`, "Four workers is the
 optimization baseline; twenty-four is the guard") — over a generated input
-clustering lines near the bound. **A factor above one has a leg of its own**: a
-query over an `int8[]` of single digits, the largest decode factor, and an
-ordering filter over a `jsonb` object, a key factor, from the slice that
-computes them on; a factor no leg reads would be an argued constant. It is taken on today's code first, pricing
+clustering lines near the bound. **Each term of a factor no count of Arrow's
+buffers sees has a leg**, from the slice that computes the factors on: a query
+over an `int8[]` of single digits, a fixed-width array's form, where a
+builder's growth shows; one over a `text[]` of one-byte elements, the stage a
+part's token and unquoted copy hold beside its view; and an ordering filter
+over a `jsonb` object, a key factor. Each leg's factor is read off its planned
+query by the instrument, never restated, and the stated allowance is sized from
+the largest so it never binds on a line. Rejected: a leg for the largest
+factor, which reads the form `int8[]`'s does and a count of Arrow's buffers
+already checks per type; a factor restated in `measure.py`, a second copy
+nothing keeps in step; a user surface showing it, which nothing user-facing
+needs. It is taken on today's code first, pricing
 the copies, and re-taken once the ledger lands, confirming the factors or
 re-setting them, and showing a parse flat in its line length. **The
 acceptance is two hand runs on the reference dump**, read with no setting and
