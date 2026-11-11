@@ -155,21 +155,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A long nested value's factor is its reservation, every buffer at its own
-  densest, summed (33.24).** The spec's "What a held line costs" reserves each
-  buffer "to the field's length at that buffer's density" and charges what is
-  reserved, so D154's factor became the sum of the reservations where it was
-  the densest part's alone: unchanged for `bigint[]`, a range array and a
-  multirange; `text[]` from `161/16` to `177/16`, a long element's bytes beside
-  views reserved for short ones; `bytea[]` from `89/16` to `97/16`; a record
-  array holding text up by one; a multidimensional array by its inner lists
-  (`factor/tests.rs`). No value is dense in two buffers at once, so the sum
-  reserves address space and commit it never writes: an escaped `text[]` of
-  six-byte elements reserves three and a half times the views it fills
-  (`decoded_copies.rs`'s `a_nested_value_decodes_into_its_builders`, now
-  bounded by the reservation). Reconsidering: charge the largest and leave the
-  untouched reservation uncharged, which holds for resident memory and not
-  under a strict overcommit or an address-space limit, the spec's grounds
-  against reserving I71's bound per line; or reserve the densest buffer alone,
-  which lets the others double.
-

@@ -28,7 +28,7 @@ proves it is `crates/pgdt-query/tests/decoded_copies.rs`'s
   one-dimensional array of fixed-width elements, a range array and a
   multirange; up by a text byte for `text[]` (`177/16`), by a decoded byte for
   `bytea[]` (`97/16`) and a record array holding text, and by each dimension's
-  lists for a multidimensional array (STATUS, "Decisions worth another look").
+  lists for a multidimensional array ([`decisions.md`](decisions.md), "D154").
 
 ## Its count pair, reworked, placed and accepted
 
