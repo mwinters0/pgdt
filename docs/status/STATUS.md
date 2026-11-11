@@ -115,7 +115,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.15** A normalized type's key is positions: a `jsonb` object's and a multirange's ordering key holding its pairs' positions and its members' bounds, and its key factor, as the spec's "What a held line costs" states (D152); an allocation test failing on its parent — [notes](../design/roadmap-P33.15-positions-notes.md)
 - [x] **33.16** A nested value decodes into its builders: no staging of a nested value's elements, as the spec's "What a held line costs" states (D153); an allocation test failing on its parent; its count pair, `02cdaa3d` against the tree, resolving a rise on the three query rows, placed by callgrind in `push_field`'s test for a nested column and in register allocation of unchanged code, and accepted (D108) — [notes](../design/roadmap-P33.16-builders-notes.md)
 - [x] **33.16.3** 33.16's count pair over a nested column: `--count-pair` given a shape reading the `arrays` input, `query --schema-mode typed` over `arrays`, and `--count-pair <parent>..<change>` pricing a committed change from checkouts; taken as `dbdaead4..067b8f69`, `067b8f69`'s first parent `dbdaead4` holding `02cdaa3d`'s crates, as the spec's "How it is shown" states (D108). It resolves a fall on the `arrays` row, so nothing there is placed, and on the control rows 33.16's rises, placed and accepted there — [notes](../design/roadmap-P33.16.3-nested-notes.md)
-- [ ] **33.16.1** A query has one factor: a decode factor beside each builder, pgdt-query folding a query's decode factors and its ordering terms' key factors into one number, as the spec's "What a held line costs" and "Where it lives" state
+- [x] **33.16.1** A query has one factor: a decode factor beside each builder, pgdt-query folding a query's decode factors and its ordering terms' key factors into one number, as the spec's "What a held line costs" and "Where it lives" state (D154) — [notes](../design/roadmap-P33.16.1-factor-notes.md)
 - [ ] **33.16.2** `long-line-resident`'s `int8[]` query and `jsonb` filter legs, as the spec's "How it is shown" states, and their readings at the commit adding them
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, a parse drawing for the scalar text it collects past its chunk term, an unstated allowance's ledger unlimited; a read over mapped blocks carving its longest line's charge before a reader starts; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
 - [ ] **33.5** The floor: the pools shrinking and regrowing, readers parked latest first, a line one reader cannot hold refused for memory, and a read over mapped blocks whose longest line one reader cannot hold refused before it reads a byte, its remedy spelled by `pgdt` and the shell
@@ -151,4 +151,25 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **Arrow's growth is outside a decode factor (D154).** A factor counts a
+  column's Arrow form, not the old buffer a builder copies from as it
+  doubles, following D141's "a batch's buffer growing past a value is its
+  span's"; so a `bigint[]` field's column holds its form twice at a growth,
+  and a charge by the factor alone is short by that. Made so because D141
+  set the precedent and 33.7's re-take confirms or re-sets the factors.
+  Reconsidering doubles every factor above one, or sizes builders ahead.
+- **`long-line-resident`'s `int8[]` leg is not the largest decode factor.**
+  The spec's "How it is shown" calls an `int8[]` of single digits the
+  largest; `factor/tests.rs` gives it `65/16`, a `text[]` of one-byte
+  elements `161/16` (a 16-byte view a two-byte element, and its token and
+  unquoted copy), a `numeric(76,0)[]` `257/16`, an array of records more.
+  33.16.2 takes the leg as specified unless the maintainer names another;
+  reconsidering adds a `text[]` leg, or the largest, to the figure.
+- **A tier-tested container's factor is fourteen or more (D153, D154).** A
+  `date[]` holding a value its type cannot hold is unescaped and staged by
+  `decode_array`, a 24-byte slot an element, before it is walked: `14` on a
+  64-bit target, a `datemultirange` `16`, where its walk alone holds
+  `33/16`. Kept as D153 chose it, walking such a field once more being
+  refused there. Reconsidering reopens D153's staging for these columns.
 

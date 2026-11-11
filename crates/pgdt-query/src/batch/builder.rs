@@ -27,6 +27,10 @@ use pgdt_model::PostgresInvalidValues;
 
 use super::bytea::ByteaBuilder;
 
+mod factor;
+
+pub(crate) use self::factor::{Factor, column_factor};
+
 /// One column's typed builder, chosen from a [`pgdt_codec::ResolvedSchema`]
 /// field's [`DataType`] — the complete set [`pgdt_codec::pgtype::resolve_declared_type`]
 /// and [`pgdt_codec::resolve_columns`] can ever produce.

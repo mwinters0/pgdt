@@ -25,6 +25,7 @@ use pgdt_model::{
 use super::partition::plan_partitions;
 use super::segment::{Segment, SegmentEntry};
 use crate::Predicate;
+use crate::batch::{Factor, column_factor};
 use crate::options::QueryOptions;
 use crate::predicate::{ComparisonNote, ResolvedExpr, check_columns, resolve_expr};
 use crate::prune::{SortedStop, prune_block};
@@ -139,6 +140,16 @@ impl ReplayPlan {
     /// bar what cutting it into sub-streams adds.
     pub(in crate::stream) fn notes(&self) -> impl Iterator<Item = PlanNote> + '_ {
         self.table_notes.iter().chain(&self.read_as_null).chain(&self.pruned).cloned()
+    }
+
+    /// **The query's one factor**: the largest of every planned block's
+    /// decode factors over the columns its batch reads and key factors over
+    /// its filter's terms, each term's key dropped before its row is
+    /// decoded — `None` where the query holds nothing beside its line that
+    /// grows with it (`docs/design/decisions.md`, "D154").
+    #[cfg_attr(not(test), expect(dead_code, reason = "the ledger's carve reads it"))]
+    pub(in crate::stream) fn factor(&self) -> Option<Factor> {
+        self.blocks.values().flat_map(PlannedBlock::factors).reduce(Factor::max)
     }
 
     /// The segments that replay `block` whole, or the runs of groups its
@@ -424,6 +435,21 @@ pub(in crate::stream) struct PlannedBlock {
     pub(in crate::stream) unrepresentable: Vec<Option<UnrepresentableRead>>,
     pub(in crate::stream) filter: Arc<ResolvedExpr>,
     pub(in crate::stream) notes: Vec<ComparisonNote>,
+}
+
+impl PlannedBlock {
+    /// The decode factor of each column the block's batch reads
+    /// ([`column_factor`]), and the key factor of each of its filter's terms
+    /// ([`ResolvedExpr::key_factors`]).
+    fn factors(&self) -> impl Iterator<Item = Factor> + '_ {
+        let columns = self.resolved.columns();
+        let decoded = self.field_targets.iter().enumerate().filter_map(|(field, target)| {
+            let column = &columns[(*target)?];
+            let tested = self.unrepresentable.get(field).is_some_and(Option::is_some);
+            column_factor(column.data_type(), column.plan(), tested)
+        });
+        decoded.chain(self.filter.key_factors().into_iter().map(Factor::from))
+    }
 }
 
 /// Resolve one block for a query: its schema, the filter against

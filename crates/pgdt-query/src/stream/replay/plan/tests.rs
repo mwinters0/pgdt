@@ -180,3 +180,71 @@ async fn a_block_prunes_in_the_view_its_query_reads() {
     assert!(!stops(Every), "-infinity closes the column out of order");
     assert!(stops(Representable) && stops(Displayable));
 }
+
+/// **A query has one factor**: the largest of each column its batch reads
+/// and each term its filter keys by positions, none where neither grows
+/// with a line — a `date[]` holding a value its type cannot hold read through
+/// its tier test, and a nested term ordering by its parts holding none.
+#[tokio::test]
+async fn a_query_s_factor_is_its_columns_and_terms_largest() {
+    use crate::Predicate;
+    use crate::batch::Factor;
+    use crate::options::QueryOptions;
+    use pgdt_io::LocalFileSource;
+    use pgdt_mapping::map_file;
+    use pgdt_mapping::statistics::StatisticsRequest;
+    use pgdt_model::CopyBlock;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("factors.sql");
+    std::fs::write(
+        &path,
+        "CREATE TABLE public.t (\n    id integer,\n    t text,\n    a bigint[],\n    \
+             j jsonb,\n    d date[]\n);\n\n\
+             COPY public.t (id, t, a, j, d) FROM stdin;\n\
+             1\tx\t{1,2}\t{\"a\": 1}\t{2020-01-01,infinity}\n\\.\n",
+    )
+    .unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
+    let run = map_file(
+        CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let matches: Vec<CopyBlock> = run.index.blocks().cloned().collect();
+    let factor = |columns: &[&str], filter: Vec<Predicate>| {
+        let query_options = QueryOptions {
+            projection: Some(columns.iter().map(|c| c.to_string()).collect()),
+            filter: Expr::all(filter),
+            ..QueryOptions::default()
+        };
+        super::ReplayPlan::new(
+            ReadOptions::default(),
+            query_options,
+            None,
+            "public.t",
+            &matches,
+            run.index.metadata.clone(),
+        )
+        .unwrap()
+        .factor()
+    };
+    let term = |column: &str, op| Predicate { column: column.into(), op };
+    let jsonb = || term("j", PredicateOp::Gt("{}".into()));
+
+    assert_eq!(factor(&["id"], vec![]), None);
+    assert_eq!(factor(&[], vec![]), None);
+    assert_eq!(factor(&["t"], vec![]), Some(Factor::new(1, 1)));
+    assert_eq!(factor(&["id", "a", "t"], vec![]), Some(Factor::new(65, 16)));
+    assert_eq!(factor(&["id"], vec![jsonb()]), Some(Factor::new(4, 5)));
+    assert_eq!(factor(&["t"], vec![jsonb()]), Some(Factor::new(1, 1)));
+    assert_eq!(factor(&["id"], vec![term("a", PredicateOp::Gt("{1}".into()))]), None);
+    if size_of::<usize>() == 8 {
+        assert_eq!(factor(&["d"], vec![]), Some(Factor::new(14, 1)));
+    }
+}

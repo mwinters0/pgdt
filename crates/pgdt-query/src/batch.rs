@@ -15,7 +15,9 @@ mod chunks;
 
 #[cfg(test)]
 pub(crate) use self::builder::column_of;
-pub(crate) use self::builder::{ColumnBuilder, append_typed, finish_column, new_column_builder};
+pub(crate) use self::builder::{
+    ColumnBuilder, Factor, append_typed, column_factor, finish_column, new_column_builder,
+};
 pub(crate) use self::chunks::RetainedChunks;
 
 use std::ops::Range;

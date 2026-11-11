@@ -320,8 +320,8 @@ the retained read buffers ([`decisions.md`](decisions.md), "Batches, streams
 and the leader").
 
 - **pgdt-query** — `options.rs`, `batch/`: what a query asks for, and the
-  batcher, its column builders and the read chunks its views point into;
-  building arrays is query's (D74).
+  batcher, its column builders and the read chunks its views point into,
+  and each builder's decode factor (D154); building arrays is query's (D74).
 
 ## Filtering
 

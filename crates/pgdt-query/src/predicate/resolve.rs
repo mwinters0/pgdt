@@ -6,9 +6,9 @@
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::compare::{CompareKind, ComparisonPlan, ComparisonSemantics, NestedCompare};
 use pgdt_codec::internal::{
-    Equality, NestedKey, OrderKey, Side, Spellings, UnrepresentableRead, accepted_form,
-    compare_keys, compare_nested, literal_equality, literal_key, nested_accepted_form, nested_key,
-    order_key, unlisted_labels,
+    Equality, KeyFactor, NestedKey, OrderKey, Side, Spellings, UnrepresentableRead, accepted_form,
+    compare_keys, compare_nested, key_factor, literal_equality, literal_key, nested_accepted_form,
+    nested_key, nested_key_factor, order_key, unlisted_labels,
 };
 use pgdt_core::{Error, Result};
 use pgdt_model::PostgresInvalidValues;
@@ -775,6 +775,37 @@ impl ResolvedExpr {
                 }
             }
             Self::Not(inner) => inner.collect_notes(out),
+        }
+    }
+
+    /// **The key factor of each term whose key holds positions over a
+    /// normalized type** ([`key_factor`]): an ordering term's, a `jsonb`
+    /// `=`'s, and a nested term's, each key dropped before the next term is
+    /// read. A membership's lookup keys its field whole, which no factor
+    /// bounds, and is left out.
+    pub(crate) fn key_factors(&self) -> Vec<KeyFactor> {
+        let mut out = Vec::new();
+        self.collect_key_factors(&mut out);
+        out
+    }
+
+    fn collect_key_factors(&self, out: &mut Vec<KeyFactor>) {
+        match self {
+            Self::Term(term) => {
+                let factor =
+                    term.compared.as_ref().and_then(|compared| match &compared.comparison {
+                        Comparison::Ordered { kind, .. }
+                        | Comparison::Equal(Equality::Decoded { kind, .. }) => key_factor(kind),
+                        Comparison::Equal(_) => None,
+                        Comparison::Nested(nested) => nested_key_factor(&nested.plan),
+                    });
+                out.extend(factor);
+            }
+            Self::In(_) => {}
+            Self::And(children) | Self::Or(children) => {
+                children.iter().for_each(|child| child.collect_key_factors(out));
+            }
+            Self::Not(inner) => inner.collect_key_factors(out),
         }
     }
 

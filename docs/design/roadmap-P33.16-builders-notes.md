@@ -59,8 +59,7 @@ instruction by instruction; the legs kept in
   that growth is the factor's to state.
 - **A nested column under a tier test is not walked** (D153): it is unescaped
   and decoded through its elements, `UnrepresentableRead::cannot_hold` reading
-  its whole text, so its factor is the staged form's, an escaped field held
-  twice beside its line.
+  its whole text, so its factor is the staged form's (D154).
 
 ## Negative results
 

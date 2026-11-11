@@ -32,6 +32,16 @@ every leaf type, truncating a refused or tier-tested field's parts; a walk testi
 reading the field twice. Code: `batch/builder.rs` (`append_walked`), `nested/output/walk.rs`. Evidence:
 `tests/decoded_copies.rs`, `batch/tests.rs`.
 
+### D154 A decode factor is a column's densest repeated part per text byte; a query's, its largest beside its terms'
+A column's decode factor is the most its builders and walk hold per byte of a field's text: each repeated part's entry
+over the fewest bytes it is written in, its delimiter included, a text's or `bytea`'s own bytes, and one part's token,
+unquoted copy and decoded bytes; a column its tier test reads whole adds the field unescaped and its staged literal. A
+query's is the largest over the columns its batch reads and its terms' key factors (D152). Why: each grows with a line,
+and a term's key is dropped before its row decodes. Rejected: summing the two kinds; counting what a type bounds per
+row, or a scalar's own text, which never grows long; a buffer's doubling, the span's (D141); a factor per type in
+pgdt-codec, a crate from the builders. Code: `batch/builder/factor.rs`, `ReplayPlan::factor`. Evidence:
+`factor/tests.rs`, `plan/tests.rs`.
+
 ### D84 The batch span is derived from the budget and the count, and spent before the count is cut
 `max_source_span` is a ceiling: a partitioned replay derives the span it charges from the budget and the reader count,
 narrowing the span before it cuts the count, never below the announced read chunk (`ReadOptions::chunk_size_bytes`, the
