@@ -29,9 +29,8 @@ is the whole of it — and `stream/replay/plan/tests.rs`'s
   records more, each field's slot counted over a record's punctuation
   (STATUS, "Decisions worth another look").
 - **The factor is crate-private**: a leg reading it, rather than a constant
-  of its own, needs it reached from a binary. `measure.py`'s
-  `LONG_LINE_WHOLE_VALUE_CHARGE` is `2`, below `bigint[]`'s one plus its
-  factor.
+  of its own, needs it reached from a binary — the `introspect` build's
+  `planned_factor` since 33.16.2.
 
 ## What 33.4 inherits
 

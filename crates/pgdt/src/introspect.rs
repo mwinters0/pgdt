@@ -61,6 +61,11 @@
 //! `override`, so C keeps the platform allocator: neither family is the whole
 //! process, and only their sum is the heap.
 //!
+//! * **`planned_factor`** — where a query planned a replay, `query`'s or
+//!   `sql`'s: the largest factor any of its plans settled, `held/per` bytes
+//!   beside its line per byte of it, or `none` where no plan held anything
+//!   that grows with its line (`docs/design/decisions.md`, "D154"); absent
+//!   where none was planned.
 //! * **`evaluation_*`** — where `pgdt sql` ran: what
 //!   `datafusion_cli_pgdump::introspection_section` timed of a dynamic
 //!   filter's row evaluation, under its own `evaluation_scope`, after the
@@ -327,12 +332,27 @@ mod enabled {
         out.push_str(&format!("live_bytes={}\n", LIVE.load(Ordering::Relaxed)));
         out.push_str(&format!("live_peak_bytes={}\n", PEAK.load(Ordering::Relaxed)));
         push_statistics(&mut out);
+        push_factor(&mut out);
         out.push_str(SCOPE_NOTE);
         out.push_str("mimalloc_scope=rust-heap\n");
         push_mimalloc(&mut out);
         out.push_str("glibc_scope=c-malloc\n");
         push_glibc(&mut out);
         out
+    }
+
+    /// The `planned_factor` line, where a replay was planned.
+    fn push_factor(out: &mut String) {
+        out.push_str(&planned_factor_line(pgdt_core::instrument::factor_reading()));
+    }
+
+    /// `reading`'s line: nothing where no replay was planned.
+    pub(super) fn planned_factor_line(reading: Option<Option<(u64, u64)>>) -> String {
+        match reading {
+            None => String::new(),
+            Some(None) => "planned_factor=none\n".to_string(),
+            Some(Some((held, per))) => format!("planned_factor={held}/{per}\n"),
+        }
     }
 
     /// What the three scopes mean, in the report itself rather than only in
@@ -594,6 +614,16 @@ mod instrumented_tests {
                 "a line of mimalloc's document parses as a reading: {line}"
             );
         }
+    }
+
+    /// A plan's factor is one `key=value` line `measure.parse_reported`
+    /// reads, as `held/per`, and no line where nothing was planned.
+    #[test]
+    fn a_planned_factor_is_one_reading() {
+        use super::enabled::planned_factor_line;
+        assert_eq!(planned_factor_line(None), "");
+        assert_eq!(planned_factor_line(Some(None)), "planned_factor=none\n");
+        assert_eq!(planned_factor_line(Some(Some((161, 16)))), "planned_factor=161/16\n");
     }
 
     /// The note explaining the two scopes must not itself parse as a reading:

@@ -106,10 +106,10 @@ reports ([`roadmap.md`](roadmap.md), "Attribution is introspective; only
 the gate is blind").
 
 - **pgdt-core** — `instrument/`: the hooks every crate calls, one child a
-  concern — statistics attribution, evaluation timing, block decodes — with
-  what an instrumented binary reads of it.
-- **pgdt** — `introspect.rs`: what the process says about its memory, in an
-  `introspect` build alone.
+  concern — statistics attribution, evaluation timing, block decodes, the
+  factor a query planned — with what an instrumented binary reads of it.
+- **pgdt** — `introspect.rs`: what the process says about its memory and the
+  factor its query planned, in an `introspect` build alone.
 - **peak-rss** — `main.rs`: the peak resident set `scripts/measure.py` reads.
 - **count-instructions** — `main.rs`: the user-space instructions
   `scripts/measure.py`'s `release-profile` figure reads beside its wall clock.

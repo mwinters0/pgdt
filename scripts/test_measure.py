@@ -32,6 +32,7 @@ import tempfile
 import tomllib
 import unittest
 import unittest.mock
+from fractions import Fraction
 from pathlib import Path
 
 import contained
@@ -805,6 +806,7 @@ class StatisticsFigures(unittest.TestCase):
                 measure.PARALLEL_SCAN,
                 *measure.DATA_LEVEL_QUERIES,
                 measure.LONG_RSS_FAMILY,
+                measure.LONG_FACTOR_FAMILY,
             },
         )
         self.assertEqual(
@@ -5947,10 +5949,21 @@ class GzipResident(unittest.TestCase):
 
 
 class LongLineResident(unittest.TestCase):
-    """What a pass holds while it holds a long line: three passes at two counts
-    over a cluster of long lines, by value kind and line length."""
+    """What a pass holds while it holds a long line: the passes at two counts
+    over a cluster of long lines, by value kind and line length, and each
+    query's factor read off its plan."""
 
     FIGURE = "long-line-resident"
+    TERMS = ("int8array", "textarray", "jsonb")
+    #: Stand-in factors, a kind each: never the library's arithmetic.
+    FACTORS = {
+        "text": Fraction(1),
+        "escaped": Fraction(1),
+        "bytea": Fraction(1),
+        "int8array": Fraction(3),
+        "textarray": Fraction(9),
+        "jsonb": Fraction(1, 2),
+    }
 
     def test_it_is_taken_and_borrows_nothing(self):
         # Standing in no sharing edge is what lets it publish from its own
@@ -5978,12 +5991,18 @@ class LongLineResident(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn(path, fig.depends)
 
+    def test_the_term_kinds_are_the_generators_last_three(self):
+        self.assertEqual(measure.LONG_LINE_TERM_KINDS, self.TERMS)
+        self.assertEqual(measure.long_lines.KINDS[-3:], self.TERMS)
+
     def test_an_input_a_kind_and_a_length_each_a_cluster(self):
         fig = measure.SELECTABLE_BY_ID[self.FIGURE]
-        lengths = measure.LONG_LINE_LENGTHS
-        self.assertEqual(len(fig.warm_inputs), len(measure.long_lines.KINDS) * len(lengths))
+        lengths = dict(measure.LONG_LINE_LENGTHS)
+        self.assertEqual(fig.warm_inputs, measure.LONG_LINE_INPUTS)
+        # Every length of the three passes' kinds, the ladder of a term's.
+        self.assertEqual(len(fig.warm_inputs), 3 * len(lengths) + 3 * (len(lengths) - 1))
         for kind in measure.long_lines.KINDS:
-            for length, line in lengths:
+            for length in measure.long_line_lengths(kind):
                 name = measure.long_line_input(kind, length)
                 with self.subTest(input=name):
                     spec = measure.INPUTS[name]
@@ -5991,10 +6010,17 @@ class LongLineResident(unittest.TestCase):
                     self.assertFalse(spec.scales)
                     args = dict(zip(spec.args[::2], spec.args[1::2]))
                     self.assertEqual(args["--kind"], kind)
-                    self.assertEqual(args["--line-bytes"], str(line))
+                    self.assertEqual(args["--line-bytes"], str(lengths[length]))
                     self.assertEqual(args["--lines"], str(measure.LONG_LINE_CLUSTER))
-                    self.assertGreater(spec.nominal_bytes, measure.LONG_LINE_CLUSTER * line)
-                    measure.long_lines.field_bytes(kind, line)
+                    self.assertGreater(
+                        spec.nominal_bytes, measure.LONG_LINE_CLUSTER * lengths[length]
+                    )
+                    measure.long_lines.field_bytes(kind, lengths[length])
+        for kind in self.TERMS:
+            with self.subTest(kind=kind):
+                self.assertNotIn("bound", measure.long_line_lengths(kind))
+                with self.assertRaises(ValueError):
+                    measure.long_line_input(kind, "bound")
 
     def test_the_lengths_are_the_ladder_one_off_it_and_the_bound(self):
         lengths = dict(measure.LONG_LINE_LENGTHS)
@@ -6011,13 +6037,27 @@ class LongLineResident(unittest.TestCase):
         self.assertEqual(lengths["bound"], measure.LONG_LINE_BOUND)
         self.assertEqual(max(lengths.values()), measure.LONG_LINE_BOUND)
         self.assertEqual(measure.LONG_LINE_SERIAL_ONLY, ("bound",))
-        self.assertEqual(measure.long_line_jobs("bound"), (1,))
+        self.assertEqual(measure.long_line_jobs("text", "bound"), (1,))
         for length in ("32", "128", "288", "512"):
-            self.assertEqual(measure.long_line_jobs(length), measure.LONG_LINE_JOBS)
+            self.assertEqual(measure.long_line_jobs("text", length), measure.LONG_LINE_JOBS)
+            for kind in self.TERMS:
+                self.assertEqual(measure.long_line_jobs(kind, length), (1,))
         # Row order is length order.
         self.assertEqual(sorted(lengths.values()), [line for _, line in measure.LONG_LINE_LENGTHS])
         with self.assertRaises(ValueError):
             measure.long_line_input("text", "64")
+        with self.assertRaises(ValueError):
+            measure.long_line_jobs("jsonb", "bound")
+
+    def test_a_term_is_read_by_the_one_pass_holding_it(self):
+        for kind in ("text", "escaped", "bytea"):
+            self.assertEqual(measure.long_line_passes(kind), ("parse", "strict", "query"))
+        self.assertEqual(measure.long_line_passes("int8array"), ("query",))
+        self.assertEqual(measure.long_line_passes("textarray"), ("query",))
+        self.assertEqual(measure.long_line_passes("jsonb"), ("filter",))
+        self.assertEqual(measure.LONG_LINE_PLANNED, ("query", "filter"))
+        with self.assertRaises(ValueError):
+            measure.long_line_passes("json")
 
     def test_the_cluster_is_the_widest_count(self):
         self.assertEqual(measure.LONG_LINE_CLUSTER, max(measure.LONG_LINE_JOBS))
@@ -6027,39 +6067,73 @@ class LongLineResident(unittest.TestCase):
         # `MaxAllocSize - 1`, `MaxAllocSize` being `0x3fffffff`.
         self.assertEqual(measure.LONG_LINE_BOUND, 0x3FFFFFFF - 1)
 
-    def test_the_allowance_holds_the_widest_legs_lines_at_the_whole_value_charge(self):
-        # `PARALLEL_BUDGET`'s readers plus four 512 MiB lines at twice their
-        # bytes, which is more than one line at the bound at twice its bytes.
-        four = 4 * 2 * (512 << 20)
-        self.assertGreater(four, 2 * measure.LONG_LINE_BOUND)
-        self.assertEqual(measure.LONG_LINE_WHOLE_VALUE_CHARGE, 2)
+    def test_the_allowance_holds_the_widest_legs_lines_at_their_charge(self):
+        mib = 1 << 20
+        # The largest factor's kind, one 512 MiB line at one partition, at
+        # its line and its factor: more than four lines of a parse's at once.
+        widest = (1 + self.FACTORS["textarray"]) * 512 * mib
+        self.assertGreater(widest, 4 * 2 * 512 * mib)
         self.assertEqual(
-            measure.long_line_allowance(), measure.stated_allowance(measure.PARALLEL_BUDGET + four)
+            measure.long_line_allowance(self.FACTORS),
+            measure.stated_allowance(measure.PARALLEL_BUDGET + widest),
         )
+        # Where every factor is small, four lines of the text query at four
+        # partitions, each at its line and its factor of one.
+        small = dict.fromkeys(self.FACTORS, Fraction(0)) | {"text": Fraction(1)}
+        self.assertEqual(
+            measure.long_line_allowance(small),
+            measure.stated_allowance(measure.PARALLEL_BUDGET + 4 * 2 * 512 * mib),
+        )
+        # A parse's charge is its line alone: no factor, four lines.
+        none = dict.fromkeys(self.FACTORS, Fraction(0))
+        self.assertEqual(
+            measure.long_line_allowance(none),
+            measure.stated_allowance(measure.PARALLEL_BUDGET + 4 * 512 * mib),
+        )
+        # A planned kind whose factor was not read is refused.
+        with self.assertRaises(ValueError):
+            measure.long_line_allowance({k: f for k, f in self.FACTORS.items() if k != "jsonb"})
+        self.assertFalse(hasattr(measure, "LONG_LINE_WHOLE_VALUE_CHARGE"))
 
-    def test_a_kind_is_two_sweeps_each_subtraction_inside_one(self):
+    def test_a_planned_factor_is_read_as_the_instrument_writes_it(self):
+        self.assertEqual(measure.parse_planned_factor("161/16"), Fraction(161, 16))
+        self.assertEqual(measure.parse_planned_factor("none"), Fraction(0))
+        for bad in ("", "1", "1/0", "a/b", "-1/2"):
+            with self.subTest(text=bad):
+                with self.assertRaises(ValueError):
+                    measure.parse_planned_factor(bad)
+        # The key the instrument writes it under, which its own test pins.
+        source = (measure.REPO / "crates/pgdt/src/introspect.rs").read_text()
+        self.assertIn('"planned_factor=none\\n"', source)
+        self.assertIn('format!("planned_factor={held}/{per}\\n")', source)
+
+    def test_a_kind_is_its_sweeps_each_subtraction_inside_one(self):
         fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        self.assertEqual(fig.warm_groups, measure.long_line_warm_groups())
         for kind in measure.long_lines.KINDS:
-            both, serial = measure.long_line_groups(kind)
+            groups = measure.long_line_groups(kind)
+            name = lambda length: measure.long_line_input(kind, length)  # noqa: E731
+            want = {
+                frozenset((name("128"), name("512"))),
+                frozenset((name("128"), name("32"))),
+                frozenset((name("128"), name("288"))),
+            }
             with self.subTest(kind=kind):
-                self.assertEqual(both, ("32", "128", "288", "512"))
-                self.assertEqual(serial, ("512", "bound"))
-                for group in (both, serial):
-                    names = tuple(measure.long_line_input(kind, length) for length in group)
+                self.assertEqual(groups[0], ("32", "128", "288", "512"))
+                if kind in self.TERMS:
+                    self.assertEqual(len(groups), 1)
+                else:
+                    self.assertEqual(groups[1], ("512", "bound"))
+                    want.add(frozenset((name("512"), name("bound"))))
+                for group in groups:
+                    names = tuple(name(length) for length in group)
                     self.assertIn(names, fig.warm_groups)
                 pairs = {
-                    frozenset(s.inputs) for s in fig.subtracts if all(kind in n for n in s.inputs)
+                    frozenset(s.inputs)
+                    for s in fig.subtracts
+                    if all(n.startswith(f"long_{kind}_") for n in s.inputs)
                 }
-                name = lambda length: measure.long_line_input(kind, length)  # noqa: E731
-                self.assertEqual(
-                    pairs,
-                    {
-                        frozenset((name("128"), name("512"))),
-                        frozenset((name("128"), name("32"))),
-                        frozenset((name("128"), name("288"))),
-                        frozenset((name("512"), name("bound"))),
-                    },
-                )
+                self.assertEqual(pairs, want)
                 for a, b in pairs:
                     measure.subtraction_sweep(self.FIGURE, a, b)
         with self.assertRaises(ValueError):
@@ -6081,7 +6155,7 @@ class LongLineResident(unittest.TestCase):
                     script = measure._script(f"{measure.LONG_RSS_FAMILY}{name}-{jobs}")
                     self.assertTrue(script.startswith(f"time {measure.PEAK_RSS} /pgdt parse "))
                     self.assertIn(f"--jobs {jobs} ", script)
-                    self.assertIn(f"--memory {measure.long_line_allowance()} ", script)
+                    self.assertIn(f"--memory {measure.ALLOWANCE_SLOT} ", script)
                     self.assertIn(f"--max-line-bytes {measure.LONG_LINE_BOUND} ", script)
                     self.assertIn(measure.GATHER_STATISTICS, script)
                     self.assertEqual(
@@ -6112,65 +6186,144 @@ class LongLineResident(unittest.TestCase):
                     )
                 )
                 self.assertEqual(measure._dfcli_partitions(script), {str(jobs)})
-                self.assertIn(f"SET pgdump.memory = {measure.long_line_allowance()}", timed)
+                self.assertIn(f"SET pgdump.memory = {measure.ALLOWANCE_SLOT}", timed)
                 self.assertIn(f"SET pgdump.max_line_bytes = {measure.LONG_LINE_BOUND}", timed)
                 self.assertIn(measure.LONG_LINE_SQL, timed)
                 self.assertTrue(script.endswith(measure.DFCLI_ANSWER))
 
-    def test_the_query_counts_under_a_filter_keeping_every_row(self):
-        # Unfiltered, the plan node's NULL count answers it with no row read.
-        self.assertIn("count(v)", measure.LONG_LINE_SQL)
-        self.assertIn("WHERE id IS NOT NULL", measure.LONG_LINE_SQL)
-        self.assertIn(measure.long_lines.TABLE, measure.LONG_LINE_SQL)
+    def test_the_filter_is_pgdt_query_s_projecting_id_under_the_wrapper(self):
+        for jobs in measure.LONG_LINE_JOBS:
+            with self.subTest(jobs=jobs):
+                script = measure._script(f"{measure.LONG_RSS_FAMILY}filter-{jobs}")
+                builder, _, timed = script.partition(" && time ")
+                self.assertIn("/pgdt parse", builder)
+                self.assertNotIn(measure.PEAK_RSS, builder)
+                self.assertTrue(timed.startswith(f"{measure.PEAK_RSS} /pgdt query "))
+                self.assertIn(f"--filter '{measure.LONG_LINE_FILTER}'", timed)
+                self.assertIn(" --column id ", timed)
+                self.assertIn(f"--jobs {jobs} ", timed)
+                self.assertIn(f"--memory {measure.ALLOWANCE_SLOT} ", timed)
+                self.assertIn(f"--max-line-bytes {measure.LONG_LINE_BOUND} ", timed)
+        # An ordering term over the long column, which every row passes.
+        self.assertEqual(measure.LONG_LINE_FILTER, "v>{}")
+
+    def test_an_instrument_leg_is_its_pass_at_the_sweep_count_with_no_allowance(self):
+        for name in measure.LONG_LINE_PLANNED:
+            with self.subTest(name=name):
+                factor = measure._script(f"{measure.LONG_FACTOR_FAMILY}{name}")
+                timed = measure._script(f"{measure.LONG_RSS_FAMILY}{name}-{measure.SWEEP_JOBS}")
+                self.assertNotIn(measure.ALLOWANCE_SLOT, factor)
+                self.assertNotIn("--memory", factor)
+                self.assertNotIn(measure.PEAK_RSS, factor)
+                # The timed leg's shape, its wrapper and its allowance gone.
+                self.assertEqual(
+                    timed.replace(f"{measure.PEAK_RSS} ", "")
+                    .replace(f"--memory {measure.ALLOWANCE_SLOT} ", "")
+                    .replace(f'-c "SET pgdump.memory = {measure.ALLOWANCE_SLOT}" ', "")
+                    .replace(f"-c 'SET pgdump.memory = {measure.ALLOWANCE_SLOT}' ", ""),
+                    factor,
+                )
+        with self.assertRaises(ValueError):
+            measure._script(f"{measure.LONG_FACTOR_FAMILY}parse")
+
+    def test_the_allowance_reaches_a_leg_only_through_its_spec(self):
+        script = measure._script(f"{measure.LONG_RSS_FAMILY}parse-1")
+        spec = measure.RunSpec("pgdt", "long_text_32", f"{measure.LONG_RSS_FAMILY}parse-1", "warm-parallel", "x")
+        with self.assertRaises(ValueError):
+            measure.with_allowance(script, spec)
+        stated = dataclasses.replace(spec, allowance=12345)
+        self.assertIn("--memory 12345 ", measure.with_allowance(script, stated))
+        self.assertNotIn(measure.ALLOWANCE_SLOT, measure.with_allowance(script, stated))
+        with self.assertRaises(ValueError):
+            measure.with_allowance("time /pgdt parse --jobs 1", stated)
+        self.assertEqual(measure.with_allowance("time /pgdt parse", spec), "time /pgdt parse")
+        # Two allowances are two readings.
+        self.assertNotEqual(spec.key(self.FIGURE), stated.key(self.FIGURE))
+        self.assertTrue(stated.key(self.FIGURE).endswith("/allowance=12345"))
 
     def test_every_leg_is_a_shape_and_reads_resident(self):
-        specs = measure._long_line_specs()
-        passes = len(measure.LONG_LINE_PASSES)
-        # A kind: four lengths at both counts, then the bound and its anchor
-        # at one.
-        self.assertEqual(len(specs), len(measure.long_lines.KINDS) * passes * (4 * 2 + 2))
+        specs = measure._long_line_specs(12345)
+        passes = len(("parse", "strict", "query"))
+        # A kind of three passes: four lengths at both counts, then the bound
+        # and its anchor at one; a term's kind, four lengths at one.
+        self.assertEqual(len(specs), 3 * passes * (4 * 2 + 2) + 3 * 4)
         for spec in specs:
             with self.subTest(leg=spec.label):
                 self.assertIn(spec.command, measure.command_shapes())
                 # `time_run` reads a peak only off a shape whose name says so.
                 self.assertIn("rss", spec.command)
                 self.assertEqual(spec.binary, "dfcli" if "-query-" in spec.command else "pgdt")
+                self.assertEqual(spec.allowance, 12345)
+                self.assertFalse(spec.instrument)
+                measure.with_allowance(measure._script(spec.command), spec)
         self.assertEqual(len({s.key(self.FIGURE) for s in specs}), len(specs))
         self.assertEqual(len({s.label for s in specs}), len(specs))
 
+    def test_each_planned_kind_has_one_instrument_leg_in_its_ladder_sweep(self):
+        fig = measure.SELECTABLE_BY_ID[self.FIGURE]
+        specs = measure._long_factor_specs()
+        self.assertEqual(
+            [(s.input, s.command) for s in specs],
+            [
+                (
+                    measure.long_line_input(kind, measure.LONG_LINE_FACTOR_LENGTH),
+                    f"{measure.LONG_FACTOR_FAMILY}{measure.long_line_passes(kind)[-1]}",
+                )
+                for kind in measure.long_lines.KINDS
+            ],
+        )
+        placed = {
+            spec.key(self.FIGURE): gi
+            for gi, part in measure.split_specs(self.FIGURE, specs, fig.staging_groups)
+            for spec in part
+        }
+        for spec in specs:
+            with self.subTest(leg=spec.label):
+                self.assertEqual(spec.binary, "introspect")
+                self.assertTrue(spec.instrument)
+                self.assertIsNone(spec.allowance)
+                self.assertIsNone(spec.sweep)
+                self.assertIn(spec.command, measure.command_shapes())
+                self.assertNotIn("rss", spec.command)
+                kind = spec.input.split("_")[1]
+                self.assertEqual(
+                    fig.staging_groups[placed[spec.key(self.FIGURE)]][0],
+                    measure.long_line_input(kind, "32"),
+                )
+
     def test_the_bound_and_its_anchor_are_read_at_one_worker_in_their_own_sweep(self):
         fig = measure.SELECTABLE_BY_ID[self.FIGURE]
-        specs = measure._long_line_specs()
+        specs = measure._long_line_specs(12345)
         placed = dict(
             (spec.key(self.FIGURE), gi)
             for gi, part in measure.split_specs(self.FIGURE, specs, fig.staging_groups)
             for spec in part
         )
-        for k, kind in enumerate(measure.long_lines.KINDS):
+        for kind in ("text", "escaped", "bytea"):
             bound = measure.long_line_input(kind, "bound")
             anchor = measure.long_line_input(kind, "512")
+            serial_group = fig.staging_groups.index((anchor, bound))
             with self.subTest(kind=kind):
                 serial = [s for s in specs if s.input == bound or s.sweep is not None and s.input == anchor]
-                self.assertEqual(len(serial), 2 * len(measure.LONG_LINE_PASSES))
+                self.assertEqual(len(serial), 2 * 3)
                 for spec in serial:
                     self.assertTrue(spec.command.endswith("-1"), spec.command)
-                    self.assertEqual(placed[spec.key(self.FIGURE)], 2 * k + 1)
-                    self.assertEqual(spec.sweep, None if spec.input == bound else 2 * k + 1)
+                    self.assertEqual(placed[spec.key(self.FIGURE)], serial_group)
+                    self.assertEqual(spec.sweep, None if spec.input == bound else serial_group)
                 # The 512 MiB input's own legs stay in the ladder's sweep.
                 ladder = [s for s in specs if s.input == anchor and s.sweep is None]
-                self.assertEqual(len(ladder), len(measure.LONG_LINE_PASSES) * 2)
+                self.assertEqual(len(ladder), 3 * 2)
                 for spec in ladder:
-                    self.assertEqual(placed[spec.key(self.FIGURE)], 2 * k)
+                    self.assertEqual(placed[spec.key(self.FIGURE)], serial_group - 1)
 
     def test_a_count_or_pass_the_figure_does_not_carry_is_refused(self):
-        for command in ("long-rss-parse-24", "long-rss-merge-1", "long-rss-query-x"):
+        for command in ("long-rss-parse-24", "long-rss-merge-1", "long-rss-query-x", "long-rss-filter-2"):
             with self.subTest(command=command):
                 with self.assertRaises(ValueError):
                     measure._script(command)
 
     def test_the_answer_is_every_row_of_the_input(self):
-        for length, _ in measure.LONG_LINE_LENGTHS:
-            name = measure.long_line_input("bytea", length)
+        for name in measure.LONG_LINE_INPUTS:
             with self.subTest(input=name):
                 self.assertEqual(
                     measure.long_line_answer(name),
@@ -6178,6 +6331,30 @@ class LongLineResident(unittest.TestCase):
                 )
         with self.assertRaises(ValueError):
             measure.long_line_answer("control")
+        with self.assertRaises(ValueError):
+            measure.long_line_answer("long_jsonb_bound")
+
+    def test_a_factor_leg_naming_none_or_answering_short_is_refused(self):
+        specs = measure._long_factor_specs()
+
+        class Reports:
+            def __init__(self, factor: str | None, rows: int) -> None:
+                self.reported = {
+                    s.key(LongLineResident.FIGURE): {"result_first": str(rows), "rows_returned": str(rows)}
+                    for s in specs
+                }
+                self.factor = factor
+
+            def instrument_reports(self, figure, spec):
+                return [{} if self.factor is None else {"planned_factor": self.factor}]
+
+        rows = measure.long_lines.row_count(measure.LONG_LINE_CLUSTER)
+        read = measure.long_line_factors(Reports("161/16", rows), specs)
+        self.assertEqual(read, dict.fromkeys(measure.long_lines.KINDS, Fraction(161, 16)))
+        with self.assertRaises(RuntimeError):
+            measure.long_line_factors(Reports(None, rows), specs)
+        with self.assertRaises(RuntimeError):
+            measure.long_line_factors(Reports("1/1", rows - 1), specs)
 
     def test_the_secant_and_its_residuals(self):
         mib = 1 << 20
@@ -7606,13 +7783,18 @@ class WarmBound(unittest.TestCase):
                 ),
                 # A kind's lengths at both counts together, its secant and
                 # residuals subtracting them; then the bound beside the
-                # secant's longer end, the tmpfs holding no more.
+                # secant's longer end, the tmpfs holding no more, but for a
+                # term's kind, which reads no line at the bound.
                 "long-line-resident": tuple(
                     group
-                    for kind in ("text", "escaped", "bytea")
+                    for kind in ("text", "escaped", "bytea", "int8array", "textarray", "jsonb")
                     for group in (
                         tuple(f"long_{kind}_{length}" for length in ("32", "128", "288", "512")),
-                        (f"long_{kind}_512", f"long_{kind}_bound"),
+                        *(
+                            ((f"long_{kind}_512", f"long_{kind}_bound"),)
+                            if kind in ("text", "escaped", "bytea")
+                            else ()
+                        ),
                     )
                 ),
             },

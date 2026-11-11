@@ -4,6 +4,7 @@ gives."""
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
@@ -102,6 +103,19 @@ class GenerateLongLines(unittest.TestCase):
                 field = _generate("escaped", line_bytes, 1)[gen.SHORT_ROWS].split(b"\t", 1)[1]
                 self.assertIsNotNone(re.fullmatch(rb"(?:[a-z]|\\n)*\n", field))
 
+    def test_an_array_is_its_elements_and_a_jsonb_object_its_pairs(self):
+        for line_bytes in range(64, 80, 2):
+            with self.subTest(line_bytes=line_bytes):
+                field = lambda kind: (  # noqa: E731
+                    _generate(kind, line_bytes, 1)[gen.SHORT_ROWS].split(b"\t", 1)[1].rstrip(b"\n")
+                )
+                self.assertIsNotNone(re.fullmatch(rb"\{(?:[1-9],)*[1-9]\}", field("int8array")))
+                self.assertIsNotNone(re.fullmatch(rb"\{(?:[a-z],)*[a-z]\}", field("textarray")))
+                doc = field("jsonb")
+                self.assertIsNotNone(re.fullmatch(rb'\{(?:"":0,)*"":10{0,4}\}', doc))
+                # Valid JSON, its keys repeated as `jsonb_in` reads them.
+                self.assertEqual(json.loads(doc), {"": json.loads(doc.rpartition(b":")[2][:-1])})
+
     def test_a_line_the_kind_cannot_fill_is_refused(self):
         with self.assertRaises(ValueError):
             gen.field_bytes("bytea", 65)
@@ -109,6 +123,11 @@ class GenerateLongLines(unittest.TestCase):
             gen.field_bytes("text", 5)
         with self.assertRaises(ValueError):
             gen.field_bytes("json", 64)
+        for kind in ("int8array", "textarray"):
+            with self.assertRaises(ValueError):
+                gen.field_bytes(kind, 65)
+        with self.assertRaises(ValueError):
+            gen.field_bytes("jsonb", 10)
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
                 gen.generate(Path(tmp) / "x.sql", "text", 64, gen.MAX_LINES + 1)
@@ -138,7 +157,14 @@ class GenerateLongLines(unittest.TestCase):
 
     def test_the_table_declares_the_kinds_type(self):
         with tempfile.TemporaryDirectory() as tmp:
-            for kind, declared in (("text", "text"), ("escaped", "text"), ("bytea", "bytea")):
+            for kind, declared in (
+                ("text", "text"),
+                ("escaped", "text"),
+                ("bytea", "bytea"),
+                ("int8array", "bigint[]"),
+                ("textarray", "text[]"),
+                ("jsonb", "jsonb"),
+            ):
                 out = Path(tmp) / f"{kind}.sql"
                 gen.generate(out, kind, 64, 1)
                 self.assertIn(f"    v {declared}\n", out.read_text())

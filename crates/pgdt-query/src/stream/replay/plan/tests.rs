@@ -248,3 +248,71 @@ async fn a_query_s_factor_is_its_columns_and_terms_largest() {
         assert_eq!(factor(&["d"], vec![]), Some(Factor::new(14, 1)));
     }
 }
+
+/// **An instrumented binary reports the factor its replay planned**:
+/// `plan_replay` hands each plan's to the instrument, which keeps the
+/// largest. Exact under nextest, which runs each test in its own process.
+#[cfg(feature = "introspect")]
+#[tokio::test]
+async fn a_planned_replay_hands_its_factor_to_the_instrument() {
+    use crate::Predicate;
+    use crate::options::QueryOptions;
+    use pgdt_core::instrument::factor_reading;
+    use pgdt_io::LocalFileSource;
+    use pgdt_mapping::map_file;
+    use pgdt_mapping::statistics::StatisticsRequest;
+    use pgdt_model::CopyBlock;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("planned.sql");
+    std::fs::write(
+        &path,
+        "CREATE TABLE public.t (\n    id integer,\n    a bigint[],\n    j jsonb\n);\n\n\
+             COPY public.t (id, a, j) FROM stdin;\n\
+             1\t{1,2}\t{\"a\": 1}\n\\.\n",
+    )
+    .unwrap();
+    let source: Arc<dyn ByteRangeSource> = Arc::new(LocalFileSource::open(&path).unwrap());
+    let run = map_file(
+        CacheMode::DISABLED.open_source(Arc::clone(&source)).await.unwrap(),
+        ReadOptions::default(),
+        &arranged(1),
+        PostgresInvalidValues::Default,
+        &StatisticsRequest::DATA,
+        &CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let matches: Vec<CopyBlock> = run.index.blocks().cloned().collect();
+    let plan = |columns: &[&str], filter: Vec<Predicate>| {
+        let query_options = QueryOptions {
+            projection: Some(columns.iter().map(|c| c.to_string()).collect()),
+            filter: Expr::all(filter),
+            ..QueryOptions::default()
+        };
+        super::plan_replay(
+            source.as_ref(),
+            None,
+            "public.t",
+            &matches,
+            run.index.metadata.clone(),
+            ReadOptions::default(),
+            query_options,
+        )
+        .unwrap()
+        .plan
+        .factor()
+        .map(crate::batch::Factor::parts)
+    };
+
+    assert_eq!(factor_reading(), None);
+    assert_eq!(plan(&["id"], vec![]), None);
+    assert_eq!(factor_reading(), Some(None));
+    let jsonb = Predicate { column: "j".into(), op: PredicateOp::Gt("{}".into()) };
+    let keyed = plan(&["id"], vec![jsonb]);
+    assert_eq!(factor_reading(), Some(keyed));
+    let decoded = plan(&["a"], vec![]);
+    assert_eq!(factor_reading(), Some(decoded));
+    plan(&["id"], vec![]);
+    assert_eq!(factor_reading(), Some(decoded), "the largest a process planned is kept");
+}

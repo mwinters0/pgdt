@@ -52,8 +52,9 @@ held line holds resident" carries 33.3's re-take, read against this sitting.
   `a_stated_memory_budget_at_a_serial_job_count_is_not_marked_default`). It
   bounds chunks, never a held line, which nothing charges today.
 - **The allowance is the re-take's too**: `long_line_allowance` is stated on
-  both takes, so the two differ by the code alone; why it is sized off the
-  cluster is its docstring and
+  every take, sized since 33.16.2 from the factors the sitting's instrument
+  legs read, so two takes differ by the code alone where those do not move;
+  why it is sized off the cluster is its docstring and
   [2026-10-31](../status/history/2026-10-31.md), "P33.1: the figure re-shaped
   before its readings".
 - **No gate twin**: no held line is charged today, so no cell is held to its

@@ -104,6 +104,7 @@ import dataclasses
 import functools
 import hashlib
 import json
+import math
 import os
 import platform
 import re
@@ -117,6 +118,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import date
+from fractions import Fraction
 from pathlib import Path
 from typing import Callable, Iterable, Mapping, Sequence
 
@@ -1810,6 +1812,28 @@ LONG_LINE_SERIAL_ONLY: tuple[str, ...] = ("bound",)
 #: worker can hold one at once (`LONG_LINE_JOBS`). The same at every length,
 #: so two inputs of a kind differ in their lines' length alone.
 LONG_LINE_CLUSTER = 4
+#: The kinds read for **a term of a query's factor no count of Arrow's buffers
+#: sees** (`roadmap-P33-line-bound.md`, "How it is shown"): a fixed-width
+#: array's form, where a builder's growth shows; the stage a `text[]` part's
+#: token and unquoted copy hold; and a `jsonb` ordering key. Each is read by
+#: the one pass holding that term (`long_line_passes`), at one partition and
+#: along the ladder alone (`long_line_lengths`): **what one line holds is the
+#: term's question**, four partitions answering only how many lines the cut
+#: holds at once, which the other kinds' columns read, and a `text[]` line's
+#: decode at four partitions, or at the bound, passes `LONG_LINE_MEMORY`.
+LONG_LINE_TERM_KINDS: tuple[str, ...] = ("int8array", "textarray", "jsonb")
+
+
+def long_line_lengths(kind: str) -> tuple[str, ...]:
+    """The tokens of `LONG_LINE_LENGTHS` `kind`'s lines are generated at: every
+    one, or the ladder alone for a term's kind (`LONG_LINE_TERM_KINDS`)."""
+    if kind not in long_lines.KINDS:
+        raise ValueError(f"{kind!r} is no value kind of long-line-resident")
+    return tuple(
+        length
+        for length, _ in LONG_LINE_LENGTHS
+        if kind not in LONG_LINE_TERM_KINDS or length not in LONG_LINE_SERIAL_ONLY
+    )
 
 
 def long_line_bytes(length: str) -> int:
@@ -1819,17 +1843,24 @@ def long_line_bytes(length: str) -> int:
 
 def long_line_input(kind: str, length: str) -> str:
     """The input holding `long_lines`' cluster of `kind` lines of `length`, a
-    token of `LONG_LINE_LENGTHS`."""
-    if length not in dict(LONG_LINE_LENGTHS):
-        raise ValueError(f"{length!r} is no line length of long-line-resident")
+    token of `long_line_lengths(kind)`."""
+    if length not in long_line_lengths(kind):
+        raise ValueError(f"{length!r} is no line length of long-line-resident's {kind}")
     return f"long_{kind}_{length}"
 
+
+#: Every `long-line-resident` input, by kind then length.
+LONG_LINE_INPUTS: tuple[str, ...] = tuple(
+    long_line_input(kind, length) for kind in long_lines.KINDS for length in long_line_lengths(kind)
+)
 
 #: One input a value kind and a line length (`generate_long_lines.py`), each
 #: a cluster of `LONG_LINE_CLUSTER` lines between short rows. Its nominal is its
 #: cluster and a mebibyte for the rest, which is a few hundred bytes.
 for _kind in long_lines.KINDS:
     for _length, _bytes in LONG_LINE_LENGTHS:
+        if _length not in long_line_lengths(_kind):
+            continue
         INPUTS[long_line_input(_kind, _length)] = InputSpec(
             long_line_input(_kind, _length),
             "generate_long_lines.py",
@@ -2432,6 +2463,12 @@ class RunSpec:
     #: the same input in two sweeps is two readings, each paired only with its
     #: own sweep's (`nested-end-to-end`'s control).
     sweep: int | None = None
+    #: The `--memory` this leg states where its shape leaves it to the sitting
+    #: (`ALLOWANCE_SLOT`, `with_allowance`): `long-line-resident`'s, sized from
+    #: the factors its instrument legs read in the same sitting. **Part of
+    #: `key`**, appended where set: one shape under two allowances is two
+    #: arrangements, so a moved factor re-takes every leg it sizes.
+    allowance: int | None = None
 
     def key(self, figure: str) -> str:
         """This run's identity, which is what a reading is filed under.
@@ -2446,7 +2483,24 @@ class RunSpec:
         base = f"{figure}/{self.binary}/{self.input}/{self.command}/{self.regime}"
         if self.memory is not None:
             base += f"/m={self.memory}"
+        if self.allowance is not None:
+            base += f"/allowance={self.allowance}"
         return base if self.sweep is None else f"{base}/sweep={self.sweep}"
+
+
+def with_allowance(script: str, spec: RunSpec) -> str:
+    """`script`, `spec`'s shape, with its `ALLOWANCE_SLOT` replaced by the
+    spec's allowance. **Refused where the two disagree**: a shape leaving its
+    allowance to a spec stating none would run with the slot as its argument,
+    and a spec stating one over a shape with no slot would be keyed by an
+    allowance nothing ran under."""
+    if (ALLOWANCE_SLOT in script) != (spec.allowance is not None):
+        raise ValueError(
+            f"{spec.label or spec.command}: its shape "
+            + ("leaves" if ALLOWANCE_SLOT in script else "leaves no")
+            + f" allowance to the sitting, and the spec states {spec.allowance}"
+        )
+    return script if spec.allowance is None else script.replace(ALLOWANCE_SLOT, str(spec.allowance))
 
 
 #: The perf table's columns, split the way the generator writes them: the 16
@@ -2653,16 +2707,28 @@ GZRSS_FAMILY = "parse-gzrss-jobs-"
 #: its axis; a gathering family (`GATHERING_FAMILIES`), a default parse being
 #: one of its passes.
 LONG_RSS_FAMILY = "long-rss-"
+#: `long-line-resident`'s instrument legs, `<family><pass>`: a query or filter
+#: pass of `LONG_LINE_PLANNED` on the introspection build, once at
+#: `SWEEP_JOBS`, stating no allowance, read for the factor its plan settled
+#: (`planned_factor`, `crates/pgdt/src/introspect.rs`) and never for a
+#: resident. A gathering family as `LONG_RSS_FAMILY` is, its builder the same.
+LONG_FACTOR_FAMILY = "long-factor-"
 #: The passes, in the table's column order, each with what its column is
 #: called: a parse at the data level, the request stated as every gathering
 #: figure states it (`GATHER_STATISTICS`); the same parse told to check every
-#: field (`--postgres-invalid-values strict`); and a query decoding every
-#: value, the provider's (`long_line_invocation`).
+#: field (`--postgres-invalid-values strict`); a query decoding every value,
+#: the provider's (`long_line_invocation`); and `pgdt query`'s ordering filter
+#: over the long column, whose key only the library's semantics hold, the
+#: provider comparing as DataFusion does (`long_line_filter`).
 LONG_LINE_PASSES: tuple[tuple[str, str], ...] = (
     ("parse", "default parse"),
     ("strict", "strict parse"),
     ("query", "query"),
+    ("filter", "ordering filter"),
 )
+#: The passes a query's factor is planned by, each read off the instrument
+#: (`LONG_FACTOR_FAMILY`).
+LONG_LINE_PLANNED: tuple[str, ...] = ("query", "filter")
 #: The counts each pass is read at: the serial path and the optimization
 #: baseline (`roadmap.md`, "Four workers is the optimization baseline;
 #: twenty-four is the guard"), as the phase's spec names them.
@@ -2673,39 +2739,87 @@ LONG_LINE_JOBS: tuple[int, ...] = (1, 4)
 #: (`roadmap-P33-line-bound.md`, "A held line is charged, and admitted in file
 #: order"), and a re-take under it is where a gate twin belongs.
 LONG_LINE_MEMORY = "16g"
-#: What the spec charges a held line of a pass decoding whole values, a
-#: query's or a strict parse's, in bytes a line byte
-#: (`roadmap-P33-line-bound.md`, "What a held line costs"): the largest charge
-#: any leg's line will draw.
-LONG_LINE_WHOLE_VALUE_CHARGE = 2
+#: What a `long-line-resident` timed leg's shape states for `--memory` and
+#: `pgdump.memory`, replaced by its spec's own allowance as it runs
+#: (`RunSpec.allowance`): the number is the sitting's, sized from the factors
+#: its instrument legs read (`long_line_allowance`), so no shape restates one.
+ALLOWANCE_SLOT = "@allowance@"
 
 
-def long_line_jobs(length: str) -> tuple[int, ...]:
+def long_line_passes(kind: str) -> tuple[str, ...]:
+    """The passes `kind` is read by: the two parses and the query, or for a
+    term's kind (`LONG_LINE_TERM_KINDS`) the one holding its term — the
+    provider's query over an array, the ordering filter over `jsonb`."""
+    if kind not in long_lines.KINDS:
+        raise ValueError(f"{kind!r} is no value kind of long-line-resident")
+    if kind == "jsonb":
+        return ("filter",)
+    if kind in LONG_LINE_TERM_KINDS:
+        return ("query",)
+    return ("parse", "strict", "query")
+
+
+def long_line_jobs(kind: str, length: str) -> tuple[int, ...]:
     """The counts a line of `length` is read at: `LONG_LINE_JOBS`, or one
-    alone for a length in `LONG_LINE_SERIAL_ONLY`."""
-    return (1,) if length in LONG_LINE_SERIAL_ONLY else LONG_LINE_JOBS
+    alone for a length in `LONG_LINE_SERIAL_ONLY` or a term's kind
+    (`LONG_LINE_TERM_KINDS`)."""
+    if length not in long_line_lengths(kind):
+        raise ValueError(f"{length!r} is no line length of long-line-resident's {kind}")
+    if length in LONG_LINE_SERIAL_ONLY or kind in LONG_LINE_TERM_KINDS:
+        return (1,)
+    return LONG_LINE_JOBS
 
 
-def long_line_allowance() -> int:
-    """The `--memory` and `pgdump.memory` every `long-line-resident` leg
+def fmt_factor(factor: Fraction) -> str:
+    """A planned factor as the instrument writes it: `held/per`, a whole one
+    bare, `none` for zero."""
+    if not factor:
+        return "none"
+    return str(factor.numerator) if factor.denominator == 1 else f"{factor.numerator}/{factor.denominator}"
+
+
+def parse_planned_factor(text: str) -> Fraction:
+    """A report's `planned_factor`, `held/per` or `none`, as bytes held beside
+    a line per byte of it, `none` being zero."""
+    if text == "none":
+        return Fraction(0)
+    held, sep, per = text.partition("/")
+    if not sep or not held.isdigit() or not per.isdigit() or int(per) == 0:
+        raise ValueError(f"{text!r} is no planned factor")
+    return Fraction(int(held), int(per))
+
+
+def long_line_allowance(factors: Mapping[str, Fraction]) -> int:
+    """The `--memory` and `pgdump.memory` every `long-line-resident` timed leg
     states: `PARALLEL_BUDGET`'s readers, plus the widest leg's lines held at
-    once at the whole-value charge — a line a worker, at every length and
-    count the figure reads.
+    once at its charge — a line a worker, at every length and count the figure
+    reads its kind at.
+
+    **A charge is the spec's** (`roadmap-P33-line-bound.md`, "What a held line
+    costs"): a query's or a filter's its line once plus its kind's factor,
+    `factors` holding each planned kind's as its instrument leg read it
+    (`LONG_FACTOR_FAMILY`); a parse's, which streams its line and draws only
+    for the scalar text it collects, at most its line. So **it is sized from
+    the largest factor, read rather than restated**.
 
     **Sized off the cluster so that it never binds on the lines.** Inert on
     today's code, which charges no held line. Once the ledger charges one, an
     allowance with nothing for the lines — `PARALLEL_BUDGET`'s alone — leaves
-    four 512 MiB lines at twice their bytes past what its carve leaves, and the
-    re-take would price waiting and parking, which the floor's tests and the
-    acceptance's hand run own, rather than the charge factors. **One allowance
-    for every leg, stated on both takes**, so the two differ by the code alone,
-    and two lengths of one pass differ by the line alone."""
-    held = max(
-        jobs * LONG_LINE_WHOLE_VALUE_CHARGE * line
-        for length, line in LONG_LINE_LENGTHS
-        for jobs in long_line_jobs(length)
-    )
-    return stated_allowance(PARALLEL_BUDGET + held)
+    four 512 MiB lines past what its carve leaves, and the re-take would price
+    waiting and parking, which the floor's tests and the acceptance's hand run
+    own, rather than the charge factors. **One allowance for every leg, stated
+    on both takes**, so the two differ by the code alone where the factors do
+    not move, and two lengths of one pass differ by the line alone."""
+    held = Fraction(0)
+    for kind in long_lines.KINDS:
+        for name in long_line_passes(kind):
+            if name in LONG_LINE_PLANNED and kind not in factors:
+                raise ValueError(f"no factor was read for {kind}'s {name}")
+            charge = 1 + factors[kind] if name in LONG_LINE_PLANNED else Fraction(1)
+            for length in long_line_lengths(kind):
+                for jobs in long_line_jobs(kind, length):
+                    held = max(held, jobs * charge * long_line_bytes(length))
+    return stated_allowance(PARALLEL_BUDGET + math.ceil(held))
 
 
 #: This machine's hardware threads and physical cores, which the figure's
@@ -3353,21 +3467,52 @@ LONG_LINE_BUILDER = (
 )
 
 
-def long_line_invocation(partitions: int, dump: str) -> tuple[list[str], list[str]]:
+def long_line_invocation(
+    partitions: int, dump: str, allowance: str | None = ALLOWANCE_SLOT
+) -> tuple[list[str], list[str]]:
     """The environment and arguments one query leg of `long-line-resident`
     states over the dump at `dump`, at `partitions` as its session's
     `target_partitions`: the `pgdt` legs' allowance and line limit, each a
-    `SET` ahead of the query in the same process."""
+    `SET` ahead of the query in the same process — no allowance for an
+    instrument leg reading the plan's factor, which no allowance moves
+    (`LONG_FACTOR_FAMILY`)."""
     if partitions not in LONG_LINE_JOBS:
         raise ValueError(f"{partitions} is a partition count the figure does not carry")
     env = [f"{DFCLI_PARTITIONS}={partitions}"]
     argv = [
         "--source", f"{DFCLI_CATALOG}={dump}", "--format", "csv", "-q",
-        "-c", f"SET pgdump.memory = {long_line_allowance()}",
+        *(("-c", f"SET pgdump.memory = {allowance}") if allowance is not None else ()),
         "-c", f"SET pgdump.max_line_bytes = {LONG_LINE_BOUND}",
         "-c", LONG_LINE_SQL,
-    ]
+    ]  # fmt: skip
     return env, argv
+
+
+#: `long-line-resident`'s ordering filter: the long `jsonb` column ordered
+#: against an empty object, which every row's object passes, a pair or more
+#: being greater than none (I41's `compareJsonbContainers`), so it keeps every
+#: row and reads every field's key. Only `id` is projected, so the batch
+#: decodes nothing the key's term does not.
+LONG_LINE_FILTER = "v>{}"
+
+
+def long_line_filter(jobs: int, allowance: str | None = ALLOWANCE_SLOT) -> str:
+    """`pgdt query`'s ordering filter over the cluster at `jobs`, under the
+    figure's allowance and line limit, over the cache the untimed builder
+    wrote; no allowance for an instrument leg (`long_line_invocation`).
+
+    **`pgdt query`'s, not the provider's**: a pushed filter compares as
+    DataFusion does over the emitted value (`docs/design/decisions.md`,
+    "D88"), `jsonb` as its text, so only the library's semantics hold a
+    `jsonb` key. Its printing renders `id` alone."""
+    if jobs not in LONG_LINE_JOBS:
+        raise ValueError(f"{jobs} is a job count the figure does not carry")
+    memory = f"--memory {allowance} " if allowance is not None else ""
+    return (
+        f"/pgdt query --source /dump.sql --cache /dump.sql.pgdt --table {long_lines.TABLE} "
+        f"--column id --filter '{LONG_LINE_FILTER}' --jobs {jobs} {memory}"
+        f"--max-line-bytes {LONG_LINE_BOUND} >/dev/null"
+    )
 
 #: What the decode figure's container is given, against the register's 512 MB.
 #: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
@@ -4600,8 +4745,9 @@ def _script(command: str) -> str:
         )
     if command.startswith(LONG_RSS_FAMILY):
         # `long-line-resident`: one pass at one count under the wrapper, every
-        # leg stating the figure's line limit and allowance. The query's builder is outside the timer and the wrapper,
-        # a process of its own, so neither reads its peak.
+        # leg stating the figure's line limit and its sitting's allowance
+        # (`ALLOWANCE_SLOT`). A query's or filter's builder is outside the
+        # timer and the wrapper, a process of its own, so neither reads its peak.
         name, _, jobs = command.removeprefix(LONG_RSS_FAMILY).rpartition("-")
         if name not in dict(LONG_LINE_PASSES) or not jobs.isdigit():
             raise ValueError(f"unknown command shape {command!r}")
@@ -4613,12 +4759,28 @@ def _script(command: str) -> str:
                 f"{LONG_LINE_BUILDER}time {dfcli_shell(env, f'{PEAK_RSS} {SQL_SHELL}', argv)} "
                 f">/tmp/result.csv && {DFCLI_ANSWER}"
             )
+        if name == "filter":
+            return f"{LONG_LINE_BUILDER}time {PEAK_RSS} {long_line_filter(int(jobs))}"
         strict = " --postgres-invalid-values strict" if name == "strict" else ""
         return (
             f"time {PEAK_RSS} /pgdt parse --source /dump.sql --cache /tmp/x.pgdt "
-            f"--jobs {jobs} --memory {long_line_allowance()} "
+            f"--jobs {jobs} --memory {ALLOWANCE_SLOT} "
             f"--max-line-bytes {LONG_LINE_BOUND} {GATHER_STATISTICS}{strict} >/dev/null"
         )
+    if command.startswith(LONG_FACTOR_FAMILY):
+        # `long-line-resident`'s instrument legs: the timed legs' query or
+        # filter at `SWEEP_JOBS`, under no wrapper and no allowance, for the
+        # report its process writes at exit.
+        name = command.removeprefix(LONG_FACTOR_FAMILY)
+        if name == "query":
+            env, argv = long_line_invocation(SWEEP_JOBS, "/dump.sql", None)
+            return (
+                f"{LONG_LINE_BUILDER}time {dfcli_shell(env, SQL_SHELL, argv)} "
+                f">/tmp/result.csv && {DFCLI_ANSWER}"
+            )
+        if name == "filter":
+            return f"{LONG_LINE_BUILDER}time {long_line_filter(SWEEP_JOBS, None)}"
+        raise ValueError(f"unknown command shape {command!r}")
     if command.startswith(JOBS_AXIS):
         # The three shapes whose worker count is a figure's axis rather than the
         # apparatus's constant. Each `pgdt` one is otherwise the shape it is
@@ -4757,6 +4919,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"{GZPASS_FAMILY}{n}" for n in GZPASS_JOBS),
         *(f"{GZRSS_FAMILY}{n}" for n in GZIP_RSS_JOBS),
         *(f"{LONG_RSS_FAMILY}{name}-{n}" for name, _ in LONG_LINE_PASSES for n in LONG_LINE_JOBS),
+        *(f"{LONG_FACTOR_FAMILY}{name}" for name in LONG_LINE_PLANNED),
         *(
             f"{RESERVE_FAMILY}{token}-{budget}"
             for token, _, _ in RESERVE_ARENAS
@@ -4890,6 +5053,7 @@ GATHERING_FAMILIES: tuple[str, ...] = (
     PARALLEL_SCAN,
     *DATA_LEVEL_QUERIES,
     LONG_RSS_FAMILY,
+    LONG_FACTOR_FAMILY,
 )
 
 
@@ -4906,7 +5070,8 @@ def statistics_flag_problems() -> list[str]:
     figures', the dynamic-filter figures', whose scans prune by what the
     untimed builder gathered, and the query figures', which read the cache it
     wrote (`DATA_LEVEL_QUERIES`, `PARALLEL_SCAN`), and `long-line-resident`'s, a default
-    parse being one of its passes (`LONG_RSS_FAMILY`) — and a `parse` of theirs that inherits
+    parse being one of its passes (`LONG_RSS_FAMILY`) and its instrument legs reading
+    through its builder's cache (`LONG_FACTOR_FAMILY`) — and a `parse` of theirs that inherits
     the request is reported exactly as anyone else's is."""
     return [
         command
@@ -5412,7 +5577,7 @@ class Session:
         self._last_killed = False
         self._last_instrument = {}
         dump = self.input_path(spec.input, spec.regime)
-        script = _script(spec.command)
+        script = with_allowance(_script(spec.command), spec)
         counted = self.counted(spec)
         if counted:
             script = counted_script(script)
@@ -5582,14 +5747,18 @@ class Session:
                     "resolved_jobs": jobs,
                     **({} if spec.input == "control" else {"first_pass_workers": jobs}),
                 }
-            if spec.command.startswith(LONG_RSS_FAMILY):
+            if spec.command.startswith((LONG_RSS_FAMILY, LONG_FACTOR_FAMILY)):
                 # A stand-in answer or resolution, for the same reason: the
-                # figure refuses a query leg answering other than its input's
-                # values, and a parse leg resolving another count.
-                name, _, jobs = spec.command.removeprefix(LONG_RSS_FAMILY).rpartition("-")
+                # figure refuses a query or filter leg answering other than its
+                # input's rows, and a parse leg resolving another count.
+                rest = spec.command.removeprefix(LONG_RSS_FAMILY).removeprefix(LONG_FACTOR_FAMILY)
+                name, _, jobs = rest.rpartition("-") if "-" in rest else (rest, "", "")
+                answer = str(long_line_answer(spec.input))
                 self._last_stdout = (
-                    {"result_rows": "1", "result_first": str(long_line_answer(spec.input))}
+                    {"result_rows": "1", "result_first": answer}
                     if name == "query"
+                    else {"rows_returned": answer}
+                    if name == "filter"
                     else {"resolved_jobs": jobs}
                 )
             if spec.command.startswith(GZSPACING_FAMILY):
@@ -5642,6 +5811,10 @@ class Session:
                     "malloc_system_current": str(130 * MIB),
                     "malloc_system_max": str(350 * MIB),
                 }
+                if spec.command.startswith(LONG_FACTOR_FAMILY):
+                    # A stand-in plan's factor, varied by input so the figure's
+                    # largest is one kind's; never the library's arithmetic.
+                    self._last_instrument["planned_factor"] = f"{1 + digest[4] % 9}/{2}"
             return 0.4 + digest[0] / 255 * 5.0
         # The counters bracket the run as tightly as possible: two procfile
         # reads, outside the timer, either side of the subprocess. Their
@@ -12894,57 +13067,104 @@ def run_dynamic_filter_topk(session: Session) -> str:
 
 
 def long_line_answer(name: str) -> int:
-    """What `LONG_LINE_SQL` answers over the input `name`: every row of its
-    table (`generate_long_lines.row_count`)."""
-    if name not in {
-        long_line_input(k, length) for k in long_lines.KINDS for length, _ in LONG_LINE_LENGTHS
-    }:
+    """What `LONG_LINE_SQL` and `LONG_LINE_FILTER` answer over the input
+    `name`: every row of its table (`generate_long_lines.row_count`)."""
+    if name not in LONG_LINE_INPUTS:
         raise ValueError(f"{name!r} is no input of long-line-resident")
     return long_lines.row_count(LONG_LINE_CLUSTER)
 
 
-def long_line_groups(kind: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """`kind`'s two sweeps, as the lengths' tokens: every length read at both
-    counts, which the secant and its residuals subtract; and the lengths read
-    at one worker alone beside the secant's longer end, their anchor.
+def long_line_groups(kind: str) -> tuple[tuple[str, ...], ...]:
+    """`kind`'s sweeps, as the lengths' tokens: every length but the bound,
+    which the secant and its residuals subtract; then, but for a term's kind
+    (`LONG_LINE_TERM_KINDS`), which reads no line at the bound, the lengths
+    read at one worker alone beside the secant's longer end, their anchor.
 
     **Two sweeps because the bound's cluster outgrows the tmpfs room beside
     the ladder** (`warm_bound`): an anchor of the secant's longer end, measured
     in each, lets the bound's residual subtract within its own sweep and take
     from the other only the secant, a per-byte rate, never a reading
     (`Subtraction`)."""
-    if kind not in long_lines.KINDS:
-        raise ValueError(f"{kind!r} is no value kind of long-line-resident")
-    both = tuple(length for length, _ in LONG_LINE_LENGTHS if length not in LONG_LINE_SERIAL_ONLY)
-    return both, (LONG_LINE_SECANT[1], *LONG_LINE_SERIAL_ONLY)
+    ladder = tuple(
+        length for length in long_line_lengths(kind) if length not in LONG_LINE_SERIAL_ONLY
+    )
+    if kind in LONG_LINE_TERM_KINDS:
+        return (ladder,)
+    return ladder, (LONG_LINE_SECANT[1], *LONG_LINE_SERIAL_ONLY)
 
 
-def _long_line_specs() -> list[RunSpec]:
-    """Every leg, by kind then sweep: each length of a kind's first sweep at
-    each of its counts, then its second sweep's — the serial-only lengths and
-    their anchor, at one worker, the anchor's legs naming the sweep
-    (`in_sweep`)."""
+#: The length each kind's instrument leg reads its plan's factor over: the
+#: ladder's shortest, a plan's factor being the schema's and its filter's,
+#: whatever the lines' length.
+LONG_LINE_FACTOR_LENGTH = LONG_LINE_LENGTHS[0][0]
+
+
+def long_line_warm_groups() -> tuple[tuple[str, ...], ...]:
+    """Every sweep, in order: each kind's (`long_line_groups`)."""
+    return tuple(
+        tuple(long_line_input(kind, length) for length in group)
+        for kind in long_lines.KINDS
+        for group in long_line_groups(kind)
+    )
+
+
+def _long_factor_specs() -> list[RunSpec]:
+    """Each kind's instrument leg: its planned pass (`LONG_LINE_PLANNED`) on
+    the introspection build over its `LONG_LINE_FACTOR_LENGTH` input, its
+    report naming the factor the plan settled. **Swept in its kind's ladder
+    sweep, ahead of every timed leg**, whose allowance it sizes: a sweep of
+    their own would stage each input twice with no subtraction pairing it."""
+    labels = dict(LONG_LINE_PASSES)
+    return [
+        RunSpec(
+            "introspect",
+            long_line_input(kind, LONG_LINE_FACTOR_LENGTH),
+            f"{LONG_FACTOR_FAMILY}{name}",
+            "warm-parallel",
+            f"{kind}, the factor its {labels[name]} planned",
+            instrument=True,
+        )
+        for kind in long_lines.KINDS
+        for name in long_line_passes(kind)
+        if name in LONG_LINE_PLANNED
+    ]
+
+
+def _long_line_specs(allowance: int) -> list[RunSpec]:
+    """Every timed leg, by kind then sweep, each stating `allowance`: each
+    length of a kind's first sweep at each of its counts, then its second
+    sweep's — the serial-only lengths and their anchor, at one worker, the
+    anchor's legs naming the sweep (`in_sweep`)."""
     figure = "long-line-resident"
+    labels = dict(LONG_LINE_PASSES)
     specs = []
-    for k, kind in enumerate(long_lines.KINDS):
-        for gi, group in enumerate(long_line_groups(kind)):
+    gi = 0
+    for kind in long_lines.KINDS:
+        for k, group in enumerate(long_line_groups(kind)):
             for length in group:
-                anchor = gi == 1 and length not in LONG_LINE_SERIAL_ONLY
-                jobs_read = (1,) if anchor else long_line_jobs(length)
+                anchor = k == 1 and length not in LONG_LINE_SERIAL_ONLY
+                jobs_read = (1,) if anchor else long_line_jobs(kind, length)
                 where = (
                     f"{length} MiB lines" if length.isdigit() else "lines at the bound"
                 ) + (" beside the bound" if anchor else "")
-                for name, label in LONG_LINE_PASSES:
+                for name in long_line_passes(kind):
                     for jobs in jobs_read:
                         spec = RunSpec(
                             "dfcli" if name == "query" else "pgdt",
                             long_line_input(kind, length),
                             f"{LONG_RSS_FAMILY}{name}-{jobs}",
                             "warm-parallel",
-                            f"{kind}, {where}, {label}, {jobs}{'p' if name == 'query' else 'j'}",
+                            f"{kind}, {where}, {labels[name]}, {jobs}{long_line_unit(name)}",
+                            allowance=allowance,
                         )
-                        specs.append(in_sweep(figure, spec, 2 * k + gi) if anchor else spec)
+                        specs.append(in_sweep(figure, spec, gi) if anchor else spec)
+            gi += 1
     return specs
+
+
+def long_line_unit(name: str) -> str:
+    """What a pass's count is of: the provider's partitions, or workers."""
+    return "p" if name == "query" else "j"
 
 
 def long_line_secant(lo: Sequence[float], hi: Sequence[float], span: int) -> float:
@@ -12970,32 +13190,69 @@ def long_line_residual(
     return median(at) - (median(anchor) + per_byte * span / 1024)
 
 
+def long_line_factors(session: Session, specs: Sequence[RunSpec]) -> dict[str, Fraction]:
+    """Each kind's planned factor, off its instrument leg's reports
+    (`_long_factor_specs`). **Refused, naming each, where a leg's reports name
+    none, or disagree**: the factor is a plan's, the same every rep, and a leg
+    that planned nothing, or answered other than its input's rows, read no
+    factor of the figure's query."""
+    figure = "long-line-resident"
+    factors: dict[str, Fraction] = {}
+    problems = []
+    for spec in specs:
+        kind = spec.input.split("_")[1]
+        name = spec.command.removeprefix(LONG_FACTOR_FAMILY)
+        planned = {report.get("planned_factor") for report in session.instrument_reports(figure, spec)}
+        if len(planned) != 1 or None in planned:
+            problems.append(f"{spec.label}: its reports name the factors {sorted(map(str, planned))}")
+            continue
+        report = session.reported.get(spec.key(figure), {})
+        want = str(long_line_answer(spec.input))
+        got = report.get("result_first") if name == "query" else report.get("rows_returned")
+        if got != want:
+            problems.append(f"{spec.label}: it answered {got or 'nothing'} where its table holds {want}")
+            continue
+        factors[kind] = parse_planned_factor(planned.pop())
+    if problems:
+        raise RuntimeError(f"{figure} cannot read its factors: " + "; ".join(problems))
+    return factors
+
+
 def run_long_line_resident(session: Session) -> str:
     """Peak resident set of each pass over a cluster of long lines, by value
     kind, line length and count: what a pass holds beside a line it holds,
     on code that charges none of it.
 
-    **What it prices is the copies**, the phase's spec's account of today's
-    code ("What a held line costs"): a held line's buffer at its high-water
-    mark, the decoded copy beside it, and the chunks a copied line keeps
-    pinned. The spec sets a held line's charge at once its bytes for a pass
-    keeping clipped heads and twice for one decoding whole values, once those
-    copies go; this figure is read again under that charge, which is what
-    confirms or re-sets it.
+    **What it prices is the copies and the factors**, the phase's spec's
+    account ("What a held line costs"): a parse streams its line, holding at
+    most the scalar text it collects; a query holds its line and its decode,
+    bounded by its plan's factor — the largest of its columns' decode factors
+    and its terms' key factors (`docs/design/decisions.md`, "D154") — which
+    each planned kind's instrument leg reads off the plan
+    (`LONG_FACTOR_FAMILY`) and every leg's allowance is sized from
+    (`long_line_allowance`). The term kinds (`LONG_LINE_TERM_KINDS`) read the
+    terms no count of Arrow's buffers sees. This figure is read again once
+    the ledger charges a held line, which confirms the factors or re-sets
+    them.
 
     **What would falsify the account**, written before any reading:
 
-    - a one-partition query whose secant is outside three to four bytes a
-      line byte, the spec's figure for what a query holds today;
-    - a one-worker default parse whose secant is under one, a line being held
-      whole before its row is emitted (`docs/design/decisions.md`, "D23") — an
-      instrument not seeing the line, before it is a finding;
+    - a one-worker parse whose secant is past one: a parse streams its line
+      (D138), holding no `text`, `bytea` or escaped field's bytes;
+    - a one-partition query or filter whose secant is under one: its line is
+      held whole while its row is decoded (`docs/design/decisions.md`, "D23")
+      — an instrument not seeing the line, before it is a finding;
+    - a one-partition query or filter whose secant is past one plus twice its
+      planned factor: it then holds a term the factor misses beyond its
+      builders' doubling, which the factor leaves uncharged (D141) and 33.24
+      removes past a chunk term; between one plus the factor and that, the
+      doubling is the candidate, to be named rather than assumed;
     - a one-worker or one-partition cell whose residual at 32 MiB is larger
       than that line: resident is then not a factor times the line, and no
       charge factor is read off it;
     - a residual at 288 MiB differing from the 32 MiB one by more than a
-      32 MiB line, at either count: past a chunk the peak then follows the
-      owner's doubling rather than the line, and a factor read off the
+      32 MiB line, at either count: past a chunk the peak then follows a
+      buffer's doubling rather than the line, and a factor read off the
       power-of-two ladder is a factor of the growth at one phase of it;
     - a residual at the bound larger than a 32 MiB line: the ladder's secant
       does not reach the bound, and what one reader holds there, the floor's
@@ -13008,10 +13265,18 @@ def run_long_line_resident(session: Session) -> str:
     **No gate twin**: the container is headroom (`LONG_LINE_MEMORY`). A kill
     is still a kill, run once on the gate build before the error is raised.
     **Three reps**, as the other resident figures take: a peak is steady
-    across reps, and the reps catch an outlier.
+    across reps, and the reps catch an outlier. **One rep of each instrument
+    leg**, a plan's factor being the same every rep.
     """
     figure = "long-line-resident"
-    specs = _long_line_specs()
+    factor_specs = _long_factor_specs()
+    to_read = [s for s in factor_specs if not session.has(figure, s)]
+    session.build_before_sweep(to_read)
+    session.sweep(figure, to_read, session.cfg.reps(1))
+    factors = long_line_factors(session, factor_specs)
+    allowance = long_line_allowance(factors)
+
+    specs = _long_line_specs(allowance)
     to_sweep = [s for s in specs if not session.has(figure, s)]
     session.build_before_sweep(to_sweep)
     session.sweep(figure, to_sweep, session.cfg.reps(3))
@@ -13027,12 +13292,18 @@ def run_long_line_resident(session: Session) -> str:
             figure, spec
         )
         report = session.reported.get(spec.key(figure), {})
+        want = str(long_line_answer(spec.input))
         if name == "query":
-            want = str(long_line_answer(spec.input))
             if report.get("result_rows") != "1" or report.get("result_first") != want:
                 problems.append(
                     f"{spec.label}: the query counted {report.get('result_first', 'nothing')} "
                     f"values where its table holds {want}"
+                )
+        elif name == "filter":
+            if report.get("rows_returned") != want:
+                problems.append(
+                    f"{spec.label}: the filter kept {report.get('rows_returned', 'no')} rows "
+                    f"where its table holds {want}, every one of which it keeps"
                 )
         elif report.get("resolved_jobs") != jobs:
             problems.append(
@@ -13046,10 +13317,16 @@ def run_long_line_resident(session: Session) -> str:
         return f"{length} MiB" if length.isdigit() else f"the bound, {LONG_LINE_BOUND:,} B"
 
     lo, hi = LONG_LINE_SECANT
-    columns = [(name, label, jobs) for name, label in LONG_LINE_PASSES for jobs in LONG_LINE_JOBS]
+    read = {(name, jobs) for _, _, name, jobs, _ in readings}
+    columns = [
+        (name, label, jobs)
+        for name, label in LONG_LINE_PASSES
+        for jobs in LONG_LINE_JOBS
+        if (name, jobs) in read
+    ]
     headers = [
         "Lines",
-        *(f"{label}, {jobs}{'p' if name == 'query' else 'j'}" for name, label, jobs in columns),
+        *(f"{label}, {jobs}{long_line_unit(name)}" for name, label, jobs in columns),
     ]
 
     def cell(key: tuple[str, str, str, int, bool]) -> str:
@@ -13058,8 +13335,9 @@ def run_long_line_resident(session: Session) -> str:
     rows = []
     secants = []
     for kind in long_lines.KINDS:
-        both, serial = long_line_groups(kind)
-        for length in both:
+        groups = long_line_groups(kind)
+        ladder, serial = groups[0], groups[1] if len(groups) > 1 else ()
+        for length in ladder:
             rows.append(
                 [f"{kind}, {row_name(length)}"]
                 + [cell((kind, length, name, jobs, False)) for name, _, jobs in columns]
@@ -13072,18 +13350,29 @@ def run_long_line_resident(session: Session) -> str:
             )
         cells = [kind]
         for name, _, jobs in columns:
-            r = {length: readings.get((kind, length, name, jobs, False)) for length in both}
+            r = {length: readings.get((kind, length, name, jobs, False)) for length in ladder}
+            if r.get(lo) is None or r.get(hi) is None:
+                cells.append("—")
+                continue
             per_byte = long_line_secant(
                 r[lo], r[hi], long_line_bytes(hi) - long_line_bytes(lo)
             )
-            parts = [f"**×{per_byte:.2f}**"] + [
+            parts = [f"**×{per_byte:.2f}**"]
+            if name in LONG_LINE_PLANNED:
+                f = factors[kind]
+                parts[0] += (
+                    f" (planned ×{float(1 + f):.2f}, one and {fmt_factor(f)})"
+                    if f
+                    else " (planned ×1, no factor)"
+                )
+            parts += [
                 f"{length}: "
                 + fmt_rss_delta(
                     long_line_residual(
                         per_byte, r[lo], r[length], long_line_bytes(length) - long_line_bytes(lo)
                     )
                 )
-                for length in both
+                for length in ladder
                 if length not in LONG_LINE_SECANT
             ]
             for length in serial:
@@ -13097,34 +13386,41 @@ def run_long_line_resident(session: Session) -> str:
             cells.append(" · ".join(parts))
         secants.append(cells)
 
-    inputs = [
-        long_line_input(kind, length) for kind in long_lines.KINDS for length, _ in LONG_LINE_LENGTHS
-    ]
     sizes = ", ".join(
-        f"`{name}` " + _fmt_bytes(session.input_size(name, "warm-parallel")) for name in inputs
+        f"`{name}` " + _fmt_bytes(session.input_size(name, "warm-parallel"))
+        for name in LONG_LINE_INPUTS
     )
+    planned = ", ".join(f"`{kind}` {fmt_factor(f)}" for kind, f in factors.items())
     notes = (
         "\n\nEach cell is peak resident set; a length at the bound is read at one worker or "
-        "partition alone. Every input is one table of "
-        f"{long_lines.SHORT_ROWS} short rows, a cluster of {LONG_LINE_CLUSTER} consecutive rows "
-        "each a line of the length its row names, terminator included, and "
+        "partition alone, and a term's kind along the ladder at one alone. Every input is one "
+        f"table of {long_lines.SHORT_ROWS} short rows, a cluster of {LONG_LINE_CLUSTER} "
+        "consecutive rows each a line of the length its row names, terminator included, and "
         f"{long_lines.SHORT_ROWS} short rows (`generate_long_lines.py`): `text` decodes to "
-        "itself, `escaped` to seven bytes in eight, `bytea` to half. Every leg states "
-        f"`--memory {long_line_allowance()}`, `parallel-peak-rss`'s allowance and four "
-        f"lines held at twice their {hi} MiB, and I71's bound as its line limit, "
+        "itself, `escaped` to seven bytes in eight, `bytea` to half; `int8array` is a "
+        "`bigint[]` of single digits, `textarray` a `text[]` of one-letter elements and `jsonb` "
+        "an object of empty keys, each the densest text its term is held for. Every timed leg "
+        f"states `--memory {allowance}`, `parallel-peak-rss`'s allowance and the widest leg's "
+        "lines held at once at their charge — a parse's its line, a query's or filter's its line "
+        "and its kind's planned factor — and I71's bound as its line limit, "
         f"`{LONG_LINE_BOUND}`, in a {LONG_LINE_MEMORY} container — "
         "an apparatus departure from the register's 512 MB, which one held line outgrows. A "
         f"parse states `{GATHER_STATISTICS}`, and the strict one "
         "`--postgres-invalid-values strict` beside it. The query is `pgdt sql`'s "
-        f"`{LONG_LINE_SQL}` at the column's count of partitions, over a cache an untimed "
-        "`parse` wrote in the same container, its answer held to the input's rows. Each kind "
-        f"is two sweeps: the lengths read at both counts, and the bound beside the {hi} MiB "
-        "input again, its row marked so.\n\n"
+        f"`{LONG_LINE_SQL}` at the column's count of partitions, and the ordering filter "
+        f"`pgdt query`'s `--filter '{LONG_LINE_FILTER}'` projecting `id`, each over a cache an "
+        "untimed `parse` wrote in the same container, its answer held to the input's rows. Each "
+        "kind is two sweeps but a term's, one: the lengths read at both counts, and the bound "
+        f"beside the {hi} MiB input again, its row marked so.\n\n"
+        f"**Each planned factor**, read off its plan by the introspection build over the "
+        f"{LONG_LINE_FACTOR_LENGTH} MiB input, in its kind's first sweep ahead of every "
+        f"timed leg: {planned}.\n\n"
         f"Inputs: {sizes}.\n\n"
         f"**Each pass's secant**: the resident a line byte added between the {lo} MiB and "
-        f"{hi} MiB rows, then what it misses each other length's median by, measured less "
-        f"predicted — the bound's from the {hi} MiB row of its own sweep. At four workers or "
-        "partitions it sums every line held at once.\n\n"
+        f"{hi} MiB rows, beside a query's or filter's one plus its planned factor, then what it "
+        "misses each other length's median by, measured less predicted — the bound's from the "
+        f"{hi} MiB row of its own sweep. At four workers or partitions it sums every line held "
+        "at once.\n\n"
         + md_table(["Kind", *headers[1:]], secants)
         + "\n\nPer-rep readings (peak RSS):\n"
         + "\n".join(
@@ -13895,8 +14191,9 @@ FIGURES: list[Figure] = [
         run=run_gzip_first_pass,
     ),
     # What a pass holds while it holds a long line, by value kind, line length
-    # and count: the parse and its gathering, the strict check, and the
-    # provider's query and replay, which builds the column it reads.
+    # and count: the parse and its gathering, the strict check, the
+    # provider's query and replay, which builds the column it reads, and
+    # `pgdt query`'s ordering filter, each query's factor read off its plan.
     Figure(
         id="long-line-resident",
         section="What a held line holds resident",
@@ -13917,19 +14214,11 @@ FIGURES: list[Figure] = [
             *QUERY_CLI,
             "scripts/generate_long_lines.py",
         ),
-        warm_inputs=tuple(
-            long_line_input(kind, length)
-            for kind in long_lines.KINDS
-            for length, _ in LONG_LINE_LENGTHS
-        ),
-        # A kind's two sweeps (`long_line_groups`), so the tmpfs holds one
+        warm_inputs=LONG_LINE_INPUTS,
+        # A kind's sweeps (`long_line_groups`), so the tmpfs holds one
         # kind's lengths at a time, and the bound's cluster beside the
         # secant's longer end alone.
-        warm_groups=tuple(
-            tuple(long_line_input(kind, length) for length in group)
-            for kind in long_lines.KINDS
-            for group in long_line_groups(kind)
-        ),
+        warm_groups=long_line_warm_groups(),
         # The secant, each other length's residual against its shorter end,
         # and the bound's against its longer end, measured beside it.
         subtracts=tuple(
@@ -13949,6 +14238,7 @@ FIGURES: list[Figure] = [
                 *(
                     (LONG_LINE_SECANT[1], length, "a pass's residual at the bound, in its sweep")
                     for length in LONG_LINE_SERIAL_ONLY
+                    if length in long_line_lengths(kind)
                 ),
             )
         ),

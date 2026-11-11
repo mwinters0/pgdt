@@ -59,6 +59,12 @@ impl Factor {
         Self::new(bits, 8 * bytes)
     }
 
+    /// `held` and `per`, in lowest terms: what an instrumented binary reports.
+    #[cfg(feature = "introspect")]
+    pub(crate) fn parts(self) -> (u64, u64) {
+        (self.held, self.per)
+    }
+
     /// The most held beside a text of `len` bytes.
     #[cfg_attr(not(test), expect(dead_code, reason = "the ledger's carve reads it"))]
     pub(crate) fn of(self, len: u64) -> u64 {

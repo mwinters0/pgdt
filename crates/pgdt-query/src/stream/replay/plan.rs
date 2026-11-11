@@ -147,7 +147,10 @@ impl ReplayPlan {
     /// its filter's terms, each term's key dropped before its row is
     /// decoded — `None` where the query holds nothing beside its line that
     /// grows with it (`docs/design/decisions.md`, "D154").
-    #[cfg_attr(not(test), expect(dead_code, reason = "the ledger's carve reads it"))]
+    #[cfg_attr(
+        not(any(test, feature = "introspect")),
+        expect(dead_code, reason = "the ledger's carve reads it")
+    )]
     pub(in crate::stream) fn factor(&self) -> Option<Factor> {
         self.blocks.values().flat_map(PlannedBlock::factors).reduce(Factor::max)
     }
@@ -866,6 +869,10 @@ pub(in crate::stream) fn plan_replay(
     query_options: QueryOptions,
 ) -> Result<PlannedReplay> {
     let mut plan = ReplayPlan::new(read, query_options, database, table, matches, metadata)?;
+    // What an instrumented binary reports of the plan (`long-line-resident`'s
+    // legs read it there rather than restating it).
+    #[cfg(feature = "introspect")]
+    pgdt_core::internal::factor_planned(plan.factor().map(Factor::parts));
     let (groups, mut plan_notes, span, advice) = plan_partitions(
         source,
         matches,

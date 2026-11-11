@@ -4395,7 +4395,7 @@ Per-rep readings (peak RSS):
 Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤4.64%, machine ≤11% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤72°C.
 
 **It is read twice**: against the falsifiers `measure.run_long_line_resident`
-states, and against the account the 33.3 notes wrote of this commit's code
+stated at `6dd4523c`, and against the account the 33.3 notes wrote of this commit's code
 before it ([`roadmap-P33.3-hold-notes.md`](roadmap-P33.3-hold-notes.md), "What
 the re-take is read against"). The previous sitting, at `36888923` before 33.2
 and 33.3, is `runs/measure-20261101T001136/tables.md`; both changes lie between
