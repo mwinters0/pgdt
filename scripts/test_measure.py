@@ -5994,13 +5994,15 @@ class LongLineResident(unittest.TestCase):
     def test_the_term_kinds_are_the_generators_last_three(self):
         self.assertEqual(measure.LONG_LINE_TERM_KINDS, self.TERMS)
         self.assertEqual(measure.long_lines.KINDS[-3:], self.TERMS)
+        # `text[]` alone outgrows the container at the bound.
+        self.assertEqual(measure.LONG_LINE_LADDER_ONLY, ("textarray",))
 
     def test_an_input_a_kind_and_a_length_each_a_cluster(self):
         fig = measure.SELECTABLE_BY_ID[self.FIGURE]
         lengths = dict(measure.LONG_LINE_LENGTHS)
         self.assertEqual(fig.warm_inputs, measure.LONG_LINE_INPUTS)
-        # Every length of the three passes' kinds, the ladder of a term's.
-        self.assertEqual(len(fig.warm_inputs), 3 * len(lengths) + 3 * (len(lengths) - 1))
+        # Every length of every kind but `textarray`, its ladder alone.
+        self.assertEqual(len(fig.warm_inputs), 5 * len(lengths) + (len(lengths) - 1))
         for kind in measure.long_lines.KINDS:
             for length in measure.long_line_lengths(kind):
                 name = measure.long_line_input(kind, length)
@@ -6018,9 +6020,12 @@ class LongLineResident(unittest.TestCase):
                     measure.long_lines.field_bytes(kind, lengths[length])
         for kind in self.TERMS:
             with self.subTest(kind=kind):
-                self.assertNotIn("bound", measure.long_line_lengths(kind))
-                with self.assertRaises(ValueError):
-                    measure.long_line_input(kind, "bound")
+                if kind == "textarray":
+                    self.assertNotIn("bound", measure.long_line_lengths(kind))
+                    with self.assertRaises(ValueError):
+                        measure.long_line_input(kind, "bound")
+                else:
+                    self.assertIn("bound", measure.long_line_lengths(kind))
 
     def test_the_lengths_are_the_ladder_one_off_it_and_the_bound(self):
         lengths = dict(measure.LONG_LINE_LENGTHS)
@@ -6046,8 +6051,11 @@ class LongLineResident(unittest.TestCase):
         self.assertEqual(sorted(lengths.values()), [line for _, line in measure.LONG_LINE_LENGTHS])
         with self.assertRaises(ValueError):
             measure.long_line_input("text", "64")
+        # A term's kind reads the bound at one partition, as every kind does.
+        self.assertEqual(measure.long_line_jobs("int8array", "bound"), (1,))
+        self.assertEqual(measure.long_line_jobs("jsonb", "bound"), (1,))
         with self.assertRaises(ValueError):
-            measure.long_line_jobs("jsonb", "bound")
+            measure.long_line_jobs("textarray", "bound")
 
     def test_a_term_is_read_by_the_one_pass_holding_it(self):
         for kind in ("text", "escaped", "bytea"):
@@ -6090,6 +6098,12 @@ class LongLineResident(unittest.TestCase):
             measure.long_line_allowance(none),
             measure.stated_allowance(measure.PARALLEL_BUDGET + 4 * 512 * mib),
         )
+        # `int8array`'s line at the bound, at its factor, where it binds.
+        bound = self.FACTORS | {"int8array": Fraction(9)}
+        self.assertEqual(
+            measure.long_line_allowance(bound),
+            measure.stated_allowance(measure.PARALLEL_BUDGET + 10 * measure.LONG_LINE_BOUND),
+        )
         # A planned kind whose factor was not read is refused.
         with self.assertRaises(ValueError):
             measure.long_line_allowance({k: f for k, f in self.FACTORS.items() if k != "jsonb"})
@@ -6120,7 +6134,7 @@ class LongLineResident(unittest.TestCase):
             }
             with self.subTest(kind=kind):
                 self.assertEqual(groups[0], ("32", "128", "288", "512"))
-                if kind in self.TERMS:
+                if kind == "textarray":
                     self.assertEqual(len(groups), 1)
                 else:
                     self.assertEqual(groups[1], ("512", "bound"))
@@ -6245,8 +6259,9 @@ class LongLineResident(unittest.TestCase):
         specs = measure._long_line_specs(12345)
         passes = len(("parse", "strict", "query"))
         # A kind of three passes: four lengths at both counts, then the bound
-        # and its anchor at one; a term's kind, four lengths at one.
-        self.assertEqual(len(specs), 3 * passes * (4 * 2 + 2) + 3 * 4)
+        # and its anchor at one; a term's kind, its one pass at one partition,
+        # four lengths, then the bound and its anchor but for `textarray`.
+        self.assertEqual(len(specs), 3 * passes * (4 * 2 + 2) + 2 * (4 + 2) + 4)
         for spec in specs:
             with self.subTest(leg=spec.label):
                 self.assertIn(spec.command, measure.command_shapes())
@@ -6332,7 +6347,7 @@ class LongLineResident(unittest.TestCase):
         with self.assertRaises(ValueError):
             measure.long_line_answer("control")
         with self.assertRaises(ValueError):
-            measure.long_line_answer("long_jsonb_bound")
+            measure.long_line_answer("long_textarray_bound")
 
     def test_a_factor_leg_naming_none_or_answering_short_is_refused(self):
         specs = measure._long_factor_specs()
@@ -7783,8 +7798,8 @@ class WarmBound(unittest.TestCase):
                 ),
                 # A kind's lengths at both counts together, its secant and
                 # residuals subtracting them; then the bound beside the
-                # secant's longer end, the tmpfs holding no more, but for a
-                # term's kind, which reads no line at the bound.
+                # secant's longer end, the tmpfs holding no more, but for
+                # `textarray`, which reads no line at the bound.
                 "long-line-resident": tuple(
                     group
                     for kind in ("text", "escaped", "bytea", "int8array", "textarray", "jsonb")
@@ -7792,7 +7807,7 @@ class WarmBound(unittest.TestCase):
                         tuple(f"long_{kind}_{length}" for length in ("32", "128", "288", "512")),
                         *(
                             ((f"long_{kind}_512", f"long_{kind}_bound"),)
-                            if kind in ("text", "escaped", "bytea")
+                            if kind != "textarray"
                             else ()
                         ),
                     )

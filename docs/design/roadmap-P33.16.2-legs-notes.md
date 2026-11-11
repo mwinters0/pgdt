@@ -1,11 +1,7 @@
 # P33.16.2 notes — the term legs and their factors
 
-**The instrument landed; the bound legs and the readings did not.**
-`int8array` and `jsonb` read the bound beside their ladder, at one reader, as
-the spec's "How it is shown" states since this slice's review; the generator,
-`long_line_lengths` and `long_line_groups` still give a term's kind the
-ladder alone. A figure is taken from a
-commit, never from a tree carrying its own apparatus
+**The instrument and every leg landed; the readings did not.** A figure is
+taken from a commit, never from a tree carrying its own apparatus
 ([`measurements.md`](measurements.md), "A figure may be published outside the
 sweep"), so the box stays unticked until a later round, on the commit carrying
 this change, runs `cd scripts && uv run measure.py --figure long-line-resident`
@@ -25,7 +21,10 @@ falsifiers.
   `int8array`, a `bigint[]` of single digits, and `textarray`, a `text[]` of
   one-letter elements, each read by the provider's query; `jsonb`, an object
   of empty keys, read by `pgdt query`'s ordering filter `v>{}` projecting
-  `id`. Each reads the ladder at one partition alone.
+  `id`. Each reads at one partition alone, and `int8array` and `jsonb` the
+  bound beside their ladder, in a second sweep with its 512 MiB anchor as
+  every other kind does; `textarray` reads the ladder alone
+  (`LONG_LINE_LADDER_ONLY`).
 - **Each kind's factor is read before any timed leg**: one instrument leg a
   kind with a query or filter pass (`LONG_FACTOR_FAMILY`), over its 32 MiB
   input on the introspection build, refused where its reports name no factor
