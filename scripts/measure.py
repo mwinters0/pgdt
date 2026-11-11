@@ -1804,9 +1804,9 @@ LONG_LINE_LENGTHS: tuple[tuple[str, int], ...] = (
 LONG_LINE_SECANT: tuple[str, str] = ("128", "512")
 #: The lengths read at one worker or partition alone. **Four workers each
 #: holding what one holds at the bound** (`docs/design/measurements.md`, "What
-#: a held line holds resident") would need, on the widest pass, a container
-#: past `contained.MAX_FRACTION` of this machine's memory, which it refuses;
-#: one fits.
+#: a held line holds resident") would need, on the widest pass, more than
+#: `LONG_LINE_MEMORY`, the figure's one ceiling, which `memory_preflight` holds
+#: under `contained.MAX_FRACTION` of the machine; one fits.
 LONG_LINE_SERIAL_ONLY: tuple[str, ...] = ("bound",)
 #: The long lines in each input's cluster: the four-worker leg's count, so each
 #: worker can hold one at once (`LONG_LINE_JOBS`). The same at every length,
@@ -1820,7 +1820,8 @@ LONG_LINE_CLUSTER = 4
 #: along the ladder alone (`long_line_lengths`): **what one line holds is the
 #: term's question**, four partitions answering only how many lines the cut
 #: holds at once, which the other kinds' columns read, and a `text[]` line's
-#: decode at four partitions, or at the bound, passes `LONG_LINE_MEMORY`.
+#: decode at four partitions, or at the bound, passes `LONG_LINE_MEMORY`, the
+#: figure's one ceiling (`LONG_LINE_SERIAL_ONLY`).
 LONG_LINE_TERM_KINDS: tuple[str, ...] = ("int8array", "textarray", "jsonb")
 
 
@@ -2737,8 +2738,10 @@ LONG_LINE_JOBS: tuple[int, ...] = (1, 4)
 #: charged on today's code, so nothing here is held to the allowance it states;
 #: what will be is a held line's draw on the ledger
 #: (`roadmap-P33-line-bound.md`, "A held line is charged, and admitted in file
-#: order"), and a re-take under it is where a gate twin belongs.
-LONG_LINE_MEMORY = "16g"
+#: order"), and a re-take under it is where a gate twin belongs. **Held under
+#: `contained.MAX_FRACTION` of the machine** (`memory_preflight`), the one
+#: ceiling every leg's resident set must fit.
+LONG_LINE_MEMORY = "15g"
 #: What a `long-line-resident` timed leg's shape states for `--memory` and
 #: `pgdump.memory`, replaced by its spec's own allowance as it runs
 #: (`RunSpec.allowance`): the number is the sitting's, sized from the factors
@@ -6489,6 +6492,28 @@ def apparatus_preflight(cfg: Config, log: Callable[[str], None]) -> list[str]:
     return problems
 
 
+def memory_preflight(cfg: Config, figures: Sequence[Figure], machine: int) -> list[str]:
+    """Each container a selected figure's legs run in — its own (`Figure.memory`)
+    or the sweep's (`Config.memory`) — held to `contained.MAX_FRACTION` of
+    `machine`, the memory of the machine the sweep runs on: one problem line for
+    each past it, as `contained.py` refuses its own `--memory`.
+
+    **One ceiling for every container a reading runs in**: a limit near the
+    machine's is no limit, whether a figure or a hand run states it, and a
+    figure's container sized on a larger machine is refused here rather than
+    run past it."""
+    problems: list[str] = []
+    for what, memory in (
+        ("the sweep's container (PGDT_MEASURE_MEMORY)", cfg.memory),
+        *((f"{fig.id}'s container", fig.memory) for fig in figures if fig.memory),
+    ):
+        try:
+            contained.check_memory(memory, machine, what)
+        except ValueError as exc:
+            problems.append(str(exc))
+    return problems
+
+
 def mount_preflight(cfg: Config, dirs: Sequence[Path]) -> list[str]:
     """Each staging directory read back from inside a container before the
     first reading, one problem line for each whose contents it does not see.
@@ -7448,7 +7473,8 @@ class Figure:
     #: so a figure that sets it says so in its own table: the register's one
     #: line is "3.00 GiB inputs read by a `glibc` binary in a 512 MB
     #: container", and a figure holding N decoded 24 MiB blocks
-    #: at once cannot be one of them at 24 workers.
+    #: at once cannot be one of them at 24 workers. Held under
+    #: `contained.MAX_FRACTION` of the machine (`memory_preflight`).
     memory: str | None = None
     #: Consumers that repeat this figure's numbers **without naming it** — the
     #: residue the scan cannot find. `depends` is the edge into a figure; the
@@ -16132,6 +16158,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     stager.plan(figures)
     problems = stager.preflight(figures)
     problems += apparatus_preflight(cfg, log)
+    problems += memory_preflight(cfg, figures, contained.machine_bytes())
     problems += mount_preflight(
         cfg,
         [cfg.cache_dir, cfg.warm_dir, *([cfg.nvme_dir] if any(fig.nvme_inputs for fig in figures) else [])],

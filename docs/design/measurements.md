@@ -491,7 +491,10 @@ grow with the cores. `contained.py` runs the command in the release image,
 whose glibc binaries built there are held to and which carries `perf`,
 `heaptrack`, `valgrind`, `strace` and libc's debug symbols, each path it names mounted at
 its own path. Its limit guards the machine and is no figure's budget, so a
-shape stating no allowance discovers it; one past half the machine is refused.
+shape stating no allowance discovers it. **Half the machine is the one ceiling**
+(`contained.MAX_FRACTION`): `contained.py` refuses a `--memory` past it, and
+`measure.memory_preflight` a sweep with any figure's container past it, before
+the first reading.
 **The rule is checked, not remembered**: a `PreToolUse` hook
 (`.claude/settings.json`) refuses a Bash command running a built binary, `cargo
 run`, `cargo bench` or a profiler outside a container, and `test_measure.py`'s

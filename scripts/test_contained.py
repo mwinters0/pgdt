@@ -122,6 +122,10 @@ class Memory(unittest.TestCase):
         with self.assertRaises(ValueError):
             contained.check_memory("20g", 32 * 1024**3)
 
+    def test_a_refusal_names_what_stated_the_limit(self):
+        with self.assertRaisesRegex(ValueError, "^a figure's container 20g is over 50%"):
+            contained.check_memory("20g", 32 * 1024**3, "a figure's container")
+
     def test_main_refuses_it_before_building_anything(self):
         with unittest.mock.patch.object(contained, "argv") as built, \
                 contextlib.redirect_stderr(io.StringIO()):

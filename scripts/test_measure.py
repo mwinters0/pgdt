@@ -10942,6 +10942,49 @@ class ApparatusPreflight(unittest.TestCase):
         )
 
 
+class MemoryPreflight(unittest.TestCase):
+    """Each container a figure's legs run in is held to the ceiling
+    `contained.py` holds its own `--memory` to, before the first reading."""
+
+    #: The machine the register is taken on: `MemTotal`, 31.26 GiB.
+    HOST = 32_773_996 * 1024
+
+    def _figure(self, memory):
+        return dataclasses.replace(measure.FIGURES_BY_ID["long-line-resident"], memory=memory)
+
+    def test_a_figure_s_container_past_half_the_machine_is_refused_by_name(self):
+        problems = measure.memory_preflight(measure.Config(), [self._figure("16g")], self.HOST)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("long-line-resident's container 16g", problems[0])
+        self.assertIn(f"{contained.MAX_FRACTION:.0%}", problems[0])
+
+    def test_one_under_half_passes(self):
+        self.assertEqual(
+            measure.memory_preflight(measure.Config(), [self._figure("15g")], self.HOST), []
+        )
+
+    def test_the_sweep_s_own_container_is_held_too(self):
+        problems = measure.memory_preflight(
+            measure.Config(memory="20g"), [self._figure(None)], self.HOST
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("PGDT_MEASURE_MEMORY", problems[0])
+
+    def test_every_figure_fits_the_register_s_machine(self):
+        # Every container a figure states runs on the machine its table is
+        # taken on; `long-line-resident`'s is the largest.
+        self.assertEqual(
+            measure.memory_preflight(measure.Config(), measure.EVERY_FIGURE, self.HOST), []
+        )
+
+    def test_the_sweep_refuses_before_its_first_reading(self):
+        source = inspect.getsource(measure.emit)
+        self.assertIn("problems += memory_preflight(cfg, figures, contained.machine_bytes())", source)
+        self.assertLess(
+            source.index("memory_preflight(cfg, figures"), source.index("Session(cfg, stager")
+        )
+
+
 class MountPreflight(unittest.TestCase):
     """A container reads its mounts from the runtime's mount namespace, not
     the harness's, so before the first reading a nonce is written into each

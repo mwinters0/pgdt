@@ -5,9 +5,9 @@
 under a memory limit** (`docs/design/measurements.md`, "The apparatus"): a
 figure, a profile, a heaptrack recording, a traced save count, a hand probe.
 This machine-protecting limit is not a figure's budget; a figure's container
-states its own. `measure.py` runs its figures in containers of their own and
-everything else it starts through `argv` here, and its printed recipes and any
-hand-run reading run this script.
+states its own, under the same ceiling (`MAX_FRACTION`). `measure.py` runs its
+figures in containers of their own and everything else it starts through `argv`
+here, and its printed recipes and any hand-run reading run this script.
 
 It runs the command in the release image (`release.ensure_image`), whose glibc
 binaries built there are held to and which carries `perf`, `heaptrack`,
@@ -52,7 +52,8 @@ REPO = Path(__file__).resolve().parent.parent
 DEFAULT_MEMORY = "4g"
 
 #: The largest limit a run may state, as a fraction of the machine's memory: a
-#: limit near the machine's is no limit.
+#: limit near the machine's is no limit. **The one ceiling**, a figure's own
+#: container held to it as this script's is (`measure.memory_preflight`).
 MAX_FRACTION = 0.5
 
 #: The container runtime, as `release.py` names it.
@@ -88,11 +89,13 @@ def machine_bytes(meminfo: Path = Path("/proc/meminfo")) -> int:
     raise ValueError(f"no MemTotal in {meminfo}")
 
 
-def check_memory(size: str, machine: int) -> None:
-    """Refuse a limit past `MAX_FRACTION` of the machine's memory."""
+def check_memory(size: str, machine: int, what: str = "--memory") -> None:
+    """Refuse a limit past `MAX_FRACTION` of the machine's memory: this
+    script's `--memory`, and each container a figure's legs run in, which
+    `measure.memory_preflight` refuses before the first reading."""
     if size_bytes(size) > machine * MAX_FRACTION:
         raise ValueError(
-            f"--memory {size} is over {MAX_FRACTION:.0%} of this machine's "
+            f"{what} {size} is over {MAX_FRACTION:.0%} of this machine's "
             f"{machine / 1024**3:.1f} GiB: a limit near the machine's is no limit"
         )
 
