@@ -185,7 +185,9 @@ de-duplicates, a multirange, whose members it sorts and merges — holds the
 least that order needs: each pair's position in the field, sorted, its value
 walked from there, and each member's bounds. **A nested value is decoded
 straight into its builders** as its walk reads each element, with no staging of
-its elements, a field refused whole by truncating them back. A query then holds the
+its elements, a refused field ending its query; one a tier test reads
+([`decisions.md`](decisions.md), "D98"), a type that does not grow long, is held
+whole and decoded through its elements, as a scalar a batch reads is. A query then holds the
 line and that copy — about the line for an unescaped value, twice it for an
 escaped one, one and a half for hex bytea and up to twice it for
 `bytea_output = escape`'s form, which no dump pins (I4) — where today it holds
@@ -320,7 +322,7 @@ edge, pgdt-dump depending on pgdt-io already.
   field's runs as the carry's fold hands them over. The mark and the rewind are
   `Parts`'s (`value/source.rs`), the trait a container's walk hands its parts
   through, each implementor restoring its own state or truncating what it
-  collected, a query's builder among them. Rejected: a reader pulling
+  collected. Rejected: a reader pulling
   its source's next chunk itself, a codec walk driving pgdt-dump's reader, its
   tab split, CR hold and chunk retention beneath it (`decisions.md`, "D74").
 - **The offset cut** — pgdt-query's `batch.rs`, "Arrow batches", beside the

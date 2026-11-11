@@ -113,6 +113,7 @@ Spec: [`../design/roadmap-P33-line-bound.md`](../design/roadmap-P33-line-bound.m
 - [x] **33.14.1** A nested term holds no tree: an array, record and range ordering term as the output grammars' walk reads it, a nested literal's elements yielded one at a time over its held field, as the spec's "What a held line costs" states (D151); an allocation test failing on its parent — [notes](../design/roadmap-P33.14.1-tree-notes.md)
 - [x] **33.15** A normalized type's key is positions: a `jsonb` object's and a multirange's ordering key holding its pairs' positions and its members' bounds, and its key factor, as the spec's "What a held line costs" states (D152); an allocation test failing on its parent — [notes](../design/roadmap-P33.15-positions-notes.md)
 - [x] **33.16** A nested value decodes into its builders: no staging of a nested value's elements, as the spec's "What a held line costs" states (D153); an allocation test failing on its parent; its count pair, `02cdaa3d` against the tree, resolving a rise on the three query rows, placed by callgrind in `push_field`'s test for a nested column and in register allocation of unchanged code, and accepted (D108) — [notes](../design/roadmap-P33.16-builders-notes.md)
+- [ ] **33.16.3** 33.16's count pair over a nested column: `--count-pair` given a shape reading the `arrays` input, taken at `02cdaa3d` against `067b8f69`, a rise it resolves placed and reworked or accepted, as the spec's "How it is shown" states (D108)
 - [ ] **33.16.1** A query has one factor: a decode factor beside each builder, pgdt-query folding a query's decode factors and its ordering terms' key factors into one number, as the spec's "What a held line costs" and "Where it lives" state
 - [ ] **33.16.2** `long-line-resident`'s `int8[]` query and `jsonb` filter legs, as the spec's "How it is shown" states, and their readings at the commit adding them
 - [ ] **33.4** The ledger: carved by `Arrangement::resolve`, drawn by a held line past its chunk term, admitted in file order, a later holder giving its line up and re-reading it, the charge factors, a parse drawing for the scalar text it collects past its chunk term, an unstated allowance's ledger unlimited; a read over mapped blocks carving its longest line's charge before a reader starts; a query's polling contract stated on `TablePartitions` and tested; under today's line limit
@@ -150,27 +151,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **33.16 truncates nothing.** The spec's "What a held line costs" has a
-  nested value "refused whole by truncating" its builders back, and its "Where
-  it lives" counts a query's builder among `Parts`'s implementors (so
-  `roadmap-P33.21-rewind-notes.md`, "What 33.16 inherits"). 33.16 leaves a
-  refused field's parts in the builders (D153): every `Err` of `append_typed`
-  and `append_walked` ends its query (`RowBatcher::push_field`'s
-  `Error::FieldDecode`, raised through the replay's `?`) or is read off a
-  builder made for that one value (`render.rs`'s `decode_field`); Arrow's
-  builders have no truncate, so truncating needs a builder of our own for
-  every leaf type; and the batch walks the output grammar (D151), which
-  rewinds no whitespace run, so no `Parts` reaches it. Reconsidering: a mode
-  reading a refused nested field as NULL or as its text needs the truncation
-  and keeps the spec's sentences; otherwise both are amended.
-- **33.16's count pair cannot see the change it prices.** D108 and the spec's
-  "How it is shown" price a slice changing what a batch decodes with by
-  `--count-pair`, whose one input is the brace-free control
-  (`COUNT_PAIR_INPUT`, `scripts/measure.py`), so no shape reads a nested
-  column, and `nested-decode-micro` benches pgdt-codec's `decode_*`, not the
-  batch. 33.16 is ticked on that pair, which priced `push_field`'s new
-  dispatch alone, accepted (`roadmap-P33.16-builders-notes.md`, "Its count
-  pair, placed and accepted"), so the walk is accepted unpriced on a nested
-  column. Reconsidering: a pair shape over the `arrays` input, an apparatus
-  change to `measure.py`, and its rise placed and reworked or accepted in a
-  follow-up to 33.16.

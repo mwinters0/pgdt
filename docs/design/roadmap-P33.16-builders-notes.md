@@ -57,21 +57,18 @@ instruction by instruction; the legs kept in
   grown by doubling as Arrow's builders grow, so at the last doubling a
   builder holds its old and new buffers both. Whether a decode factor carries
   that growth is the factor's to state.
-
-## What 33.4 inherits
-
-- **A nested column under an unrepresentable test still unescapes its field
-  and reads it whole**: `UnrepresentableRead::cannot_hold` reads the text, so
-  an escaped nested field there is held twice beside its line.
+- **A nested column under a tier test is not walked** (D153): it is unescaped
+  and decoded through its elements, `UnrepresentableRead::cannot_hold` reading
+  its whole text, so its factor is the staged form's, an escaped field held
+  twice beside its line.
 
 ## Negative results
 
 - **No builder truncates a refused field's parts**, which the spec's "What a
   held line costs" states: every `Err` from `append_typed` and
   `append_walked` ends its query or is read off a builder made for that one
-  value, so no reader meets them. STATUS's "Decisions worth another look"
-  carries the call.
+  value, so no reader meets them (D153).
 - **The count pair prices only `push_field`'s dispatch**: its input, the
   brace-free control, holds no nested column, so the walk's speed against the
-  staged elements on a nested column is read by no instrument here; STATUS's
-  "Decisions worth another look" carries it.
+  staged elements on a nested column is read by no instrument here; 33.16.3
+  prices it.

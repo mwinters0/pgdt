@@ -30,11 +30,6 @@ was taken.
   `Check::Scalar`'s collected text gives `Check::mark` its fixed state, and
   only whitespace reaches it between a mark and a rewind.
 
-## What 33.16 inherits
-
-- **A query's builder is a `Parts`**, so it truncates what it appended since
-  the mark, as `Collect` does.
-
 ## Negative results
 
 - **`benches/resumable/` keeps its own `Blanks`**: it is

@@ -63,7 +63,9 @@ collected scalar text, drawn from the ledger. A mapping pass's census holds a
 counted container's field whole for the same reason (`FieldCount::keeps`,
 `Kept::Whole`), so a cold query is charged for a long `timestamptz[]` field in a
 table it reads beside it; the `*_in` walks a parse streams cannot stand in, reading
-spellings `decode_*` refuses (`{ infinity }` in a `date[]`).
+spellings `decode_*` refuses (`{ infinity }` in a `date[]`). A query's batch
+does the same for a nested column under a tier test (D153), unescaping it and
+decoding it through its elements.
 
 **Why P40 cares.** It was 33.13.2: the output grammars' walk resumable, the
 gatherer's sum and tier and the census's count read over it holding a bounded
