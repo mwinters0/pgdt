@@ -398,13 +398,20 @@ buffers sees has a leg**, from the slice that computes the factors on: a query
 over an `int8[]` of single digits, a fixed-width array's form, where a
 builder's growth shows; one over a `text[]` of one-byte elements, the stage a
 part's token and unquoted copy hold beside its view; and an ordering filter
-over a `jsonb` object, a key factor. Each leg's factor is read off its planned
+over a `jsonb` object of empty keys, a key factor, each the densest text its
+term is stated over. Each reads its lengths at one reader, what one line holds
+being a term's question, and `int8[]` and `jsonb` read the bound beside them,
+the cell the floor's charge for a factor is otherwise extrapolated to;
+`text[]`'s, its builders doubling, outgrows the figure's container. Each leg's factor is read off its planned
 query by the instrument, never restated, and the stated allowance is sized from
 the largest so it never binds on a line. Rejected: a leg for the largest
 factor, which reads the form `int8[]`'s does and a count of Arrow's buffers
 already checks per type; a factor restated in `measure.py`, a second copy
 nothing keeps in step; a user surface showing it, which nothing user-facing
-needs. It is taken on today's code first, pricing
+needs; a term's leg at four readers, which reads how many lines the cut holds
+at once, as every other kind's column does; a `jsonb` object as `jsonb_out`
+writes one, distinct keys and its spaces, which reads below the factor's
+density and so cannot show it understated. It is taken on today's code first, pricing
 the copies, and re-taken once the ledger lands, confirming the factors or
 re-setting them, and showing a parse flat in its line length. **The
 acceptance is two hand runs on the reference dump**, read with no setting and

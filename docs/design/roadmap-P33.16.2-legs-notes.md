@@ -1,6 +1,10 @@
 # P33.16.2 notes — the term legs and their factors
 
-**The instrument landed; its readings did not.** A figure is taken from a
+**The instrument landed; the bound legs and the readings did not.**
+`int8array` and `jsonb` read the bound beside their ladder, at one reader, as
+the spec's "How it is shown" states since this slice's review; the generator,
+`long_line_lengths` and `long_line_groups` still give a term's kind the
+ladder alone. A figure is taken from a
 commit, never from a tree carrying its own apparatus
 ([`measurements.md`](measurements.md), "A figure may be published outside the
 sweep"), so the box stays unticked until a later round, on the commit carrying
@@ -52,7 +56,7 @@ falsifiers.
 - **The instrument legs sweep in their kind's ladder sweep**, not one of
   their own: an input staged in a second sweep must be paired there by a
   subtraction (`test_measure.py`'s `test_a_split_figure_covers_its_warm_set`).
-- **A term's kind reads no four-partition column and no bound**: four
-  `text[]` lines of 512 MiB, or one at the bound, decoded at one and
-  `161/16` with a builder's doubling, pass `LONG_LINE_MEMORY`
-  (STATUS, "Decisions worth another look").
+- **A term's kind reads no four-partition column, and `text[]` no bound**:
+  the cut's count is every other kind's column, and `text[]` decoded at
+  `161/16` with its builders' doubling outgrows `LONG_LINE_MEMORY` at either
+  (the spec's "How it is shown").
