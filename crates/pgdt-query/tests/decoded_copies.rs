@@ -191,9 +191,9 @@ async fn a_bytea_is_one_copy() {
 /// (`docs/design/decisions.md`, "D153"): a `bigint[]` of short elements
 /// written in place and a `text[]` whose every element `COPY` writes with an
 /// escape, each of seven or eight MiB, are read into their batch holding the
-/// builders' Arrow form and no more, never the elements' text beside it or
-/// the field unescaped. Each holds a power of two of elements, and the rows
-/// beside it none, so a builder grown by doubling ends at its last doubling.
+/// builders' reservation and no more, never the elements' text beside it or
+/// the field unescaped: each is past its chunk term, so its builders are
+/// reserved to it ("D154"), an element's slot for every two of its bytes.
 #[tokio::test]
 async fn a_nested_value_decodes_into_its_builders() {
     let dir = tempfile::tempdir().unwrap();
@@ -204,13 +204,12 @@ async fn a_nested_value_decodes_into_its_builders() {
         text.push('}');
         text
     };
-    // An `int8` is eight bytes for each element's two, a `text`'s view
-    // sixteen for its seven; each builder's growth holds its last two sizes.
+    // An `int8`'s eight bytes, and a `text`'s view's sixteen.
     let bigints = 4usize << 20;
     let texts = 1usize << 20;
-    for (declared, text, count, element_bytes) in [
-        ("bigint[]", array("7", bigints), bigints, 8 + 4),
-        ("text[]", array("\"a\tb\"", texts), texts, 16 + 8),
+    for (declared, text, count, slot) in [
+        ("bigint[]", array("7", bigints), bigints, 8),
+        ("text[]", array("\"a\tb\"", texts), texts, 16),
     ] {
         let field = pgdt_core::escape_field(Some(&text));
         let path = dump(dir.path(), declared, "{}", &field);
@@ -225,9 +224,30 @@ async fn a_nested_value_decodes_into_its_builders() {
             })
             .max();
         assert_eq!(longest, Some(count as i32), "{declared}");
-        let bound = count * element_bytes + (1 << 20);
+        let bound = field.len().div_ceil(2) * slot + (1 << 20);
         assert!(peak < bound, "{declared}: {peak} bytes allocated at the peak, past {bound}");
     }
+}
+
+/// **A nested value past its chunk term is decoded into builders reserved
+/// to it** (`docs/design/decisions.md`, "D154"): a `bigint[]` of a power of
+/// two of one-digit elements, between rows of two elements, is a batch of its
+/// own and holds what its reservation states — eight bytes and a bit for every
+/// two of its text — never the buffer its builder would outgrow by doubling
+/// past the elements beside it, nor the outgrown one beside it.
+#[tokio::test]
+async fn a_long_nested_value_is_decoded_into_reserved_builders() {
+    let dir = tempfile::tempdir().unwrap();
+    let count = 4usize << 20;
+    let text = format!("{{{}}}", vec!["7"; count].join(","));
+    let path = dump(dir.path(), "bigint[]", "{1,2}", text.as_bytes());
+    let (batches, peak) = query(&path).await;
+    let sizes: Vec<usize> = batches.iter().map(RecordBatch::num_rows).collect();
+    assert_eq!(sizes, [1, 1, 1]);
+    assert_eq!(batches[1].column(1).as_list::<i32>().value_length(0), count as i32);
+    let reserved = text.len().div_ceil(2) * 65 / 8;
+    let bound = reserved + (1 << 20);
+    assert!(peak < bound, "{peak} bytes allocated at the peak, past {bound}");
 }
 
 /// **A filter term holds no copy of an escaped field it reads**

@@ -582,6 +582,59 @@ async fn a_resume_token_after_one_batch_continues_correctly() {
     assert_eq!(rows, widgets_expected());
 }
 
+/// **A long nested value is a batch of its own** (`docs/design/decisions.md`,
+/// "D154"): the rows before it are emitted ahead of it and the rows after it
+/// behind it, whatever the span allows, so its builders start empty; and the
+/// token a stream hands back after the rows before it resumes at its row,
+/// delivering every row once.
+#[tokio::test]
+async fn a_long_nested_value_is_a_batch_of_its_own() {
+    use arrow::array::{Array, AsArray, RecordBatch};
+    use arrow::datatypes::Int32Type;
+
+    // Each row's `a` and its array's length, NULL as `None`.
+    fn rows(batch: &RecordBatch) -> Vec<(i32, Option<i32>)> {
+        let a = batch.column(0).as_primitive::<Int32Type>();
+        let b = batch.column(1).as_list::<i32>();
+        (0..batch.num_rows())
+            .map(|row| (a.value(row), b.is_valid(row).then(|| b.value_length(row))))
+            .collect()
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("long.sql");
+    let long = format!("{{{}}}", vec!["7"; 4096].join(","));
+    let file = format!(
+        "CREATE TABLE public.t (\n    a integer,\n    b bigint[]\n);\n\n\
+         COPY public.t (a, b) FROM stdin;\n1\t{{1}}\n2\t\\N\n3\t{long}\n4\t{{4,4}}\n5\t{{5}}\n\\.\n\n"
+    );
+    std::fs::write(&path, file).unwrap();
+    let scan = ScanOptions {
+        read: ReadOptions { chunk_size_bytes: 1 << 10, ..ReadOptions::default() },
+        ..Default::default()
+    };
+    let cold = Cold { scan, ..Cold::default() };
+    let expected = [(1, Some(1)), (2, None), (3, Some(4096)), (4, Some(2)), (5, Some(1))];
+
+    let plan = cold.plan(open(&path), "public.t", QueryOptions::default()).await;
+    let plan = plan.unwrap().unwrap();
+    let mut stream = plan.in_file_order(cold.max_rows);
+    let mut batches = Vec::new();
+    while let Some(batch) = stream.next().await {
+        batches.push(rows(&batch.unwrap()));
+    }
+    assert_eq!(batches, [&expected[..2], &expected[2..3], &expected[3..]]);
+
+    let mut stream = plan.in_file_order(cold.max_rows);
+    let mut read = rows(&stream.next().await.expect("a first batch").unwrap());
+    let token = stream.resume_token();
+    let mut resumed = plan.resume(token, cold.max_rows).unwrap();
+    while let Some(batch) = resumed.next().await {
+        read.extend(rows(&batch.unwrap()));
+    }
+    assert_eq!(read, expected);
+}
+
 /// Round-trip check against real `pg_dump` output, batched with a small
 /// `max_rows` so the 132-row `escapes` table crosses several batches: each
 /// batched value must match a value the test computes itself (see

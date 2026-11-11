@@ -15,6 +15,7 @@ mod chunks;
 
 #[cfg(test)]
 pub(crate) use self::builder::column_of;
+use self::builder::reserved_column_builder;
 pub(crate) use self::builder::{
     ColumnBuilder, Factor, append_typed, column_factor, finish_column, new_column_builder,
 };
@@ -23,10 +24,11 @@ pub(crate) use self::chunks::RetainedChunks;
 use std::ops::Range;
 
 use arrow::array::{ArrayRef, RecordBatch, RecordBatchOptions};
-use arrow::datatypes::SchemaRef;
+use arrow::datatypes::{DataType, SchemaRef};
 
 use pgdt_codec::ResolvedSchema;
 use pgdt_codec::internal::{FieldText, UnrepresentableRead, decode_bytea_into, escaped_utf8_error};
+use pgdt_codec::pgtype::NestedPlan;
 use pgdt_core::internal::{RawField, RawRow, RowSplit, printout, printout_head, unescaped};
 use pgdt_core::{Error, Result};
 use pgdt_model::PostgresInvalidValues;
@@ -75,6 +77,18 @@ pub(crate) struct RowBatcher {
     options: QueryOptions,
     /// Rows a batch is flushed at: the stream's, not the query's.
     max_rows: usize,
+    /// Parallel to `columns`: each column's type and plan, which a walked
+    /// value longer than `long_field` is decoded into builders reserved
+    /// from ([`reserved_column_builder`]).
+    plans: Vec<(DataType, NestedPlan)>,
+    /// Whether any column's value is walked ([`Self::walks_column`]).
+    walks: bool,
+    /// The length past which a walked value is long — its read's chunk, the
+    /// term a line past it draws beyond.
+    long_field: usize,
+    /// Whether the in-flight batch holds a long walked value, so it flushes
+    /// after its row and no later row grows its reserved builders.
+    holds_long: bool,
 }
 
 impl RowBatcher {
@@ -83,12 +97,14 @@ impl RowBatcher {
     /// fields onto it. Both come from `crate::stream::replay::plan::project`;
     /// `unrepresentable` is parallel to `field_targets`, `None` for each
     /// field that is not tested. A batch is flushed at `max_rows` rows, or
-    /// where `options` bounds its bytes or its span first.
+    /// where `options` bounds its bytes or its span first, and around a
+    /// nested value longer than `long_field` ([`Self::cuts_before`]).
     pub(crate) fn new(
         resolved: &ResolvedSchema,
         table: String,
         options: QueryOptions,
         max_rows: usize,
+        long_field: usize,
         field_targets: Vec<Option<usize>>,
         unrepresentable: Vec<Option<UnrepresentableRead>>,
     ) -> Self {
@@ -101,11 +117,15 @@ impl RowBatcher {
         }
         let declared_types =
             resolved.columns().iter().map(|c| c.declared().map(str::to_string)).collect();
-        let columns = resolved
+        let columns: Vec<ColumnBuilder> = resolved
             .columns()
             .iter()
             .map(|column| new_column_builder(column.data_type(), column.plan()))
             .collect();
+        let walks =
+            columns.iter().zip(&projected).any(|(b, tested)| is_walked(b) && tested.is_none());
+        let plans =
+            resolved.columns().iter().map(|c| (c.data_type().clone(), c.plan().clone())).collect();
         Self {
             schema,
             table,
@@ -120,6 +140,10 @@ impl RowBatcher {
             not_null: resolved.columns().iter().map(|column| column.not_null()).collect(),
             options,
             max_rows,
+            plans,
+            walks,
+            long_field,
+            holds_long: false,
         }
     }
 
@@ -154,9 +178,35 @@ impl RowBatcher {
     /// most one row. The span trigger cannot fire on an empty batch whatever
     /// its cap, `span` staying `None` until a row lands.
     pub(crate) fn should_flush(&self) -> bool {
-        self.rows_in_batch >= self.max_rows
+        self.holds_long
+            || self.rows_in_batch >= self.max_rows
             || self.options.max_bytes.is_some_and(|max| self.bytes_in_batch >= max)
             || self.source_span_reached()
+    }
+
+    /// **Whether the in-flight batch must be flushed before `row`**: it holds
+    /// a row, and `row` has a nested value its batch walks longer than
+    /// `long_field`, which is decoded into builders reserved to it, so they
+    /// must start empty (`docs/design/decisions.md`, "D154"). The row's
+    /// boundaries are `split`'s, which [`Self::push_row`] reads again.
+    pub(crate) fn cuts_before(&self, row: RawRow<'_>, split: &mut RowSplit) -> bool {
+        let raw = row.bytes();
+        if !self.walks || self.rows_in_batch == 0 || raw.len() <= self.long_field {
+            return false;
+        }
+        let mut start = 0;
+        split.complete(raw).iter().zip(&self.field_targets).any(|(&end, target)| {
+            let long = end - start > self.long_field
+                && target.is_some_and(|target| self.walks_column(target));
+            start = end + 1;
+            long
+        })
+    }
+
+    /// Whether column `col`'s value is walked into its builders
+    /// ([`append_walked`]): a nested column no tier test reads.
+    fn walks_column(&self, col: usize) -> bool {
+        is_walked(&self.columns[col]) && self.unrepresentable[col].is_none()
     }
 
     fn source_span_reached(&self) -> bool {
@@ -297,9 +347,22 @@ impl RowBatcher {
         // A nested value is walked off its field into its builders, an
         // escaped one unescaped as it is read, so no text of it is made
         // (`docs/design/decisions.md`, "D153"); a NULL goes on below.
-        let walked = is_walked(&self.columns[col]) && self.unrepresentable[col].is_none();
+        let walked = self.walks_column(col);
         let invalid = self.options.postgres_invalid_values;
-        match walked.then(|| row.read(field.clone())).transpose()? {
+        let read = walked.then(|| row.read(field.clone())).transpose()?;
+        // A long one, in a batch holding no row, is decoded into builders
+        // reserved to it, its batch flushed after its row, so no buffer of
+        // its copy grows by doubling (`docs/design/decisions.md`, "D154").
+        if walked
+            && field_len > self.long_field
+            && self.rows_in_batch == 0
+            && !matches!(read, None | Some(RawField::Null))
+        {
+            let (data_type, plan) = &self.plans[col];
+            self.columns[col] = reserved_column_builder(data_type, plan, field_len);
+            self.holds_long = true;
+        }
+        match read {
             Some(RawField::Escaped(bytes)) => {
                 if let Some(valid_up_to) = escaped_utf8_error(bytes) {
                     return Err(Error::InvalidUtf8 { valid_up_to });
@@ -371,6 +434,7 @@ impl RowBatcher {
         self.rows_in_batch = 0;
         self.bytes_in_batch = 0;
         self.span = None;
+        self.holds_long = false;
         let arrays: Vec<ArrayRef> = self.columns.iter_mut().map(finish_column).collect();
         RecordBatch::try_new_with_options(
             self.schema.clone(),

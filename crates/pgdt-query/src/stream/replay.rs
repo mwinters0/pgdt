@@ -280,7 +280,7 @@ pub(super) fn replay<'a>(
                             active = Some(opened);
                         }
                         Event::Row(row) => {
-                            if let Some((header_offset, _, batcher, filter, _)) =
+                            if let Some((header_offset, header, batcher, filter, database)) =
                                 active.as_mut()
                             {
                                 let unchecked = RawRow::unchecked(row.raw);
@@ -348,6 +348,36 @@ pub(super) fn replay<'a>(
                                     past_limit = true;
                                     stopped_at = Some(chunk.scanner().position());
                                 } else if keep && !rejected {
+                                    // A long nested value starts a batch of
+                                    // its own (`RowBatcher::cuts_before`):
+                                    // the rows before it are emitted, and a
+                                    // pause there resumes at its row.
+                                    if batcher.cuts_before(raw, &mut split) {
+                                        let begins_at = batcher.batch_start().unwrap_or(row.offset);
+                                        let batch = batcher.flush()?;
+                                        chunks.invalidate_block_cache();
+                                        rows_emitted += batch.num_rows() as u64;
+                                        *shared.batch_offset.lock().unwrap() = begins_at;
+                                        *shared.position.lock().unwrap() = ResumeToken {
+                                            offset: row.offset,
+                                            rows_emitted,
+                                            query_fingerprint: fingerprint,
+                                            generation: 0,
+                                            in_copy: Some(InCopyResume {
+                                                header: header.clone(),
+                                                header_offset: *header_offset,
+                                                // The row is counted as read;
+                                                // it is the next one.
+                                                rows_in_block: chunk
+                                                    .scanner()
+                                                    .in_copy_rows()
+                                                    .unwrap_or(1)
+                                                    - 1,
+                                                database: database.clone(),
+                                            }),
+                                        };
+                                        yield batch;
+                                    }
                                     batcher.push_row(
                                         *header_offset,
                                         row.offset,
@@ -574,6 +604,7 @@ fn activate(
         header.qualified_name(),
         plan.query_options.clone(),
         max_rows,
+        plan.read.chunk_size_bytes,
         block.field_targets.clone(),
         block.unrepresentable.clone(),
     );

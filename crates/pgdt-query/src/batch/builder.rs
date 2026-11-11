@@ -158,20 +158,39 @@ fn array_depth(parts: &ListParts) -> usize {
     }
 }
 
-fn new_list_parts(data_type: &DataType, element: &Position<NestedPlan>) -> ListParts {
+fn new_list_parts(
+    data_type: &DataType,
+    element: &Position<NestedPlan>,
+    room: Option<Room>,
+) -> ListParts {
     let DataType::List(field) = data_type else {
         unreachable!("a NestedPlan::Array/Multirange only ever accompanies DataType::List")
     };
+    let child = |room| Box::new(column_builder(field.data_type(), &element.plan, room));
+    let (child, lists) = match room {
+        None => (child(None), 0),
+        Some(Room { entries, len }) => {
+            // As many parts as the text holds at their fewest bytes each.
+            let parts = len.div_ceil(part_bytes(&child(None)));
+            (child(Some(Room { entries: parts, len })), entries)
+        }
+    };
+    let mut offsets = Vec::with_capacity(lists + 1);
+    offsets.push(0);
     ListParts {
         field: field.clone(),
-        child: Box::new(new_column_builder(field.data_type(), &element.plan)),
+        child,
         not_null: element.not_null,
-        offsets: vec![0],
-        validity: Vec::new(),
+        offsets,
+        validity: Vec::with_capacity(lists),
     }
 }
 
-fn new_struct_parts(data_type: &DataType, positions: &[Position<NestedPlan>]) -> StructParts {
+fn new_struct_parts(
+    data_type: &DataType,
+    positions: &[Position<NestedPlan>],
+    room: Option<Room>,
+) -> StructParts {
     let DataType::Struct(fields) = data_type else {
         unreachable!("a NestedPlan::Record/Range only ever accompanies DataType::Struct")
     };
@@ -179,28 +198,80 @@ fn new_struct_parts(data_type: &DataType, positions: &[Position<NestedPlan>]) ->
     let children = fields
         .iter()
         .zip(positions)
-        .map(|(f, position)| new_column_builder(f.data_type(), &position.plan))
+        .map(|(f, position)| column_builder(f.data_type(), &position.plan, room))
         .collect();
     let not_null = positions.iter().map(|position| position.not_null).collect();
-    StructParts { fields: fields.clone(), children, not_null, validity: Vec::new() }
+    let validity = Vec::with_capacity(room.map_or(0, |room| room.entries));
+    StructParts { fields: fields.clone(), children, not_null, validity }
+}
+
+/// The fewest bytes an entry of `builder` is written in as a list's part, its
+/// delimiter aside: a leaf's one byte, an unquoted part never being empty; a
+/// list's `{`, its `}` delimiting its last part; an `int2vector`'s first
+/// element; a record's parentheses and commas, each field NULL; a range's
+/// `(,)`.
+pub(super) fn shortest(builder: &ColumnBuilder) -> u64 {
+    match builder {
+        ColumnBuilder::Record(parts) => parts.children.len().max(1) as u64 + 1,
+        ColumnBuilder::Range(_) => 3,
+        _ => 1,
+    }
+}
+
+/// The fewest bytes an entry of `builder` takes as a list's part, its
+/// delimiter included: what a list's child is reserved by, one entry for
+/// each of them its text holds.
+fn part_bytes(builder: &ColumnBuilder) -> usize {
+    shortest(builder) as usize + 1
+}
+
+/// The entries a builder has room for unreserved: Arrow's builders' default.
+const DEFAULT_ENTRIES: usize = 1024;
+
+/// What a builder is reserved for: `entries` of its own, and a text of `len`
+/// bytes its repeated parts are read from.
+#[derive(Debug, Clone, Copy)]
+struct Room {
+    entries: usize,
+    len: usize,
 }
 
 pub(crate) fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder {
+    column_builder(data_type, plan, None)
+}
+
+/// **A nested column's builder reserved for one value of `len` bytes of
+/// text**: each buffer at that buffer's density — as many of each repeated
+/// part as the text holds at their fewest bytes, a `bytea` part's bytes as
+/// many as the text's — so decoding the value into it never grows a buffer
+/// by doubling, and holds what [`Factor`]'s reservation states
+/// (`docs/design/decisions.md`, "D154").
+pub(crate) fn reserved_column_builder(
+    data_type: &DataType,
+    plan: &NestedPlan,
+    len: usize,
+) -> ColumnBuilder {
+    column_builder(data_type, plan, Some(Room { entries: 1, len }))
+}
+
+/// A builder of `data_type` filled as `plan` says, with room as `room`
+/// states, or Arrow's default room with none.
+fn column_builder(data_type: &DataType, plan: &NestedPlan, room: Option<Room>) -> ColumnBuilder {
     match plan {
         NestedPlan::Scalar | NestedPlan::Decimal { .. } | NestedPlan::Text { .. } => {}
         NestedPlan::Array(child) => {
-            return ColumnBuilder::Array(new_list_parts(data_type, child));
+            return ColumnBuilder::Array(new_list_parts(data_type, child, room));
         }
         NestedPlan::Multirange(bound) => {
             let range = Position::nullable(NestedPlan::Range(bound.clone()));
-            return ColumnBuilder::Multirange(new_list_parts(data_type, &range));
+            return ColumnBuilder::Multirange(new_list_parts(data_type, &range, room));
         }
         NestedPlan::Int2Vector => {
             let element = Position::nullable(NestedPlan::Scalar);
-            return ColumnBuilder::Int2Vector(new_list_parts(data_type, &element));
+            return ColumnBuilder::Int2Vector(new_list_parts(data_type, &element, room));
         }
         NestedPlan::Record(field_plans) => {
-            return ColumnBuilder::Record(new_struct_parts(data_type, field_plans));
+            return ColumnBuilder::Record(new_struct_parts(data_type, field_plans, room));
         }
         NestedPlan::Range(bound) => {
             let plans = [
@@ -211,7 +282,7 @@ pub(crate) fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> Col
                 NestedPlan::Scalar,
             ]
             .map(Position::nullable);
-            return ColumnBuilder::Range(new_struct_parts(data_type, &plans));
+            return ColumnBuilder::Range(new_struct_parts(data_type, &plans, room));
         }
     }
     // A decimal's typmod precision, which the Arrow type carries only where
@@ -225,46 +296,56 @@ pub(crate) fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> Col
         NestedPlan::Text { length } => Some(*length),
         _ => None,
     };
+    // Arrow's default room, or the entries `room` reserves.
+    let n = room.map_or(DEFAULT_ENTRIES, |room| room.entries);
     match data_type {
-        DataType::Utf8View => ColumnBuilder::Utf8View(StringViewBuilder::new(), length),
-        DataType::Boolean => ColumnBuilder::Bool(BooleanBuilder::new()),
-        DataType::Int16 => ColumnBuilder::Int16(Int16Builder::new()),
-        DataType::Int32 => ColumnBuilder::Int32(Int32Builder::new()),
-        DataType::Int64 => ColumnBuilder::Int64(Int64Builder::new()),
-        DataType::UInt32 => ColumnBuilder::UInt32(UInt32Builder::new()),
-        DataType::Float32 => ColumnBuilder::Float32(Float32Builder::new()),
-        DataType::Float64 => ColumnBuilder::Float64(Float64Builder::new()),
-        DataType::Date32 => ColumnBuilder::Date32(Date32Builder::new()),
+        DataType::Utf8View => ColumnBuilder::Utf8View(StringViewBuilder::with_capacity(n), length),
+        DataType::Boolean => ColumnBuilder::Bool(BooleanBuilder::with_capacity(n)),
+        DataType::Int16 => ColumnBuilder::Int16(Int16Builder::with_capacity(n)),
+        DataType::Int32 => ColumnBuilder::Int32(Int32Builder::with_capacity(n)),
+        DataType::Int64 => ColumnBuilder::Int64(Int64Builder::with_capacity(n)),
+        DataType::UInt32 => ColumnBuilder::UInt32(UInt32Builder::with_capacity(n)),
+        DataType::Float32 => ColumnBuilder::Float32(Float32Builder::with_capacity(n)),
+        DataType::Float64 => ColumnBuilder::Float64(Float64Builder::with_capacity(n)),
+        DataType::Date32 => ColumnBuilder::Date32(Date32Builder::with_capacity(n)),
         DataType::Timestamp(TimeUnit::Microsecond, tz) => ColumnBuilder::TimestampMicro {
-            builder: TimestampMicrosecondBuilder::new().with_timezone_opt(tz.clone()),
+            builder: TimestampMicrosecondBuilder::with_capacity(n).with_timezone_opt(tz.clone()),
             has_tz: tz.is_some(),
         },
         DataType::Time64(TimeUnit::Microsecond) => {
-            ColumnBuilder::Time64Micro(Time64MicrosecondBuilder::new())
+            ColumnBuilder::Time64Micro(Time64MicrosecondBuilder::with_capacity(n))
         }
         DataType::Interval(IntervalUnit::MonthDayNano) => {
-            ColumnBuilder::IntervalMonthDayNano(IntervalMonthDayNanoBuilder::new())
+            ColumnBuilder::IntervalMonthDayNano(IntervalMonthDayNanoBuilder::with_capacity(n))
         }
         DataType::Decimal128(p, s) => ColumnBuilder::Decimal128 {
-            builder: Decimal128Builder::new().with_precision_and_scale(*p, *s).expect(
+            builder: Decimal128Builder::with_capacity(n).with_precision_and_scale(*p, *s).expect(
                 "pgtype::map_numeric only ever produces a valid Decimal128 precision/scale",
             ),
             scale: *s,
             precision: precision(*p),
         },
         DataType::Decimal256(p, s) => ColumnBuilder::Decimal256 {
-            builder: Decimal256Builder::new().with_precision_and_scale(*p, *s).expect(
+            builder: Decimal256Builder::with_capacity(n).with_precision_and_scale(*p, *s).expect(
                 "pgtype::map_numeric only ever produces a valid Decimal256 precision/scale",
             ),
             scale: *s,
             precision: precision(*p),
         },
         DataType::FixedSizeBinary(16) => {
-            ColumnBuilder::FixedSizeBinary16(FixedSizeBinaryBuilder::new(16))
+            ColumnBuilder::FixedSizeBinary16(FixedSizeBinaryBuilder::with_capacity(n, 16))
         }
-        DataType::Binary => ColumnBuilder::Binary(ByteaBuilder::new()),
+        // A part's bytes are never more than its text's.
+        DataType::Binary => ColumnBuilder::Binary(match room {
+            None => ByteaBuilder::new(),
+            Some(Room { entries, len }) => ByteaBuilder::with_capacity(entries, len),
+        }),
+        // An enum's labels are its type's, so only its keys are reserved.
         DataType::Dictionary(k, v) if **k == DataType::Int32 && **v == DataType::Utf8 => {
-            ColumnBuilder::Dictionary(StringDictionaryBuilder::new())
+            ColumnBuilder::Dictionary(match room {
+                None => StringDictionaryBuilder::new(),
+                Some(Room { entries, .. }) => StringDictionaryBuilder::with_capacity(entries, 0, 0),
+            })
         }
         other => unreachable!("resolve_columns never resolves a column to {other:?}"),
     }

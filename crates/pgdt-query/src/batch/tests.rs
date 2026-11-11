@@ -28,7 +28,15 @@ fn one_column_batcher_fed_by(
         comparison_for(declared, None, &[], &[]),
         false,
     )]);
-    RowBatcher::new(&resolved, "public.t".into(), options, usize::MAX, field_targets, Vec::new())
+    RowBatcher::new(
+        &resolved,
+        "public.t".into(),
+        options,
+        usize::MAX,
+        usize::MAX,
+        field_targets,
+        Vec::new(),
+    )
 }
 
 /// The unprojected case: one `Utf8View` column, fed by the row's only
@@ -163,6 +171,7 @@ fn a_zero_column_batch_carries_only_its_row_count() {
         "public.t".into(),
         QueryOptions::default(),
         usize::MAX,
+        usize::MAX,
         vec![None, None],
         Vec::new(),
     );
@@ -276,6 +285,7 @@ fn nested_batcher(data_type: DataType, plan: NestedPlan) -> RowBatcher {
         &resolved,
         "public.t".into(),
         Default::default(),
+        usize::MAX,
         usize::MAX,
         vec![Some(0)],
         Vec::new(),

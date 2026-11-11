@@ -4499,16 +4499,16 @@ its line, 52.6 to 56.5 MiB from 32 MiB to the bound.
   how much is retained is the purge's timing, as at 33.8.
 - **At 32 and 128 MiB both hold about a `C` past `N` and every buffer its
   doubling outgrew**: `int8[]` 1.08 and 1.03 `C`, `text[]` 1.05 and 0.51.
-  **This has no name.** The instrument legs read the 32 MiB inputs and show it
-  live in Rust's heap: `int8[]`'s live peak is 259.45 MiB, two of its 128 MiB
-  value buffers, where a doubling, whose `realloc` the counter takes as its
-  growth, holds one; `text[]`'s 515.45 MiB is two of its 256 MiB.
-  A batch of two 32 MiB rows, which the span's 64 MiB ceiling (D84) allows,
-  would hold that, but not at 128 MiB, where one row passes the span, and
-  text's, escaped text's and bytea's cells at 32 MiB hold one line and one
-  copy. What would name it is the `introspect` build's live peak over the
-  128, 288 and 512 MiB inputs, which says at which lengths the second buffer
-  is live, and a run at `MIMALLOC_PURGE_DELAY=0`, which leaves only what is.
+  **It is the first long row's builder doubled past `C`**: the 8 short rows,
+  each `{1,2}` or `{a,b}`, share its batch, and their 16 elements carry its
+  values, which end 24 bytes under `C` at 32, 128 and 512 MiB, past it, so the
+  builder's last doubling is to `2C`, its copy holding `C` beside it. The
+  `introspect` build's live peak over `int8[]` is `2C` at 32, 128 and 512 MiB
+  and `C` at 288, whose values end at 0.56 `C`; at `MIMALLOC_PURGE_DELAY=0` a
+  one-partition query's peak is the last doubling's outgrown buffer beside
+  its copy (`runs/33.24-attribution-20261111/results.txt`). 33.24's cut
+  before a long nested value, its builders starting empty and reserved to
+  it, removes both.
 - **Two cells pass the allowance every leg states**, 8,489,271,296 B: `int8[]`
   at the bound and `text[]` at 512 MiB. Today's code charges no held line, so
   nothing binds; the allowance is sized from the plans' factors, which those

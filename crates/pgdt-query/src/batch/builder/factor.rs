@@ -6,10 +6,11 @@
 //!
 //! What it counts:
 //!
-//! - **the Arrow form a value's text can grow**: each repeated part's entry —
-//!   an array's element, a multirange's member, an `int2vector`'s element —
+//! - **what a nested value's builders are reserved to** past its chunk term
+//!   (`reserved_column_builder`): each repeated part's entry, at every depth,
 //!   over the fewest bytes the part is written in, its delimiter included,
-//!   and a text's or a `bytea`'s own bytes one for one;
+//!   and a text's or a `bytea`'s own bytes one for one — every buffer at its
+//!   own density, since each is reserved so, and so never grown by doubling;
 //! - **what a part's append holds besides**, one part at a time: an escaped
 //!   field's token and its unquoted copy, and a `bytea` part's decoded bytes;
 //! - **for a column its tier test reads whole**, the field unescaped and the
@@ -18,8 +19,8 @@
 //! Not counted: what a value holds whatever its text's length — a scalar's
 //! entry, a record's and a range's own, and a list's at the top — which the
 //! column's type bounds per row; a scalar's own text, which never grows long;
-//! and a buffer's slack and copy as it grows, the batch's span's
-//! (`decisions.md`, "D141").
+//! and a buffer's slack and copy as a batch grows within its span, the
+//! span's (`decisions.md`, "D141").
 
 use std::borrow::Cow;
 use std::mem::size_of;
@@ -30,7 +31,7 @@ use pgdt_codec::internal::KeyFactor;
 use pgdt_codec::nested::RangeLiteral;
 use pgdt_codec::pgtype::NestedPlan;
 
-use super::{ColumnBuilder, is_walked, new_column_builder};
+use super::{ColumnBuilder, is_walked, new_column_builder, shortest};
 
 /// At most `held` bytes for every `per` bytes of a text, beside the text:
 /// what a value's decode or an ordering key over it holds while it is read.
@@ -111,7 +112,7 @@ pub(crate) fn column_factor(
         // most, every decode shortening a value (D141).
         ColumnBuilder::Utf8View(..) | ColumnBuilder::Binary(_) => Factor::ONE,
         b if is_walked(b) => {
-            let walked = form(b).plus(stage(b));
+            let walked = reserved(b).plus(stage(b));
             let staged = if tested { staged(b) } else { Factor::ZERO };
             if walked.is_zero() && staged.is_zero() {
                 Factor::ZERO
@@ -159,16 +160,26 @@ fn entry_bits(builder: &ColumnBuilder) -> u64 {
     slot + 1
 }
 
-/// The fewest bytes an entry of `builder` is written in as a list's part, its
-/// delimiter aside: a leaf's one byte, an unquoted part never being empty; a
-/// list's `{`, its `}` delimiting its last part; an `int2vector`'s first
-/// element; a record's parentheses and commas, each field NULL; a range's
-/// `(,)`.
-fn shortest(builder: &ColumnBuilder) -> u64 {
+/// **What a nested value's builders are reserved to**, per byte of its text
+/// (`reserved_column_builder`): each repeated part's entry over its fewest
+/// bytes, summed over every depth, and one where a text's or a `bytea`'s own
+/// bytes are held. Every buffer is reserved at its own density, so this is
+/// their sum where [`form`] is their largest.
+fn reserved(builder: &ColumnBuilder) -> Factor {
     match builder {
-        ColumnBuilder::Record(parts) => parts.children.len().max(1) as u64 + 1,
-        ColumnBuilder::Range(_) => 3,
-        _ => 1,
+        // A text's bytes past its view are blocks of their own, never grown
+        // by doubling; a `bytea`'s are reserved to its text's length.
+        ColumnBuilder::Utf8View(..) | ColumnBuilder::Binary(_) => Factor::ONE,
+        ColumnBuilder::Array(parts)
+        | ColumnBuilder::Multirange(parts)
+        | ColumnBuilder::Int2Vector(parts) => {
+            let child = &*parts.child;
+            Factor::bits(entry_bits(child), shortest(child) + 1).plus(reserved(child))
+        }
+        ColumnBuilder::Record(parts) | ColumnBuilder::Range(parts) => {
+            parts.children.iter().map(reserved).fold(Factor::ZERO, Factor::plus)
+        }
+        _ => Factor::ZERO,
     }
 }
 

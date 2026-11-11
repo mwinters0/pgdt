@@ -20,6 +20,13 @@ impl ByteaBuilder {
         Self { values: Vec::new(), offsets: vec![0], nulls: NullBufferBuilder::new(0) }
     }
 
+    /// A builder with room for `rows` values of `bytes` bytes in all.
+    pub(crate) fn with_capacity(rows: usize, bytes: usize) -> Self {
+        let mut offsets = Vec::with_capacity(rows + 1);
+        offsets.push(0);
+        Self { values: Vec::with_capacity(bytes), offsets, nulls: NullBufferBuilder::new(rows) }
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.offsets.len() - 1
     }
